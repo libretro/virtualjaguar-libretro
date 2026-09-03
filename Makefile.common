@@ -10,6 +10,7 @@ INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src/cd \
 				-I$(CORE_DIR)/src/bios \
 				-I$(CORE_DIR)/src/m68000 \
+				-I$(CORE_DIR)/src/debug \
 				-I$(LIBRETRO_COMM_DIR)/include \
 				-I$(LIBCHDR_DIR)/include \
 				-I$(LIBCHDR_DIR)/deps/lzma-25.01/include \
@@ -83,6 +84,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/core/filedb.c \
 	$(CORE_DIR)/src/core/titledb.c \
 	$(CORE_DIR)/src/core/titlehook.c \
+	$(CORE_DIR)/src/core/hookfile.c \
 	$(CORE_DIR)/src/m68000/cpustbl.c \
 	$(CORE_DIR)/src/m68000/cpudefs.c \
 	$(CORE_DIR)/src/m68000/cpuemu.c \
@@ -105,7 +107,10 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/core/vjag_memory.c \
 	$(CORE_DIR)/src/core/vjtrace.c \
 	$(CORE_DIR)/src/core/universalhdr.c \
-	$(CORE_DIR)/src/jerry/wavetable.c
+	$(CORE_DIR)/src/jerry/wavetable.c \
+	$(CORE_DIR)/src/debug/gdbstub.c \
+	$(CORE_DIR)/src/debug/gdbtarget.c \
+	$(CORE_DIR)/src/debug/gdbsock.c
 
 # SIMD-accelerated blitter operations: select arch-specific implementation.
 # BLITTER_SIMD may be set explicitly to one of: scalar, sse2, neon.

@@ -33,6 +33,7 @@
 #include "bus_arbiter.h"
 #include "../core/vjtrace.h"
 #include "perf_iface.h"
+#include "gdbstub.h"
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
@@ -809,9 +810,45 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // Check for CPU -> DSP interrupt
                if (data & DSPINT0)
                {
-                  m68k_end_timeslice();
-                  DSPReleaseTimeslice();
-                  DSPSetIRQLine(DSPIRQ_CPU, ASSERT_LINE);
+                  /* Only deliver a CPU->DSP interrupt when the DSP is
+                   * actually RUNNING (issue #635, White Men Can't Jump).
+                   *
+                   * The game stops its DSP by raising DSPINT0 -- its INT0
+                   * handler is a shutdown routine ($F1B76A: disable
+                   * INT_ENA0/1, clear the latches, write $20 to D_CTRL so
+                   * DSPGO clears).  Its reload sequence is: stop, copy a
+                   * fresh 2.5KB program over DSP RAM, set D_PC, set DSPGO.
+                   *
+                   * At the stop, DSPGO is ALREADY clear (the traced write
+                   * is OR.L #4 over a prior value of $820, bit 0 = 0), so
+                   * there is no running program to consume the interrupt.
+                   * Delivered unconditionally, the latch survives into the
+                   * NEWLY started program, which enables INT_ENA0/1 during
+                   * its own init and immediately services it -- running the
+                   * shutdown handler and stopping itself after ~1,319
+                   * opcodes.  The 68K then posts command $0D to the mailbox
+                   * at $F1B2C0, nothing ever consumes it, and the next
+                   * caller spins forever at $01C306 waiting for it to clear.
+                   * The GPU stops being fed and the picture freezes.
+                   *
+                   * The game cannot rely on the latch being cleared later:
+                   * its start routine writes D_FLAGS <- 0, and JTRM Rev 8 is
+                   * explicit that "writing a zero leaves them unchanged".
+                   *
+                   * JTRM Rev 8 does NOT state whether a CPU interrupt raised
+                   * while the DSP is stopped latches -- the interrupt
+                   * section describes the latches without reference to
+                   * DSPGO.  This gate is therefore argued from behaviour,
+                   * not from a manual line: the title demonstrably works on
+                   * hardware, and it cannot if a stop-interrupt is still
+                   * pending when its replacement program starts.  Worth
+                   * confirming against hardware if anyone can. */
+                  if (DSP_RUNNING)
+                  {
+                     m68k_end_timeslice();
+                     DSPReleaseTimeslice();
+                     DSPSetIRQLine(DSPIRQ_CPU, ASSERT_LINE);
+                  }
                   data &= ~DSPINT0;
                }
                // Protect writes to VERSION and the interrupt latches...
@@ -951,23 +988,62 @@ uint32_t DSPGetFlags(void)
 	return dsp_flags;
 }
 
-/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
- * VJ_TRACE; DSPGetReg is new-for-vjtrace surface (unlike GPU's
- * pre-existing #406 GPUGetReg, left unguarded elsewhere), so it
- * compiles out entirely in shipped/non-test builds rather than relying
- * solely on exports.list to hide it. */
-#ifdef VJ_TRACE
-/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose a DSP
- * register by index from the CURRENT bank, mirroring GPUGetReg in
- * src/tom/gpu.c. Not part of the shipped ABI (production link uses
- * exports.list, which does not have the _DSP* wildcard). */
+/* Write side of DSPGetFlags, added for the GDB stub (issue #652). A raw
+ * poke of dsp_flags -- see GPUSetFlags in src/tom/gpu.c for why this
+ * bypasses the D_FLAGS MMIO write path (interrupt-mask side effects a
+ * debugger write should not trigger as a side effect of merely wanting
+ * to see a different N/C/Z combination). */
+void DSPSetFlags(uint32_t v)
+{
+	dsp_flags = v;
+}
+
+/* DSPGetPC/DSPSetPC, added for the GDB stub (issue #652): dsp_pc had no
+ * accessor at all before this (GPU's equivalent, GPUGetPC, predates
+ * vjtrace -- issue #406). Raw poke on the write side, like GPUSetPC. */
+uint32_t DSPGetPC(void)
+{
+	return dsp_pc;
+}
+
+void DSPSetPC(uint32_t pc)
+{
+	dsp_pc = pc;
+}
+
+/* Diagnostic-only accessor, added for `monitor regs dsp` (the GDB stub,
+ * issue #652): the raw D_CTRL value, read-only -- see GPUGetControl in
+ * src/tom/gpu.c for why the write side is not exposed. */
+uint32_t DSPGetControl(void)
+{
+	return dsp_control;
+}
+
+/* Originally vjtrace-only (#408) and gated behind VJ_TRACE, like GPU's
+ * GPUGetReg was NOT (issue #406, pre-existing). The GDB stub (issue
+ * #652) needs DSPGetReg in every build (shipped-by-default, off by
+ * default -- see docs/gdb-stub-design.md), so it is unconditional now,
+ * matching GPUGetReg. This does not change the shipped dylib's exported
+ * symbol list -- production links still use exports.list, which never
+ * listed either accessor. */
 uint32_t DSPGetReg(int n)
 {
 	if (n < 0 || n > 31)
 		return 0;
 	return dsp_reg[n];
 }
-#endif /* VJ_TRACE */
+
+/* Write side of DSPGetReg, added for the GDB stub (issue #652). Pokes
+ * the ACTIVE bank directly, mirroring GPUSetReg's reasoning in
+ * src/tom/gpu.c: the $F1A000-range MMIO register window addresses both
+ * banks unconditionally by register number, which is NOT what "the
+ * current register file" means once REGPAGE has flipped. */
+void DSPSetReg(int n, uint32_t v)
+{
+	if (n < 0 || n > 31)
+		return;
+	dsp_reg[n] = v;
+}
 
 void DSPInit(void)
 {
@@ -1798,6 +1874,7 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 void DSPExec(int32_t cycles)
 {
 	int idleSkipActive;
+	int gdbArmedSlice;
 
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
@@ -1810,6 +1887,14 @@ void DSPExec(int32_t cycles)
 	VJP_ENTER(VJP_DSP);
 
 	dsp_releaseTimeSlice_flag = 0;
+
+	/* Same shape as GPUExec's cached locals (issue #532): a hot global
+	 * read per emulated instruction with an opaque opcode call in
+	 * between.  Measured (issue #652): this removes part of the DSP's
+	 * share of the GDB hook cost; ~2%% remains and is NOT explained --
+	 * see docs/gdb-stub-design.md.  Only GDBHalt() can re-arm inside a
+	 * slice. */
+	gdbArmedSlice = gdbArmedDSP;
 	dsp_in_exec++;
 
 	/* Idle-loop fast-forward gates (issue #569).  Every one of these adds
@@ -1858,6 +1943,19 @@ void DSPExec(int32_t cycles)
 	              && !(dsp_control & 0x18);
 #ifdef VJ_TRACE
 	if (vjtrace_armed || vjtrace_nwatch)
+		idleSkipActive = 0;
+#endif
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_IDLE_GATE)
+	/* GDB stub (issue #652): DSPIdleLoopProbe() extrapolates the PC
+	 * forward over many idle-loop iterations without visiting each one,
+	 * exactly the class of per-instruction side effect the #569 idle-skip
+	 * gate list above already disables for (blit memo, busArbiter,
+	 * vjtrace watch). A DSP breakpoint or pending step would be stepped
+	 * clean over. This is a RUNTIME check, same reasoning as the VJ_TRACE
+	 * block above: gdbArmedDSP defaults to 0 and costs one load + branch
+	 * when nothing is armed. VJ_GDB_STUB_DISABLE_HOOKS exists only for
+	 * the Phase 2 A/B perf measurement. */
+	if (gdbArmedDSP)
 		idleSkipActive = 0;
 #endif
 	/* Probe + reject memo are re-derived from scratch every call, so
@@ -1920,6 +2018,21 @@ void DSPExec(int32_t cycles)
 		}
 
 		pcThis = dsp_pc;
+
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_DSP_HOOK)
+		/* GDB stub (issue #652): one load of a hot global, one
+		 * never-taken branch when no DSP breakpoint/step is armed -- see
+		 * docs/gdb-stub-design.md "Breakpoint detection". GDBHalt()
+		 * blocks in place (does not unwind this loop) until the client
+		 * continues, steps, or disconnects. VJ_GDB_STUB_DISABLE_HOOKS
+		 * exists only for the Phase 2 A/B perf measurement -- see the
+		 * comment in src/core/jaguar.c's M68KInstructionHook(). */
+		if (gdbArmedSlice && GDBCheckPC(GDB_TGT_DSP, pcThis))
+		{
+			GDBHalt(GDB_TGT_DSP, GDB_STOP_BREAKPOINT, pcThis);
+			gdbArmedSlice = gdbArmedDSP;
+		}
+#endif
 
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
 		{

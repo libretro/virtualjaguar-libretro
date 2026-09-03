@@ -59,8 +59,33 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "state.h"
 #include "titledb.h"
 #include "titlehook.h"
+#include "gdbstub.h"
 #include "log.h"
-#include "version.h" /* generated; defines CORE_VERSION */
+/* CORE_VERSION.  scripts/gen-version-h.sh writes src/core/version.h with
+ * the short git rev in it; the Makefile and jni/Android.mk both run it at
+ * parse time, so for them the generated header exists and wins.  Build
+ * systems that cannot run a script before compiling (the Provenance
+ * SwiftPM manifest) have no version.h and used to fail on this include --
+ * they fall back to the committed defaults instead.
+ *
+ * Nested rather than `#if defined(__has_include) && __has_include(...)`:
+ * the standard says #if short-circuits, but older preprocessors that lack
+ * __has_include can still choke parsing the call in the right-hand
+ * operand.  Every compiler without __has_include here is Makefile-driven,
+ * so it takes the #else and finds the generated header. */
+#if defined(__has_include)
+#  if __has_include("version.h")
+#    define VJ_HAVE_GENERATED_VERSION_H 1
+#  endif
+#else
+#  define VJ_HAVE_GENERATED_VERSION_H 1
+#endif
+
+#ifdef VJ_HAVE_GENERATED_VERSION_H
+#include "version.h"          /* generated; defines CORE_VERSION */
+#else
+#include "version_fallback.h" /* committed defaults; same macros */
+#endif
 
 /* Samples (not pairs) handed to the frontend once per field.  These are
  * also the numerator of the advertised sample rate -- see
@@ -130,6 +155,75 @@ static int hook_restart_notice_logged = 0;
 static bool widescreen_enabled          = false;
 static bool widescreen_geometry_pending = false;
 
+/* Title-scoped, so it has to be re-armed per load exactly like the
+ * titledb warning latches -- iOS cannot dlclose the core (#605). */
+static void widescreen_reset(void)
+{
+   widescreen_enabled          = false;
+   widescreen_geometry_pending = false;
+}
+
+/* GDB remote debug stub (issue #652).  Developer-facing, off by default,
+ * latched once at content load exactly like the enhancement-hook gate
+ * above -- a "Restart" option must not be settable by a per-title DB
+ * row, so it is read raw via environ_cb, never through
+ * get_variable_pertitle().  File-scope statics, not retro_run()-local:
+ * iOS cannot dlclose the core, so a resident process must not carry a
+ * previous title's stub state into the next load -- reset alongside
+ * everything else in retro_unload_game() and retro_deinit().
+ *
+ * Phase 2 moved the session, receive buffer, breakpoint tables and the
+ * blocking halt loop into src/debug/gdbtarget.c (GDBTargetOpen/Close/
+ * ServicePoll/ResetState) -- this file now owns only what genuinely
+ * needs environ_cb: option parsing, the socket lifecycle, and the two
+ * OSD banners the design calls out ("shown when the stub is enabled and
+ * again when a client attaches -- both are moments we can still reach
+ * the frontend"). */
+static bool gdb_stub_enabled     = false;
+static bool gdb_stub_socket_open = false;
+static int  gdb_stub_port        = 2345;
+static bool gdb_stub_wait_at_boot = false;
+
+/* Defined further down, right after environ_cb itself is declared --
+ * forward-declared here so gdb_stub_service() below can call it. */
+static void gdb_stub_show_banner(const char *text);
+
+/* Re-armed on every load/unload exactly like widescreen_reset() above:
+ * a fresh title must not inherit a previous session's socket or armed
+ * breakpoints. Does NOT call GDBTargetClose() itself -- callers that
+ * need the Jaguar-side state disarmed too (unload/deinit) call that
+ * explicitly, since a bind-failure path needs only the option flags
+ * reset, not a full target-state wipe of a target that was never
+ * opened. */
+static void gdb_stub_reset(void)
+{
+   gdb_stub_enabled      = false;
+   gdb_stub_socket_open  = false;
+   gdb_stub_port         = 2345;
+   gdb_stub_wait_at_boot = false;
+}
+
+/* Serviced once per frame from the top of retro_run(), and only when the
+ * stub is enabled -- with no client attached this is one poll() and a
+ * handful of cheap comparisons, bounded and non-blocking, per the
+ * design's "near-zero cost when disabled/idle" requirement. Firing a
+ * breakpoint does NOT return through here: GDBHalt() (src/debug/
+ * gdbtarget.c) blocks in place, deep inside JaguarExecuteNew(), and this
+ * function is simply never reached for the remainder of that retro_run()
+ * call. The "client attached" banner is fired here, on the edge
+ * GDBTargetServicePoll() reports, because this is the only place in the
+ * whole stub that can still reach environ_cb. */
+static void gdb_stub_service(void)
+{
+   if (!gdb_stub_enabled || !gdb_stub_socket_open)
+      return;
+
+   GDBTargetServicePoll();
+
+   if (GDBSockHasClientAttachEvent())
+      gdb_stub_show_banner("GDB client attached -- halts will freeze this frontend");
+}
+
 #ifdef VJ_TRACE
 /* vjtrace per-session frame counter (see the use site in retro_run()).
  * File-scope, not a retro_run()-local static, so retro_unload_game()/
@@ -150,8 +244,13 @@ extern void (*eeprom_dirty_cb)(void);
  *                followed by 128 bytes of CD EEPROM (64 x 16-bit words).
  * Memory Track cart (CRC 0xFDF37F47): mtMem is used directly (128K).
  *
- * The save buffer is kept in sync on every EEPROM write via eeprom_dirty_cb,
- * so frontends that cache the pointer always see current data. */
+ * EEPROM banks stay in sync on every write via eeprom_dirty_cb, so
+ * frontends that cache the pointer always see current EEPROM data.
+ * Memory Track is 128 KB; mt_dirty_cb only latches mt_save_buf_dirty so
+ * an AT29C010 programming burst does not memcpy the whole chip per byte.
+ * mt_flush_save_buf copies at most once per frame (and whenever a SRAM
+ * consumer reads the pointer), which is the freshness those frontends
+ * need. */
 #define EEPROM_SAVE_SIZE    128  /* 64 x 16-bit words, big-endian */
 #define CD_EEPROM_SAVE_SIZE 128  /* CD EEPROM: 64 x 16-bit words */
 #define MT_SAVE_SIZE        0x20000  /* 128K Memory Track */
@@ -161,9 +260,12 @@ extern void (*eeprom_dirty_cb)(void);
 #define CD_SAVE_SIZE        (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE)
 static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE];
 #define MT_SAVE_OFFSET      (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE)
+static int mt_save_buf_dirty;
 static void eeprom_pack_save_buf(void);
 static void eeprom_unpack_save_buf(void);
 static void mt_pack_save_buf(void);
+static void mt_mark_save_dirty(void);
+static void mt_flush_save_buf(void);
 
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
@@ -172,8 +274,86 @@ static retro_environment_t environ_cb;
 retro_audio_sample_batch_t audio_batch_cb;
 retro_log_printf_t vj_log_cb = NULL;
 
+/* GDB stub OSD banner (issue #652) -- see the forward declaration and
+ * gdb_stub_service() above for why this lives here, after environ_cb. */
+static void gdb_stub_show_banner(const char *text)
+{
+   struct retro_message_ext gdb_msg;
+
+   memset(&gdb_msg, 0, sizeof(gdb_msg));
+   gdb_msg.msg      = text;
+   gdb_msg.duration = 4000;
+   gdb_msg.priority = 2;
+   gdb_msg.level    = RETRO_LOG_INFO;
+   gdb_msg.target   = RETRO_MESSAGE_TARGET_OSD;
+   gdb_msg.type     = RETRO_MESSAGE_TYPE_NOTIFICATION;
+   gdb_msg.progress = -1;
+   environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &gdb_msg);
+}
+
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
+
+/* Keyboard-presence latch (#569/P8).  update_input()'s default (non-remap)
+ * path polls 24 keyboard fallback keys per frame; on keyboard-less devices
+ * (every phone/TV box) all 24 input_state_cb round trips return 0 forever.
+ * The frontend's own keyboard event callback is the cheapest presence
+ * signal we have: register it, and only start the per-frame polls after
+ * the first key event ever arrives (any key, either edge -- evidence a
+ * physical keyboard exists trumps decoding which key it was).  Latch-only,
+ * never cleared mid-session, so once a keyboard is seen behavior is
+ * bit-identical to the unconditional polling this replaces.  A frontend
+ * that declines SET_KEYBOARD_CALLBACK gets the old unconditional polls --
+ * the gate must fail open or a declining frontend would lose keyboard
+ * input entirely.  The numpad_to_kb path stays gated on its own option
+ * (explicitly configuring it is already a "keyboard present" statement),
+ * and the voice-chat PTT poll is gated on VoiceChatEnabled(). */
+static bool kb_callback_registered = false;
+static bool kb_event_seen = false;
+
+static void keyboard_event_cb(bool down, unsigned keycode,
+                              uint32_t character, uint16_t key_modifiers)
+{
+   (void)down;
+   (void)keycode;
+   (void)character;
+   (void)key_modifiers;
+   kb_event_seen = true;
+}
+
+/* Auto-frameskip (#684) -- the standard libretro pattern (gpsp/snes9x):
+ * when the frontend's audio buffer is draining, skip VIDEO PRESENTATION
+ * for a frame so a slow host catches up before the buffer underruns.
+ * Skipping reuses tomSkipVideoPresent, the same presentation-skip path
+ * RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE already drives from retro_run:
+ * emulation runs unabridged, only the host XRGB8888 store is bypassed, so
+ * this cannot desync savestates, run-ahead or netplay (#400).  NOTHING in
+ * this block may ever enter retro_serialize -- it is presentation-only
+ * host state.  Frontends that don't implement the buffer-status callback
+ * leave retro_audio_buff_active false and every mode degrades to
+ * "disabled". */
+static unsigned frameskip_type;             /* 0 off / 1 auto / 2 auto_threshold */
+static unsigned frameskip_threshold;        /* occupancy percent, type 2 only */
+static unsigned frameskip_max          = 3; /* cap on consecutive skips */
+static unsigned frameskip_counter;          /* consecutive skips so far */
+static int      frameskip_this_frame;       /* this retro_run skipped by frameskip */
+static int      frameskip_init_done;
+static bool     retro_audio_buff_active;
+static unsigned retro_audio_buff_occupancy;
+static bool     retro_audio_buff_underrun;
+static unsigned frameskip_audio_latency;
+static bool     update_audio_latency;
+
+/* Enhancement profile (P9, docs/perf-audit-2026-08.md): the 'auto' profile
+ * watches the same frontend audio-buffer signal frameskip consumes, so its
+ * registration rides init_frameskip() below.  What init_frameskip() last saw
+ * enhancement_watch_wanted() return, so check_variables() can re-run it when
+ * the answer changes without thrashing the frontend's audio driver on every
+ * unrelated option flip.  Full state + helpers live next to the titledb
+ * plumbing further down; this is host-side presentation state and must never
+ * enter retro_serialize, same rule as the frameskip block above. */
+static int enhancement_watch_registered;
+static int enhancement_watch_wanted(void);
 
 /* CD content state. The Tier 1 weak symbols for external_cd_bios[] and
  * cd_bios_loaded_externally are overridden by the strong definitions below. */
@@ -181,6 +361,17 @@ static bool jaguar_cd_mode = false;
 /* Memory Track presence option (CD only); default on. */
 static bool opt_memory_track = true;
 static char cd_image_path[4096] = {0};
+
+/* Disk control interface (#651).  DISK_MAX_IMAGES is deliberately
+ * generous: no multi-disc Jaguar CD title exists, so in practice the list
+ * only ever holds the one disc a frontend handed us after launch. */
+#define DISK_MAX_IMAGES 8
+
+static char     disk_image_path[DISK_MAX_IMAGES][4096];
+static unsigned disk_num_images;
+static unsigned disk_index;
+static unsigned disk_initial_index;
+static bool     disk_ejected;
 bool cd_bios_loaded_externally = false;
 uint8_t external_cd_bios[0x40000];  /* 256 KB */
 
@@ -189,6 +380,80 @@ void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
+
+/* Frontend-driven: RetroArch calls this once per output frame with the
+ * audio buffer's health.  Values are only trusted while active is true
+ * (active false = reporting unavailable, e.g. audio driver off). */
+static void retro_audio_buff_status_cb(bool active, unsigned occupancy,
+      bool underrun_likely)
+{
+   retro_audio_buff_active    = active;
+   retro_audio_buff_occupancy = occupancy;
+   retro_audio_buff_underrun  = underrun_likely;
+}
+
+/* (Un)register the buffer-status callback to match the current option.
+ * Called from check_variables() when the frameskip option changes (which
+ * covers both content load and a mid-session menu change).  On frontends
+ * that don't implement the environment call the registration fails,
+ * retro_audio_buff_active stays false, and every auto mode behaves as
+ * "disabled" -- never crashes, never skips blind.  When frameskip is on
+ * we also ask for ~6 frames of audio latency (rounded up to the frontend
+ * granularity of 32 ms) so the buffer has enough headroom for the
+ * occupancy reports to be meaningful; 0 restores frontend defaults.  The
+ * actual SET_MINIMUM_AUDIO_LATENCY call is deferred to retro_run() via
+ * update_audio_latency, matching gpsp -- the frontend re-inits its audio
+ * driver on that call, which is only safe between frames. */
+static void init_frameskip(void)
+{
+   /* The enhancement-profile 'auto' watch (P9) shares this registration:
+    * it needs the buffer-status reports even while frameskip is disabled.
+    * It never asks for extra audio latency -- that request stays keyed to
+    * frameskip alone, because the frontend re-inits its audio driver on
+    * the deferred SET_MINIMUM_AUDIO_LATENCY call in retro_run(). */
+   int want_watch = enhancement_watch_wanted();
+
+   enhancement_watch_registered = want_watch;
+   if (frameskip_type > 0 || want_watch)
+   {
+      struct retro_audio_buffer_status_callback buf_status_cb;
+      buf_status_cb.callback = retro_audio_buff_status_cb;
+      if (!environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK,
+            &buf_status_cb))
+      {
+         if (frameskip_type > 0)
+            LOG_WRN("[frameskip] frontend does not support the audio buffer "
+                    "status callback -- automatic frameskip disabled\n");
+         else
+            LOG_INF("[perf] frontend does not support the audio buffer "
+                    "status callback -- enhancement profile 'auto' keeps "
+                    "the per-title enhancement defaults\n");
+         retro_audio_buff_active    = false;
+         retro_audio_buff_occupancy = 0;
+         retro_audio_buff_underrun  = false;
+         frameskip_audio_latency    = 0;
+      }
+      else if (frameskip_type > 0)
+      {
+         /* 6 frames of headroom at the current video standard. */
+         float frame_time_msec = 1000.0f
+               / (vjs.hardwareTypeNTSC == 1 ? 60.0f : 50.0f);
+         frameskip_audio_latency = (unsigned)((6.0f * frame_time_msec) + 0.5f);
+         frameskip_audio_latency = (frameskip_audio_latency + 0x1F) & ~0x1F;
+      }
+      else
+         frameskip_audio_latency = 0;
+   }
+   else
+   {
+      environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, NULL);
+      retro_audio_buff_active    = false;
+      retro_audio_buff_occupancy = 0;
+      retro_audio_buff_underrun  = false;
+      frameskip_audio_latency    = 0;
+   }
+   update_audio_latency = true;
+}
 
 
 
@@ -213,6 +478,11 @@ static bool show_input_options = true;
  * the options menu is complete before any content is loaded (the type is
  * unknown then, and the user may be configuring ahead of loading). */
 static bool content_loaded         = false;
+/* No-content boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, issue #646):
+ * there is no cartridge, so there is no EEPROM chip for RETRO_MEMORY_SAVE_RAM
+ * to expose.  Gates retro_get_memory_size()/retro_get_memory_data() only --
+ * everything else keys off jaguar_cd_mode / jaguarCartInserted as before. */
+static bool no_game_active         = false;
 static bool show_cd_options        = true;
 static bool show_cart_bios_option  = true;
 /* 16bpp preview interpretation only matters while texture dump is on
@@ -1234,6 +1504,14 @@ void retro_set_environment(retro_environment_t cb)
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 
+   /* No-content boot (issue #646): retro_load_game(NULL) boots the bare
+    * console -- real boot ROM, no cartridge, matching what a real Jaguar
+    * does with an empty cart slot.  See cd_boot_strategy_none. */
+   {
+      bool no_content = true;
+      environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_content);
+   }
+
    /* CD extensions are declared path-loaded (env 65).  DELIBERATELY the
     * inverse of the usual pattern: hybrid cart+disc cores (Genesis Plus GX,
     * PicoDrive, Geargrafx) set need_fullpath=true globally and override
@@ -2062,11 +2340,11 @@ static bool titledb_negative_warn_seen(const char *key)
 
 /* Compounding-settings warning (issue #595).
  *
- * The DSP idle-loop fast-forward (virtualjaguar_risc_idle_skip) is the
+ * The RISC idle-loop fast-forward (virtualjaguar_risc_idle_skip) is the
  * largest speed lever the core has (66-87% less DSP interpretation on the
- * titles measured, #569), and DSPExec() gates it off entirely whenever
- * certain other options are active -- see the gate comment at the top of
- * DSPExec() in src/jerry/dsp.c.  So a user who raises the RISC overclock on
+ * titles measured, #569, plus the GPU port), and DSPExec()/GPUExec() gate
+ * it off entirely whenever certain other options are active -- see the
+ * gate comment at the top of DSPExec() in src/jerry/dsp.c.  So a user who raises the RISC overclock on
  * a borderline-slow title pays the overclock's own cost AND silently
  * forfeits the bigger win: it reads as "overclocking made it much slower"
  * with nothing anywhere to explain why.  Name the suppressor in the log.
@@ -2131,10 +2409,148 @@ static void perf_warn_idle_skip_suppressed(void)
       return;
 
    LOG_WRN("[perf] virtualjaguar_risc_idle_skip is enabled but suppressed by: "
-           "%s -- the DSP idle-loop fast-forward is doing nothing, so this "
+           "%s -- the GPU/DSP idle-loop fast-forward is doing nothing, so this "
            "combination can run slower than idle-skip alone. Your settings "
            "are honored, not overridden.\n", who);
    perf_conflict_warned = 1;
+}
+
+/* Enhancement profile (P9, docs/perf-audit-2026-08.md).
+ *
+ * The titledb enables expensive visual enhancements (internal resolution
+ * 2x, true color) by default for titles verified to benefit -- but the
+ * hi-res render + shadow path they turn on is ~30% of AvP's frame on the
+ * host, which is the difference between playable and not on slow devices.
+ * The profile decides whether those DB DEFAULTS may apply at all:
+ *
+ *   quality      apply them (the pre-profile behaviour, unchanged);
+ *   performance  never apply them;
+ *   auto         apply them on capable hosts; behave like 'performance'
+ *                when (a) the build targets 32-bit ARM -- there is no
+ *                per-platform define reaching C for the rpi / classic_armv7
+ *                makefile targets, so the compiler's own __arm__ /
+ *                __aarch64__ macros are the platform signal -- or (b) the
+ *                frontend's audio-buffer status reports underrun danger
+ *                for ENH_DEMOTE_UNDERRUN_FRAMES consecutive frames inside
+ *                the first ENH_WATCH_WINDOW_FRAMES of a session (the same
+ *                signal auto-frameskip consumes, #684).
+ *
+ * ONLY titledb-sourced defaults are affected.  get_variable_pertitle()
+ * substitutes a DB value only when the user left the option at its
+ * registered default, so an explicit user choice is out of this code's
+ * reach by construction -- the DB's one hard rule ("user-set values
+ * always win") holds for the profile too.
+ *
+ * The runtime demotion (b) is evaluated ONLY during the first
+ * ENH_WATCH_WINDOW_FRAMES of a loaded session, because dropping the
+ * internal resolution is a live geometry switch: confined to the first
+ * seconds it lands during boot logos/menus rather than mid-game, and a
+ * transient stall later in the session (shader compile, background task)
+ * can never yank the resolution out from under the player.  All of this
+ * is host-side presentation state -- never serialized. */
+#if defined(__arm__) && !defined(__aarch64__)
+#define ENHANCEMENT_PLATFORM_SLOW 1
+#else
+#define ENHANCEMENT_PLATFORM_SLOW 0
+#endif
+
+/* ~10 s NTSC watch window; demote after ~3 s of sustained underrun danger. */
+#define ENH_WATCH_WINDOW_FRAMES    600
+#define ENH_DEMOTE_UNDERRUN_FRAMES 180
+
+static int enhancement_profile_opt;      /* 0 auto / 1 quality / 2 performance */
+static int enhancement_auto_demoted;     /* runtime latch: 'auto' measured an
+                                          * overrun this load and demoted */
+static int enhancement_suppress_logged;  /* one [perf] line per load */
+static int titledb_enhancement_applied;  /* a DB enhancement default was
+                                          * substituted this load (arms the
+                                          * 'auto' watch: nothing applied ->
+                                          * nothing to demote) */
+static int hires_from_titledb;           /* this session's 2x came from the DB,
+                                          * not from the user (see the load-time
+                                          * latch in retro_load_game) */
+static unsigned enhancement_watch_frames;   /* frames since load, saturating
+                                             * at ENH_WATCH_WINDOW_FRAMES */
+static unsigned enhancement_underrun_run;   /* consecutive underrun frames */
+
+/* Per-load reset, same three call sites as titledb_reset_negative_warnings()
+ * (retro_load_game / retro_unload_game / retro_deinit -- iOS cannot dlclose
+ * a core, so statics must be reset by hand).  enhancement_profile_opt itself
+ * is re-read from the option, not reset here. */
+static void enhancement_profile_reset(void)
+{
+   enhancement_auto_demoted    = 0;
+   enhancement_suppress_logged = 0;
+   titledb_enhancement_applied = 0;
+   hires_from_titledb          = 0;
+   enhancement_watch_frames    = 0;
+   enhancement_underrun_run    = 0;
+}
+
+/* Raw read (never through get_variable_pertitle()), same reasoning as the
+ * pertitle gate: a DB row must not be able to pick its own profile.  Called
+ * at the top of check_variables() and once in retro_load_game() before the
+ * hires latch, which runs before check_variables(). */
+static void enhancement_profile_read(void)
+{
+   struct retro_variable var;
+   var.key   = "virtualjaguar_enhancement_profile";
+   var.value = NULL;
+   enhancement_profile_opt = 0;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "quality") == 0)
+         enhancement_profile_opt = 1;
+      else if (strcmp(var.value, "performance") == 0)
+         enhancement_profile_opt = 2;
+   }
+}
+
+/* The keys the profile governs: the expensive visual enhancements the perf
+ * audit measured.  Deliberately a curated list, not "every DB pair" -- a
+ * future compatibility row (e.g. a controller type) is not an enhancement
+ * and must keep applying whatever the profile says, and a future speedup
+ * row (blit_memo) would be exactly backwards to suppress on slow hosts. */
+static int enhancement_profile_governs(const char *key)
+{
+   return strcmp(key, "virtualjaguar_internal_resolution") == 0
+       || strcmp(key, "virtualjaguar_true_color") == 0;
+}
+
+/* Does the profile currently resolve to "suppress the DB enhancement
+ * defaults"?  On yes, *reason names why for the log line. */
+static int enhancement_profile_suppressing(const char **reason)
+{
+   if (enhancement_profile_opt == 1)
+      return 0;
+   if (enhancement_profile_opt == 2)
+   {
+      *reason = "performance profile selected";
+      return 1;
+   }
+#if ENHANCEMENT_PLATFORM_SLOW
+   *reason = "32-bit ARM host";
+   return 1;
+#else
+   if (enhancement_auto_demoted)
+   {
+      *reason = "measured frame-budget overrun";
+      return 1;
+   }
+   return 0;
+#endif
+}
+
+/* Should the 'auto' runtime watch be running?  Also consulted by
+ * init_frameskip() to decide whether the audio-buffer status callback
+ * must stay registered while frameskip itself is disabled. */
+static int enhancement_watch_wanted(void)
+{
+   return !ENHANCEMENT_PLATFORM_SLOW
+       && enhancement_profile_opt == 0
+       && !enhancement_auto_demoted
+       && titledb_enhancement_applied
+       && enhancement_watch_frames < ENH_WATCH_WINDOW_FRAMES;
 }
 
 /* GET_VARIABLE with per-title defaults (issue #368) and known-bad refusal
@@ -2167,6 +2583,35 @@ static bool get_variable_pertitle(struct retro_variable *var)
    def = core_option_default(var->key);
    ovr = TitleDBOverride(var->key);
 
+   /* Enhancement profile (P9): when the profile resolves to 'performance',
+    * a DB enhancement default is dropped HERE, before the substitution --
+    * exactly as if the title had no row for this key.  Explicit user
+    * choices never reach this branch (the substitution below only fires
+    * with the option at its registered default), so they are untouched. */
+   if (ovr && enhancement_profile_governs(var->key))
+   {
+      const char *why = NULL;
+      if (enhancement_profile_suppressing(&why))
+      {
+         if (!enhancement_suppress_logged)
+         {
+            const char *title = TitleDBTitleName();
+            if (enhancement_profile_opt == 2)
+               LOG_INF("[perf] enhancement profile 'performance': not "
+                       "applying %s's per-title enhancement defaults (%s). "
+                       "Options you set yourself are honored as always.\n",
+                       title ? title : "this title", why);
+            else
+               LOG_WRN("[perf] enhancement profile 'auto': not applying "
+                       "%s's per-title enhancement defaults (%s). Options "
+                       "you set yourself are honored as always.\n",
+                       title ? title : "this title", why);
+            enhancement_suppress_logged = 1;
+         }
+         ovr = NULL;
+      }
+   }
+
    if (ovr && (!ok || (def && !strcmp(var->value, def))))
    {
       if (TitleDBUnsafeValue(var->key, ovr, def))
@@ -2181,6 +2626,10 @@ static bool get_variable_pertitle(struct retro_variable *var)
       LOG_INF("[titledb] %s: %s=%s (option at default)\n",
               TitleDBTitleName(), var->key, ovr);
       var->value = ovr;
+      /* Arms the enhancement-profile 'auto' watch: a session where no DB
+       * enhancement default applied has nothing to demote. */
+      if (enhancement_profile_governs(var->key))
+         titledb_enhancement_applied = 1;
       return true;
    }
 
@@ -2378,6 +2827,10 @@ static void check_variables(void)
    else
       pertitle_enabled = true;
 
+   /* Enhancement profile (P9): raw read, before any get_variable_pertitle()
+    * call below consults it. */
+   enhancement_profile_read();
+
    var.key = "virtualjaguar_usefastblitter";
    var.value = NULL;
 
@@ -2457,6 +2910,56 @@ static void check_variables(void)
       {
          widescreen_enabled = ws_want;
          widescreen_geometry_pending = true;
+      }
+   }
+
+   /* Auto frameskip (#684): raw read, like widescreen above -- a
+    * device-speed workaround is a viewer choice, never a per-title
+    * substitution.  Presentation-only; see the state block's comment near
+    * the top of this file.  init_frameskip() (which registers or
+    * unregisters the frontend buffer-status callback and re-arms the
+    * minimum-audio-latency request) only runs when the effective setting
+    * actually changed, so an unrelated option flip cannot thrash the
+    * frontend's audio driver. */
+   {
+      unsigned fs_prev_type      = frameskip_type;
+      unsigned fs_prev_threshold = frameskip_threshold;
+
+      var.key = "virtualjaguar_frameskip";
+      var.value = NULL;
+      frameskip_type      = 0;
+      frameskip_threshold = 0;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         if (strcmp(var.value, "auto") == 0)
+            frameskip_type = 1;
+         else if (strncmp(var.value, "auto_threshold_", 15) == 0)
+         {
+            frameskip_type      = 2;
+            frameskip_threshold = (unsigned)atoi(var.value + 15);
+         }
+      }
+
+      var.key = "virtualjaguar_frameskip_max";
+      var.value = NULL;
+      frameskip_max = 3;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         int fs_max = atoi(var.value);
+         if (fs_max >= 1 && fs_max <= 4)
+            frameskip_max = (unsigned)fs_max;
+      }
+
+      if (frameskip_type != fs_prev_type
+          || frameskip_threshold != fs_prev_threshold
+          || !frameskip_init_done
+          /* Enhancement profile (P9): the 'auto' watch rides this
+           * registration, so re-run when its answer changed (e.g. the
+           * profile option flipped mid-session). */
+          || enhancement_watch_wanted() != enhancement_watch_registered)
+      {
+         frameskip_init_done = 1;
+         init_frameskip();
       }
    }
 
@@ -2580,7 +3083,7 @@ static void check_variables(void)
          GPUPipeTimingReset();
    }
 
-   /* DSP idle-loop fast-forward (issue #569).  Bit-exact by
+   /* GPU/DSP idle-loop fast-forward (issue #569 + GPU port).  Bit-exact by
     * construction -- see the safety theorem in src/jerry/dsp.c -- and
     * the corpus A/B (Iron Soldier, AvP, Doom, Wolfenstein 3D, Tempest
     * 2000, jagniccc, yarc, plus the CD titles Primal Rage and Battle
@@ -2590,7 +3093,7 @@ static void check_variables(void)
     * through is a silent audio/video divergence nobody can attribute,
     * against a speed win a user can opt into with one toggle -- an
     * asymmetry a nine-title corpus does not settle for a ~200-title
-    * library.  DSPExec re-checks the interacting options (dram timing,
+    * library.  DSPExec/GPUExec re-check the interacting options (dram timing,
     * pipeline timing, clock scale, blit memo) itself, so the order the
     * option loop reads them in does not matter. */
    var.key = "virtualjaguar_risc_idle_skip";
@@ -3040,6 +3543,54 @@ static void check_variables(void)
    update_option_visibility();
 }
 
+/* Enhancement profile (P9) runtime demotion: the 'auto' watch measured a
+ * sustained frame-budget overrun early in the session, so drop the
+ * titledb-sourced enhancement defaults NOW, once, at a frame boundary
+ * (called from retro_run() between the frameskip verdict and the pre-render
+ * geometry latch -- no halfline is mid-render there).
+ *
+ * True color re-resolves live through the check_variables() below, exactly
+ * like a user toggling the option.  Internal resolution is normally
+ * restart-only because SET_GEOMETRY cannot GROW past the advertised
+ * maximum (see the load-time latch in retro_load_game), but a demotion
+ * only ever SHRINKS 2x -> 1x, which stays inside the session's advertised
+ * maximum: ShadowHiresSetN(1) tears the hi-res arena down (the same
+ * teardown the load-time allocation-failure fallback uses), the memo cache
+ * is flushed because its recorded post-states are sized N*N, and zeroing
+ * videoWidth/videoHeight forces the existing pre-render geometry block in
+ * retro_run() to re-latch pitch + SET_GEOMETRY from TOM's current stock
+ * size before the next frame renders.  Presentation-only throughout:
+ * emulation state, savestates, run-ahead and netplay are unaffected.
+ *
+ * Only a DB-sourced 2x is dropped (hires_from_titledb): a user's explicit
+ * 2x is out of reach, per the profile's contract. */
+static void enhancement_auto_demote(void)
+{
+   enhancement_auto_demoted = 1;
+   LOG_WRN("[perf] enhancement profile 'auto': the audio buffer reported "
+           "underrun danger for %u consecutive frames -- dropping the "
+           "per-title enhancement defaults for this session (measured "
+           "frame-budget overrun). Set the Enhancement Profile option to "
+           "'quality' to keep them regardless.\n",
+           (unsigned)ENH_DEMOTE_UNDERRUN_FRAMES);
+   if (hires_from_titledb && shadowHiresN > 1)
+   {
+      LOG_WRN("[perf] internal resolution: per-title default %dx -> 1x\n",
+              shadowHiresN);
+      BlitMemoFlush();
+      ShadowHiresSetN(1);
+      /* Force the pre-render geometry block in retro_run() to re-latch
+       * game_width/game_height, the screen pitch and SET_GEOMETRY from
+       * TOM's current stock size. */
+      videoWidth  = 0;
+      videoHeight = 0;
+   }
+   /* Re-resolve every option with the suppression now active: true color
+    * (and any future live-applied enhancement default) falls back to the
+    * user's own value on this same code path a menu toggle would take. */
+   check_variables();
+}
+
 /* Team Tap sockets 1-3 (#513).
  *
  * Everything behind the adapter is an ordinary standard pad, so this is
@@ -3133,6 +3684,10 @@ static void update_input(void)
    unsigned i;
    int16_t ret[2];
    unsigned player;
+   /* Keyboard fallback polls run only once a keyboard has proven itself
+    * (kb_event_seen) -- or unconditionally, exactly as before, when the
+    * frontend declined the keyboard callback and no proof is possible. */
+   bool kb_poll = !kb_callback_registered || kb_event_seen;
    if (!input_poll_cb)
       return;
 
@@ -3299,29 +3854,32 @@ static void update_input(void)
          if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
             joypad0Buttons[BUTTON_4] = 0xff;
       }
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0))
+      /* Keyboard fallbacks below are latch-gated (kb_poll): 24 frontend
+       * round trips per frame otherwise, all returning 0 on any device
+       * without a keyboard (#569/P8). */
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0))
          joypad0Buttons[BUTTON_0] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1))
          joypad0Buttons[BUTTON_1] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2))
          joypad0Buttons[BUTTON_2] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3))
          joypad0Buttons[BUTTON_3] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4))
          joypad0Buttons[BUTTON_4] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
          joypad0Buttons[BUTTON_5] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)? 1 : 0))
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)? 1 : 0))
          joypad0Buttons[BUTTON_6] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_7)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_7)? 1 : 0))
          joypad0Buttons[BUTTON_7] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_8)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_8)? 1 : 0))
          joypad0Buttons[BUTTON_8] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
          joypad0Buttons[BUTTON_9] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
          joypad0Buttons[BUTTON_s] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
          joypad0Buttons[BUTTON_d] = 0xff;
 
       if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
@@ -3371,29 +3929,29 @@ static void update_input(void)
          if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
             joypad1Buttons[BUTTON_4] = 0xff;
       }
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p))
          joypad1Buttons[BUTTON_0] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q))
          joypad1Buttons[BUTTON_1] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w))
          joypad1Buttons[BUTTON_2] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e))
          joypad1Buttons[BUTTON_3] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r))
          joypad1Buttons[BUTTON_4] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
          joypad1Buttons[BUTTON_5] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_y)? 1 : 0))
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_y)? 1 : 0))
          joypad1Buttons[BUTTON_6] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_u)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_u)? 1 : 0))
          joypad1Buttons[BUTTON_7] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_i)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_i)? 1 : 0))
          joypad1Buttons[BUTTON_8] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_o)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_o)? 1 : 0))
          joypad1Buttons[BUTTON_9] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFTBRACKET)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFTBRACKET)? 1 : 0))
          joypad1Buttons[BUTTON_s] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
          joypad1Buttons[BUTTON_d] = 0xff;
    }
 
@@ -3958,6 +4516,7 @@ bool retro_serialize(void *data, size_t size)
    uint8_t *buf, *start;
    size_t written;
    uint32_t magic, version, flags, reserved;
+   enum retro_savestate_context ss_ctx;
    extern uint8_t jerry_ram_8[];
    extern bool lowerField;
 
@@ -4066,6 +4625,27 @@ bool retro_serialize(void *data, size_t size)
     * loadable. */
    buf += UARTWireSpeedupStateSave(buf);
 
+   /* v14: mounted-disc identity + image index (#651).  Disk control lets a
+    * frontend swap the disc mid-session, so a state and the mounted disc
+    * can now disagree -- which they never could before, when the disc was
+    * fixed at load.  All three identity words come from accessors that
+    * already exist (cdintf.h); zero when no disc is mounted.
+    *
+    * STRICTLY LAST, after the wire-speedup chunk: same reasoning as Team
+    * Tap's comment above -- appending keeps every v12/v13 blob loadable,
+    * interleaving would silently desync all of them. */
+   {
+      uint32_t disc_sessions = jaguar_cd_mode ? CDIntfGetNumSessions() : 0;
+      uint32_t disc_tracks   = jaguar_cd_mode ? CDIntfGetNumTracks() : 0;
+      uint32_t disc_sectors  = jaguar_cd_mode ? CDIntfGetDiscTotalSectors() : 0;
+      uint32_t disc_index    = disk_index;
+
+      STATE_SAVE_VAR(buf, disc_sessions);
+      STATE_SAVE_VAR(buf, disc_tracks);
+      STATE_SAVE_VAR(buf, disc_sectors);
+      STATE_SAVE_VAR(buf, disc_index);
+   }
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4084,9 +4664,25 @@ bool retro_serialize(void *data, size_t size)
       }
    }
 
-   /* Zero-fill remaining bytes for deterministic save states */
+   /* Zero-fill remaining bytes for deterministic save states.  Skip
+    * only for same-session run-ahead (SAME_INSTANCE / SAME_BINARY):
+    * those buffers never leave the process, are never compared, and
+    * serialize every frame.  Keep the memset for NORMAL (on-disk) and
+    * ROLLBACK_NETPLAY -- libretro.h 5718-5730: a rollback state "will
+    * almost certainly be loaded by a separate binary, device, and
+    * address space" and peers may CRC-compare the blob for desync
+    * detection.  Query per call: RetroArch's savestate context is not
+    * session-stable (run-ahead and a user save interleave).  A frontend
+    * that does not implement GET_SAVESTATE_CONTEXT leaves ss_ctx at
+    * NORMAL and keeps the zero-fill. */
    if (written < STATE_SIZE)
-      memset(buf, 0, STATE_SIZE - written);
+   {
+      ss_ctx = RETRO_SAVESTATE_CONTEXT_NORMAL;
+      if (!(environ_cb(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &ss_ctx)
+            && (ss_ctx == RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE
+                || ss_ctx == RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_BINARY)))
+         memset(buf, 0, STATE_SIZE - written);
+   }
 
    return true;
 }
@@ -4247,6 +4843,40 @@ bool retro_unserialize(const void *data, size_t size)
       buf += UARTWireSpeedupStateLoad(buf);
    else
       UARTSetWireSpeedupEffective(1);
+
+   /* v14: mounted-disc identity (#651) -- see the matching save comment.
+    * Refuse a state taken on a different disc rather than resuming a
+    * machine whose CD state points at content that is not mounted. States
+    * written before v14 carry no identity and load unchanged, exactly as
+    * they did when the disc could not change mid-session. */
+   if (version >= STATE_VERSION_DISK_CONTROL)
+   {
+      uint32_t disc_sessions, disc_tracks, disc_sectors, disc_index;
+
+      STATE_LOAD_VAR(buf, disc_sessions);
+      STATE_LOAD_VAR(buf, disc_tracks);
+      STATE_LOAD_VAR(buf, disc_sectors);
+      STATE_LOAD_VAR(buf, disc_index);
+
+      if (jaguar_cd_mode
+          && (disc_sessions != CDIntfGetNumSessions()
+              || disc_tracks != CDIntfGetNumTracks()
+              || disc_sectors != CDIntfGetDiscTotalSectors()))
+      {
+         LOG_ERR("[CD] refusing savestate: taken on a different disc "
+                 "(state: %u sessions / %u tracks / %u sectors; mounted: "
+                 "%u / %u / %u)\n",
+                 (unsigned)disc_sessions, (unsigned)disc_tracks,
+                 (unsigned)disc_sectors,
+                 (unsigned)CDIntfGetNumSessions(),
+                 (unsigned)CDIntfGetNumTracks(),
+                 (unsigned)CDIntfGetDiscTotalSectors());
+         return false;
+      }
+
+      if (disc_index < disk_num_images)
+         disk_index = disc_index;
+   }
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -4785,10 +5415,366 @@ static void video_buffer_blank(void)
       videoBuffer[i] = 0xFF000000;
 }
 
+typedef enum
+{
+   DISC_BOOT_OK = 0,
+   DISC_BOOT_OPEN_FAILED,       /* CDIntfOpenImage refused the image */
+   DISC_BOOT_NO_BIOS_FOR_AUDIO  /* audio disc, real CD BIOS unavailable */
+} disc_boot_status;
+
+/* Defined below, next to retro_load_game: the disk-control insert path
+ * and the load path share it (#651). */
+static disc_boot_status open_disc_and_resolve_boot(const char *path);
+
+/* ---------------------------------------------------------------------
+ * Disk control callbacks (#651)
+ *
+ * The emulated CD unit has no tray: src/cd/ models no disc-present line
+ * and no "medium not present" error, so eject is a frontend-level FLAG
+ * and the mounted image stays readable until an insert replaces it.
+ * Documented limitation -- nothing but the frontend can reach the window
+ * between an eject and the next insert.
+ * ------------------------------------------------------------------ */
+
+static bool disk_get_eject_state(void)
+{
+   return disk_ejected;
+}
+
+static unsigned disk_get_image_index(void)
+{
+   return disk_index;
+}
+
+static unsigned disk_get_num_images(void)
+{
+   return disk_num_images;
+}
+
+/* Closing the tray is the only disk-control entry point that touches the
+ * emulated machine.  It re-runs boot resolution against the newly selected
+ * disc and dispatches the resolved strategy, because the boot strategy is
+ * DERIVED FROM THE DISC (session count decides HLE vs real BIOS) and
+ * retro_reset() re-resolves nothing.
+ *
+ * This is a restart, not a continuous swap: real hardware would have the
+ * running CD BIOS notice a new disc, which depends on disc-presence
+ * polling we have not verified.  Documented in the user-facing CD notes.
+ *
+ * A failed insert must leave no partial-mount state, so bootConfig and
+ * jaguar_cd_mode are snapshotted and restored, and the previously mounted
+ * image is reopened on a best-effort basis -- CDIntfOpenImage() closes the
+ * current image before parsing the new one, so by the time an open fails
+ * the old disc is already gone from the drive. */
+static bool disk_set_eject_state(bool ejected)
+{
+   struct BootConfig saved_boot;
+   char              saved_path[sizeof(cd_image_path)];
+   bool              saved_cd_mode;
+   disc_boot_status  st;
+
+   if (ejected)
+   {
+      /* Eject is a FLAG: src/cd/ models no tray and no disc-present line,
+       * so the mounted image stays readable until an insert replaces it. */
+      disk_ejected = true;
+      return true;
+   }
+
+   if (!disk_ejected)
+      return true;                    /* already closed -- nothing to do */
+
+   if (disk_num_images == 0 || disk_image_path[disk_index][0] == '\0')
+   {
+      LOG_WRN("[CD] disk control: nothing to insert (image list is "
+              "empty)\n");
+      return false;
+   }
+
+   saved_boot    = bootConfig;
+   saved_cd_mode = jaguar_cd_mode;
+   memcpy(saved_path, cd_image_path, sizeof(saved_path));
+
+   st = open_disc_and_resolve_boot(disk_image_path[disk_index]);
+
+   /* NOT a bare JaguarReset(): bios_boot() copies the CD BIOS to $800000
+    * and sets jaguarRunAddress from $800404 before resetting, so a plain
+    * reset would restart the PREVIOUS program.  NULL is safe here -- both
+    * CD strategies ignore info (hle_strategy_boot does `(void)info;`);
+    * only cart_boot reads it, and cart is never resolved on this path.
+    *
+    * A damaged rip reaches HERE, not the branch above: the image parses
+    * and resolves fine, and it is the boot itself that fails (several CDI
+    * V2 rips in circulation are missing their boot header entirely).  So
+    * both failures share one restore -- an early version restored only on
+    * the resolve failure and left a half-configured machine behind on the
+    * far more likely one. */
+   if (st != DISC_BOOT_OK
+       || !bootConfig.strategy
+       || !bootConfig.strategy->boot(NULL))
+   {
+      if (st == DISC_BOOT_OPEN_FAILED)
+         LOG_ERR("[CD] disk control: insert failed -- image could not be "
+                 "opened\n");
+      else if (st == DISC_BOOT_NO_BIOS_FOR_AUDIO)
+         LOG_ERR("[CD] disk control: insert failed -- audio disc needs the "
+                 "real CD BIOS and it is unavailable\n");
+      else
+         LOG_ERR("[CD] disk control: insert failed -- the boot strategy "
+                 "refused this disc (a damaged rip will do this)\n");
+
+      bootConfig     = saved_boot;
+      jaguar_cd_mode = saved_cd_mode;
+      memcpy(cd_image_path, saved_path, sizeof(cd_image_path));
+      if (cd_image_path[0] != '\0' && !CDIntfOpenImage(cd_image_path))
+         LOG_ERR("[CD] disk control: could not reopen the previous disc "
+                 "either -- the drive is now empty\n");
+
+      LOG_WRN("[CD] disk control: tray stays open, previous disc "
+              "restored\n");
+      return false;                   /* disk_ejected stays true */
+   }
+
+   LOG_INF("[CD] disk control: inserted '%s', booting via '%s'\n",
+           cd_image_path,
+           bootConfig.strategy->name ? bootConfig.strategy->name : "?");
+   disk_ejected = false;
+   return true;
+}
+
+/* Routed through the eject/insert pair so there is exactly one way to
+ * mount a disc, not two that can drift apart. */
+static bool disk_set_image_index(unsigned index)
+{
+   if (index >= disk_num_images)
+      return false;
+
+   if (!disk_ejected)
+   {
+      disk_index = index;
+      return disk_set_eject_state(true) && disk_set_eject_state(false);
+   }
+
+   disk_index = index;
+   return true;
+}
+
+static bool disk_replace_image_index(unsigned index,
+                                     const struct retro_game_info *info)
+{
+   unsigned i;
+
+   if (index >= disk_num_images)
+      return false;
+
+   if (!info || !info->path)
+   {
+      /* Removing an entry: shuffle the tail down so the list stays dense
+       * (the frontend addresses images by position). */
+      for (i = index; i + 1 < disk_num_images; i++)
+         memcpy(disk_image_path[i], disk_image_path[i + 1],
+                sizeof(disk_image_path[i]));
+      disk_num_images--;
+      if (disk_num_images > 0 && disk_index >= disk_num_images)
+         disk_index = disk_num_images - 1;
+      else if (disk_num_images == 0)
+         disk_index = 0;
+      return true;
+   }
+
+   strncpy(disk_image_path[index], info->path,
+           sizeof(disk_image_path[index]) - 1);
+   disk_image_path[index][sizeof(disk_image_path[index]) - 1] = '\0';
+   return true;
+}
+
+static bool disk_add_image_index(void)
+{
+   if (disk_num_images >= DISK_MAX_IMAGES)
+   {
+      LOG_WRN("[CD] disk control: image list full (%u), refusing add\n",
+              (unsigned)DISK_MAX_IMAGES);
+      return false;
+   }
+   disk_image_path[disk_num_images][0] = '\0';
+   disk_num_images++;
+   return true;
+}
+
+static bool disk_set_initial_image(unsigned index, const char *path)
+{
+   /* Recorded and applied when the list is first populated.  Effectively
+    * inert today -- it exists because the frontend only restores a
+    * last-used disk index when set_initial_image AND get_image_path are
+    * both implemented. */
+   (void)path;
+   disk_initial_index = index;
+   return true;
+}
+
+static bool disk_get_image_path(unsigned index, char *path, size_t len)
+{
+   if (index >= disk_num_images || !path || len == 0)
+      return false;
+   strncpy(path, disk_image_path[index], len - 1);
+   path[len - 1] = '\0';
+   return true;
+}
+
+static bool disk_get_image_label(unsigned index, char *label, size_t len)
+{
+   const char *base;
+
+   if (index >= disk_num_images || !label || len == 0)
+      return false;
+   base = strrchr(disk_image_path[index], '/');
+   base = base ? base + 1 : disk_image_path[index];
+   strncpy(label, base, len - 1);
+   label[len - 1] = '\0';
+   return true;
+}
+
+/* Registered from retro_load_game UNCONDITIONALLY, including the
+ * info == NULL no-content path -- that is the case the whole feature
+ * exists for (#646 gave the core no-content boot; without disk control a
+ * frontend has no way to hand it a disc afterwards).
+ *
+ * The callback structs are static because the frontend keeps the pointer
+ * it is given long after this call returns. */
+static void register_disk_control(void)
+{
+   static struct retro_disk_control_ext_callback ext;
+   static struct retro_disk_control_callback     legacy;
+   unsigned version = 0;
+
+   ext.set_eject_state     = disk_set_eject_state;
+   ext.get_eject_state     = disk_get_eject_state;
+   ext.get_image_index     = disk_get_image_index;
+   ext.set_image_index     = disk_set_image_index;
+   ext.get_num_images      = disk_get_num_images;
+   ext.replace_image_index = disk_replace_image_index;
+   ext.add_image_index     = disk_add_image_index;
+   ext.set_initial_image   = disk_set_initial_image;
+   ext.get_image_path      = disk_get_image_path;
+   ext.get_image_label     = disk_get_image_label;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION,
+                  &version)
+       && version >= 1
+       && environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, &ext))
+   {
+      LOG_INF("[CD] disk control: ext interface v%u registered\n", version);
+      return;
+   }
+
+   legacy.set_eject_state     = disk_set_eject_state;
+   legacy.get_eject_state     = disk_get_eject_state;
+   legacy.get_image_index     = disk_get_image_index;
+   legacy.set_image_index     = disk_set_image_index;
+   legacy.get_num_images      = disk_get_num_images;
+   legacy.replace_image_index = disk_replace_image_index;
+   legacy.add_image_index     = disk_add_image_index;
+
+   if (environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, &legacy))
+      LOG_INF("[CD] disk control: legacy interface registered "
+              "(no ext support)\n");
+   else
+      LOG_WRN("[CD] disk control: frontend accepted neither interface -- "
+              "inserting a disc after launch will not be possible\n");
+}
+
+/* Open a disc image and derive the boot configuration FROM THAT DISC.
+ *
+ * Shared by retro_load_game() and the disk-control insert path (#651).
+ * Both must pick the boot strategy from the mounted disc, and
+ * retro_reset() is a bare JaguarReset() -- it re-resolves nothing, so an
+ * insert that only reset would run against the PREVIOUS disc's boot
+ * config, silently, and look like it had worked.
+ *
+ * Allocates nothing and frees nothing.  The two callers have opposite
+ * cleanup policies -- load tears the whole session down and returns
+ * false, insert must leave the running machine untouched and merely
+ * report the failure to the frontend -- so cleanup stays with them. */
+static disc_boot_status open_disc_and_resolve_boot(const char *path)
+{
+   uint32_t effective_cd_boot_mode;
+
+   jaguar_cd_mode         = true;
+   /* Hardware has the Memory Track cart plugged in alongside the CD unit
+    * (user-selectable; some titles behave differently with one present). */
+   jaguarMemTrackInserted = opt_memory_track;
+   strncpy(cd_image_path, path, sizeof(cd_image_path) - 1);
+   cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+   effective_cd_boot_mode = vjs.cdBootMode;
+
+   LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
+   if (!CDIntfOpenImage(cd_image_path))
+   {
+      LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
+      return DISC_BOOT_OPEN_FAILED;
+   }
+   LOG_INF("[CD] Disc image opened OK\n");
+
+   /* Audio-only (Red Book) disc: exactly one session, versus the two
+    * sessions (game data in session 2) every Jaguar CD data disc has.
+    * All Jaguar CD tracks are typed AUDIO in CUE sheets regardless of
+    * actual content, so session count -- not track type -- is the correct
+    * discriminator; see the comment on CDIntfIsSession2Sector() in
+    * src/cd/cdintf.c.  HLE synthesizes its boot stub from session-2 game
+    * data, which an audio-only disc has none of by construction, so HLE
+    * can never produce a boot for this content.  The retail CD BIOS's own
+    * player front-end handles audio discs natively (Virtual Light
+    * Machine, issues #291/#300/#325).  Force the real-BIOS path for THIS
+    * disc only -- the global 'CD Boot Mode' option (and its HLE-only 'CD
+    * Read Speed' knob) stay untouched for every other disc, including the
+    * known-damaged CDI rips, which still fail the same clear way they
+    * always have: their CDI container header declares numSessions=2
+    * regardless of the corruption in their session-2 boot data, so this
+    * check never sees them. */
+   if (CDIntfGetNumSessions() == 1)
+   {
+      LOG_INF("[CD] Audio-only disc detected (1 session) -- forcing "
+              "real CD BIOS boot path regardless of CD Boot Mode "
+              "setting\n");
+      effective_cd_boot_mode = CDBOOT_BIOS;
+   }
+
+   if (effective_cd_boot_mode != CDBOOT_HLE)
+      stage_cd_bios();
+
+   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
+                     effective_cd_boot_mode, vjs.useJaguarBIOS);
+   vjs.useJaguarBIOS = bootConfig.showBootROM;
+
+   /* Defensive check for the audio-only override above: stage_cd_bios()
+    * always has an embedded CD BIOS to fall back to, so this should be
+    * unreachable in practice -- but if some future change to BIOS staging
+    * ever leaves it unsatisfied, fail loudly here rather than silently
+    * falling through to an HLE boot that is guaranteed to fail anyway (no
+    * session-2 game data to synthesize a stub from). */
+   if (CDIntfGetNumSessions() == 1
+       && bootConfig.strategy != &cd_boot_strategy_bios)
+   {
+      LOG_ERR("[CD] Audio-only disc requires the real CD BIOS boot path "
+              "and it could not be staged -- refusing this disc rather "
+              "than attempting an HLE boot that cannot succeed\n");
+      CDIntfCloseImage();
+      return DISC_BOOT_NO_BIOS_FOR_AUDIO;
+   }
+
+   return DISC_BOOT_OK;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
    bool is_cd_content;
+   /* Effective boot-mode fed to ResolveBootConfig() below -- normally just
+    * vjs.cdBootMode, but forced to CDBOOT_BIOS for an audio-only disc
+    * (issue #657).  Kept separate from vjs.cdBootMode itself so the
+    * override never touches the persisted option value: the next CD
+    * loaded in this frontend session still gets whatever the user
+    * actually configured. */
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -4868,10 +5854,12 @@ bool retro_load_game(const struct retro_game_info *info)
       { 0 },
    };
 
-   if (!info)
-      return false;
-
-   is_cd_content = info->path && (has_extension(info->path, "cue")
+   /* info == NULL is a no-content boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME,
+    * issue #646): the bare console, no cartridge.  Handled by threading the
+    * NULL through every info-dependent branch below (is_cd_content is
+    * unconditionally false; apply_cart_bios_autodetect() already NULL-checks
+    * info on its own) rather than an early return. */
+   is_cd_content = info && info->path && (has_extension(info->path, "cue")
                                   || has_extension(info->path, "cdi")
                                   || has_extension(info->path, "chd")
                                   || has_extension(info->path, "iso"));
@@ -4902,7 +5890,7 @@ bool retro_load_game(const struct retro_game_info *info)
     * over disc bytes either way. v1 only covers cartridge CRCs, and hashing
     * a disc image would find nothing this table knows about while risking a
     * collision handing a CD title some cartridge's per-title overrides. */
-   if (info->data && !is_cd_content)
+   if (info && info->data && !is_cd_content)
    {
       TitleDBSetContent((const uint8_t *)info->data, info->size);
       /* A patched ROM (RetroArch soft patching, or a pre-patched dump)
@@ -4952,6 +5940,12 @@ bool retro_load_game(const struct retro_game_info *info)
          pertitle_enabled = true;
    }
 
+   /* Enhancement profile (P9): per-load state reset, then a raw read for
+    * the same reason the gate above is raw -- the hires latch below runs
+    * before check_variables() and already consults the profile. */
+   enhancement_profile_reset();
+   enhancement_profile_read();
+
    /* Enhancement-hook gate (issue #370), latched HERE and nowhere else.
     * Read raw for the same reason the gate above is: otherwise a DB row
     * could carry {"virtualjaguar_enhancement_hooks","enabled"} in its own
@@ -4969,6 +5963,163 @@ bool retro_load_game(const struct retro_game_info *info)
       else
          TitleHookSetEnabled(0);
       hook_restart_notice_logged = 0;
+
+      /* User-supplied hooks (#637): <system_dir>/vj_hooks.txt, the same
+       * shape and location as vj_netlink.txt.  Path only -- the file is
+       * read inside TitleHookApplyROM(), AFTER this gate, so a file can
+       * never switch on its own gate (the reason the gate above is read
+       * raw).  No system directory means no user hooks, which is the
+       * normal headless case. */
+      {
+         const char *sysdir = NULL;
+         if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sysdir)
+             && sysdir && *sysdir)
+         {
+            char hookpath[1024];
+            snprintf(hookpath, sizeof(hookpath), "%s/vj_hooks.txt", sysdir);
+            TitleHookSetUserFilePath(hookpath);
+         }
+         else
+            TitleHookSetUserFilePath(NULL);
+      }
+   }
+
+   /* GDB remote debug stub (issue #652): same raw-read reasoning as the
+    * enhancement-hook gate immediately above -- a developer-facing
+    * "Restart" gate must not be settable by a per-title DB row. */
+   gdb_stub_reset();
+   {
+      struct retro_variable gdb_var;
+      struct retro_variable port_var;
+      struct retro_variable wait_var;
+      struct retro_variable timeout_var;
+      int halt_timeout_seconds = 0;
+
+      /* Bind scope (issue #652).  Latched ONCE here, alongside the gate
+       * and for the same raw-read reason: a per-title DB row must never
+       * be able to widen the debug socket beyond loopback.  Anything but
+       * an explicit "lan" resolves to loopback inside
+       * GDBSockSetBindMode(), so an absent or garbled value fails
+       * closed. */
+      {
+         struct retro_variable bind_var;
+         bind_var.key   = "virtualjaguar_gdb_bind";
+         bind_var.value = NULL;
+         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &bind_var)
+             && bind_var.value && !strcmp(bind_var.value, "lan"))
+            GDBSockSetBindMode(GDB_BIND_LAN);
+         else
+            GDBSockSetBindMode(GDB_BIND_LOOPBACK);
+      }
+
+      gdb_var.key   = "virtualjaguar_gdb_stub";
+      gdb_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gdb_var) && gdb_var.value)
+         gdb_stub_enabled = (strcmp(gdb_var.value, "enabled") == 0);
+
+      port_var.key   = "virtualjaguar_gdb_port";
+      port_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &port_var) && port_var.value)
+      {
+         /* The core-options UI only ever offers the four listed ports, so
+          * this only matters for a hand-edited config. atoi() on garbage
+          * returns 0, which GDBSockOpen() would take as "ask the OS for an
+          * ephemeral port" while the banner below kept reporting the
+          * bogus requested number -- reject it instead and keep the
+          * documented default. */
+         int parsed_port = atoi(port_var.value);
+         if (parsed_port > 0 && parsed_port <= 65535)
+            gdb_stub_port = parsed_port;
+      }
+
+      /* virtualjaguar_gdb_wait: halt at the very first 68K instruction so
+       * a developer can attach before anything has run -- see the design
+       * doc's note that debugging a boot-time fault is impossible if the
+       * machine has already run past it. Read here (not latched
+       * separately) since it only matters once, at this same load. */
+      wait_var.key   = "virtualjaguar_gdb_wait";
+      wait_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &wait_var) && wait_var.value)
+         gdb_stub_wait_at_boot = (strcmp(wait_var.value, "enabled") == 0);
+
+      /* virtualjaguar_gdb_halt_timeout: "off" (0) by default -- silently
+       * resuming a debugged machine is worse than a freeze for this
+       * audience, per the design doc. */
+      timeout_var.key   = "virtualjaguar_gdb_halt_timeout";
+      timeout_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &timeout_var) && timeout_var.value
+            && strcmp(timeout_var.value, "off") != 0)
+      {
+         int parsed_timeout = atoi(timeout_var.value);
+         if (parsed_timeout > 0)
+            halt_timeout_seconds = parsed_timeout;
+      }
+
+      if (gdb_stub_enabled)
+      {
+         if (GDBSockOpen(gdb_stub_port) == 0)
+         {
+            char gdb_msg_text[160];  /* both warnings fit in LAN mode */
+
+            gdb_stub_socket_open = true;
+            GDBTargetOpen();
+            GDBTargetSetHaltTimeout(halt_timeout_seconds);
+            if (gdb_stub_wait_at_boot)
+               GDBTargetArmWaitAtBoot();
+
+            {
+               /* Say WHICH address, never a hardcoded 127.0.0.1 -- the
+                * bind scope is now a user choice, and a banner that lies
+                * about it is worse than no banner. */
+               int lan = (GDBSockGetBindMode() == GDB_BIND_LAN);
+               const char *host = lan ? "0.0.0.0" : "127.0.0.1";
+
+               /* The freeze warning applies in BOTH modes -- binding
+                * scope changes who can reach the stub, not what a halt
+                * does to the frontend. An earlier revision dropped it
+                * from the LAN banner, which made the banner say less
+                * exactly when more is at stake. */
+               snprintf(gdb_msg_text, sizeof(gdb_msg_text),
+                        "GDB stub listening on %s:%d%s -- halts freeze this "
+                        "frontend", host, gdb_stub_port,
+                        lan ? " OPEN TO YOUR NETWORK;" : "");
+               gdb_stub_show_banner(gdb_msg_text);
+
+               if (lan)
+                  /* WRN, not INF: this is the one configuration where an
+                   * unattended core is remotely controllable, and the RSP
+                   * protocol has no authentication.  It must be visible in
+                   * a log someone skims. */
+                  LOG_WRN("[GDB] stub listening on %s:%d -- REACHABLE FROM "
+                          "YOUR LOCAL NETWORK. The GDB protocol has no "
+                          "authentication: anyone who can reach this port "
+                          "can read/write emulated memory and control "
+                          "execution. Public (non-private) peers are refused. "
+                          "Set GDB Stub: Network Binding back to 'loopback' "
+                          "when you are done.%s%s\n",
+                          host, gdb_stub_port,
+                          gdb_stub_wait_at_boot ? " (halting at boot)" : "",
+                          halt_timeout_seconds > 0
+                             ? " (halt-timeout armed)" : "");
+               else
+                  LOG_INF("[GDB] stub listening on %s:%d%s%s\n", host,
+                          gdb_stub_port,
+                          gdb_stub_wait_at_boot ? " (halting at boot)" : "",
+                          halt_timeout_seconds > 0
+                             ? " (halt-timeout armed)" : "");
+            }
+         }
+         else
+         {
+            /* Bind failure (port in use, a second core instance under
+             * run-ahead, or no BSD sockets on this target) is logged once
+             * and the stub stays disabled for this session -- it must
+             * never fail content load. */
+            gdb_stub_enabled = false;
+            LOG_WRN("[GDB] stub enabled but failed to open port %d -- "
+                    "disabled for this session\n", gdb_stub_port);
+         }
+      }
    }
 
    /* Known-bad (#464) warning latch: a fresh load starts with none warned,
@@ -4976,6 +6127,10 @@ bool retro_load_game(const struct retro_game_info *info)
    titledb_reset_negative_warnings();
    /* Compounding-settings (#595) warning latch: same reasoning, same reset. */
    perf_conflict_reset();
+   /* Widescreen (#530/#605): clear BEFORE the check_variables() below, so
+    * this load latches its own aspect rather than inheriting the previous
+    * title's on a core that was never dlclosed. */
+   widescreen_reset();
 
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
@@ -4984,11 +6139,20 @@ bool retro_load_game(const struct retro_game_info *info)
    {
       struct retro_variable hires_var;
       int hires_n = 1;
+      int hires_raw_2x = 0;
+      /* Raw read first, so a DB-substituted 2x is distinguishable from a
+       * user-set one: the enhancement-profile 'auto' runtime demotion may
+       * only ever drop the DB's 2x, never the user's (P9). */
       hires_var.key = "virtualjaguar_internal_resolution";
+      hires_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &hires_var)
+          && hires_var.value && strcmp(hires_var.value, "2x") == 0)
+         hires_raw_2x = 1;
       hires_var.value = NULL;
       if (get_variable_pertitle(&hires_var)
           && hires_var.value && strcmp(hires_var.value, "2x") == 0)
          hires_n = 2;
+      hires_from_titledb = (hires_n == 2 && !hires_raw_2x);
       ShadowHiresSetN(hires_n);
       hires_restart_notice_logged = 0;
    }
@@ -5040,13 +6204,23 @@ bool retro_load_game(const struct retro_game_info *info)
     * stops test runs against a stale core from going unnoticed. */
    LOG_INF("[Virtual Jaguar] build: %s\n", CORE_VERSION);
 
-   /* Register EEPROM dirty callback so the save buffer stays in sync */
+   /* Register EEPROM dirty callback so the save buffer stays in sync.
+    * Memory Track latches a dirty flag instead -- packing 128 KB per
+    * AT29C010 byte write is the F2 amplification. */
    eeprom_dirty_cb = eeprom_pack_save_buf;
-   mt_dirty_cb     = mt_pack_save_buf;
+   mt_dirty_cb     = mt_mark_save_dirty;
 
-   /* Detect CD content (CUE/CDI/CHD/ISO) and stage a CD BIOS (external file
-    * if present, embedded otherwise) so ResolveBootConfig can pick the
-    * right boot strategy. */
+   /* Disk control (#651): register before the content branch, so it is
+    * registered on the no-content path too -- that is the case the
+    * feature exists for. */
+   register_disk_control();
+
+   /* Detect CD content (CUE/CDI/CHD/ISO) and pick a boot strategy from the
+    * disc itself.  The CD branch lives in open_disc_and_resolve_boot() so
+    * the disk-control insert path (#651) can re-run exactly the same
+    * sequence; the cart and no-content branches keep their own
+    * ResolveBootConfig() calls, which is why this is a restructure and not
+    * a lift of a contiguous block. */
    jaguar_cd_mode            = false;
    jaguarMemTrackInserted    = false;
    cd_image_path[0]          = '\0';
@@ -5054,25 +6228,38 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if (is_cd_content)
    {
-      jaguar_cd_mode = true;
-      /* Hardware has the Memory Track cart plugged in alongside the CD
-       * unit (user-selectable; some titles behave differently with one
-       * present). */
-      jaguarMemTrackInserted = opt_memory_track;
-      strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
-      cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+      disc_boot_status st = open_disc_and_resolve_boot(info->path);
 
-      if (vjs.cdBootMode != CDBOOT_HLE)
-         stage_cd_bios();
+      if (st != DISC_BOOT_OK)
+      {
+         free(videoBuffer);
+         videoBuffer = NULL;
+         free(sampleBuffer);
+         sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
+         return false;
+      }
+   }
+   else if (!info)
+   {
+      /* No-content boot (issue #646): ResolveBootConfig() only knows about
+       * cart/CD content, and there is no 68K program anywhere for HLE to
+       * jump into, so the real boot ROM is the only sane strategy --
+       * exactly what real hardware shows with an empty cart slot. */
+      vjs.useJaguarBIOS          = true;
+      bootConfig.isCDGame        = false;
+      bootConfig.showBootROM     = true;
+      bootConfig.cdBiosAvailable = false;
+      bootConfig.strategy        = &cd_boot_strategy_none;
    }
    else
+   {
       apply_cart_bios_autodetect(info);
-
-   /* Resolve boot configuration — single source of truth for which
-    * strategy (cart / HLE / real BIOS) we will dispatch to below. */
-   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
-                     vjs.cdBootMode, vjs.useJaguarBIOS);
-   vjs.useJaguarBIOS = bootConfig.showBootROM;
+      ResolveBootConfig(&bootConfig, jaguar_cd_mode,
+                        cd_bios_loaded_externally, vjs.cdBootMode,
+                        vjs.useJaguarBIOS);
+      vjs.useJaguarBIOS = bootConfig.showBootROM;
+   }
 
    /* check_variables() ran above, before bootConfig existed, so the blit
     * memo could not tell cartridge from CD content then.  Re-apply the
@@ -5088,23 +6275,21 @@ bool retro_load_game(const struct retro_game_info *info)
     * reason; the latch keeps later option reads from repeating it. */
    perf_warn_idle_skip_suppressed();
 
-   /* Open the disc image BEFORE JaguarInit() so CDROMInit -> CDIntfInit ->
-    * CDIntfIsImageLoaded sees the disc and haveCDGoodness is set correctly. */
-   if (jaguar_cd_mode)
-   {
-      LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
-      if (!CDIntfOpenImage(cd_image_path))
-      {
-         LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
-         free(videoBuffer);
-         videoBuffer = NULL;
-         free(sampleBuffer);
-         sampleBuffer = NULL;
-         TitleDBSetContent(NULL, 0);
-         return false;
-      }
-      LOG_INF("[CD] Disc image opened OK\n");
-   }
+   /* Widescreen (#605): the check_variables() above latched this load's
+    * aspect, and the frontend queries retro_get_system_av_info() after
+    * retro_load_game() returns -- so it already has the right geometry.
+    * Leaving the flag armed made the first retro_run() fire a
+    * value-identical SET_GEOMETRY on the very frame that submits the
+    * first video_cb, which is the frontend-reallocates-and-drops-a-frame
+    * case the geometry-change comment in retro_run() warns about.  Only
+    * a genuine mid-session toggle should notify. */
+   widescreen_geometry_pending = false;
+
+   /* The disc image (if any) is already open at this point -- see the
+    * CDIntfOpenImage() call above, moved ahead of ResolveBootConfig() for
+    * issue #657.  It still ran before JaguarInit(), just earlier than
+    * before, so CDROMInit -> CDIntfInit -> CDIntfIsImageLoaded below
+    * still sees the disc and haveCDGoodness is still set correctly. */
 
    JaguarInit();                                             // set up hardware
    CrashDetectReset();                                       // zero per-game watchdog state
@@ -5139,7 +6324,7 @@ bool retro_load_game(const struct retro_game_info *info)
     * boot strategies handle their own JaguarReset() ordering internally
     * so the post-boot state is preserved.  We only need to do an extra
     * reset+reload here for the RAM-loaded path. */
-   if (!jaguarCartInserted && !jaguar_cd_mode)
+   if (info && !jaguarCartInserted && !jaguar_cd_mode)
    {
       JaguarReset();
       if (!JaguarLoadFile((uint8_t*)info->data, info->size))
@@ -5196,6 +6381,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    /* Content type is now known — refresh which options apply to it. */
    content_loaded = true;
+   no_game_active = (info == NULL);
    update_option_visibility();
 
    /* Memory Track NVM BIOS module: on hardware the CD BIOS boot installs
@@ -5223,8 +6409,14 @@ void retro_unload_game(void)
    jaguar_cd_mode    = false;
    jaguarMemTrackInserted = false;
    cd_image_path[0]  = '\0';
+   memset(disk_image_path, 0, sizeof(disk_image_path));
+   disk_num_images    = 0;
+   disk_index         = 0;
+   disk_initial_index = 0;
+   disk_ejected       = false;
    /* Content type is unknown again — restore the full option list. */
    content_loaded    = false;
+   no_game_active    = false;
    update_option_visibility();
    JaguarDone();
 
@@ -5282,6 +6474,15 @@ void retro_unload_game(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* GDB stub (#652): close the listener/client and disarm every
+    * breakpoint/watchpoint/step (GDBTargetClose(), src/debug/
+    * gdbtarget.c) so a stale socket -- or worse, an armed breakpoint at
+    * an address that means nothing in the next title -- never lingers
+    * into the next load. Re-latch the gate from the next load's option
+    * instead of carrying this session's state forward. */
+   GDBSockClose();
+   GDBTargetClose();
+   gdb_stub_reset();
    /* Known-bad negative entries (#464): same reasoning, same reset. */
    TitleDBSetNegativeForTest(NULL, 0);
    titledb_reset_negative_warnings();
@@ -5289,9 +6490,21 @@ void retro_unload_game(void)
     * warning latch: same reasoning, same reset. */
    TitleDBSetPairsForTest(NULL, 0);
    perf_conflict_reset();
+   /* Enhancement profile (P9): the runtime-demotion latch and its watch
+    * are title-scoped like everything above -- the next load re-evaluates
+    * from scratch. */
+   enhancement_profile_reset();
+   /* Widescreen (#530) is title-scoped like everything above and was
+    * missed when it landed (#605).  iOS never dlcloses the core, so
+    * leaving these set lets a 16:9 title hand its aspect ratio to the
+    * next one: retro_get_system_av_info() can be called before the new
+    * session's first check_variables(), and that is the negotiation
+    * that sizes the frontend's first render target. */
+   widescreen_reset();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
+   mt_save_buf_dirty = 0;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
 
@@ -5336,7 +6549,10 @@ static void eeprom_pack_save_buf(void)
    }
    /* Memory Track NVRAM follows both EEPROM banks (CD content only). */
    if (jaguar_cd_mode)
+   {
       memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
+      mt_save_buf_dirty = 0;
+   }
 }
 
 /* Mirror the Memory Track into the save buffer without repacking the EEPROMs
@@ -5345,6 +6561,18 @@ static void eeprom_pack_save_buf(void)
 static void mt_pack_save_buf(void)
 {
    memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
+   mt_save_buf_dirty = 0;
+}
+
+static void mt_mark_save_dirty(void)
+{
+   mt_save_buf_dirty = 1;
+}
+
+static void mt_flush_save_buf(void)
+{
+   if (mt_save_buf_dirty)
+      mt_pack_save_buf();
 }
 
 /* Unpack the save buffer back into eeprom_ram[] and cdrom_eeprom_ram[].
@@ -5369,10 +6597,17 @@ void *retro_get_memory_data(unsigned type)
       return jaguarMainRAM;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
+      /* No-content boot (#646): no cartridge means no EEPROM chip. */
+      if (no_game_active)
+         return NULL;
       /* Memory Track cart uses 128K NVRAM directly */
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return mtMem;
-      /* Regular carts: return the pre-packed save buffer */
+      /* Regular carts / CD: return the pre-packed save buffer.
+       * Flush Memory Track first so a consumer that didn't cache the
+       * pointer (or that re-queries after writes this frame) never
+       * reads a stale 128 KB tail. */
+      mt_flush_save_buf();
       return eeprom_save_buf;
    }
    return NULL;
@@ -5384,6 +6619,11 @@ size_t retro_get_memory_size(unsigned type)
       return 0x200000;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
+      /* No-content boot (#646): no cartridge means no EEPROM chip -- report
+       * zero so frontends don't create a meaningless .srm for a bare BIOS
+       * session. */
+      if (no_game_active)
+         return 0;
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;
       /* CD discs share the cart EEPROM with their CD-side EEPROM bank
@@ -5411,6 +6651,16 @@ void retro_init(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
+
+   /* Keyboard-presence latch (see keyboard_event_cb above).  Registered
+    * here, once, rather than per-load: keyboard presence is a host
+    * property, not a content property. */
+   {
+      struct retro_keyboard_callback kb_cb;
+      kb_cb.callback = keyboard_event_cb;
+      kb_callback_registered =
+         environ_cb(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, &kb_cb);
+   }
 
    /* Controller types the frontend may assign per port (#428/#429/#436).
     * Port 1 offers pad or rotary: the ST/Amiga mouse adapter is a
@@ -5497,6 +6747,8 @@ void retro_init(void)
 void retro_deinit(void)
 {
    libretro_supports_bitmasks = false;
+   kb_callback_registered = false;
+   kb_event_seen = false;
 
    /* Dump totals to the frontend log before going inert.  RetroArch shows
     * the same numbers in its UI, but a log line is what can actually be
@@ -5523,6 +6775,15 @@ void retro_deinit(void)
    ShadowFBShutdown();
    ShadowHiresShutdown();
    BlitMemoShutdown();
+
+   /* Disk control statics (#651): same reasoning as the shutdowns above --
+    * iOS cannot dlclose the core, so a stale image list would survive into
+    * the next load and offer the frontend a disc that is no longer there. */
+   memset(disk_image_path, 0, sizeof(disk_image_path));
+   disk_num_images    = 0;
+   disk_index         = 0;
+   disk_initial_index = 0;
+   disk_ejected       = false;
    /* Texture dump (#369): close the manifest, log the session summary,
     * free the dedupe set and reset every static. */
    TexDumpShutdown();
@@ -5666,6 +6927,12 @@ void retro_deinit(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* GDB stub (#652): belt-and-suspenders, matching retro_unload_game() --
+    * a frontend that calls deinit without unload first must not leave a
+    * listener bound, or a breakpoint armed, past process teardown. */
+   GDBSockClose();
+   GDBTargetClose();
+   gdb_stub_reset();
    /* Known-bad negative entries (#464): same per-load re-arm as above. */
    TitleDBSetNegativeForTest(NULL, 0);
    titledb_reset_negative_warnings();
@@ -5673,9 +6940,16 @@ void retro_deinit(void)
     * warning latch: same per-load re-arm as above. */
    TitleDBSetPairsForTest(NULL, 0);
    perf_conflict_reset();
+   /* Enhancement profile (P9): same per-load re-arm as above; the option
+    * itself is re-read on the next load. */
+   enhancement_profile_reset();
+   enhancement_profile_opt = 0;
+   /* Widescreen (#530/#605): same per-load re-arm as above. */
+   widescreen_reset();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
+   mt_save_buf_dirty = 0;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
    videoWidth = 0;
@@ -5764,6 +7038,12 @@ void retro_run(void)
 {
    bool updated = false;
 
+   /* GDB stub (#652): serviced first and unconditionally cheap when
+    * disabled -- gdb_stub_service() itself early-returns before touching
+    * a single byte if the option is off, which is the whole point of the
+    * "near-zero cost when disabled" requirement in the design doc. */
+   gdb_stub_service();
+
 #ifdef VJ_TRACE
    /* Stamp the frame number BEFORE the machine runs, so every event
     * emitted during this retro_run carries the number of the frame it
@@ -5798,6 +7078,97 @@ void retro_run(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
       check_variables();
+
+   /* RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE (presentation-skip half only:
+    * the audio bit is intentionally ignored -- DSP/DAC output is untouched).
+    * Queried every frame because the frontend may flip it frame-to-frame
+    * (e.g. hidden run-ahead re-executes, fast-forward). Default keeps the
+    * video bit set, so a frontend that doesn't implement the call --
+    * environ_cb() returns false and leaves av_enable_flags untouched --
+    * renders exactly as before. tomSkipVideoPresent gates ONLY the final
+    * host XRGB8888 store in TOMExecHalfline (tom.c); OP/GPU/DSP/blitter
+    * execution above it in JaguarExecuteNew() always runs unabridged, so
+    * this cannot desync emulation or run-ahead determinism (#400). */
+   {
+      enum retro_av_enable_flags av_enable_flags = RETRO_AV_ENABLE_VIDEO;
+      environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av_enable_flags);
+      tomSkipVideoPresent = (av_enable_flags & RETRO_AV_ENABLE_VIDEO) ? 0 : 1;
+   }
+
+   /* Auto frameskip (#684): decide whether THIS frame's presentation is
+    * skipped to let the audio buffer refill.  Rides the same
+    * tomSkipVideoPresent flag the GET_AUDIO_VIDEO_ENABLE block above just
+    * set -- when the frontend already discards this frame's video
+    * (fast-forward, run-ahead hidden frames) there is nothing left to
+    * skip, so the frameskip counter stands down and its cap starts fresh
+    * on the next presented frame.  retro_audio_buff_active is only true
+    * while a registered buffer-status callback is being fed by the
+    * frontend, so unsupported frontends never reach the verdict.
+    * frameskip_counter caps consecutive skips at frameskip_max so the
+    * screen can never freeze even with the buffer pinned at 0%.
+    * frameskip_this_frame is what video_cb consumes below: a
+    * frameskip-skipped frame is presented as a dupe (NULL), which the
+    * GET_AUDIO_VIDEO_ENABLE path must NOT do -- its discarded frames keep
+    * handing videoBuffer to the frontend exactly as before. */
+   frameskip_this_frame = 0;
+   if (frameskip_type > 0 && !tomSkipVideoPresent && retro_audio_buff_active)
+   {
+      int want_skip;
+      if (frameskip_type == 1)
+         want_skip = retro_audio_buff_underrun ? 1 : 0;
+      else
+         want_skip = (retro_audio_buff_occupancy < frameskip_threshold)
+               ? 1 : 0;
+
+      if (!want_skip || frameskip_counter >= frameskip_max)
+         frameskip_counter = 0;
+      else
+      {
+         frameskip_counter++;
+         frameskip_this_frame = 1;
+         tomSkipVideoPresent  = 1;
+      }
+   }
+   else
+      frameskip_counter = 0;
+
+   /* Enhancement profile 'auto' runtime watch (P9): evaluated ONLY during
+    * the first ENH_WATCH_WINDOW_FRAMES of a loaded session (see the state
+    * block's comment for why -- the demotion is a live geometry switch and
+    * must land during boot/menus, never mid-game).  Demote once when the
+    * frontend reports underrun danger for ENH_DEMOTE_UNDERRUN_FRAMES
+    * consecutive frames; retro_audio_buff_active is only true while a
+    * registered buffer-status callback is being fed, so frontends without
+    * the callback can never demote.  Sits between the frameskip verdict
+    * above (fresh buffer report) and the geometry block below, which
+    * applies the demotion's forced geometry re-latch this same frame,
+    * before rendering. */
+   if (enhancement_watch_frames < ENH_WATCH_WINDOW_FRAMES)
+   {
+      enhancement_watch_frames++;
+      if (enhancement_watch_wanted())
+      {
+         if (retro_audio_buff_active && retro_audio_buff_underrun)
+         {
+            enhancement_underrun_run++;
+            if (enhancement_underrun_run >= ENH_DEMOTE_UNDERRUN_FRAMES)
+               enhancement_auto_demote();
+         }
+         else
+            enhancement_underrun_run = 0;
+      }
+   }
+
+   /* Deferred from init_frameskip(): tell the frontend how much audio
+    * buffering frameskip needs to see the drain coming (0 = restore its
+    * own default).  The frontend re-inits its audio driver on this call,
+    * so it fires once per option change, from retro_run, never per frame. */
+   if (update_audio_latency)
+   {
+      environ_cb(RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY,
+            &frameskip_audio_latency);
+      update_audio_latency = false;
+   }
 
    /* Apply pending geometry change BEFORE rendering this frame.  TOM's
     * scanline renderer reads tomWidth (pixels per row) and screenPitch
@@ -5971,7 +7342,13 @@ void retro_run(void)
     * idempotent on repeated netlink_apply() calls with unchanged
     * parameters, so this rebuild's own SET_CORE_OPTIONS_V2 -- even if it
     * causes the frontend to re-signal a variables update -- cannot wipe
-    * the peer table out from under itself. */
+    * the peer table out from under itself.
+    *
+    * Skip the clock query (and ConsumeChanged) when netlink is off and
+    * nothing is latched: JLinkNowMs() is a second per-frame
+    * clock_gettime on top of JLinkFrameTick.  A sticky dirty latch
+    * still enters so a change is delayed, never lost. */
+   if (JLinkMode() != JLINK_MODE_DISABLED || netlink_peers_dirty)
    {
       uint32_t disc_now = JLinkNowMs();
       if (JLinkDiscConsumeChanged())
@@ -6022,7 +7399,14 @@ void retro_run(void)
     * The reverse mismatch also exists -- a narrow window (e.g. VDB=38,
     * VDE=100 -> 34 rendered rows, presented height 31) writes past the
     * presented height.  That is harmless here (the allocation is 1024x512
-    * and the extra rows are simply not shown) and is left alone. */
+    * and the extra rows are simply not shown) and is left alone.
+    *
+    * Presentation-skip: this whole fixup only touches videoBuffer (the
+    * host output), so it is skipped along with the rest of presentation
+    * when the frontend has flagged this frame's video as discarded --
+    * TOMGetWrittenRowExtent()'s own bookkeeping (tomRowsWrittenCur/Prev/
+    * Last in tom.c) is unconditional and unaffected either way. */
+   if (!tomSkipVideoPresent)
    {
       uint32_t written = TOMGetWrittenRowExtent();
       /* Hi-res: TOM reports rows in STOCK units.  The decision below is
@@ -6078,10 +7462,35 @@ void retro_run(void)
     * and video stall. Fires LOG_WRN/LOG_ERR via vj_log_cb so the
     * signature shows up in the RetroArch log without extra wiring.
     * Off-mode short-circuits in CrashDetectFrameTick, so the cost
-    * when disabled is one indirect function call per frame. */
-   CrashDetectFrameTick(videoBuffer, (unsigned)game_width, (unsigned)game_height);
+    * when disabled is one indirect function call per frame.
+    *
+    * Pass fb=NULL while presentation is skipped: videoBuffer is frozen at
+    * whatever the last rendered frame left there, and a long presentation-
+    * skip run (run-ahead's hidden frames, fast-forward) would otherwise
+    * read as a false video_stall.  CrashDetectFrameTick treats a NULL fb
+    * as "no framebuffer to hash this frame" and skips only that one check;
+    * GPU/DSP PC-escape and wedge detection -- the checks that actually
+    * matter here, since nothing about emulation itself changed -- still
+    * run unconditionally. */
+   CrashDetectFrameTick(tomSkipVideoPresent ? NULL : videoBuffer,
+                         (unsigned)game_width, (unsigned)game_height);
 
-   video_cb(videoBuffer, game_width, game_height, game_width << 2);
+   /* Memory Track SRAM: one 128 KB pack per dirty frame, after emulation
+    * so frontends that cache the SAVE_RAM pointer see this frame's writes.
+    * retro_serialize / unserialize / deinit read mtMem via MTStateSave,
+    * not eeprom_save_buf, so they do not need a flush. */
+   mt_flush_save_buf();
+
+   /* A frameskip-skipped frame is handed to the frontend as NULL ("dupe
+    * last frame", the standard libretro frameskip contract -- gpsp does
+    * the same): videoBuffer was not rendered this frame, and NULL also
+    * spares the frontend a redundant texture upload -- part of the very
+    * cost frameskip exists to shed.  The GET_AUDIO_VIDEO_ENABLE skip path
+    * is deliberately NOT routed through this: the frontend told us it is
+    * discarding that video, and it keeps receiving videoBuffer exactly as
+    * it always has. */
+   video_cb(frameskip_this_frame ? NULL : videoBuffer,
+         game_width, game_height, game_width << 2);
 
 #ifdef DEBUG_PRESENTATION
    if (dbg_frame_counter < 5

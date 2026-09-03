@@ -176,10 +176,11 @@ and `TCP_NODELAY` plus the adaptive reply wait already cover the network
 side.
 
 This is authentic — a real Voice Modem at 19200 baud was exactly this
-slow — so it is addressed as an **opt-in enhancement**, not a bug fix:
-core option `virtualjaguar_netlink_speed` (default Off; `auto`, #552)
-divides the character frame time by a fixed 4x once the two console
-instances negotiate that out-of-band and agree (see
+slow — so it is addressed as an **enhancement**, not a bug fix: core
+option `virtualjaguar_netlink_speed` (default `auto` since #552's
+negotiation made a bad guess impossible; `disabled` opts back out to
+authentic timing) divides the character frame time by a fixed 4x once
+the two console instances negotiate that out-of-band and agree (see
 `docs/netlink-design.md`'s negotiation section) — never a magnitude the
 player picks, and never applied unilaterally by one side. The knob is a
 single one: `UARTFrameUsec()` in `src/jerry/uart.c` schedules both the TX

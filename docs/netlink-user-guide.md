@@ -86,7 +86,7 @@ Desktop/testing shortcuts: environment variables `VJ_NETLINK_HOST` and
 
 ## Making link play feel snappier (optional, not authentic)
 
-*Network Link Wire Speed* (default **Off**, values **Off** / **Auto**)
+*Network Link Wire Speed* (default **Auto**, values **Off** / **Auto**)
 clocks the emulated serial port faster than the real hardware ran it, when
 the console on the other end agrees to.
 
@@ -100,10 +100,10 @@ bytes each way every frame, roughly 5.8 ms of pure wire time per
 direction against a 16.7 ms frame.
 
 That slowness is *real* — a Voice Modem or a JagLink cable behaved exactly
-this way — which is why this is off by default and labelled an
-enhancement rather than a fix.
+this way — which is why this is labelled an enhancement rather than a fix,
+even though negotiation makes it safe enough to ship on by default.
 
-- **Set *Auto* on either or both consoles — there is nothing to match.**
+- **It is *Auto* on both consoles by default — there is nothing to match.**
   The two cores agree on the speedup between themselves the moment the
   link comes up. If the other side is running an older core, has this set
   to *Off*, or never answers, this side quietly stays at authentic timing

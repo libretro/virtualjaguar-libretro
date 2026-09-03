@@ -254,6 +254,8 @@
 //	------------------------------------------------------------
 
 #include "tom.h"
+#include "tom_scan_simd_neon.h"
+#include "tom_scan_simd_sse2.h"
 
 #include <string.h>								// For memset()
 #include "blitter.h"
@@ -437,14 +439,18 @@ uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
 uint32_t * screenBuffer;
 uint32_t screenPitch;
 
+/* RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE presentation-skip -- see the
+ * declaration in tom.h for the safety argument.  Default 0 (render). */
+int tomSkipVideoPresent;
+
 typedef void (render_xxx_scanline_fn)(uint32_t *);
 
 // Private function prototypes
 
 void tom_render_16bpp_cry_scanline(uint32_t * backbuffer);
-void tom_render_24bpp_scanline(uint32_t * backbuffer);
-void tom_render_16bpp_direct_scanline(uint32_t * backbuffer);
-void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer);
+void tom_render_24bpp_scanline(uint32_t * VJ_RESTRICT backbuffer);
+void tom_render_16bpp_direct_scanline(uint32_t * VJ_RESTRICT backbuffer);
+void tom_render_16bpp_rgb_scanline(uint32_t * VJ_RESTRICT backbuffer);
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer);
 uint16_t TOMIRQControlReg(void);
 
@@ -1191,6 +1197,11 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
    unsigned w = (tomWidth < 1024) ? tomWidth : 1024;
    uint32_t *dst;
    uint32_t px;
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   unsigned neon_done;
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   unsigned sse2_done;
+#endif
 
    if (fn == tom_render_16bpp_cry_scanline)
    {
@@ -1204,13 +1215,57 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
       return;
    }
 
-   for (i = 0; i < w; i++)
-      tomHiresScratch[i] = backbuffer[i * n];
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   /* n==2 is Stage 1. Compiler autovec of the runtime-n loops only
+    * fires for n==1 (gather) or n>7 (expand); the common 2x path
+    * stays scalar without this. */
+   if (n == 2u)
+   {
+      neon_done = tom_scan_neon_hires_gather_n2(backbuffer, tomHiresScratch, w);
+      for (i = neon_done; i < w; i++)
+         tomHiresScratch[i] = backbuffer[i * n];
+   }
+   else
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   /* Same n==2 gate as the NEON branch above. */
+   if (n == 2u)
+   {
+      sse2_done = tom_scan_sse2_hires_gather_n2(backbuffer, tomHiresScratch, w);
+      for (i = sse2_done; i < w; i++)
+         tomHiresScratch[i] = backbuffer[i * n];
+   }
+   else
+#endif
+   {
+      for (i = 0; i < w; i++)
+         tomHiresScratch[i] = backbuffer[i * n];
+   }
    fn(tomHiresScratch);
    for (r = 0; r < n; r++)
    {
       dst = backbuffer + r * screenPitch;
-      for (i = 0; i < w; i++)
+#if defined(BLITTER_SIMD_HAVE_NEON)
+      if (n == 2u)
+      {
+         neon_done = tom_scan_neon_hires_expand_n2(tomHiresScratch, dst, w);
+         dst += neon_done * 2u;
+         i = neon_done;
+      }
+      else
+         i = 0;
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+      if (n == 2u)
+      {
+         sse2_done = tom_scan_sse2_hires_expand_n2(tomHiresScratch, dst, w);
+         dst += sse2_done * 2u;
+         i = sse2_done;
+      }
+      else
+         i = 0;
+#else
+      i = 0;
+#endif
+      for (; i < w; i++)
       {
          px = tomHiresScratch[i];
          for (s = 0; s < n; s++)
@@ -1220,12 +1275,12 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
 }
 
 // 24 BPP mode rendering
-void tom_render_24bpp_scanline(uint32_t * backbuffer)
+void tom_render_24bpp_scanline(uint32_t * VJ_RESTRICT backbuffer)
 {
    unsigned i;
    uint8_t s;
    uint16_t width = tomWidth;
-   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
    int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
@@ -1251,6 +1306,25 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 #endif
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 4, pwidth_scale);
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_neon_24bpp(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 4;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_sse2_24bpp(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 4;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#endif
    while (width >= pwidth_scale)
    {
       uint32_t b;
@@ -1269,15 +1343,34 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 //Seems to me that this is NOT a valid mode--the JTRM seems to imply that you would need
 //extra hardware outside of the Jaguar console to support this!
 // 16 BPP direct mode rendering
-void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
+void tom_render_16bpp_direct_scanline(uint32_t * VJ_RESTRICT backbuffer)
 {
    uint8_t s;
    uint16_t width = tomWidth;
-   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_neon_16bpp_direct(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_sse2_16bpp_direct(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#endif
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -1304,12 +1397,12 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
  *
  * Only pack art substitutes here, never a true-color CRY
  * reconstruction; see TomLinePackRGB above. */
-void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
+void tom_render_16bpp_rgb_scanline(uint32_t * VJ_RESTRICT backbuffer)
 {
    unsigned i;
    uint8_t s;
    uint16_t width = tomWidth;
-   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
    int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
@@ -1358,6 +1451,25 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
       return;
    }
 
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_neon_16bpp_rgb(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_sse2_16bpp_rgb(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#endif
    while (width >= pwidth_scale)
    {
       uint32_t color = (*current_line_buffer++) << 8;
@@ -1532,13 +1644,52 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    // Really, this value is somewhere around 507 for an NTSC Jaguar. But this
    // should work in a majority of cases, at least until we can figure it out properly.
    if (endingHalfline > GET16(tomRam8, VP))
+   {
       startingHalfline = 0;
+
+      /* A VDE past the end of the field is the documented "OP runs every
+       * line" idiom (JTRM: set VDE=$FFFF to work around the VDE-compare
+       * bug), not a request to run the object list through vertical
+       * blanking as well.  Left unclamped it does exactly that, and the
+       * extra passes are destructive rather than merely wasted: the OP
+       * decrements an object's HEIGHT and advances its DATA pointer on
+       * every pass that reaches it, so a pass landing after the game has
+       * rebuilt its list for the next field silently eats the first line
+       * of every object in it.
+       *
+       * Super Burnout (#632) is the case that exposed this.  It sets
+       * VDB=25, VDE=$7FF, VP=523, VBB=500, VI=521, and rebuilds the
+       * display list in its vertical-interrupt handler.  The OP then ran
+       * once more at halfline 522 -- one halfline after VI -- consuming
+       * line 0 of the freshly written HUD object.  The visible result was
+       * the top scanline missing from the whole first HUD text row, so LAP
+       * rendered as LHP and POSITION as POSTTTON, identically on both
+       * blitters because the blitter was never involved.
+       *
+       * Clamp to the VISIBLE window, which is where the line-copy loop
+       * below stops reading: a pass at or past bottomVisible produces a
+       * line buffer nobody ever copies out, so declining to run it cannot
+       * change the picture, while running it can corrupt the next field.
+       *
+       * Not VBB.  Clamping to VBB was the first attempt and it was wrong:
+       * blanking begins before the display window ends on this hardware
+       * (NTSC VBB=500 against a visible window running to 511), so it cut
+       * the bottom three scanlines off every title using the VDE=$FFFF
+       * idiom -- about a third of the private corpus, including Hover
+       * Strike, JSSDemo and JagFest Demo.  "Only Super Burnout does this"
+       * was measured on five ROMs and did not survive 160. */
+      {
+         uint16_t visible_end = TOMGetBottomVisible();
+         if (visible_end > 0 && visible_end < endingHalfline)
+            endingHalfline = visible_end;
+      }
+   }
 
    if ((halfline >= startingHalfline) && (halfline < endingHalfline))
    {
       if (render)
       {
-         uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+         uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
          uint8_t bgHI = tomRam8[BG], bgLO = tomRam8[BG + 1];
 
          // Clear line buffer with BG
@@ -1552,8 +1703,10 @@ void TOMExecHalfline(uint16_t halfline, bool render)
              * endian-corrected value, so it is safe on any host byte
              * order -- see the paletteRAM16 comment in op.c for the same
              * "OK for direct copies, not for endian-corrected data"
-             * pattern applied to this exact line buffer. */
-            uint16_t * current_line_buffer16 = (uint16_t *)current_line_buffer;
+             * pattern applied to this exact line buffer.
+             * No hand-written NEON: clang/gcc -O3 already emit dup+stp.
+             * VJ_RESTRICT helps autovec on other targets. */
+            uint16_t * VJ_RESTRICT current_line_buffer16 = (uint16_t *)current_line_buffer;
             uint16_t bgPixel;
 
             current_line_buffer[0] = bgHI;
@@ -1602,27 +1755,39 @@ void TOMExecHalfline(uint16_t halfline, bool render)
       if (writtenRow + 1 > tomRowsWrittenCur)
          tomRowsWrittenCur = writtenRow + 1;
 
-      if (inActiveDisplayArea)
+      /* Presentation-skip (RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE): both
+       * branches below do nothing but store host XRGB8888 pixels into
+       * screenBuffer -- the CRY/RGB16 -> RGB32 conversion (stock, true-color
+       * or hi-res box-replication/supersampled) and the border-colour fill.
+       * screenBuffer is not addressable Jaguar memory, so skipping these
+       * stores is invisible to emulation; tomSkipVideoPresent stays 0
+       * (render as normal) unless the frontend just said this frame's
+       * video will be discarded. See the tom.h declaration for the full
+       * argument. */
+      if (!tomSkipVideoPresent)
       {
-         if (shadowHiresActive)
-            tom_render_scanline_hires(TOMCurrentLine);
-         else
-            scanline_render[TOMGetVideoMode()](TOMCurrentLine);
-      }
-      else
-      {
-         // If outside of VDB & VDE, then display the border color
-         // (replicated across the N sub-rows / N-wide pixels at hi-res).
-         uint8_t      g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-         uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
-         uint32_t hr;
-
-         for (hr = 0; hr < hiresRowScale; hr++)
+         if (inActiveDisplayArea)
          {
-            uint32_t * currentLineBuffer = TOMCurrentLine + hr * screenPitch;
+            if (shadowHiresActive)
+               tom_render_scanline_hires(TOMCurrentLine);
+            else
+               scanline_render[TOMGetVideoMode()](TOMCurrentLine);
+         }
+         else
+         {
+            // If outside of VDB & VDE, then display the border color
+            // (replicated across the N sub-rows / N-wide pixels at hi-res).
+            uint8_t      g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+            uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+            uint32_t hr;
 
-            for(i=0; i<tomWidth * hiresRowScale; i++)
-               *currentLineBuffer++ = pixel;
+            for (hr = 0; hr < hiresRowScale; hr++)
+            {
+               uint32_t * currentLineBuffer = TOMCurrentLine + hr * screenPitch;
+
+               for(i=0; i<tomWidth * hiresRowScale; i++)
+                  *currentLineBuffer++ = pixel;
+            }
          }
       }
    }

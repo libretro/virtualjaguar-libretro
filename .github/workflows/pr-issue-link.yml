@@ -62,7 +62,7 @@ jobs:
       # event), never the PR head.  The script below runs with a write token,
       # so it must be the trusted copy from the target branch and not a
       # version the PR itself could have edited.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Link the PR to its issue, or explain what is missing
         env:

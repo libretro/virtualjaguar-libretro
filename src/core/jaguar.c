@@ -43,6 +43,7 @@
 #include "settings.h"
 #include "tom.h"
 #include "vjtrace.h"
+#include "gdbstub.h"
 
 static bool frameDone;
 
@@ -384,6 +385,26 @@ void M68KInstructionHook(void)
    pcQPtr++;
    pcQPtr &= 0x3FF;
 
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_68K_HOOK)
+   /* GDB stub (issue #652): one load of a hot global, one never-taken
+    * branch when no 68K breakpoint/step is armed -- see
+    * docs/gdb-stub-design.md "Breakpoint detection" and its cited
+    * vjtrace evidence that a predicted-not-taken branch on a hot global
+    * is free. GDBHalt() blocks in place (does not unwind this hook, or
+    * m68k_execute()'s caller) until the client continues, steps, or
+    * disconnects -- placed before the odd-PC check below so a runaway
+    * 68K that fetched an odd address while a breakpoint happens to sit
+    * exactly there still stops instead of silently returning.
+    *
+    * VJ_GDB_STUB_DISABLE_HOOKS exists ONLY for the Phase 2 A/B
+    * perf measurement (docs/gdb-stub-design.md Testing item 4) that
+    * proves this branch is free when unarmed -- it must never be
+    * defined in a shipped build; the stub ships enabled-by-default
+    * with this hook always compiled in. */
+   if (gdbArmed68K && GDBCheckPC(GDB_TGT_68K, m68kPC))
+      GDBHalt(GDB_TGT_68K, GDB_STOP_BREAKPOINT, m68kPC);
+#endif
+
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
       return;
 
@@ -514,9 +535,13 @@ static void M68KGPURAMSyncRead(unsigned int address, unsigned int length)
 unsigned int m68k_read_memory_8(unsigned int address)
 {
 #ifdef ALPINE_FUNCTIONS
-   // Check if breakpoint on memory is active, and deal with it
-   if (bpmActive && address == bpmAddress1)
-      M68KDebugHalt();
+   /* GDB stub (issue #652): rides this pre-existing memory-breakpoint
+    * gate rather than adding a new one. bpmActive/bpmAddress1 are owned
+    * exclusively by the stub (src/debug/gdbtarget.c) -- nothing else in
+    * the tree ever arms them, so this is a single global-bool check,
+    * false in every session without an attached debugger. isWrite=0. */
+   if (bpmActive)
+      GDBMemWatchHit(address, 0);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -562,9 +587,9 @@ void gpu_dump_registers(void);
 unsigned int m68k_read_memory_16(unsigned int address)
 {
 #ifdef ALPINE_FUNCTIONS
-   // Check if breakpoint on memory is active, and deal with it
-   if (bpmActive && address == bpmAddress1)
-      M68KDebugHalt();
+   /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=0. */
+   if (bpmActive)
+      GDBMemWatchHit(address, 0);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -609,9 +634,9 @@ unsigned int m68k_read_memory_16(unsigned int address)
 unsigned int m68k_read_memory_32(unsigned int address)
 {
 #ifdef ALPINE_FUNCTIONS
-   // Check if breakpoint on memory is active, and deal with it
-   if (bpmActive && address == bpmAddress1)
-      M68KDebugHalt();
+   /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=0. */
+   if (bpmActive)
+      GDBMemWatchHit(address, 0);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -777,9 +802,9 @@ static bool M68KRiscWordLatch(unsigned int address, unsigned int value)
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
 #ifdef ALPINE_FUNCTIONS
-   // Check if breakpoint on memory is active, and deal with it
-   if (bpmActive && address == bpmAddress1)
-      M68KDebugHalt();
+   /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=1. */
+   if (bpmActive)
+      GDBMemWatchHit(address, 1);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -831,9 +856,9 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 void m68k_write_memory_16(unsigned int address, unsigned int value)
 {
 #ifdef ALPINE_FUNCTIONS
-   // Check if breakpoint on memory is active, and deal with it
-   if (bpmActive && address == bpmAddress1)
-      M68KDebugHalt();
+   /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=1. */
+   if (bpmActive)
+      GDBMemWatchHit(address, 1);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P
@@ -901,9 +926,9 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 void m68k_write_memory_32(unsigned int address, unsigned int value)
 {
 #ifdef ALPINE_FUNCTIONS
-   // Check if breakpoint on memory is active, and deal with it
-   if (bpmActive && address == bpmAddress1)
-      M68KDebugHalt();
+   /* GDB stub (issue #652): see m68k_read_memory_8 above. isWrite=1. */
+   if (bpmActive)
+      GDBMemWatchHit(address, 1);
 #endif
 
    // Musashi does this automagically for you, UAE core does not :-P

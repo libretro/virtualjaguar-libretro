@@ -1,3 +1,60 @@
+Virtual Jaguar v3.6.0 libretro
+------------------------------
+
+Debugger & libretro surface. Full notes: docs/RELEASE_NOTES_v3.6.0.md
+
+NOTE: this file has no sections for v3.1.0 through v3.5.1. The
+per-release notes in docs/RELEASE_NOTES_v*.md are complete and
+authoritative for those releases.
+
+== Debugging ==
+* GDB remote serial protocol stub (#652): attach m68k-elf-gdb or lldb over
+  TCP. Breakpoints, single-step, registers, memory. The GPU and DSP appear
+  as GDB threads, so all three processors are inspectable from one session.
+  Connect scripts, editor plugins and an installer are included.
+
+== libretro surface ==
+* Disk control interface (#651): launch with no content and insert a disc
+  afterwards; reach the Virtual Light Machine with an audio CD. Inserting a
+  disc RESTARTS the console -- the boot strategy is derived from the disc.
+  Eject is a frontend-level flag, not an emulated tray.
+* Savestates now record which disc was mounted and refuse a mismatch.
+  Older states are unaffected.
+* Auto frameskip driven by audio buffer status (#690).
+* Enhancement profile option: auto / quality / performance (#706).
+* No-content boot (#646).
+
+== Patching ==
+* docs/patching-a-game.md routes between cheats, soft patches, hooks and
+  per-title defaults -- previously three doors with no signpost (#637).
+* User-authorable hooks via <system>/vj_hooks.txt. Off by default; a hook
+  file cannot switch on its own gate. expect[] is mandatory and checked,
+  and any malformed line discards the whole file.
+
+== Performance ==
+* RISC idle-loop fast-forward is ON BY DEFAULT (#608), after a sweep of 148
+  cart images plus 6 CD spot-checks came back byte-identical. Also ported
+  to the GPU interpreter (#699).
+* NEON/SSE2 fast paths for OP phrase stores, TOM scanline converters, the
+  hi-res Stage-1 store and line resolve, and the voice-chat mixer.
+* ARMv8 hardware CRC32 with runtime dispatch; byte-swap intrinsics for
+  GET/SET; per-SoC ARM tuning; LTO by default on ELF targets.
+
+== Game fixes ==
+* White Men Can't Jump (#635): froze at the menus with no audio at all, in
+  both BIOS modes. A CPU interrupt delivered to an already-stopped DSP was
+  serviced by the next program loaded, whose handler shut it down.
+* Audio-only CDs route through the real CD BIOS, whose player front-end is
+  the VLM (#683).
+* Object Processor window/VBB clamps (#604, #641); nested blits refused
+  (#663, #677); widescreen statics reset per load (#605).
+
+== Build ==
+* Package.swift ships here, so Apple frontends stop vendoring a fork
+  (#614), guarded by a CI build and a source-list drift check.
+* Cross-platform core installer (#640).
+* SPM builds no longer inline the scalar blitter on arm64 (#612).
+
 Virtual Jaguar v3.0.0 libretro
 ------------------------------
 

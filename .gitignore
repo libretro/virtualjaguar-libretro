@@ -56,6 +56,8 @@ tools/jagcd/*.exe
 test/tools/blit_memo_verify
 test/tools/dsp_idle_ab
 test/tools/dsp_idle_probe_falsify
+test/tools/gpu_idle_ab
+test/tools/gpu_idle_probe_falsify
 test/tools/i2s_lag_probe
 test/tools/test_memory_map
 test/tools/test_op_gpu_object
@@ -72,10 +74,12 @@ test/tools/teamtap_ports
 test/tools/mouse_decode_test
 test/tools/rotary_decode_test
 test/tools/analog_decode_test
+test/tools/audio_wav_dump
 test/tools/paddle_decode_test
 test/tools/procontroller_decode_test
 test/tools/sixd_decode_test
 test/tools/tuning_identity
+test/tools/gdb_determinism_probe
 # vjtrace flight-recorder analyzer/smoke tools -- built on demand by
 # test/tools/vjtrace_selftest.sh (and by hand per each tool's own header
 # comment); never tracked, same Mach-O-on-Linux-CI hazard as above.
@@ -176,9 +180,12 @@ __pycache__/
 /test/tools/counter_rate_scan
 /test/tools/gpu_bench_read
 /test/tools/gpu_disasm_dump
+/test/tools/frame_cost_probe
 /test/tools/gpu_pipe_probe
 /test/tools/irq_rate_probe
 /test/tools/m68k_pc_histogram
+/test/tools/risc_backtrace_histogram
+/test/tools/risc_pc_histogram
 /test/tools/menu_step_probe
 /test/tools/present_rate_probe
 test/tools/blitter_static_leak

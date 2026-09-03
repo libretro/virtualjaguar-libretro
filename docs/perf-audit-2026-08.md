@@ -40,6 +40,9 @@ promoted here.
    vjtrace compiled out of release, crash_detect 256-sample hash/frame, perf probes at slice
    granularity, OP `O(N²)` (teardown-only, 0% of frame), TOM LUT-driven scanline render.
 
+**Related:** ARM64/NEON SIMD tasks — [`perf-audit/simd-neon-arm64.md`](perf-audit/simd-neon-arm64.md); per-chip build tuning —
+[`perf-audit/arm-chip-tuning.md`](perf-audit/arm-chip-tuning.md); non-SIMD hot-path followups — [`perf-audit/hotpath-followups-2026-08.md`](perf-audit/hotpath-followups-2026-08.md).
+
 ## Evidence
 
 ### Host profiles (macOS arm64, `sample`, 12 s each, release `-O3 -g`, fast blitter)

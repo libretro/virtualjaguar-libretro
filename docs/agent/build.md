@@ -89,7 +89,7 @@ full rebuild per flip (~21s at `-j8` without ccache).
 
 Stamp covers **every** compile-affecting switch (`BUILD_AXES`: `TEST_EXPORTS BENCH_PROFILE
 DEBUG BLITTER_TRACE COVERAGE RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform
-OPT_LEVEL LTO`).
+OPT_LEVEL LTO IOS_MCPU`).
 **Adding a new CFLAGS-affecting switch means adding it to that list** — forgetting = silent
 chimera binary, not a build error. It stamps variable *names*, not `$(CFLAGS)` (`DEBUG=1`
 injects a per-second `-DBUILD_TIMESTAMP`, so stamping flags would flush every build).
@@ -148,17 +148,30 @@ platforms are explicitly carved back out:
   attribute already present on an earlier declaration governs the later definition, so
   `libretro.c`'s definitions (which never repeat `RETRO_API`) inherit it from the header
   they include.
-- **`LTO=1` opt-in knob:** `make LTO=1` (combine with `platform=` as usual) appends
-  `-flto` to both compile and link lines for every `GC_STYLE=gnu` target except `win`
-  (see above). Deliberately **not** default-on — it needs an A/B on real Pi hardware first
-  (`test/tools/rpi_perf.sh`), the same caution the `-O3` rollout used (#515/#516).
-  `classic_armv7_a7` is unaffected either way: it already runs its own
-  `-flto=4 -fwhole-program` pipeline in its platform block, independent of this knob.
-  `LTO` is in `BUILD_AXES` since it changes object content.
+- **`LTO` default-on for GNU-ld ELF:** unix, `rpi*`, generic `arm64`/`aarch64`/`armv*`
+  now pass `-flto` unless you opt out with `LTO=0`. `win` (PE/COFF) and `qnx`
+  (unverified gcc floor) stay excluded even with `LTO=1`. Mach-O (`osx`/`ios*`/`tvos*`)
+  stays default-off; explicit `make LTO=1` on those is honoured so a macOS host can A/B
+  the flag. `classic_armv7_a7` is unaffected: it already runs its own
+  `-flto=4 -fwhole-program` pipeline in its platform block. Host A/B numbers are
+  indicative only — Linux/Pi CI + `test/tools/rpi_perf.sh` on device is the final
+  arbiter. `LTO` is in `BUILD_AXES` since it changes object content.
+  **`COVERAGE=1` force-disables LTO** (even an explicit `LTO=1`): GCC's gcov
+  instrumentation turns the dsp.c/gpu.c computed-goto dispatch tables into
+  `.data.rel.local` arrays of `.L` label addresses that don't survive LTO
+  partitioning (`undefined reference to `.L106'` at link).
+- **iOS/tvOS `-mtune`:** `ios-arm64` adds `-mtune=apple-a10`, `tvos-arm64` adds
+  `-mtune=apple-a8`. These are ISA-safe (scheduling only) for RetroArch's iOS 9 / A7
+  and tvOS Apple TV HD / A8 floors. Do **not** default `-mcpu` there — that would emit
+  CRC32 (A10+) / LSE (A11+) and SIGILL on the floor chips. Opt-in pin for iOS 17+
+  deploys: `make platform=ios-arm64 IOS_MCPU=apple-a12` (appends `-mcpu=$(IOS_MCPU)`;
+  `IOS_MCPU` is in `BUILD_AXES`).
 - **Android (`jni/Android.mk`):** `ndk-build` never includes `Makefile`, only
   `Makefile.common`, so it inherited none of the desktop optimisation flags. `COREFLAGS`
   now also carries `-O3 -DNDEBUG -fvisibility=hidden -fno-stack-protector
-  -fomit-frame-pointer -fno-semantic-interposition` by hand.
+  -fomit-frame-pointer -fno-semantic-interposition` by hand. No `-march` extensions
+  (single-APK arm64-v8a baseline is `armv8-a`). No `-flto`: the chip-tuning note did
+  not propose it, and this host cannot run `ndk-build` to verify.
 - **Issue #516 does not apply here:** neither `-fvisibility=hidden` nor
   `-fno-semantic-interposition` is an `-O`, so neither can silently shift a platform's
   resolved optimisation level.

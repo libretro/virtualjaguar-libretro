@@ -337,13 +337,19 @@ jobs:
           *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="-DBLITTER_SIMD_SCALAR" ;;
         esac
 
+        # -I libretro-common/include is required, not decorative: blitter_simd.h
+        # does `#include <boolean.h>`, and libretro-common owns that header.
+        # This compile used to resolve it by accident through src/core, which
+        # carried a stale duplicate copy; with that removed the include path has
+        # to name the real location. Makefile.common always passed this -I, so
+        # only these by-hand compiles were affected.
         echo "==> Testing ${SIMD_SRC}..."
-        $CC -O2 -Wall ${EXTRA} -I src -I src/core -I src/tom \
+        $CC -O2 -Wall ${EXTRA} -I src -I src/core -I src/tom -I libretro-common/include \
           -o test_blitter_simd test/test_blitter_simd.c ${SIMD_SRC}
         ./test_blitter_simd
 
         echo "==> Cross-checking against scalar..."
-        $CC -O2 -Wall -DBLITTER_SIMD_SCALAR -I src -I src/core -I src/tom \
+        $CC -O2 -Wall -DBLITTER_SIMD_SCALAR -I src -I src/core -I src/tom -I libretro-common/include \
           -o test_blitter_scalar test/test_blitter_simd.c src/tom/blitter_simd_scalar.c
         ./test_blitter_scalar
 
@@ -439,6 +445,128 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
+  duplicated-lists-in-sync:
+    name: duplicated lists in sync
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    # src/core/version_fallback.h holds a deliberate copy of
+    # CORE_BASE_VERSION for build systems that cannot run
+    # scripts/gen-version-h.sh before compiling (the Provenance SwiftPM
+    # manifest).  Nothing rewrites it at build time on purpose -- the
+    # generator runs at Makefile *parse* time, so a generator that edited a
+    # tracked file would dirty the tree on every build and feed a false
+    # "-dirty" into scripts/build-id.sh and the VJ_EXPECT_BUILD guard.
+    #
+    # So the copy is checked rather than fixed, the same way the
+    # docs/cd-boot-matrix.md drift guard works: fail loudly, never quietly
+    # correct.  version-bump.yml updates both files on a release bump; this
+    # catches a hand edit that touched only one.
+    - name: CORE_BASE_VERSION matches the Makefile
+      run: |
+        set -euo pipefail
+        mk=$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)
+        fb=$(sed -n 's/^#define CORE_BASE_VERSION "\(.*\)"$/\1/p' src/core/version_fallback.h | head -1)
+        if [ -z "$mk" ]; then echo "could not read CORE_BASE_VERSION from Makefile"; exit 1; fi
+        if [ -z "$fb" ]; then echo "could not read CORE_BASE_VERSION from src/core/version_fallback.h"; exit 1; fi
+        if [ "$mk" != "$fb" ]; then
+          echo "::error file=src/core/version_fallback.h::version_fallback.h says '$fb' but the Makefile says '$mk' -- update both."
+          exit 1
+        fi
+        echo "OK: both say $mk"
+
+    # Package.swift repeats Makefile.common's source list, because SPM needs
+    # the file list in the manifest and cannot read a Makefile. Same posture as
+    # the check above: fail loudly, never auto-fix. The downstream Provenance
+    # wrapper kept its own copy of this list and drifted by 27 files over seven
+    # releases -- this is that lesson turned into a build failure.
+    - name: Package.swift sources match Makefile.common
+      run: sh scripts/check-package-sources.sh
+
+    # Same posture for the msvc-check job's inline source list, which rots the
+    # same way and worse: it is Windows-only, so drift shows up as a missing
+    # header on two jobs while ~35 others stay green (issue #679, and PR #662
+    # is the case in point).
+    - name: MSVC job sources match Makefile.common
+      run: sh scripts/check-msvc-sources.sh
+
+  spm-build:
+    name: SwiftPM build (macOS arm64)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    # No Makefile target reads Package.swift, so without this job a manifest
+    # that does not even parse would merge unnoticed and only break the Apple
+    # frontend that consumes it. Building the package here is the only thing
+    # in CI that exercises it.
+    #
+    # This also covers the two things the source-list diff cannot see: that the
+    # arch guards resolve to exactly one blitter_simd_ops when all three
+    # variants are compiled together, and that libretro.c still compiles with
+    # no generated src/core/version.h (a fresh checkout has none -- the
+    # committed src/core/version_fallback.h is what makes that work).
+    - name: swift build
+      run: swift build -v 2>&1 | tail -40
+
+    # The blind spot that let an `unsafeFlags` slip in: SwiftPM REFUSES to
+    # resolve a VERSIONED dependency on a package whose targets carry unsafe
+    # flags, but a package built as the ROOT (which `swift build` above does)
+    # is exempt -- so the restriction is invisible from inside the repo. This
+    # consumes the package the way a frontend actually would, by version tag,
+    # which is the only way to see it.
+    - name: a versioned consumer can build against this package
+      run: |
+        set -euo pipefail
+        work=$(mktemp -d)
+        # A tag on a throwaway clone; the real repo is untouched.
+        # Clone under the repo name: SwiftPM derives package identity from the
+        # URL's last path component, not from `name:` in the manifest.
+        git clone --quiet --no-hardlinks . "$work/virtualjaguar-libretro"
+        git -C "$work/virtualjaguar-libretro" -c user.email=ci@example.com -c user.name=CI tag -f 0.0.1
+        mkdir -p "$work/app/Sources/app"
+        echo 'print("ok")' > "$work/app/Sources/app/main.swift"
+        cat > "$work/app/Package.swift" <<PKG
+        // swift-tools-version:5.9
+        import PackageDescription
+        let package = Package(
+            name: "app",
+            dependencies: [.package(url: "$work/virtualjaguar-libretro", from: "0.0.1")],
+            targets: [.executableTarget(name: "app", dependencies: [
+                .product(name: "VirtualJaguar", package: "virtualjaguar-libretro")])]
+        )
+        PKG
+        cd "$work/app"
+        # `swift build`, NOT `swift package resolve`: resolve succeeds even with
+        # unsafe flags present -- the restriction is enforced when the dependency
+        # graph is loaded for a build. Verified both ways before relying on it.
+        if ! out=$(swift build 2>&1); then
+          echo "$out"
+          echo "::error::a versioned dependency on this package does not resolve."
+          echo "::error::If this says 'contains unsafe build flags', remove the .unsafeFlags"
+          echo "::error::from Package.swift -- they make the package unconsumable by any"
+          echo "::error::frontend pinning a release tag, which is the point of shipping it."
+          exit 1
+        fi
+        echo "OK: builds as a versioned dependency"
+
+    - name: exactly one SIMD vtable, and it is not the scalar one
+      run: |
+        set -euo pipefail
+        B=$(find .build -type d -name 'virtualjaguar.build' | head -1)
+        [ -n "$B" ] || { echo "could not locate the build directory"; exit 1; }
+        total=0
+        for a in neon sse2 scalar; do
+          o="$B/src/tom/blitter_simd_$a.c.o"
+          n=0
+          [ -f "$o" ] && n=$(nm "$o" | grep -c '_blitter_simd_ops' || true)
+          echo "  blitter_simd_$a: $n"
+          total=$((total + n))
+        done
+        [ "$total" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops definition, found $total"; exit 1; }
+        echo "OK: exactly one vtable"
+
   msvc-check:
     name: MSVC ${{ matrix.arch }} compilation check
     runs-on: windows-latest
@@ -471,7 +599,7 @@ jobs:
       shell: cmd
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
-          /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
+          /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Isrc\debug /Ilibretro-common\include ^
           /Ideps\libchdr\include /Ideps\libchdr\deps\lzma-25.01\include /Ideps\libchdr\deps\miniz-3.1.1 /Ideps\libchdr\deps\zstd-1.5.7 ^
           /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
           /D_7ZIP_ST /DMINIZ_DEFLATE_APIS /DWANT_RAW_DATA_SECTOR=1 /DWANT_SUBCODE=1 /DVERIFY_BLOCK_CRC=1 ^
@@ -486,6 +614,7 @@ jobs:
           src\bios\jagbios_m.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
+          src\debug\gdbstub.c src\debug\gdbtarget.c src\debug\gdbsock.c ^
           src\tom\blitter_simd_scalar.c ^
           deps\libchdr\unity.c
 
@@ -665,16 +794,18 @@ jobs:
           # file that no longer exists and fails the whole job with
           # "no input files" / "expected exactly one compiler job".
           #
-          # blitter_simd_<arch>.{c,h} are all excluded. Only one arch is
-          # ever built, so the other two .c files aren't in
-          # compile_commands.json; and the .h files are include-only
-          # fragments that refuse to be compiled standalone (they
-          # #error unless blitter_simd.h pulled them in), so linting one
-          # directly is guaranteed to fail. They are covered instead by
+          # Every *_simd_<arch>.{c,h} fragment (blitter_simd_*, op_simd_*,
+          # tom_scan_simd_*, and any future src/jerry ones) is excluded.
+          # Only one arch is ever built, so the other arch .c files
+          # aren't in compile_commands.json; and the .h files are
+          # include-only fragments that cannot be linted standalone
+          # (blitter's #error unless blitter_simd.h pulled them in; the
+          # op/tom ones compile to nothing without their host .c's
+          # capability macros and includes). They are covered instead by
           # c89-lint's per-arch pass, which compiles them the way the
           # build does.
           FILES=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- '*.c' '*.h' \
-            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2|scalar)\.(c|h)$)' \
+            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/(tom|jerry)/[a-z0-9_]+_simd_(neon|sse2|scalar)\.(c|h)$)' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then
             echo "No relevant C files changed; skipping clang-tidy."

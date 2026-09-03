@@ -8,15 +8,21 @@
 
 set -e
 
-# libretro.c includes the generated src/core/version.h.  Make sure it
-# exists before we run -fsyntax-only -- this script is invoked from CI
-# and pre-commit hooks where `make` may not have run yet.
+# Generate src/core/version.h if it is missing -- this script is invoked
+# from CI and pre-commit hooks where `make` may not have run yet.
+#
+# libretro.c no longer *needs* it (it falls back to the committed
+# src/core/version_fallback.h when the generated header is absent), so this
+# is now a deliberate choice rather than a workaround: the Makefile build is
+# the one this lint is meant to model, and that build always has the
+# generated header.  Dropping these two lines would silently switch the lint
+# to the fallback path instead.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -f "$ROOT/src/core/version.h" ] || sh "$ROOT/scripts/gen-version-h.sh"
 
 CC="${CC:-gcc}"
 CFLAGS="-fsyntax-only -std=gnu89 -Werror=declaration-after-statement"
-INCLUDES="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include -Ideps/libchdr/include"
+INCLUDES="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Isrc/debug -Ilibretro-common/include -Ideps/libchdr/include"
 DEFINES='-D__LIBRETRO__ -DINLINE=inline'
 
 skip_file() {
@@ -28,6 +34,13 @@ skip_file() {
         # scalar ops and the arch header would redefine every one). They are
         # checked, with the right define and target, by check_simd_arch below.
         src/tom/blitter_simd_neon.c|src/tom/blitter_simd_sse2.c) return 0 ;;
+        src/tom/op_simd_neon.h) return 0 ;;
+        src/tom/op_simd_sse2.h) return 0 ;;
+        src/tom/tom_scan_simd_neon.h) return 0 ;;
+        src/tom/tom_scan_simd_sse2.h) return 0 ;;
+        src/tom/shadowfb_simd_neon.h) return 0 ;;
+        src/jerry/voicechat_simd_neon.h) return 0 ;;
+        src/jerry/voicechat_simd_sse2.h) return 0 ;;
         # Depends on rcheevos headers fetched at runtime by the e2e shell wrapper.
         test/tools/test_rcheevos_e2e.c) return 0 ;;
         # Diagnostic tools — not part of the libretro core build.
@@ -35,10 +48,12 @@ skip_file() {
         deps/libchdr/*) return 0 ;;
         tools/jagcd/*) return 0 ;;
         # Builds against test/harness/, which is outside $INCLUDES; C99 harness.
+        test/tools/audio_wav_dump.c) return 0 ;;
         test/tools/fmv_seek_probe.c) return 0 ;;
         test/tools/frame_hash_ab.c) return 0 ;;
         test/tools/hires_box_check.c) return 0 ;;
         test/tools/hires_state_digest.c) return 0 ;;
+        test/tools/gdb_determinism_probe.c) return 0 ;;
         test/tools/hires_shot.c) return 0 ;;
         test/tools/blit_memo_verify.c) return 0 ;;
         test/tools/op_list_dump.c) return 0 ;;
@@ -59,7 +74,7 @@ CHECK_SIMD=0
 for f in $FILES; do
     [ -f "$f" ] || continue
     case "$f" in *.c) ;; *) continue ;; esac
-    case "$f" in src/tom/blitter.c|src/tom/blitter_simd_*.c) CHECK_SIMD=1 ;; esac
+    case "$f" in src/tom/blitter.c|src/tom/blitter_simd_*.c|src/tom/op.c|src/tom/tom.c|src/jerry/voicechat.c) CHECK_SIMD=1 ;; esac
     if skip_file "$f"; then continue; fi
 
     if ! $CC $CFLAGS $INCLUDES $DEFINES "$f" 2>&1; then
@@ -80,6 +95,12 @@ done
 # Re-check blitter.c (and the arch's own .c) once per arch, cross-
 # targeting when the host can't do it natively.  A host that can't
 # cross-target says so out loud rather than passing silently.
+#
+# op.c, tom.c and voicechat.c ride the same pass: they include the guard-selected
+# op_simd_<arch>.h / tom_scan_simd_<arch>.h fragments, which the default
+# loop only ever sees with the host's own capability macros.  Compiling
+# them per-arch is the only host-side syntax check the non-native
+# fragment header gets.
 check_simd_arch() {
     arch="$1"      # sse2 | neon
     define="$2"    # BLITTER_SIMD_SSE2 | BLITTER_SIMD_NEON
@@ -103,7 +124,8 @@ check_simd_arch() {
     rm -f "$probe_c"
 
     arch_failed=0
-    for f in src/tom/blitter.c "src/tom/blitter_simd_$arch.c"; do
+    for f in src/tom/blitter.c "src/tom/blitter_simd_$arch.c" \
+             src/tom/op.c src/tom/tom.c src/jerry/voicechat.c; do
         [ -f "$f" ] || continue
         if ! $cc $CFLAGS $target $INCLUDES $DEFINES "-D$define" "$f" 2>&1; then
             echo "C89 lint: $arch pass failed on $f"

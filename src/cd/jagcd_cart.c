@@ -7,11 +7,13 @@
 
 #include "jagcd_boot.h"
 #include "file.h"
+#include "jaggd.h"          /* JGD_AUTO_THRESHOLD -- size of the flat cart window */
 #include "jaguar.h"
 #include "log.h"
 #include "vjag_memory.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <streams/file_stream.h>
 
 RFILE* rfopen(const char *path, const char *mode);
@@ -94,4 +96,45 @@ const CDBootStrategy cd_boot_strategy_cart = {
     cart_boot,
     NULL,
     cart_reset
+};
+
+/* No-content boot -- see the declaration comment in jagcd_boot.h. */
+static bool none_boot(const struct retro_game_info *info)
+{
+    (void)info;
+
+    /* Clear the flat cart window ($800000-$DFFEFF) so a previous title's
+     * image cannot survive a same-process reload (iOS never dlcloses the
+     * core) and be mistaken for an inserted cartridge.  jaguarROMSize and
+     * the CRC follow suit so titledb / enhancement-hook / Memory-Track
+     * lookups all see "no content" instead of the last title's values. */
+    memset(jaguarMainROM, 0, JGD_AUTO_THRESHOLD);
+    jaguarROMSize      = 0;
+    jaguarMainROMCRC32 = 0;
+
+    /* jaguarCartInserted here means "JaguarReset() must take the real
+     * boot-ROM vector path" (copy SSP/PC from the staged boot ROM and park
+     * illegal-fetch traps there), not "there is a valid program at
+     * $800000" -- the window above is zeroed, so the boot ROM's own
+     * cart-header check finds nothing, exactly like a real console with an
+     * empty cart slot. */
+    jaguarCartInserted = true;
+
+    JaguarReset();
+
+    LOG_INF("[BOOT] Boot path: no cartridge (bare console boot)\n");
+    return true;
+}
+
+static void none_reset(void)
+{
+}
+
+/* instruction_hook is NULL for the same reason cart_boot's is: nothing to
+ * trap on an empty cart slot, and jaguar.c already NULL-checks it. */
+const CDBootStrategy cd_boot_strategy_none = {
+    "none",
+    none_boot,
+    NULL,
+    none_reset
 };

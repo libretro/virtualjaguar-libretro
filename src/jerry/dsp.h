@@ -37,6 +37,15 @@ void DSPReleaseTimeslice(void);
 bool DSPIsRunning(void);
 uint8_t *DSPGetRAM(void);
 uint32_t DSPGetFlags(void);
+void DSPSetFlags(uint32_t v);
+/* GDB stub accessors (issue #652): the active register bank and PC,
+ * read and write. See src/jerry/dsp.c for why the writes are raw pokes
+ * rather than routed through the MMIO write path. */
+uint32_t DSPGetPC(void);
+void DSPSetPC(uint32_t pc);
+uint32_t DSPGetControl(void);
+uint32_t DSPGetReg(int n);
+void DSPSetReg(int n, uint32_t v);
 
 void DSPExecP(int32_t cycles);
 void DSPExecP2(int32_t cycles);

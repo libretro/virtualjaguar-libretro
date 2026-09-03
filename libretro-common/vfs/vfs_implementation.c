@@ -208,7 +208,19 @@
 #include <file/file_path.h>
 
 #ifdef HAVE_CDROM
-#include <vfs/vfs_implementation_cdrom.h>
+/* This core vendors a SUBSET of libretro-common, and the cdrom subsystem
+ * is not part of it: libretro-common/include/cdrom/ was never brought in,
+ * so <vfs/vfs_implementation_cdrom.h> (which includes <cdrom/cdrom.h>)
+ * could never compile here.  It was removed as dangling in 616edf0.
+ *
+ * The 12 HAVE_CDROM blocks below need six retro_vfs_file_*_cdrom symbols
+ * from that subsystem, so defining HAVE_CDROM cannot work without
+ * vendoring all of it -- which this core has no use for: its Jaguar CD
+ * support is its own implementation in src/cd/.
+ *
+ * Fail loudly and explain, rather than leaving a missing-header error for
+ * whoever tries it.  Nothing in this repo defines HAVE_CDROM. */
+#error "HAVE_CDROM is not supported: libretro-common/include/cdrom/ is not vendored in this core. See src/cd/ for the Jaguar CD implementation."
 #endif
 
 #if defined(ANDROID) && defined(HAVE_SAF)

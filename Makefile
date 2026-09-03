@@ -77,26 +77,91 @@ OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64 \
 # NOTE (issue #517): -Ofast's headline implication is -ffast-math, which
 # used to be applied unconditionally to every non-MSVC build further down
 # and so added no new semantics here.  #517's audit measured that global
-# -ffast-math at ~0% (integer-only hot loops; the only floating point in
-# the tree is a savestated I2S resampler and event-scheduling code, neither
-# on a hot path) and removed it everywhere else as a latent determinism
-# hazard.  classic_armv7_a7 was left alone -- its -Ofast is longstanding,
-# and this is an ARM cross-compile target this repo cannot benchmark on x86
-# or arm64 hardware -- so it is now the ONLY platform that still ships
-# -ffast-math.  If that ever needs to change: -Ofast -fno-fast-math is
-# last-wins (same mechanism as the -O2/-O3 override above) and cancels just
-# the fast-math half while keeping -Ofast's other -O3-family optimizations.
-# Measure before touching; don't assume the null result here transfers.
+# -ffast-math at ~0% (integer-only hot loops) and removed it everywhere
+# else as a latent determinism hazard.  classic_armv7_a7 was left alone at
+# the time, which left it as the only platform in the tree still shipping
+# -ffast-math.
+#
+# It is now cancelled here too (issue #633), via the -Ofast -fno-fast-math
+# last-wins form the previous revision of this comment already described.
+# -Ofast's other -O3-family optimizations are kept; only the fast-math half
+# goes away.  Three reasons, none of them a measured slowdown:
+#
+#   * #517's own premise was wrong about the blast radius.  It described the
+#     tree's floating point as "a savestated I2S resampler and
+#     event-scheduling code".  There is float arithmetic in sixteen source
+#     files, and the two largest are src/jerry/dac.c (the resampler) and
+#     src/core/event.c -- the event scheduler, i.e. machine timing itself.
+#   * Determinism is load-bearing here: run-ahead (#400), netplay and
+#     savestate compatibility all depend on it, and this is a platform
+#     people run netplay on.  dac.c's i2sPhase read cursor is savestated, so
+#     reassociated rounding there is a savestate-divergence hazard, not just
+#     an audio one.
+#   * A user-reported "parasitic noise during gameplay" on buildbot builds
+#     (#633) has no repro on any platform that dropped the flag in #517.
+#     i2sPhase is a double phase accumulator stepped per sample; -ffast-math
+#     reassociation and FMA contraction change how it rounds on every step.
+#     Unproven -- this repo has no ARMv7 hardware to listen on -- but it is
+#     the only structural difference between the platforms that report it
+#     and the ones that do not.
+#
+# The gain being given up was measured at ~0% and the hot loops are integer,
+# so there is nothing here for fast-math to buy.  A per-file
+# `src/jerry/dac.o: CFLAGS += -fno-fast-math` was considered and rejected as
+# too narrow: it leaves the scheduler exposed, and -ffast-math is not purely
+# per-TU anyway (at link time it can pull in crtfastmath.o, which sets
+# FTZ/DAZ process-wide).  Revisit per-file scoping only if fast-math is ever
+# measured to pay for itself somewhere specific.
 OPT_OFAST_PLATFORMS := classic_armv7_a7
 ifeq ($(origin OPT_LEVEL),undefined)
    ifneq ($(filter $(platform),$(OPT_OFAST_PLATFORMS)),)
-      OPT_LEVEL := -Ofast
+      OPT_LEVEL := -Ofast -fno-fast-math
    else ifneq ($(filter $(platform),$(OPT_O3_PLATFORMS)),)
       OPT_LEVEL := -O3
    else
       OPT_LEVEL := -O2
    endif
 endif
+
+# LTO default.  Resolved here (before BUILD_AXES) so the stamp records the
+# effective value, not the empty command-line origin.
+#
+# GNU-ld ELF targets (unix, rpi*, generic arm64/aarch64/armv*) default ON;
+# opt out with LTO=0.  win (PE/COFF) and qnx (unverified gcc floor) stay off.
+# Mach-O (osx/ios/tvos) stays off unless LTO=1 is passed explicitly -- Apple
+# ld64 LTO is a different pipeline than the #569 ELF GOT/PLT win, and host
+# A/B numbers are indicative only.  classic_armv7_a7 is not in this list: it
+# already runs its own -flto=4 -fwhole-program pipeline.
+#
+# The FLAGS append is still gated on GC_STYLE below; this only picks the
+# default so `make` and `make LTO=1` stamp the same on unix/rpi*.
+LTO_DEFAULT_PLATFORMS := unix rpi0 rpi1 rpi2 rpi3 rpi3_64 rpi4 rpi4_64 rpi5 rpi5_64 \
+                         arm64 aarch64
+ifeq ($(origin LTO),undefined)
+   ifneq ($(filter $(platform),$(LTO_DEFAULT_PLATFORMS)),)
+      LTO := 1
+   else ifneq (,$(filter armv%,$(platform)))
+      LTO := 1
+   else
+      LTO := 0
+   endif
+endif
+
+# gcov + -flto is known-broken on GCC: the computed-goto dispatch tables in
+# dsp.c/gpu.c become .data.rel.local arrays of .L label addresses, and the
+# coverage instrumentation strands those local symbols across LTO partitions
+# ("undefined reference to `.L106'" at link).  Coverage wants unmerged,
+# per-line attribution anyway, so force LTO off -- even over an explicit
+# LTO=1 -- whenever COVERAGE=1.
+ifeq ($(COVERAGE),1)
+   override LTO := 0
+endif
+
+# Opt-in iOS -mcpu pin.  Empty by default: stock ios-arm64 is -mtune only
+# (ISA-safe for the RetroArch iOS 9 / A7 floor).  For an iOS 17+ deploy
+# that can assume A12+: `make platform=ios-arm64 IOS_MCPU=apple-a12`.
+# MUST stay in BUILD_AXES -- it changes object content.
+IOS_MCPU ?=
 
 # system platform
 system_platform = unix
@@ -118,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.5.1
+CORE_BASE_VERSION := v3.6.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -165,6 +230,55 @@ MACHO_EXPORTS := exports.list
 endif
 MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
+# Benchmark-only: compile OUT the GDB stub's per-instruction hook checks.
+#
+# The stub ships enabled-by-default-off, and that decision rests on the
+# armed-counter check costing nothing when no breakpoint is set (issue #652,
+# docs/gdb-stub-design.md).  That is a measurable claim, so it needs a
+# measurable control arm:
+#
+#   test/tools/opt_ab.sh 'VJ_GDB_STUB_DISABLE_HOOKS=0' \
+#                        'VJ_GDB_STUB_DISABLE_HOOKS=1' 12
+#
+# NEVER ship a build with this set -- it silently removes breakpoint
+# detection from all three processors.  It exists so the A/B is
+# reproducible; the first measurement was taken with an equivalent local
+# edit that was reverted afterwards, which left the number unverifiable.
+#
+# Passing CFLAGS=... on the command line instead does not work here: a
+# command-line assignment blocks every later `+=` in this Makefile, silently
+# dropping the -I/-D flags the build needs.
+ifeq ($(VJ_GDB_STUB_DISABLE_HOOKS),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_HOOKS
+endif
+
+# Finer control arm: removes ONLY the idle-skip interaction
+# (`if (gdbArmed*) idleSkipActive = 0;`), leaving the per-instruction PC
+# checks in place, so the two halves of the hook cost can be told apart.
+#
+# The backslash-continuation must NOT sit inside the $(...): make would read
+# the whole thing as ONE variable reference named "VJ_GDB_STUB_DISABLE_IDLE_GATE
+# VJ_GDB_STUB_DISABLE_68K_HOOK VJ_GDB_STUB_DISABLE_DSP_HOOK", which does not
+# exist, expands empty, and leaves the macro undefined for every value of
+# every one of those three variables -- an inert control arm that produces a
+# byte-identical binary in both of its A/B arms and therefore a guaranteed
+# null result.  (That is exactly how it shipped, and how the "idle-skip
+# gating costs ~0%" row got recorded; the two names below belong in
+# BUILD_AXES, which is where they have now been put.)
+ifeq ($(VJ_GDB_STUB_DISABLE_IDLE_GATE),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_IDLE_GATE
+endif
+
+# Per-processor control arms, so the hook cost can be attributed to one
+# processor at a time (issue #652).  Used to establish that the 68K hook
+# and the idle-skip gating both cost nothing and the residual is the DSP.
+ifeq ($(VJ_GDB_STUB_DISABLE_68K_HOOK),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_68K_HOOK
+endif
+ifeq ($(VJ_GDB_STUB_DISABLE_DSP_HOOK),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_DSP_HOOK
+endif
+
 # Records the build configuration the objects in the tree were last
 # compiled under; see the mode-switch hook next to the link rule below.
 #
@@ -183,7 +297,9 @@ MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
               RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
-              OPT_LEVEL LTO
+              OPT_LEVEL LTO IOS_MCPU VJ_GDB_STUB_DISABLE_HOOKS \
+              VJ_GDB_STUB_DISABLE_IDLE_GATE VJ_GDB_STUB_DISABLE_68K_HOOK \
+              VJ_GDB_STUB_DISABLE_DSP_HOOK
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
@@ -278,6 +394,17 @@ else ifneq (,$(findstring ios,$(platform)))
 ifeq ($(platform),ios-arm64)
    CC = cc -arch arm64 -isysroot $(IOSSDK)
    CXX = clang++ -arch arm64 -isysroot $(IOSSDK)
+   # ISA-safe schedule model.  RetroArch's ios-arm64 floor is iOS 9 = A7;
+   # -mtune does not change the ISA so A7 devices still run the binary.
+   # Do NOT default -mcpu: apple-a10+ emits CRC32, apple-a11+ emits LSE,
+   # and either SIGILLs on A7/A8/A9.  Opt in for iOS 17+ deploys:
+   #   make platform=ios-arm64 IOS_MCPU=apple-a12
+   CFLAGS += -mtune=apple-a10
+   CXXFLAGS += -mtune=apple-a10
+   ifneq ($(IOS_MCPU),)
+      CFLAGS += -mcpu=$(IOS_MCPU)
+      CXXFLAGS += -mcpu=$(IOS_MCPU)
+   endif
 else
    CC = cc -arch armv7 -isysroot $(IOSSDK)
    CXX = clang++ -arch armv7 -isysroot $(IOSSDK)
@@ -302,6 +429,10 @@ else ifeq ($(platform), tvos-arm64)
         CC = cc -arch arm64 -isysroot $(IOSSDK)
         CXX = clang++ -arch arm64 -isysroot $(IOSSDK)
         MINVERSION = -mappletvos-version-min=11.0
+        # ISA-safe schedule model for Apple TV HD (A8), the tvOS floor.
+        # -mcpu is forbidden here: apple-a10+ emits CRC32 => SIGILL on A8.
+        CFLAGS += -mtune=apple-a8
+        CXXFLAGS += -mtune=apple-a8
         SHARED += $(MINVERSION)
         CFLAGS += $(MINVERSION)
 
@@ -439,7 +570,8 @@ else ifeq ($(platform), libnx)
 	# possibly speed up are integer-only regardless of target architecture,
 	# so the x86_64/arm64 A/B null result (see the FLAGS block below)
 	# generalizes here without needing a Switch-specific measurement.
-	CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd
+	# -mcpu implies -mtune, so a separate -mtune=cortex-a57 was redundant.
+	CFLAGS += -march=armv8-a -mtp=soft -mcpu=cortex-a57+crc+fp+simd
 	CXXFLAGS := $(ASFLAGS) $(CFLAGS)
 	STATIC_LINKING = 1
 
@@ -1018,17 +1150,29 @@ ifneq ($(platform),win)
       FLAGS += -fvisibility=hidden
    endif
 
-   # Opt-in LTO (issue #569). Deliberately NOT default-on -- it wants an
-   # A/B on real Pi hardware first (test/tools/rpi_perf.sh exists for
-   # exactly that), same caution as the -O3 rollout above (#515/#516).
-   # `make LTO=1` (add `platform=rpi4_64` etc.) appends -flto to both
-   # the compile and link lines for every GC_STYLE=gnu target except
-   # `win` (see above).
+   # LTO (issue #569).  Default-on for these GNU-ld ELF targets; opt out
+   # with LTO=0.  macOS host A/B is indicative only; Linux/Pi CI + device
+   # `rpi_perf.sh` is the final arbiter.  `win` is excluded by the outer
+   # ifneq; `qnx` is excluded here (unverified gcc floor -- the same
+   # reason it is carved out of -fno-semantic-interposition).
+   # `make LTO=1 platform=rpi4_64` still works (now a no-op vs default).
+   ifneq ($(platform),qnx)
+      ifeq ($(LTO),1)
+         FLAGS   += -flto
+         LDFLAGS += -flto
+      endif
+   endif
+endif
+endif
+
+# Explicit LTO=1 on Mach-O (osx/ios/tvos): same knob, default-off.  Lets
+# a macOS host A/B the flag; Apple ld64 LTO is not the #569 ELF win and
+# is not default-on.
+ifeq ($(GC_STYLE),macho)
    ifeq ($(LTO),1)
       FLAGS   += -flto
       LDFLAGS += -flto
    endif
-endif
 endif
 # ----------------------------------------------------------------
 
@@ -1209,10 +1353,12 @@ clean:
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
+		test/tools/test_disk_control \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
+		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
 		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
@@ -1267,7 +1413,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 # invocations get different values.
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb test/tools/test_gdbstub_proto \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -1277,13 +1423,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
-		test/tools/dsp_idle_probe_falsify \
+		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_disk_control \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
@@ -1431,6 +1577,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_biosdb
 	./test/test_cart_bios_loader
 	./test/test_titlehook
+	./test/tools/test_gdbstub_proto
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
@@ -1592,6 +1739,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# genuinely idle loop, so a silently-disabled feature cannot pass.
 	@# Hand-assembles both shapes into DSP RAM; needs no ROM but yarc.
 	./test/tools/dsp_idle_probe_falsify ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# GPU port of the same admission rule (issue #569).  The GPU's
+	@# executed-path identity is opcost == idleBodyCount (its inlined
+	@# delay slots are NOT counted, unlike the DSP's +1), so this pins
+	@# both directions: a genuine loop must still fire (a +1 off-by-one
+	@# would silently disable the feature) and the compound-period
+	@# store-hiding exploit must still be rejected.
+	./test/tools/gpu_idle_probe_falsify ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Texture dump mode (issue #369): identity-contract freeze vs the
 	@# committed golden list, determinism, fast/accurate engine
 	@# independence, machine inertness (fb hashes + savestate digests
@@ -1843,6 +1997,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@rm -f $(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE)
 	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
 	@# user-override contract, driven through the real dlopen'd core.
+	@# Cases 9-12 extend it to the enhancement profile (P9): performance
+	@# suppresses the DB defaults, an explicit user option beats the
+	@# profile, quality applies them, and the 'auto' runtime demotion
+	@# drops them mid-session on sustained synthetic underrun reports.
 	@# Cases 7/8 extend this to the negative/known-bad entry class (#464):
 	@# refuse-the-default / honour-and-warn-the-user, via a
 	@# programmatically-installed row (TitleDBSetNegativeForTest) so the
@@ -1871,6 +2029,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 7 --quiet || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 8 --quiet \
 				--option virtualjaguar_true_color=enabled || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 9 --quiet \
+				--option virtualjaguar_enhancement_profile=performance || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 10 --quiet \
+				--option virtualjaguar_enhancement_profile=performance \
+				--option virtualjaguar_internal_resolution=2x || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 11 --quiet \
+				--option virtualjaguar_enhancement_profile=quality || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 12 --quiet || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
@@ -1883,6 +2049,41 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
+
+	@# Disk control interface (#651): boot with NO content, then hand the
+	@# core a disc through the frontend-facing callbacks.  Case 1 asserts
+	@# the RESOLVED STRATEGY moved off "none", not that the insert returned
+	@# true -- a reset against the previous disc's boot config looks
+	@# identical from outside.  Case 3 asserts a failed insert is inert.
+	@#
+	@# Case 2 (audio-only disc must land on the real CD BIOS) is NOT run:
+	@# no one-session image exists in the corpus -- every CUE carries two
+	@# REM SESSION markers and CDI headers declare numSessions=2 -- so it
+	@# would pass against a data disc for the wrong reason.  Ledgered as a
+	@# skip rather than written to look like coverage.
+	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
+		"no one-session (Red Book) disc in the private corpus"
+	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
+	if [ -n "$$disc" ]; then \
+		rc=0; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 1 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 3 --quiet || rc=1; \
+		discb=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | sed -n 2p); \
+		if [ -n "$$discb" ]; then \
+			if ./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --disc-b "$$discb" --case 4 --quiet; then :; \
+			else c4=$$?; \
+				if [ $$c4 -eq 77 ]; then \
+					bash scripts/test-skip.sh record "Disk control savestate identity (#651)" "one of the two discs is a damaged rip that cannot boot"; \
+				else rc=1; fi; \
+			fi; \
+		else \
+			bash scripts/test-skip.sh record "Disk control savestate identity (#651)" "need two CD images in test/roms/private"; \
+		fi; \
+		exit $$rc; \
+	else \
+		bash scripts/test-skip.sh record "Disk control interface (#651)" \
+			"no CD image in test/roms/private"; \
+	fi
 	@# Enhancement hooks (issue #370).  All four gates run on in-repo public
 	@# content, so none of them can skip -- and hook_identity_ab.sh now
 	@# ENFORCES that rather than asserting it: it counts the ROMs it actually
@@ -1946,10 +2147,28 @@ test/test_cart_bios_loader: test/test_cart_bios_loader.c $(TARGET) \
 # links with the same two-file style as test_titledb plus a handful of
 # stubbed core globals defined in the test itself.
 test/test_titlehook: test/tools/test_titlehook.c src/core/titlehook.c \
-		src/core/titledb.c src/core/crc32.c
+		src/core/titledb.c src/core/crc32.c src/core/hookfile.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_titlehook.c src/core/titlehook.c \
-		src/core/titledb.c src/core/crc32.c
+		src/core/titledb.c src/core/crc32.c src/core/hookfile.c
+
+# GDB Remote Serial Protocol engine (issue #652).  No emulator:
+# src/debug/gdbstub.c never dereferences a Jaguar global.
+#
+# gdbsock.c is linked too, for the bind-mode fail-closed tests (#652 LAN
+# option).  It DOES contain socket code, but none of it runs here -- the
+# tests only exercise GDBSockSetBindMode()/GDBSockGetBindMode(), which
+# touch a single static and never open a socket.  Linking the real file
+# rather than a stub is the point: it is the shipped default that must
+# be proven safe, not a copy of it.
+test/tools/test_gdbstub_proto: test/tools/test_gdbstub_proto.c src/debug/gdbstub.c \
+		src/debug/gdbsock.c
+	@# -DINLINE: gdbsock.c pulls in src/core/log.h for the refused-peer
+	@# warning, and log.h uses INLINE, which the core build supplies via
+	@# -DINLINE="inline". Test rules get no such default.
+	$(CC) -O2 -Wall -std=c99 -DINLINE=inline $(INCFLAGS) \
+		-o $@ test/tools/test_gdbstub_proto.c src/debug/gdbstub.c \
+		src/debug/gdbsock.c
 
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -2072,10 +2291,14 @@ test/test_pit_clock_rate: test/test_pit_clock_rate.c \
 		src/jerry/jerry.c src/tom/tom.c
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_pit_clock_rate.c
 
+# -DINLINE=inline because this compiles a core source STANDALONE, outside
+# CFLAGS: blitter_mmio.c includes src/core/log.h, which declares
+# `static INLINE`, and every other build of that file gets INLINE from the
+# core's own -DINLINE="inline".  log.h's vj_log_cb is stubbed in the test.
 test/test_blitter_mmio: test/test_blitter_mmio.c src/tom/blitter_mmio.c \
 		src/tom/blitter_internal.h src/tom/blitter.h src/core/vjag_memory.h \
-		src/core/settings.h
-	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		src/core/settings.h src/core/log.h
+	$(CC) -O2 -Wall -std=c99 -DINLINE=inline $(INCFLAGS) \
 		-o $@ test/test_blitter_mmio.c src/tom/blitter_mmio.c
 
 test/test_tom_visible_window: test/test_tom_visible_window.c src/tom/tom.c \
@@ -2171,6 +2394,13 @@ test/tools/test_memory_map: test/tools/test_memory_map.c
 # apply / disable / user-override contract, driven through the real core
 # via the shared harness.  Needs shadowHiresN + shadowFBActive from the
 # wide test symbol set (exports-test.list / link-test.T).
+test/tools/test_disk_control: test/tools/test_disk_control.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_disk_control.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -2297,6 +2527,13 @@ test/tools/rotary_decode_test: test/tools/rotary_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/rotary_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/hires_state_digest: test/tools/hires_state_digest.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/hires_state_digest.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
@@ -2449,6 +2686,22 @@ test/tools/dsp_idle_ab: test/tools/dsp_idle_ab.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
+# GPU analogs of the two tools above (issue #569, GPU port).
+test/tools/gpu_idle_probe_falsify: test/tools/gpu_idle_probe_falsify.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/gpu_idle_probe_falsify.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Not built by `test`: an A/B measurement harness, not an assertion.
+test/tools/gpu_idle_ab: test/tools/gpu_idle_ab.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/gpu_idle_ab.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
 test/test_frontend_pacing: test/test_frontend_pacing.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -2594,6 +2847,11 @@ tools/jagcd/jagcd-chd-check: tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
 
 lint:
 	@scripts/c89-lint.sh
+	@# Hand-maintained source lists that repeat Makefile.common and rot
+	@# invisibly.  Run locally so drift fails BEFORE a push, not after a
+	@# Windows-only CI job fails on a missing header (issue #679).
+	@sh scripts/check-package-sources.sh
+	@sh scripts/check-msvc-sources.sh
 
 # `make coverage` -- builds with gcov instrumentation, runs the full
 # test suite, and produces a Cobertura XML report at coverage.xml plus

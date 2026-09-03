@@ -55,6 +55,7 @@
 #include "jaggd.h"          /* JGD_AUTO_THRESHOLD, jgdActive */
 #include "jaguar.h"         /* jaguarCartInserted, jaguarROMSize, ...CRC32 */
 #include "vjag_memory.h"    /* jaguarMainROM */
+#include "hookfile.h"       /* user-supplied hooks (#637) */
 
 /* The 68K vector table a JST_ROM cartridge places after its $400-byte
  * header: SSP at cart+$400, PC at cart+$404.  Consumed by the loader
@@ -200,16 +201,52 @@ int TitleHookApplyToBuffer(uint8_t *rom, uint32_t romSize,
    return n;
 }
 
+/* <system_dir>/vj_hooks.txt, or empty when the frontend gave us no system
+ * directory.  Static storage: TitleDBHook holds pointers into userSet, so
+ * it must outlive the apply. */
+static char        user_hook_path[1024];
+static HookFileSet userSet;
+
+void TitleHookSetUserFilePath(const char *path)
+{
+   if (!path || !*path)
+   {
+      user_hook_path[0] = '\0';
+      return;
+   }
+   strncpy(user_hook_path, path, sizeof(user_hook_path) - 1);
+   user_hook_path[sizeof(user_hook_path) - 1] = '\0';
+}
+
 int TitleHookApplyROM(void)
 {
    const TitleDBHook *hooks;
    const char *title;
    int count = 0;
+   int userCount = 0;
 
    if (!hooks_enabled)
       return 0;
 
    hooks = TitleDBHooks(&count);
+
+   /* User file wins over a built-in row for the same CRC, matching the
+    * per-title DB's one hard rule ("user-set values always win"), and the
+    * override is logged naming both so a bug report starts from the right
+    * hypothesis.  Parsed AFTER the gate: the gate is read raw via
+    * environ_cb, so a file can never switch on its own gate. */
+   userCount = HookFileLoad(user_hook_path, TitleDBContentCRC(), &userSet);
+   if (userCount > 0)
+   {
+      if (hooks != NULL && count > 0 && hooks[0].kind != TITLEDB_HOOK_NONE)
+         LOG_WRN("[hooks] %s: user hook file overrides the %d built-in "
+                 "hook(s) for this title; the built-in row is NOT applied\n",
+                 TitleDBTitleName() ? TitleDBTitleName() : "(unlisted title)",
+                 count);
+      hooks = userSet.hooks;
+      count = userCount;
+   }
+
    if (hooks == NULL || count <= 0 || hooks[0].kind == TITLEDB_HOOK_NONE)
       return 0;
 

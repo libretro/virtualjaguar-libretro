@@ -173,6 +173,23 @@ int main(void)
          "Doom EX alias row present and carries internal_resolution");
    TitleDBSetCRC(0);
 
+   /* RISC idle-skip qualification rows (issue #707).  One representative
+    * new row (Zoop!) and one pre-existing row that gained the pair
+    * without losing what it already carried (AvP) -- the table-integrity
+    * loop above covers the rest. */
+   TitleDBSetCRC(0xC5562581);
+   {
+      const char *v = TitleDBOverride("virtualjaguar_risc_idle_skip");
+      CHECK(v != NULL && strcmp(v, "enabled") == 0,
+            "Zoop! idle-skip row present and enabled");
+   }
+   TitleDBSetCRC(0xDC187F82);
+   CHECK(TitleDBOverride("virtualjaguar_risc_idle_skip") != NULL,
+         "AvP row gained risc_idle_skip");
+   CHECK(TitleDBOverride("virtualjaguar_internal_resolution") != NULL,
+         "AvP row kept internal_resolution alongside idle-skip");
+   TitleDBSetCRC(0);
+
    /* Hook lookup (issue #370). */
    {
       int hcount = -1;

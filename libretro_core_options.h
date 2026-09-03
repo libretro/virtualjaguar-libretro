@@ -118,9 +118,14 @@ struct retro_core_option_v2_category option_cats_us[] = {
       "Logging and watchdog aids for troubleshooting and bug reports."
    },
    {
-      "timing",
-      "Timing",
-      "Clock speed multipliers, then the experimental hardware-timing models."
+      "speed",
+      "Speed",
+      "Make the emulator faster. Two kinds, and the difference matters: the fast-forward options cost nothing (identical picture and sound, just less work), while the overclocks change what the game itself computes and can break it."
+   },
+   {
+      "accuracy",
+      "Hardware Timing (Experimental)",
+      "Make the emulator slower and more like real silicon. The opposite of Speed above: these exist because parts of the machine are modelled as free, which lets some games run too fast. Still being calibrated."
    },
    { NULL, NULL, NULL },
 };
@@ -211,21 +216,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
-      "virtualjaguar_blit_memo",
-      "Blit Memoization (Per-Title)",
-      NULL,
-      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render the same scene every engine cycle while the player is idle). Output is bit-identical by construction. Enabled per title via the enhancement database; not available for CD content. 'Verify' never skips -- it runs every would-be skip and logs any divergence, for validating new titles. Switches off DSP Idle-Loop Fast-Forward while enabled.",
-      NULL,
-      "video",
-      {
-         { "disabled", "Disabled" },
-         { "enabled",  "Enabled" },
-         { "verify",   "Verify (debug, no speedup)" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
       "virtualjaguar_crash_detect",
       "Crash Detect",
       NULL,
@@ -240,15 +230,96 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled"
    },
-   /* Clock speeds first, then the experimental timing models they interact
-    * with -- the toggles below are grouped under the two scales on purpose. */
+   /* Speed category, ordered by what a user should try first: the two
+    * free fast-forwards (identical output, less work), then the two
+    * overclocks, which change what the game computes and can break it.
+    * blit_memo lives here rather than under Video because it belongs to
+    * the same free-speedup class -- and because it silently switches off
+    * idle-skip, which is undiscoverable from a different category. */
+   {
+      "virtualjaguar_risc_idle_skip",
+      "RISC Idle-Loop Fast-Forward (GPU + DSP)",
+      NULL,
+      "Fast-forward the GPU and DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation and 60%+ less GPU interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. On by default: the corpus sweep behind #708 ran 148 cart images plus 6 CD spot-checks off-vs-on and every single one was byte-identical (framebuffer, audio and savestate hash streams). If a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: a non-stock RISC Clock Scale, DRAM Timing, GPU Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The M68K clock scale and Blitter Bus Timing do not affect it.",
+      NULL,
+      "speed",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
+      "virtualjaguar_blit_memo",
+      "Blit Memoization (Per-Title)",
+      NULL,
+      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render the same scene every engine cycle while the player is idle). Output is bit-identical by construction. Enabled per title via the enhancement database; not available for CD content. 'Verify' never skips -- it runs every would-be skip and logs any divergence, for validating new titles. Switches off DSP Idle-Loop Fast-Forward while enabled.",
+      NULL,
+      "speed",
+      {
+         { "disabled", "Disabled" },
+         { "enabled",  "Enabled" },
+         { "verify",   "Verify (debug, no speedup)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_frameskip",
+      "Frameskip",
+      NULL,
+      "Skip presenting frames to avoid audio buffer under-run (crackling) on hardware too slow to render every frame. 'Auto' skips a frame when the frontend advises an under-run is likely; 'Auto (Threshold)' skips whenever the audio buffer occupancy falls below the chosen percentage (higher = skips earlier and more often). Presentation only: the emulated machine runs every frame in full either way, so save states, run-ahead and netplay are unaffected. Requires frontend support for audio buffer status reporting; without it, all values behave as Disabled.",
+      NULL,
+      "speed",
+      {
+         { "disabled",          "Disabled" },
+         { "auto",              "Auto" },
+         { "auto_threshold_15", "Auto (Threshold 15%)" },
+         { "auto_threshold_30", "Auto (Threshold 30%)" },
+         { "auto_threshold_45", "Auto (Threshold 45%)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_frameskip_max",
+      "Frameskip Maximum",
+      NULL,
+      "Cap on how many frames in a row Frameskip may skip before one is always presented, so the screen keeps moving even while the audio buffer stays low. Has no effect while Frameskip is disabled.",
+      NULL,
+      "speed",
+      {
+         { "1", NULL },
+         { "2", NULL },
+         { "3", NULL },
+         { "4", NULL },
+         { NULL, NULL },
+      },
+      "3"
+   },
+   {
+      "virtualjaguar_enhancement_profile",
+      "Enhancement Profile (Per-Title Defaults)",
+      NULL,
+      "Decide whether the per-title enhancement database may switch on expensive visual enhancements (Internal Resolution 2x, True Color) by default for recognized games. 'Quality' always applies them. 'Performance' never does. 'Auto' applies them on capable hardware, but suppresses them on 32-bit ARM devices and drops them early in a session if the audio buffer reports the machine cannot keep up (the same signal Frameskip uses). Only database-supplied DEFAULTS are affected: any option you set yourself always wins, whatever the profile says.",
+      NULL,
+      "speed",
+      {
+         { "auto",        "Auto" },
+         { "quality",     "Quality" },
+         { "performance", "Performance" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
    {
       "virtualjaguar_m68k_clock_scale",
       "M68K Clock Scale (Overclock)",
       NULL,
-      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix: it can smooth framerate-limited games (Doom, AvP, Checkered Flag) but may break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. If an overclocked game misbehaves, try the timing models below. Report bugs only at 1x.",
+      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix, and it helps less often than you would think: AvP and Checkered Flag were both measured and neither gained anything (AvP is locked to one frame per 5 fields; Checkered Flag caps itself in software), because most Jaguar games are paced by a field lock or their own frame cap rather than by CPU speed. It may also break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. Overclocking the 68000 is the safer of the two scales: it does NOT cost you DSP Idle-Loop Fast-Forward. If an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x.",
       NULL,
-      "timing",
+      "speed",
       {
          { "0.5x", NULL },
          { "1x",   "1x (stock)" },
@@ -263,9 +334,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_clock_scale",
       "RISC (GPU/DSP) Clock Scale (Overclock)",
       NULL,
-      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing; if an overclocked game misbehaves, try the timing models below. Report bugs only at 1x. Anything other than 1x also switches OFF DSP Idle-Loop Fast-Forward, so with that enabled the result can end up SLOWER than stock -- the M68K scale above does not have that side effect.",
+      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing; if an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x. READ THIS FIRST: anything other than 1x switches OFF DSP Idle-Loop Fast-Forward, which is the larger speed-up on most titles -- so on a DSP-bound game this option makes you SLOWER overall, not faster. Try idle-skip on its own before reaching for this. The M68K scale does not have that side effect.",
       NULL,
-      "timing",
+      "speed",
       {
          { "0.5x", NULL },
          { "1x",   "1x (stock)" },
@@ -276,26 +347,12 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
-      "virtualjaguar_risc_idle_skip",
-      "DSP Idle-Loop Fast-Forward",
-      NULL,
-      "Fast-forward the DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. Off by default while the compatibility corpus grows -- if a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: a non-stock RISC Clock Scale, DRAM Timing, GPU Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The M68K clock scale and Blitter Bus Timing do not affect it.",
-      NULL,
-      "timing",
-      {
-         { "disabled", NULL },
-         { "enabled",  NULL },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
       "virtualjaguar_dram_timing",
       "DRAM Timing (Experimental)",
       NULL,
       "Charge the GPU and 68000 realistic DRAM access time once they leave their local buses, pacing hardware-timed games (Doom-class) closer to real hardware. Each processor pays only its own costs, so relative CPU/GPU timing is preserved. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
-      "timing",
+      "accuracy",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
@@ -309,7 +366,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Model the GPU's real instruction costs: the single external-memory gateway, the register score-board and ALU interlocks. The emulated GPU otherwise finishes renders 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
-      "timing",
+      "accuracy",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
@@ -323,7 +380,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Charge the 68000 the bus time each blit really takes -- on hardware the blitter is the top-priority bus master and freezes the cacheless 68000 while it runs. Zero-time blits let games paced on blit completion (Doom's menus, Hover Strike) run too fast. Still being calibrated.",
       NULL,
-      "timing",
+      "accuracy",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
@@ -411,7 +468,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_netlink_speed",
       "Network Link Wire Speed (Enhancement)",
       NULL,
-      "Clocks the emulated serial port faster than real hardware, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next -- at authentic speed (Ultra Vortek's Voice Modem mode settles at 19200 baud, about 5.8 ms of wire time each way per frame) you do not see your own move until the round trip completes. Off by default because a real Voice Modem or JagLink cable is exactly that slow. 'Auto' has the two consoles agree the speed-up between themselves at link-up: nothing to match by hand, and if the peer runs an older core, is not in Auto, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client): frontend netplay has no channel for the two cores to negotiate over and always runs authentic timing. If a game starts dropping link data, turn this off.",
+      "Clocks the emulated serial port faster than real hardware, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next -- at authentic speed (Ultra Vortek's Voice Modem mode settles at 19200 baud, about 5.8 ms of wire time each way per frame) you do not see your own move until the round trip completes. A real Voice Modem or JagLink cable is exactly that slow, which is why this stays an opt-out enhancement rather than a fix. 'Auto' (the default) has the two consoles agree the speed-up between themselves at link-up: nothing to match by hand, and if the peer runs an older core, is not in Auto, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client): frontend netplay has no channel for the two cores to negotiate over and always runs authentic timing. If a game starts dropping link data, turn this off.",
       NULL,
       "network",
       {
@@ -419,7 +476,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "auto",     "Auto (negotiated with peer)" },
          { NULL, NULL },
       },
-      "disabled"
+      "auto"
    },
    {
       "virtualjaguar_voice_chat",
@@ -571,6 +628,80 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_gdb_stub",
+      "GDB Debug Stub (Restart)",
+      NULL,
+      "Open a GDB remote debugging server on localhost so a debugger can inspect the emulated machine. Developer-facing; leave disabled for normal play. By default the server listens only on 127.0.0.1 and is not reachable from another machine; 'GDB Stub: Network Binding' can widen that to your local network, with the security consequences described there. Requires a restart.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_gdb_bind",
+      "GDB Stub: Network Binding (Debug)",
+      NULL,
+      "Which addresses the GDB stub will accept debugger connections from. 'Loopback' (default) accepts only connections from this same machine -- on a phone, tablet or TV that means nothing outside the device can ever reach it. 'LAN' additionally accepts connections from your local network, so you can debug a game running on another device from your computer. SECURITY: the GDB protocol has NO authentication of any kind. While the stub is open, anyone who can reach the port can read and write the emulated machine's memory and control its execution. Only use 'LAN' on a network you trust, only while you are actually debugging, and turn it back off afterwards. Connections from public (non-private) addresses are refused and logged even in 'LAN' mode. Has no effect unless GDB Stub is enabled. Takes effect on content load.",
+      NULL,
+      "diagnostics",
+      {
+         { "loopback", "Loopback (this machine only)" },
+         { "lan",      "LAN (local network -- see warning)" },
+         { NULL, NULL },
+      },
+      "loopback"
+   },
+   {
+      "virtualjaguar_gdb_port",
+      "GDB Stub Port (Restart)",
+      NULL,
+      "TCP port for the GDB debug stub. Change this only if another program already uses the default. Requires a restart.",
+      NULL,
+      "diagnostics",
+      {
+         { "2345", NULL },
+         { "2346", NULL },
+         { "2347", NULL },
+         { "3333", NULL },
+         { NULL, NULL },
+      },
+      "2345"
+   },
+   {
+      "virtualjaguar_gdb_wait",
+      "GDB Stub: Halt At Boot (Restart)",
+      NULL,
+      "Halt the 68000 before its very first instruction and wait for a GDB client to attach, so a boot-time fault can be debugged instead of running to completion before you connect. Only takes effect while the GDB Debug Stub option above is enabled. Requires a restart.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_gdb_halt_timeout",
+      "GDB Stub: Halt Timeout",
+      NULL,
+      "If the machine is halted at a breakpoint with no client activity for this long, resume automatically and log it loudly, so a forgotten debug session does not look like a hang forever. 'Off' means a halt waits indefinitely -- the default, because silently resuming a debugged machine is worse than a freeze for the developers this option is for.",
+      NULL,
+      "diagnostics",
+      {
+         { "off", NULL },
+         { "30",  "30 seconds" },
+         { "60",  "60 seconds" },
+         { "300", "5 minutes" },
+         { NULL, NULL },
+      },
+      "off"
+   },
+   {
       "virtualjaguar_texdump_16bpp",
       "Texture Dump: 16bpp Preview",
       NULL,
@@ -646,13 +777,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_boot_mode",
       "CD Boot Mode (Restart)",
       NULL,
-      "How Jaguar CD discs boot. OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS with the boot ROM on: more faithful, still experimental. It prefers a CD BIOS ROM file from the system directory (several common names and the usual Jaguar / Jaguar CD sub-folders are searched) and otherwise uses the built-in image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If no CD BIOS can be staged at all, the core falls back to HLE rather than failing.",
+      "How Jaguar CD discs boot. OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS with the boot ROM on: more faithful, and verified clean across all 5 tested FMV titles (Dragon's Lair, Space Ace, BrainDead 13, Blue Lightning, Highlander) in 15,000-frame probes. It prefers a CD BIOS ROM file from the system directory (several common names and the usual Jaguar / Jaguar CD sub-folders are searched) and otherwise uses the built-in image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If no CD BIOS can be staged at all, the core falls back to HLE rather than failing. Audio-only (Red Book) CDs always use the real BIOS regardless of this setting, since HLE has no game code to boot from.",
       NULL,
       "cdrom",
       {
          { "hle",  "HLE (Recommended)" },
          { "auto", "Auto (Real BIOS)" },
-         { "bios", "Real BIOS (Included, Experimental)" },
+         { "bios", "Real BIOS (Included)" },
          { NULL, NULL },
       },
       "hle"

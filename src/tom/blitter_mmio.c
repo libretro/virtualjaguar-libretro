@@ -7,6 +7,7 @@
 #include <string.h>
 #include "bus_arbiter.h"
 #include "gpu.h"
+#include "../core/log.h"
 #include "settings.h"
 #include "vjag_memory.h"
 
@@ -322,6 +323,61 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * shadow registers as they run. */
       uint32_t busClks = 0;
       int trBlit = 0;
+
+      /* Re-entrancy guard (issue #659).
+       *
+       * A blit whose destination lands in $F022xx writes the blitter's own
+       * registers as pixel data -- blitter_write_word()/_long() route
+       * anything at or above $200000 through JaguarWrite*(), which comes
+       * straight back here.  A pixel landing on B_CMD's low word (offset
+       * $3A) then dispatches a SECOND blit from inside the first.
+       *
+       * Hardware cannot do that.  The blitter is one state machine and one
+       * bus master; it is not re-entrant, and a write to B_CMD while it is
+       * running cannot start a nested blit on top of the running one.  The
+       * register write itself is real and still happens -- only the nested
+       * dispatch is refused.
+       *
+       * Chroma-Luma Color Pick (PD) is the case that exposed it: the 68K
+       * programs B_COUNT = $2704A7E4 (42980 x 9988 = 429M pixels), the blit
+       * runs away into the register file, writes $0000 over B_CMD, and
+       * re-enters with the same count still latched. Traced at depth=1, but
+       * nothing bounded the nesting, and retro_run never returned -- a hard
+       * freeze of the frontend, invisible to crash_detect because every
+       * watchdog signature is checked between frames.
+       *
+       * Deliberately NOT a cap on blit size. That blit is finite (~16s of
+       * Jaguar time) and hardware would complete it, so truncating it would
+       * be a visible deviation; worse, abandoning a blit part-way leaves
+       * A1/A2 and the counters in a state hardware never reaches, and those
+       * are savestated (the determinism run-ahead and netplay depend on).
+       * This guard is transient within a single dispatch, always zero
+       * between frames, and so has no savestate surface at all. */
+      static int blit_in_progress = 0;
+
+      /* Warn once.  A title reaching this is misprogramming its blit
+       * destination and the user wants to know why the picture is wrong,
+       * but a runaway blit can arrive here on every pixel, so this must
+       * never become a per-pixel log.
+       *
+       * NOTE for anyone touching the includes: this file is also compiled
+       * STANDALONE by test/test_blitter_mmio, outside CFLAGS and without
+       * linking the core.  src/core/log.h needs -DINLINE (supplied by that
+       * Makefile rule) and resolves to vj_log_cb (stubbed in the test's
+       * existing stub block).  Both are required together. */
+      if (blit_in_progress)
+      {
+         static int warned = 0;
+         if (!warned)
+         {
+            warned = 1;
+            LOG_WRN("[blitter] B_CMD written while a blit is running "
+                    "(destination overlaps $F022xx) -- refusing the nested "
+                    "blit; see issue #659\n");
+         }
+         return;
+      }
+
       if (vjs.blitterTiming)
          busClks = BlitDurationSysclks();
 
@@ -340,6 +396,7 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       if (texReplaceEnabled)
          trBlit = TexReplacePreBlit();
 
+      blit_in_progress = 1;
       if (BlitterCompareIsEnabled())
          BlitterRunComparison();
       else if (!BlitMemoLaunch())
@@ -350,6 +407,7 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          else
             BlitterMidsummer2();
       }
+      blit_in_progress = 0;
 
       if (trBlit)
          TexReplacePostBlit();

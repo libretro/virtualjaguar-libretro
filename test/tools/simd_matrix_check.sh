@@ -79,10 +79,16 @@ dump() {
    # calling make happens to carry.  The explicit empty assignments pin the
    # rest of BUILD_AXES for the same reason -- a future `make test` variant
    # that sets DEBUG=1 would otherwise silently move the answer again.
-   env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL \
+   #
+   # LTO is un-set rather than pinned to empty: `LTO=` on the command line
+   # is origin=command / value empty, which the Makefile treats as off and
+   # would hide the ELF default-on.  `env -u LTO` drops a parent
+   # `make LTO=1 test` export so origin is undefined and the default applies.
+   env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL -u LTO \
       make -n -f Makefile -f "$PROBE" vjsimd platform="$plat" \
            COVERAGE= DEBUG= TEST_EXPORTS= BENCH_PROFILE= BLITTER_TRACE= \
            RELEASE_DEBUG_INFO= DEBUG_PRESENTATION= STATIC_LINKING= \
+           IOS_MCPU= \
            "$@" 2>/dev/null \
       | tr -d '"' | sed -n 's/.*\(SIMD=.*\)/\1/p' | head -1
 }
@@ -259,8 +265,57 @@ expect_tune rpi5_64  -O3 cortex-a76   no
 # The target #516 was actually about: -Ofast must survive to the end.
 expect_tune classic_armv7_a7 -Ofast - yes
 # Non-Pi ARM must NOT acquire -mcpu -- we do not know their silicon.
+# ios-arm64 / tvos-arm64: -mtune is ISA-safe; -mcpu is not (A7 / A8 floors).
+expect_tune ios-arm64  -O3 - no
 expect_tune tvos-arm64 -O3 - no
 expect_tune vita       -O2 - no
+
+# expect_mtune <platform> <expected-mtune|->
+expect_mtune() {
+   local plat="$1" want="$2"; shift 2
+   local got cflags mtune
+
+   checked=$((checked + 1))
+   got="$(dump "$plat" "$@")"
+   cflags="$(printf '%s' "$got" | sed -n 's/.*CFLAGS=//p')"
+   mtune="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -E '^-mtune=' | tail -1)"
+
+   if [ -z "$cflags" ]; then
+      printf 'FAIL  %-42s could not read CFLAGS\n' "$plat"; fail=$((fail + 1)); return
+   fi
+   if [ "$want" = "-" ]; then
+      if [ -n "$mtune" ]; then
+         printf 'FAIL  %-42s unexpected %s\n' "$plat" "$mtune"; fail=$((fail + 1)); return
+      fi
+   elif [ "$mtune" != "-mtune=$want" ]; then
+      printf 'FAIL  %-42s -mtune is %s, expected -mtune=%s\n' "$plat" "${mtune:-none}" "$want"
+      fail=$((fail + 1)); return
+   fi
+   [ "$VERBOSE" = 1 ] && printf 'ok    %-42s %s\n' "$plat" "${mtune:-(no -mtune)}"
+   return 0
+}
+
+echo
+echo "simd_matrix_check: Apple -mtune (ISA-safe; no default -mcpu)"
+expect_mtune ios-arm64  apple-a10
+expect_mtune tvos-arm64 apple-a8
+# 32-bit ios9 must not pick up the arm64 tune value.
+expect_mtune ios9 -
+# rpi rows use -mcpu (implies -mtune); they must not also pass -mtune.
+expect_mtune rpi4_64 -
+# Opt-in IOS_MCPU appends -mcpu without dropping -mtune.
+got="$(dump ios-arm64 IOS_MCPU=apple-a12)"
+cflags="$(printf '%s' "$got" | sed -n 's/.*CFLAGS=//p')"
+checked=$((checked + 1))
+mcpu="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -E '^-mcpu=' | tail -1)"
+mtune="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -E '^-mtune=' | tail -1)"
+if [ "$mcpu" != "-mcpu=apple-a12" ] || [ "$mtune" != "-mtune=apple-a10" ]; then
+   printf 'FAIL  %-42s IOS_MCPU=apple-a12 => mtune=%s mcpu=%s\n' \
+      "ios-arm64 IOS_MCPU=apple-a12" "${mtune:-none}" "${mcpu:-none}"
+   fail=$((fail + 1))
+elif [ "$VERBOSE" = 1 ]; then
+   printf 'ok    %-42s %s %s\n' "ios-arm64 IOS_MCPU=apple-a12" "$mtune" "$mcpu"
+fi
 
 echo
 
@@ -323,6 +378,50 @@ expect_vis osx      no  no
 # there expands to __attribute__((__dllexport__)), not the visibility
 # attribute, so it is explicitly excluded from both flags in the Makefile.
 expect_vis win       no  no
+
+# expect_lto <platform> <expect-flto:yes|no> [extra make vars...]
+expect_lto() {
+   local plat="$1" want="$2"; shift 2
+   local got cflags has_lto label
+
+   checked=$((checked + 1))
+   label="$plat${1:+ $1}"
+   got="$(dump "$plat" "$@")"
+   cflags="$(printf '%s' "$got" | sed -n 's/.*CFLAGS=//p')"
+
+   if [ -z "$cflags" ]; then
+      printf 'FAIL  %-42s could not read CFLAGS\n' "$label"; fail=$((fail + 1)); return
+   fi
+   has_lto="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -cE '^-flto$')"
+   if [ "$want" = yes ] && [ "$has_lto" -eq 0 ]; then
+      printf 'FAIL  %-42s missing -flto\n' "$label"; fail=$((fail + 1)); return
+   fi
+   if [ "$want" = no ] && [ "$has_lto" -ne 0 ]; then
+      printf 'FAIL  %-42s unexpectedly has -flto\n' "$label"; fail=$((fail + 1)); return
+   fi
+   [ "$VERBOSE" = 1 ] && printf 'ok    %-42s lto=%s\n' "$label" "$want"
+   return 0
+}
+
+echo
+echo "simd_matrix_check: LTO default (issue #569; ELF on, Mach-O/win/qnx off)"
+# GNU-ld ELF defaults on; LTO=0 opts out.
+expect_lto unix     yes
+expect_lto rpi4_64  yes
+expect_lto rpi1     yes
+expect_lto arm64    yes
+expect_lto unix     no  LTO=0
+# Mach-O default-off; explicit LTO=1 is honoured for host A/B.
+expect_lto osx      no
+expect_lto osx      yes LTO=1
+expect_lto ios-arm64 no
+# win (PE) and qnx stay excluded even with LTO=1.
+expect_lto win      no  LTO=1
+expect_lto qnx      no  LTO=1
+# gcov coverage forces LTO off (GCC computed-goto .L refs break LTO link),
+# even over an explicit LTO=1.
+expect_lto unix     no  COVERAGE=1
+expect_lto unix     no  COVERAGE=1 LTO=1
 
 echo
 if [ "$fail" -ne 0 ]; then

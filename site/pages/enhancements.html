@@ -1,350 +1,433 @@
-<!-- title: Enhancements — Virtual Jaguar libretro -->
+<!-- title: Enhancements | Virtual Jaguar libretro -->
 <!-- nav: Enhancements -->
 <!-- description: Beyond stock Atari Jaguar hardware: true-color rendering, 2x internal resolution, HD texture dump and replacement, overclocking, CD read-speed control and a crash watchdog. -->
 
 <h1>Enhancements</h1>
 <p class="lede">
-  Features the hardware never had. Off by default means bit-identical.
-  Full list: <a href="{{DOCS_OPTIONS_URL}}">libretro docs</a>.
+  None of this was on the hardware. Where an option is off, output is
+  bit-identical to stock. Full list:
+  <a href="{{DOCS_OPTIONS_URL}}">libretro docs</a>.
 </p>
 
-<h2>True-color rendering <span class="badge good">shipped — v3.2.0</span></h2>
-<p>
-  The blitter computes Gouraud shading with 16 fraction bits, then discards
-  them in the 16-bit CRY write. <code>virtualjaguar_true_color</code> keeps
-  them in a shadow framebuffer. Game-visible RAM stays bit-identical.
-</p>
+<section class="win">
+  <h2>True colour <span class="badge">shipped v3.2.0</span></h2>
+  <div class="win-body">
+    <p>
+      The blitter computes Gouraud shading with 16 fraction bits, then throws
+      them away in the 16-bit CRY write.
+      <code>virtualjaguar_true_color</code> keeps them, in a shadow
+      framebuffer. Game-visible RAM stays bit-identical.
+    </p>
 
-<div class="ab-pair">
-  <figure>
-    <div class="label">Stock 16-bit CRY (off)</div>
-    <img src="assets/cyber_off_850.png" alt="Cybermorph terrain, stock 16-bit CRY rendering: visible banding on shaded polygon surfaces" width="326" height="240">
-    <figcaption>Cybermorph, frame 850 &mdash; 304 unique colors.</figcaption>
-  </figure>
-  <figure>
-    <div class="label">True-color (on)</div>
-    <img src="assets/cyber_on_850.png" alt="Cybermorph terrain, true-color rendering: smooth gradients on shaded polygon surfaces" width="326" height="240">
-    <figcaption>Same frame, same inputs &mdash; 450 unique colors.</figcaption>
-  </figure>
-</div>
+    <div class="ab-pair">
+      <figure class="shot">
+        <div class="win-bar">Stock 16-bit CRY, off</div>
+        <div class="well">
+          <img src="assets/cyber_off_850.png" width="326" height="240"
+               alt="Cybermorph terrain, stock 16-bit CRY rendering: visible banding on shaded polygon surfaces">
+        </div>
+        <figcaption>Cybermorph, frame 850. 304 unique colours.</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="win-bar">True colour, on</div>
+        <div class="well">
+          <img src="assets/cyber_on_850.png" width="326" height="240"
+               alt="Cybermorph terrain, true-color rendering: smooth gradients on shaded polygon surfaces">
+        </div>
+        <figcaption>Same frame, same inputs. 450 unique colours.</figcaption>
+      </figure>
+    </div>
 
-<figure class="smooth">
-  <img src="assets/truecolor_ab_cybermorph.png" alt="Three-panel comparison: stock frame, true-color frame, and a difference map amplified 64 times showing shading refinement across polygon surfaces">
-  <figcaption>
-    Off / on / difference (amplified 64&times;). 45.9% of pixels refined;
-    every changed channel moves exactly one quantization step.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Cybermorph <span class="badge">off / on / difference</span></div>
+      <div class="well">
+        <img src="assets/truecolor_ab_cybermorph.png"
+             alt="Three-panel comparison: stock frame, true-color frame, and a difference map amplified 64 times showing shading refinement across polygon surfaces">
+      </div>
+      <figcaption>
+        Difference amplified 64x. <strong>45.9% of pixels refined</strong>,
+        and every changed channel moves exactly one quantization step.
+      </figcaption>
+    </figure>
 
-<div class="evidence">
-  304&nbsp;&rarr;&nbsp;450 unique colors (peak 423&nbsp;&rarr;&nbsp;702). Both
-  blitter engines agree exactly; off, 600 frames hash bit-identical to develop.
-  CRY 16bpp only, ~8&nbsp;MB when enabled. Shipped in
-  <a href="{{REPO}}/releases/tag/v3.2.0">v3.2.0</a> &mdash;
-  <a href="{{REPO}}/pull/341">PR #341</a>.
-</div>
+    <div class="evidence">
+      304 -&gt; 450 unique colours, peak 423 -&gt; 702. Both blitter engines
+      agree exactly. With the option off, 600 frames hash bit-identical to
+      develop. CRY 16bpp only, roughly 8&nbsp;MB when enabled. Shipped in
+      <a href="{{REPO}}/releases/tag/v3.2.0">v3.2.0</a>,
+      <a href="{{REPO}}/pull/341">PR #341</a>.
+    </div>
+  </div>
+</section>
 
-<h2>Internal resolution 2&times; <span class="badge good">complete — v3.3.0</span></h2>
-<p>
-  The blitter is the Jaguar's rasterizer, and it walks source textures with
-  16.16 fixed-point steps &mdash; then rounds each output pixel to the nearest
-  texel and throws the rest away. <code>virtualjaguar_internal_resolution</code>
-  (<code>1x</code> default, <code>2x</code>; restart required) re-samples those
-  same walks at double density into a shadow surface. The extra pixels are
-  <strong>source data the hardware sampled past</strong>; no interpolation
-  or filtering is involved.
-</p>
-<p>
-  As of <a href="{{REPO}}/releases/tag/v3.3.0">v3.3.0</a> the pipeline is
-  complete: supersampling covers fractional-walk <strong>blits</strong>
-  (Stage&nbsp;2), the Object Processor's <strong>scaled sprites</strong>
-  (Stage&nbsp;3, SCBITOBJ) including <strong>8bpp CLUT objects</strong>, and
-  both <strong>CRY and RGB16 direct</strong> video modes render the recovered
-  detail to the screen. The RGB16 renderer mattered more than it sounds:
-  measured across ~3,000,000 scaled calls, Val d&rsquo;Is&egrave;re and Primal
-  Rage are 100% RGB16 &mdash; before v3.3.0 an entire class of titles produced
-  supersampled content and then threw it away at scanline time. And the CLUT
-  extension is what reaches 2D games at all: scaled CLUT objects are 81% of the
-  truly-scaled pixels in International Sensible Soccer and 76% in
-  Val d&rsquo;Is&egrave;re.
-</p>
-<p>
-  The emulated machine never sees it. The stock framebuffer stays bit-identical
-  and savestate digests match between <code>1x</code> and <code>2x</code> &mdash;
-  both proven per-title by committed tooling
-  (<a href="{{REPO}}/blob/develop/test/tools/hires_box_check.c">hires_box_check</a>,
-  <a href="{{REPO}}/blob/develop/test/tools/hires_state_digest.c">hires_state_digest</a>),
-  not asserted.
-</p>
+<section class="win">
+  <h2>Internal resolution 2x <span class="badge">complete v3.3.0</span></h2>
+  <div class="win-body">
+    <p>
+      The blitter is the Jaguar's rasterizer, and it walks source textures
+      with 16.16 fixed-point steps, then rounds each output pixel to the
+      nearest texel and throws the rest away.
+      <code>virtualjaguar_internal_resolution</code> (<code>1x</code> default,
+      <code>2x</code>, restart required) re-samples those same walks at double
+      density into a shadow surface. The extra pixels are <strong>source data
+      the hardware sampled past</strong>. No interpolation or filtering is
+      involved.
+    </p>
+    <p>
+      As of <a href="{{REPO}}/releases/tag/v3.3.0">v3.3.0</a> the pipeline is
+      complete. Supersampling covers fractional-walk <strong>blits</strong>
+      (Stage&nbsp;2), the Object Processor's <strong>scaled sprites</strong>
+      (Stage&nbsp;3, SCBITOBJ) including <strong>8bpp CLUT objects</strong>,
+      and both <strong>CRY and RGB16 direct</strong> video modes render the
+      recovered detail to the screen.
+    </p>
+    <p>
+      The RGB16 renderer mattered more than it sounds. Measured across about
+      3,000,000 scaled calls, Val d&rsquo;Is&egrave;re and Primal Rage are
+      100% RGB16: before v3.3.0 an entire class of titles produced
+      supersampled content and then threw it away at scanline time. The CLUT
+      extension is what reaches 2D games at all. Scaled CLUT objects are 81%
+      of the truly-scaled pixels in International Sensible Soccer and 76% in
+      Val d&rsquo;Is&egrave;re.
+    </p>
+    <p>
+      The emulated machine never sees any of it. The stock framebuffer stays
+      bit-identical and savestate digests match between <code>1x</code> and
+      <code>2x</code>. Both are proven per-title by committed tooling,
+      <a href="{{REPO}}/blob/develop/test/tools/hires_box_check.c">hires_box_check</a>
+      and
+      <a href="{{REPO}}/blob/develop/test/tools/hires_state_digest.c">hires_state_digest</a>,
+      rather than asserted.
+    </p>
 
-<figure class="smooth">
-  <img src="assets/hires_ab_avp_fullframe.png" width="1360" height="574"
-       alt="Alien vs Predator frame 6000, two panels side by side: left is the 1x frame with every pixel doubled, right is the same frame at 2x internal resolution. Both show an Alien's claw in a textured corridor facing a chevron-panelled door; the panels differ only in fine texture detail.">
-  <figcaption>
-    Alien vs Predator, frame 6000, same ROM and same input script &mdash; only
-    the option differs. <strong>At 1:1 the difference is subtle</strong>: this
-    buys fine texture detail, not a change in composition or colour.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Alien vs Predator, frame 6000 <span class="badge">1x / 2x</span></div>
+      <div class="well">
+        <img src="assets/hires_ab_avp_fullframe.png" width="1360" height="574"
+             alt="Alien vs Predator frame 6000, two panels side by side: left is the 1x frame with every pixel doubled, right is the same frame at 2x internal resolution. Both show an Alien's claw in a textured corridor facing a chevron-panelled door; the panels differ only in fine texture detail.">
+      </div>
+      <figcaption>
+        Same ROM, same input script. Only the option differs.
+        <strong>At 1:1 the difference is subtle.</strong> This buys fine
+        texture detail, not a change in composition or colour.
+      </figcaption>
+    </figure>
 
-<figure class="smooth">
-  <img src="assets/hires_ab_avp_wall.png" width="1016" height="446"
-       alt="Magnified 6x crop of the corridor wall and floor. In the 1x panel the wall ribs are flat 2x2 blocks of a single colour; in the 2x panel the same ribs carry intermediate texel values and the diagonal wall-floor edge steps in half-pixel increments.">
-  <figcaption>
-    Same frame, <strong>magnified 6&times;</strong> from the 1&times; pixel
-    grid. The ribbed wall is where it reads: those columns are minified source
-    walks, so the extra scanline lands on a different texel about half the time.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Corridor wall <span class="badge">magnified 6x</span></div>
+      <div class="well">
+        <img src="assets/hires_ab_avp_wall.png" width="1016" height="446"
+             alt="Magnified 6x crop of the corridor wall and floor. In the 1x panel the wall ribs are flat 2x2 blocks of a single colour; in the 2x panel the same ribs carry intermediate texel values and the diagonal wall-floor edge steps in half-pixel increments.">
+      </div>
+      <figcaption>
+        Same frame, magnified 6x from the 1x pixel grid. The ribbed wall is
+        where it reads: those columns are minified source walks, so the extra
+        scanline lands on a different texel about half the time.
+      </figcaption>
+    </figure>
 
-<figure class="smooth">
-  <img src="assets/hires_ab_avp_door.png" width="776" height="386"
-       alt="Magnified 6x crop of the chevron-panelled door. The 2x panel resolves sub-texel shading along the chevron edges and across the panel face that the box-replicated 1x panel cannot represent.">
-  <figcaption>
-    The door, <strong>magnified 6&times;</strong>. Some of what appears here is
-    an intermediate value between two adjacent texels &mdash; a finer gradient,
-    reading as stippling at this magnification &mdash; rather than new
-    structure. It is still recovered source data, but it is not extra geometry.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Chevron door <span class="badge">magnified 6x</span></div>
+      <div class="well">
+        <img src="assets/hires_ab_avp_door.png" width="776" height="386"
+             alt="Magnified 6x crop of the chevron-panelled door. The 2x panel resolves sub-texel shading along the chevron edges and across the panel face that the box-replicated 1x panel cannot represent.">
+      </div>
+      <figcaption>
+        Some of what appears here is an intermediate value between two
+        adjacent texels, a finer gradient reading as stippling at this
+        magnification, rather than new structure. It is still recovered source
+        data. It is not extra geometry.
+      </figcaption>
+    </figure>
 
-<figure class="smooth">
-  <img src="assets/hires_ab_valdisere_fullframe.png" width="1048" height="448"
-       alt="Val d'Isere Skiing and Snowboarding, downhill run: left is the 1x frame pixel-doubled, right is the same frame at 2x internal resolution. The snowboarder, trees and course furniture carry finer edges on the right.">
-  <figcaption>
-    Val d&rsquo;Is&egrave;re, mid-run at 46&nbsp;MPH, same ROM and same input
-    script &mdash; only the option differs. This title measured a flat
-    <strong>0.0000%</strong> before v3.3.0: every scaled object on screen is an
-    8bpp CLUT sprite, and its video mode is RGB16. Both v3.3.0 additions are
-    load-bearing here.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Val d&rsquo;Is&egrave;re, 46 MPH <span class="badge">1x / 2x</span></div>
+      <div class="well">
+        <img src="assets/hires_ab_valdisere_fullframe.png" width="1048" height="448"
+             alt="Val d'Isere Skiing and Snowboarding, downhill run: left is the 1x frame pixel-doubled, right is the same frame at 2x internal resolution. The snowboarder, trees and course furniture carry finer edges on the right.">
+      </div>
+      <figcaption>
+        Same ROM, same input script. Only the option differs. This title
+        measured a flat <strong>0.0000%</strong> before v3.3.0: every scaled
+        object on screen is an 8bpp CLUT sprite, and its video mode is RGB16.
+        Both v3.3.0 additions are load-bearing here.
+      </figcaption>
+    </figure>
 
-<figure class="smooth">
-  <img src="assets/hires_ab_valdisere_detail.png" width="1208" height="360"
-       alt="Magnified 3x crop of the course ahead of the snowboarder. The tree clusters in the 2x panel resolve branch-level structure where the 1x panel shows flat 2x2 blocks.">
-  <figcaption>
-    The course ahead, <strong>magnified 3&times;</strong> (densest-detail
-    window, located by measurement rather than by eye). The trees are scaled
-    8bpp CLUT objects &mdash; exactly the path Stage&nbsp;3&rsquo;s CLUT
-    extension supersamples &mdash; and at 2&times; they resolve branch
-    structure the 1&times; walk stepped past.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Course ahead <span class="badge">magnified 3x</span></div>
+      <div class="well">
+        <img src="assets/hires_ab_valdisere_detail.png" width="1208" height="360"
+             alt="Magnified 3x crop of the course ahead of the snowboarder. The tree clusters in the 2x panel resolve branch-level structure where the 1x panel shows flat 2x2 blocks.">
+      </div>
+      <figcaption>
+        The densest-detail window, located by measurement rather than by eye.
+        The trees are scaled 8bpp CLUT objects, exactly the path
+        Stage&nbsp;3's CLUT extension supersamples, and at 2x they resolve
+        branch structure the 1x walk stepped past.
+      </figcaption>
+    </figure>
 
-<figure class="smooth">
-  <img src="assets/hires_diff_valdisere_detail.png" width="1816" height="360"
-       alt="Three panels: the 1x crop, the 2x crop, and their difference amplified 8 times. The difference concentrates on the tree clusters.">
-  <figcaption>
-    Same crop &mdash; 1&times; / 2&times; / difference
-    <strong>amplified 8&times;</strong>. The recovered detail concentrates
-    exactly where the scaled objects are; the flat snow, which carries no
-    sub-texel information, stays black.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Same crop <span class="badge">1x / 2x / difference 8x</span></div>
+      <div class="well">
+        <img src="assets/hires_diff_valdisere_detail.png" width="1816" height="360"
+             alt="Three panels: the 1x crop, the 2x crop, and their difference amplified 8 times. The difference concentrates on the tree clusters.">
+      </div>
+      <figcaption>
+        The recovered detail concentrates exactly where the scaled objects
+        are. The flat snow, which carries no sub-texel information, stays
+        black.
+      </figcaption>
+    </figure>
 
-<h3>Doom and JagDoomEX</h3>
-<p>
-  Doom &mdash; and the popular <strong>JagDoomEX</strong> romhack, which the
-  per-title database recognizes by its patched CRCs and enhances identically
-  &mdash; is CRY-mode and blit-rendered, so it exercises the Stage&nbsp;2 path.
-  The frame below is from the attract demo, machine-selected for the highest
-  measured sub-pixel density in the run (13.9% of 2&times;2 blocks).
-</p>
+    <h3>Doom and JagDoomEX</h3>
+    <p>
+      Doom is CRY-mode and blit-rendered, so it exercises the Stage&nbsp;2
+      path. So does the <strong>JagDoomEX</strong> romhack: the per-title
+      database recognizes it by its patched CRCs and enhances it identically.
+      The frame below is from the attract demo, machine-selected for the
+      highest measured sub-pixel density in the run, 13.9% of 2x2 blocks.
+    </p>
 
-<figure class="smooth">
-  <img src="assets/hires_ab_doomex_fullframe.png" width="1312" height="480"
-       alt="JagDoomEX demo frame: left is the 1x frame pixel-doubled, right the same frame at 2x internal resolution with true color.">
-  <figcaption>
-    JagDoomEX, demo frame 1800, same ROM and same (empty) input &mdash; only
-    the options differ: 2&times; + true colour, the exact preset the per-title
-    database applies for Doom and both JagDoomEX CRCs.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">JagDoomEX, demo frame 1800 <span class="badge">1x / 2x</span></div>
+      <div class="well">
+        <img src="assets/hires_ab_doomex_fullframe.png" width="1312" height="480"
+             alt="JagDoomEX demo frame: left is the 1x frame pixel-doubled, right the same frame at 2x internal resolution with true color.">
+      </div>
+      <figcaption>
+        Same ROM, same (empty) input. Only the options differ: 2x plus true
+        colour, both set by hand for this capture. The per-title database
+        applies 2x alone to Doom and the JagDoomEX CRCs; true colour was
+        dropped from those rows once a pixel diff measured it at 0.0000%.
+      </figcaption>
+    </figure>
 
-<figure class="smooth">
-  <img src="assets/hires_diff_doomex_wall.png" width="1816" height="360"
-       alt="Three panels of a wall crop magnified 3x: 1x, 2x, and the difference amplified 8 times showing dense horizontal runs of recovered texels across the wall texture.">
-  <figcaption>
-    Wall crop, <strong>magnified 3&times;</strong> &mdash; 1&times; /
-    2&times; / difference <strong>amplified 8&times;</strong>. 14.7% of the
-    frame&rsquo;s pixels change; the diagonal mortar seam resolves continuously
-    at 2&times; where the 1&times; walk renders it broken. Doom&rsquo;s
-    palette is deliberately murky, so the honest presentation is the
-    difference map &mdash; at 1:1 this reads as texture solidity, not a
-    different picture.
-  </figcaption>
-</figure>
+    <figure class="shot smooth wide">
+      <div class="win-bar">Wall crop <span class="badge">1x / 2x / difference 8x</span></div>
+      <div class="well">
+        <img src="assets/hires_diff_doomex_wall.png" width="1816" height="360"
+             alt="Three panels of a wall crop magnified 3x: 1x, 2x, and the difference amplified 8 times showing dense horizontal runs of recovered texels across the wall texture.">
+      </div>
+      <figcaption>
+        Magnified 3x. <strong>14.7% of the frame's pixels change</strong>, and
+        the diagonal mortar seam resolves continuously at 2x where the 1x walk
+        renders it broken. Doom's palette is deliberately murky, so the honest
+        presentation is the difference map. At 1:1 this reads as texture
+        solidity, not as a different picture.
+      </figcaption>
+    </figure>
 
-<p>
-  <strong>Which titles benefit, measured.</strong> The number is the share of
-  2&times;2 output blocks carrying genuine sub-pixel detail &mdash; a coverage
-  figure, not &ldquo;N% better image&rdquo;. Every scene below was
-  screenshot-verified in real gameplay, and is identical on both blitter
-  engines.
-</p>
+    <h3>Which titles benefit, measured</h3>
+    <p>
+      The number is the share of 2x2 output blocks carrying genuine sub-pixel
+      detail. It is a coverage figure, not &ldquo;N% better image&rdquo;.
+      Every scene below was screenshot-verified in real gameplay, and is
+      identical on both blitter engines.
+    </p>
 
-<div class="table-wrap"><table>
-  <tr><th>Title</th><th>Scene</th><th>Blocks with real sub-pixel detail</th></tr>
-  <tr><td>Alien vs Predator</td><td>textured corridor, standing still</td><td>30.6%</td></tr>
-  <tr><td>Alien vs Predator</td><td>same level, walking into a door</td><td>13.0%</td></tr>
-  <tr><td>Skyhammer</td><td>in-mission cockpit, city flight</td><td>3.4&ndash;17.7%</td></tr>
-  <tr><td>Doom</td><td>E1M1 gameplay</td><td>8.7%</td></tr>
-  <tr><td>Missile Command 3D</td><td>Original 3D gameplay</td><td>5.0&ndash;5.9%</td></tr>
-  <tr><td>Val d&rsquo;Is&egrave;re Skiing</td><td>downhill run (new in v3.3.0: RGB16 + scaled CLUT)</td><td>2.5&ndash;7.2% <em>(was 0.0000%)</em></td></tr>
-  <tr><td>International Sensible Soccer</td><td>match kickoff (scaled CLUT sprites)</td><td>0.1&ndash;0.6% <em>(was 0.0000% outside 16bpp scenes)</em></td></tr>
-</table></div>
+    <div class="table-wrap"><table>
+      <tr><th>Title</th><th>Scene</th><th>Blocks with real sub-pixel detail</th></tr>
+      <tr><td>Alien vs Predator</td><td>textured corridor, standing still</td><td>30.6%</td></tr>
+      <tr><td>Alien vs Predator</td><td>same level, walking into a door</td><td>13.0%</td></tr>
+      <tr><td>Skyhammer</td><td>in-mission cockpit, city flight</td><td>3.4-17.7%</td></tr>
+      <tr><td>Doom</td><td>E1M1 gameplay</td><td>8.7%</td></tr>
+      <tr><td>Missile Command 3D</td><td>Original 3D gameplay</td><td>5.0-5.9%</td></tr>
+      <tr><td>Val d&rsquo;Is&egrave;re Skiing</td><td>downhill run (new in v3.3.0: RGB16 + scaled CLUT)</td><td>2.5-7.2% <em>(was 0.0000%)</em></td></tr>
+      <tr><td>International Sensible Soccer</td><td>match kickoff (scaled CLUT sprites)</td><td>0.1-0.6% <em>(was 0.0000% outside 16bpp scenes)</em></td></tr>
+    </table></div>
 
-<p>
-  The AvP spread is the honest shape of this feature: a corridor viewed down
-  its length is minification-heavy and recovers a lot; a wall pressed against
-  the camera is magnification-heavy and recovers little. Stage&nbsp;2 recovers
-  information <em>only where the source walk minifies</em>.
-</p>
+    <p>
+      The AvP spread is the honest shape of this feature. A corridor viewed
+      down its length is minification-heavy and recovers a lot. A wall pressed
+      against the camera is magnification-heavy and recovers little.
+      Stage&nbsp;2 recovers information <em>only where the source walk
+      minifies</em>.
+    </p>
 
-<p>
-  <strong>Which titles it does nothing for, and why.</strong> Three census
-  candidates measured a true 0.0000%, for three different reasons:
-</p>
-<ul>
-  <li><strong>Towers II</strong> &mdash; zero non-uniform blocks across
-  1.17&nbsp;billion rendered pixels. Its content is information-theoretically
-  flat for this feature.</li>
-  <li><strong>I-War</strong> and <strong>Towers II</strong> &mdash; they
-  magnify their textures (81% of I-War's qualifying walks consume less than one
-  texel per pixel). The half-step sample lands inside the same texel, so there
-  is nothing to recover. Information-theoretic, not a bug.</li>
-  <li><strong>Cybermorph</strong> and <strong>Checkered Flag</strong> &mdash;
-  effectively none of their blits use a fractional source walk (13 and 8
-  qualifying blits out of roughly 1.7&nbsp;M each), and Cybermorph re-measured
-  0.0000% on v3.3.0 even with true colour on. Nothing for this feature to hook
-  into &mdash; use True Color there instead, which is exactly why the
-  per-title defaults ship it for Cybermorph.</li>
-</ul>
-<p>
-  Iron Soldier 2 on CD is <em>unverified</em>, not zero &mdash; its gameplay
-  could not be reached headlessly. This helps some games. It does not help all
-  of them.
-</p>
+    <h3>Which titles it does nothing for</h3>
+    <p>
+      Three census candidates measured a true 0.0000%, for three different
+      reasons.
+    </p>
+    <ul>
+      <li><strong>Towers II</strong>: zero non-uniform blocks across 1.17
+      billion rendered pixels. Its content is information-theoretically flat
+      for this feature.</li>
+      <li><strong>I-War</strong> and <strong>Towers II</strong>: they magnify
+      their textures. 81% of I-War's qualifying walks consume less than one
+      texel per pixel, so the half-step sample lands inside the same texel and
+      there is nothing to recover. Information-theoretic, not a bug.</li>
+      <li><strong>Cybermorph</strong> and <strong>Checkered Flag</strong>:
+      effectively none of their blits use a fractional source walk, 13 and 8
+      qualifying blits out of roughly 1.7&nbsp;M each, and Cybermorph
+      re-measured 0.0000% on v3.3.0 even with true colour on. There is nothing
+      for this feature to hook into. Use True Color there instead, which is
+      why the per-title defaults ship it for Cybermorph.</li>
+    </ul>
+    <p>
+      Iron Soldier 2 on CD is <em>unverified</em>, not zero: its gameplay
+      could not be reached headlessly. This helps some games. It does not help
+      all of them.
+    </p>
 
-<p>
-  <strong>The cost.</strong> 2&times; scales with screen area, so budget for it
-  on a handheld: Stage&nbsp;1 measured Doom at +13% frame time, and
-  Stage&nbsp;2 adds roughly +1.5% (Doom) to +7.4% (Missile Command 3D) on top
-  of that. At <code>1x</code> the cost is nil and the output is bit-identical.
-</p>
+    <h3>The cost</h3>
+    <p>
+      2x scales with screen area, so budget for it on a handheld.
+      Stage&nbsp;1 measured Doom at +13% frame time, and Stage&nbsp;2 adds
+      roughly +1.5% (Doom) to +7.4% (Missile Command 3D) on top of that. At
+      <code>1x</code> the cost is nil and the output is bit-identical.
+    </p>
 
-<div class="evidence">
-  Stage&nbsp;1+2 shipped in v3.2.0 (<a href="{{REPO}}/pull/353">PR #353</a>,
-  <a href="{{REPO}}/pull/359">PR #359</a>); Stage&nbsp;3 and the RGB16 renderer
-  shipped in <a href="{{REPO}}/releases/tag/v3.3.0">v3.3.0</a>
-  (<a href="{{REPO}}/pull/381">PR #381</a>,
-  <a href="{{REPO}}/pull/383">PR #383</a>, the CLUT extension in
-  <a href="{{REPO}}/issues/367">#367</a>). Method, per-title input scripts and
-  instrumentation:
-  <a href="{{REPO}}/blob/develop/docs/avp-renderer-analysis.md">docs/avp-renderer-analysis.md</a>
-  &middot; <a href="{{REPO}}/blob/develop/docs/hires-stage0-census.md">corpus census</a>
-  &middot; <a href="{{REPO}}/blob/develop/docs/hires-upscaling-design.md">design</a>
-  &middot; epic <a href="{{REPO}}/issues/338">#338</a>.
-</div>
+    <div class="evidence">
+      Stage&nbsp;1 and 2 shipped in v3.2.0 (<a href="{{REPO}}/pull/353">PR
+      #353</a>, <a href="{{REPO}}/pull/359">PR #359</a>). Stage&nbsp;3 and the
+      RGB16 renderer shipped in
+      <a href="{{REPO}}/releases/tag/v3.3.0">v3.3.0</a>
+      (<a href="{{REPO}}/pull/381">PR #381</a>,
+      <a href="{{REPO}}/pull/383">PR #383</a>, the CLUT extension in
+      <a href="{{REPO}}/issues/367">#367</a>). Method, per-title input scripts
+      and instrumentation:
+      <a href="{{REPO}}/blob/develop/docs/avp-renderer-analysis.md">docs/avp-renderer-analysis.md</a>
+      &middot; <a href="{{REPO}}/blob/develop/docs/hires-stage0-census.md">corpus census</a>
+      &middot; <a href="{{REPO}}/blob/develop/docs/hires-upscaling-design.md">design</a>
+      &middot; epic <a href="{{REPO}}/issues/338">#338</a>.
+    </div>
+  </div>
+</section>
 
-<h2>HD texture dump and replacement <span class="badge good">shipped &mdash; v3.4.0</span></h2>
-<p>
-  Both halves of a texture-pack pipeline. <code>virtualjaguar_texture_dump</code>
-  writes every unique blit source the game uses to
-  <code>&lt;system&gt;/vj_texdump/&lt;CRC32&gt;/</code> as a PNG named by a
-  stable content hash (FNV-1a&nbsp;64 over format, dimensions and raw source
-  bytes). The palette is deliberately excluded from the hash: the Jaguar
-  blitter never sees one, and a key the replacement pipeline cannot
-  discriminate would strand every pack drawn against it. The identity
-  contract is frozen in
-  <a href="{{REPO}}/blob/develop/docs/texture-dump.md">docs/texture-dump.md</a>.
-</p>
-<p>
-  Redraw a tile, keep its filename, move it one directory over
-  (<code>vj_texpacks/&lt;CRC32&gt;/</code>) and it presents in place of the
-  original. Packs are true colour; nothing quantises back to CRY, and a pack
-  pixel with alpha below 128 keeps the stock pixel. Replacement rides the
-  true-colour shadow framebuffer and never writes the emulated machine, so
-  savestates, rewind, run-ahead and netplay stay bit-identical with or
-  without a pack. A pack cannot desync a link game.
-</p>
-<p>
-  Tier&nbsp;1 covers 16bpp source tiles at 1&times; through straight-copy
-  blits, the sprite and UI class dump mode was built around. Indexed sources
-  (tier&nbsp;2) and Stage&nbsp;2 hi-res surfaces (tier&nbsp;3) are designed
-  but not implemented; those entries are skipped and the stock pixel
-  presents. The replacement option only appears when a pack directory exists
-  for the loaded cartridge.
-</p>
-<div class="evidence">
-  Shipped in <a href="{{REPO}}/releases/tag/v3.4.0">v3.4.0</a> &middot;
-  <a href="{{REPO}}/issues/369">#369</a> &middot; identity contract:
-  <a href="{{REPO}}/blob/develop/docs/texture-dump.md">docs/texture-dump.md</a>.
-</div>
+<section class="win">
+  <h2>HD texture dump and replacement <span class="badge">shipped v3.4.0</span></h2>
+  <div class="win-body">
+    <p>
+      Both halves of a texture-pack pipeline.
+      <code>virtualjaguar_texture_dump</code> writes every unique blit source
+      the game uses to <code>&lt;system&gt;/vj_texdump/&lt;CRC32&gt;/</code>
+      as a PNG named by a stable content hash: FNV-1a&nbsp;64 over format,
+      dimensions and raw source bytes.
+    </p>
+    <p>
+      The palette is deliberately excluded from that hash. The Jaguar blitter
+      never sees one, and a key the replacement pipeline cannot discriminate
+      would strand every pack drawn against it. The identity contract is
+      frozen in
+      <a href="{{REPO}}/blob/develop/docs/texture-dump.md">docs/texture-dump.md</a>.
+    </p>
+    <p>
+      Redraw a tile, keep its filename, move it one directory over to
+      <code>vj_texpacks/&lt;CRC32&gt;/</code>, and it presents in place of the
+      original. Packs are true colour. Nothing quantises back to CRY, and a
+      pack pixel with alpha below 128 keeps the stock pixel. Replacement rides
+      the true-colour shadow framebuffer and never writes the emulated
+      machine, so savestates, rewind, run-ahead and netplay stay bit-identical
+      with or without a pack. A pack cannot desync a link game.
+    </p>
+    <p>
+      Tier&nbsp;1 covers 16bpp source tiles at 1x through straight-copy blits,
+      the sprite and UI class the dump mode was built around. Indexed sources
+      (tier&nbsp;2) and Stage&nbsp;2 hi-res surfaces (tier&nbsp;3) are
+      designed but not implemented; those entries are skipped and the stock
+      pixel presents. The replacement option only appears when a pack
+      directory exists for the loaded cartridge.
+    </p>
+    <div class="evidence">
+      Shipped in <a href="{{REPO}}/releases/tag/v3.4.0">v3.4.0</a> &middot;
+      <a href="{{REPO}}/issues/369">#369</a> &middot; identity contract:
+      <a href="{{REPO}}/blob/develop/docs/texture-dump.md">docs/texture-dump.md</a>.
+    </div>
+  </div>
+</section>
 
-<h2>Overclocking that doesn't break the game</h2>
-<p>
-  <code>virtualjaguar_m68k_clock_scale</code> (0.5&times;&ndash;3&times;) and
-  <code>virtualjaguar_risc_clock_scale</code> (0.5&times;&ndash;2&times;).
-  Bus latencies stay in wall time at any scale &mdash; pacing and pitch don't
-  drift; CI proves it at non-1&times; scales.
-</p>
-<div class="evidence">
-  <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a>
-  (#314, #316) &middot; cycle-domain contract
-  <a href="{{REPO}}/issues/318">#318</a>,
-  <a href="{{REPO}}/pull/337">PR #337</a> (merged).
-</div>
+<section class="win">
+  <h2>Clock scaling</h2>
+  <div class="win-body">
+    <p>
+      <code>virtualjaguar_m68k_clock_scale</code> runs 0.5x to 3x, and
+      <code>virtualjaguar_risc_clock_scale</code> 0.5x to 2x. Bus latencies
+      stay in wall time at any scale, so pacing and pitch do not drift. CI
+      proves it at non-1x scales.
+    </p>
+    <div class="evidence">
+      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a>
+      (#314, #316) &middot; cycle-domain contract
+      <a href="{{REPO}}/issues/318">#318</a>,
+      <a href="{{REPO}}/pull/337">PR #337</a> (merged).
+    </div>
+  </div>
+</section>
 
-<h2>CD read-speed control</h2>
-<p>
-  <code>virtualjaguar_cd_read_speed</code>: 1&times; (hardware-faithful) to
-  instant, on the HLE path. Streaming reads keep fast transfers from stomping
-  in-flight game code &mdash; regression-tested.
-</p>
-<div class="evidence">
-  <a href="{{REPO}}/blob/develop/docs/cd-read-speed.md">docs/cd-read-speed.md</a>
-  &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a>.
-</div>
+<section class="win">
+  <h2>CD read speed</h2>
+  <div class="win-body">
+    <p>
+      <code>virtualjaguar_cd_read_speed</code> runs from 1x
+      (hardware-faithful) to instant, on the HLE path. Streaming reads keep
+      fast transfers from stomping in-flight game code. Regression-tested.
+    </p>
+    <div class="evidence">
+      <a href="{{REPO}}/blob/develop/docs/cd-read-speed.md">docs/cd-read-speed.md</a>
+      &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a>.
+    </div>
+  </div>
+</section>
 
-<h2>Crash watchdog</h2>
-<p>
-  <code>virtualjaguar_crash_detect</code> (default on) matches known failure
-  signatures each frame. Your frontend log names the broken subsystem.
-</p>
-<div class="evidence">
-  <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">src/core/crash_detect.c</a>
-  (signatures and thresholds in the header comment).
-</div>
+<section class="win">
+  <h2>Crash watchdog</h2>
+  <div class="win-body">
+    <p>
+      <code>virtualjaguar_crash_detect</code>, default on, matches known
+      failure signatures each frame. Your frontend log names the subsystem
+      that broke.
+    </p>
+    <div class="evidence">
+      <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">src/core/crash_detect.c</a>.
+      Signatures and thresholds are in the header comment.
+    </div>
+  </div>
+</section>
 
-<h2>Per-title enhancement defaults <span class="badge good">shipped — v3.2.0+</span></h2>
-<p>
-  <code>virtualjaguar_pertitle_defaults</code> (default on) applies known-safe
-  presets for recognized games &mdash; 2&times; + true colour for Doom and
-  Alien vs Predator, true colour for Cybermorph, and more as titles are
-  verified. A preset only touches options you have left at their defaults; any
-  option you set yourself always wins. Disable it for stock behaviour on every
-  title.
-</p>
-<div class="evidence">
-  Title table: <a href="{{REPO}}/blob/develop/src/core/titledb.c">src/core/titledb.c</a>
-  (every row carries its evidence citation) &middot;
-  <a href="{{REPO}}/issues/368">#368</a>.
-</div>
+<section class="win">
+  <h2>Per-title defaults <span class="badge">shipped v3.2.0 and later</span></h2>
+  <div class="win-body">
+    <p>
+      <code>virtualjaguar_pertitle_defaults</code>, default on, applies
+      known-safe presets for recognized games: 2x for Doom and Alien vs
+      Predator, true colour for Cybermorph, 2x plus true colour for I-War
+      and Skyhammer, and more as titles
+      are verified. A preset only touches options you have left at their
+      defaults. Any option you set yourself always wins. Disable it for stock
+      behaviour on every title.
+    </p>
+    <div class="evidence">
+      Title table:
+      <a href="{{REPO}}/blob/develop/src/core/titledb.c">src/core/titledb.c</a>,
+      where every row carries its evidence citation &middot;
+      <a href="{{REPO}}/issues/368">#368</a>.
+    </div>
+  </div>
+</section>
 
-<h2>Blit memoization <span class="badge good">shipped — v3.3.0</span></h2>
-<p>
-  Some titles re-render a bit-identical scene every engine cycle while the
-  player is idle. <code>virtualjaguar_blit_memo</code> skips a blit only when
-  its <em>entire</em> input state provably matches an earlier identical blit,
-  and replays the recorded writes &mdash; output is bit-identical by
-  construction, and a verify mode executes every would-be skip and checks it.
-  Enabled per title via the enhancement database; 2,546,482 corpus
-  verifications, zero divergences.
-</p>
-<div class="evidence">
-  <a href="{{REPO}}/blob/develop/docs/blit-memo.md">docs/blit-memo.md</a>
-  &middot; <a href="{{REPO}}/issues/411">#411</a>,
-  <a href="{{REPO}}/pull/414">PR #414</a>.
-</div>
+<section class="win">
+  <h2>Blit memoization <span class="badge">shipped v3.3.0</span></h2>
+  <div class="win-body">
+    <p>
+      Some titles re-render a bit-identical scene every engine cycle while the
+      player is idle. <code>virtualjaguar_blit_memo</code> skips a blit only
+      when its <em>entire</em> input state provably matches an earlier
+      identical blit, and then replays the recorded writes. Output is
+      bit-identical by construction, and a verify mode executes every
+      would-be skip and checks it.
+    </p>
+    <p>
+      Enabled per title via the enhancement database, which currently carries
+      no rows for it: the mechanism ships ahead of the data, so nothing turns
+      it on by default. 2,546,482 corpus verifications, zero divergences.
+    </p>
+    <div class="evidence">
+      <a href="{{REPO}}/blob/develop/docs/blit-memo.md">docs/blit-memo.md</a>
+      &middot; <a href="{{REPO}}/issues/411">#411</a>,
+      <a href="{{REPO}}/pull/414">PR #414</a>.
+    </div>
+  </div>
+</section>

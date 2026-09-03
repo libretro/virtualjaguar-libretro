@@ -276,6 +276,10 @@ Full contributor mechanics — branching, lint gates, commit style, pre-commit h
 
 Linux (x86_64, aarch64, i686) · macOS (Apple Silicon, Intel) · Windows (x64, x86) · Android (arm64-v8a, armeabi-v7a, x86_64, x86) · iOS · tvOS · WebAssembly · PS Vita · Nintendo Switch — 16 targets, defined in [`release.yml`](.github/workflows/release.yml). Other handhelds and consoles get the core through the libretro buildbot.
 
+### Debugging with GDB/LLDB
+
+The core can open a loopback-only GDB remote-serial-protocol socket (off by default, developer-facing) so a real `gdb` or `lldb` can set breakpoints, read/write registers and memory, and single-step across all three processors — 68000, GPU, and DSP. `tools/gdb/connect.sh` (`connect.cmd` on Windows) finds a debugger and launches it pre-configured; `tools/gdb/install.sh` adds the same convenience commands to your `~/.gdbinit`/`~/.lldbinit` permanently. Full walkthrough, the honest limits (symbol-level, not source-level; no GDB backend for the RISC ISA; a halt freezes the whole frontend), and the `monitor` command reference: [`docs/gdb-stub-guide.md`](docs/gdb-stub-guide.md).
+
 ---
 
 ## The machine being emulated
@@ -312,6 +316,8 @@ System clock 26.590906 MHz NTSC / 26.593900 MHz PAL. Full source map: [`docs/sou
 
 **Known limitations:** the blitter is not fully cycle-accurate (a few games need fast mode) and GPU/DSP pipeline hazards are not yet modelled ([#313](https://github.com/libretro/virtualjaguar-libretro/issues/313)), which shows up as some titles running fast.
 
+**Running slow?** The defaults are tuned for compatibility, not speed, and the biggest available speedup ships off by default. See the [settings & performance tuning guide](docs/settings-and-performance-guide.md) — it covers which options actually matter, and which combinations quietly cancel each other out.
+
 ---
 
 ## Documentation and support
@@ -320,7 +326,7 @@ System clock 26.590906 MHz NTSC / 26.593900 MHz PAL. Full source map: [`docs/sou
 - **[GitHub Discussions](https://github.com/libretro/virtualjaguar-libretro/discussions)** — questions and compatibility reports. Bring your frontend log.
 - **[Issues](https://github.com/libretro/virtualjaguar-libretro/issues)** — confirmed bugs.
 - **[Releases](https://github.com/libretro/virtualjaguar-libretro/releases)** — tagged builds for 16 platforms. The rolling **[`nightly` prerelease](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly)** is rebuilt from every push to `develop`; it is gated on *compiling*, not on the test suite — treat it as bleeding edge.
-- **[`docs/`](docs)** — the full document index: [network play setup](docs/netlink-user-guide.md), [input devices / mouse](docs/input-devices-user-guide.md), [file formats](docs/README), [source layout](docs/source-layout.md), [savestate compatibility](docs/savestate-compat.md), [ROM patches / soft patching](docs/rom-patches.md), [CD read speed](docs/cd-read-speed.md), [CD known issues](docs/cd-known-issues.md), [cartridge triage](docs/cart-issue-triage.md), [profiling](docs/profiling.md), [release process](docs/release-process.md), [changelog](docs/WHATSNEW), [TODO](docs/TODO), and the distilled JTRM hardware references (`docs/jtrm-*.md`).
+- **[`docs/`](docs)** — the full document index: [settings & performance tuning](docs/settings-and-performance-guide.md), [network play setup](docs/netlink-user-guide.md), [input devices / mouse](docs/input-devices-user-guide.md), [file formats](docs/README), [source layout](docs/source-layout.md), [savestate compatibility](docs/savestate-compat.md), [patching a game](docs/patching-a-game.md), [ROM patches / soft patching](docs/rom-patches.md), [CD read speed](docs/cd-read-speed.md), [CD known issues](docs/cd-known-issues.md), [cartridge triage](docs/cart-issue-triage.md), [profiling](docs/profiling.md), [release process](docs/release-process.md), [changelog](docs/WHATSNEW), [TODO](docs/TODO), and the distilled JTRM hardware references (`docs/jtrm-*.md`).
 - **[SECURITY.md](SECURITY.md)** — security policy and binary verification.
 
 ## Contributors

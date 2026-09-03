@@ -14,6 +14,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "libretro.h"
+
 #include "vjag_memory.h"
 #include "settings.h"
 #include "blitter.h"
@@ -23,6 +25,10 @@ uint8_t blitter_ram[0x100];
 
 /* Stubs for dependencies we don't need */
 struct VJSettings vjs = { 0 };
+/* blitter_mmio.c logs a refused nested blit (#659) through src/core/log.h.
+ * NULL here makes VJ_LOG fall back to its vj_log_stderr path, so the warning
+ * still works standalone instead of the include becoming a link error. */
+retro_log_printf_t vj_log_cb = NULL;
 int BlitterCompareIsEnabled(void) { return 0; }
 void BlitterRunComparison(void) {}
 void blitter_blit(uint32_t cmd) { (void)cmd; }

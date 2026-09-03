@@ -12,8 +12,8 @@
 #include <string.h>
 
 /* who codes from src/core/vjag_memory.h:
- *   UNKNOWN JAGUAR DSP GPU TOM JERRY M68K BLITTER OP DEBUG
- * DEBUG (9) marks a host-injected event (input edges, marks). */
+ *   UNKNOWN JAGUAR DSP GPU TOM JERRY M68K BLITTER OP DEBUGGER
+ * DEBUGGER (9) marks a host-injected event (input edges, marks). */
 #define TP_WHO_DEBUG 9
 
 #define TP_MAX_SNAPS  HARNESS_MAX_SNAP_FRAMES

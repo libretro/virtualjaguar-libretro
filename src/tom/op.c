@@ -25,6 +25,8 @@
 #include "vjag_memory.h"
 #include "tom.h"
 #include "../core/vjtrace.h"
+#include "op_simd_neon.h"
+#include "op_simd_sse2.h"
 
 #define BLEND_Y(dst, src)	op_blend_y[(((uint16_t)dst<<8)) | ((uint16_t)(src))]
 #define BLEND_CR(dst, src)	op_blend_cr[(((uint16_t)dst)<<8) | ((uint16_t)(src))]
@@ -1163,6 +1165,36 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
          pixels <<= firstPix;
          data += pitch;
 
+#if defined(BLITTER_SIMD_HAVE_NEON)
+         /* Full 4-pixel phrase, no RMW / REFLECT / shadow hooks, wholly
+          * inside LBUF. Partial firstPix/i phrases and every other mode
+          * keep the scalar loop below. */
+         if (!flagRMW && lbufDelta == 2
+               && !shadowFBActive && !shadowHiresActive
+               && OP_LBUF_IN_BOUNDS(currentLineBuffer, 8)
+               && i == 0 && firstPix == 0)
+         {
+            op_store_phrase_16bpp_neon(currentLineBuffer, pixels, flagTRANS);
+            currentLineBuffer += 8;
+            firstPix = 0;
+            i = 0;
+            continue;
+         }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+         /* Same guard as the NEON branch above; only the store differs. */
+         if (!flagRMW && lbufDelta == 2
+               && !shadowFBActive && !shadowHiresActive
+               && OP_LBUF_IN_BOUNDS(currentLineBuffer, 8)
+               && i == 0 && firstPix == 0)
+         {
+            op_store_phrase_16bpp_sse2(currentLineBuffer, pixels, flagTRANS);
+            currentLineBuffer += 8;
+            firstPix = 0;
+            i = 0;
+            continue;
+         }
+#endif
+
          while (i++ < 4)
          {
             uint8_t bitsHi = pixels >> 56, bitsLo = pixels >> 48;
@@ -1232,6 +1264,34 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
          uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
          pixels <<= firstPix;
          data += pitch;
+
+#if defined(BLITTER_SIMD_HAVE_NEON)
+         /* Full 2-pixel phrase, no REFLECT, wholly inside LBUF.
+          * 24bpp has no RMW path and no shadow-FB hooks. Partial
+          * firstPix/i phrases keep the scalar loop below. */
+         if (!flagRMW && lbufDelta == 4
+               && OP_LBUF_IN_BOUNDS(currentLineBuffer, 8)
+               && i == 0 && firstPix == 0)
+         {
+            op_store_phrase_24bpp_neon(currentLineBuffer, pixels, flagTRANS);
+            currentLineBuffer += 8;
+            firstPix = 0;
+            i = 0;
+            continue;
+         }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+         /* Same guard as the NEON branch above; only the store differs. */
+         if (!flagRMW && lbufDelta == 4
+               && OP_LBUF_IN_BOUNDS(currentLineBuffer, 8)
+               && i == 0 && firstPix == 0)
+         {
+            op_store_phrase_24bpp_sse2(currentLineBuffer, pixels, flagTRANS);
+            currentLineBuffer += 8;
+            firstPix = 0;
+            i = 0;
+            continue;
+         }
+#endif
 
          while (i++ < 2)
          {
@@ -1917,9 +1977,18 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
             uint8_t bits3 = pixels >> 56, bits2 = pixels >> 48,
                     bits1 = pixels >> 40, bits0 = pixels >> 32;
 
+            /* Bounds-clamped for the same reason the fixed-bitmap stores
+             * are (#565, and the OP_LBUF_IN_BOUNDS comment above): this
+             * loop runs on the raw phrase `iwidth`, not on the clamped
+             * visibleDestPixels the 1-16 BPP branches above bound
+             * themselves with, and lbufDelta sign-extends OPFLAG_REFLECT
+             * -- so a reflected object with a garbage iwidth walks
+             * backward out of tomRam8 with nothing to stop it.  Four
+             * bytes per store here rather than two, so it leaves the
+             * buffer faster than the case that actually crashed. */
             if (flagTRANS && (bits3 | bits2 | bits1 | bits0) == 0)
                ;	// Do nothing...
-            else
+            else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 4))
                *currentLineBuffer = bits3,
                   *(currentLineBuffer + 1) = bits2,
                   *(currentLineBuffer + 2) = bits1,

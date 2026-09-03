@@ -91,22 +91,27 @@ static struct BootConfig *p_bootConfig;
 static const CDBootStrategy *p_strategy_hle;
 static const CDBootStrategy *p_strategy_bios;
 static const CDBootStrategy *p_strategy_cart;
+static const CDBootStrategy *p_strategy_none;
 
 #define IS_HLE(c)  ((c).strategy == p_strategy_hle)
 #define IS_BIOS(c) ((c).strategy == p_strategy_bios)
 #define IS_CART(c)  ((c).strategy == p_strategy_cart)
+#define IS_NONE(c)  ((c).strategy == p_strategy_none)
 
 static void (*p_retro_init)(void);
 static void (*p_retro_deinit)(void);
 static bool (*p_retro_load_game)(const struct retro_game_info *);
 static void (*p_retro_unload_game)(void);
 static void (*p_retro_run)(void);
+static void (*p_retro_reset)(void);
 static void (*p_retro_set_environment)(retro_environment_t);
 static void (*p_retro_set_video_refresh)(retro_video_refresh_t);
 static void (*p_retro_set_audio_sample)(retro_audio_sample_t);
 static void (*p_retro_set_audio_sample_batch)(retro_audio_sample_batch_t);
 static void (*p_retro_set_input_poll)(retro_input_poll_t);
 static void (*p_retro_set_input_state)(retro_input_state_t);
+static void *(*p_retro_get_memory_data)(unsigned);
+static size_t (*p_retro_get_memory_size)(unsigned);
 
 #define LOAD_SYM(name) do { \
     p_##name = dlsym(g_handle, #name); \
@@ -132,7 +137,8 @@ static bool load_core(void)
     p_strategy_hle  = dlsym(g_handle, "cd_boot_strategy_hle");
     p_strategy_bios = dlsym(g_handle, "cd_boot_strategy_bios");
     p_strategy_cart = dlsym(g_handle, "cd_boot_strategy_cart");
-    if (!p_strategy_hle || !p_strategy_bios || !p_strategy_cart)
+    p_strategy_none = dlsym(g_handle, "cd_boot_strategy_none");
+    if (!p_strategy_hle || !p_strategy_bios || !p_strategy_cart || !p_strategy_none)
     { fprintf(stderr, "FATAL: dlsym(strategies)\n"); return false; }
 
     LOAD_SYM(retro_init);
@@ -147,6 +153,9 @@ static bool load_core(void)
     p_retro_load_game = dlsym(g_handle, "retro_load_game");
     p_retro_unload_game = dlsym(g_handle, "retro_unload_game");
     p_retro_run = dlsym(g_handle, "retro_run");
+    p_retro_reset = dlsym(g_handle, "retro_reset");
+    p_retro_get_memory_data = dlsym(g_handle, "retro_get_memory_data");
+    p_retro_get_memory_size = dlsym(g_handle, "retro_get_memory_size");
 
     return true;
 }
@@ -539,6 +548,99 @@ TEST(integration_hle_bios_setting_off)
 }
 
 /* ------------------------------------------------------------------ */
+/* Part 3: No-content boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME,      */
+/*          issue #646) -- retro_load_game(NULL).  Needs no ROM/disc,  */
+/*          so these always run (never gated on the private corpus).   */
+/* ------------------------------------------------------------------ */
+
+static bool g_saw_no_game_env = false;
+
+static bool env_callback_no_game(unsigned cmd, void *data)
+{
+    if ((cmd & 0xFF) == RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME)
+    {
+        g_saw_no_game_env = *(const bool *)data;
+        return true;
+    }
+    return env_callback(cmd, data);
+}
+
+static void core_init_no_game(void)
+{
+    g_saw_no_game_env = false;
+    p_retro_set_environment(env_callback_no_game);
+    p_retro_set_video_refresh(stub_video);
+    p_retro_set_audio_sample(stub_audio);
+    p_retro_set_audio_sample_batch(stub_audio_batch);
+    p_retro_set_input_poll(stub_input_poll);
+    p_retro_set_input_state(stub_input_state);
+    p_retro_init();
+}
+
+TEST(no_game_env_declared)
+{
+    core_init_no_game();
+    ASSERT_EQ(g_saw_no_game_env, true);
+    p_retro_deinit();
+}
+
+TEST(no_game_boot_selects_none_strategy)
+{
+    bool loaded;
+
+    core_init_no_game();
+    loaded = p_retro_load_game(NULL);
+    if (!loaded) FAIL("retro_load_game(NULL) failed");
+
+    fprintf(stderr, "        bootConfig: isCDGame=%d showBootROM=%d strategy=%s\n",
+            p_bootConfig->isCDGame, p_bootConfig->showBootROM,
+            p_bootConfig->strategy ? p_bootConfig->strategy->name : "null");
+
+    ASSERT_EQ(p_bootConfig->isCDGame, false);
+    ASSERT_EQ(p_bootConfig->showBootROM, true);
+    ASSERT(IS_NONE(*p_bootConfig));
+    core_teardown();
+}
+
+TEST(no_game_save_ram_is_empty)
+{
+    bool loaded;
+
+    core_init_no_game();
+    loaded = p_retro_load_game(NULL);
+    if (!loaded) FAIL("retro_load_game(NULL) failed");
+
+    /* No cartridge -> no EEPROM chip.  A frontend must not be handed a
+     * meaningless .srm for a bare-BIOS session. */
+    ASSERT_EQ(p_retro_get_memory_size(RETRO_MEMORY_SAVE_RAM), 0);
+    ASSERT(p_retro_get_memory_data(RETRO_MEMORY_SAVE_RAM) == NULL);
+    core_teardown();
+}
+
+TEST(no_game_runs_and_resets_without_crashing)
+{
+    bool loaded;
+    int i;
+
+    core_init_no_game();
+    loaded = p_retro_load_game(NULL);
+    if (!loaded) FAIL("retro_load_game(NULL) failed");
+
+    /* Real hardware boots the ROM (cube animation) and then sits with an
+     * empty cart slot; run long enough to clear the animation and settle,
+     * then reset and do it again.  A crash here is the whole point of the
+     * test -- there is no assertion beyond "the process is still alive". */
+    for (i = 0; i < 120; i++)
+        p_retro_run();
+    if (p_retro_reset)
+        p_retro_reset();
+    for (i = 0; i < 60; i++)
+        p_retro_run();
+
+    core_teardown();
+}
+
+/* ------------------------------------------------------------------ */
 /* Main                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -604,6 +706,14 @@ int main(int argc, char *argv[])
             SKIP(integration_auto_mode_with_bios, "no CD BIOS file");
         }
     }
+    total_fail += REPORT();
+
+    /* ---- Part 3: No-content boot (never gated -- needs no ROM) ---- */
+    SUITE("No-Content Boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME)");
+    RUN(no_game_env_declared);
+    RUN(no_game_boot_selects_none_strategy);
+    RUN(no_game_save_ram_is_empty);
+    RUN(no_game_runs_and_resets_without_crashing);
     total_fail += REPORT();
 
     if (g_handle) dlclose(g_handle);
