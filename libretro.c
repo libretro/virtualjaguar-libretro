@@ -5995,6 +5995,23 @@ bool retro_load_game(const struct retro_game_info *info)
       struct retro_variable timeout_var;
       int halt_timeout_seconds = 0;
 
+      /* Bind scope (issue #652).  Latched ONCE here, alongside the gate
+       * and for the same raw-read reason: a per-title DB row must never
+       * be able to widen the debug socket beyond loopback.  Anything but
+       * an explicit "lan" resolves to loopback inside
+       * GDBSockSetBindMode(), so an absent or garbled value fails
+       * closed. */
+      {
+         struct retro_variable bind_var;
+         bind_var.key   = "virtualjaguar_gdb_bind";
+         bind_var.value = NULL;
+         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &bind_var)
+             && bind_var.value && !strcmp(bind_var.value, "lan"))
+            GDBSockSetBindMode(GDB_BIND_LAN);
+         else
+            GDBSockSetBindMode(GDB_BIND_LOOPBACK);
+      }
+
       gdb_var.key   = "virtualjaguar_gdb_stub";
       gdb_var.value = NULL;
       if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gdb_var) && gdb_var.value)
@@ -6042,7 +6059,7 @@ bool retro_load_game(const struct retro_game_info *info)
       {
          if (GDBSockOpen(gdb_stub_port) == 0)
          {
-            char gdb_msg_text[96];
+            char gdb_msg_text[160];  /* both warnings fit in LAN mode */
 
             gdb_stub_socket_open = true;
             GDBTargetOpen();
@@ -6050,13 +6067,47 @@ bool retro_load_game(const struct retro_game_info *info)
             if (gdb_stub_wait_at_boot)
                GDBTargetArmWaitAtBoot();
 
-            snprintf(gdb_msg_text, sizeof(gdb_msg_text),
-                     "GDB stub listening on 127.0.0.1:%d -- halts will "
-                     "freeze this frontend", gdb_stub_port);
-            gdb_stub_show_banner(gdb_msg_text);
-            LOG_INF("[GDB] stub listening on 127.0.0.1:%d%s%s\n", gdb_stub_port,
-                    gdb_stub_wait_at_boot ? " (halting at boot)" : "",
-                    halt_timeout_seconds > 0 ? " (halt-timeout armed)" : "");
+            {
+               /* Say WHICH address, never a hardcoded 127.0.0.1 -- the
+                * bind scope is now a user choice, and a banner that lies
+                * about it is worse than no banner. */
+               int lan = (GDBSockGetBindMode() == GDB_BIND_LAN);
+               const char *host = lan ? "0.0.0.0" : "127.0.0.1";
+
+               /* The freeze warning applies in BOTH modes -- binding
+                * scope changes who can reach the stub, not what a halt
+                * does to the frontend. An earlier revision dropped it
+                * from the LAN banner, which made the banner say less
+                * exactly when more is at stake. */
+               snprintf(gdb_msg_text, sizeof(gdb_msg_text),
+                        "GDB stub listening on %s:%d%s -- halts freeze this "
+                        "frontend", host, gdb_stub_port,
+                        lan ? " OPEN TO YOUR NETWORK;" : "");
+               gdb_stub_show_banner(gdb_msg_text);
+
+               if (lan)
+                  /* WRN, not INF: this is the one configuration where an
+                   * unattended core is remotely controllable, and the RSP
+                   * protocol has no authentication.  It must be visible in
+                   * a log someone skims. */
+                  LOG_WRN("[GDB] stub listening on %s:%d -- REACHABLE FROM "
+                          "YOUR LOCAL NETWORK. The GDB protocol has no "
+                          "authentication: anyone who can reach this port "
+                          "can read/write emulated memory and control "
+                          "execution. Public (non-private) peers are refused. "
+                          "Set GDB Stub: Network Binding back to 'loopback' "
+                          "when you are done.%s%s\n",
+                          host, gdb_stub_port,
+                          gdb_stub_wait_at_boot ? " (halting at boot)" : "",
+                          halt_timeout_seconds > 0
+                             ? " (halt-timeout armed)" : "");
+               else
+                  LOG_INF("[GDB] stub listening on %s:%d%s%s\n", host,
+                          gdb_stub_port,
+                          gdb_stub_wait_at_boot ? " (halting at boot)" : "",
+                          halt_timeout_seconds > 0
+                             ? " (halt-timeout armed)" : "");
+            }
          }
          else
          {

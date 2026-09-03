@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.5.1
+CORE_BASE_VERSION := v3.6.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -2152,12 +2152,23 @@ test/test_titlehook: test/tools/test_titlehook.c src/core/titlehook.c \
 		-o $@ test/tools/test_titlehook.c src/core/titlehook.c \
 		src/core/titledb.c src/core/crc32.c src/core/hookfile.c
 
-# GDB Remote Serial Protocol engine (issue #652, Phase 1).  Pure protocol
-# unit tests: no emulator, no sockets. src/debug/gdbstub.c never calls
-# socket() and never dereferences a Jaguar global, so it links alone here.
-test/tools/test_gdbstub_proto: test/tools/test_gdbstub_proto.c src/debug/gdbstub.c
-	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/tools/test_gdbstub_proto.c src/debug/gdbstub.c
+# GDB Remote Serial Protocol engine (issue #652).  No emulator:
+# src/debug/gdbstub.c never dereferences a Jaguar global.
+#
+# gdbsock.c is linked too, for the bind-mode fail-closed tests (#652 LAN
+# option).  It DOES contain socket code, but none of it runs here -- the
+# tests only exercise GDBSockSetBindMode()/GDBSockGetBindMode(), which
+# touch a single static and never open a socket.  Linking the real file
+# rather than a stub is the point: it is the shipped default that must
+# be proven safe, not a copy of it.
+test/tools/test_gdbstub_proto: test/tools/test_gdbstub_proto.c src/debug/gdbstub.c \
+		src/debug/gdbsock.c
+	@# -DINLINE: gdbsock.c pulls in src/core/log.h for the refused-peer
+	@# warning, and log.h uses INLINE, which the core build supplies via
+	@# -DINLINE="inline". Test rules get no such default.
+	$(CC) -O2 -Wall -std=c99 -DINLINE=inline $(INCFLAGS) \
+		-o $@ test/tools/test_gdbstub_proto.c src/debug/gdbstub.c \
+		src/debug/gdbsock.c
 
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

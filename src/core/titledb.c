@@ -159,8 +159,14 @@
  *    Battle Sphere, NBA Jam TE, Syndicate, Theme Park, Ultra Vortek,
  *    Skyhammer corpus dump, ...) get NO pair: the option would burn probe
  *    work for nothing.  Full per-title numbers in the sweep doc.
- *  - The global default stays "disabled" (the libretro.c option comment's
- *    reasoning stands); these rows opt in exactly the titles measured.
+ *  - SUPERSEDED by #608 (v3.6.0): the global default is now "enabled",
+ *    after the 148-image corpus sweep. These rows are therefore no-ops
+ *    today -- a per-title default only substitutes when the option sits
+ *    at its registered default, and that value is now the same one the
+ *    rows carry. They are kept, not deleted, because they record WHICH
+ *    titles were actually measured (the fires=0 titles still have no
+ *    row), and they become load-bearing again the moment the global
+ *    default moves back. Do not read them as the reason idle-skip is on.
  * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {

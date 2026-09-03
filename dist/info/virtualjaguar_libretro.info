@@ -5,7 +5,7 @@ supported_extensions = "j64|jag|rom|abs|cof|bin|prg|cue|cdi|chd"
 corename = "Virtual Jaguar"
 license = "GPLv3"
 permissions = ""
-display_version = "v3.5.1"
+display_version = "v3.6.0"
 categories = "Emulator"
 
 # Hardware Information
@@ -26,7 +26,7 @@ core_options = "true"
 load_subsystem = "false"
 hw_render = "false"
 needs_fullpath = "false"
-disk_control = "false"
+disk_control = "true"
 is_experimental = "false"
 
 # BIOS / Firmware (all optional -- embedded copies are used when absent)
