@@ -87,6 +87,57 @@ jobs:
           fi
           echo "$out"
 
+          # pr-link-issue.sh exits non-zero for TWO different reasons, and
+          # they need different advice:
+          #
+          #   a) there is no tag in the body -- the author must add one, and
+          #   b) a tag WAS found but GitHub refused the mutation.
+          #
+          # Reporting (b) as (a) sends the author hunting for a tag that is
+          # already there.  That happened on PR #725: the body carried both
+          # `Refs #652` and the HTML comment, but #652 had accumulated so
+          # many manually-linked PRs that addCloseIssueReferences returned
+          # "Issue exceeds manual reference limit" -- and this job said "no
+          # link tag in its body", which is the one thing that was untrue.
+          case "$out" in
+            *"exceeds manual reference limit"*)
+              {
+                echo "### ⚠️ Could not link -- the ISSUE is at GitHub's link limit"
+                echo
+                echo "A link tag **was** found in this PR's body. GitHub refused the"
+                echo "link because the target issue already has the maximum number of"
+                echo "manually-linked pull requests:"
+                echo
+                echo '```'
+                echo "$out"
+                echo '```'
+                echo
+                echo "Nothing is wrong with this PR. Either link a different (or newer)"
+                echo "issue, or add the \`no-issue\` label -- the work is still traceable"
+                echo "through the \`Refs #N\` text in the description."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::PR #$PR has a link tag, but the target issue is at GitHub's manual-reference limit -- see the job summary. This is NOT a missing tag."
+              exit 1
+              ;;
+            *"GraphQL"*|*"HTTP 4"*|*"HTTP 5"*|*"gh: "*)
+              {
+                echo "### ⚠️ Could not link -- the GitHub API refused the request"
+                echo
+                echo "A link tag may well be present; the API call itself failed:"
+                echo
+                echo '```'
+                echo "$out"
+                echo '```'
+                echo
+                echo "Re-run this job first -- several of these are transient. If it"
+                echo "persists, read the message above rather than assuming the tag is"
+                echo "missing."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::PR #$PR: the GitHub API refused the link (see the job summary). This is an API failure, NOT necessarily a missing link tag."
+              exit 1
+              ;;
+          esac
+
           {
             echo "### ❌ This PR is not linked to an issue"
             echo
