@@ -631,7 +631,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_gdb_stub",
       "GDB Debug Stub (Restart)",
       NULL,
-      "Open a GDB remote debugging server on localhost so a debugger can inspect the emulated machine. Developer-facing; leave disabled for normal play. The server only ever listens on 127.0.0.1 -- it is not reachable from another machine. Requires a restart.",
+      "Open a GDB remote debugging server on localhost so a debugger can inspect the emulated machine. Developer-facing; leave disabled for normal play. By default the server listens only on 127.0.0.1 and is not reachable from another machine; 'GDB Stub: Network Binding' can widen that to your local network, with the security consequences described there. Requires a restart.",
       NULL,
       "diagnostics",
       {
@@ -640,6 +640,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "disabled"
+   },
+   {
+      "virtualjaguar_gdb_bind",
+      "GDB Stub: Network Binding (Debug)",
+      NULL,
+      "Which addresses the GDB stub will accept debugger connections from. 'Loopback' (default) accepts only connections from this same machine -- on a phone, tablet or TV that means nothing outside the device can ever reach it. 'LAN' additionally accepts connections from your local network, so you can debug a game running on another device from your computer. SECURITY: the GDB protocol has NO authentication of any kind. While the stub is open, anyone who can reach the port can read and write the emulated machine's memory and control its execution. Only use 'LAN' on a network you trust, only while you are actually debugging, and turn it back off afterwards. Connections from public (non-private) addresses are refused and logged even in 'LAN' mode. Has no effect unless GDB Stub is enabled. Takes effect on content load.",
+      NULL,
+      "diagnostics",
+      {
+         { "loopback", "Loopback (this machine only)" },
+         { "lan",      "LAN (local network -- see warning)" },
+         { NULL, NULL },
+      },
+      "loopback"
    },
    {
       "virtualjaguar_gdb_port",
