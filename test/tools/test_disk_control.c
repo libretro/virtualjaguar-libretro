@@ -98,11 +98,11 @@ static int strategy_is_cd(void)
  * freezes on the boot ROM's red logo passes every one of them, which is
  * exactly how the v3.6.0 no-content regression shipped.  So this tracks
  * whether the picture actually CHANGES, which is the thing a user sees. */
-static uint32_t vid_hash;         /* FNV-1a over the frame just delivered */
-static uint32_t vid_prev_hash;
+static uint32_t vid_prev_hash;    /* FNV-1a over the previous frame       */
 static unsigned vid_frames;       /* frames the core actually delivered   */
 static unsigned vid_changes;      /* frames whose pixels differed         */
 static unsigned vid_nonblack;     /* frames with any non-black pixel      */
+static int      vid_bad_pitch;    /* set if the frame was not 4 bytes/px  */
 
 static void vid_cb(void *ud, const void *data, unsigned w, unsigned h,
                    size_t pitch)
@@ -115,6 +115,16 @@ static void vid_cb(void *ud, const void *data, unsigned w, unsigned h,
     (void)ud;
     if (!p)                       /* duped frame: no new pixels */
         return;
+
+    /* The harness video callback carries no pixel-format field, and this
+     * indexes rows as uint32_t -- correct for the core's XRGB8888 output,
+     * but a silent out-of-bounds read past each row if that ever became
+     * RGB565.  Validate rather than assume: a format change should fail
+     * loudly here, not read garbage and look like a flaky test. */
+    if (pitch < (size_t)w * 4) {
+        vid_bad_pitch = 1;
+        return;
+    }
     vid_frames++;
     for (y = 0; y < h; y++)
     {
@@ -132,7 +142,6 @@ static void vid_cb(void *ud, const void *data, unsigned w, unsigned h,
     if (vid_frames > 1 && hsh != vid_prev_hash)
         vid_changes++;
     vid_prev_hash = hsh;
-    vid_hash      = hsh;
 }
 
 static harness_result mkres(int ok, const char *name, const char *detail)
@@ -315,14 +324,17 @@ int main(int argc, char **argv)
 
         harness_run(&cfg);
 
-        rendered = (vid_frames > 0 && vid_nonblack > 0);
+        rendered = (vid_frames > 0 && vid_nonblack > 0 && !vid_bad_pitch);
         /* >=2 distinct images over the window. Generous on purpose: the
          * bar is "not frozen", not "animates smoothly". */
         moving   = (vid_changes >= 2);
 
         results[nres++] = mkres(rendered, "case5_no_content_renders",
             rendered ? "bare-console boot put a non-black image on screen"
-                     : "bare-console boot rendered nothing (or all black)");
+                     : (vid_bad_pitch
+                        ? "frame was not XRGB8888 (pitch < w*4) -- this test "
+                          "reads rows as uint32_t and cannot score it"
+                        : "bare-console boot rendered nothing (or all black)"));
         results[nres++] = mkres(moving, "case5_no_content_progresses",
             moving ? "the picture changes -- the machine is running"
                    : "the picture NEVER CHANGES -- wedged on the boot screen "
