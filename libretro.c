@@ -6059,7 +6059,7 @@ bool retro_load_game(const struct retro_game_info *info)
       {
          if (GDBSockOpen(gdb_stub_port) == 0)
          {
-            char gdb_msg_text[96];
+            char gdb_msg_text[160];  /* both warnings fit in LAN mode */
 
             gdb_stub_socket_open = true;
             GDBTargetOpen();
@@ -6074,10 +6074,15 @@ bool retro_load_game(const struct retro_game_info *info)
                int lan = (GDBSockGetBindMode() == GDB_BIND_LAN);
                const char *host = lan ? "0.0.0.0" : "127.0.0.1";
 
+               /* The freeze warning applies in BOTH modes -- binding
+                * scope changes who can reach the stub, not what a halt
+                * does to the frontend. An earlier revision dropped it
+                * from the LAN banner, which made the banner say less
+                * exactly when more is at stake. */
                snprintf(gdb_msg_text, sizeof(gdb_msg_text),
-                        "GDB stub listening on %s:%d%s", host, gdb_stub_port,
-                        lan ? " -- OPEN TO YOUR NETWORK" : " -- halts freeze "
-                              "this frontend");
+                        "GDB stub listening on %s:%d%s -- halts freeze this "
+                        "frontend", host, gdb_stub_port,
+                        lan ? " OPEN TO YOUR NETWORK;" : "");
                gdb_stub_show_banner(gdb_msg_text);
 
                if (lan)

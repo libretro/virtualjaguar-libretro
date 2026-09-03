@@ -170,8 +170,9 @@ int GDBSockPoll(void)
       {
          {
             uint32_t a = ntohl(peer.sin_addr.s_addr);
-            LOG_WRN("[gdb] REFUSED connection from %u.%u.%u.%u -- not a "
-                    "private/link-local address. gdb_bind=lan accepts only "
+            LOG_WRN("[GDB] REFUSED connection from %u.%u.%u.%u -- not a "
+                    "private/link-local address. virtualjaguar_gdb_bind=lan "
+                    "accepts only "
                     "RFC1918, CGNAT, link-local and loopback peers.\n",
                     (unsigned)((a >> 24) & 0xFF), (unsigned)((a >> 16) & 0xFF),
                     (unsigned)((a >> 8) & 0xFF), (unsigned)(a & 0xFF));
