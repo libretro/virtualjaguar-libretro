@@ -130,6 +130,9 @@
 [PASS tests/stress/many_blits.jag
 [PASS tests/stress/rapid_irq_pump.jag
 [PASS tests/timing/doom_update_gate_rate.jag
+[PASS tests/timing/gpu_alu_loop_rate.jag
+[PASS tests/timing/gpu_load_use_loop_rate.jag
+[PASS tests/timing/gpu_store_ext_loop_rate.jag
 [PASS tests/timing/halfline_count_per_frame.jag
 [PASS tests/timing/halfline_period_us.jag
 [PASS tests/timing/hc_advance.jag
@@ -137,6 +140,7 @@
 [PASS tests/timing/input_edge_per_field.jag
 [PASS tests/timing/jerry_pit_setup.jag
 [PASS tests/timing/pit_countdown_rate.jag
+[PASS tests/timing/render_bound_loop_rate.jag
 [PASS tests/timing/vblank_60hz_exact.jag
 [PASS tests/timing/vc_advance.jag
 [PASS tests/timing/vc_field_bit.jag
