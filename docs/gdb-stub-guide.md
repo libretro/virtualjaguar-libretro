@@ -197,8 +197,23 @@ implementation was actually verified against; please file an issue with what you
 
 ## Security notes (short version — see the design doc for the full reasoning)
 
-- The listener binds `127.0.0.1` only, always. There is no option to change this. If you need to
-  reach it from another machine, forward the port yourself (e.g. `ssh -L`).
+- **The listener binds `127.0.0.1` by default.** On desktop, if you only need it from another
+  machine occasionally, forwarding the port yourself is still the safest route
+  (`ssh -L 2345:127.0.0.1:2345 <host>`) — it needs no core option and no open port.
+- **`GDB Stub: Network Binding` (`virtualjaguar_gdb_bind`) can widen that to `lan`.** This exists
+  for the case SSH cannot cover: debugging a game running on a phone, tablet or TV, where there is
+  no shell on the device to forward from. Understand what you are turning on:
+  - **The GDB remote protocol has no authentication of any kind.** While the stub is open on the
+    LAN, anyone who can reach the port can read and write the emulated machine's memory and control
+    its execution. There is no password, no token, and no handshake to add one to.
+  - Connections from **public (non-private) addresses are refused and logged** even in `lan` mode —
+    only RFC1918, CGNAT (100.64/10), link-local and loopback peers are accepted. That stops the
+    silent accidental case (carrier NAT, a misconfigured hotspot). It does **not** make a hostile
+    LAN safe, and it will also refuse a legitimate VPN peer on a public range.
+  - It is **latched once at content load**, so changing it mid-session does nothing until you reload.
+  - It **fails closed**: absent, unset or unrecognised values resolve to loopback.
+  - When `lan` is active the core logs a warning naming the address and port, and shows an on-screen
+    banner saying the stub is open to your network. Turn it back to `loopback` when you are done.
 - Only one client at a time; a second connection attempt is closed immediately.
 - Every memory read and write is bounds-checked against the emulated map — a malformed or
   hostile packet cannot read or write outside emulated space.

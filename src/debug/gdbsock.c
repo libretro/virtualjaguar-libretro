@@ -10,6 +10,7 @@
 #endif
 #include <string.h>
 #include "gdbstub.h"
+#include "log.h"   /* refused-peer warning; same logger gdbtarget.c uses */
 
 #if defined(_WIN32) || defined(__unix__) || defined(__APPLE__) || \
     defined(__linux__) || defined(__ANDROID__)
@@ -62,6 +63,40 @@ static void GDBSetNonBlocking(gdb_sock_t s)
 #endif
 }
 
+/* Default is the safe one, so a caller that never sets it -- a test, or a
+ * frontend that does not know the option exists -- gets loopback. */
+static int gdbBindMode = GDB_BIND_LOOPBACK;
+
+void GDBSockSetBindMode(int mode)
+{
+   /* Anything that is not explicitly LAN resolves to loopback: fail
+    * closed, so a garbled or future option value cannot widen the bind. */
+   gdbBindMode = (mode == GDB_BIND_LAN) ? GDB_BIND_LAN : GDB_BIND_LOOPBACK;
+}
+
+int GDBSockGetBindMode(void)
+{
+   return gdbBindMode;
+}
+
+/* Is this peer on a network we are willing to accept from?
+ *
+ * RFC1918 (10/8, 172.16/12, 192.168/16), CGNAT 100.64/10, link-local
+ * 169.254/16, and loopback.  Anything else -- i.e. a routable public
+ * address -- is refused.  Deliberately conservative: a VPN peer on a
+ * non-private range is refused too, which is visible in the log rather
+ * than silent. */
+static int gdb_peer_allowed(uint32_t hostorder)
+{
+   if ((hostorder & 0xFF000000u) == 0x7F000000u) return 1; /* 127/8      */
+   if ((hostorder & 0xFF000000u) == 0x0A000000u) return 1; /* 10/8       */
+   if ((hostorder & 0xFFF00000u) == 0xAC100000u) return 1; /* 172.16/12  */
+   if ((hostorder & 0xFFFF0000u) == 0xC0A80000u) return 1; /* 192.168/16 */
+   if ((hostorder & 0xFFC00000u) == 0x64400000u) return 1; /* 100.64/10  */
+   if ((hostorder & 0xFFFF0000u) == 0xA9FE0000u) return 1; /* 169.254/16 */
+   return 0;
+}
+
 int GDBSockOpen(int port)
 {
    struct sockaddr_in addr;
@@ -80,8 +115,11 @@ int GDBSockOpen(int port)
    memset(&addr, 0, sizeof(addr));
    addr.sin_family      = AF_INET;
    addr.sin_port        = htons((unsigned short)port);
-   /* Loopback ONLY. Never INADDR_ANY -- this is a security invariant. */
-   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+   /* Loopback unless the user deliberately opted into LAN for this
+    * session (issue #652).  Loopback remains the DEFAULT and the
+    * fallback for any unrecognised option value -- see gdbstub.h. */
+   addr.sin_addr.s_addr = htonl(gdbBindMode == GDB_BIND_LAN
+                                ? INADDR_ANY : INADDR_LOOPBACK);
 
    if (bind(gdbListen, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
        listen(gdbListen, 1) != 0)
@@ -116,9 +154,32 @@ int GDBSockPoll(void)
    if (gdb_sock_valid(gdbClient))
       return 1;
 
-   incoming = accept(gdbListen, NULL, NULL);
-   if (!gdb_sock_valid(incoming))
-      return 0;
+   {
+      struct sockaddr_in peer;
+      socklen_t          plen = (socklen_t)sizeof(peer);
+
+      memset(&peer, 0, sizeof(peer));
+      incoming = accept(gdbListen, (struct sockaddr *)&peer, &plen);
+      if (!gdb_sock_valid(incoming))
+         return 0;
+
+      /* Only meaningful when bound beyond loopback; harmless otherwise,
+       * since a loopback bind can only ever yield a 127/8 peer. */
+      if (gdbBindMode == GDB_BIND_LAN
+          && !gdb_peer_allowed(ntohl(peer.sin_addr.s_addr)))
+      {
+         {
+            uint32_t a = ntohl(peer.sin_addr.s_addr);
+            LOG_WRN("[gdb] REFUSED connection from %u.%u.%u.%u -- not a "
+                    "private/link-local address. gdb_bind=lan accepts only "
+                    "RFC1918, CGNAT, link-local and loopback peers.\n",
+                    (unsigned)((a >> 24) & 0xFF), (unsigned)((a >> 16) & 0xFF),
+                    (unsigned)((a >> 8) & 0xFF), (unsigned)(a & 0xFF));
+         }
+         gdb_closesock(incoming);
+         return 0;
+      }
+   }
 
    GDBSetNonBlocking(incoming);
    gdbClient = incoming;
@@ -167,6 +228,8 @@ int GDBSockHasClient(void)
 #else /* no BSD sockets on this target */
 
 int  GDBSockOpen(int port) { (void)port; return -1; }
+void GDBSockSetBindMode(int mode) { (void)mode; }
+int  GDBSockGetBindMode(void) { return GDB_BIND_LOOPBACK; }
 void GDBSockClose(void)    { }
 int  GDBSockPoll(void)     { return 0; }
 int  GDBSockRecv(char *buf, int max) { (void)buf; (void)max; return 0; }

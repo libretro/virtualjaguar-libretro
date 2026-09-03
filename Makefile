@@ -2155,9 +2155,14 @@ test/test_titlehook: test/tools/test_titlehook.c src/core/titlehook.c \
 # GDB Remote Serial Protocol engine (issue #652, Phase 1).  Pure protocol
 # unit tests: no emulator, no sockets. src/debug/gdbstub.c never calls
 # socket() and never dereferences a Jaguar global, so it links alone here.
-test/tools/test_gdbstub_proto: test/tools/test_gdbstub_proto.c src/debug/gdbstub.c
-	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/tools/test_gdbstub_proto.c src/debug/gdbstub.c
+test/tools/test_gdbstub_proto: test/tools/test_gdbstub_proto.c src/debug/gdbstub.c \
+		src/debug/gdbsock.c
+	@# -DINLINE: gdbsock.c pulls in src/core/log.h for the refused-peer
+	@# warning, and log.h uses INLINE, which the core build supplies via
+	@# -DINLINE="inline". Test rules get no such default.
+	$(CC) -O2 -Wall -std=c99 -DINLINE=inline $(INCFLAGS) \
+		-o $@ test/tools/test_gdbstub_proto.c src/debug/gdbstub.c \
+		src/debug/gdbsock.c
 
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

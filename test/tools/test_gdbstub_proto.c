@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <libretro.h>
 #include "../../src/debug/gdbstub.h"
 
 /* ------------------------------------------------------------------ */
@@ -17,6 +18,12 @@
 /* ------------------------------------------------------------------ */
 
 static int tf_pass = 0, tf_fail = 0, tf_skip = 0;
+/* gdbsock.c logs a refused non-private peer (#652) through src/core/log.h.
+ * NULL makes VJ_LOG fall back to its vj_log_stderr path, so the warning
+ * still works standalone instead of the include becoming a link error --
+ * same stub test_blitter_mmio.c and test_titlehook.c already use. */
+retro_log_printf_t vj_log_cb = NULL;
+
 static const char *tf_suite = "";
 static const char *tf_name = "";
 static bool tf_failed = false;
@@ -566,6 +573,37 @@ TEST(hg_selects_thread_and_qc_reports_it) {
     ASSERT_STR(reply, "QC2");
 }
 
+
+/* Bind scope (issue #652).  The DEFAULT is the whole point: an open GDB
+ * stub is unauthenticated read/write of the emulated machine, so the safe
+ * value must be what you get from doing nothing, from an absent option,
+ * and from any value we do not recognise.  These four assertions are what
+ * stop that default drifting in a later refactor. */
+TEST(bind_mode_defaults_to_loopback) {
+    /* No setter call -- a frontend that never heard of this option, or a
+     * test, must still get loopback. */
+    ASSERT_EQ(GDBSockGetBindMode(), GDB_BIND_LOOPBACK);
+}
+
+TEST(bind_mode_lan_is_settable) {
+    GDBSockSetBindMode(GDB_BIND_LAN);
+    ASSERT_EQ(GDBSockGetBindMode(), GDB_BIND_LAN);
+    GDBSockSetBindMode(GDB_BIND_LOOPBACK);
+}
+
+TEST(bind_mode_unknown_value_fails_closed) {
+    GDBSockSetBindMode(GDB_BIND_LAN);
+    GDBSockSetBindMode(99);          /* garbage / future value */
+    ASSERT_EQ(GDBSockGetBindMode(), GDB_BIND_LOOPBACK);
+}
+
+TEST(bind_mode_returns_to_loopback) {
+    GDBSockSetBindMode(GDB_BIND_LAN);
+    GDBSockSetBindMode(GDB_BIND_LOOPBACK);
+    ASSERT_EQ(GDBSockGetBindMode(), GDB_BIND_LOOPBACK);
+}
+
+
 int main(void) {
     int total_fail = 0;
 
@@ -618,6 +656,10 @@ int main(void) {
     RUN(qrcmd_without_monitor_op_is_unsupported);
     RUN(thread_roster_is_fixed_at_three);
     RUN(hg_selects_thread_and_qc_reports_it);
+    RUN(bind_mode_defaults_to_loopback);
+    RUN(bind_mode_lan_is_settable);
+    RUN(bind_mode_unknown_value_fails_closed);
+    RUN(bind_mode_returns_to_loopback);
     total_fail += REPORT();
 
     return total_fail;

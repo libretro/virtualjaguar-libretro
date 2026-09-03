@@ -228,6 +228,29 @@ int GDBSockHasClientAttachEvent(void);
  * rest are inert, so the caller degrades to "stub unavailable" rather
  * than failing content load.
  */
+/* Bind scope for the listening socket (issue #652).
+ *
+ * DEFAULT AND FALLBACK IS LOOPBACK.  An open GDB stub is arbitrary read
+ * and write of emulated memory plus control of execution, and the RSP
+ * protocol carries NO authentication whatsoever -- anyone who can reach
+ * the port owns the emulated machine.  So binding beyond loopback is
+ * opt-in, per session, and never the value an unset/garbled option
+ * resolves to.
+ *
+ * GDB_BIND_LAN additionally rejects any peer outside RFC1918 /
+ * link-local / loopback at accept() time.  That does not make a hostile
+ * LAN safe; it exists to stop the SILENT accidental case -- a public
+ * address via carrier NAT or a misconfigured hotspot -- which is the
+ * failure a user cannot notice. A refused peer is logged. */
+#define GDB_BIND_LOOPBACK 0
+#define GDB_BIND_LAN      1
+
+/* Latched once at content load from the raw core option; never re-read
+ * mid-session, so a settings change cannot widen a socket that is
+ * already open. */
+void GDBSockSetBindMode(int mode);
+int  GDBSockGetBindMode(void);
+
 int GDBSockOpen(int port);
 void GDBSockClose(void);
 int GDBSockPoll(void);
