@@ -32,7 +32,7 @@
 #define VJAG_VERSION_H
 
 /* Keep in sync with CORE_BASE_VERSION in the Makefile. */
-#define CORE_BASE_VERSION "v3.6.0"
+#define CORE_BASE_VERSION "v3.6.1"
 
 /* Spelled so it cannot be mistaken for a real rev in a bug report: a build
  * that reports this had no git metadata available at compile time. */
