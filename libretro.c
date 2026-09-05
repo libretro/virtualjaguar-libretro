@@ -6267,6 +6267,21 @@ bool retro_load_game(const struct retro_game_info *info)
        * zero files present. */
       stage_cd_bios();
 
+      /* The CD unit is attached -- that is WHY the BIOS is running -- so
+       * this is CD mode with nothing in the tray, not cartridge mode.
+       * Both flags mirror open_disc_and_resolve_boot(); only the disc is
+       * missing.  Without them a machine sitting in the CD BIOS gets the
+       * options menu inverted against it (update_option_visibility() keys
+       * both gates off jaguar_cd_mode, so CD Boot Mode / CD BIOS Type
+       * would be HIDDEN and the cartridge-BIOS option shown), and the
+       * Memory Track cart -- which plugs into the CD unit and is present
+       * whether or not a disc is -- would stay absent until the first
+       * insert.  Safe with no disc: the three disc-identity accessors
+       * return zero when nothing is mounted (see the savestate chunk),
+       * and the MT save-buffer paths only touch mtMem. */
+      jaguar_cd_mode             = true;
+      jaguarMemTrackInserted     = opt_memory_track;
+
       vjs.useJaguarBIOS          = true;
       bootConfig.isCDGame        = false;
       bootConfig.showBootROM     = true;
