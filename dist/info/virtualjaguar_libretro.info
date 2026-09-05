@@ -5,7 +5,7 @@ supported_extensions = "j64|jag|rom|abs|cof|bin|prg|cue|cdi|chd"
 corename = "Virtual Jaguar"
 license = "GPLv3"
 permissions = ""
-display_version = "v3.6.0"
+display_version = "v3.6.1"
 categories = "Emulator"
 
 # Hardware Information
@@ -14,7 +14,7 @@ systemname = "Jaguar"
 systemid = "atari_jaguar"
 
 # Libretro Features
-supports_no_game = "false"
+supports_no_game = "true"
 database = "Atari - Jaguar"
 savestate = "true"
 savestate_features = "3"

@@ -584,7 +584,14 @@ TEST(no_game_env_declared)
     p_retro_deinit();
 }
 
-TEST(no_game_boot_selects_none_strategy)
+/* Renamed from no_game_boot_selects_none_strategy (#726).  It asserted
+ * IS_NONE, which pinned the bare-console boot that made the feature
+ * useless: cd_boot_strategy_none runs the boot ROM against a zeroed cart
+ * window -- the empty-slot logo -- and the CD BIOS is mapped as a
+ * cartridge, so nothing reachable from that screen could ever get to it.
+ * No-content boot exists to be a place you insert a disc FROM, so the
+ * BIOS is the correct resolution and this now pins that instead. */
+TEST(no_game_boot_selects_cd_bios_strategy)
 {
     bool loaded;
 
@@ -596,9 +603,14 @@ TEST(no_game_boot_selects_none_strategy)
             p_bootConfig->isCDGame, p_bootConfig->showBootROM,
             p_bootConfig->strategy ? p_bootConfig->strategy->name : "null");
 
+    /* isCDGame stays false: the BIOS is up, but no disc is mounted.  That
+     * pairing (bios + !isCDGame) is what the disk-control insert test uses
+     * to tell "bare BIOS" from "disc mounted". */
     ASSERT_EQ(p_bootConfig->isCDGame, false);
     ASSERT_EQ(p_bootConfig->showBootROM, true);
-    ASSERT(IS_NONE(*p_bootConfig));
+    ASSERT_EQ(p_bootConfig->cdBiosAvailable, true);
+    ASSERT(IS_BIOS(*p_bootConfig));
+    ASSERT(!IS_NONE(*p_bootConfig));
     core_teardown();
 }
 
@@ -711,7 +723,7 @@ int main(int argc, char *argv[])
     /* ---- Part 3: No-content boot (never gated -- needs no ROM) ---- */
     SUITE("No-Content Boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME)");
     RUN(no_game_env_declared);
-    RUN(no_game_boot_selects_none_strategy);
+    RUN(no_game_boot_selects_cd_bios_strategy);
     RUN(no_game_save_ram_is_empty);
     RUN(no_game_runs_and_resets_without_crashing);
     total_fail += REPORT();

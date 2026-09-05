@@ -449,6 +449,11 @@ disk-control interface, so a frontend can start it with no content at all and
 hand it a disc afterwards — which is what makes "launch the core, put in a
 music CD, get the Virtual Light Machine" reachable.
 
+Started with no content, the core comes up **in the CD BIOS**, on its
+insert-disc screen, which is the screen you insert *from*. No files are
+required: an external CD BIOS ROM in the system directory is preferred if you
+have one, and otherwise an embedded image is used.
+
 Two things to know about how that behaves:
 
 - **Inserting a disc restarts the console.** The boot strategy is derived from

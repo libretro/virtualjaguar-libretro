@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.6.0
+CORE_BASE_VERSION := v3.6.1
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -2061,6 +2061,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# REM SESSION markers and CDI headers declare numSessions=2 -- so it
 	@# would pass against a data disc for the wrong reason.  Ledgered as a
 	@# skip rather than written to look like coverage.
+	@# Case 5 (no-content boot renders AND progresses, #726) takes NO disc
+	@# and must NOT sit inside the corpus guard below.  It is the
+	@# regression cover for the bug that shipped in v3.6.0, so it has to
+	@# run on public CI and on contributor machines, which are exactly the
+	@# checkouts with no test/roms/private.  An earlier revision nested it
+	@# in the `if [ -n "$$disc" ]` block, where it silently ran nowhere but
+	@# a corpus machine.
+	./test/tools/test_disk_control ./$(TARGET) --case 5 --quiet
+
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
 	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \

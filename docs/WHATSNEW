@@ -1,3 +1,33 @@
+Virtual Jaguar v3.6.1 libretro
+------------------------------
+
+No-content boot fix. Full notes: docs/RELEASE_NOTES_v3.6.1.md
+
+== Fixes ==
+* No-content boot now comes up in the CD BIOS, on its insert-disc screen,
+  instead of a bare console with an empty cart slot (#726). The CD BIOS is
+  mapped as a cartridge at $800000, so nothing reachable from the
+  empty-slot screen could get to it -- which made "launch bare, insert a
+  disc, reach the VLM" (#646 + #651) unreachable by construction. No files
+  are required: an external CD BIOS ROM in the system directory wins if
+  present, otherwise an embedded image is used.
+* The same path now reports CD mode with an empty tray rather than
+  cartridge mode, so the options menu is no longer inverted against a
+  machine sitting in the CD BIOS (CD Boot Mode / CD BIOS Type were hidden,
+  the cartridge-BIOS option shown), and the Memory Track cart is present
+  from boot rather than only after the first insert.
+* dist/info: supports_no_game is "true". It was left "false" when
+  SET_SUPPORT_NO_GAME shipped in v3.6.0, and RetroArch reads the info
+  database -- not the runtime environment call -- to decide whether to
+  offer a contentless launch, so the feature was never advertised.
+
+== Tests ==
+* Two tests asserted the old boot strategy and so encoded the bug. Both now
+  pin the corrected behaviour; test_disk_control case 1 pairs the strategy
+  name with isCDGame, because bare BIOS and a real-BIOS disc both resolve
+  to "bios" and comparing names alone would have gone vacuous.
+
+
 Virtual Jaguar v3.6.0 libretro
 ------------------------------
 
