@@ -6242,15 +6242,36 @@ bool retro_load_game(const struct retro_game_info *info)
    }
    else if (!info)
    {
-      /* No-content boot (issue #646): ResolveBootConfig() only knows about
-       * cart/CD content, and there is no 68K program anywhere for HLE to
-       * jump into, so the real boot ROM is the only sane strategy --
-       * exactly what real hardware shows with an empty cart slot. */
+      /* No-content boot (issue #646, corrected for #726): come up in the
+       * CD BIOS, not on an empty cart slot.
+       *
+       * cd_boot_strategy_none models a bare console -- the boot ROM running
+       * against a zeroed cart window.  That is authentic for a Jaguar with
+       * no CD unit attached, but it is a dead end for the feature this path
+       * exists to serve: the CD BIOS is what offers "insert a disc", and it
+       * is mapped as a cartridge at $800000, so nothing reachable from the
+       * empty-slot screen can ever get to it.  Booting bare in order to
+       * insert a disc afterwards -- the whole point of #646 plus disk
+       * control (#651) -- was therefore unreachable, which is what #726
+       * reported as "red logo, and you cannot boot into CD".
+       *
+       * ResolveBootConfig() is still not usable here (it only knows about
+       * cart/CD content), so this mirrors its CDBOOT_BIOS arm by hand:
+       * showBootROM is forced on because the real CD BIOS path requires it.
+       *
+       * Neither call below can fail for want of a file.  stage_cd_bios()
+       * prefers an external ROM from the system directory and otherwise
+       * copies an embedded image, and bios_boot() needs no disc -- it
+       * memcpys the staged BIOS, takes the run address from $800404 and
+       * resets -- so the BIOS comes up on its own insert-disc screen with
+       * zero files present. */
+      stage_cd_bios();
+
       vjs.useJaguarBIOS          = true;
       bootConfig.isCDGame        = false;
       bootConfig.showBootROM     = true;
-      bootConfig.cdBiosAvailable = false;
-      bootConfig.strategy        = &cd_boot_strategy_none;
+      bootConfig.cdBiosAvailable = true;
+      bootConfig.strategy        = &cd_boot_strategy_bios;
    }
    else
    {

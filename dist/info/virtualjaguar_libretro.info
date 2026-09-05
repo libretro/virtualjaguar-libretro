@@ -14,7 +14,7 @@ systemname = "Jaguar"
 systemid = "atari_jaguar"
 
 # Libretro Features
-supports_no_game = "false"
+supports_no_game = "true"
 database = "Atari - Jaguar"
 savestate = "true"
 savestate_features = "3"

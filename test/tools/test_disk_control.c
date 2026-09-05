@@ -221,13 +221,21 @@ int main(int argc, char **argv)
 
     switch (case_num) {
     case 1: {
-        int registered, was_none, added, inserted, now_cd;
+        int registered, was_bare_bios, added, inserted, now_cd;
 
         registered = cfg.disk_cb_registered
                   && cfg.disk_add_image_index
                   && cfg.disk_replace_image_index
                   && cfg.disk_set_eject_state;
-        was_none   = strcmp(strategy_name(), "none") == 0;
+        /* No-content boot resolves to the CD BIOS (#726), so the strategy
+         * NAME alone no longer separates before-insert from after: a
+         * real-BIOS disc resolves to "bios" as well, and asserting
+         * strategy_is_cd() on both sides would be vacuous.  isCDGame is
+         * what actually moves -- false for the bare BIOS sitting on its
+         * insert-disc screen, true once a disc is mounted -- so both
+         * halves below pair the name with it. */
+        was_bare_bios = strcmp(strategy_name(), "bios") == 0
+                     && !bootcfg->isCDGame;
 
         gi.path = disc_path;
         added    = registered
@@ -235,23 +243,27 @@ int main(int argc, char **argv)
                 && cfg.disk_replace_image_index(0, &gi)
                 && cfg.disk_set_eject_state(true);
         inserted = added && cfg.disk_set_eject_state(false);
-        now_cd   = strategy_is_cd();
+        now_cd   = strategy_is_cd() && bootcfg->isCDGame;
 
         results[nres++] = mkres(registered, "case1_interface_registered",
             registered ? "core registered the disk control ext interface"
                        : "no disk control interface registered -- every "
                          "assertion below would be vacuous");
-        results[nres++] = mkres(was_none, "case1_no_content_resolved",
-            was_none ? "strategy was \"none\" before the insert"
-                     : "strategy was not \"none\" at no-content boot");
+        results[nres++] = mkres(was_bare_bios, "case1_no_content_resolved",
+            was_bare_bios ? "no-content boot came up in the CD BIOS with no "
+                            "disc mounted"
+                          : "no-content boot did not resolve to the CD BIOS "
+                            "(#726: it must, or the insert-disc screen is "
+                            "unreachable)");
         results[nres++] = mkres(inserted, "case1_insert_succeeded",
             inserted ? "set_eject_state(false) returned true"
                      : "insert was refused");
         results[nres++] = mkres(now_cd, "case1_boot_resolution_reran",
-            now_cd ? "strategy is now a CD strategy -- resolution re-ran"
-                   : "strategy did NOT move off \"none\" -- the insert "
-                     "reset the machine without re-resolving");
-        pass = registered && was_none && inserted && now_cd;
+            now_cd ? "a disc is mounted and a CD strategy resolved -- "
+                     "resolution re-ran"
+                   : "isCDGame never went true -- the insert reset the "
+                     "machine without re-resolving");
+        pass = registered && was_bare_bios && inserted && now_cd;
         break;
     }
     case 4: {
