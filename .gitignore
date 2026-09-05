@@ -54,6 +54,7 @@ tools/jagcd/jagcd-chd-check
 tools/jagcd/chdman
 tools/jagcd/*.exe
 test/tools/blit_memo_verify
+test/tools/dsp_halt_backtrace
 test/tools/dsp_idle_ab
 test/tools/dsp_idle_probe_falsify
 test/tools/gpu_idle_ab
