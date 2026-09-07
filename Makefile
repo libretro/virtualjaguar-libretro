@@ -2078,6 +2078,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# ~600, so 1200 frames is decisive and cheap.  Private corpus only.
 	@bal=$$(find -L test/roms/private -iname 'Baldies*Rev 1*.cue' 2>/dev/null | head -1); \
 	if [ -n "$$bal" ]; then \
+		$(MAKE) --no-print-directory test/tools/cd_wedge_probe >/dev/null || exit 1; \
 		if ./test/tools/cd_wedge_probe ./$(TARGET) "$$bal" --frames 1200 --arm 300 --freeze-frames 400 \
 				--option virtualjaguar_cd_boot_mode=hle >/dev/null 2>&1; then \
 			echo "  PASS: [baldies_hle_cutscene_progresses] no freeze in 1200 frames (#738)"; \
