@@ -1353,7 +1353,7 @@ clean:
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
-		test/tools/test_disk_control \
+		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
@@ -2070,6 +2070,24 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# a corpus machine.
 	./test/tools/test_disk_control ./$(TARGET) --case 5 --quiet
 
+	@# Baldies HLE cutscene (#738): the boot classifier PASSED this title
+	@# while it was frozen from frame ~600 (it reaches game code and is
+	@# not thrashing -- it is just waiting on a dead clock), so the cover
+	@# has to be a freeze detector.  cd_wedge_probe exits 42 on 400
+	@# identical frames after frame 300; the unpatched core froze at
+	@# ~600, so 1200 frames is decisive and cheap.  Private corpus only.
+	@bal=$$(find -L test/roms/private -iname 'Baldies*Rev 1*.cue' 2>/dev/null | head -1); \
+	if [ -n "$$bal" ]; then \
+		if ./test/tools/cd_wedge_probe ./$(TARGET) "$$bal" --frames 1200 --arm 300 --freeze-frames 400 \
+				--option virtualjaguar_cd_boot_mode=hle >/dev/null 2>&1; then \
+			echo "  PASS: [baldies_hle_cutscene_progresses] no freeze in 1200 frames (#738)"; \
+		else \
+			echo "  FAIL: [baldies_hle_cutscene_progresses] Baldies froze under HLE (#738: stream marker misaligned?)"; exit 1; \
+		fi; \
+	else \
+		bash scripts/test-skip.sh record "Baldies HLE cutscene progression (#738)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
+	fi
+
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
 	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
@@ -2407,6 +2425,14 @@ test/tools/test_disk_control: test/tools/test_disk_control.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_disk_control.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Freeze detector used by the Baldies HLE cutscene check below (#738).
+test/tools/cd_wedge_probe: test/tools/cd_wedge_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. $(INCFLAGS) \
+		-o $@ test/tools/cd_wedge_probe.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
