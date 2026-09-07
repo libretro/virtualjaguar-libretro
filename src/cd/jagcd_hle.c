@@ -486,6 +486,25 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
             {
                uint32_t relOff = s2 * 2352 + i;
                uint32_t mis    = (destAddr + relOff) & 3;
+               /* The I2S capture phase is a WORD phase: a genuine marker
+                * lands at destination misalignment 0 or 2, never 1 or 3.
+                * An odd-misaligned byte-fill run is therefore payload that
+                * happens to repeat a printable byte, not a mastering
+                * marker -- and returning on it hides the real one.
+                * Baldies (#738): sector 8 opens with 65 x '{' at misalign
+                * 1; the true 64 x ''' chunk marker sits in sector 7 at
+                * misalign 2.  Returning "shift 0" on the decoy left the
+                * marker 2-aligned, the game's 16-aligned-long locator
+                * counted 15, and it aborted its cutscene into a
+                * stack-unsafe exit that hangs the console.  Skip the
+                * decoy and keep scanning. */
+               if (mis & 1u)
+               {
+                  HLE_LOG("align scan: ignoring %s run (%u) at LBA %u off "
+                          "%u -- odd dest misalign %u is not a word phase\n",
+                          what, run, startLBA + s2, i, mis);
+                  continue;
+               }
                HLE_LOG("align scan: %s run (%u) at LBA %u off %u "
                        "(stream off %u, dest misalign %u) -- shift %u\n",
                        what, run, startLBA + s2, i, relOff, mis,
