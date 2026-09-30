@@ -696,6 +696,15 @@ unsigned int m68k_read_memory_32(unsigned int address)
  * this scheduler slice before the 68000 goes any further.  Full explanation on
  * gpuSliceBudget in gpu.c (issue #138).
  *
+ * The catch-up runs BEFORE the write lands.  Run after it, the GPU spends the
+ * cycles that precede the write with the write already visible: a short GPU
+ * job posted by the write can finish, and its CPU interrupt be taken, before
+ * the 68000 reaches the very next instruction.  Myst's movie decoder posts a
+ * job then executes `stop #$2000` with only the GPU interrupt enabled; the
+ * interrupt had already been serviced, so the 68000 slept forever (black
+ * screen after the Cyan logo).  On silicon the GPU cannot finish a job
+ * between two consecutive 68000 instructions.
+ *
  * m68kInLongWrite suppresses the sync for the two halves of a 68000 long
  * write, which reaches TOM as two word writes: the GPU must never observe a
  * half-written longword (Pitfall's mailbox poll loop read $00F00000 and jumped
@@ -819,6 +828,7 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
     * record shape. */
    VJT_WATCH_WR(address, value & 0xFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
+   M68KGPURAMSync(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
@@ -848,8 +858,6 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
       JERRYWriteByte(address, value, M68K);
    else
       jaguar_unknown_writebyte(address, value, M68K);
-
-   M68KGPURAMSync(address, 1);
 }
 
 
@@ -871,19 +879,15 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
     * in m68k_write_memory_8. */
    VJT_WATCH_WR(address, value & 0xFFFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
+   /* Before the write, not after: the latch-only half occupies the bus
+    * like a committing write, and either way the GPU must not observe
+    * the new value in cycles that precede it (see M68KGPURAMSync). */
+   M68KGPURAMSync(address, 2);
 
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
     * see M68KRiscWordLatch. */
    if (M68KRiscWordLatch(address, value))
-   {
-      /* The half that only latches still occupies the bus, so the GPU
-       * must be run up to this access exactly as it is for a committing
-       * write.  Without this, GPU work that logically falls between the
-       * two halves gets executed after the commit instead of before it,
-       * and would observe the new longword a half-write early. */
-      M68KGPURAMSync(address, 2);
       return;
-   }
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
@@ -918,8 +922,6 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    {
       jaguar_unknown_writeword(address, value, M68K);
    }
-
-   M68KGPURAMSync(address, 2);
 }
 
 
@@ -951,12 +953,11 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
       SET32(jaguarMainRAM, address, value);
       return;
    }
+   M68KGPURAMSync(address, 4);
    m68kInLongWrite++;
    m68k_write_memory_16(address, value >> 16);
    m68k_write_memory_16(address + 2, value & 0xFFFF);
    m68kInLongWrite--;
-
-   M68KGPURAMSync(address, 4);
 }
 
 /* Disassemble M68K instructions at the given offset */
