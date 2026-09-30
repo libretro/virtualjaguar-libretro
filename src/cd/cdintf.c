@@ -663,6 +663,70 @@ static bool ParseCHD(const char *chdPath)
    return true;
 }
 
+static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer);
+
+/* A virtual pregap is stored as silence, but Atari's mastering header
+ *   10 zero bytes | 'ATRI' x16 | "ATARI APPROVED DATA HEADER ATRI " | ...
+ * can start inside it: the CHD then keeps only the tail of the 'ATRI'
+ * run at the head of INDEX 01 (Vid Grid USA/Alt track 3: 9 and 10 of 16).
+ * Drivers that match 16 consecutive 'ATRI' longs then retry the read
+ * forever.  The missing bytes are fully determined by the header format,
+ * so rebuild them at the end of the pregap's last sector.  Byte order is
+ * the disc's (I2S-swapped pairs); compare and fill in the unswapped view. */
+static uint32_t chd_atri_repair_logged = 0;
+
+static void CHDRepairAtriPregap(const struct CDIntfTrack *track, uint8_t *buffer)
+{
+   static const char hdr[] = "ATARI APPROVED DATA HEADER";
+   uint8_t data[2352];
+   uint8_t sw[2352];
+   uint32_t i, run, missing;
+
+   if (!CDIntfReadBlockCHD(track->dataLBA, data))
+      return;
+   for (i = 0; i + 1 < 2352; i += 2)
+   {
+      sw[i]     = data[i + 1];
+      sw[i + 1] = data[i];
+   }
+
+   /* Partial 'ATRI' (0-3 bytes of its tail), then whole ones, then text. */
+   for (run = 0; run < 4; run++)
+   {
+      uint32_t off = run, k = 0;
+      if (run && memcmp(sw, "ATRI" + 4 - run, run) != 0)
+         continue;
+      while (off + 4 <= 64 && memcmp(sw + off, "ATRI", 4) == 0)
+      {
+         off += 4;
+         k++;
+      }
+      if (k == 0 || off >= 64 || memcmp(sw + off, hdr, sizeof(hdr) - 1) != 0)
+         continue;
+
+      missing = 64 - off;
+      for (i = 0; i + 1 < 2352; i += 2)
+      {
+         sw[i]     = buffer[i + 1];
+         sw[i + 1] = buffer[i];
+      }
+      for (i = 0; i < missing; i++)
+         sw[2352 - missing + i] = (uint8_t)"ATRI"[i & 3];
+      for (i = 0; i + 1 < 2352; i += 2)
+      {
+         buffer[i]     = sw[i + 1];
+         buffer[i + 1] = sw[i];
+      }
+      if (track->number != chd_atri_repair_logged)
+      {
+         chd_atri_repair_logged = track->number;
+         LOG_INF("[CD-CHD] track %u: rebuilt %u byte(s) of the 'ATRI' sync "
+                 "run lost in its virtual pregap\n", track->number, missing);
+      }
+      return;
+   }
+}
+
 static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
 {
    int i;
@@ -701,6 +765,8 @@ static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
    if (chd_virtual_pregap[track->number - 1] && sector < track->dataLBA)
    {
       memset(buffer, 0, 2352);
+      if (sector + 1 == track->dataLBA)
+         CHDRepairAtriPregap(track, buffer);
       lastReadVirtualPregap = true;
       lastVirtualPregapLBA = sector;
       return true;
