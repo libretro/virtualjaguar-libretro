@@ -121,6 +121,13 @@ static uint32_t hle_gpu_data_base  = 0;
  * DSP.  $FFFFFFFF = no read yet. */
 static uint32_t hle_post_read_lba  = 0xFFFFFFFFu;
 
+/* Byte phase (mod 4) inside a 2352-byte sector of the last mastered sync
+ * run HLERawStreamAlignOffset located, and the track it was found on
+ * (0 = none yet).  2352 is a multiple of 4, so within one track the
+ * phase is a property of the pressing, not of the read. */
+static uint32_t hle_align_phase_track = 0;
+static uint32_t hle_align_phase       = 0;
+
 /* ------------------------------------------------------------------ */
 /* Streaming CD_read transfer                                          */
 /*                                                                     */
@@ -364,6 +371,24 @@ static uint32_t HLEPatRunLen(const uint8_t *sec, uint32_t i, const uint8_t *pat)
    return n;
 }
 
+static uint32_t HLETrackOfLBA(uint32_t lba)
+{
+   uint32_t track, idx, rel;
+   bool isData;
+
+   if (!CDIntfGetQPosition(lba, &track, &idx, &rel, &isData))
+      return 0;
+   return track;
+}
+
+/* Remember where a located sync run sat, then return the stream shift. */
+static uint32_t HLEAlignRecord(uint32_t lba, uint32_t relOff, uint32_t mis)
+{
+   hle_align_phase_track = HLETrackOfLBA(lba);
+   hle_align_phase       = relOff & 3u;
+   return (mis == 2) ? 2u : 0u;
+}
+
 static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
                                         uint32_t d1, bool d1Usable)
 {
@@ -414,7 +439,7 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
                     "(stream off %u, dest misalign %u) -- shift %u\n",
                     what, run, startLBA + s, i, relOff, mis,
                     (mis == 2) ? 2u : 0u);
-            return (mis == 2) ? 2u : 0u;
+            return HLEAlignRecord(startLBA + s, relOff, mis);
          }
       }
    }
@@ -505,14 +530,47 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
                           what, run, startLBA + s2, i, mis);
                   continue;
                }
+               /* Same decoy class, even phase: a run whose sector phase
+                * contradicts the one already measured on this track is
+                * payload, not a marker (Hover Strike's intro refill at
+                * LBA 122632: a phase-0 fill at off 228 against a track
+                * whose every real marker sits at phase 2). */
+               if (hle_align_phase_track != 0
+                   && (relOff & 3u) != hle_align_phase
+                   && hle_align_phase_track == HLETrackOfLBA(startLBA + s2))
+               {
+                  HLE_LOG("align scan: ignoring %s run (%u) at LBA %u off "
+                          "%u -- phase %u contradicts track %u phase %u\n",
+                          what, run, startLBA + s2, i, relOff & 3u,
+                          hle_align_phase_track, hle_align_phase);
+                  continue;
+               }
                HLE_LOG("align scan: %s run (%u) at LBA %u off %u "
                        "(stream off %u, dest misalign %u) -- shift %u\n",
                        what, run, startLBA + s2, i, relOff, mis,
                        (mis == 2) ? 2u : 0u);
-               return (mis == 2) ? 2u : 0u;
+               return HLEAlignRecord(startLBA + s2, relOff, mis);
             }
          }
       }
+   }
+
+   /* No marker near this read -- a continuation read into the middle of
+    * a file (Hover Strike's intro movie: its fifth refill at LBA 119977
+    * has no sync run in reach).  The stream phase is the pressing's, so
+    * reuse the one measured earlier on the same track instead of
+    * dropping to 0: a 2-byte-shifted refill makes the movie player
+    * abort and halt the GPU that drives its clock (black screen). */
+   if (hle_align_phase_track != 0
+       && hle_align_phase_track == HLETrackOfLBA(startLBA))
+   {
+      uint32_t mis = (destAddr + hle_align_phase) & 3u;
+      HLE_LOG("align scan: no sync run within %u sectors of LBA %u -- "
+              "reusing track %u phase %u, shift %u\n",
+              (unsigned)HLE_ALIGN_SCAN_SECTORS, startLBA,
+              hle_align_phase_track, hle_align_phase,
+              (mis == 2) ? 2u : 0u);
+      return (mis == 2) ? 2u : 0u;
    }
 
    HLE_LOG("align scan: no sync run within %u sectors of LBA %u\n",
@@ -1735,6 +1793,8 @@ bool JaguarCDHLEBoot(void)
    hle_read_dest     = 0;
    hle_read_progress = 0;
    hle_post_read_lba = 0xFFFFFFFFu;
+   hle_align_phase_track = 0;
+   hle_align_phase = 0;
 
    if (!CDIntfIsImageLoaded())
    {
@@ -1993,6 +2053,8 @@ static void hle_strategy_reset(void)
    hle_read_dest     = 0;
    hle_read_progress = 0;
    hle_post_read_lba = 0xFFFFFFFFu;
+   hle_align_phase_track = 0;
+   hle_align_phase = 0;
    hle_stream_arm_count = 0;
    memset(&hleStream, 0, sizeof(hleStream));
 }
