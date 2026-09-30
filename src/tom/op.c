@@ -495,6 +495,18 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 //
 // Object Processor main routine
 //
+/* Set only around OPProcessListNoBitmaps(): bitmap and scaled objects are
+ * skipped (link followed, no pixels, no HEIGHT/DATA write-back) while
+ * branch, GPU and stop objects run normally. */
+static bool op_skip_bitmaps = false;
+
+void OPProcessListNoBitmaps(int halfline)
+{
+   op_skip_bitmaps = true;
+   OPProcessList(halfline, false);
+   op_skip_bitmaps = false;
+}
+
 void OPProcessList(int halfline, bool render)
 {
    bool inhibit;
@@ -520,7 +532,7 @@ void OPProcessList(int halfline, bool render)
    {
       uint64_t p0;
       // *** BEGIN OP PROCESSOR TESTING ONLY ***
-      inhibit     = false;
+      inhibit     = op_skip_bitmaps;
       // *** END OP PROCESSOR TESTING ONLY ***
 
       p0          = OPLoadPhrase(op_pointer);
