@@ -694,7 +694,7 @@ static void CHDRepairAtriPregap(const struct CDIntfTrack *track, uint8_t *buffer
    for (run = 0; run < 4; run++)
    {
       uint32_t off = run, k = 0;
-      if (run && memcmp(sw, "ATRI" + 4 - run, run) != 0)
+      if (run && memcmp(sw, &"ATRI"[4 - run], run) != 0)
          continue;
       while (off + 4 <= 64 && memcmp(sw + off, "ATRI", 4) == 0)
       {
