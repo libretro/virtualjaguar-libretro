@@ -953,10 +953,17 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
       SET32(jaguarMainRAM, address, value);
       return;
    }
+   /* Charge both bus cycles up front so the catch-up covers the whole long
+    * access, as it does for the 8/16-bit paths (charge, then sync, then
+    * write); the halves below then run uncharged to avoid billing twice. */
+   M68K_BUS_CHARGE(address, 1);
+   M68K_BUS_CHARGE((address + 2) & 0x00FFFFFF, 1);
    M68KGPURAMSync(address, 4);
    m68kInLongWrite++;
+   m68kBusNoCharge++;
    m68k_write_memory_16(address, value >> 16);
    m68k_write_memory_16(address + 2, value & 0xFFFF);
+   m68kBusNoCharge--;
    m68kInLongWrite--;
 }
 
