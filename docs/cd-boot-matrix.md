@@ -111,36 +111,53 @@ fresh dated section; do not retrofit old ones.
 
 | Title | Mode | Score | Stage | Watchdog | PC evidence |
 |---|---|---|---|---|---|
-| Baldies (USA) (Rev 1).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18235B unique_pcs=26 final_pc=$05FE8A <!-- build:e8179c04a895 --> |
-| Baldies (USA) (Rev 1).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B086 dsp_run=1 |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21698B unique_pcs=65 final_pc=$05FE88 <!-- build:e8179c04a895 --> |
-| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=26709B unique_pcs=47 final_pc=$007794 <!-- build:e8179c04a895 --> |
-| Battle Morph (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=905 seek_starts=1 seek_dones=1 fifo_drains=28672 unchanged for 300 frames gpu_pc=$00F0343E gpu_run=1 dsp_pc=$00F1C076 dsp_run=1 |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=30596B unique_pcs=72 final_pc=$022052 <!-- build:e8179c04a895 --> |
-| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17926B unique_pcs=52 final_pc=$004FD0 <!-- build:e8179c04a895 --> |
-| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1106 seek_starts=2 seek_dones=2 fifo_drains=38915 unchanged for 300 frames gpu_pc=$00F03278 gpu_run=1 dsp_pc=$00F1B084 dsp_run=1 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=27663B unique_pcs=62 final_pc=$004FD2 <!-- build:e8179c04a895 --> |
-| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18477B unique_pcs=73 final_pc=$00967A <!-- build:e8179c04a895 --> |
-| Dragon's Lair (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29338B unique_pcs=82 final_pc=$004C10 <!-- build:e8179c04a895 --> |
-| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21068B unique_pcs=56 final_pc=$009222 <!-- build:e8179c04a895 --> |
-| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1755 seek_starts=4 seek_dones=4 fifo_drains=92617 unchanged for 300 frames gpu_pc=$00F031BE gpu_run=1 dsp_pc=$00F1B07C dsp_run=1 |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=16456B unique_pcs=71 final_pc=$0088DA <!-- build:e8179c04a895 --> |
-| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23042B unique_pcs=37 final_pc=$05DAA4 <!-- build:e8179c04a895 --> |
-| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17157B unique_pcs=78 final_pc=$05DAA4 <!-- build:e8179c04a895 --> |
-| Iron Soldier 2 (USA) (Songbird).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29325B unique_pcs=23 final_pc=$00B542 <!-- build:e8179c04a895 --> |
-| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29872B unique_pcs=41 final_pc=$00B542 <!-- build:e8179c04a895 --> |
-| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28237B unique_pcs=98 final_pc=$00457A <!-- build:e8179c04a895 --> |
-| Primal Rage (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=884 seek_starts=2 seek_dones=2 fifo_drains=17996 unchanged for 300 frames gpu_pc=$00F031F4 gpu_run=1 dsp_pc=$00F1B0B0 dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25894B unique_pcs=75 final_pc=$01AFCE <!-- build:e8179c04a895 --> |
-| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19041B unique_pcs=62 final_pc=$004D4E <!-- build:e8179c04a895 --> |
-| Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=85 final_pc=$00B87A <!-- build:e8179c04a895 --> |
-| baldies.cdi | hle | 1/1 | GAME_CODE | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18235B unique_pcs=26 final_pc=$05FE8A <!-- build:e8179c04a895 --> |
-| baldies.cdi | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B086 dsp_run=1 |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21698B unique_pcs=65 final_pc=$05FE88 <!-- build:e8179c04a895 --> |
-| Myst (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=10988B unique_pcs=256+ final_pc=$0103FA <!-- build:e8179c04a895 --> |
-| Myst (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=2246 seek_starts=10 seek_dones=10 fifo_drains=75081 unchanged for 300 frames gpu_pc=$00F03768 gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18029B unique_pcs=256+ final_pc=$00EF82 <!-- build:e8179c04a895 --> |
-| Baldies (USA) (Rev 1).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20677B unique_pcs=19 final_pc=$04C3B6 <!-- build:e8179c04a895 --> |
-| Baldies (USA) (Rev 1).chd | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1253 seek_starts=3 seek_dones=3 fifo_drains=93729 unchanged for 300 frames gpu_pc=$00F031AC gpu_run=0 dsp_pc=$00F1B0A8 dsp_run=1 |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25122B unique_pcs=45 final_pc=$04C3B6 <!-- build:e8179c04a895 --> |
+| Baldies (USA) (Rev 1).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:4cbb1d56cff7 --> |
+| Baldies (USA) (Rev 1).cue | bios | 0/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B088 dsp_run=1 |     [FAIL]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=13194B unique_pcs=45 final_pc=$05F4EA <!-- build:4cbb1d56cff7 --> |
+| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=26709B unique_pcs=47 final_pc=$007794 <!-- build:4cbb1d56cff7 --> |
+| Battle Morph (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=905 seek_starts=1 seek_dones=1 fifo_drains=28672 unchanged for 300 frames gpu_pc=$00F0343E gpu_run=1 dsp_pc=$00F1C076 dsp_run=1 |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=30596B unique_pcs=72 final_pc=$022052 <!-- build:4cbb1d56cff7 --> |
+| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17926B unique_pcs=52 final_pc=$004FD0 <!-- build:4cbb1d56cff7 --> |
+| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1106 seek_starts=2 seek_dones=2 fifo_drains=38915 unchanged for 300 frames gpu_pc=$00F03278 gpu_run=1 dsp_pc=$00F1B084 dsp_run=1 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=27663B unique_pcs=62 final_pc=$004FD2 <!-- build:4cbb1d56cff7 --> |
+| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18477B unique_pcs=73 final_pc=$00967A <!-- build:4cbb1d56cff7 --> |
+| Dragon's Lair (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29338B unique_pcs=82 final_pc=$004C10 <!-- build:4cbb1d56cff7 --> |
+| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19113B unique_pcs=46 final_pc=$0088D8 <!-- build:4cbb1d56cff7 --> |
+| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=774 seek_starts=1 seek_dones=1 fifo_drains=6592 unchanged for 300 frames gpu_pc=$00F0307E gpu_run=1 dsp_pc=$00F1B11C dsp_run=0 |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20384B unique_pcs=64 final_pc=$0088D8 <!-- build:4cbb1d56cff7 --> |
+| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=13546B unique_pcs=22 final_pc=$05F59A <!-- build:4cbb1d56cff7 --> |
+| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17157B unique_pcs=73 final_pc=$05DAA6 <!-- build:4cbb1d56cff7 --> |
+| Iron Soldier 2 (USA) (Songbird).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29325B unique_pcs=23 final_pc=$00B542 <!-- build:4cbb1d56cff7 --> |
+| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29872B unique_pcs=41 final_pc=$00B542 <!-- build:4cbb1d56cff7 --> |
+| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28237B unique_pcs=97 final_pc=$00457A <!-- build:4cbb1d56cff7 --> |
+| Primal Rage (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=884 seek_starts=2 seek_dones=2 fifo_drains=17996 unchanged for 300 frames gpu_pc=$00F031F4 gpu_run=1 dsp_pc=$00F1B0B0 dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25894B unique_pcs=75 final_pc=$01AFCE <!-- build:4cbb1d56cff7 --> |
+| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=15136B unique_pcs=24 final_pc=$00B87A <!-- build:4cbb1d56cff7 --> |
+| Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=85 final_pc=$00B87A <!-- build:4cbb1d56cff7 --> |
+| baldies.cdi | hle | 1/1 | GAME_CODE | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:4cbb1d56cff7 --> |
+| baldies.cdi | bios | 0/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B088 dsp_run=1 |     [FAIL]  baldies.cdi : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=13194B unique_pcs=45 final_pc=$05F4EA <!-- build:4cbb1d56cff7 --> |
+| Myst (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=6373B unique_pcs=249 final_pc=$0103FA <!-- build:4cbb1d56cff7 --> |
+| Myst (USA).cue | bios | 0/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=2246 seek_starts=10 seek_dones=10 fifo_drains=75081 unchanged for 300 frames gpu_pc=$00F0376A gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [FAIL]  Myst (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=17177B unique_pcs=256+ final_pc=$0103FA <!-- build:4cbb1d56cff7 --> |
+| Baldies (USA) (Rev 1).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:4cbb1d56cff7 --> |
+| Baldies (USA) (Rev 1).chd | bios | 0/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B088 dsp_run=1 |     [FAIL]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=13194B unique_pcs=45 final_pc=$05F4EA <!-- build:4cbb1d56cff7 --> |
 | Myst (USA).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).chd : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=6373B unique_pcs=249 final_pc=$0103FA <!-- build:ce032c452e32 --> |
 | Myst (USA).chd | bios | 0/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=2246 seek_starts=10 seek_dones=10 fifo_drains=75081 unchanged for 300 frames gpu_pc=$00F0376A gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [FAIL]  Myst (USA).chd : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=17177B unique_pcs=256+ final_pc=$0103FA <!-- build:ce032c452e32 --> |
-| Frog Feast (USA) (Unl).chd | hle | 0/1 | LOAD_FAIL | (none) |     [FAIL]  Frog Feast (USA) (Unl).chd : load failed (retro_load_game returned false) <!-- build:e8179c04a895 --> |
-| Frog Feast (USA) (Unl).chd | bios | 1/1 | BIOS_INTRO | [CRASH-DETECT] cd_seek_wedge frame=784 seek_starts=1 seek_dones=1 fifo_drains=0 unchanged for 300 frames gpu_pc=$00F03A8C gpu_run=1 dsp_pc=$00F1B07C dsp_run=1 |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24659B unique_pcs=75 final_pc=$196028 <!-- build:e8179c04a895 --> |
+| Frog Feast (USA) (Unl).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=7027B unique_pcs=122 final_pc=$006E92 <!-- build:4cbb1d56cff7 --> |
+| Frog Feast (USA) (Unl).chd | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25474B unique_pcs=130 final_pc=$006E92 <!-- build:4cbb1d56cff7 --> |
 
 Raw per-run logs are not committed; re-run the script to regenerate.
+
+### Regenerated on 2f913d8 -- 2026-10-02 (#735)
+
+The first full sweep since 2026-08-13. Against those rows, two titles improved
+and four regressed. Everything else is unchanged at the stage and verdict level.
+
+- **Improved.** `Frog Feast (USA) (Unl).chd`: hle LOAD_FAIL -> GAME_CODE PASS,
+  bios BIOS_INTRO -> GAME_CODE PASS.
+- **Regressed, all in bios mode, PASS -> FAIL at the same stage.** Baldies
+  `.cue` / `.chd` / `.cdi` and `Myst (USA).cue`. In each the 68K is parked
+  waiting for an interrupt that does not come (`not_loop=0`). These are #752
+  (Baldies: STOP at `$05F4EA`, GPU completion IRQ starved) and #756 (Myst:
+  68K sleeps on STOP, GPU IRQ serviced early). #757 claims #756 and should
+  move these rows.
+
+Wall-clock caps were raised for this sweep (`CD_MATRIX_TIMEOUT=400`) because
+the host was heavily loaded. The frame budget is unchanged (3000).
 
 ### Myst CHD joined the sweep -- 2026-10-01
 
@@ -1103,4 +1120,4 @@ Deltas vs the previous table; no regressions:
 
 Raw per-run logs are not committed; re-run the script to regenerate.
 
-Raw per-run logs: /private/tmp/claude-501/-Users-jmattiello-Workspace-Provenance-virtualjaguar-libretro/bfa69fd3-7b92-4cf7-afef-2d80243fcfae/scratchpad/cd-matrix-logs (not committed; re-run to regenerate).
+Raw per-run logs: /private/tmp/claude-501/-Users-jmattiello-Workspace-Provenance-virtualjaguar-libretro/6201742f-f42e-4304-a245-2b3e2891ea93/scratchpad/cdmx-logs (not committed; re-run to regenerate).
