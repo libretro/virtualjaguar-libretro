@@ -87,8 +87,8 @@ the current directory when omitted.
   ```
   cc -O2 -Wall -std=c99 -I. -I./test/harness -I./libretro-common/include -o test/tools/frame_hash_ab \
      test/tools/frame_hash_ab.c test/harness/harness.c -ldl -lm
-  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv a.csv --frames 1800 --option virtualjaguar_dsp=enabled
-  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv b.csv --frames 1800 --option virtualjaguar_dsp=disabled
+  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv a.csv --frames 1800 --option virtualjaguar_usefastblitter=enabled
+  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv b.csv --frames 1800 --option virtualjaguar_usefastblitter=disabled
   ```
   Then diff whichever CSV/dump pair applies:
   - `field_diff` — generic row/column CSV diff (works on `frame_hash_ab`'s

@@ -410,8 +410,114 @@ static struct retro_microphone_interface g_synth_mic_iface = {
     synth_read_mic
 };
 
+/* Option keys the core registered (#742).  An --option key the core never
+ * registered used to be silently ignored, so a typo, a renamed option or an
+ * option missing on this branch measured the defaults and reported a
+ * confident null result (the --bios / risc_pc_histogram casualties). */
+#define HARNESS_MAX_REG_KEYS 512
+#define HARNESS_REG_KEY_LEN  64
+static char     reg_keys[HARNESS_MAX_REG_KEYS][HARNESS_REG_KEY_LEN];
+static unsigned reg_num_keys;
+
+static void reg_add_key(const char *key)
+{
+    unsigned i;
+    if (!key || !*key) return;
+    for (i = 0; i < reg_num_keys; i++)
+        if (strcmp(reg_keys[i], key) == 0) return;
+    if (reg_num_keys >= HARNESS_MAX_REG_KEYS) return;
+    snprintf(reg_keys[reg_num_keys], HARNESS_REG_KEY_LEN, "%s", key);
+    reg_num_keys++;
+}
+
+static void reg_record(unsigned cmd, const void *data)
+{
+    unsigned i;
+    if (!data) return;
+    switch (cmd) {
+    case RETRO_ENVIRONMENT_SET_VARIABLES: {
+        const struct retro_variable *v = (const struct retro_variable *)data;
+        for (i = 0; v[i].key; i++) reg_add_key(v[i].key);
+        break;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS: {
+        const struct retro_core_option_definition *d =
+            (const struct retro_core_option_definition *)data;
+        for (i = 0; d[i].key; i++) reg_add_key(d[i].key);
+        break;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
+        const struct retro_core_options_intl *o =
+            (const struct retro_core_options_intl *)data;
+        if (o->us)
+            for (i = 0; o->us[i].key; i++) reg_add_key(o->us[i].key);
+        break;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2: {
+        const struct retro_core_options_v2 *o =
+            (const struct retro_core_options_v2 *)data;
+        if (o->definitions)
+            for (i = 0; o->definitions[i].key; i++)
+                reg_add_key(o->definitions[i].key);
+        break;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+        const struct retro_core_options_v2_intl *o =
+            (const struct retro_core_options_v2_intl *)data;
+        if (o->us && o->us->definitions)
+            for (i = 0; o->us->definitions[i].key; i++)
+                reg_add_key(o->us->definitions[i].key);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/* Call after retro_set_environment + retro_init, before retro_load_game.
+ * An unregistered --option key is fatal (exit 2, naming the key) unless
+ * VJ_HARNESS_ALLOW_UNKNOWN_OPTIONS is set -- the escape hatch for an A/B
+ * against an older core that predates an option the tool always passes.
+ * Prints the resolved option set (stderr) so a log is self-describing. */
+static void validate_options(const harness_config *cfg)
+{
+    unsigned i, j;
+    int bad = 0;
+    const char *allow = getenv("VJ_HARNESS_ALLOW_UNKNOWN_OPTIONS");
+
+    if (cfg->num_options == 0) return;
+    if (reg_num_keys == 0) {
+        fprintf(stderr, "harness: WARNING core registered no option keys; "
+                        "cannot validate --option\n");
+    } else {
+        for (i = 0; i < cfg->num_options; i++) {
+            for (j = 0; j < reg_num_keys; j++)
+                if (strcmp(cfg->options[i].key, reg_keys[j]) == 0) break;
+            if (j == reg_num_keys) {
+                fprintf(stderr, "harness: %s --option key '%s' is not an option "
+                                "this core registers\n",
+                        (allow && *allow) ? "WARNING" : "FATAL",
+                        cfg->options[i].key);
+                bad = 1;
+            }
+        }
+        if (bad && !(allow && *allow)) {
+            fprintf(stderr, "harness: refusing to run with an unknown option -- it "
+                            "would be ignored and the run would measure the default. "
+                            "Set VJ_HARNESS_ALLOW_UNKNOWN_OPTIONS=1 to override.\n");
+            exit(2);
+        }
+    }
+    /* Always, even under --quiet: several tools rewrite their own flags to
+     * "--quiet" placeholders, and this goes to stderr, not the data. */
+    for (i = 0; i < cfg->num_options; i++)
+        fprintf(stderr, "harness: option %s=%s\n",
+                cfg->options[i].key, cfg->options[i].value);
+}
+
 static bool cb_environment(unsigned cmd, void *data)
 {
+    reg_record(cmd, data);
     switch (cmd) {
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
         *(struct retro_log_callback *)data = log_cb_struct;
@@ -593,6 +699,10 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             if (eq) {
                 *eq = '\0';
                 harness_set_option(cfg, argv[i], eq + 1);
+            } else {
+                fprintf(stderr, "harness: FATAL --option '%s' is not KEY=VALUE\n",
+                        argv[i]);
+                exit(2);
             }
         } else if (argv[i][0] == '-') {
             /* Unknown flag — skip. Tools pre-parse their own flags
@@ -732,6 +842,7 @@ bool harness_load_rom(harness_config *cfg)
 
     lr_set_environment(cb_environment);
     lr_init();
+    validate_options(cfg);
     lr_set_video_refresh(cb_video);
     lr_set_audio_sample(cb_audio_sample);
     lr_set_audio_sample_batch(cb_audio_batch);
@@ -774,6 +885,7 @@ bool harness_load_no_content(harness_config *cfg)
 
     lr_set_environment(cb_environment);
     lr_init();
+    validate_options(cfg);
     lr_set_video_refresh(cb_video);
     lr_set_audio_sample(cb_audio_sample);
     lr_set_audio_sample_batch(cb_audio_batch);
@@ -984,7 +1096,11 @@ void *harness_dlsym(harness_config *cfg, const char *name)
 
 void harness_set_option(harness_config *cfg, const char *key, const char *value)
 {
-    if (cfg->num_options >= HARNESS_MAX_OPTIONS) return;
+    if (cfg->num_options >= HARNESS_MAX_OPTIONS) {
+        fprintf(stderr, "harness: FATAL more than %d options; '%s' would be "
+                        "dropped\n", HARNESS_MAX_OPTIONS, key);
+        exit(2);
+    }
     cfg->options[cfg->num_options].key = key;
     cfg->options[cfg->num_options].value = value;
     cfg->num_options++;
