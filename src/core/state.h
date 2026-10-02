@@ -78,9 +78,14 @@ extern "C" {
  *     changes UARTFrameUsec(), which schedules the UART TX/RX
  *     event-queue deadlines.  A pre-#552 v13 state (Team Tap only) reads
  *     nothing here and the loader falls back to stock (1), which is
- *     exactly what a pre-#552 core was — see UARTWireSpeedupStateLoad(). */
+ *     exactly what a pre-#552 core was — see UARTWireSpeedupStateLoad().
+ * v14: mounted-disc identity + image index (#651).  Shipped in v3.6.0.
+ * v15: CDROM chunk gained the last $03nn/$14nn TOC word handed out
+ *     (dsaLastMultiWord).  develop only — first bump of the post-v3.6.1
+ *     cycle, so any other in-flight state change this cycle extends v15
+ *     in place rather than bumping again. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   14
+#define STATE_VERSION   15
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -183,6 +188,12 @@ extern "C" {
  * 13 shipped in v3.5.1, so this needs its own bump; 14 is now the single
  * shared bump for this release, per the one-bump-per-release policy. */
 #define STATE_VERSION_DISK_CONTROL 14
+
+/* v15: the CDROM chunk carries dsaLastMultiWord, the word an early DS_DATA
+ * read returns between two $03nn/$14nn TOC words.  A state taken there and
+ * loaded into a fresh core would otherwise read 0, and run-ahead/netplay
+ * would diverge (the #400 class).  Older states load it as 0. */
+#define STATE_VERSION_CDROM_DSA_LASTWORD 15
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
