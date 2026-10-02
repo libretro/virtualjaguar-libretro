@@ -10,6 +10,11 @@ No findings: say `No findings.` Do not summarize the diff. If you cannot state a
 failing input or state, do not post the finding. Hard rules (C89, vendored paths, branch
 base) are in `.github/copilot-instructions.md`; do not restate them.
 
+## 0. Run, don't read
+
+If a shell is available, run `bash scripts/c89-lint.sh <changed .c files>` (plain gcc, no
+setup). Its output is evidence; reading the diff for mid-block declarations is not.
+
 ## 1. Fix evidence (check first)
 
 - A fix derived from one to five ROMs is a hypothesis. The first OP-window fix regressed a
