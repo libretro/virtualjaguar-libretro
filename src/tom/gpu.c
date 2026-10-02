@@ -1410,15 +1410,16 @@ int32_t GPUSliceRemaining(void)
 }
 
 /* Advance the GPU to the 68000's position inside the current slice.  Called
- * once per completed 68000 write access into GPU local RAM (see
- * m68k_write_memory_* in jaguar.c).
+ * once per 68000 write access into GPU local RAM, BEFORE the write lands (see
+ * M68KGPURAMSync in jaguar.c for why not after -- Myst, issue #756).
  *
- * It has to be the *whole* 68000 access, not each bus half: a 68000 MOVE.L
- * reaches TOM as two word writes, and running the GPU between them let it
- * sample a half-written mailbox -- Pitfall's poll loop read $00F00000 and
+ * It has to be once for the *whole* 68000 access, not each bus half: a 68000
+ * MOVE.L reaches TOM as two word writes, and running the GPU between them let
+ * it sample a half-written mailbox -- Pitfall's poll loop read $00F00000 and
  * jumped into the TOM register file during boot.  Our 68000 core executes an
  * instruction atomically, so the closest available approximation to real
- * concurrency is to advance the GPU only once the access is complete. */
+ * concurrency is to advance the GPU once, ahead of the access, and never
+ * between its halves. */
 void GPUSyncToM68K(void)
 {
    int32_t target, run;
