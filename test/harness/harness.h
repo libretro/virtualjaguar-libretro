@@ -40,7 +40,8 @@
  *     --json           Output machine-parseable JSON instead of human text
  *     --frames N       Override frame count to run
  *     --bios           Enable BIOS mode (default: HLE)
- *     --option K=V     Set core option (e.g. --option virtualjaguar_dsp=enabled)
+ *     --option K=V     Set core option (e.g. --option virtualjaguar_bios=enabled).
+ *                      An unregistered key is FATAL (#742)
  *     --quiet          Suppress per-frame output, only show final results
  *     --snapshot-interval N   Probe snapshot every N frames (default: 1)
  *     --load-state F   Restore a RetroArch .state after the game loads,

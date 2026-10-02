@@ -18,6 +18,16 @@
  *               answer when session 1 has exactly one track. This fixture
  *               pins track 2 to session 1 (not session 2) and the boot
  *               stub to track 3.
+ *   vpregap   : test/roms/synth_jagcd_vpregap.chd has three session-2
+ *               tracks whose INDEX 00 runs (2, 3 and 5 sectors) chdman
+ *               records as VAUDIO virtual pregaps COUNTED INSIDE the
+ *               track's FRAMES (issue #774, the #754/#755 case). Before
+ *               #755 ParseCHD added PREGAP to FRAMES a second time (every
+ *               later track shifted by the sum of the earlier pregaps) and
+ *               read INDEX 01 from the head of the pregap. Every tagged
+ *               sector names its own track and sector, so a read from the
+ *               wrong place fails on content, not just on silence.
+ *               Source: test/tools/gen_synth_jagcd_vpregap.py.
  *
  * Fixtures are committed uncompressed CD CHDs. If one is missing, SKIP
  * rather than fail a checkout that forgot to git-add the files. There
@@ -301,6 +311,86 @@ TEST(chd_multi_track_session1_is_not_flipped_early)
     cd_unload_game();
 }
 
+/* Track layout of synth_jagcd_vpregap.chd, in disc LBAs: track 1 (4) +
+ * synthesized 11400-sector session gap + track 2 (4) puts track 3's
+ * pregap at 11408. Each later track starts where the previous one's
+ * FRAMES (pregap + data) end. */
+#define VPG_DATA_SECTORS 4u
+static const struct {
+    uint32_t track, startLBA, pregap;
+} vpg_tracks[] = {
+    { 3u, 11408u, 2u },
+    { 4u, 11414u, 3u },
+    { 5u, 11421u, 5u }
+};
+
+/* Mirrors tag_sector() in test/tools/gen_synth_jagcd_vpregap.py. */
+static void vpg_tag_sector(uint32_t track, uint32_t sector, uint8_t *out)
+{
+    char tag[17];
+    size_t i;
+
+    snprintf(tag, sizeof(tag), "T%02uS%02u vpregap  ",
+             (unsigned)track, (unsigned)sector);
+    for (i = 0; i < 2352u; i += 16u)
+        memcpy(out + i, tag, 16u);
+}
+
+TEST(chd_virtual_pregaps_land_on_index01)
+{
+    const char *fix = "test/roms/synth_jagcd_vpregap.chd";
+    uint8_t got[2352];
+    uint8_t want[2352];
+    uint8_t zero[2352];
+    uint32_t t, s, dataLBA, absLBA;
+    uint8_t (*p_track_info)(uint32_t, uint32_t);
+
+    if (!file_exists(fix)) {
+        SKIP_TEST(chd_virtual_pregaps_land_on_index01,
+                   "missing test/roms/synth_jagcd_vpregap.chd");
+        return;
+    }
+    p_track_info = (uint8_t (*)(uint32_t, uint32_t))
+                       dlsym(C.handle, "CDIntfGetTrackInfo");
+    ASSERT_TRUE(p_track_info != NULL);
+    memset(zero, 0, sizeof(zero));
+
+    ASSERT_TRUE(cd_load_game(fix));
+    ASSERT_EQ_U32(cd_num_sessions(), 2u);
+    ASSERT_EQ_U32(cd_num_tracks(), 5u);
+
+    for (t = 0; t < sizeof(vpg_tracks) / sizeof(vpg_tracks[0]); t++) {
+        dataLBA = vpg_tracks[t].startLBA + vpg_tracks[t].pregap;
+        ASSERT_EQ(cd_track_session(vpg_tracks[t].track), 2);
+
+        /* TOC: INDEX 01 as absolute MSF (150-frame lead-in). */
+        absLBA = dataLBA + 150u;
+        ASSERT_EQ_U32(p_track_info(vpg_tracks[t].track, 0), absLBA / 4500u);
+        ASSERT_EQ_U32(p_track_info(vpg_tracks[t].track, 1), (absLBA / 75u) % 60u);
+        ASSERT_EQ_U32(p_track_info(vpg_tracks[t].track, 2), absLBA % 75u);
+
+        /* Pregap reads silence, first through last sector. */
+        for (s = 0; s < vpg_tracks[t].pregap; s++) {
+            ASSERT_TRUE(cd_read_block(vpg_tracks[t].startLBA + s, got));
+            ASSERT_TRUE(memcmp(got, zero, sizeof(got)) == 0);
+        }
+
+        /* INDEX 01 onward is this track's own data, sector for sector,
+         * through the last one (catches a wrong track length too). */
+        for (s = 0; s < VPG_DATA_SECTORS; s++) {
+            ASSERT_TRUE(cd_read_block(dataLBA + s, got));
+            vpg_tag_sector(vpg_tracks[t].track, s, want);
+            if (memcmp(got, want, sizeof(got)) != 0)
+                fprintf(stderr, "    track %u sector %u at LBA %u read \"%.16s\"\n",
+                        (unsigned)vpg_tracks[t].track, (unsigned)s,
+                        (unsigned)(dataLBA + s), (const char *)got);
+            ASSERT_TRUE(memcmp(got, want, sizeof(got)) == 0);
+        }
+    }
+
+    cd_unload_game();
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
@@ -325,6 +415,7 @@ int main(int argc, char *argv[])
     RUN_TEST(chd_gap_and_session1_are_silence);
     RUN_TEST(chd_session2_header_and_extract);
     RUN_TEST(chd_multi_track_session1_is_not_flipped_early);
+    RUN_TEST(chd_virtual_pregaps_land_on_index01);
 
     {
         void (*p)(void) = (void (*)(void))dlsym(C.handle, "retro_deinit");
