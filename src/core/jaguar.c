@@ -825,10 +825,11 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
     * argument is not masked to the access width (byte stores can
     * arrive sign-extended into the upper 24 bits), unlike
     * JaguarWriteByte's uint8_t parameter, so mask here to match its
-    * record shape. */
-   VJT_WATCH_WR(address, value & 0xFFu, M68K);
+    * record shape.  Emitted after the sync so a trace orders the GPU/DSP
+    * events of the catch-up before the write they precede. */
    M68K_BUS_CHARGE(address, 1);
    M68KGPURAMSync(address, 1);
+   VJT_WATCH_WR(address, value & 0xFFu, M68K);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
@@ -876,13 +877,13 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
     * one 68K bus write, including the half that only reaches the
     * GPU/DSP RISC-local latch below and not memory yet.  Masked to 16
     * bits to match JaguarWriteWord's record shape -- see the mask note
-    * in m68k_write_memory_8. */
-   VJT_WATCH_WR(address, value & 0xFFFFu, M68K);
+    * in m68k_write_memory_8, and for why it follows the sync. */
    M68K_BUS_CHARGE(address, 1);
    /* Before the write, not after: the latch-only half occupies the bus
     * like a committing write, and either way the GPU must not observe
     * the new value in cycles that precede it (see M68KGPURAMSync). */
    M68KGPURAMSync(address, 2);
+   VJT_WATCH_WR(address, value & 0xFFFFu, M68K);
 
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
     * see M68KRiscWordLatch. */
