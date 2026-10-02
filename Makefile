@@ -1791,6 +1791,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	 else rc=$$?; \
 	   if [ $$rc -ne 1 ]; then echo "jagcd-chd-check: unexpected $$rc"; exit $$rc; fi; \
 	 fi
+	@# exit 2 = virtual pregaps present (a warning, still a valid CHD).
+	@./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_vpregap.chd >/dev/null; \
+	 rc=$$?; if [ $$rc -ne 2 ]; then \
+	   echo "jagcd-chd-check: expected exit 2 on synth_jagcd_vpregap.chd, got $$rc"; exit 1; \
+	 fi
 	@# Optional: PATH/JAGCD_CHDMAN round-trip. Exit 77 = no CHSE-capable
 	@# chdman (CI, Homebrew 0.288). The committed synth_jagcd*.chd files
 	@# are the actual CHD load gate; this only checks the converter.
