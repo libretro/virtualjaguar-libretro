@@ -101,7 +101,7 @@ def main():
             "    INDEX 00 00:00:00",
             "    INDEX 01 00:00:%02d" % pregap,
         ]
-    with open(os.path.join(out, "disc.cue"), "w") as f:
+    with open(os.path.join(out, "disc.cue"), "w", encoding="ascii", newline="\n") as f:
         f.write("\n".join(cue) + "\n")
 
 
