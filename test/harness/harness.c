@@ -487,8 +487,10 @@ static void validate_options(const harness_config *cfg)
 
     if (cfg->num_options == 0) return;
     if (reg_num_keys == 0) {
-        fprintf(stderr, "harness: WARNING core registered no option keys; "
-                        "cannot validate --option\n");
+        fprintf(stderr, "harness: %s core registered no option keys, so no "
+                        "--option can be validated\n",
+                (allow && *allow) ? "WARNING" : "FATAL");
+        if (!(allow && *allow)) exit(2);
     } else {
         for (i = 0; i < cfg->num_options; i++) {
             for (j = 0; j < reg_num_keys; j++)
@@ -704,6 +706,9 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
                         argv[i]);
                 exit(2);
             }
+        } else if (strcmp(argv[i], "--option") == 0) {
+            fprintf(stderr, "harness: FATAL --option needs a KEY=VALUE argument\n");
+            exit(2);
         } else if (argv[i][0] == '-') {
             /* Unknown flag — skip. Tools pre-parse their own flags
              * before calling harness_init_from_args. */
@@ -840,6 +845,7 @@ bool harness_load_rom(harness_config *cfg)
 
     active_cfg = cfg;
 
+    reg_num_keys = 0;   /* this core's keys only, not a previous load's */
     lr_set_environment(cb_environment);
     lr_init();
     validate_options(cfg);
@@ -883,6 +889,7 @@ bool harness_load_no_content(harness_config *cfg)
 {
     active_cfg = cfg;
 
+    reg_num_keys = 0;   /* this core's keys only, not a previous load's */
     lr_set_environment(cb_environment);
     lr_init();
     validate_options(cfg);
