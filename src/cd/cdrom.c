@@ -874,6 +874,7 @@ void CDROMReset(void)
    fifoDataReady = false;
    dsaResponseReady = false;
    isMultiWordResponse = false;
+   dsaLastMultiWord = 0;
    txBufferEmpty = true;
    cdPlaying = false;
    seekDelay = 0;
@@ -2858,6 +2859,7 @@ size_t CDROMStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, dsaQueueCount);
 	STATE_SAVE_VAR(buf, dsaResponseDelay);
 	STATE_SAVE_VAR(buf, cdDriveSpeed);
+	STATE_SAVE_VAR(buf, dsaLastMultiWord);
 
 	return (size_t)(buf - start);
 }
@@ -2979,6 +2981,12 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	}
 	else
 		cdDriveSpeed = CD_SPEED_DOUBLE;
+
+	/* See STATE_VERSION_CDROM_DSA_LASTWORD. */
+	if (stateVersion >= STATE_VERSION_CDROM_DSA_LASTWORD)
+		STATE_LOAD_VAR(buf, dsaLastMultiWord);
+	else
+		dsaLastMultiWord = 0;
 
 	/* Q-subcode serializer: nothing is serialized on purpose.  Arming is
 	 * re-derived from the SBCNTRL register saved inside cdRam above, and
