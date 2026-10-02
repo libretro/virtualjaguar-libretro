@@ -47,8 +47,8 @@ static uint8_t *chd_hunk = NULL;
 static uint32_t chd_hunkbytes = 0;
 static uint32_t chd_read_err_logged = 0;
 static int32_t chd_hunknum = -1;
-/* First CHD frame of each track's stored data (includes 4-frame padding
- * of earlier tracks; does NOT include virtual pregaps). */
+/* First CHD frame of each track (includes 4-frame padding of earlier
+ * tracks; the track's pregap, real or virtual, starts here). */
 static uint32_t chd_frame0[CDINTF_MAX_TRACKS];
 static uint8_t chd_virtual_pregap[CDINTF_MAX_TRACKS];
 static bool ParseCHD(const char *chdPath);
@@ -610,10 +610,10 @@ static bool ParseCHD(const char *chdPath)
 
       disc.tracks[i].startLBA = discLBA;
       disc.tracks[i].dataLBA = discLBA + stored_pregap;
-      if (chd_virtual_pregap[i])
-         disc.tracks[i].lengthLBA = stored_pregap + (uint32_t)frames;
-      else
-         disc.tracks[i].lengthLBA = (uint32_t)frames;
+      /* FRAMES counts the pregap for both real and virtual pregaps; chdman
+       * stores a virtual pregap as zero frames at the start of the track
+       * (Myst (USA): INDEX 01 data sits at chd_frame0 + PREGAP). */
+      disc.tracks[i].lengthLBA = (uint32_t)frames;
 
       MSFFromLBA(disc.tracks[i].dataLBA,
                  &disc.tracks[i].startM,
@@ -706,10 +706,7 @@ static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
       return true;
    }
 
-   if (chd_virtual_pregap[track->number - 1])
-      rel = sector - track->dataLBA;
-   else
-      rel = sector - track->startLBA;
+   rel = sector - track->startLBA;
 
    frame = chd_frame0[track->number - 1] + rel;
    frames_per_hunk = chd_hunkbytes / CD_FRAME_SIZE;
