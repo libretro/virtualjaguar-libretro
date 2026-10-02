@@ -135,10 +135,34 @@ fresh dated section; do not retrofit old ones.
 | Myst (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=2246 seek_starts=10 seek_dones=10 fifo_drains=75081 unchanged for 300 frames gpu_pc=$00F03768 gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18029B unique_pcs=256+ final_pc=$00EF82 <!-- build:e8179c04a895 --> |
 | Baldies (USA) (Rev 1).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20677B unique_pcs=19 final_pc=$04C3B6 <!-- build:e8179c04a895 --> |
 | Baldies (USA) (Rev 1).chd | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1253 seek_starts=3 seek_dones=3 fifo_drains=93729 unchanged for 300 frames gpu_pc=$00F031AC gpu_run=0 dsp_pc=$00F1B0A8 dsp_run=1 |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25122B unique_pcs=45 final_pc=$04C3B6 <!-- build:e8179c04a895 --> |
+| Myst (USA).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).chd : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=6373B unique_pcs=249 final_pc=$0103FA <!-- build:ce032c452e32 --> |
+| Myst (USA).chd | bios | 0/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=2246 seek_starts=10 seek_dones=10 fifo_drains=75081 unchanged for 300 frames gpu_pc=$00F0376A gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [FAIL]  Myst (USA).chd : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=17177B unique_pcs=256+ final_pc=$0103FA <!-- build:ce032c452e32 --> |
 | Frog Feast (USA) (Unl).chd | hle | 0/1 | LOAD_FAIL | (none) |     [FAIL]  Frog Feast (USA) (Unl).chd : load failed (retro_load_game returned false) <!-- build:e8179c04a895 --> |
 | Frog Feast (USA) (Unl).chd | bios | 1/1 | BIOS_INTRO | [CRASH-DETECT] cd_seek_wedge frame=784 seek_starts=1 seek_dones=1 fifo_drains=0 unchanged for 300 frames gpu_pc=$00F03A8C gpu_run=1 dsp_pc=$00F1B07C dsp_run=1 |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24659B unique_pcs=75 final_pc=$196028 <!-- build:e8179c04a895 --> |
 
 Raw per-run logs are not committed; re-run the script to regenerate.
+
+### Myst CHD joined the sweep -- 2026-10-01
+
+`Myst (USA).chd` now has rows (issue #774, after #755 fixed virtual-pregap
+handling in `ParseCHD`). It is the corpus's only CHD with virtual pregaps:
+tracks 3-10 carry 148-149-frame `VAUDIO` pregaps, which is exactly the case
+#755 fixed. Its rows match the `Myst (USA).cue` rows field for field when
+both are measured on the same build (`ram_payload`, `unique_pcs`, `final_pc`,
+and in bios mode the same `cd_seek_wedge` frame, seek and drain counts), so
+the CHD reader returns the same data the CUE/BIN path does.
+
+Conversion matters. Homebrew/distro `chdman` (0.289 here) does not write CHSE
+session tags, and the core refuses such a CHD at load (`LOAD_FAIL`). Convert
+with `tools/jagcd/jagcd-to-chd` and the pinned `chdman` from the
+`jagcd-tools-*.zip` release asset. It exits 2 on this disc, which means
+"virtual pregaps present": a warning, not a failure.
+
+These two rows are stamped with a newer cache id than the rest of the table.
+The 2026-08-13 rows are stale (#735). On the current build the Myst CUE rows
+also read `not_loop=0`, and bios reads `[FAIL]`. That is identical on v3.6.1
+(`f9a3c89`), so it predates #750 and #755. Whether it is a regression or Myst
+idling on a static screen at frame 3000 is for #735 to decide.
 
 ### Myst joined the sweep -- 2026-07-30
 
