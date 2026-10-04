@@ -534,6 +534,36 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
 /* from the sentinel position into RAM with I2S un-swap.               */
 /* ------------------------------------------------------------------ */
 
+/* True when a run of HLE_ALIGN_D1_RUN consecutive D1 longs starts within
+ * the first `sectors` sectors at `lba` (I2S un-swapped, any byte phase). */
+static bool HLESentinelNear(uint32_t lba, uint32_t d1, uint32_t sectors)
+{
+   uint8_t  sec[2352];
+   uint8_t  pat[4];
+   uint32_t s, i;
+
+   pat[0] = (uint8_t)(d1 >> 24);
+   pat[1] = (uint8_t)(d1 >> 16);
+   pat[2] = (uint8_t)(d1 >> 8);
+   pat[3] = (uint8_t)d1;
+
+   for (s = 0; s < sectors; s++)
+   {
+      if (!CDIntfReadBlock(lba + s, sec))
+         continue;
+      for (i = 0; i + 1 < 2352; i += 2)
+      {
+         uint8_t tmp = sec[i];
+         sec[i]     = sec[i + 1];
+         sec[i + 1] = tmp;
+      }
+      for (i = 0; i + 4 <= 2352; i++)
+         if (HLEPatRunLen(sec, i, pat) >= HLE_ALIGN_D1_RUN)
+            return true;
+   }
+   return false;
+}
+
 static void HLEHandleCDRead(void)
 {
    #define MIN_SYNC_MATCHES 3
@@ -727,7 +757,18 @@ static void HLEHandleCDRead(void)
    {
       uint32_t s2first = CDIntfGetSession2FirstTrackLBA();
       uint32_t discTotal = CDIntfGetDiscTotalSectors();
-      if (s2first > 0 && (lba < s2first || (discTotal > 0 && lba >= discTotal)))
+      /* ...unless the requested position is right: the D1 sync run sits
+       * a few sectors in.  Fast Food 64 / Frogz 64 / Saucer Wars keep
+       * their program on track 2, in session 1 (TOC entry $2C10 minus 6
+       * frames, 'TRAK' run 6 sectors later); redirecting sent them to
+       * another 'TRAK' file on track 4, which they ran as code. */
+      if (s2first > 0 && lba < s2first && (d1 >> 16) != 0
+          && HLESentinelNear(lba, d1, 16))
+      {
+         HLE_LOG("CD_read: LBA %u is before session 2 but holds the D1 "
+                 "sync run -- reading it as requested\n", lba);
+      }
+      else if (s2first > 0 && (lba < s2first || (discTotal > 0 && lba >= discTotal)))
       {
          uint32_t gameData = CDIntfGetSession2GameDataLBA();
          if (gameData > 0)
