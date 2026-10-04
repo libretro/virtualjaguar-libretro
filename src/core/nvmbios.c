@@ -750,7 +750,21 @@ bool NVMBiosHook(uint32_t pc)
    }
 
    m68k_set_reg(M68K_REG_D0, (uint32_t)ret);
-   return true;   /* the RTS stub at $2404 now returns to the caller */
+
+   /* Our RTS stub at $2404 returns to the caller.  A disc that ships its
+    * own copy of the Atari NVM module over $2400 keeps the cookie but
+    * replaces the stub with the real dispatcher (Fast Food 64, Frogz 64,
+    * Saucer Wars): falling through would run that module's flash code
+    * against a part that is not there after we already served the call,
+    * and its DQ7 polling loop spins for minutes per block (black screen).
+    * Return on its behalf instead. */
+   if ((((uint16_t)jaguarMainRAM[NVM_DISPATCH_ADDR] << 8)
+        | jaguarMainRAM[NVM_DISPATCH_ADDR + 1]) != 0x4E75)
+   {
+      m68k_set_reg(M68K_REG_PC, m68k_read_memory_32(sp));
+      m68k_set_reg(M68K_REG_A7, sp + 4);
+   }
+   return true;
 }
 
 /* --------------------------------------------------------------------
