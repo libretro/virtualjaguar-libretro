@@ -6,22 +6,24 @@
 # ship with a stale .info field (RetroArch's "core version" UI) or a stale
 # fallback header (v3.6.1 nearly did, #734).
 
-set -e
+set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 INFO="$ROOT/dist/info/virtualjaguar_libretro.info"
 MAKEFILE="$ROOT/Makefile"
 FALLBACK="$ROOT/src/core/version_fallback.h"
 
-if [ ! -f "$INFO" ]; then
-  echo "::error::missing $INFO"
-  exit 1
-fi
+for f in "$MAKEFILE" "$INFO" "$FALLBACK"; do
+  if [ ! -f "$f" ]; then
+    echo "::error::missing $f"
+    exit 1
+  fi
+done
 
 # Portable across BSD/GNU sed.
 MAKE_VER=$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' "$MAKEFILE" | head -1)
-INFO_VER=$(sed -n 's/^display_version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$INFO" | head -1)
-FALLBACK_VER=$(sed -n 's/^#define[[:space:]]*CORE_BASE_VERSION[[:space:]]*"\(.*\)"/\1/p' "$FALLBACK" | head -1)
+INFO_VER=$(sed -n 's/^display_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$INFO" | head -1)
+FALLBACK_VER=$(sed -n 's/^#define[[:space:]]*CORE_BASE_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' "$FALLBACK" | head -1)
 
 if [ -z "$MAKE_VER" ]; then
   echo "::error::could not parse CORE_BASE_VERSION from $MAKEFILE"

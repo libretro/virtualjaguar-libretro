@@ -16,7 +16,7 @@ PRs targeting `master` directly trigger a friendly comment from `.github/workflo
 
 ## TL;DR
 
-1. Cut `release/X.Y.Z` from `develop`.  Bump `CORE_BASE_VERSION` in `Makefile` (or use the `Bump Version & Release` workflow).  Update `docs/RELEASE_NOTES_vX.Y.Z.md`.  Open a PR from `release/X.Y.Z` → `master`.
+1. Cut `release/X.Y.Z` from `develop`.  Bump the version in all three places -- `CORE_BASE_VERSION` in `Makefile`, `display_version` in `dist/info/virtualjaguar_libretro.info`, and `CORE_BASE_VERSION` in `src/core/version_fallback.h` (or use the `Bump Version & Release` workflow); `scripts/check-info-version.sh` fails CI if they drift.  Update `docs/RELEASE_NOTES_vX.Y.Z.md`.  Open a PR from `release/X.Y.Z` → `master`.
 2. Merge into `master`.
 3. `git tag vX.Y.Z && git push libretro vX.Y.Z` (or via GitHub UI).
 4. Watch [Actions](https://github.com/libretro/virtualjaguar-libretro/actions) — `release.yml` builds 16 platforms (14 in the build matrix, plus Vita and Switch in their own jobs), generates `SHA256SUMS.txt`, and publishes the release with `docs/RELEASE_NOTES_vX.Y.Z.md` as the body.
@@ -41,6 +41,7 @@ PRs targeting `master` directly trigger a friendly comment from `.github/workflo
 - CI on the release PR is green except `claude-review` (non-blocking; AI review service refuses diffs > 20k lines).
 - `docs/WHATSNEW` v`X.Y.Z` section is up-to-date.
 - `docs/RELEASE_NOTES_vX.Y.Z.md` exists. (See below for how to generate one.)
+- `src/core/version_fallback.h` `CORE_BASE_VERSION` matches the new tag (`scripts/check-info-version.sh` checks all three copies).
 - `dist/info/virtualjaguar_libretro.info` is up-to-date — `display_version` matches the new tag, any new feature flags are reflected (`savestate`, `cheats`, `disk_control`, `hw_render`, etc.).
 
 ### 2. Tag
