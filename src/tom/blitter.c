@@ -304,11 +304,16 @@ PERF_COUNTER(blitter_phrase_writes);
 #define ZDATA_OFFSET_32(a)     (PIXEL_OFFSET_32(a) + a##_zoffs * 2)
 #define READ_ZDATA_32(a)       (blitter_read_long(a##_addr+(ZDATA_OFFSET_32(a)<<2)))
 
-/* Z data sits ZOFFS phrases above the pixel's phrase and is as wide as the
- * pixel.  Games clear the Z buffer with a 32bpp phrase copy (SRCZ1 = all
- * ones, DSTWRZ) -- 42Bastian's PolyEngine does, every frame -- and the
- * 16bpp-only addressing here scattered those writes, so the Z buffer was
- * never cleared and every later Z test rejected (#786). */
+/* Z data sits ZOFFS phrases above the pixel's phrase.  Z-buffering proper
+ * (compare, computed Z) is defined for 16bpp pixels only (JTRM v8 pp.68,
+ * 81), but the Z memory cycles still run at other depths, moving a whole Z
+ * phrase like the pixel phrase.  Games use that to clear the Z buffer with
+ * a 32bpp phrase copy (SRCZ1 = all ones, DSTWRZ) -- 42Bastian's PolyEngine
+ * does, every frame.  The 16bpp-only addressing here scattered those
+ * writes, so the Z buffer was never cleared and every later Z test
+ * rejected (#786).  At 32bpp each per-pixel access is therefore the
+ * pixel's 32-bit half of the Z phrase; a 32bpp Z *compare* stays outside
+ * the JTRM and only mirrors the accurate engine. */
 #define ZDATA_IS_32(f) ((((f)>>3)&0x07) == 5)
 
 // z data read
@@ -321,7 +326,7 @@ PERF_COUNTER(blitter_phrase_writes);
 #define WRITE_ZDATA_32(a,d)     {  blitter_write_long(a##_addr+(ZDATA_OFFSET_32(a)<<2), d); }
 
 // z data write
-#define WRITE_ZDATA(a,f,d) { if (ZDATA_IS_32(f)) WRITE_ZDATA_32(a,d) else WRITE_ZDATA_16(a,d) }
+#define WRITE_ZDATA(a,f,d) do { if (ZDATA_IS_32(f)) WRITE_ZDATA_32(a,d) else WRITE_ZDATA_16(a,d) } while (0)
 
 /* Register-sourced pixel data (SRCDATA / DSTDATA / DSTZ / SRCZINT /
  * PATTERNDATA).  These are 64-bit registers; `p` selects phrase mode.
