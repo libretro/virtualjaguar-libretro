@@ -134,6 +134,24 @@ static int build_fd_jagcrypt_2mib(uint8_t **buf, uint32_t *size)
    return 1;
 }
 
+static int build_f7_jagcrypt_min(uint8_t **buf, uint32_t *size)
+{
+   uint8_t *b;
+
+   /* Lower edge of the jagcrypt range: a 9-block boot block (byte 0 =
+    * -9 = 0xF7) with data, not 68K, at $802000.  One block more (0xF6)
+    * is Atari's standard block and must stay HLE -- the case below. */
+   b = (uint8_t *)calloc(1, 0x200000u);
+   if (!b)
+      return 0;
+   b[0] = 0xF7;
+   b[0x2000] = 0x0A;
+   b[0x2001] = 0x64;
+   *buf = b;
+   *size = 0x200000u;
+   return 1;
+}
+
 static int build_f6_commercial_unlisted_op(uint8_t **buf, uint32_t *size)
 {
    uint8_t *b;
@@ -201,6 +219,7 @@ static const struct case_row g_cases[] = {
    { "rayman_demo_2mib_ff", 0, build_rayman_demo_shape },
    { "fc_jagcrypt", 1, build_fc_jagcrypt },
    { "fd_jagcrypt_2mib", 1, build_fd_jagcrypt_2mib },
+   { "f7_jagcrypt_min", 1, build_f7_jagcrypt_min },
    { "f6_commercial_unlisted_op", 0, build_f6_commercial_unlisted_op },
    { "addq_non_fc_fence", 0, build_addq_fence },
    { "68k_move_entry", 0, build_68k_move },

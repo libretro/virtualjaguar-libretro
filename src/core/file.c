@@ -529,7 +529,7 @@ bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size)
    if (cart_entry_looks_like_68k(op))
       return false;
    /* Byte 0 of an encrypted boot block is the negated count of 65-byte
-    * RSA blocks.  Atari's standard 10-block block (0xF6) is on every
+    * RSA blocks.  Atari's standard 10-block boot block (0xF6) is on every
     * commercial cart, several of which have entry opcodes the 68K check
     * above misses (Hover Strike $203C, Rayman $2039), so only 2-9 blocks
     * (0xF7-0xFE) mark a jagcrypt / GPU-only cart: Tursi intros (FC/FE),
