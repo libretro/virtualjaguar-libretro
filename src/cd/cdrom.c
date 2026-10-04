@@ -391,6 +391,8 @@ static bool dsaResponseReady = false;
 // Tracks whether the current response is multi-word (TOC) or single-word.
 // Used by DSCNTRL read to clear bit 13 for single-word responses (MiSTer behavior).
 static bool isMultiWordResponse = false;
+/* Last $03nn/$14nn word handed out, returned by early DS_DATA reads. */
+static uint16_t dsaLastMultiWord = 0;
 
 // BUTCH status bit tracking (per MiSTer FPGA reference):
 // bit 12 (TX buffer empty): set when DS_DATA is written, cleared when DSCNTRL is read
@@ -872,6 +874,7 @@ void CDROMReset(void)
    fifoDataReady = false;
    dsaResponseReady = false;
    isMultiWordResponse = false;
+   dsaLastMultiWord = 0;
    txBufferEmpty = true;
    cdPlaying = false;
    seekDelay = 0;
@@ -1252,6 +1255,13 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       if (haveCDGoodness && fifoDataReady)
          data |= (1 << 4);
    }
+   else if (offset == DS_DATA && haveCDGoodness && isMultiWordResponse
+            && dsaQueueCount == 0 && !dsaResponseReady)
+   {
+      /* A read before the next TOC word has arrived (bit 13 low) sees the
+       * receive latch unchanged; it must not advance the response. */
+      data = dsaLastMultiWord;
+   }
    else if (offset == DS_DATA && haveCDGoodness)
    {
       // DSA response queue takes priority — this ensures the seek response
@@ -1446,6 +1456,9 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          data = cdCmd;								// Echo: $70nn
       else
          data = 0x0400;
+
+      if (isMultiWordResponse)
+         dsaLastMultiWord = (uint16_t)data;
 
       // Multi-word commands: keep dsaResponseReady true while there are
       // more data words to deliver; clear it after the last data word so
@@ -1831,8 +1844,15 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       }
       else if ((data & 0xFF00) == 0x0300 || (data & 0xFF00) == 0x1400)
       {
-         dsaResponseReady = true;
-         isMultiWordResponse = true;  // TOC responses are multi-word
+         /* TOC responses are multi-word.  The first word arrives after the
+          * usual serial turnaround, not with the command write: Ocean
+          * Depths' TOC reader (the Atari CD library's) does `tst.w DS_DATA`
+          * right after writing $14nn, and a word already sitting there got
+          * consumed by that dummy read -- the collector never saw $60nn
+          * and waited forever for the rest of the track. */
+         dsaResponseReady = false;
+         dsaResponseDelay = DSA_RESPONSE_DELAY_TICKS;
+         isMultiWordResponse = true;
       }
       else if ((data & 0xFF00) == 0x0200)
       {
@@ -2839,6 +2859,7 @@ size_t CDROMStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, dsaQueueCount);
 	STATE_SAVE_VAR(buf, dsaResponseDelay);
 	STATE_SAVE_VAR(buf, cdDriveSpeed);
+	STATE_SAVE_VAR(buf, dsaLastMultiWord);
 
 	return (size_t)(buf - start);
 }
@@ -2960,6 +2981,12 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	}
 	else
 		cdDriveSpeed = CD_SPEED_DOUBLE;
+
+	/* See STATE_VERSION_CDROM_DSA_LASTWORD. */
+	if (stateVersion >= STATE_VERSION_CDROM_DSA_LASTWORD)
+		STATE_LOAD_VAR(buf, dsaLastMultiWord);
+	else
+		dsaLastMultiWord = 0;
 
 	/* Q-subcode serializer: nothing is serialized on purpose.  Arming is
 	 * re-derived from the SBCNTRL register saved inside cdRam above, and
