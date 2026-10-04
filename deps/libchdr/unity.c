@@ -32,7 +32,26 @@
 #endif
 
 #include "deps/lzma-25.01/src/LzmaDec.c"
+/* LZMA's 7zTypes.h and miniz.h both `typedef unsigned char Byte;`.  The
+ * two are identical (legal C11), but clang warns under -std=c99
+ * (-Wtypedef-redefinition).  Silenced here rather than by editing the
+ * vendored headers; GCC does not raise it.  `__has_warning` is tested in
+ * its own #if: a preprocessor without it would choke on the call even
+ * behind a short-circuiting `&&`. */
+#if defined(__clang__) && defined(__has_warning)
+#  if __has_warning("-Wtypedef-redefinition")
+#    define VJ_LIBCHDR_SILENCE_TYPEDEF_REDEF 1
+#  endif
+#endif
+#ifdef VJ_LIBCHDR_SILENCE_TYPEDEF_REDEF
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wtypedef-redefinition"
+#endif
 #include "deps/miniz-3.1.1/miniz.c"
+#ifdef VJ_LIBCHDR_SILENCE_TYPEDEF_REDEF
+#pragma clang diagnostic pop
+#undef VJ_LIBCHDR_SILENCE_TYPEDEF_REDEF
+#endif
 #include "deps/zstd-1.5.7/zstddeclib.c"
 
 /* snprintf shim for MSVC < 2015 (buildbot msvc05/10): libchdr_chd.c uses
