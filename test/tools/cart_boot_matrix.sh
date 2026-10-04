@@ -95,7 +95,7 @@ classify_mode() {
     rc="$1"; logfile="$2"
     line="$(grep -m1 '^CARTPROBE ' "$logfile" 2>/dev/null || true)"
 
-    sigs="$(grep -oE 'gpu_pc_escape|dsp_pc_escape|gpu_wedge|dsp_wedge|video_stall' \
+    sigs="$(grep -oE 'gpu_pc_escape|dsp_pc_escape|gpu_wedge|dsp_wedge|video_stall|inframe_hang' \
                  "$logfile" 2>/dev/null | sort -u | paste -sd, - || true)"
 
     if grep -q 'FATAL build mismatch' "$logfile" 2>/dev/null; then

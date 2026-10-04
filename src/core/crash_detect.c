@@ -7,6 +7,7 @@
 #include "../cd/cdrom.h"    /* CDROMDiagGetSeekWedgeState(), CDTraceDump() */
 #include "../tom/shadowfb.h" /* shadowHiresActive + resolve counters */
 #include "settings.h"       /* bootConfig.isCDGame */
+#include "../m68000/m68kinterface.h" /* m68k_get_reg() for inframe_hang */
 #include <boolean.h>        /* project shim; bool / true / false */
 #include <stdint.h>
 #include <stddef.h>
@@ -91,6 +92,26 @@ extern uint32_t dsp_exec_opcode_count;
 /* I2CNTRL low byte: I2S FIFO data enable. */
 #define CD_I2S_FIFO_ENABLE      0x04u
 
+/* inframe_hang (issue #740): a blit this large cannot be legitimate.
+ * 2^24 pixels sweeps all 2 MB of main RAM at 1bpp eight times over; the
+ * largest real blits are full-screen clears (~10^5 pixels).  The case that
+ * motivated it: Music Demo (ScatoLOGIC) in BIOS mode, where a wedged GPU
+ * writes $2710826D into B_COUNT (334M pixels) -- the accurate blitter runs
+ * it for hours inside one register write and retro_run never returns. */
+#define INFRAME_BLIT_PIXELS_MAX 0x01000000u
+
+/* Work the DEFAULT (accurate) engine actually does for a B_COUNT, which is
+ * what can hang the host -- not the JTRM's nominal size.  JTRM v8 (BLIT_COUNT
+ * $F0223C) says each 16-bit counter takes 1..65536 with 0 encoding 65536.
+ * The outer counter runs that way (ocount-- from 0 wraps to $FFFF).  The
+ * inner one does not: BlitterMidsummer2 ends the inner loop when the count
+ * crosses into bit 15, so a 0 inner count stops after its first step -- at
+ * most one phrase, 64 pixels at 1bpp.  Williams/Telegames carts (Troy
+ * Aikman, Double Dragon V, Brutal Sports Football) write B_COUNT=0 at boot
+ * and run fine; counting that as 2^32 pixels was a false alarm. */
+#define INFRAME_BLIT_INNER(c) (((c) & 0xFFFFu) ? ((c) & 0xFFFFu) : 64u)
+#define INFRAME_BLIT_OUTER(c) (((c) >> 16) ? ((c) >> 16) : 0x10000u)
+
 /* Halfline expectation per frame: 524 NTSC, 624 PAL.  Anomaly band is +/- 4. */
 
 /* Verbose-mode heartbeat: dump current state every N frames. */
@@ -146,6 +167,7 @@ static unsigned last_log_fb_stall;
 static unsigned last_log_cd_seek_wedge;
 static unsigned last_log_gpu_runaway;
 static unsigned last_log_gpu_go_full;
+static unsigned last_log_inframe_blit;
 
 static uint32_t gpu_go_pages[GPU_GO_PAGES_MAX];
 static unsigned gpu_go_page_count;
@@ -364,6 +386,7 @@ void CrashDetectReset(void)
    last_log_cd_seek_wedge = 0;
    last_log_gpu_runaway = 0;
    last_log_gpu_go_full = 0;
+   last_log_inframe_blit = 0;
    gpu_go_page_count = 0;
 }
 
@@ -390,6 +413,35 @@ void CrashDetectNoteGPUGo(uint32_t pc)
       return;
    }
    gpu_go_pages[gpu_go_page_count++] = page;
+}
+
+int CrashDetectBlitIsAbsurd(uint32_t b_count)
+{
+   uint32_t inner = INFRAME_BLIT_INNER(b_count);
+   uint32_t outer = INFRAME_BLIT_OUTER(b_count);
+
+   /* Compared without forming the product, which would not fit in 32 bits. */
+   return outer > INFRAME_BLIT_PIXELS_MAX / inner;
+}
+
+void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base)
+{
+   if (!cd_initialized || cd_mode == CRASH_DETECT_OFF)
+      return;
+   if (!CrashDetectBlitIsAbsurd(b_count))
+      return;
+   if (!may_log(&last_log_inframe_blit))
+      return;
+   LOG_ERR("[CRASH-DETECT] inframe_hang frame=%u where=blitter b_count=$%08X "
+           "pixels=%.0f b_cmd=$%08X a1_base=$%08X gpu_pc=$%08X gpu_run=%d "
+           "dsp_pc=$%08X dsp_run=%d m68k_pc=$%06X (blit runs synchronously; "
+           "the frame may never complete)\n",
+           frame_no + 1, b_count,
+           (double)INFRAME_BLIT_INNER(b_count)
+              * (double)INFRAME_BLIT_OUTER(b_count),
+           b_cmd, a1_base, pc_canonical(gpu_pc), (int)GPUIsRunning(),
+           pc_canonical(dsp_pc), (int)DSPIsRunning(),
+           (unsigned)(m68k_get_reg(NULL, M68K_REG_PC) & PC_ALIAS_MASK));
 }
 
 void CrashDetectSetMode(int mode)
