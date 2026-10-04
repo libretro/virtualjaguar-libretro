@@ -130,8 +130,10 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 #define PIXLINECOUNTER   0x3C
 #define B_DSTZ           0x50
 #define B_SRCZINT        0x58
+#define B_SRCZFRAC       0x60
 #define B_PATD           0x68
 #define B_IINC           0x70
+#define B_ZINC           0x74
 #define B_PHRASEINT0     0x7C
 #define B_PHRASEINT1     0x80
 #define B_PHRASEINT2     0x84
@@ -146,6 +148,7 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 #define C_UPDA1     0x00000200u
 #define C_UPDA2     0x00000400u
 #define C_GOURD     0x00001000u
+#define C_GOURZ     0x00002000u
 #define C_PATDSEL   0x00010000u
 #define C_ZMODE_GT  0x00100000u   /* ZMODE bit 2: inhibit if src Z > dst Z */
 #define C_LFU_NAN   0x00200000u
@@ -711,6 +714,74 @@ static void test_z_clear_32bpp(void)
 }
 
 /* ================================================================
+ * Vector 8 -- computed Z: each pixel gets its Z, THEN ZINC is added
+ *
+ * Blitter netlist (jag_sim INNER.NET, DCONTROL.NET, DATA.NET): in the
+ * dzwrite state zpipe[0] latches the computed Z on atick[0], the integer
+ * add (Srcz1add) lands on atick[1], and the Z write data is that latched
+ * value -- so the first pixel is written with the seed, matching the
+ * JTRM v8 p.81-82 example.  The accurate blitter used to add first and
+ * wrote every Z one ZINC ahead (#789).
+ *
+ * 16bpp pixel mode, pitch 2 phrases, ZOFFS 1, GOURZ + DSTWRZ, no Z
+ * compare.  All four Z lanes seeded $1000.0000, ZINC $0010.0000, so
+ * the Z phrase must read 1000 1010 1020 1030.  Hand-derived, not
+ * recorded: both blitters must match.
+ * ================================================================ */
+
+static const uint8_t expect_gourz_seed_first[BLIT_MODES][WINDOW] = {
+{  /* fast */
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x10, 0x00, 0x10, 0x10, 0x10, 0x20, 0x10, 0x30,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+{  /* accurate */
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x10, 0x00, 0x10, 0x10, 0x10, 0x20, 0x10, 0x30,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+};
+
+static void test_gourz_seed_first(void)
+{
+   blit_regs_reset();
+
+   memset(p_jaguarMainRAM + DST_ADDR, 0x11, WINDOW);
+
+   wreg(A1_BASE,  DST_ADDR);
+   wreg(A1_FLAGS, FLAG_PITCH(1) |                 /* 2 phrases: pixels, Z */
+                  FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_ZOFFS(1) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PIXEL));
+   wreg(A2_FLAGS, FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PIXEL));
+   wreg(B_SRCZINT,      0x10001000u);
+   wreg(B_SRCZINT + 4,  0x10001000u);
+   wreg(B_SRCZFRAC,     0x00000000u);
+   wreg(B_SRCZFRAC + 4, 0x00000000u);
+   wreg(B_ZINC,         0x00100000u);
+   wreg(B_PATD,         0xABCDABCDu);
+   wreg(B_PATD + 4,     0xABCDABCDu);
+   wreg(PIXLINECOUNTER, (1u << 16) | 4u);   /* 1 line of 4 pixels */
+
+   fire(C_PATDSEL | C_GOURZ | C_DSTWRZ | C_UPDA1);
+   check_window("gourz_seed_first", DST_ADDR, expect_gourz_seed_first,
+                WINDOW);
+}
+
+/* ================================================================
  * Vector 5 -- Gouraud shading, and the colour_index reset
  *
  * colour_index advances (mod 4) once per pixel while GOURD and A1 phrase
@@ -1047,6 +1118,7 @@ int main(int argc, char **argv)
       test_gouraud_output();
       test_dstenz_without_dsten();
       test_z_clear_32bpp();
+      test_gourz_seed_first();
    }
 
    /* Decode guards: fast path only (see the enum comment up top). */
