@@ -53,7 +53,11 @@ static const struct row rows[] = {
 
 int main(int argc, char **argv)
 {
+#ifdef __APPLE__
    const char *core = argc > 1 ? argv[1] : "./virtualjaguar_libretro.dylib";
+#else
+   const char *core = argc > 1 ? argv[1] : "./virtualjaguar_libretro.so";
+#endif
    void *handle;
    wedge_frame_fn fn;
    unsigned i, fails = 0;
