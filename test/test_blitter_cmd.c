@@ -54,12 +54,13 @@
  * virtualjaguar_usefastblitter core option ships "disabled").  The two are
  * separate implementations and each gets its own row of golden bytes.
  *
- * They agree on every vector here except Gouraud, where the four
- * PHRASEINT seeds come out in opposite order within the phrase --
- * 0x11,0x44,0x77,0xAA under the fast blitter and 0xAA,0x77,0x44,0x11
- * under the accurate one.  That divergence is recorded, not judged; see
- * test/tools/test_blitter_compare for the tooling that explores this
- * class of difference.
+ * They agree on every vector here.  Gouraud used to be the exception:
+ * the fast blitter put the four PHRASEINT seeds in the opposite order
+ * within the phrase (0x11,0x44,0x77,0xAA vs 0xAA,0x77,0x44,0x11).  That
+ * was a fast-path lane-order bug -- lane 3 is the left-most pixel (JTRM
+ * v8 p.130-131) -- and the JTRM's own Gouraud Z strip (vector 9) now pins
+ * the order for both engines.  test/tools/test_blitter_compare explores
+ * this class of difference.
  *
  * The two decode checks stay fast-only.  Midsummer2 reads blitter_ram
  * directly and never assigns colour_index or the nine decoded fields, so
@@ -923,8 +924,8 @@ static void test_jtrm_gourz_strip(void)
  * the second -- direct evidence that colour_index is cycling per pixel. */
 static const uint8_t expect_gourd_single[BLIT_MODES][WINDOW] = {
 {  /* fast */
-   0x00, 0x11, 0x00, 0x44, 0x00, 0x77, 0x00, 0xAA,
-   0x00, 0x12, 0x00, 0x45, 0x00, 0x78, 0x00, 0xAB,
+   0x00, 0xAA, 0x00, 0x77, 0x00, 0x44, 0x00, 0x11,
+   0x00, 0xAB, 0x00, 0x78, 0x00, 0x45, 0x00, 0x12,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -949,8 +950,8 @@ static const uint8_t expect_gourd_single[BLIT_MODES][WINDOW] = {
  * only to satisfy check_window()'s per-mode indexing. */
 static const uint8_t expect_gourd_second[BLIT_MODES][WINDOW] = {
 {  /* fast */
-   0x00, 0x11, 0x00, 0x44, 0x00, 0x77, 0x00, 0xAA,
-   0x00, 0x12, 0x00, 0x45, 0x00, 0x78, 0x00, 0xAB,
+   0x00, 0xAA, 0x00, 0x77, 0x00, 0x44, 0x00, 0x11,
+   0x00, 0xAB, 0x00, 0x78, 0x00, 0x45, 0x00, 0x12,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1245,13 +1246,8 @@ int main(int argc, char **argv)
       test_dstenz_without_dsten();
       test_z_clear_32bpp();
       test_gourz_seed_first();
+      test_jtrm_gourz_strip();
    }
-
-   /* The JTRM's phrase-mode Gouraud Z strip runs under the accurate
-    * engine only for now: the fast engine still mis-orders phrase-mode
-    * lanes and wraps Z instead of saturating, fixed in the follow-up. */
-   select_blitter(BLIT_ACCURATE);
-   test_jtrm_gourz_strip();
 
    /* Decode guards: fast path only (see the enum comment up top). */
    select_blitter(BLIT_FAST);

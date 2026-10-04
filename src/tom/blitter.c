@@ -569,6 +569,43 @@ static void shadow_hires_sub_fast(shadowfb_sub *out, uint32_t cmd,
 // to optimize the blitter, then we may revisit it in the future...
 
 // Generic blit handler
+/* Computed Z saturates instead of wrapping (JTRM v8 p.81: "adding one
+ * to a Z value of FFFF hex will give FFFF, not the overflow result
+ * 0000"), the way the intensity clamps below already do. */
+static uint32_t z_add_sat(uint32_t z, int32_t inc)
+{
+   uint32_t r = z + (uint32_t)inc;
+   if (inc >= 0 && r < z)
+      return 0xFFFFFFFF;
+   if (inc < 0 && r > z)
+      return 0;
+   return r;
+}
+
+/* Advance one computed lane: Z, then intensity and colour, each clamped. */
+static void gouraud_lane_advance(uint32_t cmd, int v)
+{
+   if (GOURZ)
+      z_i[v] = z_add_sat(z_i[v], zadd);
+
+   if (GOURD || SRCSHADE)
+   {
+      gd_i[v] += gd_ia;
+      //Hmm, this doesn't seem to do anything...
+      //But it is correct according to the JTRM...!
+      if ((int32_t)gd_i[v] < 0)
+         gd_i[v] = 0;
+      if (gd_i[v] > 0x00FFFFFF)
+         gd_i[v] = 0x00FFFFFF;//*/
+
+      gd_c[v] += gd_ca;
+      if ((int32_t)gd_c[v] < 0)
+         gd_c[v] = 0;
+      if (gd_c[v] > 0x000000FF)
+         gd_c[v] = 0x000000FF;//*/
+   }
+}
+
 static void blitter_generic(uint32_t cmd)
 {
    uint32_t srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
@@ -582,6 +619,8 @@ static void blitter_generic(uint32_t cmd)
    uint32_t a1_flags = REG(A1_FLAGS);
    uint32_t a2_flags = REG(A2_FLAGS);
    uint32_t bppSrc = (DSTA2 ? 1 << ((a1_flags >> 3) & 0x07) : 1 << ((a2_flags >> 3) & 0x07));
+   int32_t px_phrase = 0;
+   int v;
 
    while (outer_loop--)
    {
@@ -600,6 +639,18 @@ static void blitter_generic(uint32_t cmd)
       while (inner_loop--)
       {
          srcdata = srczdata = dstdata = dstzdata = writedata = inhibit = 0;
+
+         /* Phrase mode: a pixel takes the computed lane for its position
+          * in the phrase.  Lane 3 is bits 63-48, the left-most pixel on
+          * this big-endian machine (JTRM v8 p.130-131; netlist BLITGPU
+          * Dec4 maps B_Z0-B_Z3 / B_I0-B_I3 to lanes 0-3), and z_i[v] /
+          * gd_i[v] hold lane v.  This used to start every strip at lane 0
+          * (the right-most) whatever its x. */
+         if (a1_phrase_mode && (GOURD || SRCSHADE || GOURZ))
+         {
+            colour_index = 3 - ((a1_x >> 16) & 3);
+            px_phrase = a1_x >> 18;
+         }
 
          if (!DSTA2)							// Data movement: A1 <- A2
          {
@@ -1091,32 +1142,23 @@ static void blitter_generic(uint32_t cmd)
             }
          }//*/
 
-         if (GOURZ)
-            z_i[colour_index] += zadd;
-
-         if (GOURD || SRCSHADE)
-         {
-            gd_i[colour_index] += gd_ia;
-            //Hmm, this doesn't seem to do anything...
-            //But it is correct according to the JTRM...!
-            if ((int32_t)gd_i[colour_index] < 0)
-               gd_i[colour_index] = 0;
-            if (gd_i[colour_index] > 0x00FFFFFF)
-               gd_i[colour_index] = 0x00FFFFFF;//*/
-
-            gd_c[colour_index] += gd_ca;
-            if ((int32_t)gd_c[colour_index] < 0)
-               gd_c[colour_index] = 0;
-            if (gd_c[colour_index] > 0x000000FF)
-               gd_c[colour_index] = 0x000000FF;//*/
-         }
-
          if (GOURD || SRCSHADE || GOURZ)
          {
+            /* Phrase mode: the hardware adds the increment (four times the
+             * per-pixel gradient) to all four lanes once per phrase write,
+             * so advance them together when this pixel ends its phrase --
+             * the next pixel is in another phrase, or the strip is done.
+             * Pixel mode keeps its single lane stepping every pixel. */
             if (a1_phrase_mode)
-               //This screws things up WORSE (for the BIOS opening screen)
-               //				if (a1_phrase_mode || a2_phrase_mode)
-               colour_index = (colour_index + 1) & 0x03;
+            {
+               if (inner_loop == 0 || (a1_x >> 18) != px_phrase)
+               {
+                  for (v = 0; v < 4; v++)
+                     gouraud_lane_advance(cmd, v);
+               }
+            }
+            else
+               gouraud_lane_advance(cmd, colour_index);
          }
       }
 
