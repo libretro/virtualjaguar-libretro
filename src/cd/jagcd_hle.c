@@ -610,6 +610,23 @@ static void HLEHandleCDRead(void)
    if (a0 != 0 && a0 < 0x200000)
       m68k_set_reg(M68K_REG_A0, a0 - 4);
 
+   /* An end address in RAM at or below the destination is an empty
+    * range: the BIOS GPU ISR stores only while its write pointer is below
+    * the end, so nothing lands in RAM -- the call just seeks and leaves
+    * the drive playing there.  World Tour Racing starts its title music
+    * this way (A0=$12ECDE, A1=$12EC88, then CD_I2S_enable); falling
+    * through to the unknown-size default below streamed 367 KB over the
+    * GPU program it was about to launch from $133AB0, and the title
+    * screen froze with the GPU spinning on corrupt code. */
+   if (a1 != 0 && a1 < 0x200000 && a0 < 0x200000 && a1 <= a0)
+   {
+      HLE_LOG("CD_read: empty range (dest=$%06X end=$%06X) -- seek only, "
+              "no data transfer, LBA %u\n", a0, a1, lba);
+      hle_post_read_lba = lba;
+      hle_read_pending = false;
+      return;
+   }
+
    /* A byte-identical CD_read re-issued while the previous one is still
     * streaming is a poll-retry idiom (Iron Soldier 2's boot stub) — keep
     * the in-flight stream instead of restarting from byte 0, which would
