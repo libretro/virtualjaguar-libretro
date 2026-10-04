@@ -130,8 +130,11 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 #define PIXLINECOUNTER   0x3C
 #define B_DSTZ           0x50
 #define B_SRCZINT        0x58
+#define B_SRCZFRAC       0x60
 #define B_PATD           0x68
 #define B_IINC           0x70
+#define B_ZINC           0x74
+#define B_Z0             0x8C   /* B_Z0..B_Z3: one 16.16 computed-Z lane each */
 #define B_PHRASEINT0     0x7C
 #define B_PHRASEINT1     0x80
 #define B_PHRASEINT2     0x84
@@ -142,12 +145,15 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 #define C_DSTEN     0x00000008u
 #define C_DSTENZ    0x00000010u
 #define C_DSTWRZ    0x00000020u
+#define C_CLIP_A1   0x00000040u
 #define C_UPDA1F    0x00000100u
 #define C_UPDA1     0x00000200u
 #define C_UPDA2     0x00000400u
 #define C_GOURD     0x00001000u
+#define C_GOURZ     0x00002000u
 #define C_PATDSEL   0x00010000u
 #define C_ZMODE_GT  0x00100000u   /* ZMODE bit 2: inhibit if src Z > dst Z */
+#define C_ZMODE_LE  0x000C0000u   /* ZMODE 3: inhibit if src Z <= dst Z */
 #define C_LFU_NAN   0x00200000u
 #define C_LFU_NA    0x00400000u
 #define C_LFU_AN    0x00800000u
@@ -711,6 +717,197 @@ static void test_z_clear_32bpp(void)
 }
 
 /* ================================================================
+ * Vector 8 -- computed Z: each pixel gets its Z, THEN ZINC is added
+ *
+ * Blitter netlist (jag_sim INNER.NET, DCONTROL.NET, DATA.NET): in the
+ * dzwrite state zpipe[0] latches the computed Z on atick[0], the integer
+ * add (Srcz1add) lands on atick[1], and the Z write data is that latched
+ * value -- so the first pixel is written with the seed, matching the
+ * JTRM v8 p.81-82 example.  The accurate blitter used to add first and
+ * wrote every Z one ZINC ahead (#789).
+ *
+ * 16bpp pixel mode, pitch 2 phrases, ZOFFS 1, GOURZ + DSTWRZ, no Z
+ * compare.  All four Z lanes seeded $1000.0000, ZINC $0010.0000, so
+ * the Z phrase must read 1000 1010 1020 1030.  Hand-derived, not
+ * recorded: both blitters must match.
+ * ================================================================ */
+
+static const uint8_t expect_gourz_seed_first[BLIT_MODES][WINDOW] = {
+{  /* fast */
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x10, 0x00, 0x10, 0x10, 0x10, 0x20, 0x10, 0x30,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+{  /* accurate */
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x10, 0x00, 0x10, 0x10, 0x10, 0x20, 0x10, 0x30,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+};
+
+static void test_gourz_seed_first(void)
+{
+   blit_regs_reset();
+
+   memset(p_jaguarMainRAM + DST_ADDR, 0x11, WINDOW);
+
+   wreg(A1_BASE,  DST_ADDR);
+   wreg(A1_FLAGS, FLAG_PITCH(1) |                 /* 2 phrases: pixels, Z */
+                  FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_ZOFFS(1) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PIXEL));
+   wreg(A2_FLAGS, FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PIXEL));
+   wreg(B_SRCZINT,      0x10001000u);
+   wreg(B_SRCZINT + 4,  0x10001000u);
+   wreg(B_SRCZFRAC,     0x00000000u);
+   wreg(B_SRCZFRAC + 4, 0x00000000u);
+   wreg(B_ZINC,         0x00100000u);
+   wreg(B_PATD,         0xABCDABCDu);
+   wreg(B_PATD + 4,     0xABCDABCDu);
+   wreg(PIXLINECOUNTER, (1u << 16) | 4u);   /* 1 line of 4 pixels */
+
+   fire(C_PATDSEL | C_GOURZ | C_DSTWRZ | C_UPDA1);
+   check_window("gourz_seed_first", DST_ADDR, expect_gourz_seed_first,
+                WINDOW);
+}
+
+/* ================================================================
+ * Vector 9 -- the JTRM's own Gouraud Z strip, phrase mode
+ *
+ * JTRM v8 pp.81-82 worked example, verbatim where it is self-consistent:
+ * A1 pitch 1 (pixel and Z phrases alternate), 16bpp, ZOFFS 1, width 20
+ * (field ), phrase X add, window 20 x 5, pointer (1,0), 18 pixels,
+ * DSTEN DSTENZ DSTWRZ CLIP_A1 GOURZ PATDSEL, ZMODE 3, Source Z1
+ * FFFFE7E7CFCFB7B7, Source Z2 FFFFE000C001A002 (loaded via B_Z0-B_Z3,
+ * see below), Z inc 9F9F8004.  The
+ * four lanes are x=0..3 left to right (x=0 is off the strip's left edge,
+ * FFFF.FFFF = E7E7.E000 + 1818.1FFF), and Z inc is exactly four times
+ * -1818.1FFF, so pixel x gets E7E7.E000 - (x-1) * 1818.1FFF -- the seed
+ * first, as the netlist says (#789) -- saturating at 0 (p.81).
+ *
+ * Deliberate departures:
+ *  - Base is DST_ADDR, not the example's  (outside main RAM).
+ *  - Pixel colour is a constant PATD instead of GOURD: the manual calls
+ *    its numbers "pretty arbitrary", and its intensity fractions do not
+ *    match the C7.2833 it states, so no pixel value can be derived.
+ *  - Destination Z starts at .  The example's prose ("greater than
+ *    or equal") contradicts the p.74 ZMODE table (3 = inhibit on less or
+ *    EQUAL); with  no pixel compares equal, so the saturated pixels
+ *    x=11..18 (Z 0) are inhibited and x=1..10 written under either
+ *    reading.  DSTEN/DSTENZ restore x=0, x=19 and the inhibited pixels.
+ * Hand-derived, not recorded: both blitters must match.
+ * ================================================================ */
+
+static const uint8_t expect_jtrm_gourz_lo[BLIT_MODES][WINDOW] = {
+{  /* fast */
+   0x11, 0x11, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x00, 0x01, 0xE7, 0xE7, 0xCF, 0xCF, 0xB7, 0xB7,
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x9F, 0x9F, 0x87, 0x87, 0x6F, 0x6F, 0x57, 0x57,
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0x11, 0x11,
+   0x3F, 0x3F, 0x27, 0x26, 0x0F, 0x0E, 0x00, 0x01,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01,
+},
+{  /* accurate */
+   0x11, 0x11, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x00, 0x01, 0xE7, 0xE7, 0xCF, 0xCF, 0xB7, 0xB7,
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD,
+   0x9F, 0x9F, 0x87, 0x87, 0x6F, 0x6F, 0x57, 0x57,
+   0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0x11, 0x11,
+   0x3F, 0x3F, 0x27, 0x26, 0x0F, 0x0E, 0x00, 0x01,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01,
+},
+};
+
+static const uint8_t expect_jtrm_gourz_hi[BLIT_MODES][WINDOW] = {
+{  /* fast */
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+{  /* accurate */
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+};
+
+static void test_jtrm_gourz_strip(void)
+{
+   unsigned i;
+
+   blit_regs_reset();
+
+   memset(p_jaguarMainRAM + DST_ADDR, 0x11, 2 * WINDOW);
+   for (i = 0; i < 5; i++)                    /* five Z phrases:  */
+   {
+      unsigned k;
+      for (k = 0; k < 8; k += 2)
+      {
+         p_jaguarMainRAM[DST_ADDR + 16 * i + 8 + k]     = 0x00;
+         p_jaguarMainRAM[DST_ADDR + 16 * i + 8 + k + 1] = 0x01;
+      }
+   }
+
+   wreg(A1_BASE,  DST_ADDR);
+   wreg(A1_FLAGS, FLAG_PITCH(1) |
+                  FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_ZOFFS(1) |
+                  FLAG_WIDTH(1, 4) |                /* 1.01 x 2^4 = 20 */
+                  FLAG_XADD(XADD_PHRASE));
+   wreg(A1_CLIP,  (5u << 16) | 20u);
+   wreg(A1_PIXEL, (0u << 16) | 1u);
+   wreg(A2_FLAGS, FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_WIDTH(1, 4) |
+                  FLAG_XADD(XADD_PHRASE));
+   /* The example's Source Z1/Z2 pair, loaded one lane at a time.  Z0-Z3
+    * load lanes 0-3 (netlist BLITGPU.NET Dec4 -> zedld[0..3]), and lane 3
+    * is bits 63-48, the left-most pixel on this big-endian machine (JTRM
+    * p.130-131): x=0 is Z3.  This sidesteps which half of the 64-bit
+    * $F02258/$F02260 registers each longword address loads. */
+   wreg(B_Z0 + 12,      0xFFFFFFFFu);       /* x=0  FFFF.FFFF */
+   wreg(B_Z0 + 8,       0xE7E7E000u);       /* x=1  E7E7.E000 */
+   wreg(B_Z0 + 4,       0xCFCFC001u);       /* x=2  CFCF.C001 */
+   wreg(B_Z0 + 0,       0xB7B7A002u);       /* x=3  B7B7.A002 */
+   wreg(B_ZINC,         0x9F9F8004u);
+   wreg(B_PATD,         0xABCDABCDu);
+   wreg(B_PATD + 4,     0xABCDABCDu);
+   wreg(PIXLINECOUNTER, (1u << 16) | 18u);  /* 1 line of 18 pixels */
+
+   fire(C_DSTEN | C_DSTENZ | C_DSTWRZ | C_CLIP_A1 | C_GOURZ |
+        C_PATDSEL | C_ZMODE_LE);
+   check_window("jtrm_gourz_strip_lo", DST_ADDR, expect_jtrm_gourz_lo,
+                WINDOW);
+   check_window("jtrm_gourz_strip_hi", DST_ADDR + WINDOW,
+                expect_jtrm_gourz_hi, WINDOW);
+}
+
+/* ================================================================
  * Vector 5 -- Gouraud shading, and the colour_index reset
  *
  * colour_index advances (mod 4) once per pixel while GOURD and A1 phrase
@@ -1047,7 +1244,14 @@ int main(int argc, char **argv)
       test_gouraud_output();
       test_dstenz_without_dsten();
       test_z_clear_32bpp();
+      test_gourz_seed_first();
    }
+
+   /* The JTRM's phrase-mode Gouraud Z strip runs under the accurate
+    * engine only for now: the fast engine still mis-orders phrase-mode
+    * lanes and wraps Z instead of saturating, fixed in the follow-up. */
+   select_blitter(BLIT_ACCURATE);
+   test_jtrm_gourz_strip();
 
    /* Decode guards: fast path only (see the enum comment up top). */
    select_blitter(BLIT_FAST);

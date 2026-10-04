@@ -3569,6 +3569,21 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   We're having the same phrase mode overwrite problem we had with the pixels... !!! FIX !!!
                   Odd. It's equating 0 with 0... Even though ZMODE is $04 (less than)!
                   */
+               zSrcShift = srcshift & 0x30;
+               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
+               if (zSrcShift == 0)
+                  srcz = srcz1;
+               else
+                  srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
+
+               /* Computed Z advances AFTER this write's Z is taken, not
+                * before.  Netlist (jag_sim INNER.NET 15/10/92 note,
+                * DCONTROL.NET Srcz1add/Srcz2add, DATA.NET Srczo): in the
+                * dzwrite state zpipe[0] latches srcz into srczp on atick[0],
+                * the integer add lands on atick[1], and the write data
+                * srczo is srczp one stage later -- so the first strip
+                * pixel gets the seed, as in the JTRM v8 p.81-82 example.
+                * Adding first wrote every Z one ZINC ahead (#789). */
                if (gourz)
                {
                   uint16_t addq[4];
@@ -3577,15 +3592,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   srcz2 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
                   ADDARRAY(addq, 6/*daddasel*/, 7/*daddbsel*/, 1/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
                   srcz1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-
                }
-
-               zSrcShift = srcshift & 0x30;
-               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
-               if (zSrcShift == 0)
-                  srcz = srcz1;
-               else
-                  srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
 
 
                //When in SRCSHADE mode, it adds the IINC to the read source (from LFU???)
