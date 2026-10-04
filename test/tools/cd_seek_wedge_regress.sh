@@ -54,12 +54,23 @@ for t in "${TITLES[@]}"; do
         VJ_TEST_CD_ROOT="$ROOT" VJ_TEST_CD_FOCUS="$t" \
         VJ_TEST_CD_EXTS=cue VJ_TEST_CD_FRAMES="$FRAMES" \
         "$HARNESS" 2>&1)"
-    if ! printf '%s\n' "$log" | /usr/bin/grep -Eq '^ *\[(PASS|FAIL)\]'; then
+    rc=$?
+    # [RUN] = the harness found the disc.  Only its absence is a SKIP; a
+    # crash, a nonzero exit or a missing [PASS] after [RUN] is a FAIL, or a
+    # broken image / dead harness would pass green without ever reaching
+    # the false-positive window.
+    if ! printf '%s\n' "$log" | grep -q '^ *\[RUN\]'; then
         echo "SKIP: $t (not in corpus)"
         continue
     fi
     ran=$((ran + 1))
-    hits="$(printf '%s\n' "$log" | /usr/bin/grep '\[CRASH-DETECT\] cd_seek_wedge')"
+    if [ "$rc" -ne 0 ] || ! printf '%s\n' "$log" | grep -q '^ *\[PASS\]'; then
+        echo "FAIL: $t did not run to a [PASS] (exit $rc):" >&2
+        printf '%s\n' "$log" | grep -E '^ *\[(PASS|FAIL|CRASH)\]' >&2
+        fails=$((fails + 1))
+        continue
+    fi
+    hits="$(printf '%s\n' "$log" | grep '\[CRASH-DETECT\] cd_seek_wedge')"
     if [ -n "$hits" ]; then
         echo "FAIL: $t logged cd_seek_wedge:" >&2
         printf '%s\n' "$hits" >&2
