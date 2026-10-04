@@ -109,8 +109,15 @@ extern uint32_t dsp_exec_opcode_count;
  * most one phrase, 64 pixels at 1bpp.  Williams/Telegames carts (Troy
  * Aikman, Double Dragon V, Brutal Sports Football) write B_COUNT=0 at boot
  * and run fine; counting that as 2^32 pixels was a false alarm. */
-#define INFRAME_BLIT_INNER(c) (((c) & 0xFFFFu) ? ((c) & 0xFFFFu) : 64u)
-#define INFRAME_BLIT_OUTER(c) (((c) >> 16) ? ((c) >> 16) : 0x10000u)
+static uint32_t inframe_blit_inner(uint32_t b_count)
+{
+   return (b_count & 0xFFFFu) ? (b_count & 0xFFFFu) : 64u;
+}
+
+static uint32_t inframe_blit_outer(uint32_t b_count)
+{
+   return (b_count >> 16) ? (b_count >> 16) : 0x10000u;
+}
 
 /* Halfline expectation per frame: 524 NTSC, 624 PAL.  Anomaly band is +/- 4. */
 
@@ -417,8 +424,8 @@ void CrashDetectNoteGPUGo(uint32_t pc)
 
 int CrashDetectBlitIsAbsurd(uint32_t b_count)
 {
-   uint32_t inner = INFRAME_BLIT_INNER(b_count);
-   uint32_t outer = INFRAME_BLIT_OUTER(b_count);
+   uint32_t inner = inframe_blit_inner(b_count);
+   uint32_t outer = inframe_blit_outer(b_count);
 
    /* Compared without forming the product, which would not fit in 32 bits. */
    return outer > INFRAME_BLIT_PIXELS_MAX / inner;
@@ -437,8 +444,8 @@ void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base)
            "dsp_pc=$%08X dsp_run=%d m68k_pc=$%06X (blit runs synchronously; "
            "the frame may never complete)\n",
            frame_no + 1, b_count,
-           (double)INFRAME_BLIT_INNER(b_count)
-              * (double)INFRAME_BLIT_OUTER(b_count),
+           (double)inframe_blit_inner(b_count)
+              * (double)inframe_blit_outer(b_count),
            b_cmd, a1_base, pc_canonical(gpu_pc), (int)GPUIsRunning(),
            pc_canonical(dsp_pc), (int)DSPIsRunning(),
            (unsigned)(m68k_get_reg(NULL, M68K_REG_PC) & PC_ALIAS_MASK));
