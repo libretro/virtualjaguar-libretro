@@ -91,6 +91,14 @@ void CDROMHLEDataReadBegin(void);
 void CDROMDiagGetSeekWedgeState(uint32_t *seekStarts, uint32_t *seekDones,
                                 uint32_t *fifoDrains);
 
+/* Low byte of BUTCH ($DFFF03): bit 0 master IRQ enable, bit 1 FIFO
+ * half-full IRQ enable.  Read-only, for cd_seek_wedge. */
+uint8_t CDROMDiagGetButchIntCtrl(void);
+
+/* Low byte of I2CNTRL ($DFFF13): bit 2 = I2S FIFO data enable.
+ * Read-only, for cd_seek_wedge. */
+uint8_t CDROMDiagGetI2SCtrl(void);
+
 /* First (boot-relevant) $12xx seek target, post-redirect, as an absolute
  * disc LBA.  Returns 0xFFFFFFFF if no seek has been issued since reset.
  * Consumed by test/test_cd_fifo_stream.c to locate the sync mark the GPU

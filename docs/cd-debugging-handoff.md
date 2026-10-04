@@ -103,7 +103,7 @@ The `stop`-wait idiom is **not** CD-only. Static scan of the local cart library 
 2. **Battle Morph** — 68K PC lands in data (`$AFDE`, Line-A) **before any CD I/O** (`seeks=0`, ~frame 437, right after the `$050176` stub injection). Its TOC link tested **negative**. Note: in CD-BIOS mode, vectors 2–255 are PRNG garbage (`jaguar.c` vector-stub block is gated `!vjs.useJaguarBIOS`). **Populating them would MASK real failures** — boot stubs execute deliberate ILLEGAL halts on error paths. Fix the underlying error, not the halt. (Same for `jagcd_hle.c`'s ADDQ skip-handler.)
 3. **IS2 (HLE)** — `CD_poll` signals completion but the game re-reads forever. Downstream of the idempotency fix.
 4. **`baldies.cdi`** — CDI parser segfaults at load (pre-injection). CUE variant unaffected.
-5. **`cd_seek_wedge` false-positive** on *legitimate* transfer completion (BUTCH bit 0 cleared). Watchdog refinement; cosmetic log noise, not a hang.
+5. ~~**`cd_seek_wedge` false-positive** on *legitimate* transfer completion (BUTCH bit 0 cleared).~~ FIXED (#741): the watchdog now only counts frozen drains while a seek is outstanding or the transfer is still open (BUTCH master + FIFO interrupts armed, `$03`, and I2CNTRL bit 2 set).
 
 ## 6. Toolkit — everything runnable from the CLI
 

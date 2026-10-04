@@ -200,10 +200,11 @@ prompted the addition:
   frames the sampled PC is already well past that code -- `final_pc=$00CA64`
   (hle), `$00F1A4` (bios), both outside the band. Sampling Myst much earlier
   would be needed to land in it.
-- **The bios row's `cd_seek_wedge` line is the documented benign case**
-  (CLAUDE.md, "Runtime crash watchdog"): Myst goes CD-idle for ~6s during the
-  intro movie's all-black pause. The hle row shows the same window as
-  `video_stall`. Neither is a failure.
+- **The bios row's `cd_seek_wedge` line was a false positive** (fixed in
+  #741): Myst goes CD-idle for ~6s during the intro movie's all-black pause,
+  with the transfer finished (BUTCH bit 0 cleared). The watchdog no longer
+  counts that window. The hle row shows the same window as `video_stall`.
+  Neither is a failure.
 
 Adding a title also exposed a latent bug in this script, fixed in the same
 commit: new rows were appended to EOF instead of into the results table. On a
@@ -830,10 +831,11 @@ engine, $F0327x BrainDead / Dragon's Lair / Space Ace class). Contract test:
   transfer #2 runs to completion (drains 17,996; the engine's ISR signals
   done by clearing BUTCH bit 0), gpu waits at $F031F6 with IMASK clear --
   byte-for-byte the same wait state as the Primal Rage (hle) control row,
-  payload 6790B vs hle 6679B. The row still logs `cd_seek_wedge`: drains
-  legitimately stop after transfer completion (BUTCH bit 0 off), which the
-  watchdog cannot yet distinguish from a freeze -- watchdog refinement
-  candidate, not a boot defect.
+  payload 6790B vs hle 6679B. The row logged `cd_seek_wedge` at the time:
+  drains legitimately stop after transfer completion (BUTCH bit 0 off), which
+  the watchdog could not then distinguish from a freeze. Fixed in #741 -- the
+  watchdog now requires BUTCH's master + FIFO interrupts to still be armed
+  and I2CNTRL FIFO data enabled.
 - **Highlander (bios)** -- ADVANCED. Was: cd_seek_wedge with drains frozen
   at 54 right after the first fills (same clobber, first ISR invocations).
   Now: no seek wedge, gpu active at $F031C2, dsp running, final_pc=$0036BE
