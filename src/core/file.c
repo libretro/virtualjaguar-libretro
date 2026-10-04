@@ -528,10 +528,14 @@ bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size)
       return false;
    if (cart_entry_looks_like_68k(op))
       return false;
-   /* Tursi jagcrypt / GPU-only intros typically start 0xFC or 0xFE.
-    * Do not treat every non-68K entry as BIOS: synthetic test ROMs
-    * start with ADDQ and similar. */
-   if (body[0] == 0xFC || body[0] == 0xFE)
+   /* Byte 0 of an encrypted boot block is the negated count of 65-byte
+    * RSA blocks.  Atari's standard 10-block block (0xF6) is on every
+    * commercial cart, several of which have entry opcodes the 68K check
+    * above misses (Hover Strike $203C, Rayman $2039), so only 2-9 blocks
+    * (0xF7-0xFE) mark a jagcrypt / GPU-only cart: Tursi intros (FC/FE),
+    * 42Bastian's PolyEngine (FD).  0xFF is excluded as indistinguishable
+    * from blank padding; synthetic test ROMs start with ADDQ and similar. */
+   if (body[0] >= 0xF7 && body[0] <= 0xFE)
       return true;
    return false;
 }

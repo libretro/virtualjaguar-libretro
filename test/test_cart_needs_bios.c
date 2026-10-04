@@ -116,6 +116,41 @@ static int build_fc_jagcrypt(uint8_t **buf, uint32_t *size)
    return 1;
 }
 
+static int build_fd_jagcrypt_2mib(uint8_t **buf, uint32_t *size)
+{
+   uint8_t *b;
+
+   /* 42Bastian PolyEngine shape: 3-block boot block (byte 0 = -3), data
+    * (not 68K) at $802000, 2 MiB so the <1 MiB FF-pad branch cannot
+    * claim it. */
+   b = (uint8_t *)calloc(1, 0x200000u);
+   if (!b)
+      return 0;
+   b[0] = 0xFD;
+   b[0x2000] = 0x0A;
+   b[0x2001] = 0x64;
+   *buf = b;
+   *size = 0x200000u;
+   return 1;
+}
+
+static int build_f6_commercial_unlisted_op(uint8_t **buf, uint32_t *size)
+{
+   uint8_t *b;
+
+   /* Hover Strike shape: Atari's standard 10-block boot block (0xF6) and
+    * a real 68K entry (MOVE.L #imm,D0) the 68K check does not list. */
+   b = (uint8_t *)calloc(1, 0x200000u);
+   if (!b)
+      return 0;
+   b[0] = 0xF6;
+   b[0x2000] = 0x20;
+   b[0x2001] = 0x3C;
+   *buf = b;
+   *size = 0x200000u;
+   return 1;
+}
+
 static int build_addq_fence(uint8_t **buf, uint32_t *size)
 {
    uint8_t *b;
@@ -165,6 +200,8 @@ static const struct case_row g_cases[] = {
    { "ff_pad_bootintro_32k", 1, build_ff_pad_bootintro },
    { "rayman_demo_2mib_ff", 0, build_rayman_demo_shape },
    { "fc_jagcrypt", 1, build_fc_jagcrypt },
+   { "fd_jagcrypt_2mib", 1, build_fd_jagcrypt_2mib },
+   { "f6_commercial_unlisted_op", 0, build_f6_commercial_unlisted_op },
    { "addq_non_fc_fence", 0, build_addq_fence },
    { "68k_move_entry", 0, build_68k_move },
    { "mid_size_oob_window", 0, build_oob_window },
