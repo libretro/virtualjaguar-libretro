@@ -300,14 +300,28 @@ PERF_COUNTER(blitter_phrase_writes);
 #define ZDATA_OFFSET_16(a)     (PIXEL_OFFSET_16(a) + a##_zoffs * 4)
 #define READ_ZDATA_16(a)       (blitter_read_word(a##_addr+(ZDATA_OFFSET_16(a)<<1)))
 
+// 32 bpp z data read
+#define ZDATA_OFFSET_32(a)     (PIXEL_OFFSET_32(a) + a##_zoffs * 2)
+#define READ_ZDATA_32(a)       (blitter_read_long(a##_addr+(ZDATA_OFFSET_32(a)<<2)))
+
+/* Z data sits ZOFFS phrases above the pixel's phrase and is as wide as the
+ * pixel.  Games clear the Z buffer with a 32bpp phrase copy (SRCZ1 = all
+ * ones, DSTWRZ) -- 42Bastian's PolyEngine does, every frame -- and the
+ * 16bpp-only addressing here scattered those writes, so the Z buffer was
+ * never cleared and every later Z test rejected (#786). */
+#define ZDATA_IS_32(f) ((((f)>>3)&0x07) == 5)
+
 // z data read
-#define READ_ZDATA(a,f) (READ_ZDATA_16(a))
+#define READ_ZDATA(a,f) (ZDATA_IS_32(f) ? READ_ZDATA_32(a) : READ_ZDATA_16(a))
 
 // 16 bpp z data write
 #define WRITE_ZDATA_16(a,d)     {  blitter_write_word(a##_addr+(ZDATA_OFFSET_16(a)<<1), d); }
 
+// 32 bpp z data write
+#define WRITE_ZDATA_32(a,d)     {  blitter_write_long(a##_addr+(ZDATA_OFFSET_32(a)<<2), d); }
+
 // z data write
-#define WRITE_ZDATA(a,f,d) WRITE_ZDATA_16(a,d);
+#define WRITE_ZDATA(a,f,d) { if (ZDATA_IS_32(f)) WRITE_ZDATA_32(a,d) else WRITE_ZDATA_16(a,d) }
 
 /* Register-sourced pixel data (SRCDATA / DSTDATA / DSTZ / SRCZINT /
  * PATTERNDATA).  These are 64-bit registers; `p` selects phrase mode.
@@ -605,21 +619,18 @@ static void blitter_generic(uint32_t cmd)
 
             // load dst data and Z
             if (DSTEN)
-            {
                dstdata = READ_PIXEL(a1, a1_flags);
-
-               if (DSTENZ)
-                  dstzdata = READ_ZDATA(a1, a1_flags);
-               else
-                  dstzdata = READ_RDATA(DSTZ, a1, a1_flags, a1_phrase_mode);
-            }
             else
-            {
                dstdata = READ_RDATA(DSTDATA, a1, a1_flags, a1_phrase_mode);
 
-               if (DSTENZ)
-                  dstzdata = READ_RDATA(DSTZ, a1, a1_flags, a1_phrase_mode);
-            }
+            /* DSTENZ is its own memory-cycle enable, independent of DSTEN
+             * (JTRM v8 p.73); without it the comparator sees the DSTZ
+             * register (p.68).  This used to read the register when DSTEN
+             * was clear, so Z tests ignored the Z buffer (#786). */
+            if (DSTENZ)
+               dstzdata = READ_ZDATA(a1, a1_flags);
+            else
+               dstzdata = READ_RDATA(DSTZ, a1, a1_flags, a1_phrase_mode);
 
             if (GOURZ)
                srczdata = z_i[colour_index] >> 16;
@@ -834,19 +845,18 @@ static void blitter_generic(uint32_t cmd)
 
             // load dst data and Z
             if (DSTEN)
-            {
                dstdata = READ_PIXEL(a2, a2_flags);
-               if (DSTENZ)
-                  dstzdata = READ_ZDATA(a2, a2_flags);
-               else
-                  dstzdata = READ_RDATA(DSTZ, a2, a2_flags, a2_phrase_mode);
-            }
             else
-            {
                dstdata = READ_RDATA(DSTDATA, a2, a2_flags, a2_phrase_mode);
-               if (DSTENZ)
-                  dstzdata = READ_RDATA(DSTZ, a2, a2_flags, a2_phrase_mode);
-            }
+
+            /* DSTENZ is its own memory-cycle enable, independent of DSTEN
+             * (JTRM v8 p.73); without it the comparator sees the DSTZ
+             * register (p.68).  This used to read the register when DSTEN
+             * was clear, so Z tests ignored the Z buffer (#786). */
+            if (DSTENZ)
+               dstzdata = READ_ZDATA(a2, a2_flags);
+            else
+               dstzdata = READ_RDATA(DSTZ, a2, a2_flags, a2_phrase_mode);
 
             if (GOURZ)
                srczdata = z_i[colour_index] >> 16;

@@ -128,6 +128,8 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 #define A2_STEP          0x34
 #define B_CMD            0x38
 #define PIXLINECOUNTER   0x3C
+#define B_DSTZ           0x50
+#define B_SRCZINT        0x58
 #define B_PATD           0x68
 #define B_IINC           0x70
 #define B_PHRASEINT0     0x7C
@@ -138,11 +140,14 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 /* B_CMD bits */
 #define C_SRCEN     0x00000001u
 #define C_DSTEN     0x00000008u
+#define C_DSTENZ    0x00000010u
+#define C_DSTWRZ    0x00000020u
 #define C_UPDA1F    0x00000100u
 #define C_UPDA1     0x00000200u
 #define C_UPDA2     0x00000400u
 #define C_GOURD     0x00001000u
 #define C_PATDSEL   0x00010000u
+#define C_ZMODE_GT  0x00100000u   /* ZMODE bit 2: inhibit if src Z > dst Z */
 #define C_LFU_NAN   0x00200000u
 #define C_LFU_NA    0x00400000u
 #define C_LFU_AN    0x00800000u
@@ -158,8 +163,10 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 #define FLAG_PIXSIZE(s)  (((uint32_t)(s) & 0x07u) << 3)
 #define FLAG_WIDTH(m,e)  ((((uint32_t)(m) & 0x03u) << 9) | (((uint32_t)(e) & 0x0Fu) << 11))
 #define FLAG_XADD(x)     (((uint32_t)(x) & 0x03u) << 16)
+#define FLAG_ZOFFS(z)    (((uint32_t)(z) & 0x07u) << 6)
 
 #define PIXSIZE_16BPP    4
+#define PIXSIZE_32BPP    5
 #define XADD_PHRASE      0
 #define XADD_PIXEL       1
 
@@ -567,6 +574,143 @@ static void test_pitch(void)
 }
 
 /* ================================================================
+ * Vector 6 -- Z compare reads destination Z from memory on DSTENZ alone
+ *
+ * JTRM v8 p.73: B_CMD bits 0-5 are independent memory-cycle enables, and
+ * DSTENZ (bit 4) "Enables a destination Z read as part of inner loop
+ * operation" -- it does not depend on DSTEN (bit 3).  Without DSTENZ the
+ * comparator sees the DSTZ register (p.68).  The fast blitter had this
+ * backwards when DSTEN was clear: DSTENZ read the DSTZ register, so every
+ * Z test compared against the register instead of the Z buffer (#786,
+ * 42Bastian's PolyEngine drew nothing).
+ *
+ * Layout: A1, 16bpp pixel mode, pitch 2 phrases, ZOFFS 1 -- a phrase of
+ * four pixels followed by their phrase of Z.  Source Z (SRCZINT) is
+ * $2000 in every lane; destination Z alternates $1000 / $3000.  ZMODE
+ * "greater" inhibits where src > dst, so pixels 0 and 2 keep their old
+ * $1111 and pixels 1 and 3 take the pattern $ABCD.  The DSTZ register
+ * holds $FFFF, which would let all four through -- the old bug's output.
+ * Hand-derived from the JTRM, not recorded: both blitters must match.
+ * ================================================================ */
+
+static const uint8_t expect_dstenz_no_dsten[BLIT_MODES][WINDOW] = {
+{  /* fast */
+   0x11, 0x11, 0xAB, 0xCD, 0x11, 0x11, 0xAB, 0xCD,
+   0x10, 0x00, 0x30, 0x00, 0x10, 0x00, 0x30, 0x00,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+{  /* accurate */
+   0x11, 0x11, 0xAB, 0xCD, 0x11, 0x11, 0xAB, 0xCD,
+   0x10, 0x00, 0x30, 0x00, 0x10, 0x00, 0x30, 0x00,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+   0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+},
+};
+
+static void test_dstenz_without_dsten(void)
+{
+   static const uint8_t dst_z[8] = {
+      0x10, 0x00, 0x30, 0x00, 0x10, 0x00, 0x30, 0x00 };
+
+   blit_regs_reset();
+
+   memset(p_jaguarMainRAM + DST_ADDR, 0x11, WINDOW);
+   memcpy(p_jaguarMainRAM + DST_ADDR + 8, dst_z, sizeof(dst_z));
+
+   wreg(A1_BASE,  DST_ADDR);
+   wreg(A1_FLAGS, FLAG_PITCH(1) |                 /* 2 phrases: pixels, Z */
+                  FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_ZOFFS(1) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PIXEL));
+   /* The fast blitter sizes the SRCZ register read by the SOURCE
+    * channel's flags even with SRCEN clear, so A2 must say 16bpp too. */
+   wreg(A2_FLAGS, FLAG_PIXSIZE(PIXSIZE_16BPP) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PIXEL));
+   wreg(B_SRCZINT,     0x20002000u);
+   wreg(B_SRCZINT + 4, 0x20002000u);
+   wreg(B_DSTZ,        0xFFFFFFFFu);
+   wreg(B_DSTZ + 4,    0xFFFFFFFFu);
+   wreg(B_PATD,        0xABCDABCDu);
+   wreg(B_PATD + 4,    0xABCDABCDu);
+   wreg(PIXLINECOUNTER, (1u << 16) | 4u);   /* 1 line of 4 pixels */
+
+   fire(C_PATDSEL | C_DSTENZ | C_ZMODE_GT | C_UPDA1);
+   check_window("dstenz_without_dsten", DST_ADDR, expect_dstenz_no_dsten,
+                WINDOW);
+}
+
+/* ================================================================
+ * Vector 7 -- 32bpp phrase copy with DSTWRZ clears the Z phrases
+ *
+ * The Z-buffer clear 42Bastian's PolyEngine runs every frame (#786): a
+ * 32bpp phrase-mode copy of a background image, DSTWRZ set and SRCENZ
+ * clear, so each Z phrase -- ZOFFS phrases above its pixel phrase -- gets
+ * the SRCZ registers (all ones here).  Pitch 2 phrases, ZOFFS 1: pixel
+ * phrases at +0 and +16 take the source, Z phrases at +8 and +24 become
+ * $FF.  The fast blitter addressed Z with the 16bpp formula and wrote 16
+ * bits, so the Z phrases stayed at their old $55.
+ * ================================================================ */
+
+static const uint8_t expect_z_clear_32bpp[BLIT_MODES][WINDOW] = {
+{  /* fast */
+   0x21, 0x24, 0x27, 0x2A, 0x2D, 0x30, 0x33, 0x36,
+   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+   0x39, 0x3C, 0x3F, 0x42, 0x45, 0x48, 0x4B, 0x4E,
+   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+},
+{  /* accurate */
+   0x21, 0x24, 0x27, 0x2A, 0x2D, 0x30, 0x33, 0x36,
+   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+   0x39, 0x3C, 0x3F, 0x42, 0x45, 0x48, 0x4B, 0x4E,
+   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+   0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+},
+};
+
+static void test_z_clear_32bpp(void)
+{
+   blit_regs_reset();
+
+   ram_pattern(SRC_ADDR, WINDOW, 0x21, 0x03);
+   memset(p_jaguarMainRAM + DST_ADDR, 0x55, WINDOW);
+
+   wreg(A1_BASE,  DST_ADDR);
+   wreg(A1_FLAGS, FLAG_PITCH(1) |                 /* 2 phrases: pixels, Z */
+                  FLAG_PIXSIZE(PIXSIZE_32BPP) |
+                  FLAG_ZOFFS(1) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PHRASE));
+   wreg(A2_BASE,  SRC_ADDR);
+   wreg(A2_FLAGS, FLAG_PIXSIZE(PIXSIZE_32BPP) |
+                  FLAG_WIDTH(WIDTH8_M, WIDTH8_E) |
+                  FLAG_XADD(XADD_PHRASE));
+   wreg(B_SRCZINT,     0xFFFFFFFFu);
+   wreg(B_SRCZINT + 4, 0xFFFFFFFFu);
+   wreg(PIXLINECOUNTER, (1u << 16) | 4u);   /* 1 line, 4 longs = 2 phrases */
+
+   fire(C_SRCEN | C_DSTWRZ | C_UPDA1 | C_UPDA2 | C_LFU_AN | C_LFU_A);
+   check_window("z_clear_32bpp", DST_ADDR, expect_z_clear_32bpp, WINDOW);
+}
+
+/* ================================================================
  * Vector 5 -- Gouraud shading, and the colour_index reset
  *
  * colour_index advances (mod 4) once per pixel while GOURD and A1 phrase
@@ -901,6 +1045,8 @@ int main(int argc, char **argv)
       test_lfu_ops();
       test_pitch();
       test_gouraud_output();
+      test_dstenz_without_dsten();
+      test_z_clear_32bpp();
    }
 
    /* Decode guards: fast path only (see the enum comment up top). */
