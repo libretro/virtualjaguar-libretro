@@ -837,6 +837,21 @@ void CDROMDiagGetSeekWedgeState(uint32_t *seekStarts, uint32_t *seekDones,
    if (fifoDrains) *fifoDrains = cdFifoDrainCount;
 }
 
+/* Low byte of the BUTCH interrupt-control register ($DFFF03): bit 0 =
+ * master interrupt enable, bit 1 = FIFO half-full interrupt enable (butch.v
+ * map, test/mister_ground_truth.h).  Read-only, for cd_seek_wedge. */
+uint8_t CDROMDiagGetButchIntCtrl(void)
+{
+   return cdRam[BUTCH + 3];
+}
+
+/* Low byte of I2CNTRL ($DFFF13): bit 2 = I2S FIFO data enable (the same
+ * bit BUTCHExec gates FIFO fill on).  Read-only, for cd_seek_wedge. */
+uint8_t CDROMDiagGetI2SCtrl(void)
+{
+   return cdRam[I2CNTRL + 3];
+}
+
 uint32_t CDROMDiagGetFirstSeekBlock(void)
 {
    return diag_firstSeekBlock;
