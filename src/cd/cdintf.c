@@ -2268,11 +2268,15 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
 {
    static const uint8_t MAGIC[32] =
       "ATARI APPROVED DATA HEADER ATRI ";
-   /* One CD sector: both known real-disc cases (Baldies +0x42, Frog Feast
-    * +0x17A) land well inside it.  A title that needs more than a sector
-    * of skip before the header is a different disc shape and should fail
-    * loudly rather than be silently absorbed by an ever-widening search. */
-   const uint32_t SEARCH_WINDOW = 2352;
+   /* Sixteen CD sectors.  Most discs put the header in the first sector
+    * (Baldies +0x42, Frog Feast +0x17A), but some open the boot track with
+    * a silent sector: Ocean Depths (LBA +1, +0x2B6) and Simone (LBA +1,
+    * +0x1DE) were refused as "zero-filled" bad rips although the header is
+    * intact one sector in -- the BIOS finds it because it scans the
+    * stream for the sync run.  The 32-byte magic keeps a wider window
+    * from matching anything else; still bounded so a genuinely headerless
+    * track fails loudly. */
+   const uint32_t SEARCH_WINDOW = 16u * 2352u;
    uint32_t headerOffset;
    bool foundHeader;
    uint32_t i;
