@@ -26,6 +26,7 @@
 #include "dsp.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
+#include "state.h"
 
 /* There is NO DSP-RAM "CD transfer done" flag.  An earlier HLE wrote
  * $00000000 / $FFFFFFFF to $F1B4C8 around every CD_read, citing a
@@ -1412,6 +1413,128 @@ uint32_t JaguarCDHLEStreamBytes(void)
 uint32_t JaguarCDHLEStreamArmCount(void)
 {
    return hle_stream_arm_count;
+}
+
+/* ------------------------------------------------------------------ */
+/* Savestate chunk (#787)                                              */
+/*                                                                     */
+/* Field by field, never the raw struct: padding bytes and the size of */
+/* `bool` are compiler properties, and a rollback-netplay peer may run */
+/* a different build.  hle_active is NOT saved -- it is set by the boot */
+/* strategy (HLE vs real BIOS), which is session configuration like    */
+/* NTSC/PAL.  hle_stream_arm_count is a probe counter, not machine     */
+/* state.                                                              */
+/* ------------------------------------------------------------------ */
+
+#define HLE_STATE_MAGIC 0x31454C48u   /* "HLE1" little-endian */
+
+size_t JaguarCDHLEStateSave(uint8_t *buf)
+{
+   uint8_t *start = buf;
+   uint32_t magic = HLE_STATE_MAGIC;
+   uint8_t  b;
+
+   STATE_SAVE_VAR(buf, magic);
+
+   b = hle_read_pending ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   STATE_SAVE_VAR(buf, hle_read_dest);
+   STATE_SAVE_VAR(buf, hle_read_end_addr);
+   STATE_SAVE_VAR(buf, hle_read_progress);
+   STATE_SAVE_VAR(buf, hle_gpu_data_base);
+   STATE_SAVE_VAR(buf, hle_post_read_lba);
+   STATE_SAVE_VAR(buf, hle_align_phase_track);
+   STATE_SAVE_VAR(buf, hle_align_phase);
+
+   b = hleStream.active ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   b = hleStream.bufValid ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   STATE_SAVE_VAR(buf, hleStream.lba);
+   STATE_SAVE_VAR(buf, hleStream.bufOff);
+   STATE_SAVE_VAR(buf, hleStream.dest);
+   STATE_SAVE_VAR(buf, hleStream.total);
+   STATE_SAVE_VAR(buf, hleStream.reqTotal);
+   STATE_SAVE_VAR(buf, hleStream.written);
+   STATE_SAVE_VAR(buf, hleStream.accFrac);
+   STATE_SAVE_VAR(buf, hleStream.d1);
+   STATE_SAVE_VAR(buf, hleStream.statusBase);
+   STATE_SAVE_VAR(buf, hleStream.sigD0);
+   STATE_SAVE_VAR(buf, hleStream.sigD1);
+   STATE_SAVE_VAR(buf, hleStream.sigA0);
+   STATE_SAVE_VAR(buf, hleStream.sigA1);
+   STATE_SAVE_VAR(buf, hleStream.speedMult);
+   STATE_SAVE_VAR(buf, hleStream.startDelay);
+   /* The sector buffer holds the un-swapped bytes of the sector being
+    * delivered; re-reading it from the disc on load would work too, but
+    * only for a valid buffer, and this keeps the load path trivial. */
+   STATE_SAVE_BUF(buf, hleStream.buf, sizeof(hleStream.buf));
+
+   return (size_t)(buf - start);
+}
+
+void JaguarCDHLEStateReset(void)
+{
+   hleStream.active   = false;
+   hleStream.bufValid = false;
+   hle_read_pending   = false;
+   hle_read_progress  = 0;
+}
+
+size_t JaguarCDHLEStateLoad(const uint8_t *buf)
+{
+   const uint8_t *start = buf;
+   uint32_t magic;
+   uint8_t  pending, active, bufValid;
+
+   STATE_LOAD_VAR(buf, magic);
+   if (magic != HLE_STATE_MAGIC)
+   {
+      /* No chunk: a v15 blob written before #787 (its zero-filled tail
+       * reads as magic 0).  Nothing past this point is ours. */
+      JaguarCDHLEStateReset();
+      return (size_t)(buf - start);
+   }
+
+   STATE_LOAD_VAR(buf, pending);
+   STATE_LOAD_VAR(buf, hle_read_dest);
+   STATE_LOAD_VAR(buf, hle_read_end_addr);
+   STATE_LOAD_VAR(buf, hle_read_progress);
+   STATE_LOAD_VAR(buf, hle_gpu_data_base);
+   STATE_LOAD_VAR(buf, hle_post_read_lba);
+   STATE_LOAD_VAR(buf, hle_align_phase_track);
+   STATE_LOAD_VAR(buf, hle_align_phase);
+   hle_read_pending = pending != 0;
+
+   STATE_LOAD_VAR(buf, active);
+   STATE_LOAD_VAR(buf, bufValid);
+   STATE_LOAD_VAR(buf, hleStream.lba);
+   STATE_LOAD_VAR(buf, hleStream.bufOff);
+   STATE_LOAD_VAR(buf, hleStream.dest);
+   STATE_LOAD_VAR(buf, hleStream.total);
+   STATE_LOAD_VAR(buf, hleStream.reqTotal);
+   STATE_LOAD_VAR(buf, hleStream.written);
+   STATE_LOAD_VAR(buf, hleStream.accFrac);
+   STATE_LOAD_VAR(buf, hleStream.d1);
+   STATE_LOAD_VAR(buf, hleStream.statusBase);
+   STATE_LOAD_VAR(buf, hleStream.sigD0);
+   STATE_LOAD_VAR(buf, hleStream.sigD1);
+   STATE_LOAD_VAR(buf, hleStream.sigA0);
+   STATE_LOAD_VAR(buf, hleStream.sigA1);
+   STATE_LOAD_VAR(buf, hleStream.speedMult);
+   STATE_LOAD_VAR(buf, hleStream.startDelay);
+   STATE_LOAD_BUF(buf, hleStream.buf, sizeof(hleStream.buf));
+   hleStream.active   = active != 0;
+   hleStream.bufValid = bufValid != 0;
+
+   /* JaguarCDHLEStreamTick indexes buf[bufOff..2351] and copies
+    * total - written bytes: a damaged state must not turn either into an
+    * out-of-bounds read.  Drop the transfer rather than resume garbage. */
+   if (hleStream.bufOff > sizeof(hleStream.buf)
+       || hleStream.written > hleStream.total)
+      JaguarCDHLEStateReset();
+
+   return (size_t)(buf - start);
 }
 
 void JaguarCDHLEStreamTick(void)

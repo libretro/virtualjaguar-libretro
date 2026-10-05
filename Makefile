@@ -1777,6 +1777,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Doom (savestate determinism, enhancement path)" "no ROM matching 'Doom*' in the private corpus"; \
 	fi
+	@# Issue #787: the HLE CD BIOS streams CD_read data at drive rate from
+	@# state that used to live outside the blob, so every HLE disc diverged
+	@# under run-ahead while a read was in flight.  Warmup 400 lands
+	@# mid-stream on Hover Strike's intro (failed all four checks pre-fix).
+	@rom=$$(bash scripts/find-rom.sh 'Hover Strike - Unconquered Lands (USA).cue'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --warmup 400 --frames 120 --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Hover Strike CD (HLE savestate determinism, #787)" "no disc matching 'Hover Strike - Unconquered Lands (USA).cue' in the private corpus"; \
+	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap

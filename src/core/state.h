@@ -83,7 +83,10 @@ extern "C" {
  * v15: CDROM chunk gained the last $03nn/$14nn TOC word handed out
  *     (dsaLastMultiWord).  develop only — first bump of the post-v3.6.1
  *     cycle, so any other in-flight state change this cycle extends v15
- *     in place rather than bumping again. */
+ *     in place rather than bumping again.
+ *     EXTENDED IN PLACE (still v15): #787 appended the HLE CD streaming
+ *     chunk strictly last, behind a magic word, so a v15 blob written
+ *     before it (zero-filled tail) loads with the transfer dropped. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   15
 /* Oldest layout retro_unserialize still accepts.  States between
@@ -194,6 +197,9 @@ extern "C" {
  * loaded into a fresh core would otherwise read 0, and run-ahead/netplay
  * would diverge (the #400 class).  Older states load it as 0. */
 #define STATE_VERSION_CDROM_DSA_LASTWORD 15
+/* First version that may carry the trailing HLE CD streaming chunk
+ * (#787).  "May": the chunk is tagged, see JaguarCDHLEStateLoad. */
+#define STATE_VERSION_HLE_CD_STREAM 15
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
