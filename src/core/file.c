@@ -176,7 +176,13 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
          uint16_t op = GET16(buffer, offset);
          uint32_t target;
 
-         if (op != 0x4EB9 && op != 0x4EF9 && op != 0x41F9
+         /* (op & 0xF1FF) == 0x41F9 is LEA abs.L into ANY address register
+          * (A0-A7): $41F9/$43F9/.../$4FF9.  Matching only A0 scored
+          * PlaySFX (issue #739, a BJL image linked at $4000 that loads its
+          * library base with LEA abs.L,A6) at 2 against the minimum of 8,
+          * so it fell through to the headerless-cart fallback and ran from
+          * a garbage cart+$404 vector. */
+         if (op != 0x4EB9 && op != 0x4EF9 && (op & 0xF1FF) != 0x41F9
                && op != 0x2039 && op != 0x2079 && op != 0x2279)
             continue;
 
