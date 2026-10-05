@@ -148,7 +148,8 @@ the current directory when omitted.
 
 - `crash_detect` signatures in the RetroArch log (core option
   `virtualjaguar_crash_detect`, default enabled) — `gpu_pc_escape`,
-  `dsp_pc_escape`, `gpu_wedge`/`dsp_wedge`, `video_stall`, `cd_seek_wedge`.
+  `dsp_pc_escape`, `gpu_wedge`/`dsp_wedge`, `video_stall`, `cd_seek_wedge`,
+  `inframe_hang` (an absurd blit that would never let the frame finish).
   No save state or input recording needed; the log line at the moment of
   failure names which subsystem broke. Full signature list: CLAUDE.md
   "Runtime crash watchdog".
