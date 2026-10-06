@@ -39,10 +39,13 @@
  *      interface shipped with one commit earlier.
  *
  * Run: test_disk_control <core> --disc <image> --case N [--quiet]
+ *      (--disc is required for cases 1, 3 and 4 only; case 5 is the
+ *       no-content boot check and takes no disc.  Case 4 also needs --disc-b.)
  */
 
 #define _DEFAULT_SOURCE 1
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,8 +123,15 @@ static void vid_cb(void *ud, const void *data, unsigned w, unsigned h,
      * indexes rows as uint32_t -- correct for the core's XRGB8888 output,
      * but a silent out-of-bounds read past each row if that ever became
      * RGB565.  Validate rather than assume: a format change should fail
-     * loudly here, not read garbage and look like a flaky test. */
-    if (pitch < (size_t)w * 4) {
+     * loudly here, not read garbage and look like a flaky test.
+     *
+     * Alignment matters for the same reason: row[x] is a uint32_t load, and
+     * an unaligned uint32_t access is undefined behaviour in C (and raises
+     * SIGBUS on strict-alignment targets).  Row y starts at base + y*pitch,
+     * so every row is 4-byte aligned only if BOTH the base pointer and the
+     * pitch are multiples of 4; reject either otherwise. */
+    if (pitch < (size_t)w * 4 || (pitch & 3u) != 0
+        || ((uintptr_t)data & 3u) != 0) {
         vid_bad_pitch = 1;
         return;
     }
@@ -176,8 +186,12 @@ int main(int argc, char **argv)
     }
     if (case_num != 1 && case_num != 3 && case_num != 4
         && case_num != 5) {
-        fprintf(stderr, "usage: test_disk_control <core> --disc <image> "
-                        "--case N[1|3|4|5] [--quiet]\n"
+        fprintf(stderr, "usage: test_disk_control <core> --case N "
+                        "[--disc <image>] [--disc-b <image>] [--quiet]\n"
+                        "  N is one of 1|3|4|5.  Cases 1, 3 and 4 need "
+                        "--disc <image>; case 4 also needs\n"
+                        "  --disc-b <image>.  Case 5 (no-content boot) "
+                        "takes no disc.\n"
                         "  (case 2 needs a one-session audio disc; none "
                         "exists in the corpus)\n");
         return 1;
