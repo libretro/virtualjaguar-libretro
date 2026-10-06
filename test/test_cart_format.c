@@ -67,6 +67,7 @@ static bool  (*p_retro_load_game)(const struct retro_game_info *);
 static void  (*p_retro_unload_game)(void);
 static uint32_t *p_crc;
 static uint32_t *p_romsize;
+static uint8_t **p_mainram;
 
 static bool env_cb(unsigned cmd, void *data)
 {
@@ -319,6 +320,58 @@ TEST(small_headerless_bootintro_loads)
    p_retro_unload_game();
 }
 
+/* Issue #739: PlaySFX is a headerless BJL image linked at $4000 whose early
+ * absolute references are mostly LEA abs.L into A1-A7 (library base in A6)
+ * plus a few JSR abs.L.  The load-address scorer used to count only
+ * LEA abs.L,A0, so the image scored 2 (minimum 8) and fell through to the
+ * sub-1 MiB cart fallback: HLE then ran from cart+$404 = $4436 (not a
+ * header vector at all) through zeroed RAM until the PC left RAM.  With every
+ * LEA destination counted it is a raw binary: copied to $4000 and entered
+ * there.  The image is synthetic: seven LEA abs.L,An (n = 1..7) plus one
+ * JSR abs.L, all into the $4000 window, nothing at $400 that looks like a
+ * header. */
+TEST(raw_binary_lea_any_register_loads_at_4000)
+{
+   uint8_t img[0x1000];
+   uint8_t *ram;
+   unsigned i, n, off = 0x10;
+
+   memset(img, 0, sizeof(img));
+   /* MOVEQ #1,D0 as an unmistakable first instruction. */
+   img[0] = 0x70;
+   img[1] = 0x01;
+   for (n = 1; n <= 7; n++)
+   {
+      img[off + 0] = (uint8_t)(0x41 | (n << 1));   /* LEA abs.L,An */
+      img[off + 1] = 0xF9;
+      img[off + 2] = 0x00;
+      img[off + 3] = 0x00;
+      img[off + 4] = 0x40;
+      img[off + 5] = 0x80;
+      off += 6;
+   }
+   img[off + 0] = 0x4E;                             /* JSR abs.L */
+   img[off + 1] = 0xB9;
+   img[off + 2] = 0x00;
+   img[off + 3] = 0x00;
+   img[off + 4] = 0x40;
+   img[off + 5] = 0x80;
+   /* Make sure the cart-shaped probes cannot claim it: nothing at $400. */
+   for (i = 0x400; i < 0x408; i++)
+      img[i] = 0x11;
+
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   /* Loaded at $4000, not mapped as a cart... */
+   ASSERT(memcmp(ram + 0x4000, img, sizeof(img)) == 0);
+   /* ...and entered there: HLE reset latches the run address as the
+    * initial PC (vector 1). */
+   ASSERT_EQ_U(((unsigned)ram[4] << 24) | ((unsigned)ram[5] << 16)
+         | ((unsigned)ram[6] << 8) | ram[7], 0x4000);
+   p_retro_unload_game();
+}
+
 int main(int argc, char **argv)
 {
    const char *core_path = (argc > 1) ? argv[1]
@@ -338,6 +391,7 @@ int main(int argc, char **argv)
    p_retro_unload_game     = (void (*)(void))dlsym(core, "retro_unload_game");
    p_crc                   = (uint32_t *)dlsym(core, "jaguarMainROMCRC32");
    p_romsize               = (uint32_t *)dlsym(core, "jaguarROMSize");
+   p_mainram               = (uint8_t **)dlsym(core, "jaguarMainRAM");
 
    if (!p_retro_init || !p_retro_set_environment || !p_retro_load_game
          || !p_retro_unload_game || !p_retro_deinit)
@@ -346,7 +400,7 @@ int main(int argc, char **argv)
       return 1;
    }
 
-   if (!p_crc || !p_romsize)
+   if (!p_crc || !p_romsize || !p_mainram)
    {
       fprintf(stderr, "FATAL: jaguarMainROMCRC32 / jaguarROMSize not exported "
                       "-- build with TEST_EXPORTS=1\n");
@@ -368,6 +422,7 @@ int main(int argc, char **argv)
    RUN(fullsize_incidental_marker_at_600_not_stripped);
    RUN(small_headered_with_copier_header_loads);
    RUN(small_headerless_bootintro_loads);
+   RUN(raw_binary_lea_any_register_loads_at_4000);
 
    p_retro_deinit();
 
