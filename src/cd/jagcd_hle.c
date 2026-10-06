@@ -1427,6 +1427,29 @@ uint32_t JaguarCDHLEStreamArmCount(void)
 /* ------------------------------------------------------------------ */
 
 #define HLE_STATE_MAGIC 0x31454C48u   /* "HLE1" little-endian */
+#define HLE_STATE_RAM_SIZE 0x200000u  /* 2 MB main RAM */
+
+/* A GPU data-area base is either unset (0) or a range that holds its
+ * +0/+4/+8 longs: main RAM, or GPU local RAM ($F03000-$F03FFF, where the
+ * BIOS default $F03B00 and Battle Morph's $F03158 live). */
+static bool hle_state_base_ok(uint32_t base)
+{
+   if (base == 0)
+      return true;
+   if ((base & 3u) != 0)
+      return false;
+   if (base <= HLE_STATE_RAM_SIZE - 12u)
+      return true;
+   return base >= 0xF03000u && base <= 0xF04000u - 12u;
+}
+
+/* Bytes JaguarCDHLEStateSave writes, so the caller can check room first. */
+size_t JaguarCDHLEStateSize(void)
+{
+   return 4u + 1u + 7u * 4u            /* magic, pending, 7 bookkeeping words */
+        + 2u + 15u * 4u                /* active, bufValid, 15 stream words */
+        + sizeof(hleStream.buf);
+}
 
 size_t JaguarCDHLEStateSave(uint8_t *buf)
 {
@@ -1527,12 +1550,36 @@ size_t JaguarCDHLEStateLoad(const uint8_t *buf)
    hleStream.active   = active != 0;
    hleStream.bufValid = bufValid != 0;
 
-   /* JaguarCDHLEStreamTick indexes buf[bufOff..2351] and copies
-    * total - written bytes: a damaged state must not turn either into an
-    * out-of-bounds read.  Drop the transfer rather than resume garbage. */
-   if (hleStream.bufOff > sizeof(hleStream.buf)
-       || hleStream.written > hleStream.total)
+   /* Everything below came from a file.  The arm path only ever builds
+    * these from a bounded CD_read, so a state that a real session wrote
+    * always passes; a damaged or crafted one must not turn into an
+    * out-of-bounds access (Copilot review on #803):
+    * - StreamTick indexes buf[bufOff..2351] and copies total - written;
+    * - HLEStreamFinish writes the pad/ATRI block at dest + total, with a
+    *   bound check that a dest near $FFFFFFFF would wrap past;
+    * - CD_poll and the status writes touch base +0/+4/+8.
+    * On any failure drop the transfer AND the pointers it would use. */
+   if (!hle_state_base_ok(hle_gpu_data_base)
+       || !hle_state_base_ok(hleStream.statusBase))
+   {
+      hle_gpu_data_base    = 0;
+      hleStream.statusBase = 0;
       JaguarCDHLEStateReset();
+   }
+   if (hleStream.bufOff > sizeof(hleStream.buf)
+       || hleStream.written > hleStream.total
+       || hleStream.reqTotal > hleStream.total
+       || hleStream.dest >= HLE_STATE_RAM_SIZE
+       || hleStream.total > HLE_STATE_RAM_SIZE - hleStream.dest)
+      JaguarCDHLEStateReset();
+   if (hle_read_dest >= HLE_STATE_RAM_SIZE
+       || hle_read_end_addr < hle_read_dest
+       || hle_read_end_addr > HLE_STATE_RAM_SIZE)
+   {
+      hle_read_dest     = 0;
+      hle_read_end_addr = 0;
+      JaguarCDHLEStateReset();
+   }
 
    return (size_t)(buf - start);
 }

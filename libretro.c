@@ -4655,6 +4655,10 @@ bool retro_serialize(void *data, size_t size)
     * STRICTLY LAST, after the disc identity: appending keeps every older
     * blob loadable, and the chunk's own magic word tells a pre-#787 v15
     * blob (zero-filled tail) from one that carries it. */
+   /* Check room BEFORE writing (Kimi review on #803): the chunk is ~2.4 KB
+    * and the size check below only runs after the bytes are already out. */
+   if ((size_t)(buf - start) + JaguarCDHLEStateSize() > STATE_SIZE)
+      return false;
    buf += JaguarCDHLEStateSave(buf);
 
    written = (size_t)(buf - start);

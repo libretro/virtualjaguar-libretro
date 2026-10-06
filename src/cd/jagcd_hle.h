@@ -67,6 +67,7 @@ void JaguarCDHLESetActive(bool active);
  * written before this chunk existed) is detected and takes
  * JaguarCDHLEStateReset() instead.  Save/Load return the bytes consumed. */
 size_t JaguarCDHLEStateSave(uint8_t *buf);
+size_t JaguarCDHLEStateSize(void);
 size_t JaguarCDHLEStateLoad(const uint8_t *buf);
 /* For a state that carries no HLE chunk: drop any in-flight transfer
  * (the state's RAM and CPU registers describe a machine that is not
