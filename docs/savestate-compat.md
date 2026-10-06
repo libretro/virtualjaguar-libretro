@@ -9,13 +9,14 @@ Defined in `src/core/state.h`:
 | Constant | Value | Meaning |
 |---|---|---|
 | `STATE_MAGIC` | `0x564A5353` (`"VJSS"`) | Header magic |
-| `STATE_VERSION` | `8` | Version this build **writes** |
+| `STATE_VERSION` | `15` | Version this build **writes** (v3.7.0) |
 | `STATE_MIN_VERSION` | `1` | Oldest version this build will **load** |
 
 `retro_unserialize()` refuses anything outside `STATE_MIN_VERSION … STATE_VERSION`
-outright, returning false without touching emulator state. Inside the window it
-always loads in full; chunks whose fields an older layout did not carry are
-reconstructed rather than read (see below).
+outright, returning false without touching emulator state. Inside the window the
+format is read in full (a CD state from v14 up can still be refused for a
+different disc, see below); chunks whose fields an older layout did not carry are
+reconstructed rather than read.
 
 Header fields are stored with host-endian `memcpy` (`STATE_SAVE_VAR`). On a
 little-endian host the on-disk magic bytes are `53 53 4A 56`, not the ASCII
@@ -23,7 +24,7 @@ string `"VJSS"`.
 
 ## What released cores wrote
 
-Only four format versions have ever left a release tag:
+Format versions that have left a release tag (full history in `src/core/state.h`):
 
 | Version | Written by |
 |---|---|
@@ -31,10 +32,24 @@ Only four format versions have ever left a release tag:
 | 2 | v2.3.0, v2.3.1 |
 | 3 | v2.3.2 |
 | 7 | v3.0.0, v3.1.0 |
-| 8 | develop (unreleased): trailing Jaguar GameDrive chunk, `STATE_VERSION_JAGGD` |
+| 8 | v3.2.0: trailing Jaguar GameDrive chunk, `STATE_VERSION_JAGGD` |
+| 11 | v3.3.0 (the layout carries the v9 I2S ring, v10 blitter busy window and v11 hi-res epoch additions) |
+| 12 | v3.4.0: input-device chunk |
+| 13 | v3.5.x: Team Tap chunk, extended in place with the netlink wire-speedup word |
+| 14 | v3.6.0, v3.6.1: mounted-disc identity |
+| 15 | v3.7.0: CDROM `dsaLastMultiWord`, extended in place with the HLE CD streaming chunk (#803) |
 
-Versions 4, 5 and 6 existed only on `develop` / nightlies. All four released
-layouts load on the current core.
+No release wrote versions 4, 5, 6, 9 or 10: they were intermediate `develop` /
+nightly layouts, and v3.3.0 went straight to 11 (which includes the v9 and v10
+additions). As format support, `retro_unserialize()` can read every version from
+`STATE_MIN_VERSION` up; v3.6.1's v14 states load and run byte-identically to
+v3.6.1 itself (measured in #803). Format support is not a guarantee that a given
+file loads: from v14 up, a CD state also records the mounted disc's identity
+(sessions, tracks, total sectors) and is refused, returning false, when it does
+not match the disc currently mounted in CD mode (`retro_unserialize()`,
+`libretro.c`).
+A state saved by an older build while an HLE CD read was in flight cannot
+resume that read: the transfer was never saved.
 
 ## v8: Jaguar GameDrive chunk
 

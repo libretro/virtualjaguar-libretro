@@ -232,8 +232,10 @@ In order. Stop as soon as it is fast enough.
 5. **Only then consider overclocking**, and read §4.4 first, because it can make
    things worse.
 
-Note what is *not* on this list: there is no "frame skip" option and no internal
-speed limiter. Pacing is entirely your frontend's job (§4.6).
+Note what is *not* on this list: there is no internal speed limiter, and the
+`frameskip` option (§4.5) is not a speed lever: it only skips *presenting* frames
+to avoid audio under-runs, while the emulated machine still runs every frame.
+Pacing is entirely your frontend's job (§4.6).
 
 ### 4.3 DSP Idle-Loop Fast-Forward — the big lever, and the trap
 
