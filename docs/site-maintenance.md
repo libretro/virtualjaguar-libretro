@@ -62,6 +62,13 @@ robots -- derives from that single string, so they cannot drift apart.
 | `{{DOCS_SRC_URL}}` | the Markdown source of that page in `libretro/docs` |
 | `{{DOCS_COMPAT_URL}}` | libretro's community Jaguar compatibility list |
 | `{{COMPAT_TABLE}}`, `{{COMPAT_BUILD_IDS}}`, `{{COMPAT_N_TITLES}}`, `{{COMPAT_N_HLE_GOOD}}`, `{{COMPAT_N_BIOS_GOOD}}` | parsed from `docs/cd-boot-matrix.md` |
+| `{{CART_TABLE}}`, `{{CART_BUILD_IDS}}`, `{{CART_N_TITLES}}`, `{{CART_N_HLE_GOOD}}`, `{{CART_N_BIOS_GOOD}}` | parsed from `docs/cart-boot-matrix.md` |
+| `{{CART_N_HLE_RUN}}`, `{{CART_N_BIOS_RUN}}` | "N of M" cart rows whose stage is `GAME_CODE`, regardless of the headless video verdict |
+
+The home-page hero is `assets/hero_mosaic.webp`: four frames rendered by the
+core with `hires_shot` at `internal_resolution=2x`, `true_color=enabled`,
+`usefastblitter=disabled`, `pertitle_defaults=disabled`, cropped and tiled 2x2.
+The caption on the page must name exactly those settings.
 
 An unresolved `{{PLACEHOLDER}}` fails the build — checked both in the fragment
 and in the fully rendered page, so a typo in the template is caught too.
@@ -226,9 +233,8 @@ These are hard rules, inherited from how the site was built:
   notes or `docs/cart-issue-triage.md`.
 - **No unverifiable superlatives** ("best", "fastest"). Real numbers with
   sources are the hype.
-- **No claims about other emulators' internals.** The single comparative line
-  on the why-this-core page is phrased as current knowledge with an explicit
-  invitation to correct it in Discussions.
+- **No claims about other emulators.** Describe what this core does, with
+  evidence; do not state or imply what any other emulator lacks.
 - Screenshots must be real captures produced by the test tooling, presented
   with honest framing (e.g. the true-color difference panel states its 64×
   amplification).

@@ -564,6 +564,11 @@ figcaption {
     repeating-linear-gradient(0deg,
       rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
 }
+/* Hero mosaic: four real frames, so no scanline/vignette overlay and a
+ * smooth (not pixelated) downscale. */
+.crt-frame.mosaic { max-width: 46rem; }
+.crt-frame.mosaic .crt-screen::after { display: none; }
+
 .crt-frame figcaption {
   font-family: var(--font-mono);
   font-size: 0.74rem;
@@ -613,6 +618,29 @@ figcaption {
   border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
 }
 .win-body > .table-wrap:last-child { margin-bottom: 0; }
+
+/* Collapsible long tables (the generated boot matrices). */
+details.fold { margin: 1rem 0 0; }
+details.fold > summary {
+  cursor: pointer;
+  display: inline-block;
+  padding: 0.3rem 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg);
+  background: var(--code-bg);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+}
+details.fold > summary:hover { color: var(--red-link); }
+details.fold > summary:focus-visible {
+  outline: 2px solid var(--red-link);
+  outline-offset: 2px;
+}
+details.fold[open] > summary { margin-bottom: 0.4rem; }
 
 table {
   border-collapse: collapse;

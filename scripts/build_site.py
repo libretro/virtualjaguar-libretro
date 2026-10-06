@@ -470,7 +470,7 @@ def render_cart_table(rows):
     out.append('<div class="table-wrap"><table>')
     out.append("<tr><th>Cartridge</th><th>HLE boot</th><th>Real-BIOS boot</th>"
                "<th>Notes</th></tr>")
-    n_good = {"hle": 0, "bios": 0}
+    n_good = {"hle": 0, "bios": 0, "hle_run": 0, "bios_run": 0}
     for r in rows:
         cells = ['<td>%s</td>' % html.escape(r["title"])]
         notes = []
@@ -479,6 +479,9 @@ def render_cart_table(rows):
             cls, label = classify_cart_stage(r[stage_k], r[notes_k])
             if cls == "good":
                 n_good[mode] += 1
+            # "Reaches game code" regardless of the headless video verdict.
+            if r[stage_k].strip() == "GAME_CODE":
+                n_good[mode + "_run"] += 1
             cells.append('<td><span class="badge %s" title="%s">%s</span></td>'
                          % (cls, html.escape(r[notes_k], quote=True),
                             html.escape(label)))
@@ -804,6 +807,10 @@ def main():
         "{{CART_N_TITLES}}": str(cart_n_titles),
         "{{CART_N_HLE_GOOD}}": str(cart_n_good["hle"]),
         "{{CART_N_BIOS_GOOD}}": str(cart_n_good["bios"]),
+        "{{CART_N_HLE_RUN}}":
+            "%d of %d" % (cart_n_good["hle_run"], cart_n_titles),
+        "{{CART_N_BIOS_RUN}}":
+            "%d of %d" % (cart_n_good["bios_run"], cart_n_titles),
     }
 
     # Fresh output dir.  Only ever recursively delete a directory this
