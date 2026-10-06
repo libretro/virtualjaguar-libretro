@@ -233,9 +233,8 @@ These are hard rules, inherited from how the site was built:
   notes or `docs/cart-issue-triage.md`.
 - **No unverifiable superlatives** ("best", "fastest"). Real numbers with
   sources are the hype.
-- **No claims about other emulators' internals.** The single comparative line
-  on the why-this-core page is phrased as current knowledge with an explicit
-  invitation to correct it in Discussions.
+- **No claims about other emulators.** Describe what this core does, with
+  evidence; do not state or imply what any other emulator lacks.
 - Screenshots must be real captures produced by the test tooling, presented
   with honest framing (e.g. the true-color difference panel states its 64×
   amplification).
