@@ -35,6 +35,32 @@ void CrashDetectSetMode(int mode);
  * was started at from a jump into a data buffer (issue #461). */
 void CrashDetectNoteGPUGo(uint32_t pc);
 
+/* cd_seek_wedge per-frame predicate (issue #741), split out so a unit test
+ * can pin it without a disc.  Returns 1 when this frame counts toward the
+ * wedge window: a seek has been issued, the FIFO drain counter did not move,
+ * a RISC processor is running, and the drive still owes data -- a seek is
+ * outstanding, or the game still has a FIFO transfer open: BUTCH master AND
+ * FIFO interrupts armed (butch_int = BUTCH low byte) AND I2S FIFO data
+ * enabled (i2s_ctrl = I2CNTRL low byte, bit 2).  A game ends a transfer by
+ * clearing either one; that idle drive is not a wedge. */
+int CrashDetectCDSeekWedgeFrame(uint32_t seek_starts, uint32_t seek_dones,
+                                uint32_t fifo_drains, uint32_t last_fifo_drains,
+                                int processor_running, uint8_t butch_int,
+                                uint8_t i2s_ctrl);
+
+/* In-frame hang signature (issue #740).  The blitter runs synchronously
+ * inside one register write, so a garbage B_COUNT freezes the host inside
+ * retro_run and the per-frame checks never get a turn.  Called at blit
+ * dispatch, before either engine runs: logs `inframe_hang` once per
+ * LOG_REPEAT window when the blit is absurdly large, then lets it run --
+ * log only, no behaviour change.  b_count = B_COUNT ($F0223C). */
+void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base);
+
+/* Whether a B_COUNT value's pixel count (inner * outer, as the accurate
+ * engine executes it) crosses the inframe_hang threshold.  Split out for
+ * the unit test. */
+int CrashDetectBlitIsAbsurd(uint32_t b_count);
+
 /* Per-frame hook -- call once at the END of JaguarExecuteNew so all
  * subsystems have been advanced.  fb may be NULL if no framebuffer
  * is available this frame; the stall detector skips that frame. */

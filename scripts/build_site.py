@@ -78,6 +78,29 @@ SITE_NAME = "Virtual Jaguar libretro"
 # This site is the project showcase; that page is the manual.
 LIBRETRO_DOCS = "https://docs.libretro.com/library/virtual_jaguar/"
 LIBRETRO_DOCS_OPTIONS = LIBRETRO_DOCS + "#core-options"
+
+# The Provenance family of emulator sites this showcase is published
+# alongside (jaguar.provenance-emu.com is hosted by Provenance).  Source of
+# truth: provenance-emu.github.io/data/family.yml.  Keep in sync by hand.
+PROVENANCE_ORG_ID = "https://provenance-emu.com/#organization"
+FAMILY = [
+    ("Provenance", "https://provenance-emu.com/",
+     "Multi-system retro emulator for iOS, tvOS and macOS"),
+    ("iCube", "https://icube-emu.com/",
+     "GameCube & Wii emulator for iOS and tvOS"),
+    ("iFly", "https://ifly-emu.com/",
+     "Dreamcast emulator for iOS and tvOS"),
+    ("Provenance Wiki", "https://wiki.provenance-emu.com/",
+     "Guides, ROM ripping, BIOS help"),
+]
+
+
+def family_links_html():
+    """Footer links to the sibling Provenance sites, one per line, with the
+    tagline as the title attribute so the footer stays one short paragraph."""
+    return " &middot;\n".join(
+        '    <a href="%s" title="%s">%s</a>' % (url, html.escape(tagline), name)
+        for name, url, tagline in FAMILY)
 LIBRETRO_DOCS_CONTROLS = LIBRETRO_DOCS + "#controllers"
 LIBRETRO_DOCS_SRC = ("https://github.com/libretro/docs/blob/master/"
                      "docs/library/virtual_jaguar.md")
@@ -554,6 +577,14 @@ def software_application_ld(version, share_url, description):
             "name": "Virtual Jaguar core documentation (docs.libretro.com)",
             "url": LIBRETRO_DOCS,
         },
+        # The showcase site is published by Provenance; the Organization node
+        # itself lives on provenance-emu.com and is referenced by @id.
+        "publisher": {
+            "@type": "Organization",
+            "@id": PROVENANCE_ORG_ID,
+            "name": "Provenance",
+            "url": "https://provenance-emu.com/",
+        },
     }
 
 
@@ -662,11 +693,16 @@ def layout(page_name, meta, body, nav_items, ctx):
     <a href="%(repo)s/blob/develop/scripts/build_site.py">scripts/build_site.py</a>.
     Every claim links to its evidence.
   </p>
+  <p class="family">
+    More from Provenance:
+%(family)s
+  </p>
 </div></footer>
 </body>
 </html>
 """ % {"headmeta": head_meta(page_name, meta, ctx), "nav": "\n".join(nav),
-       "body": body, "repo": REPO_URL, "docs": LIBRETRO_DOCS}
+       "body": body, "repo": REPO_URL, "docs": LIBRETRO_DOCS,
+       "family": family_links_html()}
 
 
 # ------------------------------------------------------ sitemap  /  robots

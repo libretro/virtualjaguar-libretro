@@ -176,7 +176,13 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
          uint16_t op = GET16(buffer, offset);
          uint32_t target;
 
-         if (op != 0x4EB9 && op != 0x4EF9 && op != 0x41F9
+         /* (op & 0xF1FF) == 0x41F9 is LEA abs.L into ANY address register
+          * (A0-A7): $41F9/$43F9/.../$4FF9.  Matching only A0 scored
+          * PlaySFX (issue #739, a BJL image linked at $4000 that loads its
+          * library base with LEA abs.L,A6) at 2 against the minimum of 8,
+          * so it fell through to the headerless-cart fallback and ran from
+          * a garbage cart+$404 vector. */
+         if (op != 0x4EB9 && op != 0x4EF9 && (op & 0xF1FF) != 0x41F9
                && op != 0x2039 && op != 0x2079 && op != 0x2279)
             continue;
 
@@ -528,10 +534,14 @@ bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size)
       return false;
    if (cart_entry_looks_like_68k(op))
       return false;
-   /* Tursi jagcrypt / GPU-only intros typically start 0xFC or 0xFE.
-    * Do not treat every non-68K entry as BIOS: synthetic test ROMs
-    * start with ADDQ and similar. */
-   if (body[0] == 0xFC || body[0] == 0xFE)
+   /* Byte 0 of an encrypted boot block is the negated count of 65-byte
+    * RSA blocks.  Atari's standard 10-block boot block (0xF6) is on every
+    * commercial cart, several of which have entry opcodes the 68K check
+    * above misses (Hover Strike $203C, Rayman $2039), so only 2-9 blocks
+    * (0xF7-0xFE) mark a jagcrypt / GPU-only cart: Tursi intros (FC/FE),
+    * 42Bastian's PolyEngine (FD).  0xFF is excluded as indistinguishable
+    * from blank padding; synthetic test ROMs start with ADDQ and similar. */
+   if (body[0] >= 0xF7 && body[0] <= 0xFE)
       return true;
    return false;
 }

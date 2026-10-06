@@ -163,17 +163,26 @@ heartbeat every 600 frames). Cost enabled: one indirect call + ~256-px hash/fram
 - `gpu_pc_escape` — GPU PC outside `[$F03000,$F03FFF] ∪ [$0,$E3FFFF]` (matches JaguarReadX
   decoding: main RAM mirrors bottom 8MB, cart ROM, boot ROM).
 - `dsp_pc_escape` — DSP PC outside `[$F1B000,$F1CFFF] ∪ [$0,$E3FFFF]`.
+- `inframe_hang` — fired at blit dispatch (not per frame) when `B_COUNT` asks for >2^24 pixels,
+  counted the way the accurate (default) engine runs it: outer 0 = 65536 lines (JTRM), inner 0 =
+  one step (≤64 px — `BlitterMidsummer2` stops on the bit-15 crossing; Williams/Telegames carts
+  write `B_COUNT=0` at boot and run fine). The blitter runs synchronously inside one register
+  write, so such a blit can keep `retro_run` from returning for hours and no per-frame signature
+  ever gets a turn; this line is logged *before* it runs. Reproducers: Music Demo (ScatoLOGIC)
+  `--bios` (#794), DEMO1 (bin) HLE (accurate only; the fast engine runs outer 0 as 0 lines).
+  Matrix runs killed at the wall-clock cap carry it in their evidence column.
 - `gpu_wedge` / `dsp_wedge` — flagged running but **zero opcodes** for ≥180 / 600 frames
   (`gpu_exec_opcode_count` / `dsp_exec_opcode_count`). A stable sampled PC alone is NOT a wedge:
   deterministic slice budgets land the per-frame PC on the same instruction of a healthy
   wait/spin loop (Super Burnout spins ~446k GPU ops/frame at one sampled PC — the #378 false
   positive; regression `test/tools/test_wedge_spin`).
 - `video_stall` — FB hash unchanged 300 frames while a processor runs.
-- `cd_seek_wedge` — a CD seek started but FIFO drain frozen 300 frames while a processor runs;
-  dumps the CD trace ring. **Known benign:** a title going CD-idle >5s after a transfer fires
-  too — Myst (bios) fires during the intro movie's ~6s all-black pause (drain parked at payload
-  end LBA 21189, movie from RAM, clock ticking); HLE shows the same black window (fires
-  `video_stall`). Corroborate before treating a lone line as a wedge.
+- `cd_seek_wedge` — FIFO drain frozen 300 frames while a processor runs AND the drive still owes
+  data: a seek outstanding, or a transfer still open (BUTCH low byte bits 0+1 = master + FIFO IRQ
+  armed, AND I2CNTRL bit 2 = FIFO data enabled); dumps the CD trace ring. A game ends a transfer
+  by clearing BUTCH bit 0 (Myst, Primal Rage, BrainDead 13 …) or I2CNTRL bit 2 (Philia); those
+  idle drives used to fire it (#741). The line prints `butch_int=`/`i2s_ctrl=`. Pinned by
+  `test/test_crash_detect_cd_wedge` (CI) + `test/tools/cd_seek_wedge_regress.sh` (private discs).
 
 Triaging "X crashes/hangs/black screen": the RetroArch log shows the signature — no save state
 or input recording needed. **Add new signatures here when you find a recurring failure mode not

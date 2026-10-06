@@ -4646,6 +4646,21 @@ bool retro_serialize(void *data, size_t size)
       STATE_SAVE_VAR(buf, disc_index);
    }
 
+   /* v15 (extended in place, #787): HLE CD streaming state -- the
+    * in-flight CD_read the HLE BIOS delivers at drive rate, plus its
+    * CD_poll bookkeeping.  Outside the blob, a rollback replayed frames
+    * against a transfer that had already advanced (run-ahead divergence
+    * on every HLE CD title measured mid-stream).
+    *
+    * STRICTLY LAST, after the disc identity: appending keeps every older
+    * blob loadable, and the chunk's own magic word tells a pre-#787 v15
+    * blob (zero-filled tail) from one that carries it. */
+   /* Check room BEFORE writing (Kimi review on #803): the chunk is ~2.4 KB
+    * and the size check below only runs after the bytes are already out. */
+   if ((size_t)(buf - start) + JaguarCDHLEStateSize() > STATE_SIZE)
+      return false;
+   buf += JaguarCDHLEStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4877,6 +4892,16 @@ bool retro_unserialize(const void *data, size_t size)
       if (disc_index < disk_num_images)
          disk_index = disc_index;
    }
+
+   /* v15 (extended in place, #787): HLE CD streaming state -- see the
+    * matching save comment.  Older layouts end before it; a v15 blob
+    * written before #787 ends with a zero-filled tail, which the chunk's
+    * magic word rejects.  Either way the in-flight transfer is dropped
+    * rather than inherited from whatever this session was doing. */
+   if (version >= STATE_VERSION_HLE_CD_STREAM)
+      buf += JaguarCDHLEStateLoad(buf);
+   else
+      JaguarCDHLEStateReset();
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the

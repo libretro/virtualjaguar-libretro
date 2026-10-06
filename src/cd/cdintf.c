@@ -47,8 +47,8 @@ static uint8_t *chd_hunk = NULL;
 static uint32_t chd_hunkbytes = 0;
 static uint32_t chd_read_err_logged = 0;
 static int32_t chd_hunknum = -1;
-/* First CHD frame of each track's stored data (includes 4-frame padding
- * of earlier tracks; does NOT include virtual pregaps). */
+/* First CHD frame of each track (includes 4-frame padding of earlier
+ * tracks; the track's pregap, real or virtual, starts here). */
 static uint32_t chd_frame0[CDINTF_MAX_TRACKS];
 static uint8_t chd_virtual_pregap[CDINTF_MAX_TRACKS];
 static bool ParseCHD(const char *chdPath);
@@ -610,10 +610,10 @@ static bool ParseCHD(const char *chdPath)
 
       disc.tracks[i].startLBA = discLBA;
       disc.tracks[i].dataLBA = discLBA + stored_pregap;
-      if (chd_virtual_pregap[i])
-         disc.tracks[i].lengthLBA = stored_pregap + (uint32_t)frames;
-      else
-         disc.tracks[i].lengthLBA = (uint32_t)frames;
+      /* FRAMES counts the pregap for both real and virtual pregaps; chdman
+       * stores a virtual pregap as zero frames at the start of the track
+       * (Myst (USA): INDEX 01 data sits at chd_frame0 + PREGAP). */
+      disc.tracks[i].lengthLBA = (uint32_t)frames;
 
       MSFFromLBA(disc.tracks[i].dataLBA,
                  &disc.tracks[i].startM,
@@ -663,6 +663,70 @@ static bool ParseCHD(const char *chdPath)
    return true;
 }
 
+static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer);
+
+/* A virtual pregap is stored as silence, but Atari's mastering header
+ *   10 zero bytes | 'ATRI' x16 | "ATARI APPROVED DATA HEADER ATRI " | ...
+ * can start inside it: the CHD then keeps only the tail of the 'ATRI'
+ * run at the head of INDEX 01 (Vid Grid USA/Alt track 3: 9 and 10 of 16).
+ * Drivers that match 16 consecutive 'ATRI' longs then retry the read
+ * forever.  The missing bytes are fully determined by the header format,
+ * so rebuild them at the end of the pregap's last sector.  Byte order is
+ * the disc's (I2S-swapped pairs); compare and fill in the unswapped view. */
+static uint32_t chd_atri_repair_logged = 0;
+
+static void CHDRepairAtriPregap(const struct CDIntfTrack *track, uint8_t *buffer)
+{
+   static const char hdr[] = "ATARI APPROVED DATA HEADER";
+   uint8_t data[2352];
+   uint8_t sw[2352];
+   uint32_t i, run, missing;
+
+   if (!CDIntfReadBlockCHD(track->dataLBA, data))
+      return;
+   for (i = 0; i + 1 < 2352; i += 2)
+   {
+      sw[i]     = data[i + 1];
+      sw[i + 1] = data[i];
+   }
+
+   /* Partial 'ATRI' (0-3 bytes of its tail), then whole ones, then text. */
+   for (run = 0; run < 4; run++)
+   {
+      uint32_t off = run, k = 0;
+      if (run && memcmp(sw, &"ATRI"[4 - run], run) != 0)
+         continue;
+      while (off + 4 <= 64 && memcmp(sw + off, "ATRI", 4) == 0)
+      {
+         off += 4;
+         k++;
+      }
+      if (k == 0 || off >= 64 || memcmp(sw + off, hdr, sizeof(hdr) - 1) != 0)
+         continue;
+
+      missing = 64 - off;
+      for (i = 0; i + 1 < 2352; i += 2)
+      {
+         sw[i]     = buffer[i + 1];
+         sw[i + 1] = buffer[i];
+      }
+      for (i = 0; i < missing; i++)
+         sw[2352 - missing + i] = (uint8_t)"ATRI"[i & 3];
+      for (i = 0; i + 1 < 2352; i += 2)
+      {
+         buffer[i]     = sw[i + 1];
+         buffer[i + 1] = sw[i];
+      }
+      if (track->number != chd_atri_repair_logged)
+      {
+         chd_atri_repair_logged = track->number;
+         LOG_INF("[CD-CHD] track %u: rebuilt %u byte(s) of the 'ATRI' sync "
+                 "run lost in its virtual pregap\n", track->number, missing);
+      }
+      return;
+   }
+}
+
 static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
 {
    int i;
@@ -701,15 +765,14 @@ static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
    if (chd_virtual_pregap[track->number - 1] && sector < track->dataLBA)
    {
       memset(buffer, 0, 2352);
+      if (sector + 1 == track->dataLBA)
+         CHDRepairAtriPregap(track, buffer);
       lastReadVirtualPregap = true;
       lastVirtualPregapLBA = sector;
       return true;
    }
 
-   if (chd_virtual_pregap[track->number - 1])
-      rel = sector - track->dataLBA;
-   else
-      rel = sector - track->startLBA;
+   rel = sector - track->startLBA;
 
    frame = chd_frame0[track->number - 1] + rel;
    frames_per_hunk = chd_hunkbytes / CD_FRAME_SIZE;
@@ -2271,11 +2334,15 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
 {
    static const uint8_t MAGIC[32] =
       "ATARI APPROVED DATA HEADER ATRI ";
-   /* One CD sector: both known real-disc cases (Baldies +0x42, Frog Feast
-    * +0x17A) land well inside it.  A title that needs more than a sector
-    * of skip before the header is a different disc shape and should fail
-    * loudly rather than be silently absorbed by an ever-widening search. */
-   const uint32_t SEARCH_WINDOW = 2352;
+   /* Sixteen CD sectors.  Most discs put the header in the first sector
+    * (Baldies +0x42, Frog Feast +0x17A), but some open the boot track with
+    * a silent sector: Ocean Depths (LBA +1, +0x2B6) and Simone (LBA +1,
+    * +0x1DE) were refused as "zero-filled" bad rips although the header is
+    * intact one sector in -- the BIOS finds it because it scans the
+    * stream for the sync run.  The 32-byte magic keeps a wider window
+    * from matching anything else; still bounded so a genuinely headerless
+    * track fails loudly. */
+   const uint32_t SEARCH_WINDOW = 16u * 2352u;
    uint32_t headerOffset;
    bool foundHeader;
    uint32_t i;

@@ -83,8 +83,9 @@ Cutting a release:
 
 1. `git checkout develop && git checkout -b release/vX.Y.Z`
 2. Bump version (all must match): `Makefile` → `CORE_BASE_VERSION := vX.Y.Z`;
-   `dist/info/virtualjaguar_libretro.info` → `display_version = "vX.Y.Z"`; `src/core/version.h`
-   auto-generated (gitignored, `bash scripts/gen-version-h.sh` or rebuild).
+   `dist/info/virtualjaguar_libretro.info` → `display_version = "vX.Y.Z"`;
+   `src/core/version_fallback.h` → `#define CORE_BASE_VERSION "vX.Y.Z"` (used when the generated
+   `src/core/version.h` is absent). `bash scripts/check-info-version.sh` checks all three (#734).
 3. Release notes: `docs/RELEASE_NOTES_vX.Y.Z.md` (template: `docs/RELEASE_NOTES_v2.3.0.md`) —
    highlights, bug fixes, perf, testing, known issues, stats (`git diff --shortstat
    vPREV..HEAD`), downloads, maintainers.

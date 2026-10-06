@@ -321,6 +321,13 @@ jobs:
             exit "$rc"
           fi
         fi
+        # exit 2 = virtual pregaps present (a warning, still a valid CHD).
+        rc=0
+        ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_vpregap.chd >/dev/null || rc=$?
+        if [ "$rc" -ne 2 ]; then
+          echo "jagcd-chd-check: expected exit 2 on synth_jagcd_vpregap.chd, got $rc"
+          exit 1
+        fi
         ./test/test_chd_unit
 
     - name: Run SIMD blitter tests

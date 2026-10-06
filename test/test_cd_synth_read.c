@@ -82,6 +82,11 @@ static uint32_t (*p_cd_total)(void);
 static bool     (*p_load_game)(const struct retro_game_info *);
 static void     (*p_unload_game)(void);
 static void     (*p_run)(void);
+static size_t   (*p_ser_size)(void);
+static bool     (*p_serialize)(void *, size_t);
+static bool     (*p_unserialize)(const void *, size_t);
+static size_t   (*p_hle_state_save)(uint8_t *);
+static size_t   (*p_hle_state_size)(void);
 
 static uint8_t *ram;
 
@@ -578,6 +583,85 @@ TEST(delivery_is_streamed_not_instant)
 }
 
 /* ------------------------------------------------------------------ */
+/* 3b. An in-flight stream survives a savestate round trip (#787)      */
+/* ------------------------------------------------------------------ */
+
+/* The HLE stream lives in jagcd_hle.c statics.  Before #787 none of it was
+ * in the state blob, so restoring a state saved mid-transfer left the
+ * stream wherever the live session had taken it -- here, already finished
+ * -- and the bytes still owed after the save point never arrived: exactly
+ * what run-ahead's rollback does every frame.  Save part-way through,
+ * finish the transfer, restore, and the SAME transfer must be in flight
+ * again and complete byte-exact.
+ *
+ * Negative control (verified): on the pre-#787 core the stream is inactive
+ * right after the restore and this test goes red. */
+TEST(inflight_stream_survives_savestate_round_trip)
+{
+    uint32_t size = 0x8000u;
+    uint32_t totalAtSave, ticks, bad, i;
+    size_t   ssz;
+    uint8_t *state;
+
+    /* The room check in retro_serialize trusts JaguarCDHLEStateSize(). */
+    {
+        static uint8_t chunk[8192];
+        ASSERT_EQ_U32((uint32_t)p_hle_state_save(chunk),
+                      (uint32_t)p_hle_state_size());
+    }
+
+    ssz   = p_ser_size();
+    state = (uint8_t *)malloc(ssz);
+    ASSERT_TRUE(state != NULL);
+
+    fill_dest(DEST_A, size + 128u);
+    arm_read(payloadLBA, DEST_A, size);
+    for (i = 0; i < 20u; i++)
+        p_hle_tick();
+    ASSERT_TRUE(p_hle_active());
+    if (ram[DEST_A + size - 1u] != FILLER)
+        FAIL("stream finished before the save point; shorten the warmup");
+    totalAtSave = p_hle_bytes();
+
+    if (!p_serialize(state, ssz))
+    {
+        free(state);
+        FAIL("retro_serialize failed mid-stream");
+    }
+
+    /* Let the live session finish the transfer. */
+    drive_stream(200000u);
+    if (p_hle_active())
+    {
+        free(state);
+        FAIL("stream never completed before the restore");
+    }
+
+    /* Roll back to the save point. */
+    if (!p_unserialize(state, ssz))
+    {
+        free(state);
+        FAIL("retro_unserialize failed");
+    }
+    free(state);
+
+    if (!p_hle_active())
+        FAIL("restored state has no stream in flight -- the transfer was lost");
+    ASSERT_EQ_U32(p_hle_dest(), DEST_A);
+    ASSERT_EQ_U32(p_hle_bytes(), totalAtSave);
+    if (ram[DEST_A + size - 1u] != FILLER)
+        FAIL("restored RAM already holds the tail -- RAM was not rolled back");
+
+    ticks = drive_stream(200000u);
+    if (p_hle_active())
+        FAIL("restored stream never completed (%u ticks)", ticks);
+    bad = first_bad(DEST_A, size);
+    if (bad != size)
+        FAIL("after restore, byte %u: got $%02X, expected $%02X",
+             bad, ram[DEST_A + bad], expect_ram(bad));
+}
+
+/* ------------------------------------------------------------------ */
 /* 4. Arming over an in-flight stream                                   */
 /* ------------------------------------------------------------------ */
 
@@ -725,10 +809,17 @@ static bool resolve_symbols(void)
     p_load_game     = (bool (*)(const struct retro_game_info *))dlsym(C.handle, "retro_load_game");
     p_unload_game   = (void (*)(void))dlsym(C.handle, "retro_unload_game");
     p_run           = (void (*)(void))dlsym(C.handle, "retro_run");
+    p_ser_size      = (size_t (*)(void))dlsym(C.handle, "retro_serialize_size");
+    p_serialize     = (bool (*)(void *, size_t))dlsym(C.handle, "retro_serialize");
+    p_unserialize   = (bool (*)(const void *, size_t))dlsym(C.handle, "retro_unserialize");
+    p_hle_state_save = (size_t (*)(uint8_t *))dlsym(C.handle, "JaguarCDHLEStateSave");
+    p_hle_state_size = (size_t (*)(void))dlsym(C.handle, "JaguarCDHLEStateSize");
 
     return p_hle_hook && p_hle_tick && p_hle_active && p_hle_dest &&
            p_hle_bytes && p_hle_arms && p_cd_read_block && p_cd_s2_first &&
            p_cd_total && p_load_game && p_unload_game && p_run &&
+           p_ser_size && p_serialize && p_unserialize &&
+           p_hle_state_save && p_hle_state_size &&
            C.m68k_set_reg && C.m68k_get_reg && C.GetRamPtr;
 }
 
@@ -830,6 +921,7 @@ int main(int argc, char *argv[])
     RUN_TEST(synth_disc_lba_addressing);
     RUN_TEST(long_rounded_tail_holds_real_disc_bytes);
     RUN_TEST(delivery_is_streamed_not_instant);
+    RUN_TEST(inflight_stream_survives_savestate_round_trip);
     RUN_TEST(arming_over_inflight_drops_tail_and_completion);
 
     /* Fresh boot for the end-to-end run so the 68K starts at the stub. */

@@ -26,6 +26,7 @@
 #include "dsp.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
+#include "state.h"
 
 /* There is NO DSP-RAM "CD transfer done" flag.  An earlier HLE wrote
  * $00000000 / $FFFFFFFF to $F1B4C8 around every CD_read, citing a
@@ -120,6 +121,13 @@ static uint32_t hle_gpu_data_base  = 0;
  * a following CD_I2S_enable (SMODE slave) streams that audio into the
  * DSP.  $FFFFFFFF = no read yet. */
 static uint32_t hle_post_read_lba  = 0xFFFFFFFFu;
+
+/* Byte phase (mod 4) inside a 2352-byte sector of the last mastered sync
+ * run HLERawStreamAlignOffset located, and the track it was found on
+ * (0 = none yet).  2352 is a multiple of 4, so within one track the
+ * phase is a property of the pressing, not of the read. */
+static uint32_t hle_align_phase_track = 0;
+static uint32_t hle_align_phase       = 0;
 
 /* ------------------------------------------------------------------ */
 /* Streaming CD_read transfer                                          */
@@ -364,6 +372,24 @@ static uint32_t HLEPatRunLen(const uint8_t *sec, uint32_t i, const uint8_t *pat)
    return n;
 }
 
+static uint32_t HLETrackOfLBA(uint32_t lba)
+{
+   uint32_t track, idx, rel;
+   bool isData;
+
+   if (!CDIntfGetQPosition(lba, &track, &idx, &rel, &isData))
+      return 0;
+   return track;
+}
+
+/* Remember where a located sync run sat, then return the stream shift. */
+static uint32_t HLEAlignRecord(uint32_t lba, uint32_t relOff, uint32_t mis)
+{
+   hle_align_phase_track = HLETrackOfLBA(lba);
+   hle_align_phase       = relOff & 3u;
+   return (mis == 2) ? 2u : 0u;
+}
+
 static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
                                         uint32_t d1, bool d1Usable)
 {
@@ -414,7 +440,7 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
                     "(stream off %u, dest misalign %u) -- shift %u\n",
                     what, run, startLBA + s, i, relOff, mis,
                     (mis == 2) ? 2u : 0u);
-            return (mis == 2) ? 2u : 0u;
+            return HLEAlignRecord(startLBA + s, relOff, mis);
          }
       }
    }
@@ -486,14 +512,66 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
             {
                uint32_t relOff = s2 * 2352 + i;
                uint32_t mis    = (destAddr + relOff) & 3;
+               /* The I2S capture phase is a WORD phase: a genuine marker
+                * lands at destination misalignment 0 or 2, never 1 or 3.
+                * An odd-misaligned byte-fill run is therefore payload that
+                * happens to repeat a printable byte, not a mastering
+                * marker -- and returning on it hides the real one.
+                * Baldies (#738): sector 8 opens with 65 x '{' at misalign
+                * 1; the true 64 x ''' chunk marker sits in sector 7 at
+                * misalign 2.  Returning "shift 0" on the decoy left the
+                * marker 2-aligned, the game's 16-aligned-long locator
+                * counted 15, and it aborted its cutscene into a
+                * stack-unsafe exit that hangs the console.  Skip the
+                * decoy and keep scanning. */
+               if (mis & 1u)
+               {
+                  HLE_LOG("align scan: ignoring %s run (%u) at LBA %u off "
+                          "%u -- odd dest misalign %u is not a word phase\n",
+                          what, run, startLBA + s2, i, mis);
+                  continue;
+               }
+               /* Same decoy class, even phase: a run whose sector phase
+                * contradicts the one already measured on this track is
+                * payload, not a marker (Hover Strike's intro refill at
+                * LBA 122632: a phase-0 fill at off 228 against a track
+                * whose every real marker sits at phase 2). */
+               if (hle_align_phase_track != 0
+                   && (relOff & 3u) != hle_align_phase
+                   && hle_align_phase_track == HLETrackOfLBA(startLBA + s2))
+               {
+                  HLE_LOG("align scan: ignoring %s run (%u) at LBA %u off "
+                          "%u -- phase %u contradicts track %u phase %u\n",
+                          what, run, startLBA + s2, i, relOff & 3u,
+                          hle_align_phase_track, hle_align_phase);
+                  continue;
+               }
                HLE_LOG("align scan: %s run (%u) at LBA %u off %u "
                        "(stream off %u, dest misalign %u) -- shift %u\n",
                        what, run, startLBA + s2, i, relOff, mis,
                        (mis == 2) ? 2u : 0u);
-               return (mis == 2) ? 2u : 0u;
+               return HLEAlignRecord(startLBA + s2, relOff, mis);
             }
          }
       }
+   }
+
+   /* No marker near this read -- a continuation read into the middle of
+    * a file (Hover Strike's intro movie: its fifth refill at LBA 119977
+    * has no sync run in reach).  The stream phase is the pressing's, so
+    * reuse the one measured earlier on the same track instead of
+    * dropping to 0: a 2-byte-shifted refill makes the movie player
+    * abort and halt the GPU that drives its clock (black screen). */
+   if (hle_align_phase_track != 0
+       && hle_align_phase_track == HLETrackOfLBA(startLBA))
+   {
+      uint32_t mis = (destAddr + hle_align_phase) & 3u;
+      HLE_LOG("align scan: no sync run within %u sectors of LBA %u -- "
+              "reusing track %u phase %u, shift %u\n",
+              (unsigned)HLE_ALIGN_SCAN_SECTORS, startLBA,
+              hle_align_phase_track, hle_align_phase,
+              (mis == 2) ? 2u : 0u);
+      return (mis == 2) ? 2u : 0u;
    }
 
    HLE_LOG("align scan: no sync run within %u sectors of LBA %u\n",
@@ -514,6 +592,36 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
 /* HLE: scan disc data from MSF for the D1 sentinel, then transfer    */
 /* from the sentinel position into RAM with I2S un-swap.               */
 /* ------------------------------------------------------------------ */
+
+/* True when a run of HLE_ALIGN_D1_RUN consecutive D1 longs starts within
+ * the first `sectors` sectors at `lba` (I2S un-swapped, any byte phase). */
+static bool HLESentinelNear(uint32_t lba, uint32_t d1, uint32_t sectors)
+{
+   uint8_t  sec[2352];
+   uint8_t  pat[4];
+   uint32_t s, i;
+
+   pat[0] = (uint8_t)(d1 >> 24);
+   pat[1] = (uint8_t)(d1 >> 16);
+   pat[2] = (uint8_t)(d1 >> 8);
+   pat[3] = (uint8_t)d1;
+
+   for (s = 0; s < sectors; s++)
+   {
+      if (!CDIntfReadBlock(lba + s, sec))
+         continue;
+      for (i = 0; i + 1 < 2352; i += 2)
+      {
+         uint8_t tmp = sec[i];
+         sec[i]     = sec[i + 1];
+         sec[i + 1] = tmp;
+      }
+      for (i = 0; i + 4 <= 2352; i++)
+         if (HLEPatRunLen(sec, i, pat) >= HLE_ALIGN_D1_RUN)
+            return true;
+   }
+   return false;
+}
 
 static void HLEHandleCDRead(void)
 {
@@ -590,6 +698,23 @@ static void HLEHandleCDRead(void)
     * skipping the clobber on the rejected path is the safer shape. */
    if (a0 != 0 && a0 < 0x200000)
       m68k_set_reg(M68K_REG_A0, a0 - 4);
+
+   /* An end address in RAM at or below the destination is an empty
+    * range: the BIOS GPU ISR stores only while its write pointer is below
+    * the end, so nothing lands in RAM -- the call just seeks and leaves
+    * the drive playing there.  World Tour Racing starts its title music
+    * this way (A0=$12ECDE, A1=$12EC88, then CD_I2S_enable); falling
+    * through to the unknown-size default below streamed 367 KB over the
+    * GPU program it was about to launch from $133AB0, and the title
+    * screen froze with the GPU spinning on corrupt code. */
+   if (a1 != 0 && a1 < 0x200000 && a0 < 0x200000 && a1 <= a0)
+   {
+      HLE_LOG("CD_read: empty range (dest=$%06X end=$%06X) -- seek only, "
+              "no data transfer, LBA %u\n", a0, a1, lba);
+      hle_post_read_lba = lba;
+      hle_read_pending = false;
+      return;
+   }
 
    /* A byte-identical CD_read re-issued while the previous one is still
     * streaming is a poll-retry idiom (Iron Soldier 2's boot stub) — keep
@@ -708,7 +833,18 @@ static void HLEHandleCDRead(void)
    {
       uint32_t s2first = CDIntfGetSession2FirstTrackLBA();
       uint32_t discTotal = CDIntfGetDiscTotalSectors();
-      if (s2first > 0 && (lba < s2first || (discTotal > 0 && lba >= discTotal)))
+      /* ...unless the requested position is right: the D1 sync run sits
+       * a few sectors in.  Fast Food 64 / Frogz 64 / Saucer Wars keep
+       * their program on track 2, in session 1 (TOC entry $2C10 minus 6
+       * frames, 'TRAK' run 6 sectors later); redirecting sent them to
+       * another 'TRAK' file on track 4, which they ran as code. */
+      if (s2first > 0 && lba < s2first && (d1 >> 16) != 0
+          && HLESentinelNear(lba, d1, 16))
+      {
+         HLE_LOG("CD_read: LBA %u is before session 2 but holds the D1 "
+                 "sync run -- reading it as requested\n", lba);
+      }
+      else if (s2first > 0 && (lba < s2first || (discTotal > 0 && lba >= discTotal)))
       {
          uint32_t gameData = CDIntfGetSession2GameDataLBA();
          if (gameData > 0)
@@ -1279,6 +1415,175 @@ uint32_t JaguarCDHLEStreamArmCount(void)
    return hle_stream_arm_count;
 }
 
+/* ------------------------------------------------------------------ */
+/* Savestate chunk (#787)                                              */
+/*                                                                     */
+/* Field by field, never the raw struct: padding bytes and the size of */
+/* `bool` are compiler properties, and a rollback-netplay peer may run */
+/* a different build.  hle_active is NOT saved -- it is set by the boot */
+/* strategy (HLE vs real BIOS), which is session configuration like    */
+/* NTSC/PAL.  hle_stream_arm_count is a probe counter, not machine     */
+/* state.                                                              */
+/* ------------------------------------------------------------------ */
+
+#define HLE_STATE_MAGIC 0x31454C48u   /* "HLE1" little-endian */
+#define HLE_STATE_RAM_SIZE 0x200000u  /* 2 MB main RAM */
+
+/* A GPU data-area base is either unset (0) or a range that holds its
+ * +0/+4/+8 longs: main RAM, or GPU local RAM ($F03000-$F03FFF, where the
+ * BIOS default $F03B00 and Battle Morph's $F03158 live). */
+static bool hle_state_base_ok(uint32_t base)
+{
+   if (base == 0)
+      return true;
+   if ((base & 3u) != 0)
+      return false;
+   if (base <= HLE_STATE_RAM_SIZE - 12u)
+      return true;
+   return base >= 0xF03000u && base <= 0xF04000u - 12u;
+}
+
+/* Bytes JaguarCDHLEStateSave writes, so the caller can check room first. */
+size_t JaguarCDHLEStateSize(void)
+{
+   return 4u + 1u + 7u * 4u            /* magic, pending, 7 bookkeeping words */
+        + 2u + 15u * 4u                /* active, bufValid, 15 stream words */
+        + sizeof(hleStream.buf);
+}
+
+size_t JaguarCDHLEStateSave(uint8_t *buf)
+{
+   uint8_t *start = buf;
+   uint32_t magic = HLE_STATE_MAGIC;
+   uint8_t  b;
+
+   STATE_SAVE_VAR(buf, magic);
+
+   b = hle_read_pending ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   STATE_SAVE_VAR(buf, hle_read_dest);
+   STATE_SAVE_VAR(buf, hle_read_end_addr);
+   STATE_SAVE_VAR(buf, hle_read_progress);
+   STATE_SAVE_VAR(buf, hle_gpu_data_base);
+   STATE_SAVE_VAR(buf, hle_post_read_lba);
+   STATE_SAVE_VAR(buf, hle_align_phase_track);
+   STATE_SAVE_VAR(buf, hle_align_phase);
+
+   b = hleStream.active ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   b = hleStream.bufValid ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   STATE_SAVE_VAR(buf, hleStream.lba);
+   STATE_SAVE_VAR(buf, hleStream.bufOff);
+   STATE_SAVE_VAR(buf, hleStream.dest);
+   STATE_SAVE_VAR(buf, hleStream.total);
+   STATE_SAVE_VAR(buf, hleStream.reqTotal);
+   STATE_SAVE_VAR(buf, hleStream.written);
+   STATE_SAVE_VAR(buf, hleStream.accFrac);
+   STATE_SAVE_VAR(buf, hleStream.d1);
+   STATE_SAVE_VAR(buf, hleStream.statusBase);
+   STATE_SAVE_VAR(buf, hleStream.sigD0);
+   STATE_SAVE_VAR(buf, hleStream.sigD1);
+   STATE_SAVE_VAR(buf, hleStream.sigA0);
+   STATE_SAVE_VAR(buf, hleStream.sigA1);
+   STATE_SAVE_VAR(buf, hleStream.speedMult);
+   STATE_SAVE_VAR(buf, hleStream.startDelay);
+   /* The sector buffer holds the un-swapped bytes of the sector being
+    * delivered; re-reading it from the disc on load would work too, but
+    * only for a valid buffer, and this keeps the load path trivial. */
+   STATE_SAVE_BUF(buf, hleStream.buf, sizeof(hleStream.buf));
+
+   return (size_t)(buf - start);
+}
+
+void JaguarCDHLEStateReset(void)
+{
+   hleStream.active   = false;
+   hleStream.bufValid = false;
+   hle_read_pending   = false;
+   hle_read_progress  = 0;
+}
+
+size_t JaguarCDHLEStateLoad(const uint8_t *buf)
+{
+   const uint8_t *start = buf;
+   uint32_t magic;
+   uint8_t  pending, active, bufValid;
+
+   STATE_LOAD_VAR(buf, magic);
+   if (magic != HLE_STATE_MAGIC)
+   {
+      /* No chunk: a v15 blob written before #787 (its zero-filled tail
+       * reads as magic 0).  Nothing past this point is ours. */
+      JaguarCDHLEStateReset();
+      return (size_t)(buf - start);
+   }
+
+   STATE_LOAD_VAR(buf, pending);
+   STATE_LOAD_VAR(buf, hle_read_dest);
+   STATE_LOAD_VAR(buf, hle_read_end_addr);
+   STATE_LOAD_VAR(buf, hle_read_progress);
+   STATE_LOAD_VAR(buf, hle_gpu_data_base);
+   STATE_LOAD_VAR(buf, hle_post_read_lba);
+   STATE_LOAD_VAR(buf, hle_align_phase_track);
+   STATE_LOAD_VAR(buf, hle_align_phase);
+   hle_read_pending = pending != 0;
+
+   STATE_LOAD_VAR(buf, active);
+   STATE_LOAD_VAR(buf, bufValid);
+   STATE_LOAD_VAR(buf, hleStream.lba);
+   STATE_LOAD_VAR(buf, hleStream.bufOff);
+   STATE_LOAD_VAR(buf, hleStream.dest);
+   STATE_LOAD_VAR(buf, hleStream.total);
+   STATE_LOAD_VAR(buf, hleStream.reqTotal);
+   STATE_LOAD_VAR(buf, hleStream.written);
+   STATE_LOAD_VAR(buf, hleStream.accFrac);
+   STATE_LOAD_VAR(buf, hleStream.d1);
+   STATE_LOAD_VAR(buf, hleStream.statusBase);
+   STATE_LOAD_VAR(buf, hleStream.sigD0);
+   STATE_LOAD_VAR(buf, hleStream.sigD1);
+   STATE_LOAD_VAR(buf, hleStream.sigA0);
+   STATE_LOAD_VAR(buf, hleStream.sigA1);
+   STATE_LOAD_VAR(buf, hleStream.speedMult);
+   STATE_LOAD_VAR(buf, hleStream.startDelay);
+   STATE_LOAD_BUF(buf, hleStream.buf, sizeof(hleStream.buf));
+   hleStream.active   = active != 0;
+   hleStream.bufValid = bufValid != 0;
+
+   /* Everything below came from a file.  The arm path only ever builds
+    * these from a bounded CD_read, so a state that a real session wrote
+    * always passes; a damaged or crafted one must not turn into an
+    * out-of-bounds access (Copilot review on #803):
+    * - StreamTick indexes buf[bufOff..2351] and copies total - written;
+    * - HLEStreamFinish writes the pad/ATRI block at dest + total, with a
+    *   bound check that a dest near $FFFFFFFF would wrap past;
+    * - CD_poll and the status writes touch base +0/+4/+8.
+    * On any failure drop the transfer AND the pointers it would use. */
+   if (!hle_state_base_ok(hle_gpu_data_base)
+       || !hle_state_base_ok(hleStream.statusBase))
+   {
+      hle_gpu_data_base    = 0;
+      hleStream.statusBase = 0;
+      JaguarCDHLEStateReset();
+   }
+   if (hleStream.bufOff > sizeof(hleStream.buf)
+       || hleStream.written > hleStream.total
+       || hleStream.reqTotal > hleStream.total
+       || hleStream.dest >= HLE_STATE_RAM_SIZE
+       || hleStream.total > HLE_STATE_RAM_SIZE - hleStream.dest)
+      JaguarCDHLEStateReset();
+   if (hle_read_dest >= HLE_STATE_RAM_SIZE
+       || hle_read_end_addr < hle_read_dest
+       || hle_read_end_addr > HLE_STATE_RAM_SIZE)
+   {
+      hle_read_dest     = 0;
+      hle_read_end_addr = 0;
+      JaguarCDHLEStateReset();
+   }
+
+   return (size_t)(buf - start);
+}
+
 void JaguarCDHLEStreamTick(void)
 {
    uint32_t budget;
@@ -1658,6 +1963,8 @@ bool JaguarCDHLEBoot(void)
    hle_read_dest     = 0;
    hle_read_progress = 0;
    hle_post_read_lba = 0xFFFFFFFFu;
+   hle_align_phase_track = 0;
+   hle_align_phase = 0;
 
    if (!CDIntfIsImageLoaded())
    {
@@ -1916,6 +2223,8 @@ static void hle_strategy_reset(void)
    hle_read_dest     = 0;
    hle_read_progress = 0;
    hle_post_read_lba = 0xFFFFFFFFu;
+   hle_align_phase_track = 0;
+   hle_align_phase = 0;
    hle_stream_arm_count = 0;
    memset(&hleStream, 0, sizeof(hleStream));
 }

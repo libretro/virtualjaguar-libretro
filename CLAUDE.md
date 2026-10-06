@@ -92,8 +92,8 @@ make TEST_EXPORTS=1 test                       # wide-ABI test suite (auto-relin
 ```
 
 Runtime crash watchdog (`src/core/crash_detect.c`, option `virtualjaguar_crash_detect`) logs
-`gpu_pc_escape`/`dsp_pc_escape`/`gpu_wedge`/`dsp_wedge`/`video_stall`/`cd_seek_wedge` at the
-moment of crash — the RetroArch log line points at the broken subsystem. Signatures + all
+`gpu_pc_escape`/`dsp_pc_escape`/`gpu_wedge`/`dsp_wedge`/`video_stall`/`cd_seek_wedge`/`inframe_hang` at
+the moment of crash — the RetroArch log line points at the broken subsystem. Signatures + all
 harnesses: [`docs/agent/testing.md`](docs/agent/testing.md).
 
 ## Sub-agent guidelines

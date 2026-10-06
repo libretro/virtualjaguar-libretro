@@ -59,6 +59,7 @@
       CDROM*;
       CDIntf*;
       CDTrace*;
+      CrashDetect*;
       BUTCH*;
       GetRamPtr;
       bootConfig;

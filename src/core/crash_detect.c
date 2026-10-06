@@ -7,6 +7,7 @@
 #include "../cd/cdrom.h"    /* CDROMDiagGetSeekWedgeState(), CDTraceDump() */
 #include "../tom/shadowfb.h" /* shadowHiresActive + resolve counters */
 #include "settings.h"       /* bootConfig.isCDGame */
+#include "../m68000/m68kinterface.h" /* m68k_get_reg() for inframe_hang */
 #include <boolean.h>        /* project shim; bool / true / false */
 #include <stdint.h>
 #include <stddef.h>
@@ -66,25 +67,57 @@ extern uint32_t dsp_exec_opcode_count;
 
 /* cd_seek_wedge: a CD seek was issued but the FIFO drain counter (see
  * CDROMDiagGetSeekWedgeState()) hasn't advanced in this many frames while
- * a processor is still running. SEEK_DELAY_TICKS in cdrom.c is ~100
+ * a processor is still running AND the drive still owes data (see
+ * CrashDetectCDSeekWedgeFrame()). SEEK_DELAY_TICKS in cdrom.c is ~100
  * halfline ticks (~0.2 frames at NTSC's ~524 halflines/frame) even for a
  * from-scratch seek, so 300 frames (5 sec) is far beyond any legitimate
  * seek.
  *
- * KNOWN BENIGN CASE: a title that legitimately goes CD-idle for >5s
- * fires this too -- the signature cannot tell "game stopped draining
- * because it wedged" from "game finished the transfer and doesn't need
- * the disc right now".  Ground truth: Myst (bios mode) fires
- * cd_seek_wedge at ~frame 2260 with the drain frozen at the intro
- * movie's payload end (LBA 21189) while the game plays the movie's
- * ~6-second all-black dramatic pause (Cyan logo -> black -> match
- * strike -> burning MYST logo) entirely from RAM; the movie clock
- * (TOM PIT -> GPU IRQ2 -> $1D58C accumulator) keeps ticking at 12 Hz
- * throughout and the next asset loads right on schedule.  HLE mode
- * shows the identical black window (fires video_stall instead).
- * Corroborate with the trace ring / a longer freeze window before
- * treating a lone cd_seek_wedge line as a real stall. */
+ * Drains frozen alone is NOT a wedge: a game that finished its transfer
+ * stops draining and plays from RAM (Myst's ~6 s black pause after the
+ * intro movie, Primal Rage / BrainDead 13 after their FMV loads).  Issue
+ * #741 measured 15 such fires across 7 bios-mode titles that all went on
+ * to run: every one had BUTCH low byte $02 -- the engine's ISR clears the
+ * master interrupt enable (bit 0) to signal completion.  Philia (bios)
+ * ends its transfer the other way: BUTCH stays $03 but it clears I2CNTRL
+ * bit 2 (I2S FIFO data enable) and waits for a button.  The real
+ * IMASK-stuck transfer wedge (7c98e16, re-broken as a control) has both
+ * still on -- BUTCH $03, I2CNTRL bit 2 set -- with nobody servicing the
+ * interrupt.  FIFO-level state does not separate them (fifoDataReady=1 and
+ * cdPlaying=1 in the BUTCH-$02 fires and in the wedge alike). */
 #define WEDGE_FRAMES_CD_SEEK 300
+
+/* BUTCH interrupt-control low byte: master enable | FIFO half-full enable. */
+#define CD_BUTCH_FIFO_XFER_IRQS 0x03u
+/* I2CNTRL low byte: I2S FIFO data enable. */
+#define CD_I2S_FIFO_ENABLE      0x04u
+
+/* inframe_hang (issue #740): a blit this large cannot be legitimate.
+ * 2^24 pixels sweeps all 2 MB of main RAM at 1bpp eight times over; the
+ * largest real blits are full-screen clears (~10^5 pixels).  The case that
+ * motivated it: Music Demo (ScatoLOGIC) in BIOS mode, where a wedged GPU
+ * writes $2710826D into B_COUNT (334M pixels) -- the accurate blitter runs
+ * it for hours inside one register write and retro_run never returns. */
+#define INFRAME_BLIT_PIXELS_MAX 0x01000000u
+
+/* Work the DEFAULT (accurate) engine actually does for a B_COUNT, which is
+ * what can hang the host -- not the JTRM's nominal size.  JTRM v8 (BLIT_COUNT
+ * $F0223C) says each 16-bit counter takes 1..65536 with 0 encoding 65536.
+ * The outer counter runs that way (ocount-- from 0 wraps to $FFFF).  The
+ * inner one does not: BlitterMidsummer2 ends the inner loop when the count
+ * crosses into bit 15, so a 0 inner count stops after its first step -- at
+ * most one phrase, 64 pixels at 1bpp.  Williams/Telegames carts (Troy
+ * Aikman, Double Dragon V, Brutal Sports Football) write B_COUNT=0 at boot
+ * and run fine; counting that as 2^32 pixels was a false alarm. */
+static uint32_t inframe_blit_inner(uint32_t b_count)
+{
+   return (b_count & 0xFFFFu) ? (b_count & 0xFFFFu) : 64u;
+}
+
+static uint32_t inframe_blit_outer(uint32_t b_count)
+{
+   return (b_count >> 16) ? (b_count >> 16) : 0x10000u;
+}
 
 /* Halfline expectation per frame: 524 NTSC, 624 PAL.  Anomaly band is +/- 4. */
 
@@ -141,6 +174,7 @@ static unsigned last_log_fb_stall;
 static unsigned last_log_cd_seek_wedge;
 static unsigned last_log_gpu_runaway;
 static unsigned last_log_gpu_go_full;
+static unsigned last_log_inframe_blit;
 
 static uint32_t gpu_go_pages[GPU_GO_PAGES_MAX];
 static unsigned gpu_go_page_count;
@@ -359,6 +393,7 @@ void CrashDetectReset(void)
    last_log_cd_seek_wedge = 0;
    last_log_gpu_runaway = 0;
    last_log_gpu_go_full = 0;
+   last_log_inframe_blit = 0;
    gpu_go_page_count = 0;
 }
 
@@ -387,10 +422,55 @@ void CrashDetectNoteGPUGo(uint32_t pc)
    gpu_go_pages[gpu_go_page_count++] = page;
 }
 
+int CrashDetectBlitIsAbsurd(uint32_t b_count)
+{
+   uint32_t inner = inframe_blit_inner(b_count);
+   uint32_t outer = inframe_blit_outer(b_count);
+
+   /* Compared without forming the product, which would not fit in 32 bits. */
+   return outer > INFRAME_BLIT_PIXELS_MAX / inner;
+}
+
+void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base)
+{
+   if (!cd_initialized || cd_mode == CRASH_DETECT_OFF)
+      return;
+   if (!CrashDetectBlitIsAbsurd(b_count))
+      return;
+   if (!may_log(&last_log_inframe_blit))
+      return;
+   LOG_ERR("[CRASH-DETECT] inframe_hang frame=%u where=blitter b_count=$%08X "
+           "pixels=%.0f b_cmd=$%08X a1_base=$%08X gpu_pc=$%08X gpu_run=%d "
+           "dsp_pc=$%08X dsp_run=%d m68k_pc=$%06X (blit runs synchronously; "
+           "the frame may never complete)\n",
+           frame_no + 1, b_count,
+           (double)inframe_blit_inner(b_count)
+              * (double)inframe_blit_outer(b_count),
+           b_cmd, a1_base, pc_canonical(gpu_pc), (int)GPUIsRunning(),
+           pc_canonical(dsp_pc), (int)DSPIsRunning(),
+           (unsigned)(m68k_get_reg(NULL, M68K_REG_PC) & PC_ALIAS_MASK));
+}
+
 void CrashDetectSetMode(int mode)
 {
    if (mode < CRASH_DETECT_OFF || mode > CRASH_DETECT_VERBOSE) mode = CRASH_DETECT_ON;
    cd_mode = mode;
+}
+
+int CrashDetectCDSeekWedgeFrame(uint32_t seek_starts, uint32_t seek_dones,
+                                uint32_t fifo_drains, uint32_t last_fifo_drains,
+                                int processor_running, uint8_t butch_int,
+                                uint8_t i2s_ctrl)
+{
+   if (seek_starts == 0 || fifo_drains != last_fifo_drains || !processor_running)
+      return 0;
+   /* Shape (a): the seek-complete response never arrived. */
+   if (seek_starts != seek_dones)
+      return 1;
+   /* Shape (b): seeks done, but the game still has a FIFO transfer open
+    * (interrupts armed, FIFO data enabled) and no drain has happened. */
+   return (butch_int & CD_BUTCH_FIFO_XFER_IRQS) == CD_BUTCH_FIFO_XFER_IRQS
+       && (i2s_ctrl & CD_I2S_FIFO_ENABLE) != 0;
 }
 
 void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
@@ -403,6 +483,8 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    uint32_t cd_seek_starts;
    uint32_t cd_seek_dones;
    uint32_t cd_fifo_drains;
+   uint8_t  cd_butch_int;
+   uint8_t  cd_i2s_ctrl;
 
    if (!cd_initialized) return;
    if (cd_mode == CRASH_DETECT_OFF) return;
@@ -516,34 +598,39 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
 
    /* ---- CD seek wedge: a seek was issued (real-BIOS/BUTCHExec path) but
     * the FIFO drain counter has made no progress for WEDGE_FRAMES_CD_SEEK
-    * frames while a processor is still running. Gated on cd_seek_starts
-    * > 0 so non-CD games (and CD games before their first seek) never
-    * evaluate this at all.
+    * frames while a processor is still running and the drive still owes
+    * data. Gated on cd_seek_starts > 0 so non-CD games (and CD games before
+    * their first seek) never evaluate this at all.
     *
-    * Deliberately broader than "SEEK_START without SEEK_DONE": comparing
-    * fifoDrains instead of seekDones catches both CD seek-wedge shapes
-    * that need telling apart -- (a) the seek-completion response never
-    * arrives (seekDones stays behind seekStarts, so fifoDrains obviously
-    * never advances either), and (b) the seek completes fine but the
-    * FIFO continuation dies afterward (seekDones catches up, fifoDrains
-    * still never advances). Either way, the ring dump below shows which
-    * one happened. */
+    * Catches both CD seek-wedge shapes -- (a) the seek-completion response
+    * never arrives (seekDones stays behind seekStarts), and (b) the seek
+    * completes but the FIFO continuation dies afterward while the game
+    * still has the transfer open. A finished transfer (the game cleared
+    * BUTCH bit 0 or I2CNTRL bit 2) is not counted; see
+    * CrashDetectCDSeekWedgeFrame(). The ring dump below shows which shape
+    * happened. */
    if (bootConfig.isCDGame)
    {
       CDROMDiagGetSeekWedgeState(&cd_seek_starts, &cd_seek_dones, &cd_fifo_drains);
+      cd_butch_int = CDROMDiagGetButchIntCtrl();
+      cd_i2s_ctrl  = CDROMDiagGetI2SCtrl();
 
-      if (cd_seek_starts > 0 && cd_fifo_drains == last_cd_fifo_drains
-          && (gpu_running || dsp_running))
+      if (CrashDetectCDSeekWedgeFrame(cd_seek_starts, cd_seek_dones,
+                                      cd_fifo_drains, last_cd_fifo_drains,
+                                      gpu_running || dsp_running,
+                                      cd_butch_int, cd_i2s_ctrl))
       {
          cd_seek_wedge_frames++;
          if (cd_seek_wedge_frames == WEDGE_FRAMES_CD_SEEK
              && may_log(&last_log_cd_seek_wedge))
          {
             LOG_WRN("[CRASH-DETECT] cd_seek_wedge frame=%u seek_starts=%u seek_dones=%u "
-                    "fifo_drains=%u unchanged for %u frames gpu_pc=$%08X gpu_run=%d "
-                    "dsp_pc=$%08X dsp_run=%d\n",
+                    "fifo_drains=%u unchanged for %u frames butch_int=$%02X i2s_ctrl=$%02X gpu_pc=$%08X "
+                    "gpu_run=%d dsp_pc=$%08X dsp_run=%d\n",
                     frame_no, cd_seek_starts, cd_seek_dones, cd_fifo_drains,
-                    WEDGE_FRAMES_CD_SEEK, cur_gpu_pc, gpu_running, cur_dsp_pc, dsp_running);
+                    WEDGE_FRAMES_CD_SEEK, (unsigned)cd_butch_int,
+                    (unsigned)cd_i2s_ctrl, cur_gpu_pc,
+                    gpu_running, cur_dsp_pc, dsp_running);
             CDTraceDump();
          }
       }

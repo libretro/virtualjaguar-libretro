@@ -20,6 +20,7 @@ void OPDone(void);
 uint64_t OPLoadPhrase(uint32_t offset);
 
 void OPProcessList(int halfline, bool render);
+void OPProcessListNoBitmaps(int halfline);
 uint32_t OPGetListPointer(void);
 void OPSetStatusRegister(uint32_t data);
 uint32_t OPGetStatusRegister(void);

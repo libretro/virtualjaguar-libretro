@@ -87,8 +87,8 @@ the current directory when omitted.
   ```
   cc -O2 -Wall -std=c99 -I. -I./test/harness -I./libretro-common/include -o test/tools/frame_hash_ab \
      test/tools/frame_hash_ab.c test/harness/harness.c -ldl -lm
-  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv a.csv --frames 1800 --option virtualjaguar_dsp=enabled
-  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv b.csv --frames 1800 --option virtualjaguar_dsp=disabled
+  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv a.csv --frames 1800 --option virtualjaguar_usefastblitter=enabled
+  ./test/tools/frame_hash_ab ./virtualjaguar_libretro.dylib rom.jag --csv b.csv --frames 1800 --option virtualjaguar_usefastblitter=disabled
   ```
   Then diff whichever CSV/dump pair applies:
   - `field_diff` — generic row/column CSV diff (works on `frame_hash_ab`'s
@@ -148,7 +148,8 @@ the current directory when omitted.
 
 - `crash_detect` signatures in the RetroArch log (core option
   `virtualjaguar_crash_detect`, default enabled) — `gpu_pc_escape`,
-  `dsp_pc_escape`, `gpu_wedge`/`dsp_wedge`, `video_stall`, `cd_seek_wedge`.
+  `dsp_pc_escape`, `gpu_wedge`/`dsp_wedge`, `video_stall`, `cd_seek_wedge`,
+  `inframe_hang` (an absurd blit that would never let the frame finish).
   No save state or input recording needed; the log line at the moment of
   failure names which subsystem broke. Full signature list: CLAUDE.md
   "Runtime crash watchdog".

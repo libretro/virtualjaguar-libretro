@@ -8,12 +8,15 @@
 #include "bus_arbiter.h"
 #include "gpu.h"
 #include "../core/log.h"
+#include "../core/crash_detect.h"
 #include "settings.h"
 #include "vjag_memory.h"
 
+#define A1_BASE         ((uint32_t)0x00)
 #define A1_FLAGS        ((uint32_t)0x04)
 #define A1_PIXEL        ((uint32_t)0x0C)
 #define COMMAND         ((uint32_t)0x38)
+#define PIXLINECOUNTER  ((uint32_t)0x3C)
 #define SRCDATA         ((uint32_t)0x40)
 #define DSTDATA         ((uint32_t)0x48)
 #define DSTZ            ((uint32_t)0x50)
@@ -395,6 +398,13 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * machine cannot observe it either. */
       if (texReplaceEnabled)
          trBlit = TexReplacePreBlit();
+
+      /* Log-only in-frame hang signature (issue #740): a garbage B_COUNT
+       * runs to completion inside this register write and the frame never
+       * ends, so the per-frame watchdog would never see it. */
+      CrashDetectNoteBlit(GET32(blitter_ram, PIXLINECOUNTER),
+                          GET32(blitter_ram, COMMAND),
+                          GET32(blitter_ram, A1_BASE));
 
       blit_in_progress = 1;
       if (BlitterCompareIsEnabled())

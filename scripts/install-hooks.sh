@@ -27,8 +27,8 @@ if [ -n "$STAGED_C" ]; then
   scripts/c89-lint.sh $STAGED_C
 fi
 
-# .info / Makefile version sync check
-if echo "$STAGED" | grep -qE '^(dist/info/|Makefile$)'; then
+# Version sync check: Makefile, .info and the fallback header (#734)
+if echo "$STAGED" | grep -qE '^(dist/info/|Makefile$|src/core/version_fallback\.h$)'; then
   scripts/check-info-version.sh
 fi
 

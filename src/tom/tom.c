@@ -1585,6 +1585,7 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    bool inActiveDisplayArea = true;
    uint16_t startingHalfline;
    uint16_t endingHalfline;
+   uint16_t lateEndHalfline = 0;
    uint32_t * TOMCurrentLine = 0;
    uint16_t topVisible;
    uint16_t bottomVisible;
@@ -1681,7 +1682,10 @@ void TOMExecHalfline(uint16_t halfline, bool render)
       {
          uint16_t visible_end = TOMGetBottomVisible();
          if (visible_end > 0 && visible_end < endingHalfline)
+         {
+            lateEndHalfline = GET16(tomRam8, VP);
             endingHalfline = visible_end;
+         }
       }
    }
 
@@ -1721,7 +1725,19 @@ void TOMExecHalfline(uint16_t halfline, bool render)
       }
    }
    else
+   {
       inActiveDisplayArea = false;
+      /* The clamp above keeps late passes off bitmap objects, but the OP
+       * still runs on these lines on hardware: a list that parks a GPU
+       * object on a blanking line gets its interrupt there.  Vid Grid
+       * (VDE=$7FF, VP=523) branches to a GPU object only at VC==518 and
+       * builds its movie bitmaps from that ISR; without the pass it
+       * showed a black screen over running movie audio.  Walk the list
+       * with bitmaps skipped so branch/GPU/stop objects still fire. */
+      if (render && lateEndHalfline != 0
+          && halfline >= endingHalfline && halfline < lateEndHalfline)
+         OPProcessListNoBitmaps(halfline);
+   }
 
    // Derive visible window from VDB/VDE registers (with fallback)
 

@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.6.1
+CORE_BASE_VERSION := v3.7.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -1345,7 +1345,7 @@ clean:
 		test/test_eeprom_read_race \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cart_format test/test_cart_needs_bios \
+		test/test_cart_format test/test_cart_needs_bios test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
@@ -1353,7 +1353,7 @@ clean:
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
-		test/tools/test_disk_control \
+		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
@@ -1425,7 +1425,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
 		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
+		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
@@ -1777,6 +1777,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Doom (savestate determinism, enhancement path)" "no ROM matching 'Doom*' in the private corpus"; \
 	fi
+	@# Issue #787: the HLE CD BIOS streams CD_read data at drive rate from
+	@# state that used to live outside the blob, so every HLE disc diverged
+	@# under run-ahead while a read was in flight.  Warmup 400 lands
+	@# mid-stream on Hover Strike's intro (failed all four checks pre-fix).
+	@rom=$$(bash scripts/find-rom.sh 'Hover Strike - Unconquered Lands (USA).cue'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --warmup 400 --frames 120 --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Hover Strike CD (HLE savestate determinism, #787)" "no disc matching 'Hover Strike - Unconquered Lands (USA).cue' in the private corpus"; \
+	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
@@ -1790,6 +1800,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		echo "jagcd-chd-check: expected exit 1 on synth_jagcd_nosession.chd"; exit 1; \
 	 else rc=$$?; \
 	   if [ $$rc -ne 1 ]; then echo "jagcd-chd-check: unexpected $$rc"; exit $$rc; fi; \
+	 fi
+	@# exit 2 = virtual pregaps present (a warning, still a valid CHD).
+	@./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_vpregap.chd >/dev/null; \
+	 rc=$$?; if [ $$rc -ne 2 ]; then \
+	   echo "jagcd-chd-check: expected exit 2 on synth_jagcd_vpregap.chd, got $$rc"; exit 1; \
 	 fi
 	@# Optional: PATH/JAGCD_CHDMAN round-trip. Exit 77 = no CHSE-capable
 	@# chdman (CI, Homebrew 0.288). The committed synth_jagcd*.chd files
@@ -1820,6 +1835,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_bios_config && ./test/test_boot_config
 	./test/test_cart_format ./$(TARGET)
 	./test/test_cart_needs_bios ./$(TARGET) --quiet
+	./test/test_crash_detect_cd_wedge ./$(TARGET)
+	./test/test_crash_detect_inframe ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
 	@# $F14000/$F14002 identity guardrail for the input-devices track
@@ -2069,6 +2086,25 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# in the `if [ -n "$$disc" ]` block, where it silently ran nowhere but
 	@# a corpus machine.
 	./test/tools/test_disk_control ./$(TARGET) --case 5 --quiet
+
+	@# Baldies HLE cutscene (#738): the boot classifier PASSED this title
+	@# while it was frozen from frame ~600 (it reaches game code and is
+	@# not thrashing -- it is just waiting on a dead clock), so the cover
+	@# has to be a freeze detector.  cd_wedge_probe exits 42 on 400
+	@# identical frames after frame 300; the unpatched core froze at
+	@# ~600, so 1200 frames is decisive and cheap.  Private corpus only.
+	@bal=$$(find -L test/roms/private -iname 'Baldies*Rev 1*.cue' 2>/dev/null | head -1); \
+	if [ -n "$$bal" ]; then \
+		$(MAKE) --no-print-directory test/tools/cd_wedge_probe >/dev/null || exit 1; \
+		if ./test/tools/cd_wedge_probe ./$(TARGET) "$$bal" --frames 1200 --arm 300 --freeze-frames 400 \
+				--option virtualjaguar_cd_boot_mode=hle >/dev/null 2>&1; then \
+			echo "  PASS: [baldies_hle_cutscene_progresses] no freeze in 1200 frames (#738)"; \
+		else \
+			echo "  FAIL: [baldies_hle_cutscene_progresses] Baldies froze under HLE (#738: stream marker misaligned?)"; exit 1; \
+		fi; \
+	else \
+		bash scripts/test-skip.sh record "Baldies HLE cutscene progression (#738)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
+	fi
 
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
@@ -2410,6 +2446,14 @@ test/tools/test_disk_control: test/tools/test_disk_control.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
+# Freeze detector used by the Baldies HLE cutscene check below (#738).
+test/tools/cd_wedge_probe: test/tools/cd_wedge_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. $(INCFLAGS) \
+		-o $@ test/tools/cd_wedge_probe.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -2747,6 +2791,12 @@ test/test_boot_config: test/test_boot_config.c
 test/test_cart_format: test/test_cart_format.c
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cart_format.c -ldl
+
+test/test_crash_detect_cd_wedge: test/test_crash_detect_cd_wedge.c
+	$(CC) -O2 -Wall -std=c99 -o $@ test/test_crash_detect_cd_wedge.c -ldl
+
+test/test_crash_detect_inframe: test/test_crash_detect_inframe.c
+	$(CC) -O2 -Wall -std=c99 -o $@ test/test_crash_detect_inframe.c -ldl
 
 test/test_cart_needs_bios: test/test_cart_needs_bios.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
