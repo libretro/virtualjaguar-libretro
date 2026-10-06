@@ -636,6 +636,10 @@ details.fold > summary {
   border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
 }
 details.fold > summary:hover { color: var(--red-link); }
+details.fold > summary:focus-visible {
+  outline: 2px solid var(--red-link);
+  outline-offset: 2px;
+}
 details.fold[open] > summary { margin-bottom: 0.4rem; }
 
 table {
