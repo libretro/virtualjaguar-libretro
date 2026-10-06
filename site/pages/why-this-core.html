@@ -4,8 +4,8 @@
 
 <h1>Why this core</h1>
 <p class="lede">
-  Every line below is backed by a commit, a test, or a merged PR. The right
-  column is the receipt.
+  What you get in RetroArch. Each claim links to the commit, test or doc that
+  backs it.
 </p>
 
 <section class="win">
@@ -16,7 +16,8 @@
 
       <tr>
         <td><strong>Every platform RetroArch runs on.</strong>
-            16 CI-built targets per release, plus handhelds via the buildbot.</td>
+            24 CI-built binaries per release, including Raspberry Pi, iOS,
+            Android, web, Switch and Vita.</td>
         <td><a href="{{REPO}}/blob/develop/.github/workflows/release.yml">release.yml</a></td>
       </tr>
       <tr>
@@ -27,27 +28,26 @@
       </tr>
       <tr>
         <td><strong>Run-ahead, rewind and netplay determinism.</strong>
-            A harness replays RetroArch's rollback loop and demands
-            byte-identical state.</td>
+            A harness replays RetroArch&rsquo;s rollback loop and demands
+            byte-identical state, for cartridges and, since v3.7.0, for HLE
+            CD titles.</td>
         <td><a href="{{REPO}}/pull/327">PR #327</a> &middot;
             <a href="{{REPO}}/blob/develop/test/tools/test_runahead_determinism.c">test_runahead_determinism.c</a></td>
       </tr>
       <tr>
         <td><strong>Old savestates keep loading.</strong>
-            Every format any released core wrote still loads. Exactly, not
-            best-effort.</td>
+            Every format any released core wrote still loads.</td>
         <td><a href="{{REPO}}/blob/develop/docs/savestate-compat.md">savestate-compat.md</a> &middot;
             <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a></td>
       </tr>
       <tr>
         <td><strong>Frontend features come with RetroArch.</strong>
-            CRT shaders, remapping, fast-forward, per-game overrides. The core
-            does not reimplement any of it.</td>
+            CRT shaders, remapping, fast-forward, per-game overrides.</td>
         <td><a href="{{REPO}}/blob/develop/libretro.c">libretro.c</a></td>
       </tr>
       <tr>
         <td><strong>Documented in the libretro docs.</strong>
-            Where a libretro user would look for it. No BIOS files needed.</td>
+            No BIOS files needed.</td>
         <td><a href="{{DOCS_URL}}">docs.libretro.com</a> &middot;
             <a href="{{DOCS_OPTIONS_URL}}">core options</a> &middot;
             <a href="{{REPO}}#bios">README: BIOS</a></td>
@@ -55,14 +55,15 @@
       <tr>
         <td><strong>The peripherals, not just the controller.</strong>
             Jaguar CD in both boot modes, JagLink and CatBox, the Voice Modem,
-            GameDrive, Memory Track, mouse, rotary, analog, driving, lightgun.</td>
+            GameDrive, Memory Track, Team Tap, mouse, rotary, analog, driving,
+            lightgun.</td>
         <td><a href="./">front page</a> &middot;
-            <a href="compatibility.html">compatibility data</a></td>
+            <a href="{{REPO}}/blob/develop/docs/input-devices-user-guide.md">input guide</a></td>
       </tr>
       <tr>
         <td><strong>Hardware-referenced accuracy.</strong>
-            Checked against the Jaguar Technical Reference Manual, not against
-            source comments. An acid suite gates CI.</td>
+            Checked against the Jaguar Technical Reference Manual, not source
+            comments. An acid suite gates CI.</td>
         <td><a href="{{REPO}}/tree/develop/test/acid">test/acid</a> &middot;
             <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a></td>
       </tr>
@@ -80,15 +81,14 @@
   <h2>One comparative claim</h2>
   <div class="win-body">
     <p>
-      We know of no other Jaguar emulator with a true-colour mode or with
-      in-core internal-resolution supersampling.
-      <a href="enhancements.html">Both shipped</a>, covering blits, scaled
-      sprites and every direct video mode as of v3.3.0.
+      We know of no other Jaguar emulator with a true-colour mode or in-core
+      internal-resolution supersampling, as opposed to filtering the finished
+      frame. <a href="enhancements.html">Both shipped</a> in v3.2.0 and v3.3.0.
     </p>
     <p>
-      That is the only claim on this site made about anyone else's work. If it
-      is wrong, <a href="{{REPO}}/discussions">say so in Discussions</a> and
-      this page gets corrected.
+      It is the only claim here about anyone else&rsquo;s work. If it is wrong,
+      <a href="{{REPO}}/discussions">say so in Discussions</a> and we will
+      correct it.
     </p>
   </div>
 </section>
@@ -97,7 +97,8 @@
   <h2>Found something broken</h2>
   <div class="win-body">
     <p>
-      <a href="{{REPO}}/discussions">Discussions</a> for reports,
+      Check <a href="compatibility.html">known problems</a> first. Then use
+      <a href="{{REPO}}/discussions">Discussions</a> for reports and
       <a href="{{REPO}}/issues">Issues</a> for confirmed bugs. Attach your
       frontend log: the crash watchdog writes the failure signature into it.
     </p>

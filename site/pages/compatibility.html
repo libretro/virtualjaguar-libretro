@@ -1,61 +1,150 @@
 <!-- title: Compatibility | Virtual Jaguar libretro -->
 <!-- nav: Compatibility -->
-<!-- description: Jaguar CD and cartridge boot results per image for the Virtual Jaguar libretro core, generated from committed test logs rather than typed in by hand. -->
+<!-- description: Which Atari Jaguar and Jaguar CD games have known problems in Virtual Jaguar libretro v3.7.0, what was fixed recently, and the headless boot matrices behind the claims. -->
 
 <h1>Compatibility</h1>
 <p class="lede">
-  Generated from committed test logs. Nothing on this page is typed by hand.
+  Most of the library boots and plays. This page lists what does not, what
+  was fixed recently, and how much to trust the test data. Current as of
+  v3.7.0 (2026-10-06). No BIOS files are required
+  (<a href="{{REPO}}#bios">README: BIOS</a>).
 </p>
 
-<div class="note">
-  <p>
-    <span class="badge good">verified</span> means a result in the test log.
-    <span class="badge bad">known issue</span> means a failure recorded in a
-    committed doc. <span class="badge warn">not yet verified</span> means no
-    recorded result either way.
-  </p>
-  <p>
-    Verified is a narrow claim: <em>boots into game code headlessly</em>, on
-    the maintainer's disc images, at build {{COMPAT_BUILD_IDS}}. It is not a
-    certificate that the game can be completed.
-  </p>
-</div>
+<section class="win">
+  <h2>Known problems <span class="badge warn">v3.7.0</span></h2>
+  <div class="win-body">
+    <div class="table-wrap"><table>
+      <tr><th>Title</th><th>Problem</th><th>Tracking</th></tr>
+      <tr><td>Dragon&rsquo;s Lair, Space Ace, BrainDead 13 (CD)</td>
+          <td>Intro and attract loop play. The interactive scenes do not load.</td>
+          <td><a href="{{REPO}}/issues/737">#737</a></td></tr>
+      <tr><td>White Men Can&rsquo;t Jump</td>
+          <td>Menu freeze and missing audio are fixed. Still very glitchy in play.</td>
+          <td><a href="{{REPO}}/issues/736">#736</a></td></tr>
+      <tr><td>Club Drive</td>
+          <td>Freezes in gameplay at default settings, reported after holding the accelerator for a few seconds.</td>
+          <td><a href="{{REPO}}/issues/611">#611</a></td></tr>
+      <tr><td>Doom, Hover Strike</td>
+          <td>Run faster than hardware, and touchscreen taps register as repeated presses.</td>
+          <td><a href="{{REPO}}/issues/401">#401</a> &middot; <a href="{{REPO}}/issues/399">#399</a> &middot; <a href="{{REPO}}/issues/743">#743</a></td></tr>
+      <tr><td>Battle Morph (CD)</td>
+          <td>Reported too fast. May be paced correctly with GPU Pipeline Timing on; not yet re-verified.</td>
+          <td><a href="{{REPO}}/issues/331">#331</a></td></tr>
+      <tr><td>Alien vs Predator</td>
+          <td>High-pitched noise during play, reported on Windows, Linux and Android. Not reproduced on macOS or iOS.</td>
+          <td><a href="{{REPO}}/issues/633">#633</a></td></tr>
+      <tr><td>Defender 2000</td>
+          <td>Hangs at level start with M68K Clock Scale 3x. Stock clocks are fine.</td>
+          <td><a href="{{REPO}}/issues/460">#460</a></td></tr>
+      <tr><td>Seven homebrew cart images (DEMO1, DEMO1B, Ladybug Demo, JagMania Jul 8, Chroma-Luma Color Pick)</td>
+          <td>Freeze in HLE with the default Accurate blitter. No commercial title is affected.</td>
+          <td><a href="{{REPO}}/issues/800">#800</a></td></tr>
+      <tr><td>Music Demo (2002), real-BIOS mode</td>
+          <td>GPU wedges at frame 338.</td>
+          <td><a href="{{REPO}}/issues/794">#794</a></td></tr>
+      <tr><td>Hover Strike, real-BIOS CD mode</td>
+          <td>Run-ahead diverges mid-load. HLE, the default, is deterministic.</td>
+          <td><a href="{{REPO}}/issues/804">#804</a></td></tr>
+    </table></div>
+    <p class="footnote">
+      Inserting a disc restarts the console, so a mid-session swap is a
+      reboot. What is scheduled for the next releases is on the
+      <a href="{{REPO}}/milestones">milestones</a> page.
+    </p>
+  </div>
+</section>
 
-<p class="footnote">
-  Manual: <a href="{{DOCS_URL}}">docs.libretro.com</a>. No BIOS files are
-  required (<a href="{{REPO}}#bios">README: BIOS</a>). libretro keeps a
-  separate <a href="{{DOCS_COMPAT_URL}}">community compatibility list</a> that
-  covers cartridges.
-</p>
+<section class="win">
+  <h2>Fixed recently <span class="badge good">release notes</span></h2>
+  <div class="win-body">
+    <div class="table-wrap"><table>
+      <tr><th>Title</th><th>What was fixed</th><th>Release</th></tr>
+      <tr><td>Baldies (CD)</td>
+          <td>Froze about 600 frames into the intro in HLE, and stalled in real-BIOS mode.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td></tr>
+      <tr><td>Myst, Space Ace (CD)</td>
+          <td>Black screen after the Cyan logo, and a frozen silent intro. Myst now boots from CHD images.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td></tr>
+      <tr><td>World Tour Racing (CD)</td>
+          <td>Title screen froze. FMV froze separately in v3.5.0.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.5.0.md">v3.5.0</a></td></tr>
+      <tr><td>Vid Grid, Ocean Depths, Simone (CD)</td>
+          <td>CHD boot loops and black video, a TOC read bug, and boot headers refused as bad rips.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td></tr>
+      <tr><td>Fast Food 64, Frogz 64, Saucer Wars (CD homebrew)</td>
+          <td>Now reach their title screens with audio.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td></tr>
+      <tr><td>PolyEngine, PlaySFX (homebrew)</td>
+          <td>PolyEngine showed a black screen, or noise on the Fast blitter. PlaySFX and other headerless binaries now load.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td></tr>
+      <tr><td>Cybermorph, I-War</td>
+          <td>The Fast blitter now matches the Accurate one on every sampled blit.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td></tr>
+      <tr><td>White Men Can&rsquo;t Jump</td>
+          <td>Menu freeze and no audio in both BIOS modes (#635).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.6.0.md">v3.6.0</a></td></tr>
+      <tr><td>Club Drive</td>
+          <td>Crash at RISC Clock Scale 2x (#565).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.5.0.md">v3.5.0</a></td></tr>
+      <tr><td>Ultra Vortek</td>
+          <td>Video torn apart when the Voice Modem activates (#500).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td></tr>
+      <tr><td>Val d&rsquo;Is&egrave;re Skiing</td>
+          <td>Snow rendered wrong. Object Processor register write order, from the Flare netlists (#354).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a></td></tr>
+      <tr><td>Raiden, Power Drive Rally</td>
+          <td>Music dying and a black screen on HLE fast-boot; sound freezing mid-game (#344, #339, #355).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a></td></tr>
+      <tr><td>Alien vs Predator, Tempest 2000, Pitfall, Wolfenstein 3D</td>
+          <td>Colour bars and a red shotgun background; a one-frame playfield collapse; a black screen in gameplay; missing music.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
+    </table></div>
+  </div>
+</section>
+
+<section class="win">
+  <h2>How much to trust the matrices</h2>
+  <div class="win-body">
+    <p>
+      The two tables below are a headless smoke test, generated from
+      committed logs. <strong>Reaches game code</strong> means the 68K was
+      executing game code when the run ended. It does not mean the game can
+      be finished, and menus are not told apart from gameplay. A
+      &ldquo;video undetermined&rdquo; badge means the headless video check
+      was inconclusive, not that the title is broken.
+    </p>
+    <ul>
+      <li>The <strong>cartridge matrix</strong> runs the Fast blitter only,
+          so it cannot see the default-settings freezes in
+          <a href="{{REPO}}/issues/800">#800</a>.</li>
+      <li>The <strong>CD matrix</strong> predates several v3.7.0 CD fixes.
+          Trust the list above over its rows.</li>
+      <li>The PlaySFX HLE row predates the
+          <a href="{{REPO}}/issues/739">#739</a> fix and now boots.</li>
+    </ul>
+    <p>
+      Your game is not listed, or the list says it runs and it does not?
+      Report it in <a href="{{REPO}}/discussions">Discussions</a> with your
+      frontend log. The
+      <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a>
+      writes its failure signature there. libretro also keeps a
+      <a href="{{DOCS_COMPAT_URL}}">community compatibility list</a>.
+    </p>
+  </div>
+</section>
 
 <section class="win">
   <h2>Jaguar CD boot matrix <span class="badge">generated</span></h2>
   <div class="win-body">
     <p>
-      Parsed from
-      <a href="{{REPO}}/blob/develop/docs/cd-boot-matrix.md"><code>docs/cd-boot-matrix.md</code></a>,
-      produced by
-      <a href="{{REPO}}/blob/develop/test/tools/cd_boot_matrix.sh"><code>cd_boot_matrix.sh</code></a>.
-      Every title runs in both modes, HLE and real BIOS.
+      {{COMPAT_N_TITLES}} disc images, both boot modes, build
+      {{COMPAT_BUILD_IDS}}. From
+      <a href="{{REPO}}/blob/develop/docs/cd-boot-matrix.md"><code>docs/cd-boot-matrix.md</code></a>.
     </p>
-
-    <dl class="readout">
-      <dt>Disc images in the corpus</dt>
-      <dd>{{COMPAT_N_TITLES}}</dd>
-      <dt>Reach game code, HLE mode</dt>
-      <dd>{{COMPAT_N_HLE_GOOD}}</dd>
-      <dt>Reach game code, real-BIOS mode</dt>
-      <dd>{{COMPAT_N_BIOS_GOOD}}</dd>
-    </dl>
-
-    {{COMPAT_TABLE}}
-
-    <p class="footnote">
-      Notes carry <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash
-      watchdog</a> signatures. A lone <code>cd_seek_wedge</code> or
-      <code>video_stall</code> next to a passing PC trace is often benign. The
-      stage column is the gate.
-    </p>
+    <details class="fold">
+      <summary>Show the per-disc table</summary>
+      {{COMPAT_TABLE}}
+    </details>
   </div>
 </section>
 
@@ -63,87 +152,19 @@
   <h2>Cartridge boot matrix <span class="badge">generated</span></h2>
   <div class="win-body">
     <p>
-      Parsed from
-      <a href="{{REPO}}/blob/develop/docs/cart-boot-matrix.md"><code>docs/cart-boot-matrix.md</code></a>,
-      produced by
-      <a href="{{REPO}}/blob/develop/test/tools/cart_boot_matrix.sh"><code>cart_boot_matrix.sh</code></a>.
-      Every cartridge in the corpus runs headlessly in both boot modes.
-      &ldquo;Boots and runs&rdquo; means the final 68K PC is executing game
-      code at build {{CART_BUILD_IDS}}. Video evidence and any crash-watchdog
-      signature go in the notes.
+      {{CART_N_TITLES}} images, 600 frames each, Fast blitter, build
+      {{CART_BUILD_IDS}}. From
+      <a href="{{REPO}}/blob/develop/docs/cart-boot-matrix.md"><code>docs/cart-boot-matrix.md</code></a>.
     </p>
-    <p>
-      Two limits worth stating plainly. Menu and in-game are not
-      distinguished headlessly. A &ldquo;video undetermined&rdquo; badge means
-      the title executes but the headless video evidence is inconclusive, not
-      that the title is broken.
-    </p>
-
     <dl class="readout">
-      <dt>Cartridge images in the corpus</dt>
-      <dd>{{CART_N_TITLES}}</dd>
-      <dt>Boot and run, HLE mode</dt>
-      <dd>{{CART_N_HLE_GOOD}}</dd>
-      <dt>Boot and run, real-BIOS mode</dt>
-      <dd>{{CART_N_BIOS_GOOD}}</dd>
+      <dt>Reach game code, HLE boot (Fast blitter)</dt>
+      <dd>{{CART_N_HLE_RUN}}</dd>
+      <dt>Reach game code, real-BIOS boot (Fast blitter)</dt>
+      <dd>{{CART_N_BIOS_RUN}}</dd>
     </dl>
-
-    {{CART_TABLE}}
-  </div>
-</section>
-
-<section class="win">
-  <h2>Cartridge fixes <span class="badge">shipped in tagged releases</span></h2>
-  <div class="win-body">
-    <p>Named fixes from the release notes, each with the commit trail.</p>
-
-    <div class="table-wrap"><table>
-      <tr><th>Title</th><th>What was fixed</th><th>Source</th></tr>
-      <tr><td>Doom</td><td>Ran at roughly 2x speed. Brought down by bus-contention modelling.</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v2.3.0.md">v2.3.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/doom-pace-calibration.md">calibration</a></td></tr>
-      <tr><td>Wolfenstein 3D</td><td>Missing game music. DSP <code>D_FLAGS</code> pipeline-stage correction.</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
-      <tr><td>Tempest 2000</td><td>One-frame playfield collapse (#187).</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
-      <tr><td>Alien vs Predator</td><td>Cyan and brown bars (#178). Red background behind the shotgun (#267, #292).</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
-      <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay. 14-byte group-0 bus-error frame, plus GPU <code>STOREP</code> masking (#138).</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
-      <tr><td>Raiden</td><td>Music dying after saved-options corruption, an EEPROM read race (#344). Black screen on HLE fast-boot (#339).</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a></td></tr>
-      <tr><td>Power Drive Rally</td><td>Sound freezing on a constant tone mid-game. GPU/DSP local RAM 16-bit-port latch (#355).</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a> &middot; <a href="{{REPO}}/pull/363">PR #363</a></td></tr>
-      <tr><td>Val d&rsquo;Is&egrave;re Skiing</td><td>Snow rendered wrong. Object Processor register write order is LSW-first, proven from the Flare netlists (#354).</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a></td></tr>
-      <tr><td>Ultra Vortek</td><td>Video torn apart when the Voice Modem activates. The UART IRQ was missing TOM&rsquo;s <code>C_JERENA</code> gate: 3.26 spurious interrupts per frame before, 0.999 after (#500).</td>
-          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td></tr>
-    </table></div>
-
-    <h3>Still open</h3>
-    <p class="footnote">
-      Render-bound game loops run about 2x fast in Doom and Hover Strike
-      (<a href="{{REPO}}/issues/401">#401</a>; a real-hardware Doom capture now
-      anchors the timing-accuracy campaign). Battle Morph on CD is too fast
-      (<a href="{{REPO}}/issues/331">#331</a>). The non-default Fast blitter
-      drops Iron Soldier's briefing wireframe; keep Accurate
-      (<a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">triage doc</a>).
-    </p>
-  </div>
-</section>
-
-<section class="win">
-  <h2>Beyond the headless gate <span class="badge">help wanted</span></h2>
-  <div class="win-body">
-    <p>
-      The matrices above prove that titles boot and execute. They cannot prove
-      a game plays correctly to the end, and no amount of headless sweeping
-      will change that.
-    </p>
-    <p>
-      Report gameplay issues in <a href="{{REPO}}/discussions">Discussions</a>
-      with your frontend log attached. The
-      <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a>
-      writes the failure signature into it.
-    </p>
+    <details class="fold">
+      <summary>Show the per-cartridge table</summary>
+      {{CART_TABLE}}
+    </details>
   </div>
 </section>

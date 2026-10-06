@@ -1,60 +1,30 @@
 <!-- title: Settings & Performance | Virtual Jaguar libretro -->
 <!-- nav: Performance -->
-<!-- description: Which of the core's forty-odd options actually matter, what to change when an Atari Jaguar game runs slow, and which settings quietly cancel each other out. -->
+<!-- description: What to change when an Atari Jaguar game runs slow in Virtual Jaguar libretro, in order, and which settings quietly cancel each other out. -->
 
 <h1>Settings &amp; performance</h1>
 <p class="lede">
-  The core ships about forty options. Almost none need your attention. Two of
-  them interact in a way that can make a slow game slower.
+  The defaults are tuned. If a game boots and plays at full speed, change
+  nothing. If it is slow, follow the steps below in order, and read the
+  warning about overclocking first.
 </p>
 
 <section class="win">
-  <h2>Leave the defaults alone</h2>
+  <h2>The defaults</h2>
   <div class="win-body">
     <p>
-      Accurate blitter, stock clocks, every experimental timing model off, HLE
-      BIOS, and per-title enhancement defaults on, which gives roughly twenty
-      recognised games a visual upgrade that was verified safe for that
-      specific title. If a game boots and plays, you are done here.
+      Accurate blitter, stock clocks, experimental timing models off, HLE CD
+      boot, and <strong>RISC Idle-Loop Fast-Forward on</strong>, which is the
+      biggest speed-up the core has. Per-title defaults are also on: about
+      a dozen recognised games (and the JagDoomEX hacks) get 2x internal
+      resolution or true colour, and
+      the Enhancement Profile decides whether that is allowed on your hardware.
     </p>
     <p>
-      Four settings are worth knowing about: <strong>Blitter</strong>,
-      <strong>Internal Resolution</strong>, <strong>DSP Idle-Loop
-      Fast-Forward</strong>, and for CD games <strong>CD Boot Mode</strong>.
-      Everything else is a diagnostic, a controller, or networking.
-    </p>
-  </div>
-</section>
-
-<section class="win">
-  <h2>Where frame time goes</h2>
-  <div class="win-body">
-    <p>Profiling put the cost in one place, and not where intuition puts it.</p>
-
-    <div class="table-wrap"><table>
-      <thead><tr><th>Subsystem</th><th>Share of frame time</th></tr></thead>
-      <tbody>
-        <tr><td><strong>DSP</strong></td><td><strong>33-67%</strong>, the top cost on every title measured. 50-67% on the DSP-heavy ones (Iron Soldier 67%, Alien vs Predator 63%), about 33% on Skyhammer</td></tr>
-        <tr><td>GPU</td><td>large, title-dependent. Around 24% on Skyhammer</td></tr>
-        <tr><td>Blitter (fast)</td><td>5-17%</td></tr>
-        <tr><td>Blitter (accurate)</td><td>up to about 34% on Alien vs Predator</td></tr>
-        <tr><td>Object Processor</td><td>about 1%</td></tr>
-        <tr><td>68000</td><td>0.7-2.6%</td></tr>
-      </tbody>
-    </table></div>
-
-    <p>
-      <strong>The DSP sits in a 3-5 instruction wait loop for 90-99.7% of
-      every frame</strong> on the titles measured, while the emulator
-      interprets 416k-590k opcodes per frame doing it. That is more than real
-      silicon could retire in a frame (about 443k cycles at 26.59&nbsp;MHz
-      over a 60.05&nbsp;Hz field), because pipeline hazards are not modelled.
-      So it is interpreter work, not a hardware budget, which is exactly why
-      skipping it is free. The 68000 and the Object Processor are noise.
-    </p>
-    <p class="footnote">
-      Host profiles on desktop arm64, not device measurements. No on-device
-      Apple TV capture exists yet.
+      Five settings matter: <strong>Enhancement Profile</strong>,
+      <strong>Internal Resolution</strong>, <strong>Blitter</strong>,
+      <strong>Frameskip</strong>, and for CD games <strong>CD Boot
+      Mode</strong>. The rest are diagnostics, controllers and networking.
     </p>
   </div>
 </section>
@@ -64,28 +34,28 @@
   <div class="win-body">
     <p>In order. Stop as soon as it is fast enough.</p>
     <ol>
-      <li><strong>Turn off Per-Title Enhancement Defaults.</strong> If your
-          game is recognised, it is rendering at 2x and/or full-precision
-          Gouraud right now. 2x and true color together measured about 30% of
-          the frame on Alien vs Predator; its shipped preset is 2x only, so
-          disabling it recovers that share rather than the whole 30%. On a
-          low-end device this is step one, not step three.</li>
+      <li><strong>Enhancement Profile to Performance.</strong> It stops the
+          per-title database from switching on 2x resolution and true colour.
+          On Alien vs Predator those two measured about 30% of the frame.
+          <strong>Auto</strong>, the default, already turns them off on
+          32-bit ARM and drops them early if the audio buffer cannot keep up.
+          Options you set yourself always win.</li>
       <li><strong>Internal Resolution 1x, True Color off.</strong> The manual
-          version of step 1, if you want to keep per-title defaults
-          elsewhere.</li>
-      <li><strong>Turn on DSP Idle-Loop Fast-Forward.</strong> The biggest
-          lever, and it is <strong>off by default</strong>. Nobody gets it by
-          accident.</li>
+          version of step 1, for any game.</li>
+      <li><strong>Frameskip to Auto.</strong> Skips presenting frames when the
+          frontend reports an audio under-run. Presentation only: the
+          emulated machine still runs every frame, so savestates, run-ahead
+          and netplay are unaffected. It needs a frontend that reports audio
+          buffer status.</li>
       <li><strong>Blitter to Fast.</strong> Measured 1.21x typical, up to
-          1.58x on the title that gains most. It breaks some games, with
-          wireframe artifacts and missing geometry, so switch back the moment
-          anything looks wrong.</li>
-      <li><strong>Only then consider overclocking</strong>, and read the next
-          section first, because it can make things worse.</li>
+          1.58x on the title that gains most. It can still break some games
+          with wireframe artifacts or missing geometry, so switch back the
+          moment anything looks wrong.</li>
+      <li><strong>Only then consider overclocking</strong>, after the next
+          section, because it can make things worse.</li>
     </ol>
     <p>
-      There is no frame-skip option and no internal speed limiter. Pacing is
-      entirely your frontend's job.
+      There is no internal speed limiter. Pacing is your frontend&rsquo;s job.
     </p>
   </div>
 </section>
@@ -94,8 +64,10 @@
   <h2>What cancels idle-skip <span class="badge">read before overclocking</span></h2>
   <div class="win-body">
     <p>
-      <strong>DSP Idle-Loop Fast-Forward disables itself</strong> when any of
-      these is in effect:
+      RISC Idle-Loop Fast-Forward skips the redundant iterations of the wait
+      loops the GPU and DSP spend most of each frame in, and it is exact:
+      savestates, run-ahead and netplay are unaffected. It
+      <strong>switches itself off entirely</strong> when any of these is set:
     </p>
 
     <div class="table-wrap"><table>
@@ -109,26 +81,22 @@
     </table></div>
 
     <p>
-      It stays active under <strong>M68K Clock Scale</strong> at any value,
-      and under <strong>Blitter Bus Timing</strong>. Neither of those turns it
-      off.
+      M68K Clock Scale at any value, and Blitter Bus Timing, do not affect it.
     </p>
 
     <div class="note">
       <p>
-        <strong>Overclocking the RISC to make a slow game faster can make it
-        slower.</strong> Setting RISC Clock Scale to <code>2x</code> gives the
-        GPU and DSP twice the cycles, and simultaneously forfeits a 66-87%
-        reduction in DSP work. On a DSP-bound title you have traded the bigger
-        win for the smaller one.
+        <strong>Overclocking the RISC to speed up a slow game can make it
+        slower.</strong> RISC Clock Scale <code>2x</code> doubles GPU and DSP
+        cycles and also forfeits a 66-87% cut in DSP work. On a DSP-bound
+        title you trade the bigger win for the smaller one.
       </p>
     </div>
 
     <p>
-      Since <strong>v3.5.1</strong> the core tells you. Enable idle-skip
-      alongside any of the above and one <code>[perf]</code> line lands in
-      your frontend log naming the exact setting suppressing it. It warns
-      only. Your settings are always honoured, never overridden.
+      The core warns you. Enable idle-skip alongside any setting above and
+      one <code>[perf]</code> line in your frontend log names the culprit.
+      It only warns. Your settings are never overridden.
     </p>
   </div>
 </section>
@@ -137,10 +105,12 @@
   <h2>Jaguar CD</h2>
   <div class="win-body">
     <p>
-      <strong>CD Boot Mode</strong> defaults to HLE, the fastest and most
-      broadly compatible path, and it needs no BIOS files. Switch to real BIOS
-      if a disc misbehaves: it is a different implementation of the same boot
-      sequence, and a handful of titles work under one and not the other.
+      <strong>CD Boot Mode</strong> defaults to HLE: fastest, broadly
+      compatible, no BIOS files. Try real BIOS if a disc misbehaves. The two
+      are different implementations of the same boot, and a few titles work
+      under one and not the other. <strong>CD Read Speed</strong> (HLE only)
+      defaults to 2x; <code>1x</code> is hardware-faithful and
+      <code>instant</code> is fastest.
     </p>
   </div>
 </section>
@@ -149,9 +119,9 @@
   <h2>Full guide</h2>
   <div class="win-body">
     <p>
-      This page is the short version. The complete guide lives in the
-      repository: every option, a restart-required table, a symptom to setting
-      troubleshooting table, and the evidence behind each figure above.
+      The repository carries the complete guide: every option, which ones need
+      a restart, a symptom-to-setting table, and the measurements behind the
+      figures above.
       <a href="{{REPO}}/blob/develop/docs/settings-and-performance-guide.md">settings-and-performance-guide.md</a>.
     </p>
   </div>
