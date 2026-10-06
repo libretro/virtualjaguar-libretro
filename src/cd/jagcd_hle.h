@@ -2,6 +2,7 @@
 #define __JAGCD_HLE_H__
 
 #include <stdint.h>
+#include <stddef.h>
 #include <boolean.h>
 
 #ifdef __cplusplus
@@ -57,6 +58,22 @@ uint32_t JaguarCDHLEStreamArmCount(void);
 
 /* Force HLE active state (for unit testing without a disc image). */
 void JaguarCDHLESetActive(bool active);
+
+/* Savestate chunk (#787): the in-flight streamed CD_read and the CD_read /
+ * CD_poll bookkeeping, which used to live outside the state blob -- so a
+ * rollback (run-ahead, netplay) or a load into a fresh core lost or
+ * leaked the transfer.  Appended strictly last to the blob and tagged
+ * with a magic word, so any blob without it (v14 and older, and v15
+ * written before this chunk existed) is detected and takes
+ * JaguarCDHLEStateReset() instead.  Save/Load return the bytes consumed. */
+size_t JaguarCDHLEStateSave(uint8_t *buf);
+size_t JaguarCDHLEStateSize(void);
+size_t JaguarCDHLEStateLoad(const uint8_t *buf);
+/* For a state that carries no HLE chunk: drop any in-flight transfer
+ * (the state's RAM and CPU registers describe a machine that is not
+ * mid-read as far as we can know) and leave the session-stable setup --
+ * GPU data area base, align phase, post-read LBA -- as it is. */
+void JaguarCDHLEStateReset(void);
 
 #ifdef __cplusplus
 }

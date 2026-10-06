@@ -26,6 +26,7 @@
 #include "dsp.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
+#include "state.h"
 
 /* There is NO DSP-RAM "CD transfer done" flag.  An earlier HLE wrote
  * $00000000 / $FFFFFFFF to $F1B4C8 around every CD_read, citing a
@@ -1412,6 +1413,175 @@ uint32_t JaguarCDHLEStreamBytes(void)
 uint32_t JaguarCDHLEStreamArmCount(void)
 {
    return hle_stream_arm_count;
+}
+
+/* ------------------------------------------------------------------ */
+/* Savestate chunk (#787)                                              */
+/*                                                                     */
+/* Field by field, never the raw struct: padding bytes and the size of */
+/* `bool` are compiler properties, and a rollback-netplay peer may run */
+/* a different build.  hle_active is NOT saved -- it is set by the boot */
+/* strategy (HLE vs real BIOS), which is session configuration like    */
+/* NTSC/PAL.  hle_stream_arm_count is a probe counter, not machine     */
+/* state.                                                              */
+/* ------------------------------------------------------------------ */
+
+#define HLE_STATE_MAGIC 0x31454C48u   /* "HLE1" little-endian */
+#define HLE_STATE_RAM_SIZE 0x200000u  /* 2 MB main RAM */
+
+/* A GPU data-area base is either unset (0) or a range that holds its
+ * +0/+4/+8 longs: main RAM, or GPU local RAM ($F03000-$F03FFF, where the
+ * BIOS default $F03B00 and Battle Morph's $F03158 live). */
+static bool hle_state_base_ok(uint32_t base)
+{
+   if (base == 0)
+      return true;
+   if ((base & 3u) != 0)
+      return false;
+   if (base <= HLE_STATE_RAM_SIZE - 12u)
+      return true;
+   return base >= 0xF03000u && base <= 0xF04000u - 12u;
+}
+
+/* Bytes JaguarCDHLEStateSave writes, so the caller can check room first. */
+size_t JaguarCDHLEStateSize(void)
+{
+   return 4u + 1u + 7u * 4u            /* magic, pending, 7 bookkeeping words */
+        + 2u + 15u * 4u                /* active, bufValid, 15 stream words */
+        + sizeof(hleStream.buf);
+}
+
+size_t JaguarCDHLEStateSave(uint8_t *buf)
+{
+   uint8_t *start = buf;
+   uint32_t magic = HLE_STATE_MAGIC;
+   uint8_t  b;
+
+   STATE_SAVE_VAR(buf, magic);
+
+   b = hle_read_pending ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   STATE_SAVE_VAR(buf, hle_read_dest);
+   STATE_SAVE_VAR(buf, hle_read_end_addr);
+   STATE_SAVE_VAR(buf, hle_read_progress);
+   STATE_SAVE_VAR(buf, hle_gpu_data_base);
+   STATE_SAVE_VAR(buf, hle_post_read_lba);
+   STATE_SAVE_VAR(buf, hle_align_phase_track);
+   STATE_SAVE_VAR(buf, hle_align_phase);
+
+   b = hleStream.active ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   b = hleStream.bufValid ? 1 : 0;
+   STATE_SAVE_VAR(buf, b);
+   STATE_SAVE_VAR(buf, hleStream.lba);
+   STATE_SAVE_VAR(buf, hleStream.bufOff);
+   STATE_SAVE_VAR(buf, hleStream.dest);
+   STATE_SAVE_VAR(buf, hleStream.total);
+   STATE_SAVE_VAR(buf, hleStream.reqTotal);
+   STATE_SAVE_VAR(buf, hleStream.written);
+   STATE_SAVE_VAR(buf, hleStream.accFrac);
+   STATE_SAVE_VAR(buf, hleStream.d1);
+   STATE_SAVE_VAR(buf, hleStream.statusBase);
+   STATE_SAVE_VAR(buf, hleStream.sigD0);
+   STATE_SAVE_VAR(buf, hleStream.sigD1);
+   STATE_SAVE_VAR(buf, hleStream.sigA0);
+   STATE_SAVE_VAR(buf, hleStream.sigA1);
+   STATE_SAVE_VAR(buf, hleStream.speedMult);
+   STATE_SAVE_VAR(buf, hleStream.startDelay);
+   /* The sector buffer holds the un-swapped bytes of the sector being
+    * delivered; re-reading it from the disc on load would work too, but
+    * only for a valid buffer, and this keeps the load path trivial. */
+   STATE_SAVE_BUF(buf, hleStream.buf, sizeof(hleStream.buf));
+
+   return (size_t)(buf - start);
+}
+
+void JaguarCDHLEStateReset(void)
+{
+   hleStream.active   = false;
+   hleStream.bufValid = false;
+   hle_read_pending   = false;
+   hle_read_progress  = 0;
+}
+
+size_t JaguarCDHLEStateLoad(const uint8_t *buf)
+{
+   const uint8_t *start = buf;
+   uint32_t magic;
+   uint8_t  pending, active, bufValid;
+
+   STATE_LOAD_VAR(buf, magic);
+   if (magic != HLE_STATE_MAGIC)
+   {
+      /* No chunk: a v15 blob written before #787 (its zero-filled tail
+       * reads as magic 0).  Nothing past this point is ours. */
+      JaguarCDHLEStateReset();
+      return (size_t)(buf - start);
+   }
+
+   STATE_LOAD_VAR(buf, pending);
+   STATE_LOAD_VAR(buf, hle_read_dest);
+   STATE_LOAD_VAR(buf, hle_read_end_addr);
+   STATE_LOAD_VAR(buf, hle_read_progress);
+   STATE_LOAD_VAR(buf, hle_gpu_data_base);
+   STATE_LOAD_VAR(buf, hle_post_read_lba);
+   STATE_LOAD_VAR(buf, hle_align_phase_track);
+   STATE_LOAD_VAR(buf, hle_align_phase);
+   hle_read_pending = pending != 0;
+
+   STATE_LOAD_VAR(buf, active);
+   STATE_LOAD_VAR(buf, bufValid);
+   STATE_LOAD_VAR(buf, hleStream.lba);
+   STATE_LOAD_VAR(buf, hleStream.bufOff);
+   STATE_LOAD_VAR(buf, hleStream.dest);
+   STATE_LOAD_VAR(buf, hleStream.total);
+   STATE_LOAD_VAR(buf, hleStream.reqTotal);
+   STATE_LOAD_VAR(buf, hleStream.written);
+   STATE_LOAD_VAR(buf, hleStream.accFrac);
+   STATE_LOAD_VAR(buf, hleStream.d1);
+   STATE_LOAD_VAR(buf, hleStream.statusBase);
+   STATE_LOAD_VAR(buf, hleStream.sigD0);
+   STATE_LOAD_VAR(buf, hleStream.sigD1);
+   STATE_LOAD_VAR(buf, hleStream.sigA0);
+   STATE_LOAD_VAR(buf, hleStream.sigA1);
+   STATE_LOAD_VAR(buf, hleStream.speedMult);
+   STATE_LOAD_VAR(buf, hleStream.startDelay);
+   STATE_LOAD_BUF(buf, hleStream.buf, sizeof(hleStream.buf));
+   hleStream.active   = active != 0;
+   hleStream.bufValid = bufValid != 0;
+
+   /* Everything below came from a file.  The arm path only ever builds
+    * these from a bounded CD_read, so a state that a real session wrote
+    * always passes; a damaged or crafted one must not turn into an
+    * out-of-bounds access (Copilot review on #803):
+    * - StreamTick indexes buf[bufOff..2351] and copies total - written;
+    * - HLEStreamFinish writes the pad/ATRI block at dest + total, with a
+    *   bound check that a dest near $FFFFFFFF would wrap past;
+    * - CD_poll and the status writes touch base +0/+4/+8.
+    * On any failure drop the transfer AND the pointers it would use. */
+   if (!hle_state_base_ok(hle_gpu_data_base)
+       || !hle_state_base_ok(hleStream.statusBase))
+   {
+      hle_gpu_data_base    = 0;
+      hleStream.statusBase = 0;
+      JaguarCDHLEStateReset();
+   }
+   if (hleStream.bufOff > sizeof(hleStream.buf)
+       || hleStream.written > hleStream.total
+       || hleStream.reqTotal > hleStream.total
+       || hleStream.dest >= HLE_STATE_RAM_SIZE
+       || hleStream.total > HLE_STATE_RAM_SIZE - hleStream.dest)
+      JaguarCDHLEStateReset();
+   if (hle_read_dest >= HLE_STATE_RAM_SIZE
+       || hle_read_end_addr < hle_read_dest
+       || hle_read_end_addr > HLE_STATE_RAM_SIZE)
+   {
+      hle_read_dest     = 0;
+      hle_read_end_addr = 0;
+      JaguarCDHLEStateReset();
+   }
+
+   return (size_t)(buf - start);
 }
 
 void JaguarCDHLEStreamTick(void)
