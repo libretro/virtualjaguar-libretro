@@ -31,7 +31,7 @@ ROM used on the real-BIOS cartridge path:
 | Setting | Image |
 | --- | --- |
 | `Series K` (default) | The original Jaguar boot ROM. Embedded. |
-| `Model M` | The later revision (patch address `$4804`) most size-coded BootIntros target. Embedded; an optional `jagboot_m.rom` (exactly 128 KB) in the root of the `system` directory replaces it. That file is read as-is, with no checksum or identification step. |
+| `Model M` | The later revision (patch address `$4804`) most size-coded BootIntros target. Embedded; an optional `jagboot_m.rom` in the root of the `system` directory replaces it. The core reads the first 128 KiB and uses the file if that read succeeds, so a file of 128 KiB or more is accepted (anything beyond 128 KiB is ignored) and a shorter file is skipped in favour of the embedded image. It is read as-is, with no checksum or identification step (`libretro.c`, `stage_cart_boot_rom`). |
 | `Custom` | A 128 KB image loaded from the `system` directory. |
 
 For `Custom`, the core searches these names in this order, and for each name tries
@@ -50,8 +50,9 @@ and nothing usable is found, the core logs a warning and uses the embedded Serie
 ## CD BIOS override
 
 Only in the real-BIOS CD path. A CD BIOS file in the `system` directory takes
-precedence over the embedded images (the `CD BIOS Type` option only chooses the
-embedded image when no file is found). Accepted names:
+precedence over the embedded images. The `CD BIOS Type` option chooses which
+file is tried first (see below) and, when no usable file is found, which embedded
+image is used. Accepted names:
 
 | Type | Filenames |
 | --- | --- |

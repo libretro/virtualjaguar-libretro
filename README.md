@@ -14,7 +14,7 @@ Website, downloads, compatibility and enhancement write-ups: **[jaguar.provenanc
 - **Releases:** tagged builds are on [GitHub Releases](https://github.com/libretro/virtualjaguar-libretro/releases). Put the file in RetroArch's `cores` folder.
 - **Nightly:** the rolling [`nightly` prerelease](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly) is rebuilt on every push to `develop`. It is gated on compiling, not on the test suite.
 
-Release builds cover Linux (x86_64, aarch64, i686, Raspberry Pi 1-5), macOS (Apple Silicon, Intel), Windows (x64, x86), Android (arm64-v8a, armeabi-v7a, x86_64, x86), iOS, tvOS, WebAssembly, PS Vita and Nintendo Switch. The matrix is in [`release.yml`](.github/workflows/release.yml). Other platforms get the core through the libretro buildbot.
+Release builds cover Linux (x86_64, aarch64, i686, and Raspberry Pi 1, 2, 3, 4 and 5, each with its own CPU-tuned build, plus 64-bit builds for the Pi 3, 4 and 5), macOS (Apple Silicon, Intel), Windows (x64, x86), Android (arm64-v8a, armeabi-v7a, x86_64, x86), iOS (arm64), tvOS (arm64), WebAssembly (Emscripten), PS Vita and Nintendo Switch. The matrix is in [`release.yml`](.github/workflows/release.yml). Other platforms get the core through the libretro buildbot.
 
 ### BIOS
 
@@ -27,14 +27,14 @@ None required. The Jaguar boot ROMs and CD BIOSes are embedded, and cartridges b
 | Cartridge | `j64`, `jag`, `rom`, `abs`, `cof`, `bin`, `prg` | Headerless raw homebrew is detected conservatively. Soft patching is covered in [`docs/rom-patches.md`](docs/rom-patches.md). |
 | Jaguar CD | `cue` (with `bin`), `cdi`, `chd` | `.iso` is not supported. CHD needs session metadata from a recent `chdman`; see [`docs/jagcd-chd.md`](docs/jagcd-chd.md). Each release attaches a suitable `chdman` as `jagcd-tools-*.zip`. |
 
-The core can also start with no content and take a disc through RetroArch's disk control. Cartridge EEPROM/SRAM and the CD Memory Track are saved as `<game>.srm` in RetroArch's `saves` folder; save states go in `states`.
+The core can also start with no content and take a disc through RetroArch's disk control. Cartridge EEPROM/SRAM and the CD Memory Track are saved as `<game>.srm` in RetroArch's `saves` folder; save states go in `states`. Exception: in a no-content session, a disc inserted through disk control gets no `.srm` (its Memory Track writes are not exposed to the frontend; use save states, or load the disc as content; [#810](https://github.com/libretro/virtualjaguar-libretro/issues/810)).
 
 ## Features
 
 - **Jaguar CD:** boots through a high-level CD BIOS (default) or the real CD BIOS on emulated BUTCH hardware; audio CDs and the Virtual Light Machine work. Memory Track saves are emulated. Load-time tuning: [`docs/cd-read-speed.md`](docs/cd-read-speed.md).
 - **Enhancements, all core options:** true-color Gouraud shading, 2x internal resolution, widescreen, per-title defaults, and texture dump/replacement for HD packs. Overview and A/B images on the [website](https://jaguar.provenance-emu.com/enhancements.html); texture packs in [`docs/texture-dump.md`](docs/texture-dump.md).
 - **Speed:** an accurate SIMD blitter (SSE2/NEON), idle-loop fast-forward for the GPU and DSP (on by default), and M68K and RISC clock-scale options. Which options help and which cancel each other: [`docs/settings-and-performance-guide.md`](docs/settings-and-performance-guide.md).
-- **Save states, run-ahead, rewind, cheats, RetroAchievements:** supported. States from older versions still load ([`docs/savestate-compat.md`](docs/savestate-compat.md)).
+- **Save states, run-ahead, rewind, cheats, RetroAchievements:** supported. The state format reads every version back to the first release, though a CD state is refused on a different disc ([`docs/savestate-compat.md`](docs/savestate-compat.md)).
 - **Controllers:** joypad, Pro Controller, Team Tap, ST/Amiga mouse, Tempest rotary, analog and driving controllers, 6D stick and light gun, with per-axis tuning. See [`docs/input-devices-user-guide.md`](docs/input-devices-user-guide.md).
 - **Link play:** JagLink/CatBox serial over TCP or RetroArch netplay, and the Voice Modem ([`docs/netlink-user-guide.md`](docs/netlink-user-guide.md), [`docs/voice-modem.md`](docs/voice-modem.md)).
 - **Jaguar GameDrive:** detection and bank switching for GD-locked homebrew ([`docs/jgd-interface-notes.md`](docs/jgd-interface-notes.md)).
