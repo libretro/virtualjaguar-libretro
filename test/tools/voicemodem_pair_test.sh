@@ -20,15 +20,37 @@ fi
 
 run_pair() {
     local port="$1"
-    local answer_rc dial_rc answer_pid
+    local answer_rc dial_rc answer_pid sync_dir waited
 
-    "$BIN" "$CORE" --role answer --port "$port" &
+    # Explicit handshakes instead of sleeps (#796): the pair talks through
+    # marker files in this directory.  The answerer announces "listening"
+    # once its server socket is open, the dialler is started on that, and
+    # the two meet at barriers inside voicemodem_pair (see peer_sync).
+    sync_dir="$(mktemp -d "${TMPDIR:-/tmp}/vj_vmodem_sync.XXXXXX")" || return 1
+
+    "$BIN" "$CORE" --role answer --port "$port" --sync "$sync_dir" &
     answer_pid=$!
-    sleep 0.3
-    "$BIN" "$CORE" --role dial --port "$port" --host 127.0.0.1
-    dial_rc=$?
+    waited=0
+    while [ ! -e "$sync_dir/answer.listening" ] && [ ! -e "$sync_dir/answer.failed" ]; do
+        # Answerer died without saying anything (crash, missing core).
+        kill -0 "$answer_pid" 2>/dev/null || break
+        waited=$((waited + 1))
+        if [ "$waited" -gt 1200 ]; then      # 1200 x 50 ms = 60 s
+            echo "voicemodem_pair_test: answerer never started listening" >&2
+            kill "$answer_pid" 2>/dev/null
+            break
+        fi
+        sleep 0.05
+    done
+    if [ -e "$sync_dir/answer.listening" ]; then
+        "$BIN" "$CORE" --role dial --port "$port" --host 127.0.0.1 --sync "$sync_dir"
+        dial_rc=$?
+    else
+        dial_rc=1
+    fi
     wait "$answer_pid"
     answer_rc=$?
+    rm -rf "$sync_dir"
 
     if [ "$answer_rc" -eq 0 ] && [ "$dial_rc" -eq 0 ]; then
         echo "voicemodem_pair_test: PASS (port $port)"
