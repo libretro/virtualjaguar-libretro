@@ -220,7 +220,7 @@ level 0 with no legend entry. HBW (26 Apr 1995) is a separate, partly overlappin
 | # | Title (short) | v8 pp. | Applies | Lvl | HBW xref | Modeled? |
 |---|---|---|---|---|---|---|
 | 1 | Unscaled 16-bit object fetch every 3 ticks (should be 2) | 133-134 | TOM/OP | 1 | n/a | no: OP cost is an occupancy estimate (`bus_arbiter_op_charge`), not tick-level |
-| 2 | Scoreboard failure on indexed-store data | 134 | TOM+JERRY | 1 | GPU/DSP #1 | no |
+| 2 | Scoreboard failure on indexed-store data | 134 | TOM+JERRY | 1 | GPU/DSP #1 | **DSP, partial**: `div` immediately followed by store 49/50/60/61 of its quotient register stores the old value (`dsp.c` `dsp_div_store_fixups`, #811: Xenowings' joypad reader relies on it). Not modeled: a later store inside the divide latency, the external-load variant, and the GPU |
 | 3 | Transparency with HILO set | 134 | TOM v1 only | 2 | n/a | n/a (not on production Tom v2) |
 | 4 | Horizontal Period register length | 134 | TOM | 0 | n/a | n/a (`TOMReset` writes HP 844/850) |
 | 5 | Clipping inefficiency (720-px line buffer) | 134-135 | TOM/OP | 1 | n/a | n/a, perf only (720 limit in `op.c`) |

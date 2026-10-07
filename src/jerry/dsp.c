@@ -362,6 +362,50 @@ static uint32_t *DSPLoadOverwritePeek(uint32_t *val, uint32_t *pc)
 	return dsp_ldx_slot;
 }
 
+/* Indexed store of a divide's result (issue #811).  JTRM Rev 8 p.134,
+ * TOM/JERRY bug 2 "Scoreboard Failure on Indexed Addressing Mode Stores"
+ * ("applies to both Tom & Jerry"): the data of store instructions 49,
+ * 50, 60 and 61 is not scoreboarded, so when it is the result of a
+ * divide still in flight the store writes the register's OLD contents;
+ * the address registers stay fully protected.  Xenowings' DSP joypad
+ * reader ends with `div r9,r8 / store r8,(r14+1)` and relies on this:
+ * the joypad bits go to $F1C3A8 and the quotient never does.  Writing
+ * the quotient instead fed the game garbage and the ship never moved.
+ * Modeled for the instruction immediately after the divide only (the
+ * documented pattern; an intervening instruction may be the manual's
+ * dependent "protection instruction", which this does not decode).
+ * Diagnostics (test ABI): stale-data stores applied since DSPReset.
+ * Monotonic, not serialized. */
+uint64_t dsp_div_store_fixups = 0;
+
+/* Called right after a divide executed, dsp_pc at the next instruction.
+ * Returns the divide's destination slot if that instruction is an
+ * indexed store whose data register is that slot and whose address
+ * registers are not, else NULL.  Only peeks DSP local RAM. */
+static uint32_t *DSPDivStorePeek(uint32_t *divDst, uint32_t *pc)
+{
+	uint32_t off, n, p1, p2;
+	uint16_t op;
+
+	if (dsp_pc < DSP_WORK_RAM_BASE || dsp_pc >= DSP_WORK_RAM_BASE + 0x2000 - 1)
+		return NULL;
+	off = dsp_pc - DSP_WORK_RAM_BASE;
+	op  = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+	n   = op >> 10;
+	p1  = (op >> 5) & 0x1F;
+	p2  = op & 0x1F;
+	if (n != 49 && n != 50 && n != 60 && n != 61)
+		return NULL;
+	if (&dsp_reg[p2] != divDst)
+		return NULL;
+	if (((n == 49 || n == 60) && p2 == 14)
+	      || ((n == 50 || n == 61) && p2 == 15)
+	      || ((n == 60 || n == 61) && p1 == p2))
+		return NULL;
+	*pc = dsp_pc;
+	return divDst;
+}
+
 static uint32_t dspgo_poll_count;
 
 #define BRANCH_CONDITION(x)		dsp_branch_condition_table[(x) + ((jaguar_flags & 7) << 5)]
@@ -1115,6 +1159,7 @@ void DSPReset(void)
 	dsp_pc				  = 0x00F1B000;
 	dspgo_poll_count	  = 0;
 	dsp_load_wb_fixups	  = 0;
+	dsp_div_store_fixups  = 0;
 	dsp_ldx_slot		  = NULL;
 	dsp_acc				  = 0x00000000;
 	dsp_remain			  = 0x00000000;
@@ -1385,6 +1430,7 @@ static int32_t   idleProbeCyc0, idleProbeCyc1;
 static uint32_t  idleProbeOpc0, idleProbeOpc1;
 static uint32_t  idleProbeS0[64], idleProbeS1[64];
 static uint64_t  idleProbeLdxFix;		/* dsp_load_wb_fixups at S0 */
+static uint64_t  idleProbeDivFix;		/* dsp_div_store_fixups at S0 */
 static uint8_t   idleProbeFz0, idleProbeFn0, idleProbeFc0;
 static uint8_t   idleProbeFz1, idleProbeFn1, idleProbeFc1;
 
@@ -1790,6 +1836,7 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 		idleProbeJr    = jrAddr;
 		idleProbeBank  = dsp_reg;
 		idleProbeLdxFix = dsp_load_wb_fixups;
+		idleProbeDivFix = dsp_div_store_fixups;
 		idleProbeStage = 1;
 		return cycles;
 	}
@@ -1824,8 +1871,10 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 	/* Issue #811: dsp_idle_check_body models a load followed by an
 	 * overwrite of its target in program order (the overwrite wins), but
 	 * the interpreter now lets the external load data land last.  A loop
-	 * in which that fired is not the loop the dataflow proof describes. */
-	if (dsp_load_wb_fixups != idleProbeLdxFix)
+	 * in which that fired is not the loop the dataflow proof describes.
+	 * Same for a divide whose indexed store wrote the pre-divide value. */
+	if (dsp_load_wb_fixups != idleProbeLdxFix
+	      || dsp_div_store_fixups != idleProbeDivFix)
 	{
 		dsp_idle_memo_reject(head, jrAddr);
 		return cycles;
@@ -1950,6 +1999,10 @@ void DSPExec(int32_t cycles)
 	 * instruction (see dsp_ldx_slot). */
 	uint32_t *ldxArmed = NULL;
 	uint32_t ldxVal = 0, ldxPc = 0;
+	/* Issue #811 stale indexed-store data after a divide (see
+	 * dsp_div_store_fixups), armed for exactly the next instruction. */
+	uint32_t *divArmed = NULL;
+	uint32_t divOld = 0, divPc = 0;
 
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
@@ -2041,8 +2094,9 @@ void DSPExec(int32_t cycles)
 	dsp_ldx_slot   = NULL;
 
 	/* An armed late write-back runs one instruction past the budget so a
-	 * load/overwrite pair never straddles a slice (see dsp_ldx_slot). */
-	while ((cycles > 0 || ldxArmed) && DSP_RUNNING)
+	 * load/overwrite pair never straddles a slice (see dsp_ldx_slot);
+	 * likewise a divide/indexed-store pair (see dsp_div_store_fixups). */
+	while ((cycles > 0 || ldxArmed || divArmed) && DSP_RUNNING)
 	{
       uint16_t opcode;
       uint32_t index;
@@ -2124,7 +2178,34 @@ void DSPExec(int32_t cycles)
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
-		dsp_executeOpcode(index);
+		if (divArmed && pcThis == divPc
+		      && &dsp_reg[dsp_opcode_second_parameter] == divArmed)
+		{
+			/* Issue #811: indexed store right behind a divide into its
+			 * data register -- the quotient has not been written back
+			 * yet, so the store sees the old contents. */
+			uint32_t quot = *divArmed;
+
+			*divArmed = divOld;
+			dsp_executeOpcode(index);
+			*divArmed = quot;
+			dsp_div_store_fixups++;
+			divArmed = NULL;
+		}
+		else if (index == 21)
+		{
+			uint32_t *dst = &dsp_reg[dsp_opcode_second_parameter];
+			uint32_t old = *dst;
+
+			dsp_executeOpcode(index);
+			divArmed = DSPDivStorePeek(dst, &divPc);
+			divOld = old;
+		}
+		else
+		{
+			dsp_executeOpcode(index);
+			divArmed = NULL;
+		}
 		cycles -= dsp_opcode_cycles[index];
 
 		/* Issue #811: the previous instruction was an external load and
