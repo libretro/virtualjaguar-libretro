@@ -228,10 +228,13 @@ void JERRYResetI2S(void)
 
 
 /*
- * PIT clock rate: JTRM says PIT divides the full processor clock
- * (26.59 MHz NTSC). JERRY PIT uses RISC rate (full system clock) per
- * the JTRM and the original emulator code. TOM PIT uses M68K rate
- * (half system clock) to match observed Battle Sphere behavior.
+ * PIT clock rate: both PITs divide the full processor clock (26.59 MHz
+ * NTSC), per JTRM Rev 8 p.16 ("The system clock is divided by (one plus the
+ * value in the first register)") and Software Reference v2.4 pp.14, 69-71.
+ * JERRY PIT uses the RISC rate (full system clock); so does the TOM PIT
+ * (see TOMResetPIT in src/tom/tom.c).  A half-rate (M68K) TOM PIT was tried
+ * for Battle Sphere in PRs #134/#141/#154 and reverted (4e51603) -- it broke
+ * Doom and Rayman music timing.  Source: JTRM Rev 8 p.16.
  */
 
 void JERRYResetPIT1(void)

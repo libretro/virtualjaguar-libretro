@@ -18,21 +18,21 @@ ComLynx/MIDI), joystick interface, EEPROM interface, and clock dividers.
 
 JERRY occupies the address range `$F10000`--`$F1FFFF` in the Jaguar memory map.
 DSP local RAM lives at `$F1B000`--`$F1CFFF` (8 KB). Wavetable ROM occupies
-`$F1D000`--`$F1DFFF` (read-only, 8 waveforms of 256 x 16-bit samples each).
+`$F1D000`--`$F1DFFF` (read-only, 8 waveforms of 128 x 16-bit samples each, sign-extended to 32 bits).
 
 Derived from: `src/jerry/jerry.c` -- NOT verified against the JTRM. **PARTIAL
 DISAGREEMENT FOUND** (see issue #522 report): the JERRY address range and DSP
 RAM location above match the manual (Software Reference Manual v2.4 p.69
 "Jerry", p.78 "Memory Map": `$F1B000`-`$F1CFFF` = 8 KB local RAM), but the
-wavetable claim "8 waveforms of 256 x 16-bit samples each" is wrong -- the
+wavetable claim "8 waveforms of 256 x 16-bit samples each" (now corrected in the text above) was wrong -- the
 manual (p.78 "Wave Table ROM") and `src/jerry/wavetable.c` (comment: "Each
 entry has 128 values") both say **128** entries per waveform (eight 128-entry
 tables, addressed as 1K 32-bit sign-extended locations spanning the same
 `$F1D000`-`$F1DFFF` 4 KB range). This is a docs-only error -- the emulator's
 actual wavetable data (`src/jerry/wavetable.c`) already uses 128 correctly.
-The same wrong "256 x 16-bit" figure repeats below in the Wavetable ROM
-section (line ~348, `Source:` at old line 365), out of this audit's bounded
-Phase 2 scope but flagged here for the same reason.
+The same wrong "256 x 16-bit" figure in the Wavetable ROM section below has
+also been corrected. Source: JTRM Rev 8 p.98 "Wave Table ROM" (eight 128-entry
+tables of signed 16-bit values, sign-extended to 32 bits).
 
 ---
 
@@ -366,8 +366,9 @@ Derived from: `src/jerry/eeprom.c` -- NOT verified against the JTRM
 
 ## Wavetable ROM
 
-JERRY contains 8 read-only waveform tables in ROM, each 256 x 16-bit
-samples (512 bytes). Total: 4 KB at `$F1D000`--`$F1DFFF`.
+JERRY contains 8 read-only waveform tables in ROM, each 128 x 16-bit
+samples, sign-extended to 32 bits on read (0x200 bytes apart). Window: 4 KB at
+`$F1D000`--`$F1DFFF`. Source: JTRM Rev 8 p.98.
 
 | Address   | Name         | Description                              |
 |-----------|--------------|------------------------------------------|
@@ -384,10 +385,8 @@ These are loaded into `jerry_ram_8` at offset `$D000` during init. Writes to
 this range are silently ignored (ROM protection).
 
 Derived from: `src/jerry/jerry.c` (`JERRYInit`), `src/jerry/wavetable.c` --
-NOT verified against the JTRM. See the disagreement flagged near line 23
-above: the manual specifies 128 entries per waveform (not 256); this file's
-own comment ("Each entry has 128 values") already agrees with the manual, so
-the table header above ("each 256 x 16-bit samples") is the erroneous side.
+NOT verified against the JTRM (the entry count is: JTRM Rev 8 p.98 says
+128 per waveform, matching the code comment "Each entry has 128 values").
 
 ---
 

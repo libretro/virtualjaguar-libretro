@@ -2615,9 +2615,11 @@ static void test_tom_ipl2_reassert_after_selective_clear(void)
  * Test 10k: PAL vs NTSC Video Timing Defaults
  *
  * Pin the documented difference between NTSC and PAL HLE init values
- * for the core vertical/horizontal timing registers. Source of truth
- * is TOMReset() in src/tom/tom.c (NTSC ~ lines 898-923, PAL ~ lines
- * 924-947): the two modes share VDB=38, VDE=518, HDB1=203, HDB2=203,
+ * for the core vertical/horizontal timing registers. The reference here
+ * is the emulator's own TOMReset() in src/tom/tom.c (this test checks the
+ * HLE boot path against TOMReset(); it is NOT a JTRM-verified value set --
+ * see docs/jtrm-clocks-timing.md for the manual's video timings)
+ * (NTSC ~ lines 898-923, PAL ~ lines 924-947): the two modes share VDB=38, VDE=518, HDB1=203, HDB2=203,
  * HDE=1665, VEE=6, VI=0, but differ on VP (523 vs 623), VBB, VBE, VS,
  * VEB, HP, HBB, HBE, HS, HVS, HEQ.
  *

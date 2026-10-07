@@ -3,9 +3,10 @@
 ;
 ; No GPU/DSP program needed: the blitter is a DMA engine driven entirely by
 ; 68K writes to its MMIO register file at $F02200-$F0229F (docs/jtrm-blitter.md;
-; register offsets cross-checked against src/tom/blitter.c, the authoritative
-; source -- JTRM naming drifts slightly, e.g. blitter.c's PIXLINECOUNTER is
-; the JTRM's B_COUNT). This is why the shape is closer to Task 1 (bench68k.s,
+; register offsets cross-checked against JTRM Rev 8 pp.70-77 and
+; src/tom/blitter.c -- the only naming difference is blitter.c's
+; PIXLINECOUNTER, which is the JTRM's B_COUNT; behaviour is the same).
+; This is why the shape is closer to Task 1 (bench68k.s,
 ; pure 68K loop) than Tasks 2-4 (68K bootstrap + separate GPU/DSP payload):
 ; there is no second program to embed, just register writes in a loop.
 ;
