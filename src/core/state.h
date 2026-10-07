@@ -85,8 +85,9 @@ extern "C" {
  *     EXTENDED IN PLACE (still v15): #787 appended the HLE CD streaming
  *     chunk strictly last, behind a magic word, so a v15 blob written
  *     before it (zero-filled tail) loads with the transfer dropped.
- * v16: real-BIOS CD boot chunk (#804), appended strictly last behind a
- *     magic word: whether the boot stub has been injected.  First bump of
+ * v16: two real-BIOS CD chunks (#804), appended strictly last, each behind
+ *     a magic word: "CDB1" (boot stub injected yet) and "CDX1" (FIFO
+ *     refill accumulator + CD IRQ edge detector).  First bump of
  *     the v3.7.1 cycle, so any other in-flight state change this cycle
  *     extends v16 in place rather than bumping again. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
