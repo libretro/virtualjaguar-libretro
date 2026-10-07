@@ -2106,6 +2106,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "Baldies HLE cutscene progression (#738)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
 	fi
 
+	@# Xenowings in-game video (#811): the GPU's object-list swap is
+	@# `load (r0),r2 / moveq #0,r2`, which only works because the external
+	@# load lands after the moveq (JTRM p.136, TOM bug 13).  Without that
+	@# OLP=0 and every gameplay frame is black.  The tool waits for the
+	@# menu, presses B, waits for the loading screen and needs a lit
+	@# 326-wide playfield frame.  Private corpus only.
+	@rom=$$(bash scripts/find-rom.sh 'xenowings.rom' '*xenowings*.rom' '*xenowings*.j64' '*xenowings*.jag'); \
+	if [ -n "$$rom" ]; then \
+		$(MAKE) --no-print-directory test/tools/xenowings_ingame_video >/dev/null || exit 1; \
+		./test/tools/xenowings_ingame_video ./$(TARGET) "$$rom" --quiet || exit 1; \
+	else \
+		bash scripts/test-skip.sh record "Xenowings in-game video (#811)" "no ROM matching '*xenowings*' in the private corpus"; \
+	fi
+
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
 	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
@@ -2451,6 +2465,14 @@ test/tools/cd_wedge_probe: test/tools/cd_wedge_probe.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 -I. $(INCFLAGS) \
 		-o $@ test/tools/cd_wedge_probe.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Xenowings in-game video (#811): state-driven menu -> gameplay check.
+test/tools/xenowings_ingame_video: test/tools/xenowings_ingame_video.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
+		-o $@ test/tools/xenowings_ingame_video.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

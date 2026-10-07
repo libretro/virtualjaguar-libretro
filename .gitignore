@@ -64,6 +64,7 @@ test/tools/test_memory_map
 test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
 test/tools/cd_wedge_probe
+test/tools/xenowings_ingame_video
 test/tools/fmv_seek_probe
 test/tools/sram_test
 test/tools/netlink_pair
