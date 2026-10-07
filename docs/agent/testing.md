@@ -183,6 +183,8 @@ heartbeat every 600 frames). Cost enabled: one indirect call + ~256-px hash/fram
   by clearing BUTCH bit 0 (Myst, Primal Rage, BrainDead 13 …) or I2CNTRL bit 2 (Philia); those
   idle drives used to fire it (#741). The line prints `butch_int=`/`i2s_ctrl=`. Pinned by
   `test/test_crash_detect_cd_wedge` (CI) + `test/tools/cd_seek_wedge_regress.sh` (private discs).
+  `test/test_cd_bios_boot` FAILs a disc when the watchdog fired (`CrashDetectCDSeekWedgeFires()`,
+  sticky, `[CD-WEDGE]` line) -- its PC checks alone pass on a dead transfer (#799).
 
 Triaging "X crashes/hangs/black screen": the RetroArch log shows the signature — no save state
 or input recording needed. **Add new signatures here when you find a recurring failure mode not

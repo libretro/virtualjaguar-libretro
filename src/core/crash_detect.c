@@ -144,6 +144,10 @@ static unsigned fb_same_hash_frames;
 
 static uint32_t last_cd_fifo_drains;
 static unsigned cd_seek_wedge_frames;
+/* Sticky: how many times cd_seek_wedge has crossed its threshold since the
+ * last CrashDetectReset().  Counted before the log throttle, so a test can
+ * ask the watchdog directly instead of grepping the log (issue #799). */
+static unsigned cd_seek_wedge_fires;
 
 static unsigned next_heartbeat_frame;
 
@@ -379,6 +383,7 @@ void CrashDetectReset(void)
    fb_same_hash_frames = 0;
    last_cd_fifo_drains = 0;
    cd_seek_wedge_frames = 0;
+   cd_seek_wedge_fires = 0;
    next_heartbeat_frame = HEARTBEAT_FRAMES;
    hb_prev_hires_hits = 0;
    hb_prev_hires_miss_value = 0;
@@ -471,6 +476,16 @@ int CrashDetectCDSeekWedgeFrame(uint32_t seek_starts, uint32_t seek_dones,
     * (interrupts armed, FIFO data enabled) and no drain has happened. */
    return (butch_int & CD_BUTCH_FIFO_XFER_IRQS) == CD_BUTCH_FIFO_XFER_IRQS
        && (i2s_ctrl & CD_I2S_FIFO_ENABLE) != 0;
+}
+
+unsigned CrashDetectCDSeekWedgeFires(void)
+{
+   return cd_seek_wedge_fires;
+}
+
+unsigned CrashDetectCDSeekWedgeStreak(void)
+{
+   return cd_seek_wedge_frames;
 }
 
 void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
@@ -621,6 +636,8 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
                                       cd_butch_int, cd_i2s_ctrl))
       {
          cd_seek_wedge_frames++;
+         if (cd_seek_wedge_frames == WEDGE_FRAMES_CD_SEEK)
+            cd_seek_wedge_fires++;
          if (cd_seek_wedge_frames == WEDGE_FRAMES_CD_SEEK
              && may_log(&last_log_cd_seek_wedge))
          {
