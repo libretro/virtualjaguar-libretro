@@ -115,13 +115,15 @@ ids=$(command gh api graphql \
    --jq '"\(.data.repository.pullRequest.id) \(.data.repository.issue.id)"')
 pr_id=${ids%% *}; issue_id=${ids##* }
 
-if ! command gh api graphql \
+# Keep GitHub's error text: the workflow classifies on the exit code but
+# still shows this message (e.g. "Issue exceeds manual reference limit").
+if ! err=$(command gh api graphql \
    -f query='mutation($i:ID!,$p:[ID!]!){
       addCloseIssueReferences(input:{issueId:$i, pullRequestIds:$p}){
         clientMutationId
       }}' \
-   -f i="$issue_id" -f p="$pr_id" >/dev/null 2>&1; then
-   DIE_CODE=3; die "GitHub API refused the mutation (see above for the error)"
+   -f i="$issue_id" -f p="$pr_id" 2>&1 >/dev/null); then
+   DIE_CODE=3; die "GitHub API refused to link PR #$PR to #$ISSUE: $err"
 fi
 
 # Verify rather than trust the mutation's empty success payload.

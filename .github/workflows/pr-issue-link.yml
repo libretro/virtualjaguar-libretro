@@ -145,7 +145,7 @@ jobs:
                 echo "### ⚠️ Could not link -- the GitHub API refused the request"
                 echo
                 echo "A link tag **was** found in this PR's body, but the attempt to create"
-                echo "the link failed. The API error appears above:"
+                echo "the link failed. GitHub said:"
                 echo
                 echo '```'
                 echo "$out"
