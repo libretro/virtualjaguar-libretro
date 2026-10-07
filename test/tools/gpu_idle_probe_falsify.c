@@ -31,6 +31,22 @@
  *      == idleBodyCount: here 7 counted opcodes vs the 2 a
  *      straight-line body charges) rejects it.
  *
+ *   C. the late-load loop (issue #811)  ->  the probe MUST NOT fire.
+ *      head:  load (r2),r3      ; external (main RAM) load, data = $F02114
+ *             moveq #0,r3       ; TOM bug 13: the load data lands AFTER this
+ *             load (r3),r4      ; model says EA 0 (plain RAM); silicon and
+ *                               ; the interpreter read G_CTRL
+ *             jr always,head ; (ds) nop
+ *      gpu_idle_check_body walks the body in program order, so it proves
+ *      r3 == 0 at the second load and admits the loop -- but the
+ *      interpreter lets the load data win (gpu_load_wb_fixups), so the
+ *      real EA is register space and the dataflow proof is about a
+ *      different loop.  The probe rejects any loop in which a fix-up
+ *      fired between its snapshots.  Program D is the control: the same
+ *      loop with the load aimed at r5 (no overwrite, no fix-up) is a
+ *      genuine idle loop and MUST still fire, so the guard is shown to
+ *      key on the fix-up and not on external loads in general.
+ *
  * Unlike the DSP test, gpu_control is static, so the GPU is started
  * through the G_CTRL MMIO write path (GPUWriteLong), and yarc's GPU
  * program actively uses interrupts -- GPUSetFlags(0) masks INT_ENA0-4
@@ -58,6 +74,8 @@
 #define OP_JR     53
 #define OP_NOP    57
 #define OP_MOVEI  38
+#define OP_MOVEQ  35
+#define OP_LOAD   41
 
 /* Branch condition codes: 0 = always, 1 = NE (fails when Z is set). */
 #define CC_ALWAYS  0
@@ -71,6 +89,9 @@
 #define PROG_A_OFF   0x0E00          /* $F03E00 */
 #define PROG_B_OFF   0x0E80          /* $F03E80 */
 #define SCRATCH_OFF  0x0F80          /* $F03F80 -- the exploit's store target */
+#define PROG_C_OFF   0x0F00          /* $F03F00 */
+#define MAINRAM_PTR  0x00100000u     /* main-RAM long holding G_CTRL's address */
+#define G_CTRL_ADDR  0x00F02114u
 
 static uint8_t  *gpu_ram;
 static uint32_t *p_bank0;
@@ -78,6 +99,9 @@ static uint32_t *p_bank1;
 static uint32_t *p_fires;
 static uint32_t *p_rejects;
 static uint32_t *p_opcount;
+static uint64_t *p_wbfix;
+static uint8_t **p_mainram_slot;     /* jaguarMainRAM is a POINTER */
+static uint32_t (*p_readlong)(uint32_t, uint32_t);
 static void    (*p_gpuexec)(int32_t);
 static void    (*p_setpc)(uint32_t);
 static void    (*p_setflags)(uint32_t);
@@ -130,6 +154,29 @@ static void build_prog_b(void)
     setreg(5, GPU_RAM_BASE + PROG_B_OFF);          /* jump target = head       */
 }
 
+static void build_prog_c(uint32_t load_dst)
+{
+    /* load (r2),rD ; moveq #0,r3 ; load (r3),r4 ; jr always,head ; nop
+     * jr offset -4 -> target = (jr+2) + (-4*2) = jr - 6 = head.
+     * C: rD = r3 (the overwritten register) -- the fix-up arms.
+     * D: rD = r5 -- nothing overwrites the load target, no fix-up. */
+    put16(PROG_C_OFF + 0, enc(OP_LOAD, 2, load_dst));
+    put16(PROG_C_OFF + 2, enc(OP_MOVEQ, 0, 3));
+    put16(PROG_C_OFF + 4, enc(OP_LOAD, 3, 4));
+    put16(PROG_C_OFF + 6, enc(OP_JR, 0x1C /* -4 */, CC_ALWAYS));
+    put16(PROG_C_OFF + 8, enc(OP_NOP, 0, 0));
+
+    setreg(2, MAINRAM_PTR);                        /* load address (RAM)       */
+    setreg(3, 0);
+    setreg(4, 0);
+    setreg(5, 0);
+    /* Big-endian long in main RAM: the value the late load delivers. */
+    (*p_mainram_slot)[MAINRAM_PTR + 0] = (uint8_t)(G_CTRL_ADDR >> 24);
+    (*p_mainram_slot)[MAINRAM_PTR + 1] = (uint8_t)(G_CTRL_ADDR >> 16);
+    (*p_mainram_slot)[MAINRAM_PTR + 2] = (uint8_t)(G_CTRL_ADDR >> 8);
+    (*p_mainram_slot)[MAINRAM_PTR + 3] = (uint8_t)(G_CTRL_ADDR);
+}
+
 /* Run one hand-assembled program from `off` for `cycles`, returning how
  * many times the fast-forward fired. */
 static uint32_t run_prog(uint32_t off, int32_t cycles,
@@ -154,11 +201,14 @@ static uint32_t run_prog(uint32_t off, int32_t cycles,
 int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
-    harness_result res[3];
+    harness_result res[5];
     unsigned nres = 0;
     uint32_t fires_a, fires_b, rej_a, rej_b, ops_a, ops_b;
+    uint32_t fires_c, fires_d, rej_c, rej_d;
+    uint64_t wb_c, wb_d, wb0;
     static char detail_a[192], detail_b[192], detail_c[192];
-    int ok_a, ok_b;
+    static char detail_e[256], detail_f[256];
+    int ok_a, ok_b, ok_c, ok_d;
 
     cfg.frames = 2;
     cfg.quiet  = 1;
@@ -177,6 +227,10 @@ int main(int argc, char **argv)
     p_fires     = (uint32_t *)harness_dlsym(&cfg, "gpu_idle_skip_fires");
     p_rejects   = (uint32_t *)harness_dlsym(&cfg, "gpu_idle_skip_rejects");
     p_opcount   = (uint32_t *)harness_dlsym(&cfg, "gpu_exec_opcode_count");
+    p_wbfix     = (uint64_t *)harness_dlsym(&cfg, "gpu_load_wb_fixups");
+    p_mainram_slot = (uint8_t **)harness_dlsym(&cfg, "jaguarMainRAM");
+    p_readlong  = (uint32_t (*)(uint32_t, uint32_t))
+                  harness_dlsym(&cfg, "JaguarReadLong");
     p_gpuexec   = (void (*)(int32_t))harness_dlsym(&cfg, "GPUExec");
     p_setpc     = (void (*)(uint32_t))harness_dlsym(&cfg, "GPUSetPC");
     p_setflags  = (void (*)(uint32_t))harness_dlsym(&cfg, "GPUSetFlags");
@@ -185,7 +239,8 @@ int main(int argc, char **argv)
 
     if (!gpu_ram || !p_bank0 || !p_bank1 || !p_fires || !p_rejects
         || !p_opcount || !p_gpuexec || !p_setpc || !p_setflags
-        || !p_writelong) {
+        || !p_writelong || !p_wbfix || !p_mainram_slot || !*p_mainram_slot
+        || !p_readlong) {
         fprintf(stderr, "gpu_idle_probe_falsify: missing test ABI symbols "
                         "(build with TEST_EXPORTS=1)\n");
         return 1;
@@ -197,8 +252,31 @@ int main(int argc, char **argv)
     fires_a = run_prog(PROG_A_OFF, 20000, &rej_a, &ops_a);
     fires_b = run_prog(PROG_B_OFF, 20000, &rej_b, &ops_b);
 
+    /* C: late-load loop (must be rejected, and the fix-up must really
+     * have fired -- otherwise "0 fires" would prove nothing).  D: the
+     * no-overwrite control (must still fire, fix-up count unchanged). */
+    build_prog_c(3);
+    /* The late value is only meaningful if the core itself reads back
+     * G_CTRL's address from the poked main-RAM long (gpu_load_wb_fixups
+     * counts even when the late value equals the moveq's). */
+    if (p_readlong(MAINRAM_PTR, 0) != G_CTRL_ADDR) {
+        fprintf(stderr, "gpu_idle_probe_falsify: main-RAM poke not visible "
+                        "to JaguarReadLong ($%08X)\n",
+                p_readlong(MAINRAM_PTR, 0));
+        return 1;
+    }
+    wb0     = *p_wbfix;
+    fires_c = run_prog(PROG_C_OFF, 20000, &rej_c, NULL);
+    wb_c    = *p_wbfix - wb0;
+    build_prog_c(5);
+    wb0     = *p_wbfix;
+    fires_d = run_prog(PROG_C_OFF, 20000, &rej_d, NULL);
+    wb_d    = *p_wbfix - wb0;
+
     ok_a = (fires_a > 0);
     ok_b = (fires_b == 0);
+    ok_c = (fires_c == 0 && wb_c > 0);
+    ok_d = (fires_d > 0 && wb_d == 0);
 
     snprintf(detail_a, sizeof detail_a,
              "genuinely idle loop (addqt/jr/nop) fired %u time(s), "
@@ -226,7 +304,26 @@ int main(int argc, char **argv)
     res[nres].detail = detail_c;
     nres++;
 
+    snprintf(detail_e, sizeof detail_e,
+             "late-load loop (load (r2),r3 / moveq #0,r3 / load (r3),r4) "
+             "fired %u time(s) (must be 0), %u reject(s), %llu late "
+             "write-back(s) applied (must be > 0)",
+             fires_c, rej_c, (unsigned long long)wb_c);
+    res[nres].status = ok_c ? "PASS" : "FAIL";
+    res[nres].name   = "gpu_late_load_loop_rejected";
+    res[nres].detail = detail_e;
+    nres++;
+
+    snprintf(detail_f, sizeof detail_f,
+             "same loop with the load aimed at r5 (no overwrite) fired %u "
+             "time(s) (must be > 0), %u reject(s), %llu late write-back(s) "
+             "(must be 0)", fires_d, rej_d, (unsigned long long)wb_d);
+    res[nres].status = ok_d ? "PASS" : "FAIL";
+    res[nres].name   = "gpu_external_load_loop_still_fires";
+    res[nres].detail = detail_f;
+    nres++;
+
     harness_report(&cfg, res, nres);
     harness_shutdown(&cfg);
-    return (ok_a && ok_b) ? 0 : 1;
+    return (ok_a && ok_b && ok_c && ok_d) ? 0 : 1;
 }

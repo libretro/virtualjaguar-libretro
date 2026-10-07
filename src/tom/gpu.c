@@ -1691,6 +1691,7 @@ static uint32_t *idleProbeBank;			/* gpu_reg at S0 -- see theorem (3) */
 static int32_t   idleProbeCyc0, idleProbeCyc1;
 static uint32_t  idleProbeOpc0, idleProbeOpc1;
 static uint32_t  idleProbeS0[64], idleProbeS1[64];
+static uint64_t  idleProbeLdxFix;		/* gpu_load_wb_fixups at S0 */
 static uint8_t   idleProbeFz0, idleProbeFn0, idleProbeFc0;
 static uint8_t   idleProbeFz1, idleProbeFn1, idleProbeFc1;
 
@@ -2088,6 +2089,7 @@ static int32_t GPUIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 		idleProbeHead  = head;
 		idleProbeJr    = jrAddr;
 		idleProbeBank  = gpu_reg;
+		idleProbeLdxFix = gpu_load_wb_fixups;
 		idleProbeStage = 1;
 		return cycles;
 	}
@@ -2114,6 +2116,18 @@ static int32_t GPUIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 	    || idleProbeFc1 != idleProbeFc0
 	    || gpu_flag_z != idleProbeFz0 || gpu_flag_n != idleProbeFn0
 	    || gpu_flag_c != idleProbeFc0)
+	{
+		gpu_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Issue #811: gpu_idle_check_body models a load followed by an
+	 * overwrite of its target in program order (the overwrite wins), but
+	 * the interpreter now lets the external load data land last (JTRM
+	 * Rev 8 p.136, TOM bug 13).  A loop in which that fired is not the
+	 * loop the dataflow proof describes: reject it.  Cold path, once per
+	 * probe -- nothing is added to the per-instruction loop. */
+	if (gpu_load_wb_fixups != idleProbeLdxFix)
 	{
 		gpu_idle_memo_reject(head, jrAddr);
 		return cycles;
