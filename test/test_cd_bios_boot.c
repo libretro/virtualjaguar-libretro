@@ -83,6 +83,9 @@ static bool cd_environment(unsigned cmd, void *data)
             return true;
         }
         if (strcmp(var->key, "virtualjaguar_cd_boot_mode") == 0)    { var->value = "bios"; return true; }
+        /* The wedge verdict below reads the watchdog, so it must be on
+         * whatever the core's default becomes. */
+        if (strcmp(var->key, "virtualjaguar_crash_detect") == 0)    { var->value = "enabled"; return true; }
         var->value = NULL;
         return false;
     }
@@ -134,6 +137,15 @@ struct cd_disc_result {
 
     /* CD subsystem activity captured at end-of-run. */
     struct cd_diag_snapshot diag;
+
+    /* Crash-watchdog verdict on the CD transfer (issue #799).  The PC checks
+     * above cannot see a dead transfer: a 68K that keeps running its CD
+     * service loop satisfies every one of them.  So the watchdog's own
+     * cd_seek_wedge state is the oracle, read through the exported accessors
+     * rather than by grepping its log line. */
+    bool     wedge_accessor_missing;
+    unsigned cd_wedge_fires;      /* times cd_seek_wedge crossed 300 frames */
+    unsigned cd_wedge_streak;     /* frames the predicate holds at end-of-run */
 };
 
 static bool cd_load_game(const char *path)
@@ -292,6 +304,21 @@ static void cd_run_one_disc(const char *path, unsigned frames,
 
     /* Capture CD subsystem snapshot before unload (counters reset on next reset). */
     cd_diag_capture(C.handle, &out->diag);
+
+    /* Ask the watchdog whether the transfer wedged.  A core without these
+     * symbols (no TEST_EXPORTS) cannot give a verdict -- fail, never pass. */
+    {
+        unsigned (*p_fires)(void);
+        unsigned (*p_streak)(void);
+        p_fires  = (unsigned (*)(void))dlsym(C.handle, "CrashDetectCDSeekWedgeFires");
+        p_streak = (unsigned (*)(void))dlsym(C.handle, "CrashDetectCDSeekWedgeStreak");
+        if (p_fires && p_streak) {
+            out->cd_wedge_fires  = p_fires();
+            out->cd_wedge_streak = p_streak();
+        } else {
+            out->wedge_accessor_missing = true;
+        }
+    }
 
     if (!hist.unique_overflow && hist.unique_count <= 32) {
         size_t i;
@@ -472,7 +499,8 @@ TEST(boot_all_discovered_discs_real_bios)
         }
 
         ok = r->pc_stayed_in_ram && r->not_self_looping &&
-                  r->not_thrashing && r->ram_has_payload;
+                  r->not_thrashing && r->ram_has_payload &&
+                  !r->wedge_accessor_missing && r->cd_wedge_fires == 0;
         status_word = ok ? "PASS" : "FAIL";
         if (!ok) fail++; else pass++;
 
@@ -485,6 +513,18 @@ TEST(boot_all_discovered_discs_real_bios)
                 r->unique_pc_count,
                 r->unique_pc_overflow ? "+" : "",
                 r->final_pc);
+        /* The reason a run that looks alive above is still a FAIL (#799). */
+        if (r->cd_wedge_fires > 0)
+            fprintf(stderr,
+                    "    [CD-WEDGE] %s : CD transfer wedged (cd_seek_wedge fired "
+                    "%u time(s), %u frames held at end-of-run) -- the PC checks "
+                    "cannot see a dead transfer\n",
+                    label, r->cd_wedge_fires, r->cd_wedge_streak);
+        if (r->wedge_accessor_missing)
+            fprintf(stderr,
+                    "    [CD-WEDGE] %s : CrashDetectCDSeekWedgeFires not exported "
+                    "(build with TEST_EXPORTS=1); cannot judge the transfer\n",
+                    label);
         fprintf(stderr,
                 "    [DIAG] %s : gpu_pc=$%06X irq0=%u irq3=%u "
                 "butchExec=%u fifoIRQs=%u dsaIRQs=%u fifoReads=%u "

@@ -48,6 +48,16 @@ int CrashDetectCDSeekWedgeFrame(uint32_t seek_starts, uint32_t seek_dones,
                                 int processor_running, uint8_t butch_int,
                                 uint8_t i2s_ctrl);
 
+/* Watchdog state for tests (issue #799).  A harness's own pass criteria
+ * (PC in RAM, not looping) are all satisfied by a 68K that keeps running
+ * its CD service loop while the transfer is dead, so they cannot see a
+ * cd_seek_wedge; the watchdog can.  Fires = how many times the wedge
+ * crossed its threshold since CrashDetectReset() (sticky, not subject to
+ * the log throttle, 0 while the watchdog is disabled); Streak = frames the
+ * wedge predicate has held in a row right now. */
+unsigned CrashDetectCDSeekWedgeFires(void);
+unsigned CrashDetectCDSeekWedgeStreak(void);
+
 /* In-frame hang signature (issue #740).  The blitter runs synchronously
  * inside one register write, so a garbage B_COUNT freezes the host inside
  * retro_run and the per-frame checks never get a turn.  Called at blit
