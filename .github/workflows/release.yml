@@ -9,14 +9,14 @@ name: Release
 # CI-pushed tag can never re-enter the release path.
 #
 # The release/** lane exists because a release branch was otherwise invisible
-# until it was tagged: the code most in need of 16-platform coverage got none,
+# until it was tagged: the code most in need of 24-platform coverage got none,
 # and the libretro buildbot only reacted after the tag, when a break becomes a
 # hotfix rather than a fix.
 #
 # workflow_dispatch exists ONLY to re-publish a rolling tag, so it must be run
 # with the branch set to `develop` or a `release/*` branch.  GitHub defaults
 # the branch picker to the repo default (`master` here), and every publishing
-# job is ref-gated, so a dispatch left on the default would build all 16
+# job is ref-gated, so a dispatch left on the default would build all 24
 # targets and publish nothing.
 # The `guard` job below fails that case immediately instead of burning the
 # matrix.  To test-build an arbitrary branch, use c-cpp.yml — it has its own
@@ -42,7 +42,7 @@ concurrency:
 
 jobs:
   # ----------------------------------------------------------------
-  # Fail a pointless dispatch in seconds rather than after 16 builds.
+  # Fail a pointless dispatch in seconds rather than after 24 builds.
   # Only reachable via workflow_dispatch: push events always arrive on a
   # ref one of the two publishing jobs accepts.
   # ----------------------------------------------------------------
@@ -55,10 +55,11 @@ jobs:
         run: |
           # Built up in one variable because a ::error:: annotation has to be a
           # single line to render as one.
+          # TARGETS = 22 build configs + vita-build + switch-build = 24
           MSG="Run this workflow with the branch set to 'develop' or a 'release/*' branch."
           MSG="$MSG The publishing jobs are ref-gated (tags v* -> release,"
           MSG="$MSG develop -> nightly, release/* -> prerelease), so a dispatch"
-          MSG="$MSG from '${GITHUB_REF_NAME}' would build all 16 targets and"
+          MSG="$MSG from '${GITHUB_REF_NAME}' would build all 24 targets and"
           MSG="$MSG publish nothing."
           MSG="$MSG To test-build a branch, use the C/C++ CI workflow instead."
           echo "::error::$MSG"
@@ -669,7 +670,7 @@ jobs:
   # tracking issue that always shows the current build.
   #
   # Gating: `needs` covers the build jobs only, so this publishes a
-  # commit that COMPILES on all 16 targets.  It does NOT wait on
+  # commit that COMPILES on all 24 targets.  It does NOT wait on
   # c-cpp.yml / acid-test.yml / regression-test.yml, which run
   # independently on the same push — a commit that builds but fails a
   # test can still ship a nightly.  The release body says so; do not
@@ -680,7 +681,7 @@ jobs:
     name: Update rolling prerelease
     needs: [build, vita-build, switch-build, jagcd-tools]
     # Wait for the tools build, but do not REQUIRE it.  chdman is an
-    # auxiliary desktop helper; the nightly's product is the 16 core
+    # auxiliary desktop helper; the nightly's product is the 24 core
     # binaries.  Gating the publish on it meant a missing pkg-config
     # package on a runner image silently withheld three days of good core
     # builds (2026-08-18).  Tagged releases still require it below, because
@@ -781,12 +782,12 @@ jobs:
             echo "| **Branch** | \`${GITHUB_REF_NAME}\` |"
             echo
             P="> Automatic build of the \`${GITHUB_REF_NAME}\` tip, replaced on every push."
-            P="$P It compiled on all 16 targets; it has **not** been through the"
+            P="$P It compiled on all 24 targets; it has **not** been through the"
             P="$P test suite or any manual QA. For a stable build use the"
             P="$P [latest release](${GITHUB_SERVER_URL}/${REPO}/releases/latest)."
             if [ "${TAG}" = "prerelease" ]; then
               P="$P This is a RELEASE CANDIDATE from a release branch, not a release:"
-              P="$P it exists so the 16-platform matrix runs on the code about to"
+              P="$P it exists so the 24-platform matrix runs on the code about to"
               P="$P ship, instead of first meeting it at the tag."
             fi
             echo "$P"
@@ -890,7 +891,7 @@ jobs:
             echo
             echo "### What these are"
             echo
-            P="Every push to \`develop\` rebuilds the core for all 16 supported platforms"
+            P="Every push to \`develop\` rebuilds the core for all 24 supported platforms"
             P="$P and replaces the single"
             P="$P [\`nightly\`](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly) prerelease."
             P="$P There is only ever one nightly — the current tip."
@@ -899,7 +900,7 @@ jobs:
             echo "| | Stable | Nightly |"
             echo "|---|---|---|"
             echo "| Source | tagged \`vX.Y.Z\` on \`master\` | every push to \`develop\` |"
-            echo "| Gate | full CI + release checklist | compiles on all 16 targets |"
+            echo "| Gate | full CI + release checklist | compiles on all 24 targets |"
             echo "| Frequency | periodic | continuous |"
             echo "| Use it for | playing | testing a fix before it ships |"
             echo

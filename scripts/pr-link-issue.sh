@@ -30,7 +30,12 @@ set -euo pipefail
 
 # Guard the file-mutating and network helpers against interactive shell
 # aliases (`rm -i` and friends block forever with no TTY).
-die() { printf 'pr-link-issue: %s\n' "$*" >&2; exit 1; }
+# Exit codes:
+#   0 = success (link created or already existed)
+#   1 = generic error (bad args, repo not found, issue validation failed)
+#   2 = no link tag found in the PR body (author must add one)
+#   3 = tag found but the GitHub API mutation failed (display error to user)
+die() { printf 'pr-link-issue: %s\n' "$*" >&2; exit "${DIE_CODE:-1}"; }
 
 PR=""; ISSUE=""; REPO=""
 while [ $# -gt 0 ]; do
@@ -89,7 +94,7 @@ if [ -z "$ISSUE" ]; then
               | grep -oiE '(clos(e|es|ed)|fix(es|ed)?|resolv(e|es|ed)|refs?)[[:space:]]+#[0-9]+' \
               | grep -oE '[0-9]+' | head -1 || true)
    fi
-   [ -n "$ISSUE" ] || die "PR #$PR body has no link tag (Closes/Fixes/Resolves/Refs #N, or <!-- link-issue: #N -->) and no issue number was given"
+   [ -n "$ISSUE" ] || { DIE_CODE=2; die "PR #$PR body has no link tag (Closes/Fixes/Resolves/Refs #N, or <!-- link-issue: #N -->) and no issue number was given"; }
 fi
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 
@@ -110,16 +115,20 @@ ids=$(command gh api graphql \
    --jq '"\(.data.repository.pullRequest.id) \(.data.repository.issue.id)"')
 pr_id=${ids%% *}; issue_id=${ids##* }
 
-command gh api graphql \
+# Keep GitHub's error text: the workflow classifies on the exit code but
+# still shows this message (e.g. "Issue exceeds manual reference limit").
+if ! err=$(command gh api graphql \
    -f query='mutation($i:ID!,$p:[ID!]!){
       addCloseIssueReferences(input:{issueId:$i, pullRequestIds:$p}){
         clientMutationId
       }}' \
-   -f i="$issue_id" -f p="$pr_id" >/dev/null
+   -f i="$issue_id" -f p="$pr_id" 2>&1 >/dev/null); then
+   DIE_CODE=3; die "GitHub API refused to link PR #$PR to #$ISSUE: $err"
+fi
 
 # Verify rather than trust the mutation's empty success payload.
 now=$(command gh pr view "$PR" --repo "$REPO" \
          --json closingIssuesReferences \
          --jq '[.closingIssuesReferences[].number] | join(",")')
-[ -n "$now" ] || die "mutation reported success but PR #$PR still has no linked issue"
+[ -n "$now" ] || { DIE_CODE=3; die "mutation reported success but PR #$PR still has no linked issue"; }
 echo "PR #$PR -> linked to #${now//,/, #}"
