@@ -23,16 +23,21 @@
  *   2. press B (starts ARCADE, the default item);
  *   3. wait for the "LOADING MISSION DATA" screen: 326 wide, a line of
  *      text on black (lit, but under 10% coverage);
- *   4. within the next 900 frames, require at least one 326-wide frame
- *      with >= 50% non-black coverage -- the in-game playfield.  Before
- *      the fix every one of those frames was black.
+ *   4. within the next 1200 frames, require at least 600 CONSECUTIVE
+ *      326-wide frames with >= 50% non-black coverage -- sustained
+ *      gameplay -- and no return of the loading screen after gameplay
+ *      starts.
  *
- * KNOWN LIMIT (do not tighten yet): a few frames into gameplay the game
- * runs a self-modifying-code integrity check at 68K $350C that depends on
- * the 68000's two-word instruction prefetch, which this core's 68K does
- * not model.  It fails, and the game jumps back to its loader, so today
- * only a handful of gameplay frames render.  Once the 68K prefetch is
- * modeled, raise MIN_LIT_FRAMES to require sustained gameplay.
+ * Two bugs fail step 4:
+ *   - black gameplay (above): no lit frame at all;
+ *   - the game's anti-tamper check at 68K $350C: `ori.l #$04000400,(a1)`
+ *     patches the next two `addq.l #1,d6` into `addq.l #3,d6`, and the
+ *     check (d6 == $12071971) only passes because a real 68000 already
+ *     holds both words in its prefetch queue and runs the old pair.
+ *     Without a queue model d6 ends at $12071975, the game jumps back to
+ *     its loader a few frames into gameplay, and only ~6 lit frames
+ *     render.  The model lives in src/m68000/m68kinterface.c;
+ *     test/test_m68k_prefetch.c pins it without a ROM.
  *
  * Exit status: 0 pass, 1 fail.
  *
@@ -59,9 +64,9 @@
 #define PRESS_HOLD         10u
 #define LOADING_MAX_PCT    10.0
 #define LOADING_TIMEOUT    900u   /* frames after the press */
-#define GAME_WINDOW        900u   /* frames after the loading screen */
+#define GAME_WINDOW        1200u  /* frames after the loading screen */
 #define GAME_LIT_PCT       50.0
-#define MIN_LIT_FRAMES     1u
+#define MIN_RUN_FRAMES     600u   /* consecutive lit gameplay frames */
 
 enum { PH_MENU, PH_LOADING, PH_GAME, PH_DONE };
 
@@ -75,7 +80,13 @@ typedef struct {
     unsigned loading_frame;
     unsigned lit_frames;
     unsigned first_lit;
+    unsigned run;           /* current streak of lit 326-wide frames */
+    unsigned best_run;
+    unsigned reloads;       /* loading screen seen again after gameplay */
+    int      in_loading;
     double   best_pct;
+    double   run_min_pct;   /* dimmest frame inside the current streak */
+    double   best_run_min_pct;
     const char *fail;
 } xw_state;
 
@@ -134,7 +145,29 @@ static bool xw_frame(void *ud, unsigned f)
                 if (!s->lit_frames)
                     s->first_lit = f;
                 s->lit_frames++;
+                if (!s->run || s->pct < s->run_min_pct)
+                    s->run_min_pct = s->pct;
+                s->run++;
+                if (s->run > s->best_run) {
+                    s->best_run = s->run;
+                    s->best_run_min_pct = s->run_min_pct;
+                }
+            } else {
+                s->run = 0;
             }
+        } else {
+            s->run = 0;
+        }
+        /* The loader's "LOADING MISSION DATA" screen coming back after
+         * gameplay started is the #811 anti-tamper failure: the game
+         * jumped back to its loader at $80200A. */
+        if (s->lit_frames && s->w < MENU_MIN_WIDTH
+                && s->pct > 0.0 && s->pct < LOADING_MAX_PCT) {
+            if (!s->in_loading)
+                s->reloads++;
+            s->in_loading = 1;
+        } else {
+            s->in_loading = 0;
         }
         if (f >= s->loading_frame + GAME_WINDOW)
             s->phase = PH_DONE;
@@ -171,16 +204,20 @@ int main(int argc, char **argv)
 
     if (!s.fail && s.phase != PH_DONE)
         s.fail = "frame budget ran out before the in-game window closed";
-    pass = !s.fail && s.lit_frames >= MIN_LIT_FRAMES;
+    pass = !s.fail && s.best_run >= MIN_RUN_FRAMES && s.reloads == 0;
     if (s.fail)
         snprintf(detail, sizeof detail, "%s", s.fail);
     else
         snprintf(detail, sizeof detail,
                  "menu B at frame %u, loading at %u, %u in-game frame(s) >= %.0f%% lit "
-                 "(first %u, best %.1f%%)%s",
+                 "(first %u, best %.1f%%), longest streak %u (dimmest %.1f%%, need %u), "
+                 "%u return(s) to the loader%s",
                  s.press_frame, s.loading_frame, s.lit_frames, GAME_LIT_PCT,
-                 s.first_lit, s.best_pct,
-                 pass ? "" : " -- gameplay is black (#811: OLP=0 from the load/moveq race?)");
+                 s.first_lit, s.best_pct, s.best_run, s.best_run_min_pct,
+                 MIN_RUN_FRAMES, s.reloads,
+                 pass ? "" :
+                 !s.lit_frames ? " -- gameplay is black (#811: OLP=0 from the load/moveq race?)"
+                               : " -- gameplay did not last (#811: 68000 prefetch / anti-tamper at $350C?)");
 
     res.status = pass ? "PASS" : "FAIL";
     res.name   = "xenowings_ingame_video";
