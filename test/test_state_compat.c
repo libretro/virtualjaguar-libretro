@@ -81,7 +81,7 @@ const char *__lsan_default_suppressions(void) {
 }
 #endif
 
-#define MAX_RESULTS 24
+#define MAX_RESULTS 32
 #define DEFAULT_ROM "test/roms/yarc.j64"
 #define DEFAULT_FRAMES 120
 /* Frames run between capturing the v3 state and loading the v2 fixture,
@@ -340,6 +340,7 @@ int main(int argc, char **argv)
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     dac_state_save_fn dac_save;
     dac_state_save_fn cdrom_save, joy_save, mt_save, nvm_save;
+    dac_state_save_fn bios_chunk_save, cdext_chunk_save;
     serialize_size_fn ser_size_fn;
     serialize_fn ser;
     unserialize_fn unser;
@@ -398,6 +399,8 @@ int main(int argc, char **argv)
     joy_save    = (dac_state_save_fn)harness_dlsym(&cfg, "JoystickStateSave");
     mt_save     = (dac_state_save_fn)harness_dlsym(&cfg, "MTStateSave");
     nvm_save    = (dac_state_save_fn)harness_dlsym(&cfg, "NVMBiosStateSave");
+    bios_chunk_save  = (dac_state_save_fn)harness_dlsym(&cfg, "JaguarCDBiosStateSave");
+    cdext_chunk_save = (dac_state_save_fn)harness_dlsym(&cfg, "CDROMStateExtSave");
     ser_size_fn = (serialize_size_fn)harness_dlsym(&cfg, "retro_serialize_size");
     ser         = (serialize_fn)harness_dlsym(&cfg, "retro_serialize");
     unser       = (unserialize_fn)harness_dlsym(&cfg, "retro_unserialize");
@@ -406,6 +409,7 @@ int main(int argc, char **argv)
     height_ptr  = (int *)harness_dlsym(&cfg, "game_height");
 
     if (!dac_save || !cdrom_save || !joy_save || !mt_save
+        || !bios_chunk_save || !cdext_chunk_save
         || !ser_size_fn || !ser || !unser
         || !fb_ptr || !width_ptr || !height_ptr) {
         fprintf(stderr,
@@ -699,6 +703,93 @@ int main(int argc, char **argv)
           "v3_dac_block_realigned",
           "post-load DAC block is byte-identical to the saved one -- proves "
           "every chunk before it was read in the v3 layout, not the v7 one");
+
+    /* ---- 8b. v16 real-BIOS CD chunks (#804) -------------------------- */
+    /* Two trailing chunks -- JaguarCDBiosStateSave ("CDB1": boot stub
+     * injected) then CDROMStateExtSave ("CDX1": FIFO refill accumulator,
+     * IRQ edge) -- sit back to back at the end of the payload.  A cart
+     * has no disc, so drive them through the state blob itself: patch the
+     * values into a freshly written state, load it, and read them back
+     * through the module's own save function.
+     *
+     * Negative control (verified): with the chunks' load calls removed
+     * from retro_unserialize, v16_chunks_restored goes red. */
+    {
+        static uint8_t bios_a[64], bios_b[64], cdx_a[64], cdx_b[64];
+        size_t bios_n, cdx_n, tail_off = 0;
+        unsigned tail_matches;
+        uint8_t pair[128];
+
+        if (!ser(state_v3, state_size)) {
+            check(0, "v16_chunks_located", "retro_serialize() returned false");
+        } else {
+            bios_n = bios_chunk_save(bios_a);
+            cdx_n  = cdext_chunk_save(cdx_a);
+            memcpy(pair, bios_a, bios_n);
+            memcpy(pair + bios_n, cdx_a, cdx_n);
+            tail_matches = find_pattern(state_v3, state_size, pair,
+                                        bios_n + cdx_n, &tail_off);
+            check(tail_matches == 1 && bios_n == 5 && cdx_n == 9,
+                  "v16_chunks_located",
+                  "CDB1 (%lu B) + CDX1 (%lu B) occur %u time(s) in the state "
+                  "(expect 1; sizes 5 + 9) -- chunk layout changed? re-derive "
+                  "the patch offsets below",
+                  (unsigned long)bios_n, (unsigned long)cdx_n, tail_matches);
+            if (tail_matches == 1 && bios_n == 5 && cdx_n == 9) {
+                /* CDB1: magic(4) injected(1).  CDX1: magic(4) accum(4) irq(1). */
+                memcpy(scratch, state_v3, state_size);
+                scratch[tail_off + 4] = 1;
+                put_u32(scratch, tail_off + 5 + 4, 37u);
+                scratch[tail_off + 5 + 8] = 1;
+
+                check(unser(scratch, state_size), "v16_chunks_load",
+                      "retro_unserialize() of a v%d state carrying non-default "
+                      "CD BIOS chunks", STATE_VERSION);
+                bios_chunk_save(bios_b);
+                cdext_chunk_save(cdx_b);
+                check(bios_b[4] == 1 && get_u32(cdx_b, 4) == 37u
+                      && cdx_b[8] == 1,
+                      "v16_chunks_restored",
+                      "after load: stub-injected=%u refill-accum=%u irq-edge=%u "
+                      "(expect 1 / 37 / 1) -- the rollback must restore "
+                      "them, not inherit the replay's values",
+                      (unsigned)bios_b[4], (unsigned)get_u32(cdx_b, 4),
+                      (unsigned)cdx_b[8]);
+
+                /* A v15 state ends before the chunks: whatever bytes sit
+                 * there are NOT ours.  The load must leave the live
+                 * session's values alone (v3.7.0 behaviour) rather than
+                 * force "boot stub not injected": a state saved mid-game
+                 * would then re-arm the $005E40 GPU-magic stomp and the
+                 * $050176 re-injection over the game's own RAM. */
+                (void)unser(scratch, state_size);   /* live values = 1/37/1 */
+                put_u32(scratch, STATE_OFF_VERSION, 15u);
+                scratch[tail_off + 4] = 0;           /* chunk bytes must be ignored */
+                put_u32(scratch, tail_off + 5 + 4, 5u);
+                check(unser(scratch, state_size), "v15_state_loads",
+                      "retro_unserialize() of a v15 state (shipped in v3.7.0)");
+                bios_chunk_save(bios_b);
+                cdext_chunk_save(cdx_b);
+                check(bios_b[4] == 1 && get_u32(cdx_b, 4) == 37u
+                      && cdx_b[8] == 1,
+                      "v15_chunks_inherited",
+                      "after a v15 load: stub-injected=%u refill-accum=%u "
+                      "irq-edge=%u (expect the live 1 / 37 / 1, unchanged)",
+                      (unsigned)bios_b[4], (unsigned)get_u32(cdx_b, 4),
+                      (unsigned)cdx_b[8]);
+
+                /* A damaged accumulator must not reach
+                 * CDROMNextRefillDelay's divide/modulo unchecked. */
+                memcpy(scratch, state_v3, state_size);
+                put_u32(scratch, tail_off + 5 + 4, 100000u);
+                (void)unser(scratch, state_size);
+                cdext_chunk_save(cdx_b);
+                check(get_u32(cdx_b, 4) < 100u, "v16_accum_bounded",
+                      "out-of-range refill accumulator loaded as %u (expect "
+                      "0..99)", (unsigned)get_u32(cdx_b, 4));
+            }
+        }
+    }
 
     /* ---- 9. Rejections -------------------------------------------- */
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_VERSION,

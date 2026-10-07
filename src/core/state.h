@@ -81,14 +81,16 @@ extern "C" {
  *     exactly what a pre-#552 core was — see UARTWireSpeedupStateLoad().
  * v14: mounted-disc identity + image index (#651).  Shipped in v3.6.0.
  * v15: CDROM chunk gained the last $03nn/$14nn TOC word handed out
- *     (dsaLastMultiWord).  develop only — first bump of the post-v3.6.1
- *     cycle, so any other in-flight state change this cycle extends v15
- *     in place rather than bumping again.
+ *     (dsaLastMultiWord).  Shipped in v3.7.0.
  *     EXTENDED IN PLACE (still v15): #787 appended the HLE CD streaming
  *     chunk strictly last, behind a magic word, so a v15 blob written
- *     before it (zero-filled tail) loads with the transfer dropped. */
+ *     before it (zero-filled tail) loads with the transfer dropped.
+ * v16: real-BIOS CD boot chunk (#804), appended strictly last behind a
+ *     magic word: whether the boot stub has been injected.  First bump of
+ *     the v3.7.1 cycle, so any other in-flight state change this cycle
+ *     extends v16 in place rather than bumping again. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   15
+#define STATE_VERSION   16
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -200,6 +202,15 @@ extern "C" {
 /* First version that may carry the trailing HLE CD streaming chunk
  * (#787).  "May": the chunk is tagged, see JaguarCDHLEStateLoad. */
 #define STATE_VERSION_HLE_CD_STREAM 15
+/* v16: trailing real-BIOS CD boot chunk (#804): jagcd_bios.c's
+ * cdBootStubInjected flag, which gates the 68K boot-stub injection hook.
+ * Outside the blob, a rollback to a pre-injection state kept the flag set
+ * by the replay that had already injected, so the replay never injected
+ * the stub and the game never started (run-ahead diverged mid-load); and
+ * a post-injection state loaded into a fresh core re-armed the $005E40
+ * GPU-magic stomp over the game's own RAM.  Older states do not carry it:
+ * the live session's value is left alone (v3.7.0 behaviour). */
+#define STATE_VERSION_BIOS_CD_BOOT 16
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
@@ -255,6 +266,14 @@ size_t TOMStateLoad(const uint8_t *buf);
 
 size_t CDROMStateSave(uint8_t *buf);
 size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion);
+/* Trailing drive-timing chunk (#804, STATE_VERSION_BIOS_CD_BOOT): the FIFO
+ * refill error-diffusion accumulator and the CD IRQ edge detector.  Tagged
+ * with a magic word; Reset is what a state without the chunk gets. */
+size_t CDROMStateExtSize(void);
+size_t CDROMStateExtSave(uint8_t *buf);
+size_t CDROMStateExtLoad(const uint8_t *buf);
+void   CDROMStateExtReset(void);
+
 
 size_t JoystickStateSave(uint8_t *buf);
 size_t JoystickStateLoad(const uint8_t *buf);

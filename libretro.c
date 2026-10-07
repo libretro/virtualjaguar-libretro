@@ -4661,6 +4661,23 @@ bool retro_serialize(void *data, size_t size)
       return false;
    buf += JaguarCDHLEStateSave(buf);
 
+   /* v16 (#804): real-BIOS CD path.  Two trailing chunks, each behind its
+    * own magic word: the boot-stub-injected flag (jagcd_bios.c) and the
+    * CD drive-timing statics (cdrom.c: FIFO refill accumulator, IRQ edge
+    * detector).  Outside the blob, run-ahead replayed a real-BIOS load
+    * against a flag/phase the replay had already advanced (Hover Strike,
+    * warmup 400: video diverged 44 frames after the rollback).
+    *
+    * STRICTLY LAST, after the HLE chunk: appending keeps every v15 and
+    * older blob loadable.  Room is checked BEFORE writing, as above. */
+   if ((size_t)(buf - start) + JaguarCDBiosStateSize() > STATE_SIZE)
+      return false;
+   buf += JaguarCDBiosStateSave(buf);
+
+   if ((size_t)(buf - start) + CDROMStateExtSize() > STATE_SIZE)
+      return false;
+   buf += CDROMStateExtSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4902,6 +4919,19 @@ bool retro_unserialize(const void *data, size_t size)
       buf += JaguarCDHLEStateLoad(buf);
    else
       JaguarCDHLEStateReset();
+
+   /* v16 (#804): real-BIOS CD chunks -- see the matching save comment.
+    * v15 and older end before them.  For those the live session's values
+    * are LEFT ALONE, exactly as v3.7.0 did: users save mid-game, after the
+    * boot stub is in, so forcing "not injected" would re-arm the $005E40
+    * GPU-magic stomp (and the $050176 re-injection) over the game's own
+    * RAM -- corrupting a state that loads fine today.  A fresh core holds
+    * the defaults anyway. */
+   if (version >= STATE_VERSION_BIOS_CD_BOOT)
+   {
+      buf += JaguarCDBiosStateLoad(buf);
+      buf += CDROMStateExtLoad(buf);
+   }
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
