@@ -196,6 +196,44 @@ uint64_t gpu_pipe_ext_total   = 0;
 static uint32_t gpu_opcode_first_parameter;
 static uint32_t gpu_opcode_second_parameter;
 
+/* Late write-back of an external load (issue #811).  JTRM Rev 8 p.35:
+ * "No score-board protection applies to writes. Therefore, if two
+ * instructions both write to the same register and the first one
+ * completes after the second, the data will be written out of
+ * sequence"; and p.37 on loads through the external gateway, "the data
+ * is not loaded into the target register, however, until the external
+ * transfer has taken place".  p.136 lists the consequence as TOM/JERRY
+ * bug 13, "Scoreboard failure on successive writes", with this very
+ * example:
+ *
+ *     load  (r3),r2
+ *     moveq 3,r2        ; load data is written into r2 AFTER the moveq
+ *
+ * This core writes load data immediately, so the second write used to
+ * win.  Xenowings swaps its object-list double buffer with
+ * `load (r0),r2 / moveq #0,r2 / ... / store r2,(r4=OLP)`: on silicon the
+ * load lands last and OLP gets the list address; here OLP got 0, the OP
+ * walked the STOP object at $000000 every field and gameplay was black.
+ *
+ * Modeled for the one case that is unambiguous: the instruction
+ * IMMEDIATELY after an external load writes the load's target register
+ * without reading it (a read would stall on the score-board, restoring
+ * program order) and is not itself a load/store (the gateway serializes
+ * those).  A one-tick write certainly completes before an external load
+ * (>= 7 sysclks end-to-end even on an idle bus, see GPU_PIPE_* above).
+ * Later instructions are left alone: how far the window reaches depends
+ * on bus latency, which this core does not track by default.
+ *
+ * gpu_ldx_slot is set by the load body and consumed by the exec loop in
+ * the same iteration; the armed fix-up lives in GPUExec() locals and the
+ * loop always executes the following instruction before returning, so
+ * nothing here outlives a slice or needs serializing. */
+static uint32_t *gpu_ldx_slot = NULL;
+static void GPULoadNoteExternal(uint32_t addr);
+/* Diagnostics (test ABI): late write-backs applied since GPUReset.
+ * Monotonic, not serialized -- same convention as gpu_pipe_stall_total. */
+uint64_t gpu_load_wb_fixups = 0;
+
 /* Per-opcode operand classification, indexed by opcode (gpu_dispatch
  * order).  Bit 0: field 1 (IMM_1) names a register this op READS.
  * Bit 1: field 2 (IMM_2) names a register this op READS.  Bit 2: this
@@ -394,6 +432,7 @@ static void GPUPipeMemAccess(uint32_t addr, int isLoad)
  * dram_timing immediate self-cost, exactly as before. */
 #define GPU_PIPE_LOAD(addr) \
    do { \
+      GPULoadNoteExternal(addr); \
       if (vjs.gpuPipelineTiming) GPUPipeMemAccess((addr), 1); \
       else GPU_EXT_ACCESS(addr); \
    } while (0)
@@ -548,6 +587,52 @@ uint32_t gpu_reg_bank_0[32];
 uint32_t gpu_reg_bank_1[32];
 static uint32_t * gpu_reg;
 static uint32_t * gpu_alternate_reg;
+
+/* Issue #811 helpers -- see the comment at gpu_ldx_slot.  The local
+ * window is the same one GPUPipeMemAccess() treats as the GPU's own
+ * bus; everything else goes through the external gateway. */
+static void GPULoadNoteExternal(uint32_t addr)
+{
+   addr &= 0xFFFFFF;
+   if (addr < 0xF02000 || addr > 0xF03FFF)
+      gpu_ldx_slot = &gpu_reg[gpu_opcode_second_parameter];
+}
+
+/* Called right after an external load executed (gpu_ldx_slot set).
+ * Decodes the instruction at gpu_pc -- the next one to execute -- and
+ * returns the load's register slot if that instruction will overwrite
+ * it ahead of the load data, else NULL.  Only peeks GPU local RAM, so
+ * the fetch has no bus side effects. */
+static uint32_t *GPULoadOverwritePeek(uint32_t *val, uint32_t *pc)
+{
+   uint32_t off, n, p1, p2;
+   uint16_t op;
+   uint8_t f;
+
+   if (gpu_pc < GPU_WORK_RAM_BASE || gpu_pc >= GPU_WORK_RAM_BASE + 0x1000 - 1)
+      return NULL;
+   off = gpu_pc - GPU_WORK_RAM_BASE;
+   op  = ((uint16_t)gpu_ram_8[off] << 8) | (uint16_t)gpu_ram_8[off + 1];
+   n   = op >> 10;
+   p1  = (op >> 5) & 0x1F;
+   p2  = op & 0x1F;
+   f   = gpu_pipe_flags[n];
+   /* Must write field 2 without reading it (bit 2 set, bit 1 clear)... */
+   if ((f & 6) != 4)
+      return NULL;
+   /* ...without reading it through field 1 either... */
+   if ((f & 1) && p1 == p2)
+      return NULL;
+   /* ...and must not be a load/store (39-50, 58-61): those wait for the
+    * external gateway, so they complete after the pending load. */
+   if ((n >= 39 && n <= 50) || (n >= 58 && n <= 61))
+      return NULL;
+   if (&gpu_reg[p2] != gpu_ldx_slot)
+      return NULL;
+   *val = *gpu_ldx_slot;
+   *pc  = gpu_pc;
+   return gpu_ldx_slot;
+}
 
 static uint32_t gpu_instruction;
 static uint32_t gpu_opcode_first_parameter;
@@ -1311,6 +1396,8 @@ void GPUReset(void)
    /* Machine reset is the diagnostics' epoch (see their declaration). */
    gpu_pipe_stall_total = 0;
    gpu_pipe_ext_total   = 0;
+   gpu_load_wb_fixups   = 0;
+   gpu_ldx_slot         = NULL;
 
    // GPU registers (directly visible)
    gpu_flags			  = 0x00000000;
@@ -2141,6 +2228,10 @@ void GPUExec(int32_t cycles)
    uint32_t riscScale;
    int      idleSkipActive;
    int      gdbArmedSlice;
+   /* Issue #811 late load write-back, armed for exactly the next
+    * instruction (see gpu_ldx_slot). */
+   uint32_t *ldxArmed = NULL;
+   uint32_t ldxVal = 0, ldxPc = 0;
 
    if (!GPU_RUNNING)
       return;
@@ -2212,8 +2303,11 @@ void GPUExec(int32_t cycles)
     * loop runs between retro_run() calls -- so refreshing after it is
     * sufficient. */
    gdbArmedSlice = gdbArmedGPU;
+   gpu_ldx_slot  = NULL;
 
-   while (cycles > 0 && GPU_RUNNING)
+   /* An armed late write-back runs one instruction past the budget so a
+    * load/overwrite pair never straddles a slice (see gpu_ldx_slot). */
+   while ((cycles > 0 || ldxArmed) && GPU_RUNNING)
    {
       uint16_t opcode;
       uint32_t index;
@@ -2262,6 +2356,23 @@ void GPUExec(int32_t cycles)
       if (pipeTiming)
          GPUPipeCheckUse(index);
       executeOpcode(index);
+      /* Issue #811: the previous instruction was an external load and
+       * this one overwrote its target -- the load data lands last. */
+      if (ldxArmed)
+      {
+         if (pcThis == ldxPc
+               && &gpu_reg[gpu_opcode_second_parameter] == ldxArmed)
+         {
+            *ldxArmed = ldxVal;
+            gpu_load_wb_fixups++;
+         }
+         ldxArmed = NULL;
+      }
+      if (gpu_ldx_slot)
+      {
+         ldxArmed = GPULoadOverwritePeek(&ldxVal, &ldxPc);
+         gpu_ldx_slot = NULL;
+      }
       if (pipeTiming)
       {
          gpu_pipe_clock += (uint64_t)gpu_opcode_cycles[index] + gpu_bus_stall
