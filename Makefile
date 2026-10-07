@@ -2086,6 +2086,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# in the `if [ -n "$$disc" ]` block, where it silently ran nowhere but
 	@# a corpus machine.
 	./test/tools/test_disk_control ./$(TARGET) --case 5 --quiet
+	@# Case 6 (#810): the Memory Track is exposed as SAVE_RAM from the first
+	@# query of a no-content boot, and a frontend-loaded .srm reaches mtMem.
+	@# Also disc-free, so it stays outside the corpus guard for the same
+	@# reason as case 5.
+	./test/tools/test_disk_control ./$(TARGET) --case 6 --quiet
 
 	@# Baldies HLE cutscene (#738): the boot classifier PASSED this title
 	@# while it was frozen from frame ~600 (it reaches game code and is
@@ -2113,6 +2118,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		rc=0; \
 		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 1 --quiet || rc=1; \
 		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 3 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 7 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 8 --option virtualjaguar_memory_track=disabled --quiet || rc=1; \
 		discb=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | sed -n 2p); \
 		if [ -n "$$discb" ]; then \
 			if ./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --disc-b "$$discb" --case 4 --quiet; then :; \

@@ -71,6 +71,7 @@ _joypad1Buttons
 _InputDev*
 _Quad*
 _MTState*
+_mtMem
 _NVMBios*
 _NVM_*
 _JGD*
