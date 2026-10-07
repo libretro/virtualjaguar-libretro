@@ -183,6 +183,7 @@ void Exception(int nr, uint32_t oldpc, int ExceptionSource)
 
 	m68k_setpc(m68k_read_memory_32(4 * nr));
 	fill_prefetch_0();
+	M68KPrefetchFlush();	/* exception processing refills the queue */
 	/* Handle trace flags depending on current state */
 }
 

@@ -1336,7 +1336,7 @@ $(CORE_DIR)/libretro.o: $(VERSION_H)
 clean:
 	rm -f $(TARGET) $(OBJECTS) $(BUILD_CONFIG_STAMP) $(LEGACY_LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
-		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops \
+		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_fountain_crash test/test_audio_pipeline \
@@ -1414,7 +1414,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
 test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb test/tools/test_gdbstub_proto \
-		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
+		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_fountain_crash \
@@ -1580,6 +1580,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/tools/test_gdbstub_proto
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
+	./test/test_m68k_prefetch
 	./test/test_gpu_ops
 	./test/test_dsp_ops
 	./test/test_dsp_unit
@@ -2126,9 +2127,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Xenowings in-game video (#811): the GPU's object-list swap is
 	@# `load (r0),r2 / moveq #0,r2`, which only works because the external
 	@# load lands after the moveq (JTRM p.136, TOM bug 13).  Without that
-	@# OLP=0 and every gameplay frame is black.  The tool waits for the
-	@# menu, presses B, waits for the loading screen and needs a lit
-	@# 326-wide playfield frame.  Private corpus only.
+	@# OLP=0 and every gameplay frame is black.  Then the game's
+	@# self-modifying anti-tamper check at 68K $$350C needs the 68000
+	@# prefetch queue (m68kinterface.c), or the game drops back to its
+	@# loader a few frames in.  The tool waits for the menu, presses B,
+	@# waits for the loading screen and needs 600 consecutive lit 326-wide
+	@# playfield frames with no return to the loader.  Private corpus only.
 	@rom=$$(bash scripts/find-rom.sh 'xenowings.rom' '*xenowings*.rom' '*xenowings*.j64' '*xenowings*.jag'); \
 	if [ -n "$$rom" ]; then \
 		$(MAKE) --no-print-directory test/tools/xenowings_ingame_video >/dev/null || exit 1; \
@@ -2398,6 +2402,10 @@ test/test_m68k_ops: test/test_m68k_ops.c
 test/test_m68k_irq_ssp: test/test_m68k_irq_ssp.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_m68k_irq_ssp.c -ldl
+
+test/test_m68k_prefetch: test/test_m68k_prefetch.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_m68k_prefetch.c -ldl
 
 test/test_gpu_ops: test/test_gpu_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \

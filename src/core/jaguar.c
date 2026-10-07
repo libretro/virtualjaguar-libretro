@@ -834,6 +834,8 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
    {
+      if (M68K_PF_NEAR(address, 1))
+         M68KPrefetchSnoop(address, 1);   /* self-modifying code, #811 */
       if (blitMemoMode)
          BlitMemoWriteHook(address, 1, value);
       jaguarMainRAM[address] = value;
@@ -893,6 +895,8 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
+      if (M68K_PF_NEAR(address, 2))
+         M68KPrefetchSnoop(address, 2);   /* self-modifying code, #811 */
       if (blitMemoMode)
          BlitMemoWriteHook(address, 2, value);
       SET16(jaguarMainRAM, address, value);
@@ -949,6 +953,8 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
        * `value` already matches JaguarWriteLong's record shape. */
       VJT_WATCH_WR(address, value, M68K);
       M68K_BUS_CHARGE(address, 2);
+      if (M68K_PF_NEAR(address, 4))
+         M68KPrefetchSnoop(address, 4);   /* self-modifying code, #811 */
       if (blitMemoMode)
          BlitMemoWriteHook(address, 4, value);
       SET32(jaguarMainRAM, address, value);
