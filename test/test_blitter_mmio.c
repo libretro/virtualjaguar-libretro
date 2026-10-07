@@ -43,8 +43,9 @@ void TexDumpLaunch(void) {}
 int texReplaceEnabled = 0;               /* texture replacement off */
 int TexReplacePreBlit(void) { return 0; }
 void TexReplacePostBlit(void) {}
-void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base)
-{ (void)b_count; (void)b_cmd; (void)a1_base; }   /* inframe_hang (#740) */
+void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
+                         uint32_t dst_flags, uint32_t dst_x)
+{ (void)b_count; (void)b_cmd; (void)a1_base; (void)dst_flags; (void)dst_x; }   /* inframe_hang (#740, #800) */
 
 /* Blitter bus-time model dependencies (vjs.blitterTiming stays 0 in the
  * stub settings above, so the timing path short-circuits; these only

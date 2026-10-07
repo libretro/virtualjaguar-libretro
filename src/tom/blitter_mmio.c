@@ -15,6 +15,9 @@
 #define A1_BASE         ((uint32_t)0x00)
 #define A1_FLAGS        ((uint32_t)0x04)
 #define A1_PIXEL        ((uint32_t)0x0C)
+#define A2_FLAGS        ((uint32_t)0x28)
+#define A2_PIXEL        ((uint32_t)0x30)
+#define CMD_DSTA2       ((uint32_t)0x00000800)
 #define COMMAND         ((uint32_t)0x38)
 #define PIXLINECOUNTER  ((uint32_t)0x3C)
 #define SRCDATA         ((uint32_t)0x40)
@@ -407,7 +410,13 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * ends, so the per-frame watchdog would never see it. */
       CrashDetectNoteBlit(GET32(blitter_ram, PIXLINECOUNTER),
                           GET32(blitter_ram, COMMAND),
-                          GET32(blitter_ram, A1_BASE));
+                          GET32(blitter_ram, A1_BASE),
+                          (GET32(blitter_ram, COMMAND) & CMD_DSTA2)
+                             ? GET32(blitter_ram, A2_FLAGS)
+                             : GET32(blitter_ram, A1_FLAGS),
+                          (GET32(blitter_ram, COMMAND) & CMD_DSTA2)
+                             ? GET16(blitter_ram, A2_PIXEL + 2)
+                             : GET16(blitter_ram, A1_PIXEL + 2));
 
       blit_in_progress = 1;
       if (BlitterCompareIsEnabled())

@@ -9,6 +9,12 @@
  * the two values measured on Music Demo (ScatoLOGIC) in BIOS mode, and the
  * B_COUNT=0 boot blit three commercial Williams/Telegames carts issue.
  *
+ * Second table: CrashDetectBlitNeverEnds() (issue #800), the blits whose
+ * pixel count is small but whose inner counter never decrements -- phrase
+ * mode below 8bpp, per INNER.NET's Inc0-Inc3 decode.  DEMO1B's blit
+ * (B_COUNT=$000000DC, 14.4M "pixels") sits under the 2^24 threshold, so
+ * the pixel rule alone never named it.
+ *
  * Build: make TEST_EXPORTS=1 test/test_crash_detect_inframe
  * Run:   ./test/test_crash_detect_inframe ./virtualjaguar_libretro.dylib
  */
@@ -18,6 +24,40 @@
 #include <dlfcn.h>
 
 typedef int (*absurd_fn)(uint32_t);
+typedef int (*never_fn)(uint32_t, uint32_t, uint32_t);
+
+/* A1_FLAGS / A2_FLAGS: pixel size in bits 3-5, X add control in bits
+ * 16-17 (00 = phrase mode, 01 = add pixel size). */
+#define FLAGS_PHRASE(psz)  ((uint32_t)(psz) << 3)
+#define FLAGS_PIXEL(psz)   (((uint32_t)(psz) << 3) | 0x00010000u)
+
+struct never_row {
+   const char *name;
+   uint32_t b_count;
+   uint32_t dst_flags;
+   uint32_t dst_x;
+   int want;
+};
+
+static const struct never_row never_rows[] = {
+   /* Measured: DEMO1B [a1] HLE, all address registers zero (A1_FLAGS=0 =
+    * phrase mode, 1bpp), outer 0, inner $DC. */
+   { "DEMO1B [a1] $000000DC, 1bpp phrase, x=0",  0x000000DCu, FLAGS_PHRASE(0), 0, 1 },
+   /* Music Demo BIOS (#794): A1_FLAGS=$00200000 -> phrase, 1bpp, x=0. */
+   { "Music Demo $2710826D, flags $00200000",    0x2710826Du, 0x00200000u,     0, 1 },
+   { "2bpp phrase, x even",                      0x00010010u, FLAGS_PHRASE(1), 4, 1 },
+   { "4bpp phrase, x odd, inner 2",              0x00010002u, FLAGS_PHRASE(2), 5, 1 },
+   /* The 8/16/32 bpp decodes always decrement (Inc1-Inc3). */
+   { "same at 8bpp phrase",                      0x000000DCu, FLAGS_PHRASE(3), 0, 0 },
+   { "same at 16bpp phrase",                     0x000000DCu, FLAGS_PHRASE(4), 0, 0 },
+   { "same at 32bpp phrase",                     0x000000DCu, FLAGS_PHRASE(5), 0, 0 },
+   /* Pixel mode always decrements by one. */
+   { "1bpp pixel mode",                          0x000000DCu, FLAGS_PIXEL(0),  0, 0 },
+   /* The first write can still end the line. */
+   { "1bpp phrase, inner 0 (count==0, one write)", 0x00010000u, FLAGS_PHRASE(0), 0, 0 },
+   { "1bpp phrase, inner 1, x odd",              0x00010001u, FLAGS_PHRASE(0), 1, 0 },
+   { "1bpp phrase, inner 1, x even",             0x00010001u, FLAGS_PHRASE(0), 2, 1 },
+};
 
 struct row {
    const char *name;
@@ -55,6 +95,7 @@ int main(int argc, char **argv)
 #endif
    void *handle;
    absurd_fn fn;
+   never_fn never;
    unsigned i, fails = 0;
 
    handle = dlopen(core, RTLD_LAZY);
@@ -82,11 +123,32 @@ int main(int argc, char **argv)
       }
    }
 
+   never = (never_fn)dlsym(handle, "CrashDetectBlitNeverEnds");
+   if (!never)
+   {
+      fprintf(stderr, "FAIL: CrashDetectBlitNeverEnds not exported (build with TEST_EXPORTS=1)\n");
+      return 1;
+   }
+   for (i = 0; i < sizeof(never_rows) / sizeof(never_rows[0]); i++)
+   {
+      const struct never_row *r = &never_rows[i];
+      int got = never(r->b_count, r->dst_flags, r->dst_x);
+      if (got != r->want)
+      {
+         fprintf(stderr, "FAIL: %s (B_COUNT=$%08X flags=$%08X x=%u): never_ends got %d want %d\n",
+                 r->name, (unsigned)r->b_count, (unsigned)r->dst_flags,
+                 (unsigned)r->dst_x, got, r->want);
+         fails++;
+      }
+   }
+
    if (fails)
    {
       fprintf(stderr, "test_crash_detect_inframe: %u failure(s)\n", fails);
       return 1;
    }
-   printf("test_crash_detect_inframe: %u cases PASS\n", (unsigned)(sizeof(rows) / sizeof(rows[0])));
+   printf("test_crash_detect_inframe: %u cases PASS\n",
+          (unsigned)(sizeof(rows) / sizeof(rows[0])
+                     + sizeof(never_rows) / sizeof(never_rows[0])));
    return 0;
 }

@@ -63,13 +63,22 @@ unsigned CrashDetectCDSeekWedgeStreak(void);
  * retro_run and the per-frame checks never get a turn.  Called at blit
  * dispatch, before either engine runs: logs `inframe_hang` once per
  * LOG_REPEAT window when the blit is absurdly large, then lets it run --
- * log only, no behaviour change.  b_count = B_COUNT ($F0223C). */
-void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base);
+ * log only, no behaviour change.  b_count = B_COUNT ($F0223C); dst_flags
+ * and dst_x feed CrashDetectBlitNeverEnds. */
+void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
+                         uint32_t dst_flags, uint32_t dst_x);
 
 /* Whether a B_COUNT value's pixel count (inner * outer, as the accurate
  * engine executes it) crosses the inframe_hang threshold.  Split out for
  * the unit test. */
 int CrashDetectBlitIsAbsurd(uint32_t b_count);
+
+/* Whether the blit's first inner loop can never end (issue #800): phrase
+ * mode below 8bpp, where the netlist's inner-counter decrement is
+ * dstxp[0] and phrase-aligned X keeps it at zero.  dst_flags = A1_FLAGS
+ * (A2_FLAGS when B_CMD.DSTA2), dst_x = that pointer's X.  Split out for the
+ * unit test. */
+int CrashDetectBlitNeverEnds(uint32_t b_count, uint32_t dst_flags, uint32_t dst_x);
 
 /* Per-frame hook -- call once at the END of JaguarExecuteNew so all
  * subsystems have been advanced.  fb may be NULL if no framebuffer
