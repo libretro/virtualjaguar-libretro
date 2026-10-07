@@ -288,7 +288,7 @@ Single phrase. Halts OP processing for the current scanline.
 | Bits | Name | Description |
 |------|------|-------------|
 | 0-2 | TYPE | Object type = 4 |
-| 3-63 | -- | Unused (but bit 3 may optionally trigger an interrupt) |
+| 3-63 | DATA | JTRM Rev 8 p.20: "stops object processing and interrupts the host"; bits 3-63 are free data for the CPU interrupt handler. **Emulator differs:** `src/tom/op.c` `OBJECT_TYPE_STOP` raises the interrupt only if bit 3 is set (follow-up on #820). |
 
 The OP restarts from OLP (Object List Pointer) on the next scanline.
 
@@ -352,7 +352,7 @@ Lower bit depths use a CLUT (colour lookup table) in TOM. The INDEX field in BIT
 
 7. **FIRSTPIX for fine scrolling**: FIRSTPIX specifies which pixel within the first data phrase to start rendering from. This enables smooth horizontal scrolling at sub-phrase granularity without needing to shift the entire data buffer.
 
-8. **VDE comparison bug**: On some hardware revisions, VDE comparison against VC doesn't work correctly unless VC is first written with $FFFF. See the VC register workaround in `src/tom/tom.c`.
+8. **VDE comparison bug**: Software Reference v2.4 p.13 (PDF p.16) says that, because of a console bug, VDE should be set to $FFFF so the Object Processor processes every line. The further claim that VC must also be written $FFFF has **no source** in JTRM v8/v10, the Software Reference or Hardware Bugs & Warnings. See the VDE handling in `src/tom/tom.c` (`startingHalfline`/`endingHalfline`).
 
 9. **Scaled objects and REMAINDER**: For scaled objects, the REMAINDER field must be managed correctly. The OP writes back the updated REMAINDER to the object in RAM after each scanline. This means objects in ROM won't scale correctly (they need to be in RAM for writeback).
 

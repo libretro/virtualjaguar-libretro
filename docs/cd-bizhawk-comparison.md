@@ -595,8 +595,8 @@ admitting them.
   `jagMemSpace[0x80040B] &= 0xFE` auth skip and the `$005E40` GPU-magic
   hook (`jagcd_bios.c:52-56`) are unique to us.
 * **The distilled JTRM notes have nothing on BUTCH.** `docs/jtrm-*.md`
-  yields three incidental mentions (`jtrm-jerry.md:234`, `:416` on I2S
-  slave mode; `jtrm-register-map.md:581` noting BUTCH sits on GPIO0) and no
+  yields three incidental mentions (`jtrm-jerry.md` I2S slave-mode
+  callback text and Known Gotcha 8; `jtrm-register-map.md` GPIO0 row noting BUTCH sits there) and no
   register or timing detail. The primary source *does* exist, in the main
   checkout at `docs/atari-jaguar-1999/'06 - Jaguar CD-ROM.pdf'` (39 pages;
   gitignored, so it is absent from a fresh `git worktree` — check the main

@@ -1,11 +1,13 @@
 ;
 ; tests/irq/tom_int1_readback.s - TOM_INT1 enable mask is *write-only*.
 ;
-; Per src/tom/tom.c the documented hardware semantic for $F000E0 is
-; "R/W ---xxxxx ---xxxxx" -- only the low 5 bits of each byte are
-; meaningful, and writes to bits 8..12 (the enable mask high byte)
-; are NOT readable.  Reads return pending status in the low 5 bits
-; of the low byte; the high byte always reads as 0.
+; Per JTRM Rev 8 p.16 (INT1, $F000E0): bits 0-4 write the enable mask for
+; the five CPU interrupt sources, and when READ the same bits report which
+; interrupts are PENDING; bits 8-12 are write-1-to-clear for the pending
+; latches (they are not an enable byte).  So the enable mask is not
+; readable.  (src/tom/tom.c models the register as "R/W ---xxxxx ---xxxxx"
+; and returns 0 in the high byte; that part is emulator behaviour, not a
+; manual statement.)
 ;
 ; This test pins down that semantic so a future change can't
 ; silently make the enable bits readable.  If real hardware does

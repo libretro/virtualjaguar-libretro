@@ -19,7 +19,9 @@ The Blitter is a 64-bit DMA engine in TOM that performs pixel-level operations. 
 
 The blitter operates in an inner/outer loop pattern. The inner loop processes pixels across a line; the outer loop steps to the next line. B_COUNT register sets both counts.
 
-Derived from: `src/tom/blitter.c` -- NOT verified against the JTRM
+Derived from: `src/tom/blitter.c` -- NOT verified against the JTRM, EXCEPT the parts below carrying their own
+`Source: JTRM Rev 8 p.N` tag (PITCH, window width, B_CMD bit list, LFU, B_SRCZ1/2, B_COUNT), which were re-read
+against the PDF in the #820 docs pass. The rest of the file is still unverified.
 
 ## Address Generators
 
@@ -51,6 +53,8 @@ Derived from: `src/tom/blitter.c` -- NOT verified against the JTRM
 | 18 | YADDCTL | Y add control: 0=+0, 1=+1 (overridden by X control in add-increment mode) |
 | 19 | XSIGNSUB | X addition is subtraction (for right-to-left; only valid with X add-pixel-size mode) |
 | 20 | YSIGNSUB | Y addition is subtraction (for bottom-to-top) |
+
+Source: JTRM Rev 8 pp.70-71 (A1 flags register: pitch 3 = 2 phrase gaps, X/Y add control, sign bits).
 
 ### Window Width Encoding (6-bit Floating Point)
 
@@ -105,51 +109,78 @@ Writing B_CMD starts a blitter operation. 31 control bits:
 | 10 | UPDA2 | Update A2 pointer each outer loop |
 | 11 | DSTA2 | A2 is destination (normally A1 is dest) |
 | 12 | GOURD | Enable Gouraud shading |
-| 13 | ZBUFF | Enable Z-buffer comparison |
-| 14 | TOPBEN | Top byte transparency enable |
-| 15 | TOPNEN | Top nibble transparency enable |
+| 13 | GOURZ | Enable polygon (computed) Z updates within the inner loop; the Z comparator itself is ZMODE (bits 18-20) |
+| 14 | TOPBEN | Enable carry into the top byte of the intensity integers in Gouraud updates (leave clear for CRY) |
+| 15 | TOPNEN | Enable carry into the top nibble of the intensity integers in Gouraud updates (leave clear for CRY) |
 | 16 | PATDSEL | Use pattern data (B_PATD) instead of LFU output |
 | 17 | ADDDSEL | Add source and destination pixel values |
-| 18-20 | ZMODE | Z compare mode: 0=never, 1=less, 2=equal, 3=lequal, 4=greater, 5=nequal, 6=gequal, 7=always |
-| 21-24 | LFU | Logic Function Unit control (4-bit truth table) |
+| 18-20 | ZMODE | Z comparator inhibit conditions, ORed: bit 0 = source < dest, bit 1 = source = dest, bit 2 = source > dest; 0 disables the comparator; 16bpp only |
+| 21-24 | LFU | Logic Function Unit control: OR of minterms (bit 21 ~S&~D, 22 ~S&D, 23 S&~D, 24 S&D) |
 | 25 | CMPDST | Compare with destination (else source) for transparency |
-| 26 | BCOMPEN | Bit comparator enable (1bpp transparency) |
+| 26 | BCOMPEN | Bit comparator enable (write inhibit on the bit-comparator output; whole phrases only for 8bpp) |
 | 27 | DCOMPEN | Data comparator enable (pixel-level transparency) |
 | 28 | BKGWREN | Allow writes to background (transparent) pixels |
 | 29 | BUSHI | High bus priority (moves blitter up in priority chain) |
-| 30 | SRCSHADE | Apply Gouraud shading to source data |
+| 30 | SRCSHADE | Apply Gouraud shading to source data (hardware needs GOURZ set too: TOM #9) |
+
+Source: JTRM Rev 8 pp.73-75 (Command Register, bits 0-30; bits 14/15 are carry enables, not transparency;
+ZMODE is a 3-bit OR of conditions, not an enumerated compare). Bit positions agree with `src/tom/blitter.c`
+(`UPDA1 0x200`, `Z_OP_INF 0x40000`, `LFU_NAN 0x200000`, `BCOMPEN 0x4000000`, ...).
 
 ### B_CMD Status (read from same address $F02238)
 
 When read, returns blitter status:
-- Bit 0: IDLE (1 = blitter is idle/done)
-- Bits 1-15: Internal state machine status (for debugging)
+- Bit 0: IDLE (1 = blitter is completely idle and its last bus transaction completed)
+- Bit 1: STOPPED (stopped in collision-detection mode)
+- Bits 2-15: Internal state machine status (diagnostic only)
+- Bits 16-31: inner count (diagnostic only)
+
+Source: JTRM Rev 8 p.75 "Status Register".
 
 ## Logic Function Unit (LFU)
 
-4-bit truth table encoding for combining source (S) and destination (D):
+The LFU output is the Boolean OR of four minterms of Source (S) and Destination (D), selected by B_CMD bits
+21-24 (LFU[0] = bit 21 ... LFU[3] = bit 24):
+
+| LFU bit | B_CMD bit | Minterm |
+|---------|-----------|---------|
+| 0 | 21 | ~S & ~D |
+| 1 | 22 | ~S & D |
+| 2 | 23 | S & ~D |
+| 3 | 24 | S & D |
+
+Source: JTRM Rev 8 p.74 (LFUFUNC). Code agrees: `src/tom/blitter.c` `LFU_NAN/LFU_NA/LFU_AN/LFU_A` =
+bits 21/22/23/24; `test/acid/include/jaguar_regs.s` `LFU_FN_x`.
 
 | LFU[3:0] | S=0,D=0 | S=0,D=1 | S=1,D=0 | S=1,D=1 | Function |
-|-----------|---------|---------|---------|---------|----------|
+|----------|---------|---------|---------|---------|----------|
 | 0000 | 0 | 0 | 0 | 0 | ZERO |
 | 0001 | 1 | 0 | 0 | 0 | ~S & ~D (NOR) |
-| 0010 | 0 | 0 | 1 | 0 | S & ~D |
-| 0011 | 1 | 0 | 1 | 0 | S (REPLACE) |
-| 0100 | 0 | 1 | 0 | 0 | ~S & D |
-| 0101 | 1 | 1 | 0 | 0 | D (NOP) |
+| 0010 | 0 | 1 | 0 | 0 | ~S & D |
+| 0011 | 1 | 1 | 0 | 0 | ~S |
+| 0100 | 0 | 0 | 1 | 0 | S & ~D |
+| 0101 | 1 | 0 | 1 | 0 | ~D |
 | 0110 | 0 | 1 | 1 | 0 | S ^ D (XOR) |
-| 0111 | 1 | 1 | 1 | 0 | S | D (OR) |
-| 1000 | 0 | 0 | 0 | 1 | ~S & D (NAND complement?) |
+| 0111 | 1 | 1 | 1 | 0 | ~(S & D) (NAND) |
+| 1000 | 0 | 0 | 0 | 1 | S & D (AND) |
 | 1001 | 1 | 0 | 0 | 1 | ~(S ^ D) (XNOR) |
-| 1100 | 0 | 0 | 1 | 1 | S & D (AND) |
+| 1010 | 0 | 1 | 0 | 1 | D (destination unchanged) |
+| 1011 | 1 | 1 | 0 | 1 | ~S \| D |
+| 1100 | 0 | 0 | 1 | 1 | S (REPLACE / copy source) |
+| 1101 | 1 | 0 | 1 | 1 | S \| ~D |
+| 1110 | 0 | 1 | 1 | 1 | S \| D (OR) |
 | 1111 | 1 | 1 | 1 | 1 | ONE |
 
-In B_CMD encoding: LFU bits are at positions [24:21], so:
-- LFU_REPLACE (S copy) = 0b0011 << 21 = $00600000
-- LFU_OR = 0b0111 << 21 = $00E00000
+In B_CMD encoding the function nibble is shifted left by 21:
+- LFU_REPLACE (S copy) = 0b1100 << 21 = $01800000
+- LFU_OR = 0b1110 << 21 = $01C00000
 - LFU_XOR = 0b0110 << 21 = $00C00000
-- LFU_AND = 0b1100 << 21 = $01800000
+- LFU_AND = 0b1000 << 21 = $01000000
+- LFU_NOTS (~S) = 0b0011 << 21 = $00600000
 - LFU_ZERO = 0b0000 << 21 = $00000000
+
+An earlier version of this section gave LFU_REPLACE = $00600000 (that is ~S) and LFU_AND = $01800000 (that is a
+copy of S), and a 12-row table that was not the p.74 encoding.
 
 ## Modes of Operation
 
@@ -187,18 +218,18 @@ Per-pixel intensity interpolation for smooth shading.
 
 ### Z-Buffered Rendering
 Per-pixel depth comparison.
-- ZBUFF bit in B_CMD
-- ZMODE[18:20] in B_CMD selects comparison
+- GOURZ bit in B_CMD (computed-Z updates), ZMODE enables/selects the comparison
+- ZMODE[18:20] in B_CMD selects the inhibit conditions (bit 0 src<dst, bit 1 src=dst, bit 2 src>dst, ORed)
 - B_Z0-B_Z3: Corner Z values
 - B_ZINC: Z increment per pixel
-- B_SRCZ1/B_SRCZ2: Source Z values (fractional/integer)
+- B_SRCZ1/B_SRCZ2: Source Z / computed Z: SRCZ1 = the four integer parts, SRCZ2 = the four fractional parts (JTRM Rev 8 p.76)
 - DSTWRZ: write Z to destination Z buffer
 - DSTENZ: read destination Z for comparison
 
 Gouraud + Z-buffer example (from JTRM):
 1. Set A1 = colour buffer, A2 = source (or pattern for solid polygons)
 2. Set Z buffer in a separate pass or use interleaved Z
-3. Enable GOURD | ZBUFF | DSTWRZ
+3. Enable GOURD | GOURZ | DSTWRZ
 4. Set intensities and Z values at corners, increments per pixel
 
 ## Data Registers
@@ -208,8 +239,8 @@ Gouraud + Z-buffer example (from JTRM):
 | $F02240 | B_SRCD | 64-bit | Source data (2 x 32-bit writes) |
 | $F02248 | B_DSTD | 64-bit | Destination data |
 | $F02250 | B_DSTZ | 64-bit | Destination Z |
-| $F02258 | B_SRCZ1 | 64-bit | Source Z fraction |
-| $F02260 | B_SRCZ2 | 64-bit | Source Z integer |
+| $F02258 | B_SRCZ1 | 64-bit | Source Z register 1: integer parts of computed Z (JTRM Rev 8 p.76; v10 p.4) |
+| $F02260 | B_SRCZ2 | 64-bit | Source Z register 2: fractional parts of computed Z (JTRM Rev 8 p.76; v10 p.4) |
 | $F02268 | B_PATD | 64-bit | Pattern data |
 | $F02270 | B_IINC | 32-bit | Intensity increment (16.16 fixed) |
 | $F02274 | B_ZINC | 32-bit | Z increment |
@@ -221,8 +252,12 @@ Gouraud + Z-buffer example (from JTRM):
 
 | Bits | Name | Description |
 |------|------|-------------|
-| 0-15 | INNER | Inner loop count (pixels per line) |
-| 16-31 | OUTER | Outer loop count (number of lines) |
+| 0-15 | INNER | Inner loop count (pixels per line); 1-65536, encoded 0 = 65536 (v8 p.75) |
+| 16-31 | OUTER | Outer loop count (number of lines); 1-65536, encoded 0 = 65536 (v8 p.75) |
+
+Source: JTRM Rev 8 p.75 "Counters Register". The accurate engine does NOT run inner 0 as 65536 steps (it does one
+step of at most 64 px, because `BlitterMidsummer2` stops on the bit-15 crossing); real games rely on that (see
+`src/core/crash_detect.c` `inframe_hang`, `docs/jtrm-errata.md` A5).
 
 ## Known Emulation Gotchas
 
@@ -232,7 +267,7 @@ Gouraud + Z-buffer example (from JTRM):
 
 3. **Gouraud intensity offset**: There is a known divergence between fast and accurate blitter modes in Gouraud shading output. See `test/tools/test_blitter_compare`.
 
-4. **BUSHI priority**: When BUSHI (bit 29) is set, the blitter runs at elevated bus priority (level 5 instead of 10). This can starve the 68K. Games use this for time-critical blits.
+4. **BUSHI priority (do not set)**: When BUSHI (bit 29) is set, the blitter runs at elevated bus priority (above the OP, v8 p.75). The manual documents it as a speed-up for many short blits, but v8's own bug list (TOM #24, p.138), Software Reference v2.4 (PDF p.63) and Hardware Bugs & Warnings p.2 #5 all say it must not be set: it can corrupt the OP line-buffer address (horizontal black stripes). The emulator does not model priority escalation (`src/tom/blitter.c`: "Missing: BUSHI"). Earlier text here claimed "games use this for time-critical blits"; that is unverified. See `docs/jtrm-errata.md` A3.
 
 5. **Phrase mode vs pixel mode**: The blitter can address in phrase units or pixel units (XADDCTL in FLAGS). Phrase mode is faster but less flexible. Some games mix modes within the same blit sequence.
 

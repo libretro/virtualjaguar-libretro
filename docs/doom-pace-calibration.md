@@ -587,17 +587,22 @@ in §4.
 
 ### 5B. Load-proportional cost (partly modelled, badly)
 
-4. **Score-boarding / RAW stalls.** `docs/jtrm-gpu-dsp.md:40`, `:263` —
-   *"Not modeling this makes code run too fast."* The renderer is
+4. **Score-boarding / RAW stalls.** `docs/jtrm-gpu-dsp.md` "Pipeline" and
+   "Known Emulation Gotchas" 3 (both `Derived from ... NOT verified` text, not
+   manual evidence; the mechanism was later confirmed from the netlist, see
+   `docs/gpu-timing-spec.md`) — *"Not modeling this makes code run too fast."* The renderer is
    compiler-generated code with constant `load (rN),rN` → immediate-use
    patterns; on silicon each stalls for the external load latency. Likely the
    single biggest missing load-proportional term, and it compounds with (5).
 5. **External LOAD/STORE latency as a *stall*, not just a bus charge.**
-   `docs/jtrm-gpu-dsp.md:140`, `:267`. `GPU_EXT_ACCESS` charges ~5 clocks but
+   `docs/jtrm-gpu-dsp.md` "Instruction Set / Data Movement" (LOAD "varies") and
+   "Known Emulation Gotchas" 7 (`Derived from` text; netlist-confirmed in
+   `docs/gpu-timing-spec.md`). `GPU_EXT_ACCESS` charges ~5 clocks but
    models no dependent-instruction stall. Load/store is **24.6 %** of the
    renderer's static instructions (1687 of 6863 across `r_phase1..9.gas`,
    counted with `grep -cE "^[[:space:]]+(load|store)[bwp]?"`).
-6. **MOVEI costs 3 cycles, not 1.** `docs/jtrm-gpu-dsp.md:134` — the two
+6. **MOVEI costs 3 cycles, not 1.** JTRM Rev 8 p.51 ("Cycle 3: Destination
+   register write"); `docs/jtrm-gpu-dsp.md` "Instruction Set / Data Movement" — the two
    immediate words occupy two extra fetch slots. MOVEI is **16.6 %** of the
    renderer's static instructions (1139 of 6863; per-phase range 13.1 %
    (`r_phase7`) to 21.3 % (`r_phase9`)), giving a **1.33x upper bound**. It is

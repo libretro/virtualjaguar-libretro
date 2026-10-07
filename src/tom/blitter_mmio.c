@@ -210,7 +210,10 @@ uint8_t BlitterReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
    BlitterTimingChargeAccess(who);
 
-   /* Real hardware returns $00000805, as documented in the JTRM. */
+   /* Status read-back: $00000805 = IDLE (bit 0) | inner IDLE (bit 2) |
+    * outer IDLE (bit 11).  The value itself is not printed in the JTRM;
+    * it is derived from the documented status bits (JTRM Rev 8 p.75
+    * "Status Register"; bits 2 and 11 are listed "Diagnostic only"). */
    if (offset == (COMMAND + 0))
       return 0x00;
    if (offset == (COMMAND + 1))

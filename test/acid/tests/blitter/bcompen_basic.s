@@ -1,8 +1,8 @@
 ;
 ; tests/blitter/bcompen_basic.s - BCOMPEN bit-mask compositing (font path).
 ;
-; With BCOMPEN (this emulator: command bit 26 = $04000000, see
-; src/tom/blitter.c:137), source data is treated as a bit-mask: each
+; With BCOMPEN (command bit 26 = $04000000, JTRM Rev 8 p.74; also
+; defined in src/tom/blitter.c), source data is treated as a bit-mask: each
 ; source bit selects whether the corresponding dest pixel gets the
 ; pattern colour (1) or is left alone (0).  This is the path many
 ; games use to render bitmap fonts.
@@ -15,8 +15,9 @@
 ; Expected dest 8 bytes (MSB first across pixels):
 ;   $11 $00 $11 $00  $00 $11 $00 $11
 ;
-; Command bits (per src/tom/blitter.c, which is authoritative for this
-; emulator and differs from JTRM's older bit numbering):
+; Command bits (per JTRM Rev 8 pp.73-75 "Command Register"; these are the
+; same bit numbers src/tom/blitter.c uses -- there is no numbering
+; difference between the manual and the code):
 ;   SRCEN    = $00000001  (bit 0)
 ;   PATDSEL  = $00010000  (bit 16 -- use B_PATD for the foreground colour)
 ;   LFU_AN   = $00800000  (bit 23) -- LFU term: src AND ~dst

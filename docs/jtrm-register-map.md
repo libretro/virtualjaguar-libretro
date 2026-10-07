@@ -48,10 +48,10 @@ Registers in **bold** are boot-time only -- do NOT modify from game code.
 
 | Address | Name | R/W | Width | Description |
 |---------|------|-----|-------|-------------|
-| **$F00000** | **MEMCON1** | RW | 16 | Memory config 1. Bit 0: ROMHI. Bits 1-2: ROMWIDTH. Bits 3-4: ROMSPEED. Bits 5-6: DRAMSPEED. Bit 7: FASTROM. Bits 11-12: IOSPEED. Bit 12: BIGEND. Bit 13: HILO. Bit 14: CPU32. |
-| **$F00002** | **MEMCON2** | RW | 16 | Memory config 2. Bits 0-1: COLS0. Bits 2-3: DWIDTH0. Bits 4-5: COLS1. Bits 6-7: DWIDTH1. Bits 8-11: REFRATE. |
+| **$F00000** | **MEMCON1** | RW | 16 | Memory config 1. Bit 0: ROMHI. Bits 1-2: ROMWIDTH. Bits 3-4: ROMSPEED. Bits 5-6: DRAMSPEED. Bit 7: FASTROM. Bits 11-12: IOSPEED. Bit 14: CPU32. (BIGEND/HILO are in MEMCON2, not here.) Source: JTRM Rev 8 p.10. |
+| **$F00002** | **MEMCON2** | RW | 16 | Memory config 2. Bits 0-1: COLS0. Bits 2-3: DWIDTH0. Bits 4-5: COLS1. Bits 6-7: DWIDTH1. Bits 8-11: REFRATE. Bit 12: BIGEND. Bit 13: HILO. Source: JTRM Rev 8 p.11. |
 | $F00004 | HC | RW | 16 | Horizontal count. 10-bit counter (bits 0-9), counts up to HP. Bit 10: which half of line (determines which line buffer is active). Written only for ASIC test. |
-| $F00006 | VC | RW | 16 | Vertical count. 11-bit counter, counts half-lines. Bit 11: odd/even field. GOTCHA: Write $FFFF as workaround for VDE comparison bug on Jaguar Console. |
+| $F00006 | VC | RW | 16 | Vertical count. 11-bit counter, counts half-lines. Bit 11: odd/even field. GOTCHA (unsourced): "write $FFFF to VC as a VDE-compare workaround" appears in no manual we hold (v8, v10, Software Reference v2.4, Hardware Bugs & Warnings); only the VDE=$FFFF half is documented (see VDE). |
 | $F00008 | LPH | RO | 16 | Light pen horizontal (11 bits) |
 | $F0000A | LPV | RO | 16 | Light pen vertical (11 bits, half-lines) |
 | $F00010-16 | OB[0-3] | RO | 64 | Object processor current object data (4 x 16-bit reads). Allows GPU to read OP object parameters. |
@@ -73,7 +73,7 @@ Registers in **bold** are boot-time only -- do NOT modify from game code.
 | **$F00042** | **VBE** | WO | 16 | Vertical blanking end (11-bit half-line) |
 | **$F00044** | **VS** | WO | 16 | Vertical sync (11-bit half-line). Vertical sync starts here. |
 | $F00046 | VDB | WO | 16 | Vertical display begin (11-bit half-line). OP processing starts every line from here to VDE. |
-| $F00048 | VDE | WO | 16 | Vertical display end (11-bit half-line). GOTCHA: Due to a hardware bug, set VDE=$FFFF on Jaguar Console so OP processes every line. |
+| $F00048 | VDE | WO | 16 | Vertical display end (11-bit half-line). GOTCHA: Due to a hardware bug, set VDE=$FFFF on Jaguar Console so OP processes every line. Source: Software Reference v2.4 p.13 (PDF p.16); v8 p.15 documents VDE as a plain half-line compare. |
 | **$F0004A** | **VEB** | WO | 16 | Vertical equalization begin (11-bit half-line) |
 | **$F0004C** | **VEE** | WO | 16 | Vertical equalization end (11-bit half-line) |
 | $F0004E | VI | WO | 16 | Vertical interrupt (11-bit half-line). Must be odd for non-interlaced. Fires once per frame (interlaced: once per field). |
@@ -136,7 +136,7 @@ All GPU registers are 32 bits wide.
 | $F0210C | G_END | WO | Data organisation. Bit 0: BIG_IO (big-endian CPU I/O). Bit 1: BIG_PIX (big-endian pixel org). Bit 2: BIG_INST (big-endian instruction fetch). |
 | $F02110 | G_PC | RW | GPU program counter. Write before setting GPUGO. Read gives current instruction address. |
 | $F02114 | G_CTRL | RW | GPU control/status (see bit layout below) |
-| $F02118 | G_HIDATA | RW | High 16 bits for 48-bit GPU phrase reads/writes |
+| $F02118 | G_HIDATA | RW | 32-bit high long-word for GPU phrase (LOADP/STOREP) transfers; any external load overwrites it (TOM #16). Source: JTRM Rev 8 p.61. |
 | $F0211C | G_REMAIN | RO | Division remainder (read) |
 | $F0211C | G_DIVCTRL | WO | Division control (write). Bit 0: DIV_OFFSET (1 = 16.16 fixed-point division). |
 
@@ -175,6 +175,8 @@ Interrupt vector offsets within local RAM:
 **WARNING:** Writing to flag bits and using them in the following instruction
 will not work due to pipe-lining. Insert at least 2 instructions (or 4 for
 indexed STORE) between a flag-setting STORE and a flag-dependent instruction.
+Source: Software Reference v2.4 p.46 (PDF p.48: two, four for indexed STORE);
+Hardware Bugs & Warnings p.3 #11 (two NOPs). JTRM Rev 8 p.59 says only "at least one".
 
 ### G_CTRL bit layout
 
@@ -250,14 +252,18 @@ idle. B_CMD write initiates the Blitter operation.
 \* Must be refreshed after a blit.
 \*\* Must be refreshed if used to store dynamic data (inner loop read with GOURD or GOURZ set).
 
-Note: JTRM v2.2 and earlier reversed the descriptions of B_SRCZ1 and B_SRCZ2.
-The equates were not changed, so source code is unaffected.
+Note: Software Reference v2.2 and earlier reversed the descriptions of the B_I3..B_I0 and B_Z3..B_Z0
+registers (not B_SRCZ1/B_SRCZ2). The equates were not changed, so source code is unaffected. Source: JTRM Rev 10
+p.4 footnote `***` (marks only those eight registers). JTRM Rev 8 p.77 still uses the older naming (Intensity 0
+at $F0227C, Z0 at $F0228C); this file follows the Rev 10 / JAGUAR.INC equates (B_I3 at $F0227C ... B_I0 at
+$F02288, B_Z3 at $F0228C ... B_Z0 at $F02298). B_SRCZ1 = integer parts of computed Z, B_SRCZ2 = fractional parts
+(JTRM Rev 8 p.76).
 
 ### A1_FLAGS / A2_FLAGS bit layout
 
 | Bit(s) | Name | Description |
 |--------|------|-------------|
-| 0-1 | PITCH | Phrase gap: 2^PITCH phrases between successive pixel data phrases. 0=contiguous, 1=1 gap, 2=3 gaps, 3=7 gaps. Useful for Z-buffer interleaving. |
+| 0-1 | PITCH | Phrase gap: 0=contiguous (distance 1), 1=1 phrase gap (distance 2), 2=3 gaps (distance 4), 3=**2** gaps (distance 3, special case for double-buffered Z). Source: JTRM Rev 8 p.70; `blitter.c` `pitchValue[]={0,1,3,2}`. |
 | 2 | -- | Unused |
 | 3-5 | PIXEL | Pixel size: 0=1bpp, 1=2bpp, 2=4bpp, 3=8bpp, 4=16bpp, 5=32bpp |
 | 6-8 | ZOFFS | Z data offset in phrases from pixel data. Values 0 and 7 not used. |
@@ -269,16 +275,16 @@ The equates were not changed, so source code is unaffected.
 | 20 | YSIGNSUB | Y add becomes subtract |
 
 **WIDTH encoding (6-bit floating point):**
-- Bits 9-12 (4 bits): unsigned exponent
-- Bits 12-14 (3 bits): mantissa (with implicit leading 1)
-- Value = (0b1_mmm) << exponent, where mmm = mantissa bits
+- Bits 14-11: exponent E3..E0 (4 bits, unsigned)
+- Bits 10-9: stored mantissa M1 M0 (the top mantissa bit is an implicit 1, binary point after it)
+- Width in pixels = (1.M1M0)b x 2^E = ((4 | M) << E) >> 2
 
-Valid widths: 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64,
-80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 640, 768, 896,
-1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584.
+Example (the manual's own): width 640 = 1.01b x 2^9, so E = 1001, M = 01 and WIDTH field = 0b100101
+(bits 14..9). Only widths of the form (4+M) x 2^(E-2) are representable, and the width must be a whole
+number of phrases in the current pixel size. See `docs/jtrm-blitter.md` "Window Width Encoding".
 
-Example: width=640. 640 = 1010_000000 binary = 0b1_010 << 7.
-Mantissa = 010, exponent = 0111. WIDTH field = 0b0111_010 = bits [14:9].
+Source: JTRM Rev 8 p.70 (A1 flags register, Width). An earlier version of this entry put the exponent at
+bits 9-12 and the mantissa at bits 12-14 and gave 640 as `0b0111_010`; both were wrong.
 
 **A2_FLAGS** is the same layout but:
 - Bit 15 = MASK (enable Boolean AND masking with A2_MASK register)
@@ -301,7 +307,7 @@ Mantissa = 010, exponent = 0111. WIDTH field = 0b0111_010 = bits [14:9].
 | 10 | UPDA2 | Update A2 step pointer between outer loop passes |
 | 11 | DSTA2 | Destination is A2 (default: A1 is destination, A2 is source) |
 | 12 | GOURD | Gouraud shading enable |
-| 13 | ZBUFF | Z-buffer computation enable |
+| 13 | GOURZ | Enable polygon Z data updates within the inner loop (a.k.a. computed Z; JTRM Rev 8 p.74) |
 | 14 | TOPBEN | Top byte enable (carry into top byte of intensity in Gouraud, leave clear for CRY) |
 | 15 | TOPNEN | Top nibble enable (carry into top nibble, leave clear for CRY) |
 | 16 | PATDSEL | Pattern data select (use B_PATD as write data) |
@@ -313,30 +319,42 @@ Mantissa = 010, exponent = 0111. WIDTH field = 0b0111_010 = bits [14:9].
 | 27 | DCOMPEN | Data comparator enable (transparency: inhibit write on match) |
 | 28 | BKGWREN | Background write enable (when comparator inhibits, write dest data back) |
 | 29 | BUSHI | Bus priority high. HARDWARE BUG: should not be set on Jaguar Console. |
-| 30 | SRCSHADE | Source shading (use IINC to modify intensity of data read from source address) |
+| 30 | SRCSHADE | Source shading (use IINC to modify intensity of data read from source address). Hardware only works if GOURZ is also set (TOM #9, v8 p.135; Hardware Bugs & Warnings Blitter #2) |
 
 ### LFU truth table (bits 21-24)
 
-The LFU implements a 4-bit minterm on Source (S) and Destination (D):
-- Bit 21: output when NOT source AND NOT dest
-- Bit 22: output when source AND NOT dest
-- Bit 23: output when NOT source AND dest
-- Bit 24: output when source AND dest
+The LFU output is the Boolean OR of four minterms of Source (S) and Destination (D), one per bit:
+- Bit 21: ~S & ~D
+- Bit 22: ~S & D
+- Bit 23: S & ~D
+- Bit 24: S & D
 
-| LFU Value | Equate | Operation |
-|-----------|--------|-----------|
-| $000000 | LFU_CLEAR | All zeros |
-| $100000 | LFU_NSAND | ~S & ~D |
-| $200000 | LFU_SAND | S & ~D |
-| $400000 | LFU_NOTS | ~S (complement source) |
-| $600000 | LFU_REPLACE / LFU_S | S (copy source -- most common) |
-| $800000 | LFU_NSAD | ~S & D |
-| $A00000 | LFU_D | D (destination unchanged) |
-| $600000 | LFU_NOTD | ~D |
-| $900000 | LFU_N_SXORD | ~(S ^ D) (XNOR) |
-| $C00000 | LFU_SAD | S & D |
-| $E00000 | LFU_SORD | S | D |
-| $F00000 | LFU_ONE | All ones |
+Source: JTRM Rev 8 p.74 (LFUFUNC bit 0-3 = minterms listed in this order, at B_CMD bits 21-24). Code agrees:
+`src/tom/blitter.c` `LFU_NAN 0x200000`, `LFU_NA 0x400000`, `LFU_AN 0x800000`, `LFU_A 0x1000000`;
+`test/acid/include/jaguar_regs.s` `LFU_FN_x`. Value = (function nibble << 21).
+
+| LFU Value | Function nibble | Operation | Common name |
+|-----------|-----------------|-----------|-------------|
+| $0000000 | 0x0 | 0 | CLEAR |
+| $0200000 | 0x1 | ~S & ~D | NOR |
+| $0400000 | 0x2 | ~S & D | |
+| $0600000 | 0x3 | ~S | NOTS |
+| $0800000 | 0x4 | S & ~D | |
+| $0A00000 | 0x5 | ~D | NOTD |
+| $0C00000 | 0x6 | S ^ D | XOR |
+| $0E00000 | 0x7 | ~(S & D) | NAND |
+| $1000000 | 0x8 | S & D | AND |
+| $1200000 | 0x9 | ~(S ^ D) | XNOR |
+| $1400000 | 0xA | D | destination unchanged |
+| $1600000 | 0xB | ~S \| D | |
+| $1800000 | 0xC | S | **REPLACE / copy source (most common)** |
+| $1A00000 | 0xD | S \| ~D | |
+| $1C00000 | 0xE | S \| D | OR |
+| $1E00000 | 0xF | 1 | ONE |
+
+An earlier version of this table labelled bits 22/23 swapped, gave equate values that did not follow the bit
+positions (S & ~D shown as $200000, ~S as $400000, REPLACE as $600000 -- which is actually ~S) and listed $600000
+twice (REPLACE and NOTD).
 
 ---
 
@@ -468,15 +486,15 @@ multiply/accumulate.
 
 | Address | Name | R/W | Description |
 |---------|------|-----|-------------|
-| $F1A100 | D_FLAGS | RW | DSP flags (same structure as G_FLAGS but with 5 interrupt sources) |
+| $F1A100 | D_FLAGS | RW | DSP flags (same structure as G_FLAGS but with 6 interrupt sources; int 5 uses bits 16/17) |
 | $F1A104 | D_MTXC | WO | Matrix control |
 | $F1A108 | D_MTXA | WO | Matrix address |
 | $F1A10C | D_END | WO | Data organisation |
 | $F1A110 | D_PC | RW | DSP program counter |
-| $F1A114 | D_CTRL | RW | DSP control/status (same layout as G_CTRL) |
+| $F1A114 | D_CTRL | RW | DSP control/status (same layout as G_CTRL, plus INT_LAT5 at bit 16; JTRM Rev 8 p.111) |
 | $F1A118 | D_MOD | RW | Modulo instruction mask (for ADDQMOD/SUBQMOD circular buffer addressing). Set high bits to 1, low bits to 0 for 2^n buffer size. |
 | $F1A11C | D_REMAIN | RO | Division remainder |
-| $F1A11C | D_DIVCTRL | WO | Division control. Bit 0: DIV_OFFSET. |
+| $F1A11C | D_DIVCTRL | WO | Division control. Bit 0: DIV_OFFSET (what `dsp.c` implements; JTRM Rev 8 p.111 prints bit **1** for the DSP and bit 0 for the GPU, p.61 -- unresolved, see `docs/jtrm-errata.md` A14). |
 | $F1A120 | D_MACHI | RO | MAC accumulator high byte (bits 32-39 of 40-bit result, read after RESMAC) |
 
 ### DSP Memory
@@ -485,7 +503,7 @@ multiply/accumulate.
 |-------|------|----------|
 | $F1A000-$F1A1FF | 512 B | DSP control registers |
 | $F1B000-$F1CFFF | 8 KB | DSP local RAM |
-| $F1D000-$F1DFFF | 8 KB | Wave table ROM (8 x 128-entry x 16-bit, sign-extended to 32-bit on read) |
+| $F1D000-$F1DFFF | 4 KB window | Wave table ROM (8 x 128-entry x 16-bit, sign-extended to 32-bit on read; "1K 32-bit locations", JTRM Rev 8 p.98) |
 
 ### Wave Table ROM contents
 
@@ -519,6 +537,12 @@ multiply/accumulate.
 | 12 | D_TIM2CLR | Clear Int 3 latch |
 | 13 | D_EXT0CLR | Clear Int 4 latch |
 | 14 | REGPAGE | Select register bank 1 |
+| 15 | DMAEN | DMA bus priority for LOAD/STORE. Must not be set (see Known Hardware Bugs) |
+| 16 | D_EXT1ENA | Enable Int 5 (External 1 / EINT[1]) |
+| 17 | D_EXT1CLR | Clear Int 5 latch |
+
+Source: JTRM Rev 8 p.109 (INT_ENA0-4 = bits 4-8, INT_CLR0-4 = bits 9-13, DMAEN = 15, INT_ENA5 = 16,
+INT_CLR5 = 17).
 
 DSP interrupt vectors (offsets within local RAM at $F1B000):
 - $F1B000: Int 0 -- CPU
@@ -526,10 +550,11 @@ DSP interrupt vectors (offsets within local RAM at $F1B000):
 - $F1B020: Int 2 -- Timer 1
 - $F1B030: Int 3 -- Timer 2
 - $F1B040: Int 4 -- External 0
+- $F1B050: Int 5 -- External 1
 
-Note: JTRM page 79 also lists Int 5 (External 1) but D_FLAGS only has 5
-enable/clear bit pairs (bits 4-8 / 9-13). The 6th interrupt source exists in
-hardware but is not controllable via the flags register in standard revisions.
+Int 5 (External 1) is controlled by D_FLAGS bits 16 (enable) and 17 (clear); its latch is D_CTRL bit 16
+(JTRM Rev 8 pp.98, 109, 111). An earlier version of this note claimed the 6th source was "not controllable via
+the flags register"; that was wrong. `src/jerry/dsp.c` already implements it (`INT_ENA5`, `INT_CLR5`, `INT_LAT5`).
 
 ---
 
@@ -625,24 +650,29 @@ initialization.
 
 ---
 
-## Known Hardware Bugs (from JTRM "Hardware Bugs & Warnings")
+## Known Hardware Bugs (Atari documents; per-item sources)
 
-1. **VDE comparison bug:** On Jaguar Console, VDE must be set to $FFFF and VC
-   written with $FFFF before VDE comparison works reliably. Standard practice
-   is to set VDE=$FFFF so the OP runs every line.
+Three Atari sources, none of which is a superset of the others: JTRM Rev 8 "TOM and JERRY Bugs List"
+(pp.133-141, rev-2 silicon), "Hardware Bugs & Warnings" (26 Apr 1995, 6 pp, abbreviated HBW), and the
+Software Reference Manual v2.4 (7 Jun 1995, SWR). Full list with a modeled? column: `docs/jtrm-errata.md`
+section C.
 
-2. **DMAEN bug (G_FLAGS bit 15):** Setting DMAEN on Jaguar Console causes
-   improper memory reads. Do not set this bit.
+1. **VDE comparison bug:** VDE must be set to $FFFF so the OP processes every line (SWR p.13, PDF p.16).
+   The additional claim that VC must also be written $FFFF has **no source** in v8, v10, SWR or HBW.
 
-3. **BUSHI bug (B_CMD bit 29):** Setting BUSHI on Jaguar Console can cause
-   system instability. Do not set this bit.
+2. **DMAEN (G_FLAGS/D_FLAGS bit 15):** do not set. SWR p.45 (PDF p.47, GPU), p.81 (PDF p.83, DSP);
+   HBW p.2 #4 (DSP: an external load/store hangs the DSP) and #5 (GPU: disturbs the OP); v8 TOM #24, p.138.
 
-4. **BUS_HOG bug (G_CTRL bit 11):** Setting BUS_HOG on Jaguar Console starves
-   other bus masters. Do not set this bit.
+3. **BUSHI (B_CMD bit 29):** do not set. SWR PDF p.63; HBW p.2 #5; v8 TOM #24, p.138 (no master may outrank the
+   Object Processor; the failure is horizontal black stripes from a corrupted line-buffer address).
 
-5. **GPU STORE + flags pipe-lining:** Writing to flag bits via STORE and testing
-   them in the immediately following instruction does not work. Need 2+
-   instructions gap (4+ for indexed STORE).
+4. **BUS_HOG (G_CTRL/D_CTRL bit 11):** do not set. SWR p.47 (PDF p.49, GPU) and PDF p.85 (DSP). Not in HBW or v8's
+   bug list.
 
-6. **Divide unit timing:** GPU/DSP divide completes in 16 ticks. Reading the
-   quotient or starting another divide before completion inserts wait states.
+5. **GPU/DSP STORE + flags pipe-lining:** writing flag bits via STORE and testing them in the next instruction
+   does not work. SWR p.46 (PDF p.48): 2+ instructions (4+ for indexed STORE); HBW p.3 #11: two NOPs.
+
+6. **Divide:** the divide unit completes in 16 ticks (v8 p.42; the instruction writes its result at cycle 18,
+   p.47) -- that is a timing fact, not a bug. The actual divider bug is **consecutive divides** (v8 TOM #25,
+   p.139; HBW p.3 #9): two divides separated by fewer than 16 clocks, the second taking the first's quotient
+   as an operand with no scoreboard dependency in between, give a wrong second result.

@@ -13,6 +13,7 @@ so they cost nothing until you open them).
   `TEST_EXPORTS` relink, build-identity guard, stale-.o hazard.
 - [`docs/agent/hardware.md`](docs/agent/hardware.md) — 4-processor model, memory map, clocks,
   source layout, distilled JTRM index (`docs/jtrm-*.md`), known limitations.
+- [`docs/jtrm-errata.md`](docs/jtrm-errata.md) — JTRM errata; Atari bug lists vs what we model.
 - [`docs/agent/testing.md`](docs/agent/testing.md) — shared harness, full harness catalog,
   vjtrace, audio-test requirements, crash watchdog signatures, acid gating, profiling, headless
   caveat.

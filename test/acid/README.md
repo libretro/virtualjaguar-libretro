@@ -81,12 +81,13 @@ fundamental encoding mistakes that masked dozens of test failures
 as "real emulator bugs":
 
 1. **TOM_INT1 byte order**: I had the IRQ enable mask in the high
-   byte; per src/tom/tom.c it's the *low* byte.  Fixing this
+   byte; per JTRM Rev 8 p.16 the enables are bits 0-4 (the *low*
+   byte; bits 8-12 are the pending-clear bits).  Fixing this
    recovered every IRQ-delivery test.
 2. **Blitter command bit positions**: I'd been writing `$0001C000`
    thinking the high nibble was the LFU select, but the actual
-   layout (per src/tom/blitter.c) puts SRCEN at bit 0, DSTEN at
-   bit 3, and the LFU function at bits 21..24.  My encoding was
+   layout (JTRM Rev 8 pp.73-75, same as src/tom/blitter.c) puts SRCEN
+   at bit 0, DSTEN at bit 3, and the LFU function at bits 21..24.  My encoding was
    completely bogus.  Fixing this recovered all the blitter mode
    tests.
 3. **JERRY PIT writable vs readable addresses**: $F10000/$F10002
