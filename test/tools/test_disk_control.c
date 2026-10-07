@@ -38,9 +38,30 @@
  *      only the return value would pass against the inert stub this
  *      interface shipped with one commit earlier.
  *
+ *   6  No-content boot exposes the Memory Track as SAVE_RAM from the very
+ *      first query (#810).  Needs no disc.  The size and pointer must be
+ *      CD_SAVE_SIZE and non-NULL straight after the load, and a marker the
+ *      "frontend" writes into the buffer before frame 1 must reach mtMem --
+ *      i.e. the .srm load a frontend does once, after retro_load_game,
+ *      actually lands.  A late-exposure fix would pass a size>0 check after
+ *      an insert and still lose every save, because that load already
+ *      happened against a size of 0.
+ *
+ *   7  Same, then insert a disc.  Size and pointer must be unchanged, the
+ *      marker must still be in mtMem (the insert's reboot must not wipe the
+ *      Memory Track), and the NVM BIOS module cookie must be present in RAM.
+ *
+ *   8  Memory Track DISABLED (--option virtualjaguar_memory_track=disabled):
+ *      nothing to persist on a bare no-content session, so SAVE_RAM is 0 --
+ *      and it STAYS 0 after a disc is inserted.  Deliberate: a frontend sizes
+ *      and loads the buffer once at load, so exposing it for the first time
+ *      after an insert would be a write without a load (the file is
+ *      overwritten at exit from a buffer that never saw it).  Guards against
+ *      "fixing" #810 by keying SAVE_RAM on a mounted disc.
+ *
  * Run: test_disk_control <core> --disc <image> --case N [--quiet]
- *      (--disc is required for cases 1, 3 and 4 only; case 5 is the
- *       no-content boot check and takes no disc.  Case 4 also needs --disc-b.)
+ *      (--disc is required for cases 1, 3, 4, 7 and 8; cases 5 and 6 are
+ *       no-disc no-content boot checks.  Case 4 also needs --disc-b.)
  */
 
 #define _DEFAULT_SOURCE 1
@@ -154,6 +175,48 @@ static void vid_cb(void *ud, const void *data, unsigned w, unsigned h,
     vid_prev_hash = hsh;
 }
 
+/* Mirrors libretro.c: 128 B cart EEPROM + 128 B CD EEPROM + 128 KB Memory
+ * Track.  Hard-coded on purpose -- a test that derived the expectation from
+ * the core's own constant could not catch that constant being wrong. */
+#define DC_CD_SAVE_SIZE   (128u + 128u + 0x20000u)
+#define DC_MT_SAVE_OFFSET 256u
+#define DC_MARKER_OFF     0x40u    /* offset inside the Memory Track        */
+#define DC_NVM_COOKIE_RAM 0x2400u  /* src/core/nvmbios.h NVM_COOKIE_ADDR    */
+
+static size_t (*lr_mem_size)(unsigned);
+static void  *(*lr_mem_data)(unsigned);
+static const uint8_t *mt_mem;      /* the core's real Memory Track array    */
+
+static const uint8_t dc_marker[8] = { 0xA5, 0x5A, 0xC3, 0x3C,
+                                      0x81, 0x18, 0xE7, 0x7E };
+
+/* Stand in for the frontend loading a .srm: it asks for the size and the
+ * pointer once, after retro_load_game, and copies the file into the buffer. */
+static int seed_srm_marker(void)
+{
+    uint8_t *buf = (uint8_t *)lr_mem_data(RETRO_MEMORY_SAVE_RAM);
+
+    if (!buf || lr_mem_size(RETRO_MEMORY_SAVE_RAM) != DC_CD_SAVE_SIZE)
+        return 0;
+    memcpy(buf + DC_MT_SAVE_OFFSET + DC_MARKER_OFF, dc_marker,
+           sizeof(dc_marker));
+    return 1;
+}
+
+/* jaguarMainRAM is a POINTER variable into jagMemSpace, so dlsym returns
+ * the address of the pointer, not of the RAM (cf. cd_wedge_probe.c). */
+static const uint8_t *main_ram(harness_config *c)
+{
+    uint8_t **ramp = (uint8_t **)harness_dlsym(c, "jaguarMainRAM");
+
+    return ramp ? *ramp : NULL;
+}
+
+static int marker_in_mtmem(void)
+{
+    return memcmp(mt_mem + DC_MARKER_OFF, dc_marker, sizeof(dc_marker)) == 0;
+}
+
 static harness_result mkres(int ok, const char *name, const char *detail)
 {
     harness_result r;
@@ -167,7 +230,7 @@ int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     struct retro_game_info gi;
-    harness_result results[6];
+    harness_result results[8];
     unsigned nres = 0;
     const char *disc_path = NULL;
     const char *disc_path_b = NULL;
@@ -185,18 +248,20 @@ int main(int argc, char **argv)
             disc_path_b = argv[i + 1];
     }
     if (case_num != 1 && case_num != 3 && case_num != 4
-        && case_num != 5) {
+        && case_num != 5 && case_num != 6 && case_num != 7
+        && case_num != 8) {
         fprintf(stderr, "usage: test_disk_control <core> --case N "
                         "[--disc <image>] [--disc-b <image>] [--quiet]\n"
-                        "  N is one of 1|3|4|5.  Cases 1, 3 and 4 need "
-                        "--disc <image>; case 4 also needs\n"
-                        "  --disc-b <image>.  Case 5 (no-content boot) "
-                        "takes no disc.\n"
+                        "  N is one of 1|3|4|5|6|7|8.  Cases 1, 3, 4, 7 and 8 "
+                        "need --disc <image>; case 4 also needs\n"
+                        "  --disc-b <image>.  Cases 5 and 6 (no-content "
+                        "boot) take no disc.  Case 8 also wants\n"
+                        "  --option virtualjaguar_memory_track=disabled.\n"
                         "  (case 2 needs a one-session audio disc; none "
                         "exists in the corpus)\n");
         return 1;
     }
-    if (!disc_path && case_num != 5) {
+    if (!disc_path && case_num != 5 && case_num != 6) {
         fprintf(stderr, "test_disk_control: no --disc given\n");
         return 1;
     }
@@ -223,6 +288,17 @@ int main(int argc, char **argv)
     if (!bootcfg) {
         fprintf(stderr, "test_disk_control: bootConfig not exported -- "
                         "rebuild with `make TEST_EXPORTS=1`\n");
+        return 1;
+    }
+
+    lr_mem_size = (size_t (*)(unsigned))harness_dlsym(&cfg,
+                                            "retro_get_memory_size");
+    lr_mem_data = (void *(*)(unsigned))harness_dlsym(&cfg,
+                                            "retro_get_memory_data");
+    mt_mem      = (const uint8_t *)harness_dlsym(&cfg, "mtMem");
+    if (!lr_mem_size || !lr_mem_data || !mt_mem) {
+        fprintf(stderr, "test_disk_control: memory accessors / mtMem not "
+                        "exported -- rebuild with `make TEST_EXPORTS=1`\n");
         return 1;
     }
 
@@ -371,6 +447,129 @@ int main(int argc, char **argv)
                 vid_frames, vid_nonblack, vid_changes);
 
         pass = rendered && moving;
+        break;
+    }
+    case 6: {
+        /* #810: the buffer must be exposed from the FIRST query, because a
+         * frontend sizes and loads it exactly once, right after the load.
+         * (Memory Track enabled is the default; it is plugged in from frame
+         * 0 on this path, see the no-content branch of retro_load_game.) */
+        int sized, seeded, landed, stable;
+        size_t size_at_load = lr_mem_size(RETRO_MEMORY_SAVE_RAM);
+        void  *ptr_at_load  = lr_mem_data(RETRO_MEMORY_SAVE_RAM);
+
+        sized  = size_at_load == DC_CD_SAVE_SIZE && ptr_at_load != NULL;
+        seeded = sized && seed_srm_marker();
+        harness_step(&cfg);                 /* first frame unpacks the .srm */
+        landed = seeded && marker_in_mtmem();
+        harness_step(&cfg);
+        stable = lr_mem_data(RETRO_MEMORY_SAVE_RAM) == ptr_at_load
+              && lr_mem_size(RETRO_MEMORY_SAVE_RAM) == DC_CD_SAVE_SIZE;
+
+        results[nres++] = mkres(sized, "case6_save_ram_exposed_at_load",
+            sized ? "no-content boot reports CD_SAVE_SIZE and a buffer at "
+                    "load time"
+                  : "SAVE_RAM is size 0 / NULL on a no-content boot with "
+                    "the Memory Track plugged in (#810)");
+        results[nres++] = mkres(landed, "case6_srm_load_reaches_mtmem",
+            landed ? "data the frontend wrote into SAVE_RAM reached the "
+                     "Memory Track"
+                   : "frontend-loaded save data never reached mtMem");
+        results[nres++] = mkres(stable, "case6_buffer_stable",
+            stable ? "pointer and size unchanged across frames"
+                   : "pointer or size moved under the frontend");
+        pass = sized && seeded && landed && stable;
+        break;
+    }
+    case 7: {
+        int sized, seeded, inserted, same, kept, nvm, nvm0, i;
+        const uint8_t *ram;
+        void *ptr_before = lr_mem_data(RETRO_MEMORY_SAVE_RAM);
+
+        sized  = lr_mem_size(RETRO_MEMORY_SAVE_RAM) == DC_CD_SAVE_SIZE
+              && ptr_before != NULL;
+        seeded = sized && seed_srm_marker();
+        /* Control for the cookie probe below: it must be present straight
+         * after the no-content load, or "missing after the insert" would
+         * only mean the probe is looking at the wrong address. */
+        ram    = main_ram(&cfg);
+        nvm0   = ram && memcmp(ram + DC_NVM_COOKIE_RAM, "_NVM", 4) == 0;
+        harness_step(&cfg);                 /* first frame unpacks the .srm */
+
+        gi.path  = disc_path;
+        inserted = cfg.disk_cb_registered
+                && cfg.disk_add_image_index()
+                && cfg.disk_replace_image_index(0, &gi)
+                && cfg.disk_set_eject_state(true)
+                && cfg.disk_set_eject_state(false);
+        /* Sampled BEFORE any frame runs: the boot has just reset the machine,
+         * so nothing the game does can have touched $2400 yet, and a missing
+         * cookie here is the insert path's doing, not the game's. */
+        ram  = main_ram(&cfg);
+        nvm  = ram && memcmp(ram + DC_NVM_COOKIE_RAM, "_NVM", 4) == 0;
+        for (i = 0; i < 30; i++)
+            harness_step(&cfg);
+
+        same = lr_mem_size(RETRO_MEMORY_SAVE_RAM) == DC_CD_SAVE_SIZE
+            && lr_mem_data(RETRO_MEMORY_SAVE_RAM) == ptr_before;
+        kept = seeded && marker_in_mtmem();
+
+        results[nres++] = mkres(seeded, "case7_exposed_before_insert",
+            seeded ? "SAVE_RAM exposed and seeded before the insert"
+                   : "SAVE_RAM not exposed before the insert");
+        results[nres++] = mkres(inserted, "case7_insert_succeeded",
+            inserted ? "disc inserted" : "insert was refused");
+        results[nres++] = mkres(same, "case7_save_ram_after_insert",
+            same ? "size and pointer unchanged by the insert"
+                 : "SAVE_RAM size/pointer changed or vanished after the "
+                   "insert (#810)");
+        results[nres++] = mkres(kept, "case7_memory_track_survives_insert",
+            kept ? "Memory Track contents survived the insert reboot"
+                 : "the insert reboot wiped the Memory Track -- the next "
+                   "frontend save would write it back blank");
+        results[nres++] = mkres(nvm0, "case7_nvm_module_at_load",
+            nvm0 ? "'_NVM' cookie present after the no-content load"
+                 : "'_NVM' cookie missing straight after the no-content "
+                   "load -- the probe address is wrong");
+        results[nres++] = mkres(nvm, "case7_nvm_module_present",
+            nvm ? "'_NVM' cookie present after the insert reboot"
+                : "'_NVM' cookie missing after the insert reboot -- games "
+                  "launched by insert would not see the Memory Track");
+        pass = seeded && nvm0 && inserted && same && kept && nvm;
+        break;
+    }
+    case 8: {
+        /* Memory Track disabled: a bare no-content session has nothing to
+         * persist and keeps reporting 0 (the pre-#810 contract).  Mounting a
+         * disc must NOT flip that mid-session -- see the header comment. */
+        int bare_zero, inserted, still_zero;
+
+        bare_zero = lr_mem_size(RETRO_MEMORY_SAVE_RAM) == 0
+                 && lr_mem_data(RETRO_MEMORY_SAVE_RAM) == NULL;
+
+        gi.path  = disc_path;
+        inserted = cfg.disk_cb_registered
+                && cfg.disk_add_image_index()
+                && cfg.disk_replace_image_index(0, &gi)
+                && cfg.disk_set_eject_state(true)
+                && cfg.disk_set_eject_state(false);
+        harness_step(&cfg);
+        still_zero = lr_mem_size(RETRO_MEMORY_SAVE_RAM) == 0
+                  && lr_mem_data(RETRO_MEMORY_SAVE_RAM) == NULL;
+
+        results[nres++] = mkres(bare_zero, "case8_bare_session_has_no_save_ram",
+            bare_zero ? "no Memory Track, no disc: SAVE_RAM is 0/NULL"
+                      : "bare session exposes SAVE_RAM with nothing to save "
+                        "(is the memory_track option actually disabled?)");
+        results[nres++] = mkres(inserted, "case8_insert_succeeded",
+            inserted ? "disc inserted" : "insert was refused");
+        results[nres++] = mkres(still_zero, "case8_save_ram_stays_unexposed",
+            still_zero ? "SAVE_RAM still 0/NULL after the insert (no write "
+                         "without a load)"
+                       : "SAVE_RAM appeared mid-session: the frontend never "
+                         "loaded the .srm into it, so its exit save would "
+                         "clobber the previous session's file");
+        pass = bare_zero && inserted && still_zero;
         break;
     }
     case 3: {

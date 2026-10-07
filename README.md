@@ -27,7 +27,7 @@ None required. The Jaguar boot ROMs and CD BIOSes are embedded, and cartridges b
 | Cartridge | `j64`, `jag`, `rom`, `abs`, `cof`, `bin`, `prg` | Headerless raw homebrew is detected conservatively. Soft patching is covered in [`docs/rom-patches.md`](docs/rom-patches.md). |
 | Jaguar CD | `cue` (with `bin`), `cdi`, `chd` | `.iso` is not supported. CHD needs session metadata from a recent `chdman`; see [`docs/jagcd-chd.md`](docs/jagcd-chd.md). Each release attaches a suitable `chdman` as `jagcd-tools-*.zip`. |
 
-The core can also start with no content and take a disc through RetroArch's disk control. Cartridge EEPROM/SRAM and the CD Memory Track are saved as `<game>.srm` in RetroArch's `saves` folder; save states go in `states`. Exception: in a no-content session, a disc inserted through disk control gets no `.srm` (its Memory Track writes are not exposed to the frontend; use save states, or load the disc as content; [#810](https://github.com/libretro/virtualjaguar-libretro/issues/810)).
+The core can also start with no content and take a disc through RetroArch's disk control. Cartridge EEPROM/SRAM and the CD Memory Track are saved as `<game>.srm` in RetroArch's `saves` folder; save states go in `states`. Exception: a no-content session exposes the Memory Track as save RAM from the start ([#810](https://github.com/libretro/virtualjaguar-libretro/issues/810)), but with no content the frontend has nothing to name the `.srm` after, so it is not per-game and is not named after the disc you insert. Load the disc as content for per-game saves.
 
 ## Features
 

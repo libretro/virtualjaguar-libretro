@@ -74,6 +74,7 @@
       InputDev*;
       Quad*;
       MTState*;
+      mtMem;
       NVMBios*;
       NVM_*;
       JGD*;

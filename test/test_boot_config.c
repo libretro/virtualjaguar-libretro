@@ -614,7 +614,7 @@ TEST(no_game_boot_selects_cd_bios_strategy)
     core_teardown();
 }
 
-TEST(no_game_save_ram_is_empty)
+TEST(no_game_save_ram_is_memory_track)
 {
     bool loaded;
 
@@ -622,10 +622,16 @@ TEST(no_game_save_ram_is_empty)
     loaded = p_retro_load_game(NULL);
     if (!loaded) FAIL("retro_load_game(NULL) failed");
 
-    /* No cartridge -> no EEPROM chip.  A frontend must not be handed a
-     * meaningless .srm for a bare-BIOS session. */
-    ASSERT_EQ(p_retro_get_memory_size(RETRO_MEMORY_SAVE_RAM), 0);
-    ASSERT(p_retro_get_memory_data(RETRO_MEMORY_SAVE_RAM) == NULL);
+    /* Originally (#646) this asserted size 0: no cartridge, no EEPROM chip,
+     * so no .srm for a bare-BIOS session.  #726 made no-content boot a CD
+     * session with the Memory Track plugged in from frame 0, and #810 found
+     * that exposing nothing loses every save made through a disc inserted
+     * later: a frontend sizes and loads SAVE_RAM once, right after the load,
+     * so it has to be exposed from the FIRST query.  Memory Track is on by
+     * default; the disabled case is covered by test_disk_control case 8. */
+    ASSERT_EQ(p_retro_get_memory_size(RETRO_MEMORY_SAVE_RAM),
+              128 + 128 + 0x20000);
+    ASSERT(p_retro_get_memory_data(RETRO_MEMORY_SAVE_RAM) != NULL);
     core_teardown();
 }
 
@@ -724,7 +730,7 @@ int main(int argc, char *argv[])
     SUITE("No-Content Boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME)");
     RUN(no_game_env_declared);
     RUN(no_game_boot_selects_cd_bios_strategy);
-    RUN(no_game_save_ram_is_empty);
+    RUN(no_game_save_ram_is_memory_track);
     RUN(no_game_runs_and_resets_without_crashing);
     total_fail += REPORT();
 

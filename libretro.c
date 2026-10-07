@@ -5590,6 +5590,16 @@ static bool disk_set_eject_state(bool ejected)
       return false;                   /* disk_ejected stays true */
    }
 
+   /* The boot just reset RAM, which wipes the Memory Track NVM BIOS module
+    * (the '_NVM' cookie + dispatcher stub) that no-content load installed.
+    * retro_load_game and retro_reset reinstall it after their boot for the
+    * same reason; without this, a game started by an insert sees the Memory
+    * Track cart but no NVM BIOS behind it, so the saves #810 exposes would
+    * never be written (#810). */
+   NVMBiosReset();
+   if (jaguarMemTrackInserted)
+      NVMBiosInstall();
+
    LOG_INF("[CD] disk control: inserted '%s', booting via '%s'\n",
            cd_image_path,
            bootConfig.strategy->name ? bootConfig.strategy->name : "?");
@@ -6682,14 +6692,38 @@ static void eeprom_unpack_save_buf(void)
       memcpy(mtMem, eeprom_save_buf + MT_SAVE_OFFSET, MT_SAVE_SIZE);
 }
 
+/* Does this session have anything for the frontend to persist?
+ *
+ * Only a no-content boot can answer no.  There, "no cartridge" used to mean
+ * "no save media" (#646: don't hand frontends a meaningless .srm for a bare
+ * BIOS), but #726 changed what a no-content boot IS: it comes up in the CD
+ * BIOS with the CD unit attached and the Memory Track cart plugged in from
+ * frame 0.  The Memory Track is real, writable save media whether or not a
+ * disc is mounted, so the answer follows it (#810).
+ *
+ * Deliberately NOT keyed on a disc being mounted.  libretro has no "save RAM
+ * changed" notification: frontends size the buffer and copy the .srm into it
+ * once, right after retro_load_game (RetroArch also sizes its autosave once,
+ * at init), and only re-query at shutdown.  Exposing the buffer for the first
+ * time after an insert would therefore be a write without a load -- the
+ * session's saves hit disk but are never read back, and each session blindly
+ * overwrites the last one's file.  So the answer has to be right at the FIRST
+ * query, which is why it keys on the Memory Track and nothing that can change
+ * later.  With the Memory Track disabled a no-content session keeps
+ * reporting nothing, and an inserted disc does not change that. */
+static bool save_ram_available(void)
+{
+   return !no_game_active || jaguarMemTrackInserted;
+}
+
 void *retro_get_memory_data(unsigned type)
 {
    if (type == RETRO_MEMORY_SYSTEM_RAM)
       return jaguarMainRAM;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
-      /* No-content boot (#646): no cartridge means no EEPROM chip. */
-      if (no_game_active)
+      /* No-content boot with no Memory Track and no disc (#646, #810). */
+      if (!save_ram_available())
          return NULL;
       /* Memory Track cart uses 128K NVRAM directly */
       if (jaguarMainROMCRC32 == 0xFDF37F47)
@@ -6710,10 +6744,9 @@ size_t retro_get_memory_size(unsigned type)
       return 0x200000;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
-      /* No-content boot (#646): no cartridge means no EEPROM chip -- report
-       * zero so frontends don't create a meaningless .srm for a bare BIOS
-       * session. */
-      if (no_game_active)
+      /* No-content boot with no Memory Track and no disc (#646, #810):
+       * nothing to persist, so don't create a meaningless .srm. */
+      if (!save_ram_available())
          return 0;
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;
