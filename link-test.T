@@ -67,6 +67,10 @@
       jaguar_cd_*;
       ResolveBootConfig;
       BlitterCompare*;
+      BlitterIsHung;
+      BlitterNeverEndsApprox;
+      BlitterReadLong;
+      BlitterWriteLong;
       DAC*;
       Joystick*;
       joypad0Buttons;

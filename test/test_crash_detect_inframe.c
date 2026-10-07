@@ -25,6 +25,31 @@
 
 typedef int (*absurd_fn)(uint32_t);
 typedef int (*never_fn)(uint32_t, uint32_t, uint32_t);
+typedef int (*approx_fn)(uint32_t);
+
+/* Third table: BlitterNeverEndsApprox() -- whether the accurate engine's
+ * one-wrap-period result for a never-ending blit is exact (repeating the
+ * step is idempotent on memory) or a defined one-pass approximation. */
+struct approx_row {
+   const char *name;
+   uint32_t b_cmd;
+   int want;
+};
+
+static const struct approx_row approx_rows[] = {
+   /* Measured hangs, LFU clear and no accumulators: exact. */
+   { "DEMO1B $00002208 (DSTEN, GOURZ w/o DSTWRZ)",   0x00002208u, 0 },
+   { "Chroma-Luma $00002704 (SRCENX, LFU clear)",    0x00002704u, 0 },
+   { "Native Demo $00002718 (DSTEN/DSTENZ, LFU 0)",  0x00002718u, 0 },
+   { "pattern fill, LFU S only, no source read",     0x01810000u, 0 },
+   /* Not provably idempotent: approximation. */
+   { "Music Demo $2710826D (BCOMPEN, ZMODE, S&D)",   0x2710826Du, 1 },
+   { "JagMania $FFFFFFFB (everything)",              0xFFFFFFFBu, 1 },
+   { "DSTEN + LFU NOT D (toggles every pass)",       0x00A00008u, 1 },
+   { "SRCEN + LFU S (source steps separately)",      0x01800001u, 1 },
+   { "GOURD",                                        0x00001000u, 1 },
+   { "GOURZ + DSTWRZ",                               0x00002020u, 1 },
+};
 
 /* A1_FLAGS / A2_FLAGS: pixel size in bits 3-5, X add control in bits
  * 16-17 (00 = phrase mode, 01 = add pixel size). */
@@ -96,6 +121,7 @@ int main(int argc, char **argv)
    void *handle;
    absurd_fn fn;
    never_fn never;
+   approx_fn approx;
    unsigned i, fails = 0;
 
    handle = dlopen(core, RTLD_LAZY);
@@ -142,6 +168,24 @@ int main(int argc, char **argv)
       }
    }
 
+   approx = (approx_fn)dlsym(handle, "BlitterNeverEndsApprox");
+   if (!approx)
+   {
+      fprintf(stderr, "FAIL: BlitterNeverEndsApprox not exported (build with TEST_EXPORTS=1)\n");
+      return 1;
+   }
+   for (i = 0; i < sizeof(approx_rows) / sizeof(approx_rows[0]); i++)
+   {
+      const struct approx_row *r = &approx_rows[i];
+      int got = approx(r->b_cmd);
+      if (got != r->want)
+      {
+         fprintf(stderr, "FAIL: %s (B_CMD=$%08X): approx got %d want %d\n",
+                 r->name, (unsigned)r->b_cmd, got, r->want);
+         fails++;
+      }
+   }
+
    if (fails)
    {
       fprintf(stderr, "test_crash_detect_inframe: %u failure(s)\n", fails);
@@ -149,6 +193,7 @@ int main(int argc, char **argv)
    }
    printf("test_crash_detect_inframe: %u cases PASS\n",
           (unsigned)(sizeof(rows) / sizeof(rows[0])
-                     + sizeof(never_rows) / sizeof(never_rows[0])));
+                     + sizeof(never_rows) / sizeof(never_rows[0])
+                     + sizeof(approx_rows) / sizeof(approx_rows[0])));
    return 0;
 }

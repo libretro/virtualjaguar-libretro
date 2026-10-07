@@ -64,6 +64,10 @@ _cd_boot_strategy_*
 _jaguar_cd_*
 _ResolveBootConfig
 _BlitterCompare*
+_BlitterIsHung
+_BlitterNeverEndsApprox
+_BlitterReadLong
+_BlitterWriteLong
 _DAC*
 _Joystick*
 _joypad0Buttons

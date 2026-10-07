@@ -89,7 +89,12 @@ extern "C" {
  *     a magic word: "CDB1" (boot stub injected yet) and "CDX1" (FIFO
  *     refill accumulator + CD IRQ edge detector).  First bump of
  *     the v3.7.1 cycle, so any other in-flight state change this cycle
- *     extends v16 in place rather than bumping again. */
+ *     extends v16 in place rather than bumping again.
+ *     EXTENDED IN PLACE (still v16): #800 appended "BLH1" strictly after
+ *     CDX1: the sticky "blitter hung" flag + the stuck inner count (a
+ *     blit hardware never finishes leaves the blitter busy until reset).
+ *     A v16 blob written before it ends in the zero-filled tail there, so
+ *     the magic misses and it loads as not hung; v15 and older too. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   16
 /* Oldest layout retro_unserialize still accepts.  States between
@@ -212,6 +217,10 @@ extern "C" {
  * GPU-magic stomp over the game's own RAM.  Older states do not carry it:
  * the live session's value is left alone (v3.7.0 behaviour). */
 #define STATE_VERSION_BIOS_CD_BOOT 16
+/* v16, extended in place (#800): trailing "BLH1" hung-blitter chunk
+ * (BlitterHungStateSave, src/tom/blitter_mmio.c), read only for
+ * version >= STATE_VERSION_BIOS_CD_BOOT, strictly after CDX1.  Missing or
+ * wrong magic, or an older version: not hung. */
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

@@ -4,6 +4,7 @@
 #include "log.h"
 #include "../jerry/dsp.h"   /* DSPIsRunning() returns bool -- match the canonical decl */
 #include "../tom/gpu.h"     /* GPUIsRunning() */
+#include "../tom/blitter.h" /* BlitterNeverEnds() -- shared never-ending-blit predicate */
 #include "../cd/cdrom.h"    /* CDROMDiagGetSeekWedgeState(), CDTraceDump() */
 #include "../tom/shadowfb.h" /* shadowHiresActive + resolve counters */
 #include "settings.h"       /* bootConfig.isCDGame */
@@ -439,33 +440,13 @@ int CrashDetectBlitIsAbsurd(uint32_t b_count)
    return outer > INFRAME_BLIT_PIXELS_MAX / inner;
 }
 
-/* A blit whose first inner loop can never end (issue #800).  The inner
- * counter's decrement comes from INNER.NET (jag_sim netlists/tom/INNER.NET,
- * Inc0-Inc3 at lines ~611-635): in pixel mode it is 1; in phrase mode it is
- * built from the destination X's low bits, but only the 8/16/32 bpp decodes
- * (pixel8/pixel16/pixel32) contribute beyond bit 0.  At pixsize 0-2
- * (1/2/4 bpp) the decrement is just dstxp[0].  Phrase-mode X add is "add
- * phrase width and truncate to phrase boundary" (JTRM v8 p.71, A1_FLAGS
- * bits 16-17 = 00), so after the first write X is phrase-aligned, dstxp[0]
- * is 0 and the counter never moves again.  The line ends only if the first
- * write already reaches the count: inner 0 (INNER.NET Inner0t: count == 0,
- * one write) or inner 1 with an odd starting X.  Real hardware never
- * finishes such a blit; the synchronous engine runs it forever inside one
- * register write.  dst_flags = A1_FLAGS, or A2_FLAGS when DSTA2 (B_CMD bit
- * 11) is set; dst_x = that pointer's X (low word of A1/A2_PIXEL). */
+/* A blit whose first inner loop can never end (issue #800).  The
+ * predicate is the blitter's own (BlitterNeverEnds, src/tom/blitter_mmio.c,
+ * where the INNER.NET derivation lives), so the watchdog, the dispatch
+ * path and the accurate engine cannot drift apart. */
 int CrashDetectBlitNeverEnds(uint32_t b_count, uint32_t dst_flags, uint32_t dst_x)
 {
-   uint32_t inner = b_count & 0xFFFFu;
-   uint32_t pixsize = (dst_flags >> 3) & 0x07u;
-   int phrase_mode = ((dst_flags >> 16) & 0x03u) == 0;
-
-   if (!phrase_mode || pixsize >= 3)
-      return 0;
-   if (inner == 0)
-      return 0;
-   if (inner == 1 && (dst_x & 1u))
-      return 0;
-   return 1;
+   return BlitterNeverEnds(b_count, dst_flags, dst_x);
 }
 
 void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
@@ -483,11 +464,13 @@ void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
    if (never_ends)
    {
       LOG_ERR("[CRASH-DETECT] inframe_hang frame=%u where=blitter b_count=$%08X "
-              "never_ends=1 dst_flags=$%08X dst_x=%u b_cmd=$%08X a1_base=$%08X "
+              "never_ends=1%s dst_flags=$%08X dst_x=%u b_cmd=$%08X a1_base=$%08X "
               "gpu_pc=$%08X gpu_run=%d dsp_pc=$%08X dsp_run=%d m68k_pc=$%06X "
               "(phrase-mode blit below 8bpp: the inner counter never "
-              "decrements, so the blit never finishes)\n",
-              frame_no + 1, b_count, dst_flags, (unsigned)(dst_x & 0xFFFFu),
+              "decrements; the emulated blitter stays hung until reset)\n",
+              frame_no + 1, b_count,
+              BlitterNeverEndsApprox(b_cmd) ? " approx=1" : "",
+              dst_flags, (unsigned)(dst_x & 0xFFFFu),
               b_cmd, a1_base, pc_canonical(gpu_pc), (int)GPUIsRunning(),
               pc_canonical(dsp_pc), (int)DSPIsRunning(),
               (unsigned)(m68k_get_reg(NULL, M68K_REG_PC) & PC_ALIAS_MASK));

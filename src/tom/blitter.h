@@ -5,6 +5,7 @@
 #ifndef __BLITTER_H__
 #define __BLITTER_H__
 
+#include <stddef.h>
 #include "vjag_memory.h"
 
 #ifdef __cplusplus
@@ -21,6 +22,29 @@ void BlitterReset(void);
  * Called by BlitterReset()/BlitterDone(); see blitter.c for why (#479). */
 void BlitterResetDecodeState(void);
 void BlitterDone(void);
+
+/* Blits that never end on hardware (issues #800, #794).
+ *
+ * BlitterNeverEnds: whether a blit's first inner loop can never finish.
+ * Exact netlist condition, shared by the accurate engine, the dispatch
+ * path and the crash watchdog so they cannot drift apart.  dst_flags =
+ * A1_FLAGS, or A2_FLAGS when B_CMD.DSTA2; dst_x = that pointer's X.
+ *
+ * BlitterNeverEndsApprox: for such a blit, whether the one-wrap-period
+ * memory effect the accurate engine produces is only an approximation
+ * (the repeated step is not provably idempotent on memory).
+ *
+ * BlitterIsHung: the sticky "blitter hung" flag.  Set at dispatch when
+ * a never-ending blit was started; B_CMD then reads busy and further
+ * starts are ignored, until reset / power-on.  Serialised as the
+ * trailing "BLH1" savestate chunk (v16, after CDX1). */
+int BlitterNeverEnds(uint32_t b_count, uint32_t dst_flags, uint32_t dst_x);
+int BlitterNeverEndsApprox(uint32_t b_cmd);
+int BlitterIsHung(void);
+size_t BlitterHungStateSize(void);
+size_t BlitterHungStateSave(uint8_t *buf);
+size_t BlitterHungStateLoad(const uint8_t *buf);
+void BlitterHungStateReset(void);
 
 uint8_t BlitterReadByte(uint32_t, uint32_t who);
 uint16_t BlitterReadWord(uint32_t, uint32_t who);

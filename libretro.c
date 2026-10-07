@@ -4678,6 +4678,13 @@ bool retro_serialize(void *data, size_t size)
       return false;
    buf += CDROMStateExtSave(buf);
 
+   /* v16, extended in place (#800): the sticky "blitter hung" flag -- a
+    * blit hardware never finishes leaves the blitter busy until reset.
+    * Its own magic ("BLH1"), STRICTLY after CDX1; room checked first. */
+   if ((size_t)(buf - start) + BlitterHungStateSize() > STATE_SIZE)
+      return false;
+   buf += BlitterHungStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4931,7 +4938,12 @@ bool retro_unserialize(const void *data, size_t size)
    {
       buf += JaguarCDBiosStateLoad(buf);
       buf += CDROMStateExtLoad(buf);
+      /* #800: hung-blitter chunk.  A v16 blob written before it existed
+       * ends in the zero-filled tail here: wrong magic -> not hung. */
+      buf += BlitterHungStateLoad(buf);
    }
+   else
+      BlitterHungStateReset();   /* older states: not hung */
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
