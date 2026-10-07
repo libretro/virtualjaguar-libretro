@@ -1355,7 +1355,7 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
-		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_blitter_hung \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
@@ -1430,7 +1430,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_disk_control \
-		test/tools/test_hook_gate \
+		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_blitter_hung \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1850,6 +1850,35 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cart_needs_bios ./$(TARGET) --quiet
 	./test/test_crash_detect_cd_wedge ./$(TARGET)
 	./test/test_crash_detect_inframe ./$(TARGET)
+	@# Uploaded-executable ILLEGAL park (#800).  The synthetic raw binary
+	@# needs no ROM and always runs; DEMO1B is the measured reproducer
+	@# (it hung retro_run forever under the accurate blitter).  The tool
+	@# forces the accurate blitter and arms its own wall-clock alarm.
+	./test/tools/test_upload_illegal_park ./$(TARGET)
+	@# A blit hardware never finishes (#800/#794) hangs the emulated
+	@# blitter, never the host: synthetic never-ending blit under both
+	@# engines (returns, B_CMD busy, starts ignored, reset clears,
+	@# savestate restores), then the two measured reproducers.
+	./test/tools/test_blitter_hung ./$(TARGET)
+	./test/tools/test_blitter_hung ./$(TARGET) --fast
+	@rom=$$(bash scripts/find-rom.sh 'Music Demo (2002) (ScatoLOGIC).jag' 'Music Demo*.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_blitter_hung ./$(TARGET) --rom "$$rom" --bios; \
+	else \
+		bash scripts/test-skip.sh record "Hung blitter (Music Demo --bios, #794)" "no ROM matching 'Music Demo*' in the private corpus"; \
+	fi
+	@rom=$$(bash scripts/find-rom.sh 'Native Demo (bin) (1997).jag' 'Native Demo (bin)*'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_blitter_hung ./$(TARGET) --rom "$$rom"; \
+	else \
+		bash scripts/test-skip.sh record "Hung blitter (Native Demo (bin), #800)" "no ROM matching 'Native Demo (bin)*' in the private corpus"; \
+	fi
+	@rom=$$(bash scripts/find-rom.sh 'DEMO1B (PD) [[]a1[]].jag' 'DEMO1B (PD).jag' 'DEMO1B*.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_upload_illegal_park ./$(TARGET) --rom "$$rom" --frames 600; \
+	else \
+		bash scripts/test-skip.sh record "Upload ILLEGAL park (DEMO1B, accurate blitter)" "no ROM matching 'DEMO1B*' in the private corpus"; \
+	fi
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
 	@# $F14000/$F14002 identity guardrail for the input-devices track
@@ -2846,6 +2875,23 @@ test/test_crash_detect_cd_wedge: test/test_crash_detect_cd_wedge.c
 
 test/test_crash_detect_inframe: test/test_crash_detect_inframe.c
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_crash_detect_inframe.c -ldl
+
+# Uploaded-executable ILLEGAL park (#800): harness tool, needs the wide
+# test ABI for m68k_get_reg.
+# Never-ending blit -> hung emulated blitter (#800/#794).
+test/tools/test_blitter_hung: test/tools/test_blitter_hung.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_blitter_hung.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_upload_illegal_park: test/tools/test_upload_illegal_park.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_upload_illegal_park.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
 test/test_cart_needs_bios: test/test_cart_needs_bios.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \

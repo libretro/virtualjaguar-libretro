@@ -82,6 +82,29 @@ file written by a v3.7.0 build (`274fa74`), Hover Strike real-BIOS. Regression:
 `test_state_compat` (`v16_*`, `v15_*` rows) and the ROM-gated real-BIOS Hover
 Strike run in `make test`.
 
+### v16, extended in place: hung blitter (#800, #794)
+
+A third trailing chunk, strictly after `"CDX1"`, 7 bytes; `STATE_VERSION`
+stays 16.
+
+| Chunk | Magic | Fields | Owner |
+|---|---|---|---|
+| Hung blitter | `"BLH1"` | `blitterHung`, `blitterHungICount` | `src/tom/blitter_mmio.c` |
+
+A blit that never finishes on hardware (phrase mode below 8bpp: INNER.NET's
+inner-counter decrement is `dstxp[0]`, which phrase-aligned X keeps at 0)
+leaves the emulated blitter hung until reset: `B_CMD` reads busy (IDLE clear,
+the stuck inner count in bits 16-31) and further starts are ignored. That flag
+is machine state, so it is saved: without it a rollback across the hang would
+replay with an idle blitter that accepts blits hardware would ignore.
+
+Loading: read only for `version >= 16`, after `"CDX1"`. A v16 state written
+before this chunk existed ends in the blob's zero-filled tail at that offset,
+so the magic misses and it loads as not hung; v15 and older reset it to not
+hung too. Saving room-checks before writing, like the other trailing chunks.
+Regression: `test/tools/test_blitter_hung` (serialize, `retro_reset` clears,
+unserialize restores).
+
 ## v8: Jaguar GameDrive chunk
 
 v8 (one shared bump per release policy — all in-flight changes since v3.1.0

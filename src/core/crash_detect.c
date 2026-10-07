@@ -4,6 +4,7 @@
 #include "log.h"
 #include "../jerry/dsp.h"   /* DSPIsRunning() returns bool -- match the canonical decl */
 #include "../tom/gpu.h"     /* GPUIsRunning() */
+#include "../tom/blitter.h" /* BlitterNeverEnds() -- shared never-ending-blit predicate */
 #include "../cd/cdrom.h"    /* CDROMDiagGetSeekWedgeState(), CDTraceDump() */
 #include "../tom/shadowfb.h" /* shadowHiresActive + resolve counters */
 #include "settings.h"       /* bootConfig.isCDGame */
@@ -104,9 +105,12 @@ extern uint32_t dsp_exec_opcode_count;
  * what can hang the host -- not the JTRM's nominal size.  JTRM v8 (BLIT_COUNT
  * $F0223C) says each 16-bit counter takes 1..65536 with 0 encoding 65536.
  * The outer counter runs that way (ocount-- from 0 wraps to $FFFF).  The
- * inner one does not: BlitterMidsummer2 ends the inner loop when the count
- * crosses into bit 15, so a 0 inner count stops after its first step -- at
- * most one phrase, 64 pixels at 1bpp.  Williams/Telegames carts (Troy
+ * inner one does not: INNER.NET (jag_sim netlists/tom) asserts inner0 when
+ * the count is zero OR has underflowed (Inner0t/Uflowt, ~lines 662-673), and
+ * BlitterMidsummer2 matches it, so a 0 inner count stops after its first
+ * step -- at most one phrase, 64 pixels at 1bpp.  The pixel count assumes
+ * the counter actually decrements; the one shape where it cannot (phrase
+ * mode below 8bpp) is CrashDetectBlitNeverEnds.  Williams/Telegames carts (Troy
  * Aikman, Double Dragon V, Brutal Sports Football) write B_COUNT=0 at boot
  * and run fine; counting that as 2^32 pixels was a false alarm. */
 static uint32_t inframe_blit_inner(uint32_t b_count)
@@ -436,14 +440,42 @@ int CrashDetectBlitIsAbsurd(uint32_t b_count)
    return outer > INFRAME_BLIT_PIXELS_MAX / inner;
 }
 
-void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base)
+/* A blit whose first inner loop can never end (issue #800).  The
+ * predicate is the blitter's own (BlitterNeverEnds, src/tom/blitter_mmio.c,
+ * where the INNER.NET derivation lives), so the watchdog, the dispatch
+ * path and the accurate engine cannot drift apart. */
+int CrashDetectBlitNeverEnds(uint32_t b_count, uint32_t dst_flags, uint32_t dst_x)
 {
+   return BlitterNeverEnds(b_count, dst_flags, dst_x);
+}
+
+void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
+                         uint32_t dst_flags, uint32_t dst_x)
+{
+   int never_ends;
+
    if (!cd_initialized || cd_mode == CRASH_DETECT_OFF)
       return;
-   if (!CrashDetectBlitIsAbsurd(b_count))
+   never_ends = CrashDetectBlitNeverEnds(b_count, dst_flags, dst_x);
+   if (!never_ends && !CrashDetectBlitIsAbsurd(b_count))
       return;
    if (!may_log(&last_log_inframe_blit))
       return;
+   if (never_ends)
+   {
+      LOG_ERR("[CRASH-DETECT] inframe_hang frame=%u where=blitter b_count=$%08X "
+              "never_ends=1%s dst_flags=$%08X dst_x=%u b_cmd=$%08X a1_base=$%08X "
+              "gpu_pc=$%08X gpu_run=%d dsp_pc=$%08X dsp_run=%d m68k_pc=$%06X "
+              "(phrase-mode blit below 8bpp: the inner counter never "
+              "decrements; the emulated blitter stays hung until reset)\n",
+              frame_no + 1, b_count,
+              BlitterNeverEndsApprox(b_cmd) ? " approx=1" : "",
+              dst_flags, (unsigned)(dst_x & 0xFFFFu),
+              b_cmd, a1_base, pc_canonical(gpu_pc), (int)GPUIsRunning(),
+              pc_canonical(dsp_pc), (int)DSPIsRunning(),
+              (unsigned)(m68k_get_reg(NULL, M68K_REG_PC) & PC_ALIAS_MASK));
+      return;
+   }
    LOG_ERR("[CRASH-DETECT] inframe_hang frame=%u where=blitter b_count=$%08X "
            "pixels=%.0f b_cmd=$%08X a1_base=$%08X gpu_pc=$%08X gpu_run=%d "
            "dsp_pc=$%08X dsp_run=%d m68k_pc=$%06X (blit runs synchronously; "

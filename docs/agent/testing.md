@@ -165,12 +165,26 @@ heartbeat every 600 frames). Cost enabled: one indirect call + ~256-px hash/fram
 - `dsp_pc_escape` — DSP PC outside `[$F1B000,$F1CFFF] ∪ [$0,$E3FFFF]`.
 - `inframe_hang` — fired at blit dispatch (not per frame) when `B_COUNT` asks for >2^24 pixels,
   counted the way the accurate (default) engine runs it: outer 0 = 65536 lines (JTRM), inner 0 =
-  one step (≤64 px — `BlitterMidsummer2` stops on the bit-15 crossing; Williams/Telegames carts
-  write `B_COUNT=0` at boot and run fine). The blitter runs synchronously inside one register
-  write, so such a blit can keep `retro_run` from returning for hours and no per-frame signature
-  ever gets a turn; this line is logged *before* it runs. Reproducers: Music Demo (ScatoLOGIC)
-  `--bios` (#794), DEMO1 (bin) HLE (accurate only; the fast engine runs outer 0 as 0 lines).
+  one step (≤64 px — INNER.NET's zero/underflow detect, which `BlitterMidsummer2` matches;
+  Williams/Telegames carts write `B_COUNT=0` at boot and run fine). Also fires with
+  `never_ends=1` for a blit whose inner counter never decrements: phrase mode below 8bpp, where
+  INNER.NET's decrement is `dstxp[0]` and phrase-aligned X keeps it 0 — real hardware never
+  finishes it either (#800). `approx=1` marks a hang whose memory effect below is only a
+  one-pass approximation (`BlitterNeverEndsApprox`). Policy: hang the emulated blitter, never the
+  host -- the accurate engine runs the stuck step for one destination wrap period (exact when
+  the step is idempotent on memory), then `B_CMD` reads busy and further starts are ignored
+  until reset (`test/tools/test_blitter_hung`; saved in the v16 `"BLH1"` chunk). Known limit: on
+  hardware a `B_COUNT` write while hung would un-stick it; not modelled. Absurd-size blits are
+  still run synchronously and can keep `retro_run` from returning for hours; this line is logged
+  *before* the blit runs. Reproducers: Music Demo (ScatoLOGIC) `--bios` (#794, `approx=1`),
+  Native Demo (bin) HLE.
   Matrix runs killed at the wall-clock cap carry it in their evidence column.
+  - Seen as garbage blits from a runaway 68K whose exception frames land on the blitter's
+    `$F0A238` mirror. Uploaded executables (raw BJL/.abs) that end in ILLEGAL used to do this in
+    HLE; JaguarReset now parks vector 4 at `$1000` (`test/tools/test_upload_illegal_park`, #800).
+- `test/tools/cart_boot_matrix.sh` runs the probe's default **Fast** blitter. Sweep the shipped
+  default with `CART_MATRIX_PROBE_ARGS="--option virtualjaguar_usefastblitter=disabled"` plus an
+  explicit `CART_MATRIX_OUT` (args are folded into the row cache id and default log dir).
 - `gpu_wedge` / `dsp_wedge` — flagged running but **zero opcodes** for ≥180 / 600 frames
   (`gpu_exec_opcode_count` / `dsp_exec_opcode_count`). A stable sampled PC alone is NOT a wedge:
   deterministic slice budgets land the per-frame PC on the same instruction of a healthy
