@@ -67,8 +67,8 @@ typedef uint32_t (*blit_rl_fn)(uint32_t, uint32_t);
 typedef int      (*is_hung_fn)(void);
 typedef void     (*reset_fn)(void);
 typedef size_t   (*ser_size_fn)(void);
-typedef int      (*ser_fn)(void *, size_t);   /* bool in the core */
-typedef int      (*unser_fn)(const void *, size_t);
+typedef bool     (*ser_fn)(void *, size_t);
+typedef bool     (*unser_fn)(const void *, size_t);
 
 /* Same synthetic image as test_upload_illegal_park: BJL startup idiom,
  * SP = $200000, two JSRs, ILLEGAL -> 68K parks at $1000. */
