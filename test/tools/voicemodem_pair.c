@@ -1,6 +1,7 @@
 /* voicemodem_pair.c — one endpoint of the two-process Voice Modem test.
  *
  *   voicemodem_pair <core> --role dial|answer [--port N] [--host ADDR]
+ *                   [--sync DIR]
  *
  * Drives the JERRY UART registers with the exact command sequences Ultra
  * Vortek's modem driver issues (docs/voice-modem.md): wake, ident,
@@ -16,6 +17,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <time.h>
 #include "../harness/harness.h"
 #include "jlink.h"
 
@@ -25,13 +27,29 @@ typedef int      (*jlink_conn_t)(void);
 typedef void     (*retro_run_t)(void);
 
 #define ROM_SIZE 131072
-#define MAX_WAIT_FRAMES 1200    /* rendezvous budget (~20 s at 60 fps) */
-#define MSG_TIMEOUT 600         /* frames to wait for one 3-byte reply */
+#define MSG_TIMEOUT 600         /* frames to wait for the local TBE flag */
+
+/* Anything that waits on the PEER is bounded in wall-clock time, not in
+ * frames: a frame is ~2 ms, so a frame budget is really a ~1 s budget that
+ * a loaded CI runner (the peer process descheduled, or still loading the
+ * core) blows through before the peer has done anything wrong (#796).
+ * Generous on purpose -- it only bounds a genuinely dead peer. */
+#define RENDEZVOUS_MS 60000     /* both processes up and the link connected */
+#define PEER_WAIT_MS  30000     /* one peer-dependent message / digit / barrier */
 
 static jerry_ww_t jerry_ww;
 static jerry_rw_t jerry_rw;
 static retro_run_t run_frame;
 static const char *g_role = "?";
+static const char *g_peer = "?";
+static const char *g_sync_dir = NULL;   /* --sync DIR: peer barrier files */
+
+static long long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 /* Software RX FIFO.  On real hardware Ultra Vortek's DSP drains RBF at
  * I2S rate no matter what the 68K is doing; without this, RX bytes
@@ -83,11 +101,12 @@ static int send_word(uint16_t w)
     return tx_byte((uint8_t)(w >> 8));
 }
 
-/* Pop one received byte, pumping frames until it arrives. */
+/* Pop one received byte, pumping frames until it arrives (or the peer has
+ * been silent for PEER_WAIT_MS of wall-clock time). */
 static int rx_byte(uint8_t *b)
 {
-    int i;
-    for (i = 0; i < MSG_TIMEOUT; i++)
+    long long deadline = now_ms() + PEER_WAIT_MS;
+    do
     {
         drain_rbf();
         if (rxf_count)
@@ -98,8 +117,75 @@ static int rx_byte(uint8_t *b)
             return 1;
         }
         step();
-    }
+    } while (now_ms() < deadline);
     return 0;
+}
+
+/* Explicit peer barrier (--sync DIR).  Each side drops DIR/<role>.<tag> and
+ * pumps frames until DIR/<peer>.<tag> exists.  Without it the two processes
+ * only line up by wall-clock luck: the dialler finishes its carrier query
+ * and starts its data packet while the answerer is still short of its own
+ * $8100, so the dialler's first data byte lands in the answerer's message
+ * queue AHEAD of the $86D0 reply it is waiting for ("got F0DE, want 86D0",
+ * #796).  The wire carries no peer-state signal, so the barrier lives
+ * outside it.  A no-op when --sync is not given (hand-run pair). */
+static void sync_touch(const char *tag)
+{
+    char path[512];
+    FILE *f;
+    if (!g_sync_dir)
+        return;
+    snprintf(path, sizeof(path), "%s/%s.%s", g_sync_dir, g_role, tag);
+    f = fopen(path, "w");
+    if (f)
+        fclose(f);
+}
+
+static int peer_failed(void)
+{
+    char path[512];
+    if (!g_sync_dir)
+        return 0;
+    snprintf(path, sizeof(path), "%s/%s.failed", g_sync_dir, g_peer);
+    return access(path, F_OK) == 0;
+}
+
+static int peer_sync(const char *tag)
+{
+    char mine[512], theirs[512];
+    long long deadline;
+    FILE *f;
+
+    if (!g_sync_dir)
+        return 1;
+    snprintf(mine, sizeof(mine), "%s/%s.%s", g_sync_dir, g_role, tag);
+    snprintf(theirs, sizeof(theirs), "%s/%s.%s", g_sync_dir, g_peer, tag);
+    f = fopen(mine, "w");
+    if (!f)
+    {
+        fprintf(stderr, "[%s] FAIL: cannot create sync file %s\n", g_role, mine);
+        return 0;
+    }
+    fclose(f);
+
+    deadline = now_ms() + PEER_WAIT_MS;
+    while (access(theirs, F_OK) != 0)
+    {
+        if (peer_failed())                  /* peer gave up: don't sit it out */
+        {
+            fprintf(stderr, "[%s] FAIL: peer failed before sync point '%s'\n",
+                    g_role, tag);
+            return 0;
+        }
+        if (now_ms() >= deadline)
+        {
+            fprintf(stderr, "[%s] FAIL: peer never reached sync point '%s'\n",
+                    g_role, tag);
+            return 0;
+        }
+        step();     /* keep the core (and the link) running while we wait */
+    }
+    return 1;
 }
 
 /* Read one 3-byte modem message ($FF sync, high, low); $B1xx ring
@@ -152,11 +238,11 @@ static int cmd_echo(uint16_t w)
 }
 
 /* Poll $6800 until the modem reports a heard digit; require it. */
-static int expect_digit(uint8_t digit, int tries)
+static int expect_digit(uint8_t digit)
 {
     uint16_t got;
-    int i;
-    for (i = 0; i < tries; i++)
+    long long deadline = now_ms() + PEER_WAIT_MS;
+    while (now_ms() < deadline)
     {
         if (!send_word(0x6800))
             return 0;
@@ -209,14 +295,24 @@ static int recv_packet(const uint8_t *want)
     return expect(0xF301);      /* modem-generated end-of-packet */
 }
 
+static char g_rom_path[256];
+
+static void remove_synth_rom(void)
+{
+    if (g_rom_path[0])
+        remove(g_rom_path);
+}
+
 static const char *make_synth_rom(const char *role)
 {
-    static char path[256];
+    char *path = g_rom_path;
     static uint8_t rom_buf[ROM_SIZE];
     FILE *f;
     const char *tmp = getenv("TMPDIR");
-    snprintf(path, sizeof(path), "%s/vj_vmodem_pair_%s.j64",
-             tmp ? tmp : "/tmp", role);
+    /* Per-process name: two pairs on one host (parallel CI jobs, a stress
+     * loop) must not rewrite each other's ROM mid-load. */
+    snprintf(path, sizeof(g_rom_path), "%s/vj_vmodem_pair_%s_%ld.j64",
+             tmp ? tmp : "/tmp", role, (long)getpid());
     memset(rom_buf, 0, ROM_SIZE);
     rom_buf[0x404] = 0x00; rom_buf[0x405] = 0x80;
     rom_buf[0x406] = 0x20; rom_buf[0x407] = 0x00;
@@ -225,6 +321,7 @@ static const char *make_synth_rom(const char *role)
     if (!f) return NULL;
     fwrite(rom_buf, 1, ROM_SIZE, f);
     fclose(f);
+    atexit(remove_synth_rom);
     return path;
 }
 
@@ -254,6 +351,11 @@ int main(int argc, char **argv)
             port = argv[++i];
             argv[i - 1] = argv[i] = (char *)"--quiet";
         }
+        else if (!strcmp(argv[i], "--sync") && i + 1 < argc)
+        {
+            g_sync_dir = argv[++i];
+            argv[i - 1] = argv[i] = (char *)"--quiet";
+        }
         else if (!strcmp(argv[i], "--host") && i + 1 < argc)
         {
             host = argv[++i];
@@ -263,10 +365,11 @@ int main(int argc, char **argv)
     if (!role || (strcmp(role, "dial") && strcmp(role, "answer")))
     {
         fprintf(stderr, "usage: voicemodem_pair <core> --role dial|answer"
-                        " [--port N] [--host ADDR]\n");
+                        " [--port N] [--host ADDR] [--sync DIR]\n");
         return 1;
     }
     g_role = role;
+    g_peer = !strcmp(role, "dial") ? "answer" : "dial";
     dialer = !strcmp(role, "dial");
 
     if (snprintf(port_env, sizeof(port_env), "VJ_NETLINK_PORT=%s", port)
@@ -310,9 +413,12 @@ int main(int argc, char **argv)
     {
         fprintf(stderr, "[%s] FAIL: netlink server did not open "
                         "(port %s busy?)\n", role, port);
+        sync_touch("failed");
         harness_shutdown(&cfg);
         return 2;
     }
+    if (!dialer)
+        sync_touch("listening");    /* the driver starts the dialler on this */
 
     /* Slow character pacing (~27 ms/char, one per video frame): this
      * test reads and refills the UART at frame granularity, and the
@@ -321,15 +427,21 @@ int main(int argc, char **argv)
      * end-of-packet marker fires exactly once. */
     jerry_ww(0xF10034, 0x0FFF, 0);
 
-    for (i = 0; i < MAX_WAIT_FRAMES && !connected; i++)
     {
-        step();
-        if (jlink_connected())
-            connected = 1;
+        long long deadline = now_ms() + RENDEZVOUS_MS;
+        while (!connected && now_ms() < deadline)
+        {
+            step();
+            if (jlink_connected())
+                connected = 1;
+            else if (peer_failed())
+                break;
+        }
     }
     if (!connected)
     {
         fprintf(stderr, "[%s] FAIL: transport never connected\n", role);
+        sync_touch("failed");
         harness_shutdown(&cfg);
         return 1;
     }
@@ -354,8 +466,8 @@ int main(int argc, char **argv)
             if (!send_word(0x8C00) || !expect(0x8C00)) break;
             /* first $6800 marks end-of-dial; then hear the answerer's
              * probe digits 0, 9 */
-            if (!expect_digit(0x0, 400)) break;
-            if (!expect_digit(0x9, 400)) break;
+            if (!expect_digit(0x0)) break;
+            if (!expect_digit(0x9)) break;
             /* send our probe digits 1, 2 */
             if (!cmd_echo(0x8A21)) break;
             if (!cmd_echo(0x8A22)) break;
@@ -368,13 +480,17 @@ int main(int argc, char **argv)
             if (!cmd_echo(0x8A29)) break;
             if (!send_word(0x8C00) || !expect(0x8C00)) break;
             /* hear the dialer's probe digits 1, 2 */
-            if (!expect_digit(0x1, 400)) break;
-            if (!expect_digit(0x2, 400)) break;
+            if (!expect_digit(0x1)) break;
+            if (!expect_digit(0x2)) break;
         }
 
         /* --- carrier query: $86xx then the async $A4FC --- */
         if (!cmd_echo(0x8000)) break;
         if (!send_word(0x8100) || !expect(0x86D0) || !expect(0xA4FC)) break;
+
+        /* Both sides are past the carrier query: only now may either side's
+         * data bytes reach the other's message queue (see peer_sync). */
+        if (!peer_sync("carrier")) break;
 
         /* --- data phase: one packet each way --- */
         if (dialer)
@@ -391,8 +507,11 @@ int main(int argc, char **argv)
         ok = 1;
     } while (0);
 
-    /* Grace period so the peer finishes its paced reads before the
-     * socket goes away under it. */
+    /* Don't take the socket away under a peer that is still reading: wait
+     * for its "done" (explicit barrier), plus a short frame grace for runs
+     * without --sync. */
+    if (ok && !peer_sync("done"))
+        ok = 0;
     if (ok)
         for (i = 0; i < 120; i++)
             step();
@@ -401,6 +520,7 @@ int main(int argc, char **argv)
 
     if (!ok)
     {
+        sync_touch("failed");
         fprintf(stderr, "[%s] FAIL\n", role);
         return 1;
     }
