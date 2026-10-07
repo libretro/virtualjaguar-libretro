@@ -78,92 +78,101 @@ jobs:
             exit 0
           fi
 
-          # Already linked -> reports and exits 0.  Tag in the body -> links
-          # it and exits 0.  Neither -> exits non-zero, message on stderr.
-          if out=$(./scripts/pr-link-issue.sh "$PR" --repo "$REPO" 2>&1); then
+          # Run the script, capturing both output and exit code.
+          # Exit codes:
+          #   0 = success (link created or already existed)
+          #   1 = generic error (bad args, repo not found, issue validation failed)
+          #   2 = no link tag found in the PR body
+          #   3 = tag found but the GitHub API mutation failed
+          set +e
+          out=$(./scripts/pr-link-issue.sh "$PR" --repo "$REPO" 2>&1)
+          exit_code=$?
+          set -e
+
+          if [ $exit_code -eq 0 ]; then
             echo "$out"
             echo "✅ $out" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
           echo "$out"
 
-          # pr-link-issue.sh exits non-zero for TWO different reasons, and
-          # they need different advice:
+          # pr-link-issue.sh signals its failure mode via exit code:
+          #   2 = no link tag found (author must add one)
+          #   3 = tag found but GitHub refused the mutation (API error, user may be blameless)
           #
-          #   a) there is no tag in the body -- the author must add one, and
-          #   b) a tag WAS found but GitHub refused the mutation.
-          #
-          # Reporting (b) as (a) sends the author hunting for a tag that is
-          # already there.  That happened on PR #725: the body carried both
-          # `Refs #652` and the HTML comment, but #652 had accumulated so
-          # many manually-linked PRs that addCloseIssueReferences returned
-          # "Issue exceeds manual reference limit" -- and this job said "no
+          # Reporting mode (3) as mode (2) sends the author hunting for a tag
+          # that is already there.  That happened on PR #725: the body carried
+          # `Refs #652` and the HTML comment, but #652 had accumulated so many
+          # manually-linked PRs that addCloseIssueReferences returned "Issue
+          # exceeds manual reference limit" -- and the old workflow said "no
           # link tag in its body", which is the one thing that was untrue.
-          case "$out" in
-            *"exceeds manual reference limit"*)
+          case $exit_code in
+            2)
+              # No link tag found -- author action needed
               {
-                echo "### ⚠️ Could not link -- the ISSUE is at GitHub's link limit"
+                echo "### ❌ This PR is not linked to an issue"
                 echo
-                echo "A link tag **was** found in this PR's body. GitHub refused the"
-                echo "link because the target issue already has the maximum number of"
-                echo "manually-linked pull requests:"
+                echo "No entry in the **Development** panel, and no link tag in the body"
+                echo "for CI to act on."
+                echo
+                echo "**Fix it by editing the PR description** -- add one of:"
                 echo
                 echo '```'
-                echo "$out"
+                echo "Closes #123        Fixes #123        Resolves #123        Refs #123"
+                echo "<!-- link-issue: #123 -->     (invisible in the rendered body)"
                 echo '```'
                 echo
-                echo "Nothing is wrong with this PR. Either link a different (or newer)"
-                echo "issue, or add the \`no-issue\` label -- the work is still traceable"
-                echo "through the \`Refs #N\` text in the description."
+                echo "Editing the description re-runs this job, which will then create the"
+                echo "link for you. The Development panel by hand still works, and so does"
+                echo "\`scripts/pr-link-issue.sh $PR --repo $REPO\` from a terminal."
+                echo
+                echo "Note the keywords do **not** link on their own here: GitHub only honours"
+                echo "them when a PR targets the default branch (\`master\`), and this PR targets"
+                echo "\`develop\`. The tag is a marker for this job, not for GitHub."
+                echo
+                echo "Without the link the issue never shows which release or pre-release"
+                echo "tag contains the work, which is the whole point of linking."
+                echo
+                echo "Genuinely no issue? Add the \`no-issue\` label."
               } >> "$GITHUB_STEP_SUMMARY"
-              echo "::error::PR #$PR has a link tag, but the target issue is at GitHub's manual-reference limit -- see the job summary. This is NOT a missing tag."
+              echo "::error::PR #$PR has no linked issue and no link tag in its body. Add 'Refs #N' to the description (that re-runs this job and creates the link), or add the 'no-issue' label."
               exit 1
               ;;
-            *"GraphQL"*|*"HTTP 4"*|*"HTTP 5"*|*"gh: "*)
+            3)
+              # Tag found but API mutation failed
               {
                 echo "### ⚠️ Could not link -- the GitHub API refused the request"
                 echo
-                echo "A link tag may well be present; the API call itself failed:"
+                echo "A link tag **was** found in this PR's body, but the attempt to create"
+                echo "the link failed. The API error appears above:"
                 echo
                 echo '```'
                 echo "$out"
                 echo '```'
                 echo
-                echo "Re-run this job first -- several of these are transient. If it"
-                echo "persists, read the message above rather than assuming the tag is"
-                echo "missing."
+                echo "Re-run this job first -- several API errors are transient. If it"
+                echo "persists, read the error message carefully. If it mentions a limit"
+                echo "(manual reference limit, webhook limit, etc.), the issue may need"
+                echo "to be changed or a \`no-issue\` label added."
+                echo
+                echo "The work is still traceable through the \`Refs #N\` text in the description."
               } >> "$GITHUB_STEP_SUMMARY"
-              echo "::error::PR #$PR: the GitHub API refused the link (see the job summary). This is an API failure, NOT necessarily a missing link tag."
+              echo "::error::PR #$PR: the GitHub API refused the link (exit code 3). See the job summary for details and the API error message."
+              exit 1
+              ;;
+            *)
+              # Generic error (exit code 1 or other)
+              {
+                echo "### ⚠️ Could not check the link -- a tool or connection error occurred"
+                echo
+                echo "The check itself failed. The error was:"
+                echo
+                echo '```'
+                echo "$out"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::PR #$PR: the link check encountered an error (exit code $exit_code). See the job summary."
               exit 1
               ;;
           esac
-
-          {
-            echo "### ❌ This PR is not linked to an issue"
-            echo
-            echo "No entry in the **Development** panel, and no link tag in the body"
-            echo "for CI to act on."
-            echo
-            echo "**Fix it by editing the PR description** -- add one of:"
-            echo
-            echo '```'
-            echo "Closes #123        Fixes #123        Resolves #123        Refs #123"
-            echo "<!-- link-issue: #123 -->     (invisible in the rendered body)"
-            echo '```'
-            echo
-            echo "Editing the description re-runs this job, which will then create the"
-            echo "link for you. The Development panel by hand still works, and so does"
-            echo "\`scripts/pr-link-issue.sh $PR --repo $REPO\` from a terminal."
-            echo
-            echo "Note the keywords do **not** link on their own here: GitHub only honours"
-            echo "them when a PR targets the default branch (\`master\`), and this PR targets"
-            echo "\`develop\`. The tag is a marker for this job, not for GitHub."
-            echo
-            echo "Without the link the issue never shows which release or pre-release"
-            echo "tag contains the work, which is the whole point of linking."
-            echo
-            echo "Genuinely no issue? Add the \`no-issue\` label."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          echo "::error::PR #$PR has no linked issue and no link tag in its body. Add 'Refs #N' to the description (that re-runs this job and creates the link), or add the 'no-issue' label."
-          exit 1
