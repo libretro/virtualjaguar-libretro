@@ -1787,6 +1787,18 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Hover Strike CD (HLE savestate determinism, #787)" "no disc matching 'Hover Strike - Unconquered Lands (USA).cue' in the private corpus"; \
 	fi
+	@# Issue #804: the same disc on the REAL-BIOS path.  The boot-stub-injected
+	@# flag (jagcd_bios.c) and the BUTCH FIFO refill accumulator (cdrom.c) lived
+	@# outside the blob, so a rollback across the stub injection never injected
+	@# it and the replay diverged ~40 frames in (failed video_replay_identical
+	@# and state_reconverges pre-fix).  The explicit boot-mode option is what
+	@# selects the BIOS path -- `--bios` only toggles the cart boot ROM.
+	@rom=$$(bash scripts/find-rom.sh 'Hover Strike - Unconquered Lands (USA).cue'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --option virtualjaguar_cd_boot_mode=bios --warmup 400 --frames 120 --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Hover Strike CD (real-BIOS savestate determinism, #804)" "no disc matching 'Hover Strike - Unconquered Lands (USA).cue' in the private corpus"; \
+	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap

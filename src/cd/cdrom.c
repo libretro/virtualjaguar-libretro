@@ -3015,3 +3015,66 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 
 	return (size_t)(buf - start);
 }
+
+/* ------------------------------------------------------------------ */
+/* Trailing CDROM drive-timing chunk (#804)                            */
+/*                                                                     */
+/* Two statics the main CDROM chunk never carried.  fifoRefillAccum is  */
+/* the error-diffusion remainder behind CDROMNextRefillDelay(): it      */
+/* decides whether the NEXT FIFO refill interval is 2 or 3 ticks, so    */
+/* leaving it at the replay's value shifted every later refill by one   */
+/* tick (Hover Strike real-BIOS load: state_reconverges differed in     */
+/* fifoFillDelay 41 frames after the rollback).  cdPrevShouldIRQ is the */
+/* edge detector for the 68K/GPU CD interrupt: the same class of hidden */
+/* cross-tick state, saved alongside (no divergence was observed from   */
+/* it on its own).                                                      */
+/* ------------------------------------------------------------------ */
+
+#define CDROM_EXT_MAGIC 0x31584443u   /* "CDX1" little-endian */
+
+size_t CDROMStateExtSize(void)
+{
+	return 4u + 4u + 1u;   /* magic, fifoRefillAccum, cdPrevShouldIRQ */
+}
+
+size_t CDROMStateExtSave(uint8_t *buf)
+{
+	uint8_t *start = buf;
+	uint32_t magic = CDROM_EXT_MAGIC;
+	uint8_t  b     = cdPrevShouldIRQ ? 1 : 0;
+
+	STATE_SAVE_VAR(buf, magic);
+	STATE_SAVE_VAR(buf, fifoRefillAccum);
+	STATE_SAVE_VAR(buf, b);
+
+	return (size_t)(buf - start);
+}
+
+void CDROMStateExtReset(void)
+{
+	fifoRefillAccum = 0;
+	cdPrevShouldIRQ = false;
+}
+
+size_t CDROMStateExtLoad(const uint8_t *buf)
+{
+	const uint8_t *start = buf;
+	uint32_t magic;
+	uint8_t  b;
+
+	STATE_LOAD_VAR(buf, magic);
+	if (magic != CDROM_EXT_MAGIC)
+	{
+		CDROMStateExtReset();
+		return (size_t)(buf - start);
+	}
+	STATE_LOAD_VAR(buf, fifoRefillAccum);
+	STATE_LOAD_VAR(buf, b);
+	cdPrevShouldIRQ = (b != 0);
+	/* CDROMNextRefillDelay does fifoRefillAccum / 100 and % 100: only
+	 * 0..99 is ever produced, so anything else came from a damaged file. */
+	if (fifoRefillAccum < 0 || fifoRefillAccum >= 100)
+		fifoRefillAccum = 0;
+
+	return (size_t)(buf - start);
+}

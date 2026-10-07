@@ -9,7 +9,7 @@ Defined in `src/core/state.h`:
 | Constant | Value | Meaning |
 |---|---|---|
 | `STATE_MAGIC` | `0x564A5353` (`"VJSS"`) | Header magic |
-| `STATE_VERSION` | `15` | Version this build **writes** (v3.7.0) |
+| `STATE_VERSION` | `16` | Version this build **writes** (v3.7.1 cycle; v3.7.0 wrote 15) |
 | `STATE_MIN_VERSION` | `1` | Oldest version this build will **load** |
 
 `retro_unserialize()` refuses anything outside `STATE_MIN_VERSION … STATE_VERSION`
@@ -50,6 +50,37 @@ not match the disc currently mounted in CD mode (`retro_unserialize()`,
 `libretro.c`).
 A state saved by an older build while an HLE CD read was in flight cannot
 resume that read: the transfer was never saved.
+
+## v16: real-BIOS CD chunks (#804, v3.7.1 cycle)
+
+Two trailing chunks, appended strictly after the HLE CD streaming chunk, each
+behind its own magic word. `STATE_SIZE` is unchanged (`0x280000`); the chunks
+are 5 and 9 bytes.
+
+| Chunk | Magic | Fields | Owner |
+|---|---|---|---|
+| Real-BIOS boot | `"CDB1"` | `cdBootStubInjected` | `src/cd/jagcd_bios.c` |
+| CD drive timing | `"CDX1"` | `fifoRefillAccum`, `cdPrevShouldIRQ` | `src/cd/cdrom.c` |
+
+Both lived outside the blob. A rollback (run-ahead, netplay) to a state taken
+before the boot stub was injected kept the flag set by the replay that had
+already injected it, so the replay never injected and the game never started;
+the refill accumulator picks the next FIFO interval (2 or 3 ticks), so a stale
+value shifted every later refill by one tick. Measured on Hover Strike at
+warmup 400, real-BIOS path: video diverged 44 frames after the rollback before
+the fix, all four `test_runahead_determinism` checks pass after.
+
+Loading: `retro_unserialize()` reads both chunks only for `version >= 16`
+(`STATE_VERSION_BIOS_CD_BOOT`). A v15 or older state loads normally and the
+chunks' values are left as the live session holds them, exactly as v3.7.0 did.
+That is deliberate: defaulting `cdBootStubInjected` to false would re-arm the
+`$005E40` GPU-magic stomp and the `$050176` boot-stub re-injection over a
+mid-game v15 state's RAM, a regression for every existing real-BIOS state. (A
+v15 state loaded into a fresh core still starts with the flag clear, as before.)
+A damaged accumulator (outside 0..99) loads as 0. Verified with a genuine v15
+file written by a v3.7.0 build (`274fa74`), Hover Strike real-BIOS. Regression:
+`test_state_compat` (`v16_*`, `v15_*` rows) and the ROM-gated real-BIOS Hover
+Strike run in `make test`.
 
 ## v8: Jaguar GameDrive chunk
 

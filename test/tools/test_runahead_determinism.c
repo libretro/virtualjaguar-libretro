@@ -589,9 +589,14 @@ int main(int argc, char **argv)
 
     free(blob_b);
     free(blob_c);
-    remove(state_a);
-    remove(state_b);
-    remove(state_c);
+    /* VJ_RUNAHEAD_KEEP=1 keeps the three state files so a failing
+     * state_reconverges can be diffed offline (b = end of pass 1,
+     * c = end of pass 2; first differing offset names the subsystem). */
+    if (!getenv("VJ_RUNAHEAD_KEEP")) {
+        remove(state_a);
+        remove(state_b);
+        remove(state_c);
+    }
     harness_shutdown(&cfg);
 
     return failed;

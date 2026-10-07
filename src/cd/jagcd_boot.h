@@ -2,6 +2,7 @@
 #define __JAGCD_BOOT_H__
 
 #include <stdint.h>
+#include <stddef.h>
 #include <boolean.h>
 
 #ifdef __cplusplus
@@ -32,6 +33,18 @@ extern const CDBootStrategy cd_boot_strategy_cart;
  * Selected directly in retro_load_game() when info == NULL; never produced
  * by ResolveBootConfig(), which only knows about cart/CD content. */
 extern const CDBootStrategy cd_boot_strategy_none;
+
+/* Savestate chunk for the real-BIOS boot path (#804): whether the boot stub
+ * has been injected yet.  Appended strictly last to the state blob behind a
+ * magic word.  retro_unserialize() only calls Load for v16+ states and
+ * leaves the live value alone for older ones (forcing "not injected" would
+ * re-arm the BIOS hooks over a mid-game state's RAM); a chunk whose magic
+ * is wrong takes JaguarCDBiosStateReset().  Save/Load return the bytes
+ * consumed. */
+size_t JaguarCDBiosStateSize(void);
+size_t JaguarCDBiosStateSave(uint8_t *buf);
+size_t JaguarCDBiosStateLoad(const uint8_t *buf);
+void   JaguarCDBiosStateReset(void);
 
 #ifdef __cplusplus
 }
