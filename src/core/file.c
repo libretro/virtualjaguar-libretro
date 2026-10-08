@@ -139,9 +139,15 @@ static void ReportKnownBadDumpLoaded(uint32_t crc)
 
 static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *loadAddress)
 {
-   static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000 };
+   /* $5000 is listed after $4000 so a pure containment tie still resolves
+    * to $4000 exactly as before; only entry-point evidence (below) can pick
+    * it. */
+   static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000, 0x00005000 };
    unsigned bestCandidate = 0;
    unsigned bestScore = 0;
+   unsigned bestEntry = 0;
+   unsigned entryCandidate = 0;
+   unsigned entryScore = 0;
    unsigned minScore;
    bool knownStartup;
    unsigned i;
@@ -166,9 +172,21 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
          && GET32(buffer, 6) == 0x00F0210C);
    minScore = knownStartup ? 2 : 8;
 
+   /* Containment alone cannot tell overlapping bases apart.  Chroma-Luma
+    * (bin) and JagMania (issue #818) are linked at $5000, and a $4000
+    * window also contains almost every target they reference, so $4000
+    * won and every call landed $1000 low -- JSR $5804 ran Chroma's font
+    * data.  The decider is entry-point consistency: under the right base a
+    * JSR/JMP abs.L target is the start of the image or the instruction
+    * right after an RTS/RTE/RTR, i.e. the start of a subroutine.  Under a
+    * wrong base that is a coincidence.  Among the bases that clear the
+    * containment bar, the one with the most such hits wins; with no hit for
+    * any base the containment winner stands, so images without the signal
+    * load where they always did. */
    for (i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
    {
       unsigned score = 0;
+      unsigned entry = 0;
       uint32_t base = candidates[i];
 
       for (offset = 0; offset + 6 <= size && offset < 2048; offset += 2)
@@ -188,7 +206,16 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
 
          target = GET32(buffer, offset + 2);
          if (target >= base && target < base + size)
+         {
+            uint32_t rel = target - base;
+
             score++;
+            if ((op == 0x4EB9 || op == 0x4EF9) && !(rel & 1)
+                  && (rel == 0 || GET16(buffer, rel - 2) == 0x4E75
+                     || GET16(buffer, rel - 2) == 0x4E73
+                     || GET16(buffer, rel - 2) == 0x4E77))
+               entry++;
+         }
       }
 
       if (score > bestScore)
@@ -196,12 +223,20 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
          bestScore = score;
          bestCandidate = i;
       }
+
+      if (score >= minScore && entry > 0
+            && (entry > bestEntry || (entry == bestEntry && score > entryScore)))
+      {
+         bestEntry = entry;
+         entryScore = score;
+         entryCandidate = i;
+      }
    }
 
    if (bestScore < minScore)
       return false;
 
-   *loadAddress = candidates[bestCandidate];
+   *loadAddress = candidates[bestEntry ? entryCandidate : bestCandidate];
    return true;
 }
 

@@ -29,9 +29,10 @@
  * ROM mode (--rom PATH [--bios]): runs PATH for 600 frames under the
  * accurate blitter and asserts every frame completes AND the blitter ended
  * hung -- i.e. the title really issued a never-ending blit and the host
- * survived it.  Reproducers: Music Demo (ScatoLOGIC) --bios (#794, frame
- * 158) and Native Demo (bin) HLE (frame 170); both used to hang retro_run
- * forever.
+ * survived it.  Reproducer: Native Demo (bin) HLE (frame 170), which used
+ * to hang retro_run forever.  Music Demo (ScatoLOGIC) --bios (#794, frame
+ * 158) was one too until #818: its blitter spray came from a $1000-low
+ * load address, and loaded at its $5000 link base it issues no such blit.
  *
  * Build:  cc -O2 -Wall -std=c99 -I. -I./src -I./libretro-common/include \
  *           -o test/tools/test_blitter_hung test/tools/test_blitter_hung.c \
