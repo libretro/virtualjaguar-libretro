@@ -1,3 +1,111 @@
+Virtual Jaguar v3.7.1 libretro
+------------------------------
+
+Broken-games release, continued. Full notes: docs/RELEASE_NOTES_v3.7.1.md
+
+== Game fixes ==
+* Xenowings is playable (#811). It needed four fixes: TOM bug 13 (#819),
+  JERRY bug 13 (#822) and JERRY bug 2 (#825) from Atari's own hardware
+  bug list, plus 68000 prefetch-queue emulation for its self-modifying
+  anti-tamper check (#823); #824 keeps the GPU idle-loop fast-forward
+  consistent with the bug-13 rule. Headless-verified only; not yet
+  confirmed in RetroArch.
+* Club Drive no longer crashes when driving, and its ground and horizon
+  colours match the real game (#611, #828, #829; the cloud sky box is still
+  missing, #831). GPU and DSP NORMI returned one
+  too high for every input; Club Drive uses it to pick a corner when
+  clipping polygons, so a polygon crossing two screen edges came out
+  twisted and the GPU ran off into garbage.
+* The 7 homebrew carts that froze on the Accurate blitter now run (#800,
+  #817). The cause was a 68K running away after ILLEGAL in an uploaded
+  executable, not a slow blitter; vector 4 is now parked at $1000.
+* A blit that never ends no longer freezes RetroArch (#794, #817).
+  The emulated blitter hangs like the chip does (busy status, further
+  starts ignored, cleared on reset) and the host keeps running.
+* Six homebrew binaries linked at $5000 were loaded at $4000 and now load
+  at the right address (#818, #826): Chroma-Luma (bin), JagMania
+  (Jul 8), JagMarble (2000), FORCE Design Legion Force Jidai Intro Demo 0!,
+  Joypad-TeamTap Tester [a1], Music Demo (ScatoLOGIC). This is also the
+  real cause of the Music Demo BIOS-mode blitter spray in #794.
+* White Men Can't Jump intro logo (#736, #827): only the first logo's
+  apex showed. The title now defaults Blitter Bus Timing on, so the 68K
+  stalls behind the blitter as on hardware and the GPU logo decode
+  finishes before the fade. The rest of the game is not claimed fixed.
+* Memory Track saves work after a no-content boot plus a disc insert
+  (#810, #815): save RAM is exposed whenever the Memory Track is
+  enabled, and the insert reinstalls the NVM BIOS module. Not yet
+  verified in RetroArch.
+* Real-BIOS CD run-ahead and rewind stay in sync (#804, #814).
+  Hover Strike with cd_boot_mode=bios diverged because the boot-stub flag
+  and the CD FIFO refill phase were outside the savestate.
+
+== Savestates ==
+* Version 16. v3.7.0 (v15) and older states still load; v16 states do not
+  load in older builds.
+* Appended chunks: CDB1 and CDX1 (real-BIOS CD boot flag and refill phase,
+  #814) and BLH1 (blitter hung flag, #817). A missing chunk loads as
+  the default. See docs/savestate-compat.md.
+
+== Documentation ==
+* New docs/jtrm-errata.md (#820, #821): where Atari's manual is wrong
+  or silent, and which entries in Atari's own hardware-bug list the core
+  emulates.
+* 110 corrections to the distilled docs/jtrm-*.md files, each re-read
+  against the PDF. Docs and comments only; no behaviour change.
+* Cart and CD boot matrices regenerated for v3.7.1 (#830); site pages
+  audited for v3.7.0 (#808).
+
+== Testing ==
+* Cart corpus, 155 titles. Fast blitter: 155/155 HLE and 154/155 BIOS reach
+  game code. Accurate blitter: 155/155 in both modes, up from 148 HLE and
+  136 BIOS in v3.7.0.
+* CD corpus: 28 of 28 discs reach game code in both modes, unchanged.
+* NORMI corpus sweep: only Club Drive, Checkered Flag and Native Demo
+  change. Club Drive's rendering was confirmed correct by the maintainer.
+
+== Developer / CI ==
+* pr-link-issue.sh uses distinct exit codes and the workflow reads them;
+  release.yml target count corrected to 24 (#812).
+* test_cd_bios_boot now fails when the CD transfer wedged (#799, #813).
+* voicemodem pair test waits for its peer, not the wall clock (#796,
+  #816).
+* New ROM-gated checks: test_blitter_hung, test_upload_illegal_park,
+  test_club_drive_611, xenowings_ingame_video, wmcj_intro_logo,
+  test_m68k_prefetch; NORMI cases in test_gpu_ops and test_dsp_ops are
+  taken from the netlist decode.
+* cart_boot_matrix.sh: CART_MATRIX_PROBE_ARGS knob; refuses to run without
+  an explicit CART_MATRIX_OUT.
+
+== Known issues ==
+* #737 (FMV interactive scenes) and #633 (AvP noise) were closed as not
+  reproducible. The FMV titles start on A/B/C, not START.
+* Club Drive draws a flat colour instead of its cloud sky box (#831).
+* TOM bug 2 (GPU indexed store after divide) is not modelled; only the DSP
+  half is (#825).
+
+
+Virtual Jaguar v3.7.0 libretro
+------------------------------
+
+Broken-games release. Full notes: docs/RELEASE_NOTES_v3.7.0.md
+
+== Game fixes ==
+* Baldies no longer freezes in its intro, in HLE or BIOS boot mode
+  (#738, #750, #752).
+* Myst boots from CHD images and gets past the Cyan logo in both boot
+  modes (#754-#757).
+* World Tour Racing gets past its title screen (#589, #759).
+* PolyEngine boots and draws polygons (#785, #790, #791).
+* PlaySFX and other headerless raw-binary homebrew load in HLE (#739, #805).
+* Vid Grid, Ocean Depths, Simone, Fast Food 64, Frogz 64 and Saucer Wars
+  each have a fix (#760-#765).
+* HLE CD titles are deterministic under run-ahead and rollback, and a
+  state saved mid-load resumes the load (#787, #803).
+
+== Savestates ==
+* Version 15. v3.6.x (v14) states still load.
+
+
 Virtual Jaguar v3.6.1 libretro
 ------------------------------
 
