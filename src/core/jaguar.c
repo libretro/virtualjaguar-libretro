@@ -1537,9 +1537,9 @@ void JaguarReset(void)
        * 1bpp phrase-mode blits the hardware never finishes (INNER.NET
        * counts only dstxp[0] below 8bpp), which hung retro_run under the
        * accurate blitter (issue #800: DEMO1 (bin), DEMO1B, Ladybug).
-       * Two images with a wrongly inferred load address crash into the
-       * same runaway (Chroma-Luma (bin), JagMania (Jul 8)); they no
-       * longer hang but are still broken -- a separate loader bug.
+       * A wrongly inferred load address crashes into the same runaway
+       * (Chroma-Luma (bin), JagMania (Jul 8): linked at $5000, loaded at
+       * $4000 -- fixed in file.c, issue #818).
        *
        * Park ONLY vector 4 (illegal instruction), the same guard file.c
        * uses, re-armed here so it also survives retro_reset()'s RAM

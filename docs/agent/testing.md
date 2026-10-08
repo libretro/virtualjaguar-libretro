@@ -176,12 +176,15 @@ heartbeat every 600 frames). Cost enabled: one indirect call + ~256-px hash/fram
   until reset (`test/tools/test_blitter_hung`; saved in the v16 `"BLH1"` chunk). Known limit: on
   hardware a `B_COUNT` write while hung would un-stick it; not modelled. Absurd-size blits are
   still run synchronously and can keep `retro_run` from returning for hours; this line is logged
-  *before* the blit runs. Reproducers: Music Demo (ScatoLOGIC) `--bios` (#794, `approx=1`),
-  Native Demo (bin) HLE.
+  *before* the blit runs. Reproducer: Native Demo (bin) HLE. (Music Demo (ScatoLOGIC) `--bios`,
+  #794 `approx=1`, was a misloaded raw binary -- fixed by #818, now `test_raw_binary_boot`.)
   Matrix runs killed at the wall-clock cap carry it in their evidence column.
   - Seen as garbage blits from a runaway 68K whose exception frames land on the blitter's
     `$F0A238` mirror. Uploaded executables (raw BJL/.abs) that end in ILLEGAL used to do this in
     HLE; JaguarReset now parks vector 4 at `$1000` (`test/tools/test_upload_illegal_park`, #800).
+  - A raw binary parked at `$1000` early is often a wrong inferred load base, not a bad title:
+    `file.c` picks between overlapping candidate bases by entry-point consistency (JSR targets
+    right after an RTS). `test/tools/test_raw_binary_boot --expect-base` pins it (#818).
 - `test/tools/cart_boot_matrix.sh` runs the probe's default **Fast** blitter. Sweep the shipped
   default with `CART_MATRIX_PROBE_ARGS="--option virtualjaguar_usefastblitter=disabled"` plus an
   explicit `CART_MATRIX_OUT` (args are folded into the row cache id and default log dir).
