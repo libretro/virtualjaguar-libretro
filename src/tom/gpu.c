@@ -3354,23 +3354,31 @@ INLINE static void gpu_opcode_mtoi(void)
 }
 
 
+/* NORMI: the right shift that normalises an unsigned integer "as an IEEE
+ * 32-bit floating point value" (JTRM v8 p.52), i.e. that puts the top set
+ * bit at bit 23, the hidden-bit position.  So the result is (index of the
+ * top set bit) - 23: NORMI 1 = -23, NORMI $800000 = 0, NORMI $80000000 = 8.
+ * The TOM netlist (ARITH.NET "normalisation integer generator") encodes
+ * exactly that, and gives -32 for a zero source (normi[5] set because no
+ * bit at 23 or above is set, normi[4..0] clear).
+ *
+ * The old code normalised to bit 22 and returned one too many everywhere
+ * (0 for a zero source).  Club Drive indexes its four-entry screen-corner
+ * clip table with (NORMI(outcode) << 3) & $1F, so every clip corner came
+ * out rotated by one; a polygon that crossed two screen edges got the wrong
+ * corner, the edge walker bailed on the non-monotonic result with its
+ * return stack (r10) still borrowed as scratch, and the GPU jumped into
+ * main RAM (#611). */
 INLINE static void gpu_opcode_normi(void)
 {
    uint32_t _RM = RM;
-   uint32_t res = 0;
+   uint32_t res = (uint32_t)-32;
 
    if (_RM)
    {
-      while ((_RM & 0xFFC00000) == 0)
-      {
-         _RM <<= 1;
-         res--;
-      }
-      while ((_RM & 0xFF800000) != 0)
-      {
-         _RM >>= 1;
+      res = (uint32_t)-23;
+      while ((_RM >>= 1) != 0)
          res++;
-      }
    }
    RN = res;
    SET_ZN(res);
