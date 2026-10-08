@@ -2170,6 +2170,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "Xenowings in-game video (#811)" "no ROM matching '*xenowings*' in the private corpus"; \
 	fi
 
+	@# White Men Can't Jump intro logo (#736): the game's fade-in copies
+	@# out of a buffer its GPU is still decoding and relies on each blit
+	@# freezing the 68000 (JTRM v8 p.8, p.69).  With zero-time blits only
+	@# the logo's apex survived.  The titledb row turns on the blitter
+	@# bus-time model for this title; run at DEFAULT options so the row
+	@# is what is tested.  Private corpus only.
+	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
+	if [ -n "$$rom" ]; then \
+		$(MAKE) --no-print-directory test/tools/wmcj_intro_logo >/dev/null || exit 1; \
+		./test/tools/wmcj_intro_logo ./$(TARGET) "$$rom" --quiet || exit 1; \
+	else \
+		bash scripts/test-skip.sh record "White Men Can't Jump intro logo (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
+	fi
+
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
 	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
@@ -2529,6 +2543,14 @@ test/tools/xenowings_ingame_video: test/tools/xenowings_ingame_video.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
 		-o $@ test/tools/xenowings_ingame_video.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# White Men Can't Jump intro logo (#736): blit-vs-GPU-decoder race.
+test/tools/wmcj_intro_logo: test/tools/wmcj_intro_logo.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
+		-o $@ test/tools/wmcj_intro_logo.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
