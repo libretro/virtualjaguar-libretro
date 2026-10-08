@@ -20,8 +20,8 @@ wrong or silent (see Documentation).
   (TOM/JERRY bug 13 and bug 2) and 68000 prefetch emulation. Gameplay rendered black,
   dropped back to the loader, and ignored input before. Headless-verified only; not yet
   confirmed in RetroArch (https://github.com/libretro/virtualjaguar-libretro/pull/819, https://github.com/libretro/virtualjaguar-libretro/pull/822, https://github.com/libretro/virtualjaguar-libretro/pull/823, https://github.com/libretro/virtualjaguar-libretro/pull/824, https://github.com/libretro/virtualjaguar-libretro/pull/825, https://github.com/libretro/virtualjaguar-libretro/issues/811).
-- **Club Drive no longer crashes when you drive**, and its ground and horizon colours now
-  match the real game; the cloud sky box is still missing (https://github.com/libretro/virtualjaguar-libretro/issues/831) (https://github.com/libretro/virtualjaguar-libretro/pull/828, https://github.com/libretro/virtualjaguar-libretro/pull/829, https://github.com/libretro/virtualjaguar-libretro/issues/611).
+- **Club Drive no longer crashes when you drive**, and its walls, ceilings and horizon now
+  render as on hardware (https://github.com/libretro/virtualjaguar-libretro/pull/828, https://github.com/libretro/virtualjaguar-libretro/pull/829, https://github.com/libretro/virtualjaguar-libretro/issues/611).
 - **Seven homebrew carts that froze on the Accurate blitter now run**, and a blit that
   never ends no longer freezes RetroArch (https://github.com/libretro/virtualjaguar-libretro/pull/817, https://github.com/libretro/virtualjaguar-libretro/issues/800, https://github.com/libretro/virtualjaguar-libretro/issues/794).
 - **Six homebrew binaries now load at the right address**, so they draw instead of
@@ -70,9 +70,9 @@ wrong or silent (see Documentation).
   saved state each ran 2400 frames clean with the picture moving; on the previous build
   four of the six crashed. The DSP has the same `NORMI` block and gets the same fix
   (https://github.com/libretro/virtualjaguar-libretro/pull/829; only Music Demo executes DSP `NORMI` in the cart corpus, with no
-  visible or audible change). Club Drive's ground and horizon colours now match the real game,
-  confirmed by the maintainer; its cloud sky box is a separate, still-open bug
-  (https://github.com/libretro/virtualjaguar-libretro/issues/831). See Testing for the corpus effects.
+  visible or audible change). Club Drive's indoor world (Jerome's Pad) now draws its ceiling
+  and walls instead of the flat clear colour, and the outdoor worlds' sky boxes render as
+  before (https://github.com/libretro/virtualjaguar-libretro/issues/831 was this, not a missing sky). See Testing for the corpus effects.
 - **Seven homebrew carts hung the Accurate blitter (https://github.com/libretro/virtualjaguar-libretro/issues/800, https://github.com/libretro/virtualjaguar-libretro/pull/817).** Chroma-Luma (bin),
   DEMO1 (bin), DEMO1B (two dumps), JagMania (Jul 8), Ladybug Demo and Ladybug Demo (rom)
   each froze inside one blit under the default Accurate blitter. The blitter was not slow:
@@ -209,8 +209,6 @@ Release gate, v3.7.1 against the v3.7.0 tag, each built from a clean tree.
   (https://github.com/libretro/virtualjaguar-libretro/issues/633) could not be reproduced either; reopen either issue if it still happens.
 - **Myst CHD on Raspberry Pi 5** is confirmed working on the v3.7.0 release build
   (https://github.com/libretro/virtualjaguar-libretro/issues/774).
-- **Club Drive** still draws a flat colour where the real game shows a cloud sky box
-  (https://github.com/libretro/virtualjaguar-libretro/issues/831).
 - **White Men Can't Jump** is not declared fixed beyond its intro logo (https://github.com/libretro/virtualjaguar-libretro/issues/736).
 - **Xenowings and Memory Track:** verified headless only, see above.
 - **GPU bug 2** (the TOM half of the indexed-store-after-divide bug) is not modelled; only

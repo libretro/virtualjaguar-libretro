@@ -10,9 +10,8 @@ Broken-games release, continued. Full notes: docs/RELEASE_NOTES_v3.7.1.md
   anti-tamper check (#823); #824 keeps the GPU idle-loop fast-forward
   consistent with the bug-13 rule. Headless-verified only; not yet
   confirmed in RetroArch.
-* Club Drive no longer crashes when driving, and its ground and horizon
-  colours match the real game (#611, #828, #829; the cloud sky box is still
-  missing, #831). GPU and DSP NORMI returned one
+* Club Drive no longer crashes when driving, and its walls, ceilings and
+  horizon render as on hardware (#611, #828, #829). GPU and DSP NORMI returned one
   too high for every input; Club Drive uses it to pick a corner when
   clipping polygons, so a polygon crossing two screen edges came out
   twisted and the GPU ran off into garbage.
@@ -79,7 +78,6 @@ Broken-games release, continued. Full notes: docs/RELEASE_NOTES_v3.7.1.md
 == Known issues ==
 * #737 (FMV interactive scenes) and #633 (AvP noise) were closed as not
   reproducible. The FMV titles start on A/B/C, not START.
-* Club Drive draws a flat colour instead of its cloud sky box (#831).
 * TOM bug 2 (GPU indexed store after divide) is not modelled; only the DSP
   half is (#825).
 
