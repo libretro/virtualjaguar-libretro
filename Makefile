@@ -1355,7 +1355,7 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
-		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
@@ -1430,7 +1430,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_disk_control \
-		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung \
+		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1858,18 +1858,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# A blit hardware never finishes (#800/#794) hangs the emulated
 	@# blitter, never the host: synthetic never-ending blit under both
 	@# engines (returns, B_CMD busy, starts ignored, reset clears,
-	@# savestate restores), then the measured reproducer.  Music Demo
-	@# (ScatoLOGIC) --bios was the second one (#794) until #818 showed
-	@# its spray came from a $$1000-low load address; it is now a
-	@# raw-binary boot check below.
+	@# savestate restores).  Both measured reproducers are gone: Music
+	@# Demo (ScatoLOGIC) --bios (#794) sprayed the blitter only from a
+	@# $$1000-low load address (#818, now a raw-binary boot check below), and
+	@# Native Demo (bin) HLE reached its blit only through a GPU runaway
+	@# into data that the #611 NORMI fix reshuffled.  The synthetic test
+	@# covers both engines.
 	./test/tools/test_blitter_hung ./$(TARGET)
 	./test/tools/test_blitter_hung ./$(TARGET) --fast
-	@rom=$$(bash scripts/find-rom.sh 'Native Demo (bin) (1997).jag' 'Native Demo (bin)*'); \
-	if [ -n "$$rom" ]; then \
-		./test/tools/test_blitter_hung ./$(TARGET) --rom "$$rom"; \
-	else \
-		bash scripts/test-skip.sh record "Hung blitter (Native Demo (bin), #800)" "no ROM matching 'Native Demo (bin)*' in the private corpus"; \
-	fi
 	@rom=$$(bash scripts/find-rom.sh 'DEMO1B (PD) [[]a1[]].jag' 'DEMO1B (PD).jag' 'DEMO1B*.jag'); \
 	if [ -n "$$rom" ]; then \
 		./test/tools/test_upload_illegal_park ./$(TARGET) --rom "$$rom" --frames 600; \
@@ -1900,6 +1896,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
 	else \
 		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Music Demo, #794/#818)" "no ROM matching 'Music Demo*' in the private corpus"; \
+	fi
+	@# Club Drive GPU runaway (#611): NORMI was one too high, so the clip
+	@# corner table lookup rotated every inserted screen corner; steering
+	@# from the mid-race state ran the GPU into main RAM by frame 82.  The
+	@# user's RetroArch state is rzip-compressed, so extract it first.
+	@rom=$$(bash scripts/find-rom.sh 'Club Drive (1994).jag' 'Club Drive*.jag' 'Club Drive*.j64'); \
+	state="test/roms/private/states/Club Drive (1994).state3"; \
+	if [ -n "$$rom" ] && [ -f "$$state" ]; then \
+		raw=$$(mktemp /tmp/vj_club_drive_611.XXXXXX) && \
+		python3 scripts/rzip_extract.py "$$state" "$$raw" >/dev/null && \
+		./test/tools/test_club_drive_611 ./$(TARGET) "$$rom" --load-state "$$raw"; \
+		rc=$$?; rm -f "$$raw"; [ $$rc -eq 0 ]; \
+	else \
+		bash scripts/test-skip.sh record "Club Drive GPU stays local (#611)" "no 'Club Drive*' ROM or states/Club Drive (1994).state3 in the private corpus"; \
 	fi
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
@@ -2927,6 +2937,15 @@ test/tools/test_blitter_hung: test/tools/test_blitter_hung.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_blitter_hung.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Club Drive GPU runaway regression (#611): harness tool, needs the wide
+# test ABI for GPUGetPC.
+test/tools/test_club_drive_611: test/tools/test_club_drive_611.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_club_drive_611.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

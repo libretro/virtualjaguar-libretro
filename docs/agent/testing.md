@@ -176,8 +176,10 @@ heartbeat every 600 frames). Cost enabled: one indirect call + ~256-px hash/fram
   until reset (`test/tools/test_blitter_hung`; saved in the v16 `"BLH1"` chunk). Known limit: on
   hardware a `B_COUNT` write while hung would un-stick it; not modelled. Absurd-size blits are
   still run synchronously and can keep `retro_run` from returning for hours; this line is logged
-  *before* the blit runs. Reproducer: Native Demo (bin) HLE. (Music Demo (ScatoLOGIC) `--bios`,
-  #794 `approx=1`, was a misloaded raw binary -- fixed by #818, now `test_raw_binary_boot`.)
+  *before* the blit runs. No real-ROM reproducer remains: Music Demo (ScatoLOGIC) `--bios`
+  (#794, `approx=1`) was a misloaded raw binary (fixed by #818, now `test_raw_binary_boot`), and
+  Native Demo (bin) HLE reached the blit only through a GPU runaway into data that the #611 NORMI
+  fix reshuffled. The synthetic test covers both engines.
   Matrix runs killed at the wall-clock cap carry it in their evidence column.
   - Seen as garbage blits from a runaway 68K whose exception frames land on the blitter's
     `$F0A238` mirror. Uploaded executables (raw BJL/.abs) that end in ILLEGAL used to do this in
