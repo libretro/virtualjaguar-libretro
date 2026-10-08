@@ -2897,23 +2897,25 @@ INLINE static void dsp_opcode_mtoi(void)
 }
 
 
+/* NORMI: the right shift that normalises an unsigned integer "as an IEEE
+ * 32-bit floating point value" (JTRM v8 p.52, DSP p.108), i.e. that puts the
+ * top set bit at bit 23, the hidden-bit position: (index of the top set
+ * bit) - 23.  NORMI 1 = -23, NORMI $800000 = 0, NORMI $80000000 = 8, and a
+ * zero source gives -32.  JERRY's netlist (DSP_A-5Q.NET, "normalisation
+ * integer generator") is line-for-line the same logic as TOM's ARITH.NET.
+ *
+ * The old code normalised to bit 22 and returned one too many everywhere
+ * (0 for a zero source) -- the same off-by-one fixed in the GPU for #611. */
 INLINE static void dsp_opcode_normi(void)
 {
 	uint32_t _Rm = RM;
-	uint32_t res = 0;
+	uint32_t res = (uint32_t)-32;
 
 	if (_Rm)
 	{
-		while ((_Rm & 0xffc00000) == 0)
-		{
-			_Rm <<= 1;
-			res--;
-		}
-		while ((_Rm & 0xff800000) != 0)
-		{
-			_Rm >>= 1;
+		res = (uint32_t)-23;
+		while ((_Rm >>= 1) != 0)
 			res++;
-		}
 	}
 	RN = res;
 	SET_ZN(RN);

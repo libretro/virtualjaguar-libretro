@@ -808,17 +808,24 @@ static void test_sat32s(void)
 
 static void test_normi(void)
 {
+   /* NORMI = (index of the top set bit) - 23: the right shift that puts the
+    * top bit at the IEEE hidden-bit position (JTRM v8 p.52; JERRY netlist
+    * DSP_A-5Q.NET normalisation integer generator).  Zero gives -32. */
+   static const uint32_t src[] = { 0x80000000u, 0x00800000u, 0x00400000u,
+                                   0x00000001u, 0x00000000u, 0x01000000u };
+   static const int32_t want[] = { 8, 0, -1, -23, -32, 1 };
+   unsigned i;
+
    printf("\n--- NORMI ---\n");
-   prep();
-   /* normi: shift count to normalize value into bit 22 position.
-    * 0x80000000 (bit 31) needs 9 right shifts → result = 9.
-    * Algorithm: shift left while bits 22-31 are 0 (res--),
-    *            then shift right while bits 23-31 are non-zero (res++). */
-   wmovei(0x100, 0x80000000, 0);
-   w16(0x106, OP_NORMI(0, 1));
-   run(20);
-   if (REG(1) == 9) PASS("normi(0x80000000)=9");
-   else FAIL("normi(0x80000000)=%d (expected 9)", (int32_t)REG(1));
+   for (i = 0; i < sizeof(src) / sizeof(src[0]); i++)
+   {
+      prep();
+      wmovei(0x100, src[i], 0);
+      w16(0x106, OP_NORMI(0, 1));
+      run(20);
+      if ((int32_t)REG(1) == want[i]) PASS("normi($%08X)=%d", (unsigned)src[i], (int)want[i]);
+      else FAIL("normi($%08X)=%d (expected %d)", (unsigned)src[i], (int32_t)REG(1), (int)want[i]);
+   }
 }
 
 static void test_mtoi(void)
