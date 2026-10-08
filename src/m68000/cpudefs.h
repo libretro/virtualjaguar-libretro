@@ -26,6 +26,9 @@
 #define SPCFLAG_MFP           0x200
 #define SPCFLAG_EXEC          0x400
 #define SPCFLAG_MODE_CHANGE   0x800
+/* A write landed on instruction words the prefetch queue already holds;
+ * the next dispatch takes the slow path in m68kinterface.c (issue #811). */
+#define SPCFLAG_PREFETCH      0x1000
 
 struct regstruct
 {

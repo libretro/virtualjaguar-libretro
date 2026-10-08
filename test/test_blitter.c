@@ -55,8 +55,11 @@ TEST(blit_a1_base_write_read)
 TEST(blit_a1_flags_write_read)
 {
     uint32_t val;
-    /* A1_FLAGS may be write-only in this implementation.
-     * On real hardware and MiSTer, it should be readable. */
+    /* A1_FLAGS is documented write-only (JTRM Rev 8 p.70), and on real
+     * silicon a read at $F02204 returns the A1 pixel pointer instead
+     * (TOM bug #10, JTRM Rev 8 p.135; modeled in blitter_mmio.c).  This
+     * test only pins this implementation's read-back of the last write;
+     * it is not a statement about real-hardware behaviour. */
     blit_write32(BLIT_A1_FLAGS, 0x00000014);
     val = blit_read32(BLIT_A1_FLAGS);
     CHECK_EQ(val, 0x00000014);

@@ -74,9 +74,12 @@ manual-authoritative. Every section now carries a per-line tag saying which it i
   source code. Treat it the same as an inline source comment: plausible, but **not** grounds for a
   hardware-accuracy decision on its own. If the decision matters, open the cited PDF page yourself.
 
-Two verified disagreements between a `Derived from:` claim and the manual are recorded inline
-where found (`jtrm-clocks-timing.md` CLK1/2/3 divider formula; `jtrm-jerry.md` wavetable entry
-count) — read those notes before touching either area. Full TRM PDFs in `docs/atari-jaguar-1999/`
+Disagreements between a `Derived from:` claim and the manual are recorded inline where found,
+but the manual itself is also wrong, internally inconsistent, or silent in places (and Atari's own
+bug lists are only partly modeled). Those are collected in **`docs/jtrm-errata.md`** — manual wrong /
+hardware differs (A), manual silent but settled from netlist/Verilator/games (B), Atari bug lists with a
+modeled? column (C), and our own past mistakes (D). **Read it before any hardware-accuracy decision in
+GPU/DSP, blitter, OP, JERRY, CD, or video-timing code.** Full TRM PDFs in `docs/atari-jaguar-1999/`
 (gitignored — copyrighted).
 
 - `jtrm-clocks-timing.md` — clock hierarchy, video timing, PIT formulas, memory map, bus priority
@@ -85,6 +88,7 @@ count) — read those notes before touching either area. Full TRM PDFs in `docs/
 - `jtrm-blitter.md` — address generators, B_CMD, LFU truth table, modes of operation
 - `jtrm-jerry.md` — PIT timers, JINTCTRL, I2S/DAC, UART, clock dividers, EEPROM
 - `jtrm-object-processor.md` — object types, bit fields, display pipeline, colour space
+- `jtrm-errata.md` — where the manual is wrong/silent, Atari bug lists + what we model, past doc mistakes
 
 True field rate: 524/624 halflines = 60.05445 / 50.08013 Hz; 59.94 is the INTERLACED rate.
 

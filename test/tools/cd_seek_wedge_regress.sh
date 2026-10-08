@@ -5,10 +5,12 @@
 # Before #741 the watchdog counted any frame with frozen FIFO drains, and
 # fired on every one of these titles while they went on to run (15 fires,
 # BUTCH low byte $02 each time: the game had cleared the master interrupt
-# enable to signal completion).  Asserts on the log line itself, not the
-# harness [PASS]: test_cd_bios_boot also reports [PASS] on a real
-# IMASK-stuck wedge, so [PASS] proves nothing here.  The other side (a real
-# wedge must still fire) is pinned without a disc by
+# enable to signal completion).  Asserts on the log line as well as the
+# harness verdict.  Since #799 test_cd_bios_boot itself reports FAIL when the
+# watchdog's cd_seek_wedge fired (it used to print [PASS] on a real
+# IMASK-stuck wedge), so the [PASS] requirement below already covers a false
+# fire; the grep stays as an independent check on the log.  The other side (a
+# real wedge must still fire) is pinned without a disc by
 # test/test_crash_detect_cd_wedge.
 #
 # Needs the private corpus; SKIPs (exit 0) without it.

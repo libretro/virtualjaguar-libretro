@@ -11,6 +11,7 @@
 // JLH  10/28/2011  Created this file ;-)
 //
 
+#include <string.h>
 #include "m68kinterface.h"
 #include "cpudefs.h"
 #include "inlines.h"
@@ -99,6 +100,344 @@ void M68KDebugResume(void)
 }
 
 
+/* ------------------------------------------------------------------------
+ * 68000 prefetch queue, as far as self-modifying code can observe it
+ * (issue #811).
+ *
+ * The 68000 holds two instruction words ahead of the decoder (IR/IRC).  At
+ * an instruction boundary they are the words at PC and PC+2.  A write that
+ * lands on a word the queue already holds does not change what executes;
+ * the CPU runs the stale copy, and only a later refetch sees the new value.
+ * Xenowings relies on that: at $350C, `ori.l #$04000400,(a1)` turns the next
+ * two `addq.l #1,d6` into `addq.l #3,d6`, and its anti-tamper check only
+ * passes if the old instructions run.
+ *
+ * This core reads every instruction word straight from memory.  Rather than
+ * model the queue on every fetch, the main-RAM write paths do one compare
+ * against a window around regs.pc (M68K_PF_NEAR) and call
+ * M68KPrefetchSnoop() on a hit.  The snoop records the word as it was
+ * before the write.  At the next dispatch, the recorded words that the
+ * queue really held are kept (pf_resolve), swapped back into RAM for
+ * exactly one instruction, then restored (M68KPrefetchDispatch).
+ *
+ * Which words the queue holds when the write lands depends on the order of
+ * the instruction's bus cycles.  Two cases cover the instructions that
+ * write memory:
+ *
+ *   - The final prefetch comes BEFORE the write: next_pc and next_pc+2 are
+ *     both held.  This covers the read-modify-write ALU forms (ORI/ANDI/
+ *     EORI/ADDI/SUBI #imm,<ea>; ADD/SUB/AND/OR/EOR Dn,<ea>; ADDQ/SUBQ;
+ *     CLR/NEG/NEGX/NOT; Scc; shifts and bit ops on memory), MOVE to -(An),
+ *     PEA (An), and ADDX/SUBX/ABCD/SBCD -(An).
+ *   - The write comes BEFORE the final prefetch: only next_pc is held.
+ *     This covers MOVE to (An), (An)+, (d16,An), (d8,An,Xn), (xxx).W and
+ *     (xxx).L, MOVEM to memory, MOVEP to memory, LINK, and the other PEA
+ *     modes.
+ *
+ * Sources: the bus-cycle sequences in Clock Signal's microcode-derived
+ * 68000 (TomHarte/CLK, Processors/68000/Implementation/
+ * 68000Implementation.hpp): Perform_np = "PerformDynamic(); Prefetch();"
+ * then StoreOperand; MOVE_bw (An) = "Access(...); // nw" then
+ * "Prefetch(); // np"; MOVE -(An) = np then nw; MOVEMtoM_finish ends with
+ * the np; LINKw = np, push, np; MOVEPtoM = np, four writes, np.
+ *
+ * The generated _5 handlers do not encode this order: op_2080_5
+ * (move.l Dn,(An)) refills before its write, which is not what the
+ * hardware does.  So the class is decided here from OpcodeFamily and the
+ * opcode, never from where the handler calls fill_prefetch.
+ *
+ * Known approximation: MOVE from a memory source to (xxx).L writes before
+ * fetching next_pc at all on hardware; it is treated as "next_pc held".
+ * ---------------------------------------------------------------------- */
+
+#define PF_FREE    0
+#define PF_FRESH   1	/* written by the instruction that just ran */
+#define PF_QUEUED  2	/* the queue holds this word for the next dispatch */
+#define PF_SWAPPED 3	/* stale word is in RAM while one instruction runs */
+#define PF_SLOTS   24	/* 16 words of snoop window + 2 queued, rounded up */
+
+typedef struct
+{
+	uint32_t addr;
+	uint16_t oldv;		/* the word as the queue holds it */
+	uint16_t newv;		/* RAM contents while swapped out */
+	uint8_t  state;
+	uint8_t  two;		/* FRESH: final prefetch came before the write */
+	uint8_t  dirty;		/* SWAPPED: the running instruction wrote it */
+} pf_entry;
+
+static pf_entry pfEntry[PF_SLOTS];
+static unsigned pfCount = 0;	/* slots in use (dense; [0, pfCount)) */
+
+extern uint32_t pcQueue[0x400];
+extern uint32_t pcQPtr;
+
+/* 1 when the final prefetch of the running instruction precedes its writes,
+ * so the queue holds next_pc and next_pc+2; 0 when only next_pc is held.
+ * See the table above. */
+static int pf_class_two(void)
+{
+	uint32_t ipc = pcQueue[(pcQPtr - 1) & 0x3FF];
+	uint16_t op;
+
+	if (OpcodeFamily != i_MOVE && OpcodeFamily != i_PEA
+	    && OpcodeFamily != i_MVMLE && OpcodeFamily != i_MVPRM
+	    && OpcodeFamily != i_LINK)
+		return 1;
+	if (OpcodeFamily == i_MVMLE || OpcodeFamily == i_MVPRM
+	    || OpcodeFamily == i_LINK)
+		return 0;
+	if (ipc > 0x1FFFFE)
+		return 1;	/* unreachable: the snoop only fires near RAM code */
+	op = (uint16_t)GET16(jaguarMainRAM, ipc);
+	if (OpcodeFamily == i_MOVE)
+		return ((op >> 6) & 7) == 4;	/* destination -(An) */
+	return ((op >> 3) & 7) == 2;		/* PEA (An) */
+}
+
+static void pf_remove(unsigned i)
+{
+	pfEntry[i] = pfEntry[--pfCount];
+	pfEntry[pfCount].state = PF_FREE;
+}
+
+static void pf_sync_flag(void)
+{
+	if (pfCount)
+		regs.spcflags |= SPCFLAG_PREFETCH;
+	else
+		regs.spcflags &= ~SPCFLAG_PREFETCH;
+}
+
+/* Called from the main-RAM branch of m68k_write_memory_8/16/32 before the
+ * write lands, when M68K_PF_NEAR() hit.  Records each written word inside
+ * [regs.pc - 16, regs.pc + 16).  The window has to reach behind regs.pc
+ * because the generated handlers advance regs.pc before some writes and
+ * after others. */
+void M68KPrefetchSnoop(unsigned int address, unsigned int len)
+{
+	uint32_t w, end = address + len;
+	unsigned i;
+	int two = -1;
+
+	for (w = address & ~1u; w < end; w += 2)
+	{
+		if ((uint32_t)(w + 16u - regs.pc) >= 32u || w > 0x1FFFFE)
+			continue;
+		for (i = 0; i < pfCount; i++)
+			if (pfEntry[i].addr == w)
+				break;
+		if (i < pfCount)
+		{
+			/* Keep the first capture: the queue copy predates every
+			 * write in this instruction. */
+			if (pfEntry[i].state == PF_SWAPPED)
+				pfEntry[i].dirty = 1;
+			else
+			{
+				if (two < 0)
+					two = pf_class_two();
+				pfEntry[i].state = PF_FRESH;
+				pfEntry[i].two   = (uint8_t)two;
+			}
+			continue;
+		}
+		if (pfCount >= PF_SLOTS)
+			continue;
+		if (two < 0)
+			two = pf_class_two();
+		pfEntry[pfCount].addr  = w;
+		pfEntry[pfCount].oldv  = (uint16_t)GET16(jaguarMainRAM, w);
+		pfEntry[pfCount].newv  = 0;
+		pfEntry[pfCount].state = PF_FRESH;
+		pfEntry[pfCount].two   = (uint8_t)two;
+		pfEntry[pfCount].dirty = 0;
+		pfCount++;
+	}
+	pf_sync_flag();
+}
+
+/* The queue is refilled from a new PC (exception, interrupt, reset, PC set
+ * from outside the CPU): every recorded word is dropped.  A word swapped
+ * out for the running instruction gets its real contents back first. */
+void M68KPrefetchFlush(void)
+{
+	unsigned i;
+
+	for (i = 0; i < pfCount; i++)
+	{
+		if (pfEntry[i].state == PF_SWAPPED && !pfEntry[i].dirty)
+			SET16(jaguarMainRAM, pfEntry[i].addr, pfEntry[i].newv);
+		pfEntry[i].state = PF_FREE;
+	}
+	pfCount = 0;
+	regs.spcflags &= ~SPCFLAG_PREFETCH;
+}
+
+/* Would this entry still be in the queue when the CPU dispatches at pc? */
+static int pf_keep(const pf_entry *e, uint32_t pc)
+{
+	if (e->addr == pc)
+		return 1;
+	if (e->addr != pc + 2)
+		return 0;
+	return e->state == PF_QUEUED || e->two;
+}
+
+/* Keep only the words the queue holds at dispatch PC `pc`.  Idempotent,
+ * so a savestate can apply it without disturbing the run. */
+static void pf_resolve(uint32_t pc)
+{
+	unsigned i = 0;
+
+	while (i < pfCount)
+	{
+		if (pf_keep(&pfEntry[i], pc))
+		{
+			pfEntry[i].state = PF_QUEUED;
+			i++;
+		}
+		else
+			pf_remove(i);
+	}
+	pf_sync_flag();
+}
+
+/* Slow-path dispatch, taken only while SPCFLAG_PREFETCH is set.  Runs one
+ * instruction with the queued words in RAM, then puts the real words back.
+ * Swapping through RAM (instead of overriding the fetch) covers a stale
+ * extension word as well as a stale opcode with no change to the fetch
+ * path.  The swap is raw and lasts one instruction.  Anything else that
+ * reads those two words during it sees the stale value: this instruction
+ * reading its own code as data, or a GPU/DSP catch-up (M68KGPURAMSync) or
+ * blit that this instruction's own register write starts.  That needs code
+ * that patches the instruction stream and then has another processor read
+ * the patched words within one 68K instruction; it is accepted as a known
+ * approximation. */
+#if defined(__GNUC__) || defined(__clang__)
+#define PF_COLD __attribute__((noinline, cold))
+#elif defined(_MSC_VER) && _MSC_VER >= 1400	/* VS2005+; msvc2003 lacks it */
+#define PF_COLD __declspec(noinline)
+#else
+#define PF_COLD
+#endif
+
+/* Kept out of line (PF_COLD) so m68k_execute's hot loop stays as small as
+ * it was: inlined, this path quadrupled the function. */
+static PF_COLD int32_t M68KPrefetchDispatch(void)
+{
+	uint32_t pc = regs.pc, opcode;
+	int32_t cycles;
+	unsigned i;
+	int cls;
+
+	pf_resolve(pc);
+	for (i = 0; i < pfCount; i++)
+	{
+		pfEntry[i].newv  = (uint16_t)GET16(jaguarMainRAM, pfEntry[i].addr);
+		pfEntry[i].dirty = 0;
+		pfEntry[i].state = PF_SWAPPED;
+		SET16(jaguarMainRAM, pfEntry[i].addr, pfEntry[i].oldv);
+	}
+
+	opcode = get_iword(0);
+	cycles = (int32_t)(*cpuFunctionTable[opcode])(opcode);
+	/* Classified before anything is restored: it reads the opcode that ran. */
+	cls = pf_class_two();
+
+	/* Entries an exception flushed mid-instruction are already gone. */
+	i = 0;
+	while (i < pfCount)
+	{
+		pf_entry *e = &pfEntry[i];
+
+		if (e->state != PF_SWAPPED)
+		{
+			i++;		/* FRESH: recorded by this instruction */
+			continue;
+		}
+		if (e->dirty)
+		{
+			/* This instruction wrote the word: RAM keeps its value, and
+			 * the queue copy (oldv) is resolved like any other write. */
+			e->state = PF_FRESH;
+			e->two   = (uint8_t)cls;
+			i++;
+			continue;
+		}
+		SET16(jaguarMainRAM, e->addr, e->newv);
+		/* The IRC word becomes the next opcode only when the instruction
+		 * was one word long and did not branch. */
+		if (e->addr == pc + 2 && regs.pc == pc + 2)
+		{
+			e->state = PF_QUEUED;
+			i++;
+		}
+		else
+			pf_remove(i);
+	}
+	pf_sync_flag();
+	return cycles;
+}
+
+/* Savestate packing, in fields that were always serialized and never used
+ * (regs.prefetch_pc / regs.prefetch), so no STATE_VERSION change: old
+ * states carry zeros and load as "nothing queued".
+ *   prefetch_pc: bits 0-23 dispatch PC, bit 30 = word at PC queued,
+ *                bit 31 = word at PC+2 queued
+ *   prefetch:    queued word at PC in the high half, PC+2 in the low half
+ * Packing does not modify the live entries (run-ahead determinism). */
+#define PF_PACK_W0 0x40000000u
+#define PF_PACK_W1 0x80000000u
+
+static void pf_pack(void)
+{
+	uint32_t pc = regs.pc & 0x00FFFFFF, pp = 0, data = 0;
+	unsigned i;
+
+	for (i = 0; i < pfCount; i++)
+	{
+		if (!pf_keep(&pfEntry[i], regs.pc))
+			continue;
+		if (pfEntry[i].addr == regs.pc)
+		{
+			pp   |= PF_PACK_W0;
+			data |= (uint32_t)pfEntry[i].oldv << 16;
+		}
+		else
+		{
+			pp   |= PF_PACK_W1;
+			data |= pfEntry[i].oldv;
+		}
+	}
+	regs.prefetch_pc = pp ? (pp | pc) : 0;
+	regs.prefetch    = data;
+}
+
+static void pf_unpack(void)
+{
+	uint32_t pc = regs.prefetch_pc & 0x00FFFFFF;
+
+	pfCount = 0;
+	memset(pfEntry, 0, sizeof(pfEntry));
+	if (regs.prefetch_pc & PF_PACK_W0)
+	{
+		pfEntry[pfCount].addr  = pc;
+		pfEntry[pfCount].oldv  = (uint16_t)(regs.prefetch >> 16);
+		pfEntry[pfCount].state = PF_QUEUED;
+		pfCount++;
+	}
+	if (regs.prefetch_pc & PF_PACK_W1)
+	{
+		pfEntry[pfCount].addr  = pc + 2;
+		pfEntry[pfCount].oldv  = (uint16_t)(regs.prefetch & 0xFFFF);
+		pfEntry[pfCount].state = PF_QUEUED;
+		pfCount++;
+	}
+	pf_sync_flag();
+}
+
+
 /* File-scope so m68k_done() below can reset it after freeing table68k. */
 static uint32_t emulation_initialized = 0;
 
@@ -138,6 +477,7 @@ void m68k_pulse_reset(void)
 	m68k_areg(regs, 7) = m68k_read_memory_32(0);
 	m68k_setpc(m68k_read_memory_32(4));
 	refill_prefetch(m68k_getpc(), 0);
+	M68KPrefetchFlush();
 }
 
 
@@ -202,8 +542,13 @@ int m68k_execute(int num_cycles)
 #ifdef M68K_HOOK_FUNCTION
 		M68KInstructionHook();
 #endif
-		opcode = get_iword(0);
-		cycles = (int32_t)(*cpuFunctionTable[opcode])(opcode);
+		if (regs.spcflags & SPCFLAG_PREFETCH)
+			cycles = M68KPrefetchDispatch();	/* see the queue model above */
+		else
+		{
+			opcode = get_iword(0);
+			cycles = (int32_t)(*cpuFunctionTable[opcode])(opcode);
+		}
 		regs.remainingCycles -= cycles;
 	}
 	while (regs.remainingCycles > 0);
@@ -309,6 +654,7 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 	m68ki_stack_frame_3word(regs.pc, sr);
 
 	m68k_setpc(newPC);
+	M68KPrefetchFlush();	/* exception processing refills the queue */
 
 	// Defer cycle counting until later
 	regs.interruptCycles += 56;	// NOT ACCURATE-- !!! FIX !!!
@@ -392,7 +738,10 @@ void m68k_set_reg(m68k_register_t reg, unsigned int value)
 	if (reg <= M68K_REG_A7)
 		regs.regs[reg] = value;
 	else if (reg == M68K_REG_PC)
+	{
 		regs.pc = value;
+		M68KPrefetchFlush();	/* the queue is refilled from the new PC */
+	}
 	else if (reg == M68K_REG_SR)
 	{
 		regs.sr = value;
@@ -707,6 +1056,7 @@ size_t M68KStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, regs.x);
 	STATE_SAVE_VAR(buf, regs.pc);
 	STATE_SAVE_VAR(buf, regs.spcflags);
+	pf_pack();
 	STATE_SAVE_VAR(buf, regs.prefetch_pc);
 	STATE_SAVE_VAR(buf, regs.prefetch);
 	STATE_SAVE_VAR(buf, regs.remainingCycles);
@@ -749,6 +1099,7 @@ size_t M68KStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, regs.spcflags);
 	STATE_LOAD_VAR(buf, regs.prefetch_pc);
 	STATE_LOAD_VAR(buf, regs.prefetch);
+	pf_unpack();
 	STATE_LOAD_VAR(buf, regs.remainingCycles);
 	STATE_LOAD_VAR(buf, regs.interruptCycles);
 

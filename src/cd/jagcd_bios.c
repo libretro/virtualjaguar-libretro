@@ -17,6 +17,7 @@
 #include "settings.h"
 #include "vjag_memory.h"
 #include "m68000/m68kinterface.h"
+#include "state.h"
 
 #include <string.h>
 
@@ -32,6 +33,59 @@ static bool cdBootStubInjected = false;
 static void bios_reset(void)
 {
     cdBootStubInjected = false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Savestate chunk (#804)                                              */
+/*                                                                     */
+/* cdBootStubInjected decides whether the 68K hooks below still inject  */
+/* the boot stub ($050176) and still stomp the GPU auth magic ($005E40).*/
+/* It lives outside the machine state, so a rollback to a state taken   */
+/* BEFORE the injection kept the flag set by the pass that had already  */
+/* injected: the replay never injected, the game never started, and     */
+/* run-ahead diverged mid-load.  The reverse direction hurts too: a     */
+/* state taken AFTER injection, loaded into a fresh core, re-armed the  */
+/* $005E40 stomp over the game's own RAM (Myst's GPU IRQ0 stub).        */
+/* ------------------------------------------------------------------ */
+
+#define BIOS_STATE_MAGIC 0x31424443u   /* "CDB1" little-endian */
+
+size_t JaguarCDBiosStateSize(void)
+{
+    return 4u + 1u;   /* magic, cdBootStubInjected */
+}
+
+size_t JaguarCDBiosStateSave(uint8_t *buf)
+{
+    uint8_t *start = buf;
+    uint32_t magic = BIOS_STATE_MAGIC;
+    uint8_t  b     = cdBootStubInjected ? 1 : 0;
+
+    STATE_SAVE_VAR(buf, magic);
+    STATE_SAVE_VAR(buf, b);
+    return (size_t)(buf - start);
+}
+
+void JaguarCDBiosStateReset(void)
+{
+    cdBootStubInjected = false;
+}
+
+size_t JaguarCDBiosStateLoad(const uint8_t *buf)
+{
+    const uint8_t *start = buf;
+    uint32_t magic;
+    uint8_t  b;
+
+    STATE_LOAD_VAR(buf, magic);
+    if (magic != BIOS_STATE_MAGIC)
+    {
+        JaguarCDBiosStateReset();
+        return (size_t)(buf - start);
+    }
+    STATE_LOAD_VAR(buf, b);
+    cdBootStubInjected = (b != 0);
+    return (size_t)(buf - start);
 }
 
 static bool bios_instruction_hook(uint32_t m68kPC)

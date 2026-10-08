@@ -187,6 +187,13 @@ extern uint8_t jagMemSpace[];
  * writes a vector table of its own. */
 #define BIOS_ROM_PARK_PC        0x00E005DC
 
+/* Uploaded-executable illegal-instruction park (issue #800).  The same
+ * guard file.c has always installed for Alpine and JagServer images:
+ * vector 4 -> $1000, and $1000 = BRA.S * ($60FE).  See JaguarReset. */
+#define M68K_VEC_ILLEGAL        0x0010
+#define UPLOAD_ILLEGAL_PARK_PC  0x00001000
+#define M68K_OP_BRA_SELF        0x60FE
+
 /* Cart header: byte 0 of the 4-byte CARTRIDGE block at $800400.
  * Bits 1-4 of this byte are the MEMCON1 ROM bus-width/speed bits the
  * BIOS reads to size the cart bus on power-on. */
@@ -834,6 +841,8 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
    {
+      if (M68K_PF_NEAR(address, 1))
+         M68KPrefetchSnoop(address, 1);   /* self-modifying code, #811 */
       if (blitMemoMode)
          BlitMemoWriteHook(address, 1, value);
       jaguarMainRAM[address] = value;
@@ -893,6 +902,8 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
+      if (M68K_PF_NEAR(address, 2))
+         M68KPrefetchSnoop(address, 2);   /* self-modifying code, #811 */
       if (blitMemoMode)
          BlitMemoWriteHook(address, 2, value);
       SET16(jaguarMainRAM, address, value);
@@ -949,6 +960,8 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
        * `value` already matches JaguarWriteLong's record shape. */
       VJT_WATCH_WR(address, value, M68K);
       M68K_BUS_CHARGE(address, 2);
+      if (M68K_PF_NEAR(address, 4))
+         M68KPrefetchSnoop(address, 4);   /* self-modifying code, #811 */
       if (blitMemoMode)
          BlitMemoWriteHook(address, 4, value);
       SET32(jaguarMainRAM, address, value);
@@ -1509,6 +1522,38 @@ void JaguarReset(void)
          ? HLE_SSP_RAMLOAD : HLE_SSP_CART;
       SET32(jaguarMainRAM, 0, hleSSP);
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
+
+      /* Uploaded executables (raw BJL binaries, .abs, .cof, JagServer --
+       * anything that is not a cartridge) carry no vector table, and many
+       * end their 68K main with ILLEGAL: the Alpine/BJL idiom for "drop
+       * into the debugger", leaving the GPU/OP to run the demo.  The
+       * cartridge HLE path below installs RTE stubs and file.c guards
+       * Alpine/JagServer images, but raw binaries and .abs files got
+       * nothing, so the trap jumped through a zero vector to $0, ran the
+       * vector table as code and walked the stack down through $0,
+       * $FFxxxx and into TOM, where the 68K's own exception frames land
+       * on the blitter's B_COUNT/B_CMD ($F0A238 reaches $F02238 through
+       * TOMWriteWord's offset &= $FF3FFF) and start blits.  Those are
+       * 1bpp phrase-mode blits the hardware never finishes (INNER.NET
+       * counts only dstxp[0] below 8bpp), which hung retro_run under the
+       * accurate blitter (issue #800: DEMO1 (bin), DEMO1B, Ladybug).
+       * A wrongly inferred load address crashes into the same runaway
+       * (Chroma-Luma (bin), JagMania (Jul 8): linked at $5000, loaded at
+       * $4000 -- fixed in file.c, issue #818).
+       *
+       * Park ONLY vector 4 (illegal instruction), the same guard file.c
+       * uses, re-armed here so it also survives retro_reset()'s RAM
+       * clear.  Skipped when the loaded image covers the vector or the
+       * park loop, and for CD content (ILLEGAL is a deliberate halt
+       * there). */
+      if (!jaguarCartInserted && !bootConfig.isCDGame
+            && !(jaguarLoadedRAMEnd > jaguarLoadedRAMStart
+               && jaguarLoadedRAMStart < UPLOAD_ILLEGAL_PARK_PC + 2
+               && jaguarLoadedRAMEnd > M68K_VEC_ILLEGAL))
+      {
+         SET32(jaguarMainRAM, M68K_VEC_ILLEGAL, UPLOAD_ILLEGAL_PARK_PC);
+         SET16(jaguarMainRAM, UPLOAD_ILLEGAL_PARK_PC, M68K_OP_BRA_SELF);
+      }
    }
 
    TOMReset();

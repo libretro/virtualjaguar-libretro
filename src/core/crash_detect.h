@@ -48,18 +48,37 @@ int CrashDetectCDSeekWedgeFrame(uint32_t seek_starts, uint32_t seek_dones,
                                 int processor_running, uint8_t butch_int,
                                 uint8_t i2s_ctrl);
 
+/* Watchdog state for tests (issue #799).  A harness's own pass criteria
+ * (PC in RAM, not looping) are all satisfied by a 68K that keeps running
+ * its CD service loop while the transfer is dead, so they cannot see a
+ * cd_seek_wedge; the watchdog can.  Fires = how many times the wedge
+ * crossed its threshold since CrashDetectReset() (sticky, not subject to
+ * the log throttle, 0 while the watchdog is disabled); Streak = frames the
+ * wedge predicate has held in a row right now. */
+unsigned CrashDetectCDSeekWedgeFires(void);
+unsigned CrashDetectCDSeekWedgeStreak(void);
+
 /* In-frame hang signature (issue #740).  The blitter runs synchronously
  * inside one register write, so a garbage B_COUNT freezes the host inside
  * retro_run and the per-frame checks never get a turn.  Called at blit
  * dispatch, before either engine runs: logs `inframe_hang` once per
  * LOG_REPEAT window when the blit is absurdly large, then lets it run --
- * log only, no behaviour change.  b_count = B_COUNT ($F0223C). */
-void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base);
+ * log only, no behaviour change.  b_count = B_COUNT ($F0223C); dst_flags
+ * and dst_x feed CrashDetectBlitNeverEnds. */
+void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
+                         uint32_t dst_flags, uint32_t dst_x);
 
 /* Whether a B_COUNT value's pixel count (inner * outer, as the accurate
  * engine executes it) crosses the inframe_hang threshold.  Split out for
  * the unit test. */
 int CrashDetectBlitIsAbsurd(uint32_t b_count);
+
+/* Whether the blit's first inner loop can never end (issue #800): phrase
+ * mode below 8bpp, where the netlist's inner-counter decrement is
+ * dstxp[0] and phrase-aligned X keeps it at zero.  dst_flags = A1_FLAGS
+ * (A2_FLAGS when B_CMD.DSTA2), dst_x = that pointer's X.  Split out for the
+ * unit test. */
+int CrashDetectBlitNeverEnds(uint32_t b_count, uint32_t dst_flags, uint32_t dst_x);
 
 /* Per-frame hook -- call once at the END of JaguarExecuteNew so all
  * subsystems have been advanced.  fb may be NULL if no framebuffer

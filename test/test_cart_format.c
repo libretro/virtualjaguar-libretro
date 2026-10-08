@@ -372,6 +372,89 @@ TEST(raw_binary_lea_any_register_loads_at_4000)
    p_retro_unload_game();
 }
 
+/* Issue #818 helpers.  put_abs() writes a 6-byte abs.L instruction;
+ * initial_pc() reads the HLE reset vector the loader latched. */
+static void put_abs(uint8_t *img, unsigned off, unsigned op, uint32_t target)
+{
+   img[off + 0] = (uint8_t)(op >> 8);
+   img[off + 1] = (uint8_t)op;
+   img[off + 2] = (uint8_t)(target >> 24);
+   img[off + 3] = (uint8_t)(target >> 16);
+   img[off + 4] = (uint8_t)(target >> 8);
+   img[off + 5] = (uint8_t)target;
+}
+
+static unsigned initial_pc(const uint8_t *ram)
+{
+   return ((unsigned)ram[4] << 24) | ((unsigned)ram[5] << 16)
+      | ((unsigned)ram[6] << 8) | ram[7];
+}
+
+/* Synthetic raw binary linked at `base`: eight JSR abs.L calls into
+ * subroutines at image offset $800 + 16*k, each preceded by an RTS (the end
+ * of the previous subroutine).  The image is 8 KiB, so with base $5000 every
+ * target also falls inside a $4000 window -- the overlap that made the
+ * containment scorer pick $4000 for Chroma-Luma and JagMania. */
+static void build_linked_image(uint8_t *img, unsigned size, uint32_t base)
+{
+   unsigned k;
+
+   memset(img, 0, size);
+   img[0] = 0x70;                                  /* MOVEQ #1,D0 */
+   img[1] = 0x01;
+   for (k = 0; k < 8; k++)
+   {
+      unsigned sub = 0x800 + 16 * k;
+
+      put_abs(img, 0x10 + 6 * k, 0x4EB9, base + sub);  /* JSR abs.L */
+      img[sub - 2] = 0x4E;                         /* RTS */
+      img[sub - 1] = 0x75;
+      img[sub + 0] = 0x4E;                         /* NOP */
+      img[sub + 1] = 0x71;
+   }
+   for (k = 0x400; k < 0x408; k++)
+      img[k] = 0x11;
+}
+
+/* Issue #818: Chroma-Luma (bin) and JagMania (Jul 8) are raw binaries linked
+ * at $5000.  $5000 was not a candidate, and the $4000 window contains their
+ * targets too, so they loaded $1000 low and an early JSR ran font data.  The
+ * JSR targets only line up with subroutine starts at $5000. */
+TEST(raw_binary_linked_at_5000_loads_at_5000)
+{
+   static uint8_t img[0x2000];
+   uint8_t *ram;
+
+   build_linked_image(img, (unsigned)sizeof(img), 0x5000);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x5000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x5000);
+   p_retro_unload_game();
+}
+
+/* The other side of #818: a $4000-linked image whose LEAs point at BSS past
+ * its end scores HIGHER on containment at $5000 (the BSS lies inside the
+ * $5000 window only).  Its JSR targets are subroutine starts at $4000 alone,
+ * so it must stay at $4000.  Without this the fix could be "$5000 wins". */
+TEST(raw_binary_bss_refs_do_not_pull_4000_image_to_5000)
+{
+   static uint8_t img[0x2000];
+   uint8_t *ram;
+   unsigned k;
+
+   build_linked_image(img, (unsigned)sizeof(img), 0x4000);
+   for (k = 0; k < 10; k++)                        /* LEA abs.L,A1 -> BSS */
+      put_abs(img, 0x100 + 6 * k, 0x43F9, 0x6100 + 0x10 * k);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   p_retro_unload_game();
+}
+
 int main(int argc, char **argv)
 {
    const char *core_path = (argc > 1) ? argv[1]
@@ -423,6 +506,8 @@ int main(int argc, char **argv)
    RUN(small_headered_with_copier_header_loads);
    RUN(small_headerless_bootintro_loads);
    RUN(raw_binary_lea_any_register_loads_at_4000);
+   RUN(raw_binary_linked_at_5000_loads_at_5000);
+   RUN(raw_binary_bss_refs_do_not_pull_4000_image_to_5000);
 
    p_retro_deinit();
 

@@ -29,6 +29,17 @@
 #   CART_MATRIX_TIMEOUT    seconds per run   (default 90)
 #   CART_MATRIX_JOBS       parallel workers  (default 4)
 #   CART_MATRIX_MAX_RUNS   stop after N fresh titles this invocation (chunking)
+#   CART_MATRIX_PROBE_ARGS extra cart_boot_probe arguments, appended to every
+#                          probe run (word-split), e.g.
+#                          "--option virtualjaguar_usefastblitter=disabled"
+#                          to sweep the ACCURATE blitter -- the shipped
+#                          default.  Without it the probe runs the harness
+#                          default, the FAST blitter, which is blind to
+#                          accurate-only hangs (issue #800).  Folded into the
+#                          row-cache identity, kept out of the default
+#                          LOGDIR, and refused without an explicit
+#                          CART_MATRIX_OUT, so an Accurate sweep can never
+#                          reuse, overwrite or publish over Fast rows.
 #
 # Requires the wide test ABI:  make TEST_EXPORTS=1
 # and the probe:               see cart_boot_probe.c header for the cc line.
@@ -36,8 +47,18 @@
 set -u
 
 ROMS_ROOT="${CART_MATRIX_ROMS_ROOT:-test/roms/private/ROMS}"
+PROBE_ARGS="${CART_MATRIX_PROBE_ARGS:-}"
+if [ -n "$PROBE_ARGS" ] && [ -z "${CART_MATRIX_OUT:-}" ]; then
+    echo "error: CART_MATRIX_PROBE_ARGS is set; also set CART_MATRIX_OUT" >&2
+    echo "  (the default OUT is the published Fast-blitter matrix)" >&2
+    exit 1
+fi
+PROBE_ARGS_TAG=""
+if [ -n "$PROBE_ARGS" ]; then
+    PROBE_ARGS_TAG="-$(printf '%s' "$PROBE_ARGS" | { shasum 2>/dev/null || sha1sum; } | cut -c1-8)"
+fi
 OUT="${CART_MATRIX_OUT:-docs/cart-boot-matrix.md}"
-LOGDIR="${CART_MATRIX_LOGDIR:-/tmp/cart-matrix-logs}"
+LOGDIR="${CART_MATRIX_LOGDIR:-/tmp/cart-matrix-logs$PROBE_ARGS_TAG}"
 FRAMES="${CART_MATRIX_FRAMES:-600}"
 TIMEOUT_SECS="${CART_MATRIX_TIMEOUT:-90}"
 JOBS="${CART_MATRIX_JOBS:-4}"
@@ -68,7 +89,7 @@ export VJ_EXPECT_BUILD="$BUILD_ID"
 
 # Row-cache identity (#440): scoped to inputs that can change a verdict, so a
 # docs-only commit no longer invalidates all 154 rows.  See matrix_common.sh.
-CACHE_ID="$(matrix_cache_id)"
+CACHE_ID="$(matrix_cache_id)$PROBE_ARGS_TAG"
 
 ROWDIR="$LOGDIR/rows"
 mkdir -p "$LOGDIR" "$ROWDIR"
@@ -168,7 +189,7 @@ process_one() {
     slug="$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')"
     rowfile="$ROWDIR/$slug.row"
 
-    if [ -f "$rowfile" ] && grep -q "build:$CACHE_ID" "$rowfile"; then
+    if [ -f "$rowfile" ] && grep -q "build:$CACHE_ID -->" "$rowfile"; then
         return 0
     fi
 
@@ -177,13 +198,13 @@ process_one() {
 
     DYLD_LIBRARY_PATH=. LD_LIBRARY_PATH=. \
         run_bounded "$TIMEOUT_SECS" "$hle_log" \
-        "$PROBE" "$CORE" "$rom" --frames "$FRAMES"
+        "$PROBE" "$CORE" "$rom" --frames "$FRAMES" $PROBE_ARGS
     hle_rc=$?
     hle="$(classify_mode "$hle_rc" "$hle_log")"
 
     DYLD_LIBRARY_PATH=. LD_LIBRARY_PATH=. \
         run_bounded "$TIMEOUT_SECS" "$bios_log" \
-        "$PROBE" "$CORE" "$rom" --frames "$FRAMES" --bios
+        "$PROBE" "$CORE" "$rom" --frames "$FRAMES" --bios $PROBE_ARGS
     bios_rc=$?
     bios="$(classify_mode "$bios_rc" "$bios_log")"
 
@@ -196,7 +217,7 @@ process_one() {
 }
 export -f process_one run_bounded classify_mode field
 export -f matrix_core_error matrix_run_bounded
-export ROWDIR LOGDIR FRAMES TIMEOUT_SECS MATRIX_TIMEOUT_BIN PROBE CORE BUILD_ID CACHE_ID VJ_EXPECT_BUILD
+export ROWDIR LOGDIR FRAMES TIMEOUT_SECS MATRIX_TIMEOUT_BIN PROBE CORE BUILD_ID CACHE_ID VJ_EXPECT_BUILD PROBE_ARGS
 
 # ---------------------------------------------------------------------------
 # ROM list -> fresh work list (respecting MAX_RUNS) -> parallel workers
@@ -216,7 +237,7 @@ count=0
 while IFS= read -r rom; do
     base="$(basename "$rom")"
     slug="$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')"
-    if [ -f "$ROWDIR/$slug.row" ] && grep -q "build:$CACHE_ID" "$ROWDIR/$slug.row"; then
+    if [ -f "$ROWDIR/$slug.row" ] && grep -q "build:$CACHE_ID -->" "$ROWDIR/$slug.row"; then
         continue
     fi
     printf '%s\n' "$rom" >> "$FRESH"
@@ -301,6 +322,9 @@ DONE="$(ls "$ROWDIR" 2>/dev/null | wc -l | tr -d ' ')"
     printf 'in-game is not distinguished headlessly.  A "black video" note is\n'
     printf 'undetermined evidence (headless read-path caveat), not a verdict.\n'
     printf 'Rows are stamped with the core build that produced them.\n\n'
+    if [ -n "$PROBE_ARGS" ]; then
+        printf 'Probe arguments for every run: `%s`\n\n' "$PROBE_ARGS"
+    fi
     printf '| Title | HLE | HLE notes | Real BIOS | BIOS notes |\n'
     printf '|---|---|---|---|---|\n'
     # Only rows for ROMs in the CURRENT list: a row cached for a file that

@@ -9,13 +9,14 @@ Defined in `src/core/state.h`:
 | Constant | Value | Meaning |
 |---|---|---|
 | `STATE_MAGIC` | `0x564A5353` (`"VJSS"`) | Header magic |
-| `STATE_VERSION` | `8` | Version this build **writes** |
+| `STATE_VERSION` | `16` | Version this build **writes** (v3.7.1 cycle; v3.7.0 wrote 15) |
 | `STATE_MIN_VERSION` | `1` | Oldest version this build will **load** |
 
 `retro_unserialize()` refuses anything outside `STATE_MIN_VERSION … STATE_VERSION`
-outright, returning false without touching emulator state. Inside the window it
-always loads in full; chunks whose fields an older layout did not carry are
-reconstructed rather than read (see below).
+outright, returning false without touching emulator state. Inside the window the
+format is read in full (a CD state from v14 up can still be refused for a
+different disc, see below); chunks whose fields an older layout did not carry are
+reconstructed rather than read.
 
 Header fields are stored with host-endian `memcpy` (`STATE_SAVE_VAR`). On a
 little-endian host the on-disk magic bytes are `53 53 4A 56`, not the ASCII
@@ -23,7 +24,7 @@ string `"VJSS"`.
 
 ## What released cores wrote
 
-Only four format versions have ever left a release tag:
+Format versions that have left a release tag (full history in `src/core/state.h`):
 
 | Version | Written by |
 |---|---|
@@ -31,10 +32,78 @@ Only four format versions have ever left a release tag:
 | 2 | v2.3.0, v2.3.1 |
 | 3 | v2.3.2 |
 | 7 | v3.0.0, v3.1.0 |
-| 8 | develop (unreleased): trailing Jaguar GameDrive chunk, `STATE_VERSION_JAGGD` |
+| 8 | v3.2.0: trailing Jaguar GameDrive chunk, `STATE_VERSION_JAGGD` |
+| 11 | v3.3.0 (the layout carries the v9 I2S ring, v10 blitter busy window and v11 hi-res epoch additions) |
+| 12 | v3.4.0: input-device chunk |
+| 13 | v3.5.x: Team Tap chunk, extended in place with the netlink wire-speedup word |
+| 14 | v3.6.0, v3.6.1: mounted-disc identity |
+| 15 | v3.7.0: CDROM `dsaLastMultiWord`, extended in place with the HLE CD streaming chunk (#803) |
 
-Versions 4, 5 and 6 existed only on `develop` / nightlies. All four released
-layouts load on the current core.
+No release wrote versions 4, 5, 6, 9 or 10: they were intermediate `develop` /
+nightly layouts, and v3.3.0 went straight to 11 (which includes the v9 and v10
+additions). As format support, `retro_unserialize()` can read every version from
+`STATE_MIN_VERSION` up; v3.6.1's v14 states load and run byte-identically to
+v3.6.1 itself (measured in #803). Format support is not a guarantee that a given
+file loads: from v14 up, a CD state also records the mounted disc's identity
+(sessions, tracks, total sectors) and is refused, returning false, when it does
+not match the disc currently mounted in CD mode (`retro_unserialize()`,
+`libretro.c`).
+A state saved by an older build while an HLE CD read was in flight cannot
+resume that read: the transfer was never saved.
+
+## v16: real-BIOS CD chunks (#804, v3.7.1 cycle)
+
+Two trailing chunks, appended strictly after the HLE CD streaming chunk, each
+behind its own magic word. `STATE_SIZE` is unchanged (`0x280000`); the chunks
+are 5 and 9 bytes.
+
+| Chunk | Magic | Fields | Owner |
+|---|---|---|---|
+| Real-BIOS boot | `"CDB1"` | `cdBootStubInjected` | `src/cd/jagcd_bios.c` |
+| CD drive timing | `"CDX1"` | `fifoRefillAccum`, `cdPrevShouldIRQ` | `src/cd/cdrom.c` |
+
+Both lived outside the blob. A rollback (run-ahead, netplay) to a state taken
+before the boot stub was injected kept the flag set by the replay that had
+already injected it, so the replay never injected and the game never started;
+the refill accumulator picks the next FIFO interval (2 or 3 ticks), so a stale
+value shifted every later refill by one tick. Measured on Hover Strike at
+warmup 400, real-BIOS path: video diverged 44 frames after the rollback before
+the fix, all four `test_runahead_determinism` checks pass after.
+
+Loading: `retro_unserialize()` reads both chunks only for `version >= 16`
+(`STATE_VERSION_BIOS_CD_BOOT`). A v15 or older state loads normally and the
+chunks' values are left as the live session holds them, exactly as v3.7.0 did.
+That is deliberate: defaulting `cdBootStubInjected` to false would re-arm the
+`$005E40` GPU-magic stomp and the `$050176` boot-stub re-injection over a
+mid-game v15 state's RAM, a regression for every existing real-BIOS state. (A
+v15 state loaded into a fresh core still starts with the flag clear, as before.)
+A damaged accumulator (outside 0..99) loads as 0. Verified with a genuine v15
+file written by a v3.7.0 build (`274fa74`), Hover Strike real-BIOS. Regression:
+`test_state_compat` (`v16_*`, `v15_*` rows) and the ROM-gated real-BIOS Hover
+Strike run in `make test`.
+
+### v16, extended in place: hung blitter (#800, #794)
+
+A third trailing chunk, strictly after `"CDX1"`, 7 bytes; `STATE_VERSION`
+stays 16.
+
+| Chunk | Magic | Fields | Owner |
+|---|---|---|---|
+| Hung blitter | `"BLH1"` | `blitterHung`, `blitterHungICount` | `src/tom/blitter_mmio.c` |
+
+A blit that never finishes on hardware (phrase mode below 8bpp: INNER.NET's
+inner-counter decrement is `dstxp[0]`, which phrase-aligned X keeps at 0)
+leaves the emulated blitter hung until reset: `B_CMD` reads busy (IDLE clear,
+the stuck inner count in bits 16-31) and further starts are ignored. That flag
+is machine state, so it is saved: without it a rollback across the hang would
+replay with an idle blitter that accepts blits hardware would ignore.
+
+Loading: read only for `version >= 16`, after `"CDX1"`. A v16 state written
+before this chunk existed ends in the blob's zero-filled tail at that offset,
+so the magic misses and it loads as not hung; v15 and older reset it to not
+hung too. Saving room-checks before writing, like the other trailing chunks.
+Regression: `test/tools/test_blitter_hung` (serialize, `retro_reset` clears,
+unserialize restores).
 
 ## v8: Jaguar GameDrive chunk
 

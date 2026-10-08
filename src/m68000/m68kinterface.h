@@ -103,6 +103,15 @@ int irq_ack_handler(int);
 void M68KInstructionHook(void);
 #endif
 
+/* 68000 prefetch-queue model for self-modifying code (issue #811).  The
+ * memory write paths call M68KPrefetchSnoop() before a main-RAM write
+ * lands, but only when M68K_PF_NEAR() says it is within 16 bytes of the
+ * PC; everything else lives in m68kinterface.c. */
+#define M68K_PF_NEAR(addr, len) \
+	((unsigned int)((addr) + (len) + 15u - regs.pc) < 31u + (len))
+void M68KPrefetchSnoop(unsigned int address, unsigned int len);
+void M68KPrefetchFlush(void);
+
 // Functions to allow debugging
 void M68KDebugHalt(void);
 void M68KDebugResume(void);

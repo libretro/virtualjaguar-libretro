@@ -2339,6 +2339,9 @@ void BlitterMidsummer2(void)
 
    bool phrase_mode;
    uint16_t a1FracCInX = 0, a1FracCInY = 0;
+   /* Never-ending blit (#800/#794): see the block after phrase_mode. */
+   bool never_ends;
+   uint32_t stuck_writes = 0, stuck_limit = 0;
 
    // Bugs in Jaguar I
 
@@ -2356,6 +2359,44 @@ void BlitterMidsummer2(void)
    VJP_ENTER(VJP_BLITTER);
 
    phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
+
+   /* A blit hardware never finishes (#800, #794): phrase mode below 8bpp,
+    * where INNER.NET's inner-counter decrement is dstxp[0] and phrase-
+    * aligned X keeps it at zero (BlitterNeverEnds, blitter_mmio.c, has the
+    * derivation; the same predicate gates the watchdog and the dispatch
+    * path's sticky "hung" flag).  The real blitter keeps stepping forever:
+    * every step writes one destination phrase and moves X by a phrase (64,
+    * 32 or 16 pixels at 1/2/4bpp) and, with the Y add bit, Y by one.  The
+    * pointers are 16 bits and wrap, so the destination sweep repeats with
+    * a period of 65536/ppp steps (65536 with Y add).
+    *
+    * POLICY: hang the emulated blitter, never the host.  Run the stuck
+    * step for exactly one full wrap period (+1 when the start X is not
+    * phrase-aligned, so the partial first phrase is followed by every
+    * aligned one), then stop; dispatch marks the blitter hung, B_CMD reads
+    * busy and further starts are ignored until reset.  That memory result
+    * is EXACT whenever repeating the step is idempotent on memory -- the
+    * shapes every observed homebrew hang has (DEMO1B $2208, Chroma $2704,
+    * Native Demo $2718: LFU clear, no accumulators) -- because after one
+    * period every location the hardware will ever write holds its final
+    * value.  Otherwise (BlitterNeverEndsApprox: Gouraud/Z/shade
+    * accumulators, comparator masks, LFU feeding back D or a separately
+    * stepping S -- Music Demo, JagMania) hardware memory has no final
+    * state and this is a defined one-pass approximation.  Bounded at
+    * 65536 phrase writes.  The pointers end one period on, i.e. where they
+    * started (outer updates never run: the outer loop never sees indone).
+    * The collapsed fast paths below are bypassed so the reference state
+    * machine handles it. */
+   never_ends = BlitterNeverEnds(GET32(blitter_ram, PIXLINECOUNTER),
+         dsta2 ? GET32(blitter_ram, A2_FLAGS) : GET32(blitter_ram, A1_FLAGS),
+         (uint16_t)(dsta2 ? a2_x : a1_x)) ? true : false;
+   if (never_ends)
+   {
+      uint32_t ppp_stuck = 64u >> pixsize;   /* pixsize 0-2 here */
+      stuck_limit = a1addy ? 0x10000u : (0x10000u / ppp_stuck);
+      if (((uint16_t)(dsta2 ? a2_x : a1_x)) & (ppp_stuck - 1u))
+         stuck_limit++;
+   }
 
    // Stopgap vars to simulate various lines
 
@@ -2486,6 +2527,7 @@ void BlitterMidsummer2(void)
          bool idle_inner = true, sreadx = false, szreadx = false, sread = false,
               szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
          bool inner0 = false;
+         bool stuck_done = false;   /* never_ends: one wrap period written */
          bool idle_inneri, sreadxi, szreadxi, sreadi, szreadi, dreadi, dzreadi, dwritei, dzwritei;
          //other stuff
          uint8_t srcshift = 0;
@@ -2574,7 +2616,7 @@ void BlitterMidsummer2(void)
           *
           * The existing state machine is the fallback for all other configs.
           *=================================================================*/
-         if (patdsel && !srcen && !srcenx && !dsten && !dstenz && !dstwrz
+         if (!never_ends && patdsel && !srcen && !srcenx && !dsten && !dstenz && !dstwrz
                && !gourd && !gourz && !srcshade && !adddsel
                && !bcompen && !dcompen && !a2update && zmode == 0)
          {
@@ -2838,7 +2880,7 @@ void BlitterMidsummer2(void)
           *   7. Step both A1 and A2 addresses
           *   8. Decrement icount, check inner0
           *=================================================================*/
-         if (srcen && !srcenx && !srcenz && !dsten && !dstenz && !dstwrz
+         if (!never_ends && srcen && !srcenx && !srcenz && !dsten && !dstenz && !dstwrz
                && !bcompen && !dcompen && !gourd && !gourz && !srcshade
                && !adddsel && !patdsel && zmode == 0
                && a1addx != 3 && a2addx != 3
@@ -3163,8 +3205,8 @@ void BlitterMidsummer2(void)
             /* State machine: step is always true (no bus contention in
                Jaguar I), textext/txtread never assert. Both eliminated. */
 
-            if ((dzwrite && inner0)
-                  || (dwrite && !dstwrz && inner0))
+            if ((dzwrite && (inner0 || stuck_done))
+                  || (dwrite && !dstwrz && (inner0 || stuck_done)))
             {
                idle_inneri = true;
                break;
@@ -3510,6 +3552,11 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
                if (icount == 0 || ((icount & 0x8000) && !(oldicount & 0x8000)))
                   inner0 = true;
+               /* Never-ending blit: stop after one wrap period.  Set only
+                * here, AFTER inner0, so it changes no write mask; the
+                * idle_inner test above ends the step after its Z write. */
+               if (never_ends && ++stuck_writes >= stuck_limit)
+                  stuck_done = true;
                // X/Y stepping is also done here, I think...No. It's done when a1_add or a2_add is asserted...
 
                //*********************************************************************************
@@ -4011,6 +4058,11 @@ fc_inner_done:
          ocount--;
 
          if (ocount == 0)
+            outer0 = true;
+         /* Never-ending blit stopped by the wrap-period bound: the outer
+          * machine goes straight to idle (no A1/A2 outer updates -- the
+          * hardware never gets that far). */
+         if (stuck_done)
             outer0 = true;
       }
 

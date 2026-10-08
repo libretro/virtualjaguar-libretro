@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.7.0
+CORE_BASE_VERSION := v3.7.1
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -1336,7 +1336,7 @@ $(CORE_DIR)/libretro.o: $(VERSION_H)
 clean:
 	rm -f $(TARGET) $(OBJECTS) $(BUILD_CONFIG_STAMP) $(LEGACY_LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
-		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops \
+		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_fountain_crash test/test_audio_pipeline \
@@ -1355,7 +1355,7 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
-		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
@@ -1414,7 +1414,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
 test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb test/tools/test_gdbstub_proto \
-		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
+		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_m68k_prefetch test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_fountain_crash \
@@ -1430,7 +1430,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_disk_control \
-		test/tools/test_hook_gate \
+		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1580,6 +1580,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/tools/test_gdbstub_proto
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
+	./test/test_m68k_prefetch
 	./test/test_gpu_ops
 	./test/test_dsp_ops
 	./test/test_dsp_unit
@@ -1787,6 +1788,18 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Hover Strike CD (HLE savestate determinism, #787)" "no disc matching 'Hover Strike - Unconquered Lands (USA).cue' in the private corpus"; \
 	fi
+	@# Issue #804: the same disc on the REAL-BIOS path.  The boot-stub-injected
+	@# flag (jagcd_bios.c) and the BUTCH FIFO refill accumulator (cdrom.c) lived
+	@# outside the blob, so a rollback across the stub injection never injected
+	@# it and the replay diverged ~40 frames in (failed video_replay_identical
+	@# and state_reconverges pre-fix).  The explicit boot-mode option is what
+	@# selects the BIOS path -- `--bios` only toggles the cart boot ROM.
+	@rom=$$(bash scripts/find-rom.sh 'Hover Strike - Unconquered Lands (USA).cue'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --option virtualjaguar_cd_boot_mode=bios --warmup 400 --frames 120 --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Hover Strike CD (real-BIOS savestate determinism, #804)" "no disc matching 'Hover Strike - Unconquered Lands (USA).cue' in the private corpus"; \
+	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
@@ -1837,6 +1850,67 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cart_needs_bios ./$(TARGET) --quiet
 	./test/test_crash_detect_cd_wedge ./$(TARGET)
 	./test/test_crash_detect_inframe ./$(TARGET)
+	@# Uploaded-executable ILLEGAL park (#800).  The synthetic raw binary
+	@# needs no ROM and always runs; DEMO1B is the measured reproducer
+	@# (it hung retro_run forever under the accurate blitter).  The tool
+	@# forces the accurate blitter and arms its own wall-clock alarm.
+	./test/tools/test_upload_illegal_park ./$(TARGET)
+	@# A blit hardware never finishes (#800/#794) hangs the emulated
+	@# blitter, never the host: synthetic never-ending blit under both
+	@# engines (returns, B_CMD busy, starts ignored, reset clears,
+	@# savestate restores).  Both measured reproducers are gone: Music
+	@# Demo (ScatoLOGIC) --bios (#794) sprayed the blitter only from a
+	@# $$1000-low load address (#818, now a raw-binary boot check below), and
+	@# Native Demo (bin) HLE reached its blit only through a GPU runaway
+	@# into data that the #611 NORMI fix reshuffled.  The synthetic test
+	@# covers both engines.
+	./test/tools/test_blitter_hung ./$(TARGET)
+	./test/tools/test_blitter_hung ./$(TARGET) --fast
+	@rom=$$(bash scripts/find-rom.sh 'DEMO1B (PD) [[]a1[]].jag' 'DEMO1B (PD).jag' 'DEMO1B*.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_upload_illegal_park ./$(TARGET) --rom "$$rom" --frames 600; \
+	else \
+		bash scripts/test-skip.sh record "Upload ILLEGAL park (DEMO1B, accurate blitter)" "no ROM matching 'DEMO1B*' in the private corpus"; \
+	fi
+	@# Raw-binary load address (#818): all three are linked at $$5000, which
+	@# the containment scorer used to resolve to $$4000 (black screen, 68K
+	@# parked on ILLEGAL; Music Demo --bios sprayed the blitter, #794).
+	@# The ROM-free cases live in test_cart_format.
+	@rom=$$(bash scripts/find-rom.sh 'Chroma-Luma Color Pick by Matthias Domin (bin)*' 'Chroma-Luma*(bin)*'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 && \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Chroma-Luma (bin), #818)" "no ROM matching 'Chroma-Luma*(bin)*' in the private corpus"; \
+	fi
+	@rom=$$(bash scripts/find-rom.sh 'JagMania (Jul 8)*' 'JagMania*Jul 8*'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 && \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Raw binary at \$$5000 (JagMania (Jul 8), #818)" "no ROM matching 'JagMania (Jul 8)*' in the private corpus"; \
+	fi
+	@rom=$$(bash scripts/find-rom.sh 'Music Demo (2002) (ScatoLOGIC).jag' 'Music Demo*.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 && \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Music Demo, #794/#818)" "no ROM matching 'Music Demo*' in the private corpus"; \
+	fi
+	@# Club Drive GPU runaway (#611): NORMI was one too high, so the clip
+	@# corner table lookup rotated every inserted screen corner; steering
+	@# from the mid-race state ran the GPU into main RAM by frame 82.  The
+	@# user's RetroArch state is rzip-compressed, so extract it first.
+	@rom=$$(bash scripts/find-rom.sh 'Club Drive (1994).jag' 'Club Drive*.jag' 'Club Drive*.j64'); \
+	state="test/roms/private/states/Club Drive (1994).state3"; \
+	if [ -n "$$rom" ] && [ -f "$$state" ]; then \
+		raw=$$(mktemp /tmp/vj_club_drive_611.XXXXXX) && \
+		python3 scripts/rzip_extract.py "$$state" "$$raw" >/dev/null && \
+		./test/tools/test_club_drive_611 ./$(TARGET) "$$rom" --load-state "$$raw"; \
+		rc=$$?; rm -f "$$raw"; [ $$rc -eq 0 ]; \
+	else \
+		bash scripts/test-skip.sh record "Club Drive GPU stays local (#611)" "no 'Club Drive*' ROM or states/Club Drive (1994).state3 in the private corpus"; \
+	fi
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
 	@# $F14000/$F14002 identity guardrail for the input-devices track
@@ -2086,6 +2160,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# in the `if [ -n "$$disc" ]` block, where it silently ran nowhere but
 	@# a corpus machine.
 	./test/tools/test_disk_control ./$(TARGET) --case 5 --quiet
+	@# Case 6 (#810): the Memory Track is exposed as SAVE_RAM from the first
+	@# query of a no-content boot, and a frontend-loaded .srm reaches mtMem.
+	@# Also disc-free, so it stays outside the corpus guard for the same
+	@# reason as case 5.
+	./test/tools/test_disk_control ./$(TARGET) --case 6 --quiet
 
 	@# Baldies HLE cutscene (#738): the boot classifier PASSED this title
 	@# while it was frozen from frame ~600 (it reaches game code and is
@@ -2106,6 +2185,37 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "Baldies HLE cutscene progression (#738)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
 	fi
 
+	@# Xenowings in-game video (#811): the GPU's object-list swap is
+	@# `load (r0),r2 / moveq #0,r2`, which only works because the external
+	@# load lands after the moveq (JTRM p.136, TOM bug 13).  Without that
+	@# OLP=0 and every gameplay frame is black.  Then the game's
+	@# self-modifying anti-tamper check at 68K $$350C needs the 68000
+	@# prefetch queue (m68kinterface.c), or the game drops back to its
+	@# loader a few frames in.  The tool waits for the menu, presses B,
+	@# waits for the loading screen and needs 600 consecutive lit 326-wide
+	@# playfield frames with no return to the loader.  Private corpus only.
+	@rom=$$(bash scripts/find-rom.sh 'xenowings.rom' '*xenowings*.rom' '*xenowings*.j64' '*xenowings*.jag'); \
+	if [ -n "$$rom" ]; then \
+		$(MAKE) --no-print-directory test/tools/xenowings_ingame_video >/dev/null || exit 1; \
+		./test/tools/xenowings_ingame_video ./$(TARGET) "$$rom" --quiet || exit 1; \
+	else \
+		bash scripts/test-skip.sh record "Xenowings in-game video (#811)" "no ROM matching '*xenowings*' in the private corpus"; \
+	fi
+
+	@# White Men Can't Jump intro logo (#736): the game's fade-in copies
+	@# out of a buffer its GPU is still decoding and relies on each blit
+	@# freezing the 68000 (JTRM v8 p.8, p.69).  With zero-time blits only
+	@# the logo's apex survived.  The titledb row turns on the blitter
+	@# bus-time model for this title; run at DEFAULT options so the row
+	@# is what is tested.  Private corpus only.
+	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
+	if [ -n "$$rom" ]; then \
+		$(MAKE) --no-print-directory test/tools/wmcj_intro_logo >/dev/null || exit 1; \
+		./test/tools/wmcj_intro_logo ./$(TARGET) "$$rom" --quiet || exit 1; \
+	else \
+		bash scripts/test-skip.sh record "White Men Can't Jump intro logo (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
+	fi
+
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
 	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
@@ -2113,6 +2223,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		rc=0; \
 		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 1 --quiet || rc=1; \
 		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 3 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 7 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 8 --option virtualjaguar_memory_track=disabled --quiet || rc=1; \
 		discb=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | sed -n 2p); \
 		if [ -n "$$discb" ]; then \
 			if ./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --disc-b "$$discb" --case 4 --quiet; then :; \
@@ -2366,6 +2478,10 @@ test/test_m68k_irq_ssp: test/test_m68k_irq_ssp.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_m68k_irq_ssp.c -ldl
 
+test/test_m68k_prefetch: test/test_m68k_prefetch.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_m68k_prefetch.c -ldl
+
 test/test_gpu_ops: test/test_gpu_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_gpu_ops.c -ldl
@@ -2451,6 +2567,22 @@ test/tools/cd_wedge_probe: test/tools/cd_wedge_probe.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 -I. $(INCFLAGS) \
 		-o $@ test/tools/cd_wedge_probe.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Xenowings in-game video (#811): state-driven menu -> gameplay check.
+test/tools/xenowings_ingame_video: test/tools/xenowings_ingame_video.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
+		-o $@ test/tools/xenowings_ingame_video.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# White Men Can't Jump intro logo (#736): blit-vs-GPU-decoder race.
+test/tools/wmcj_intro_logo: test/tools/wmcj_intro_logo.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
+		-o $@ test/tools/wmcj_intro_logo.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
@@ -2797,6 +2929,39 @@ test/test_crash_detect_cd_wedge: test/test_crash_detect_cd_wedge.c
 
 test/test_crash_detect_inframe: test/test_crash_detect_inframe.c
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_crash_detect_inframe.c -ldl
+
+# Uploaded-executable ILLEGAL park (#800): harness tool, needs the wide
+# test ABI for m68k_get_reg.
+# Never-ending blit -> hung emulated blitter (#800/#794).
+test/tools/test_blitter_hung: test/tools/test_blitter_hung.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_blitter_hung.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Club Drive GPU runaway regression (#611): harness tool, needs the wide
+# test ABI for GPUGetPC.
+test/tools/test_club_drive_611: test/tools/test_club_drive_611.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_club_drive_611.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_upload_illegal_park: test/tools/test_upload_illegal_park.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_upload_illegal_park.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_raw_binary_boot: test/tools/test_raw_binary_boot.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_raw_binary_boot.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
 test/test_cart_needs_bios: test/test_cart_needs_bios.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \

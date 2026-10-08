@@ -4661,6 +4661,30 @@ bool retro_serialize(void *data, size_t size)
       return false;
    buf += JaguarCDHLEStateSave(buf);
 
+   /* v16 (#804): real-BIOS CD path.  Two trailing chunks, each behind its
+    * own magic word: the boot-stub-injected flag (jagcd_bios.c) and the
+    * CD drive-timing statics (cdrom.c: FIFO refill accumulator, IRQ edge
+    * detector).  Outside the blob, run-ahead replayed a real-BIOS load
+    * against a flag/phase the replay had already advanced (Hover Strike,
+    * warmup 400: video diverged 44 frames after the rollback).
+    *
+    * STRICTLY LAST, after the HLE chunk: appending keeps every v15 and
+    * older blob loadable.  Room is checked BEFORE writing, as above. */
+   if ((size_t)(buf - start) + JaguarCDBiosStateSize() > STATE_SIZE)
+      return false;
+   buf += JaguarCDBiosStateSave(buf);
+
+   if ((size_t)(buf - start) + CDROMStateExtSize() > STATE_SIZE)
+      return false;
+   buf += CDROMStateExtSave(buf);
+
+   /* v16, extended in place (#800): the sticky "blitter hung" flag -- a
+    * blit hardware never finishes leaves the blitter busy until reset.
+    * Its own magic ("BLH1"), STRICTLY after CDX1; room checked first. */
+   if ((size_t)(buf - start) + BlitterHungStateSize() > STATE_SIZE)
+      return false;
+   buf += BlitterHungStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4902,6 +4926,24 @@ bool retro_unserialize(const void *data, size_t size)
       buf += JaguarCDHLEStateLoad(buf);
    else
       JaguarCDHLEStateReset();
+
+   /* v16 (#804): real-BIOS CD chunks -- see the matching save comment.
+    * v15 and older end before them.  For those the live session's values
+    * are LEFT ALONE, exactly as v3.7.0 did: users save mid-game, after the
+    * boot stub is in, so forcing "not injected" would re-arm the $005E40
+    * GPU-magic stomp (and the $050176 re-injection) over the game's own
+    * RAM -- corrupting a state that loads fine today.  A fresh core holds
+    * the defaults anyway. */
+   if (version >= STATE_VERSION_BIOS_CD_BOOT)
+   {
+      buf += JaguarCDBiosStateLoad(buf);
+      buf += CDROMStateExtLoad(buf);
+      /* #800: hung-blitter chunk.  A v16 blob written before it existed
+       * ends in the zero-filled tail here: wrong magic -> not hung. */
+      buf += BlitterHungStateLoad(buf);
+   }
+   else
+      BlitterHungStateReset();   /* older states: not hung */
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -5559,6 +5601,16 @@ static bool disk_set_eject_state(bool ejected)
               "restored\n");
       return false;                   /* disk_ejected stays true */
    }
+
+   /* The boot just reset RAM, which wipes the Memory Track NVM BIOS module
+    * (the '_NVM' cookie + dispatcher stub) that no-content load installed.
+    * retro_load_game and retro_reset reinstall it after their boot for the
+    * same reason; without this, a game started by an insert sees the Memory
+    * Track cart but no NVM BIOS behind it, so the saves #810 exposes would
+    * never be written (#810). */
+   NVMBiosReset();
+   if (jaguarMemTrackInserted)
+      NVMBiosInstall();
 
    LOG_INF("[CD] disk control: inserted '%s', booting via '%s'\n",
            cd_image_path,
@@ -6652,14 +6704,38 @@ static void eeprom_unpack_save_buf(void)
       memcpy(mtMem, eeprom_save_buf + MT_SAVE_OFFSET, MT_SAVE_SIZE);
 }
 
+/* Does this session have anything for the frontend to persist?
+ *
+ * Only a no-content boot can answer no.  There, "no cartridge" used to mean
+ * "no save media" (#646: don't hand frontends a meaningless .srm for a bare
+ * BIOS), but #726 changed what a no-content boot IS: it comes up in the CD
+ * BIOS with the CD unit attached and the Memory Track cart plugged in from
+ * frame 0.  The Memory Track is real, writable save media whether or not a
+ * disc is mounted, so the answer follows it (#810).
+ *
+ * Deliberately NOT keyed on a disc being mounted.  libretro has no "save RAM
+ * changed" notification: frontends size the buffer and copy the .srm into it
+ * once, right after retro_load_game (RetroArch also sizes its autosave once,
+ * at init), and only re-query at shutdown.  Exposing the buffer for the first
+ * time after an insert would therefore be a write without a load -- the
+ * session's saves hit disk but are never read back, and each session blindly
+ * overwrites the last one's file.  So the answer has to be right at the FIRST
+ * query, which is why it keys on the Memory Track and nothing that can change
+ * later.  With the Memory Track disabled a no-content session keeps
+ * reporting nothing, and an inserted disc does not change that. */
+static bool save_ram_available(void)
+{
+   return !no_game_active || jaguarMemTrackInserted;
+}
+
 void *retro_get_memory_data(unsigned type)
 {
    if (type == RETRO_MEMORY_SYSTEM_RAM)
       return jaguarMainRAM;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
-      /* No-content boot (#646): no cartridge means no EEPROM chip. */
-      if (no_game_active)
+      /* No-content boot with no Memory Track and no disc (#646, #810). */
+      if (!save_ram_available())
          return NULL;
       /* Memory Track cart uses 128K NVRAM directly */
       if (jaguarMainROMCRC32 == 0xFDF37F47)
@@ -6680,10 +6756,9 @@ size_t retro_get_memory_size(unsigned type)
       return 0x200000;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
-      /* No-content boot (#646): no cartridge means no EEPROM chip -- report
-       * zero so frontends don't create a meaningless .srm for a bare BIOS
-       * session. */
-      if (no_game_active)
+      /* No-content boot with no Memory Track and no disc (#646, #810):
+       * nothing to persist, so don't create a meaningless .srm. */
+      if (!save_ram_available())
          return 0;
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;

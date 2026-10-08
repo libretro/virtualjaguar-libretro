@@ -721,15 +721,33 @@ static void test_pack(void)
    else FAIL("unpack(0x1234)=%08X (expected 00404034)", REG(0));
 }
 
+/* NORMI = (index of the top set bit) - 23: the right shift that normalises
+ * the value as an IEEE single (JTRM v8 p.52), as TOM's ARITH.NET encodes
+ * it; a zero source gives -32.  The old expectation (9 for $80000000)
+ * normalised to bit 22 and was one too high; Club Drive's clip-corner
+ * table lookup depends on the exact value (#611). */
+static void normi_case(uint32_t in, int32_t want)
+{
+   prep();
+   gwmovei(0x100, in, 0);
+   gw16(0x106, OP(56, 0, 1));  /* normi R0, R1 */
+   run(20);
+   if ((int32_t)REG(1) == want) PASS("normi(0x%08X)=%d", in, want);
+   else FAIL("normi(0x%08X)=%d (expected %d)", in, (int32_t)REG(1), want);
+}
+
 static void test_normi(void)
 {
    printf("\n--- NORMI ---\n");
-   prep();
-   gwmovei(0x100, 0x80000000, 0);
-   gw16(0x106, OP(56, 0, 1));  /* normi R0, R1 */
-   run(20);
-   if (REG(1) == 9) PASS("normi(0x80000000)=9");
-   else FAIL("normi(0x80000000)=%d (expected 9)", (int32_t)REG(1));
+   normi_case(0x80000000u,   8);
+   normi_case(0x01000000u,   1);
+   normi_case(0x00800000u,   0);
+   normi_case(0x00FFFFFFu,   0);
+   normi_case(0x00400000u,  -1);
+   normi_case(0x00000080u, -16);
+   normi_case(0x00000002u, -22);
+   normi_case(0x00000001u, -23);
+   normi_case(0x00000000u, -32);
 }
 
 /* ============================================================ */

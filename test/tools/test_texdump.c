@@ -382,7 +382,8 @@ static void synth_blit(const synth_ctx *sc, uint32_t src_addr,
     uint32_t sflags = synth_flags(log2w, psize);
     uint32_t dflags = synth_flags(log2w, psize);
     uint32_t step   = ((uint32_t)1 << 16) | ((uint32_t)(-(int)w) & 0xFFFF);
-    uint32_t cmd    = 0x00600000u   /* LFU = source (REPLACE)  */
+    uint32_t cmd    = 0x00600000u   /* LFU = ~S (bits 21+22; JTRM v8 p.74).
+                                     * NOT a source copy -- that is $01800000. */
                     | 0x00000001u   /* SRCEN                   */
                     | 0x00000200u   /* UPDA1                   */
                     | 0x00000400u;  /* UPDA2                   */

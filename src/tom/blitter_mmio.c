@@ -11,10 +11,14 @@
 #include "../core/crash_detect.h"
 #include "settings.h"
 #include "vjag_memory.h"
+#include "../core/state.h"
 
 #define A1_BASE         ((uint32_t)0x00)
 #define A1_FLAGS        ((uint32_t)0x04)
 #define A1_PIXEL        ((uint32_t)0x0C)
+#define A2_FLAGS        ((uint32_t)0x28)
+#define A2_PIXEL        ((uint32_t)0x30)
+#define CMD_DSTA2       ((uint32_t)0x00000800)
 #define COMMAND         ((uint32_t)0x38)
 #define PIXLINECOUNTER  ((uint32_t)0x3C)
 #define SRCDATA         ((uint32_t)0x40)
@@ -180,6 +184,138 @@ static void BlitterTimingChargeAccess(uint32_t who)
 }
 
 
+/* ------------------------------------------------------------------ */
+/* Blits that never end on hardware (issues #800, #794)                 */
+/* ------------------------------------------------------------------ */
+
+/* B_CMD bits used by the classification below (JTRM v8 p.73-75). */
+#define CMD_SRCEN       ((uint32_t)0x00000001)
+#define CMD_SRCENX      ((uint32_t)0x00000004)
+#define CMD_DSTEN       ((uint32_t)0x00000008)
+#define CMD_DSTWRZ      ((uint32_t)0x00000020)
+#define CMD_GOURD       ((uint32_t)0x00001000)
+#define CMD_GOURZ       ((uint32_t)0x00002000)
+#define CMD_ADDDSEL     ((uint32_t)0x00020000)
+#define CMD_ZMODE       ((uint32_t)0x001C0000)
+#define CMD_BCOMPEN     ((uint32_t)0x04000000)
+#define CMD_DCOMPEN     ((uint32_t)0x08000000)
+#define CMD_SRCSHADE    ((uint32_t)0x40000000)
+
+/* B_CMD status while hung (JTRM v8 p.75, F02238 read-only): bit 0 IDLE
+ * clear, bit 12 "outer INNER" set (the outer state machine never leaves
+ * its inner-loop-active state), bit 9 "inner DWRITE" (every stuck step
+ * writes), bits 16-31 the inner count the counter is stuck at.  Bits
+ * 2-31 are documented as diagnostic only. */
+#define STATUS_HUNG_BITS ((uint32_t)0x00001200)
+
+#define BLITTER_HUNG_MAGIC 0x31484C42u   /* "BLH1" little-endian */
+
+static uint8_t  blitterHung;
+static uint16_t blitterHungICount;
+
+/* The inner counter's decrement is INNER.NET's Inc0-Inc3 (jag_sim
+ * netlists/tom/INNER.NET ~611-635): 1 in pixel mode; in phrase mode only
+ * the 8/16/32bpp decodes contribute beyond bit 0, so at pixsize 0-2 it is
+ * dstxp[0].  Phrase-mode X add truncates to a phrase boundary (JTRM v8
+ * p.71, A1/A2_FLAGS bits 16-17 = 00), so after the first write dstxp[0] is
+ * 0 and the count never moves again; inner0 (count == 0 or underflow,
+ * INNER.NET ~662-673) is never reached.  The line ends only if the first
+ * write already reaches the count: inner 0 (one write) or inner 1 with an
+ * odd starting X.  Nothing else ends an inner loop, so the blit never
+ * returns to idle on hardware. */
+int BlitterNeverEnds(uint32_t b_count, uint32_t dst_flags, uint32_t dst_x)
+{
+   uint32_t inner = b_count & 0xFFFFu;
+   uint32_t pixsize = (dst_flags >> 3) & 0x07u;
+   int phrase_mode = ((dst_flags >> 16) & 0x03u) == 0;
+
+   if (!phrase_mode || pixsize >= 3)
+      return 0;
+   if (inner == 0)
+      return 0;
+   if (inner == 1 && (dst_x & 1u))
+      return 0;
+   return 1;
+}
+
+/* Whether repeating the stuck step forever is NOT provably idempotent on
+ * memory, i.e. the accurate engine's one-wrap-period result is only a
+ * defined approximation of the (never final) hardware memory state.
+ * Conservative: any per-step data that can change from one wrap to the
+ * next -- Gouraud/Z accumulators that are written or compared, intensity
+ * shading, data/bit/Z comparator masks, adder mode, destination data fed
+ * back through the LFU (read-modify-write), or source data fed into the
+ * LFU (the source pointer has its own period and may overlap the
+ * destination). */
+int BlitterNeverEndsApprox(uint32_t b_cmd)
+{
+   uint32_t lfu = (b_cmd >> 21) & 0x0Fu;  /* minterms !S!D, !SD, S!D, SD */
+   int lfu_reads_d = ((lfu & 1u) != ((lfu >> 1) & 1u))
+                  || (((lfu >> 2) & 1u) != ((lfu >> 3) & 1u));
+   int lfu_reads_s = ((lfu & 1u) != ((lfu >> 2) & 1u))
+                  || (((lfu >> 1) & 1u) != ((lfu >> 3) & 1u));
+
+   if (b_cmd & (CMD_GOURD | CMD_SRCSHADE | CMD_ADDDSEL
+                | CMD_BCOMPEN | CMD_DCOMPEN | CMD_ZMODE))
+      return 1;
+   if ((b_cmd & CMD_GOURZ) && (b_cmd & CMD_DSTWRZ))
+      return 1;
+   if ((b_cmd & CMD_DSTEN) && lfu_reads_d)
+      return 1;
+   if ((b_cmd & (CMD_SRCEN | CMD_SRCENX)) && lfu_reads_s)
+      return 1;
+   return 0;
+}
+
+int BlitterIsHung(void)
+{
+   return blitterHung != 0;
+}
+
+void BlitterHungStateReset(void)
+{
+   blitterHung = 0;
+   blitterHungICount = 0;
+}
+
+size_t BlitterHungStateSize(void)
+{
+   return 4u + 1u + 2u;   /* magic, hung, stuck inner count */
+}
+
+size_t BlitterHungStateSave(uint8_t *buf)
+{
+   uint8_t *start = buf;
+   uint32_t magic = BLITTER_HUNG_MAGIC;
+
+   STATE_SAVE_VAR(buf, magic);
+   STATE_SAVE_VAR(buf, blitterHung);
+   STATE_SAVE_VAR(buf, blitterHungICount);
+   return (size_t)(buf - start);
+}
+
+/* A missing or wrong magic (a state written before this chunk existed:
+ * the blob's zero-filled tail) means not hung. */
+size_t BlitterHungStateLoad(const uint8_t *buf)
+{
+   const uint8_t *start = buf;
+   uint32_t magic;
+
+   STATE_LOAD_VAR(buf, magic);
+   if (magic != BLITTER_HUNG_MAGIC)
+   {
+      BlitterHungStateReset();
+      return (size_t)(buf - start);
+   }
+   STATE_LOAD_VAR(buf, blitterHung);
+   STATE_LOAD_VAR(buf, blitterHungICount);
+   blitterHung = blitterHung ? 1 : 0;
+   if (!blitterHung)
+      blitterHungICount = 0;
+   return (size_t)(buf - start);
+}
+
+
 void BlitterInit(void)
 {
    BlitterReset();
@@ -189,6 +325,9 @@ void BlitterInit(void)
 void BlitterReset(void)
 {
    memset(blitter_ram, 0x00, 0xA0);
+   /* A hung blitter (one that started a blit hardware never finishes)
+    * stays hung until reset / power-on -- this is that reset. */
+   BlitterHungStateReset();
    /* The register file is not the whole of the blitter's serialised
     * state: the B_CMD decode statics live in blitter.c and used to
     * survive teardown into the next session's savestate (#479). */
@@ -210,7 +349,17 @@ uint8_t BlitterReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
    BlitterTimingChargeAccess(who);
 
-   /* Real hardware returns $00000805, as documented in the JTRM. */
+   /* Hung (a never-ending blit is still running, #800): not idle. */
+   if (blitterHung && offset >= COMMAND && offset <= (COMMAND + 3))
+   {
+      uint32_t status = ((uint32_t)blitterHungICount << 16) | STATUS_HUNG_BITS;
+      return (uint8_t)(status >> (8 * (3 - (offset - COMMAND))));
+   }
+
+   /* Status read-back: $00000805 = IDLE (bit 0) | inner IDLE (bit 2) |
+    * outer IDLE (bit 11).  The value itself is not printed in the JTRM;
+    * it is derived from the documented status bits (JTRM Rev 8 p.75
+    * "Status Register"; bits 2 and 11 are listed "Diagnostic only"). */
    if (offset == (COMMAND + 0))
       return 0x00;
    if (offset == (COMMAND + 1))
@@ -326,6 +475,13 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * shadow registers as they run. */
       uint32_t busClks = 0;
       int trBlit = 0;
+      uint32_t hbCount = GET32(blitter_ram, PIXLINECOUNTER);
+      uint32_t hbCmd = GET32(blitter_ram, COMMAND);
+      uint32_t hbFlags = (hbCmd & CMD_DSTA2) ? GET32(blitter_ram, A2_FLAGS)
+                                             : GET32(blitter_ram, A1_FLAGS);
+      uint32_t hbX = (hbCmd & CMD_DSTA2) ? GET16(blitter_ram, A2_PIXEL + 2)
+                                         : GET16(blitter_ram, A1_PIXEL + 2);
+      int neverEnds;
 
       /* Re-entrancy guard (issue #659).
        *
@@ -381,6 +537,20 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          return;
       }
 
+      /* A hung blitter (#800) is still running the blit it can never
+       * finish.  A B_CMD write cannot start another one: OUTER.NET only
+       * leaves idle on go (innert[0] = idle AND go), and the outer state
+       * machine never returns to idle.  The register write itself is kept
+       * (above).  KNOWN LIMIT: on hardware the counter/command/pointer
+       * registers still latch mid-blit (FDSYNC on cmdld/countld), so e.g.
+       * a B_COUNT write with inner count 0 would end the stuck line and let
+       * the blit continue; JTRM v8 p.70 calls register writes while busy
+       * undefined, and this model does not resume a hung blit. */
+      if (blitterHung)
+         return;
+
+      neverEnds = BlitterNeverEnds(hbCount, hbFlags, hbX);
+
       if (vjs.blitterTiming)
          busClks = BlitDurationSysclks();
 
@@ -402,9 +572,8 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       /* Log-only in-frame hang signature (issue #740): a garbage B_COUNT
        * runs to completion inside this register write and the frame never
        * ends, so the per-frame watchdog would never see it. */
-      CrashDetectNoteBlit(GET32(blitter_ram, PIXLINECOUNTER),
-                          GET32(blitter_ram, COMMAND),
-                          GET32(blitter_ram, A1_BASE));
+      CrashDetectNoteBlit(hbCount, hbCmd, GET32(blitter_ram, A1_BASE),
+                          hbFlags, hbX);
 
       blit_in_progress = 1;
       if (BlitterCompareIsEnabled())
@@ -418,6 +587,18 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             BlitterMidsummer2();
       }
       blit_in_progress = 0;
+
+      /* A blit hardware never finishes (#800/#794).  The accurate engine
+       * has run it for one destination wrap period and returned (see
+       * BlitterMidsummer2); the fast engine ran its own approximation.
+       * Either way the emulated blitter is now hung -- not the host --
+       * until reset.  Engine-independent, so B_CMD reads busy under both.
+       * The counter sits at inner - dstxp[0] after the first write. */
+      if (neverEnds)
+      {
+         blitterHung = 1;
+         blitterHungICount = (uint16_t)((hbCount & 0xFFFFu) - (hbX & 1u));
+      }
 
       if (trBlit)
          TexReplacePostBlit();

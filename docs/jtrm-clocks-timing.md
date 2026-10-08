@@ -30,12 +30,15 @@ SCLK, DAC sample rates, and other derived clocks.
 
 | Register | Address | Formula |
 |---|---|---|
-| CLK1 (processor divider) | `$F10010` | system_clock / (2 * (N + 1)) |
-| CLK2 (video divider) | `$F10012` | system_clock / (2 * (N + 1)) |
-| CLK3 (chroma divider) | `$F10014` | system_clock / (2 * (N + 1)) |
+| CLK1 (processor divider, PCLKDIV) | `$F10010` | PCLKDIV = (N + 1) * CHRDIV (PLL config; "Do NOT Modify") |
+| CLK2 (video divider) | `$F10012` | (N + 1) * CHRDIV (PLL config; "Do NOT Modify") |
+| CLK3 (chroma divider, CHRDIV) | `$F10014` | CHRDIV = chroma_osc / (N + 1) (PLL config; "Do NOT Modify") |
 
-Derived from: `src/jerry/jerry.c` -- NOT verified against the JTRM. **DISAGREEMENT FOUND**
-(see issue #522 report): the manual describes CLK1/CLK2/CLK3 as PLL configuration
+Source: Software Reference Manual v2.4 pp.69-70 "Jerry" clock section (`docs/atari-jaguar-1999/03 - Software
+Reference.pdf` PDF pp.71-72; PCLKDIV = (N+1) * CHRDIV re-read on PDF p.71). An earlier version of this table gave
+all three registers `system_clock / (2 * (N + 1))`, which is the JERRY SCLK ($F1A150) formula, not a CLK1/2/3
+formula. Registers' behaviour in the emulator: `src/jerry/jerry.c` -- NOT verified against the JTRM.
+**DISAGREEMENT FOUND** (see issue #522 report): the manual describes CLK1/CLK2/CLK3 as PLL configuration
 registers marked "Do NOT Modify: For Information Only" with formulas
 `PCLKDIV = (N+1) * CHRDIV` (CLK1/CLK2) and `CHRDIV = chroma_osc / (N+1)` (CLK3) --
 not the `system_clock / (2*(N+1))` formula shown above, which is actually the JERRY
@@ -52,21 +55,24 @@ SCLK ($F1A150) formula (Software Reference Manual v2.4 p.72). See
 |---|---|---|
 | Master clock | 26.590906 MHz | 26.593900 MHz |
 | Horizontal period | 63.5555 us | 64.0 us |
-| Horizontal sync width | 4.8390 us | 4.7 us |
-| Back porch (colour burst to active) | 5.7 us | 5.6 us |
+| Horizontal sync width | 4.76 us | 4.7 us |
+| Horizontal back porch | 4.45 us | 5.7 us |
 | Active display | 52.0 us | 52.0 us |
-| Front porch | 1.0 us | 1.7 us |
+| Horizontal front porch | 1.27 us | 1.65 us |
 | Halflines per field (VP+1, non-interlaced) | 524 (262 lines) | 624 (312 lines) |
 | Halflines per field (interlaced) | 525 | 625 |
 | **Field rate (non-interlaced)** | **60.05445 Hz** | **50.08013 Hz** |
 | Vertical sync lines | 6 | 5 |
 | Pre-equalizing pulses | 6 | 5 |
-| Post-equalizing pulses | 6 | 5 |
+| Post-equalizing pulses | 6 | 6 |
 | Vertical blanking lines | ~20 | ~24 |
 | Active display lines | ~240 | ~256 |
 
-Source: JTRM Rev 10 p.8 "Video Timings" (master clock, periods, vertical
-lines); JTRM Rev 8 p.15 (`VP`: "the number of half lines per field ... one
+Source: JTRM Rev 10 p.8 "Video Timings" (master clock, periods, hsync width,
+back/front porch, equalisation and vertical sync pulse counts, vertical lines; re-checked cell by cell
+against the PDF text layer -- an earlier version of this table had NTSC hsync 4.8390, NTSC back porch 5.7,
+PAL back porch 5.6, NTSC front porch 1.0, PAL front porch 1.7 and PAL post-equalising pulses 5, all differing
+from the page it cited); JTRM Rev 8 p.15 (`VP`: "the number of half lines per field ... one
 more than the value written ... If the number of half lines is odd then the
 display is interlaced", and `HP`: "the period of half a display line ... one
 tick longer than the value written"); `src/tom/op.c` (active display).
@@ -89,14 +95,22 @@ system clocks per pixel.
 
 | Divisor | Overscanned pixels | Non-overscanned pixels | Typical use |
 |---|---|---|---|
-| 1 | 1330 | ~1040 | |
-| 2 | 665 | ~520 | 640-wide modes |
-| 3 | 443 | ~347 | |
-| 4 | 332 | ~260 | **320-wide (square pixels)** |
-| 5 | 266 | ~208 | |
-| 6 | 221 | ~173 | |
-| 7 | 190 | ~149 | |
-| 8 | 166 | ~130 | |
+| 1 | 1330 | 1064 | |
+| 2 | 665 | 532 | 640-wide modes |
+| 3 | 443 | 355 | |
+| 4 | 332 | 266 | **320-wide (square pixels)** |
+| 5 | 266 | 213 | |
+| 6 | 222 | 177 | |
+| 7 | 190 | 152 | |
+| 8 | 166 | 133 | |
+
+Source: JTRM Rev 10 p.6 "Jaguar Video & System Clocks" pixel-divisor table. Two cells in the printed table are
+transcription typos and are corrected here from the page's own rule (about 40 us non-overscanned / 50 us
+overscanned at 26.59 MHz, divided by the divisor): divisor 1 non-overscanned is printed 1046 (should be 1064,
+since 532 x 2 = 1064 and the other rows are all 1064 / divisor) and divisor 2 overscanned is printed 655 (should
+be 665 = 1330 / 2). Divisor 6 overscanned: 1330 / 6 = 221.7, printed 222. Earlier versions of this file carried
+a ~1040 / 520 / 347 / 260 / 208 / 173 / 149 / 130 non-overscanned column that matches nothing in the manual.
+See `docs/jtrm-errata.md` A10.
 
 Divisor 4 gives square pixels. Most games use divisor 4 (320-wide) or
 divisor 2 (640-wide).
@@ -183,10 +197,13 @@ CRITICAL GOTCHA above is verified correct, not just asserted. Implementation
 
 | Register | Address | Purpose |
 |---|---|---|
-| MEMCON1 | `$F00000` | DRAM width (16/32/64-bit), speed, row size, BIGEND |
-| MEMCON2 | `$F00002` | ROMHI (remap ROM high), additional timing |
+| MEMCON1 | `$F00000` | ROMHI (bit 0), ROM width/speed, DRAM speed (bits 5-6), FASTROM, IOSPEED (bits 11-12), CPU32 |
+| MEMCON2 | `$F00002` | DRAM column count and width for banks 0/1, REFRATE (bits 8-11), BIGEND (bit 12), HILO (bit 13) |
 
-Derived from: `src/core/vjag_memory.c` (header comment has full map),
+Source: JTRM Rev 8 pp.10-11 (MEMCON1/MEMCON2 bit fields). An earlier version of this table put BIGEND in
+MEMCON1 and ROMHI in MEMCON2; ROMHI is MEMCON1 bit 0 and BIGEND is MEMCON2 bit 12.
+
+Memory map rows above: Derived from: `src/core/vjag_memory.c` (header comment has full map),
 `src/core/jaguar.c` (dispatch logic) -- NOT verified against the JTRM
 
 ---

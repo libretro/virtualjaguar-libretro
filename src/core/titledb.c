@@ -775,6 +775,32 @@ static const TitleDBEntry titledb_table[] = {
          { "virtualjaguar_risc_idle_skip", "enabled" },
          { NULL, NULL }
       }
+   },
+
+   /* White Men Can't Jump (retail) — blitter bus timing (#736).
+    * Not an enhancement: the title races its own GPU decoder against
+    * the blitter and needs blits to take time.  $17BD8 starts the GPU
+    * decoding a logo into $0DCF00 and returns without waiting; the
+    * fade-in at $0138AE then issues 64 pairs of SRCSHADE copies out of
+    * that buffer, each gated only on B_CMD idle ($015F0C).  With
+    * zero-time blits the whole fade ran in two fields while the decoder
+    * had finished 111 of 200 rows, and the last copy froze 49 of them:
+    * the Trimark logo showed only its apex, the High Voltage logo and
+    * the spinning-ball title animation never appeared, in HLE and
+    * real-BIOS boot alike.  On hardware the 68000 cannot run during a
+    * blit: it is the lowest-priority bus master (JTRM v8 p.8) and the
+    * blitter holds its bus request until the operation completes
+    * (v8 p.69).  This row turns on the existing model of exactly that
+    * (BlitDurationSysclks, blitter_mmio.c) for this title; it does not
+    * change the model.  Fast/accurate blitters are hash-identical on
+    * this title, so neither engine is at fault.
+    * CRC: White Men Can't Jump (World) from src/core/filedb.c line 37. */
+   {
+      0x14915F20, "White Men Can't Jump",
+      {
+         { "virtualjaguar_blitter_timing", "enabled" },
+         { NULL, NULL }
+      }
    }
 };
 
