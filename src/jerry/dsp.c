@@ -799,7 +799,13 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
          case 0x00:
             {
                uint32_t * preWriteBank = dsp_reg;
-               IMASKCleared = (dsp_flags & IMASK) && !(data & IMASK);
+               /* OR, not assign: a host write to D_FLAGS must not drop
+                * an interrupt DSPSetIRQLine latched for the next
+                * instruction boundary.  Re-checking is always safe --
+                * DSPHandleIRQsNP takes nothing that is masked, disabled
+                * or not latched. */
+               IMASKCleared = IMASKCleared
+                  || ((dsp_flags & IMASK) && !(data & IMASK));
                dsp_flags = (data & ~IMASK) | ((data & IMASK) ? (dsp_flags & IMASK) : 0);
                dsp_flag_z = dsp_flags & 0x01;
                dsp_flag_c = (dsp_flags >> 1) & 0x01;
@@ -1006,9 +1012,10 @@ void DSPHandleIRQsNP(void)
 
 	/* IMASK reads clear the moment the D_FLAGS store is decoded, but the
 	 * store has not retired yet -- the instruction behind it is already
-	 * past Read Operands and still runs masked (see DSPWriteLong).  This
-	 * entry point is also reached asynchronously from DSPSetIRQLine, which
-	 * cannot see DSPExec's own hold-off, so re-check here.  Leave the
+	 * past Read Operands and still runs masked (see DSPWriteLong).  DSPExec's
+	 * loop-top caller already waits out the hold-off; this used to be
+	 * reached asynchronously from DSPSetIRQLine too (no longer, #744), and
+	 * stays as a guard for any caller outside that loop.  Leave the
 	 * latch standing in dsp_control and IMASKCleared unconsumed: DSPExec
 	 * dispatches it once the delay expires, at most two slots later.
 	 *
@@ -1070,7 +1077,42 @@ void DSPSetIRQLine(int irqline, int state)
 	if (state)
 	{
 		dsp_control |= mask;
-		DSPHandleIRQsNP();
+		/* Latch now, vector later: the DSP takes the interrupt itself at
+		 * its next instruction boundary (DSPExec's loop-top re-check),
+		 * not here.  JTRM Rev 8 p.38: an interrupt "forces a call" into
+		 * the instruction stream and pushes "the address of the last
+		 * instruction to be executed before the interrupt occurred" --
+		 * it is something the running DSP does, so a stopped DSP takes
+		 * nothing until DSPGO and an event callback must not move the
+		 * PC on its behalf.
+		 *
+		 * Vectoring synchronously from the event (JERRY I2S/PIT
+		 * callbacks run between scheduler slices) made the interrupt
+		 * visible to the 68000 for its entire next slice before the DSP
+		 * had executed a single cycle of the handler.  Club Drive
+		 * (#744) rewrites D_PC to $F1B030 from the 68000 at $807CE8
+		 * while DSPGO=1 (JTRM Rev 8 p.110 only promises D_PC writes
+		 * "whenever the DSP is idle"); when that write landed in the slice right
+		 * after an I2S event it found PC parked on the $F1B010 vector
+		 * with IMASK set, restarted the DSP's init with IMASK still
+		 * set (the init's read-modify-write of D_FLAGS writes the 1
+		 * back), and no interrupt was ever serviced again: LTXD stayed
+		 * 0 forever.  Which I2S phase the HLE boot happened to have
+		 * decided it -- 5 of 97 swept phases were silent, and the BIOS
+		 * boot merely had a lucky one.  For a running DSP the loop-top
+		 * re-check normally runs at the same DSP time the synchronous
+		 * call used to, with the same return address (dsp_pc - 2).  Two
+		 * exceptions: a deferred interrupt waits out an in-flight
+		 * DSP-issued D_FLAGS store (at most one instruction in real
+		 * code, see DSP_FLAGS_RETIRE_DELAY), and a stopped DSP is not
+		 * vectored until DSPGO.
+		 *
+		 * IMASKCleared doubles as "re-check pending interrupts at the
+		 * next boundary"; it already respects the D_FLAGS retire
+		 * hold-off, already gates the #569 idle-loop probe, and is
+		 * already in the savestate, so a latch raised in the last event
+		 * of a frame survives serialization. */
+		IMASKCleared = true;
 	}
 }
 
@@ -1278,11 +1320,11 @@ void DSPSyncToM68K(void)
  *     NOTE: unlike GPUExec, DSPExec has no slice-entry DSPHandleIRQs
  *     call at all.  The only in-loop dispatch is the
  *     `IMASKCleared && dspFlagsRetireDelay == 0` re-check at the top of
- *     DSPExec's loop below, and IMASKCleared is set only by a
- *     store to D_FLAGS (dsp.c:698) -- which the admission rule excludes.
- *     The other entry point, DSPSetIRQLine -> DSPHandleIRQsNP
- *     (dsp.c:925-935), is only ever reached from event callbacks, i.e.
- *     between slices, per (1).  The probe additionally requires
+ *     DSPExec's loop below.  IMASKCleared is set by a store to
+ *     D_FLAGS (dsp.c:698) -- which the admission rule excludes -- or by
+ *     DSPSetIRQLine latching an interrupt (since #744 it no longer
+ *     vectors there itself), reached from event callbacks between
+ *     slices, per (1), or from a D_CTRL DSPINT0 store -- again a store.  The probe additionally requires
  *     IMASKCleared == false and dspFlagsRetireDelay == 0, so neither
  *     the pending-IRQ path nor the D_FLAGS retire countdown is live.
  *

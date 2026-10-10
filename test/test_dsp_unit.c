@@ -443,20 +443,34 @@ static void test_int_ena_dispatch(void)
    /* Start the DSP with INT_ENA0 already enabled */
    p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
    p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0, 2);
+   /* That D_FLAGS write is DSP-issued (who=2), so it has a two-slot
+    * retire window (DSP_FLAGS_RETIRE_DELAY) during which the DSP does
+    * not take interrupts; run it out first. */
+   p_DSPExec(2);
 
    pc_before = *p_dsp_pc;
+   p_dsp_reg_bank_0[0] = 0;
 
-   /* Now assert the IRQ line — this should dispatch immediately */
+   /* Assert the IRQ line.  This only latches (#744): the DSP takes the
+    * interrupt itself at its next instruction boundary, so an event
+    * callback never moves the PC on the DSP's behalf. */
    p_DSPSetIRQLine(0, 1);
+
+   if (*p_dsp_pc == pc_before)
+      PASS("IRQ assert latched without moving PC (%08X)", pc_before);
+   else
+      FAIL("IRQ assert vectored synchronously: PC %08X -> %08X", pc_before, *p_dsp_pc);
+
+   /* One DSP step: take the interrupt, then run the handler's first
+    * instruction (moveq #7,r0 at vector 0). */
+   p_DSPExec(1);
 
    pc_after = *p_dsp_pc;
 
-   if (pc_after == DSP_RAM_BASE)
-      PASS("INT_ENA0 + IRQ assert dispatched to vector 0 ($F1B000)");
-   else if (pc_after != pc_before)
-      PASS("INT_ENA0 + IRQ assert changed PC (before=%08X after=%08X)", pc_before, pc_after);
+   if (pc_after == DSP_RAM_BASE + 2 && p_dsp_reg_bank_0[0] == 7)
+      PASS("INT_ENA0 + IRQ assert dispatched to vector 0 ($F1B000) at the next instruction");
    else
-      FAIL("INT_ENA0 + IRQ assert did NOT dispatch: PC stayed at %08X", pc_after);
+      FAIL("INT_ENA0 + IRQ assert did NOT dispatch: PC=%08X R0=%08X", pc_after, p_dsp_reg_bank_0[0]);
 
    /* Stop DSP */
    p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
@@ -523,18 +537,25 @@ static void test_interrupt_priority(void)
    p_DSPWriteLong(DSP_PC_ADDR, 0xF1B800, 6);
    p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
    p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0 | INT_ENA1, 2);
+   /* That D_FLAGS write is DSP-issued (who=2), so it has a two-slot
+    * retire window (DSP_FLAGS_RETIRE_DELAY) during which the DSP does
+    * not take interrupts; run it out first. */
+   p_DSPExec(2);
 
    /* Assert IRQ1 — DSPSetIRQLine calls DSPHandleIRQsNP which now sees
     * both INT_LAT0+INT_ENA0 and INT_LAT1+INT_ENA1 pending.
     * The higher-priority one (IRQ1) should win. */
    p_DSPSetIRQLine(1, 1);
+   /* Taken at the DSP's next instruction boundary (#744); the one
+    * step also runs the handler's first instruction (a NOP). */
+   p_DSPExec(1);
 
    pc_after = *p_dsp_pc;
 
    /* Vector 1 = $F1B010, Vector 0 = $F1B000 */
-   if (pc_after == DSP_RAM_BASE + 0x10)
+   if (pc_after == DSP_RAM_BASE + 0x12)
       PASS("Highest-priority interrupt (IRQ1 -> $F1B010) dispatched");
-   else if (pc_after == DSP_RAM_BASE)
+   else if (pc_after == DSP_RAM_BASE + 0x02)
       FAIL("Lower-priority interrupt (IRQ0 -> $F1B000) dispatched instead of IRQ1, PC=%08X", pc_after);
    else
       FAIL("Unexpected PC after dual-interrupt dispatch: %08X", pc_after);
@@ -564,7 +585,24 @@ static void test_interrupt_return_address(void)
    p_DSPExec(1);
 
    p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0, 2);
+   /* That D_FLAGS write is DSP-issued (who=2), so it has a two-slot
+    * retire window (DSP_FLAGS_RETIRE_DELAY) during which the DSP does
+    * not take interrupts; run it out first. */
+   p_DSPExec(2);
    p_DSPSetIRQLine(0, 1);
+
+   /* Asserting the line only latches (#744); the PC must not move until
+    * the DSP itself takes the interrupt.  Ungated, unlike Test 7, so CI
+    * on every platform guards this contract. */
+   if (*p_dsp_pc == DSP_RAM_BASE + 0x106)
+      PASS("IRQ assert latched without moving PC");
+   else
+      FAIL("IRQ assert moved PC to $%08X before the DSP ran (expected $%08X)",
+            *p_dsp_pc, DSP_RAM_BASE + 0x106);
+
+   /* Taken at the DSP's next instruction boundary; the one step also
+    * runs the handler's first instruction (a NOP). */
+   p_DSPExec(1);
 
    saved_pc = read_dsp_ram32(0x8FC);
 
@@ -574,16 +612,18 @@ static void test_interrupt_return_address(void)
       FAIL("IRQ stack pointer = $%08X (expected $%08X)",
             p_dsp_reg_bank_0[31], DSP_RAM_BASE + 0x8FC);
 
-   if (saved_pc == DSP_RAM_BASE + 0x100)
+   /* Last instruction executed before the interrupt: the second of the
+    * two retire-window NOPs ($F1B102, $F1B104). */
+   if (saved_pc == DSP_RAM_BASE + 0x104)
       PASS("IRQ saved return PC $%08X", saved_pc);
    else
       FAIL("IRQ saved return PC $%08X (expected $%08X)",
-            saved_pc, DSP_RAM_BASE + 0x100);
+            saved_pc, DSP_RAM_BASE + 0x104);
 
-   if (*p_dsp_pc == DSP_RAM_BASE)
-      PASS("IRQ vectored PC to $%08X", *p_dsp_pc);
+   if (*p_dsp_pc == DSP_RAM_BASE + 2)
+      PASS("IRQ vectored PC to $%08X and ran the handler's first instruction", DSP_RAM_BASE);
    else
-      FAIL("IRQ PC = $%08X (expected $%08X)", *p_dsp_pc, DSP_RAM_BASE);
+      FAIL("IRQ PC = $%08X (expected $%08X)", *p_dsp_pc, DSP_RAM_BASE + 2);
 
    if (*p_dsp_control & INT_LAT0)
       PASS("IRQ latch remains set for handler acknowledgement");
