@@ -5495,6 +5495,41 @@ typedef enum
  * and the load path share it (#651). */
 static disc_boot_status open_disc_and_resolve_boot(const char *path);
 
+/* Per-title DB key for a disc (issue #747): CRC32 of its boot stub.
+ * Probes the image on its own -- open, extract, close -- so it can run
+ * BEFORE the option reads on the load path (check_variables() and the
+ * internal-resolution latch both precede open_disc_and_resolve_boot()),
+ * giving disc rows the same reach as cart rows.  The close leaves CDIntf
+ * exactly as an unopened drive; open_disc_and_resolve_boot() reopens.
+ * No image or no extractable stub (audio-only, damaged CDI V2 rip) is
+ * simply "no key".  The CRC is logged either way so a row author can take
+ * the key straight from the RetroArch log. */
+static void titledb_probe_disc(const char *path)
+{
+   static uint8_t stub[600 * 1024];   /* same bound as jagcd_hle.c */
+   uint32_t load_addr = 0, length = 0, crc = 0;
+
+   if (path && path[0] && CDIntfOpenImage(path))
+   {
+      if (CDIntfExtractBootStub(stub, sizeof(stub), &load_addr, &length)
+          && length > 0)
+         crc = (uint32_t)crc32_calcCheckSum(stub, (unsigned int)length);
+      CDIntfCloseImage();
+      CDIntfClearLastReadVirtualPregap();
+   }
+
+   TitleDBSetDisc(crc);
+   if (crc == 0)
+      LOG_INF("[titledb] disc has no extractable boot stub -- no per-title "
+              "key\n");
+   else if (TitleDBTitleName())
+      LOG_INF("[titledb] disc boot stub CRC32 $%08X: %s\n",
+              (unsigned)crc, TitleDBTitleName());
+   else
+      LOG_INF("[titledb] disc boot stub CRC32 $%08X: no per-title entry\n",
+              (unsigned)crc);
+}
+
 /* ---------------------------------------------------------------------
  * Disk control callbacks (#651)
  *
@@ -5564,6 +5599,13 @@ static bool disk_set_eject_state(bool ejected)
    saved_cd_mode = jaguar_cd_mode;
    memcpy(saved_path, cd_image_path, sizeof(saved_path));
 
+   /* Per-title DB (#747): key the new disc, then re-read the options so a
+    * disc row (cd_boot_mode above all) reaches the boot resolution below.
+    * Nothing else re-runs check_variables() on an insert.  Load-latched
+    * options keep their load-time value, exactly as for a user change. */
+   titledb_probe_disc(disk_image_path[disk_index]);
+   check_variables();
+
    st = open_disc_and_resolve_boot(disk_image_path[disk_index]);
 
    /* NOT a bare JaguarReset(): bios_boot() copies the CD BIOS to $800000
@@ -5595,6 +5637,10 @@ static bool disk_set_eject_state(bool ejected)
       bootConfig     = saved_boot;
       jaguar_cd_mode = saved_cd_mode;
       memcpy(cd_image_path, saved_path, sizeof(cd_image_path));
+      /* Back to the previous disc's per-title row (#747), before the
+       * reopen below -- the probe closes the image it opens. */
+      titledb_probe_disc(cd_image_path[0] != '\0' ? cd_image_path : NULL);
+      check_variables();
       if (cd_image_path[0] != '\0' && !CDIntfOpenImage(cd_image_path))
          LOG_ERR("[CD] disk control: could not reopen the previous disc "
                  "either -- the drive is now empty\n");
@@ -5981,7 +6027,13 @@ bool retro_load_game(const struct retro_game_info *info)
                  "docs/rom-patches.md)\n", (unsigned)TitleDBContentCRC());
    }
    else
+   {
       TitleDBSetContent(NULL, 0);
+      /* Disc rows (#747) are keyed by boot-stub CRC, never by hashing the
+       * image -- see titledb_probe_disc(). */
+      if (is_cd_content)
+         titledb_probe_disc(info->path);
+   }
 
    /* Texture dump (#369): dumps land under the system directory, keyed
     * by the content CRC the DB just latched.  The path is set here once

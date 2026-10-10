@@ -50,6 +50,20 @@ The rules for a compatibility row, from the tier-3 rule of #746:
 
 The first one is White Men Can't Jump's `blitter_timing=enabled` (#736, PR #827). It stands in for blitter timing being on by default for every title (#408).
 
+## Jaguar CD titles: disc rows (issue #747)
+
+CD titles have their own table, `titledb_disc_table[]`. Each row is keyed by the **CRC32 of the disc's boot stub**: the boot program `CDIntfExtractBootStub()` pulls from session 2, word-swap undone. Rows carry the same `pairs[]` and `negative[]` with the same semantics as cart rows, but no `hooks[]`, because hooks patch cartridge ROM.
+
+- **Getting the key.** Every CD load logs `[titledb] disc boot stub CRC32 $XXXXXXXX: <title | no per-title entry>`.
+- **Why not the disc layout.** The session/track/sector count is unstable across formats: CDI rips carry +150 sectors against the CUE/CHD of the same pressing. It is also not unique: eight homebrew discs share `2/6/18044`. Measurements are on #747.
+- **Same reach as a cart row.** The key is computed by probing the image *before* the option reads. A disc row can therefore set load-latched options and `cd_boot_mode`, and the boot decision honours it. A disk-control insert re-keys and re-reads the options. Load-latched options keep their load-time value then, as they do for any mid-session change.
+- **Limits of the key.** It identifies the boot loader, not the game program:
+  - Seven homebrew discs share one loader (`$DE7145EE`).
+  - Songbird re-releases share the original's stub.
+  - Audio-only discs and damaged CDI V2 rips have no stub, so they have no key.
+  - Rows go on retail pressings; never key a row on a shared loader.
+- The table ships empty. Its first row is validated by `test_titledb`, the same way `hooks[]` and `negative[]` were.
+
 ## Negative / known-bad entries (issue #464)
 
 `pairs[]` and `hooks[]` only let a title **opt in** to something. There was
@@ -255,6 +269,9 @@ A row is admissible only when all of the following hold:
 | `test/test_titledb` (negative-entry section) | `TitleDBUnsafeValue()` lookup: no content, unknown content, exact-value match, wildcard (`"*"`) match against a caller-supplied default, the test-only override, and the shipped-table integrity checks (`negative[]` termination, key/value non-empty, no key=value shared with `pairs[]`, no duplicate within a row). |
 | `test/test_titledb` (class section) | Every compatibility pair in the shipped table carries a `cite` naming a `#N` ticket; class values are known; `TitleDBOverrideClass()` answers from the same pair as `TitleDBOverride()`. |
 | `test/tools/test_pertitle_db --case 13/14` | End-to-end on AvP with a synthetic compatibility pair: the performance profile does **not** drop it (13); an explicit user value still beats it (14). |
+| `test/test_titledb` (disc section) | Disc-table integrity (non-zero key, no hooks, pair checks, compatibility citation); cart/disc namespace isolation in both directions; `0` is never a key. |
+| `test/tools/test_pertitle_db --case 15/16/17` | On Baldies: a synthetic disc row sets `cd_boot_mode=bios` and the boot resolves to the real BIOS (15); a non-matching key leaves HLE (16); the CUE, CHD and CDI rips all log stub `$82B88060` (17). |
+| `test/tools/test_disk_control --case 9/10` | The same disc row applies when the disc arrives by a disk-control insert after a no-content boot (9); without the row the insert resolves HLE (10). |
 | `test/tools/test_pertitle_db --case 7/8` | End-to-end through the real core on AvP: a negative row on `virtualjaguar_true_color=enabled` (the value AvP's own `pairs[]` row would substitute at default) is **refused** with a logged warning when it would apply as a default (case 7), and **honoured** with a logged warning when the user sets it explicitly (case 8). Installed programmatically via `TitleDBSetNegativeForTest()`, same "no canary row in the shipped table" reasoning as the hooks gate test. |
 
 All four run on repo-resident public content, so all four gate CI — and
