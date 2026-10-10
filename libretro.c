@@ -2588,7 +2588,8 @@ static bool get_variable_pertitle(struct retro_variable *var)
     * exactly as if the title had no row for this key.  Explicit user
     * choices never reach this branch (the substitution below only fires
     * with the option at its registered default), so they are untouched. */
-   if (ovr && enhancement_profile_governs(var->key))
+   if (ovr && enhancement_profile_governs(var->key)
+       && TitleDBOverrideClass(var->key) != TITLEDB_CLASS_COMPATIBILITY)
    {
       const char *why = NULL;
       if (enhancement_profile_suppressing(&why))
@@ -2628,7 +2629,8 @@ static bool get_variable_pertitle(struct retro_variable *var)
       var->value = ovr;
       /* Arms the enhancement-profile 'auto' watch: a session where no DB
        * enhancement default applied has nothing to demote. */
-      if (enhancement_profile_governs(var->key))
+      if (enhancement_profile_governs(var->key)
+          && TitleDBOverrideClass(var->key) != TITLEDB_CLASS_COMPATIBILITY)
          titledb_enhancement_applied = 1;
       return true;
    }

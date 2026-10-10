@@ -2092,6 +2092,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# suppresses the DB defaults, an explicit user option beats the
 	@# profile, quality applies them, and the 'auto' runtime demotion
 	@# drops them mid-session on sustained synthetic underrun reports.
+	@# Cases 13/14 cover the compatibility row class (#748): never dropped
+	@# by the enhancement profile, never beats an explicit user choice.
 	@# Cases 7/8 extend this to the negative/known-bad entry class (#464):
 	@# refuse-the-default / honour-and-warn-the-user, via a
 	@# programmatically-installed row (TitleDBSetNegativeForTest) so the
@@ -2128,6 +2130,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 11 --quiet \
 				--option virtualjaguar_enhancement_profile=quality || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 12 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 13 --quiet \
+				--option virtualjaguar_enhancement_profile=performance || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 14 --quiet \
+				--option virtualjaguar_internal_resolution=2x || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \

@@ -133,6 +133,23 @@
  * discriminator and this section's evidence bar restated for authors.
  * ------------------------------------------------------------------
  *
+ * Compatibility-class pairs (issue #748, the tier-3 rule of #746)
+ *
+ * The fix for a title that only works under a non-default setting is the
+ * MECHANISM -- HLE parity with the boot ROM, the timing model -- not a row.
+ * A compatibility pair is admissible only when that fix is impossible or
+ * cannot be dated, and then:
+ *
+ *  1. `cls` is TITLEDB_CLASS_COMPATIBILITY and `cite` carries the
+ *     measurement (probe, numbers, date) and the mechanism ticket as "#N".
+ *     test_titledb fails a compatibility pair whose cite has no "#N".
+ *  2. The enhancement profile never touches it (get_variable_pertitle()).
+ *  3. It is RETIRED when the cited mechanism lands.  Search this file for
+ *     the ticket number when closing one.
+ *  4. Like every pair, it only fills in an option left at its registered
+ *     default; the user's explicit choice still wins.
+ * ------------------------------------------------------------------
+ *
  * virtualjaguar_risc_idle_skip qualification policy (issue #707,
  * docs/perf-audit/idle-skip-corpus-2026-08.md):
  *
@@ -794,11 +811,19 @@ static const TitleDBEntry titledb_table[] = {
     * (BlitDurationSysclks, blitter_mmio.c) for this title; it does not
     * change the model.  Fast/accurate blitters are hash-identical on
     * this title, so neither engine is at fault.
+    * COMPATIBILITY row (#748): retire it when blitter bus timing is on
+    * by default for every title -- the no-toggles goal of #408.
     * CRC: White Men Can't Jump (World) from src/core/filedb.c line 37. */
    {
       0x14915F20, "White Men Can't Jump",
       {
-         { "virtualjaguar_blitter_timing", "enabled" },
+         { "virtualjaguar_blitter_timing", "enabled",
+           TITLEDB_CLASS_COMPATIBILITY,
+           "intro logos complete only with blit time modelled: 111/200 "
+           "decoder rows done when the zero-time fade ended, Trimark + "
+           "High Voltage logos missing in HLE and BIOS, 2026-10-07 "
+           "(#736, PR #827); stands in for blitter timing on by "
+           "default (#408)" },
          { NULL, NULL }
       }
    }
@@ -888,7 +913,7 @@ void TitleDBSetContent(const uint8_t *data, size_t size)
  * half-consulted the shipped table would be exactly as fragile as the
  * shipped-table dependency it exists to remove (issue #590).
  */
-const char *TitleDBOverride(const char *key)
+static const TitleDBPair *titledb_find_pair(const char *key)
 {
    int i;
 
@@ -902,7 +927,7 @@ const char *TitleDBOverride(const char *key)
          if (pairs_override[i].key == NULL)
             break;
          if (strcmp(pairs_override[i].key, key) == 0)
-            return pairs_override[i].value;
+            return &pairs_override[i];
       }
       return NULL;
    }
@@ -915,10 +940,26 @@ const char *TitleDBOverride(const char *key)
       if (current->pairs[i].key == NULL)
          return NULL;
       if (strcmp(current->pairs[i].key, key) == 0)
-         return current->pairs[i].value;
+         return &current->pairs[i];
    }
 
    return NULL;
+}
+
+const char *TitleDBOverride(const char *key)
+{
+   const TitleDBPair *p = titledb_find_pair(key);
+   return p ? p->value : NULL;
+}
+
+/*
+ * Class of the pair TitleDBOverride() would answer from (issue #748), or
+ * -1 on no pair.  Same lookup, same test-override precedence.
+ */
+int TitleDBOverrideClass(const char *key)
+{
+   const TitleDBPair *p = titledb_find_pair(key);
+   return p ? p->cls : -1;
 }
 
 /*

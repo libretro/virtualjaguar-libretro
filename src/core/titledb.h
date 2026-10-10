@@ -15,9 +15,34 @@
 extern "C" {
 #endif
 
+/*
+ * Row classes (issue #748) -- the tier-3 contract.
+ *
+ *   ENHANCEMENT    (0, the zero-fill default): a visual/perf lever.  The
+ *                  enhancement profile may decline to apply it (see
+ *                  enhancement_profile_governs() in libretro.c).
+ *   COMPATIBILITY  (1): a setting the title needs to WORK at all -- boot
+ *                  mode, a timing model, a controller type.  Never governed
+ *                  by the enhancement profile.  `cite` is mandatory: the
+ *                  measurement (probe, numbers, date) and the mechanism
+ *                  ticket the row stands in for, as "#N".  test_titledb
+ *                  fails the table if it is missing.  The row is RETIRED,
+ *                  not kept, when that mechanism lands -- the ticket number
+ *                  is how the retirement is found.
+ *
+ * Both classes share the DB's one hard rule: a row only substitutes for an
+ * option left at its registered default, so an explicit user choice always
+ * wins.  Existing two-field initializers stay valid (C89 6.5.7 zero-fills
+ * cls and cite, i.e. an enhancement pair with no citation).
+ */
+#define TITLEDB_CLASS_ENHANCEMENT   0
+#define TITLEDB_CLASS_COMPATIBILITY 1
+
 typedef struct {
    const char *key;     /* core option key, e.g. "virtualjaguar_true_color" */
    const char *value;   /* value to apply when the user left the option at default */
+   int         cls;     /* TITLEDB_CLASS_*; omitted = ENHANCEMENT */
+   const char *cite;    /* COMPATIBILITY: evidence + "#N" mechanism ticket */
 } TitleDBPair;
 
 #define TITLEDB_MAX_PAIRS 4
@@ -133,6 +158,10 @@ uint32_t TitleDBContentCRC(void);
 
 /* Lookup: return the preset value for a key in the loaded content, or NULL. */
 const char *TitleDBOverride(const char *key);
+
+/* Class (TITLEDB_CLASS_*) of the pair TitleDBOverride() would answer from
+ * for `key`, or -1 when there is no such pair (issue #748). */
+int TitleDBOverrideClass(const char *key);
 
 /* Negative-entry lookup (issue #464): does the loaded content's row mark
  * `key`=`value` as known-bad?  `option_default` is the key's registered
