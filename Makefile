@@ -1728,6 +1728,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Iron Soldier 1 (audio presence, risc=2x)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
 	fi
+	@# Club Drive under the HLE boot (#744): the 68K rewrites D_PC while
+	@# the DSP runs; when that landed right after an I2S event the DSP
+	@# restarted with IMASK stuck and the game was silent forever.  The
+	@# fix defers DSP interrupt vectoring to the DSP's next instruction.
+	@# Measured on the fix: RMS ~2949, onset frame 6 (develop: RMS 0,
+	@# no onset).  Same envelope as Iron Soldier 1 above.
+	@rom=$$(bash scripts/find-rom.sh 'Club Drive (1994).jag' 'Club Drive*.jag' 'Club Drive*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_presence ./$(TARGET) "$$rom" --label "Club Drive (HLE)" --rms-floor 200 --rms-ceiling 25000 --quiet && \
+		./test/test_audio_clipping ./$(TARGET) "$$rom" --label "Club Drive (HLE)" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Club Drive (HLE audio presence)" "no ROM matching 'Club Drive*' in the private corpus"; \
+	fi
 	@# Save-state determinism: replay the same frames after
 	@# retro_unserialize and require identical video AND audio.  This is
 	@# what backs `savestate_features = 3` in dist/info/ and the zero
