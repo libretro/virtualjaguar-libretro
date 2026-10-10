@@ -1348,7 +1348,7 @@ clean:
 		test/test_cart_format test/test_cart_needs_bios test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
-		test/test_state_compat test/test_frontend_pacing test/test_jgd \
+		test/test_state_compat test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
 		test/dump_pc test/heap_search \
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
@@ -1421,7 +1421,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
-		test/test_frontend_pacing test/test_jgd \
+		test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
 		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
@@ -2044,6 +2044,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# synthetic (builds its own probe images), so it runs everywhere,
 	@# including checkouts without the private ROM tree.
 	./test/test_jgd ./$(TARGET)
+	@# GameDrive SD-card layer (#783): open dispositions, read-only card,
+	@# sandbox refusals, FILINFO layout, directories, savestate restore that
+	@# never truncates.  Host-only (no core), runs everywhere.
+	./test/test_jaggd_fs
 	@# Frontend pacing / fast-forward contract: the core must not throttle
 	@# itself, and samples-per-frame must match the advertised fps and
 	@# sample_rate, otherwise the frontend's audio driver becomes the pacing
@@ -2850,6 +2854,18 @@ test/test_state_compat: test/test_state_compat.c \
 # Jaguar GameDrive (JagGD) detection + banking.  Synthetic-only: builds
 # its own probe cartridge images at runtime, no private ROMs needed.
 # Needs jgd*/JGD* from the wide test symbol set.
+JAGGD_FS_TEST_LC = libretro-common/streams/file_stream.c \
+	libretro-common/vfs/vfs_implementation.c \
+	libretro-common/compat/compat_strl.c libretro-common/string/stdstring.c \
+	libretro-common/encodings/encoding_utf.c libretro-common/compat/fopen_utf8.c \
+	libretro-common/file/file_path.c libretro-common/file/file_path_io.c \
+	libretro-common/time/rtime.c libretro-common/compat/compat_strcasestr.c \
+	libretro-common/compat/compat_posix_string.c
+
+test/test_jaggd_fs: test/test_jaggd_fs.c src/core/jaggd_fs.c src/core/jaggd_fs.h
+	$(CC) -O2 -std=c99 $(INCFLAGS) -D__LIBRETRO__ \
+		-o $@ test/test_jaggd_fs.c src/core/jaggd_fs.c $(JAGGD_FS_TEST_LC)
+
 test/test_jgd: test/test_jgd.c \
 		test/harness/harness.c test/harness/harness.h \
 		src/core/state.h src/core/jaggd.h

@@ -19,9 +19,16 @@
  *      register at $F16006.  BigPEmu does the same thing structurally
  *      (it cannot ship RetroHQ's copyrighted blob either).
  *
- * Out of scope (matches BigPEmu): GD menu, SD/FAT filesystem, GPU
- * async reads, encrypted .jgd images, .MRQ sidecars.  File/dir/async
- * blob functions return -1; serial numbers return zeros-with-success.
+ *   3. The SD-card file API (#783): blob functions 9-16, 20-23 and 26
+ *      (GD_CardIn, GD_FileOpen..GD_FileSize, GD_FileInfo, GD_DirOpen..
+ *      GD_DirClose, GD_DebugString) answered from a host folder acting as
+ *      the card -- jaggd_fs.c.  Each of those blob slots is one backdoor
+ *      write ($C000 | function); the core services the call during that
+ *      write from the 68K's d0/d1/a0/a1 and leaves the result in d0.
+ *
+ * Out of scope: GD menu, GPU/async reads (functions 2, 17-19, and the
+ * GD_FREAD_GPU modes of FileRead -- those return -1), encrypted .jgd
+ * images, .MRQ sidecars.  Serial numbers return zeros-with-success.
  */
 
 #include "jaggd.h"
@@ -30,6 +37,10 @@
 #include <string.h>
 
 #include "log.h"
+#include "jaggd_fs.h"
+#include "jaguar.h"
+#include "vjag_memory.h"
+#include "m68kinterface.h"
 
 /* ------------------------------------------------------------------ */
 /* State                                                              */
@@ -95,6 +106,7 @@ static uint16_t pagesLatch = 0;
  *   $9000 | nibbles 0-2      stage pages 0-2       (GD_ROMSetPages)
  *   $A000 | nibbles 3-5      apply pages 3-5 + staged half
  *   $B000 | enable bit 0     ROM write enable      (GD_ROMWriteEnable)
+ *   $C000 | function         SD host call (#783), 68K writer only
  */
 static const uint8_t jgdBlob[] =
 {
@@ -108,24 +120,24 @@ static const uint8_t jgdBlob[] =
    /* 018 */ 0x60, 0x00, 0x00, 0x84,         /* f6  bra.w setpages(09E)    */
    /* 01C */ 0x60, 0x00, 0x00, 0xA6,         /* f7  bra.w serial  (0C4)    */
    /* 020 */ 0x60, 0x00, 0x00, 0xA2,         /* f8  bra.w serial  (0C4)    */
-   /* 024 */ 0x70, 0x00, 0x4E, 0x75,         /* f9  GD_CardIn: moveq #0,d0; rts */
-   /* 028 */ 0x70, 0xFF, 0x4E, 0x75,         /* f10 GD_FileOpen:  moveq #-1,d0; rts */
-   /* 02C */ 0x70, 0xFF, 0x4E, 0x75,         /* f11 GD_FileClose */
-   /* 030 */ 0x70, 0xFF, 0x4E, 0x75,         /* f12 GD_FileSeek  */
-   /* 034 */ 0x70, 0xFF, 0x4E, 0x75,         /* f13 GD_FileRead  */
-   /* 038 */ 0x70, 0xFF, 0x4E, 0x75,         /* f14 GD_FileWrite */
-   /* 03C */ 0x70, 0xFF, 0x4E, 0x75,         /* f15 GD_FileTell  */
-   /* 040 */ 0x70, 0xFF, 0x4E, 0x75,         /* f16 GD_FileSize  */
+   /* 024 */ 0x60, 0x00, 0x00, 0xAA,         /* f9  bra.w GD_CardIn (host 0D0) */
+   /* 028 */ 0x60, 0x00, 0x00, 0xB0,         /* f10 bra.w GD_FileOpen (host 0DA) */
+   /* 02C */ 0x60, 0x00, 0x00, 0xB6,         /* f11 bra.w GD_FileClose (host 0E4) */
+   /* 030 */ 0x60, 0x00, 0x00, 0xBC,         /* f12 bra.w GD_FileSeek (host 0EE) */
+   /* 034 */ 0x60, 0x00, 0x00, 0xC2,         /* f13 bra.w GD_FileRead (host 0F8) */
+   /* 038 */ 0x60, 0x00, 0x00, 0xC8,         /* f14 bra.w GD_FileWrite (host 102) */
+   /* 03C */ 0x60, 0x00, 0x00, 0xCE,         /* f15 bra.w GD_FileTell (host 10C) */
+   /* 040 */ 0x60, 0x00, 0x00, 0xD4,         /* f16 bra.w GD_FileSize (host 116) */
    /* 044 */ 0x70, 0xFF, 0x4E, 0x75,         /* f17 GD_FileAsyncPos    */
    /* 048 */ 0x70, 0xFF, 0x4E, 0x75,         /* f18 GD_FileAsyncWait   */
    /* 04C */ 0x70, 0xFF, 0x4E, 0x75,         /* f19 GD_FileAsyncActive */
-   /* 050 */ 0x70, 0xFF, 0x4E, 0x75,         /* f20 GD_FileInfo  */
-   /* 054 */ 0x70, 0xFF, 0x4E, 0x75,         /* f21 GD_DirOpen   */
-   /* 058 */ 0x70, 0xFF, 0x4E, 0x75,         /* f22 GD_DirRead   */
-   /* 05C */ 0x70, 0xFF, 0x4E, 0x75,         /* f23 GD_DirClose  */
+   /* 050 */ 0x60, 0x00, 0x00, 0xCE,         /* f20 bra.w GD_FileInfo (host 120) */
+   /* 054 */ 0x60, 0x00, 0x00, 0xD4,         /* f21 bra.w GD_DirOpen (host 12A) */
+   /* 058 */ 0x60, 0x00, 0x00, 0xDA,         /* f22 bra.w GD_DirRead (host 134) */
+   /* 05C */ 0x60, 0x00, 0x00, 0xE0,         /* f23 bra.w GD_DirClose (host 13E) */
    /* 060 */ 0x4E, 0x75, 0x4E, 0x71,         /* f24 GD_Reset:       rts */
    /* 064 */ 0x4E, 0x75, 0x4E, 0x71,         /* f25 GD_SetLED:      rts */
-   /* 068 */ 0x4E, 0x75, 0x4E, 0x71,         /* f26 GD_DebugString: rts */
+   /* 068 */ 0x60, 0x00, 0x00, 0xDE,         /* f26 bra.w GD_DebugString (host 148) */
    /* biosver: */
    /* 06C */ 0x30, 0x3C, 0x01, 0x00,         /* move.w #$0100,d0 */
    /* 070 */ 0x4E, 0x75,                     /* rts */
@@ -161,7 +173,37 @@ static const uint8_t jgdBlob[] =
    /* 0C6 */ 0x42, 0x98,                     /* .l: clr.l (a0)+  */
    /* 0C8 */ 0x51, 0xC9, 0xFF, 0xFC,         /* dbra d1,.l       */
    /* 0CC */ 0x70, 0x00,                     /* moveq #0,d0      */
-   /* 0CE */ 0x4E, 0x75                      /* rts */
+   /* 0CE */ 0x4E, 0x75,                     /* rts */
+   /* Host calls (#783): one backdoor write, $C000 | function.  The core
+    * services the call during that write -- it reads d0/d1/a0/a1, does the
+    * I/O against the host SD folder, and leaves the result in d0 -- so the
+    * stub is just the write and an rts. */
+   /* 0D0 */ 0x33, 0xFC, 0xC0, 0x09, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C009,$F16006 (GD_CardIn) */
+   /* 0D8 */ 0x4E, 0x75,                     /* rts */
+   /* 0DA */ 0x33, 0xFC, 0xC0, 0x0A, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C00A,$F16006 (GD_FileOpen) */
+   /* 0E2 */ 0x4E, 0x75,                     /* rts */
+   /* 0E4 */ 0x33, 0xFC, 0xC0, 0x0B, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C00B,$F16006 (GD_FileClose) */
+   /* 0EC */ 0x4E, 0x75,                     /* rts */
+   /* 0EE */ 0x33, 0xFC, 0xC0, 0x0C, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C00C,$F16006 (GD_FileSeek) */
+   /* 0F6 */ 0x4E, 0x75,                     /* rts */
+   /* 0F8 */ 0x33, 0xFC, 0xC0, 0x0D, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C00D,$F16006 (GD_FileRead) */
+   /* 100 */ 0x4E, 0x75,                     /* rts */
+   /* 102 */ 0x33, 0xFC, 0xC0, 0x0E, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C00E,$F16006 (GD_FileWrite) */
+   /* 10A */ 0x4E, 0x75,                     /* rts */
+   /* 10C */ 0x33, 0xFC, 0xC0, 0x0F, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C00F,$F16006 (GD_FileTell) */
+   /* 114 */ 0x4E, 0x75,                     /* rts */
+   /* 116 */ 0x33, 0xFC, 0xC0, 0x10, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C010,$F16006 (GD_FileSize) */
+   /* 11E */ 0x4E, 0x75,                     /* rts */
+   /* 120 */ 0x33, 0xFC, 0xC0, 0x14, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C014,$F16006 (GD_FileInfo) */
+   /* 128 */ 0x4E, 0x75,                     /* rts */
+   /* 12A */ 0x33, 0xFC, 0xC0, 0x15, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C015,$F16006 (GD_DirOpen) */
+   /* 132 */ 0x4E, 0x75,                     /* rts */
+   /* 134 */ 0x33, 0xFC, 0xC0, 0x16, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C016,$F16006 (GD_DirRead) */
+   /* 13C */ 0x4E, 0x75,                     /* rts */
+   /* 13E */ 0x33, 0xFC, 0xC0, 0x17, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C017,$F16006 (GD_DirClose) */
+   /* 146 */ 0x4E, 0x75,                     /* rts */
+   /* 148 */ 0x33, 0xFC, 0xC0, 0x1A, 0x00, 0xF1, 0x60, 0x06, /* move.w #$C01A,$F16006 (GD_DebugString) */
+   /* 150 */ 0x4E, 0x75                      /* rts */
 };
 
 #define JGD_BLOB_SIZE ((uint16_t)sizeof(jgdBlob))
@@ -213,6 +255,8 @@ void JGDReset(void)
       jgdPage[i] = (uint8_t)i;
    jgdWriteEnabled = 0;
    JGDSpiReset();
+   /* The program that opened them is gone. */
+   JGDFSCloseAll();
 }
 
 
@@ -234,6 +278,7 @@ void JGDDone(void)
     * power-on value here (see CLAUDE.md / feedback_ios_static_state). */
    JGDUnload();
    jgdMode = JGD_MODE_AUTO;
+   JGDFSDone();
 }
 
 
@@ -424,8 +469,172 @@ static void JGDDataWrite(uint16_t v)
 }
 
 
+/* ------------------------------------------------------------------ */
+/* SD host calls (#783)                                               */
+/* ------------------------------------------------------------------ */
+
+#define JGD_ADDR_LIMIT 0x01000000u   /* the 68K's 24-bit bus */
+#define JGD_IO_CHUNK   4096u
+
+/* NUL-terminated path/string from emulated memory, capped at 255 chars.
+ * NULL if there is no terminator in range (the ROM is untrusted). */
+static const char *JGDReadCString(uint32_t addr, char *out, uint32_t cap)
+{
+   uint32_t i;
+
+   for (i = 0; i < cap; i++)
+   {
+      if (addr + i >= JGD_ADDR_LIMIT)
+         return NULL;
+      out[i] = (char)JaguarReadByte(addr + i, M68K);
+      if (out[i] == '\0')
+         return out;
+   }
+   return NULL;
+}
+
+static int JGDRangeOK(uint32_t addr, uint32_t len)
+{
+   return addr < JGD_ADDR_LIMIT && len <= JGD_ADDR_LIMIT - addr;
+}
+
+/* Copy host bytes into emulated memory through the bus, so every watcher
+ * (vjtrace, blit memo, idle-skip) sees the write as the 68K's. */
+static void JGDPutBytes(uint32_t addr, const uint8_t *src, uint32_t len)
+{
+   uint32_t i;
+   for (i = 0; i < len; i++)
+      JaguarWriteByte(addr + i, src[i], M68K);
+}
+
+static int32_t JGDHostRead(uint32_t handle, uint32_t flags, uint32_t addr,
+                           uint32_t len)
+{
+   uint8_t buf[JGD_IO_CHUNK];
+   uint32_t done = 0;
+
+   /* GD_FREAD_GPU / _ASYNC need the GPU read handler: not emulated. */
+   if (flags != 0 || !JGDRangeOK(addr, len))
+      return -1;
+   while (done < len)
+   {
+      uint32_t want = len - done, got = 0;
+      if (want > JGD_IO_CHUNK)
+         want = JGD_IO_CHUNK;
+      if (JGDFSRead(handle, buf, want, &got) < 0)
+         return -1;
+      JGDPutBytes(addr + done, buf, got);
+      done += got;
+      if (got < want)
+         break;               /* end of file: success, as FatFs */
+   }
+   return 0;
+}
+
+static int32_t JGDHostWrite(uint32_t handle, uint32_t addr, uint32_t len)
+{
+   uint8_t buf[JGD_IO_CHUNK];
+   uint32_t done = 0, i;
+
+   if (!JGDRangeOK(addr, len))
+      return -1;
+   while (done < len)
+   {
+      uint32_t n = len - done;
+      if (n > JGD_IO_CHUNK)
+         n = JGD_IO_CHUNK;
+      for (i = 0; i < n; i++)
+         buf[i] = JaguarReadByte(addr + done + i, M68K);
+      if (JGDFSWrite(handle, buf, n) < 0)
+         return -1;
+      done += n;
+   }
+   return 0;
+}
+
+static void JGDHostCall(unsigned fn)
+{
+   uint32_t d0 = m68k_get_reg(NULL, M68K_REG_D0);
+   uint32_t d1 = m68k_get_reg(NULL, M68K_REG_D1);
+   uint32_t a0 = m68k_get_reg(NULL, M68K_REG_A0);
+   uint32_t a1 = m68k_get_reg(NULL, M68K_REG_A1);
+   uint32_t h  = d0 & 0xFFFF;
+   uint32_t flags = d0 >> 16;
+   char path[JGDFS_PATH_MAX];
+   uint8_t info[JGDFS_INFO_LONG_SIZE];
+   int32_t res = -1;
+   int lng;
+
+   switch (fn)
+   {
+      case 9:   /* GD_CardIn */
+         res = JGDFSCardIn() ? 1 : 0;
+         break;
+      case 10:  /* GD_FileOpen: a0 path, d0 mode */
+         if (JGDReadCString(a0, path, sizeof(path)))
+            res = JGDFSOpen(path, d0 & 0xFFFF);
+         break;
+      case 11:  /* GD_FileClose */
+         res = JGDFSClose(h);
+         break;
+      case 12:  /* GD_FileSeek: d0 whence<<16|handle, d1 offset */
+         res = JGDFSSeek(h, flags, (int32_t)d1);
+         break;
+      case 13:  /* GD_FileRead: d0 flags<<16|handle, a0 buffer, d1 size */
+         res = JGDHostRead(h, flags, a0, d1);
+         break;
+      case 14:  /* GD_FileWrite: d0 handle, a0 buffer, d1 size */
+         res = JGDHostWrite(h, a0, d1);
+         break;
+      case 15:  /* GD_FileTell */
+         res = (int32_t)JGDFSTell(h);
+         break;
+      case 16:  /* GD_FileSize */
+         res = (int32_t)JGDFSSize(h);
+         break;
+      case 20:  /* GD_FileInfo: a0 path, a1 buffer, d0 bit0 long name */
+         lng = (d0 & 1) ? 1 : 0;
+         if (JGDReadCString(a0, path, sizeof(path))
+             && JGDRangeOK(a1, lng ? JGDFS_INFO_LONG_SIZE
+                                    : JGDFS_INFO_SHORT_SIZE))
+         {
+            res = JGDFSInfo(path, info, lng);
+            if (res >= 0)
+               JGDPutBytes(a1, info, lng ? JGDFS_INFO_LONG_SIZE
+                                          : JGDFS_INFO_SHORT_SIZE);
+         }
+         break;
+      case 21:  /* GD_DirOpen: a0 path */
+         if (JGDReadCString(a0, path, sizeof(path)))
+            res = JGDFSDirOpen(path);
+         break;
+      case 22:  /* GD_DirRead: d0 flags<<16|handle, a0 buffer */
+         lng = (flags & 1) ? 1 : 0;
+         if (JGDRangeOK(a0, lng ? JGDFS_INFO_LONG_SIZE
+                                : JGDFS_INFO_SHORT_SIZE))
+         {
+            res = JGDFSDirRead(h, info, lng);
+            /* The end-of-directory record (zeroed name) is written too. */
+            JGDPutBytes(a0, info, lng ? JGDFS_INFO_LONG_SIZE
+                                       : JGDFS_INFO_SHORT_SIZE);
+         }
+         break;
+      case 23:  /* GD_DirClose */
+         res = JGDFSDirClose(h);
+         break;
+      case 26:  /* GD_DebugString: a0 C string -> the log */
+         if (JGDReadCString(a0, path, sizeof(path)))
+            LOG_INF("[JGD] debug: %s\n", path);
+         res = 0;
+         break;
+      default:
+         break;
+   }
+   m68k_set_reg(M68K_REG_D0, (unsigned int)res);
+}
+
 /* Backdoor register (see the blob's op encoding above). */
-static void JGDBackdoorWrite(uint16_t v)
+static void JGDBackdoorWrite(uint16_t v, uint32_t who)
 {
    unsigned page;
 
@@ -449,6 +658,13 @@ static void JGDBackdoorWrite(uint16_t v)
          break;
       case 0xB000:
          jgdWriteEnabled = (uint8_t)(v & 1);
+         break;
+      case 0xC000:
+         /* Only the 68K runs the blob.  The write is synchronous on the
+          * 68K bus and the stub's move.w #imm,abs.l never touches d0, so
+          * the result set here is what the stub's rts returns. */
+         if (who == M68K)
+            JGDHostCall(v & 0xFF);
          break;
       default:
          break;
@@ -494,7 +710,7 @@ uint8_t JGDControlReadByte(uint32_t offset)
 }
 
 
-void JGDControlWriteWord(uint32_t offset, uint16_t data)
+void JGDControlWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    switch (offset & 0xFFFFFFFE)
    {
@@ -505,7 +721,7 @@ void JGDControlWriteWord(uint32_t offset, uint16_t data)
          JGDDataWrite(data);
          break;
       case JGD_BACKDOOR:
-         JGDBackdoorWrite(data);
+         JGDBackdoorWrite(data, who);
          break;
       default:
          break;
@@ -513,11 +729,11 @@ void JGDControlWriteWord(uint32_t offset, uint16_t data)
 }
 
 
-void JGDControlWriteByte(uint32_t offset, uint8_t data)
+void JGDControlWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    /* Byte writes are not used by the published bindings; approximate
     * them as a word write carrying the byte in the low lane. */
-   JGDControlWriteWord(offset & 0xFFFFFFFE, data);
+   JGDControlWriteWord(offset & 0xFFFFFFFE, data, who);
 }
 
 /* ------------------------------------------------------------------ */

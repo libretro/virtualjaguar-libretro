@@ -746,6 +746,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "auto"
    },
    {
+      "virtualjaguar_jgd_sd",
+      "Jaguar GameDrive SD Card",
+      NULL,
+      "The GameDrive's SD card, as a folder on this device: 'jaggd-sd' inside the frontend's save directory (system directory if there is none). Homebrew that reads or writes its own files through the GameDrive file API (JagOS, streamed assets, screenshots) uses it. Paths are confined to that folder. 'Read-only' lets software read files but never create or change one. Only active when the GameDrive itself is.",
+      NULL,
+      "bios_boot",
+      {
+         { "enabled",  "Read/write" },
+         { "readonly", "Read-only" },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_pal",
       "PAL (Restart)",
       NULL,

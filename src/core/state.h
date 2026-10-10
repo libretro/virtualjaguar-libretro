@@ -94,9 +94,16 @@ extern "C" {
  *     CDX1: the sticky "blitter hung" flag + the stuck inner count (a
  *     blit hardware never finishes leaves the blitter busy until reset).
  *     A v16 blob written before it ends in the zero-filled tail there, so
- *     the magic misses and it loads as not hung; v15 and older too. */
+ *     the magic misses and it loads as not hung; v15 and older too.
+ * v17: GameDrive SD-card handles (#783), appended strictly after BLH1
+ *     behind "JGF1": per open file its card-relative path, access and
+ *     position, per open directory its path and entry index.  Restore
+ *     reopens with the original access only (never a create/truncate/
+ *     append), so loading a state cannot clobber a file.  First bump of
+ *     the v3.8.0 cycle: any other in-flight state change this cycle
+ *     extends v17 in place rather than bumping again. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   16
+#define STATE_VERSION   17
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -217,6 +224,9 @@ extern "C" {
  * GPU-magic stomp over the game's own RAM.  Older states do not carry it:
  * the live session's value is left alone (v3.7.0 behaviour). */
 #define STATE_VERSION_BIOS_CD_BOOT 16
+/* v17: trailing "JGF1" GameDrive SD-handle chunk (#783, JGDFSStateSave in
+ * src/core/jaggd_fs.c).  Older states: every handle closes. */
+#define STATE_VERSION_JGD_SD 17
 /* v16, extended in place (#800): trailing "BLH1" hung-blitter chunk
  * (BlitterHungStateSave, src/tom/blitter_mmio.c), read only for
  * version >= STATE_VERSION_BIOS_CD_BOOT, strictly after CDX1.  Missing or

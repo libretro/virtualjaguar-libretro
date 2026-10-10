@@ -75,6 +75,7 @@ src/core/bus_arbiter.c
 src/core/crash_detect.c
 src/core/hookfile.c
 src/core/jaggd.c
+src/core/jaggd_fs.c
 src/core/nvmbios.c
 src/core/perf_counters.c
 src/core/perf_iface.c

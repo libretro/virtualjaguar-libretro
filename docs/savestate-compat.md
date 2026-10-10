@@ -9,7 +9,7 @@ Defined in `src/core/state.h`:
 | Constant | Value | Meaning |
 |---|---|---|
 | `STATE_MAGIC` | `0x564A5353` (`"VJSS"`) | Header magic |
-| `STATE_VERSION` | `16` | Version this build **writes** (v3.7.1 cycle; v3.7.0 wrote 15) |
+| `STATE_VERSION` | `17` | Version this build **writes** (v3.8.0 cycle; v3.7.1 wrote 16) |
 | `STATE_MIN_VERSION` | `1` | Oldest version this build will **load** |
 
 `retro_unserialize()` refuses anything outside `STATE_MIN_VERSION … STATE_VERSION`
@@ -50,6 +50,25 @@ not match the disc currently mounted in CD mode (`retro_unserialize()`,
 `libretro.c`).
 A state saved by an older build while an HLE CD read was in flight cannot
 resume that read: the transfer was never saved.
+
+## v17: GameDrive SD-card handles (#783, v3.8.0 cycle)
+
+One trailing chunk, strictly after `"BLH1"`, fixed size (3172 bytes). This is the first bump of the v3.8.0 cycle, so any other state change this cycle extends v17 in place.
+
+| Chunk | Magic | Fields | Owner |
+|---|---|---|---|
+| GameDrive SD handles | `"JGF1"` | Per file slot (8): in-use, read, write, position, card-relative path (256 bytes). Per directory slot (4): in-use, entry index, path. | `src/core/jaggd_fs.c` |
+
+An open file is machine-visible state: the next `GD_FileRead` returns bytes from its position. Without the chunk, a run-ahead rollback or a loaded save would read from the wrong place.
+
+- **What restore stores and does:** paths are card-relative, so a state works on another machine. Restore reopens each file with its original access **only**. It never re-applies a create, truncate or append disposition, so loading a state can never clobber a file.
+- **Run-ahead:** run-ahead loads a state every frame, so a slot already open on the same path and access is only re-seeked.
+- **Missing files:** a file that no longer exists comes back closed.
+- **Directories:** a directory is reopened and its first *index* entries are skipped.
+- **Loading:** read only for `version >= 17`. Older states, and a v17 blob with a wrong magic, close every handle.
+- **Host side effects:** file *contents* are host state, like the 16 MB GameDrive image. Writes already made stay made across a state load.
+
+Regression tests: `test/test_jaggd_fs` (save, re-seek, close-then-reopen, no truncation, deleted file, zero state) and `test/test_jgd` (the probe's file calls through the real blob).
 
 ## v16: real-BIOS CD chunks (#804, v3.7.1 cycle)
 

@@ -103,6 +103,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
 	$(CORE_DIR)/src/core/jaggd.c \
+	$(CORE_DIR)/src/core/jaggd_fs.c \
 	$(CORE_DIR)/src/core/nvmbios.c \
 	$(CORE_DIR)/src/core/vjag_memory.c \
 	$(CORE_DIR)/src/core/vjtrace.c \
