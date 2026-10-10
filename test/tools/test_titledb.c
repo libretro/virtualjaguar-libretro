@@ -348,6 +348,108 @@ int main(void)
    }
    TitleDBSetCRC(0);
 
+   /* Disc rows (issue #747): own table, keyed by boot-stub CRC in crc32.
+    * Shipped-table integrity (vacuous while it ships empty, same as the
+    * hooks[] loop: it validates the FIRST row added) ... */
+   {
+      int dcount = 0;
+      const TitleDBEntry *d = TitleDBDiscTable(&dcount);
+      int ccount = 0;
+      const TitleDBEntry *c = TitleDBTable(&ccount);
+
+      CHECK(dcount >= 0, "disc table count is sane");
+      for (i = 0; i < dcount; i++)
+      {
+         CHECK(d[i].crc32 != 0, "disc row key (boot-stub CRC) is non-zero");
+         CHECK(d[i].name && d[i].name[0], "disc row has a name");
+         CHECK(d[i].pairs[0].key != NULL || d[i].negative[0].key != NULL,
+               "disc row has at least one pair or negative entry");
+         CHECK(d[i].hooks[0].kind == TITLEDB_HOOK_NONE,
+               "disc row carries no hooks[] (hooks patch cartridge ROM)");
+         for (j = i + 1; j < dcount; j++)
+            CHECK(d[i].crc32 != d[j].crc32, "no duplicate disc keys");
+         for (j = 0; j < TITLEDB_MAX_PAIRS && d[i].pairs[j].key; j++)
+         {
+            CHECK(strncmp(d[i].pairs[j].key, "virtualjaguar_", 14) == 0,
+                  "disc pair key is a core option key");
+            CHECK(d[i].pairs[j].value && d[i].pairs[j].value[0],
+                  "disc pair value is non-empty");
+            if (d[i].pairs[j].cls == TITLEDB_CLASS_COMPATIBILITY)
+            {
+               const char *cc = d[i].pairs[j].cite;
+               const char *h = cc ? strchr(cc, '#') : NULL;
+               while (h && !(h[1] >= '0' && h[1] <= '9'))
+                  h = strchr(h + 1, '#');
+               CHECK(h != NULL,
+                     "disc compatibility pair cites its mechanism ticket");
+            }
+         }
+      }
+
+      /* ... and lookup semantics, through the test override. */
+      {
+         static TitleDBEntry rows[2];
+         int clash = 0;
+
+         memset(rows, 0, sizeof(rows));
+         rows[0].crc32 = 0x82B88060;              /* Baldies boot stub */
+         rows[0].name  = "Synthetic disc row";
+         rows[0].pairs[0].key   = "virtualjaguar_cd_boot_mode";
+         rows[0].pairs[0].value = "bios";
+         rows[0].pairs[0].cls   = TITLEDB_CLASS_COMPATIBILITY;
+         rows[0].pairs[0].cite  = "synthetic (#747)";
+         rows[1].crc32 = 0;                       /* zero-key canary */
+         rows[1].name  = "Zero-key canary";
+         rows[1].pairs[0].key   = "virtualjaguar_bios";
+         rows[1].pairs[0].value = "enabled";
+
+         for (i = 0; i < ccount; i++)
+            if (c[i].crc32 == rows[0].crc32)
+               clash = 1;
+         CHECK(!clash, "synthetic disc key is not also a cart CRC");
+
+         TitleDBSetDiscRowsForTest(rows, 2);
+
+         TitleDBSetDisc(0x82B88060);
+         CHECK(TitleDBTitleName()
+               && strcmp(TitleDBTitleName(), "Synthetic disc row") == 0,
+               "disc key matches its disc row");
+         CHECK(TitleDBOverride("virtualjaguar_cd_boot_mode")
+               && strcmp(TitleDBOverride("virtualjaguar_cd_boot_mode"),
+                         "bios") == 0,
+               "disc row answers TitleDBOverride like a cart row");
+         CHECK(TitleDBContentCRC() == 0,
+               "a disc match does not set the cartridge content CRC");
+
+         TitleDBSetCRC(0x82B88060);
+         CHECK(TitleDBTitleName() == NULL,
+               "a cart CRC never matches a disc row");
+
+         TitleDBSetDisc(0);
+         CHECK(TitleDBTitleName() == NULL,
+               "TitleDBSetDisc(0) is no key -- never matches a zero row");
+
+         TitleDBSetCRC(0);
+         CHECK(TitleDBTitleName() == NULL,
+               "TitleDBSetCRC(0) is no key -- never matches");
+
+         TitleDBSetDiscRowsForTest(NULL, 0);
+         TitleDBSetDisc(0x82B88060);
+         CHECK(TitleDBTitleName() == NULL,
+               "override cleared: shipped disc table has no such row");
+
+         /* A cart CRC passed to the disc lookup finds nothing either. */
+         if (ccount > 0)
+         {
+            TitleDBSetDisc(c[0].crc32);
+            CHECK(TitleDBTitleName() == NULL,
+                  "a disc key never matches a cart row");
+         }
+         TitleDBSetDisc(0);
+      }
+   }
+   TitleDBSetCRC(0);
+
    printf("%s (%d failures)\n", fails ? "FAILED" : "OK", fails);
    return fails ? 1 : 0;
 }

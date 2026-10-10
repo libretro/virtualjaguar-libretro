@@ -2191,6 +2191,31 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "Baldies HLE cutscene progression (#738)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
 	fi
 
+	@# Per-title disc rows (#747): disc rows are keyed by boot-stub CRC.
+	@# A synthetic disc row on Baldies' key must reach the boot decision on
+	@# the load path (pertitle 15; 16 is the non-matching control) and on a
+	@# disk-control insert (disk_control 9; 10 is the no-row control).  Case
+	@# 17 pins the key's cross-format stability: the CUE, CHD and CDI rips
+	@# of the same pressing must all log $$82B88060.  Private corpus only.
+	@bal=$$(find -L test/roms/private -iname 'Baldies*Rev 1*.cue' 2>/dev/null | head -1); \
+	if [ -n "$$bal" ]; then \
+		rc=0; \
+		./test/tools/test_pertitle_db ./$(TARGET) "$$bal" --case 15 --quiet || rc=1; \
+		./test/tools/test_pertitle_db ./$(TARGET) "$$bal" --case 16 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$bal" --case 9 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$bal" --case 10 --quiet || rc=1; \
+		for r in "$$bal" \
+		         "$$(find -L test/roms/private -iname 'Baldies*Rev 1*.chd' 2>/dev/null | head -1)" \
+		         "$$(find -L test/roms/private -iname 'baldies.cdi' 2>/dev/null | head -1)"; do \
+			[ -n "$$r" ] || continue; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$r" --case 17 --quiet \
+				--expect-stub 82B88060 || rc=1; \
+		done; \
+		exit $$rc; \
+	else \
+		bash scripts/test-skip.sh record "Per-title disc rows (#747)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
+	fi
+
 	@# Xenowings in-game video (#811): the GPU's object-list swap is
 	@# `load (r0),r2 / moveq #0,r2`, which only works because the external
 	@# load lands after the moveq (JTRM p.136, TOM bug 13).  Without that

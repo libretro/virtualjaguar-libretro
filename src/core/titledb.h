@@ -153,8 +153,37 @@ void TitleDBSetContent(const uint8_t *data, size_t size);
 void TitleDBSetCRC(uint32_t crc);
 
 /* CRC32 (header-normalized) of the currently loaded content, as last set by
- * TitleDBSetContent/TitleDBSetCRC; 0 when no content is loaded. */
+ * TitleDBSetContent/TitleDBSetCRC; 0 when no content is loaded.  Cartridge
+ * content only: a disc match (TitleDBSetDisc) never sets it, so texture
+ * dump/replace directories keyed on it are unaffected by CD rows. */
 uint32_t TitleDBContentCRC(void);
+
+/*
+ * Disc rows (issue #747).  A Jaguar CD title is keyed by the CRC32 of its
+ * boot stub as CDIntfExtractBootStub() returns it (word-swap undone,
+ * header-validated): measured stable across CUE, CHD and CDI rips of the
+ * same pressing, where the session/track/sector layout is not (CDI rips
+ * carry +150 sectors).  Disc rows live in their OWN table, whose `crc32`
+ * field holds the stub CRC, so a cartridge CRC can never match a disc row
+ * or the reverse.  Same pairs[] / negative[] semantics as cart rows; disc
+ * rows carry no hooks[] (those patch cartridge ROM).
+ *
+ * Known limits of the key: it identifies the boot LOADER, not the game
+ * program -- seven homebrew discs share one loader ($DE7145EE) and
+ * Songbird re-releases share the original's stub.  Discs with no
+ * extractable stub (audio-only, damaged CDI V2 rips) have no key.
+ *
+ * TitleDBSetDisc(0) clears the match.  Like TitleDBSetCRC, it replaces
+ * whatever row was current.
+ */
+void TitleDBSetDisc(uint32_t boot_stub_crc);
+
+/* Test-only: TitleDBSetDisc() scans these rows instead of the shipped disc
+ * table; NULL restores it.  Mirrors TitleDBSetPairsForTest(). */
+void TitleDBSetDiscRowsForTest(const TitleDBEntry *rows, int count);
+
+/* Test-only introspection: the raw disc table. */
+const TitleDBEntry *TitleDBDiscTable(int *count);
 
 /* Lookup: return the preset value for a key in the loaded content, or NULL. */
 const char *TitleDBOverride(const char *key);

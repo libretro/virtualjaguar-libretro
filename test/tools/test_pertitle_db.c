@@ -96,6 +96,22 @@
  *      registered default so the explicit choice is distinguishable --
  *      a default-valued user choice cannot be, see case 4.)
  *
+ * Disc-keyed cases (issue #747) -- the ROM argument is a Jaguar CD image:
+ *
+ *  15  Baldies (Rev 1), CD Boot Mode at its default (hle), PLUS a
+ *      synthetic DISC row keyed on Baldies' boot-stub CRC $82B88060 with a
+ *      compatibility pair cd_boot_mode=bios.  The boot strategy must
+ *      resolve to "bios": the disc key is computed before the option
+ *      reads, so a disc row reaches the boot decision.  Uses
+ *      TitleDBSetDiscRowsForTest, which matches by key only -- unlike the
+ *      pairs override, it cannot pass without the disc lookup working.
+ *  16  Control for 15: the same row keyed on a CRC the disc does NOT have.
+ *      The strategy stays "hle" and no row matches.
+ *  17  Any disc, no override: the core logs the disc's boot-stub CRC so a
+ *      row author can read the key off the log.  Run with --expect-stub
+ *      XXXXXXXX over the CUE, CHD and CDI rips of one pressing, it pins the
+ *      cross-format stability the key depends on.
+ *
  * The [titledb] substitution/miss lines are logged at RETRO_LOG_INFO via
  * LOG_INF(), which the harness's cb_log filters out below RETRO_LOG_WARN
  * unless VJ_HARNESS_LOG_INFO=1 is set (see harness.c) -- this test sets it
@@ -115,6 +131,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include "../harness/harness.h"
 #include "../../src/core/titledb.h"
 
@@ -145,6 +162,20 @@ static TitleDBPair synthetic_pairs[3];
 
 /* Cases 13/14 (issue #748): one synthetic compatibility pair. */
 static TitleDBPair compat_pairs[2];
+
+/* Cases 15/16 (issue #747): one synthetic disc row. */
+static TitleDBEntry disc_rows[1];
+
+/* Leading layout of struct BootConfig / CDBootStrategy, as in
+ * test_disk_control.c: `strategy` is the last field and `name` the first,
+ * so trailing additions cannot shift what is read. */
+struct pt_strategy { const char *name; };
+struct pt_bootconfig {
+    bool isCDGame;
+    bool showBootROM;
+    bool cdBiosAvailable;
+    const struct pt_strategy *strategy;
+};
 
 /* ----------------------------------------------------------------
  * stderr capture: redirect around the core load so the [titledb]
@@ -269,6 +300,8 @@ int main(int argc, char **argv)
     unsigned nres = 0;
     int pass;
     int did_manual_unload = 0;
+    const char *expect_stub = NULL;
+    struct pt_bootconfig *bootcfg;
 
     /* Pre-parse --case: harness_init_from_args skips unknown flags one
      * token at a time (see its comment "Unknown flag -- skip"), and the
@@ -280,10 +313,12 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--case") == 0 && i + 1 < argc)
             case_num = atoi(argv[i + 1]);
+        if (strcmp(argv[i], "--expect-stub") == 0 && i + 1 < argc)
+            expect_stub = argv[i + 1];
     }
-    if (case_num < 1 || case_num > 14) {
+    if (case_num < 1 || case_num > 17) {
         fprintf(stderr,
-                "usage: test_pertitle_db [core] <rom> --case N[1-14] "
+                "usage: test_pertitle_db [core] <rom> --case N[1-17] "
                 "[--option KEY=VALUE ...]\n");
         return 1;
     }
@@ -342,6 +377,28 @@ int main(int argc, char **argv)
         compat_pairs[1].key   = NULL;
         compat_pairs[1].value = NULL;
         set_pairs(compat_pairs, 1);
+    }
+
+    /* Cases 15/16 (issue #747): a synthetic disc row, keyed on Baldies'
+     * boot-stub CRC (15) or on one the disc does not have (16). */
+    if (case_num == 15 || case_num == 16) {
+        void (*set_disc)(const TitleDBEntry *, int);
+
+        set_disc = (void (*)(const TitleDBEntry *, int))
+            harness_dlsym(&cfg, "TitleDBSetDiscRowsForTest");
+        if (!set_disc) {
+            fprintf(stderr, "test_pertitle_db: TitleDBSetDiscRowsForTest not "
+                            "exported -- rebuild with `make TEST_EXPORTS=1`\n");
+            return 1;
+        }
+        memset(disc_rows, 0, sizeof(disc_rows));
+        disc_rows[0].crc32 = (case_num == 15) ? 0x82B88060u : 0x0BADD15Cu;
+        disc_rows[0].name  = "Synthetic disc row";
+        disc_rows[0].pairs[0].key   = "virtualjaguar_cd_boot_mode";
+        disc_rows[0].pairs[0].value = "bios";
+        disc_rows[0].pairs[0].cls   = TITLEDB_CLASS_COMPATIBILITY;
+        disc_rows[0].pairs[0].cite  = "synthetic test row (#747)";
+        set_disc(disc_rows, 1);
     }
 
     /* Cases 7/8 (issue #464): install the negative row BEFORE
@@ -659,6 +716,52 @@ int main(int argc, char **argv)
                      : "shadowHiresN != 2 (a compatibility pair overrode an "
                        "explicit user choice!)");
         pass = hires_ok;
+        break;
+    }
+    case 15:
+    case 16: {
+        /* Disc row reaches the boot decision (15) / a non-matching key
+         * leaves the default alone (16). */
+        const char *want = (case_num == 15) ? "bios" : "hle";
+        const char *got;
+        int strat_ok, match_log;
+
+        bootcfg = (struct pt_bootconfig *)harness_dlsym(&cfg, "bootConfig");
+        got = (bootcfg && bootcfg->strategy && bootcfg->strategy->name)
+            ? bootcfg->strategy->name : "(none)";
+        strat_ok  = (strcmp(got, want) == 0);
+        match_log = log_contains("disc boot stub CRC32 $82B88060: "
+                                 "Synthetic disc row");
+        if (case_num == 16)
+            match_log = !match_log && log_contains("no per-title entry");
+        results[nres++] = mkres(strat_ok,
+            case_num == 15 ? "case15_disc_row_sets_boot_strategy"
+                           : "case16_unmatched_disc_keeps_default",
+            strat_ok ? (case_num == 15
+                        ? "boot strategy == bios (disc row applied)"
+                        : "boot strategy == hle (no row matched)")
+                     : got);
+        results[nres++] = mkres(match_log,
+            case_num == 15 ? "case15_match_logged" : "case16_miss_logged",
+            match_log ? "[titledb] disc line names the expected outcome"
+                      : "[titledb] disc match/miss line missing or wrong");
+        pass = strat_ok && match_log;
+        break;
+    }
+    case 17: {
+        /* The boot-stub CRC is logged on every CD load (and, with
+         * --expect-stub, is the expected value). */
+        char needle[64];
+        int logged;
+        if (expect_stub)
+            snprintf(needle, sizeof(needle), "disc boot stub CRC32 $%s",
+                     expect_stub);
+        else
+            snprintf(needle, sizeof(needle), "disc boot stub CRC32 $");
+        logged = log_contains(needle);
+        results[nres++] = mkres(logged, "case17_stub_crc_logged",
+            logged ? needle : "no matching [titledb] disc boot stub line");
+        pass = logged;
         break;
     }
     default:

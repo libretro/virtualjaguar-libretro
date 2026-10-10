@@ -832,6 +832,25 @@ static const TitleDBEntry titledb_table[] = {
 static const int titledb_count =
    sizeof(titledb_table) / sizeof(titledb_table[0]);
 
+/*
+ * Disc rows (issue #747): keyed by boot-stub CRC32 in the `crc32` field
+ * (see TitleDBSetDisc in titledb.h for why not the session/track/sector
+ * layout).  Same row discipline as the cart table -- census or
+ * compatibility citation per pair -- and no hooks[].  Get a disc's key
+ * from the RetroArch log: every CD load logs "[titledb] disc boot stub
+ * CRC32 $XXXXXXXX".
+ *
+ * Ships EMPTY: the mechanism lands ahead of the data, like hooks[] and
+ * negative[] did.  Add rows ABOVE the terminator; the count excludes it
+ * (C89 has no empty initializer lists).
+ */
+static const TitleDBEntry titledb_disc_table[] = {
+   { 0, NULL }   /* terminator -- keep last */
+};
+
+static const int titledb_disc_count =
+   (int)(sizeof(titledb_disc_table) / sizeof(titledb_disc_table[0])) - 1;
+
 /* Current loaded title match; NULL if no content is loaded or CRC doesn't match. */
 static const TitleDBEntry *current = NULL;
 
@@ -845,6 +864,10 @@ static int hooks_override_count = 0;
 /* Test-only negative-pair override; see TitleDBSetNegativeForTest below. */
 static const TitleDBNegativePair *negative_override = NULL;
 static int negative_override_count = 0;
+
+/* Test-only disc-row override; see TitleDBSetDiscRowsForTest below. */
+static const TitleDBEntry *disc_rows_override = NULL;
+static int disc_rows_override_count = 0;
 
 /* Test-only positive-pair override; see TitleDBSetPairsForTest below. */
 static const TitleDBPair *pairs_override = NULL;
@@ -860,11 +883,43 @@ void TitleDBSetCRC(uint32_t crc)
 
    content_crc = crc;
    current = NULL;
+   if (crc == 0)              /* "no content": never a key (#747) */
+      return;
    for (i = 0; i < titledb_count; i++)
    {
       if (titledb_table[i].crc32 == crc)
       {
          current = &titledb_table[i];
+         return;
+      }
+   }
+}
+
+/*
+ * Disc lookup (issue #747): match a boot-stub CRC against the disc table
+ * only.  0 is "no key" and never matches, so a disc with no extractable
+ * stub cannot pick up a row.  content_crc is deliberately left alone --
+ * it is the cartridge CRC (see TitleDBContentCRC).
+ */
+void TitleDBSetDisc(uint32_t boot_stub_crc)
+{
+   const TitleDBEntry *rows = titledb_disc_table;
+   int count = titledb_disc_count;
+   int i;
+
+   current = NULL;
+   if (boot_stub_crc == 0)
+      return;
+   if (disc_rows_override != NULL)
+   {
+      rows  = disc_rows_override;
+      count = disc_rows_override_count;
+   }
+   for (i = 0; i < count; i++)
+   {
+      if (rows[i].crc32 == boot_stub_crc)
+      {
+         current = &rows[i];
          return;
       }
    }
@@ -1086,6 +1141,32 @@ void TitleDBSetPairsForTest(const TitleDBPair *pairs, int count)
    }
    pairs_override = pairs;
    pairs_override_count = count;
+}
+
+/*
+ * Test-only: rows TitleDBSetDisc() scans instead of the shipped disc table.
+ * NULL restores it.
+ */
+void TitleDBSetDiscRowsForTest(const TitleDBEntry *rows, int count)
+{
+   if (rows == NULL || count <= 0)
+   {
+      disc_rows_override = NULL;
+      disc_rows_override_count = 0;
+      return;
+   }
+   disc_rows_override = rows;
+   disc_rows_override_count = count;
+}
+
+/*
+ * Test-only introspection: the raw disc table (terminator excluded).
+ */
+const TitleDBEntry *TitleDBDiscTable(int *count)
+{
+   if (count != NULL)
+      *count = titledb_disc_count;
+   return titledb_disc_table;
 }
 
 /*
