@@ -1567,6 +1567,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# never be blamed on a title, and the row cache must ignore docs-only
 	@# changes. Synthetic logs only -- no ROMs, no core, runs in <1s.
 	bash test/tools/matrix_common_test.sh
+	@# Matrix-diff release gate (#749): stage ordering, crash-signature and
+	@# asymmetry detection, exit codes. Synthetic fixtures -- no corpus needed.
+	bash test/test_matrix_diff.sh
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate

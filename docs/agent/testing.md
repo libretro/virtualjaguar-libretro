@@ -79,6 +79,10 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   id (`<!-- build:<rev> -->`); resume skips only same-build rows, re-runs others. (Resuming from
   an older build used to resurrect ancient rows as "fresh" — the phantom Battle Morph bios
   `? (pc_escape)` `final_pc=$8FBFB758` was such a stale row.)
+- `test/tools/matrix_diff.py OLD.md NEW.md` — never-backward gate (#749) between two copies of the
+  same matrix (cart or CD): prints regressed / still-asymmetric / improved, exit 1 on any backward
+  stage move or new crash-watchdog signature, 2 on parse error. Release-time, corpus machine only
+  (`docs/release-process.md`). Self-test `test/test_matrix_diff.sh` runs in `make test`.
 - CD trace ring: option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1`) records
   `DSA_TX/DSA_RX/SEEK_START/SEEK_DONE/FIFO_FILL/FIFO_DRAIN/STOP/HLE_READ`; dumped on
   `cd_seek_wedge` or on request.
