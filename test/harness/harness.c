@@ -430,6 +430,82 @@ static void reg_add_key(const char *key)
     reg_num_keys++;
 }
 
+/* Environment capture (#841): OSD notices (SET_MESSAGE_EXT), the core
+ * option definitions of the first and the latest SET_CORE_OPTIONS_V2[_INTL]
+ * push, and any SET_VARIABLE (which the core must never call).  File-static
+ * rather than in harness_config because the first option push happens inside
+ * retro_set_environment, before a config is attached.  Every string is a
+ * private copy: the core's amended-definition buffers are reused. */
+#define HARNESS_MAX_OSD 32
+static char    *osd_texts[HARNESS_MAX_OSD];
+static unsigned osd_n;
+static unsigned opt_pushes;
+static unsigned set_variable_n;
+static int      variable_update_pending;
+static unsigned opt_pushes_before_load;
+typedef struct {
+    char   **keys;
+    char   **infos;
+    unsigned n;
+} opt_snapshot;
+static opt_snapshot opt_first, opt_latest;
+
+static void opt_snapshot_free(opt_snapshot *s)
+{
+    unsigned i;
+    for (i = 0; i < s->n; i++) { free(s->keys[i]); free(s->infos[i]); }
+    free(s->keys);
+    free(s->infos);
+    s->keys = NULL;
+    s->infos = NULL;
+    s->n = 0;
+}
+
+static void opt_snapshot_take(opt_snapshot *s,
+                              const struct retro_core_option_v2_definition *d)
+{
+    unsigned n = 0, i;
+    opt_snapshot_free(s);
+    while (d[n].key) n++;
+    s->keys  = (char **)calloc(n ? n : 1, sizeof(char *));
+    s->infos = (char **)calloc(n ? n : 1, sizeof(char *));
+    if (!s->keys || !s->infos) return;
+    for (i = 0; i < n; i++) {
+        s->keys[i]  = strdup(d[i].key);
+        s->infos[i] = strdup(d[i].info ? d[i].info : "");
+    }
+    s->n = n;
+}
+
+static void opt_capture(const struct retro_core_option_v2_definition *d)
+{
+    if (!d) return;
+    if (opt_pushes == 0) opt_snapshot_take(&opt_first, d);
+    opt_snapshot_take(&opt_latest, d);
+    opt_pushes++;
+}
+
+static const char *opt_snapshot_find(const opt_snapshot *s, const char *key)
+{
+    unsigned i;
+    for (i = 0; i < s->n; i++)
+        if (strcmp(s->keys[i], key) == 0) return s->infos[i];
+    return NULL;
+}
+
+unsigned harness_osd_count(void) { return osd_n; }
+const char *harness_osd_text(unsigned i) { return i < osd_n ? osd_texts[i] : NULL; }
+unsigned harness_options_push_count(void) { return opt_pushes; }
+unsigned harness_options_pushes_before_load(void) { return opt_pushes_before_load; }
+unsigned harness_options_def_count_first(void) { return opt_first.n; }
+unsigned harness_options_def_count_latest(void) { return opt_latest.n; }
+const char *harness_options_info(const char *key)
+{ return opt_snapshot_find(&opt_latest, key); }
+const char *harness_options_first_info(const char *key)
+{ return opt_snapshot_find(&opt_first, key); }
+unsigned harness_set_variable_calls(void) { return set_variable_n; }
+void harness_notify_variable_update(void) { variable_update_pending = 1; }
+
 static void reg_record(unsigned cmd, const void *data)
 {
     unsigned i;
@@ -459,6 +535,7 @@ static void reg_record(unsigned cmd, const void *data)
         if (o->definitions)
             for (i = 0; o->definitions[i].key; i++)
                 reg_add_key(o->definitions[i].key);
+        if (o->definitions) opt_capture(o->definitions);
         break;
     }
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
@@ -467,6 +544,7 @@ static void reg_record(unsigned cmd, const void *data)
         if (o->us && o->us->definitions)
             for (i = 0; o->us->definitions[i].key; i++)
                 reg_add_key(o->us->definitions[i].key);
+        if (o->us && o->us->definitions) opt_capture(o->us->definitions);
         break;
     }
     default:
@@ -539,12 +617,39 @@ static bool cb_environment(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
     case RETRO_ENVIRONMENT_SET_VARIABLES:
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
-    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
     case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        /* Opt-in (cfg->core_options_v2), like the other answers below:
+         * tools that predate it keep getting `true` WITHOUT a version
+         * written, i.e. version 0, so the core registers its legacy
+         * SET_VARIABLES list exactly as before.  With the flag set the
+         * core registers through SET_CORE_OPTIONS_V2[_INTL], which the
+         * capture above records, and may re-push definitions later. */
+        if (data && active_cfg && active_cfg->core_options_v2)
+            *(unsigned *)data = 2;
+        return true;
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
+        return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        /* Edge-triggered by harness_notify_variable_update(); otherwise
+         * the flag stays false exactly as before this hook existed. */
+        if (data) {
+            *(bool *)data = variable_update_pending ? true : false;
+            variable_update_pending = 0;
+        }
+        return true;
+    case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
+        /* Recorded for #841; the notice text is the contract. */
+        if (data && osd_n < HARNESS_MAX_OSD) {
+            const struct retro_message_ext *m =
+                (const struct retro_message_ext *)data;
+            osd_texts[osd_n++] = strdup(m->msg ? m->msg : "");
+        }
+        return true;
+    case RETRO_ENVIRONMENT_SET_VARIABLE:
+        set_variable_n++;
         return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
         if (active_cfg) active_cfg->video.set_geometry_calls++;
@@ -862,6 +967,7 @@ bool harness_load_rom(harness_config *cfg)
 
     active_rom_data = rom_data;
 
+    opt_pushes_before_load = opt_pushes;
     if (!lr_load_game(&game)) {
         fprintf(stderr, "harness: retro_load_game failed for '%s'\n", cfg->rom_path);
         active_rom_data = NULL;
@@ -899,6 +1005,7 @@ bool harness_load_no_content(harness_config *cfg)
     lr_set_input_poll(cb_input_poll);
     lr_set_input_state(cb_input_state);
 
+    opt_pushes_before_load = opt_pushes;
     if (!lr_load_game(NULL)) {
         fprintf(stderr, "harness: retro_load_game(NULL) failed "
                         "(core may not support no-content boot)\n");

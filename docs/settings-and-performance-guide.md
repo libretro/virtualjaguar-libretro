@@ -88,6 +88,22 @@ To turn the whole thing off, set **Per-Title Enhancement Defaults** to
 Everything the core does per title is logged with a `[titledb]` prefix, so the
 RetroArch log always tells you exactly what was applied.
 
+**You also see it on screen.** When a game loads with presets applied, a
+4-second notice names the game, each option and its class, for example
+*White Men Can't Jump: Blitter Bus Timing on (compatibility preset)*. A second
+notice appears if the Enhancement Profile withholds or drops enhancement
+presets (*per-title enhancement presets not applied (performance profile
+selected)*). Both mirror the log lines, show once per load, and never repeat
+per frame. The affected options also explain themselves: their description
+(the sublabel under the option) gains a leading sentence such as *This game:
+set to 2x by its per-title preset. Choose a value to override.*, or, for DSP
+Idle-Loop Fast-Forward, *Inactive: suppressed by RISC (GPU/DSP) Clock Scale
+2x.* The core only explains; it never rewrites a value you chose. Frontends that
+don't support Core Options v2, or that ignore a repeated definition push,
+show the stock text and still get the notices. These sublabels are refreshed
+(one options-menu rebuild) only at load and when an option change alters which
+notes apply.
+
 ### Titles that configure themselves
 
 Twenty-one entries as of v3.5.0. All of them set internal resolution, true

@@ -312,6 +312,15 @@ typedef struct {
     bool        (*disk_get_image_label)(unsigned index, char *label,
                                         size_t len);
 
+    /* RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION (#841), opt-in like the
+     * hooks above: when non-zero the environment callback reports options
+     * version 2, so the core registers via SET_CORE_OPTIONS_V2[_INTL] and is
+     * willing to re-push amended definitions; the harness_options_* capture
+     * below then sees them.  Default 0 leaves the answer at "version 0"
+     * (legacy SET_VARIABLES registration), matching every tool that predates
+     * it.  Set it before harness_load_rom(). */
+    int           core_options_v2;
+
     /* Runtime state (set by harness) */
     void  *core_handle;
     unsigned current_frame;
@@ -362,6 +371,7 @@ typedef struct {
     .mic_tone = 0, \
     .av_skip_video = 0, \
     .accept_audio_buf_cb = 0, \
+    .core_options_v2 = 0, \
     .audio_buf_cb = NULL, \
     .core_handle = NULL, \
     .current_frame = 0, \
@@ -432,6 +442,35 @@ void harness_press(harness_config *cfg, unsigned port, unsigned button,
  * Only trace_probe calls this, and only when a flight-recorder flag was
  * given, so tools that do not attach never trigger those extra calls. */
 uint32_t harness_input_mask(harness_config *cfg, unsigned port);
+
+/* Environment capture (#841).  Process-wide, since one core is loaded per
+ * process, and all strings are the harness's own copies (valid until exit).
+ *
+ * OSD: every SET_MESSAGE_EXT text, in order.
+ * Option pushes: SET_CORE_OPTIONS_V2 / _V2_INTL calls, counting the core's
+ * initial registration, so "re-pushed at load" is
+ * harness_options_push_count() minus harness_options_pushes_before_load().
+ * harness_options_info() is the `info` of a key in the LATEST push,
+ * harness_options_first_info() in the FIRST; the def_count pair lets a test
+ * assert the option COUNT never changes (libretro.h's re-push rule).
+ * harness_set_variable_calls() counts SET_VARIABLE (env 70): the core must
+ * never rewrite the user's values. */
+unsigned    harness_osd_count(void);
+const char *harness_osd_text(unsigned i);
+unsigned    harness_options_push_count(void);
+/* The push count at the instant retro_load_game was called, i.e. after the
+ * core's own registration in retro_set_environment/retro_init: the baseline
+ * for "re-pushes caused by loading this content". */
+unsigned    harness_options_pushes_before_load(void);
+unsigned    harness_options_def_count_first(void);
+unsigned    harness_options_def_count_latest(void);
+const char *harness_options_info(const char *key);
+const char *harness_options_first_info(const char *key);
+unsigned    harness_set_variable_calls(void);
+/* Make the NEXT GET_VARIABLE_UPDATE answer "updated" (once), so a test that
+ * changed cfg.options[] mid-run drives the core's check_variables() the way
+ * a frontend option change does.  Default: never updated. */
+void        harness_notify_variable_update(void);
 
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);

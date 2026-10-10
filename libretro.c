@@ -2082,6 +2082,8 @@ static int netlink_host_option_index(void)
  * failing), then jaghub.local and vj_netlink.txt -- the existing presets
  * stay selectable, peers are added, not substituted. Capped at
  * JLINK_DISC_MAX_PEERS entries. */
+static bool core_options_push(void);
+
 static void netlink_rebuild_host_options(void)
 {
    int idx, i, n, peer_count, my_device;
@@ -2189,7 +2191,9 @@ static void netlink_rebuild_host_options(void)
    option_defs_us[idx].values[n].value = NULL;
    option_defs_us[idx].values[n].label = NULL;
 
-   options_pushed = environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
+   /* Through the shared push, not &options_us directly: a title that has
+    * option explanations live (#841) must keep them across this rebuild. */
+   options_pushed = core_options_push();
 
    /* SET_CORE_OPTIONS_V2 rebuilds RetroArch's whole core_option_manager
     * from these definitions, which carry no visibility field -- every
@@ -2389,21 +2393,47 @@ static void perf_conflict_append(char *buf, size_t cap, const char *what)
    strncat(buf, what, cap - used - 1);
 }
 
+/* Which options currently switch the RISC idle-skip off.  Mirrors the gate
+ * at the top of DSPExec() (src/jerry/dsp.c) -- see the comment above for what
+ * is deliberately absent.  Shared by the log warning below and the option
+ * sublabel (#841), so the two can never name different suppressors. */
+#define IDLE_SUP_CLOCK 1u
+#define IDLE_SUP_DRAM  2u
+#define IDLE_SUP_PIPE  4u
+#define IDLE_SUP_MEMO  8u
+
+static unsigned idle_skip_suppressor_mask(void)
+{
+   unsigned mask = 0;
+
+   if (riscClockScalePct != 100)
+      mask |= IDLE_SUP_CLOCK;
+   if (busArbiter.enabled)
+      mask |= IDLE_SUP_DRAM;
+   if (vjs.gpuPipelineTiming)
+      mask |= IDLE_SUP_PIPE;
+   if (blitMemoMode != BLIT_MEMO_OFF || blitMemoRecording)
+      mask |= IDLE_SUP_MEMO;
+   return mask;
+}
+
 static void perf_warn_idle_skip_suppressed(void)
 {
    char who[192];
+   unsigned mask;
 
    if (perf_conflict_warned || !vjs.riscIdleSkip)
       return;
 
    who[0] = '\0';
-   if (riscClockScalePct != 100)
+   mask = idle_skip_suppressor_mask();
+   if (mask & IDLE_SUP_CLOCK)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_risc_clock_scale");
-   if (busArbiter.enabled)
+   if (mask & IDLE_SUP_DRAM)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_dram_timing");
-   if (vjs.gpuPipelineTiming)
+   if (mask & IDLE_SUP_PIPE)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_gpu_pipeline_timing");
-   if (blitMemoMode != BLIT_MEMO_OFF || blitMemoRecording)
+   if (mask & IDLE_SUP_MEMO)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_blit_memo");
 
    if (who[0] == '\0')
@@ -2414,6 +2444,447 @@ static void perf_warn_idle_skip_suppressed(void)
            "combination can run slower than idle-skip alone. Your settings "
            "are honored, not overridden.\n", who);
    perf_conflict_warned = 1;
+}
+
+/* Option explanations (issue #841).
+ *
+ * The core makes settings decisions the menu cannot show: a per-title DB row
+ * fills in an option left at its default, the enhancement profile drops or
+ * demotes those presets, and some options silently switch others off (the
+ * idle-skip suppressors above).  Two surfaces tell the player, both mirroring
+ * the [titledb] / [perf] log lines so screen and log agree:
+ *
+ *   - OSD notices (SET_MESSAGE_EXT, via netlink_osd()), edge-triggered and
+ *     latched once per load: one when presets were applied, one when the
+ *     profile suppressed or demoted them;
+ *   - the affected options' `info` (sublabel) amended with one sentence, by
+ *     re-pushing SET_CORE_OPTIONS_V2 with the option COUNT unchanged.
+ *
+ * Observation, not recomputation: get_variable_pertitle() is the single
+ * place a preset is substituted or dropped, so it records what it did per
+ * key (explain_observe) and this code only formats that record.
+ *
+ * Re-push contract.  A V2 push makes RetroArch tear down and rebuild its
+ * option manager (runloop.c): the old values are flushed to disk, the
+ * game/folder option flags are cleared, and the new manager re-detects the
+ * per-game / per-folder file from the content path and reloads values from
+ * it -- so the user's values survive (verified against RetroArch's
+ * runloop.c, see docs/settings-and-performance-guide.md).  A rebuild resets
+ * every row to visible, hence the visibility_force_push after each push.
+ * The push happens ONLY at load end and from check_variables() when an
+ * option change alters the amendment set -- never per frame, and NEVER from
+ * inside update_option_visibility() (the frontend's update-display callback
+ * runs while its menu is iterating options).  The user's value is never
+ * written back (no SET_VARIABLE): the combination is explained, not fixed.
+ *
+ * option_defs_us / options_us are never mutated by this code: amended
+ * definitions live in a static copy, so unload (and the iOS no-dlclose
+ * static reset in retro_deinit) restores the originals simply by pushing
+ * &options_us again or by forgetting the copy. */
+#define EXPLAIN_MAX_OBS     8
+#define EXPLAIN_MAX_AMEND   8
+#define EXPLAIN_NOTE_MAX    384
+#define EXPLAIN_INFO_MAX    3072
+#define EXPLAIN_DEFS_MAX    144
+
+#define EXPLAIN_OBS_NONE    0
+#define EXPLAIN_OBS_APPLIED 1  /* DB value substituted for a default option */
+#define EXPLAIN_OBS_DROPPED 2  /* DB value withheld by the enhancement profile */
+
+/* Compile-time guard (C89 negative-array trick): the static copy below must
+ * hold every definition plus the terminator.  Adding options past the limit
+ * fails the build here instead of truncating the pushed table. */
+typedef char explain_defs_fit_check
+   [(sizeof(option_defs_us) / sizeof(option_defs_us[0])
+     <= EXPLAIN_DEFS_MAX) ? 1 : -1];
+
+typedef struct {
+   char key[64];
+   char value[32];
+   char reason[64];
+   int  state;
+   int  cls;
+} explain_obs_t;
+
+typedef struct {
+   int  idx;                      /* index into option_defs_us */
+   char note[EXPLAIN_NOTE_MAX];
+} explain_amend_t;
+
+static explain_obs_t   explain_obs[EXPLAIN_MAX_OBS];
+static int             explain_obs_count;
+static explain_amend_t explain_cur[EXPLAIN_MAX_AMEND]; /* live in frontend */
+static int             explain_cur_n;
+static int             explain_pushed;   /* amended defs are live */
+static int             explain_load_notice_done;
+static int             explain_suppress_notice_done;
+static char            explain_info_buf[EXPLAIN_MAX_AMEND][EXPLAIN_INFO_MAX];
+static struct retro_core_option_v2_definition
+                       explain_defs[EXPLAIN_DEFS_MAX];
+static struct retro_core_options_v2 explain_opts;
+
+static int explain_find_def(const char *key)
+{
+   int i;
+
+   for (i = 0; option_defs_us[i].key; i++)
+      if (!strcmp(option_defs_us[i].key, key))
+         return i;
+   return -1;
+}
+
+/* Short option name for prose: the definition's desc without its trailing
+ * parenthetical ("Blitter Bus Timing (Experimental)" -> "Blitter Bus
+ * Timing").  Taken from the definitions so wording changes cannot drift. */
+static void explain_option_name(int idx, char *out, size_t cap)
+{
+   const char *desc = option_defs_us[idx].desc;
+   size_t len = strlen(desc);
+   const char *p;
+
+   if (len > 0 && desc[len - 1] == ')')
+   {
+      /* Last " (" that is balanced back to the closing paren. */
+      for (p = desc + len - 1; p > desc; p--)
+         if (p[0] == '(' && p[-1] == ' ')
+         {
+            len = (size_t)(p - desc) - 1;
+            break;
+         }
+   }
+   if (len >= cap)
+      len = cap - 1;
+   memcpy(out, desc, len);
+   out[len] = '\0';
+}
+
+/* Human text for a value: its label when the definition has one, else
+ * on/off for the enabled/disabled pairs, else the raw value. */
+static const char *explain_value_text(int idx, const char *value)
+{
+   const struct retro_core_option_value *v = option_defs_us[idx].values;
+
+   for (; v->value; v++)
+      if (!strcmp(v->value, value))
+      {
+         if (v->label)
+            return v->label;
+         break;
+      }
+   if (!strcmp(value, "enabled"))
+      return "on";
+   if (!strcmp(value, "disabled"))
+      return "off";
+   return value;
+}
+
+/* Record what get_variable_pertitle() did with `key` on this read.  A key
+ * never observed non-NONE stays out of the table; one that was is updated in
+ * place, so a user choosing a value (APPLIED -> NONE) retires its note. */
+static void explain_observe(const char *key, int state, const char *value,
+                            int cls, const char *reason)
+{
+   int i;
+   explain_obs_t *o = NULL;
+
+   for (i = 0; i < explain_obs_count; i++)
+      if (!strcmp(explain_obs[i].key, key))
+      {
+         o = &explain_obs[i];
+         break;
+      }
+   if (!o)
+   {
+      if (state == EXPLAIN_OBS_NONE || explain_obs_count >= EXPLAIN_MAX_OBS)
+         return;
+      o = &explain_obs[explain_obs_count++];
+      snprintf(o->key, sizeof(o->key), "%s", key);
+   }
+   o->state = state;
+   o->cls   = cls;
+   snprintf(o->value, sizeof(o->value), "%s", value ? value : "");
+   snprintf(o->reason, sizeof(o->reason), "%s", reason ? reason : "");
+}
+
+/* Add `note` to the amendment for option `idx`, keeping the list sorted by
+ * idx (so the set compares equal regardless of observation order) and
+ * joining several notes for one option with a space. */
+static void explain_add(explain_amend_t *list, int *n, int idx,
+                        const char *note)
+{
+   int i, j;
+   size_t used;
+
+   for (i = 0; i < *n; i++)
+      if (list[i].idx == idx)
+      {
+         used = strlen(list[i].note);
+         if (used + 2 < sizeof(list[i].note))
+            snprintf(list[i].note + used, sizeof(list[i].note) - used,
+                     " %s", note);
+         return;
+      }
+   if (*n >= EXPLAIN_MAX_AMEND)
+      return;
+   for (i = 0; i < *n && list[i].idx < idx; i++)
+      ;
+   for (j = *n; j > i; j--)
+      list[j] = list[j - 1];
+   list[i].idx = idx;
+   snprintf(list[i].note, sizeof(list[i].note), "%s", note);
+   (*n)++;
+}
+
+/* The amendment set implied by the current state. */
+static void explain_compute(explain_amend_t *out, int *count)
+{
+   int i, idx, n = 0;
+   unsigned mask;
+   char note[EXPLAIN_NOTE_MAX];
+   char who[192];
+   char name[64];
+
+   for (i = 0; i < explain_obs_count; i++)
+   {
+      const explain_obs_t *o = &explain_obs[i];
+
+      if (o->state == EXPLAIN_OBS_NONE)
+         continue;
+      idx = explain_find_def(o->key);
+      if (idx < 0)
+         continue;
+      if (o->state == EXPLAIN_OBS_APPLIED)
+         snprintf(note, sizeof(note),
+                  "This game: set to %s by its per-title preset. Choose a "
+                  "value to override.", explain_value_text(idx, o->value));
+      else
+         snprintf(note, sizeof(note),
+                  "This game's per-title preset (%s) is not applied: %s. "
+                  "Choose it yourself to use it anyway.",
+                  explain_value_text(idx, o->value), o->reason);
+      explain_add(out, &n, idx, note);
+   }
+
+   mask = vjs.riscIdleSkip ? idle_skip_suppressor_mask() : 0;
+   idx  = mask ? explain_find_def("virtualjaguar_risc_idle_skip") : -1;
+   if (idx >= 0)
+   {
+      who[0] = '\0';
+      if (mask & IDLE_SUP_CLOCK)
+      {
+         const char *scale = riscClockScalePct == 50  ? "0.5x"
+                           : riscClockScalePct == 150 ? "1.5x"
+                           : riscClockScalePct == 200 ? "2x" : "non-stock";
+         int c = explain_find_def("virtualjaguar_risc_clock_scale");
+
+         if (c >= 0)
+         {
+            explain_option_name(c, name, sizeof(name));
+            snprintf(note, sizeof(note), "%s %s", name, scale);
+            perf_conflict_append(who, sizeof(who), note);
+         }
+      }
+      if (mask & IDLE_SUP_DRAM)
+         i = explain_find_def("virtualjaguar_dram_timing");
+      else
+         i = -1;
+      if (i >= 0)
+      {
+         explain_option_name(i, name, sizeof(name));
+         perf_conflict_append(who, sizeof(who), name);
+      }
+      if (mask & IDLE_SUP_PIPE)
+         i = explain_find_def("virtualjaguar_gpu_pipeline_timing");
+      else
+         i = -1;
+      if (i >= 0)
+      {
+         explain_option_name(i, name, sizeof(name));
+         perf_conflict_append(who, sizeof(who), name);
+      }
+      if (mask & IDLE_SUP_MEMO)
+         i = explain_find_def("virtualjaguar_blit_memo");
+      else
+         i = -1;
+      if (i >= 0)
+      {
+         explain_option_name(i, name, sizeof(name));
+         perf_conflict_append(who, sizeof(who), name);
+      }
+      if (who[0])
+      {
+         snprintf(note, sizeof(note), "Inactive: suppressed by %s.", who);
+         explain_add(out, &n, idx, note);
+      }
+   }
+   *count = n;
+}
+
+/* Push the current definitions: &options_us untouched when nothing is
+ * amended, else the static amended copy.  Shared with the netlink host
+ * picker rebuild, which also pushes definitions and must not undo these.
+ * The return value is the frontend's, which is "categories enabled", not
+ * "accepted" -- callers wanting more than best-effort must not read it
+ * as success. */
+static bool core_options_push(void)
+{
+   size_t n, i;
+
+   if (explain_cur_n == 0)
+      return environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
+
+   for (n = 0; option_defs_us[n].key; n++)
+      ;
+   memcpy(explain_defs, option_defs_us, (n + 1) * sizeof(explain_defs[0]));
+   for (i = 0; i < (size_t)explain_cur_n; i++)
+   {
+      struct retro_core_option_v2_definition *d =
+         &explain_defs[explain_cur[i].idx];
+      const char *orig = d->info;
+
+      snprintf(explain_info_buf[i], sizeof(explain_info_buf[i]), "%s%s%s",
+               explain_cur[i].note, orig ? " " : "", orig ? orig : "");
+      d->info = explain_info_buf[i];
+      /* A categorized info string would shadow the amended one. */
+      d->info_categorized = NULL;
+   }
+   explain_opts.categories  = options_us.categories;
+   explain_opts.definitions = explain_defs;
+   return environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &explain_opts);
+}
+
+/* Re-push definitions and put the frontend's row visibility back: the
+ * rebuild resets every row to visible (see visibility_force_push). */
+static void explain_repush(void)
+{
+   unsigned version = 0;
+
+   /* Do not send V2 definitions to a frontend that said it cannot take
+    * them.  (core_options_push() itself stays ungated: the netlink picker
+    * has always pushed unconditionally and handles a refusal.) */
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, &version))
+      version = 0;
+   if (version < 2)
+      return;
+   core_options_push();
+   visibility_force_push = 1;
+   update_option_visibility();
+}
+
+static int explain_same(const explain_amend_t *next, int next_n)
+{
+   int i;
+
+   if (next_n != explain_cur_n)
+      return 0;
+   for (i = 0; i < next_n; i++)
+      if (next[i].idx != explain_cur[i].idx
+          || strcmp(next[i].note, explain_cur[i].note))
+         return 0;
+   return 1;
+}
+
+/* OSD notices.  Each latches for the load, so a menu visit or a repeated
+ * check_variables() never repeats it. */
+static void explain_flush_notices(void)
+{
+   int i, idx, ne = 0, nc = 0;
+   const char *title = TitleDBTitleName();
+   char enh[160], compat[160], name[64], piece[96];
+
+   if (!title)
+      title = "This title";
+
+   if (!explain_load_notice_done)
+   {
+      explain_load_notice_done = 1;
+      enh[0] = compat[0] = '\0';
+      for (i = 0; i < explain_obs_count; i++)
+      {
+         const explain_obs_t *o = &explain_obs[i];
+
+         if (o->state != EXPLAIN_OBS_APPLIED)
+            continue;
+         idx = explain_find_def(o->key);
+         if (idx < 0)
+            continue;
+         explain_option_name(idx, name, sizeof(name));
+         snprintf(piece, sizeof(piece), "%s %s", name,
+                  explain_value_text(idx, o->value));
+         if (o->cls == TITLEDB_CLASS_COMPATIBILITY)
+         {
+            perf_conflict_append(compat, sizeof(compat), piece);
+            nc++;
+         }
+         else
+         {
+            perf_conflict_append(enh, sizeof(enh), piece);
+            ne++;
+         }
+      }
+      if (ne && nc)
+         netlink_osd("%s: %s (enhancement preset%s); %s (compatibility "
+                     "preset%s)", title, enh, ne > 1 ? "s" : "", compat,
+                     nc > 1 ? "s" : "");
+      else if (ne)
+         netlink_osd("%s: %s (enhancement preset%s)", title, enh,
+                     ne > 1 ? "s" : "");
+      else if (nc)
+         netlink_osd("%s: %s (compatibility preset%s)", title, compat,
+                     nc > 1 ? "s" : "");
+   }
+
+   if (!explain_suppress_notice_done)
+      for (i = 0; i < explain_obs_count; i++)
+         if (explain_obs[i].state == EXPLAIN_OBS_DROPPED)
+         {
+            explain_suppress_notice_done = 1;
+            netlink_osd("%s: per-title enhancement presets not applied (%s)",
+                        title, explain_obs[i].reason);
+            break;
+         }
+}
+
+/* Called once the load has resolved every option (end of retro_load_game)
+ * and from check_variables() afterwards.  Notices first, then the sublabel
+ * re-push -- which happens only when the amendment SET changed. */
+static void explain_update(void)
+{
+   explain_amend_t next[EXPLAIN_MAX_AMEND];
+   int next_n = 0;
+
+   if (!environ_cb)
+      return;
+   explain_flush_notices();
+   explain_compute(next, &next_n);
+   if (explain_same(next, next_n))
+      return;
+   memcpy(explain_cur, next, sizeof(next[0]) * (size_t)next_n);
+   explain_cur_n  = next_n;
+   explain_pushed = (next_n > 0);
+   explain_repush();
+}
+
+/* Per-load / unload / deinit reset, iOS-no-dlclose safe.
+ *   0 load start: forget observations and notice latches only.  The live
+ *     amendment record is kept so a stale one from a title that was never
+ *     unloaded is diffed away (and restored) at this load's explain_update.
+ *   1 unload: forget everything and put the original definitions back.
+ *   2 deinit: forget everything, push nothing (the core is going away; the
+ *     next retro_set_environment pushes the pristine tables). */
+static void explain_reset(int mode)
+{
+   int restore = (mode == 1 && explain_pushed && environ_cb);
+
+   explain_obs_count            = 0;
+   explain_load_notice_done     = 0;
+   explain_suppress_notice_done = 0;
+   if (mode == 0)
+      return;
+   explain_cur_n  = 0;
+   explain_pushed = 0;
+   if (restore)
+      explain_repush();
 }
 
 /* Enhancement profile (P9, docs/perf-audit-2026-08.md).
@@ -2577,12 +3048,18 @@ static bool get_variable_pertitle(struct retro_variable *var)
 {
    bool ok = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, var) && var->value;
    const char *ovr, *def;
+   int at_default;
+   int noted = 0;  /* an APPLIED/DROPPED observation was recorded (#841) */
 
    if (!pertitle_enabled)
+   {
+      explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
       return ok;
+   }
 
    def = core_option_default(var->key);
    ovr = TitleDBOverride(var->key);
+   at_default = (!ok || (def && !strcmp(var->value, def)));
 
    /* Enhancement profile (P9): when the profile resolves to 'performance',
     * a DB enhancement default is dropped HERE, before the substitution --
@@ -2610,11 +3087,19 @@ static bool get_variable_pertitle(struct retro_variable *var)
                        title ? title : "this title", why);
             enhancement_suppress_logged = 1;
          }
+         /* Only a preset that WOULD have applied (option at default) was
+          * actually dropped; an explicit user value was never in play. */
+         if (at_default)
+         {
+            explain_observe(var->key, EXPLAIN_OBS_DROPPED, ovr,
+                            TITLEDB_CLASS_ENHANCEMENT, why);
+            noted = 1;
+         }
          ovr = NULL;
       }
    }
 
-   if (ovr && (!ok || (def && !strcmp(var->value, def))))
+   if (ovr && at_default)
    {
       if (TitleDBUnsafeValue(var->key, ovr, def))
       {
@@ -2623,11 +3108,22 @@ static bool get_variable_pertitle(struct retro_variable *var)
                     "refusing the per-title default, staying at %s\n",
                     TitleDBTitleName(), var->key, ovr,
                     def ? def : "(unset)");
+         explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
          return ok;
       }
       LOG_INF("[titledb] %s: %s=%s (option at default)\n",
               TitleDBTitleName(), var->key, ovr);
       var->value = ovr;
+      /* A preset equal to the registered default changes nothing the
+       * player could see (a real frontend reports the default for an
+       * untouched option, so e.g. an idle-skip row of "enabled" is a
+       * no-op there): keep the log line above, but neither notice nor
+       * sublabel should claim a change. */
+      if (def && !strcmp(ovr, def))
+         explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
+      else
+         explain_observe(var->key, EXPLAIN_OBS_APPLIED, ovr,
+                         TitleDBOverrideClass(var->key), NULL);
       /* Arms the enhancement-profile 'auto' watch: a session where no DB
        * enhancement default applied has nothing to demote. */
       if (enhancement_profile_governs(var->key)
@@ -2635,6 +3131,9 @@ static bool get_variable_pertitle(struct retro_variable *var)
          titledb_enhancement_applied = 1;
       return true;
    }
+
+   if (!noted)
+      explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
 
    if (ok && TitleDBUnsafeValue(var->key, var->value, def)
        && !titledb_negative_warn_seen(var->key))
@@ -3560,6 +4059,14 @@ static void check_variables(void)
                                        + 0.5));
 
    update_option_visibility();
+
+   /* Option explanations (#841): re-push the sublabels only when this
+    * option change altered the amendment set.  Not on the load path, which
+    * calls it once at the end when blit-memo is resolved (see
+    * perf_warn_idle_skip_suppressed above), and never from the
+    * update-display callback. */
+   if (content_loaded)
+      explain_update();
 }
 
 /* Enhancement profile (P9) runtime demotion: the 'auto' watch measured a
@@ -6128,6 +6635,8 @@ bool retro_load_game(const struct retro_game_info *info)
     * before check_variables() and already consults the profile. */
    enhancement_profile_reset();
    enhancement_profile_read();
+   /* Option explanations (#841): this load observes its own presets. */
+   explain_reset(0);
 
    /* Enhancement-hook gate (issue #370), latched HERE and nowhere else.
     * Read raw for the same reason the gate above is: otherwise a DB row
@@ -6603,6 +7112,10 @@ bool retro_load_game(const struct retro_game_info *info)
    no_game_active = (info == NULL);
    update_option_visibility();
 
+   /* Every option is resolved (and blit-memo can finally tell cart from
+    * CD): tell the player which settings the core chose for them (#841). */
+   explain_update();
+
    /* Memory Track NVM BIOS module: on hardware the CD BIOS boot installs
     * it in RAM before the game runs; do the same after the boot strategy
     * has set RAM up. */
@@ -6713,6 +7226,9 @@ void retro_unload_game(void)
     * are title-scoped like everything above -- the next load re-evaluates
     * from scratch. */
    enhancement_profile_reset();
+   /* Option explanations (#841): forget this title's notes and put the
+    * original option definitions back in the frontend. */
+   explain_reset(1);
    /* Widescreen (#530) is title-scoped like everything above and was
     * missed when it landed (#605).  iOS never dlcloses the core, so
     * leaving these set lets a 16:9 title hand its aspect ratio to the
@@ -7186,6 +7702,9 @@ void retro_deinit(void)
     * itself is re-read on the next load. */
    enhancement_profile_reset();
    enhancement_profile_opt = 0;
+   /* Option explanations (#841): static reset only -- option_defs_us is
+    * never mutated, so nothing needs restoring in a dying core. */
+   explain_reset(2);
    /* Widescreen (#530/#605): same per-load re-arm as above. */
    widescreen_reset();
 
