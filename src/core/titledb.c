@@ -475,18 +475,22 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Towers II (retail) — 2x: census row "Towers II" 7200f, shaded 0/f
-    * (<10), QUALIFY16 32.6/f (>=5), scene: gameplay (dungeon).
-    * CRC: Towers II (0x83A3FB5D, FF_ROM|FF_VERIFIED) from
-    * src/core/filedb.c line 73. (Excluded: 0x3241AB6A "Towers II" is
-    * FF_ALPINE with no FF_VERIFIED — not the plain retail row.) */
-   {
-      0x83A3FB5D, "Towers II",
-      {
-         { "virtualjaguar_internal_resolution", "2x" },
-         { NULL, NULL }
-      }
-   },
+   /* Towers II (0x83A3FB5D) -- NO ROW, deliberately (#809).  This used to
+    * carry { internal_resolution, 2x } on the census proxy (QUALIFY16
+    * 32.6/f >= 5).  Pixel A/B 2026-10-10, test/tools/hires_shot, Accurate
+    * blitter, per-title defaults off, first-person dungeon: a 2x sweep of
+    * EVERY frame 0..12600 (menus, navigation, d-pad movement; 985.8M
+    * blocks) found 0 non-replicated 2x2 blocks; 1x vs 2x PPMs at frames
+    * 12000 / 13500 / 14800 differ from a 2x2 box-upscale of 1x in 0 of
+    * 78,240 blocks.  Its walks magnify (constant HSCALE $20, VSCALE $22 =
+    * 1.0625x), so the half-step sample re-reads the same texel --
+    * docs/hires-stage0-census.md 9.6.  2x costs ~+16% user CPU there
+    * (142.3 s -> 165.2 s over 14800 frames, one concurrent pair, loaded
+    * host) for no pixel gain.  Do not re-add it from the QUALIFY16 proxy
+    * alone.  Caveat: the file measured is the corpus dump CAF33BD6 (crc32
+    * of the file), NOT this row's 0x83A3FB5D, which is not in the local
+    * corpus; same game/engine is inferred.  filedb.c line 46: 0x3241AB6A
+    * "Towers II" is FF_ALPINE and never had a row. */
 
    /* ------------------------------------------------------------------
     * RISC idle-loop fast-forward rows (issue #707).

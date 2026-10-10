@@ -90,7 +90,7 @@ RetroArch log always tells you exactly what was applied.
 
 ### Titles that configure themselves
 
-Twenty-one entries as of v3.5.0. All of them set internal resolution, true
+Twenty-one entries as of v3.5.0 (Towers II has since been removed, #809). All of them set internal resolution, true
 color, or both — nothing else.
 
 | Title | Internal Resolution | True Color |
@@ -106,7 +106,6 @@ color, or both — nothing else.
 | Missile Command 3D | 2x | — |
 | Skyhammer | 2x | on |
 | Tempest 2000 | — | on |
-| Towers II | 2x | — |
 
 Compatibility presets:
 
