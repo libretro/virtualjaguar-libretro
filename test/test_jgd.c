@@ -39,6 +39,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define MAX_RESULTS 64
 
@@ -54,6 +55,23 @@
 #define R_SETPAGE   0x10044   /* marker after ROMSetPage(2,3) */
 #define R_WREN      0x10048   /* read-back of write-enabled cart write */
 #define R_WRDIS     0x1004C   /* read-back after write disable (must miss) */
+/* SD-card file API (#783), answered from a temp folder set after load. */
+#define R_SD_CARDIN 0x10050   /* GD_CardIn() */
+#define R_SD_OPEN   0x10054   /* GD_FileOpen("/hello.bin", READ) handle */
+#define R_SD_SIZE   0x10058   /* GD_FileSize(handle) -- only the host knows */
+#define R_SD_READ   0x1005C   /* GD_FileRead(handle, buf, 7) result */
+#define R_SD_TELL   0x10060   /* GD_FileTell after the read */
+#define R_SD_WOPEN  0x10064   /* GD_FileOpen("/out.bin", WRITE|CREATE_ALWAYS) */
+#define R_SD_WRITE  0x10068   /* GD_FileWrite(handle, "WXYZ", 4) result */
+#define R_SD_ESC    0x1006C   /* GD_FileOpen("../../etc/passwd") must fail */
+#define R_SD_BUF    0x10070   /* 8-byte read buffer */
+
+/* Strings/data placed in the probe ROM (bank 0, page 0 at $800000). */
+#define ROM_SD_HELLO  0x1000u
+#define ROM_SD_OUT    0x1020u
+#define ROM_SD_ESC    0x1040u
+#define ROM_SD_DATA   0x1060u
+#define SD_HELLO_TEXT "JAGUAR!"     /* 7 bytes, the host file's content */
 
 #define MAGIC_DONE     0xC0DE600Du
 #define MAGIC_FAILED   0xDEADDEADu
@@ -61,7 +79,7 @@
 #define ERR_VERSION    0xDEAD0002u
 
 /* Blob served by jaggd.c (kept in sync with src/core/jaggd.c). */
-#define EXPECT_BLOB_SIZE   208
+#define EXPECT_BLOB_SIZE   338
 #define EXPECT_BLOB_HDR    0x0100001Au  /* version $0100, 26 functions */
 #define EXPECT_HWVER       0x03000102u  /* FW $03.00 (>= $01.11), ASIC $01.02 */
 #define EXPECT_BIOSVER     0x00000100u
@@ -287,6 +305,12 @@ static void build_probe_rom(uint8_t *rom, uint32_t size)
     rom[0xFFFFC] = 0xAA; rom[0xFFFFD] = 0x55;
     rom[0xFFFFE] = 0xA0; rom[0xFFFFF] = 0xA0;
 
+    /* SD file API strings + write payload (#783). */
+    memcpy(rom + ROM_SD_HELLO, "/hello.bin", sizeof("/hello.bin"));
+    memcpy(rom + ROM_SD_OUT, "/out.bin", sizeof("/out.bin"));
+    memcpy(rom + ROM_SD_ESC, "../../etc/passwd", sizeof("../../etc/passwd"));
+    memcpy(rom + ROM_SD_DATA, "WXYZ", 4);
+
     /* Cart header: universal marker + run address (patched to main below) */
     rom[0x400] = 0x04; rom[0x401] = 0x04; rom[0x402] = 0x04; rom[0x403] = 0x04;
 
@@ -446,6 +470,45 @@ static void build_probe_rom(uint8_t *rom, uint32_t size)
     e_andil_d0(0xFFFF);
     e_movel_dn_abs(0, R_WRDIS);
 
+    /* SD-card file API (#783), through the blob's own slots.  a6 is still
+     * the blob base (callee-saved).  The handle round-trips through RAM. */
+    e_jsr_a6(9 * 4);                                   /* GD_CardIn */
+    e_movel_dn_abs(0, R_SD_CARDIN);
+    e_movea_imm(0, 0x800000 + ROM_SD_HELLO);
+    e_moveq(0, 1);                                     /* READ */
+    e_jsr_a6(10 * 4);                                  /* GD_FileOpen */
+    e_movel_dn_abs(0, R_SD_OPEN);
+    e_movel_abs_dn(R_SD_OPEN, 0);
+    e_jsr_a6(16 * 4);                                  /* GD_FileSize */
+    e_movel_dn_abs(0, R_SD_SIZE);
+    e_movel_abs_dn(R_SD_OPEN, 0);                      /* flags 0 = CPU */
+    e_movea_imm(0, R_SD_BUF);
+    e_movel_imm_dn(1, 7);
+    e_jsr_a6(13 * 4);                                  /* GD_FileRead */
+    e_movel_dn_abs(0, R_SD_READ);
+    e_movel_abs_dn(R_SD_OPEN, 0);
+    e_jsr_a6(15 * 4);                                  /* GD_FileTell */
+    e_movel_dn_abs(0, R_SD_TELL);
+    e_movel_abs_dn(R_SD_OPEN, 0);
+    e_jsr_a6(11 * 4);                                  /* GD_FileClose */
+
+    e_movea_imm(0, 0x800000 + ROM_SD_OUT);
+    e_moveq(0, 0x0A);                                  /* WRITE|CREATE_ALWAYS */
+    e_jsr_a6(10 * 4);
+    e_movel_dn_abs(0, R_SD_WOPEN);
+    e_movel_abs_dn(R_SD_WOPEN, 0);
+    e_movea_imm(0, 0x800000 + ROM_SD_DATA);
+    e_moveq(1, 4);
+    e_jsr_a6(14 * 4);                                  /* GD_FileWrite */
+    e_movel_dn_abs(0, R_SD_WRITE);
+    e_movel_abs_dn(R_SD_WOPEN, 0);
+    e_jsr_a6(11 * 4);
+
+    e_movea_imm(0, 0x800000 + ROM_SD_ESC);
+    e_moveq(0, 1);
+    e_jsr_a6(10 * 4);                                  /* sandbox escape */
+    e_movel_dn_abs(0, R_SD_ESC);
+
     e_movel_imm_abs(MAGIC_DONE, R_FLAG);
     e_bra_self();
 
@@ -482,10 +545,16 @@ static int write_rom_file(const char *path, const uint8_t *data, uint32_t size)
 
 /* One core lifecycle: load the image with the given option value and run.
  * Returns the harness config through *cfg (caller shuts it down). */
+/* SD card root for the probe's file calls (#783); set after load so it
+ * wins over whatever the harness's save/system directory resolved to. */
+static char g_sd_root[512];
+
 static int run_phase(harness_config *cfg, int argc, char **argv,
                      const char *rom_path, const char *jgd_value,
                      unsigned frames)
 {
+    void (*set_root)(const char *);
+
     harness_config fresh = HARNESS_CONFIG_DEFAULT;
     *cfg = fresh;
     cfg->frames = frames;
@@ -497,6 +566,9 @@ static int run_phase(harness_config *cfg, int argc, char **argv,
     harness_set_option(cfg, "virtualjaguar_jgd", jgd_value);
     if (!harness_load_rom(cfg))
         return 0;
+    set_root = (void (*)(const char *))harness_dlsym(cfg, "JGDFSSetRoot");
+    if (set_root && g_sd_root[0])
+        set_root(g_sd_root);
     harness_run(cfg);
     return 1;
 }
@@ -519,6 +591,16 @@ int main(int argc, char **argv)
              tmpdir, (long)getpid());
     snprintf(rom2_path, sizeof(rom2_path), "%s/vj_jgd_probe2_%ld.j64",
              tmpdir, (long)getpid());
+
+    /* SD card folder with one known file (#783). */
+    snprintf(g_sd_root, sizeof(g_sd_root), "%s/vj_jgd_sd_%ld",
+             tmpdir, (long)getpid());
+    mkdir(g_sd_root, 0700);
+    {
+        char p[600];
+        snprintf(p, sizeof(p), "%s/HELLO.BIN", g_sd_root);  /* FAT case */
+        write_rom_file(p, (const uint8_t *)SD_HELLO_TEXT, 7);
+    }
 
     rom16 = (uint8_t *)malloc(16u << 20);
     rom2  = (uint8_t *)malloc(2u << 20);
@@ -650,6 +732,41 @@ int main(int argc, char **argv)
           page_ptr[3], page_ptr[4], page_ptr[5]);
     check(*wren_ptr == 0, "write_enable_left_clear",
           "jgdWriteEnabled=%u after the probe disabled it", *wren_ptr);
+
+    /* SD file API (#783).  Size 7 and the buffer contents are values only
+     * the host could have produced: the old stubs returned -1 for all. */
+    check(ram32(ram, R_SD_CARDIN) == 1u, "sd_card_in",
+          "GD_CardIn() = $%08X (expect 1)", ram32(ram, R_SD_CARDIN));
+    check(ram32(ram, R_SD_OPEN) < 8u, "sd_open_case_insensitive",
+          "GD_FileOpen(\"/hello.bin\") on host HELLO.BIN = $%08X",
+          ram32(ram, R_SD_OPEN));
+    check(ram32(ram, R_SD_SIZE) == 7u, "sd_file_size",
+          "GD_FileSize = $%08X (expect 7)", ram32(ram, R_SD_SIZE));
+    check(ram32(ram, R_SD_READ) == 0u
+          && memcmp(ram + R_SD_BUF, SD_HELLO_TEXT, 7) == 0, "sd_file_read",
+          "GD_FileRead = $%08X, buffer \"%.7s\"",
+          ram32(ram, R_SD_READ), (const char *)(ram + R_SD_BUF));
+    check(ram32(ram, R_SD_TELL) == 7u, "sd_file_tell",
+          "GD_FileTell after reading 7 = $%08X", ram32(ram, R_SD_TELL));
+    {
+        char p[600];
+        char got[8] = { 0 };
+        FILE *f;
+        snprintf(p, sizeof(p), "%s/out.bin", g_sd_root);
+        f = fopen(p, "rb");
+        if (f)
+        {
+            fread(got, 1, 7, f);
+            fclose(f);
+        }
+        check(ram32(ram, R_SD_WOPEN) < 8u && ram32(ram, R_SD_WRITE) == 0u
+              && strcmp(got, "WXYZ") == 0, "sd_file_write",
+              "open $%08X write $%08X, host out.bin = \"%s\" (expect WXYZ)",
+              ram32(ram, R_SD_WOPEN), ram32(ram, R_SD_WRITE), got);
+    }
+    check(ram32(ram, R_SD_ESC) == 0xFFFFFFFFu, "sd_sandbox_escape_refused",
+          "GD_FileOpen(\"../../etc/passwd\") = $%08X (expect -1)",
+          ram32(ram, R_SD_ESC));
 
     /* ---- Savestate round-trip (still phase B's session) ---- */
     {
@@ -805,6 +922,14 @@ int main(int argc, char **argv)
 cleanup_files:
     remove(rom16_path);
     remove(rom2_path);
+    {
+        char p[600];
+        snprintf(p, sizeof(p), "%s/HELLO.BIN", g_sd_root);
+        remove(p);
+        snprintf(p, sizeof(p), "%s/out.bin", g_sd_root);
+        remove(p);
+        rmdir(g_sd_root);
+    }
     free(rom16);
     free(rom2);
     return rc;

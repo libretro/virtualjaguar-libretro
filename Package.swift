@@ -45,6 +45,7 @@ let coreSources: [String] = [
     "src/core/file.c",
     "src/core/filedb.c",
     "src/core/jaggd.c",
+    "src/core/jaggd_fs.c",
     "src/core/jaguar.c",
     "src/core/memtrack.c",
     "src/core/nvmbios.c",

@@ -58,6 +58,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "vjag_memory.h"
 #include "state.h"
 #include "titledb.h"
+#include "jaggd_fs.h"
 #include "titlehook.h"
 #include "gdbstub.h"
 #include "log.h"
@@ -3324,6 +3325,22 @@ static void check_variables(void)
    else
       JGDSetMode(JGD_MODE_AUTO);
 
+   /* GameDrive SD card (#783): a host folder acting as the card.  Access
+    * can change live -- turning it off closes every open handle. */
+   var.key = "virtualjaguar_jgd_sd";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (strcmp(var.value, "disabled") == 0)
+         JGDFSSetAccess(JGDFS_ACCESS_OFF);
+      else if (strcmp(var.value, "readonly") == 0)
+         JGDFSSetAccess(JGDFS_ACCESS_READONLY);
+      else
+         JGDFSSetAccess(JGDFS_ACCESS_READWRITE);
+   }
+   else
+      JGDFSSetAccess(JGDFS_ACCESS_READWRITE);
+
    var.key = "virtualjaguar_cd_bios_type";
    var.value = NULL;
 
@@ -4687,6 +4704,12 @@ bool retro_serialize(void *data, size_t size)
       return false;
    buf += BlitterHungStateSave(buf);
 
+   /* v17 (#783): GameDrive SD-card handles ("JGF1") -- card-relative path,
+    * access and position per open file/dir.  STRICTLY after BLH1. */
+   if ((size_t)(buf - start) + JGDFSStateSize() > STATE_SIZE)
+      return false;
+   buf += JGDFSStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4946,6 +4969,13 @@ bool retro_unserialize(const void *data, size_t size)
    }
    else
       BlitterHungStateReset();   /* older states: not hung */
+
+   /* v17 (#783): GameDrive SD handles.  Older states carry none, so every
+    * handle closes (a missing magic does the same). */
+   if (version >= STATE_VERSION_JGD_SD)
+      buf += JGDFSStateLoad(buf);
+   else
+      JGDFSCloseAll();
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -6055,6 +6085,30 @@ bool retro_load_game(const struct retro_game_info *info)
       TexReplaceContentLoaded();
       if (texReplaceEnabled)
          ShadowFBSetEnabled(1);
+   }
+
+   /* GameDrive SD card root (#783): <save dir>/jaggd-sd, falling back to
+    * the system directory.  Created lazily on first use.  A frontend that
+    * bypasses libretro.c (Provenance) calls JGDFSSetRoot itself. */
+   {
+      const char *sd_base = NULL;
+      char sd_root[1024];
+      if (!(environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &sd_base)
+            && sd_base && sd_base[0]))
+      {
+         sd_base = NULL;
+         if (!(environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sd_base)
+               && sd_base && sd_base[0]))
+            sd_base = NULL;
+      }
+      if (sd_base && strlen(sd_base) + sizeof("/jaggd-sd") < sizeof(sd_root))
+      {
+         strcpy(sd_root, sd_base);
+         strcat(sd_root, "/jaggd-sd");
+         JGDFSSetRoot(sd_root);
+      }
+      else
+         JGDFSSetRoot(NULL);
    }
 
    /* Raw gate read (never through get_variable_pertitle()) so the hires

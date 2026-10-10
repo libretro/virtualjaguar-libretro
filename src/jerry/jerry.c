@@ -680,7 +680,7 @@ void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
    /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
    else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
    {
-      JGDControlWriteByte(offset, data);
+      JGDControlWriteByte(offset, data, who);
       return;
    }
    /* GPIO5 paddle ADC (#505) -- see JERRYReadByte. */
@@ -787,7 +787,7 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
    else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
    {
-      JGDControlWriteWord(offset, data);
+      JGDControlWriteWord(offset, data, who);
       return;
    }
    /* Paddle-interface channel select (see JERRYReadWord and paddle.h).
