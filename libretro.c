@@ -6101,12 +6101,10 @@ bool retro_load_game(const struct retro_game_info *info)
                && sd_base && sd_base[0]))
             sd_base = NULL;
       }
-      if (sd_base && strlen(sd_base) + sizeof("/jaggd-sd") < sizeof(sd_root))
-      {
-         strcpy(sd_root, sd_base);
-         strcat(sd_root, "/jaggd-sd");
+      if (sd_base
+          && strlcpy(sd_root, sd_base, sizeof(sd_root)) < sizeof(sd_root)
+          && strlcat(sd_root, "/jaggd-sd", sizeof(sd_root)) < sizeof(sd_root))
          JGDFSSetRoot(sd_root);
-      }
       else
          JGDFSSetRoot(NULL);
    }

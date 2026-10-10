@@ -2863,7 +2863,10 @@ JAGGD_FS_TEST_LC = libretro-common/streams/file_stream.c \
 	libretro-common/compat/compat_posix_string.c
 
 test/test_jaggd_fs: test/test_jaggd_fs.c src/core/jaggd_fs.c src/core/jaggd_fs.h
-	$(CC) -O2 -std=c99 $(INCFLAGS) -D__LIBRETRO__ \
+	@# gnu99, not c99: under strict ISO mode glibc hides the POSIX calls
+	@# (lstat, strdup, fileno, ftruncate) that jaggd_fs.c and the linked
+	@# libretro-common sources use, and Clang rejects the implicit decls.
+	$(CC) -O2 -std=gnu99 $(INCFLAGS) -D__LIBRETRO__ \
 		-o $@ test/test_jaggd_fs.c src/core/jaggd_fs.c $(JAGGD_FS_TEST_LC)
 
 test/test_jgd: test/test_jgd.c \
