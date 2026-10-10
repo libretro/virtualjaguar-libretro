@@ -38,6 +38,55 @@ PRs targeting `master` directly trigger a friendly comment from `.github/workflo
   test/acid/BASELINE.txt` reporting `Regressions: 0`. `make -C test/acid test`
   exits non-zero by design (it returns the FAIL count), so its exit status is
   not the gate.
+- **Boot matrices: regenerate, diff, commit (#749).** The committed `docs/cart-boot-matrix.md` and
+  `docs/cd-boot-matrix.md` are the release compatibility statement, and the never-backward rule
+  (no row may move backward through the stage taxonomy or gain a crash-watchdog signature) is
+  enforced here, by hand, on the **corpus machine**. It cannot run in GitHub CI: the private ROM
+  and disc corpus is not available there. (The cart matrix went 492 commits stale across five
+  releases before this step existed.) From a checkout of the release branch with
+  `test/roms/private` populated:
+
+  ```
+  DEVELOPER_DIR=/Library/Developer/CommandLineTools make -j"$(getconf _NPROCESSORS_ONLN)" TEST_EXPORTS=1
+  DEVELOPER_DIR=/Library/Developer/CommandLineTools cc -O2 -Wall -std=c99 -I. -I./src \
+      -I./libretro-common/include -o test/tools/cart_boot_probe \
+      test/tools/cart_boot_probe.c test/harness/harness.c -ldl -lm
+  bash test/tools/cart_boot_matrix.sh     # -> docs/cart-boot-matrix.md (CART_MATRIX_OUT)
+  bash test/tools/cd_boot_matrix.sh       # -> docs/cd-boot-matrix.md   (CD_MATRIX_OUT)
+  ```
+
+  Both sweeps are long (the CD one is chunkable with `CD_MATRIX_MAX_RUNS`; the cart one with
+  `CART_MATRIX_MAX_RUNS`) and resume: only rows stamped by the *same* build are skipped, so a
+  stale row can never pass as fresh. Do not set `CART_MATRIX_PROBE_ARGS` for the committed
+  matrix: the script refuses it without an explicit `CART_MATRIX_OUT`, and the committed
+  baseline is the default (Fast-blitter) sweep. A shipped-default sweep
+  (`CART_MATRIX_PROBE_ARGS="--option virtualjaguar_usefastblitter=disabled"` plus its own
+  `CART_MATRIX_OUT=/some/other.md`) catches accurate-only hangs (#800), but there is no
+  committed baseline for it yet, so read that output by hand until one exists.
+
+  Then diff each regenerated file against the previous tag's copy:
+
+  ```
+  prev=vX.Y.Z-1   # the previous release tag
+  d="$(mktemp -d)"
+  git show "$prev:docs/cart-boot-matrix.md" > "$d/cart.md"
+  git show "$prev:docs/cd-boot-matrix.md"   > "$d/cd.md"
+  python3 -I test/tools/matrix_diff.py "$d/cart.md" docs/cart-boot-matrix.md
+  python3 -I test/tools/matrix_diff.py "$d/cd.md"   docs/cd-boot-matrix.md
+  ```
+
+  Exit 0 = nothing moved backward, 1 = at least one row did, 2 = a file did not parse (or the
+  two files are different kinds). Add `--json` for a machine-readable report.
+  - **A backward row blocks the tag** until it has a ticket and an explicit deferral (a comment
+    on the release PR naming the row, the ticket and who agreed to ship with it). A new
+    crash-watchdog signature on an unchanged stage counts as backward. Do not "fix" the diff by
+    editing the table or the tool's rankings; fix the emulator or defer the row.
+  - Read the **still-asymmetric** list too (cart: HLE stage != BIOS stage; CD: the hle and bios
+    rows differ). It never blocks, but a row that is *new* there deserves a ticket.
+  - The **improved** list is release-notes material for "Game compatibility" in
+    `docs/RELEASE_NOTES_vX.Y.Z.md`. Also account for any **added / removed** rows.
+  - Commit the regenerated docs on the release branch (`docs: regenerate cart + CD matrices for
+    vX.Y.Z`) so they ship with the tag.
 - CI on the release PR is green except `claude-review` (non-blocking; AI review service refuses diffs > 20k lines).
 - `docs/WHATSNEW` v`X.Y.Z` section is up-to-date.
 - `docs/RELEASE_NOTES_vX.Y.Z.md` exists. (See below for how to generate one.)

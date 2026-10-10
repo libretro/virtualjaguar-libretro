@@ -9,6 +9,14 @@ in-game is not distinguished headlessly.  A "black video" note is
 undetermined evidence (headless read-path caveat), not a verdict.
 Rows are stamped with the core build that produced them.
 
+**Never backward.** Every release candidate's regenerated matrix is diffed
+against the previous tag's with `test/tools/matrix_diff.py OLD.md NEW.md`.
+A row that moves backward (`LOAD_FAIL` < `?` < `GAME_CODE`, per boot mode), or
+whose notes gain a crash-watchdog signature (`gpu_wedge`, `dsp_wedge`,
+`inframe_hang`, `video_stall`, `gpu_pc_escape`, `dsp_pc_escape`), blocks the
+tag until it has a ticket and an explicit deferral.  Checklist:
+`docs/release-process.md`.
+
 | Title | HLE | HLE notes | Real BIOS | BIOS notes |
 |---|---|---|---|---|
 | Aircars (USA) (Beta) (1994-11-14) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->

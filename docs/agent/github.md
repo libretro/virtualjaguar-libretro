@@ -90,6 +90,9 @@ Cutting a release:
    highlights, bug fixes, perf, testing, known issues, stats (`git diff --shortstat
    vPREV..HEAD`), downloads, maintainers.
 4. Verify: `make clean && make -j…` clean, `make test` passes, `strings *.dylib | grep vX.Y.Z`.
+   Also regenerate both boot matrices on the corpus machine and gate the tag on
+   `python3 -I test/tools/matrix_diff.py <prev-tag copy> <regenerated>` (exit 1 = backward row =
+   blocked; not runnable in CI) — `docs/release-process.md` §1.
 5. Commit: `chore: bump version to vX.Y.Z, add release notes`.
 6. Push + PR: `git push -u libretro release/vX.Y.Z` then `gh pr create --base master`.
 7. After merge to master: tag `vX.Y.Z` and push — `release.yml` builds 16 platforms + publishes.

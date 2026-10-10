@@ -322,6 +322,13 @@ DONE="$(ls "$ROWDIR" 2>/dev/null | wc -l | tr -d ' ')"
     printf 'in-game is not distinguished headlessly.  A "black video" note is\n'
     printf 'undetermined evidence (headless read-path caveat), not a verdict.\n'
     printf 'Rows are stamped with the core build that produced them.\n\n'
+    printf '**Never backward.** Every release candidate'"'"'s regenerated matrix is diffed\n'
+    printf 'against the previous tag'"'"'s with `test/tools/matrix_diff.py OLD.md NEW.md`.\n'
+    printf 'A row that moves backward (`LOAD_FAIL` < `?` < `GAME_CODE`, per boot mode), or\n'
+    printf 'whose notes gain a crash-watchdog signature (`gpu_wedge`, `dsp_wedge`,\n'
+    printf '`inframe_hang`, `video_stall`, `gpu_pc_escape`, `dsp_pc_escape`), blocks the\n'
+    printf 'tag until it has a ticket and an explicit deferral.  Checklist:\n'
+    printf '`docs/release-process.md`.\n\n'
     if [ -n "$PROBE_ARGS" ]; then
         printf 'Probe arguments for every run: `%s`\n\n' "$PROBE_ARGS"
     fi
