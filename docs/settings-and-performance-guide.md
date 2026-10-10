@@ -57,7 +57,11 @@ Everything below is about those.
 
 **Per-Title Enhancement Defaults** (`virtualjaguar_pertitle_defaults`, default
 **enabled**) lets the core recognize a cartridge by its CRC32 and pre-set
-options that were verified to look better on that specific game.
+options for that specific game.
+
+Presets come in two kinds:
+- **Enhancement presets** were verified to look better or run faster on that game.
+- **Compatibility presets** are what a game needs in order to work correctly. They stand in for an emulator fix that hasn't landed, and each one names the ticket for that fix.
 
 Three rules make this safe:
 
@@ -65,8 +69,12 @@ Three rules make this safe:
    left at its shipped default. Change the option yourself — to anything,
    including back to the default value by hand — and the preset stops touching
    it.
-2. **Everything in the table is presentation-only** (see §3). No preset changes
-   emulated state, clock speed, or timing.
+2. **Enhancement presets are presentation-only** (see §3); they never change
+   emulated state, clock speed, or timing. **Compatibility presets may**, because
+   that is what the game needs: today only White Men Can't Jump, which turns on
+   blitter timing. The Enhancement Profile never switches a compatibility preset
+   off. Turning off Per-Title Enhancement Defaults does, and the game may then
+   need that setting by hand.
 3. **A known-bad value is refused, and a warning is logged.** The database also
    carries a negative list. If a preset would set something known to break that
    title, the core declines and logs it. If *you* set that value explicitly, the
@@ -99,6 +107,12 @@ color, or both — nothing else.
 | Skyhammer | 2x | on |
 | Tempest 2000 | — | on |
 | Towers II | 2x | — |
+
+Compatibility presets:
+
+| Title | Setting | Stands in for |
+|---|---|---|
+| White Men Can't Jump | Blitter Timing on | blitter timing on by default (#408) |
 
 Note what is **not** in the table: no preset overclocks anything, and no preset
 enables blit memoization. If you see a game running faster or slower than

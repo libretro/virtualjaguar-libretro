@@ -29,7 +29,26 @@ exactly what this feature must not do.
 | Frame pacing / VRR friendliness | Not a hook — host output, nothing written to emulated memory. Core options. |
 | Widescreen | Not a hook as things stand. The Jaguar has no viewport-scaling stage a patch can flip; a wider picture needs the *game* to render a wider viewport. If research finds a title with a settable viewport width in ROM, that specific title becomes a hook. |
 | A new controller type (e.g. a rotary) | Not a hook — an input device the core must implement. |
+| "Game X only works with real BIOS / a timing option on" | Not a hook — a **compatibility-class** `pairs[]` row, and only after the real fix has been ruled out or cannot be dated. See *Compatibility rows* below. |
 | "Game X runs at the wrong speed / input repeats" | **Not a hook.** Those are emulator timing bugs. Papering over our own inaccuracy with a per-game patch is the failure mode this feature must never become; such a proposal is re-filed against the accuracy track (#319 / #408). |
+
+## Compatibility rows (issue #748)
+
+`pairs[]` rows come in two classes, named in `src/core/titledb.h`:
+
+| Class | What it sets | Enhancement profile | Citation |
+|---|---|---|---|
+| **Enhancement** (default) | Visual or performance levers: internal resolution, true color, idle skip | The profile may drop it on slow hosts | Census or A/B numbers in the row comment |
+| **Compatibility** | What the title needs to *work*: boot mode, a timing model, a controller type | **Never** governed by the profile | Mandatory `cite` field: the measurement **and** the mechanism ticket as `#N`. `test_titledb` fails the table without one. |
+
+The rules for a compatibility row, from the tier-3 rule of #746:
+
+1. **The mechanism comes first.** Fix *why* the default fails: HLE parity with the boot ROM, or the timing model. A row is admissible only when that fix is impossible or cannot be dated.
+2. **Cite it.** Record the probe, the numbers and the date. Name the ticket the row stands in for, such as `#401` for a render-pacing row.
+3. **Retire it.** When the cited mechanism lands, the row is deleted, not kept. Search `titledb.c` for the ticket number when closing one.
+4. **The user still wins.** Like every pair, it only fills in an option left at its registered default.
+
+The first one is White Men Can't Jump's `blitter_timing=enabled` (#736, PR #827). It stands in for blitter timing being on by default for every title (#408).
 
 ## Negative / known-bad entries (issue #464)
 
@@ -234,6 +253,8 @@ A row is admissible only when all of the following hold:
 | `test/tools/test_hook_gate` | End-to-end through the real core on `yarc.j64`: gate on patches and logs; gate off (the default) does not; a deliberate `expect[]` mismatch refuses and logs; the patch survives `retro_reset()` and a state round trip. |
 | `test/tools/hook_identity_ab.sh` | Stock-path identity: per-frame framebuffer-hash CSVs are byte-identical with the gate at its default, explicitly disabled, and explicitly enabled — plus a base-vs-base determinism control, because a nondeterministic run makes every other comparison meaningless. |
 | `test/test_titledb` (negative-entry section) | `TitleDBUnsafeValue()` lookup: no content, unknown content, exact-value match, wildcard (`"*"`) match against a caller-supplied default, the test-only override, and the shipped-table integrity checks (`negative[]` termination, key/value non-empty, no key=value shared with `pairs[]`, no duplicate within a row). |
+| `test/test_titledb` (class section) | Every compatibility pair in the shipped table carries a `cite` naming a `#N` ticket; class values are known; `TitleDBOverrideClass()` answers from the same pair as `TitleDBOverride()`. |
+| `test/tools/test_pertitle_db --case 13/14` | End-to-end on AvP with a synthetic compatibility pair: the performance profile does **not** drop it (13); an explicit user value still beats it (14). |
 | `test/tools/test_pertitle_db --case 7/8` | End-to-end through the real core on AvP: a negative row on `virtualjaguar_true_color=enabled` (the value AvP's own `pairs[]` row would substitute at default) is **refused** with a logged warning when it would apply as a default (case 7), and **honoured** with a logged warning when the user sets it explicitly (case 8). Installed programmatically via `TitleDBSetNegativeForTest()`, same "no canary row in the shipped table" reasoning as the hooks gate test. |
 
 All four run on repo-resident public content, so all four gate CI — and

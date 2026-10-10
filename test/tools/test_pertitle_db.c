@@ -82,6 +82,20 @@
  *      shadowHiresN == 1 mid-session, log the [perf] demotion warning
  *      naming the measured overrun, and keep running.
  *
+ * Compatibility-class cases (issue #748), both via a SYNTHETIC row
+ * (TitleDBSetPairsForTest) so the shipped table is not under test:
+ *
+ *  13  AvP, profile=performance, synthetic COMPATIBILITY pair
+ *      internal_resolution=2x -- the profile governs enhancement pairs
+ *      only, so a compatibility pair on a profile-governed key still
+ *      applies: shadowHiresN == 2, no [perf] "not applying" line.  Case 9
+ *      is the same key as an enhancement pair, which the profile drops.
+ *  14  AvP, internal_resolution=2x set EXPLICITLY, synthetic COMPATIBILITY
+ *      pair internal_resolution=1x -- the user's choice still beats a
+ *      compatibility row: shadowHiresN == 2.  (The row's value is the
+ *      registered default so the explicit choice is distinguishable --
+ *      a default-valued user choice cannot be, see case 4.)
+ *
  * The [titledb] substitution/miss lines are logged at RETRO_LOG_INFO via
  * LOG_INF(), which the harness's cb_log filters out below RETRO_LOG_WARN
  * unless VJ_HARNESS_LOG_INFO=1 is set (see harness.c) -- this test sets it
@@ -128,6 +142,9 @@ static TitleDBNegativePair negative_true_color[2];
  * `--option virtualjaguar_true_color=disabled` on case 4 is still the
  * default-valued option under test. */
 static TitleDBPair synthetic_pairs[3];
+
+/* Cases 13/14 (issue #748): one synthetic compatibility pair. */
+static TitleDBPair compat_pairs[2];
 
 /* ----------------------------------------------------------------
  * stderr capture: redirect around the core load so the [titledb]
@@ -264,9 +281,9 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--case") == 0 && i + 1 < argc)
             case_num = atoi(argv[i + 1]);
     }
-    if (case_num < 1 || case_num > 12) {
+    if (case_num < 1 || case_num > 14) {
         fprintf(stderr,
-                "usage: test_pertitle_db [core] <rom> --case N[1-12] "
+                "usage: test_pertitle_db [core] <rom> --case N[1-14] "
                 "[--option KEY=VALUE ...]\n");
         return 1;
     }
@@ -304,6 +321,27 @@ int main(int argc, char **argv)
         synthetic_pairs[2].key   = NULL;
         synthetic_pairs[2].value = NULL;
         set_pairs(synthetic_pairs, 2);
+    }
+
+    /* Cases 13/14 (issue #748): a synthetic compatibility pair, installed
+     * before harness_load_rom() for the same reason as cases 4/7. */
+    if (case_num == 13 || case_num == 14) {
+        void (*set_pairs)(const TitleDBPair *, int);
+
+        set_pairs = (void (*)(const TitleDBPair *, int))
+            harness_dlsym(&cfg, "TitleDBSetPairsForTest");
+        if (!set_pairs) {
+            fprintf(stderr, "test_pertitle_db: TitleDBSetPairsForTest not "
+                            "exported -- rebuild with `make TEST_EXPORTS=1`\n");
+            return 1;
+        }
+        compat_pairs[0].key   = "virtualjaguar_internal_resolution";
+        compat_pairs[0].value = (case_num == 13) ? "2x" : "1x";
+        compat_pairs[0].cls   = TITLEDB_CLASS_COMPATIBILITY;
+        compat_pairs[0].cite  = "synthetic test row (#748)";
+        compat_pairs[1].key   = NULL;
+        compat_pairs[1].value = NULL;
+        set_pairs(compat_pairs, 1);
     }
 
     /* Cases 7/8 (issue #464): install the negative row BEFORE
@@ -593,6 +631,34 @@ int main(int argc, char **argv)
                           : "no [perf] demotion warning found");
         pass = (hires_before == 2) && cb_ok && (hires_after == 1)
             && demote_logged;
+        break;
+    }
+    case 13: {
+        /* Compatibility pair on a profile-governed key, performance
+         * profile: applied anyway, and the profile does not log. */
+        int hires_ok = (*hires_n_ptr == 2);
+        int no_perf  = !log_contains("not applying");
+        results[nres++] = mkres(hires_ok, "case13_compat_not_profile_governed",
+            hires_ok ? "shadowHiresN == 2 (compatibility pair applied under "
+                       "the performance profile)"
+                     : "shadowHiresN != 2 (the profile dropped a "
+                       "compatibility pair!)");
+        results[nres++] = mkres(no_perf, "case13_no_profile_suppression_log",
+            no_perf ? "no [perf] not-applying line"
+                    : "[perf] not-applying line logged for a compatibility "
+                      "pair");
+        pass = hires_ok && no_perf;
+        break;
+    }
+    case 14: {
+        /* Explicit user value beats a compatibility pair. */
+        int hires_ok = (*hires_n_ptr == 2);
+        results[nres++] = mkres(hires_ok, "case14_user_beats_compat_row",
+            hires_ok ? "shadowHiresN == 2 (explicit user choice honored over "
+                       "the compatibility pair)"
+                     : "shadowHiresN != 2 (a compatibility pair overrode an "
+                       "explicit user choice!)");
+        pass = hires_ok;
         break;
     }
     default:
