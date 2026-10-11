@@ -68,6 +68,7 @@ static void  (*p_retro_unload_game)(void);
 static uint32_t *p_crc;
 static uint32_t *p_romsize;
 static uint8_t **p_mainram;
+static uint8_t  *p_memspace;    /* jagMemSpace: the flat 24-bit bus image */
 
 static bool env_cb(unsigned cmd, void *data)
 {
@@ -455,6 +456,180 @@ TEST(raw_binary_bss_refs_do_not_pull_4000_image_to_5000)
    p_retro_unload_game();
 }
 
+/* ------------------------------------------------------------------ */
+/* Cart mirroring (issue #851)                                         */
+/* ------------------------------------------------------------------ */
+
+#define CART_BASE     0x800000u
+#define CART_END      0xDFFF00u   /* CDROM overlay starts here */
+
+static uint32_t rd32(uint32_t addr)
+{
+   return ((uint32_t)p_memspace[addr] << 24) | ((uint32_t)p_memspace[addr + 1] << 16)
+        | ((uint32_t)p_memspace[addr + 2] << 8) | p_memspace[addr + 3];
+}
+
+static void wr32(uint8_t *img, unsigned off, uint32_t v)
+{
+   img[off + 0] = (uint8_t)(v >> 24);
+   img[off + 1] = (uint8_t)(v >> 16);
+   img[off + 2] = (uint8_t)(v >> 8);
+   img[off + 3] = (uint8_t)v;
+}
+
+/* Distinct markers.  make_image()'s filler repeats every 256 bytes, so
+ * comparing mirror against original on that alone would pass a mirror
+ * sourced from the wrong megabyte -- these never repeat. */
+#define MK_2000    0xA2000001u
+#define MK_1M      0xB1000002u
+#define MK_LAST    0xC3000003u   /* last long of the image */
+#define MK_TOP     0xD4000004u   /* last long below the CDROM overlay */
+
+static uint8_t *make_marked(unsigned payload, unsigned header, unsigned *out_size)
+{
+   uint8_t *img = make_image(payload, header, true, out_size);
+   uint8_t *body;
+
+   if (!img)
+      return NULL;
+   body = img + header;
+   wr32(body, 0x2000, MK_2000);
+   if (payload > 0x100000u)
+      wr32(body, 0x100000, MK_1M);
+   /* Fill the image bytes that would alias the CDROM overlay so a leak into
+    * $DFFF00 is unmistakable (before MK_LAST: it sits inside that range for
+    * a 2 MiB image). */
+   if (payload >= 0x200000u)
+      memset(body + 0x1FFF00, 0xEE, 0x100);
+   wr32(body, payload - 4, MK_LAST);
+   return img;
+}
+
+/* Flip Out's case: a 2 MiB cart repeats at $A00000 and $C00000. */
+TEST(mirror_2mb_repeats_in_window)
+{
+   unsigned size = 0;
+   uint8_t *img = make_marked(2u * MIB, 0, &size);
+
+   ASSERT(img != NULL);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(rd32(CART_BASE + 0x2000), MK_2000);
+   ASSERT_EQ_U(rd32(0xA02000), MK_2000);          /* the read Flip Out does */
+   ASSERT_EQ_U(rd32(0xC02000), MK_2000);
+   ASSERT_EQ_U(rd32(0xB00000), MK_1M);            /* right megabyte, not just right mod 256 */
+   ASSERT_EQ_U(rd32(0xD00000), MK_1M);
+   ASSERT_EQ_U(rd32(0x9FFFFC), MK_LAST);
+   ASSERT_EQ_U(rd32(0xBFFFFC), MK_LAST);
+   /* The last mirror stops at the cart-window ceiling: the CDROM overlay
+    * keeps its own bytes. */
+   ASSERT(memcmp(p_memspace + CART_END, img + 0x1FFF00, 0x100) != 0);
+   p_retro_unload_game();
+   free(img);
+}
+
+TEST(mirror_1mb_repeats_in_window)
+{
+   unsigned size = 0;
+   uint8_t *img = make_marked(MIB, 0, &size);
+
+   ASSERT(img != NULL);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(rd32(0x802000), MK_2000);
+   ASSERT_EQ_U(rd32(0x902000), MK_2000);
+   ASSERT_EQ_U(rd32(0xD02000), MK_2000);
+   ASSERT_EQ_U(rd32(0x8FFFFC), MK_LAST);
+   ASSERT_EQ_U(rd32(0xCFFFFC), MK_LAST);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* 4 MiB repeats once, at $C00000, and is clipped before the overlay. */
+TEST(mirror_4mb_repeats_once)
+{
+   unsigned size = 0;
+   uint8_t *img = make_marked(4u * MIB, 0, &size);
+
+   ASSERT(img != NULL);
+   wr32(img, 0x1FFEFC, MK_TOP);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(rd32(0xC02000), MK_2000);
+   ASSERT_EQ_U(rd32(0xDFFEFC), MK_TOP);
+   ASSERT_EQ_U(rd32(0xBFFFFC), MK_LAST);          /* the image's own last long */
+   ASSERT(memcmp(p_memspace + CART_END, img + 0x1FFF00, 0x100) != 0);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* Header-stripped size is what counts: a 2 MiB payload behind a copier
+ * header mirrors exactly like the bare image. */
+TEST(mirror_uses_payload_size_after_header_strip)
+{
+   unsigned size = 0;
+   uint8_t *img = make_marked(2u * MIB, HEADER_SIZE, &size);
+
+   ASSERT(img != NULL);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(rd32(0xA02000), MK_2000);
+   ASSERT_EQ_U(rd32(0xB00000), MK_1M);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* Only 1/2/4 MiB images mirror (MiSTer's cart_mask); everything else keeps
+ * reading 0 past the end of the image. */
+TEST(no_mirror_for_3mb)
+{
+   unsigned size = 0;
+   uint8_t *img = make_marked(3u * MIB, 0, &size);
+
+   ASSERT(img != NULL);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(rd32(0x802000), MK_2000);
+   ASSERT_EQ_U(rd32(0xB02000), 0);
+   ASSERT_EQ_U(rd32(0xC02000), 0);
+   p_retro_unload_game();
+   free(img);
+}
+
+TEST(no_mirror_for_small_cart)
+{
+   unsigned size = 0;
+   uint8_t *img = make_marked(65536u, 0, &size);
+
+   ASSERT(img != NULL);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(rd32(0x802000), MK_2000);
+   ASSERT_EQ_U(rd32(0x812000), 0);
+   ASSERT_EQ_U(rd32(0xA02000), 0);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* jagMemSpace is static: a previous title's mirror must not survive an
+ * unload, nor leak into a different-sized image loaded afterwards in the
+ * same process (iOS cannot dlclose the core). */
+TEST(mirror_does_not_outlive_its_title)
+{
+   unsigned size2 = 0, size3 = 0;
+   uint8_t *img2 = make_marked(2u * MIB, 0, &size2);
+   uint8_t *img3 = make_marked(3u * MIB, 0, &size3);
+
+   ASSERT(img2 != NULL);
+   ASSERT(img3 != NULL);
+   ASSERT(load_image(img2, size2));
+   ASSERT_EQ_U(rd32(0xC02000), MK_2000);
+   p_retro_unload_game();
+   ASSERT_EQ_U(rd32(0xA02000), 0);
+   ASSERT_EQ_U(rd32(0x802000), 0);
+
+   ASSERT(load_image(img3, size3));
+   ASSERT_EQ_U(rd32(0xB02000), 0);
+   ASSERT_EQ_U(rd32(0xD00000), 0);
+   p_retro_unload_game();
+   free(img2);
+   free(img3);
+}
+
 int main(int argc, char **argv)
 {
    const char *core_path = (argc > 1) ? argv[1]
@@ -475,6 +650,7 @@ int main(int argc, char **argv)
    p_crc                   = (uint32_t *)dlsym(core, "jaguarMainROMCRC32");
    p_romsize               = (uint32_t *)dlsym(core, "jaguarROMSize");
    p_mainram               = (uint8_t **)dlsym(core, "jaguarMainRAM");
+   p_memspace              = (uint8_t *)dlsym(core, "jagMemSpace");
 
    if (!p_retro_init || !p_retro_set_environment || !p_retro_load_game
          || !p_retro_unload_game || !p_retro_deinit)
@@ -483,7 +659,7 @@ int main(int argc, char **argv)
       return 1;
    }
 
-   if (!p_crc || !p_romsize || !p_mainram)
+   if (!p_crc || !p_romsize || !p_mainram || !p_memspace)
    {
       fprintf(stderr, "FATAL: jaguarMainROMCRC32 / jaguarROMSize not exported "
                       "-- build with TEST_EXPORTS=1\n");
@@ -508,6 +684,13 @@ int main(int argc, char **argv)
    RUN(raw_binary_lea_any_register_loads_at_4000);
    RUN(raw_binary_linked_at_5000_loads_at_5000);
    RUN(raw_binary_bss_refs_do_not_pull_4000_image_to_5000);
+   RUN(mirror_2mb_repeats_in_window);
+   RUN(mirror_1mb_repeats_in_window);
+   RUN(mirror_4mb_repeats_once);
+   RUN(mirror_uses_payload_size_after_header_strip);
+   RUN(no_mirror_for_3mb);
+   RUN(no_mirror_for_small_cart);
+   RUN(mirror_does_not_outlive_its_title);
 
    p_retro_deinit();
 
