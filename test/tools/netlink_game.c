@@ -2,7 +2,8 @@
  *
  *   netlink_game <core> <rom> --role loopback|server|client [--port N]
  *                [--outdir DIR] [--shot-every N] [--frames N]
- *                [--press F:BTN[:HOLD]]...
+ *                [--press F:BTN[:HOLD]]... [--realtime]
+ *                [--trace FILE]     (per frame: frame wall_usec tx rx)
  *
  * Runs a real game with the netlink active, sampling the UART registers
  * once per frame (side-effect-free reads only: ASISTAT, ASICLK) and the
@@ -17,6 +18,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <time.h>
 #include "../harness/harness.h"
 
 typedef void     (*jerry_ww_t)(uint32_t, uint16_t, uint32_t);
@@ -45,7 +47,16 @@ typedef struct {
     int uart_touched;
     unsigned tbe_drops;      /* TBE observed low => game transmitted */
     int realtime;            /* pace frames to ~60 fps wall clock */
+    FILE *trace;             /* --trace: "frame wall_usec tx rx" per frame */
+    long long t0_usec;
 } ng_state;
+
+static long long ng_now_usec(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
 
 static void ng_write_ppm(const ng_state *st)
 {
@@ -94,6 +105,12 @@ static bool ng_frame_cb(void *ud, unsigned frame)
     uint32_t rx = st->jlink_rx_total ? st->jlink_rx_total() : 0;
 
     st->frame_no = frame + 1;
+    if (st->trace)
+    {
+        long long t = ng_now_usec();
+        if (!st->t0_usec) st->t0_usec = t;
+        fprintf(st->trace, "%u %lld %u %u\n", frame, t - st->t0_usec, tx, rx);
+    }
 
     if (tx != st->last_tx || rx != st->last_rx)
     {
@@ -169,6 +186,11 @@ int main(int argc, char **argv)
             st.shot_every = (unsigned)atoi(argv[++i]);
             argv[i - 1] = argv[i] = (char *)"--quiet";
         }
+        else if (!strcmp(argv[i], "--trace") && i + 1 < argc)
+        {
+            st.trace = fopen(argv[++i], "w");
+            argv[i - 1] = argv[i] = (char *)"--quiet";
+        }
         else if (!strcmp(argv[i], "--realtime"))
         {
             st.realtime = 1;
@@ -208,6 +230,7 @@ int main(int argc, char **argv)
     harness_run(&cfg);
     harness_shutdown(&cfg);
 
+    if (st.trace) fclose(st.trace);
     fprintf(stderr, "[uart] summary: touched=%d tbe_drops=%u tx=%u rx=%u\n",
             st.uart_touched, st.tbe_drops, st.last_tx, st.last_rx);
     return st.uart_touched ? 0 : 2;
