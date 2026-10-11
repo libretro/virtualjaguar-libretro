@@ -2300,8 +2300,12 @@ void DSPExec(int32_t cycles)
 		 * behind it in the pipeline has run (see DSPWriteLong, D_FLAGS
 		 * case).  Retiring re-opens interrupt recognition and commits the
 		 * register-bank switch the store selected. */
-		if (dspFlagsRetireDelay && --dspFlagsRetireDelay == 0)
-			DSPUpdateRegisterBanks();
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay--;
+			if (dspFlagsRetireDelay == 0)
+				DSPUpdateRegisterBanks();
+		}
 	}
 
 	dsp_in_exec--;
