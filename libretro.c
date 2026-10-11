@@ -2779,7 +2779,7 @@ static int explain_same(const explain_amend_t *next, int next_n)
       return 0;
    for (i = 0; i < next_n; i++)
       if (next[i].idx != explain_cur[i].idx
-          || strcmp(next[i].note, explain_cur[i].note))
+          || strcmp(next[i].note, explain_cur[i].note) != 0)
          return 0;
    return 1;
 }
@@ -7076,7 +7076,8 @@ bool retro_load_game(const struct retro_game_info *info)
     * Cart ROM is not serialized and JaguarReset() never touches it, so
     * this never needs re-applying -- not after retro_reset(), not after
     * unserialize. */
-   TitleHookApplyROM();
+   if (TitleHookApplyROM() > 0)
+      JaguarMirrorCart();   /* the repeats of a 1/2/4 MB cart carry the patch (#851) */
 
    /* Advertise the Jaguar memory map so frontends (RetroArch, etc.) can
     * resolve emulated addresses to host buffers. Required for rcheevos.

@@ -1691,6 +1691,10 @@ void JaguarDone(void)
    JERRYDone();
    JGDDone();
    m68k_done();
+   /* The cart window is static storage: drop this title's image and its
+    * mirrors so the next load (a CD BIOS staged as a cart, a smaller cart)
+    * does not see them.  Stops short of the CDROM overlay at $DFFF00. */
+   memset(jagMemSpace + 0x800000, 0, 0x5FFF00);
 }
 
 uint8_t * GetRamPtr(void)
