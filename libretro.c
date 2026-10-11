@@ -143,6 +143,12 @@ static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
 /* One-shot latch for the "restart required" notice when the
  * internal-resolution option changes mid-game. */
 static int hires_restart_notice_logged = 0;
+/* Load-time latches for the boot ROM and PAL options (#858): the option
+ * value seen at load, and a one-shot "takes effect on restart" notice. */
+static bool bios_option_at_load        = false;
+static bool ntsc_option_at_load        = true;
+static int  bios_restart_notice_logged = 0;
+static int  pal_restart_notice_logged  = 0;
 /* Same one-shot latch for the enhancement-hooks gate (issue #370).  Hooks
  * are applied once at content load; toggling mid-session cannot un-patch
  * (reverting would need a saved original the design deliberately does not
@@ -3788,15 +3794,33 @@ static void check_variables(void)
          voicechat_close_mic();
    }
 
+   /* Boot ROM and video standard are latched at content load (#858).
+    * retro_load_game() resolves vjs.useJaguarBIOS after this read (GPU-only
+    * cart autodetect, CD boot mode -> bootConfig.showBootROM), and the DSP
+    * reads it at runtime; PAL feeds the clock macros, but AV timing is only
+    * negotiated at load.  Re-applying either on a later option change (any
+    * option change re-runs this function) would undo the resolution or
+    * half-apply the standard, so after load only log the restart notice. */
    var.key = "virtualjaguar_bios";
    var.value = NULL;
 
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (strcmp(var.value, "enabled") == 0)
-         vjs.useJaguarBIOS = true;
-      else
-         vjs.useJaguarBIOS = false;
+      bool bios_want = (strcmp(var.value, "enabled") == 0);
+      if (!content_loaded)
+      {
+         vjs.useJaguarBIOS = bios_want;
+         bios_option_at_load = bios_want;
+         bios_restart_notice_logged = 0;
+      }
+      else if (bios_want == bios_option_at_load)
+         bios_restart_notice_logged = 0;
+      else if (!bios_restart_notice_logged)
+      {
+         LOG_INF("[BIOS] boot ROM option change to %s takes effect on restart\n",
+                 var.value);
+         bios_restart_notice_logged = 1;
+      }
    }
 
    var.key = "virtualjaguar_bios_type";
@@ -3817,10 +3841,21 @@ static void check_variables(void)
 
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (strcmp(var.value, "enabled") == 0)
-         vjs.hardwareTypeNTSC = false;
-      else
-         vjs.hardwareTypeNTSC = true;
+      bool ntsc_want = (strcmp(var.value, "enabled") != 0);
+      if (!content_loaded)
+      {
+         vjs.hardwareTypeNTSC = ntsc_want;
+         ntsc_option_at_load = ntsc_want;
+         pal_restart_notice_logged = 0;
+      }
+      else if (ntsc_want == ntsc_option_at_load)
+         pal_restart_notice_logged = 0;
+      else if (!pal_restart_notice_logged)
+      {
+         LOG_INF("[VIDEO] PAL option change to %s takes effect on restart\n",
+                 var.value);
+         pal_restart_notice_logged = 1;
+      }
    }
 
    var.key = "virtualjaguar_memory_track";

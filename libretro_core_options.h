@@ -588,7 +588,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios",
       "BIOS (Cartridges)",
       NULL,
-      "Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself: most commercial titles boot faster and the boot animation is skipped. 'Real' runs the actual Jaguar boot ROM, which some titles require. Both boot ROM images are built into the core, so neither setting needs a file. GPU-only/jagcrypt carts (BootIntro demos) turn the real boot ROM on even when this is set to HLE -- they contain no 68K program for HLE to start. Ignored for CD content: 'CD Boot Mode' decides there.",
+      "Restart required: applied when content is loaded. Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself: most commercial titles boot faster and the boot animation is skipped. 'Real' runs the actual Jaguar boot ROM, which some titles require. Both boot ROM images are built into the core, so neither setting needs a file. GPU-only/jagcrypt carts (BootIntro demos) turn the real boot ROM on even when this is set to HLE -- they contain no 68K program for HLE to start. Ignored for CD content: 'CD Boot Mode' decides there.",
       NULL,
       "bios_boot",
       {
