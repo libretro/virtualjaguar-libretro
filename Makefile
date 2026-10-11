@@ -1356,7 +1356,7 @@ clean:
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
-		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
+		test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
@@ -1422,7 +1422,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
-		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
+		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace \
 		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
@@ -1621,6 +1621,17 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/test_wedge_spin ./$(TARGET) "$$rom"; \
 	else \
 		bash scripts/test-skip.sh record "Wedge spin-aliasing (Super Burnout)" "no ROM matching 'Super Burnout*' in the private corpus"; \
+	fi
+	@# #853: the instruction behind a DSP-issued D_FLAGS store must use the
+	@# pre-store register bank.  Music Demo's `store D_FLAGS; movei r31`
+	@# entry escaped the DSP at frame 5 (BIOS) / ran away (HLE) when the
+	@# bank switched inside the store.  Both boot modes.
+	@rom=$$(bash scripts/find-rom.sh 'Music Demo (2002) (ScatoLOGIC).jag' 'Music Demo*.jag' 'Music Demo*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_music_demo_dsp_bank ./$(TARGET) "$$rom" --frames 1200 && \
+		./test/tools/test_music_demo_dsp_bank ./$(TARGET) "$$rom" --frames 1200 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Music Demo DSP bank (#853)" "no ROM matching 'Music Demo*' in the private corpus"; \
 	fi
 	@# ROM lookup goes through scripts/find-rom.sh, which searches the whole
 	@# private corpus case-insensitively and prefers the canonical top-level
@@ -2974,6 +2985,14 @@ test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_wedge_spin.c \
 		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/test_music_demo_dsp_bank: test/tools/test_music_demo_dsp_bank.c \
+		test/harness/harness.c test/harness/harness.h \
+		test/harness/dsp_probe.c test/harness/dsp_probe.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_music_demo_dsp_bank.c \
+		test/harness/harness.c test/harness/dsp_probe.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/tools/dsp_idle_probe_falsify: test/tools/dsp_idle_probe_falsify.c \

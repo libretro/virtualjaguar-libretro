@@ -79,6 +79,7 @@
 #define OP_LOAD(rs, rd)  DSP_OP(41, (rs), (rd))
 #define OP_ADD(rs, rd)   DSP_OP(0, (rs), (rd))
 #define OP_JR(cc, off)   DSP_OP(53, (off) & 0x1F, (cc))
+#define OP_JUMP(cc, rm)  DSP_OP(52, (rm), (cc))
 
 /* libretro function pointers */
 static void (*p_retro_init)(void);
@@ -107,6 +108,8 @@ static void (*p_DSPExec)(int32_t);
 static void (*p_DSPSetIRQLine)(int, int);
 static bool (*p_DSPIsRunning)(void);
 static void (*p_DSPInit)(void);
+static size_t (*p_DSPStateSave)(uint8_t *);
+static size_t (*p_DSPStateLoad)(const uint8_t *);
 
 /* Stub callbacks */
 static void video_refresh(const void *d, unsigned w, unsigned h, size_t p)
@@ -887,6 +890,198 @@ static void test_hle_boot_ssp(void)
       FAIL("SSP is suspicious: $%08X", ssp);
 }
 
+/* ================================================================
+ * Test 17: D_FLAGS store retire window -- register bank (#853)
+ *
+ * A DSP-issued store to D_FLAGS does not retire until the instruction
+ * behind it is already past Read Operands (JTRM v8 p.109: "writing a value
+ * to the flag bits and making use of those flag bits in the following
+ * instruction will not work properly due to pipe-lining effects").  So
+ * when the store flips REGPAGE, the ONE instruction behind it still reads
+ * AND writes the old bank, and the instruction after that uses the new
+ * one.  Music Demo (ScatoLOGIC) depends on it: `store D_FLAGS; movei r31`
+ * must set up the bank-0 stack pointer its I2S handler uses.
+ * ================================================================ */
+
+/* Common setup: NOP-filled RAM, idle loops nowhere near the program, PC at
+ * $F1B100, bank 0 live, bank-0 r1 = D_FLAGS, bank-0 r0 = REGPAGE. */
+static void flags_bank_setup(void)
+{
+   uint32_t off;
+
+   p_DSPReset();
+   for (off = 0; off < 0x2000; off += 2)
+      write_dsp_ram16(off, OP_NOP);
+   p_DSPWriteLong(DSP_FLAGS_ADDR, 0, 6);   /* host write: bank 0 now */
+   p_dsp_reg_bank_0[0] = REGPAGE;
+   p_dsp_reg_bank_0[1] = DSP_FLAGS_ADDR;
+}
+
+static void write_idle(uint16_t off)
+{
+   write_dsp_ram16(off, OP_JR(0, -1));     /* jr T,self */
+   write_dsp_ram16(off + 2, OP_NOP);
+}
+
+static void test_flags_store_bank_movei(void)
+{
+   printf("\n=== Test 17: D_FLAGS Store Retire Window (movei behind the store) ===\n");
+   flags_bank_setup();
+
+   /* $F1B100 store r0,(r1)       ; D_FLAGS = REGPAGE (bank 0 -> 1)
+    * $F1B102 movei #$11111111,r5  ; in flight: OLD bank (0)
+    * $F1B108 movei #$22222222,r6  ; past the window: NEW bank (1)
+    * $F1B10E jr T,self / nop */
+   write_dsp_ram16(0x100, OP_STORE(1, 0));
+   write_movei(0x102, 0x11111111, 5);
+   write_movei(0x108, 0x22222222, 6);
+   write_idle(0x10E);
+
+   p_DSPWriteLong(DSP_PC_ADDR, DSP_RAM_BASE + 0x100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPExec(12);
+
+   if (p_dsp_reg_bank_0[5] == 0x11111111 && p_dsp_reg_bank_1[5] == 0)
+      PASS("movei behind the D_FLAGS store wrote the pre-store bank (bank-0 r5)");
+   else
+      FAIL("movei behind the store: bank0 r5=$%08X bank1 r5=$%08X (expected bank 0)",
+           p_dsp_reg_bank_0[5], p_dsp_reg_bank_1[5]);
+
+   if (p_dsp_reg_bank_1[6] == 0x22222222 && p_dsp_reg_bank_0[6] == 0)
+      PASS("next instruction, past the window, wrote the new bank (bank-1 r6)");
+   else
+      FAIL("instruction after the window: bank0 r6=$%08X bank1 r6=$%08X (expected bank 1)",
+           p_dsp_reg_bank_0[6], p_dsp_reg_bank_1[6]);
+
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+}
+
+static void test_flags_store_bank_move(void)
+{
+   printf("\n=== Test 18: D_FLAGS Store Retire Window (source operand) ===\n");
+   flags_bank_setup();
+   p_dsp_reg_bank_0[2] = 0xAAAA0000;
+   p_dsp_reg_bank_1[2] = 0xBBBB0000;
+
+   /* store r0,(r1); move r2,r7 (old bank in and out); move r2,r8 (new) */
+   write_dsp_ram16(0x100, OP_STORE(1, 0));
+   write_dsp_ram16(0x102, OP_MOVE(2, 7));
+   write_dsp_ram16(0x104, OP_MOVE(2, 8));
+   write_idle(0x106);
+
+   p_DSPWriteLong(DSP_PC_ADDR, DSP_RAM_BASE + 0x100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPExec(12);
+
+   if (p_dsp_reg_bank_0[7] == 0xAAAA0000 && p_dsp_reg_bank_1[7] == 0)
+      PASS("move behind the store read and wrote the pre-store bank");
+   else
+      FAIL("move behind the store: bank0 r7=$%08X bank1 r7=$%08X (expected bank0 = $AAAA0000)",
+           p_dsp_reg_bank_0[7], p_dsp_reg_bank_1[7]);
+
+   if (p_dsp_reg_bank_1[8] == 0xBBBB0000 && p_dsp_reg_bank_0[8] == 0)
+      PASS("move after the window read and wrote the new bank");
+   else
+      FAIL("move after the window: bank0 r8=$%08X bank1 r8=$%08X (expected bank1 = $BBBB0000)",
+           p_dsp_reg_bank_0[8], p_dsp_reg_bank_1[8]);
+
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+}
+
+static void test_flags_store_then_jump(void)
+{
+   printf("\n=== Test 19: D_FLAGS Store Then jump (Wolfenstein 3D epilogue shape) ===\n");
+   flags_bank_setup();
+   p_dsp_reg_bank_0[3] = DSP_RAM_BASE + 0x200;   /* the real return address */
+   p_dsp_reg_bank_1[3] = DSP_RAM_BASE + 0x300;   /* the wrong one */
+
+   /* store r0,(r1); jump T,(r3); moveq #9,r4 (delay slot) */
+   write_dsp_ram16(0x100, OP_STORE(1, 0));
+   write_dsp_ram16(0x102, OP_JUMP(0, 3));
+   write_dsp_ram16(0x104, OP_MOVEQ(9, 4));
+   write_dsp_ram16(0x200, OP_MOVEQ(7, 5));
+   write_idle(0x202);
+   write_dsp_ram16(0x300, OP_MOVEQ(13, 5));
+   write_idle(0x302);
+
+   p_DSPWriteLong(DSP_PC_ADDR, DSP_RAM_BASE + 0x100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPExec(12);
+
+   if (p_dsp_reg_bank_1[5] == 7)
+      PASS("jump behind the store took its target from the pre-store bank");
+   else
+      FAIL("jump target: bank0 r5=%u bank1 r5=%u (expected bank1 r5 = 7 from $F1B200)",
+           p_dsp_reg_bank_0[5], p_dsp_reg_bank_1[5]);
+
+   if (p_dsp_reg_bank_1[4] == 9 && p_dsp_reg_bank_0[4] == 0)
+      PASS("jump delay slot (second instruction behind the store) wrote the new bank");
+   else
+      FAIL("jump delay slot: bank0 r4=%u bank1 r4=%u (expected bank 1)",
+           p_dsp_reg_bank_0[4], p_dsp_reg_bank_1[4]);
+
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+}
+
+static void test_jump_with_flags_store_in_slot(void)
+{
+   printf("\n=== Test 20: jump With D_FLAGS Store In Its Delay Slot (Doom epilogue shape) ===\n");
+   flags_bank_setup();
+   p_dsp_reg_bank_0[15] = DSP_RAM_BASE + 0x200;
+
+   /* jump T,(r15); store r0,(r1) (delay slot); target: movei #$33333333,r6 */
+   write_dsp_ram16(0x100, OP_JUMP(0, 15));
+   write_dsp_ram16(0x102, OP_STORE(1, 0));
+   write_movei(0x200, 0x33333333, 6);
+   write_idle(0x206);
+
+   p_DSPWriteLong(DSP_PC_ADDR, DSP_RAM_BASE + 0x100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPExec(12);
+
+   if (p_dsp_reg_bank_1[6] == 0x33333333 && p_dsp_reg_bank_0[6] == 0)
+      PASS("branch target after a delay-slot D_FLAGS store wrote the new bank");
+   else
+      FAIL("branch target: bank0 r6=$%08X bank1 r6=$%08X (expected bank 1)",
+           p_dsp_reg_bank_0[6], p_dsp_reg_bank_1[6]);
+
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+}
+
+static void test_flags_window_savestate(void)
+{
+   static uint8_t state[65536];
+
+   printf("\n=== Test 21: D_FLAGS Retire Window Survives A Savestate ===\n");
+   if (!p_DSPStateSave || !p_DSPStateLoad) {
+      printf("  SKIP: DSPStateSave/DSPStateLoad not exported\n");
+      return;
+   }
+   flags_bank_setup();
+   write_dsp_ram16(0x100, OP_STORE(1, 0));
+   write_movei(0x102, 0x44444444, 5);
+   write_idle(0x108);
+
+   p_DSPWriteLong(DSP_PC_ADDR, DSP_RAM_BASE + 0x100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   /* One cycle = the store alone: the slice ends inside the window. */
+   p_DSPExec(1);
+   p_DSPStateSave(state);
+
+   /* Scribble the live state, then restore the mid-window snapshot. */
+   p_DSPWriteLong(DSP_FLAGS_ADDR, 0, 6);
+   p_DSPStateLoad(state);
+   p_DSPExec(8);
+
+   if (p_dsp_reg_bank_0[5] == 0x44444444 && p_dsp_reg_bank_1[5] == 0)
+      PASS("instruction behind the store still used the pre-store bank after a load");
+   else
+      FAIL("after load: bank0 r5=$%08X bank1 r5=$%08X (expected bank 0)",
+           p_dsp_reg_bank_0[5], p_dsp_reg_bank_1[5]);
+
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+}
+
 
 /* ================================================================
  * Main
@@ -934,6 +1129,8 @@ int main(int argc, char *argv[])
    LOAD(DSPGetRAM);
    LOAD(DSPWriteLong);
    LOAD(DSPReadLong);
+   LOAD_OPT(DSPStateSave);
+   LOAD_OPT(DSPStateLoad);
 
    LOAD_OPT(dsp_control);
    LOAD_OPT(dsp_pc);
@@ -999,6 +1196,11 @@ int main(int argc, char *argv[])
    test_version_readonly();
    test_int_lat5();
    test_hle_boot_ssp();
+   test_flags_store_bank_movei();
+   test_flags_store_bank_move();
+   test_flags_store_then_jump();
+   test_jump_with_flags_store_in_slot();
+   test_flags_window_savestate();
 
    printf("\n=== Results: %d passed, %d failed ===\n", passes, fails);
 
