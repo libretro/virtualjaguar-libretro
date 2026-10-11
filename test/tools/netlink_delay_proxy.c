@@ -7,6 +7,16 @@
  * Wi-Fi/LAN latency on localhost so netlink latency behavior can be
  * reproduced headlessly (2*N ms round trip).  Exits when either side
  * closes.  POSIX only — test tooling, not shipped.
+ *
+ * Optional Wi-Fi jitter model (all default off):
+ *   --jitter-ms J       add uniform [0,J] ms to every chunk
+ *   --spike-pct P       P percent of chunks (0-100, fractions ok) get a
+ *                       latency spike on top ...
+ *   --spike-ms LO:HI    ... of uniform [LO,HI] ms (default 30:80)
+ *   --seed S            PRNG seed (default 1; runs are repeatable)
+ * The relay is a FIFO per direction (it is TCP): a spiked chunk holds
+ * every chunk behind it until it is released, exactly like a Wi-Fi
+ * retransmit / power-save wake stalling the stream.
  */
 #define _DEFAULT_SOURCE 1
 #include <stdio.h>
@@ -38,6 +48,34 @@ typedef struct
     int head, count;
 } cqueue_t;
 
+static unsigned rng_state = 1;
+static double jitter_ms = 0.0, spike_pct = 0.0;
+static int spike_lo_ms = 30, spike_hi_ms = 80;
+
+static unsigned rng_next(void)
+{
+    rng_state ^= rng_state << 13;
+    rng_state ^= rng_state >> 17;
+    rng_state ^= rng_state << 5;
+    return rng_state;
+}
+
+/* extra latency (usec) for one chunk */
+static long long extra_usec(void)
+{
+    long long x = 0;
+    if (jitter_ms > 0.0)
+        x += (long long)(jitter_ms * 1000.0 * (rng_next() % 10001) / 10000.0);
+    if (spike_pct > 0.0 && (rng_next() % 100000) < (unsigned)(spike_pct * 1000.0))
+    {
+        int span = spike_hi_ms - spike_lo_ms;
+        x += ((long long)spike_lo_ms
+              + (span > 0 ? (long long)(rng_next() % (unsigned)(span + 1)) : 0))
+             * 1000LL;
+    }
+    return x;
+}
+
 static long long now_usec(void)
 {
     struct timeval tv;
@@ -64,7 +102,7 @@ static int pump(int from, int to, cqueue_t *q, long long delay_usec,
         if (n <= 0)
             return 0;
         c->len = (int)n;
-        c->due_usec = now + delay_usec;
+        c->due_usec = now + delay_usec + extra_usec();
         q->count++;
     }
     while (q->count > 0)
@@ -112,6 +150,20 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--delay-ms") && i + 1 < argc)
             delay_ms = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--jitter-ms") && i + 1 < argc)
+            jitter_ms = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--spike-pct") && i + 1 < argc)
+            spike_pct = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--spike-ms") && i + 1 < argc)
+        {
+            if (sscanf(argv[++i], "%d:%d", &spike_lo_ms, &spike_hi_ms) != 2)
+            { fprintf(stderr, "bad --spike-ms (want LO:HI)\n"); return 1; }
+        }
+        else if (!strcmp(argv[i], "--seed") && i + 1 < argc)
+        {
+            rng_state = (unsigned)atoi(argv[++i]);
+            if (!rng_state) rng_state = 1;
+        }
     }
     if (!listen_port || !up_host[0] || !up_port)
     {

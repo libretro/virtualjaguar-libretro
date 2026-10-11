@@ -8139,6 +8139,13 @@ void retro_run(void)
                                                             : BUFPAL) / 2);
       VoiceChatMixInto(sampleBuffer, pairs);
    }
+   /* Netlink reply-wait: the emulation work for this frame is done.  Tell
+    * jlink BEFORE the frontend calls below -- audio_batch_cb blocks when
+    * the frontend's audio buffer is full (audio sync) and video_cb may
+    * block on vsync, and neither is emulation cost (see JLinkFrameEnd). */
+   if (JLinkMode() != JLINK_MODE_DISABLED)
+      JLinkFrameEnd(JaguarGetFieldRateHz());
+
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
 
    /* Give every presented row defined content.
