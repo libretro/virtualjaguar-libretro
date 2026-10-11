@@ -9,6 +9,9 @@
 # (scripts/build_site.py) renders that file; nothing on the site is typed by
 # hand.
 #
+# BIOS-mode runs are scored from the boot-ROM -> cart handoff onward, and a
+# cart the boot ROM rejects is BIOS_REJECT; see cart_classify.sh (issue #852).
+#
 # Honesty rules (mirrors the CD matrix):
 #   - "GAME_CODE" means the final 68K PC sits in game-owned RAM or cart space
 #     after the frame budget.  It is NOT a completed-the-game certificate.
@@ -25,7 +28,11 @@
 #   CART_MATRIX_ROMS_ROOT  ROM directory     (default test/roms/private/ROMS)
 #   CART_MATRIX_OUT        output markdown   (default docs/cart-boot-matrix.md)
 #   CART_MATRIX_LOGDIR     logs + row cache  (default /tmp/cart-matrix-logs)
-#   CART_MATRIX_FRAMES     frames per run    (default 600)
+#   CART_MATRIX_FRAMES     frames per run    (default 600).  In BIOS mode: frames
+#                          scored AFTER the boot-ROM -> cart handoff
+#   CART_MATRIX_BIOS_BOOT_FRAMES  extra frame cap BIOS runs get on top of
+#                          FRAMES for the boot animation (default 700; the
+#                          handoff lands at ~frame 492)
 #   CART_MATRIX_TIMEOUT    seconds per run   (default 90)
 #   CART_MATRIX_JOBS       parallel workers  (default 4)
 #   CART_MATRIX_MAX_RUNS   stop after N fresh titles this invocation (chunking)
@@ -60,7 +67,9 @@ fi
 OUT="${CART_MATRIX_OUT:-docs/cart-boot-matrix.md}"
 LOGDIR="${CART_MATRIX_LOGDIR:-/tmp/cart-matrix-logs$PROBE_ARGS_TAG}"
 FRAMES="${CART_MATRIX_FRAMES:-600}"
-TIMEOUT_SECS="${CART_MATRIX_TIMEOUT:-90}"
+BIOS_BOOT_FRAMES="${CART_MATRIX_BIOS_BOOT_FRAMES:-700}"
+# BIOS runs are ~1.8x longer than HLE ones (boot animation + FRAMES scored).
+TIMEOUT_SECS="${CART_MATRIX_TIMEOUT:-150}"
 JOBS="${CART_MATRIX_JOBS:-4}"
 MAX_RUNS="${CART_MATRIX_MAX_RUNS:-0}"
 
@@ -105,83 +114,7 @@ fi
 
 run_bounded() { matrix_run_bounded "$@"; }
 
-field() {
-    # usage: field <name> <probe-line>   (numeric / $hex fields)
-    printf '%s' "$2" | grep -oE "$1=[^ ]+" | head -1 | cut -d= -f2
-}
-
-classify_mode() {
-    # usage: classify_mode <rc> <logfile>
-    # echoes "STAGE|notes"
-    rc="$1"; logfile="$2"
-    line="$(grep -m1 '^CARTPROBE ' "$logfile" 2>/dev/null || true)"
-
-    sigs="$(grep -oE 'gpu_pc_escape|dsp_pc_escape|gpu_wedge|dsp_wedge|video_stall|inframe_hang' \
-                 "$logfile" 2>/dev/null | sort -u | paste -sd, - || true)"
-
-    if grep -q 'FATAL build mismatch' "$logfile" 2>/dev/null; then
-        # Never classify a guard refusal as a title result.  The preflight
-        # should catch this before any worker runs; this is belt-and-braces
-        # for a core swapped mid-sweep.
-        echo "? (build_mismatch)|core does not match VJ_EXPECT_BUILD — row invalid"
-        return
-    fi
-    if [ "$rc" -eq 124 ]; then
-        echo "? (timeout)|no probe line within ${TIMEOUT_SECS}s${sigs:+; $sigs}"
-        return
-    fi
-    # A dlopen failure is a HARNESS fault, not a title result.  Writing it as
-    # LOAD_FAIL is what let a missing core masquerade as 123 unloadable ROMs,
-    # and because rows are cached, the bad rows were then reused by the next
-    # invocation.  Shared with the CD sweep so one fix covers both.
-    core_err="$(matrix_core_error "$logfile")"
-    if [ -n "$core_err" ]; then
-        echo "? (core_error)|$core_err"
-        return
-    fi
-    if [ -z "$line" ] || printf '%s' "$line" | grep -q 'load_fail=1'; then
-        echo "LOAD_FAIL|probe could not load the ROM"
-        return
-    fi
-
-    frames="$(field frames "$line")"; frames="${frames:-0}"
-    pc_valid="$(field pc_valid "$line")"; pc_valid="${pc_valid:-0}"
-    pc_hex="$(printf '%s' "$line" | grep -oE 'pc=\$[0-9A-Fa-f]+' | grep -oE '[0-9A-Fa-f]+$')"
-    lit="$(field lit_frames "$line")"; lit="${lit:-0}"
-    motion="$(field motion "$line")"; motion="${motion:-0}"
-    audio="$(field audio_nonsilent "$line")"; audio="${audio:-0}"
-
-    if [ -z "$pc_hex" ] || [ "$frames" -eq 0 ]; then
-        echo "LOAD_FAIL|no frames rendered"
-        return
-    fi
-    if [ "$pc_valid" -ne 1 ]; then
-        echo "? (no_reg)|probe missing m68k_get_reg — rebuild core with TEST_EXPORTS=1"
-        return
-    fi
-
-    pc=$((16#$pc_hex))
-    # Valid 68K execute bands: main RAM (mirrors) < $200000, cart $800000-
-    # $DFFFFF, boot ROM $E00000-$E1FFFF.  Anything else is a crash, not a
-    # reached stage.
-    if ! { [ "$pc" -lt $((0x200000)) ] || \
-           { [ "$pc" -ge $((0x800000)) ] && [ "$pc" -le $((0xDFFFFF)) ]; } || \
-           { [ "$pc" -ge $((0xE00000)) ] && [ "$pc" -le $((0xE1FFFF)) ]; }; }; then
-        echo "? (pc_escape)|final_pc=\$$pc_hex${sigs:+; $sigs}"
-        return
-    fi
-
-    notes=""
-    if [ "$lit" -ge 30 ]; then
-        if [ "$motion" -ge 30 ]; then notes="video"; else notes="static video"; fi
-    else
-        notes="black video (headless — undetermined)"
-    fi
-    if [ "$audio" -ge 4800 ]; then notes="$notes, audio"; else notes="$notes, silent"; fi
-    [ -n "$sigs" ] && notes="$notes; $sigs"
-    echo "GAME_CODE|$notes"
-}
-
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/cart_classify.sh"
 process_one() {
     rom="$1"
     base="$(basename "$rom")"
@@ -200,13 +133,14 @@ process_one() {
         run_bounded "$TIMEOUT_SECS" "$hle_log" \
         "$PROBE" "$CORE" "$rom" --frames "$FRAMES" $PROBE_ARGS
     hle_rc=$?
-    hle="$(classify_mode "$hle_rc" "$hle_log")"
+    hle="$(cart_classify_mode "$hle_rc" "$hle_log" hle)"
 
     DYLD_LIBRARY_PATH=. LD_LIBRARY_PATH=. \
         run_bounded "$TIMEOUT_SECS" "$bios_log" \
-        "$PROBE" "$CORE" "$rom" --frames "$FRAMES" --bios $PROBE_ARGS
+        "$PROBE" "$CORE" "$rom" --frames "$((FRAMES + BIOS_BOOT_FRAMES))" \
+        --post-handoff "$FRAMES" --bios $PROBE_ARGS
     bios_rc=$?
-    bios="$(classify_mode "$bios_rc" "$bios_log")"
+    bios="$(cart_classify_mode "$bios_rc" "$bios_log" bios)"
 
     printf '| %s | %s | %s | %s | %s |<!-- build:%s -->\n' \
         "$title" \
@@ -215,9 +149,9 @@ process_one() {
         "$CACHE_ID" > "$rowfile"
     echo "done: $title  [hle: ${hle%%|*}]  [bios: ${bios%%|*}]"
 }
-export -f process_one run_bounded classify_mode field
+export -f process_one run_bounded cart_classify_mode field
 export -f matrix_core_error matrix_run_bounded
-export ROWDIR LOGDIR FRAMES TIMEOUT_SECS MATRIX_TIMEOUT_BIN PROBE CORE BUILD_ID CACHE_ID VJ_EXPECT_BUILD PROBE_ARGS
+export ROWDIR LOGDIR FRAMES BIOS_BOOT_FRAMES TIMEOUT_SECS MATRIX_TIMEOUT_BIN PROBE CORE BUILD_ID CACHE_ID VJ_EXPECT_BUILD PROBE_ARGS
 
 # ---------------------------------------------------------------------------
 # ROM list -> fresh work list (respecting MAX_RUNS) -> parallel workers
@@ -322,9 +256,17 @@ DONE="$(ls "$ROWDIR" 2>/dev/null | wc -l | tr -d ' ')"
     printf 'in-game is not distinguished headlessly.  A "black video" note is\n'
     printf 'undetermined evidence (headless read-path caveat), not a verdict.\n'
     printf 'Rows are stamped with the core build that produced them.\n\n'
+    printf '**Real BIOS rows are scored from the boot-ROM handoff.** The boot ROM plays a\n'
+    printf '~490-frame logo animation and jingle before it hands the 68K to the cart, so\n'
+    printf 'a BIOS run keeps going until %s frames after the handoff (cap: %s frames)\n' "$FRAMES" "$((FRAMES + BIOS_BOOT_FRAMES))"
+    printf 'and only counts video/audio from there.  `BIOS_REJECT` = the boot ROM ran,\n'
+    printf 'never reached the cartridge and halted in its own `BRA.S *` loop (the red\n'
+    printf '"Jaguar" reject screen: the dump fails the header/encryption check), which\n'
+    printf 'is not "BIOS works".  `? (bios_trap)` = the cart got control, then the 68K\n'
+    printf 'fell back into the boot ROM (an exception through its vectors).\n\n'
     printf '**Never backward.** Every release candidate'"'"'s regenerated matrix is diffed\n'
     printf 'against the previous tag'"'"'s with `test/tools/matrix_diff.py OLD.md NEW.md`.\n'
-    printf 'A row that moves backward (`LOAD_FAIL` < `?` < `GAME_CODE`, per boot mode), or\n'
+    printf 'A row that moves backward (`LOAD_FAIL` < `?` < `GAME_CODE` = `BIOS_REJECT`, per boot mode), or\n'
     printf 'whose notes gain a crash-watchdog signature (`gpu_wedge`, `dsp_wedge`,\n'
     printf '`inframe_hang`, `video_stall`, `gpu_pc_escape`, `dsp_pc_escape`), blocks the\n'
     printf 'tag until it has a ticket and an explicit deferral.  Checklist:\n'

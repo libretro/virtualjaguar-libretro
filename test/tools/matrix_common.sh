@@ -107,6 +107,7 @@ matrix_verify_core_build() {
 MATRIX_INPUT_PATHS="src libretro.c libretro_core_options.h libretro-common \
 Makefile Makefile.common test/harness test/cd_assertions.h \
 test/tools/cart_boot_probe.c test/tools/cart_boot_matrix.sh \
+test/tools/cart_classify.sh \
 test/tools/cd_boot_matrix.sh test/tools/matrix_common.sh \
 test/test_cd_hle_boot.c test/test_cd_bios_boot.c"
 

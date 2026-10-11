@@ -79,9 +79,18 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   id (`<!-- build:<rev> -->`); resume skips only same-build rows, re-runs others. (Resuming from
   an older build used to resurrect ancient rows as "fresh" — the phantom Battle Morph bios
   `? (pc_escape)` `final_pc=$8FBFB758` was such a stale row.)
+- `test/tools/cart_boot_matrix.sh` (cart counterpart; classifier in `test/tools/cart_classify.sh`,
+  probe `cart_boot_probe.c`): BIOS-mode rows are scored from the boot-ROM -> cart handoff
+  (`--post-handoff N`, cap `CART_MATRIX_BIOS_BOOT_FRAMES`, default +700 frames), classes
+  `GAME_CODE`/`BIOS_REJECT` (boot ROM halted on `BRA.S *`, never handed off: red "Jaguar" screen,
+  an authentic reject)/`? (bios_trap)` (cart ran, PC fell back into `$E00000`)/`? (...)`/`LOAD_FAIL`.
+  `bios_ran=0` (headerless RAM-loaded `.jag`, e.g. Music Demo) has no boot phase: whole run scored.
+  Crash-watchdog signatures are never handoff-relative (an early escape is a real bug, #853).
 - `test/tools/matrix_diff.py OLD.md NEW.md` — never-backward gate (#749) between two copies of the
   same matrix (cart or CD): prints regressed / still-asymmetric / improved, exit 1 on any backward
-  stage move or new crash-watchdog signature, 2 on parse error. Release-time, corpus machine only
+  stage move or new crash-watchdog signature, 2 on parse error. `BIOS_REJECT` ranks equal to
+  `GAME_CODE` (GAME_CODE -> BIOS_REJECT = lateral scoring correction; HLE GAME_CODE / BIOS
+  BIOS_REJECT is not an asymmetry). Release-time, corpus machine only
   (`docs/release-process.md`). Self-test `test/test_matrix_diff.sh` runs in `make test`.
 - CD trace ring: option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1`) records
   `DSA_TX/DSA_RX/SEEK_START/SEEK_DONE/FIFO_FILL/FIFO_DRAIN/STOP/HLE_READ`; dumped on
