@@ -8,6 +8,8 @@
 #                   drop events.  Fails unless the two yarc runs end on the same
 #                   frame, i.e. unless loading a different game in between left
 #                   no static state behind (the iOS-style reset path).
+#   smoke_state     save a state (file + thumbnail PNG), run on, load it back, run
+#                   on again: both runs must end on the same frame.
 #   smoke_cd        the synthetic Jaguar CD image, path-loaded (no BIOS).
 #
 # The expected hash is a single value for every OS and CPU: the core is
@@ -33,10 +35,14 @@ add_test(NAME smoke_reload
     COMMAND virtualjaguar --headless --frames ${VJ_SMOKE_FRAMES}
             "${VJ_ROMS}/yarc.j64" "${VJ_ROMS}/jagniccc.j64" "${VJ_ROMS}/yarc.j64")
 
+add_test(NAME smoke_state
+    COMMAND virtualjaguar --headless --frames 240 --state-roundtrip
+            "${VJ_ROMS}/jagniccc.j64")
+
 add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank
             "${VJ_ROMS}/synth_jagcd.chd")
 
-set_tests_properties(smoke_yarc smoke_reload smoke_cd PROPERTIES
+set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")

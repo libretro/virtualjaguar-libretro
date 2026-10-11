@@ -80,12 +80,11 @@ void drawCoreOptions(App& app) {
     if (host.isLoaded()) {
         if (ImGui::Button("Restart game to apply")) app.reloadContent();
         ImGui::SameLine();
-        ImGui::TextDisabled("Options marked 'Restart required' take effect on the next load.");
+        ImGui::TextDisabled("'Restart required' options apply on the next load.");
     }
-    static char filter[64] = "";
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
-    ImGui::InputTextWithHint("##filter", "Filter options", filter, sizeof filter);
-    std::string f = lower(filter);
+    ImGui::InputTextWithHint("##filter", "Filter options", app.optionFilter, sizeof app.optionFilter);
+    std::string f = lower(app.optionFilter);
     ImGui::Separator();
 
     ImGui::BeginChild("##opts", ImVec2(0, 0), ImGuiChildFlags_None);
@@ -421,7 +420,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImVec2 areaPos(vp->Pos.x, vp->Pos.y + menuH);
     ImVec2 areaSize(vp->Size.x, vp->Size.y - menuH);
     if (app.host.isLoaded() && app.video.hasFrame()) {
-        app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present);
+        app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
+                       io.DisplayFramebufferScale.x);
     } else if (!app.host.isLoaded()) {
         const char* l1 = "Virtual Jaguar";
         const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open";

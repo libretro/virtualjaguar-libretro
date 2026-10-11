@@ -59,8 +59,12 @@ void VideoOut::upload(const Frame& f) {
 }
 
 ImVec4 VideoOut::draw(ImDrawList* dl, ImVec2 pos, ImVec2 size, float coreAspect,
-                      const PresentOptions& opt) {
+                      const PresentOptions& opt, float ps) {
     if (!tex_ || !w_ || !h_ || size.x < 1 || size.y < 1) return ImVec4(pos.x, pos.y, 0, 0);
+    if (ps < 0.5f) ps = 1.0f;
+    // Work in framebuffer pixels from here on.
+    pos = ImVec2(pos.x * ps, pos.y * ps);
+    size = ImVec2(size.x * ps, size.y * ps);
 
     bool wantLinear = opt.linearFilter && !opt.integerScale;
     if (wantLinear != linear_) {
@@ -103,9 +107,9 @@ ImVec4 VideoOut::draw(ImDrawList* dl, ImVec2 pos, ImVec2 size, float coreAspect,
     }
     float x = std::floor(pos.x + (size.x - dw) * 0.5f);
     float y = std::floor(pos.y + (size.y - dh) * 0.5f);
-    dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)tex_), ImVec2(x, y), ImVec2(x + dw, y + dh),
-                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
-    return ImVec4(x, y, dw, dh);
+    dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)tex_), ImVec2(x / ps, y / ps),
+                 ImVec2((x + dw) / ps, (y + dh) / ps), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+    return ImVec4(x / ps, y / ps, dw / ps, dh / ps);
 }
 
 unsigned VideoOut::createTextureRGBA(const void* pixels, int w, int h) {

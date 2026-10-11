@@ -21,10 +21,13 @@ static void usage(const char* argv0) {
         "  --verbose             log the core's INFO messages\n"
         "  --version, --help\n"
         "\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about]\n"
+        "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
         "  --frames N            frames per game (default 300)\n"
         "  --expect-hash HEX     fail unless the first game's final frame hashes to HEX\n"
+        "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
         "\n"
@@ -51,6 +54,10 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--verbose")) a.verbose = true;
         else if (!std::strcmp(s, "--frames")) a.frames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--expect-hash")) a.expectHash = need(s);
+        else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);
+        else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
+        else if (!std::strcmp(s, "--state-roundtrip")) a.stateRoundtrip = true;
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);
         else if (!std::strcmp(s, "--data-dir")) a.dataDir = need(s);

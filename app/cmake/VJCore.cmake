@@ -104,10 +104,11 @@ if(MSVC)
     target_compile_definitions(vj_core PRIVATE
         "INLINE=_inline" _CRT_SECURE_NO_DEPRECATE)
     target_compile_options(vj_core PRIVATE /W3 /FS)
+    target_compile_definitions(vj_libchdr PRIVATE "INLINE=_inline" _CRT_SECURE_NO_DEPRECATE)
     target_compile_options(vj_libchdr PRIVATE /W3 /FS)
-    target_compile_definitions(vj_libchdr PRIVATE _CRT_SECURE_NO_DEPRECATE)
 else()
     target_compile_definitions(vj_core PRIVATE "INLINE=inline")
+    target_compile_definitions(vj_libchdr PRIVATE "INLINE=inline")
     target_compile_options(vj_core PRIVATE
         -Wall -Wno-sign-compare -Wno-unused-variable
         -Wno-unused-but-set-variable -Wno-unused-function -Wno-uninitialized
@@ -115,17 +116,12 @@ else()
         # Codegen, not a warning: signed overflow must not be exploited.
         -fno-strict-overflow
         -fomit-frame-pointer -fno-common)
-    # Same as LIBCHDR_CFLAGS in Makefile.common.
+    # LIBCHDR_CFLAGS / LIBCHDR_WARNFLAGS in Makefile.common.
     target_compile_options(vj_libchdr PRIVATE
         -std=c99 -Wno-unused-function -Wno-unused-variable)
-    target_compile_definitions(vj_libchdr PRIVATE "INLINE=inline")
-    target_compile_definitions(vj_core PRIVATE "INLINE=inline")
-    # Release optimisation: the Makefile's default is -O3 -DNDEBUG on desktops.
-    # Multi-config generators and CMAKE_BUILD_TYPE=Release already supply it;
-    # a single-config build with no type is forced to Release by the caller.
-    if(MINGW)
-        target_compile_definitions(vj_core PRIVATE _WIN32_WINNT=0x0601)
-    endif()
+    # Optimisation: the Makefile's desktop default is -O3 -DNDEBUG, which is what
+    # CMAKE_BUILD_TYPE=Release gives GCC/Clang (the top-level forces Release for
+    # a single-config build with no type).
 endif()
 
 # System libraries the core itself needs (jlink_tcp sockets, libm).

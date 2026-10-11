@@ -27,6 +27,10 @@ struct CliArgs {
     bool fullscreen = false;
     bool noContent = false;
     bool verbose = false;
+    std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
+    unsigned screenshotFrame = 120;
+    std::string showWindow;         // dev: open the 'settings', 'states' or 'about' window at start
+    bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
     std::string expectHash;         // headless: expected hash of the FIRST content
@@ -72,6 +76,7 @@ public:
     bool showStates = false;
     bool showAbout = false;
     int stateSlot = 0;
+    char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;
 
     // Video settings (persisted)
@@ -123,6 +128,7 @@ private:
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
+    void saveWindowScreenshot(const std::string& path);
 
     void handleEvent(const SDL_Event& e, bool headless);
     void handleDrop(const std::string& path);

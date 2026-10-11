@@ -457,8 +457,6 @@ bool CoreHost::startSession(std::string& err) {
     minAudioLatencyMs_ = 0;
     g_audioBufferCb = nullptr;
     frame_ = Frame();
-    frame_.serial = 0;
-    serial_ = 0;
     frameCount_ = 0;
 
     retro_set_environment(envCb);
@@ -570,6 +568,9 @@ void CoreHost::stopSession() {
     contentName_.clear();
     saveHashValid_ = false;
     g_audioBufferCb = nullptr;
+    updateDisplayCb_ = nullptr;   // belongs to the core instance that just went away
+    keyboardCb_ = nullptr;
+    diskRegistered_ = false;
 }
 
 void CoreHost::unloadContent() { stopSession(); }

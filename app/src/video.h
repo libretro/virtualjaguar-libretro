@@ -26,8 +26,10 @@ public:
 
     void upload(const Frame& f);  // no-op if f.serial already uploaded
     // Draw the frame into the given area using `dl`.  Returns the rectangle used.
+    // `pixelScale` is framebuffer pixels per ImGui point (2 on a Retina display):
+    // integer scaling and pixel snapping are done in framebuffer pixels.
     ImVec4 draw(ImDrawList* dl, ImVec2 areaPos, ImVec2 areaSize, float coreAspect,
-                const PresentOptions& opt);
+                const PresentOptions& opt, float pixelScale = 1.0f);
     bool hasFrame() const { return w_ > 0; }
     unsigned frameWidth() const { return w_; }
     unsigned frameHeight() const { return h_; }

@@ -180,7 +180,9 @@ bool App::initImGui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+    // No keyboard/gamepad navigation of the UI: those devices belong to the game.
+    // (The UI is mouse-driven; WantCaptureKeyboard is then true only while typing.)
+    io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
     g_imguiIni = paths.imguiIni;
     io.IniFilename = g_imguiIni.c_str();
     ImGui::StyleColorsDark();
@@ -638,6 +640,14 @@ int App::runInteractive(const CliArgs& a) {
     audio.open(48043.6);
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
+    if (a.showWindow.rfind("settings", 0) == 0) {
+        showSettings = true;
+        size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
+        if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
+    }
+    else if (a.showWindow == "states") showStates = true;
+    else if (a.showWindow == "about") showAbout = true;
+    unsigned uiFrames = 0;
 
     std::string firstErr;
     if (a.noContent) openNoContent();
@@ -652,7 +662,7 @@ int App::runInteractive(const CliArgs& a) {
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;
 
-        inputCaptured_ = ImGui::GetIO().WantTextInput;
+        inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         stepEmulation();
         video.upload(host.frame());
 
@@ -663,6 +673,10 @@ int App::runInteractive(const CliArgs& a) {
         drawUi(*this, capKb);
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        if (!a.screenshot.empty() && ++uiFrames == a.screenshotFrame) {
+            saveWindowScreenshot(a.screenshot);
+            quit = true;
+        }
         SDL_GL_SwapWindow(window_);
 
         updateTitle();
@@ -686,7 +700,30 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    if (a.verbose) {
+        double secs = now() - fpsWindowStart_;
+        std::fprintf(stderr, "[app] audio: queued %.1f ms, ratio %.5f, underruns %llu\n", audio.queuedMs(),
+                     audio.ratio(), (unsigned long long)audio.underruns());
+        (void)secs;
+    }
     return 0;
+}
+
+void App::saveWindowScreenshot(const std::string& path) {
+    typedef void (*ReadPixelsFn)(int, int, int, int, unsigned, unsigned, void*);
+    ReadPixelsFn rp = (ReadPixelsFn)SDL_GL_GetProcAddress("glReadPixels");
+    if (!rp || !window_) return;
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(window_, &w, &h);
+    std::vector<unsigned char> px((size_t)w * h * 4), flipped((size_t)w * h * 4);
+    rp(0, 0, w, h, 0x1908 /*GL_RGBA*/, 0x1401 /*GL_UNSIGNED_BYTE*/, px.data());
+    for (int y = 0; y < h; y++)
+        std::memcpy(&flipped[(size_t)y * w * 4], &px[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
+    SDL_Surface* s = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, flipped.data(), w * 4);
+    if (s) {
+        SDL_SavePNG(s, path.c_str());
+        SDL_DestroySurface(s);
+    }
 }
 
 int App::runHeadless(const CliArgs& a) {
@@ -744,6 +781,26 @@ int App::runHeadless(const CliArgs& a) {
             if (sf) {
                 SDL_SavePNG(sf, (a.dumpFrame + "." + std::to_string(results_.size() - 1) + ".png").c_str());
                 SDL_DestroySurface(sf);
+            }
+        }
+        if (a.stateRoundtrip) {
+            // Save-state path end to end: slot file, thumbnail PNG, restore.
+            if (!saveState(0) || !fileExists(statePath(0)) || !fileExists(thumbPath(0))) {
+                std::fprintf(stderr, "headless: FAIL state or thumbnail was not written\n");
+                return 1;
+            }
+            for (int i = 0; i < 60; i++) { audio.update(); host.runFrame(); }
+            uint32_t h1 = frameHash();
+            if (!loadState(0)) {
+                std::fprintf(stderr, "headless: FAIL could not load the state back\n");
+                return 1;
+            }
+            for (int i = 0; i < 60; i++) { audio.update(); host.runFrame(); }
+            uint32_t h2 = frameHash();
+            std::printf("STATE roundtrip %08x %08x\n", h1, h2);
+            if (h1 != h2) {
+                std::fprintf(stderr, "headless: FAIL state restore diverged (%08x vs %08x)\n", h1, h2);
+                rc = 1;
             }
         }
         std::printf("HASH %08x %ux%u audio_frames=%zu %s\n", r.hash, r.w, r.h, r.audioFrames, path.c_str());
