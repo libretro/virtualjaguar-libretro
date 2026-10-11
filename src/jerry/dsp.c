@@ -423,12 +423,16 @@ uint32_t dsp_exec_opcode_count = 0;
 /* Instruction slots a DSP-issued D_FLAGS store waits out before it
  * retires: the slot holding the store itself, plus the one instruction
  * already past Read Operands behind it in the pipeline.  While the delay
- * is outstanding a cleared IMASK cannot yet let an interrupt in, and a
- * `jump` still reads its target register from dspPreStoreBank.  See the
- * D_FLAGS case in DSPWriteLong for the hardware citation. */
+ * is outstanding a cleared IMASK cannot yet let an interrupt in, and the
+ * register-bank switch the store selects has not happened yet: dsp_reg /
+ * dsp_alternate_reg still point at the bank that was live when the store
+ * issued, so EVERY register operand of the instruction behind it -- source
+ * and destination alike -- uses the pre-store bank.  The switch is
+ * committed (DSPUpdateRegisterBanks) when the delay reaches zero, at the
+ * redirect of a taken jump/jr, or by an interrupt.  See the D_FLAGS case in
+ * DSPWriteLong for the hardware citation (issues #853, d220aa2). */
 #define DSP_FLAGS_RETIRE_DELAY 2
 static uint32_t dspFlagsRetireDelay = 0;
-static uint32_t * dspPreStoreBank = NULL;
 
 
 
@@ -798,7 +802,6 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
       {
          case 0x00:
             {
-               uint32_t * preWriteBank = dsp_reg;
                /* OR, not assign: a host write to D_FLAGS must not drop
                 * an interrupt DSPSetIRQLine latched for the next
                 * instruction boundary.  Re-checking is always safe --
@@ -810,64 +813,80 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                dsp_flag_z = dsp_flags & 0x01;
                dsp_flag_c = (dsp_flags >> 1) & 0x01;
                dsp_flag_n = (dsp_flags >> 2) & 0x01;
-               DSPUpdateRegisterBanks();
                /* A D_FLAGS store issued by the DSP itself does not retire
                 * until the instruction behind it is already past Read
                 * Operands.  JTRM (docs/jtrm-gpu-dsp.md, "Pipeline") gives
                 * the RISC core four stages -- Decode, Read Operands,
-                * Compute, Write-back -- so this store's write-back lands
-                * a stage after the next instruction has latched its source
-                * registers, and a whole stage after a branch has latched
-                * the target register it needs to steer the fetch.  Two
-                * consequences the register-bank pointer alone cannot
-                * express, both recorded here and honoured by
-                * dsp_opcode_jump and DSPExec:
+                * Compute, Write-back -- and JTRM v8 p.109 (p.59 for the
+                * GPU) warns that "writing a value to the flag bits and
+                * making use of those flag bits in the following
+                * instruction will not work properly due to pipe-lining
+                * effects", asking for at least one other instruction in
+                * between.  So the instruction already in flight behind
+                * the store still runs with the OLD flags:
                 *
-                *  - A `jump (Rn)` in the slot behind the store reads Rn
-                *    from the PRE-store bank.  This is the ISR epilogue
-                *    Wolfenstein 3D's I2S handler uses at $F1B24E:
+                *  - Its register operands, sources AND destination, are in
+                *    the PRE-store bank.  The bank switch is deferred here
+                *    and committed by DSPExec once the delay runs out, so
+                *    nothing per-operand is needed.  Two shipped shapes
+                *    depend on it:
+                *      Wolfenstein 3D's I2S epilogue at $F1B24E
                 *        store  r0,(r1)     ; r1 = $F1A100, clears IMASK
                 *        jump   (r3)        ; r3 = bank-0 return address
-                *    with the main loop running in bank 1 (REGPAGE set).
-                *    Swapping banks inside the store made `jump (r3)` read
-                *    bank 1's uninitialised r3 == 0, so the DSP returned to
-                *    PC $000000, left RAM and stopped feeding LTXD/RTXD --
-                *    the game lost all audio from frame 48 on.
+                *      with its main loop in bank 1 (REGPAGE set): reading
+                *      bank 1's r3 == 0 returned the DSP to PC $000000.
+                *      Music Demo (ScatoLOGIC) entry at $F1B020 (#853)
+                *        store  rX,(rY)     ; D_FLAGS: REGPAGE=1, I2S enable
+                *        movei  #$F1B00C,r31
+                *      whose I2S ISR then does `load (r31),r28` in bank 0:
+                *      writing the movei into bank 1 left bank-0 r31 == 0,
+                *      the first interrupt pushed to $FFFFFFFC and the DSP
+                *      escaped at frame 5.
                 *
                 *  - IMASK is not really clear until the store retires
-                *    either, so the instruction in that same slot still
-                *    runs masked and cannot be preempted.  Wolf3D's outer
-                *    epilogue at $F1B128-$F1B12A has the same store/jump
-                *    shape; letting an I2S interrupt in between the two
-                *    made the handler push the store's own address as the
-                *    return address, so `jump (r4)` ran a slot later than
-                *    it should have and read the wrong bank anyway.
+                *    either, so that same slot still runs masked and cannot
+                *    be preempted.  Wolf3D's outer epilogue at
+                *    $F1B128-$F1B12A has the same store/jump shape; letting
+                *    an I2S interrupt in between the two made the handler
+                *    push the store's own address as the return address.
                 *
-                * The bank pointer itself still swaps immediately, which is
-                * what Doom's epilogue needs: it puts the D_FLAGS store in
-                * the delay slot of `jump (r15)` at $F1B028, so the branch
-                * target at $F1B6B2 -- a `movei` whose write-back follows
-                * the store's -- must land in the NEW bank.
+                * A taken branch commits the switch at its redirect
+                * (dsp_opcode_jump/jr): the inline delay slot is already
+                * the second instruction behind the store, and Doom's
+                * epilogue puts the D_FLAGS store IN the delay slot of
+                * `jump (r15)` at $F1B028, so the branch target at $F1B6B2
+                * -- a `movei` whose write-back follows the store's --
+                * must land in the NEW bank.
                 *
-                * CAVEAT on the derivation: the four-stage pipeline is
-                * documented, but nothing in docs/jtrm-*.md describes the
-                * taken-branch refill cost that lets a delay-slot store
-                * retire before the branch target reads registers, and this
-                * emulator's own dsp_opcode_cycles[] charges jump/jr only 1
-                * cycle.  The rule above is inferred from behaviour: it is
-                * the only composite that satisfies BOTH shipped epilogue
-                * shapes -- Wolf3D's `store; jump (Rn)` needs the old bank
-                * at the jump, Doom's `jump (Rn); store` needs the new bank
-                * at the target -- with two independent code bases as the
-                * evidence.  Revisit if primary JTRM pipeline timing ever
-                * contradicts it. */
+                * WINDOW LENGTH: the store plus ONE instruction
+                * (DSP_FLAGS_RETIRE_DELAY = 2), i.e. JTRM v8's "at least
+                * one other instruction".  The stricter counts -- Software
+                * Reference v2.4 p.46 "two, or four for an indexed STORE",
+                * Hardware Bugs & Warnings #11 "two NOPs" -- are read as
+                * programmer safety margins, not as the modelled latency:
+                * this is the length d220aa2 validated on Wolf3D and Doom,
+                * Music Demo needs exactly one slot, and no title so far
+                * needs a second.  The extra latency of an indexed store
+                * is not modelled.
+                *
+                * CAVEAT on the derivation: nothing in docs/jtrm-*.md
+                * describes the taken-branch refill cost that lets a
+                * delay-slot store retire before the branch target reads
+                * registers, and dsp_opcode_cycles[] charges jump/jr only
+                * 1 cycle.  The branch rule is inferred from behaviour: it
+                * is the only composite that satisfies Wolf3D's
+                * `store; jump (Rn)` and Doom's `jump (Rn); store` at once.
+                * Revisit if primary JTRM pipeline timing contradicts it.
+                *
+                * Host (68K/GPU) writes are not in the DSP pipeline and
+                * switch the bank at once. */
                if (who == DSP)
-               {
-                  dspPreStoreBank = preWriteBank;
                   dspFlagsRetireDelay = DSP_FLAGS_RETIRE_DELAY;
-               }
                else
+               {
+                  DSPUpdateRegisterBanks();
                   dspFlagsRetireDelay = 0;
+               }
                dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
                dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
                break;
@@ -1055,7 +1074,6 @@ void DSPHandleIRQsNP(void)
 	 * to shadow -- retire it rather than let it reach into the handler. */
 	dspFlagsRetireDelay = 0;
 	DSPUpdateRegisterBanks();
-	dspPreStoreBank = dsp_reg;
 
 
 	dsp_reg[31] -= 4;
@@ -1225,7 +1243,6 @@ void DSPReset(void)
 	CLR_ZNC;
 	IMASKCleared = false;
 	dspFlagsRetireDelay = 0;
-	dspPreStoreBank = dsp_reg;
 	FlushDSPPipeline();
 	dsp_reset_stats();
 
@@ -1330,8 +1347,11 @@ void DSPSyncToM68K(void)
  *
  * (3) The register banks cannot move.  dsp_reg / dsp_alternate_reg are
  *     repointed only by DSPUpdateRegisterBanks(), reachable from a
- *     D_FLAGS write (dsp.c:756) or from taking an interrupt
- *     (dsp.c:911) -- both excluded by (2).  The probe records the bank
+ *     D_FLAGS write (dsp.c:756), from taking an interrupt
+ *     (dsp.c:911), or from retiring a DSP-issued D_FLAGS store (the
+ *     DSPExec countdown and the jump/jr redirect, #853) -- all excluded
+ *     by (2), the last because it needs dspFlagsRetireDelay != 0.  The
+ *     probe records the bank
  *     pointer at the first snapshot and re-checks it at the third.
  *
  * (4) DSP-side reads are pure.  The HLE sound-engine auto-ack in
@@ -2278,10 +2298,10 @@ void DSPExec(int32_t cycles)
 
 		/* Age out a D_FLAGS store once the instruction that was already
 		 * behind it in the pipeline has run (see DSPWriteLong, D_FLAGS
-		 * case).  Retiring re-opens interrupt recognition and stops
-		 * dsp_opcode_jump reaching for the pre-store bank. */
-		if (dspFlagsRetireDelay)
-			dspFlagsRetireDelay--;
+		 * case).  Retiring re-opens interrupt recognition and commits the
+		 * register-bank switch the store selected. */
+		if (dspFlagsRetireDelay && --dspFlagsRetireDelay == 0)
+			DSPUpdateRegisterBanks();
 	}
 
 	dsp_in_exec--;
@@ -2485,15 +2505,20 @@ INLINE static void dsp_opcode_jump(void)
 	if (BRANCH_CONDITION(IMM_2))
 	{
 		/* The target register is latched a pipeline stage before a
-		 * D_FLAGS store in the slot ahead of us can retire, so when one
-		 * is still outstanding read it from the bank that was live when
-		 * that store issued -- not from the bank it selected.  See the
-		 * D_FLAGS case in DSPWriteLong. */
-		uint32_t delayed_pc = dspFlagsRetireDelay
-		                      ? dspPreStoreBank[dsp_opcode_first_parameter]
-		                      : RM;
+		 * D_FLAGS store in the slot ahead of us can retire, so RM still
+		 * reads the bank that was live when that store issued -- the
+		 * switch is deferred until it retires.  See the D_FLAGS case in
+		 * DSPWriteLong. */
+		uint32_t delayed_pc = RM;
 		uint16_t ds_opcode;
 		uint32_t ds_index;
+		/* The delay slot is the second instruction behind such a store,
+		 * past the retire window: commit the switch before it runs. */
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
 		/* Inline delay-slot: fetch-decode-execute one instruction at current
 		 * PC before applying the branch target.  This replaces the old
 		 * recursive DSPExec(1) call, avoiding full function-call overhead,
@@ -2513,10 +2538,14 @@ INLINE static void dsp_opcode_jump(void)
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 		/* Refilling the pipeline from the branch target costs enough
-		 * cycles that an outstanding D_FLAGS store -- including one the
-		 * delay slot just issued -- reaches Write-back first, so the
-		 * target instruction sees the new bank.  See DSPWriteLong. */
-		dspFlagsRetireDelay = 0;
+		 * cycles that a D_FLAGS store the delay slot just issued reaches
+		 * Write-back first, so the target instruction sees the new bank.
+		 * See DSPWriteLong. */
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
 	}
 }
 
@@ -2532,6 +2561,12 @@ INLINE static void dsp_opcode_jr(void)
 		int32_t delayed_pc = dsp_pc + (offset * 2);
 		uint16_t ds_opcode;
 		uint32_t ds_index;
+		/* Same retire-window commits as dsp_opcode_jump. */
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
 		/* Inline delay-slot: fetch-decode-execute one instruction at current
 		 * PC before applying the branch target.  Same rationale as in
 		 * dsp_opcode_jump above. */
@@ -2550,7 +2585,11 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 		/* Same branch-target pipeline refill as dsp_opcode_jump. */
-		dspFlagsRetireDelay = 0;
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
 	}
 }
 
@@ -4236,7 +4275,15 @@ size_t DSPStateSave(uint8_t *buf)
    STATE_SAVE_BUF(buf, dsp_reg_bank_0, sizeof(dsp_reg_bank_0));
    STATE_SAVE_BUF(buf, dsp_reg_bank_1, sizeof(dsp_reg_bank_1));
 
-   active_bank = (dsp_reg == dsp_reg_bank_0) ? 0 : 1;
+   /* Bit 0: the live bank.  Bits 1-2: an un-retired D_FLAGS store's
+    * remaining delay (DSP_FLAGS_RETIRE_DELAY).  While one is outstanding
+    * the live bank is the PRE-store bank and the switch is still owed, so
+    * a state captured between the store and the instruction behind it
+    * must carry both or that instruction runs in the wrong bank after a
+    * load (run-ahead / netplay, #400 class).  States written before #853
+    * hold 0 or 1 here, i.e. no window -- no layout change. */
+   active_bank = (uint8_t)(((dsp_reg == dsp_reg_bank_0) ? 0 : 1)
+                           | ((dspFlagsRetireDelay & 3) << 1));
    STATE_SAVE_VAR(buf, active_bank);
 
    STATE_SAVE_VAR(buf, dsp_opcode_first_parameter);
@@ -4282,7 +4329,7 @@ size_t DSPStateLoad(const uint8_t *buf)
    STATE_LOAD_BUF(buf, dsp_reg_bank_1, sizeof(dsp_reg_bank_1));
 
    STATE_LOAD_VAR(buf, active_bank);
-   if (active_bank == 0)
+   if ((active_bank & 1) == 0)
    {
       dsp_reg = dsp_reg_bank_0;
       dsp_alternate_reg = dsp_reg_bank_1;
@@ -4292,12 +4339,10 @@ size_t DSPStateLoad(const uint8_t *buf)
       dsp_reg = dsp_reg_bank_1;
       dsp_alternate_reg = dsp_reg_bank_0;
    }
-   /* The state format carries no slot for an un-retired D_FLAGS store
-    * (see DSP_FLAGS_RETIRE_DELAY); retire it on load.  The window is two
-    * instruction slots wide, and the register banks themselves are saved
-    * in full either way. */
-   dspFlagsRetireDelay = 0;
-   dspPreStoreBank = dsp_reg;
+   /* An un-retired D_FLAGS store rides in bits 1-2 (see DSPStateSave). */
+   dspFlagsRetireDelay = (active_bank >> 1) & 3;
+   if (dspFlagsRetireDelay > DSP_FLAGS_RETIRE_DELAY)
+      dspFlagsRetireDelay = DSP_FLAGS_RETIRE_DELAY;
 
    STATE_LOAD_VAR(buf, dsp_opcode_first_parameter);
    STATE_LOAD_VAR(buf, dsp_opcode_second_parameter);
