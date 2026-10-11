@@ -13,8 +13,11 @@
  *      -o test/tools/test_option_visibility \
  *      test/tools/test_option_visibility.c -ldl
  *
- * Usage: test_option_visibility <core> <cart.j64> [disc.cue]
- * The disc argument is optional; the CD half is skipped without it.
+ * Usage: test_option_visibility <core> <cart.j64> [disc.cue] [--strict]
+ * The disc argument is optional; the CD half is skipped without it.  With
+ * --strict a disc that does not load is a FAILURE rather than a skip: the
+ * in-tree synthetic CHD must always load, or the CD side silently loses its
+ * coverage while the test stays green.
  */
 
 #include <stdio.h>
@@ -226,6 +229,7 @@ int main(int argc, char **argv)
    const char *core = (argc > 1) ? argv[1] : "./virtualjaguar_libretro.dylib";
    const char *cart = (argc > 2) ? argv[2] : NULL;
    const char *disc = (argc > 3) ? argv[3] : NULL;
+   int strict = (argc > 4 && !strcmp(argv[4], "--strict"));
 
    /* The Makefile always passes a disc argument; it expands to an empty
     * string when the private CD tree is absent (as on CI).  Treat that as
@@ -276,6 +280,11 @@ int main(int argc, char **argv)
    expect("(cart)", "virtualjaguar_cd_trace",      false);
    expect("(cart)", "virtualjaguar_bios",          true);
    expect("(cart)", "virtualjaguar_bios_type",     true);
+   /* Cartridge-only settings (#850) stay shown for a cartridge. */
+   expect("(cart)", "virtualjaguar_jgd",               true);
+   expect("(cart)", "virtualjaguar_jgd_sd",            true);
+   expect("(cart)", "virtualjaguar_enhancement_hooks", true);
+   expect("(cart)", "virtualjaguar_blit_memo",         true);
    /* Texture dump (#369): the 16bpp preview knob is hidden while the
     * dump option sits at its disabled default. */
    expect("(cart)", "virtualjaguar_texdump_16bpp", false);
@@ -359,7 +368,14 @@ int main(int argc, char **argv)
          /* Not a visibility regression — some images in the private tree
           * legitimately fail to load (see #230).  Disc compatibility is
           * covered by the CD boot suites; skip rather than fail here. */
-         printf("[disc] SKIP: %s did not load\n", disc);
+         if (strict)
+         {
+            printf("  FAIL: [disc] %s did not load (--strict)\n", disc);
+            failures++;
+            checks++;
+         }
+         else
+            printf("[disc] SKIP: %s did not load\n", disc);
       }
       else
       {
@@ -370,6 +386,13 @@ int main(int argc, char **argv)
          expect("(cd)", "virtualjaguar_cd_trace",      true);
          expect("(cd)", "virtualjaguar_bios",          false);
          expect("(cd)", "virtualjaguar_bios_type",     false);
+         /* Cartridge-only settings (#850): the GameDrive is reached only
+          * from the cart ROM loader, enhancement hooks and blit memo both
+          * refuse CD content. */
+         expect("(cd)", "virtualjaguar_jgd",               false);
+         expect("(cd)", "virtualjaguar_jgd_sd",            false);
+         expect("(cd)", "virtualjaguar_enhancement_hooks", false);
+         expect("(cd)", "virtualjaguar_blit_memo",         false);
          p_unload();
       }
    }
