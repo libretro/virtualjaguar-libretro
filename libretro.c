@@ -2779,7 +2779,7 @@ static int explain_same(const explain_amend_t *next, int next_n)
       return 0;
    for (i = 0; i < next_n; i++)
       if (next[i].idx != explain_cur[i].idx
-          || strcmp(next[i].note, explain_cur[i].note))
+          || strcmp(next[i].note, explain_cur[i].note) != 0)
          return 0;
    return 1;
 }
