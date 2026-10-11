@@ -271,6 +271,9 @@ typedef struct {
      * unanswered (returns false), matching every harness tool that
      * predates this option -- see cb_environment() in harness.c. */
     int           av_skip_video;
+    /* Answer GET_INPUT_BITMASKS true and serve RETRO_DEVICE_ID_JOYPAD_MASK
+     * (what RetroArch does).  Set via --input-bitmasks. */
+    int           input_bitmasks;
 
     /* RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK capture (opt-in
      * like av_skip_video/mic_tone): when accept_audio_buf_cb is non-zero
@@ -370,6 +373,7 @@ typedef struct {
     .last_fb_hash = 0, \
     .mic_tone = 0, \
     .av_skip_video = 0, \
+    .input_bitmasks = 0, \
     .accept_audio_buf_cb = 0, \
     .core_options_v2 = 0, \
     .audio_buf_cb = NULL, \

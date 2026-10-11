@@ -10,6 +10,9 @@ New tests should use `test/harness/harness.h` — shared lib eliminating dlopen/
 boilerplate (see header's AGENT QUICK-START). Features:
 
 - Common CLI: `--json`, `--frames N`, `--bios`, `--option K=V`, `--quiet`.
+  `--bios` sets only the CART BIOS option; CD boot needs `--option virtualjaguar_cd_boot_mode=bios`
+  (check the `[BOOT] CD game, mode=BIOS` log line). `--input-bitmasks` answers GET_INPUT_BITMASKS
+  like RetroArch does (default harness takes the per-button input path).
 - Scripted input: `--press FRAME:BUTTON[:HOLD]` (repeatable; buttons `up down left right a b c
   pause option 0-6`) — enough to navigate menus into gameplay headlessly. Programmatic:
   `harness_press()` / `harness_input_cb`.

@@ -181,6 +181,9 @@ static int16_t cb_input_state(unsigned p, unsigned d, unsigned i, unsigned id)
         return active_cfg->input_callback(active_cfg->input_callback_data,
                                           p, d, i, id);
     if (d != RETRO_DEVICE_JOYPAD) return 0;
+    if (id == RETRO_DEVICE_ID_JOYPAD_MASK)
+        return active_cfg->input_bitmasks
+                   ? (int16_t)harness_input_mask(active_cfg, p) : 0;
     for (e = 0; e < active_cfg->num_input_events; e++) {
         const harness_input_event *ev = &active_cfg->input_events[e];
         if (ev->port == p && ev->button == id &&
@@ -703,6 +706,11 @@ static bool cb_environment(unsigned cmd, void *data)
             active_cfg->disk_cb_registered       = 1;
         }
         return true;
+    case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
+        /* Opt-in (--input-bitmasks): RetroArch always answers true, so the
+         * core takes its RETRO_DEVICE_ID_JOYPAD_MASK path there; the
+         * default harness answers false and exercises the per-button path. */
+        return active_cfg && active_cfg->input_bitmasks;
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
         /* Only answer when a tool explicitly opted in (--av-skip-video);
          * otherwise fall through to `default: return false`, which is
@@ -762,6 +770,8 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->quiet = 1;
         } else if (strcmp(argv[i], "--mic-tone") == 0) {
             cfg->mic_tone = 1;
+        } else if (strcmp(argv[i], "--input-bitmasks") == 0) {
+            cfg->input_bitmasks = 1;
         } else if (strcmp(argv[i], "--av-skip-video") == 0) {
             cfg->av_skip_video = 1;
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
