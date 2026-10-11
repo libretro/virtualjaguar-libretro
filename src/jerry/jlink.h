@@ -51,6 +51,7 @@ void JLinkSetTCPEndpoint(const char *host, int port);
 const char *JLinkGetTCPHost(void);
 void JLinkSetWaitEnabled(int enabled);
 void JLinkFrameTick(void);
+void JLinkFrameEnd(double fieldHz);
 void JLinkAwaitReply(void);
 
 int  JLinkOpen(int mode);
