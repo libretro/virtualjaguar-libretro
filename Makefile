@@ -2025,17 +2025,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# committed in-tree, so its absence means a broken checkout and must
 	@# fail the suite rather than read as a pass -- the same rationale the
 	@# test_state_compat and test_frontend_pacing lines below already state.
-	@# Only the disc half is genuinely optional, and it now records a ledger
-	@# skip so "ran without a disc" is distinguishable from "ran fully".
+	@# The disc half always runs against the in-tree synth_jagcd.chd (#850),
+	@# so CI covers the CD side; a private rip is an extra pass that records a
+	@# ledger skip when absent, so "ran without a disc" stays distinguishable.
 	@VJ_VIS_ROOT="test/roms/private/Jaguar CD/BinCue"; VJ_VIS_DISC=""; \
 		for VJ_VIS_PAT in "Baldies*" "Myst*" "Hover*" "*"; do \
 			[ -n "$$VJ_VIS_DISC" ] && break; \
 			VJ_VIS_DISC=$$(ls "$$VJ_VIS_ROOT"/$$VJ_VIS_PAT/*.cue 2>/dev/null | head -1); \
 		done; \
+		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 test/roms/synth_jagcd.chd --strict || exit 1; \
 		if [ -z "$$VJ_VIS_DISC" ]; then \
-			bash scripts/test-skip.sh record "Core option visibility (disc half)" "no .cue image under test/roms/private/Jaguar CD/BinCue"; \
-		fi; \
-		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"
+			bash scripts/test-skip.sh record "Core option visibility (private-disc half)" "no .cue image under test/roms/private/Jaguar CD/BinCue"; \
+		else \
+			./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"; \
+		fi
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
@@ -2181,6 +2184,17 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		--option virtualjaguar_risc_idle_skip=enabled \
 		--option virtualjaguar_risc_clock_scale=2x
 	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
+	@# #850 follow-ups, all on the in-tree yarc.j64 (never skip): the runtime
+	@# demotion's OSD notice (case 7, via a synthetic enhancement row), the
+	@# restart-required sublabel marker (8), cartridge/CD option visibility
+	@# surviving a definitions re-push (9) and a frontend that refuses the
+	@# visibility call (10).
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 7 --quiet
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 8 --quiet
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 9 --quiet \
+		--option virtualjaguar_risc_idle_skip=enabled \
+		--option virtualjaguar_risc_clock_scale=2x
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 10 --quiet
 	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
 	if [ -n "$$rom" ]; then \
 		wmcj_crc=$$(python3 -c "import zlib,sys; print('0x%08X' % zlib.crc32(open(sys.argv[1],'rb').read()))" "$$rom" 2>/dev/null); \

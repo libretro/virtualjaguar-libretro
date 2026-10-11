@@ -485,7 +485,7 @@ static bool content_loaded         = false;
  * everything else keys off jaguar_cd_mode / jaguarCartInserted as before. */
 static bool no_game_active         = false;
 static bool show_cd_options        = true;
-static bool show_cart_bios_option  = true;
+static bool show_cart_options      = true;
 /* 16bpp preview interpretation only matters while texture dump is on
  * (#369).  Defaults visible, like the other show_* gates, so the first
  * update_option_visibility() sees a change and hides it while the dump
@@ -978,6 +978,25 @@ static int netlink_resolve_mode(const char *v)
    return JLINK_MODE_DISABLED;
 }
 
+/* RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY wrapper (#850).
+ *
+ * The call is only a hint, and libretro.h defines its return value as
+ * "this environment call is available" (true even for an option that does
+ * not exist).  A frontend that answers false has no option-visibility
+ * support at all, so every option simply stays visible -- the safe state,
+ * since visibility never changes what an option does.  The first refusal is
+ * latched and the rest of the session stops asking.  -1 = not asked yet.
+ * Reset in retro_deinit (iOS never dlcloses the core). */
+static int option_display_supported = -1;
+
+static void option_display_push(const struct retro_core_option_display *d)
+{
+   if (option_display_supported == 0)
+      return;
+   option_display_supported =
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, (void *)d) ? 1 : 0;
+}
+
 static bool update_option_visibility(void)
 {
    struct retro_core_option_display option_display;
@@ -1012,13 +1031,13 @@ static bool update_option_visibility(void)
 
          build_port_option_key(key, sizeof(key), i, "_numpad_to_kb");
          option_display.key = key;
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         option_display_push(&option_display);
 
          for (j = 0; j < ARRAY_SIZE(retropad_option_map); j++)
          {
             build_port_option_key(key, sizeof(key), i, retropad_option_map[j].suffix);
             option_display.key = key;
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+            option_display_push(&option_display);
          }
       }
 
@@ -1037,14 +1056,27 @@ static bool update_option_visibility(void)
          "virtualjaguar_cd_trace",
          "virtualjaguar_memory_track",
       };
-      bool show_cd_prev        = show_cd_options;
-      bool show_cart_bios_prev = show_cart_bios_option;
+      /* Cartridge-only settings (#850).  Each is inert, or refused, for
+       * CD content: the cartridge BIOS setting is ignored there
+       * (ResolveBootConfig() lets CD Boot Mode drive showBootROM); the
+       * GameDrive is only reached from the cart ROM loader (JGDLoadROM,
+       * file.c); enhancement hooks refuse anything but a cartridge ROM
+       * image (TitleHookApplyROM); blit memoization refuses CD content
+       * (BlitMemoSetMode).  Hidden for CD ONLY -- a RAM-loaded executable
+       * is not CD, so it keeps the full set. */
+      static const char * const cart_only_keys[] = {
+         "virtualjaguar_bios",
+         "virtualjaguar_bios_type",
+         "virtualjaguar_jgd",
+         "virtualjaguar_jgd_sd",
+         "virtualjaguar_enhancement_hooks",
+         "virtualjaguar_blit_memo",
+      };
+      bool show_cd_prev   = show_cd_options;
+      bool show_cart_prev = show_cart_options;
 
-      show_cd_options       = (!content_loaded || jaguar_cd_mode);
-      /* The cartridge BIOS setting is ignored for CD content —
-       * ResolveBootConfig() lets CD Boot Mode drive showBootROM — so
-       * showing it there would advertise a control that does nothing. */
-      show_cart_bios_option = (!content_loaded || !jaguar_cd_mode);
+      show_cd_options   = (!content_loaded || jaguar_cd_mode);
+      show_cart_options = (!content_loaded || !jaguar_cd_mode);
 
       if (force || show_cd_options != show_cd_prev)
       {
@@ -1052,21 +1084,19 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(cd_only_keys); i++)
          {
             option_display.key = cd_only_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
 
-      if (force || show_cart_bios_option != show_cart_bios_prev)
+      if (force || show_cart_options != show_cart_prev)
       {
-         option_display.visible = show_cart_bios_option;
-         option_display.key     = "virtualjaguar_bios";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
-         option_display.key     = "virtualjaguar_bios_type";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display.visible = show_cart_options;
+         for (i = 0; i < ARRAY_SIZE(cart_only_keys); i++)
+         {
+            option_display.key = cart_only_keys[i];
+            option_display_push(&option_display);
+         }
          updated = true;
       }
    }
@@ -1095,8 +1125,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(mouse_keys); i++)
          {
             option_display.key = mouse_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -1124,8 +1153,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(rotary_keys); i++)
          {
             option_display.key = rotary_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -1153,8 +1181,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(analog_keys); i++)
          {
             option_display.key = analog_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -1176,8 +1203,7 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_texdump_16bpp;
          option_display.key     = "virtualjaguar_texdump_16bpp";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
    }
@@ -1193,8 +1219,7 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_texture_replace;
          option_display.key     = "virtualjaguar_texture_replace";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
    }
@@ -1226,16 +1251,14 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_netlink_host;
          option_display.key     = "virtualjaguar_netlink_host";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
       if (force || show_netlink_port != show_netlink_port_prev)
       {
          option_display.visible = show_netlink_port;
          option_display.key     = "virtualjaguar_netlink_port";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
    }
@@ -1264,8 +1287,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(voice_keys); i++)
          {
             option_display.key = voice_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -7251,7 +7273,7 @@ void retro_unload_game(void)
    enable_alt_inputs = false;
    content_loaded = false;
    show_cd_options = true;
-   show_cart_bios_option = true;
+   show_cart_options = true;
 }
 
 unsigned retro_get_region(void)
@@ -7725,7 +7747,8 @@ void retro_deinit(void)
    enable_alt_inputs = false;
    content_loaded = false;
    show_cd_options = true;
-   show_cart_bios_option = true;
+   show_cart_options = true;
+   option_display_supported = -1;
 #ifdef VJ_TRACE
    /* Belt-and-suspenders, matching retro_unload_game() -- see vjt_frame's
     * decl. */

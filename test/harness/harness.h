@@ -472,6 +472,24 @@ unsigned    harness_set_variable_calls(void);
  * a frontend option change does.  Default: never updated. */
 void        harness_notify_variable_update(void);
 
+/* Option visibility (#850), from SET_CORE_OPTIONS_DISPLAY.  Returns the
+ * frontend-side state of `key`: 0 hidden, 1 visible -- including "never
+ * mentioned", which is visible by libretro default.  A definitions push
+ * (SET_CORE_OPTIONS_V2) resets every row to visible, as RetroArch's rebuilt
+ * option manager does, so a core that forgets to re-push visibility after
+ * a re-push shows up here.  harness_option_display_refuse(1) makes the call
+ * answer false, like a frontend without the feature (set before load);
+ * the core must then stop asking, which harness_option_display_calls()
+ * (every call that reached the harness, refused ones included) exposes. */
+int         harness_option_visible(const char *key);
+unsigned    harness_option_display_calls(void);
+void        harness_option_display_refuse(int refuse);
+/* `desc` (the menu label) of a key in the FIRST option push. */
+const char *harness_options_first_desc(const char *key);
+/* Key of the i-th definition in the FIRST push (NULL past the end), so a
+ * test can sweep every option instead of a list that drifts. */
+const char *harness_options_def_key(unsigned i);
+
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);
 

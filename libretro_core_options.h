@@ -163,7 +163,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_internal_resolution",
       "Internal Resolution (Restart Required)",
       NULL,
-      "Render internally at a multiple of the Jaguar's native resolution. Applied when content is loaded; changing it mid-game takes effect on restart. Presentation only: the game-visible framebuffer and all emulation timing are unchanged. Combines with True Color.",
+      "Restart required: applied when content is loaded. Render internally at a multiple of the Jaguar's native resolution. Presentation only: the game-visible framebuffer and all emulation timing are unchanged. Combines with True Color.",
       NULL,
       "video",
       {
@@ -205,7 +205,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_enhancement_hooks",
       "Per-Title Enhancement Hooks",
       NULL,
-      "Apply per-game byte patches from the enhancement database to the loaded cartridge image (game-side fixes that no core option can express). Off by default. Each patch verifies the bytes it expects and writes nothing if they differ, so it cannot corrupt a dump it was not written for. Cartridge content only; takes effect on restart.",
+      "Restart required: applied when content is loaded. Apply per-game byte patches from the enhancement database to the loaded cartridge image (game-side fixes that no core option can express). Off by default. Each patch verifies the bytes it expects and writes nothing if they differ, so it cannot corrupt a dump it was not written for. Cartridge content only.",
       NULL,
       "video",
       {
@@ -602,7 +602,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios_type",
       "Cart BIOS Type (Restart)",
       NULL,
-      "Which console boot ROM a CARTRIDGE uses when 'BIOS (Cartridges)' is Real, or when a GPU-only/jagcrypt cart turns the boot ROM on. 'Series K' is the original Jaguar; 'Model M' is the later revision (patch address $4804) most size-coded BootIntros are built for. Both are built into the core. 'Custom' loads a 128 KB image from the system directory (jagboot.rom, boot.rom, boot0.rom, or a named '[BIOS] Atari Jaguar...' file), identified by checksum and logged, falling back to Series K if none is found. A jagboot_m.rom in the system directory replaces the built-in Model M image. Ignored for CD content.",
+      "Restart required: applied when content is loaded. Which console boot ROM a CARTRIDGE uses when 'BIOS (Cartridges)' is Real, or when a GPU-only/jagcrypt cart turns the boot ROM on. 'Series K' is the original Jaguar; 'Model M' is the later revision (patch address $4804) most size-coded BootIntros are built for. Both are built into the core. 'Custom' loads a 128 KB image from the system directory (jagboot.rom, boot.rom, boot0.rom, or a named '[BIOS] Atari Jaguar...' file), identified by checksum and logged, falling back to Series K if none is found. A jagboot_m.rom in the system directory replaces the built-in Model M image. Ignored for CD content.",
       NULL,
       "bios_boot",
       {
@@ -631,7 +631,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_gdb_stub",
       "GDB Debug Stub (Restart)",
       NULL,
-      "Open a GDB remote debugging server on localhost so a debugger can inspect the emulated machine. Developer-facing; leave disabled for normal play. By default the server listens only on 127.0.0.1 and is not reachable from another machine; 'GDB Stub: Network Binding' can widen that to your local network, with the security consequences described there. Requires a restart.",
+      "Restart required: applied when content is loaded. Open a GDB remote debugging server on localhost so a debugger can inspect the emulated machine. Developer-facing; leave disabled for normal play. By default the server listens only on 127.0.0.1 and is not reachable from another machine; 'GDB Stub: Network Binding' can widen that to your local network, with the security consequences described there.",
       NULL,
       "diagnostics",
       {
@@ -645,7 +645,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_gdb_bind",
       "GDB Stub: Network Binding (Debug)",
       NULL,
-      "Which addresses the GDB stub will accept debugger connections from. 'Loopback' (default) accepts only connections from this same machine -- on a phone, tablet or TV that means nothing outside the device can ever reach it. 'LAN' additionally accepts connections from your local network, so you can debug a game running on another device from your computer. SECURITY: the GDB protocol has NO authentication of any kind. While the stub is open, anyone who can reach the port can read and write the emulated machine's memory and control its execution. Only use 'LAN' on a network you trust, only while you are actually debugging, and turn it back off afterwards. Connections from public (non-private) addresses are refused and logged even in 'LAN' mode. Has no effect unless GDB Stub is enabled. Takes effect on content load.",
+      "Restart required: applied when content is loaded. Which addresses the GDB stub will accept debugger connections from. 'Loopback' (default) accepts only connections from this same machine -- on a phone, tablet or TV that means nothing outside the device can ever reach it. 'LAN' additionally accepts connections from your local network, so you can debug a game running on another device from your computer. SECURITY: the GDB protocol has NO authentication of any kind. While the stub is open, anyone who can reach the port can read and write the emulated machine's memory and control its execution. Only use 'LAN' on a network you trust, only while you are actually debugging, and turn it back off afterwards. Connections from public (non-private) addresses are refused and logged even in 'LAN' mode. Has no effect unless GDB Stub is enabled.",
       NULL,
       "diagnostics",
       {
@@ -659,7 +659,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_gdb_port",
       "GDB Stub Port (Restart)",
       NULL,
-      "TCP port for the GDB debug stub. Change this only if another program already uses the default. Requires a restart.",
+      "Restart required: applied when content is loaded. TCP port for the GDB debug stub. Change this only if another program already uses the default.",
       NULL,
       "diagnostics",
       {
@@ -675,7 +675,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_gdb_wait",
       "GDB Stub: Halt At Boot (Restart)",
       NULL,
-      "Halt the 68000 before its very first instruction and wait for a GDB client to attach, so a boot-time fault can be debugged instead of running to completion before you connect. Only takes effect while the GDB Debug Stub option above is enabled. Requires a restart.",
+      "Restart required: applied when content is loaded. Halt the 68000 before its very first instruction and wait for a GDB client to attach, so a boot-time fault can be debugged instead of running to completion before you connect. Only takes effect while the GDB Debug Stub option above is enabled.",
       NULL,
       "diagnostics",
       {
@@ -689,7 +689,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_gdb_halt_timeout",
       "GDB Stub: Halt Timeout",
       NULL,
-      "If the machine is halted at a breakpoint with no client activity for this long, resume automatically and log it loudly, so a forgotten debug session does not look like a hang forever. 'Off' means a halt waits indefinitely -- the default, because silently resuming a debugged machine is worse than a freeze for the developers this option is for.",
+      "Restart required: applied when content is loaded. If the machine is halted at a breakpoint with no client activity for this long, resume automatically and log it loudly, so a forgotten debug session does not look like a hang forever. 'Off' means a halt waits indefinitely -- the default, because silently resuming a debugged machine is worse than a freeze for the developers this option is for.",
       NULL,
       "diagnostics",
       {
@@ -734,7 +734,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_jgd",
       "Jaguar GameDrive (Restart)",
       NULL,
-      "Emulate the Jaguar GameDrive (JagGD) flash cartridge: its detection/install interface and 1 MB bank switching over up to 16 MB of cart SDRAM. 'Auto' turns it on only for ROM images larger than the 6 MB cartridge window. 'Enabled' forces it on for smaller images too, for GD-locked homebrew that refuses to boot without the cart (BigPEmu calls this Force JGD). Without it, GD-locked titles hang at boot exactly as on a stock console.",
+      "Restart required: applied when content is loaded. Emulate the Jaguar GameDrive (JagGD) flash cartridge: its detection/install interface and 1 MB bank switching over up to 16 MB of cart SDRAM. 'Auto' turns it on only for ROM images larger than the 6 MB cartridge window. 'Enabled' forces it on for smaller images too, for GD-locked homebrew that refuses to boot without the cart (BigPEmu calls this Force JGD). Without it, GD-locked titles hang at boot exactly as on a stock console.",
       NULL,
       "bios_boot",
       {
@@ -764,7 +764,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_pal",
       "PAL (Restart)",
       NULL,
-      "Emulate a PAL Jaguar instead of NTSC.",
+      "Restart required: applied when content is loaded. Emulate a PAL Jaguar instead of NTSC.",
       NULL,
       "video",
       {
@@ -778,7 +778,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_bios_type",
       "CD BIOS Type (Restart)",
       NULL,
-      "Which CD BIOS the real-BIOS boot path uses. 'Retail' is the standard consumer BIOS; 'Developer' is the dev-kit BIOS, which applies less strict disc checks and can boot images the retail BIOS refuses. Both are built into the core, so no files are required; a CD BIOS ROM file in the system directory is preferred over the built-in image, and this setting picks which file wins when both types are present. Only has an effect when 'CD Boot Mode' is 'Real BIOS' or 'Auto' -- the HLE boot path never runs a CD BIOS.",
+      "Restart required: applied when content is loaded. Which CD BIOS the real-BIOS boot path uses. 'Retail' is the standard consumer BIOS; 'Developer' is the dev-kit BIOS, which applies less strict disc checks and can boot images the retail BIOS refuses. Both are built into the core, so no files are required; a CD BIOS ROM file in the system directory is preferred over the built-in image, and this setting picks which file wins when both types are present. Only has an effect when 'CD Boot Mode' is 'Real BIOS' or 'Auto' -- the HLE boot path never runs a CD BIOS.",
       NULL,
       "cdrom",
       {
@@ -792,7 +792,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_boot_mode",
       "CD Boot Mode (Restart)",
       NULL,
-      "How Jaguar CD discs boot. OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS with the boot ROM on: more faithful, and verified clean across all 5 tested FMV titles (Dragon's Lair, Space Ace, BrainDead 13, Blue Lightning, Highlander) in 15,000-frame probes. It prefers a CD BIOS ROM file from the system directory (several common names and the usual Jaguar / Jaguar CD sub-folders are searched) and otherwise uses the built-in image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If no CD BIOS can be staged at all, the core falls back to HLE rather than failing. Audio-only (Red Book) CDs always use the real BIOS regardless of this setting, since HLE has no game code to boot from.",
+      "Restart required: applied when content is loaded. How Jaguar CD discs boot. OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS with the boot ROM on: more faithful, and verified clean across all 5 tested FMV titles (Dragon's Lair, Space Ace, BrainDead 13, Blue Lightning, Highlander) in 15,000-frame probes. It prefers a CD BIOS ROM file from the system directory (several common names and the usual Jaguar / Jaguar CD sub-folders are searched) and otherwise uses the built-in image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If no CD BIOS can be staged at all, the core falls back to HLE rather than failing. Audio-only (Red Book) CDs always use the real BIOS regardless of this setting, since HLE has no game code to boot from.",
       NULL,
       "cdrom",
       {
@@ -824,7 +824,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_memory_track",
       "Memory Track (Restart)",
       NULL,
-      "Emulate the Memory Track save cartridge alongside the CD unit, as on real hardware. CD games detect it and save settings, progress and high scores to its 128 KB NVRAM (stored in the save file). Disable to emulate a console without the cartridge -- games will warn that game information cannot be saved.",
+      "Restart required: applied when content is loaded. Emulate the Memory Track save cartridge alongside the CD unit, as on real hardware. CD games detect it and save settings, progress and high scores to its 128 KB NVRAM (stored in the save file). Disable to emulate a console without the cartridge -- games will warn that game information cannot be saved.",
       NULL,
       "cdrom",
       {

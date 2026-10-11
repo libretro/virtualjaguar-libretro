@@ -545,7 +545,9 @@ unless you specifically want games to warn that progress cannot be saved.
 
 ## 7. Options that need a restart
 
-Changing these mid-game does nothing visible. Reload the content.
+These are read once, when content loads. Changing them mid-game does not
+take effect: reload the content. Each one's sublabel (the text under the
+option) includes **Restart required: applied when content is loaded.**
 
 | Option | Menu name |
 |---|---|
@@ -557,9 +559,25 @@ Changing these mid-game does nothing visible. Reload the content.
 | `memory_track` | Memory Track |
 | `jgd` | Jaguar GameDrive |
 | `enhancement_hooks` | Per-Title Enhancement Hooks |
+| `gdb_stub`, `gdb_bind`, `gdb_port`, `gdb_wait`, `gdb_halt_timeout` | GDB debug stub (developer-facing) |
 
 Everything else — blitter mode, true color, texture replacement, clock scales,
 timing models, idle-skip, CD read speed — takes effect immediately.
+
+### Options that only show for the content you loaded
+
+Once content is loaded the menu hides options that cannot apply to it (if your
+frontend supports hiding options; otherwise everything stays visible and
+nothing else changes). A hidden option keeps its value and still reads
+normally.
+
+- **Cartridge loaded:** the CD-only options are hidden — CD BIOS Type, CD Boot
+  Mode, CD Read Speed, CD Trace and Memory Track.
+- **CD loaded:** the cartridge-only options are hidden — BIOS (Cartridges) and Cart BIOS
+  Type (CD Boot Mode decides there), Jaguar GameDrive and its SD card,
+  Per-Title Enhancement Hooks, and Blit Memoization (which is unavailable for CD
+  content).
+- **Nothing loaded yet:** everything is shown, so you can configure ahead.
 
 ---
 

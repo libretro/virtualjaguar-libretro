@@ -445,18 +445,36 @@ static int      variable_update_pending;
 static unsigned opt_pushes_before_load;
 typedef struct {
     char   **keys;
+    char   **descs;
     char   **infos;
     unsigned n;
 } opt_snapshot;
 static opt_snapshot opt_first, opt_latest;
 
+/* SET_CORE_OPTIONS_DISPLAY (#850): the frontend-side visibility of each
+ * key.  Unmentioned = visible (the libretro default), and a definitions
+ * push rebuilds the frontend's option manager with every row visible
+ * again (RetroArch's behaviour), so a push clears the table -- the core
+ * must then re-push visibility, which is exactly what is worth testing.
+ * `refuse` makes the environment call answer false, like a frontend
+ * without option-visibility support. */
+#define HARNESS_MAX_VIS 192
+static struct { char key[64]; int visible; } vis_tab[HARNESS_MAX_VIS];
+static unsigned vis_n;
+static unsigned vis_calls;
+static int      vis_refuse;
+
 static void opt_snapshot_free(opt_snapshot *s)
 {
     unsigned i;
-    for (i = 0; i < s->n; i++) { free(s->keys[i]); free(s->infos[i]); }
+    for (i = 0; i < s->n; i++) {
+        free(s->keys[i]); free(s->descs[i]); free(s->infos[i]);
+    }
     free(s->keys);
+    free(s->descs);
     free(s->infos);
     s->keys = NULL;
+    s->descs = NULL;
     s->infos = NULL;
     s->n = 0;
 }
@@ -468,10 +486,12 @@ static void opt_snapshot_take(opt_snapshot *s,
     opt_snapshot_free(s);
     while (d[n].key) n++;
     s->keys  = (char **)calloc(n ? n : 1, sizeof(char *));
+    s->descs = (char **)calloc(n ? n : 1, sizeof(char *));
     s->infos = (char **)calloc(n ? n : 1, sizeof(char *));
-    if (!s->keys || !s->infos) return;
+    if (!s->keys || !s->descs || !s->infos) return;
     for (i = 0; i < n; i++) {
         s->keys[i]  = strdup(d[i].key);
+        s->descs[i] = strdup(d[i].desc ? d[i].desc : "");
         s->infos[i] = strdup(d[i].info ? d[i].info : "");
     }
     s->n = n;
@@ -480,6 +500,7 @@ static void opt_snapshot_take(opt_snapshot *s,
 static void opt_capture(const struct retro_core_option_v2_definition *d)
 {
     if (!d) return;
+    vis_n = 0;   /* a rebuild shows every row again (see vis_tab) */
     if (opt_pushes == 0) opt_snapshot_take(&opt_first, d);
     opt_snapshot_take(&opt_latest, d);
     opt_pushes++;
@@ -492,6 +513,44 @@ static const char *opt_snapshot_find(const opt_snapshot *s, const char *key)
         if (strcmp(s->keys[i], key) == 0) return s->infos[i];
     return NULL;
 }
+
+static const char *opt_snapshot_find_desc(const opt_snapshot *s, const char *key)
+{
+    unsigned i;
+    for (i = 0; i < s->n; i++)
+        if (strcmp(s->keys[i], key) == 0) return s->descs[i];
+    return NULL;
+}
+
+static void vis_record(const struct retro_core_option_display *d)
+{
+    unsigned i;
+    if (!d || !d->key) return;
+    for (i = 0; i < vis_n; i++)
+        if (strcmp(vis_tab[i].key, d->key) == 0) {
+            vis_tab[i].visible = d->visible ? 1 : 0;
+            return;
+        }
+    if (vis_n < HARNESS_MAX_VIS) {
+        snprintf(vis_tab[vis_n].key, sizeof(vis_tab[vis_n].key), "%s", d->key);
+        vis_tab[vis_n].visible = d->visible ? 1 : 0;
+        vis_n++;
+    }
+}
+
+int harness_option_visible(const char *key)
+{
+    unsigned i;
+    for (i = 0; i < vis_n; i++)
+        if (strcmp(vis_tab[i].key, key) == 0) return vis_tab[i].visible;
+    return 1;
+}
+unsigned harness_option_display_calls(void) { return vis_calls; }
+void harness_option_display_refuse(int refuse) { vis_refuse = refuse; }
+const char *harness_options_first_desc(const char *key)
+{ return opt_snapshot_find_desc(&opt_first, key); }
+const char *harness_options_def_key(unsigned i)
+{ return i < opt_first.n ? opt_first.keys[i] : NULL; }
 
 unsigned harness_osd_count(void) { return osd_n; }
 const char *harness_osd_text(unsigned i) { return i < osd_n ? osd_texts[i] : NULL; }
@@ -650,6 +709,14 @@ static bool cb_environment(unsigned cmd, void *data)
         return true;
     case RETRO_ENVIRONMENT_SET_VARIABLE:
         set_variable_n++;
+        return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+        /* Recorded for #850.  Before this the harness fell through to the
+         * default (false); the core now reads that as "frontend has no
+         * visibility support", so answer like a frontend that has it. */
+        vis_calls++;
+        if (vis_refuse) return false;
+        vis_record((const struct retro_core_option_display *)data);
         return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
         if (active_cfg) active_cfg->video.set_geometry_calls++;
