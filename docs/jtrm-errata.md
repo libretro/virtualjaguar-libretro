@@ -155,9 +155,15 @@ Game behaviour only: Hover Strike (`e92b675`, GPU; `test/acid/tests/op/op_gpu_in
 Can't Jump (`646d82f`, DSP CPUINT gated on DSPGO; `src/jerry/dsp.c` ~825-845, whose comment says it is
 worth confirming against hardware; #635).
 
-**B10. D_FLAGS store retires a pipeline stage late.** Jump reads pre-store bank; IMASK clear delayed. Inferred
-from Wolfenstein 3D / Doom epilogue shapes (`dsp.c` ~707-757 "inferred from behaviour", commit `d220aa2`). The GPU
-has no analog (`gpu.c` ~1488) though the manual's warning covers both.
+**B10. D_FLAGS store retires a pipeline stage late.** The one instruction behind a DSP-issued D_FLAGS store
+uses the pre-store register bank for every operand (sources and destination; the bank switch is deferred until
+the store retires) and still runs with IMASK set. A taken jump/jr commits the switch before its delay slot and
+again at the redirect. Window = store + 1 instruction, per v8 p.109 "at least one other instruction"; the stricter
+SWR/HBW counts (A4) are treated as programmer margins, and the indexed-STORE extra latency is not modelled.
+Evidence: Wolfenstein 3D `store; jump (Rn)` and Doom `jump (Rn); store` epilogues (commit `d220aa2`, jump-only),
+generalised to all operands for Music Demo's `store D_FLAGS; movei r31` (#853). The branch-refill part is inferred
+from behaviour (`dsp.c`, D_FLAGS case). The GPU has no analog (`gpu.c` GPUWriteLong G_FLAGS case swaps banks and
+dispatches interrupts inside the store) though the manual's warning (p.59) covers both.
 
 **B11. Misaligned LOAD/STORE.** v8 pp.48-56 say "must be long-word aligned"; unaligned behaviour unstated.
 "Preliminary testing on real hardware" for main-memory unaligned reads (`gpu.c` ~3057; Power Drive Rally
@@ -266,7 +272,7 @@ level 0 with no legend entry. HBW (26 Apr 1995) is a separate, partly overlappin
 |---|---|---|
 | HBW GPU/DSP #4 | DSP DMAEN set -> external load/store hangs the DSP | no |
 | HBW GPU/DSP #7 | DSP external write must follow an external read that completes (intermittent) | no. Plausible to matter for DSP mixers writing external buffers; emulator always clean, hardware intermittent |
-| HBW GPU/DSP #11 / SWR p.46 | G_FLAGS/D_FLAGS write pipelining (2 NOPs; 4 for indexed) | DSP: partial, inferred (B10). GPU: no |
+| HBW GPU/DSP #11 / SWR p.46 | G_FLAGS/D_FLAGS write pipelining (2 NOPs; 4 for indexed) | DSP: partial, 1-instruction window, all operands (B10, #853). GPU: no |
 | HBW OP #2 | VSCALE above 7.0 fails | no (no check in `op.c`) |
 | HBW OP #3 | HSCALE other than 1.0 on 24-bit scaled bitmaps distorts | no. SWR separately says scaled bitmaps do not display properly in 24-bit RGB |
 | HBW Misc #1 | UART double-shifts a start bit at a certain phase | no (`src/jerry/uart.c`). Matters only for JagLink/ComLynx/modem |

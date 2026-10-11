@@ -101,7 +101,11 @@ extern "C" {
  *     reopens with the original access only (never a create/truncate/
  *     append), so loading a state cannot clobber a file.  First bump of
  *     the v3.8.0 cycle: any other in-flight state change this cycle
- *     extends v17 in place rather than bumping again. */
+ *     extends v17 in place rather than bumping again.
+ *     EXTENDED IN PLACE (still v17, no layout change): #853 packs an
+ *     un-retired D_FLAGS store's remaining delay into bits 1-2 of the DSP
+ *     chunk's existing active_bank byte (bit 0 stays the live bank).
+ *     Older states hold 0/1 there and load as "no window". */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   17
 /* Oldest layout retro_unserialize still accepts.  States between
