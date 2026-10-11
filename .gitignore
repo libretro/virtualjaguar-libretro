@@ -197,3 +197,6 @@ test/tools/voicechat_pair
 /test/tools/netlink_discover_probe
 /test/tools/netlink_rebuild_witness
 test/roms/tier1/
+
+# Standalone app (app/): CMake build trees
+/app/build*/
