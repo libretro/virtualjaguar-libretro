@@ -124,10 +124,11 @@ static void run_frames(harness_config *cfg, unsigned n)
 }
 
 /* The options read ONLY at content load (verified one by one against where
- * libretro.c consumes them -- see the #850 commit).  `bios` is deliberately
- * absent: check_variables() rewrites vjs.useJaguarBIOS live. */
+ * libretro.c consumes them -- see the #850 commit; `bios` joined in #858
+ * once check_variables() stopped rewriting vjs.useJaguarBIOS live). */
 static const char * const restart_keys[] = {
     "virtualjaguar_internal_resolution",
+    "virtualjaguar_bios",
     "virtualjaguar_enhancement_hooks",
     "virtualjaguar_pal",
     "virtualjaguar_bios_type",
@@ -160,7 +161,6 @@ static const char * const live_keys[] = {
     "virtualjaguar_texture_dump",
     "virtualjaguar_texture_replace",
     "virtualjaguar_jgd_sd",
-    "virtualjaguar_bios",
     NULL
 };
 

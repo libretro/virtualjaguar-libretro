@@ -316,6 +316,84 @@ static int run_autodetect_arm(int argc, char **argv, const char *rom_path,
    return 0;
 }
 
+/* #858: once content is loaded, changing ANY option re-runs
+ * check_variables().  It must not re-apply 'BIOS (Cartridges)' over the
+ * load-time resolution (a GPU-only cart forces the boot ROM on), nor flip
+ * PAL mid-session.  Load the GPU-only cart with bios=HLE and pal=disabled,
+ * change an unrelated option, then also flip pal itself, and check both
+ * flags never move. */
+static int run_midsession_latch_arm(int argc, char **argv, const char *rom_path)
+{
+   harness_config cfg = HARNESS_CONFIG_DEFAULT;
+   struct vjs_prefix *vjs;
+   unsigned scale_idx, pal_idx, i;
+   int ok = 1;
+
+   if (!harness_init_from_args(&cfg, argc, argv))
+      return 1;
+   cfg.use_bios = 0;
+   cfg.rom_path = rom_path;
+   cfg.frames = 1;
+   if (cfg.num_options + 3 > HARNESS_MAX_OPTIONS)
+   {
+      fprintf(stderr, "FAIL: midsession: option table full\n");
+      return 1;
+   }
+   cfg.options[cfg.num_options].key   = "virtualjaguar_bios";
+   cfg.options[cfg.num_options].value = "disabled";
+   cfg.num_options++;
+   pal_idx = cfg.num_options;
+   cfg.options[cfg.num_options].key   = "virtualjaguar_pal";
+   cfg.options[cfg.num_options].value = "disabled";
+   cfg.num_options++;
+   scale_idx = cfg.num_options;
+   cfg.options[cfg.num_options].key   = "virtualjaguar_risc_clock_scale";
+   cfg.options[cfg.num_options].value = "1x";
+   cfg.num_options++;
+
+   if (!harness_load_rom(&cfg))
+   {
+      fprintf(stderr, "FAIL: midsession: load_rom\n");
+      harness_shutdown(&cfg);
+      return 1;
+   }
+   vjs = (struct vjs_prefix *)harness_dlsym(&cfg, "vjs");
+   if (!vjs)
+   {
+      fprintf(stderr, "FAIL: midsession: vjs not exported\n");
+      harness_shutdown(&cfg);
+      return 1;
+   }
+   for (i = 0; i < 3; i++)
+      harness_step(&cfg);
+   ok &= check_boot_flag(&cfg, 1, "midsession_loaded_gpu_only_cart");
+
+   /* An unrelated option change re-runs check_variables(). */
+   cfg.options[scale_idx].value = "2x";
+   harness_notify_variable_update();
+   for (i = 0; i < 3; i++)
+      harness_step(&cfg);
+   ok &= check_boot_flag(&cfg, 1, "midsession_unrelated_change_keeps_bios");
+
+   /* PAL itself flipped mid-session: the standard stays NTSC until restart. */
+   cfg.options[pal_idx].value = "enabled";
+   harness_notify_variable_update();
+   for (i = 0; i < 3; i++)
+      harness_step(&cfg);
+   if (!vjs->hardwareTypeNTSC)
+   {
+      fprintf(stderr, "FAIL: midsession_pal_latched: hardwareTypeNTSC flipped "
+            "mid-session\n");
+      ok = 0;
+   }
+   else
+      fprintf(stderr, "PASS: midsession_pal_latched (still NTSC)\n");
+   ok &= check_boot_flag(&cfg, 1, "midsession_pal_change_keeps_bios");
+
+   harness_shutdown(&cfg);
+   return ok ? 0 : 1;
+}
+
 static const char *default_core_path(void)
 {
 #ifdef __APPLE__
@@ -383,6 +461,9 @@ int main(int argc, char **argv)
    buf = NULL;
    if (run_autodetect_arm(argc, argv, ff_path, 1,
          "autodetect_ff_pad"))
+      fail++;
+   fprintf(stderr, "=== mid-session option latch (#858) ===\n");
+   if (run_midsession_latch_arm(argc, argv, ff_path))
       fail++;
    remove(ff_path);
 

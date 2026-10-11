@@ -553,6 +553,7 @@ option) includes **Restart required: applied when content is loaded.**
 |---|---|
 | `internal_resolution` | Internal Resolution |
 | `pal` | PAL |
+| `bios` | BIOS (Cartridges) — HLE or the real boot ROM |
 | `bios_type` | Cart BIOS Type — *which* boot ROM (Series K / Model M / Custom) |
 | `cd_bios_type` | CD BIOS Type |
 | `cd_boot_mode` | CD Boot Mode |
