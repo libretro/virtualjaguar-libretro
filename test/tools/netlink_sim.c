@@ -32,6 +32,13 @@
  *        --frames N [--delay-ms D] [--jitter-ms J] [--spike-pct P]
  *        [--spike-ms LO:HI] [--seed S] [--emu-ms E] [--emu-split F]
  *        [--pump-us U] [--phase-b-us X] [--audio-block-ms A] [--opt K=V]...
+ *        [--corrupt N:XX]  XOR the first payload byte of the Nth UART packet sent by
+ *                          instance 0 with hex XX (probe how the peer reacts)
+ *        [--log]           route the core's log lines (incl. the link stats line) to stderr
+ *        [--btrace FILE]   per-byte events: "inst virtual_us kind value"
+ *                          (kinds in netlink_sim_clockpatch.py)
+ *        [--loss-pct P --rto-ms R]   P% packet loss, R ms retransmit timeout (TCP)
+ *        [--udp-rto-ms U]  model UDP+redundancy: losses cost U ms, not R
  *        [--press F:BTN[:HOLD] | --press0 .. | --press1 ..]...
  *        [--trace FILE] [--ev LO:HI] [--shots DIR --shot-every N]
  * Doom 2P deathmatch: press A@160, right@220, right@232, A@270 (host) and
@@ -46,6 +53,7 @@
 #include <stdbool.h>
 #include <dlfcn.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <libretro.h>
 
 #define FRAME_US 16667
@@ -79,6 +87,7 @@ typedef struct inst {
     void (*simclock)(long long (*)(void), void (*)(int));
     uint32_t (*txtotal)(void);
     uint32_t (*rxtotal)(void);
+    void (*settrace)(void (*)(int, int));
     struct retro_netpacket_callback np;
     int np_ok;
     box_t inbox;
@@ -111,6 +120,15 @@ static FILE *trace;
 static unsigned ev_lo = 0, ev_hi = 0;
 static double audio_block_ms = 0;
 #define EV(me, ...) do { if ((me)->frame >= ev_lo && (me)->frame < ev_hi) { fprintf(stderr, "EV i%d f%u t=%.3f ", (me)->id, (me)->frame, (me)->clock/1000.0); fprintf(stderr, __VA_ARGS__); } } while (0)
+static FILE *btrace;                 /* --btrace: per-byte link events */
+static double loss_pct = 0;          /* --loss-pct: per-packet loss probability */
+static double rto_ms = 200;          /* --rto-ms: TCP retransmit timeout per loss */
+static int udp_model = 0;            /* --udp-rto-ms: model UDP+redundancy instead of TCP */
+static double udp_rto_ms = 0;
+static unsigned long lost_pkts, sent_pkts;
+static unsigned corrupt_idx, corrupt_xor;   /* --corrupt N:X: flip the Nth UART packet from i0 */
+static unsigned uart_pkts0;
+static int want_log;                 /* --log: route core log lines to stderr */
 static const char *shot_dir;
 static unsigned shot_every;
 static uint8_t *rom_data;
@@ -173,6 +191,32 @@ static long long extra_us(void)
     return x;
 }
 
+static void trace_hook(int kind, int val)
+{
+    if (btrace)
+        fprintf(btrace, "%d %lld %d %d\n", cur->id, cur->clock, kind, val);
+}
+
+/* Loss model.  TCP: a lost segment is recovered by the retransmit timer
+ * (--rto-ms, per loss; a lone segment in a lock-step exchange has no later
+ * segment to trigger fast retransmit) and everything behind it waits
+ * (head-of-line, the FIFO clamp in np_send).  UDP+redundancy model
+ * (--udp-rto-ms U): a lost datagram is re-sent by a short retransmit timer U;
+ * delivery to the core is still in order. */
+static long long loss_extra_us(void)
+{
+    long long x = 0;
+    double per = udp_model ? udp_rto_ms : rto_ms;
+    unsigned lim = 8;
+    while (loss_pct > 0 && lim-- && (rnd() % 100000) < (unsigned)(loss_pct * 1000.0))
+    {
+        x += (long long)(per * 1000.0);
+        lost_pkts++;
+    }
+    sent_pkts++;
+    return x;
+}
+
 static void np_send(int flags, const void *buf, size_t len, uint16_t cid)
 {
     inst_t *me = cur, *peer = &inst[1 - me->id];
@@ -182,7 +226,25 @@ static void np_send(int flags, const void *buf, size_t len, uint16_t cid)
     (void)flags; (void)cid;
     charge_in_run(me);
     if (!buf || !len || len > sizeof(p->d) || b->count >= MAXPK) return;
-    due = me->clock + extra_us();
+    if (corrupt_idx && me->id == 0 && len >= 2 && ((const uint8_t *)buf)[0] == 1
+        && ++uart_pkts0 == corrupt_idx)
+    {
+        uint8_t save[1100];
+        memcpy(save, buf, len);
+        save[1] ^= (uint8_t)corrupt_xor;
+        fprintf(stderr, "CORRUPT i0 uart packet %u: byte %02x -> %02x\n", uart_pkts0,
+                ((const uint8_t *)buf)[1], save[1]);
+        buf = save;
+        due = me->clock + extra_us() + loss_extra_us();
+        if (due < b->last_due) due = b->last_due;
+        b->last_due = due;
+        p = &b->q[(b->head + b->count) % MAXPK];
+        p->due = due; p->from = (uint16_t)(me->id == 1 ? 0 : 1); p->len = (uint16_t)len;
+        memcpy(p->d, buf, len);
+        b->count++;
+        return;
+    }
+    due = me->clock + extra_us() + loss_extra_us();
     EV(me, "SEND len=%zu due=%.3f\n", len, due/1000.0);
     if (due < b->last_due) due = b->last_due;   /* TCP FIFO / head-of-line */
     b->last_due = due;
@@ -220,6 +282,16 @@ static void np_poll_receive(void)
 }
 
 /* ---- frontend stubs ---- */
+static void log_cb(enum retro_log_level lvl, const char *fmt, ...)
+{
+    va_list ap;
+    (void)lvl;
+    fprintf(stderr, "LOG i%d t=%.3fs ", cur->id, cur->clock / 1e6);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
 static bool env_cb(unsigned cmd, void *data)
 {
     inst_t *me = cur;
@@ -235,6 +307,10 @@ static bool env_cb(unsigned cmd, void *data)
                 if (v->key && !strcmp(v->key, opt_k[i])) { v->value = opt_v[i]; return true; }
             return false;
         }
+        case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+            if (!want_log) return false;
+            ((struct retro_log_callback *)data)->log = log_cb;
+            return true;
         case RETRO_ENVIRONMENT_GET_CAN_DUPE: *(bool *)data = true; return true;
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: *(bool *)data = false; return true;
         case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
@@ -351,9 +427,10 @@ static void *thread_main(void *arg)
     SYM(set_as, "retro_set_audio_sample"); SYM(set_asb, "retro_set_audio_sample_batch");
     SYM(set_ip, "retro_set_input_poll"); SYM(set_is, "retro_set_input_state");
     SYM(init, "retro_init"); SYM(load, "retro_load_game"); SYM(run, "retro_run");
-    SYM(simclock, "JLinkSimSetClock"); SYM(txtotal, "JLinkTxTotal"); SYM(rxtotal, "JLinkRxTotal");
+    SYM(simclock, "JLinkSimSetClock"); SYM(settrace, "JLinkSimSetTrace"); SYM(txtotal, "JLinkTxTotal"); SYM(rxtotal, "JLinkRxTotal");
 #undef SYM
     me->simclock(sim_now, sim_sleep);
+    if (btrace) me->settrace(trace_hook);
     me->set_env(env_cb);
     me->set_video(video_cb); me->set_as(as_cb); me->set_asb(asb_cb);
     me->set_ip(ip_cb); me->set_is(is_cb);
@@ -427,6 +504,12 @@ int main(int argc, char **argv)
         else if A("--pump-us") pump_us = atoi(argv[++i]);
         else if A("--phase-b-us") phase_b = atoll(argv[++i]);
         else if A("--trace") tracef = argv[++i];
+        else if A("--btrace") btrace = fopen(argv[++i], "w");
+        else if (!strcmp(argv[i], "--log")) want_log = 1;
+        else if A("--corrupt") { if (sscanf(argv[++i], "%u:%x", &corrupt_idx, &corrupt_xor) != 2) return 1; }
+        else if A("--loss-pct") loss_pct = atof(argv[++i]);
+        else if A("--rto-ms") rto_ms = atof(argv[++i]);
+        else if A("--udp-rto-ms") { udp_rto_ms = atof(argv[++i]); udp_model = 1; }
         else if A("--ev") { if (sscanf(argv[++i], "%u:%u", &ev_lo, &ev_hi) != 2) return 1; }
         else if A("--shots") shot_dir = argv[++i];
         else if A("--shot-every") shot_every = (unsigned)atoi(argv[++i]);
@@ -473,5 +556,8 @@ int main(int argc, char **argv)
     for (i = 0; i < 2; i++)
         pthread_join(inst[i].th, NULL);
     if (trace) fclose(trace);
+    if (btrace) fclose(btrace);
+    if (loss_pct > 0)
+        fprintf(stderr, "loss: %lu of %lu packets lost\n", lost_pkts, sent_pkts);
     return 0;
 }
