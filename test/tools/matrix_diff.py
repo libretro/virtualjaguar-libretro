@@ -52,11 +52,22 @@ Stage ranking (low = worse).  A move to a lower rank is BACKWARD:
         evidence, so it blocks; moving between rank-1 labels is lateral.
      2  BIOS_INTRO      (CD, bios mode)
      3  BOOT_STUB       (CD, bios mode)
-     4  GAME_CODE       (the only real stage the cart matrix produces)
+     4  GAME_CODE       (the real stage the cart matrix produces)
+     4  BIOS_REJECT     (cart, bios mode, #852): the boot ROM rejected the
+                        dump and halted on the red "Jaguar" screen
      5  MENU
      6  IN_GAME
 
-Cart reduces to LOAD_FAIL < ? < GAME_CODE.  The CD order is the legend order in
+Cart reduces to LOAD_FAIL < ? < GAME_CODE = BIOS_REJECT.  BIOS_REJECT shares
+GAME_CODE's rank on purpose (#852): old matrices scored these carts GAME_CODE
+(a false "BIOS works"), so a GAME_CODE -> BIOS_REJECT move is the scoring
+being corrected, not a regression -- it lands in "lateral", never "regressed".
+Moving from BIOS_REJECT to ? or LOAD_FAIL is backward as usual, and
+? -> BIOS_REJECT is forward.  A BIOS_REJECT cell is an authentic hardware
+outcome for that dump, so a title whose halves are GAME_CODE (HLE) and
+BIOS_REJECT (BIOS) is NOT listed under still-asymmetric (HLE fast-boot skips
+the boot ROM's check; there is no HLE gap to close).  Only the ranks of the
+cells decide the gate, as before.  The CD order is the legend order in
 docs/cd-boot-matrix.md (LOAD_FAIL -> BIOS_INTRO -> BOOT_STUB -> GAME_CODE ->
 MENU -> IN_GAME).  An unrecognised stage label is a parse error, never a silent
 rank.
@@ -99,6 +110,7 @@ STAGE_RANKS = {
     "BIOS_INTRO": 2,
     "BOOT_STUB": 3,
     "GAME_CODE": 4,
+    "BIOS_REJECT": 4,
     "MENU": 5,
     "IN_GAME": 6,
 }
@@ -281,6 +293,8 @@ def asymmetric(kind, rows):
     if kind == "cart":
         for r in rows:
             h, b = r["cells"]["HLE"][0], r["cells"]["BIOS"][0]
+            if b == "BIOS_REJECT" and h == "GAME_CODE":
+                continue  # authentic: the boot ROM rejects the dump (#852)
             if h != b:
                 out.setdefault(r["title"], []).append("HLE %s / BIOS %s" % (h, b))
     else:

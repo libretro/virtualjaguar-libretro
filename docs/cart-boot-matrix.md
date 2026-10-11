@@ -9,9 +9,18 @@ in-game is not distinguished headlessly.  A "black video" note is
 undetermined evidence (headless read-path caveat), not a verdict.
 Rows are stamped with the core build that produced them.
 
+**Real BIOS rows are scored from the boot-ROM handoff.** The boot ROM plays a
+~490-frame logo animation and jingle before it hands the 68K to the cart, so
+a BIOS run keeps going until 600 frames after the handoff (cap: 1300 frames)
+and only counts video/audio from there.  `BIOS_REJECT` = the boot ROM ran,
+never reached the cartridge and halted in its own `BRA.S *` loop (the red
+"Jaguar" reject screen: the dump fails the header/encryption check), which
+is not "BIOS works".  `? (bios_trap)` = the cart got control, then the 68K
+fell back into the boot ROM (an exception through its vectors).
+
 **Never backward.** Every release candidate's regenerated matrix is diffed
 against the previous tag's with `test/tools/matrix_diff.py OLD.md NEW.md`.
-A row that moves backward (`LOAD_FAIL` < `?` < `GAME_CODE`, per boot mode), or
+A row that moves backward (`LOAD_FAIL` < `?` < `GAME_CODE` = `BIOS_REJECT`, per boot mode), or
 whose notes gain a crash-watchdog signature (`gpu_wedge`, `dsp_wedge`,
 `inframe_hang`, `video_stall`, `gpu_pc_escape`, `dsp_pc_escape`), blocks the
 tag until it has a ticket and an explicit deferral.  Checklist:

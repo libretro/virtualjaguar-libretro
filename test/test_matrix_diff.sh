@@ -160,6 +160,90 @@ section_has regressed "Twin" && ok "duplicate-title regression listed" || bad "d
 run dup0 "$TMP/o7" "$TMP/o7"
 expect "duplicate titles compare equal to themselves" 0 "regressed (0)"
 
+# BIOS_REJECT (#852): same rank as GAME_CODE.  An old false "BIOS works" row
+# turning into a reject is a scoring correction (lateral), not a regression.
+cart "$TMP/o8" "$STAMP"  "Reject|GAME_CODE|black video (headless — undetermined), silent|GAME_CODE|video, audio"
+cart "$TMP/n8" "$STAMP2" "Reject|GAME_CODE|black video (headless — undetermined), silent|BIOS_REJECT|boot ROM halted at \$0050B6"
+run rej "$TMP/o8" "$TMP/n8"
+expect "GAME_CODE -> BIOS_REJECT is lateral, exit 0" 0 "RESULT: OK" "regressed (0)"
+section_has "lateral (informational)" "Reject [BIOS]" && ok "false-pass correction listed as lateral" \
+    || bad "false-pass correction listed as lateral" "$OUT"
+section_has still-asymmetric "Reject" && bad "HLE GAME_CODE / BIOS_REJECT not asymmetric" "$OUT" \
+    || ok "HLE GAME_CODE / BIOS_REJECT is not listed as an HLE gap"
+run rejsame "$TMP/n8" "$TMP/n8"
+expect "BIOS_REJECT vs itself is clean" 0 "regressed (0)" "improved (0)"
+cart "$TMP/n8b" "$STAMP2" "Reject|GAME_CODE|black video (headless — undetermined), silent|? (pc_escape)|final_pc=\$6D2710"
+run rejback "$TMP/n8" "$TMP/n8b"
+expect "BIOS_REJECT -> ? (pc_escape) is backward" 1 "Reject [BIOS]"
+cart "$TMP/n8c" "$STAMP2" "Reject|GAME_CODE|black video (headless — undetermined), silent|LOAD_FAIL|x"
+run rejlf "$TMP/n8" "$TMP/n8c"
+expect "BIOS_REJECT -> LOAD_FAIL is backward" 1 "Reject [BIOS]"
+run rejfwd "$TMP/n8b" "$TMP/n8"
+expect "? -> BIOS_REJECT is improved" 0 "RESULT: OK"
+section_has improved "Reject [BIOS]" && ok "? -> BIOS_REJECT listed as improved" \
+    || bad "? -> BIOS_REJECT listed as improved" "$OUT"
+cart "$TMP/n8d" "$STAMP2" "Reject|GAME_CODE|black video (headless — undetermined), silent|BIOS_REJECT|boot ROM halted; gpu_wedge"
+run rejsig "$TMP/n8" "$TMP/n8d"
+expect "new watchdog signature on a BIOS_REJECT row is still backward" 1 "Reject [BIOS]"
+# A bios_trap (cart got control, fell back into the boot ROM) is a '?' row.
+cart "$TMP/n8e" "$STAMP2" "Trap|GAME_CODE|video, silent|? (bios_trap)|final_pc=\$E005DC after cart handoff at frame 492"
+cart "$TMP/o8e" "$STAMP"  "Trap|GAME_CODE|video, silent|GAME_CODE|video, audio"
+run trap "$TMP/o8e" "$TMP/n8e"
+expect "GAME_CODE -> ? (bios_trap) is backward" 1 "Trap [BIOS]"
+
+echo "cart classifier (cart_classify.sh)"
+. "$SCRIPT_DIR/tools/matrix_common.sh"
+. "$SCRIPT_DIR/tools/cart_classify.sh"
+TIMEOUT_SECS=90
+FRAMES=600
+# probe <log> <extra fields...>: write a CARTPROBE line (plus optional core log lines on stdin)
+probe_log() {
+    f="$1"; shift
+    { cat; printf 'CARTPROBE rom="x.jag" frames=%s w=326 h=240 pc_valid=1 %s\n' "${FRAMES_RUN:-1092}" "$*"; } > "$f"
+}
+cls() { # cls <log> <mode> -> CLS
+    CLS="$(cart_classify_mode 0 "$1" "$2")"
+}
+want() { # want <name> <prefix>
+    case "$CLS" in "$2"*) ok "$1";; *) bad "$1" "got: $CLS";; esac
+}
+# Rejected cart: boot ROM ran, no handoff, halted on $60FE for 30 frames.
+FRAMES_RUN=278 probe_log "$TMP/c1" 'pc=$0050B6 nonblack_max_pct=100.0 lit_frames=230 motion=34 audio_nonsilent=105158 audio_onset=35 bios_ran=1 handoff=-1 final_op=$60FE halt_frames=30 scored_from=0 scored_frames=278 scored_lit_frames=230 scored_motion=34 scored_audio_nonsilent=105158' </dev/null
+cls "$TMP/c1" bios; want "boot ROM ran + no handoff + halt loop -> BIOS_REJECT" "BIOS_REJECT|"
+cls "$TMP/c1" hle;  want "same log in HLE mode is never BIOS_REJECT" "GAME_CODE|"
+# Boot ROM never ran (headerless RAM-loaded .jag): not a reject, whole run scored.
+probe_log "$TMP/c2" 'pc=$0086CE nonblack_max_pct=90.0 lit_frames=500 motion=100 audio_nonsilent=90000 audio_onset=35 bios_ran=0 handoff=0 final_op=$66E6 halt_frames=0 scored_from=0 scored_frames=600 scored_lit_frames=500 scored_motion=100 scored_audio_nonsilent=90000' </dev/null
+cls "$TMP/c2" bios; want "bios_ran=0 never BIOS_REJECT (RAM-loaded executable)" "GAME_CODE|video, audio"
+# Parked in a halt loop but fewer than 30 frames: not (yet) a reject.
+probe_log "$TMP/c3" 'pc=$0050B6 lit_frames=10 motion=1 audio_nonsilent=0 bios_ran=1 handoff=-1 final_op=$60FE halt_frames=12 scored_from=0 scored_frames=600 scored_lit_frames=10 scored_motion=1 scored_audio_nonsilent=0' </dev/null
+cls "$TMP/c3" bios; want "short halt (<30 frames) is not BIOS_REJECT" "GAME_CODE|"
+/usr/bin/grep -q "handoff not observed" <<<"$CLS" && ok "no-handoff run says so and scores the whole run" \
+    || bad "no-handoff run says so" "$CLS"
+# Handed off, then moving video + audio AFTER the handoff: scored from there.
+probe_log "$TMP/c4" 'pc=$00D4A4 lit_frames=950 motion=487 audio_nonsilent=551152 audio_onset=35 bios_ran=1 handoff=492 final_op=$66E6 halt_frames=0 scored_from=492 scored_frames=600 scored_lit_frames=514 scored_motion=121 scored_audio_nonsilent=262586' </dev/null
+cls "$TMP/c4" bios; want "after-handoff video+audio scored" "GAME_CODE|video, audio (after handoff f492)"
+# The boot animation must not count: whole-run says moving+audio, scored says static+silent.
+probe_log "$TMP/c5" 'pc=$00805F46 lit_frames=1020 motion=370 audio_nonsilent=288566 audio_onset=35 bios_ran=1 handoff=492 final_op=$66E6 halt_frames=0 scored_from=492 scored_frames=600 scored_lit_frames=584 scored_motion=3 scored_audio_nonsilent=0' </dev/null
+cls "$TMP/c5" bios; want "boot jingle/animation do not count: static, silent" "GAME_CODE|static video, silent (after handoff f492)"
+cls "$TMP/c5" hle;  want "HLE mode still scores the whole run" "GAME_CODE|video, audio"
+# Cart took control, then trapped into the boot ROM: crash, not reject, not working.
+probe_log "$TMP/c6" 'pc=$E005DC lit_frames=1020 motion=370 audio_nonsilent=288566 audio_onset=35 bios_ran=1 handoff=492 final_op=$60FE halt_frames=0 scored_from=492 scored_frames=600 scored_lit_frames=584 scored_motion=3 scored_audio_nonsilent=0' </dev/null
+cls "$TMP/c6" bios; want "boot-ROM PC after handoff -> ? (bios_trap)" "? (bios_trap)|"
+# Watchdog signatures are never excused, boot phase included (#853).
+printf '[CRASH-DETECT] dsp_pc_escape frame=5 pc=$00FFFFEF (valid)\n' | probe_log "$TMP/c7" 'pc=$0086CE lit_frames=500 motion=100 audio_nonsilent=90000 bios_ran=0 handoff=0 final_op=$66E6 halt_frames=0 scored_from=0 scored_frames=600 scored_lit_frames=500 scored_motion=100 scored_audio_nonsilent=90000'
+cls "$TMP/c7" bios; want "early dsp_pc_escape still reported" "GAME_CODE|video, audio; dsp_pc_escape"
+# The matrix runs the classifier under `xargs bash -c`, where only exported
+# FUNCTIONS survive; a classifier that leans on a plain variable silently drops
+# every signature there (it did, in the first cut of #852).
+export -f cart_classify_mode field matrix_core_error
+export TIMEOUT_SECS FRAMES
+SUBSH="$(bash -c 'cart_classify_mode 0 "$1" bios' _ "$TMP/c7")"
+case "$SUBSH" in *dsp_pc_escape*) ok "signatures survive the xargs/bash -c subshell";;
+    *) bad "signatures survive the xargs/bash -c subshell" "got: $SUBSH";; esac
+# Legacy probe line without the new fields still classifies as before.
+probe_log "$TMP/c8" 'pc=$00803000 lit_frames=500 motion=100 audio_nonsilent=90000 audio_onset=3' </dev/null
+cls "$TMP/c8" bios; want "legacy probe line (no bios_ran) scores the whole run" "GAME_CODE|video, audio"
+
 echo "CD matrix"
 cd_matrix "$TMP/co1" "$STAMP"  "Disc A.cue|hle|GAME_CODE|(none)" "Disc A.cue|bios|BOOT_STUB|(none)" "Disc B.cue|hle|GAME_CODE|(none)" "Disc B.cue|bios|GAME_CODE|(none)"
 cd_matrix "$TMP/cn1" "$STAMP2" "Disc A.cue|hle|GAME_CODE|(none)" "Disc A.cue|bios|BIOS_INTRO|(none)" "Disc B.cue|hle|GAME_CODE|(none)" "Disc B.cue|bios|GAME_CODE|(none)"
