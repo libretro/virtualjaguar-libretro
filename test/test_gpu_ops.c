@@ -558,6 +558,60 @@ static void test_load_store(void)
    else FAIL("store+load: %08X (expected CAFEBABE)", REG(0));
 }
 
+/* Every long-store addressing form must force long alignment in GPU local
+ * RAM (issue #866).  MiSTer's GPU gateware drives the local RAM row from
+ * dataddr[11:2] only (rtl/jaguar_common/gpu_mem.v: ram_addr[11:2]), so
+ * A1:A0 are dropped whatever the opcode.  Ruiner Pinball patches movei
+ * immediates with a store (r15+rn) at a word-aligned address. */
+#define OP_STORE_R14_IMM(n, rd) OP(49, n, rd)
+#define OP_STORE_R15_IMM(n, rd) OP(50, n, rd)
+#define OP_STORE_R14_REG(rm, rd) OP(60, rm, rd)
+#define OP_STORE_R15_REG(rm, rd) OP(61, rm, rd)
+
+static void store_align_case(const char *name, int form)
+{
+   const uint32_t X = GPU_RAM_BASE + 0x900;
+   uint32_t r10 = X + 2, r14 = 0, r15 = 0, expect_off = 0;
+   uint16_t insn = 0;
+
+   switch (form) {
+   case 0: insn = OP_STORE(10, 0);          expect_off = 0; break;
+   case 1: r14 = X + 2; insn = OP_STORE_R14_IMM(1, 0);  expect_off = 4; break;
+   case 2: r15 = X + 2; insn = OP_STORE_R15_IMM(1, 0);  expect_off = 4; break;
+   case 3: r14 = X;     insn = OP_STORE_R14_REG(11, 0); expect_off = 0; break;
+   default: r15 = X;    insn = OP_STORE_R15_REG(11, 0); expect_off = 0; break;
+   }
+
+   prep();
+   gw32(0x900, 0x11111111);
+   gw32(0x904, 0x22222222);
+   gw32(0x908, 0x33333333);
+   gwmovei(0x100, 0xCAFEBABE, 0);
+   gwmovei(0x106, r10, 10);
+   gwmovei(0x10C, 2, 11);
+   gwmovei(0x112, r14, 14);
+   gwmovei(0x118, r15, 15);
+   gw16(0x11E, insn);
+   run(100);
+   if (gr32(0x900 + expect_off) == 0xCAFEBABE
+       && gr32(0x900 + (expect_off ? 0 : 4)) == (expect_off ? 0x11111111u : 0x22222222u)
+       && gr32(0x908) == 0x33333333u)
+      PASS("%s to word-aligned address lands long-aligned", name);
+   else
+      FAIL("%s: [900]=%08X [904]=%08X [908]=%08X (CAFEBABE at +%u expected)",
+           name, gr32(0x900), gr32(0x904), gr32(0x908), expect_off);
+}
+
+static void test_store_alignment(void)
+{
+   printf("\n--- STORE alignment in GPU local RAM (#866) ---\n");
+   store_align_case("store (rn)", 0);
+   store_align_case("store (r14+n)", 1);
+   store_align_case("store (r15+n)", 2);
+   store_align_case("store (r14+rn)", 3);
+   store_align_case("store (r15+rn)", 4);
+}
+
 static void test_move_pc(void)
 {
    printf("\n--- MOVE_PC ---\n");
@@ -1130,6 +1184,7 @@ int main(int argc, char *argv[])
 
    /* Memory */
    test_load_store();
+   test_store_alignment();
    test_move_pc();
    test_nop();
 

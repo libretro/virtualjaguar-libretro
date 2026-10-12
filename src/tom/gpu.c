@@ -44,6 +44,11 @@
 
 // Seems alignment in loads & stores was off...
 #define GPU_CORRECT_ALIGNMENT
+/* store (r15+rn) was the only long form left unaligned in GPU local RAM.
+ * Hardware drops A1:A0 for every local-RAM access (MiSTer gpu_mem.v:
+ * ram_addr[11:2] = dataddr[11:2], independent of opcode); Ruiner Pinball
+ * patches movei immediates through it at word-aligned addresses (#866). */
+#define GPU_CORRECT_ALIGNMENT_STORE
 
 /* Bus contention: accumulates stall cycles for GPU external memory
  * accesses within a single instruction.  Reset before each opcode

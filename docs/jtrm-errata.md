@@ -175,6 +175,9 @@ REGPAGE bit 14, v8 pp.58-59); the GPU has no INT_ENA5/INT_CLR5.
 "Preliminary testing on real hardware" for main-memory unaligned reads (`gpu.c` ~3057; Power Drive Rally
 contradicts an earlier theory; `GPU_CORRECT_ALIGNMENT` ~46 undecided). DSP forced alignment "per the JTRM"
 (commit `d39f241`) -- the JTRM only says must-be-aligned.
+GPU/DSP local RAM (#866): MiSTer's `rtl/jaguar_common/gpu_mem.v` addresses local RAM by `dataddr[11:2]` only
+(`ram_addr[11:2]`, same module for GPU and DSP), so A1:A0 are dropped for every load/store form; every long
+form now masks there. External (main RAM) long accesses are not covered by that evidence and stay unmasked.
 
 **B12. 68K writes to RISC local RAM.** v8 p.101 gives the ordering rule; HBW Misc #2 names the failing
 instructions. The commit-on-partner latch is inferred from that + Power Drive Rally (`src/core/jaguar.c` ~733-770,
