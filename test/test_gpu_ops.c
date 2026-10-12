@@ -106,6 +106,13 @@ static void (*p_GPUExec)(int32_t);
 static void (*p_GPUWriteLong)(uint32_t, uint32_t, uint32_t);
 static void (*p_GPUWriteWord)(uint32_t, uint16_t, uint32_t);
 static uint32_t (*p_GPUReadLong)(uint32_t, uint32_t);
+/* Optional (G_FLAGS retire window, #865): the tests that need them SKIP
+ * when a core does not export them. */
+static size_t (*p_GPUStateSave)(uint8_t *);
+static size_t (*p_GPUStateLoad)(const uint8_t *);
+static void (*p_GPUSetFlags)(uint32_t);
+static void (*p_GPUUpdateRegisterBanks)(void);
+static void (*p_GPUSetIRQLine)(int, int);
 
 /* Stubs */
 static void video_refresh(const void *d, unsigned w, unsigned h, size_t p)
@@ -751,6 +758,262 @@ static void test_normi(void)
 }
 
 /* ============================================================ */
+/* G_FLAGS store retire window (#865)                           */
+/* ============================================================ */
+
+/* A GPU-issued store to G_FLAGS does not retire until the instruction
+ * behind it is already past Read Operands (JTRM v8 p.59: "writing a value
+ * to the flag bits and making use of those flag bits in the following
+ * instruction will not work properly due to pipe-lining effects").  When
+ * the store flips REGPAGE, the ONE instruction behind it still reads AND
+ * writes the old bank, and the one after that uses the new bank.  The GPU
+ * port of test_dsp_unit Tests 17-21 (#853). */
+
+#define G_IMASK    0x0008u
+#define G_INT_ENA0 0x0010u
+#define G_REGPAGE  0x4000u
+#define REG1(n)    p_gpu_reg_bank_1[(n)]
+
+/* NOP-filled RAM, all registers zero, bank 0 live (host write), bank-0
+ * r1 = G_FLAGS and bank-0 r0 = REGPAGE. */
+static void flags_bank_setup(void)
+{
+   prep();
+   p_GPUWriteLong(GPU_FLAGS_ADDR, 0, 1);
+   REG(0) = G_REGPAGE;
+   REG(1) = GPU_FLAGS_ADDR;
+}
+
+static void gw_idle(uint16_t off)
+{
+   gw16(off, OP_JR(0, -1));       /* jr T,self */
+   gw16(off + 2, OP_NOP);
+}
+
+static void go_from_100(void)
+{
+   p_GPUWriteLong(GPU_PC_ADDR, GPU_RAM_BASE + 0x100, 1);
+   p_GPUWriteLong(GPU_CTRL_ADDR, GPUGO, 1);
+}
+
+static void test_flags_store_bank_movei(void)
+{
+   printf("\n--- G_FLAGS store retire window: movei behind the store ---\n");
+   flags_bank_setup();
+   /* $F03100 store r0,(r1)       ; G_FLAGS = REGPAGE (bank 0 -> 1)
+    * $F03102 movei #$11111111,r5  ; in flight: OLD bank (0)
+    * $F03108 movei #$22222222,r6  ; past the window: NEW bank (1) */
+   gw16(0x100, OP_STORE(1, 0));
+   gwmovei(0x102, 0x11111111, 5);
+   gwmovei(0x108, 0x22222222, 6);
+   gw_idle(0x10E);
+   run(12);
+
+   if (REG(5) == 0x11111111 && REG1(5) == 0)
+      PASS("movei behind the G_FLAGS store wrote the pre-store bank (bank-0 r5)");
+   else
+      FAIL("movei behind the store: bank0 r5=$%08X bank1 r5=$%08X (expected bank 0)",
+           REG(5), REG1(5));
+   if (REG1(6) == 0x22222222 && REG(6) == 0)
+      PASS("next instruction, past the window, wrote the new bank (bank-1 r6)");
+   else
+      FAIL("instruction after the window: bank0 r6=$%08X bank1 r6=$%08X (expected bank 1)",
+           REG(6), REG1(6));
+}
+
+static void test_flags_store_bank_move(void)
+{
+   printf("\n--- G_FLAGS store retire window: source operand ---\n");
+   flags_bank_setup();
+   REG(2)  = 0xAAAA0000;
+   REG1(2) = 0xBBBB0000;
+   /* store r0,(r1); move r2,r7 (old bank in and out); move r2,r8 (new) */
+   gw16(0x100, OP_STORE(1, 0));
+   gw16(0x102, OP_MOVE(2, 7));
+   gw16(0x104, OP_MOVE(2, 8));
+   gw_idle(0x106);
+   run(12);
+
+   if (REG(7) == 0xAAAA0000 && REG1(7) == 0)
+      PASS("move behind the store read and wrote the pre-store bank");
+   else
+      FAIL("move behind the store: bank0 r7=$%08X bank1 r7=$%08X (expected bank0 = $AAAA0000)",
+           REG(7), REG1(7));
+   if (REG1(8) == 0xBBBB0000 && REG(8) == 0)
+      PASS("move after the window read and wrote the new bank");
+   else
+      FAIL("move after the window: bank0 r8=$%08X bank1 r8=$%08X (expected bank1 = $BBBB0000)",
+           REG(8), REG1(8));
+}
+
+static void test_flags_store_then_jump(void)
+{
+   printf("\n--- G_FLAGS store retire window: store; jump ---\n");
+   flags_bank_setup();
+   REG(3)  = GPU_RAM_BASE + 0x200;   /* the real target */
+   REG1(3) = GPU_RAM_BASE + 0x300;   /* the wrong one */
+   /* store r0,(r1); jump T,(r3); moveq #9,r4 (delay slot) */
+   gw16(0x100, OP_STORE(1, 0));
+   gw16(0x102, OP_JUMP(0, 3));
+   gw16(0x104, OP_MOVEQ(9, 4));
+   gw16(0x200, OP_MOVEQ(7, 5));
+   gw_idle(0x202);
+   gw16(0x300, OP_MOVEQ(13, 5));
+   gw_idle(0x302);
+   run(12);
+
+   if (REG1(5) == 7)
+      PASS("jump behind the store took its target from the pre-store bank");
+   else
+      FAIL("jump target: bank0 r5=%u bank1 r5=%u (expected bank1 r5 = 7 from $F03200)",
+           REG(5), REG1(5));
+   if (REG1(4) == 9 && REG(4) == 0)
+      PASS("jump delay slot (second instruction behind the store) wrote the new bank");
+   else
+      FAIL("jump delay slot: bank0 r4=%u bank1 r4=%u (expected bank 1)",
+           REG(4), REG1(4));
+}
+
+static void test_jump_with_flags_store_in_slot(void)
+{
+   printf("\n--- G_FLAGS store retire window: jump; store in the delay slot ---\n");
+   flags_bank_setup();
+   REG(15) = GPU_RAM_BASE + 0x200;
+   /* jump T,(r15); store r0,(r1) (delay slot); target: movei #$33333333,r6 */
+   gw16(0x100, OP_JUMP(0, 15));
+   gw16(0x102, OP_STORE(1, 0));
+   gwmovei(0x200, 0x33333333, 6);
+   gw_idle(0x206);
+   run(12);
+
+   if (REG1(6) == 0x33333333 && REG(6) == 0)
+      PASS("branch target after a delay-slot G_FLAGS store wrote the new bank");
+   else
+      FAIL("branch target: bank0 r6=$%08X bank1 r6=$%08X (expected bank 1)",
+           REG(6), REG1(6));
+}
+
+static void test_flags_window_savestate(void)
+{
+   static uint8_t state[65536];
+
+   printf("\n--- G_FLAGS store retire window: savestate inside the window ---\n");
+   if (!p_GPUStateSave || !p_GPUStateLoad) {
+      printf("  SKIP: GPUStateSave/GPUStateLoad not exported\n");
+      return;
+   }
+   flags_bank_setup();
+   gw16(0x100, OP_STORE(1, 0));
+   gwmovei(0x102, 0x44444444, 5);
+   gwmovei(0x108, 0x55555555, 6);
+   gw_idle(0x10E);
+
+   go_from_100();
+   /* One cycle = the store alone: the slice ends inside the window. */
+   p_GPUExec(1);
+   p_GPUStateSave(state);
+
+   /* Scribble the live state (a host write commits bank 0 and drops any
+    * window), then restore the mid-window snapshot. */
+   p_GPUWriteLong(GPU_FLAGS_ADDR, 0, 1);
+   p_GPUStateLoad(state);
+   p_GPUExec(12);
+   p_GPUWriteLong(GPU_CTRL_ADDR, 0, 1);
+
+   if (REG(5) == 0x44444444 && REG1(5) == 0)
+      PASS("instruction behind the store still used the pre-store bank after a load");
+   else
+      FAIL("after load: bank0 r5=$%08X bank1 r5=$%08X (expected bank 0)",
+           REG(5), REG1(5));
+   /* A load that dropped the window would leave bank 0 live for good. */
+   if (REG1(6) == 0x55555555 && REG(6) == 0)
+      PASS("the switch the store owed still happened after a load (bank-1 r6)");
+   else
+      FAIL("after load, past the window: bank0 r6=$%08X bank1 r6=$%08X (expected bank 1)",
+           REG(6), REG1(6));
+}
+
+/* Interrupt-latched-while-masked setup for the next two tests: bank 0
+ * live with IMASK set (raw poke -- a register write cannot SET IMASK),
+ * r31 = $F03F00, the GPU running, interrupt 0 latched, and an idle loop
+ * at the interrupt-0 vector ($F03000). */
+static int irq_masked_setup(void)
+{
+   if (!p_GPUSetFlags || !p_GPUUpdateRegisterBanks || !p_GPUSetIRQLine) {
+      printf("  SKIP: GPUSetFlags/GPUUpdateRegisterBanks/GPUSetIRQLine not exported\n");
+      return 0;
+   }
+   prep();
+   gw_idle(0x000);
+   p_GPUSetFlags(G_IMASK | G_INT_ENA0);
+   p_GPUUpdateRegisterBanks();
+   REG(31) = GPU_RAM_BASE + 0xF00;
+   go_from_100();
+   p_GPUSetIRQLine(0, 1);
+   return 1;
+}
+
+static void test_flags_store_imask_holdoff(void)
+{
+   uint32_t pushed;
+
+   printf("\n--- G_FLAGS store retire window: IMASK clear, interrupt held off one instruction ---\n");
+   if (!irq_masked_setup())
+      return;
+   REG(0) = G_INT_ENA0;            /* clears IMASK, keeps INT0 enabled */
+   REG(1) = GPU_FLAGS_ADDR;
+   /* $F03100 store r0,(r1)  ; IMASK cleared, interrupt 0 latched
+    * $F03102 moveq #5,r6    ; in flight: still masked, so it runs
+    * $F03104 jr T,self      ; the interrupt lands before this */
+   gw16(0x100, OP_STORE(1, 0));
+   gw16(0x102, OP_MOVEQ(5, 6));
+   gw_idle(0x104);
+   p_GPUExec(12);
+   p_GPUWriteLong(GPU_CTRL_ADDR, 0, 1);
+   pushed = gr32(0xEFC);
+
+   if (*p_gpu_pc >= GPU_RAM_BASE && *p_gpu_pc < GPU_RAM_BASE + 4)
+      PASS("interrupt 0 was taken (PC in the vector, $%08X)", *p_gpu_pc);
+   else
+      FAIL("interrupt 0 not taken: PC=$%08X", *p_gpu_pc);
+   if (REG(6) == 5 && pushed == GPU_RAM_BASE + 0x102)
+      PASS("the instruction behind the store ran masked; pushed $%08X", pushed);
+   else
+      FAIL("pushed $%08X r6=%u (expected $F03102 and 5: one instruction after the store)",
+           pushed, REG(6));
+}
+
+static void test_isr_epilogue_jump_store(void)
+{
+   uint32_t pushed;
+
+   printf("\n--- G_FLAGS store retire window: jump (r28); store r29,(r30) ISR epilogue ---\n");
+   if (!irq_masked_setup())
+      return;
+   REG(28) = GPU_RAM_BASE + 0x200; /* return address */
+   REG(29) = G_INT_ENA0;           /* restored flags: IMASK clear */
+   REG(30) = GPU_FLAGS_ADDR;
+   /* JTRM v8 p.38-39 example ISR epilogue, with interrupt 0 already
+    * latched again: the interrupt is taken at the jump target, which is
+    * what gets pushed (target - 2); the target itself has not run. */
+   gw16(0x100, OP_JUMP(0, 28));
+   gw16(0x102, OP_STORE(30, 29));
+   gw16(0x200, OP_MOVEQ(7, 5));
+   gw_idle(0x202);
+   p_GPUExec(12);
+   p_GPUWriteLong(GPU_CTRL_ADDR, 0, 1);
+   pushed = gr32(0xEFC);
+
+   if (*p_gpu_pc >= GPU_RAM_BASE && *p_gpu_pc < GPU_RAM_BASE + 4
+       && pushed == GPU_RAM_BASE + 0x1FE && REG(5) == 0)
+      PASS("interrupt taken at the branch target (pushed $%08X, PC $%08X)",
+           pushed, *p_gpu_pc);
+   else
+      FAIL("PC=$%08X pushed=$%08X r5=%u (expected vector, $F031FE, 0)",
+           *p_gpu_pc, pushed, REG(5));
+}
+
+/* ============================================================ */
 
 int main(int argc, char *argv[])
 {
@@ -785,6 +1048,11 @@ int main(int argc, char *argv[])
    LOAD(GPUWriteLong);
    LOAD(GPUWriteWord);
    LOAD(GPUReadLong);
+   p_GPUStateSave = (size_t (*)(uint8_t *))dlsym(handle, "GPUStateSave");
+   p_GPUStateLoad = (size_t (*)(const uint8_t *))dlsym(handle, "GPUStateLoad");
+   p_GPUSetFlags  = (void (*)(uint32_t))dlsym(handle, "GPUSetFlags");
+   p_GPUUpdateRegisterBanks = (void (*)(void))dlsym(handle, "GPUUpdateRegisterBanks");
+   p_GPUSetIRQLine = (void (*)(int, int))dlsym(handle, "GPUSetIRQLine");
 
    p_gpu_pc         = dlsym(handle, "gpu_pc");
    p_gpu_reg_bank_0 = dlsym(handle, "gpu_reg_bank_0");
@@ -875,6 +1143,15 @@ int main(int argc, char *argv[])
    test_sat24();
    test_pack();
    test_normi();
+
+   /* G_FLAGS store retire window (#865) */
+   test_flags_store_bank_movei();
+   test_flags_store_bank_move();
+   test_flags_store_then_jump();
+   test_jump_with_flags_store_in_slot();
+   test_flags_window_savestate();
+   test_flags_store_imask_holdoff();
+   test_isr_epilogue_jump_store();
 
    printf("\n=== Results: %d passed, %d failed ===\n", passes, fails);
 
