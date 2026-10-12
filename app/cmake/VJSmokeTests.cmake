@@ -10,11 +10,18 @@
 #                   no static state behind (the iOS-style reset path).
 #   smoke_state     save a state (file + thumbnail PNG), run on, load it back, run
 #                   on again: both runs must end on the same frame.
+#   smoke_bad_option  an --option key the core never registered must be REJECTED
+#                   (it would otherwise silently run the default).
 #   smoke_cd        the synthetic Jaguar CD image, path-loaded (no BIOS).
 #
-# The expected hash is a single value for every OS and CPU: the core is
-# deterministic (that is what run-ahead and netplay rely on) and the blitter's
-# SSE2/NEON/scalar variants are bit-identical (test_blitter_compare).
+# The expected hash is a single value for every OS and CPU: the core is meant to
+# be deterministic (run-ahead and netplay depend on it) and the SIMD blitter
+# variants are checked bit-exact against the scalar reference by
+# test/test_blitter_simd.  VERIFIED so far: macOS arm64 (NEON blitter) and
+# macOS x86_64 under Rosetta (SSE2 blitter) -- see the PR notes; Linux and
+# Windows are exercised by .github/workflows/app.yml.  If a platform ever
+# disagrees, that is a core determinism finding, not a reason for a per-OS
+# golden value.
 # Regenerate with:  virtualjaguar --headless --frames 300 test/roms/yarc.j64
 
 set(VJ_ROMS "${VJ_ROOT}/test/roms")
@@ -38,6 +45,12 @@ add_test(NAME smoke_reload
 add_test(NAME smoke_state
     COMMAND virtualjaguar --headless --frames 240 --state-roundtrip
             "${VJ_ROMS}/jagniccc.j64")
+
+add_test(NAME smoke_bad_option
+    COMMAND virtualjaguar --headless --frames 5
+            --option virtualjaguar_no_such_option=1 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_bad_option PROPERTIES
+    PASS_REGULAR_EXPRESSION "rejected by the core")
 
 add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank

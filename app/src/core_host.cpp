@@ -227,6 +227,35 @@ void CoreHost::overrideOption(const std::string& key, const std::string& value) 
     variableUpdate_ = true;
 }
 
+static std::string problemFor(const std::vector<OptionDef>& defs, const std::string& key,
+                              const std::string& value) {
+    for (const OptionDef& d : defs) {
+        if (d.key != key) continue;
+        if (validFor(d, value)) return "";
+        std::string list;
+        for (const OptionValue& v : d.values) list += (list.empty() ? "" : ", ") + v.value;
+        return "'" + value + "' is not a valid value for " + key + " (valid: " + list + ")";
+    }
+    return "'" + key + "' is not an option this core registers";
+}
+
+std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
+    std::vector<std::string> out;
+    const std::map<std::string, std::string>& m = sessionOnly ? sessionValues_ : userValues_;
+    for (const auto& kv : m) {
+        std::string p = problemFor(defs_, kv.first, kv.second);
+        if (!p.empty()) out.push_back(p);
+    }
+    return out;
+}
+
+unsigned CoreHost::visibleOptionCount() const {
+    unsigned n = 0;
+    for (const OptionDef& d : defs_)
+        if (optionVisible(d.key)) n++;
+    return n;
+}
+
 void CoreHost::setOptionValue(const std::string& key, const std::string& value) {
     userValues_[key] = value;
     variableUpdate_ = true;

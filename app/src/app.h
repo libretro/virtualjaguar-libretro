@@ -139,6 +139,7 @@ private:
     uint32_t frameHash() const;
 
     bool headless_ = false;
+    bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;
     SDL_Window* window_ = nullptr;
     SDL_GLContext gl_ = nullptr;
@@ -170,6 +171,7 @@ private:
         unsigned w = 0, h = 0;
         size_t audioFrames = 0;
         bool uniform = true;
+        unsigned optVisible = 0, optTotal = 0;
     };
     std::vector<HeadlessResult> results_;
     size_t audioFramesSeen_ = 0;

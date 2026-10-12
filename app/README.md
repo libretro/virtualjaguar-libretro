@@ -133,7 +133,11 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
 - `smoke_yarc`: boot `test/roms/yarc.j64` under HLE with no BIOS, check the hash.
 - `smoke_reload`: yarc, jagniccc, yarc in one process; the two yarc runs must
   match, which proves a different game in between left no static state behind.
+  The number of visible core options must match too (it differs between a
+  cartridge and a disc, so a stale visibility table would show).
 - `smoke_state`: save state and thumbnail, run on, load, run on; both runs match.
+- `smoke_bad_option`: an `--option` the core does not register is rejected, not
+  silently ignored.
 - `smoke_cd`: load the synthetic CD image by path (no BIOS).
 
 To regenerate the expected hash after an intentional emulation change:

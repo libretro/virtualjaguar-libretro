@@ -277,8 +277,16 @@ bool App::openContent(const std::string& pathIn) {
         std::fprintf(stderr, "open failed: %s\n", err.c_str());
         return false;
     }
-    if (!audio.isOpen()) audio.open(host.sampleRate());
-    else audio.open(host.sampleRate());   // re-formats for the new region
+    // An option override the core does not accept would silently run the default.
+    badOverride_ = false;
+    for (const std::string& p : host.checkOverrides(true)) {
+        badOverride_ = true;
+        std::fprintf(stderr, "option error: %s\n", p.c_str());
+        toast("--option: " + p, 8.0, 3);
+    }
+    for (const std::string& p : host.checkOverrides(false))
+        std::fprintf(stderr, "option warning (saved setting ignored): %s\n", p.c_str());
+    audio.open(host.sampleRate());   // (re)opens, re-formatted for this game's region
     applyAudioSettings();
     audio.clear();
     audio.setPaused(false);
@@ -756,8 +764,11 @@ int App::runHeadless(const CliArgs& a) {
             return 1;
         }
 
+        if (badOverride_) {
+            std::fprintf(stderr, "headless: FAIL an --option override was rejected by the core\n");
+            return 2;
+        }
         audioFramesSeen_ = 0;
-        std::vector<uint32_t> firstPixels;
         for (unsigned i = 0; i < a.frames; i++) {
             audio.update();
             host.runFrame();
@@ -772,6 +783,8 @@ int App::runHeadless(const CliArgs& a) {
         r.w = f.width;
         r.h = f.height;
         r.audioFrames = audioFramesSeen_;
+        r.optVisible = host.visibleOptionCount();
+        r.optTotal = (unsigned)host.optionDefs().size();
         r.uniform = true;
         for (size_t i = 1; i < f.pixels.size(); i++)
             if ((f.pixels[i] & 0xFFFFFF) != (f.pixels[0] & 0xFFFFFF)) { r.uniform = false; break; }
@@ -804,7 +817,8 @@ int App::runHeadless(const CliArgs& a) {
                 rc = 1;
             }
         }
-        std::printf("HASH %08x %ux%u audio_frames=%zu %s\n", r.hash, r.w, r.h, r.audioFrames, path.c_str());
+        std::printf("HASH %08x %ux%u audio_frames=%zu options=%u/%u %s\n", r.hash, r.w, r.h, r.audioFrames,
+                    r.optVisible, r.optTotal, path.c_str());
         std::fflush(stdout);
         if (r.w == 0 || r.h == 0) {
             std::fprintf(stderr, "headless: FAIL %s produced no video frame\n", path.c_str());
@@ -822,6 +836,17 @@ int App::runHeadless(const CliArgs& a) {
 
     // The same content loaded twice in one process must end on the same frame:
     // that is the static-state reset (loading game A, then B, then A again).
+    for (size_t i = 0; i < results_.size(); i++)
+        for (size_t j = i + 1; j < results_.size(); j++)
+            if (results_[i].path == results_[j].path &&
+                (results_[i].optVisible != results_[j].optVisible || results_[i].optTotal != results_[j].optTotal)) {
+                std::fprintf(stderr,
+                             "headless: FAIL %s shows %u/%u options, then %u/%u after another game was loaded "
+                             "in between -- option visibility leaked across a reload\n",
+                             results_[i].path.c_str(), results_[i].optVisible, results_[i].optTotal,
+                             results_[j].optVisible, results_[j].optTotal);
+                rc = 1;
+            }
     for (size_t i = 0; i < results_.size(); i++)
         for (size_t j = i + 1; j < results_.size(); j++)
             if (results_[i].path == results_[j].path && results_[i].hash != results_[j].hash) {

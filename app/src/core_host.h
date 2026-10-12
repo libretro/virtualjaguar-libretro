@@ -136,6 +136,12 @@ public:
     std::function<void(const std::string& key, const std::string& value, bool erased)> onOptionChanged;
     // Applied without being persisted: e.g. the smoke test forces a value.
     void overrideOption(const std::string& key, const std::string& value);
+    // Overrides naming an option the core never registered, or a value outside
+    // its list, are otherwise silently ignored (the run would measure the
+    // default).  Valid only after the definitions were pushed (i.e. after a load).
+    // `sessionOnly` = the --option overrides; false = the saved config.ini ones.
+    std::vector<std::string> checkOverrides(bool sessionOnly) const;
+    unsigned visibleOptionCount() const;
 
     // ---- messages ---------------------------------------------------------
     std::vector<OsdMessage> takeMessages();
