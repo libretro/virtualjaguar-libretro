@@ -2357,6 +2357,23 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "White Men Can't Jump intro logo (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
 	fi
 
+	@# White Men Can't Jump gameplay (#736): the attract-mode match flickered
+	@# at stock speed (tears, sprites dropping out for a field) because the
+	@# GPU was made to wait out each of its own blits; the titledb row now
+	@# charges the 68000 only.  fb_flicker_probe counts frames where a third
+	@# of the picture reverts to its state two frames earlier, and frames
+	@# spliced from two neighbours, over the demo (frames 1250-1850).  The
+	@# second run is the control: blitter_timing=enabled (the old row) must
+	@# EXCEED the limits, or the metric has gone blind.  Private corpus only.
+	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
+	if [ -n "$$rom" ]; then \
+		$(MAKE) --no-print-directory test/tools/fb_flicker_probe >/dev/null || exit 1; \
+		./test/tools/fb_flicker_probe ./$(TARGET) "$$rom" --frames 1850 --window-start 1250 --max-big 54 --max-splice 6 --quiet || exit 1; \
+		./test/tools/fb_flicker_probe ./$(TARGET) "$$rom" --frames 1850 --window-start 1250 --max-big 54 --max-splice 6 --expect-flicker --option virtualjaguar_blitter_timing=enabled --quiet || exit 1; \
+	else \
+		bash scripts/test-skip.sh record "White Men Can't Jump gameplay flicker (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
+	fi
+
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
 	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
@@ -2716,6 +2733,14 @@ test/tools/xenowings_ingame_video: test/tools/xenowings_ingame_video.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
 		-o $@ test/tools/xenowings_ingame_video.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# White Men Can't Jump gameplay flicker (#736): framebuffer tear/revert metric.
+test/tools/fb_flicker_probe: test/tools/fb_flicker_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
+		-o $@ test/tools/fb_flicker_probe.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

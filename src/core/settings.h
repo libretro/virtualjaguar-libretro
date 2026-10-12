@@ -31,6 +31,11 @@ struct VJSettings
 	bool useFastBlitter;
 	bool blitterTiming;
 	bool gpuPipelineTiming;
+	/* virtualjaguar_blitter_timing = "enabled" (68K and GPU both wait out
+	 * a blit) vs "m68k" (only the 68000 is charged).  Meaningful only
+	 * while blitterTiming is set.  Sits in the padding after the four
+	 * leading bools, so no later field moves. */
+	bool blitterTimingGpu;
 
 	int32_t joyport;
 	bool hardwareTypeAlpine;
