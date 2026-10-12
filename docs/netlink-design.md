@@ -605,6 +605,66 @@ structurally cannot model two peers at different divisors (same
 limitation the loopback transport has always had for this class of
 question).
 
+## Hop chain, frame quantization and the idle wait (2026-10-11, #860 follow-up)
+
+Measured with `test/tools/netlink_sim.c` (deterministic two-instance netpacket
+simulator, see `docs/agent/testing.md`), Doom 2P deathmatch, optimistic 2 ms of
+emulation per frame, 5 us per `poll_receive`.
+
+**Message structure.** The Doom link is a strict ping-pong: instance 0 sends a
+byte, instance 1 answers with one, six such pairs per tic (12 one-way hops):
+`[flag, buttons, 0, 0, CHK, 2]`, the reply side mirroring it. `CHK` is a state
+check byte (251 distinct values, echoed back by the replier; a corrupted CHK
+stops the peer dead, so it IS compared); the end marker is the pair (2, 2).
+At zero latency the tic rate is 30/s, identical to 1P (30.1 image updates/s):
+the game's own pace is the ceiling.
+
+**Quantization.** A tic is processed by the game on video-frame boundaries, so
+tic rate sits on 60/k plateaus (30, 20, 15, 12, ...). A 12-hop tic fits two
+frames only if one-way latency is under ~2.7 ms.
+
+**Phase.** The tic rate also depends on the vsync phase between the two
+devices, which drifts on real hardware, so every number must be averaged over
+phases (sweep 2/6/10/14 ms offset).  With the old code some phases collapsed
+to 5 tics/s: the side that only ANSWERS (it transmits nothing until the
+partner's byte arrives) spun on ASISTAT with no reply owed, so
+`JLinkAwaitReply` never engaged, its frame ended after ~2 ms of emulation, the
+partner's byte arrived while it was parked in the frontend, and every hop cost
+a whole frame.  `JLinkAwaitIdle` (called from `uart.c` after 24 consecutive
+ASISTAT reads with nothing to send or receive) now holds the frame open for
+that byte like a reply wait, with exponential back-off (1..32 frames) for a
+silent partner and a reset on any received byte.
+
+Tics/s, mean over 4 phases, before -> after:
+
+| one-way | 2 ms | 2.5 ms | 3 ms | 4 ms | Wi-Fi A | Wi-Fi B | 3 ms, emu 6 |
+|---|---|---|---|---|---|---|---|
+| tics/s | 27.5 -> 27.5 | 19.8 -> 26.0 | 16.3 -> 20.8 | 7.5 -> 19.2 | 8.9 -> 16.0 | 5.4 -> 9.0 | 10.0 -> 15.0 |
+
+Wi-Fi A = 2 ms + 0..3 ms jitter + 2% spikes of 30-80 ms; Wi-Fi B = 3 ms + 0..8 ms
+jitter + 3% spikes.  What is left is network time: 12 hops cannot be shortened by
+the core.
+
+**Tried and left out.** (1) Probing the frame-slot margin below 3 ms (more wait
+budget): at a single 5 ms phase it was worse than the old code on three of
+four profiles (e.g. 2.5 ms one-way 15 vs 20 tics/s), a full phase sweep showed
+no consistent gain, and it adds a way to miss vsyncs.  (2) A finer, adaptive
+poll interval inside the wait: no measurable gain (the 500 us sleep costs
+~0.2 ms per hop and the tic is quantized to frames anyway).
+
+**Link health line.** About every 5 s while a link carries traffic the core
+logs at INFO: `[NETLINK] link stats 5s: hops/s=.. hop=..ms wait/hop=..ms
+slipped=..% (a/b) timeouts=.. budget_cut=.. budget_us=.. (emu=..us
+margin_adj=..us) wait/frame=..us idle_wait=hits/total`.  `slipped` is the
+share of hops whose reply was not caught inside a wait (each costs a frame
+edge); `hop` is TX-to-reply time (network round trip plus partner turnaround).
+
+**Transport notes.** RetroArch (master 418d5c74) sets `TCP_NODELAY` on
+every netplay socket (both accepted and connecting), `netplay_netpacket_send_cb`
+with `FLUSH_HINT` sends immediately, and `poll_receive` is a real non-blocking
+`recv`, so Nagle is not a factor.  `jlink_tcp.c` also sets `TCP_NODELAY` but
+issues one `send()` per byte (no burst batching).
+
 ## Decisions log
 
 - TCP before netpacket (user, 2026-07-31) — frontend-agnostic + testable first.

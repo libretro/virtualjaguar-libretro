@@ -8044,6 +8044,13 @@ void retro_run(void)
    JLinkFrameTick();
    JLinkPoll();
    UARTPoll();
+   {
+      /* Link health line, about every 5 s while a link carries traffic
+       * (the only way to read these numbers on iOS, which has no env). */
+      char link_stats[256];
+      if (JLinkStatsPoll(link_stats, sizeof(link_stats)))
+         LOG_INF("[NETLINK] %s\n", link_stats);
+   }
 
    /* Host-side voice chat (#485): capture/gate/send. Never touches the
     * emulated UART. PTT is read from the keyboard device.  Re-evaluate

@@ -119,6 +119,24 @@ static void test_dropped_bytes_not_counted(void)
     JLinkClose();
 }
 
+/* The link-health log line (JLinkStatsPoll) must stay silent when there is no
+   link and must never fire in the first call of a window or without traffic:
+   it runs once per video frame, so a spurious line would be a log flood. */
+static void test_stats_quiet(void)
+{
+    char buf[64];
+    buf[0] = 'x';
+    buf[1] = '\0';
+    JLinkClose();
+    CHECK(JLinkStatsPoll(buf, sizeof(buf)) == 0, "stats: disabled -> no line");
+    JLinkOpen(JLINK_MODE_LOOPBACK);
+    CHECK(JLinkStatsPoll(buf, sizeof(buf)) == 0, "stats: first call only starts the window");
+    JLinkSendByte(0x42);
+    CHECK(JLinkStatsPoll(buf, sizeof(buf)) == 0, "stats: window not elapsed -> no line");
+    CHECK(buf[0] == 'x', "stats: buffer untouched when silent");
+    JLinkClose();
+}
+
 int main(void)
 {
     test_disabled_mode();
@@ -128,6 +146,7 @@ int main(void)
     test_counters_reset_on_close();
     test_rx_counted_on_arrival();
     test_dropped_bytes_not_counted();
+    test_stats_quiet();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }
