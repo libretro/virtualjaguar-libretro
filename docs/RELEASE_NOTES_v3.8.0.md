@@ -18,9 +18,9 @@ below, and they are collected under Known issues.
 ## Highlights
 
 - **Flip Out runs in both boot modes.** 1, 2 and 4 MB cartridge images now repeat across
-  the cartridge window as on hardware (https://github.com/libretro/virtualjaguar-libretro/pull/855, https://github.com/libretro/virtualjaguar-libretro/pull/851).
+  the cartridge window as on hardware (https://github.com/libretro/virtualjaguar-libretro/pull/855, https://github.com/libretro/virtualjaguar-libretro/issues/851).
 - **Fight For Your Life (1996) boots on the real BIOS.** Power-on RAM is now zero-filled in
-  BIOS mode, as it already was in HLE (https://github.com/libretro/virtualjaguar-libretro/pull/868, https://github.com/libretro/virtualjaguar-libretro/pull/856).
+  BIOS mode, as it already was in HLE (https://github.com/libretro/virtualjaguar-libretro/pull/868, https://github.com/libretro/virtualjaguar-libretro/issues/856).
 - **Club Drive has audio under the default HLE boot.** DSP interrupts are taken at the
   DSP's next instruction instead of inside an event callback (https://github.com/libretro/virtualjaguar-libretro/pull/849, https://github.com/libretro/virtualjaguar-libretro/issues/744).
 - **White Men Can't Jump gameplay stops tearing** at default settings, through a new
@@ -28,7 +28,7 @@ below, and they are collected under Known issues.
 - **Music Demo, Ruiner Pinball and Native Demo (bin) no longer run their DSP or GPU into
   garbage** (https://github.com/libretro/virtualjaguar-libretro/pull/862, https://github.com/libretro/virtualjaguar-libretro/pull/869, https://github.com/libretro/virtualjaguar-libretro/pull/872, https://github.com/libretro/virtualjaguar-libretro/pull/873).
 - **Doom 2-player netplay holds 60 fps** instead of dropping to 30 Hz. Play over Wi-Fi is
-  still slower than single player (https://github.com/libretro/virtualjaguar-libretro/pull/861, https://github.com/libretro/virtualjaguar-libretro/pull/871, https://github.com/libretro/virtualjaguar-libretro/pull/860).
+  still slower than single player (https://github.com/libretro/virtualjaguar-libretro/pull/861, https://github.com/libretro/virtualjaguar-libretro/pull/871, https://github.com/libretro/virtualjaguar-libretro/issues/860).
 - **The GameDrive SD card works**, backed by a folder on your device (https://github.com/libretro/virtualjaguar-libretro/pull/844, https://github.com/libretro/virtualjaguar-libretro/issues/783).
 - **The frontend explains per-title presets**, and options that apply only at load say so
   (https://github.com/libretro/virtualjaguar-libretro/pull/847, https://github.com/libretro/virtualjaguar-libretro/pull/859, https://github.com/libretro/virtualjaguar-libretro/pull/863).
@@ -39,7 +39,7 @@ below, and they are collected under Known issues.
 
 ### Cartridge titles
 
-- **Flip Out (https://github.com/libretro/virtualjaguar-libretro/pull/851, https://github.com/libretro/virtualjaguar-libretro/pull/855).** The game checks the long at `$A02000` and executes `ILLEGAL`
+- **Flip Out (https://github.com/libretro/virtualjaguar-libretro/issues/851, https://github.com/libretro/virtualjaguar-libretro/pull/855).** The game checks the long at `$A02000` and executes `ILLEGAL`
   if it does not match. A 2 MB cartridge drives only the address lines it has, so on
   hardware its image repeats at `$A00000`; the core returned 0 there. HLE looped
   `ILLEGAL`/`RTE` from about frame 320 and BIOS trapped into the boot ROM at about frame
@@ -50,7 +50,7 @@ below, and they are collected under Known issues.
   Fight For Your Life, where a blit reads past the end of the 4 MB image. The cart window
   past an image is also cleared on load, so a previous title's bytes no longer survive a
   reload in the same session. Headless-verified only.
-- **Fight For Your Life (1996), real BIOS (https://github.com/libretro/virtualjaguar-libretro/pull/856, https://github.com/libretro/virtualjaguar-libretro/pull/868).** The game sizes a fill from a RAM
+- **Fight For Your Life (1996), real BIOS (https://github.com/libretro/virtualjaguar-libretro/issues/856, https://github.com/libretro/virtualjaguar-libretro/pull/868).** The game sizes a fill from a RAM
   word nothing ever writes. BIOS mode filled power-on RAM with a per-word random pattern,
   so the fill overran into the GPU's parameter block, the GPU wrote a bad pointer, and the
   68K took an address error into the boot ROM at frame 1032. HLE zero-fills and never hit
@@ -60,7 +60,7 @@ below, and they are collected under Known issues.
   code. The good dump is CRC `B14C4753`; the `[a1]` dump is an authentic BIOS reject.
   Headless-verified only.
 - **Club Drive audio under HLE (https://github.com/libretro/virtualjaguar-libretro/issues/744, https://github.com/libretro/virtualjaguar-libretro/pull/849).** Club Drive was silent under the default HLE
-  boot in about 5 of 97 start-up phases. The core vectored the DSP inside the I2S event
+  boot (in a sweep of 97 start-up I2S phases, 5 were silent on develop and 0 with the fix). The core vectored the DSP inside the I2S event
   callback; the 68K then rewrote `D_PC` while the DSP was running (JTRM v8 p.110 allows that
   only while it is idle), so the interrupt service routine never ran and the game never
   re-armed it. The interrupt is now latched and taken at the DSP's next instruction.
@@ -77,7 +77,7 @@ below, and they are collected under Known issues.
   identically; the logo is 43.8% lit). Over two 600-frame stretches of the attract match,
   reverted frames / spliced frames went from 68/12 and 95/15 to 21/2 and 23/4. Some
   flicker remains. Headless-verified only (`fb_flicker_probe`).
-- **Music Demo DSP runaway (https://github.com/libretro/virtualjaguar-libretro/pull/853, https://github.com/libretro/virtualjaguar-libretro/pull/862).** The DSP code stores `D_FLAGS` to change register
+- **Music Demo DSP runaway (https://github.com/libretro/virtualjaguar-libretro/issues/853, https://github.com/libretro/virtualjaguar-libretro/pull/862).** The DSP code stores `D_FLAGS` to change register
   bank and then sets `r31` in the next instruction. On hardware that instruction still sees
   the old bank (JTRM v8 p.109); the core switched immediately, so the stack pointer landed in
   the wrong bank and the first interrupt returned into garbage. The bank switch now waits
@@ -86,17 +86,19 @@ below, and they are collected under Known issues.
   1200 frames, framebuffer and audio) was byte-identical except Music Demo. The crash
   watchdog now also sees DSP runaways in HLE. Confirmed in RetroArch on iOS: Music Demo
   runs in both modes with no watchdog lines.
-- **GPU `G_FLAGS` retire window (https://github.com/libretro/virtualjaguar-libretro/pull/865, https://github.com/libretro/virtualjaguar-libretro/pull/869).** The GPU gets the same two-instruction window
-  as the DSP. No title is known to change. Unit-tested (`test_gpu_ops` 66/66); a partial
-  corpus A/B (98 of 155 carts) was identical. The full A/B and a visual check are still
-  owed.
-- **Ruiner Pinball GPU escape (https://github.com/libretro/virtualjaguar-libretro/pull/866, https://github.com/libretro/virtualjaguar-libretro/pull/873).** `store Rn,(r15+Rm)` was the one GPU long-store
+- **GPU `G_FLAGS` retire window (https://github.com/libretro/virtualjaguar-libretro/issues/865, https://github.com/libretro/virtualjaguar-libretro/pull/869).** The GPU gets the same two-instruction window
+  as the DSP. No title is known to change. Unit-tested (`test_gpu_ops` 66/66). A partial
+  corpus A/B (98 carts, 1200 frames) was 98/98 identical in HLE and 96/98 in BIOS, the two
+  differences being harness artifacts, and the release cart matrix (which includes this
+  change) has no backward row. A per-frame A/B of the whole corpus and a visual check are
+  still owed.
+- **Ruiner Pinball GPU escape (https://github.com/libretro/virtualjaguar-libretro/issues/866, https://github.com/libretro/virtualjaguar-libretro/pull/873).** `store Rn,(r15+Rm)` was the one GPU long-store
   form that did not drop the low address bits, so a word-aligned store split across two
   longs, a jump table went wrong and the GPU ran off into DSP RAM at frame 56. Every form
   now aligns, as the MiSTer RTL addresses GPU local RAM by bits 11:2 only. Ruiner Pinball
   loses its `gpu_pc_escape` and `video_stall` in both modes. The core does not yet claim the
   game is playable. Headless-verified only.
-- **Native Demo (bin) boots (https://github.com/libretro/virtualjaguar-libretro/pull/866, https://github.com/libretro/virtualjaguar-libretro/pull/872).** This headerless binary is linked at `$5000`,
+- **Native Demo (bin) boots (https://github.com/libretro/virtualjaguar-libretro/issues/866, https://github.com/libretro/virtualjaguar-libretro/pull/872).** This headerless binary is linked at `$5000`,
   but every address it uses also fits `$4000`, so the loader picked `$4000` and the GPU ran
   away at frame 1. On a tie the loader now prefers the base under which `LEA` targets point
   at Jaguar I/O descriptor tables. Across 141 resolvable carts only this title changes base.
@@ -105,7 +107,7 @@ below, and they are collected under Known issues.
 
 ### Netplay
 
-- **Doom 2-player netplay holds 60 fps (https://github.com/libretro/virtualjaguar-libretro/pull/860, https://github.com/libretro/virtualjaguar-libretro/pull/861, https://github.com/libretro/virtualjaguar-libretro/pull/871).** The per-frame wait for the
+- **Doom 2-player netplay holds 60 fps (https://github.com/libretro/virtualjaguar-libretro/issues/860, https://github.com/libretro/virtualjaguar-libretro/pull/861, https://github.com/libretro/virtualjaguar-libretro/pull/871).** The per-frame wait for the
   partner's link byte ignored how long the rest of the frame took, so frames overran vsync
   and the core ran at 30 Hz with half-rate audio. The wait now fits in what is left of one
   frame, with a self-adjusting margin. In the simulator (3 ms each way) Doom went from 14.5
@@ -116,7 +118,7 @@ below, and they are collected under Known issues.
   while a link carries traffic.
   - On iOS to iOS over Wi-Fi the maintainer saw https://github.com/libretro/virtualjaguar-libretro/pull/861 hold 60 fps, but players still moved at
     about half single-player speed. A Doom tic is 12 one-way single-byte hops, each costing a
-    network round trip, so better waiting cannot fix the rest. Epic https://github.com/libretro/virtualjaguar-libretro/pull/864 (two Jaguars in one
+    network round trip, so better waiting cannot fix the rest. Epic https://github.com/libretro/virtualjaguar-libretro/issues/864 (two Jaguars in one
     core with standard rollback netplay) tracks it. https://github.com/libretro/virtualjaguar-libretro/pull/871's gains are simulator numbers and
     have not been measured on a device.
 
@@ -152,16 +154,16 @@ and symlinks are refused, and names match case-insensitively.
   which is the same across CUE, CHD and CDI rips of one pressing. The disc table ships empty
   in this release. Every CD load logs `[titledb] disc boot stub CRC32 $XXXXXXXX`. Seven
   homebrew discs share one loader and so share a key; audio-only discs have none.
-- **The frontend explains presets (https://github.com/libretro/virtualjaguar-libretro/issues/841, https://github.com/libretro/virtualjaguar-libretro/pull/847, https://github.com/libretro/virtualjaguar-libretro/pull/850, https://github.com/libretro/virtualjaguar-libretro/pull/859).** At load RetroArch shows an
+- **The frontend explains presets (https://github.com/libretro/virtualjaguar-libretro/issues/841, https://github.com/libretro/virtualjaguar-libretro/pull/847, https://github.com/libretro/virtualjaguar-libretro/issues/850, https://github.com/libretro/virtualjaguar-libretro/pull/859).** At load RetroArch shows an
   on-screen notice naming the presets applied (for example "White Men Can't Jump: Blitter Bus
   Timing on (compatibility preset)") and says when the performance profile withheld or
   demoted one. Option sublabels describe the current state. The core never rewrites your
   option values. Options that apply only at load now start their description with "Restart
   required: applied when content is loaded." With a CD loaded, cartridge-only options
   (GameDrive, GameDrive SD card, enhancement hooks, blit memo) are hidden.
-- **BIOS and PAL apply only at load (https://github.com/libretro/virtualjaguar-libretro/pull/858, https://github.com/libretro/virtualjaguar-libretro/pull/863).** Changing an unrelated option mid-game
+- **BIOS and PAL apply only at load (https://github.com/libretro/virtualjaguar-libretro/issues/858, https://github.com/libretro/virtualjaguar-libretro/pull/863).** Changing an unrelated option mid-game
   used to switch the boot ROM flag back off on GPU-only carts and real-BIOS CD boots, and
-  PAL switched clocks live while the frontend's AV timing stayed NTSC. Both options now take
+  PAL switched clocks live while the frontend's AV timing stayed at the load-time standard. Both options now take
   effect at the next content load; a mid-game change writes a one-time "takes effect on
   restart" line to the log.
 - **Towers II** no longer defaults to 2x internal resolution; it gave no visible gain (https://github.com/libretro/virtualjaguar-libretro/issues/809,
@@ -185,14 +187,15 @@ and symlinks are refused, and names match case-insensitively.
 
 ## Testing
 
-Release gate, develop at `c556940` against the v3.7.1 tag, run on the corpus machine
-(`docs/release-process.md`). `test/tools/matrix_diff.py`: **0 rows moved backward** in either
+Release gate against the v3.7.1 tag, run on the corpus machine
+(`docs/release-process.md`). The matrices were swept on develop `0a820e5` and the suite ran
+on `c556940`; the two differ only in the regenerated matrix docs (https://github.com/libretro/virtualjaguar-libretro/pull/874). `test/tools/matrix_diff.py`: **0 rows moved backward** in either
 matrix.
 
 - **Cart corpus, 155 titles (Fast blitter).** HLE: 155/155 reach game code. Real BIOS: 141
   reach game code and 14 are `BIOS_REJECT`.
   - The 14 are not regressions. BIOS rows are now scored from the boot-ROM handoff instead
-    of frame 0 (https://github.com/libretro/virtualjaguar-libretro/pull/852, https://github.com/libretro/virtualjaguar-libretro/pull/854), so a dump the boot ROM refuses (the red "Jaguar" screen) no
+    of frame 0 (https://github.com/libretro/virtualjaguar-libretro/issues/852, https://github.com/libretro/virtualjaguar-libretro/pull/854), so a dump the boot ROM refuses (the red "Jaguar" screen) no
     longer counts as running just because the logo animation played. They are alternate or
     bad dumps and BIOS-only demos: Assassin Demo Part 1, Drumpad2, Fight For Your Life
     `[a1]` and `[a2]`, Hubble Fade, Hubble Nebula, Iron Soldier `[a1]`, Kasumi Ninja `[a1]`,
@@ -221,7 +224,7 @@ matrix.
   matrices and exits 1 if any row moved backward or gained a crash-watchdog signature.
   `docs/release-process.md` makes it a pre-tag step. `test/test_matrix_diff.sh` (43 checks)
   runs in `make test`.
-- **BIOS scoring (https://github.com/libretro/virtualjaguar-libretro/pull/852, https://github.com/libretro/virtualjaguar-libretro/pull/854).** `cart_boot_probe` finds the boot-ROM handoff itself
+- **BIOS scoring (https://github.com/libretro/virtualjaguar-libretro/issues/852, https://github.com/libretro/virtualjaguar-libretro/pull/854).** `cart_boot_probe` finds the boot-ROM handoff itself
   (`--post-handoff N`); classification moved to `test/tools/cart_classify.sh`, which adds
   `BIOS_REJECT` and `? (bios_trap)`.
 - **Harness:** `--input-bitmasks` exercises the joypad bitmask path RetroArch uses (https://github.com/libretro/virtualjaguar-libretro/pull/857). It
@@ -245,7 +248,7 @@ matrix.
   Native Demo (bin) (https://github.com/libretro/virtualjaguar-libretro/pull/872), the GPU retire window (https://github.com/libretro/virtualjaguar-libretro/pull/869), the BIOS/PAL latching notice
   (https://github.com/libretro/virtualjaguar-libretro/pull/863), the frontend preset notices and option hiding (https://github.com/libretro/virtualjaguar-libretro/pull/847, https://github.com/libretro/virtualjaguar-libretro/pull/859) and the GameDrive SD
   card (https://github.com/libretro/virtualjaguar-libretro/pull/844). https://github.com/libretro/virtualjaguar-libretro/pull/871's netplay gains are simulator numbers.
-- **Doom netplay over Wi-Fi** stays slower than single player; epic https://github.com/libretro/virtualjaguar-libretro/pull/864.
+- **Doom netplay over Wi-Fi** stays slower than single player; epic https://github.com/libretro/virtualjaguar-libretro/issues/864.
 - **White Men Can't Jump** still flickers somewhat, less than before (https://github.com/libretro/virtualjaguar-libretro/issues/736).
 - **Ruiner Pinball** no longer crashes its GPU; whether it plays correctly is unconfirmed.
 - Still open in this milestone: the HLE-vs-BIOS asymmetry list (https://github.com/libretro/virtualjaguar-libretro/issues/744), I-War needing
