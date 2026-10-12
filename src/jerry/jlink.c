@@ -181,6 +181,18 @@ static long long jlinkReplyEwmaUsec = 0; /* smoothed reply latency */
 #define JLINK_SLOT_DECAY_USEC    500
 #define JLINK_SLOT_EXTRA_MAX_USEC 8000
 #define JLINK_SLOT_OK_FRAMES      60
+/* A frame that overran is also remembered as a floor under the decay.  Without
+   it the widening decays after 60 clean frames, the next frame overruns again,
+   and a frontend whose post-hook cost really exceeds the margin drops a vsync
+   about every 2 s for as long as the link is up (measured in the simulator
+   with 3 ms of frontend cost: 0.5 missed vsyncs/s).  The floor sits one decay
+   step above the extra that failed, never above JLINK_SLOT_FLOOR_MAX_USEC
+   (an emulation-cost spike such as a level load must not pin a huge margin),
+   and relaxes by one step per JLINK_SLOT_FLOOR_RELAX_FRAMES clean frames
+   (1 min) so a transient does not last. */
+#define JLINK_SLOT_FLOOR_MAX_USEC 4000
+#define JLINK_SLOT_FLOOR_RELAX_FRAMES 3600
+#define JLINK_SLOT_SPIKE_USEC     1000   /* emu cost over EWMA = a spike, not margin */
 static long long jlinkFrameStartUsec = 0;  /* 0 = no frame in flight */
 static long long jlinkWaitedUsec = 0;      /* wall clock blocked this frame */
 static long long jlinkEmuEwmaUsec = 0;     /* smoothed non-wait frame cost */
@@ -190,6 +202,9 @@ static long long jlinkPrevTickUsec = 0;    /* previous frame's start */
 static long long jlinkPrevWaitedUsec = 0;  /* ... and what it waited */
 static int jlinkSlotExtraUsec = 0;         /* learned margin widening */
 static int jlinkSlotOkFrames = 0;
+static int jlinkSlotFloorUsec = 0;         /* decay never goes below this */
+static int jlinkSlotFloorFrames = 0;
+static long long jlinkLastEmuSpikeUsec = 0;/* last frame's emulation cost minus the EWMA */
 static int jlinkFrameBudgetUsec = 0;       /* budget handed to the last frame */
 static int jlinkReplyTimeoutUsec = JLINK_WAIT_FLOOR_USEC;
 
@@ -340,6 +355,9 @@ void JLinkClose(void)
    jlinkPrevWaitedUsec = 0;
    jlinkSlotExtraUsec = 0;
    jlinkSlotOkFrames = 0;
+   jlinkSlotFloorUsec = 0;
+   jlinkSlotFloorFrames = 0;
+   jlinkLastEmuSpikeUsec = 0;
    jlinkFrameBudgetUsec = 0;
    jlinkInAwait = 0;
    jlinkNoBudgetNoted = 0;
@@ -833,20 +851,42 @@ void JLinkFrameTick(void)
          if (jlinkPrevWaitedUsec > 0
              && interval > (long long)jlinkFramePeriodUsec * 4 / 3)
          {
-            /* A frame that waited ran past its vsync anyway. */
+            /* A frame that waited ran past its vsync anyway.  It only raises
+               the floor if its emulation cost was about what the EWMA
+               expected: a frame that overran because emulation spiked (a
+               heavier scene, a level load) says nothing about the margin,
+               and the old behaviour (widen, then decay within seconds) is
+               the right response to it. */
+            int failed = jlinkSlotExtraUsec + JLINK_SLOT_DECAY_USEC;
+            if (failed > JLINK_SLOT_FLOOR_MAX_USEC)
+               failed = JLINK_SLOT_FLOOR_MAX_USEC;
+            if (failed > jlinkSlotFloorUsec
+                && jlinkLastEmuSpikeUsec <= JLINK_SLOT_SPIKE_USEC)
+               jlinkSlotFloorUsec = failed;
             jlinkSlotExtraUsec += JLINK_SLOT_GROW_USEC;
             if (jlinkSlotExtraUsec > JLINK_SLOT_EXTRA_MAX_USEC)
                jlinkSlotExtraUsec = JLINK_SLOT_EXTRA_MAX_USEC;
             jlinkSlotOkFrames = 0;
+            jlinkSlotFloorFrames = 0;
          }
-         else if (interval <= (long long)jlinkFramePeriodUsec * 5 / 4
-                  && jlinkSlotExtraUsec > 0
-                  && ++jlinkSlotOkFrames >= JLINK_SLOT_OK_FRAMES)
+         else if (interval <= (long long)jlinkFramePeriodUsec * 5 / 4)
          {
-            jlinkSlotExtraUsec -= JLINK_SLOT_DECAY_USEC;
-            if (jlinkSlotExtraUsec < 0)
-               jlinkSlotExtraUsec = 0;
-            jlinkSlotOkFrames = 0;
+            if (jlinkSlotExtraUsec > jlinkSlotFloorUsec
+                && ++jlinkSlotOkFrames >= JLINK_SLOT_OK_FRAMES)
+            {
+               jlinkSlotExtraUsec -= JLINK_SLOT_DECAY_USEC;
+               if (jlinkSlotExtraUsec < jlinkSlotFloorUsec)
+                  jlinkSlotExtraUsec = jlinkSlotFloorUsec;
+               jlinkSlotOkFrames = 0;
+            }
+            if (jlinkSlotFloorUsec > 0
+                && ++jlinkSlotFloorFrames >= JLINK_SLOT_FLOOR_RELAX_FRAMES)
+            {
+               jlinkSlotFloorUsec -= JLINK_SLOT_DECAY_USEC;
+               if (jlinkSlotFloorUsec < 0)
+                  jlinkSlotFloorUsec = 0;
+               jlinkSlotFloorFrames = 0;
+            }
          }
       }
       jlinkPrevTickUsec = jlinkFrameStartUsec;
@@ -1037,9 +1077,13 @@ void JLinkFrameEnd(double fieldHz)
    {
       jlinkEmuEwmaUsec = work;
       jlinkEmuSamples = 1;
+      jlinkLastEmuSpikeUsec = 0;
    }
    else
+   {
+      jlinkLastEmuSpikeUsec = work - jlinkEmuEwmaUsec;
       jlinkEmuEwmaUsec += (work - jlinkEmuEwmaUsec) / 8;
+   }
    if (fieldHz >= 20.0 && fieldHz <= 130.0)
       jlinkFramePeriodUsec = (int)(1000000.0 / fieldHz);
 #else
