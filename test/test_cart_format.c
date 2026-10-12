@@ -456,6 +456,66 @@ TEST(raw_binary_bss_refs_do_not_pull_4000_image_to_5000)
    p_retro_unload_game();
 }
 
+/* Issue #866: Native Demo (bin) is linked at $5000 and has no JSR/JMP entry
+ * evidence, and every one of its LEA targets also fits a $4000 window, so the
+ * containment tie went to $4000 and the whole image ran 4 KiB low (GPU
+ * runaway, black video).  What does tell the bases apart is that its startup
+ * LEAs descriptor tables whose first long is the Jaguar I/O destination of a
+ * GPU/DSP upload: under the right base those longs are $F03000/$F1B000, under
+ * the wrong one the same offsets hold zeros.  Tables sit below image offset
+ * $1000 so the targets are contained in both windows (a true tie). */
+static void build_descriptor_image(uint8_t *img, unsigned size, uint32_t base,
+      uint32_t first_long)
+{
+   unsigned k;
+
+   memset(img, 0, size);
+   img[0] = 0x70;                                  /* MOVEQ #1,D0 */
+   img[1] = 0x01;
+   for (k = 0; k < 10; k++)
+   {
+      unsigned tbl = 0x200 + 0x10 * k;
+
+      put_abs(img, 0x10 + 6 * k, 0x41F9, base + tbl);   /* LEA abs.L,A0 */
+      img[tbl + 0] = (uint8_t)(first_long >> 24);
+      img[tbl + 1] = (uint8_t)(first_long >> 16);
+      img[tbl + 2] = (uint8_t)(first_long >> 8);
+      img[tbl + 3] = (uint8_t)first_long;
+   }
+   for (k = 0x400; k < 0x408; k++)
+      img[k] = 0x11;
+}
+
+TEST(raw_binary_io_descriptor_tie_goes_to_5000)
+{
+   static uint8_t img[0x2000];
+   uint8_t *ram;
+
+   build_descriptor_image(img, (unsigned)sizeof(img), 0x5000, 0x00F03000);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x5000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x5000);
+   p_retro_unload_game();
+}
+
+/* The tie-break needs real evidence: the same image whose tables do not
+ * start with an I/O address keeps the historical $4000 winner. */
+TEST(raw_binary_tie_without_io_descriptor_stays_4000)
+{
+   static uint8_t img[0x2000];
+   uint8_t *ram;
+
+   build_descriptor_image(img, (unsigned)sizeof(img), 0x5000, 0x12345678);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   p_retro_unload_game();
+}
+
 /* ------------------------------------------------------------------ */
 /* Cart mirroring (issue #851)                                         */
 /* ------------------------------------------------------------------ */
@@ -684,6 +744,8 @@ int main(int argc, char **argv)
    RUN(raw_binary_lea_any_register_loads_at_4000);
    RUN(raw_binary_linked_at_5000_loads_at_5000);
    RUN(raw_binary_bss_refs_do_not_pull_4000_image_to_5000);
+   RUN(raw_binary_io_descriptor_tie_goes_to_5000);
+   RUN(raw_binary_tie_without_io_descriptor_stays_4000);
    RUN(mirror_2mb_repeats_in_window);
    RUN(mirror_1mb_repeats_in_window);
    RUN(mirror_4mb_repeats_once);
