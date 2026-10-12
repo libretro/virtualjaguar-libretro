@@ -53,7 +53,7 @@ Source key:
 **A4. Flags-store pipeline warning differs by revision.**
 - v8 p.59/p.109: at least 1 intervening instruction. SWR p.46 (PDF p.48): 2, or 4 for an indexed STORE. HBW p.3
   #11: two NOPs. Later documents are stricter. Used: `jtrm-register-map.md` (2/4).
-- Emulator models none of these directly; see B10 for the DSP behavioural model.
+- Emulator models none of these directly; see B10 for the DSP and GPU behavioural model (1-instruction window).
 
 **A5. B_COUNT inner count 0.**
 - Manual: v8 p.75 -- counters take 1..65536, 0 = 65536.
@@ -162,8 +162,14 @@ again at the redirect. Window = store + 1 instruction, per v8 p.109 "at least on
 SWR/HBW counts (A4) are treated as programmer margins, and the indexed-STORE extra latency is not modelled.
 Evidence: Wolfenstein 3D `store; jump (Rn)` and Doom `jump (Rn); store` epilogues (commit `d220aa2`, jump-only),
 generalised to all operands for Music Demo's `store D_FLAGS; movei r31` (#853). The branch-refill part is inferred
-from behaviour (`dsp.c`, D_FLAGS case). The GPU has no analog (`gpu.c` GPUWriteLong G_FLAGS case swaps banks and
-dispatches interrupts inside the store) though the manual's warning (p.59) covers both.
+from behaviour (`dsp.c`, D_FLAGS case). **GPU (#865):** same model ported to G_FLAGS (`gpu.c`, GPUWriteLong G_FLAGS
+case, `GPU_FLAGS_RETIRE_DELAY` = 2): a GPU-issued store defers the bank switch to its retire point, and the interrupt
+re-check it used to make inside the store (when it clears IMASK) moves there too, so the instruction behind it runs
+masked. jump/jr commit the bank before the delay slot and re-check interrupts only after applying the target; for the
+GPU that ordering is v8 p.39 text, not inference: "Jump instructions are always atomic with the instruction which
+succeeds them", and of the example ISR epilogue (`jump (r28); store r29,(r30)`) "Interrupts are re-enabled on the
+instruction after the jump". Host writes still switch at once. Bit layout is identical to the DSP (IMASK bit 3,
+REGPAGE bit 14, v8 pp.58-59); the GPU has no INT_ENA5/INT_CLR5.
 
 **B11. Misaligned LOAD/STORE.** v8 pp.48-56 say "must be long-word aligned"; unaligned behaviour unstated.
 "Preliminary testing on real hardware" for main-memory unaligned reads (`gpu.c` ~3057; Power Drive Rally
@@ -272,7 +278,7 @@ level 0 with no legend entry. HBW (26 Apr 1995) is a separate, partly overlappin
 |---|---|---|
 | HBW GPU/DSP #4 | DSP DMAEN set -> external load/store hangs the DSP | no |
 | HBW GPU/DSP #7 | DSP external write must follow an external read that completes (intermittent) | no. Plausible to matter for DSP mixers writing external buffers; emulator always clean, hardware intermittent |
-| HBW GPU/DSP #11 / SWR p.46 | G_FLAGS/D_FLAGS write pipelining (2 NOPs; 4 for indexed) | DSP: partial, 1-instruction window, all operands (B10, #853). GPU: no |
+| HBW GPU/DSP #11 / SWR p.46 | G_FLAGS/D_FLAGS write pipelining (2 NOPs; 4 for indexed) | partial, both RISCs: 1-instruction window, all operands, IMASK clear deferred (B10; DSP #853, GPU #865) |
 | HBW OP #2 | VSCALE above 7.0 fails | no (no check in `op.c`) |
 | HBW OP #3 | HSCALE other than 1.0 on 24-bit scaled bitmaps distorts | no. SWR separately says scaled bitmaps do not display properly in 24-bit RGB |
 | HBW Misc #1 | UART double-shifts a start bit at a certain phase | no (`src/jerry/uart.c`). Matters only for JagLink/ComLynx/modem |

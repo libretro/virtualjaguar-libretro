@@ -105,7 +105,11 @@ extern "C" {
  *     EXTENDED IN PLACE (still v17, no layout change): #853 packs an
  *     un-retired D_FLAGS store's remaining delay into bits 1-2 of the DSP
  *     chunk's existing active_bank byte (bit 0 stays the live bank).
- *     Older states hold 0/1 there and load as "no window". */
+ *     Older states hold 0/1 there and load as "no window".
+ *     EXTENDED IN PLACE again (still v17, no layout change): #865 does the
+ *     same for an un-retired G_FLAGS store in the GPU chunk's active_bank
+ *     byte -- bits 1-2 the remaining delay, bit 3 the interrupt re-check
+ *     it owes.  Older states hold 0/1 there and load as "no window". */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   17
 /* Oldest layout retro_unserialize still accepts.  States between
