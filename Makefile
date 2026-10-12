@@ -1944,6 +1944,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Music Demo, #794/#818)" "no ROM matching 'Music Demo*' in the private corpus"; \
 	fi
+	@rom=$$(bash scripts/find-rom.sh 'Native Demo (bin) (1997)*' 'Native Demo*(bin)*'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 && \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Native Demo (bin), #866)" "no ROM matching 'Native Demo (bin)*' in the private corpus"; \
+	fi
 	@# Club Drive GPU runaway (#611): NORMI was one too high, so the clip
 	@# corner table lookup rotated every inserted screen corner; steering
 	@# from the mid-race state ran the GPU into main RAM by frame 82.  The

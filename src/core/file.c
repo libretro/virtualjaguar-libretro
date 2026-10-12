@@ -145,6 +145,7 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000, 0x00005000 };
    unsigned bestCandidate = 0;
    unsigned bestScore = 0;
+   unsigned bestHw = 0;
    unsigned bestEntry = 0;
    unsigned entryCandidate = 0;
    unsigned entryScore = 0;
@@ -187,6 +188,7 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    {
       unsigned score = 0;
       unsigned entry = 0;
+      unsigned hw = 0;
       uint32_t base = candidates[i];
 
       for (offset = 0; offset + 6 <= size && offset < 2048; offset += 2)
@@ -210,6 +212,20 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
             uint32_t rel = target - base;
 
             score++;
+
+            /* LEA abs.L at a table whose first long is a Jaguar I/O
+             * address ($F00000-$F1FFFF): the descriptor idiom of a
+             * startup that uploads GPU/DSP code ({dest, size, src}).
+             * Random data lands there with probability ~2^-15, so this
+             * only ever fires under the base the image was linked at. */
+            if ((op & 0xF1FF) == 0x41F9 && !(rel & 1) && rel + 4 <= size)
+            {
+               uint32_t first = GET32(buffer, rel);
+
+               if (first >= 0x00F00000 && first <= 0x00F1FFFF)
+                  hw++;
+            }
+
             if ((op == 0x4EB9 || op == 0x4EF9) && !(rel & 1)
                   && (rel == 0 || GET16(buffer, rel - 2) == 0x4E75
                      || GET16(buffer, rel - 2) == 0x4E73
@@ -218,9 +234,14 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
          }
       }
 
-      if (score > bestScore)
+      /* A pure containment tie falls to the base with more descriptor
+       * hits.  Native Demo (bin) is linked at $5000 but every one of its
+       * references also fits a $4000 window (15 vs 15, no JSR/JMP entry
+       * hits to decide it), so $4000 won and the image ran 4 KiB low. */
+      if (score > bestScore || (score == bestScore && hw > bestHw))
       {
          bestScore = score;
+         bestHw = hw;
          bestCandidate = i;
       }
 
