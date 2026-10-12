@@ -228,7 +228,7 @@ void drawSettings(App& app) {
 // ---- save-state manager --------------------------------------------------------------------
 
 void drawStates(App& app) {
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 44.0f, ImGui::GetFontSize() * 24.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 44.0f, ImGui::GetFontSize() * 30.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Save states", &app.showStates)) {
         ImGui::End();
         return;

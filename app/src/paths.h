@@ -29,6 +29,9 @@ std::string pathStem(const std::string& path);
 std::string pathExt(const std::string& path);   // lower-case, without the dot
 std::string pathDir(const std::string& path);   // with trailing separator, or ""
 
+// Absolute, lexically normalised form of `path` (relative to the current directory).
+std::string absolutePath(const std::string& path);
+
 bool fileExists(const std::string& path);
 bool readFile(const std::string& path, std::vector<unsigned char>& out);
 bool writeFileAtomic(const std::string& path, const void* data, size_t size);

@@ -4,6 +4,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 
 namespace vj {
 
@@ -69,6 +70,13 @@ std::string pathExt(const std::string& path) {
 std::string pathDir(const std::string& path) {
     size_t slash = path.find_last_of("/\\");
     return slash == std::string::npos ? "" : path.substr(0, slash + 1);
+}
+
+std::string absolutePath(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::absolute(std::filesystem::u8path(path), ec);
+    if (ec) return path;
+    return p.lexically_normal().string();
 }
 
 bool fileExists(const std::string& path) {

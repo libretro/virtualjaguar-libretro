@@ -268,7 +268,8 @@ void App::setFullscreen(bool fs) {
 // ---------------------------------------------------------------------------------
 // content
 // ---------------------------------------------------------------------------------
-bool App::openContent(const std::string& path) {
+bool App::openContent(const std::string& pathIn) {
+    const std::string path = absolutePath(pathIn);
     host.setDirectories(paths.system, paths.saves);
     std::string err;
     if (!host.loadContent(path, err)) {
@@ -750,7 +751,7 @@ int App::runHeadless(const CliArgs& a) {
         SDL_PushEvent(&ev);
         SDL_Event got;
         while (SDL_PollEvent(&got)) handleEvent(got, true);
-        if (!host.isLoaded() || host.contentPath() != path) {
+        if (!host.isLoaded() || host.contentPath() != absolutePath(path)) {
             std::fprintf(stderr, "headless: FAIL could not load %s\n", path.c_str());
             return 1;
         }

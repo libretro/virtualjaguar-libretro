@@ -170,6 +170,7 @@ private:
     static int16_t inputStateCb(unsigned port, unsigned device, unsigned index, unsigned id);
 
     bool env(unsigned cmd, void* data);
+    void traceOption(const std::string& key, const char* value, const char* why);
     void captureOptions(const retro_core_options_v2* o);
     bool startSession(std::string& err);
     bool finishLoad(const std::string& label, std::string& err);
@@ -197,6 +198,7 @@ private:
     std::map<std::string, std::string> userValues_;     // persisted overrides
     std::map<std::string, std::string> sessionValues_;  // non-persisted overrides
     std::map<std::string, bool> visibility_;
+    std::map<std::string, std::string> optionTrace_;
     bool variableUpdate_ = false;
     retro_core_options_update_display_callback_t updateDisplayCb_ = nullptr;
 

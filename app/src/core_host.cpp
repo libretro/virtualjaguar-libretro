@@ -257,6 +257,15 @@ void CoreHost::pushMessage(const std::string& text, uint32_t ms, int level) {
 }
 
 // ---- environment ---------------------------------------------------------------
+// --verbose: say once per change when the core is handed a non-default value.
+void CoreHost::traceOption(const std::string& key, const char* value, const char* why) {
+    if (!logVerbose_) return;
+    std::string& last = optionTrace_[key];
+    if (last == value) return;
+    last = value;
+    std::fprintf(stderr, "[app] option %s=%s (%s)\n", key.c_str(), value, why);
+}
+
 bool CoreHost::env(unsigned cmd, void* data) {
     // Experimental flag bit is part of some command ids; compare masked.
     switch (cmd) {
@@ -304,11 +313,13 @@ bool CoreHost::env(unsigned cmd, void* data) {
             auto s = sessionValues_.find(d.key);
             if (s != sessionValues_.end() && validFor(d, s->second)) {
                 v->value = s->second.c_str();
+                traceOption(d.key, v->value, "override");
                 return true;
             }
             auto u = userValues_.find(d.key);
             if (u != userValues_.end() && validFor(d, u->second)) {
                 v->value = u->second.c_str();
+                traceOption(d.key, v->value, "saved");
                 return true;
             }
             v->value = d.defaultValue.c_str();
