@@ -3595,8 +3595,16 @@ static void check_variables(void)
    var.key = "virtualjaguar_blitter_timing";
    var.value = NULL;
    vjs.blitterTiming = false;
+   vjs.blitterTimingGpu = false;
    if (get_variable_pertitle(&var) && var.value)
-      vjs.blitterTiming = (strcmp(var.value, "enabled") == 0);
+   {
+      /* "enabled" prices every blit for both masters; "m68k" charges
+       * only the 68000 (#736: the GPU-side wait is what makes White Men
+       * Can't Jump's frame build overrun the field). */
+      vjs.blitterTimingGpu = (strcmp(var.value, "enabled") == 0);
+      vjs.blitterTiming = vjs.blitterTimingGpu
+                       || (strcmp(var.value, "m68k") == 0);
+   }
 
    /* GPU pipeline/gateway timing (issue #401/#313).  Transient model
     * state must not survive a toggle: a stale gateway timestamp from

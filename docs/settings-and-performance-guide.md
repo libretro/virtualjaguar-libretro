@@ -90,7 +90,7 @@ RetroArch log always tells you exactly what was applied.
 
 **You also see it on screen.** When a game loads with presets applied, a
 4-second notice names the game, each option and its class, for example
-*White Men Can't Jump: Blitter Bus Timing on (compatibility preset)*. A second
+*White Men Can't Jump: Blitter Bus Timing 68000 only (compatibility preset)*. A second
 notice appears if the Enhancement Profile withholds or drops enhancement
 presets (*per-title enhancement presets not applied (performance profile
 selected)*). Both mirror the log lines, show once per load, and never repeat
@@ -438,7 +438,7 @@ completion (Doom's menus and demo, Hover Strike) therefore run too fast.
 |---|---|---|
 | `dram_timing` | realistic DRAM access cost for the GPU and 68000 once they leave their local buses | Each processor pays only its own costs, so relative CPU/GPU timing is preserved. **Disables idle-skip.** |
 | `gpu_pipeline_timing` | the GPU's real instruction costs — single external-memory gateway, register scoreboard, ALU interlocks | **Disables idle-skip.** |
-| `blitter_timing` | charges the 68000 the bus time each blit really takes (on hardware the blitter freezes the cacheless 68000 while it runs) | Does **not** disable idle-skip. |
+| `blitter_timing` | charges the 68000 the bus time each blit really takes (on hardware the blitter freezes the cacheless 68000 while it runs). `enabled` also makes the GPU wait out its own blits; `68000 only` leaves GPU blit chains at full speed | Does **not** disable idle-skip. |
 
 **These are for accuracy investigation, not for everyday play.** They all cost
 performance, by design — they add work the emulator was previously skipping.

@@ -345,6 +345,14 @@ int main(void)
       CHECK(TitleDBOverrideClass("virtualjaguar_blitter_timing")
             == TITLEDB_CLASS_COMPATIBILITY,
             "WMCJ blitter_timing row is compatibility-class");
+      /* The row charges the 68000 only.  "enabled" also makes the GPU wait
+       * out its own blits, which overran the gameplay frame and tore it
+       * (#736); the intro-logo fix needs only the 68000 side. */
+      {
+         const char *v = TitleDBOverride("virtualjaguar_blitter_timing");
+         CHECK(v != NULL && strcmp(v, "m68k") == 0,
+               "WMCJ blitter_timing row selects the 68000-only model");
+      }
    }
    TitleDBSetCRC(0);
 

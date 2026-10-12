@@ -378,12 +378,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_blitter_timing",
       "Blitter Bus Timing (Experimental)",
       NULL,
-      "Charge the 68000 the bus time each blit really takes -- on hardware the blitter is the top-priority bus master and freezes the cacheless 68000 while it runs. Zero-time blits let games paced on blit completion (Doom's menus, Hover Strike) run too fast. Still being calibrated.",
+      "Charge the 68000 the bus time each blit really takes -- on hardware the blitter is the top-priority bus master and freezes the cacheless 68000 while it runs. Zero-time blits let games paced on blit completion (Doom's menus, Hover Strike) run too fast. 'Enabled' also makes the GPU wait out its own blits; '68000 only' charges just the 68000 and leaves GPU blit chains at full speed. Still being calibrated.",
       NULL,
       "accuracy",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
+         { "m68k",     "68000 only" },
          { NULL, NULL },
       },
       "disabled"

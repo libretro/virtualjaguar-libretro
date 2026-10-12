@@ -48,7 +48,7 @@ The rules for a compatibility row, from the tier-3 rule of #746:
 3. **Retire it.** When the cited mechanism lands, the row is deleted, not kept. Search `titledb.c` for the ticket number when closing one.
 4. **The user still wins.** Like every pair, it only fills in an option left at its registered default.
 
-The first one is White Men Can't Jump's `blitter_timing=enabled` (#736, PR #827). It stands in for blitter timing being on by default for every title (#408).
+The first one is White Men Can't Jump's `blitter_timing=m68k` (#736, PR #827). It stands in for blitter timing being on by default for every title (#408). It charges only the 68000: the intro needs that, and making the GPU wait out its own blits (`enabled`) overran the gameplay frame and tore it.
 
 ## Jaguar CD titles: disc rows (issue #747)
 
