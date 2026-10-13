@@ -28,6 +28,11 @@ stays v17.
   and 2x on 12 titles in HLE and 7 on the real BIOS; stock 1x is unchanged. The Settings
   sublabel and the `[perf]` log line no longer name the RISC clock as a suppressor. Doom's GPU
   loops are still not fast-forwarded, so Doom at 2x still takes about 1.65x the time of 1x.
+- **Clock scale options also accept a percentage; GDB halt timeout clamped.** The M68K and RISC
+  clock scale options read `175` or `175%` (clamped to 25-400) in addition to the listed values,
+  which map exactly as before, so a frontend with free-form entry (the desktop app) can set any
+  scale; stock 1x is unchanged. The GDB halt timeout is clamped to 3600 seconds. A typed link host
+  that is not a discovered peer no longer draws the "dropped off the LAN" warning.
 
 ---
 
@@ -63,6 +68,15 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   AirCars and Ultra Vortek (over the Voice Modem) on a local network, with LAN discovery
   (https://github.com/libretro/virtualjaguar-libretro/pull/888). While a session is set up, the link settings it controls are shown greyed out in
   Settings (https://github.com/libretro/virtualjaguar-libretro/pull/898).
+- **Typed settings.** Options that take a number or an address (link port and host, GDB port and
+  halt timeout, mouse and rotary sensitivity, the dead zone / offset / response-curve tuning, the
+  clock scales) show the core's presets plus a "Custom..." entry that opens a validated box; an
+  invalid entry says why and changes nothing. The Netplay window takes any port 1-65535 and a typed
+  host name or IPv4 address directly (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+- **Core events for the app.** The core tells the app about link up/down, link statistics, wire
+  speed and crash-watchdog hits over a private channel (`docs/app-frontend-extension.md`) instead
+  of the app reading log text; a watchdog hit now also shows on screen. RetroArch and other
+  frontends never see it (https://github.com/libretro/virtualjaguar-libretro/issues/888).
 - **Performance.** Release builds compile the core and the app at -O3, and the shader chain
   no longer re-runs every pass when the emulated frame has not changed (paused, or on a
   display faster than the game) (https://github.com/libretro/virtualjaguar-libretro/pull/894).
