@@ -404,6 +404,26 @@ static void testCoreInput() {
 }
 
 // ---------------------------------------------------------------------------------
+static void testRawPorts() {
+    // Bank-switching devices need the physical RetroPad ...
+    CHECK(deviceNeedsRawPad(RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0), ""));   // analog
+    CHECK(deviceNeedsRawPad(RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1), ""));   // driving
+    CHECK(deviceNeedsRawPad(RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 3), ""));   // 6D
+    CHECK(deviceNeedsRawPad(-1, "6d") && deviceNeedsRawPad(-1, "analog") && deviceNeedsRawPad(-1, "driving"));
+    // ... everything the core treats as an ordinary pad stays remapped -- BattleSphere's paddle
+    // port is a keypad title and must keep the profile.
+    CHECK(!deviceNeedsRawPad(RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2), "paddle"));
+    CHECK(!deviceNeedsRawPad(-1, "paddle"));
+    CHECK(!deviceNeedsRawPad(RETRO_DEVICE_ANALOG, ""));      // plain "RetroPad w/ Analog" = standard pad
+    CHECK(!deviceNeedsRawPad(RETRO_DEVICE_JOYPAD, "pad"));
+    CHECK(!deviceNeedsRawPad(-1, "teamtap"));
+    CHECK(!deviceNeedsRawPad(-1, "pad_pro"));
+    CHECK(!deviceNeedsRawPad(-1, "rotary"));
+    CHECK(!deviceNeedsRawPad(RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 3), "rotary"));
+    CHECK(!deviceNeedsRawPad(-1, "auto"));
+    CHECK(!deviceNeedsRawPad(-1, ""));
+}
+
 static void testOverlay() {
     CHECK(KeypadOverlay::keyAt(0, 0) == C_K1 && KeypadOverlay::keyAt(0, 2) == C_K3);
     CHECK(KeypadOverlay::keyAt(2, 0) == C_K7 && KeypadOverlay::keyAt(2, 2) == C_K9);
@@ -589,6 +609,7 @@ int main() {
     testPrecedence();
     testPersistence();
     testCoreInput();
+    testRawPorts();
     testOverlay();
     testCapture();
     testIdentity();

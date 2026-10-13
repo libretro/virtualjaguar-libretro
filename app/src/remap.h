@@ -250,6 +250,17 @@ private:
     std::vector<Base> base_;
 };
 
+// ---- which ports need the physical RetroPad -------------------------------------------
+
+// The bank-switching analog / driving / 6D devices read X, L3, R3, the shoulders and
+// triggers straight off the RetroPad, so remapping those buttons to Jaguar controls would
+// break them.  Everything else -- a plain pad, Pro Controller, Team Tap socket 0, the
+// rotary, the paddle ADC (its pad stays "fully connected"), a PLAIN RETRO_DEVICE_ANALOG
+// (libretro.c maps that to the standard pad) -- is an ordinary pad and stays remapped.
+// `frontendDevice` is what Settings assigned via retro_set_controller_port_device (-1 =
+// none), `optionValue` the core's virtualjaguar_pN_device value ("" = unknown).
+bool deviceNeedsRawPad(int frontendDevice, const std::string& optionValue);
+
 // ---- content identity ------------------------------------------------------------------------------------
 
 uint32_t crc32Bytes(const uint8_t* data, size_t size);

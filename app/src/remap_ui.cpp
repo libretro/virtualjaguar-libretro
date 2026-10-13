@@ -9,20 +9,16 @@
 
 namespace vj {
 
-// Does Jaguar port `port` need the physical RetroPad rather than the profile?  6D,
-// analog and driving devices read X / L3 / R3 / the shoulders and triggers directly,
-// so remapping those buttons to Jaguar controls would break them.
+// Does Jaguar port `port` need the physical RetroPad rather than the profile?  (deviceNeedsRawPad)
 bool inputPortIsRaw(const App& app, unsigned port) {
     int dev = app.cfg.getInt("port." + std::to_string(port), -1);   // Settings > Input > Jaguar port N
-    if (dev >= 0 && ((unsigned)dev & RETRO_DEVICE_MASK) == RETRO_DEVICE_ANALOG) return true;
-    if (!app.host.isLoaded()) return false;
-    const char* key = port == 0 ? "virtualjaguar_p1_device" : "virtualjaguar_p2_device";
-    for (const OptionDef& d : app.host.optionDefs()) {
-        if (d.key != key) continue;
-        std::string v = app.host.optionValue(d);
-        return v == "6d" || v == "analog" || v == "driving";
+    std::string opt;
+    if (app.host.isLoaded()) {
+        const char* key = port == 0 ? "virtualjaguar_p1_device" : "virtualjaguar_p2_device";
+        for (const OptionDef& d : app.host.optionDefs())
+            if (d.key == key) opt = app.host.optionValue(d);
     }
-    return false;
+    return deviceNeedsRawPad(dev, opt);
 }
 
 namespace {

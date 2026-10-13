@@ -179,6 +179,9 @@ void InputManager::poll(bool captureKeyboard) {
     core_.beginFrame();
     overlay.tick();
     refreshRawPorts();
+    // While a binding is being captured nothing reaches the core: the press being bound
+    // must not also act in the game (binding Start would pause it, for one).
+    if (capture_.active()) return;
 
     // ---- keyboard ---------------------------------------------------------------------
     DeviceSnapshot kb;

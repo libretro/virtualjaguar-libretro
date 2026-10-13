@@ -571,6 +571,18 @@ BindCapture::Result BindCapture::feed(const SDL_Event& e, Binding& out) {
 }
 
 // ---------------------------------------------------------------------------------
+// raw-pad ports
+// ---------------------------------------------------------------------------------
+bool deviceNeedsRawPad(int frontendDevice, const std::string& optionValue) {
+    // libretro.c: RETRO_DEVICE_JAG_ANALOG / _DRIVING / _6D (the paddle, subclass 2, is NOT one).
+    if (frontendDevice == (int)RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0) ||
+        frontendDevice == (int)RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1) ||
+        frontendDevice == (int)RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 3))
+        return true;
+    return optionValue == "analog" || optionValue == "driving" || optionValue == "6d";
+}
+
+// ---------------------------------------------------------------------------------
 // content identity
 // ---------------------------------------------------------------------------------
 uint32_t crc32Bytes(const uint8_t* data, size_t size) {
