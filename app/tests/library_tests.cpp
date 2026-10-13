@@ -228,7 +228,7 @@ static void testBiosClassification() {
     for (const auto& k : known) {
         // the file name must not matter: a recognized image is recognized under any name, at any size
         lib::BiosInfo b = lib::classifyBios("/x/anything_at_all.j64", 131072, k.crc);
-        CHECK(b.role == k.role && b.recognized && b.title == k.title && !b.use.empty());
+        CHECK(b.role == k.role && b.recognized && b.title == k.title);
     }
     CHECK(lib::classifyBios("/x/renamed.j64", 1 << 20, 0xFB731AAAu).recognized);   // size cap is for names only
 
@@ -253,21 +253,43 @@ static void testBiosClassification() {
     CHECK(lib::classifyBios("/g/Tempest 2000 (World).j64", 2 << 20, 1).role == lib::BiosRole::None);
     CHECK(lib::classifyBios("/g/Rebooted.j64", 100000, 1).role == lib::BiosRole::None);
 
-    // ---- will the core read it from where it is? ----
-    lib::BiosInfo cart = lib::classifyBios("/sys/jagboot.rom", 131072, 1);
-    CHECK(lib::coreWillFindBios(cart, "/sys/jagboot.rom", "/sys/"));
-    CHECK(lib::coreWillFindBios(cart, "/sys/jaguar/jagboot.rom", "/sys"));
-    CHECK(lib::coreWillFindBios(cart, "C:\\sys\\Atari - Jaguar\\jagboot.rom", "C:\\sys\\"));
-    CHECK(!lib::coreWillFindBios(cart, "/sys/jaguarcd/jagboot.rom", "/sys"));        // not a cart-boot sub-folder
-    CHECK(!lib::coreWillFindBios(cart, "/downloads/jagboot.rom", "/sys"));           // wrong folder
-    CHECK(!lib::coreWillFindBios(cart, "/sys/deep/er/jagboot.rom", "/sys"));         // the core does not recurse
-    CHECK(!lib::coreWillFindBios(cart, "/sys/jagboot.rom", ""));
-    lib::BiosInfo cdb = lib::classifyBios("/sys/jaguarcd/jagcd.bin", 262144, 0x687068D5u);
-    CHECK(lib::coreWillFindBios(cdb, "/sys/jaguarcd/jagcd.bin", "/sys"));
-    CHECK(lib::coreWillFindBios(cdb, "/sys/Atari - Jaguar CD/jagcd.bin", "/sys"));
-    CHECK(!lib::coreWillFindBios(cdb, "/sys/jagcd2.bin", "/sys"));                   // the core never opens that name
-    lib::BiosInfo mt = lib::classifyBios("/sys/memtrack.bin", 131072, 1);
-    CHECK(!lib::coreWillFindBios(mt, "/sys/memtrack.bin", "/sys"));
+    // ---- will the core read it from where it is?  (name + folder + size, from libretro.c; never the CRC) ----
+    const uint64_t K128 = 0x20000, K256 = 0x40000;
+    lib::BiosInfo cart = lib::classifyBios("/sys/jagboot.rom", K128, 1);
+    CHECK(lib::biosUse(cart, "/sys/jagboot.rom", K128, "/sys/").core);
+    CHECK(lib::biosUse(cart, "/sys/jaguar/jagboot.rom", K128, "/sys").core);
+    CHECK(lib::biosUse(cart, "C:\\sys\\Atari - Jaguar\\jagboot.rom", K128, "C:\\sys\\").core);
+    CHECK(lib::biosUse(cart, "/sys/jagboot.rom", K128, "/sys").text.find("Custom") != std::string::npos);
+    CHECK(!lib::biosUse(cart, "/sys/jaguarcd/jagboot.rom", K128, "/sys").core);      // not a cart-boot sub-folder
+    CHECK(!lib::biosUse(cart, "/downloads/jagboot.rom", K128, "/sys").core);         // wrong folder
+    CHECK(!lib::biosUse(cart, "/sys/deep/er/jagboot.rom", K128, "/sys").core);       // the core does not recurse
+    CHECK(!lib::biosUse(cart, "/sys/jagboot.rom", K128, "").core);                   // no system folder known
+    CHECK(!lib::biosUse(cart, "/sys/jagboot.rom", 0x30000, "/sys").core);            // right place, wrong size: skipped
+    CHECK(lib::biosUse(cart, "/sys/jagboot.rom", 0x30000, "/sys").text.find("131072") != std::string::npos);
+    // jagboot_m.rom: the system folder itself only, 128 KiB, and not by the Custom search
+    lib::BiosInfo mm = lib::classifyBios("/sys/jagboot_m.rom", K128, 1);
+    CHECK(lib::biosUse(mm, "/sys/jagboot_m.rom", K128, "/sys").core);
+    CHECK(lib::biosUse(mm, "/sys/jagboot_m.rom", K128, "/sys").text.find("Model M") != std::string::npos);
+    CHECK(!lib::biosUse(mm, "/sys/jaguar/jagboot_m.rom", K128, "/sys").core);
+    CHECK(!lib::biosUse(mm, "/sys/Atari - Jaguar/jagboot_m.rom", K128, "/sys").core);
+    CHECK(!lib::biosUse(mm, "/sys/jagboot_m.rom", K256, "/sys").core);
+    // a Series K dump under a name the core does not search for is not read; named jagboot.rom it is only the Custom path
+    lib::BiosInfo k = lib::classifyBios("/sys/series_k.bin", K128, 0xFB731AAAu);
+    CHECK(k.recognized && !lib::biosUse(k, "/sys/series_k.bin", K128, "/sys").core);
+    lib::BiosInfo kj = lib::classifyBios("/sys/jagboot.rom", K128, 0xFB731AAAu);
+    lib::BiosUse kju = lib::biosUse(kj, "/sys/jagboot.rom", K128, "/sys");
+    CHECK(kju.core && kju.text.find("Custom") != std::string::npos && kju.text.find("built-in Series K") != std::string::npos);
+    // CD BIOS: its own sub-folders, exactly 256 KiB
+    lib::BiosInfo cdb = lib::classifyBios("/sys/jaguarcd/jagcd.bin", K256, 0x687068D5u);
+    CHECK(lib::biosUse(cdb, "/sys/jaguarcd/jagcd.bin", K256, "/sys").core);
+    CHECK(lib::biosUse(cdb, "/sys/Atari - Jaguar CD/jagcd.bin", K256, "/sys").core);
+    CHECK(lib::biosUse(cdb, "/sys/jagcd.bin", K256, "/sys").text.find("CD Boot Mode") != std::string::npos);
+    CHECK(!lib::biosUse(cdb, "/sys/jagcd.bin", 0x30000, "/sys").core);               // 192 KiB: rejected by the core
+    CHECK(lib::biosUse(cdb, "/sys/jagcd.bin", 0x30000, "/sys").text.find("262144") != std::string::npos);
+    CHECK(!lib::biosUse(cdb, "/sys/jagcd2.bin", K256, "/sys").core);                 // the core never opens that name
+    CHECK(!lib::biosUse(cdb, "/downloads/jagcd.bin", K256, "/sys").core);
+    lib::BiosInfo mt = lib::classifyBios("/sys/memtrack.bin", K128, 1);
+    CHECK(!lib::biosUse(mt, "/sys/memtrack.bin", K128, "/sys").core);
 
     // ---- scanning and identify: sections ----
     const size_t K = 1024;

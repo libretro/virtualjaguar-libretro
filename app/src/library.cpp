@@ -245,19 +245,18 @@ struct KnownBios {
     uint32_t crc;
     BiosRole role;
     const char* title;
-    const char* use;
 };
 
 // CRCs the core itself checks: biosdb.c (cart boot ROMs, issue #469), CD_BIOS_CRC_RETAIL / _DEV and
 // the Memory Track cartridge dump (jaguarMainROMCRC32 test) in libretro.c / jaguar.c.
 const KnownBios kKnownBios[] = {
-    {0xFB731AAAu, BiosRole::CartBoot, "Series K boot ROM", "Used when BIOS (Cartridges) = Real and Cart BIOS Type = Series K"},
-    {0xAE25BDF5u, BiosRole::CartBoot, "Model M boot ROM", "Used when BIOS (Cartridges) = Real and Cart BIOS Type = Model M"},
-    {0xE60277BBu, BiosRole::CartBoot, "Stubulator '93 dev boot ROM", "Developer boot ROM: only used with Cart BIOS Type = Custom"},
-    {0x8D15DBC6u, BiosRole::CartBoot, "Stubulator '94 dev boot ROM", "Developer boot ROM: only used with Cart BIOS Type = Custom"},
-    {0x687068D5u, BiosRole::CdBios, "Jaguar CD BIOS (retail)", "Used when CD Boot Mode = Real BIOS or Auto and CD BIOS Type = Retail"},
-    {0x55A0669Cu, BiosRole::CdBios, "Jaguar CD BIOS (developer)", "Used when CD Boot Mode = Real BIOS or Auto and CD BIOS Type = Developer"},
-    {0xFDF37F47u, BiosRole::MemoryTrack, "Memory Track cartridge", "The core emulates the Memory Track itself: this image is not read"},
+    {0xFB731AAAu, BiosRole::CartBoot, "Series K boot ROM"},
+    {0xAE25BDF5u, BiosRole::CartBoot, "Model M boot ROM"},
+    {0xE60277BBu, BiosRole::CartBoot, "Stubulator '93 dev boot ROM"},
+    {0x8D15DBC6u, BiosRole::CartBoot, "Stubulator '94 dev boot ROM"},
+    {0x687068D5u, BiosRole::CdBios, "Jaguar CD BIOS (retail)"},
+    {0x55A0669Cu, BiosRole::CdBios, "Jaguar CD BIOS (developer)"},
+    {0xFDF37F47u, BiosRole::MemoryTrack, "Memory Track cartridge"},
 };
 
 const uint64_t kMaxBiosBytes = 512ull * 1024;
@@ -320,7 +319,6 @@ BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole)
             b.role = k.role;
             b.recognized = true;
             b.title = k.title;
-            b.use = k.use;
             return b;
         }
     }
@@ -347,40 +345,72 @@ BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole)
     std::string t = stem;
     if (lowerStr(t).rfind("[bios]", 0) == 0) t = trimStr(t.substr(6));
     b.title = titleFromFileStem(t);
-    switch (b.role) {
-    case BiosRole::CartBoot:
-        b.use = "Boot ROM image not in the core's list: only read with Cart BIOS Type = Custom";
-        break;
-    case BiosRole::CdBios:
-        b.use = "CD BIOS not in the core's list: used when CD Boot Mode = Real BIOS or Auto, if its header is sane";
-        break;
-    case BiosRole::MemoryTrack: b.use = "The core emulates the Memory Track itself: this image is not read"; break;
-    default: b.use = "Not read by the core"; break;
-    }
     return b;
 }
 
-bool coreWillFindBios(const BiosInfo& b, const std::string& path, const std::string& systemDir) {
-    if (systemDir.empty()) return false;
-    const char* const* names = nullptr;
-    const char* const* dirs = nullptr;
-    if (b.role == BiosRole::CartBoot) {
-        names = kCartBootNames;
-        dirs = kCartBootDirs;
-    } else if (b.role == BiosRole::CdBios) {
-        names = kCdBiosNames;
-        dirs = kCdBiosDirs;
-    } else {
-        return false;
-    }
-    if (!inList(names, baseName(path))) return false;
+BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const std::string& systemDir) {
+    BiosUse u;
+    const std::string base = baseName(path);
     const std::string dir = normDir(dirName(path));
     const std::string sys = normDir(systemDir);
-    for (; *dirs; dirs++) {
-        const std::string want = **dirs ? sys + "/" + *dirs : sys;
-        if (dir == want) return true;
+    auto inDirs = [&](const char* const* dirs) {
+        for (; *dirs; dirs++)
+            if (!sys.empty() && dir == (**dirs ? sys + "/" + *dirs : sys)) return true;
+        return false;
+    };
+    auto sizeMsg = [&](uint64_t want) {
+        return std::string("It is ") + std::to_string((unsigned long long)size) + " bytes and the core only accepts exactly " +
+               std::to_string((unsigned long long)want) + ", so it skips this file.";
+    };
+    switch (b.role) {
+    case BiosRole::CdBios:
+        if (!inList(kCdBiosNames, base)) {
+            u.text = "The core only looks for CD BIOS files by a fixed set of names (jagcd.bin, jaguarcd.bin, "
+                     "jagcd_bios.bin, jaguarcd_bios.bin, Jaguar CD BIOS.rom/.bin, or '[BIOS] Atari Jaguar CD (World)' / "
+                     "'Developer CD' with .j64, .rom or .bin): rename it to use it.";
+        } else if (!inDirs(kCdBiosDirs)) {
+            u.text = "Not in the system folder or its Atari - Jaguar, Atari - Jaguar CD, jaguar or jaguarcd sub-folders, "
+                     "so the core does not look at it here.";
+        } else if (size != 0x40000) {
+            u.text = sizeMsg(0x40000);
+        } else {
+            u.core = true;
+            u.text = "Read when a CD boots with CD Boot Mode = Real BIOS or Auto: it is preferred over the built-in CD BIOS. "
+                     "With both a retail and a developer file present, CD BIOS Type picks which one.";
+        }
+        break;
+    case BiosRole::CartBoot:
+        if (base == "jagboot_m.rom") {
+            if (dir != sys || sys.empty()) {
+                u.text = "The core only reads jagboot_m.rom from the system folder itself, not from a sub-folder or anywhere else.";
+            } else if (size != 0x20000) {
+                u.text = sizeMsg(0x20000);
+            } else {
+                u.core = true;
+                u.text = "Read when Cart BIOS Type = Model M (and the boot ROM runs, BIOS (Cartridges) = Real): it replaces "
+                         "the built-in Model M image.";
+            }
+        } else if (!inList(kCartBootNames, base)) {
+            u.text = "The core only looks for a custom boot ROM by name (jagboot.rom, boot.rom, boot0.rom or a '[BIOS] Atari "
+                     "Jaguar...' name): rename it to use it.";
+        } else if (!inDirs(kCartBootDirs)) {
+            u.text = "Not in the system folder or its Atari - Jaguar or jaguar sub-folders, so the core does not look at it here.";
+        } else if (size != 0x20000) {
+            u.text = sizeMsg(0x20000);
+        } else {
+            u.core = true;
+            u.text = "Read only when Cart BIOS Type = Custom (and the boot ROM runs, BIOS (Cartridges) = Real, or a "
+                     "GPU-only cart). Otherwise the built-in Series K / Model M image is used.";
+        }
+        if (b.recognized && b.title.find("Series K") != std::string::npos)
+            u.text += " This is the same image as the built-in Series K, which never reads a file.";
+        break;
+    case BiosRole::MemoryTrack:
+        u.text = "The core emulates the Memory Track itself (its data is the .srm save): this image is not read.";
+        break;
+    default: u.text = "The core does not read this file."; break;
     }
-    return false;
+    return u;
 }
 
 // ---- scanning ----------------------------------------------------------------------------------------------
@@ -652,7 +682,6 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs) {
             if (b.role == BiosRole::None) {
                 b.role = BiosRole::Other;
                 b.title = trimStr(e.datName.substr(6));
-                b.use = "Not read by the core";
             }
         }
         if (b.role != BiosRole::None) {

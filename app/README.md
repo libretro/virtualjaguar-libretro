@@ -393,6 +393,9 @@ To regenerate the expected hash after an intentional emulation change:
 
 ## Window sizing and UI screenshots
 
+The UI scale follows the display's content scale (200% on a 4K Windows/Linux display; 1.0 on a Retina
+Mac, where ImGui renders at the pixel density by itself). `ui.scale` in `config.ini` (default 1.0) multiplies it.
+
 Every window opens at a size in font heights (so it scales with DPI), at most 80% of the main
 window, is constrained to 95% of it each frame (a size saved in `imgui.ini` by a bigger window never
 overflows a smaller one) and is pulled back on screen. Long text wraps, tables stretch, controls take

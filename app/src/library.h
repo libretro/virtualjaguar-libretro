@@ -93,7 +93,6 @@ struct BiosInfo {
     BiosRole role = BiosRole::None;
     bool recognized = false;   // the checksum is one of the core's known images
     std::string title;         // "Series K boot ROM", or the file's own name
-    std::string use;           // one line: when the core uses an image like this
 };
 
 // Classify a cartridge-type file as BIOS / system data, by CRC32 of the whole file first and
@@ -101,9 +100,18 @@ struct BiosInfo {
 // track" in the name).  Names only count for small files (<= 512 KiB): no BIOS is larger.
 BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole);
 const char* biosRoleLabel(BiosRole r);   // "Cart boot ROM", "CD BIOS", ...
-// Would the core find this file in `systemDir`?  (right file name, in the system folder or one
-// of the sub-folders it searches)  Memory Track images and "other" files are never read.
-bool coreWillFindBios(const BiosInfo& b, const std::string& path, const std::string& systemDir);
+// Will the core read this file where it is, and when?  Decided from what libretro.c does (file
+// NAME, FOLDER and SIZE; the checksum only names the image): the cart boot ROM search
+// (load_external_cart_boot_rom: jagboot.rom, boot.rom, boot0.rom and the "[BIOS] Atari Jaguar..." names, in the
+// system folder or its "Atari - Jaguar" / "jaguar" sub-folders, exactly 128 KiB, and only with
+// Cart BIOS Type = Custom), jagboot_m.rom (system folder itself only, 128 KiB, Cart BIOS Type = Model M),
+// and the CD BIOS search (load_external_cd_bios: its own names and sub-folders, exactly 256 KiB, preferred over
+// the built-in image whenever a real CD BIOS boots).  Series K is always the built-in image.
+struct BiosUse {
+    bool core = false;     // the core reads this file from where it is
+    std::string text;      // when / why not, a sentence or two for the tooltip
+};
+BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const std::string& systemDir);
 
 // A scanned file plus what the dats say about it.
 struct Entry {

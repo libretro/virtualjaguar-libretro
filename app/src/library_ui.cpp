@@ -151,7 +151,8 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
     bool hovered = ImGui::IsItemHovered();
     ImGui::PopID();
     const lib::BiosInfo& b = e.bios;
-    const bool found = lib::coreWillFindBios(b, e.file.path, svc.systemDir);
+    const lib::BiosUse use = lib::biosUse(b, e.file.path, e.file.size, svc.systemDir);
+    const bool found = use.core;
     const bool readable = b.role == lib::BiosRole::CartBoot || b.role == lib::BiosRole::CdBios;
 
     ImVec2 a0 = p0, a1(p0.x + cellW, p0.y + artH);
@@ -168,13 +169,13 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
 
     float lh = ImGui::GetFontSize() + 2.0f;
     ImVec4 clip(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH);
-    // title (at most two lines), then the status under it; both wrap to the tile and are clipped to its text box
-    float th = std::min(ImGui::CalcTextSize(e.title.c_str(), nullptr, false, cellW - 4).y, lh * 2.0f);
+    // title: at most two lines, clipped above the status line, which is always the tile's last line and short
+    ImVec4 clipT(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH - lh);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3), IM_COL32(230, 230, 230, 255),
-                e.title.c_str(), nullptr, cellW - 4, &clip);
-    const char* st = found ? "In the system folder" : readable ? "Not in the system folder" : "Not read by the core";
+                e.title.c_str(), nullptr, cellW - 4, &clipT);
+    const char* st = found ? "Read by the core" : readable ? "Not read here" : "Not read";
     ImU32 sc = found ? IM_COL32(120, 210, 130, 255) : readable ? IM_COL32(230, 180, 90, 255) : IM_COL32(150, 150, 150, 255);
-    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3 + th), sc, st, nullptr,
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + textH - lh), sc, st, nullptr,
                 cellW - 4, &clip);
 
     if (hovered) {
@@ -185,16 +186,10 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
         ImGui::TextDisabled("%s", e.file.path.c_str());
         if (e.file.crcWhole) ImGui::TextDisabled("CRC32 %08X", e.file.crcWhole);
         ImGui::Spacing();
-        ImGui::TextWrapped("%s.", b.use.c_str());
-        if (found) {
-            ImGui::TextWrapped("It is in the system folder, where the core looks for it.");
-        } else if (readable) {
-            ImGui::TextWrapped("It is not where the core looks (the system folder %s, or its Atari - Jaguar / jaguar "
-                               "sub-folders), so the core will not read it from here. The core carries built-in copies "
-                               "of the Series K and Model M boot ROMs and both CD BIOS images, so nothing is missing "
-                               "without it.",
-                               svc.systemDir.c_str());
-        }
+        ImGui::TextWrapped("%s", use.text.c_str());
+        if (readable)
+            ImGui::TextWrapped("The core has built-in copies of the Series K and Model M boot ROMs and both CD BIOS "
+                               "images, so nothing is missing without this file.");
         ui::endWrappedTooltip();
     }
 }
@@ -338,6 +333,7 @@ int g_homeSec = -1, g_winSec = -1;   // each tab bar's last-seen section (see dr
 
 // The first-run home screen: no folders yet.  A friendly block in the middle, wrapped to the window.
 void drawEmptyHome(App& app, LibraryService& svc) {
+    svc.focusSearch = false;   // there is no search box to focus yet
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float f = ImGui::GetFontSize();
     const float bw = std::max(f * 8.0f, std::min(f * 38.0f, avail.x - f * 2.0f));

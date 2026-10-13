@@ -194,7 +194,17 @@ bool App::initImGui() {
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
-    float scale = uiScaleOverride > 0.0f ? uiScaleOverride : SDL_GetWindowDisplayScale(window_);
+    // The UI scale is the display's CONTENT scale (the 200% of a 4K Windows/Linux display), nothing more.
+    // SDL_GetWindowDisplayScale() is relative to the window's PIXEL size, so it also contains the pixel density
+    // (2.0 on every Retina Mac); ImGui's SDL3 backend lays out in window points and already renders at the
+    // pixel density (DisplayFramebufferScale), so using it directly doubled everything on a Retina Mac and
+    // every window came out twice as wide as intended.  (Dear ImGui's own SDL3 example uses the content scale.)
+    float scale = uiScaleOverride;
+    if (scale <= 0.0f) {
+        float density = SDL_GetWindowPixelDensity(window_);
+        scale = SDL_GetWindowDisplayScale(window_) / (density > 0.0f ? density : 1.0f);
+        scale *= std::min(4.0f, std::max(0.5f, cfg.getFloat("ui.scale", 1.0f)));   // user preference on top
+    }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
     st.FontScaleDpi = scale;
