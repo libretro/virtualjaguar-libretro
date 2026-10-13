@@ -63,3 +63,21 @@ else()
 endif()
 add_test(NAME network_options COMMAND vj_network_options_test "${_yarc}")
 set_tests_properties(network_options PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# Typed (free-form) option values: validators, CoreHost acceptance, and a custom link port / host name /
+# clock-scale percentage read back through the REAL core's own log lines.
+add_executable(vj_typed_options_test
+    tests/typed_options_test.cpp src/core_host.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_typed_options_test PRIVATE src)
+target_link_libraries(vj_typed_options_test PRIVATE vj_core ${VJ_SDL3_TARGET})
+if(WIN32)
+    target_link_libraries(vj_typed_options_test PRIVATE ws2_32 iphlpapi)
+endif()
+if(MSVC)
+    target_compile_options(vj_typed_options_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_typed_options_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_typed_options_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME typed_options COMMAND vj_typed_options_test "${_yarc}")
+set_tests_properties(typed_options PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")

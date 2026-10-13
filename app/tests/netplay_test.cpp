@@ -279,6 +279,7 @@ static void testCore(const std::string& rom) {
     Netplay np(host);
     np.setSystemDir(sys);
     host.onLog = [&np](int level, const char* text) { np.onCoreLog(level, text); };
+    host.onEvent = [&np](const vj_event& e) { np.onCoreEvent(e); };
 
     std::string err;
     if (!host.loadContent(rom, err)) {
@@ -289,6 +290,48 @@ static void testCore(const std::string& rom) {
     frames(host, np, 5);
     CHECK(np.link() == LinkState::Off);
     CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "auto");   // the default: nothing configured, nothing listening
+
+    // ---- the core's private event channel ------------------------------------------------------------
+    // (a) the app answered HELLO; with the log tap CUT, the link still comes up: LINK_UP arrives as an event.
+    CHECK(host.eventsActive());
+    {
+        const auto onLog = host.onLog;
+        host.onLog = nullptr;
+        NetSettings s;
+        s.role = NetRole::Loopback;
+        CHECK(np.start(s, err));
+        CHECK(runUntil(host, np, [&] { return np.link() == LinkState::Up; }));
+        CHECK(np.linkUpEvents() >= 1);
+        CHECK_EQ(np.linkDevice(), "jaglink");
+        CHECK(host.eventCount() >= 1);
+        np.stop();
+        frames(host, np, 3);
+        CHECK(np.link() == LinkState::Off);
+        host.onLog = onLog;
+    }
+    // (b) a frontend that does not answer HELLO (RetroArch's position): the core sends nothing, and the
+    // log text carries the link UP, as it did before the channel existed.
+    {
+        host.announceExtensions = false;
+        CHECK(host.loadContent(rom, err));
+        CHECK(!host.eventsActive());
+        const uint64_t before = host.eventCount();
+        const unsigned upBefore = np.linkUpEvents();
+        frames(host, np, 5);
+        NetSettings s;
+        s.role = NetRole::Loopback;
+        CHECK(np.start(s, err));
+        CHECK(runUntil(host, np, [&] { return np.link() == LinkState::Up; }));
+        CHECK_EQ(np.linkDevice(), "jaglink");
+        CHECK(np.linkUpEvents() == upBefore);       // it was the log, not an event
+        CHECK(host.eventCount() == before);         // not one event while HELLO was refused
+        np.stop();
+        frames(host, np, 3);
+        host.announceExtensions = true;
+        CHECK(host.loadContent(rom, err));
+        CHECK(host.eventsActive());
+        frames(host, np, 5);
+    }
 
     // ---- loopback: the cheapest proof that the log tap sees the core's link UP ------------------
     {
@@ -302,7 +345,7 @@ static void testCore(const std::string& rom) {
         CHECK_EQ(np.linkDevice(), "jaglink");
     }
 
-    // ---- host on a port the option does not offer (VJ_NETLINK_PORT path) -------------------------
+    // ---- host on a port the option's list does not offer: the option takes any port -----------------
     const int hostPort = pickFreePort(discPort);
     CHECK(hostPort != 0 && !Netplay::portIsOptionValue(hostPort));
     {
@@ -314,6 +357,8 @@ static void testCore(const std::string& rom) {
         frames(host, np, 5);
         CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "tcp_server");
         CHECK_EQ(optionOf(host, "virtualjaguar_uart_device"), "voicemodem");
+        CHECK_EQ(optionOf(host, "virtualjaguar_netlink_port"), std::to_string(hostPort));   // the option itself...
+        CHECK(std::getenv("VJ_NETLINK_PORT") == nullptr || std::getenv("VJ_NETLINK_PORT")[0] == 0);   // ...no env hack
         CHECK(np.link() == LinkState::Waiting);
         // ...and it really listens there: a partner connecting brings the link up as a Voice Modem.
         sock_t partner = connectTo(hostPort);
@@ -343,18 +388,48 @@ static void testCore(const std::string& rom) {
         if (partner != kBadSock) closeSock(partner);
     }
 
-    // ---- join: the address goes through the core's vj_netlink.txt route, the port through the env ---
-    {
+    // ---- join: a typed address goes straight into the core's host option; the port too ------------
+    // A name works as well as a dotted quad (the core resolves it), and no vj_netlink.txt is written.
+    for (const char* addr : {"127.0.0.1", "localhost"}) {
         const int port3 = pickFreePort(discPort);
         sock_t srv = listenOn(port3);
         CHECK(srv != kBadSock);
         NetSettings s;
         s.role = NetRole::Join;
-        s.address = "127.0.0.1";
+        s.address = addr;
         s.port = port3;
         CHECK(np.start(s, err));
         CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "disabled");   // a switch of mode bounces too
         frames(host, np, 3);
+        CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "tcp_client");
+        CHECK_EQ(optionOf(host, "virtualjaguar_netlink_host"), addr);
+        CHECK_EQ(optionOf(host, "virtualjaguar_netlink_port"), std::to_string(port3));
+        CHECK(!fs::exists(sys + "vj_netlink.txt"));
+        sock_t peer = kBadSock;
+        bool up = runUntil(host, np, [&] {
+            if (peer == kBadSock) peer = accept(srv, nullptr, nullptr);
+            return np.link() == LinkState::Up;
+        });
+        CHECK(up);
+        if (!up) std::fprintf(stderr, "  join status (%s): %s\n", addr, np.statusText().c_str());
+        CHECK(peer != kBadSock);
+        CHECK(np.statusText().find(addr) != std::string::npos);
+        if (peer != kBadSock) closeSock(peer);
+        closeSock(srv);
+    }
+
+    // ---- join through the fallback: the core's own vj_netlink.txt route ("From file") ----------------
+    {
+        np.setAddressViaOption(false);
+        const int port4 = pickFreePort(discPort);
+        sock_t srv = listenOn(port4);
+        CHECK(srv != kBadSock);
+        NetSettings s;
+        s.role = NetRole::Join;
+        s.address = "127.0.0.1";
+        s.port = port4;
+        CHECK(np.start(s, err));
+        frames(host, np, 5);
         CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "tcp_client");
         CHECK_EQ(optionOf(host, "virtualjaguar_netlink_host"), "vj_netlink.txt");
         {
@@ -369,11 +444,10 @@ static void testCore(const std::string& rom) {
             return np.link() == LinkState::Up;
         });
         CHECK(up);
-        if (!up) std::fprintf(stderr, "  join status: %s\n", np.statusText().c_str());
         CHECK(peer != kBadSock);
-        CHECK(np.statusText().find("127.0.0.1") != std::string::npos);
         if (peer != kBadSock) closeSock(peer);
         closeSock(srv);
+        np.setAddressViaOption(true);
     }
 
     // ---- looking for hosts: the core's discovery list reaches Netplay::discovered() ---------------------
