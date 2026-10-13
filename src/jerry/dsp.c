@@ -717,13 +717,11 @@ static void DSPPipeMemAccess(uint32_t addr, int isLoad, int isLong)
 	}
 }
 
-/* Which DSP timing path this slice runs: 0 none (the default, byte-
- * identical to the untimed core), 1 dram_timing self-cost, 2 the
- * pipeline model.  Latched at DSPExec entry from the two options, which
- * only check_variables() changes between retro_run() calls -- the same
- * reasoning as GPUExec's cached locals (#532).  One byte so the untimed
- * hot path pays a single load + never-taken branch per load/store
- * instead of two option reads. */
+/* Which timing model the current timed slice runs: 1 dram_timing
+ * self-cost, 2 the pipeline model.  Latched at DSPExecTimed() entry from
+ * the two options, which only check_variables() changes between
+ * retro_run() calls (the #532 reasoning).  Read only on the timed path;
+ * the untimed DSPExec() loop never touches it. */
 static uint8_t dsp_mem_timed = 0;
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -745,12 +743,6 @@ static DSP_NOINLINE void DSPMemTimed(uint32_t addr, int isLoad, int isLong)
 		dsp_bus_stall += bus_arbiter_dsp_access(addr, isLong);
 }
 
-/* Hook for the load/store opcode bodies.  Both options off: nothing. */
-#define DSP_PIPE_MEM(addr, isLoad, isLong) \
-	do { \
-		if (dsp_mem_timed) \
-			DSPMemTimed((addr), (isLoad), (isLong)); \
-	} while (0)
 
 /* Cycles to deduct for the instruction that just executed on a timed
  * slice (dsp_mem_timed != 0).  Kept out of DSPExec's loop so the
@@ -2421,15 +2413,25 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 
 /* DSP execution core */
 
+static DSP_NOINLINE void DSPExecTimed(int32_t cycles);
+static DSP_NOINLINE void DSPExecUntimed(int32_t cycles);
+
+/* Timing models (pipeline or dram_timing) run a separate loop, picked
+ * once per call, so the untimed loop below and the opcode handlers it
+ * dispatches are exactly develop's (issue #313 / #892).  Both loops are
+ * out of line so neither can merge into, or re-allocate, the other. */
 void DSPExec(int32_t cycles)
+{
+	if (vjs.gpuPipelineTiming || busArbiter.enabled)
+		DSPExecTimed(cycles);
+	else
+		DSPExecUntimed(cycles);
+}
+
+static DSP_NOINLINE void DSPExecUntimed(int32_t cycles)
 {
 	int idleSkipActive;
 	int gdbArmedSlice;
-	/* Slice-invariant settings cached in locals, as in GPUExec (issue
-	 * #532): written only by check_variables() between retro_run()s. */
-	int pipeTiming;
-	int dsp_mem_timed_local;
-	uint32_t riscScale;
 	/* Issue #811 late load write-back, armed for exactly the next
 	 * instruction (see dsp_ldx_slot). */
 	uint32_t *ldxArmed = NULL;
@@ -2459,10 +2461,6 @@ void DSPExec(int32_t cycles)
 	 * slice. */
 	gdbArmedSlice = gdbArmedDSP;
 	dsp_in_exec++;
-	dsp_mem_timed = vjs.gpuPipelineTiming ? 2 : (busArbiter.enabled ? 1 : 0);
-	dsp_mem_timed_local = dsp_mem_timed;
-	pipeTiming = (dsp_mem_timed_local == 2);
-	riscScale  = riscClockScalePct;
 
 	/* Idle-loop fast-forward gates (issue #569).  Every one of these adds
 	 * per-instruction state the affine extrapolation does not model, so
@@ -2487,8 +2485,8 @@ void DSPExec(int32_t cycles)
 	 *     `who == OP` -- but a DSP-side arbiter charge added later must
 	 *     not silently invalidate this;
 	 *   - vjs.gpuPipelineTiming: drives the DSP pipeline/gateway model
-	 *     below (issue #313), whose per-instruction stall state the
-	 *     affine extrapolation does not model;
+	 *     (issue #313), which runs in DSPExecTimed() and never reaches
+	 *     this loop -- kept in the gate as belt-and-braces;
 	 *   - DSP_CTRL single-step / single-go: the slice is one instruction;
 	 *   - vjtrace armed or a memory watch installed (VJ_TRACE builds
 	 *     only): VJT_PCHIST_DSP in this loop and VJT_WATCH_RD on the
@@ -2615,14 +2613,6 @@ void DSPExec(int32_t cycles)
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
-		/* Pipeline model: charge score-board / interlock waits BEFORE the
-		 * opcode runs (only time is charged, results are unchanged). */
-		if (pipeTiming)
-		{
-			dsp_bus_stall = 0;
-			dsp_pipe_core_stall = 0;
-			DSPPipeCheckUse(index);
-		}
 		if (divArmed && pcThis == divPc
 		      && &dsp_reg[dsp_opcode_second_parameter] == divArmed)
 		{
@@ -2651,10 +2641,7 @@ void DSPExec(int32_t cycles)
 			dsp_executeOpcode(index);
 			divArmed = NULL;
 		}
-		if (dsp_mem_timed_local == 0)
-			cycles -= dsp_opcode_cycles[index];
-		else
-			cycles -= DSPTimedCharge(index, riscScale);
+		cycles -= dsp_opcode_cycles[index];
 
 		/* Issue #811: the previous instruction was an external load and
 		 * this one overwrote its target -- the load data lands last. */
@@ -2902,7 +2889,6 @@ INLINE static void dsp_opcode_jump(void)
 		uint32_t delayed_pc = RM;
 		uint16_t ds_opcode;
 		uint32_t ds_index;
-		int dsTimed = (dsp_mem_timed == 2);   /* read once: opaque call below */
 		/* The delay slot is the second instruction behind such a store,
 		 * past the retire window: commit the switch before it runs. */
 		if (dspFlagsRetireDelay)
@@ -2926,17 +2912,7 @@ INLINE static void dsp_opcode_jump(void)
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
-		if (dsTimed)
-			DSPPipeCheckUse(ds_index);
 		dsp_executeOpcode(ds_index);
-		if (dsTimed)
-		{
-			/* The inlined delay slot is never charged by DSPExec's loop;
-			 * a taken JUMP adds ~2 dead refill ticks (R12).  Model only,
-			 * so the default path stays byte-identical. */
-			dsp_pipe_core_stall += 1u + 2u;
-			dsp_pipe_stall_total += 1u + 2u;
-		}
 		dsp_pc = delayed_pc;
 		/* Refilling the pipeline from the branch target costs enough
 		 * cycles that a D_FLAGS store the delay slot just issued reaches
@@ -2962,7 +2938,6 @@ INLINE static void dsp_opcode_jr(void)
 		int32_t delayed_pc = dsp_pc + (offset * 2);
 		uint16_t ds_opcode;
 		uint32_t ds_index;
-		int dsTimed = (dsp_mem_timed == 2);   /* read once: opaque call below */
 		/* Same retire-window commits as dsp_opcode_jump. */
 		if (dspFlagsRetireDelay)
 		{
@@ -2984,15 +2959,7 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
-		if (dsTimed)
-			DSPPipeCheckUse(ds_index);
 		dsp_executeOpcode(ds_index);
-		if (dsTimed)
-		{
-			/* Delay-slot charge + taken-JR refill (~3 dead ticks, R13). */
-			dsp_pipe_core_stall += 1u + 3u;
-			dsp_pipe_stall_total += 1u + 3u;
-		}
 		dsp_pc = delayed_pc;
 		/* Same branch-target pipeline refill as dsp_opcode_jump. */
 		if (dspFlagsRetireDelay)
@@ -3111,7 +3078,6 @@ INLINE static void dsp_opcode_move_pc(void)
 
 INLINE static void dsp_opcode_store_r14_indexed(void)
 {
-	DSP_PIPE_MEM(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2), 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), RN, DSP);
 #else
@@ -3122,7 +3088,6 @@ INLINE static void dsp_opcode_store_r14_indexed(void)
 
 INLINE static void dsp_opcode_store_r15_indexed(void)
 {
-	DSP_PIPE_MEM(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2), 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[15] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), RN, DSP);
 #else
@@ -3133,7 +3098,6 @@ INLINE static void dsp_opcode_store_r15_indexed(void)
 
 INLINE static void dsp_opcode_load_r14_ri(void)
 {
-	DSP_PIPE_MEM(dsp_reg[14] + RM, 1, 1);
 	DSPLoadNoteExternal(dsp_reg[14] + RM);
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[14] + RM) & 0xFFFFFFFC, DSP);
@@ -3145,7 +3109,6 @@ INLINE static void dsp_opcode_load_r14_ri(void)
 
 INLINE static void dsp_opcode_load_r15_ri(void)
 {
-	DSP_PIPE_MEM(dsp_reg[15] + RM, 1, 1);
 	DSPLoadNoteExternal(dsp_reg[15] + RM);
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[15] + RM) & 0xFFFFFFFC, DSP);
@@ -3157,7 +3120,6 @@ INLINE static void dsp_opcode_load_r15_ri(void)
 
 INLINE static void dsp_opcode_store_r14_ri(void)
 {
-	DSP_PIPE_MEM(dsp_reg[14] + RM, 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[14] + RM) & 0xFFFFFFFC, RN, DSP);
 #else
@@ -3168,7 +3130,6 @@ INLINE static void dsp_opcode_store_r14_ri(void)
 
 INLINE static void dsp_opcode_store_r15_ri(void)
 {
-	DSP_PIPE_MEM(dsp_reg[15] + RM, 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[15] + RM) & 0xFFFFFFFC, RN, DSP);
 #else
@@ -3184,7 +3145,6 @@ INLINE static void dsp_opcode_nop(void)
 
 INLINE static void dsp_opcode_storeb(void)
 {
-	DSP_PIPE_MEM(RM, 0, 0);
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		DSPWriteLong(RM, RN & 0xFF, DSP);
 	else
@@ -3194,7 +3154,6 @@ INLINE static void dsp_opcode_storeb(void)
 
 INLINE static void dsp_opcode_storew(void)
 {
-	DSP_PIPE_MEM(RM, 0, 0);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		DSPWriteLong(RM & 0xFFFFFFFE, RN & 0xFFFF, DSP);
@@ -3211,7 +3170,6 @@ INLINE static void dsp_opcode_storew(void)
 
 INLINE static void dsp_opcode_store(void)
 {
-	DSP_PIPE_MEM(RM, 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong(RM & 0xFFFFFFFC, RN, DSP);
 #else
@@ -3222,7 +3180,6 @@ INLINE static void dsp_opcode_store(void)
 
 INLINE static void dsp_opcode_loadb(void)
 {
-	DSP_PIPE_MEM(RM, 1, 0);
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 	{
 		/* JTRM (Technical Reference v8, "Load Byte"): byte extraction
@@ -3242,7 +3199,6 @@ INLINE static void dsp_opcode_loadb(void)
 
 INLINE static void dsp_opcode_loadw(void)
 {
-	DSP_PIPE_MEM(RM, 1, 0);
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 	{
 		/* Same JTRM rule as LOADB: word loads from internal RAM perform
@@ -3267,7 +3223,6 @@ INLINE static void dsp_opcode_loadw(void)
 
 INLINE static void dsp_opcode_load(void)
 {
-	DSP_PIPE_MEM(RM, 1, 1);
 	DSPLoadNoteExternal(RM);
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
@@ -3279,7 +3234,6 @@ INLINE static void dsp_opcode_load(void)
 
 INLINE static void dsp_opcode_load_r14_indexed(void)
 {
-	DSP_PIPE_MEM(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2), 1, 1);
 	DSPLoadNoteExternal(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2));
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), DSP);
@@ -3291,7 +3245,6 @@ INLINE static void dsp_opcode_load_r14_indexed(void)
 
 INLINE static void dsp_opcode_load_r15_indexed(void)
 {
-	DSP_PIPE_MEM(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2), 1, 1);
 	DSPLoadNoteExternal(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2));
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[15] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), DSP);
@@ -4786,3 +4739,323 @@ size_t DSPStateLoad(const uint8_t *buf)
    return (size_t)(buf - start);
 }
 
+
+/* ==================================================================
+ * Timed DSP execution (issue #313 / #892)
+ * ==================================================================
+ *
+ * Everything the DSP timing models need per instruction lives below,
+ * in a loop of its own.  DSPExec() picks this path ONCE per call when
+ * virtualjaguar_gpu_pipeline_timing or virtualjaguar_dram_timing is on;
+ * with both off it runs its own loop and the opcode handlers exactly
+ * as on develop -- no per-instruction or per-load/store test of either
+ * option is left on that path (the "model off unchanged" gate).
+ *
+ * DSPExecTimed() is DSPExec()'s loop minus the #569 idle-loop probe
+ * (which both options already disable) plus the model hooks:
+ *   - DSPPipeCheckUse() before dispatch (pipeline model only);
+ *   - dsp_executeOpcodeT(): the memory hook for load/store opcodes
+ *     (DSPMemPre) and the timed jump/jr variants, which charge their
+ *     inlined delay slot and refill;
+ *   - DSPTimedCharge() for the slice deduction.
+ * Results are identical to the untimed path; only time is charged. */
+
+/* Load/store memory hook, evaluated BEFORE the opcode runs so the
+ * address registers still hold their pre-instruction values.  Address
+ * expressions mirror the opcode bodies (alignment masking does not
+ * matter for the local/external decision or the bus cost). */
+static void DSPMemPre(uint32_t index)
+{
+	switch (index)
+	{
+	case 39: DSPMemTimed(RM, 1, 0); break;                                         /* loadb */
+	case 40: DSPMemTimed(RM, 1, 0); break;                                         /* loadw */
+	case 41: DSPMemTimed(RM, 1, 1); break;                                         /* load */
+	case 43: DSPMemTimed(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2), 1, 1); break; /* load (r14+n) */
+	case 44: DSPMemTimed(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2), 1, 1); break; /* load (r15+n) */
+	case 45: DSPMemTimed(RM, 0, 0); break;                                         /* storeb */
+	case 46: DSPMemTimed(RM, 0, 0); break;                                         /* storew */
+	case 47: DSPMemTimed(RM, 0, 1); break;                                         /* store */
+	case 49: DSPMemTimed(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2), 0, 1); break; /* store (r14+n) */
+	case 50: DSPMemTimed(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2), 0, 1); break; /* store (r15+n) */
+	case 58: DSPMemTimed(dsp_reg[14] + RM, 1, 1); break;                           /* load (r14+Rn) */
+	case 59: DSPMemTimed(dsp_reg[15] + RM, 1, 1); break;                           /* load (r15+Rn) */
+	case 60: DSPMemTimed(dsp_reg[14] + RM, 0, 1); break;                           /* store (r14+Rn) */
+	case 61: DSPMemTimed(dsp_reg[15] + RM, 0, 1); break;                           /* store (r15+Rn) */
+	default: break;
+	}
+}
+
+static void dsp_opcode_jump_t(void);
+static void dsp_opcode_jr_t(void);
+
+/* Timed-path dispatch: the untimed handlers, plus the memory hook and
+ * the timed jump variants. */
+static void dsp_executeOpcodeT(uint32_t index)
+{
+	if (index == 52)
+	{
+		dsp_opcode_jump_t();
+		return;
+	}
+	if (index == 53)
+	{
+		dsp_opcode_jr_t();
+		return;
+	}
+	DSPMemPre(index);
+	dsp_executeOpcode(index);
+}
+
+/* dsp_opcode_jump() plus the model's delay-slot accounting: the inlined
+ * delay slot is never charged by the exec loop, and a taken JUMP adds
+ * ~2 dead refill ticks (R12).  Pipeline model only, as before. */
+static void dsp_opcode_jump_t(void)
+{
+	/* KLUDGE: Used by BRANCH_CONDITION */
+	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
+
+	if (BRANCH_CONDITION(IMM_2))
+	{
+		uint32_t delayed_pc = RM;
+		uint16_t ds_opcode;
+		uint32_t ds_index;
+		int dsTimed = (dsp_mem_timed == 2);
+
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			ds_opcode = DSPReadWord(dsp_pc, DSP);
+		ds_index = ds_opcode >> 10;
+		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+		dsp_opcode_second_parameter = ds_opcode & 0x1F;
+		dsp_pc += 2;
+		dsp_exec_opcode_count++;
+		if (dsTimed)
+			DSPPipeCheckUse(ds_index);
+		dsp_executeOpcodeT(ds_index);
+		if (dsTimed)
+		{
+			dsp_pipe_core_stall += 1u + 2u;
+			dsp_pipe_stall_total += 1u + 2u;
+		}
+		dsp_pc = delayed_pc;
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
+	}
+}
+
+/* dsp_opcode_jr() plus the delay-slot charge and the taken-JR refill
+ * (~3 dead ticks, R13). */
+static void dsp_opcode_jr_t(void)
+{
+	/* KLUDGE: Used by BRANCH_CONDITION */
+	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
+
+	if (BRANCH_CONDITION(IMM_2))
+	{
+		int32_t offset = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		/* Sign extend IMM_1 */
+		int32_t delayed_pc = dsp_pc + (offset * 2);
+		uint16_t ds_opcode;
+		uint32_t ds_index;
+		int dsTimed = (dsp_mem_timed == 2);
+
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			ds_opcode = DSPReadWord(dsp_pc, DSP);
+		ds_index = ds_opcode >> 10;
+		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+		dsp_opcode_second_parameter = ds_opcode & 0x1F;
+		dsp_pc += 2;
+		dsp_exec_opcode_count++;
+		if (dsTimed)
+			DSPPipeCheckUse(ds_index);
+		dsp_executeOpcodeT(ds_index);
+		if (dsTimed)
+		{
+			dsp_pipe_core_stall += 1u + 3u;
+			dsp_pipe_stall_total += 1u + 3u;
+		}
+		dsp_pc = delayed_pc;
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay = 0;
+			DSPUpdateRegisterBanks();
+		}
+	}
+}
+
+/* DSPExec()'s loop for timed slices -- see the block comment above.
+ * Kept statement-for-statement in step with DSPExec() apart from the
+ * marked model hooks and the absent idle-loop probe. */
+/* Out of line on purpose: inlined, it would merge both loops into
+ * DSPExec() and change the untimed path's code. */
+static DSP_NOINLINE void DSPExecTimed(int32_t cycles)
+{
+	int gdbArmedSlice;
+	int pipeTiming;
+	uint32_t riscScale;
+	uint32_t *ldxArmed = NULL;
+	uint32_t ldxVal = 0, ldxPc = 0;
+	uint32_t *divArmed = NULL;
+	uint32_t divOld = 0, divPc = 0;
+
+#ifdef DSP_SINGLE_STEPPING
+	if (dsp_control & 0x18)
+	{
+		cycles = 1;
+		dsp_control &= ~0x10;
+	}
+#endif
+	/* No return between here and VJP_LEAVE (perf_iface.h). */
+	VJP_ENTER(VJP_DSP);
+
+	dsp_releaseTimeSlice_flag = 0;
+	gdbArmedSlice = gdbArmedDSP;
+	dsp_in_exec++;
+	/* Model hook: latch the timing mode for this slice. */
+	dsp_mem_timed = vjs.gpuPipelineTiming ? 2 : 1;
+	pipeTiming = (dsp_mem_timed == 2);
+	riscScale  = riscClockScalePct;
+
+	/* The #569 idle-loop probe is never active here: its gate already
+	 * excludes both timing options.  Its per-call statics are reset as
+	 * DSPExec does, so nothing stale survives into a later untimed
+	 * slice. */
+	idleProbeStage = 0;
+	idleMemoCount  = 0;
+	idleMemoNext   = 0;
+	dsp_ldx_slot   = NULL;
+
+	while ((cycles > 0 || ldxArmed || divArmed) && DSP_RUNNING)
+	{
+		uint16_t opcode;
+		uint32_t index;
+		uint32_t pcThis;
+#ifdef VJ_TRACE
+		VJT_PCHIST_DSP(dsp_pc);
+#endif
+
+		if (IMASKCleared && dspFlagsRetireDelay == 0)
+		{
+			DSPHandleIRQsNP();
+			IMASKCleared = false;
+		}
+
+		/* PC escape bail-out -- see DSPExec. */
+		if (!((dsp_pc <= 0x00E3FFFF) ||
+		      (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)))
+		{
+			cycles = 0;
+			break;
+		}
+
+		pcThis = dsp_pc;
+
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_DSP_HOOK)
+		if (gdbArmedSlice && GDBCheckPC(GDB_TGT_DSP, pcThis))
+		{
+			GDBHalt(GDB_TGT_DSP, GDB_STOP_BREAKPOINT, pcThis);
+			gdbArmedSlice = gdbArmedDSP;
+		}
+#endif
+
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			opcode = DSPReadWord(dsp_pc, DSP);
+		index = opcode >> 10;
+		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
+		dsp_opcode_second_parameter = opcode & 0x1F;
+		dsp_pc += 2;
+		dsp_exec_opcode_count++;
+		/* Model hook: score-board / interlock waits BEFORE the opcode
+		 * runs (only time is charged, results are unchanged). */
+		if (pipeTiming)
+		{
+			dsp_bus_stall = 0;
+			dsp_pipe_core_stall = 0;
+			DSPPipeCheckUse(index);
+		}
+		if (divArmed && pcThis == divPc
+		      && &dsp_reg[dsp_opcode_second_parameter] == divArmed)
+		{
+			/* Issue #811 -- see DSPExec. */
+			uint32_t quot = *divArmed;
+
+			*divArmed = divOld;
+			dsp_executeOpcodeT(index);
+			*divArmed = quot;
+			dsp_div_store_fixups++;
+			divArmed = NULL;
+		}
+		else if (index == 21)
+		{
+			uint32_t *dst = &dsp_reg[dsp_opcode_second_parameter];
+			uint32_t old = *dst;
+
+			dsp_executeOpcodeT(index);
+			divArmed = DSPDivStorePeek(dst, &divPc);
+			divOld = old;
+		}
+		else
+		{
+			dsp_executeOpcodeT(index);
+			divArmed = NULL;
+		}
+		/* Model hook: timed slice deduction. */
+		cycles -= DSPTimedCharge(index, riscScale);
+
+		/* Issue #811 late load write-back -- see DSPExec. */
+		if (ldxArmed)
+		{
+			if (pcThis == ldxPc
+			      && &dsp_reg[dsp_opcode_second_parameter] == ldxArmed)
+			{
+				*ldxArmed = ldxVal;
+				dsp_load_wb_fixups++;
+			}
+			ldxArmed = NULL;
+		}
+		if (dsp_ldx_slot)
+		{
+			ldxArmed = DSPLoadOverwritePeek(&ldxVal, &ldxPc);
+			dsp_ldx_slot = NULL;
+		}
+
+		/* D_FLAGS retire -- see DSPExec. */
+		if (dspFlagsRetireDelay)
+		{
+			dspFlagsRetireDelay--;
+			if (dspFlagsRetireDelay == 0)
+				DSPUpdateRegisterBanks();
+		}
+	}
+
+	dsp_in_exec--;
+
+	VJP_LEAVE(VJP_DSP);
+}
