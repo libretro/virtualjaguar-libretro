@@ -182,12 +182,16 @@ void Achievements::init(App& app, const CliArgs& args) {
     rc_client_set_hardcore_enabled(client_, hardcoreWanted_ ? 1 : 0);
     rc_client_set_unofficial_enabled(client_, unofficial_ ? 1 : 0);
 
-    if (args.headless) {
+    if (args.headless || !args.raMock.empty()) {
         // Headless runs never touch the network and never sign in for real: the
         // data directory is a fresh temp dir and the only server is the mock.
+        // (--ra-mock also works with a window, for screenshots of the UI.)
         if (!headlessSetup(args)) enabled_ = false;
+        if (args.showWindow == "ra-list") showList = true;
+        if (args.showWindow == "ra-login") showLogin = true;
         return;
     }
+    if (args.showWindow == "ra-login") showLogin = true;
     if (!AchHttp::available()) setStatus("This build has no HTTP support, so RetroAchievements is unavailable.");
     const std::string token = app.cfg.get("ra.token", "");
     if (enabled_ && !userCfgName_.empty() && !token.empty() && AchHttp::available()) {
@@ -286,6 +290,7 @@ void Achievements::onReset() {
 
 void Achievements::afterFrame() {
     if (!client_) return;
+    if (mockMode() && app_ && app_->window()) headlessFrame(++mockFrames_);   // pokes in a windowed mock session
     if (rc_client_is_game_loaded(client_) && memoryReady_) rc_client_do_frame(client_);
     else rc_client_idle(client_);
 }
@@ -492,7 +497,7 @@ void Achievements::toast(const std::string& title, const std::string& body, int 
     t.born = app_ ? app_->now() : 0;
     toasts.push_back(std::move(t));
     if (toasts.size() > 5) toasts.erase(toasts.begin());
-    if (app_ && app_->host.isLoaded() == false && !app_->window()) std::fprintf(stderr, "[ra] %s: %s\n", title.c_str(), body.c_str());
+    if (app_ && !app_->window()) std::fprintf(stderr, "[ra] %s: %s\n", title.c_str(), body.c_str());
 }
 
 void Achievements::handleEvent(const rc_client_event_t* e) {

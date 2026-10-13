@@ -145,7 +145,7 @@ private:
     bool loadFailed_ = false;        // the last identify/load attempt did not produce a tracked game
     unsigned unlockedBeforePoke_ = 0;
     unsigned pokeIndex_ = 0;
-    unsigned loadToken_ = 0;         // invalidates callbacks of an abandoned load
+    unsigned mockFrames_ = 0;
     double lastSettingsCheck_ = 0;
     std::string blocker_;
     std::string status_;
