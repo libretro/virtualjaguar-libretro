@@ -114,6 +114,14 @@ void deviceChanged(App& app) {
 
 }  // namespace
 
+static bool g_wantInputTab = false;
+void requestInputTab() { g_wantInputTab = true; }
+bool takeInputTabRequest() {
+    bool b = g_wantInputTab;
+    g_wantInputTab = false;
+    return b;
+}
+
 void drawDevicesPanel(App& app) {
     InputManager& in = app.input;
     const std::string game = in.content();
