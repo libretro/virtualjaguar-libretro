@@ -1,6 +1,7 @@
 // ImGui for RetroAchievements (#836): the menu, the sign-in window, the
 // achievement list, unlock toasts, leaderboard trackers and challenge markers.
 #include "imgui.h"
+#include "imgui_internal.h"   // ClearActiveID
 
 #include <algorithm>
 #include <cmath>
