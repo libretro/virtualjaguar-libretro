@@ -606,7 +606,9 @@ void App::stepEmulation() {
     for (int i = 0; i < frames; i++) {
         host.wantVideo = (i == frames - 1);
         if (!fastForward) audio.update();
+        uint64_t r0 = perf.on ? perf.tick() : 0;
         host.runFrame();
+        if (r0) perf.add(Perf::Retro, 1000.0 * (double)(perf.tick() - r0) / (double)perf.freq);
         ach.afterFrame();
         fpsWindowFrames_++;
     }
@@ -710,17 +712,33 @@ int App::runInteractive(const CliArgs& a) {
     lastTick_ = now();
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
+    perf.init(a.perfFrames, a.perfGpu);
+    video.perf = &perf;
+    if (a.perfPause && host.isLoaded()) togglePause();
 
     while (!quit) {
+        if (perf.frameBegin()) {
+            int pw = 0, ph = 0;
+            SDL_GetWindowSizeInPixels(window_, &pw, &ph);
+            perf.note = "window " + std::to_string(pw) + "x" + std::to_string(ph) + " px, vsync " + (vsync ? "on" : "off") +
+                        ", shader " + (video.shader.active() ? pathStem(video.shader.preset) : std::string("none")) +
+                        ", source " + std::to_string(video.frameWidth()) + "x" + std::to_string(video.frameHeight());
+            perf.report(host.contentName().c_str());
+            break;
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         ach.pump();
+        perf.lap(Perf::Events);
         stepEmulation();
+        perf.lap(Perf::Step);
         video.setSourceFps((float)host.fps());
         video.upload(host.frame());
+        if (perf.on && perf.gpu) Perf::finish();
+        perf.lap(Perf::Upload);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -729,11 +747,14 @@ int App::runInteractive(const CliArgs& a) {
         drawUi(*this, capKb);
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        if (perf.on && perf.gpu) Perf::finish();
+        perf.lap(Perf::Ui);
         if (!a.screenshot.empty() && ++uiFrames == a.screenshotFrame) {
             saveWindowScreenshot(a.screenshot);
             quit = true;
         }
         SDL_GL_SwapWindow(window_);
+        perf.lap(Perf::Present);
 
         updateTitle();
         double t = now();
@@ -747,6 +768,8 @@ int App::runInteractive(const CliArgs& a) {
             double wait = (host.isLoaded() && !paused) ? period - accum_ - 0.001 : 0.008;
             if (wait > 0.0005) SDL_DelayNS((Uint64)(std::min(wait, 0.016) * 1e9));
         }
+        perf.lap(Perf::Sleep);
+        perf.frameEnd();
     }
 
     int w = 0, h = 0;
@@ -817,15 +840,26 @@ int App::runHeadless(const CliArgs& a) {
             return 2;
         }
         audioFramesSeen_ = 0;
+        uint64_t hlT0 = SDL_GetPerformanceCounter(), hlRun = 0;
+        double hlCpu0 = Perf::cpuSeconds();
         for (unsigned i = 0; i < a.frames; i++) {
             ach.headlessFrame(i);
             audio.update();
+            uint64_t hr0 = SDL_GetPerformanceCounter();
             host.runFrame();
+            hlRun += SDL_GetPerformanceCounter() - hr0;
             ach.afterFrame();
             ach.pump();
             if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time
             for (const OsdMessage& m : host.takeMessages())
                 std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+        }
+        {
+            double wall = (double)(SDL_GetPerformanceCounter() - hlT0) / (double)perfFreq_;
+            double run = (double)hlRun / (double)perfFreq_;
+            double cpu = Perf::cpuSeconds() - hlCpu0;
+            std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %.3f s (%.1f fps) %s\n",
+                         a.frames, wall, a.frames / wall, run, a.frames / run, cpu, a.frames / cpu, path.c_str());
         }
         if (!cheatsHeadlessCheck(*this, a)) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;

@@ -18,6 +18,7 @@
 #include "input.h"
 #include "library_service.h"
 #include "paths.h"
+#include "perf.h"
 #include "video.h"
 
 namespace vj {
@@ -46,6 +47,9 @@ struct CliArgs {
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
     bool showHelp = false;
     bool showVersion = false;
+    unsigned perfFrames = 0;        // dev: profile this many UI frames (after a warm-up), print the phase costs, exit
+    bool perfGpu = false;           // dev: glFinish around the shader chain / UI so the numbers include GPU time
+    bool perfPause = false;         // dev: pause after loading (idle-cost profile)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -94,6 +98,7 @@ public:
     InputManager input;
     LibraryService library;   // optional game library (#838); idle until start()ed
     Achievements ach;   // RetroAchievements (#836)
+    Perf perf;          // dev: --perf-frames
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;

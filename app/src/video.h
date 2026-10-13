@@ -10,6 +10,8 @@
 
 namespace vj {
 
+struct Perf;
+
 struct PresentOptions {
     bool integerScale = false;
     bool linearFilter = false;
@@ -43,6 +45,7 @@ public:
     ShaderChain shader;
     // Fields per second of the running core (feeds the shaders' OriginalFPS).
     void setSourceFps(float fps) { fps_ = fps; }
+    Perf* perf = nullptr;   // dev: --perf-frames timers
 
     // Small helper textures for save-state thumbnails (RGBA8, tight).
     static unsigned createTextureRGBA(const void* pixels, int w, int h);
