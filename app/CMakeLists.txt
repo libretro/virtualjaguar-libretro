@@ -25,6 +25,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD_REQUIRED OFF)   # the core is built with the toolchain default
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Packaging (#839): install layout, Windows resources/subsystem, Linux desktop files.
+# Deferred to the end of this file, so it sees every target and every feature's install().
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/VJPackage.cmake")
+
 option(VJ_APP_SYSTEM_SDL3 "Use an installed SDL3 (find_package) instead of fetching one" OFF)
 option(VJ_APP_BUILD_TESTS "Build the headless smoke tests (CTest)" ON)
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)

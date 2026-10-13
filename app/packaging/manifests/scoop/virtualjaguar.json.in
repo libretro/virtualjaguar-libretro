@@ -1,0 +1,29 @@
+{
+    "version": "@VERSION@",
+    "description": "Atari Jaguar and Jaguar CD emulator",
+    "homepage": "https://jaguar.provenance-emu.com/",
+    "license": "GPL-3.0-only",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v@VERSION@/VirtualJaguar-@VERSION@-windows-x64.zip",
+            "hash": "@SHA_WIN_ZIP@"
+        }
+    },
+    "extract_dir": "VirtualJaguar",
+    "bin": "virtualjaguar.exe",
+    "shortcuts": [
+        [
+            "virtualjaguar.exe",
+            "Virtual Jaguar"
+        ]
+    ],
+    "persist": "data",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v$version/VirtualJaguar-$version-windows-x64.zip"
+            }
+        }
+    }
+}

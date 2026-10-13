@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: Libretro.VirtualJaguar
+PackageVersion: @VERSION@
+PackageLocale: en-US
+Publisher: Virtual Jaguar contributors
+PublisherUrl: https://github.com/libretro/virtualjaguar-libretro
+PublisherSupportUrl: https://github.com/libretro/virtualjaguar-libretro/issues
+PackageName: Virtual Jaguar
+PackageUrl: https://jaguar.provenance-emu.com/
+License: GPL-3.0-only
+LicenseUrl: https://github.com/libretro/virtualjaguar-libretro/blob/v@VERSION@/LICENSE
+ShortDescription: Atari Jaguar and Jaguar CD emulator
+Description: Virtual Jaguar emulates the Atari Jaguar console and its CD add-on, with save states, shaders, cheats, controller remapping and a game library. Games are not included.
+Moniker: virtualjaguar
+Tags:
+  - atari
+  - emulator
+  - jaguar
+  - retro
+ReleaseNotesUrl: https://github.com/libretro/virtualjaguar-libretro/releases/tag/v@VERSION@
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
