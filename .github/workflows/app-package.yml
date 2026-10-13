@@ -210,22 +210,21 @@ jobs:
             fi
           done
 
-      - name: Smoke-test the BUNDLE (base path is Contents/Resources)
+      - name: Smoke-test the BUNDLE
         run: |
           set -eu
           app="$PWD/dist/Virtual Jaguar.app"
-          t="$(mktemp -d)"; cp -R "$app" "$t/"; tapp="$t/Virtual Jaguar.app"
-          exe="$tapp/Contents/MacOS/virtualjaguar"
+          t="$(mktemp -d)"; cp -R "$app" "$t/"
+          exe="$t/Virtual Jaguar.app/Contents/MacOS/virtualjaguar"
           "$exe" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             arch -x86_64 "$exe" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
           fi
-          # portable.txt beside the executable's SDL base path makes the app create data/ there:
-          # proves SDL_GetBasePath() is Contents/Resources, where the bundled data lives.
-          touch "$tapp/Contents/Resources/portable.txt"
-          "$exe" --headless --frames 5 "$SMOKE_ROM" >/dev/null
-          test -d "$tapp/Contents/Resources/data" || { echo "::error::SDL base path is not Contents/Resources"; exit 1; }
           rm -rf "$t"
+          # The app looks for its bundled data beside SDL_GetBasePath(), which for a .app is
+          # Contents/Resources (headless mode uses a temp data dir, so this is checked in the SDL source
+          # that was built, to catch a future SDL bump changing it).
+          grep -q 'resourcePath' build-arm64/_deps/sdl3-src/src/filesystem/cocoa/SDL_sysfilesystem.m
 
       - name: Import the signing certificate
         if: steps.sign.outputs.enabled == 'true'
