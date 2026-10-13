@@ -17,6 +17,7 @@
 #include "core_host.h"
 #include "input.h"
 #include "library_service.h"
+#include "netplay.h"
 #include "paths.h"
 #include "video.h"
 
@@ -64,6 +65,7 @@ struct CliArgs {
     std::vector<std::string> raExpectNotice;         // a player-facing notice containing this text must have been shown
     int raExpectReset = -1;                          // exact number of clean-start restarts (-1 = don't check)
     bool raExpectBlocked = false;                    // hardcore wanted, but a disallowed core option must keep it off
+    NetplayCli netplay;                              // --netplay*: the command-line twin of the Netplay window
 };
 
 struct Osd {
@@ -94,6 +96,7 @@ public:
     InputManager input;
     LibraryService library;   // optional game library (#838); idle until start()ed
     Achievements ach;   // RetroAchievements (#836)
+    Netplay netplay{host};   // link-cable play over the network
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -105,6 +108,7 @@ public:
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
+    bool showNetplay = false;
     CheatManager cheats;
     bool devSelectVideoTab = false;   // dev: --show-window settings-video opens Settings on the Video tab
     int stateSlot = 0;
@@ -220,6 +224,11 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.
+bool netplayInit(App& app, const CliArgs& a);               // log tap + --netplay*; false = bad arguments
+int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
+void drawNetplayMenu(App& app);
+void drawNetplay(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).
 void drawControlsTab(App& app);
 void drawKeypadOverlay(App& app);

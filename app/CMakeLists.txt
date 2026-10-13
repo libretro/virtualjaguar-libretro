@@ -199,7 +199,10 @@ set(VJ_APP_SOURCES
     src/cheats_ui.cpp
     src/achievements.cpp
     src/achievements_ui.cpp
-    src/ach_http.cpp)
+    src/ach_http.cpp
+    src/netplay.cpp
+    src/netplay_addr.cpp
+    src/netplay_ui.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
@@ -213,6 +216,9 @@ set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
+if(WIN32)
+    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
+endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}")
 if(MSVC)
@@ -249,4 +255,5 @@ if(VJ_APP_BUILD_TESTS)
     include(VJSmokeTests)
     include(VJAchTests)
     include(VJCheatTests)
+    include(VJNetplayTests)
 endif()
