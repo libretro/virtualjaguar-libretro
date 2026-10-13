@@ -117,7 +117,7 @@ SHARE_IMAGE_ALT = (
     "64x-amplified difference map.")
 
 # Page order defines nav order.
-PAGES = ["index.html", "compatibility.html", "enhancements.html",
+PAGES = ["index.html", "app.html", "compatibility.html", "enhancements.html",
          "performance.html", "why-this-core.html"]
 
 EXPECTED_HEADER = ["Title", "Mode", "Score", "Stage", "Watchdog", "PC evidence"]
