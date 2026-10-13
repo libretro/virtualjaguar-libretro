@@ -502,3 +502,38 @@ raw counts in the calibration session's VERILATOR-RESULTS.md.
   read the write-back target or read fewer than two registers.  Real
   compiled GPU code therefore sits near **0.5 IPC**, and §2's 1/tick
   is only reachable by non-register-writing streams.
+
+---
+
+## 15. Bus grant latency under load (S2, 2026-10-13) — read-derived, NOT simulated
+
+Section 12 item 6 asked for a Verilator-pinned grant-latency distribution.
+**It could not be simulated:** the `vsim/` island rig behind §14 is in no
+checkout and not on the LAN build host, Verilator is not installed there,
+and that rig tied `gpu_back` granted with no ARB/MEM logic, so even
+recovered it cannot measure grant latency; the full-chip `emu` route needs
+a jag_sim checkout + a 68000 model on the build host. The function below is
+therefore assembled from the JTRM (rev 8 text, page numbers verified in
+the PDF text), the ARB.NET state machine (read, not simulated) and
+measured traffic; `docs/timing-campaign-plan.md` S2 has the result and
+`test/tools/contention_model.py` the arithmetic. Evidence tags as in the
+preamble.
+
+| Term | Rule | Constant(s) | Evidence |
+|---|---|---|---|
+| Who beats whom | refresh 2 > OP 6 > DSP-normal 7 > CPU-under-interrupt 8 > GPU-normal 9 > blitter-normal 10 > CPU 11 | — | `[JTRM p.8]` + ARB.NET `req[]` chain (same order) |
+| Re-arbitration point | ownership changes only at a memory-cycle ack | — | `[JTRM p.29]` "ownership can be lost during a request (but not during a memory cycle)"; ARB.NET `arben = q2 & ack` |
+| OP holds its burst | RELEASE clear => bus held between data fetches; Doom: RELEASE clear on 100% of objects (measured) | wait = B²/2T, B = OP+refresh per line (low: per-object bursts) | `[JTRM p.19, p.7]`; burst contiguity *inferred* |
+| Refresh | grouped after the OP's STOP; CLK/(64·(REFRATE+1)), REFRATE=5 measured | 3 clk/refresh (JTRM table) .. 9 (MEM.NET CBR walk, §8) | `[JTRM p.11, p.24]` vs §8 — unresolved, bounded |
+| Blitter vs GPU/DSP | normal-priority blit preempted at the next ack; BUSHI never set by Doom (0/378 blits per field) | wait = U_blit · c/2, c = 2..5 | `[JTRM p.8, p.69, p.75]` |
+| DSP vs GPU | DSP-normal beats GPU-normal; 16-bit external interface => 2 transactions per long | wait = U_dsp · L/2, L = 1..2 transactions × price × hold 1..2 | `[JTRM p.8, p.97]`; JERRY-side hold *inferred* |
+| 68K default owner | Idle->Request needs a local request; Request->Hold waits for the 68000's BG; Hold->Idle as soon as no local request remains (no hold-off counter) => every access arriving while the bus is parked on the 68K pays BR->BG | P_idle × H, H = 2 / 6 / 12 sysclks | ARB.NET state table (read); H from R19's 68000-datasheet bound — *not verified locally, not simulated* |
+| 68K stretch | lowest priority; stalls for every foreign tenure while it needs the bus | duty (measured 81%) × others' occupancy + 0..4 sysclk resync per tenure | `[JTRM p.8]`; resync *inferred* |
+| GPU spin occupancy | hardware-rate main-RAM polls (4 loads/iteration at L = 7+D) | utilisation 0.25 / 0.40 / 0.60 while spinning | §14 + loop shape, *inferred* (the emulated poll rate is unphysical and not used) |
+
+Doom attract demo, per external access (stock config): GPU work access
+waits 4.7 / 7.4 / 11.2 sysclks (OP+refresh dominate; handoff is small
+because GPU render traffic coincides with blitter tenure, which keeps the
+bus off the 68K); DSP 16-bit transaction 2.2 / 3.4 / 9.5. Checkered Flag
+(2.5x Doom's OP traffic, lines 33-61 carry ~490 sysclks of OP fetch) puts
+the total GPU wait at 9 / 36 / 42 sysclks per access.

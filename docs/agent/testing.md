@@ -86,6 +86,19 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
     3.000 today; FAIL > baseline+0.25 (all three timing options: 5.4; pipeline alone: 4.9) or if the
     budget rises above baseline; WARN on more overrun frames than baseline (plan 5.3: budget-1/overrun
     in heavy scenes needs reporter/BigPEmu corroboration).
+- `test/tools/bus_census_probe` + `test/tools/contention_model.py` — **timing-campaign S2 bus census**
+  (not in `make test`; build with `make TEST_EXPORTS=1 BENCH_PROFILE=1 test/tools/bus_census_probe`
+  — BENCH_PROFILE only for blitter phrase counts, accurate blitter pinned by the tool). Core side:
+  `vjtrace_bus_*` (`src/core/vjtrace.c`, VJ_TRACE only, release objects byte-identical): per-halfline
+  68K bus cycles/clocks, GPU external transactions, DSP 16-bit transactions, OP occupancy (model
+  rule, UNGATED by dram_timing), RELEASE/BUSHI/DMAEN counts, split work/spin by `--m68k-win`
+  / `--dsp-win` / gpu_busy windows. Writes per-halfline CSV (`--out`) + per-field flips
+  (`--frames-csv`) + hot PCs with code bytes; `--disasm-gpu/--disasm-dsp ADDR:N`. The model script
+  multiplies that traffic by the fixed latency function (plan S2, `gpu-timing-spec.md` §15).
+  `VJ_S2_INJECT=1|2|3` (low/central/high, VJ_TRACE builds) auto-arms the census and charges GPU
+  external accesses that function so any tool (S0 gate, CF canary) sees the result — a one-shot
+  cross-check, never a tuning knob. Doom 68K wait loops: `9C80:9C8A 4662:4670` (GPU done flag),
+  `E36A:E386 E30E:E336` (dspfinished), `12F74:12F80 4670:4688` ($279D4); DSP idle `F1B092:F1B0A0`.
 - `test/tools/corpus_ab_sweep.sh` — A/B two cores across a ROM corpus, comparing the **full**
   framebuffer hash stream: `corpus_ab_sweep.sh <base-core> <new-core> [rom-dir]`
   (`FRAMES`, `TMO`, `VJ_ROMS`). Use it before merging anything that touches rendering. Two guards,
