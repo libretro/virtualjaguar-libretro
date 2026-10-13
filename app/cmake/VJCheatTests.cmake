@@ -11,7 +11,9 @@
 #   cheat_persist_*          enable a cheat from a .cht, quit, start again with NO cheat
 #                            options: the cheat is still on (the "survives a restart" bar);
 #                            _control: a different data directory has nothing
-#   cheats_corpus            (-DVJ_APP_FETCH_CHEATS=ON) every file of the real database parses
+#   cheats_corpus            (database fetched, the default) every file of the real database parses
+#   cheats_install           (database fetched) `cmake --install` puts cheats/, the license and
+#                            the credit README beside the executable
 #   cheat_tempest_*          (corpus + private ROM) the real database's Tempest 2000
 #                            "Infinite Lives" is found through the core's own title
 #                            identity and reaches RAM
@@ -81,6 +83,11 @@ set_tests_properties(cheats_unit cheat_apply cheat_state cheat_persist_save chea
 # ---- the real database, when it was downloaded -------------------------------------------
 if(VJ_CHEATS_DIR AND EXISTS "${VJ_CHEATS_DIR}/Tempest 2000.cht")
     add_test(NAME cheats_corpus COMMAND vj_cheats_test --corpus "${VJ_CHEATS_DIR}")
+    if(VJ_CHEATS_BUNDLED)
+        add_test(NAME cheats_install
+            COMMAND ${CMAKE_COMMAND} "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DPREFIX=${CMAKE_BINARY_DIR}/cheat-install-test"
+                    "-DCONFIG=$<CONFIG>" -P "${CMAKE_CURRENT_LIST_DIR}/VJCheatInstallCheck.cmake")
+    endif()
 
     # A private ROM, found the way every other test does (scripts/find-rom.sh).
     find_program(_vj_bash bash)

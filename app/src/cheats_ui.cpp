@@ -144,8 +144,8 @@ void drawLibrary(App& app) {
     }
     ImGui::TextWrapped(
         "Cheat sets are the .cht files of the libretro cheat database (libretro-database, folder "
-        "cht/Atari - Jaguar). Copy them into the cheats folder above, or build with "
-        "-DVJ_APP_FETCH_CHEATS=ON to download a pinned copy next to the program.");
+        "cht/Atari - Jaguar). Builds bundle them in a 'cheats' folder next to the program; "
+        "you can add your own to the cheats folder above or to any folder you point this at.");
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Database: libretro-database, CC BY-SA 4.0. Jaguar cheats by Gent (Emucheats).");
     ImGui::PopStyleColor();
