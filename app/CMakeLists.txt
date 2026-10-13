@@ -104,7 +104,10 @@ set(VJ_APP_SOURCES
     src/audio.cpp
     src/video.cpp
     src/input.cpp
-    src/ui.cpp)
+    src/ui.cpp
+    src/cheats.cpp
+    src/cheats_core.cpp
+    src/cheats_ui.cpp)
 
 add_executable(virtualjaguar ${VJ_APP_SOURCES})
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
@@ -127,10 +130,14 @@ endif()
 # Windows: the executable keeps the console subsystem for now.  A GUI-subsystem
 # build would swallow the headless smoke test's stdout; packaging (#839) decides.
 
+# Optional download of the libretro Jaguar cheat database (#835), pinned.
+include(VJCheatData)
+
 # ---------------------------------------------------------------------------
 # Headless smoke tests (SDL dummy drivers, no window, no GL).
 # ---------------------------------------------------------------------------
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
     include(VJSmokeTests)
+    include(VJCheatTests)
 endif()

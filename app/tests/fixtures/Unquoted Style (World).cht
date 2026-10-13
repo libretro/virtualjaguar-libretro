@@ -1,0 +1,9 @@
+cheats = 2
+
+cheat0_desc = "Quoted desc"
+cheat0_code = "001CC80B:05"
+cheat0_enable = false
+
+cheat1_desc = Unquoted desc
+cheat1_code = 00000100:7F
+cheat1_enable = false

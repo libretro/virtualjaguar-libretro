@@ -273,6 +273,7 @@ bool App::openContent(const std::string& pathIn) {
     host.setDirectories(paths.system, paths.saves);
     std::string err;
     if (!host.loadContent(path, err)) {
+        cheatsOnClose(*this);
         toast("Could not open " + pathStem(path) + ": " + err, 5.0, 3);
         std::fprintf(stderr, "open failed: %s\n", err.c_str());
         return false;
@@ -300,6 +301,7 @@ bool App::openContent(const std::string& pathIn) {
     }
     addRecent(path);
     invalidateThumbs();
+    cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
     toast("Loaded " + host.contentName());
     saveConfig();
     return true;
@@ -319,6 +321,7 @@ bool App::openNoContent() {
     accum_ = 0;
     lastTick_ = now();
     invalidateThumbs();
+    cheatsOnClose(*this);
     toast("Booted with no cartridge");
     return true;
 }
@@ -335,6 +338,7 @@ bool App::reloadContent() {
 void App::closeContent() {
     if (!host.isLoaded()) return;
     host.unloadContent();
+    cheatsOnClose(*this);
     audio.clear();
     invalidateThumbs();
 }
@@ -431,6 +435,7 @@ bool App::loadState(int slot) {
         return false;
     }
     audio.clear();
+    cheatsAfterStateLoad(*this);
     toast("State loaded from slot " + std::to_string(slot));
     return true;
 }
@@ -629,6 +634,7 @@ int App::run(const CliArgs& a) {
     host.setLogVerbose(a.verbose);
     loadConfig();
     wireHost();
+    cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
 
@@ -656,6 +662,7 @@ int App::runInteractive(const CliArgs& a) {
     }
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
+    else if (a.showWindow == "cheats") showCheats = true;
     unsigned uiFrames = 0;
 
     std::string firstErr;
@@ -776,6 +783,7 @@ int App::runHeadless(const CliArgs& a) {
             for (const OsdMessage& m : host.takeMessages())
                 std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
         }
+        if (!cheatsHeadlessCheck(*this, a)) rc = 1;
         const Frame& f = host.frame();
         HeadlessResult r;
         r.path = path;
@@ -812,6 +820,7 @@ int App::runHeadless(const CliArgs& a) {
             for (int i = 0; i < 60; i++) { audio.update(); host.runFrame(); }
             uint32_t h2 = frameHash();
             std::printf("STATE roundtrip %08x %08x\n", h1, h2);
+            if (!cheatsHeadlessCheck(*this, a)) rc = 1;   // the cheats must still hold after a restore
             if (h1 != h2) {
                 std::fprintf(stderr, "headless: FAIL state restore diverged (%08x vs %08x)\n", h1, h2);
                 rc = 1;
