@@ -148,10 +148,11 @@ void drawSectionHint(const LibraryService& svc) {
                  "(or drop a PNG on it).");
 }
 
-// A BIOS or system file: shows what it is and whether the core will read it where it is.  It is not
-// content, so a click never launches it; on a file the core would read from its system folder but this
-// is elsewhere, a click offers to copy it there.
-void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
+// A BIOS or system file: shows what it is, whether the core finds it where it is, and whether it is the one in
+// use.  A click opens its menu: Use this BIOS (the core runs exactly this file, any name, any folder), Boot (a boot
+// ROM with an empty slot, the CD BIOS with no disc, the Memory Track cartridge), Copy to the system folder (the
+// fixed name the core's own search and RetroArch look for).
+void drawBiosCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImGui::PushID(e.file.path.c_str());
@@ -160,19 +161,57 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
     const lib::BiosInfo& b = e.bios;
     const lib::BiosUse use = lib::biosUse(b, e.file.path, e.file.size, svc.systemDir);
     const std::string installAs = use.core || svc.systemDir.empty() ? std::string() : lib::biosInstallName(b, e.file.size);
-    if (clicked && !installAs.empty()) ImGui::OpenPopup("##install");
-    if (ImGui::BeginPopup("##install")) {
-        ImGui::Text("Copy to the system folder as");
-        ImGui::TextDisabled("%s", installAs.c_str());
-        if (ImGui::Button("Copy")) {
-            svc.installBios(e);
+    const bios::Role role = bios::roleOf(b, e.file.size);
+    const bool inUse = role != bios::None && app.biosChoice.of(role) == absolutePath(e.file.path);
+    const bios::BootInfo boot = bios::bootInfo(b, e.file.size);
+    if (clicked) ImGui::OpenPopup("##bios");
+    if (ImGui::BeginPopup("##bios")) {
+        ImGui::TextDisabled("%s", e.title.c_str());
+        ImGui::Separator();
+        if (role != bios::None) {
+            const std::string useLabel = std::string(inUse ? "In use as the " : "Use as the ") + bios::roleLabel(role);
+            if (ImGui::MenuItem(useLabel.c_str(), nullptr, inUse)) {
+                app.setBiosChoice(role, inUse ? std::string() : e.file.path);   // clicking the one in use goes back to Auto
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ui::beginWrappedTooltip();
+                ImGui::TextWrapped("The core runs exactly this file as the %s, whatever it is called and wherever it lives. "
+                                   "Click again to go back to Auto.%s",
+                                   bios::roleLabel(role),
+                                   role == bios::Cd ? " It is used when CD games boot through the Real BIOS, for audio CDs, and when you Boot a BIOS."
+                                                    : " It is used when cartridges boot through the Real boot ROM, for GPU-only demos, and when you Boot a BIOS.");
+                ui::endWrappedTooltip();
+            }
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::MenuItem("Use this BIOS");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Only a 128 KiB boot ROM or a 256 KiB CD BIOS can be chosen.");
+        }
+        ImGui::BeginDisabled(boot.kind == bios::BootKind::None);
+        if (ImGui::MenuItem("Boot")) {
+            if (boot.kind == bios::BootKind::MemoryTrack) app.openContent(e.file.path);
+            else app.bootBios(role, e.file.path);
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort)) {
+            ui::beginWrappedTooltip();
+            ImGui::TextWrapped("%s", boot.text.c_str());
+            ui::endWrappedTooltip();
+        }
+        if (!installAs.empty()) {
+            const std::string cp = "Copy to the system folder as " + installAs;
+            if (ImGui::MenuItem(cp.c_str())) {
+                svc.installBios(e);
+                ImGui::CloseCurrentPopup();
+            }
+        }
         ImGui::EndPopup();
     }
-    const bool popupOpen = ImGui::IsPopupOpen("##install");   // under this tile's ID scope
+    const bool popupOpen = ImGui::IsPopupOpen("##bios");   // under this tile's ID scope
     ImGui::PopID();
     const bool found = use.core;
     const bool readable = b.role == lib::BiosRole::CartBoot || b.role == lib::BiosRole::CdBios;
@@ -195,8 +234,8 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
     ImVec4 clipT(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH - lh);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3), IM_COL32(230, 230, 230, 255),
                 e.title.c_str(), nullptr, cellW - 4, &clipT);
-    const char* st = found ? "Read by the core" : readable ? "Not read here" : "Not read";
-    ImU32 sc = found ? IM_COL32(120, 210, 130, 255) : readable ? IM_COL32(230, 180, 90, 255) : IM_COL32(150, 150, 150, 255);
+    const char* st = inUse ? "In use" : found ? "Read by the core" : readable ? "Click to use or boot" : "Not read";
+    ImU32 sc = inUse || found ? IM_COL32(120, 210, 130, 255) : readable ? IM_COL32(230, 180, 90, 255) : IM_COL32(150, 150, 150, 255);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + textH - lh), sc, st, nullptr,
                 cellW - 4, &clip);
 
@@ -209,8 +248,8 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
         if (e.file.crcWhole) ImGui::TextDisabled("CRC32 %08X", e.file.crcWhole);
         ImGui::Spacing();
         ImGui::TextWrapped("%s", use.text.c_str());
-        if (!installAs.empty())
-            ImGui::TextWrapped("Click to copy it to the system folder as %s, where the core looks for it.", installAs.c_str());
+        ImGui::TextWrapped("Click for: Use this BIOS%s%s.", boot.kind != bios::BootKind::None ? ", Boot" : "",
+                           installAs.empty() ? "" : ", Copy to the system folder");
         if (readable)
             ImGui::TextWrapped("The core has built-in copies of the Series K and Model M boot ROMs and both CD BIOS "
                                "images, so nothing is missing without this file.");
@@ -393,6 +432,10 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
         if (passes(e, svc.section, filter, needle)) shown.push_back(&e);
     }
 
+    if (svc.section == (int)lib::Section::Bios) {
+        drawBiosPanel(app);
+        ImGui::SeparatorText("BIOS and system files found");
+    }
     if (inSection == 0) {
         if (svc.scanning()) return;
         if (svc.section == (int)lib::Section::Bios)
@@ -433,7 +476,7 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
                 size_t i = (size_t)r * (size_t)cols + (size_t)c;
                 if (i >= shown.size()) break;
                 if (c > 0) ImGui::SameLine();
-                if (shown[i]->section == lib::Section::Bios) drawBiosCell(svc, *shown[i], cellW, artH, textH);
+                if (shown[i]->section == lib::Section::Bios) drawBiosCell(app, svc, *shown[i], cellW, artH, textH);
                 else drawCell(app, svc, *shown[i], cellW, artH, textH);
             }
         }
@@ -479,6 +522,11 @@ void drawEmptyHome(App& app, LibraryService& svc) {
     ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap + h1 + gap));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(f * 1.6f, f * 0.55f));
     if (ImGui::Button("Add folder...")) svc.addFolderDialog(app.window());
+    ImGui::SameLine();
+    if (ImGui::Button("BIOS & boot...")) {
+        app.showSettings = true;
+        app.devSelectTab = "BIOS";
+    }
     ImGui::PopStyleVar();
     ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap + h1 + gap + btnH + gap * 1.5f));
     ImGui::PushTextWrapPos(x0 + bw);

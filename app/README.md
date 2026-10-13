@@ -267,16 +267,42 @@ checksums the core itself checks), by the names the core searches for (`jagboot.
 `jagcd.bin`, `[BIOS] Atari Jaguar ... .j64`, ...), by "bios" or "memory track" in the name of a small
 file (512 KiB or less), or by a `[BIOS]` entry in the dat. The core's own system folder is always
 scanned for these too (only BIOS files are kept from it), so the tab shows what the core can read.
-A BIOS tile says what it is and when the core uses it (for example "Series K boot ROM: used when BIOS
-(Cartridges) = Real"), and whether it sits where the core looks; it does not launch. BIOS files are
-found anywhere under a library folder (any depth the walk reaches, any upper/lower case in the name).
-The core itself only reads its system folder, under fixed names, so a BIOS found elsewhere shows
-"Not read here"; clicking such a tile offers **Copy** into the system folder under the name the core
-searches for (`jagboot.rom`, `jagboot_m.rom`, `jagcd.bin`, the `[BIOS] Atari Jaguar ... (World)` names
-for the retail and developer CD BIOS), never over a file already there. The Series K image, the
-Memory Track and files whose size the core rejects get no copy offer. The core has
+A BIOS tile says what it is and whether the core's own search finds it where it sits, and **a click opens
+its menu**: **Use as the Cart boot ROM / CD BIOS** (the core runs exactly that file, whatever it is called and
+wherever it lives, see below), **Boot** (below) and, for a file the core would find in its system folder under the
+right name, **Copy to the system folder as ...** (the fixed names, for RetroArch sharing the folder; never over a
+file already there). BIOS files are found anywhere under a library folder (any depth the walk reaches, any
+upper/lower case in the name). The Series K image, the Memory Track and files whose size the core rejects get no
+copy offer. The core has
 every standard image built in, so none is required. Loose `(Track N).bin` files are skipped like the
 tracks a `.cue` owns.
+
+**BIOS & boot.** The BIOS & system tab starts with the same panel as **Settings > BIOS** (also File > Boot BIOS >
+BIOS & boot settings...; the home screen's "BIOS & boot..." button reaches it with no folder added), so a BIOS
+can be chosen with no game loaded and whatever the loaded game is (the core hides the CD options while a
+cartridge runs, and the Core options tab is empty before the first load).
+
+- **Which file.** Each role, the console boot ROM (128 KiB) and the Jaguar CD BIOS (256 KiB), is **Auto** or one
+  chosen file. Auto is the core's default: a file in the system folder under the names it searches, else the image
+  built into the core (**Auto picks** = Series K / Model M / Custom for the boot ROM, Retail / Developer for the CD
+  BIOS). A chosen file is handed to the core by path through a private call (`VJ_ENV_GET_BIOS_PATH`,
+  `docs/app-frontend-extension.md`), so it needs no copying and no special name. The core still checks it (exact
+  size; a CD BIOS also by checksum or header) and, if it refuses, uses its own choice and the panel says so. The
+  choice is saved per role (`bios.cart`, `bios.cd` in config.ini; Auto = no key) and applies when the game starts.
+- **When it is used.** The boot ROM runs when cartridges boot through the **Real boot ROM** (instead of HLE), for
+  GPU-only demos, and on **Boot**. The CD BIOS runs when CD games boot through **Real BIOS** (instead of HLE), for
+  audio CDs and on **Boot**. These two switches are the core options BIOS (Cartridges) and CD Boot Mode, shown here
+  whatever is loaded. Panel lines say "Running now: ..." from what the core reported staging (built in, system
+  folder file, or your file, with its CRC32) and warn when a chosen file is idle because the matching switch is HLE.
+- **Boot.** **Boot the CD BIOS (no disc)** / **Boot this ROM (empty slot)** (panel, tile menu, File > Boot BIOS)
+  starts the console with nothing inserted: the CD BIOS comes up on its disc screen with the Memory Track plugged
+  in; the boot ROM shows the Jaguar logo on an empty slot, as the hardware does. A tile's **Boot** uses that file
+  for this boot only. The known Memory Track cartridge dump boots as a cartridge (its own manager program); a
+  Memory Track image the core does not recognise, a wrong-sized file or another system file is disabled with the
+  reason in a tooltip. Command line: `--boot-bios cart|cd`, `--cart-bios FILE`, `--cd-bios FILE`.
+- **Import.** **Import BIOS file...**, or dropping (or File > Open'ing) a boot ROM or CD BIOS on the window, copies
+  it to `system/bios/` (never over a different file), chooses it and rescans. A dropped BIOS is imported, not run
+  as a cartridge; the dialog also takes a dump with no recognisable name, by its size.
 
 **File > Game library** (Ctrl/Cmd+L) opens the window.
 
@@ -547,6 +573,14 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
 - `smoke_bad_option`: an `--option` the core does not register is rejected, not
   silently ignored.
 - `smoke_cd`: load the synthetic CD image by path (no BIOS).
+- `smoke_boot_cd_bios` / `smoke_boot_cart_rom`: boot the CD BIOS with no disc, and the boot ROM with an empty
+  slot, from the images built into the core (no files needed); both must draw (no blank frame) and match a hash.
+- `bios_unit` (`vj_bios_tests`): scanning BIOS files in nested folders with upper and mixed case names, what may
+  be chosen (size), what Boot does and why not, the saved choice, importing (reuse, never overwrite, refusals),
+  and how the running BIOS is described. Synthetic files only.
+- `bios_e2e` (`vj_bios_e2e`): the real core and the private BIOS channel: a chosen CD BIOS / boot ROM file is the
+  image that runs (checksum, source), a refused or vanished file falls back, a frontend without the capability is
+  never asked, and a no-content boot enters the boot ROM or the CD BIOS as asked.
 - `library_unit` (`vj_library_tests`): dat parsing, CRC identification of synthetic files
   (copier-headered and plain carts, a `.cue` set), thumbnail naming against known libretro
   examples, cache paths, a scan of a temp folder with the hash cache, and on POSIX the whole
