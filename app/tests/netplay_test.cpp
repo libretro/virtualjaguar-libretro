@@ -19,6 +19,10 @@
 #include "netplay.h"
 #include "paths.h"
 
+extern "C" {
+#include "jlink_discover.h"   // the core's beacon codec (JLinkDiscEncode): to play a LAN host without broadcast
+}
+
 #include <SDL3/SDL.h>
 
 #include <chrono>
@@ -208,20 +212,23 @@ static void testParsers() {
     host.values = {{"127.0.0.1", "127.0.0.1 (localhost)"},
                    {"192.168.1.42", "studio - 192.168.1.42"},
                    {"10.0.0.7", "10.0.0.7 - 10.0.0.7 (Voice Modem)"},
+                   {"127.0.0.1", "devbox - 127.0.0.1"},   // a peer on this very machine
                    {"jaghub.local", "jaghub.local (host machine named 'jaghub' on the LAN)"},
                    {"vj_netlink.txt", "From file"}};
     OptionDef other;
     other.key = "virtualjaguar_netlink_port";
     other.values = {{"42171", ""}};
     std::vector<DiscoveredHost> found = Netplay::hostsFromOptions({other, host});
-    CHECK(found.size() == 2);
-    if (found.size() == 2) {
+    CHECK(found.size() == 3);
+    if (found.size() == 3) {
         CHECK_EQ(found[0].address, "192.168.1.42");
         CHECK_EQ(found[0].name, "studio");
         CHECK_EQ(found[0].device, "");
         CHECK_EQ(found[1].address, "10.0.0.7");
         CHECK_EQ(found[1].device, "Voice Modem");
         CHECK_EQ(found[1].name, "");
+        CHECK_EQ(found[2].address, "127.0.0.1");
+        CHECK_EQ(found[2].name, "devbox");
     }
     CHECK(Netplay::hostsFromOptions({other}).empty());
 
@@ -364,6 +371,44 @@ static void testCore(const std::string& rom) {
         CHECK(np.statusText().find("127.0.0.1") != std::string::npos);
         if (peer != kBadSock) closeSock(peer);
         closeSock(srv);
+    }
+
+    // ---- looking for hosts: the core's discovery list reaches Netplay::discovered() ---------------------
+    // No broadcast needed: the core listens on a UDP port, so a beacon sent straight to it is a host
+    // "seen on the LAN".  This is the real SET_CORE_OPTIONS_V2 re-push path, end to end.
+    {
+        NetSettings s;
+        s.role = NetRole::Join;   // no address: just look
+        s.port = pickFreePort(discPort);
+        CHECK(np.start(s, err));
+        frames(host, np, 5);
+        CHECK(np.discovered().empty());
+        sock_t udp = socket(AF_INET, SOCK_DGRAM, 0);
+        CHECK(udp != kBadSock);
+        uint8_t pkt[JLINK_DISC_PKT_LEN];
+        size_t n = JLinkDiscEncode(pkt, sizeof pkt, JLINK_DISC_DEV_VOICEMODEM, 42171, "teststation");
+        CHECK(n == JLINK_DISC_PKT_LEN);
+        sockaddr_in to = loopbackAddr(discPort);
+        unsigned pushes = host.optionPushes();
+        auto lastSend = std::chrono::steady_clock::time_point();
+        bool seen = runUntil(host, np, [&] {
+            auto now = std::chrono::steady_clock::now();
+            if (udp != kBadSock && now - lastSend > std::chrono::milliseconds(200)) {
+                sendto(udp, (const char*)pkt, (int)n, 0, (sockaddr*)&to, sizeof to);
+                lastSend = now;
+            }
+            return !np.discovered().empty();
+        }, 6000);
+        CHECK(seen);
+        CHECK(host.optionPushes() > pushes);   // the core re-pushed its options
+        std::vector<DiscoveredHost> found = np.discovered();
+        CHECK(found.size() == 1);
+        if (found.size() == 1) {
+            CHECK_EQ(found[0].address, "127.0.0.1");
+            CHECK_EQ(found[0].name, "teststation");
+            CHECK_EQ(found[0].device, "Voice Modem");   // we are a JagLink: the core tags the mismatch
+        }
+        if (udp != kBadSock) closeSock(udp);
     }
 
     // ---- bad input is refused, not applied -----------------------------------------------------------

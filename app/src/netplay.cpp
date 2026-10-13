@@ -32,6 +32,21 @@ bool numAfter(const std::string& line, const char* key, double& v) {
     return end != line.c_str() + p;
 }
 
+// Is this value-list row a discovered peer?  See Netplay::hostsFromOptions.
+bool peerLabel(const OptionValue& v) {
+    std::string l = v.label;
+    const char* tags[] = {" (Voice Modem)", " (JagLink)"};
+    for (const char* t : tags) {
+        size_t n = std::strlen(t);
+        if (l.size() > n && l.compare(l.size() - n, n, t) == 0) {
+            l.resize(l.size() - n);
+            break;
+        }
+    }
+    std::string suffix = " - " + v.value;
+    return l.size() >= suffix.size() && l.compare(l.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 bool contains(const std::string& s, const char* sub) { return s.find(sub) != std::string::npos; }
 
 void putEnv(const char* name, const char* value) {
@@ -121,7 +136,10 @@ std::vector<DiscoveredHost> Netplay::hostsFromOptions(const std::vector<OptionDe
     for (const OptionDef& d : defs) {
         if (d.key != kHostKey) continue;
         for (const OptionValue& v : d.values) {
-            if (isPresetHost(v.value)) continue;
+            // A discovered peer's label is "<name> - <addr>" (+ a device tag); the three presets' labels
+            // never end that way, which also keeps a peer on THIS machine (127.0.0.1) from being
+            // mistaken for the preset of the same value.
+            if (isPresetHost(v.value) && !peerLabel(v)) continue;
             DiscoveredHost h;
             h.address = v.value;
             h.label = v.label;
