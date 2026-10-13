@@ -47,6 +47,11 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
 - **Covers for Jaguar CD.** libretro-thumbnails has no Jaguar CD art, so discs now get a
   readable title card, and you can set your own cover: right-click a tile > Set cover image
   (PNG), drop a PNG on a tile, or put `<Title>.png` files in the app's `covers` folder.
+- **Better disc identification in the library.** `.chd` discs are now checksummed from
+  their first track (like `.cue`), `.cdi` best-effort, and a disc whose checksum is not
+  Redump's (a non-Redump bin/cue or `.cdi`) is matched by file or folder name when only
+  one game fits. Hover a tile to see how it was identified. (CHD hashing is verified
+  against synthetic images; checking real Redump CHDs is still to do.)
 - **Shaders.** RetroArch `.slangp` presets through librashader, with CRT, scanline and
   sharp-bilinear presets from libretro's slang-shaders bundled, plus integer scaling
   (https://github.com/libretro/virtualjaguar-libretro/issues/834, https://github.com/libretro/virtualjaguar-libretro/pull/880). Builds from source fetch the librashader runtime on macOS and Windows by

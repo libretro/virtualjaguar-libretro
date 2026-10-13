@@ -98,7 +98,10 @@
         required.</li>
       <li><strong>Identification</strong> is by CRC32 against the libretro
         database: No-Intro for cartridges, Redump for CDs. A name-only match is
-        badged <code>?</code>, an unidentified file <code>??</code>.</li>
+        badged <code>?</code>, an unidentified file <code>??</code>. Discs in
+        <code>.cue</code>, <code>.chd</code> and <code>.cdi</code> form are
+        checksummed from their first track; a rip that is not a Redump dump
+        is matched by its file or folder name when that is unambiguous.</li>
       <li><strong>Box art</strong> comes from
         <a href="https://github.com/libretro-thumbnails/Atari_-_Jaguar">libretro-thumbnails</a>,
         downloaded on demand for the tiles you can see and cached on your

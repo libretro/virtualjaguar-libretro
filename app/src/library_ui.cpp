@@ -317,6 +317,7 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
         ImGui::TextDisabled("%s", e.file.path.c_str());
         if (e.file.crcWhole) ImGui::TextDisabled("CRC32 %08X", e.file.crcWhole);
         if (!e.region.empty()) ImGui::TextDisabled("Region: %s", e.region.c_str());
+        if (!e.how.empty()) ImGui::TextDisabled("Identified by: %s", e.how.c_str());
         switch (e.match) {
         case lib::Match::Crc: ImGui::TextDisabled("Verified against the database by checksum."); break;
         case lib::Match::Name:
@@ -325,7 +326,8 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
             break;
         default:
             ImGui::TextDisabled(e.file.kind == lib::Kind::Disc && e.file.crcWhole == 0
-                                    ? "Not identified (only .cue sets are checksummed)."
+                                    ? "Not identified: no usable checksum (a .chd without session metadata, a .cdi\n"
+                                      "that is not laid out as it describes itself, or a .cue whose track is missing)."
                                     : "Not in the database; titled from the file name.");
             break;
         }

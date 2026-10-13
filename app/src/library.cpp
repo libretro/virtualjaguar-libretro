@@ -1,5 +1,7 @@
 #include "library.h"
 
+#include "disc_hash.h"
+
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -141,12 +143,42 @@ std::string nameKey(const std::string& in) {
 
 }  // namespace
 
+std::string normalizeDiscName(const std::string& name) {
+    std::string out;
+    int depth = 0;
+    char open = 0;
+    bool pendingSpace = false;
+    for (unsigned char c : name) {
+        if (depth > 0) {   // inside a (...) or [...] group
+            if (c == (unsigned char)open) depth++;
+            else if (c == (unsigned char)(open == '(' ? ')' : ']')) depth--;
+            continue;
+        }
+        if (c == '(' || c == '[') {
+            open = (char)c;
+            depth = 1;
+            pendingSpace = true;
+            continue;
+        }
+        if (c == '\'' || c == '`') continue;   // "Dragon's" == "Dragons"
+        if (std::isalnum(c)) {
+            if (pendingSpace && !out.empty()) out += ' ';
+            pendingSpace = false;
+            out += (char)std::tolower(c);
+        } else {
+            pendingSpace = true;
+        }
+    }
+    return out;
+}
+
 // ---- Dat -----------------------------------------------------------------------------------------
 
 bool Dat::parse(const std::string& text) {
     games_.clear();
     crc_.clear();
     names_.clear();
+    loose_.clear();
     header_.clear();
     Lexer lx(text);
     for (;;) {
@@ -182,6 +214,8 @@ bool Dat::parse(const std::string& text) {
         for (const DatRom& r : games_[i].roms)
             if (r.crc) crc_.emplace(r.crc, i);
         names_.emplace(nameKey(games_[i].name), i);   // first one wins
+        std::string lk = normalizeDiscName(games_[i].name);
+        if (!lk.empty()) loose_[lk].push_back(i);
     }
     return !games_.empty();
 }
@@ -214,6 +248,27 @@ const DatGame* Dat::byName(const std::string& fileStem) const {
     if (k.empty()) return nullptr;
     auto it = names_.find(k);
     return it == names_.end() ? nullptr : &games_[it->second];
+}
+
+const DatGame* Dat::byLooseName(const std::string& fileStem, const std::string& folderName, int* how) const {
+    const std::string names[2] = {normalizeDiscName(fileStem), normalizeDiscName(folderName)};
+    for (int pass = 0; pass < 2; pass++) {
+        if (names[pass].empty()) continue;
+        auto it = loose_.find(names[pass]);
+        if (it == loose_.end()) continue;
+        if (it->second.size() != 1) return nullptr;   // two games with this title: guessing is worse than showing the file name
+        if (how) *how = pass + 1;
+        return &games_[it->second[0]];
+    }
+    const std::string& k = names[0];
+    if (k.size() < 4) return nullptr;
+    const DatGame* found = nullptr;
+    for (auto it = loose_.lower_bound(k + " "); it != loose_.end() && it->first.compare(0, k.size() + 1, k + " ") == 0; ++it) {
+        if (found || it->second.size() != 1) return nullptr;   // more than one longer title starts this way
+        found = &games_[it->second[0]];
+    }
+    if (found && how) *how = 3;
+    return found;
 }
 
 // ---- hashing -----------------------------------------------------------------------------------------
@@ -682,7 +737,14 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
                     return out;
                 }
             } else {
-                f.hashed = true;   // .chd / .cdi: nothing cheap to hash
+                // .chd / .cdi: track 1 straight from the image (0 = not hashable; the file name is all there is then)
+                const std::string ext = extOf(c.path);
+                uint32_t crc = 0;
+                if (ext == "chd" ? crcOfChdTrack1(c.path, crc, cancel) : ext == "cdi" ? crcOfCdiTrack1(c.path, crc, cancel) : false)
+                    f.crcWhole = crc;
+                else if (cancel && cancel->load())
+                    return out;
+                f.hashed = true;
             }
             done++;
             if (progress) progress(done, total);
@@ -757,11 +819,26 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs) {
         if (!g && f.crcStripped) g = dat->byCrc(f.crcStripped);
         if (g) {
             e.match = Match::Crc;
+            e.how = f.kind == Kind::Disc ? "CRC32 of track 1 (Redump)" : "CRC32 of the file";
         } else {
             g = dat->byName(stemOf(f.path));
-            if (g) e.match = Match::Name;
+            if (g) {
+                e.match = Match::Name;
+                e.how = "file name";
+            } else if (f.kind == Kind::Disc) {
+                // Rips that are not Redump-exact (other offsets, another dump) have another track-1 checksum:
+                // the file name, then the name of the folder it sits in, against the dat's titles.
+                int how = 0;
+                std::string dir = normDir(dirName(f.path));
+                g = dat->byLooseName(stemOf(f.path), baseName(dir), &how);
+                if (g) {
+                    e.match = Match::Name;
+                    e.how = how == 2 ? "folder name" : how == 3 ? "file name (start of a longer title)" : "file name";
+                }
+            }
         }
     }
+    if (!g) e.how = "not identified";
     if (g) {
         e.title = g->name;
         e.datName = g->name;
@@ -812,7 +889,7 @@ float pinchTileScale(float cur, float factor) {
 // ---- scan cache serialisation --------------------------------------------------------------------------------
 
 std::string serializeCache(const std::vector<ScanFile>& files) {
-    std::string out = "VJLIB1\n";
+    std::string out = "VJLIB2\n";
     char buf[160];
     for (const ScanFile& f : files) {
         if (!f.hashed || f.path.find_first_of("\t\r\n") != std::string::npos) continue;
@@ -827,14 +904,16 @@ std::string serializeCache(const std::vector<ScanFile>& files) {
 ScanCache parseCache(const std::string& text) {
     ScanCache out;
     size_t pos = 0;
-    bool first = true;
+    bool first = true, v1 = false;
     while (pos < text.size()) {
         size_t nl = text.find('\n', pos);
         std::string line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
         pos = nl == std::string::npos ? text.size() : nl + 1;
         if (first) {
             first = false;
-            if (line != "VJLIB1") return out;
+            // VJLIB1 predates .chd / .cdi checksums: its disc images are hashed again, the rest is kept.
+            if (line == "VJLIB1") v1 = true;
+            else if (line != "VJLIB2") return out;
             continue;
         }
         std::vector<std::string> col;
@@ -853,7 +932,7 @@ ScanCache parseCache(const std::string& text) {
         f.mtime = std::strtoll(col[3].c_str(), nullptr, 10);
         f.crcWhole = parseHex32(col[4]);
         f.crcStripped = parseHex32(col[5]);
-        f.hashed = true;
+        f.hashed = !(v1 && f.kind == Kind::Disc && f.crcWhole == 0);
         out[f.path] = f;
     }
     return out;

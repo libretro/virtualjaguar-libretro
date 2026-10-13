@@ -20,6 +20,7 @@
 #include <thread>
 
 #include "config.h"
+#include "disc_hash.h"
 #include "http.h"
 #include "library.h"
 #include "library_service.h"
@@ -1157,6 +1158,258 @@ static void testCoverService() {
     svc.stop();
 }
 
+// ---- disc identification: name matching, .chd and .cdi track-1 checksums --------------------------------------------
+
+static void testLooseNames() {
+    CHECK_EQ(lib::normalizeDiscName("Dragon's Lair (USA) (Track 1)"), "dragons lair");
+    CHECK_EQ(lib::normalizeDiscName("Myst_(USA)_[Disc 1] - Redump"), "myst redump");
+    CHECK_EQ(lib::normalizeDiscName("  Blue  Lightning!! (Europe)  "), "blue lightning");
+    CHECK_EQ(lib::normalizeDiscName("Highlander - The Last of the MacLeods"), "highlander the last of the macleods");
+    CHECK_EQ(lib::normalizeDiscName("(USA)"), "");
+    CHECK_EQ(lib::normalizeDiscName("Unclosed (group"), "unclosed");
+
+    lib::Dat dat;
+    CHECK(dat.parse(datText("1", datGame("Myst (USA)", "a", 1) + datGame("Dragon's Lair (USA)", "b", 2) +
+                                     datGame("Highlander - The Last of the MacLeods (USA)", "c", 3) +
+                                     datGame("Primal Rage (USA) (Disc 1)", "d", 4) + datGame("Primal Rage (USA) (Disc 2)", "e", 5) +
+                                     datGame("Space Ace (USA)", "f", 6) + datGame("Space Ace Gold (USA)", "g", 7) +
+                                     datGame("Blue Lightning (USA)", "h", 8))));
+    auto title = [&](const char* stem, const char* folder = "") {
+        int how = 0;
+        const lib::DatGame* g = dat.byLooseName(stem, folder, &how);
+        return g ? g->name : std::string("-");
+    };
+    CHECK_EQ(title("Myst"), "Myst (USA)");                          // region and track tags do not matter
+    CHECK_EQ(title("myst (europe) (track 01)"), "Myst (USA)");
+    CHECK_EQ(title("Dragons Lair"), "Dragon's Lair (USA)");         // punctuation does not matter
+    CHECK_EQ(title("DRAGON'S_LAIR"), "Dragon's Lair (USA)");
+    CHECK_EQ(title("Space Ace"), "Space Ace (USA)");                // the exact title beats a longer one
+    CHECK_EQ(title("Highlander"), "Highlander - The Last of the MacLeods (USA)");   // a unique start of a title
+    CHECK_EQ(title("Primal Rage"), "-");                            // two discs share the title: no guess
+    CHECK_EQ(title("Primal Rage (Disc 2)"), "-");
+    CHECK_EQ(title("Space"), "-");                                  // starts two titles
+    CHECK_EQ(title("Spa"), "-");                                    // too short for a prefix match
+    CHECK_EQ(title("Myst Masterpiece Edition"), "-");               // longer than the dat title: not a match
+    CHECK_EQ(title("disc", "Myst (USA)"), "Myst (USA)");            // the folder name when the file says nothing
+    CHECK_EQ(title("disc", "Highlander"), "-");                     // a folder name must match exactly
+    CHECK_EQ(title("Space Ace", "Myst"), "Space Ace (USA)");        // the file name wins over the folder
+    int how = 0;
+    dat.byLooseName("disc", "Myst", &how);
+    CHECK(how == 2);
+    dat.byLooseName("Highlander", "", &how);
+    CHECK(how == 3);
+
+    // identify(): a disc whose checksum is not in the dat is matched by name; a cart is not touched by it
+    lib::ScanFile f;
+    f.kind = lib::Kind::Disc;
+    f.path = "/rips/Myst (USA)/disc.cue";
+    f.crcWhole = 0x12345678u;   // not Redump's
+    lib::Entry e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Name && e.datName == "Myst (USA)" && e.how == "folder name");
+    f.path = "/rips/Space.chd";
+    f.crcWhole = 0;
+    e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Unknown && e.how == "not identified" && e.title == "Space");
+    f.path = "/rips/x.cue";
+    f.crcWhole = 6;   // the dat's crc for Space Ace
+    e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Crc && e.datName == "Space Ace (USA)" && e.how.find("track 1") != std::string::npos);
+    f.kind = lib::Kind::Cart;
+    f.path = "/carts/Myst (USA).j64";
+    f.crcWhole = 0;
+    CHECK(lib::identify(f, &dat, nullptr).match == lib::Match::Name);   // the plain name rule
+    f.path = "/carts/Highlander.j64";
+    CHECK(lib::identify(f, &dat, nullptr).match == lib::Match::Unknown);   // carts do not get the loose rule
+}
+
+static void putBE(std::vector<unsigned char>& v, size_t off, uint64_t x, int bytes) {
+    for (int i = 0; i < bytes; i++) v[off + (size_t)i] = (unsigned char)(x >> (8 * (bytes - 1 - i)));
+}
+
+struct SynthTrack {
+    std::string type;                    // AUDIO, MODE1_RAW
+    int frames = 0, pregap = 0;
+    std::string pgtype = "MODE1";        // "VAUDIO" = virtual
+    std::vector<unsigned char> stored;   // frames * 2352 bytes, in the order the CHD keeps them
+};
+
+// A minimal uncompressed CHD v5 for CDs: 4 frames per hunk, 2448-byte frames (the subcode is filled with 0xEE
+// so a read that includes it shows), tracks padded to 4 frames, CHT2 track metadata and optionally CHSE.
+static bool writeSynthChd(const std::string& path, const std::vector<SynthTrack>& tracks, bool chse) {
+    const uint32_t hunkFrames = 4, hunkBytes = 2448 * hunkFrames;
+    std::vector<unsigned char> frames;
+    for (const SynthTrack& t : tracks) {
+        uint32_t padded = ((uint32_t)t.frames + 3) / 4 * 4;
+        for (uint32_t i = 0; i < padded; i++) {
+            std::vector<unsigned char> fr(2448, 0xEE);
+            if (i < (uint32_t)t.frames) std::memcpy(fr.data(), t.stored.data() + (size_t)i * 2352, 2352);
+            else std::fill(fr.begin(), fr.begin() + 2352, 0);
+            frames.insert(frames.end(), fr.begin(), fr.end());
+        }
+    }
+    const uint32_t hunks = (uint32_t)(frames.size() / hunkBytes);
+    std::vector<std::string> md;
+    if (chse) md.push_back("SESSION:1");
+    for (size_t i = 0; i < tracks.size(); i++) {
+        char b[200];
+        std::snprintf(b, sizeof b, "TRACK:%d TYPE:%s SUBTYPE:NONE FRAMES:%d PREGAP:%d PGTYPE:%s PGSUB:NONE POSTGAP:0", (int)i + 1,
+                      tracks[i].type.c_str(), tracks[i].frames, tracks[i].pregap, tracks[i].pgtype.c_str());
+        md.push_back(b);
+    }
+    const uint64_t mapOff = 124, metaOff = mapOff + (uint64_t)hunks * 4;
+    uint64_t metaEnd = metaOff;
+    for (const std::string& m : md) metaEnd += 16 + m.size() + 1;
+    const uint64_t dataStart = (metaEnd + hunkBytes - 1) / hunkBytes * hunkBytes;
+    std::vector<unsigned char> f((size_t)(dataStart + frames.size()), 0);
+    std::memcpy(f.data(), "MComprHD", 8);
+    putBE(f, 8, 124, 4);
+    putBE(f, 12, 5, 4);
+    putBE(f, 32, frames.size(), 8);
+    putBE(f, 40, mapOff, 8);
+    putBE(f, 48, metaOff, 8);
+    putBE(f, 56, hunkBytes, 4);
+    putBE(f, 60, 2448, 4);
+    for (uint32_t h = 0; h < hunks; h++) putBE(f, (size_t)mapOff + h * 4, dataStart / hunkBytes + h, 4);
+    uint64_t at = metaOff;
+    for (size_t i = 0; i < md.size(); i++) {
+        const uint32_t tag = md[i].compare(0, 7, "SESSION") == 0 ? 0x43485345u : 0x43485432u;   // CHSE / CHT2
+        const uint64_t len = md[i].size() + 1, next = i + 1 < md.size() ? at + 16 + len : 0;
+        putBE(f, (size_t)at, tag, 4);
+        putBE(f, (size_t)at + 4, len, 4);   // flags 0, 24-bit length
+        putBE(f, (size_t)at + 8, next, 8);
+        std::memcpy(f.data() + at + 16, md[i].c_str(), len);
+        at += 16 + len;
+    }
+    std::memcpy(f.data() + dataStart, frames.data(), frames.size());
+    writeBytes(path, f);
+    return true;
+}
+
+static std::vector<unsigned char> swapWords(std::vector<unsigned char> v) {
+    for (size_t i = 0; i + 1 < v.size(); i += 2) std::swap(v[i], v[i + 1]);
+    return v;
+}
+
+static void testChdAndCdiChecksums() {
+    std::string dir = g_tmp + "discs/";
+    std::atomic<bool> noCancel{false};
+
+    // the Redump .bin of track 1 (an audio track: bin files hold word-swapped samples), 10 sectors
+    std::vector<unsigned char> bin1 = noise(2352 * 10, 61);
+    std::vector<unsigned char> data2 = noise(2352 * 5, 62);
+    SynthTrack t1;
+    t1.type = "AUDIO";
+    t1.frames = 10;
+    t1.stored = swapWords(bin1);   // the CHD keeps host-order PCM
+    SynthTrack t2;
+    t2.type = "MODE1_RAW";
+    t2.frames = 5;
+    t2.stored = data2;
+    writeSynthChd(dir + "good.chd", {t1, t2}, true);
+    uint32_t crc = 0;
+    CHECK(lib::crcOfChdTrack1(dir + "good.chd", crc, &noCancel));
+    CHECK_EQ(hex8(crc), hex8(crcOf(bin1)));   // exactly the Redump bin's CRC32
+
+    // a virtual pregap is not part of the .bin: 3 silent frames the CHD counts but a bin does not have
+    std::vector<unsigned char> real7 = noise(2352 * 7, 63);
+    SynthTrack v1;
+    v1.type = "AUDIO";
+    v1.frames = 10;
+    v1.pregap = 3;
+    v1.pgtype = "VAUDIO";
+    v1.stored = std::vector<unsigned char>(2352 * 3, 0);
+    std::vector<unsigned char> sw = swapWords(real7);
+    v1.stored.insert(v1.stored.end(), sw.begin(), sw.end());
+    writeSynthChd(dir + "vpregap.chd", {v1, t2}, true);
+    CHECK(lib::crcOfChdTrack1(dir + "vpregap.chd", crc, &noCancel));
+    CHECK_EQ(hex8(crc), hex8(crcOf(real7)));
+
+    // the core refuses several audio tracks with no session metadata, so it is not hashed either
+    SynthTrack a2 = t1;
+    writeSynthChd(dir + "nochse.chd", {t1, a2}, false);
+    crc = 0xDEADBEEF;
+    CHECK(!lib::crcOfChdTrack1(dir + "nochse.chd", crc, &noCancel) && crc == 0xDEADBEEF);
+    writeBytes(dir + "junk.chd", noise(4096, 64));
+    CHECK(!lib::crcOfChdTrack1(dir + "junk.chd", crc, &noCancel));
+    CHECK(!lib::crcOfChdTrack1(dir + "missing.chd", crc, &noCancel));
+    std::atomic<bool> cancelled{true};
+    CHECK(!lib::crcOfChdTrack1(dir + "good.chd", crc, &cancelled));
+
+    // .cdi (V3.5): track 1 data after its 2-sector pregap, then the descriptor and the trailer
+    {
+        std::vector<unsigned char> img = noise(2352 * 2, 65);   // pregap sectors
+        img.insert(img.end(), bin1.begin(), bin1.end());
+        std::vector<unsigned char> hdr;
+        auto u16 = [&](unsigned x) { hdr.push_back((unsigned char)x); hdr.push_back((unsigned char)(x >> 8)); };
+        auto u32 = [&](uint32_t x) { u16(x & 0xFFFF); u16(x >> 16); };
+        u16(1);   // sessions
+        u16(1);   // tracks in session 1
+        u32(0);   // not the extended format
+        const unsigned char marker[20] = {0, 0, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF};
+        hdr.insert(hdr.end(), marker, marker + 20);
+        hdr.insert(hdr.end(), 4, 0);
+        hdr.push_back(0);                // empty file name
+        hdr.insert(hdr.end(), 19, 0);
+        u32(0);
+        hdr.insert(hdr.end(), 2, 0);     // index count
+        std::vector<unsigned char> td(0x57, 0);
+        auto put32 = [&](size_t o, uint32_t x) { for (int i = 0; i < 4; i++) td[o + (size_t)i] = (unsigned char)(x >> (8 * i)); };
+        put32(0x00, 2);    // pregap
+        put32(0x04, 10);   // length
+        put32(0x0e, 0);    // mode: audio
+        put32(0x22, 12);
+        put32(0x36, 2);    // 2352-byte sectors
+        hdr.insert(hdr.end(), td.begin(), td.end());
+        hdr.insert(hdr.end(), 64, 0);    // the rest of the descriptor
+        std::vector<unsigned char> file = img;
+        const size_t hdrAt = file.size();
+        file.insert(file.end(), hdr.begin(), hdr.end());
+        const uint32_t total = (uint32_t)file.size() + 8;
+        for (int i = 0; i < 4; i++) file.push_back((unsigned char)(0x80000006u >> (8 * i)));
+        const uint32_t fromEnd = total - (uint32_t)hdrAt;
+        for (int i = 0; i < 4; i++) file.push_back((unsigned char)(fromEnd >> (8 * i)));
+        writeBytes(dir + "good.cdi", file);
+        crc = 0;
+        CHECK(lib::crcOfCdiTrack1(dir + "good.cdi", crc, &noCancel));
+        CHECK_EQ(hex8(crc), hex8(crcOf(bin1)));
+        writeBytes(dir + "junk.cdi", noise(8192, 66));
+        CHECK(!lib::crcOfCdiTrack1(dir + "junk.cdi", crc, &noCancel));
+    }
+
+    // the scanner hashes both, identify() matches them to the dat by checksum, and the cache keeps the result
+    lib::Dat discs;
+    CHECK(discs.parse(datText("1", datGame("Synth Audio One (USA)", "Synth Audio One (USA) (Track 1).bin", crcOf(bin1)) +
+                                       datGame("Other (USA)", "o", 9))));
+    lib::ScanOptions opt;
+    opt.folders = {dir};
+    std::vector<lib::ScanFile> files = lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr);
+    int hashed = 0;
+    for (const lib::ScanFile& sf : files) {
+        const std::string name = fs::path(sf.path).filename().string();
+        lib::Entry e = lib::identify(sf, nullptr, &discs);
+        if (name == "good.chd" || name == "good.cdi") {
+            CHECK(sf.crcWhole == crcOf(bin1) && e.match == lib::Match::Crc && e.datName == "Synth Audio One (USA)");
+            hashed++;
+        } else {
+            CHECK(sf.crcWhole == 0 || name == "vpregap.chd");
+            CHECK(e.match != lib::Match::Crc);
+        }
+    }
+    CHECK(hashed == 2);
+    lib::ScanCache cache = lib::parseCache(lib::serializeCache(files));
+    CHECK(cache.size() == files.size());
+    for (const lib::ScanFile& sf : files)
+        if (sf.path.size() > 8 && sf.path.substr(sf.path.size() - 8) == "good.chd")
+            CHECK(cache[sf.path].crcWhole == sf.crcWhole && cache[sf.path].hashed);
+
+    // an old (VJLIB1) cache: disc images without a checksum are hashed again, carts and hashed discs are kept
+    std::string old = "VJLIB1\n/x/a.chd\tD\t10\t5\t00000000\t00000000\n/x/b.cue\tD\t10\t5\t0000ABCD\t00000000\n/x/c.j64\tC\t10\t5\t00000000\t00000000\n";
+    lib::ScanCache oc = lib::parseCache(old);
+    CHECK(oc.size() == 3 && !oc["/x/a.chd"].hashed && oc["/x/b.cue"].hashed && oc["/x/c.j64"].hashed);
+    lib::ScanCache nc = lib::parseCache("VJLIB2\n/x/a.chd\tD\t10\t5\t00000000\t00000000\n");
+    CHECK(nc.size() == 1 && nc["/x/a.chd"].hashed);   // an unhashable image is remembered as such
+}
+
 // ---- dev tool -------------------------------------------------------------------------------------------------------
 
 static int scanTool(const std::string& dir, const std::string& dbDir) {
@@ -1214,6 +1467,8 @@ int main(int argc, char** argv) {
     testDiscTitles();
     testCoverLookup();
     testCoverService();
+    testLooseNames();
+    testChdAndCdiChecksums();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();

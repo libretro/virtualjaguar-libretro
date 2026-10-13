@@ -48,11 +48,18 @@ public:
     // A game whose name matches `fileStem` once case, punctuation and trailing
     // "(Track N)" are ignored, or nullptr.
     const DatGame* byName(const std::string& fileStem) const;
+    // The looser match for disc rips whose checksum is not Redump's: both names go through
+    // normalizeDiscName.  Pass 1, an exact normalized title (the file name first, then the folder name);
+    // pass 2, a title that starts with the file name at a word boundary (file name only, 4+ characters).
+    // Anything that fits two games is no match.  `how` (optional): 1 file name, 2 folder name, 3 file name
+    // as the start of a longer title.
+    const DatGame* byLooseName(const std::string& fileStem, const std::string& folderName, int* how = nullptr) const;
 
 private:
     std::vector<DatGame> games_;
     std::multimap<uint32_t, size_t> crc_;
     std::map<std::string, size_t> names_;
+    std::map<std::string, std::vector<size_t>> loose_;   // normalizeDiscName(game name) -> games
     std::map<std::string, std::string> header_;
 };
 
@@ -131,6 +138,7 @@ struct Entry {
     std::string datName;   // dat game name when matched (also the thumbnail key), else ""
     std::string region;
     Match match = Match::Unknown;
+    std::string how;       // how it was identified, for the tooltip ("CRC32 of track 1 (Redump)", "folder name", ...)
 };
 
 struct ScanOptions {
@@ -161,6 +169,10 @@ std::string titleFromFileStem(const std::string& stem);
 // " - Track N" and a doubled ".bin" / ".img" / ".iso" before the extension, and collapses runs of spaces.
 // "(Disc N)" and revision tags are kept: they tell multi-disc sets and releases apart.
 std::string titleFromDiscStem(const std::string& stem);
+
+// Lower case, "(...)" and "[...]" groups dropped (region, "Track 1", "Disc 1", revisions), apostrophes dropped,
+// every other non-alphanumeric a space, spaces collapsed: "Dragon's Lair (USA) (Track 1)" -> "dragons lair".
+std::string normalizeDiscName(const std::string& name);
 
 // ---- tile zoom ----------------------------------------------------------------------------
 // The library grid's tile size is one multiplier (the toolbar slider, the config key library.size, pinch,

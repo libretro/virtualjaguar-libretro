@@ -286,11 +286,22 @@ tracks a `.cue` owns.
      the file minus a 512-byte copier header (the same rule as the core's
      `DetectPrependedHeaderSize`, so a headered dump of a known game still matches);
    - CD images against the Redump "Atari - Jaguar CD" dat. Redump hashes each track, so a
-     `.cue` is identified by the CRC32 of the first file it references (Track 1). `.chd` and
-     `.cdi` carry no cheap track hash and are matched by file name only.
+     `.cue` is identified by the CRC32 of the first file it references (Track 1). A `.chd` is
+     identified the same way: its Track 1 sectors are read back as the Redump `.bin` has them (the
+     way the core reads them: subcode dropped, audio put back in `.bin` byte order, a virtual
+     pregap left out). A `.chd` with several audio tracks and no session metadata (which the core
+     refuses too) is not hashed. A `.cdi` is hashed best-effort from its Track 1 descriptor;
+     rips whose layout differs from the descriptors (the core repairs these) will not match.
+     This is verified against synthetic images; real Redump CHDs are still to be checked.
+   - when the checksum does not match (a bin/cue or `.cdi` that is not a Redump dump) the disc is
+     matched by name: the file name, then the name of its folder, against the dat's titles with
+     case, punctuation, region and `(Track N)` / `(Disc N)` tags ignored. An exact title wins; a
+     file name that is the start of exactly one longer title also matches (file name only, 4+
+     characters). A name that fits two games (a two-disc set, "Space" for "Space Ace" and "Space
+     Ace Gold") matches neither: it stays unidentified rather than guessing.
    A name-only match is badged `?` (titled and given art from the dat entry), an unidentified
    file `??` (titled from its file name, no art). Hover a tile for the path, CRC32 and how it
-   was matched.
+   was identified (checksum, file name, folder name, or not at all).
 3. **Box art** comes from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar)
    (`thumbnails.libretro.com/Atari - Jaguar/Named_Boxarts/<dat title>.png`; the libretro rule
    replaces `& * / : ` " < > ? \ |` with `_`). It is fetched only for tiles you can see, one title
