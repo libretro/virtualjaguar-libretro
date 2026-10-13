@@ -264,6 +264,7 @@ static void testCore(const std::string& rom) {
 
     CoreHost& host = CoreHost::instance();
     host.setDirectories(sys, sav);
+    host.setLogVerbose(std::getenv("VJ_TEST_VERBOSE") != nullptr);   // the core's INFO lines, for debugging
     host.inputPoll = []() {};
     Netplay np(host);
     np.setSystemDir(sys);
@@ -356,6 +357,7 @@ static void testCore(const std::string& rom) {
             return np.link() == LinkState::Up;
         });
         CHECK(up);
+        if (!up) std::fprintf(stderr, "  join status: %s\n", np.statusText().c_str());
         CHECK(peer != kBadSock);
         CHECK(np.statusText().find("127.0.0.1") != std::string::npos);
         if (peer != kBadSock) closeSock(peer);
