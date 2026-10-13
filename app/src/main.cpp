@@ -21,8 +21,18 @@ static void usage(const char* argv0) {
         "  --verbose             log the core's INFO messages\n"
         "  --version, --help\n"
         "\n"
-        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-shader-out WxH]  print where a UI frame's time goes over N frames, then exit\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about|cheats]\n"
+        "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
+        "  --netplay ROLE        host | join | join-discovered | browse | loopback\n"
+        "  --netplay-addr ADDR   join: the host's address (no port)\n"
+        "  --netplay-port N      link port (default 42171; the window offers 42171-42174)\n"
+        "  --netplay-device D    jaglink (default) | voicemodem\n"
+        "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
+        "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
+        "\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
+        "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X]\n"
+        "     [--show-window settings[-video|-input|-audio|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -30,6 +40,8 @@ static void usage(const char* argv0) {
         "  --expect-hash HEX     fail unless the first game's final frame hashes to HEX\n"
         "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
+        "  --print-controls      print Player 1's controls cheat sheet (the active bindings) after the load\n"
+        "  --expect-controls-overlay shown|hidden   fail unless the controls overlay is (not) showing after the load\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
         "\n"
         "cheats (the command-line twins of the Cheats window; also work headless):\n"
@@ -101,6 +113,21 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--ra-expect-notice")) a.raExpectNotice.emplace_back(need(s));
         else if (!std::strcmp(s, "--ra-login-at")) a.raLoginAt = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--ra-expect-reset")) a.raExpectReset = (int)std::strtol(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--print-controls")) a.printControls = true;
+        else if (!std::strcmp(s, "--expect-controls-overlay")) {
+            std::string v = need(s);
+            if (v != "shown" && v != "hidden") {
+                std::fprintf(stderr, "--expect-controls-overlay wants shown or hidden, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.expectControls = v == "shown" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--netplay")) a.netplay.role = need(s);
+        else if (!std::strcmp(s, "--netplay-addr")) a.netplay.address = need(s);
+        else if (!std::strcmp(s, "--netplay-device")) a.netplay.device = need(s);
+        else if (!std::strcmp(s, "--netplay-port")) a.netplay.port = (int)std::strtol(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--netplay-expect-link")) a.netplay.expectLinkSec = std::strtod(need(s), nullptr);
+        else if (!std::strcmp(s, "--netplay-expect-discovery")) a.netplay.expectDiscoverySec = std::strtod(need(s), nullptr);
         else if (!std::strcmp(s, "--frames")) a.frames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--expect-hash")) a.expectHash = need(s);
         else if (!std::strcmp(s, "--perf-frames")) a.perfFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
@@ -119,6 +146,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
+        else if (!std::strcmp(s, "--ui-scale")) a.uiScale = (float)std::strtod(need(s), nullptr);
         else if (!std::strcmp(s, "--state-roundtrip")) a.stateRoundtrip = true;
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);

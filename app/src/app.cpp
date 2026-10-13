@@ -1,4 +1,5 @@
 #include "app.h"
+#include "devices_ui.h"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -72,6 +73,7 @@ void App::loadConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
+    homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     g_lastDir = cfg.get("ui.last_dir", "");
@@ -94,6 +96,7 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
+    cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
@@ -192,7 +195,17 @@ bool App::initImGui() {
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
-    float scale = SDL_GetWindowDisplayScale(window_);
+    // The UI scale is the display's CONTENT scale (the 200% of a 4K Windows/Linux display), nothing more.
+    // SDL_GetWindowDisplayScale() is relative to the window's PIXEL size, so it also contains the pixel density
+    // (2.0 on every Retina Mac); ImGui's SDL3 backend lays out in window points and already renders at the
+    // pixel density (DisplayFramebufferScale), so using it directly doubled everything on a Retina Mac and
+    // every window came out twice as wide as intended.  (Dear ImGui's own SDL3 example uses the content scale.)
+    float scale = uiScaleOverride;
+    if (scale <= 0.0f) {
+        float density = SDL_GetWindowPixelDensity(window_);
+        scale = SDL_GetWindowDisplayScale(window_) / (density > 0.0f ? density : 1.0f);
+        scale *= std::min(4.0f, std::max(0.5f, cfg.getFloat("ui.scale", 1.0f)));   // user preference on top
+    }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
     st.FontScaleDpi = scale;
@@ -242,7 +255,8 @@ void App::wireHost() {
         if (!fastForward && !mute) audio.push(d, n);
     };
     host.inputPoll = [this]() { input.poll(!inputCaptured_); };
-    input.portRaw = [this](unsigned p) { return inputPortIsRaw(*this, p); };
+    input.notify = [this](const std::string& m) { toast(m, 3.0); };
+    host.optionLock = &lockedCoreOption;   // the app's own Controls / Devices tabs replace these core options
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
         return input.state(p, d, i, id);
     };
@@ -263,6 +277,11 @@ void App::applyVsync() {
 void App::applyAudioSettings() {
     audio.setVolume(volume);
     audio.setTargetMs(audioTargetMs);
+}
+
+void App::toggleLibrary() {
+    if (homeVisible()) library.focusSearch = true;   // already showing: put the cursor in the search box
+    else library.show = !library.show;
 }
 
 void App::setFullscreen(bool fs) {
@@ -300,12 +319,9 @@ bool App::openContent(const std::string& pathIn) {
     paused = false;
     accum_ = 0;
     lastTick_ = now();
-    // Controller types chosen earlier in Settings.
-    for (unsigned p = 0; p < 2; p++) {
-        int dev = cfg.getInt("port." + std::to_string(p), -1);
-        if (dev >= 0) host.setControllerDevice(p, (unsigned)dev);
-    }
     input.setContent(contentIdentity(path));   // selects the per-game control overrides
+    applyPortDevices(*this);                   // the controller types chosen in Settings, per game or global
+    controlsOverlayOnLoad(*this);
     addRecent(path);
     invalidateThumbs();
     ach.onContentLoaded();   // identify the game, look up its achievements
@@ -333,6 +349,7 @@ bool App::openNoContent() {
     ach.onContentClosed();   // no game, so nothing to look up
     cheatsOnClose(*this);
     input.setContent("");
+    applyPortDevices(*this);
     toast("Booted with no cartridge");
     return true;
 }
@@ -536,7 +553,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (mod) showSettings = !showSettings;
         break;
     case SDLK_L:
-        if (mod) library.show = !library.show;
+        if (mod) toggleLibrary();
         break;
     default: break;
     }
@@ -610,6 +627,7 @@ void App::stepEmulation() {
         host.runFrame();
         if (r0) perf.add(Perf::Retro, 1000.0 * (double)(perf.tick() - r0) / (double)perf.freq);
         ach.afterFrame();
+        netplay.afterFrame();
         fpsWindowFrames_++;
     }
     host.wantVideo = true;
@@ -672,6 +690,7 @@ int App::run(const CliArgs& a) {
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
+    if (!netplayInit(*this, a)) return 2;
 
     int rc = a.headless ? runHeadless(a) : runInteractive(a);
 
@@ -685,6 +704,7 @@ int App::run(const CliArgs& a) {
 }
 
 int App::runInteractive(const CliArgs& a) {
+    uiScaleOverride = a.uiScale;
     if (!initWindow() || !initImGui()) return 1;
     applyAudioSettings();
     audio.open(48043.6);
@@ -692,13 +712,21 @@ int App::runInteractive(const CliArgs& a) {
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
-        devSelectVideoTab = a.showWindow.rfind("settings-video", 0) == 0;
+        if (a.showWindow.rfind("settings-video", 0) == 0) devSelectTab = "Video";
+        else if (a.showWindow.rfind("settings-input", 0) == 0) devSelectTab = "Input";
+        else if (a.showWindow.rfind("settings-audio", 0) == 0) devSelectTab = "Audio";
+        else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
     }
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
     else if (a.showWindow == "cheats") showCheats = true;
+    else if (a.showWindow == "login") ach.showLogin = true;
+    else if (a.showWindow == "achievements") ach.showList = true;
+    else if (a.showWindow == "keypad") input.overlay.open = true;
+    else if (a.showWindow == "netplay") showNetplay = true;
+    else if (a.showWindow == "controls") input.controls.show = true;
     unsigned uiFrames = 0;
 
     std::string firstErr;
@@ -706,7 +734,8 @@ int App::runInteractive(const CliArgs& a) {
     else if (!a.content.empty()) openContent(a.content[0]);
     library.createTexture = &VideoOut::createTextureRGBA;
     library.destroyTexture = &VideoOut::destroyTexture;
-    library.start(paths, cfg, !host.isLoaded());
+    // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
+    library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
     if (a.showWindow == "library") library.show = true;
 
     lastTick_ = now();
@@ -736,6 +765,7 @@ int App::runInteractive(const CliArgs& a) {
         if (quit) break;
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
+        inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
         perf.lap(Perf::Events);
         stepEmulation();
@@ -844,6 +874,12 @@ int App::runHeadless(const CliArgs& a) {
             std::fprintf(stderr, "headless: FAIL an --option override was rejected by the core\n");
             return 2;
         }
+        if (a.printControls) std::printf("%s", controlsOverlayText(*this).c_str());
+        if (a.expectControls >= 0 && (input.controls.show ? 1 : 0) != a.expectControls) {
+            std::fprintf(stderr, "headless: FAIL the controls overlay is %s after the load, expected %s\n",
+                         input.controls.show ? "showing" : "hidden", a.expectControls ? "showing" : "hidden");
+            return 1;
+        }
         audioFramesSeen_ = 0;
         uint64_t hlT0 = SDL_GetPerformanceCounter(), hlRun = 0;
         double hlCpu0 = Perf::cpuSeconds();
@@ -865,6 +901,9 @@ int App::runHeadless(const CliArgs& a) {
             double cpu = Perf::cpuSeconds() - hlCpu0;
             std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %.3f s (%.1f fps) %s\n",
                          a.frames, wall, a.frames / wall, run, a.frames / run, cpu, a.frames / cpu, path.c_str());
+            int nr = netplayHeadlessCheck(*this, a);
+            if (nr == 1) rc = 1;
+            else if (nr == 77 && rc == 0) rc = 77;
         }
         if (!cheatsHeadlessCheck(*this, a)) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;

@@ -27,7 +27,7 @@
 #   ./install.sh --channel v3.5.1
 #   ./install.sh --dest /path/to/cores  core: skip frontend discovery
 #   ./install.sh --app-dest /path       app: Applications dir (macOS) or bin dir (Linux)
-#   ./install.sh --app-format F         app: zip|dmg (macOS), appimage|deb (Linux)
+#   ./install.sh --app-format F         app: zip (macOS), appimage|deb (Linux)
 #   ./install.sh --allow-unsigned       macOS: allow clearing quarantine on an
 #                                       app Gatekeeper rejects (see below)
 #   ./install.sh --force                reinstall even if already up to date
@@ -44,7 +44,7 @@
 #   VJ_INSTALL_NO_TTY     1 = behave as if there were no terminal (tests, CI)
 #
 # THE APP
-#   macOS    Virtual Jaguar.app from the zip (or the DMG) into /Applications, or
+#   macOS    Virtual Jaguar.app from the zip into /Applications, or
 #            ~/Applications when that is not writable.  Updated where it already is.
 #   Linux    the AppImage into ~/.local/bin plus a .desktop entry; or the .deb
 #            through apt/dpkg with --app-format deb (that needs sudo).  x86_64 and
@@ -189,7 +189,7 @@ Virtual Jaguar -- installer / updater for the RetroArch core and the app.
   --channel latest|nightly|<tag>   which build (default: latest)
   --dest <dir>                     core: install here, skip frontend discovery
   --app-dest <dir>                 app: Applications dir (macOS) / bin dir (Linux)
-  --app-format zip|dmg|appimage|deb   app package (default: zip / appimage)
+  --app-format zip|appimage|deb   app package (default: zip / appimage)
   --allow-unsigned                 macOS: may clear quarantine on a rejected app
   --force                          reinstall even if already up to date
   --list                           show what was found, install nothing
@@ -229,7 +229,7 @@ done
 
 case "$AUTO_UPDATE" in ''|daily|weekly|off) ;; *) die "--auto-update takes daily, weekly or off (got '$AUTO_UPDATE')" ;; esac
 case "$WHAT" in ''|core|app|both) ;; *) die "--what takes core, app or both (got '$WHAT')" ;; esac
-case "$APP_FORMAT" in ''|zip|dmg|appimage|deb) ;; *) die "--app-format takes zip, dmg, appimage or deb (got '$APP_FORMAT')" ;; esac
+case "$APP_FORMAT" in ''|zip|appimage|deb) ;; *) die "--app-format takes zip, appimage or deb (got '$APP_FORMAT'; macOS ships a zip only)" ;; esac
 
 command -v curl >/dev/null 2>&1 || die "curl is required.  Debian/RetroPie: sudo apt install -y curl"
 
@@ -724,7 +724,7 @@ fi
 RCPT="$RCPT_DIR/install-receipt"
 
 # The receipt is a CACHE (channel, asset hash), never the source of truth for
-# whether the app is installed: a DMG drag-install or a hand-run .deb has none.
+# whether the app is installed: a drag-install or a hand-run .deb has none.
 rcpt_get() { [ -r "$RCPT" ] && sed -n "s/^$1=//p" "$RCPT" 2>/dev/null | head -1; return 0; }
 
 rcpt_write() {
@@ -852,7 +852,7 @@ app_install() {
   case "$OS" in
     Darwin)
       FORMAT=${APP_FORMAT:-zip}
-      case "$FORMAT" in zip|dmg) ;; *) die "--app-format $FORMAT does not apply on macOS (use zip or dmg)." ;; esac
+      case "$FORMAT" in zip) ;; *) die "--app-format $FORMAT does not apply on macOS (the app ships as a zip)." ;; esac
       PRE="VirtualJaguar-"; SUF="-macos-universal.$FORMAT"
       ;;
     Linux)
@@ -922,7 +922,7 @@ app_install() {
 
   # --- where it goes --------------------------------------------------------
   case "$FORMAT" in
-    zip|dmg)
+    zip)
       if [ -n "$APP_DEST" ]; then ADIR=$APP_DEST
       elif [ -n "$INST_PATH" ]; then ADIR=$(dirname "$INST_PATH")
       elif [ -w /Applications ]; then ADIR=/Applications
@@ -974,7 +974,7 @@ app_install() {
   fi
 
   case "$FORMAT" in
-    zip|dmg) app_install_mac ;;
+    zip) app_install_mac ;;
     appimage) app_install_appimage ;;
     deb)     app_install_deb ;;
   esac
@@ -993,18 +993,8 @@ app_install() {
 app_install_mac() {
   step "Installing the app"
   XD="$WORK/app/x"; mkdir -p "$XD"
-  if [ "$FORMAT" = dmg ]; then
-    MNT="$WORK/app/mnt"; mkdir -p "$MNT"
-    hdiutil attach -nobrowse -readonly -quiet -mountpoint "$MNT" "$WORK/app/$AASSET" >/dev/null \
-      || die "could not mount the DMG."
-    _src=""
-    for _a in "$MNT"/*.app; do [ -d "$_a" ] && { _src=$_a; break; }; done
-    if [ -n "$_src" ]; then ditto "$_src" "$XD/$(basename "$_src")" || { hdiutil detach -quiet "$MNT" || true; die "could not copy out of the DMG."; }; fi
-    hdiutil detach -quiet "$MNT" >/dev/null 2>&1 || hdiutil detach -force -quiet "$MNT" >/dev/null 2>&1 || true
-  else
-    if command -v ditto >/dev/null 2>&1; then ditto -x -k "$WORK/app/$AASSET" "$XD" || die "could not unpack the zip."
-    else unzip -q "$WORK/app/$AASSET" -d "$XD" || die "could not unpack the zip."; fi
-  fi
+  if command -v ditto >/dev/null 2>&1; then ditto -x -k "$WORK/app/$AASSET" "$XD" || die "could not unpack the zip."
+  else unzip -q "$WORK/app/$AASSET" -d "$XD" || die "could not unpack the zip."; fi
   NEWAPP=""
   [ -d "$XD/$MAC_APP_NAME" ] && NEWAPP="$XD/$MAC_APP_NAME"
   if [ -z "$NEWAPP" ]; then

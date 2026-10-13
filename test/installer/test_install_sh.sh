@@ -90,9 +90,6 @@ PL
   else
     (cd "$w" && zip -qr "$d/VirtualJaguar-$v-macos-universal.zip" "Virtual Jaguar.app")
   fi
-  if [ "${MAKE_DMG:-0}" = 1 ] && [ "$OS" = Darwin ] && command -v hdiutil >/dev/null 2>&1; then
-    hdiutil create -quiet -fs HFS+ -volname "Virtual Jaguar" -srcfolder "$w" -ov "$d/VirtualJaguar-$v-macos-universal.dmg" >/dev/null 2>&1 || true
-  fi
   command rm -rf "$w"
   for a in x86_64 aarch64; do
     cat > "$d/VirtualJaguar-$v-linux-$a.AppImage" <<AI
@@ -127,7 +124,7 @@ APPVER=4.0.0
 build_release "$OLD/latest/download" "" old-core
 build_release "$OLD/download/nightly" "" old-nightly
 build_release "$NEW/latest/download" 4.0.0 new-latest
-MAKE_DMG=1 build_release "$NEW/download/v4.0.0" 4.0.0 new-latest
+build_release "$NEW/download/v4.0.0" 4.0.0 new-latest
 build_release "$NEW/download/nightly" nightly nightly-one
 
 fake_binary "$T/retroarch" ""
@@ -278,14 +275,16 @@ run_suite() {
   check_has "core SHA-256 verified" "$OUT" "SHA-256 matches"
   check_true "core file in place" test -f "$CD/virtualjaguar_libretro.${CORE_ASSET##*.}"
 
-  # --- macOS DMG path -----------------------------------------------------------
-  if [ "$OS" = Darwin ] && [ -f "$NEW/download/v4.0.0/VirtualJaguar-4.0.0-macos-universal.dmg" ]; then
-    AD4="$T/apps4-$$"; H4="$T/h4-$$"
-    vj "$SH" "$NEW" "$H4" --app --yes --channel v4.0.0 --app-format dmg --app-dest "$AD4"
-    check_rc "dmg install exit 0" "$RC" 0 "$OUT"
-    check_true "dmg: bundle installed" test -x "$AD4/Virtual Jaguar.app/Contents/MacOS/virtualjaguar"
+  # --- macOS ships a zip only ----------------------------------------------------
+  AD4="$T/apps4-$$"; H4="$T/h4-$$"
+  vj "$SH" "$NEW" "$H4" --app --yes --channel v4.0.0 --app-format dmg --app-dest "$AD4"
+  check_rc "--app-format dmg is rejected (there is no DMG)" "$RC" 1 "$OUT"
+  if [ "$OS" = Darwin ]; then
+    vj "$SH" "$NEW" "$H4" --app --yes --channel v4.0.0 --app-format zip --app-dest "$AD4"
+    check_rc "zip install exit 0" "$RC" 0 "$OUT"
+    check_true "zip: bundle installed" test -x "$AD4/Virtual Jaguar.app/Contents/MacOS/virtualjaguar"
     vj "$SH" "$NEW" "$H4" --app --yes --channel v4.0.0 --app-dest "$AD4"
-    check_has "dmg then zip same version: up to date (version read from Info.plist)" "$OUT" "already up to date"
+    check_has "second run: up to date (version read from Info.plist)" "$OUT" "already up to date"
   fi
 
   # --- both, for real -----------------------------------------------------------

@@ -41,13 +41,23 @@ namespace {
 bool g_logVerbose = false;
 
 void RETRO_CALLCONV logCb(enum retro_log_level level, const char* fmt, ...) {
-    if (level < RETRO_LOG_WARN && !g_logVerbose) return;
+    CoreHost& h = CoreHost::instance();
+    const bool print = level >= RETRO_LOG_WARN || g_logVerbose;
+    if (!print && !h.onLog) return;
     static const char* const tag[] = {"DEBUG", "INFO", "WARN", "ERROR"};
     char buf[1024];
     va_list ap;
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
+    // The tap sees every line, INFO included: the Netplay window reads the core's
+    // "[NETLINK] link UP / link stats" lines from here (they are INFO).
+    if (h.onLog) {
+        std::string line(buf);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        h.onLog((int)level, line.c_str());
+    }
+    if (!print) return;
     std::fprintf(stderr, "[core %s] %s", (unsigned)level < 4 ? tag[level] : "?", buf);
     size_t n = std::strlen(buf);
     if (n == 0 || buf[n - 1] != '\n') std::fputc('\n', stderr);
@@ -196,10 +206,22 @@ void CoreHost::captureOptions(const retro_core_options_v2* o) {
             defs_.push_back(std::move(def));
         }
     }
+    locked_.clear();
+    if (optionLock) {
+        for (const OptionDef& d : defs_) {
+            std::string v;
+            if (!optionLock(d.key, v)) continue;
+            bool ok = false;
+            for (const OptionValue& ov : d.values)
+                if (ov.value == v) ok = true;
+            locked_[d.key] = ok ? v : d.defaultValue;
+        }
+    }
     optionPushes_++;
 }
 
 bool CoreHost::optionVisible(const std::string& key) const {
+    if (locked_.count(key)) return false;
     auto it = visibility_.find(key);
     return it == visibility_.end() ? true : it->second;
 }
@@ -211,6 +233,8 @@ static bool validFor(const OptionDef& d, const std::string& v) {
 }
 
 std::string CoreHost::optionValue(const OptionDef& d) const {
+    auto l = locked_.find(d.key);
+    if (l != locked_.end()) return l->second;
     auto s = sessionValues_.find(d.key);
     if (s != sessionValues_.end() && validFor(d, s->second)) return s->second;
     auto u = userValues_.find(d.key);
@@ -243,6 +267,16 @@ std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
     std::vector<std::string> out;
     const std::map<std::string, std::string>& m = sessionOnly ? sessionValues_ : userValues_;
     for (const auto& kv : m) {
+        auto l = locked_.find(kv.first);
+        if (l != locked_.end()) {
+            // The app forces it.  Silently running the forced value would be the "--option did
+            // nothing" trap, so a value that differs is reported (an error for --option, a
+            // warning for a stale saved one).
+            if (kv.second != l->second)
+                out.push_back("'" + kv.first + "' is managed by the app (Settings > Input / Controls)" +
+                              (sessionOnly ? "; --option cannot change it" : "; the saved value is ignored"));
+            continue;
+        }
         std::string p = problemFor(defs_, kv.first, kv.second);
         if (!p.empty()) out.push_back(p);
     }
@@ -261,6 +295,10 @@ void CoreHost::setOptionValue(const std::string& key, const std::string& value) 
     variableUpdate_ = true;
     if (onOptionChanged) onOptionChanged(key, value, false);
     if (updateDisplayCb_) updateDisplayCb_();
+}
+
+void CoreHost::clearOverride(const std::string& key) {
+    if (sessionValues_.erase(key)) variableUpdate_ = true;
 }
 
 void CoreHost::resetOptionToDefault(const std::string& key) {
@@ -339,6 +377,12 @@ bool CoreHost::env(unsigned cmd, void* data) {
             // Pointers into the maps' node-stable strings, or into defs_ (only
             // rebuilt on a definitions push, which also happens on the core's
             // own call stack -- the core copies values before then).
+            auto l = locked_.find(d.key);
+            if (l != locked_.end()) {
+                v->value = l->second.c_str();
+                traceOption(d.key, v->value, "locked");
+                return true;
+            }
             auto s = sessionValues_.find(d.key);
             if (s != sessionValues_.end() && validFor(d, s->second)) {
                 v->value = s->second.c_str();
@@ -478,7 +522,7 @@ bool CoreHost::env(unsigned cmd, void* data) {
         return true;
     }
 
-    // ---- reported unsupported in 4.0 -----------------------------------------
+    // ---- reported unsupported by the app -----------------------------------------
     case RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE:
     case RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE:
     case RETRO_ENVIRONMENT_GET_PERF_INTERFACE:

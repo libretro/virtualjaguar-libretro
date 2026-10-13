@@ -17,6 +17,7 @@
 #include "core_host.h"
 #include "input.h"
 #include "library_service.h"
+#include "netplay.h"
 #include "paths.h"
 #include "perf.h"
 #include "video.h"
@@ -33,7 +34,8 @@ struct CliArgs {
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
-    std::string showWindow;         // dev: open the 'settings', 'states' or 'about' window at start
+    std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
@@ -45,6 +47,8 @@ struct CliArgs {
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
     std::vector<std::string> cheatCodes;      // add these manual codes
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
+    bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
+    int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
     bool showHelp = false;
     bool showVersion = false;
     unsigned perfFrames = 0;        // dev: profile this many UI frames (after a warm-up), print the phase costs, exit
@@ -70,6 +74,7 @@ struct CliArgs {
     std::vector<std::string> raExpectNotice;         // a player-facing notice containing this text must have been shown
     int raExpectReset = -1;                          // exact number of clean-start restarts (-1 = don't check)
     bool raExpectBlocked = false;                    // hardcore wanted, but a disallowed core option must keep it off
+    NetplayCli netplay;                              // --netplay*: the command-line twin of the Netplay window
 };
 
 struct Osd {
@@ -101,6 +106,7 @@ public:
     LibraryService library;   // optional game library (#838); idle until start()ed
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
+    Netplay netplay{host};   // link-cable play over the network
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -112,8 +118,11 @@ public:
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
+    bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
+    bool showNetplay = false;
     CheatManager cheats;
-    bool devSelectVideoTab = false;   // dev: --show-window settings-video opens Settings on the Video tab
+    std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
+    float uiScaleOverride = 0;        // dev: --ui-scale
     int stateSlot = 0;
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;
@@ -133,6 +142,8 @@ public:
     bool reloadContent();
     void closeContent();
     void showOpenDialog();
+    bool homeVisible() const { return homeLibrary && !host.isLoaded(); }   // is the library standing in for the game?
+    void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
     void reset();
     void togglePause();
     void setFullscreen(bool fs);
@@ -227,9 +238,15 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
+void drawLibraryHome(App& app, float x, float y, float w, float h);
+// Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.
+bool netplayInit(App& app, const CliArgs& a);               // log tap + --netplay*; false = bad arguments
+int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
+void drawNetplayMenu(App& app);
+void drawNetplay(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).
 void drawControlsTab(App& app);
 void drawKeypadOverlay(App& app);
-bool inputPortIsRaw(const App& app, unsigned port);   // port has a device that reads the physical RetroPad
 
 }  // namespace vj

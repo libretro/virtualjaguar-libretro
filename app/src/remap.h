@@ -45,11 +45,28 @@ enum Ctl : uint8_t {
     C_A, C_B, C_C, C_OPTION, C_PAUSE,
     C_K0, C_K1, C_K2, C_K3, C_K4, C_K5, C_K6, C_K7, C_K8, C_K9, C_STAR, C_HASH,
     C_OVERLAY,   // app action (toggle the keypad overlay), not a Jaguar control
+    // ---- beyond the standard pad (devices.h): the analog / 6D / driving / pointer devices.
+    // Appended AFTER C_OVERLAY so kJaguarControls and every existing id stay put.
+    C_D, C_E, C_F,   // D (RetroPad X), E (L3), F (R3): the analog / 6D controllers' extra switches
+    // Analog controls carry a strength 0..32767 (AnalogSet), not just down/up: a gamepad axis
+    // gives the stick position, a key or button gives full scale.  The pair of a stick axis
+    // (N, P) is subtracted: value = P - N.
+    C_AX_LX_N, C_AX_LX_P, C_AX_LY_N, C_AX_LY_P,   // primary stick   (left / right, up / down)
+    C_AX_RX_N, C_AX_RX_P, C_AX_RY_N, C_AX_RY_P,   // secondary stick (6D rotations)
+    C_AX_L2, C_AX_R2, C_AX_L1, C_AX_R1,           // analog trigger / shoulder pairs
+    C_PT_L, C_PT_R, C_PT_U, C_PT_D,               // pointer motion (mouse, rotary, light gun aim) -- analog
+    C_MB_L, C_MB_R,                               // mouse buttons from the keyboard / a pad
+    C_GUN_RELOAD,                                 // light gun: fire off-screen
+    C_HELP,      // app action: the controls cheat-sheet overlay
     C_COUNT
 };
+static_assert(C_COUNT <= 64, "ControlSet is a 64-bit mask");
 constexpr int kJaguarControls = C_OVERLAY;   // controls the console itself has
 
 inline bool isKeypad(Ctl c) { return c >= C_K0 && c <= C_HASH; }
+inline bool isAnalogCtl(Ctl c) { return c >= C_AX_LX_N && c <= C_PT_D; }   // has a 0..32767 strength
+inline bool isPointerCtl(Ctl c) { return c >= C_PT_L && c <= C_GUN_RELOAD; }
+inline bool isActionCtl(Ctl c) { return c == C_OVERLAY || c == C_HELP; }   // app actions, never reach the core
 const char* ctlId(Ctl c);                     // stable config id: "up", "a", "k7", "star", "overlay"
 const char* ctlLabel(Ctl c);                  // "Up", "A", "Keypad 7", "Keypad *"
 bool ctlFromId(const std::string& id, Ctl& out);
@@ -130,10 +147,10 @@ private:
 // ---- device snapshot -> controls ------------------------------------------------------
 
 struct ControlSet {
-    uint32_t bits = 0;
+    uint64_t bits = 0;
     bool test(Ctl c) const { return (bits >> c) & 1u; }
-    void set(Ctl c) { bits |= 1u << c; }
-    void clear(Ctl c) { bits &= ~(1u << c); }
+    void set(Ctl c) { bits |= 1ull << c; }
+    void clear(Ctl c) { bits &= ~(1ull << c); }
     bool any() const { return bits != 0; }
     bool operator==(const ControlSet& o) const { return bits == o.bits; }
     bool operator!=(const ControlSet& o) const { return bits != o.bits; }
@@ -148,9 +165,30 @@ struct DeviceSnapshot {
 constexpr int kStickThreshold = 16000;
 constexpr int kTriggerThreshold = 8000;
 
+// evaluate() covers C_UP..C_OVERLAY (the standard pad, the keypad, the keypad overlay).
 // Keypad controls resolve to the DOMINANT axis of a stick, so pushing a stick
 // diagonally never presses two keypad keys (digit chords are not wanted).
 ControlSet evaluate(const Profile& p, const DeviceSnapshot& s);
+
+// The analog controls' strengths (C_AX_*, C_PT_*), 0..32767 each: a gamepad axis gives its
+// deflection past `deadzone` rescaled to full range, a key or button gives 32767.  Several
+// bindings on one control take the strongest.  Every other entry is 0.
+constexpr int kAnalogDeadzone = 3000;
+struct AnalogSet {
+    std::array<int16_t, C_COUNT> v{};
+    int16_t get(Ctl c) const { return c < C_COUNT ? v[c] : 0; }
+    // P - N of a stick axis, -32767..32767 (+ = the P control's direction).
+    int32_t axis(Ctl neg, Ctl pos) const { return (int32_t)get(pos) - (int32_t)get(neg); }
+    bool any() const {
+        for (int16_t x : v)
+            if (x) return true;
+        return false;
+    }
+};
+AnalogSet evaluateAnalog(const Profile& p, const DeviceSnapshot& s, int deadzone = kAnalogDeadzone);
+// The digital controls beyond the standard pad: C_D, C_E, C_F, C_MB_L, C_MB_R, C_GUN_RELOAD, C_HELP.
+// (evaluate() above covers C_UP..C_OVERLAY only, exactly as before the exotic devices existed.)
+ControlSet evaluateExtra(const Profile& p, const DeviceSnapshot& s);
 
 // ---- controls -> what the core reads -------------------------------------------------------
 
@@ -166,26 +204,55 @@ public:
     // A port that must see the physical RetroPad (6D / analog / driving devices read
     // X, L3, R3, L2, R2 ...; Team Tap sockets read the RetroPad buttons 0-6).
     void addRawPad(unsigned port, uint16_t mask);
+    // A Team Tap socket (frontend ports 2-7, libretro.c teamtap_map[]): the core reads only the
+    // RetroPad there -- no keyboard -- so the keypad controls 0-6 ride X, L, R, L2, R2, L3, R3
+    // and 7, 8, 9, * and # cannot be pressed at all.
+    void addTapControls(unsigned frontendPort, ControlSet c);
     // The physical keyboard, reported truthfully EXCEPT for the 24 keys the core's default
     // path reads as keypad: those only ever come from addControls().
     void addRawKey(unsigned retroKey);
 
+    // ---- the non-pad devices (libretro.c update_input(), "non-pad devices") ----------------
+    // Mouse / rotary: RETRO_DEVICE_MOUSE on the Jaguar port's frontend port.  Deltas accumulate
+    // within a frame; buttons are RETRO_DEVICE_ID_MOUSE_LEFT / _RIGHT bits (1 = left, 2 = right).
+    void addMouse(unsigned port, int32_t dx, int32_t dy, unsigned buttons);
+    // Analog stick axis: RETRO_DEVICE_ANALOG, index LEFT(0)/RIGHT(1), id X(0)/Y(1), -32768..32767.
+    void setAnalog(unsigned port, unsigned index, unsigned id, int32_t value);
+    // Analog button (RETRO_DEVICE_INDEX_ANALOG_BUTTON, id = a RETRO_DEVICE_ID_JOYPAD_*): 0..32767.
+    void setAnalogButton(unsigned port, unsigned id, int32_t value);
+    // Light gun: RETRO_DEVICE_LIGHTGUN.  x / y are the libretro -0x7fff..0x7fff screen
+    // coordinates, `buttons` a GUN_* mask.
+    enum { GUN_TRIGGER = 1, GUN_AUX_A = 2, GUN_AUX_B = 4, GUN_START = 8, GUN_SELECT = 16 };
+    void setGun(unsigned port, int32_t x, int32_t y, bool offscreen, unsigned buttons);
+
     int16_t pad(unsigned port) const { return port < 8 ? (int16_t)pad_[port] : 0; }
     bool key(unsigned retroKey) const { return retroKey < keys_.size() && keys_[retroKey]; }
     bool keypadSynthesised() const { return synth_; }
-    // retro_input_state_t for RETRO_DEVICE_JOYPAD (incl. the bitmask id) and
-    // RETRO_DEVICE_KEYBOARD.  Other devices return 0 (the caller handles analog).
+    // retro_input_state_t for the devices the Jaguar ports use: JOYPAD (incl. the bitmask id),
+    // KEYBOARD, MOUSE, ANALOG (sticks and analog buttons) and LIGHTGUN.
     int16_t state(unsigned port, unsigned device, unsigned index, unsigned id) const;
 
     // The libretro RETROK_* the core reads for a keypad control on a Jaguar port (0 = none).
     static unsigned keypadKey(unsigned port, Ctl c);
     // The RETRO_DEVICE_ID_JOYPAD_* a pad control rides on (-1 = not a pad control).
     static int padId(Ctl c);
+    // The RetroPad button a Team Tap socket reads for a control (-1 = unreachable there).
+    static int tapPadId(Ctl c);
     static bool isCoreKeypadKey(unsigned retroKey);
 
 private:
+    struct PortExtra {
+        int32_t mouseDx = 0, mouseDy = 0;
+        unsigned mouseButtons = 0;
+        int16_t stick[2][2] = {{0, 0}, {0, 0}};
+        int16_t abtn[16] = {0};
+        int32_t gunX = 0, gunY = 0;
+        bool gunOff = true;
+        unsigned gunButtons = 0;
+    };
     std::array<uint32_t, 8> pad_{};
     std::array<bool, 512> keys_{};
+    std::array<PortExtra, 2> extra_{};
     bool synth_ = false;
 };
 
@@ -249,17 +316,6 @@ private:
     DeviceClass cls_ = DeviceClass::Keyboard;
     std::vector<Base> base_;
 };
-
-// ---- which ports need the physical RetroPad -------------------------------------------
-
-// The bank-switching analog / driving / 6D devices read X, L3, R3, the shoulders and
-// triggers straight off the RetroPad, so remapping those buttons to Jaguar controls would
-// break them.  Everything else -- a plain pad, Pro Controller, Team Tap socket 0, the
-// rotary, the paddle ADC (its pad stays "fully connected"), a PLAIN RETRO_DEVICE_ANALOG
-// (libretro.c maps that to the standard pad) -- is an ordinary pad and stays remapped.
-// `frontendDevice` is what Settings assigned via retro_set_controller_port_device (-1 =
-// none), `optionValue` the core's virtualjaguar_pN_device value ("" = unknown).
-bool deviceNeedsRawPad(int frontendDevice, const std::string& optionValue);
 
 // ---- content identity ------------------------------------------------------------------------------------
 

@@ -1,0 +1,30 @@
+#include <winver.h>
+1 ICON "@VJ_ICO@"
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @VJ_RC_VERSION_COMMA@
+ PRODUCTVERSION @VJ_RC_VERSION_COMMA@
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Virtual Jaguar contributors"
+            VALUE "FileDescription", "Virtual Jaguar - Atari Jaguar emulator"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "InternalName", "virtualjaguar"
+            VALUE "LegalCopyright", "GPL-3.0-or-later"
+            VALUE "OriginalFilename", "virtualjaguar.exe"
+            VALUE "ProductName", "Virtual Jaguar"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

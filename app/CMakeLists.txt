@@ -15,8 +15,20 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# The app ships inside the core's releases, so it carries the core's version:
+# CORE_BASE_VERSION in the top-level Makefile (e.g. "v3.8.1").  One source of
+# truth means the packaging tag check, the About box, package metadata and the
+# HTTP / RetroAchievements User-Agent can never drift from the core.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../Makefile" _vj_core_ver_line
+     REGEX "^CORE_BASE_VERSION[ \t]*:=")
+string(REGEX REPLACE "^CORE_BASE_VERSION[ \t]*:=[ \t]*v?([0-9]+\\.[0-9]+\\.[0-9]+).*$" "\\1"
+       VJ_CORE_VERSION "${_vj_core_ver_line}")
+if(NOT VJ_CORE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "could not read CORE_BASE_VERSION from ../Makefile (got '${_vj_core_ver_line}')")
+endif()
+
 project(VirtualJaguar LANGUAGES C CXX
-        VERSION 4.0.0
+        VERSION ${VJ_CORE_VERSION}
         DESCRIPTION "Virtual Jaguar - Atari Jaguar emulator")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -24,6 +36,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD_REQUIRED OFF)   # the core is built with the toolchain default
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Packaging (#839): install layout, Windows resources/subsystem, Linux desktop files.
+# Deferred to the end of this file, so it sees every target and every feature's install().
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/VJPackage.cmake")
 
 option(VJ_APP_SYSTEM_SDL3 "Use an installed SDL3 (find_package) instead of fetching one" OFF)
 option(VJ_APP_BUILD_TESTS "Build the headless smoke tests (CTest)" ON)
@@ -126,6 +142,7 @@ include(VJCore)
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/http.cpp)
+target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
 target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
 set(VJ_HTTP_BACKEND "none")
@@ -213,6 +230,11 @@ set(VJ_APP_SOURCES
     src/input.cpp
     src/remap.cpp
     src/remap_ui.cpp
+    src/devices.cpp
+    src/router.cpp
+    src/cheatsheet.cpp
+    src/cheatsheet_ui.cpp
+    src/devices_ui.cpp
     src/ui.cpp
     src/library_ui.cpp
     src/cheats.cpp
@@ -220,7 +242,10 @@ set(VJ_APP_SOURCES
     src/cheats_ui.cpp
     src/achievements.cpp
     src/achievements_ui.cpp
-    src/ach_http.cpp)
+    src/ach_http.cpp
+    src/netplay.cpp
+    src/netplay_addr.cpp
+    src/netplay_ui.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
@@ -235,6 +260,9 @@ vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
+if(WIN32)
+    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
+endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}")
 if(MSVC)
@@ -271,4 +299,5 @@ if(VJ_APP_BUILD_TESTS)
     include(VJSmokeTests)
     include(VJAchTests)
     include(VJCheatTests)
+    include(VJNetplayTests)
 endif()
