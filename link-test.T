@@ -19,6 +19,8 @@
       jaguar*;
       Halfline*;
       jaguarMainRAM;
+      m68kClockScalePct;
+      riscClockScalePct;
       jaguarMainROM;
       jagMemSpace;
       busArbiter;

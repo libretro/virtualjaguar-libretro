@@ -657,6 +657,9 @@ static void validate_options(const harness_config *cfg)
                 cfg->options[i].key, cfg->options[i].value);
 }
 
+static bool (*env_hook)(unsigned cmd, void *data) = NULL;
+void harness_set_env_hook(bool (*hook)(unsigned cmd, void *data)) { env_hook = hook; }
+
 static bool cb_environment(unsigned cmd, void *data)
 {
     reg_record(cmd, data);
@@ -816,7 +819,9 @@ static bool cb_environment(unsigned cmd, void *data)
         return false;
     }
     default:
-        return false;
+        /* Opt-in: a test that plays a frontend with private commands (the
+         * core's vj_frontend_ext.h channel).  Unset = false, as always. */
+        return env_hook ? env_hook(cmd, data) : false;
     }
 }
 

@@ -494,6 +494,11 @@ const char *harness_options_first_desc(const char *key);
  * test can sweep every option instead of a list that drifts. */
 const char *harness_options_def_key(unsigned i);
 
+/* Route every environment command the harness does not itself handle to
+ * `hook` (NULL = answer false, the default).  For tests that play a frontend
+ * with private commands, e.g. the core's vj_frontend_ext.h event channel. */
+void        harness_set_env_hook(bool (*hook)(unsigned cmd, void *data));
+
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);
 
