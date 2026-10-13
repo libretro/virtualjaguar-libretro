@@ -6,6 +6,7 @@
 
 #include "core_host.h"
 #include "imgui.h"
+#include "shaders.h"
 
 namespace vj {
 
@@ -31,8 +32,17 @@ public:
     ImVec4 draw(ImDrawList* dl, ImVec2 areaPos, ImVec2 areaSize, float coreAspect,
                 const PresentOptions& opt, float pixelScale = 1.0f);
     bool hasFrame() const { return w_ > 0; }
+    unsigned texture() const { return tex_; }
     unsigned frameWidth() const { return w_; }
     unsigned frameHeight() const { return h_; }
+
+    // RetroArch .slangp presets (librashader, loaded at runtime).  When it is
+    // active, draw() renders the frame through it into the same rectangle the
+    // plain blit would use; otherwise (disabled, library missing, preset broken)
+    // the plain picture is drawn and the shader reports why via takeNotice().
+    ShaderChain shader;
+    // Fields per second of the running core (feeds the shaders' OriginalFPS).
+    void setSourceFps(float fps) { fps_ = fps; }
 
     // Small helper textures for save-state thumbnails (RGBA8, tight).
     static unsigned createTextureRGBA(const void* pixels, int w, int h);
@@ -43,6 +53,8 @@ private:
     unsigned w_ = 0, h_ = 0;
     uint64_t serial_ = 0;
     bool linear_ = false;
+    float fps_ = 0.0f;
+    uint64_t emuFrames_ = 0;   // distinct core frames seen (the shaders' FrameCount)
 };
 
 }  // namespace vj

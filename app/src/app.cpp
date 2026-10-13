@@ -66,6 +66,7 @@ void App::loadConfig() {
     present.stretch = cfg.getBool("video.stretch", false);
     present.aspectOverride = cfg.getFloat("video.aspect", 0.0f);
     vsync = cfg.getBool("video.vsync", true);
+    video.shader.loadSettings(cfg, paths.root);
     volume = cfg.getFloat("audio.volume", 1.0f);
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
@@ -87,6 +88,7 @@ void App::saveConfig() {
     cfg.setBool("video.stretch", present.stretch);
     cfg.setFloat("video.aspect", present.aspectOverride);
     cfg.setBool("video.vsync", vsync);
+    video.shader.saveSettings(cfg);
     cfg.setFloat("audio.volume", volume);
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
@@ -673,6 +675,7 @@ int App::runInteractive(const CliArgs& a) {
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         stepEmulation();
+        video.setSourceFps((float)host.fps());
         video.upload(host.frame());
 
         ImGui_ImplOpenGL3_NewFrame();
