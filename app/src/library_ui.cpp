@@ -26,11 +26,10 @@ uint32_t fnv(const std::string& s) {
     return h;
 }
 
-enum Filter { kAll, kCarts, kDiscs, kUnverified };
+enum Filter { kAll, kUnverified };
 
-bool passes(const lib::Entry& e, int filter, const std::string& needle) {
-    if (filter == kCarts && e.file.kind != lib::Kind::Cart) return false;
-    if (filter == kDiscs && e.file.kind != lib::Kind::Disc) return false;
+bool passes(const lib::Entry& e, int section, int filter, const std::string& needle) {
+    if ((int)e.section != section) return false;
     if (filter == kUnverified && e.match == lib::Match::Crc) return false;
     if (needle.empty()) return true;
     return lower(e.title).find(needle) != std::string::npos || lower(e.file.path).find(needle) != std::string::npos;
@@ -46,11 +45,11 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
     }
     ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 10.0f, 22.0f));
     ImGui::InputTextWithHint("##search", "Search", search, 128);
-    static const char* filters[] = {"All", "Cartridges", "CD images", "Not verified"};
+    static const char* filters[] = {"All", "Not verified"};
     float fw = ui::em(9.5f);
     flow.next(fw);
     ImGui::SetNextItemWidth(fw);
-    ImGui::Combo("##filter", &filter, filters, 4);
+    ImGui::Combo("##filter", &filter, filters, 2);
     float sw = ui::em(8.0f);
     flow.next(sw);
     ImGui::SetNextItemWidth(sw);
@@ -81,6 +80,31 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
             svc.saveSettings();
         }
     }
+}
+
+// Cartridges / Jaguar CD / BIOS & system.  The tabs carry no content of their own: the selected one
+// (remembered across runs) decides what the grid below lists.  `last` is this tab bar's own idea of
+// the section, so the home screen and the window stay in step when the other one changes it.
+void drawSections(LibraryService& svc, const char* id, int& last) {
+    size_t n[3] = {0, 0, 0};
+    for (const lib::Entry& e : svc.entries()) n[(int)e.section]++;
+    static const char* names[3] = {"Cartridges", "Jaguar CD", "BIOS & system"};
+    static const char* ids[3] = {"###sec0", "###sec1", "###sec2"};
+    if (!ImGui::BeginTabBar(id, ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) return;
+    for (int i = 0; i < 3; i++) {
+        char label[64];
+        std::snprintf(label, sizeof label, "%s (%zu)%s", names[i], n[i], ids[i]);
+        ImGuiTabItemFlags fl = (last != svc.section && svc.section == i) ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem(label, nullptr, fl)) {
+            if (svc.section != i && last == svc.section) {   // the user clicked this tab
+                svc.section = i;
+                svc.saveSettings();
+            }
+            ImGui::EndTabItem();
+        }
+    }
+    ImGui::EndTabBar();
+    last = svc.section;
 }
 
 void drawFolders(LibraryService& svc) {
@@ -114,6 +138,62 @@ void drawStatus(LibraryService& svc) {
     if (!svc.haveCartDat() && !svc.haveDiscDat()) {
         ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
                            "No game database found: titles come from file names. Use Update database to download it.");
+    }
+}
+
+// A BIOS or system file: shows what it is and whether the core will read it where it is.  It is not
+// content, so a click does nothing.
+void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::PushID(e.file.path.c_str());
+    ImGui::InvisibleButton("##cell", ImVec2(cellW, artH + textH));
+    bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+    const lib::BiosInfo& b = e.bios;
+    const bool found = lib::coreWillFindBios(b, e.file.path, svc.systemDir);
+    const bool readable = b.role == lib::BiosRole::CartBoot || b.role == lib::BiosRole::CdBios;
+
+    ImVec2 a0 = p0, a1(p0.x + cellW, p0.y + artH);
+    dl->AddRectFilled(a0, a1, hovered ? IM_COL32(52, 56, 66, 255) : IM_COL32(32, 34, 42, 255), 4.0f);
+    ImColor c = ImColor::HSV(b.role == lib::BiosRole::CdBios ? 0.58f : b.role == lib::BiosRole::CartBoot ? 0.08f : 0.33f,
+                             0.30f, 0.42f);
+    dl->AddRectFilled(ImVec2(a0.x + 6, a0.y + 6), ImVec2(a1.x - 6, a1.y - 6), c, 4.0f);
+    const char* label = lib::biosRoleLabel(b.role);
+    float fs = ImGui::GetFontSize() * 1.2f;
+    ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, cellW - 20.0f, cellW - 20.0f, label);
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(p0.x + (cellW - ts.x) * 0.5f, p0.y + (artH - ts.y) * 0.5f),
+                IM_COL32(255, 255, 255, 215), label, nullptr, cellW - 20.0f);
+    if (hovered) dl->AddRect(a0, a1, IM_COL32(120, 170, 255, 255), 4.0f, 0, 2.0f);
+
+    float lh = ImGui::GetFontSize() + 2.0f;
+    ImVec4 clip(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3), IM_COL32(230, 230, 230, 255),
+                e.title.c_str(), nullptr, cellW - 4, &clip);
+    const char* st = found ? "In the system folder" : readable ? "Not in the system folder" : "Not read by the core";
+    ImU32 sc = found ? IM_COL32(120, 210, 130, 255) : readable ? IM_COL32(230, 180, 90, 255) : IM_COL32(150, 150, 150, 255);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + textH - lh), sc, st, nullptr,
+                cellW - 4, &clip);
+
+    if (hovered) {
+        ui::beginWrappedTooltip();
+        ImGui::TextWrapped("%s", e.title.c_str());
+        ImGui::TextDisabled("%s%s", lib::biosRoleLabel(b.role), b.recognized ? "" : " (checksum not in the core's list)");
+        ImGui::Separator();
+        ImGui::TextDisabled("%s", e.file.path.c_str());
+        if (e.file.crcWhole) ImGui::TextDisabled("CRC32 %08X", e.file.crcWhole);
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s.", b.use.c_str());
+        if (found) {
+            ImGui::TextWrapped("It is in the system folder, where the core looks for it.");
+        } else if (readable) {
+            ImGui::TextWrapped("It is not where the core looks (the system folder %s, or its Atari - Jaguar / jaguar "
+                               "sub-folders), so the core will not read it from here. The core carries built-in copies "
+                               "of the Series K and Model M boot ROMs and both CD BIOS images, so nothing is missing "
+                               "without it.",
+                               svc.systemDir.c_str());
+        }
+        ui::endWrappedTooltip();
     }
 }
 
@@ -195,16 +275,28 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
     const std::vector<lib::Entry>& all = svc.entries();
     std::vector<const lib::Entry*> shown;
     shown.reserve(all.size());
-    for (const lib::Entry& e : all)
-        if (passes(e, filter, needle)) shown.push_back(&e);
+    size_t inSection = 0;
+    for (const lib::Entry& e : all) {
+        if ((int)e.section == svc.section) inSection++;
+        if (passes(e, svc.section, filter, needle)) shown.push_back(&e);
+    }
 
-    if (all.empty()) {
-        if (svc.folders().empty())
+    if (inSection == 0) {
+        if (svc.scanning()) return;
+        if (svc.section == (int)lib::Section::Bios)
+            ImGui::TextWrapped("No BIOS or system files found in your folders or in the core's system folder (%s). "
+                               "None are needed: the core has the Series K and Model M boot ROMs and both CD BIOS images "
+                               "built in. Put real ones in the system folder to use them.",
+                               svc.systemDir.c_str());
+        else if (svc.folders().empty())
             ImGui::TextWrapped("Add a folder of Jaguar cartridge and CD images (Add folder...) and they appear here "
                                "with their names and box art. Dropping a file on the window and File > Open "
                                "keep working without a library.");
-        else if (!svc.scanning())
+        else if (all.empty())
             ImGui::TextWrapped("No Jaguar images were found in the chosen folders.");
+        else
+            ImGui::TextWrapped(svc.section == (int)lib::Section::Cart ? "No cartridge images in the chosen folders."
+                                                                       : "No CD images (.cue, .chd, .cdi) in the chosen folders.");
         return;
     }
     if (shown.empty()) {
@@ -229,7 +321,8 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
                 size_t i = (size_t)r * (size_t)cols + (size_t)c;
                 if (i >= shown.size()) break;
                 if (c > 0) ImGui::SameLine();
-                drawCell(app, svc, *shown[i], cellW, artH, textH);
+                if (shown[i]->section == lib::Section::Bios) drawBiosCell(svc, *shown[i], cellW, artH, textH);
+                else drawCell(app, svc, *shown[i], cellW, artH, textH);
             }
         }
     }
@@ -239,6 +332,7 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
 // Search and filter are shared by the home screen and the window: one library, one view.
 char g_search[128] = "";
 int g_filter = kAll;
+int g_homeSec = -1, g_winSec = -1;   // each tab bar's last-seen section (see drawSections)
 
 // The first-run home screen: no folders yet.  A friendly block in the middle, wrapped to the window.
 void drawEmptyHome(App& app, LibraryService& svc) {
@@ -302,6 +396,7 @@ void drawLibraryHome(App& app, float x, float y, float w, float h) {
             drawEmptyHome(app, svc);
         } else {
             drawToolbar(app, svc, g_search, g_filter, true);
+            drawSections(svc, "##homesec", g_homeSec);
             drawFolders(svc);
             drawStatus(svc);
             ImGui::Separator();
@@ -328,6 +423,7 @@ void drawLibrary(App& app) {
         return;
     }
     drawToolbar(app, svc, g_search, g_filter, false);
+    drawSections(svc, "##winsec", g_winSec);
     drawFolders(svc);
     drawStatus(svc);
     ImGui::Separator();

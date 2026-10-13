@@ -80,9 +80,36 @@ struct ScanFile {
     bool hashed = false;
 };
 
+// Which part of the library a file belongs to.
+enum class Section { Cart = 0, Disc = 1, Bios = 2 };
+
+// ---- BIOS and system files -------------------------------------------------------------------
+// The core embeds the Series K and Model M boot ROMs and the retail and developer CD BIOS, so
+// none of these is needed; a file is read only in the cases the notes below spell out (all from
+// libretro.c: load_external_cd_bios, load_external_cart_boot_rom, stage_cart_boot_rom).
+enum class BiosRole { None, CartBoot, CdBios, MemoryTrack, Other };
+
+struct BiosInfo {
+    BiosRole role = BiosRole::None;
+    bool recognized = false;   // the checksum is one of the core's known images
+    std::string title;         // "Series K boot ROM", or the file's own name
+    std::string use;           // one line: when the core uses an image like this
+};
+
+// Classify a cartridge-type file as BIOS / system data, by CRC32 of the whole file first and
+// then by file name (a "[BIOS]" prefix, the names the core searches for, "bios" or "memory
+// track" in the name).  Names only count for small files (<= 512 KiB): no BIOS is larger.
+BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole);
+const char* biosRoleLabel(BiosRole r);   // "Cart boot ROM", "CD BIOS", ...
+// Would the core find this file in `systemDir`?  (right file name, in the system folder or one
+// of the sub-folders it searches)  Memory Track images and "other" files are never read.
+bool coreWillFindBios(const BiosInfo& b, const std::string& path, const std::string& systemDir);
+
 // A scanned file plus what the dats say about it.
 struct Entry {
     ScanFile file;
+    Section section = Section::Cart;
+    BiosInfo bios;         // when section == Bios
     std::string title;     // dat game name, or the cleaned file stem
     std::string datName;   // dat game name when matched (also the thumbnail key), else ""
     std::string region;
@@ -91,6 +118,9 @@ struct Entry {
 
 struct ScanOptions {
     std::vector<std::string> folders;
+    // The core's system folder: only BIOS / system files found there are kept (anything else is
+    // not part of the library), so the BIOS section shows what the core can actually read.
+    std::string systemFolder;
     int maxDepth = 8;
 };
 

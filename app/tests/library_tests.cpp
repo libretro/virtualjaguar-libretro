@@ -214,6 +214,112 @@ static void testThumbnailNames() {
     CHECK(std::strcmp(lib::kThumbTypes[0], "Named_Boxarts") == 0);   // boxart is tried first
 }
 
+static void testBiosClassification() {
+    // ---- by checksum: the images the core itself knows (biosdb.c, CD_BIOS_CRC_*, Memory Track) ----
+    struct { uint32_t crc; lib::BiosRole role; const char* title; } known[] = {
+        {0xFB731AAAu, lib::BiosRole::CartBoot, "Series K boot ROM"},
+        {0xAE25BDF5u, lib::BiosRole::CartBoot, "Model M boot ROM"},
+        {0xE60277BBu, lib::BiosRole::CartBoot, "Stubulator '93 dev boot ROM"},
+        {0x8D15DBC6u, lib::BiosRole::CartBoot, "Stubulator '94 dev boot ROM"},
+        {0x687068D5u, lib::BiosRole::CdBios, "Jaguar CD BIOS (retail)"},
+        {0x55A0669Cu, lib::BiosRole::CdBios, "Jaguar CD BIOS (developer)"},
+        {0xFDF37F47u, lib::BiosRole::MemoryTrack, "Memory Track cartridge"},
+    };
+    for (const auto& k : known) {
+        // the file name must not matter: a recognized image is recognized under any name, at any size
+        lib::BiosInfo b = lib::classifyBios("/x/anything_at_all.j64", 131072, k.crc);
+        CHECK(b.role == k.role && b.recognized && b.title == k.title && !b.use.empty());
+    }
+    CHECK(lib::classifyBios("/x/renamed.j64", 1 << 20, 0xFB731AAAu).recognized);   // size cap is for names only
+
+    // ---- by name: unknown checksum, BIOS-ish name ----
+    CHECK(lib::classifyBios("/s/jagboot.rom", 131072, 0x12345678).role == lib::BiosRole::CartBoot);
+    CHECK(lib::classifyBios("/s/jagboot_m.rom", 131072, 0x12345678).role == lib::BiosRole::CartBoot);
+    CHECK(lib::classifyBios("/s/boot0.rom", 131072, 1).role == lib::BiosRole::CartBoot);
+    CHECK(lib::classifyBios("/s/jagcd_bios.bin", 262144, 1).role == lib::BiosRole::CdBios);
+    CHECK(lib::classifyBios("/s/Jaguar CD BIOS.rom", 262144, 1).role == lib::BiosRole::CdBios);
+    lib::BiosInfo tagged = lib::classifyBios("/s/[BIOS] Atari Jaguar CD (World).j64", 262144, 1);
+    CHECK(tagged.role == lib::BiosRole::CdBios && !tagged.recognized && tagged.title == "Atari Jaguar CD (World)");
+    CHECK(lib::classifyBios("/s/[BIOS] Atari Jaguar Stubulator '94 (World).j64", 131072, 1).role == lib::BiosRole::CartBoot);
+    CHECK(lib::classifyBios("/s/[BIOS] Atari Jaguar (World).j64", 131072, 1).role == lib::BiosRole::CartBoot);
+    CHECK(lib::classifyBios("/s/My Jaguar Boot BIOS v2.bin", 131072, 1).role == lib::BiosRole::CartBoot);   // unknown but BIOS-named
+    CHECK(lib::classifyBios("/s/something bios.bin", 100000, 1).role == lib::BiosRole::Other);
+    CHECK(lib::classifyBios("/s/Memory Track (World).j64", 131072, 1).role == lib::BiosRole::MemoryTrack);
+    CHECK(lib::classifyBios("/s/memtrack.bin", 131072, 1).role == lib::BiosRole::MemoryTrack);
+    // games are not BIOS, whatever the extension; and a BIOS-looking name on a game-sized file is a game
+    CHECK(lib::classifyBios("/g/Iron Soldier (World).j64", 2 << 20, 0x99999999).role == lib::BiosRole::None);
+    CHECK(lib::classifyBios("/g/Bios Fear.j64", 2 << 20, 0x99999999).role == lib::BiosRole::None);
+    CHECK(lib::classifyBios("/g/boot.rom", 4 << 20, 0x99999999).role == lib::BiosRole::None);
+    CHECK(lib::classifyBios("/g/Tempest 2000 (World).j64", 2 << 20, 1).role == lib::BiosRole::None);
+    CHECK(lib::classifyBios("/g/Rebooted.j64", 100000, 1).role == lib::BiosRole::None);
+
+    // ---- will the core read it from where it is? ----
+    lib::BiosInfo cart = lib::classifyBios("/sys/jagboot.rom", 131072, 1);
+    CHECK(lib::coreWillFindBios(cart, "/sys/jagboot.rom", "/sys/"));
+    CHECK(lib::coreWillFindBios(cart, "/sys/jaguar/jagboot.rom", "/sys"));
+    CHECK(lib::coreWillFindBios(cart, "C:\\sys\\Atari - Jaguar\\jagboot.rom", "C:\\sys\\"));
+    CHECK(!lib::coreWillFindBios(cart, "/sys/jaguarcd/jagboot.rom", "/sys"));        // not a cart-boot sub-folder
+    CHECK(!lib::coreWillFindBios(cart, "/downloads/jagboot.rom", "/sys"));           // wrong folder
+    CHECK(!lib::coreWillFindBios(cart, "/sys/deep/er/jagboot.rom", "/sys"));         // the core does not recurse
+    CHECK(!lib::coreWillFindBios(cart, "/sys/jagboot.rom", ""));
+    lib::BiosInfo cdb = lib::classifyBios("/sys/jaguarcd/jagcd.bin", 262144, 0x687068D5u);
+    CHECK(lib::coreWillFindBios(cdb, "/sys/jaguarcd/jagcd.bin", "/sys"));
+    CHECK(lib::coreWillFindBios(cdb, "/sys/Atari - Jaguar CD/jagcd.bin", "/sys"));
+    CHECK(!lib::coreWillFindBios(cdb, "/sys/jagcd2.bin", "/sys"));                   // the core never opens that name
+    lib::BiosInfo mt = lib::classifyBios("/sys/memtrack.bin", 131072, 1);
+    CHECK(!lib::coreWillFindBios(mt, "/sys/memtrack.bin", "/sys"));
+
+    // ---- scanning and identify: sections ----
+    const size_t K = 1024;
+    std::string dir = g_tmp + "bios/lib/", sys = g_tmp + "bios/system/";
+    std::vector<unsigned char> mt1 = noise(1024 * 1024, 11);
+    writeBytes(dir + "Game One (World).j64", mt1);
+    writeBytes(dir + "bioses/jagboot.rom", noise(128 * K, 12));
+    writeBytes(dir + "bioses/[BIOS] Atari Jaguar CD (World).j64", noise(256 * K, 13));
+    writeBytes(dir + "bioses/Memory Track.j64", noise(128 * K, 14));
+    std::vector<unsigned char> weird = noise(128 * K, 15);
+    writeBytes(dir + "bioses/blob.bin", weird);                         // only the dat says what this is
+    writeBytes(dir + "Disc (USA) (Track 2).bin", noise(2352 * 30, 16)); // a loose Redump track, no cue sheet
+    writeBytes(dir + "Disc (USA) (Track 02).BIN", noise(2352 * 30, 17));
+    writeText(dir + "Real Disc (USA).cue", "FILE \"Real Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    writeBytes(dir + "Real Disc (USA) (Track 1).bin", noise(2352 * 30, 18));
+    // the core's system folder: BIOS files count, everything else there is not library content
+    writeBytes(sys + "jagcd.bin", noise(256 * K, 19));
+    writeBytes(sys + "jaguar/jagboot.rom", noise(128 * K, 20));
+    writeBytes(sys + "stray game.j64", noise(1048576, 21));
+    writeBytes(sys + "big.rom", noise(1048576, 22));
+    writeText(sys + "notes.txt", "x");
+
+    lib::ScanOptions opt;
+    opt.folders = {dir};
+    opt.systemFolder = sys;
+    std::vector<lib::ScanFile> files = lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr);
+    lib::Dat carts;
+    CHECK(carts.parse(datText("1", datGame("[BIOS] Atari Jaguar Weird Boot (World)", "weird.bin", crcOf(weird)) +
+                                       datGame("Game One (World)", "g.j64", crcOf(mt1)))));
+    std::map<std::string, lib::Entry> by;
+    for (const lib::ScanFile& f : files) by[fs::path(f.path).filename().string()] = lib::identify(f, &carts, nullptr);
+    CHECK(by.count("Game One (World).j64") && by["Game One (World).j64"].section == lib::Section::Cart);
+    CHECK(by["Game One (World).j64"].title == "Game One (World)");
+    CHECK(by.count("Real Disc (USA).cue") && by["Real Disc (USA).cue"].section == lib::Section::Disc);
+    CHECK(by["jagboot.rom"].section == lib::Section::Bios && by["jagboot.rom"].bios.role == lib::BiosRole::CartBoot);
+    CHECK(by["[BIOS] Atari Jaguar CD (World).j64"].section == lib::Section::Bios);
+    CHECK(by["[BIOS] Atari Jaguar CD (World).j64"].bios.role == lib::BiosRole::CdBios);
+    CHECK(by["Memory Track.j64"].section == lib::Section::Bios && by["Memory Track.j64"].bios.role == lib::BiosRole::MemoryTrack);
+    CHECK(by["jagcd.bin"].section == lib::Section::Bios && by["jagcd.bin"].bios.role == lib::BiosRole::CdBios);
+    // the dat tags it "[BIOS]": it leaves the game grid even though its file name says nothing
+    CHECK(by["blob.bin"].section == lib::Section::Bios && by["blob.bin"].bios.role == lib::BiosRole::CartBoot);
+    CHECK(by["blob.bin"].title == "Atari Jaguar Weird Boot (World)");
+    // disc tracks and non-BIOS files from the system folder never show
+    CHECK(!by.count("Real Disc (USA) (Track 1).bin"));
+    CHECK(!by.count("Disc (USA) (Track 2).bin") && !by.count("Disc (USA) (Track 02).BIN"));
+    CHECK(!by.count("stray game.j64") && !by.count("big.rom") && !by.count("notes.txt"));
+    int bios = 0, games = 0;
+    for (const auto& kv : by) (kv.second.section == lib::Section::Bios ? bios : games)++;
+    CHECK(bios == 5);   // jagboot.rom (two copies share a key), CD BIOS, Memory Track, jagcd.bin, blob.bin
+    CHECK(games == 2);
+}
+
 static void testScanAndIdentify() {
     const size_t MiB = 1048576;
     std::string dir = g_tmp + "scan/";
@@ -700,6 +806,7 @@ int main(int argc, char** argv) {
     testHeaderDetection();
     testThumbnailNames();
     testScanAndIdentify();
+    testBiosClassification();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();
