@@ -78,7 +78,7 @@ struct ShaderChain::Impl {
         // librashader messages can be long and multi-line; the OSD wants one line.
         for (char& c : s)
             if (c == '\n' || c == '\r') c = ' ';
-        if (s.size() > 240) s.resize(240);
+        if (s.size() > 2000) s.resize(2000);
         return s;
     }
 
@@ -439,7 +439,8 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
         failed_ = true;
         lastErr_ = why;
         I.freeChain();
-        setNotice("Shader " + pathStem(preset) + " failed (" + why + "); showing the plain picture");
+        std::string brief = why.size() > 160 ? why.substr(0, 160) + "..." : why;   // full text stays in lastError()
+        setNotice("Shader " + pathStem(preset) + " failed (" + brief + "); showing the plain picture");
         return 0u;
     };
 
