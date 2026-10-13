@@ -192,6 +192,11 @@ set(VJ_APP_SOURCES
     src/input.cpp
     src/remap.cpp
     src/remap_ui.cpp
+    src/devices.cpp
+    src/router.cpp
+    src/cheatsheet.cpp
+    src/cheatsheet_ui.cpp
+    src/devices_ui.cpp
     src/ui.cpp
     src/library_ui.cpp
     src/cheats.cpp

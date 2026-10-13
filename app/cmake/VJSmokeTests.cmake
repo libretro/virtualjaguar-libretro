@@ -17,6 +17,16 @@
 #                   serialisation, profile / per-game override precedence, the
 #                   config round trip, keypad -> core-input translation, the
 #                   keypad overlay, bind capture, content identity.  No core.
+#   devices_unit    the non-pad devices without a core (test/devices_test.cpp): kinds and
+#                   libretro ids, per-port / per-game persistence, Team Tap player
+#                   assignment, light-gun geometry, mouse-capture policy, the Router's
+#                   host-input -> core-input translation, the Pro Controller keyboard layout,
+#                   the controls cheat sheet and its auto-show rule.
+#   devices_e2e     the same Router driving the REAL core (test/devices_e2e.cpp): mouse and
+#                   rotary quadrature state, analog / driving / 6D values decoded off
+#                   $F14000 as a game does, the paddle ADC at $F17C00, the light gun's aim
+#                   point, Team Tap socket slots, locked core options.  Each group has a
+#                   negative control (no host input -> the rest value).
 #   input_e2e       the same translation driving the REAL core (test/input_e2e.cpp):
 #                   every Jaguar control on both ports, incl. keypad 7-9 * #,
 #                   must set exactly its joypad-matrix slot.
@@ -96,7 +106,17 @@ add_executable(vj_input_e2e test/input_e2e.cpp src/remap.cpp src/config.cpp src/
 target_include_directories(vj_input_e2e PRIVATE src)
 target_link_libraries(vj_input_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 
-foreach(_t vj_remap_test vj_input_e2e)
+# The device layer (devices.h / router.h / cheatsheet.h): no core, then the real core.
+set(VJ_DEVICE_SOURCES src/devices.cpp src/router.cpp src/remap.cpp src/config.cpp src/paths.cpp)
+add_executable(vj_devices_test test/devices_test.cpp src/cheatsheet.cpp ${VJ_DEVICE_SOURCES})
+target_include_directories(vj_devices_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(vj_devices_test PRIVATE ${VJ_SDL3_TARGET})
+
+add_executable(vj_devices_e2e test/devices_e2e.cpp src/core_host.cpp ${VJ_DEVICE_SOURCES})
+target_include_directories(vj_devices_e2e PRIVATE src)
+target_link_libraries(vj_devices_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
+
+foreach(_t vj_remap_test vj_input_e2e vj_devices_test vj_devices_e2e)
     if(MSVC)
         target_compile_options(${_t} PRIVATE /W3 /utf-8)
         target_compile_definitions(${_t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -107,6 +127,8 @@ endforeach()
 
 add_test(NAME remap_unit COMMAND vj_remap_test)
 add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")
-set_tests_properties(remap_unit input_e2e PROPERTIES
+add_test(NAME devices_unit COMMAND vj_devices_test)
+add_test(NAME devices_e2e COMMAND vj_devices_e2e "${VJ_ROMS}/yarc.j64")
+set_tests_properties(remap_unit input_e2e devices_unit devices_e2e PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "FAIL ")

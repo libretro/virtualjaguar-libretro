@@ -128,6 +128,12 @@ public:
     const std::vector<OptionCategory>& optionCategories() const { return categories_; }
     const std::vector<OptionDef>& optionDefs() const { return defs_; }
     bool optionVisible(const std::string& key) const;
+    // Options the app owns (its Controls tab already does what they do): when this rule says a
+    // key is locked, its value is forced -- over saved and --option values alike -- and the
+    // option is hidden from the options UI.  An empty `value` means "the option's default".
+    // Set before the first load; evaluated when the core pushes its definitions.
+    std::function<bool(const std::string& key, std::string& value)> optionLock;
+    bool optionLocked(const std::string& key) const { return locked_.count(key) != 0; }
     std::string optionValue(const OptionDef& d) const;  // user value if valid, else default
     // Set by the UI.  Marks the variable-update flag and runs the core's
     // update-display callback (as RetroArch does after a menu change).
@@ -211,6 +217,7 @@ private:
     std::vector<OptionCategory> categories_;
     std::vector<OptionDef> defs_;
     unsigned optionPushes_ = 0;
+    std::map<std::string, std::string> locked_;         // optionLock results, by key
     std::map<std::string, std::string> userValues_;     // persisted overrides
     std::map<std::string, std::string> sessionValues_;  // non-persisted overrides
     std::map<std::string, bool> visibility_;

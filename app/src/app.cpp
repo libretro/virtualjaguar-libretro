@@ -1,4 +1,5 @@
 #include "app.h"
+#include "devices_ui.h"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -242,7 +243,8 @@ void App::wireHost() {
         if (!fastForward && !mute) audio.push(d, n);
     };
     host.inputPoll = [this]() { input.poll(!inputCaptured_); };
-    input.portRaw = [this](unsigned p) { return inputPortIsRaw(*this, p); };
+    input.notify = [this](const std::string& m) { toast(m, 3.0); };
+    host.optionLock = &lockedCoreOption;   // the app's own Controls / Devices tabs replace these core options
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
         return input.state(p, d, i, id);
     };
@@ -300,12 +302,9 @@ bool App::openContent(const std::string& pathIn) {
     paused = false;
     accum_ = 0;
     lastTick_ = now();
-    // Controller types chosen earlier in Settings.
-    for (unsigned p = 0; p < 2; p++) {
-        int dev = cfg.getInt("port." + std::to_string(p), -1);
-        if (dev >= 0) host.setControllerDevice(p, (unsigned)dev);
-    }
     input.setContent(contentIdentity(path));   // selects the per-game control overrides
+    applyPortDevices(*this);                   // the controller types chosen in Settings, per game or global
+    controlsOverlayOnLoad(*this);
     addRecent(path);
     invalidateThumbs();
     ach.onContentLoaded();   // identify the game, look up its achievements
@@ -333,6 +332,7 @@ bool App::openNoContent() {
     ach.onContentClosed();   // no game, so nothing to look up
     cheatsOnClose(*this);
     input.setContent("");
+    applyPortDevices(*this);
     toast("Booted with no cartridge");
     return true;
 }
@@ -697,6 +697,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
     else if (a.showWindow == "cheats") showCheats = true;
+    else if (a.showWindow == "controls") input.controls.show = true;
     unsigned uiFrames = 0;
 
     std::string firstErr;
@@ -717,6 +718,7 @@ int App::runInteractive(const CliArgs& a) {
         if (quit) break;
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
+        inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
         stepEmulation();
         video.setSourceFps((float)host.fps());

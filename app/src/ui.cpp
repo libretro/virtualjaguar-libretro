@@ -2,6 +2,7 @@
 // options menu generated from the options v2 definitions), the save-state
 // manager, the on-screen messages.
 #include "app.h"
+#include "devices_ui.h"
 
 #include "imgui.h"
 #include "shaders.h"
@@ -162,32 +163,16 @@ void drawAudioTab(App& app) {
 }
 
 void drawInputTab(App& app) {
-    drawControlsTab(app);
-    ImGui::Separator();
-    const auto& ports = app.host.controllerPorts();
-    if (!app.host.isLoaded() || ports.empty()) {
-        ImGui::TextDisabled("Controller types are offered once a game is loaded.");
-        return;
+    if (!ImGui::BeginTabBar("##inputtabs")) return;
+    if (ImGui::BeginTabItem("Devices & players")) {
+        drawDevicesPanel(app);
+        ImGui::EndTabItem();
     }
-    for (unsigned p = 0; p < 2 && p < ports.size(); p++) {
-        std::string key = "port." + std::to_string(p);
-        int cur = app.cfg.getInt(key, -1);
-        const char* shown = "Standard Joypad";
-        for (const ControllerType& t : ports[p])
-            if ((int)t.id == cur) shown = t.desc.c_str();
-        char label[32];
-        std::snprintf(label, sizeof label, "Jaguar port %u", p + 1);
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18.0f);
-        if (ImGui::BeginCombo(label, shown)) {
-            for (const ControllerType& t : ports[p]) {
-                if (ImGui::Selectable(t.desc.c_str(), (int)t.id == cur)) {
-                    app.cfg.setInt(key, (int)t.id);
-                    app.host.setControllerDevice(p, t.id);
-                }
-            }
-            ImGui::EndCombo();
-        }
+    if (ImGui::BeginTabItem("Key / button bindings")) {
+        drawControlsTab(app);
+        ImGui::EndTabItem();
     }
+    ImGui::EndTabBar();
 }
 
 void drawStorageTab(App& app) {
@@ -358,6 +343,10 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Shader", nullptr, &app.video.shader.enabled)) app.video.shader.retry();
         ImGui::MenuItem("Show frame rate", nullptr, &app.showFps);
         ImGui::MenuItem("Keypad overlay", "F2", &app.input.overlay.open);
+        if (ImGui::MenuItem("Controls overlay", "F3", app.input.controls.show)) {
+            app.input.controls.show = !app.input.controls.show;
+            app.input.controls.hideAt = 0;
+        }
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
@@ -423,8 +412,9 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImVec2 areaPos(vp->Pos.x, vp->Pos.y + menuH);
     ImVec2 areaSize(vp->Size.x, vp->Size.y - menuH);
     if (app.host.isLoaded() && app.video.hasFrame()) {
-        app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
-                       io.DisplayFramebufferScale.x);
+        ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
+                                    io.DisplayFramebufferScale.x);
+        app.input.setPicture(pic.x, pic.y, pic.z, pic.w);   // where the picture is, for the light gun
     } else if (!app.host.isLoaded()) {
         const char* l1 = "Virtual Jaguar";
         const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open or File > Game library";
@@ -448,6 +438,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showAbout) drawAbout(app);
     drawLibrary(app);
     drawKeypadOverlay(app);
+    drawControlsOverlay(app, areaPos, areaSize);
     drawAchievementsUi(app);
     drawOsd(app, areaPos, areaSize);
 

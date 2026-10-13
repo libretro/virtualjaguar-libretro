@@ -70,6 +70,7 @@ void InputManager::setContent(const std::string& identity) {
 
 void InputManager::reresolve() {
     if (!store_) return;
+    if (cfg_) settings_ = DeviceSettings::load(*cfg_, content_);
     kbProfile_ = store_->resolve(DeviceClass::Keyboard, "", content_);
     for (Pad& p : pads_) p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_);
 }
@@ -89,6 +90,35 @@ bool InputManager::handleEvent(const SDL_Event& e) {
         if (r != BindCapture::Pending || e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
             e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION)
             return true;
+    }
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) controls.lastInputWasPad = true;
+    else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) controls.lastInputWasPad = false;
+    // ---- the pointer (devices.h): never consumed, the UI needs the same events ------------------
+    if (e.type == SDL_EVENT_MOUSE_MOTION) {
+        mouseX_ = e.motion.x;
+        mouseY_ = e.motion.y;
+        mouseInWindow_ = true;
+        if (relative_) {
+            accDx_ += e.motion.xrel;
+            accDy_ += e.motion.yrel;
+        }
+    } else if (e.type == SDL_EVENT_WINDOW_MOUSE_LEAVE) {
+        mouseInWindow_ = false;
+    } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT && userReleased_ &&
+               !uiWantsMouse_ && pic_.valid() && e.button.x >= pic_.x && e.button.x < pic_.x + pic_.w &&
+               e.button.y >= pic_.y && e.button.y < pic_.y + pic_.h) {
+        userReleased_ = false;   // a click on the picture takes the mouse back
+    } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && mousePortKind() != DevKind::Pad) {
+        if (e.key.scancode == SDL_SCANCODE_F10 && devWantsRelativeMouse(mousePortKind())) {
+            userReleased_ = relative_;   // F10 toggles: release while captured, take back otherwise
+            if (notify) notify(userReleased_ ? "Mouse released (F10 or click the picture to capture it again)"
+                                             : "Mouse captured (F10 releases it)");
+            return true;
+        }
+        if (e.key.scancode == SDL_SCANCODE_ESCAPE && relative_) {
+            userReleased_ = true;
+            if (notify) notify("Mouse released (F10 or click the picture to capture it again)");
+        }
     }
     if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
         SDL_Gamepad* g = SDL_OpenGamepad(e.gdevice.which);
@@ -133,9 +163,57 @@ std::vector<InputManager::PadInfo> InputManager::pads() const {
         pi.name = s ? s : "Gamepad";
         pi.guid = pads_[i].guid;
         pi.port = (unsigned)i;
+        for (size_t j = 0; j < i; j++)
+            if (pads_[j].guid == pads_[i].guid) pi.instance++;
+        for (unsigned sl = 0; sl < kSlots; sl++)
+            if (routes_.pad[sl] == (int)i) {
+                pi.slot = (int)sl;
+                break;
+            }
         v.push_back(pi);
     }
     return v;
+}
+
+std::array<SlotSource, kSlots> InputManager::slotConfig() const {
+    std::array<SlotSource, kSlots> a;
+    if (!cfg_) return a;
+    for (unsigned sl = 0; sl < kSlots; sl++) a[sl] = resolveSlot(*cfg_, sl, content_);
+    return a;
+}
+
+void InputManager::updateRoutes() {
+    std::vector<std::string> guids;
+    for (const Pad& p : pads_) guids.push_back(p.guid);
+    unsigned kbSlot = store_ ? (unsigned)store_->keyboardPort() : 0u;
+    routes_ = assignSlots(slotConfig(), activeSlots(kind_[0] == DevKind::TeamTap, kind_[1] == DevKind::TeamTap), guids, kbSlot);
+}
+
+void InputManager::setPortKinds(DevKind p1, DevKind p2) {
+    kind_[0] = p1;
+    kind_[1] = p2;
+}
+
+DevKind InputManager::mousePortKind() const {
+    int p = resolveMousePort({{kind_[0], kind_[1]}}, settings_.mousePort);
+    return p < 0 ? DevKind::Pad : kind_[p];
+}
+
+void InputManager::syncMouseCapture(SDL_Window* w, bool gameRunning, bool uiOpen, bool uiWantsMouse) {
+    uiWantsMouse_ = uiWantsMouse;
+    windowFocused_ = w && (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    CaptureInputs ci;
+    ci.deviceWantsMouse = devWantsRelativeMouse(mousePortKind());
+    ci.windowFocused = windowFocused_;
+    ci.gameRunning = gameRunning;
+    ci.uiOpen = uiOpen;
+    ci.userReleased = userReleased_;
+    bool want = wantRelativeMouse(ci);
+    if (want == relative_ || !w) return;
+    if (!SDL_SetWindowRelativeMouseMode(w, want)) return;
+    relative_ = want;
+    accDx_ = accDy_ = 0;
+    if (want && notify) notify("Mouse captured (F10 releases it)");
 }
 
 void InputManager::beginCapture(const LayerId& layer, Ctl ctl, bool add) {
@@ -166,114 +244,87 @@ void InputManager::bindCaptured(const Binding& b) {
     reresolve();
 }
 
-static inline uint16_t bit(unsigned id) { return (uint16_t)(1u << id); }
-
-void InputManager::refreshRawPorts() {
-    if (!portRaw) return;
-    if (++rawAge_ < 30) return;
-    rawAge_ = 0;
-    for (unsigned p = 0; p < 2; p++) rawPort_[p] = portRaw(p);
-}
-
 void InputManager::poll(bool captureKeyboard) {
     core_.beginFrame();
     overlay.tick();
-    refreshRawPorts();
     // While a binding is being captured nothing reaches the core: the press being bound
     // must not also act in the game (binding Start would pause it, for one).
     if (capture_.active()) return;
 
     // ---- keyboard ---------------------------------------------------------------------
-    DeviceSnapshot kb;
+    HostSource kb;
+    kb.isKeyboard = true;
+    kb.overlaySlot = 7;
+    kb.profile = &kbProfile_;
     if (captureKeyboard) {
         int n = 0;
         const bool* ks = SDL_GetKeyboardState(&n);
         SDL_Keymod mods = SDL_GetModState();
         // A held Ctrl/Alt/Cmd chord is an app shortcut, not Jaguar input.
         if (ks && !(mods & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) {
-            for (int sc = 0; sc < n && sc < (int)kb.key.size(); sc++) {
+            for (int sc = 0; sc < n && sc < (int)kb.snap.key.size(); sc++) {
                 if (!ks[sc]) continue;
-                kb.key[(size_t)sc] = true;
+                kb.snap.key[(size_t)sc] = true;
                 unsigned rk = retroKey((SDL_Scancode)sc);
                 if (rk) core_.addRawKey(rk);   // truthful, except the keys only the keypad synthesis may press
             }
         }
     }
     kbProfile_.stickAsDpad = false;
-    unsigned kbPort = store_ ? (unsigned)store_->keyboardPort() : 0u;
-    core_.addControls(kbPort, overlay.filter(7, evaluate(kbProfile_, kb)));
 
     // ---- gamepads ----------------------------------------------------------------------
+    std::vector<HostSource> padSrc(pads_.size());
     for (size_t i = 0; i < pads_.size(); i++) {
         Pad& p = pads_[i];
-        p.mask = 0;
         SDL_Gamepad* g = p.handle;
-        DeviceSnapshot snap;
-        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) snap.btn[(size_t)b] = SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
-        for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++) snap.axis[(size_t)a] = SDL_GetGamepadAxis(g, (SDL_GamepadAxis)a);
-        p.axis[0] = snap.axis[SDL_GAMEPAD_AXIS_LEFTX];
-        p.axis[1] = snap.axis[SDL_GAMEPAD_AXIS_LEFTY];
-        p.axis[2] = snap.axis[SDL_GAMEPAD_AXIS_RIGHTX];
-        p.axis[3] = snap.axis[SDL_GAMEPAD_AXIS_RIGHTY];
-
-        if (i < 2 && !rawPort_[i]) {
-            p.profile.stickAsDpad = stickAsDpad;
-            core_.addControls((unsigned)i, overlay.filter(i, evaluate(p.profile, snap)));
-            continue;
-        }
-
-        // Raw RetroPad (ports >= 2 are Team Tap sockets; 6D / analog / driving devices read
-        // X, L3, R3, the shoulders and triggers directly): the standard layout, unremapped.
-        auto btn = [&](SDL_GamepadButton b, unsigned id) {
-            if (snap.btn[(size_t)b]) p.mask |= bit(id);
-        };
-        btn(SDL_GAMEPAD_BUTTON_SOUTH, RETRO_DEVICE_ID_JOYPAD_B);
-        btn(SDL_GAMEPAD_BUTTON_EAST, RETRO_DEVICE_ID_JOYPAD_A);
-        btn(SDL_GAMEPAD_BUTTON_WEST, RETRO_DEVICE_ID_JOYPAD_Y);
-        btn(SDL_GAMEPAD_BUTTON_NORTH, RETRO_DEVICE_ID_JOYPAD_X);
-        btn(SDL_GAMEPAD_BUTTON_BACK, RETRO_DEVICE_ID_JOYPAD_SELECT);
-        btn(SDL_GAMEPAD_BUTTON_START, RETRO_DEVICE_ID_JOYPAD_START);
-        btn(SDL_GAMEPAD_BUTTON_DPAD_UP, RETRO_DEVICE_ID_JOYPAD_UP);
-        btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN);
-        btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT);
-        btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT);
-        btn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, RETRO_DEVICE_ID_JOYPAD_L);
-        btn(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, RETRO_DEVICE_ID_JOYPAD_R);
-        btn(SDL_GAMEPAD_BUTTON_LEFT_STICK, RETRO_DEVICE_ID_JOYPAD_L3);
-        btn(SDL_GAMEPAD_BUTTON_RIGHT_STICK, RETRO_DEVICE_ID_JOYPAD_R3);
-        if (snap.axis[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] > kTriggerThreshold) p.mask |= bit(RETRO_DEVICE_ID_JOYPAD_L2);
-        if (snap.axis[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] > kTriggerThreshold) p.mask |= bit(RETRO_DEVICE_ID_JOYPAD_R2);
-        if (stickAsDpad) {
-            if (p.axis[0] < -kStickThreshold) p.mask |= bit(RETRO_DEVICE_ID_JOYPAD_LEFT);
-            if (p.axis[0] > kStickThreshold) p.mask |= bit(RETRO_DEVICE_ID_JOYPAD_RIGHT);
-            if (p.axis[1] < -kStickThreshold) p.mask |= bit(RETRO_DEVICE_ID_JOYPAD_UP);
-            if (p.axis[1] > kStickThreshold) p.mask |= bit(RETRO_DEVICE_ID_JOYPAD_DOWN);
-        }
-        core_.addRawPad((unsigned)i, p.mask);
+        HostSource& hs = padSrc[i];
+        hs.overlaySlot = (unsigned)i < 8 ? (unsigned)i : 7u;
+        p.profile.stickAsDpad = stickAsDpad;
+        hs.profile = &p.profile;
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) hs.snap.btn[(size_t)b] = SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
+        for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++) hs.snap.axis[(size_t)a] = SDL_GetGamepadAxis(g, (SDL_GamepadAxis)a);
     }
+
+    // ---- who plays what ------------------------------------------------------------------
+    RouterConfig rc;
+    rc.kind = {{kind_[0], kind_[1]}};
+    rc.settings = settings_;
+    rc.pic = pic_;
+    rc.mousePort = resolveMousePort(rc.kind, settings_.mousePort);
+    updateRoutes();
+    rc.routes = routes_;
+
+    // ---- the pointer ---------------------------------------------------------------------
+    // Motion is handed to the first emulated frame of a UI frame only: stepEmulation() may run
+    // several frames per loop and the same delta must not be played twice.
+    PointerInput pi;
+    float mx = 0, my = 0;
+    SDL_MouseButtonFlags mb = SDL_GetMouseState(&mx, &my);
+    const bool ptrUsable = relative_ || (windowFocused_ && mouseInWindow_ && !uiWantsMouse_);
+    if (ptrUsable) {
+        if (mb & SDL_BUTTON_LMASK) pi.buttons |= 1u;
+        if (mb & SDL_BUTTON_RMASK) pi.buttons |= 2u;
+        if (mb & SDL_BUTTON_MMASK) pi.buttons |= 4u;
+    }
+    if (relative_) {
+        pi.dx = accDx_;
+        pi.dy = accDy_;
+        accDx_ = accDy_ = 0;
+    }
+    // The light gun aims with the absolute position, which a captured (relative) mouse does not have.
+    pi.havePos = !relative_ && windowFocused_ && mouseInWindow_ && !uiWantsMouse_;
+    pi.x = mx;
+    pi.y = my;
+
+    Router::Result r = router_.route(rc, padSrc, &kb, pi, &overlay, core_);
+    if (r.helpToggle) helpToggle_ = true;
 
     // Keys the overlay is holding down (a mouse click or a gamepad press in the overlay).
     core_.addControls(overlay.port > 1 ? 0u : overlay.port, overlay.held());
 }
 
 int16_t InputManager::state(unsigned port, unsigned device, unsigned index, unsigned id) const {
-    device &= RETRO_DEVICE_MASK;
-    switch (device) {
-    case RETRO_DEVICE_JOYPAD:
-    case RETRO_DEVICE_KEYBOARD:
-        return core_.state(port, device, index, id);
-    case RETRO_DEVICE_ANALOG: {
-        if (port >= pads_.size()) return 0;
-        const Pad& p = pads_[port];
-        if (index == RETRO_DEVICE_INDEX_ANALOG_LEFT)
-            return id == RETRO_DEVICE_ID_ANALOG_X ? p.axis[0] : id == RETRO_DEVICE_ID_ANALOG_Y ? p.axis[1] : 0;
-        if (index == RETRO_DEVICE_INDEX_ANALOG_RIGHT)
-            return id == RETRO_DEVICE_ID_ANALOG_X ? p.axis[2] : id == RETRO_DEVICE_ID_ANALOG_Y ? p.axis[3] : 0;
-        return 0;
-    }
-    default:
-        return 0;
-    }
+    return core_.state(port, device, index, id);
 }
 
 }  // namespace vj

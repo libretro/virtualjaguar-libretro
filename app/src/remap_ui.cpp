@@ -1,6 +1,7 @@
 // ImGui for the remapping layer: the Controls tab (profiles, per-game overrides,
 // "press a button to bind") and the Jaguar keypad overlay window.
 #include "app.h"
+#include "devices.h"
 #include "libretro.h"
 #include "imgui.h"
 
@@ -8,18 +9,6 @@
 #include <cstring>
 
 namespace vj {
-
-// Does Jaguar port `port` need the physical RetroPad rather than the profile?  (deviceNeedsRawPad)
-bool inputPortIsRaw(const App& app, unsigned port) {
-    int dev = app.cfg.getInt("port." + std::to_string(port), -1);   // Settings > Input > Jaguar port N
-    std::string opt;
-    if (app.host.isLoaded()) {
-        const char* key = port == 0 ? "virtualjaguar_p1_device" : "virtualjaguar_p2_device";
-        for (const OptionDef& d : app.host.optionDefs())
-            if (d.key == key) opt = app.host.optionValue(d);
-    }
-    return deviceNeedsRawPad(dev, opt);
-}
 
 namespace {
 
@@ -45,11 +34,19 @@ const char* sourceShort(Source s) {
     return "";
 }
 
-std::string optionIs(const App& app, const char* key) {
-    for (const OptionDef& d : app.host.optionDefs())
-        if (d.key == key) return app.host.optionValue(d);
-    return "";
-}
+struct Section {
+    const char* title;
+    Ctl first, last;
+};
+// The controls table is long; the sections say which device each group belongs to.
+const Section kSections[] = {
+    {"Standard pad", C_UP, C_PAUSE},
+    {"Keypad (the Pro Controller's X Y Z and shoulders are keypad 9 8 7 and 4 6)", C_K0, C_HASH},
+    {"Analog, driving, 6D and paddle controllers", C_D, C_AX_R1},
+    {"Pointer: mouse, rotary and light gun (motion is also taken from the mouse itself)", C_PT_L, C_GUN_RELOAD},
+    {"App", C_OVERLAY, C_OVERLAY},
+    {"App", C_HELP, C_HELP},
+};
 
 }  // namespace
 
@@ -103,20 +100,14 @@ void drawControlsTab(App& app) {
         }
     } else {
         ImGui::Checkbox("Left stick also drives the D-pad", &in.stickAsDpad);
-        if (pads.empty()) ImGui::TextDisabled("No gamepad connected. Gamepad N plays Jaguar port N.");
+        if (pads.empty()) ImGui::TextDisabled("No gamepad connected.");
         else
-            for (const InputManager::PadInfo& p : pads) ImGui::BulletText("Port %u: %s", p.port + 1, p.name.c_str());
+            for (const InputManager::PadInfo& p : pads)
+                ImGui::BulletText("%s: %s", p.slot >= 0 ? slotName((unsigned)p.slot).c_str() : "(not assigned)", p.name.c_str());
+        ImGui::TextDisabled("Which controller plays which player: Settings > Input > Players.");
     }
 
     // ---- caveats the core imposes --------------------------------------------------------
-    if (optionIs(app, "virtualjaguar_alt_inputs") == "enabled")
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
-                           "Core Options Remapping is on: the core ignores the keypad keys this app sends "
-                           "unless its 'Numpad Buttons to Keyboard Keys' option is set. Turn it off for these bindings.");
-    for (unsigned p = 0; p < 2; p++)
-        if (inputPortIsRaw(app, p))
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
-                               "Jaguar port %u has an analog / 6D / driving device: gamepad bindings are bypassed there.", p + 1);
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
     ImGui::PopStyleColor();
@@ -145,35 +136,40 @@ void drawControlsTab(App& app) {
         ImGui::TableSetupColumn("From", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
         ImGui::TableHeadersRow();
-        for (int i = 0; i < C_COUNT; i++) {
-            Ctl c = (Ctl)i;
-            ImGui::PushID(i);
+        for (const Section& sec : kSections) {
             ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(ctlLabel(c));
-            ImGui::TableNextColumn();
-            if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
-            else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
-            ImGui::TableNextColumn();
-            if (ImGui::SmallButton("Set")) in.beginCapture(layer, c, false);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Add")) in.beginCapture(layer, c, true);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Unbind")) {
-                st->set(layer, c, {});
-                dirty = true;
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("%s", sec.title);
+            for (int i = sec.first; i <= sec.last; i++) {
+                Ctl c = (Ctl)i;
+                ImGui::PushID(i);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(ctlLabel(c));
+                ImGui::TableNextColumn();
+                if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
+                else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
+                ImGui::TableNextColumn();
+                if (ImGui::SmallButton("Set")) in.beginCapture(layer, c, false);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Add")) in.beginCapture(layer, c, true);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Unbind")) {
+                    st->set(layer, c, {});
+                    dirty = true;
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!st->defined(layer, c));
+                if (ImGui::SmallButton("Default")) {
+                    st->clear(layer, c);
+                    dirty = true;
+                }
+                ImGui::EndDisabled();
+                ImGui::PopID();
             }
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!st->defined(layer, c));
-            if (ImGui::SmallButton("Default")) {
-                st->clear(layer, c);
-                dirty = true;
-            }
-            ImGui::EndDisabled();
-            ImGui::PopID();
         }
         ImGui::EndTable();
     }
@@ -185,6 +181,9 @@ void drawControlsTab(App& app) {
     if (ImGui::Button("Keypad overlay")) in.overlay.open = !in.overlay.open;
     ImGui::SameLine();
     ImGui::TextDisabled("Opens the on-screen keypad (F2 or the 'Keypad overlay' control).");
+    if (ImGui::Button("Controls overlay")) app.input.controls.show = !app.input.controls.show; app.input.controls.hideAt = 0;
+    ImGui::SameLine();
+    ImGui::TextDisabled("A cheat sheet of Player 1's bindings (F3, or the 'Controls overlay' control).");
 }
 
 void drawKeypadOverlay(App& app) {
