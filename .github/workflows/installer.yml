@@ -1,0 +1,92 @@
+name: Installer scripts
+
+# tools/install.sh (POSIX sh) and tools/install.ps1 (Windows PowerShell 5.1 + 7):
+# the core / app / both installers behind the site's copy-paste lines (#840).
+# The suites in test/installer/ run them against a fake release tree over file://
+# with HOME / LOCALAPPDATA in a temp dir, so nothing real is installed.
+#
+# The app's path filter (app.yml) does not cover tools/, hence a workflow of its own.
+# feat/833-app-shell is listed because the v4.0 app PRs are stacked on it until #867 lands.
+
+on:
+  push:
+    branches: [ master, develop ]
+    paths:
+      - 'tools/install.sh'
+      - 'tools/install.ps1'
+      - 'test/installer/**'
+      - 'site/pages/index.html'
+      - '.github/workflows/installer.yml'
+  pull_request:
+    branches: [ develop, master, feat/833-app-shell ]
+    paths:
+      - 'tools/install.sh'
+      - 'tools/install.ps1'
+      - 'test/installer/**'
+      - 'site/pages/index.html'
+      - '.github/workflows/installer.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  install-sh:
+    name: install.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest ]
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Tools (shellcheck, dash, zsh, busybox)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq shellcheck dash zsh busybox zip
+
+    - name: Tools (shellcheck, dash)
+      if: runner.os == 'macOS'
+      run: brew install shellcheck dash
+
+    - name: shellcheck
+      run: shellcheck -s sh tools/install.sh
+
+    - name: Syntax under every shell
+      run: |
+        for s in sh dash bash zsh "busybox ash"; do
+          cmd=${s%% *}
+          command -v "$cmd" >/dev/null 2>&1 || { echo "skip $s"; continue; }
+          $s -n tools/install.sh && echo "ok  $s"
+        done
+
+    - name: Installer suite (sh bash dash zsh busybox)
+      run: bash test/installer/test_install_sh.sh
+
+  install-ps1:
+    name: install.ps1 (${{ matrix.shell }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [ powershell, pwsh ]
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: PSScriptAnalyzer
+      if: matrix.shell == 'pwsh'
+      shell: pwsh
+      run: |
+        if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Force -Scope CurrentUser }
+        # Write-Host is deliberate: this is an interactive installer whose output must not
+        # land in the pipeline.  Everything else at Warning or above must be clean.
+        $r = Invoke-ScriptAnalyzer -Path tools/install.ps1 -Severity Error, Warning -ExcludeRule PSAvoidUsingWriteHost, PSUseShouldProcessForStateChangingFunctions, PSUseApprovedVerbs, PSAvoidAssignmentToAutomaticVariable
+        $r | Format-Table -AutoSize | Out-String | Write-Host
+        if ($r) { exit 1 }
+
+    - name: Installer suite
+      shell: ${{ matrix.shell }}
+      run: ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File test/installer/test_install_ps1.ps1
