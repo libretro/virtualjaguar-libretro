@@ -1,4 +1,5 @@
 #include "devices_ui.h"
+#include "instance.h"
 
 #include "app.h"
 #include "libretro.h"
@@ -115,8 +116,44 @@ void deviceChanged(App& app) {
 
 }  // namespace
 
+// Which controllers THIS window listens to.  SDL gives every connected controller to every running
+// copy of the app, so with two windows side by side (instance.h) both would answer the same pad;
+// this pins a window to one pad, or to the keyboard.  Saved per instance number.
+static void drawPadFilter(App& app) {
+    InputManager& in = app.input;
+    const std::vector<std::string> names = InputManager::connectedPadNames();
+    const int cur = in.padFilter();
+    std::string caption = cur < 0 ? "All controllers" : cur == 0 ? "Keyboard only (no controllers)" : "Controller " + std::to_string(cur);
+    if (cur > 0 && (size_t)cur <= names.size()) caption += ": " + names[(size_t)cur - 1];
+    else if (cur > 0) caption += " (not connected)";
+    const std::string label = "Controllers used by this window" + instanceTitleSuffix(app.paths.instance);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.55f, 14.0f, 30.0f));
+    int pick = -2;
+    if (ImGui::BeginCombo("##padfilter", caption.c_str())) {
+        if (ImGui::Selectable("All controllers", cur < 0)) pick = -1;
+        if (ImGui::Selectable("Keyboard only (no controllers)", cur == 0)) pick = 0;
+        for (size_t i = 0; i < names.size() && i < 9; i++) {
+            std::string l = "Controller " + std::to_string(i + 1) + ": " + names[i];
+            if (ImGui::Selectable(l.c_str(), cur == (int)i + 1)) pick = (int)i + 1;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted(label.c_str());
+    if (pick != -2) {
+        in.setPadFilter(pick);
+        app.cfg.set(instancePadKey(app.paths.instance), padFilterValue(pick));
+        app.cfg.save();
+        deviceChanged(app);
+    }
+    ui::hint("Running two windows for local play or netplay tests? Give each its own controller here; "
+             "the keyboard goes to whichever window has focus. Controller numbers follow the order they were connected.");
+}
+
 void drawDevicesPanel(App& app) {
     InputManager& in = app.input;
+    drawPadFilter(app);
+    ImGui::Separator();
     const std::string game = in.content();
     static int scope = 0;   // 0 everywhere, 1 this game
     if (game.empty()) scope = 0;

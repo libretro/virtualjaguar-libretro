@@ -44,6 +44,14 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   (https://github.com/libretro/virtualjaguar-libretro/issues/838, https://github.com/libretro/virtualjaguar-libretro/pull/881, https://github.com/libretro/virtualjaguar-libretro/pull/889). BIOS files anywhere under a library folder show in the BIOS tab,
   and one click copies a BIOS into the system folder under the name the core reads; Ctrl/Cmd
   + scroll (or a trackpad pinch on macOS) resizes the tiles (https://github.com/libretro/virtualjaguar-libretro/pull/899).
+- **Covers for Jaguar CD.** libretro-thumbnails has no Jaguar CD art, so discs now get a
+  readable title card, and you can set your own cover: right-click a tile > Set cover image
+  (PNG), drop a PNG on a tile, or put `<Title>.png` files in the app's `covers` folder.
+- **Better disc identification in the library.** `.chd` discs are now checksummed from
+  their first track (like `.cue`), `.cdi` best-effort, and a disc whose checksum is not
+  Redump's (a non-Redump bin/cue or `.cdi`) is matched by file or folder name when only
+  one game fits. Hover a tile to see how it was identified. (CHD hashing is verified
+  against synthetic images; checking real Redump CHDs is still to do.)
 - **Shaders.** RetroArch `.slangp` presets through librashader, with CRT, scanline and
   sharp-bilinear presets from libretro's slang-shaders bundled, plus integer scaling
   (https://github.com/libretro/virtualjaguar-libretro/issues/834, https://github.com/libretro/virtualjaguar-libretro/pull/880). Builds from source fetch the librashader runtime on macOS and Windows by
@@ -58,6 +66,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   Mice, the Tempest 2000 rotary controller, analog, driving, paddle, 6D, light gun and
   Team Tap are chosen under Settings > Input > Devices & players
   (https://github.com/libretro/virtualjaguar-libretro/issues/837, https://github.com/libretro/virtualjaguar-libretro/pull/879, https://github.com/libretro/virtualjaguar-libretro/pull/887).
+- **Several windows at once.** File > New window (Ctrl/Cmd+N), or `open -n` on macOS, starts
+  another copy for netplay tests on one machine or local multiplayer. Extra copies keep their
+  game saves in their own folder and never rewrite the shared settings, and each can be pinned to
+  one controller (Settings > Input) (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Save states** with thumbnails (F5 save, F7 load, F6 slot) and a state manager.
 - **Netplay for the link-cable games.** A Netplay window hosts or joins Doom, BattleSphere,
   AirCars and Ultra Vortek (over the Voice Modem) on a local network, with LAN discovery
@@ -79,7 +91,9 @@ Attached to this release:
 | --- | --- |
 | macOS 11+, Apple Silicon and Intel | `VirtualJaguar-3.8.1-macos-universal.zip` |
 | Windows x64 | `VirtualJaguar-3.8.1-windows-x64.zip` (portable) or `VirtualJaguar-3.8.1-windows-x64-setup.exe` (installer) |
+| Windows ARM64 | `VirtualJaguar-3.8.1-windows-arm64.zip` (portable) or `VirtualJaguar-3.8.1-windows-arm64-setup.exe` (installer) |
 | Linux x86_64, aarch64 | `VirtualJaguar-3.8.1-linux-<arch>.AppImage` or `virtualjaguar_3.8.1_<amd64\|arm64>.deb` |
+| Linux x86_64 (Flatpak) | `VirtualJaguar-3.8.1-linux-x86_64.flatpak` (`flatpak install --user` it; the runtime comes from Flathub) |
 
 Nightly app builds are linked from the pinned builds issue and are rebuilt from `develop`
 on every push (https://github.com/libretro/virtualjaguar-libretro/issues/839, https://github.com/libretro/virtualjaguar-libretro/issues/840, https://github.com/libretro/virtualjaguar-libretro/pull/884, https://github.com/libretro/virtualjaguar-libretro/pull/883, https://github.com/libretro/virtualjaguar-libretro/pull/886).
@@ -93,9 +107,9 @@ on every push (https://github.com/libretro/virtualjaguar-libretro/issues/839, ht
 - **Shaders on Intel Macs.** The macOS universal package bundles an arm64-only librashader,
   so shaders may be unavailable on Intel Macs.
 - **Shaders on Linux** need librashader installed separately (a distribution package, or
-  built from source).
+  built from source). The Flatpak does not include librashader yet, so it has no shaders.
 - **The MSVC Windows build is experimental.** The released Windows packages are built with
-  MinGW.
+  MinGW (the ARM64 ones with MinGW's clang).
 - **RetroAchievements** identifies cartridges and `.cue` discs, but not `.chd` or `.cdi`
   discs yet.
 - **Netplay is link-cable play on a local network only.** It is not rollback netplay, and

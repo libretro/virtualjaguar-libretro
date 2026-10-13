@@ -189,7 +189,8 @@ void portCombo(int live) {   // live > 0: what the running link uses (the box is
 void drawHost(App& app) {
     Netplay& np = app.netplay;
     const bool hosting = np.settings().role == NetRole::Host;
-    ImGui::TextWrapped("Start a game, then have your partner join it from their Netplay window. "
+    ImGui::TextWrapped("Start a game, then have your partner join it from their Netplay window "
+                       "(or from File > New window on this computer, using 127.0.0.1). "
                        "Make sure you both picked the same device above.");
     ImGui::BeginDisabled(hosting);
     portCombo(hosting ? np.settings().port : 0);

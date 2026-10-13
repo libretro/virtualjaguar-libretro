@@ -189,6 +189,10 @@ void drawInputTab(App& app) {
 void drawStorageTab(App& app) {
     ImGui::Text("Data folder%s:", app.paths.portable ? " (portable mode)" : "");
     ImGui::TextWrapped("%s", app.paths.root.c_str());
+    if (app.paths.instance > 1)
+        ui::hint("This is window %d of several on this data folder: its game saves live in their own folder, and "
+                 "changes here are not saved (only the window size and the controller choice are). Change settings "
+                 "in the first window to keep them.", app.paths.instance);
     ImGui::Separator();
     // Paths are long and have no spaces to break at: ImGui wraps them at the window edge.
     ImGui::TextWrapped("Saves: %s", app.paths.saves.c_str());
@@ -322,6 +326,7 @@ void drawAbout(App& app) {
         {"Tab (hold)", "fast-forward"},
         {"Ctrl/Cmd+O", "open a game"},
         {"Ctrl/Cmd+L", "game library"},
+        {"Ctrl/Cmd+N", "open another window (a second copy of the app)"},
         {"Ctrl/Cmd+wheel, +/-/0", "library tile size (trackpad: pinch)"},
         {"Ctrl/Cmd+R", "reset"},
     };
@@ -347,6 +352,7 @@ void drawMenuBar(App& app) {
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
+        if (ImGui::MenuItem("New window", "Ctrl+N")) app.newWindow();
         if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show && !app.homeVisible())) app.toggleLibrary();
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list

@@ -502,7 +502,7 @@ void Achievements::onStateSaved(const std::string& statePath) {
         return;
     }
     std::vector<uint8_t> buf(n);
-    if (rc_client_serialize_progress_sized(client_, buf.data(), n) == RC_OK) SDL_SaveFile(side.c_str(), buf.data(), n);
+    if (rc_client_serialize_progress_sized(client_, buf.data(), n) == RC_OK) writeFileAtomic(side, buf.data(), n);
 }
 
 void Achievements::onStateLoaded(const std::string& statePath) {

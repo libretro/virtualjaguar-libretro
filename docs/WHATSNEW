@@ -16,6 +16,10 @@ docs/RELEASE_NOTES_v3.8.1.md
   Dear ImGui, OpenGL 3.3, driving the core through the retro_* API.
 * Game library on the home screen: Cartridges, Jaguar CD and BIOS &
   system tabs, CRC32 identification, box art on demand (#838).
+  Jaguar CD has no upstream art: title cards, plus your own PNG covers
+  (right-click a tile, drop a PNG on it, or a covers folder).
+  .chd discs are checksummed, .cdi best-effort, and non-Redump rips
+  match by file/folder name when unambiguous.
 * Shaders: RetroArch .slangp presets via librashader, slang-shaders
   CRT/scanline/sharp-bilinear presets bundled, integer scaling (#834).
 * Cheats: libretro cheat database bundled, plus manual codes (#835).
@@ -25,6 +29,9 @@ docs/RELEASE_NOTES_v3.8.1.md
   overlay (F3); mice, rotary, analog, driving, paddle, 6D, light gun
   and Team Tap (#837).
 * Save states with thumbnails and a state manager.
+* Several windows at once: File > New window (Ctrl/Cmd+N). Extra
+  copies get their own save folder, leave the shared settings alone and
+  can be pinned to one controller; netplay on one machine works (#833).
 * Netplay window for the link-cable games on a LAN (not rollback;
   rollback is #864); Settings greys out the link options it controls
   during a session (#898).
@@ -34,9 +41,9 @@ docs/RELEASE_NOTES_v3.8.1.md
 * Local signing: app/packaging/local-package.sh --sign [--notarize]
   signs your own build with a certificate found on the machine or set
   in a gitignored .env (macOS Developer ID, Windows pfx/store) (#839).
-* Packages: macOS universal zip, Windows zip and installer, Linux
-  AppImage and .deb (#839, #840); nightly builds linked from the
-  pinned builds issue.
+* Packages: macOS universal zip, Windows zip and installer (x64 and
+  ARM64), Linux AppImage, .deb and a Flatpak bundle (#839, #840);
+  nightly builds linked from the pinned builds issue.
 
 == Known issues ==
 * Packages are unsigned: right-click > Open on macOS; SmartScreen may

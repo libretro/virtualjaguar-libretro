@@ -13,6 +13,8 @@ name: App packages
 # Asset names (X.Y.Z = the tag without the leading v; `nightly` / `prNNN` otherwise):
 #   VirtualJaguar-X.Y.Z-macos-universal.zip
 #   VirtualJaguar-X.Y.Z-windows-x64.zip              VirtualJaguar-X.Y.Z-windows-x64-setup.exe
+#   VirtualJaguar-X.Y.Z-windows-arm64.zip            VirtualJaguar-X.Y.Z-windows-arm64-setup.exe
+#   VirtualJaguar-X.Y.Z-linux-x86_64.flatpak         (single-file Flatpak bundle)
 #   VirtualJaguar-X.Y.Z-linux-x86_64.AppImage        VirtualJaguar-X.Y.Z-linux-aarch64.AppImage
 #   virtualjaguar_X.Y.Z_amd64.deb                    virtualjaguar_X.Y.Z_arm64.deb
 #
@@ -283,19 +285,48 @@ jobs:
           retention-days: 14
 
   # ------------------------------------------------------------------------------------------
-  # Windows x64 (MinGW-w64, the core's own Windows toolchain): portable zip + Inno Setup installer.
+  # Windows x64 (MinGW-w64, the core's own Windows toolchain) and Windows ARM64 (the same MinGW-w64
+  # environment in its CLANGARM64 flavour: clang + libc++ + lld on a native windows-11-arm runner):
+  # portable zip + Inno Setup installer each.
   # ------------------------------------------------------------------------------------------
   windows:
-    name: Windows x64
+    name: Windows ${{ matrix.arch }}
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    # arm64 is new in v3.8.1: a failure there skips its package instead of
+    # holding back every app asset (release.yml attaches app packages only
+    # when this whole workflow succeeds).
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+            msystem: MINGW64
+            pkgs: >-
+              zip
+              mingw-w64-x86_64-gcc
+              mingw-w64-x86_64-cmake
+              mingw-w64-x86_64-ninja
+            cmake_extra: ''
+          - arch: arm64
+            os: windows-11-arm
+            msystem: CLANGARM64
+            pkgs: >-
+              zip
+              mingw-w64-clang-aarch64-clang
+              mingw-w64-clang-aarch64-cmake
+              mingw-w64-clang-aarch64-ninja
+            cmake_extra: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
     defaults:
       run:
         shell: 'msys2 {0}'
     env:
       LABEL: ${{ needs.meta.outputs.label }}
       SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
+      ARCH: ${{ matrix.arch }}
       SIGNPATH_ENABLED: ${{ inputs.sign && secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v7
@@ -303,34 +334,49 @@ jobs:
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: ${{ matrix.msystem }}
           update: false
-          install: >-
-            zip
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
+          install: ${{ matrix.pkgs }}
 
       - name: Configure and build (GUI subsystem, static runtime)
         run: |
           set -eu
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION"
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+            ${{ matrix.cmake_extra }}
+          grep -E 'librashader|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER:' build/CMakeCache.txt | head
           cmake --build build -j4
 
+      # Exactly one blitter_simd_ops (NEON on ARM64, SSE2 on x64), see app.yml.
+      - name: Exactly one SIMD vtable in the core library
+        run: |
+          set -eu
+          lib=$(find build -name 'libvj_core.a' | head -1)
+          [ -n "$lib" ] || { echo "libvj_core.a not found"; exit 1; }
+          NM="$(command -v nm || command -v llvm-nm)"; echo "nm: $NM"
+          n=$("$NM" "$lib" 2>/dev/null | grep -cE ' [A-Z] _?blitter_simd_ops$' || true)
+          echo "blitter_simd_ops definitions: $n"
+          [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
+
       - name: Smoke tests (GUI-subsystem exe, output through pipes)
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure ${{ matrix.arch == 'arm64' && '-E shaders_gl' || '' }}
 
       - name: The exe must import only Windows system DLLs
         run: |
           set -eu
-          objdump -p build/virtualjaguar.exe | awk '/DLL Name/ {print $3}' | sort -u | tee dlls.txt
-          if grep -qiE 'libstdc|libgcc|libwinpthread|SDL3|libcurl' dlls.txt; then
+          OBJDUMP="$(command -v objdump || command -v llvm-objdump)"
+          echo "objdump: $OBJDUMP"
+          "$OBJDUMP" -p build/virtualjaguar.exe | awk '/DLL Name/ {print $3}' | sort -u | tee dlls.txt
+          [ -s dlls.txt ] || { echo "::error::no import table found (objdump output not understood)"; exit 1; }
+          if grep -qiE 'libstdc|libgcc|libwinpthread|libc\+\+|libunwind|SDL3|libcurl' dlls.txt; then
             echo "::error::virtualjaguar.exe depends on a non-system DLL (static runtime not in effect)"; exit 1
           fi
           # GUI subsystem = 2 (console = 3)
-          objdump -p build/virtualjaguar.exe | awk '/Subsystem/ {print}' | tee subsystem.txt
-          grep -qi 'windows GUI' subsystem.txt || { echo "::error::not a GUI-subsystem executable"; exit 1; }
+          "$OBJDUMP" -p build/virtualjaguar.exe | grep -i 'Subsystem' | tee subsystem.txt
+          grep -qiE 'windows GUI|Subsystem[[:space:]]+0*2([^0-9]|$)' subsystem.txt || { echo "::error::not a GUI-subsystem executable"; exit 1; }
+          # The machine type must match the leg (a mis-targeted toolchain would still link).
+          "$OBJDUMP" -f build/virtualjaguar.exe | tee machine.txt
+          if [ "$ARCH" = arm64 ]; then grep -qiE 'aarch64|arm64' machine.txt; else grep -qiE 'x86-64|i386:x86-64' machine.txt; fi
 
       - name: Install tree
         run: cmake --install build --prefix "$PWD/stage"
@@ -342,7 +388,7 @@ jobs:
         if: env.SIGNPATH_ENABLED == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: signpath-unsigned-exe
+          name: signpath-unsigned-exe-${{ matrix.arch }}
           path: stage/bin/virtualjaguar.exe
           retention-days: 1
       - name: SignPath - sign the exe
@@ -383,7 +429,7 @@ jobs:
       - name: Package (portable zip + installer)
         run: |
           set -eu
-          bash app/packaging/windows/package.sh stage "$LABEL" out \
+          bash app/packaging/windows/package.sh stage "$LABEL" out --arch "$ARCH" \
             --installer "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
 
       - name: SignPath - upload the unsigned installer
@@ -391,8 +437,8 @@ jobs:
         if: env.SIGNPATH_ENABLED == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: signpath-unsigned-setup
-          path: out/VirtualJaguar-${{ needs.meta.outputs.label }}-windows-x64-setup.exe
+          name: signpath-unsigned-setup-${{ matrix.arch }}
+          path: out/VirtualJaguar-${{ needs.meta.outputs.label }}-windows-${{ matrix.arch }}-setup.exe
           retention-days: 1
       - name: SignPath - sign the installer (request)
         if: env.SIGNPATH_ENABLED == 'true'
@@ -409,7 +455,7 @@ jobs:
         if: env.SIGNPATH_ENABLED == 'true'
         run: |
           set -eu
-          cp signed-setup/*.exe "out/VirtualJaguar-${LABEL}-windows-x64-setup.exe"
+          cp signed-setup/*.exe "out/VirtualJaguar-${LABEL}-windows-${ARCH}-setup.exe"
           gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ steps.sp_up_setup.outputs.artifact-id }}" || true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -422,7 +468,7 @@ jobs:
         run: |
           set -eu
           t="$RUNNER_TEMP/portable"; rm -rf "$t"; mkdir -p "$t"
-          unzip -q "out/VirtualJaguar-${LABEL}-windows-x64.zip" -d "$t"
+          unzip -q "out/VirtualJaguar-${LABEL}-windows-${ARCH}.zip" -d "$t"
           cd "$t/VirtualJaguar"
           ./virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
           test -f portable.txt   # --headless uses a temp data dir, so portable mode itself cannot be observed here
@@ -434,7 +480,7 @@ jobs:
           set -eu
           export MSYS2_ARG_CONV_EXCL='*'
           dir='C:\vjtest'
-          "out/VirtualJaguar-${LABEL}-windows-x64-setup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER "/DIR=$dir" "/LOG=$(cygpath -w "$RUNNER_TEMP/inno.log")"
+          "out/VirtualJaguar-${LABEL}-windows-${ARCH}-setup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER "/DIR=$dir" "/LOG=$(cygpath -w "$RUNNER_TEMP/inno.log")"
           ls /c/vjtest
           test -f /c/vjtest/virtualjaguar.exe
           test ! -f /c/vjtest/portable.txt || { echo "::error::installer must not ship portable.txt"; exit 1; }
@@ -445,8 +491,63 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: app-package-windows-x64
+          name: app-package-windows-${{ matrix.arch }}
           path: out/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------
+  # Flatpak (x86_64): one self-contained .flatpak bundle (the runtime comes from Flathub when the
+  # user installs it).  Built OFFLINE from app/packaging/flatpak/*.yml, whose every dependency is a
+  # hash-pinned manifest source, inside the Flathub CI image for the manifest's runtime.  Never
+  # submitted to Flathub from here.  aarch64 is not built yet (see app/packaging/README.md).
+  # ------------------------------------------------------------------------------------------
+  flatpak:
+    name: Flatpak x86_64
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    # New in v3.8.1: non-blocking, like the arm64 Windows leg above.
+    continue-on-error: true
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      APP_ID: io.github.libretro.VirtualJaguar
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the bundle
+        # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
+        # own artifact would be named app-<arch>.flatpak and not app-package-*, and the release
+        # jobs attach every artifact they find; the final file is uploaded below.
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3
+        with:
+          bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
+          manifest-path: app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+          arch: x86_64
+          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/CMakeLists.txt', 'app/cmake/**') }}
+          upload-artifact: false
+
+      - name: Smoke-test the bundle (install, run headless against the public ROM)
+        run: |
+          set -eu
+          f="VirtualJaguar-${LABEL}-linux-x86_64.flatpak"
+          ls -la "$f"
+          flatpak install --user -y --noninteractive "./$f"
+          flatpak info --user "$APP_ID"
+          # The sandbox only sees the repository because it is passed in here, read-only.
+          flatpak run --user --filesystem="$GITHUB_WORKSPACE:ro" "$APP_ID" \
+            --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          # The bundled data must be beside the executable inside the sandbox.
+          flatpak run --user --command=sh "$APP_ID" -c \
+            'ls /app/bin/cheats | head -3 && ls "/app/bin/libretro-db" && test -d /app/bin/shaders/slang-shaders && ls /app/share/metainfo'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-flatpak
+          path: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
           if-no-files-found: error
           retention-days: 14
 

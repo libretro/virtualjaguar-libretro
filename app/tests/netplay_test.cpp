@@ -16,6 +16,7 @@
 // Ports are picked at run time from 20000-29999 (below every OS's ephemeral range, and probed free):
 // a hard-coded port, or an ephemeral one, collides with a concurrent run.
 #include "core_host.h"
+#include "instance.h"
 #include "netplay.h"
 #include "paths.h"
 
@@ -33,6 +34,7 @@ extern "C" {
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -519,6 +521,62 @@ static int runPair(const std::string& exe, const std::string& rom, const std::st
     return g_fail ? 1 : 0;
 }
 
+// Two copies of the app on ONE data folder.  The test takes instance 1 itself, so both children are
+// secondaries (2 and 3): they must coexist, link up, and leave the shared files alone.
+static int runPairShared(const std::string& exe, const std::string& rom) {
+    namespace fs = std::filesystem;
+    const int port = pickFreePort();
+    const int disc = pickFreePort(port);
+    if (!port || !disc) {
+        std::fprintf(stderr, "FAIL no free port\n");
+        return 1;
+    }
+    setEnv("VJ_DISC_PORT", std::to_string(disc));
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / ("vj-netplay-shared-" + std::to_string(port));
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const fs::path cfg = dir / "config.ini";
+    const std::string seed = "# Virtual Jaguar settings\nvideo.integer=1\nra.token=not-a-real-token\n";
+    { std::ofstream f(cfg, std::ios::binary); f << seed; }
+
+    vj::InstanceLock mine;
+    CHECK(mine.acquire(dir.string() + "/") == 1);
+
+    const std::string p = std::to_string(port);
+    const std::string d = dir.string();
+    Child host = spawn(appArgs(exe, rom, {"--data-dir", d, "--netplay", "host", "--netplay-port", p, "--netplay-expect-link", "30"}));
+    SDL_Delay(300);
+    Child join = spawn(appArgs(exe, rom, {"--data-dir", d, "--netplay", "join", "--netplay-addr", "127.0.0.1",
+                                          "--netplay-port", p, "--netplay-expect-link", "30"}));
+    bool finished = waitBoth(host, join, 90);
+    reap(host);
+    reap(join);
+    CHECK(finished);
+    CHECK(host.code == 0);
+    CHECK(join.code == 0);
+    {
+        std::ifstream f(cfg, std::ios::binary);
+        std::stringstream ss;
+        ss << f.rdbuf();
+        CHECK(ss.str() == seed);                                   // neither copy rewrote the shared settings
+    }
+    CHECK(fs::exists(dir / "instance-2.lock"));
+    CHECK(fs::exists(dir / "instance-3.lock"));
+    // Each copy kept its game saves in its own folder (headless names them per instance and load).
+    int perInstance = 0;
+    for (const auto& e : fs::directory_iterator(dir)) {
+        const std::string n = e.path().filename().string();
+        if (n.rfind("saves-i2-", 0) == 0 || n.rfind("saves-i3-", 0) == 0) perInstance++;
+        CHECK(n.rfind("saves0", 0) != 0);                          // nothing went into the first copy's names
+    }
+    CHECK(perInstance == 2);
+    CHECK(!fs::exists(dir / "system" / "vj_netlink.txt"));         // the address travelled by environment
+    mine.release();
+    fs::remove_all(dir, ec);                                       // our own temp dir only
+    return g_fail ? 1 : 0;
+}
+
 static int runControl(const std::string& exe, const std::string& rom) {
     const int port = pickFreePort();
     const int disc = pickFreePort(port);
@@ -586,6 +644,8 @@ int main(int argc, char** argv) {
         rc = g_fail ? 1 : 0;
     } else if (mode == "pair" && argc >= 4) {
         rc = runPair(argv[2], argv[3], argc >= 5 ? argv[4] : "jaglink");
+    } else if (mode == "pair-shared" && argc >= 4) {
+        rc = runPairShared(argv[2], argv[3]);
     } else if (mode == "control" && argc >= 4) {
         rc = runControl(argv[2], argv[3]);
     } else if (mode == "discovery" && argc >= 4) {

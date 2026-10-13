@@ -1,15 +1,23 @@
 #!/bin/bash
 # Stage the Windows packages from an install tree (run in an MSYS2/bash shell).
 #
-#   package.sh <install-prefix> <version-label> <out-dir> [--installer <ISCC.exe>]
+#   package.sh <install-prefix> <version-label> <out-dir> [--arch x64|arm64] [--installer <ISCC.exe>]
 #
-# Produces, in <out-dir>:
-#   VirtualJaguar-<label>-windows-x64.zip           portable folder (portable.txt inside)
-#   VirtualJaguar-<label>-windows-x64-setup.exe     Inno Setup installer (with --installer)
+# Produces, in <out-dir> (<arch> defaults to x64):
+#   VirtualJaguar-<label>-windows-<arch>.zip           portable folder (portable.txt inside)
+#   VirtualJaguar-<label>-windows-<arch>-setup.exe     Inno Setup installer (with --installer)
 set -euo pipefail
 prefix="$(cd "$1" && pwd)"; label="$2"; out="$3"; shift 3
-iscc=""
-if [ "${1:-}" = "--installer" ]; then iscc="$2"; fi
+iscc=""; arch="x64"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --installer) iscc="$2"; shift 2 ;;
+    --arch) arch="$2"; shift 2 ;;
+    *) echo "unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+case "$arch" in x64|arm64) ;; *) echo "--arch takes x64 or arm64 (got '$arch')" >&2; exit 2 ;; esac
+arm64_def=""; [ "$arch" = arm64 ] && arm64_def="/DArm64"
 here="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$out"; out="$(cd "$out" && pwd)"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
@@ -37,7 +45,8 @@ if [ -n "$iscc" ]; then
     "/DAppVersion=${label}" \
     "/DSourceDir=$(cygpath -w "$tree")" \
     "/DOutputDir=$(cygpath -w "$out")" \
-    "/DOutputName=VirtualJaguar-${label}-windows-x64-setup" \
+    ${arm64_def:+"$arm64_def"} \
+    "/DOutputName=VirtualJaguar-${label}-windows-${arch}-setup" \
     "$(cygpath -w "$here/virtualjaguar.iss")"
   sign_files "$out/VirtualJaguar-${label}-windows-x64-setup.exe"
 fi
@@ -48,7 +57,7 @@ This file makes Virtual Jaguar portable: settings, saves and save states are kep
 "data" folder next to virtualjaguar.exe instead of %APPDATA%\VirtualJaguar.
 Delete this file to use the per-user folder again.
 PORT
-zipname="VirtualJaguar-${label}-windows-x64.zip"
+zipname="VirtualJaguar-${label}-windows-${arch}.zip"
 rm -f "$out/$zipname"
 (cd "$work/tree" && zip -qr -9 "$out/$zipname" VirtualJaguar)
 ls -la "$out"
