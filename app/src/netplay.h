@@ -9,12 +9,14 @@
 //   settings   core options: virtualjaguar_netlink (mode), _netlink_host, _netlink_port,
 //              _uart_device.  Mode, host and port are session overrides (never saved:
 //              relaunching the app must not start listening on its own); the device is
-//              an ordinary saved option.  An arbitrary address cannot be a core option
-//              value (the option is an enumeration), so it goes through the core's own
-//              <system dir>/vj_netlink.txt route ("From file" host).  A port outside the
-//              four the option offers goes through VJ_NETLINK_PORT (tests, power users).
-//   status     the core's "[NETLINK] ..." log lines, tapped in CoreHost::onLog: link
-//              UP/DOWN/waiting, and the "link stats" line every 5 s while traffic flows.
+//              an ordinary saved option.  The core's host and port options take any
+//              hostname / IPv4 address and any port 1-65535 (typed_options.h), so a typed
+//              address and port are set straight on them.  The core's own
+//              <system dir>/vj_netlink.txt route ("From file" host) is kept as a fallback
+//              (setAddressViaOption(false)).
+//   status     the core's private event channel (src/core/vj_frontend_ext.h): link UP / DOWN,
+//              wire speed, the link stats every 5 s while traffic flows.  Without that
+//              channel, the "[NETLINK] ..." log lines tapped in CoreHost::onLog say the same.
 //   discovery  the core finds LAN hosts itself (UDP beacon, jlink_discover.c) and splices
 //              them into the host option's value list with a second
 //              SET_CORE_OPTIONS_V2; CoreHost re-captures it, we read it back.
@@ -89,11 +91,6 @@ public:
 
     // Where the "From file" address is written: the same system directory the core is told about.
     void setSystemDir(const std::string& dir) { systemDir_ = dir; }
-    // A second copy of the app on the same data folder (instance.h) shares this system directory
-    // with the first, and the core's "From file" address (<system>/vj_netlink.txt) is ONE file: two
-    // copies joining different hosts would overwrite each other's.  Such a copy hands the core the
-    // address through VJ_NETLINK_HOST instead -- an environment variable is per process.
-    void setAddressViaEnv(bool on) { addressViaEnv_ = on; }
 
     // ---- control -----------------------------------------------------------
     // Applies `s` (host/join/loopback), or Off to disconnect.  Returns false with `err` when
@@ -113,6 +110,8 @@ public:
     // The device the core reported on its last "link UP" ("jaglink" / "voicemodem" / "").
     const std::string& linkDevice() const { return upDevice_; }
     const LinkStats& stats() const { return stats_; }
+    // LINK_UP events from the core's event channel that moved the link up (0 on a core without the channel).
+    unsigned linkUpEvents() const { return upEvents_; }
     // Seconds since the last stats line; negative when there has not been one.
     double statsAgeSec() const;
     // One plain-language line for the status banner.
@@ -125,8 +124,18 @@ public:
     // in Join or Host mode).
     std::vector<DiscoveredHost> discovered() const;
 
-    // ---- log tap (CoreHost::onLog) ------------------------------------------
+    // ---- what the core tells us (CoreHost::onLog / CoreHost::onEvent) --------------
+    // The core's private event channel is authoritative when the core said HELLO (the app's CoreHost
+    // answers it); the log tap then only handles the lines that have no event (open errors, discovery
+    // trouble).  A core that never said HELLO is read the old way, entirely from its log text.
     void onCoreLog(int level, const char* text);
+    void onCoreEvent(const vj_event& e);
+    // How a typed address reaches the core.  true (default): the host option takes it.  false: the core's
+    // own "From file" route, <system dir>/vj_netlink.txt (the fallback for a core whose host option is a
+    // closed list).  That file is ONE file per system directory, shared by every copy of the app on a data
+    // folder (instance.h), so two copies joining different hosts through it would overwrite each other:
+    // the option route, which is per process, is the default for all instances.
+    void setAddressViaOption(bool on) { viaOption_ = on; }
 
     // ---- pure helpers (unit tested) ------------------------------------------
     // `line` is the text after "[NETLINK] ", or the whole logged line.
@@ -148,8 +157,6 @@ private:
     void setOverride(const char* key, const std::string& value, std::vector<std::string>* restartKeys);
     void clearAll();
     bool writeAddressFile(const std::string& addr, std::string& err);
-    void setPortEnv(int port, bool on);
-    void setHostEnv(const std::string& addr);   // "" = remove (only if we set it)
 
     CoreHost& host_;
     std::string systemDir_;
@@ -171,9 +178,8 @@ private:
     bool haveStats_ = false;
     unsigned speedup_ = 1;
     std::string openError_, discoveryError_, droppedHost_;
-    bool portEnvSet_ = false;
-    bool hostEnvSet_ = false;
-    bool addressViaEnv_ = false;
+    unsigned upEvents_ = 0;
+    bool viaOption_ = true;        // typed host address goes in the host option; false = vj_netlink.txt route
 };
 
 }  // namespace vj

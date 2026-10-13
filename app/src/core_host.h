@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "libretro.h"
+#include "vj_frontend_ext.h"   // the core's private event channel
 
 namespace vj {
 
@@ -91,6 +92,17 @@ public:
     // Per-frame input.  Port/device/index/id exactly as retro_input_state_t.
     std::function<int16_t(unsigned, unsigned, unsigned, unsigned)> inputState;
     std::function<void()> inputPoll;
+    // ---- the core's private event channel (src/core/vj_frontend_ext.h, docs/app-frontend-extension.md) ----
+    // The core says HELLO once per retro_init; this host answers (unless announceExtensions is off, which
+    // makes it behave like RetroArch: no events are ever sent and consumers fall back to log scraping).
+    // Events arrive synchronously inside runFrame(), on the emulation thread.
+    bool announceExtensions = true;
+    std::function<void(const vj_event&)> onEvent;   // string pointers are valid for the call only
+    // True once the core's HELLO was answered in the current session: the events are then authoritative
+    // and the matching log lines need no parsing.
+    bool eventsActive() const { return helloSeen_; }
+    uint64_t eventCount() const { return eventsSeen_; }
+
     // Audio buffer occupancy for the core's frameskip / auto-enhancement logic.
     std::function<void(bool& active, unsigned& occupancy, bool& underrun)> audioBufferStatus;
     // What the host wants from GET_AUDIO_VIDEO_ENABLE this frame.
@@ -213,6 +225,8 @@ private:
     std::string saveFallbackPath() const;
     bool logVerbose_ = false;
 
+    bool helloSeen_ = false;    // the core's VJ_ENV_HELLO was answered this session
+    uint64_t eventsSeen_ = 0;
     bool initialized_ = false;  // retro_init has run (and retro_deinit has not)
     bool loaded_ = false;
     std::string contentPath_, contentName_;

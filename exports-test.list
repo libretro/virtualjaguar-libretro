@@ -16,6 +16,8 @@ _Jaguar*
 _jaguar*
 _Halfline*
 _jaguarMainRAM
+_m68kClockScalePct
+_riscClockScalePct
 _jaguarMainROM
 _jagMemSpace
 _busArbiter

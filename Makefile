@@ -1348,7 +1348,7 @@ clean:
 		test/test_cart_format test/test_cart_needs_bios test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
-		test/test_state_compat test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
+		test/test_state_compat test/test_frontend_pacing test/test_frontend_ext test/test_jgd test/test_jaggd_fs \
 		test/dump_pc test/heap_search \
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
@@ -1421,7 +1421,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
-		test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
+		test/test_frontend_pacing test/test_frontend_ext test/test_jgd test/test_jaggd_fs \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace \
 		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify test/tools/idle_skip_scale_ab \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
@@ -2141,6 +2141,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# so a missing ROM means a broken checkout and should fail the suite
 	@# rather than silently read as a pass.
 	./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Private frontend event channel: a frontend that refuses HELLO (RetroArch)
+	@# is never sent an event; one that answers gets LINK_UP.  Plus the free-form
+	@# clock-scale percentage parser (list values unchanged).
+	./test/test_frontend_ext ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Clock-scale (issue #314) audio-pacing contract at non-1x.  The one
 	@# invariant the scale options must never break is sample pacing:
 	@# I2S/DAC event scheduling stays on the unscaled sysclock, so the
@@ -3137,6 +3141,15 @@ test/test_frontend_pacing: test/test_frontend_pacing.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_frontend_pacing.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Private frontend event channel (src/core/vj_frontend_ext.h) opt-in contract +
+# free-form clock-scale parsing.
+test/test_frontend_ext: test/test_frontend_ext.c \
+		src/core/vj_frontend_ext.h test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_frontend_ext.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 

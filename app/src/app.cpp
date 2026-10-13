@@ -752,7 +752,6 @@ int App::run(const CliArgs& a) {
     loadConfig();
     if (paths.instance > 1) {
         host.setSaveFallbackDir(paths.savesShared);
-        netplay.setAddressViaEnv(true);
         std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());
     }
     wireHost();

@@ -1,6 +1,7 @@
 #include "core_host.h"
 
 #include "paths.h"
+#include "typed_options.h"
 
 #include <vfs/vfs_implementation.h>
 
@@ -231,10 +232,13 @@ bool CoreHost::optionVisible(const std::string& key) const {
     return it == visibility_.end() ? true : it->second;
 }
 
+// A value the core will be handed: one of the core's own list entries, or -- for the keys in
+// typed_options.h -- any free-form value that passes that key's validator.  Enumerations stay strict.
 static bool validFor(const OptionDef& d, const std::string& v) {
     for (const OptionValue& ov : d.values)
         if (ov.value == v) return true;
-    return false;
+    const TypedOption* t = typedOptionFor(d.key);
+    return t && validTypedValue(*t, v);
 }
 
 std::string CoreHost::optionValue(const OptionDef& d) const {
@@ -263,6 +267,11 @@ static std::string problemFor(const std::vector<OptionDef>& defs, const std::str
         if (validFor(d, value)) return "";
         std::string list;
         for (const OptionValue& v : d.values) list += (list.empty() ? "" : ", ") + v.value;
+        if (const TypedOption* t = typedOptionFor(key)) {
+            std::string why;
+            validTypedValue(*t, value, &why);
+            return "'" + value + "' is not a valid value for " + key + " (" + why + "; or one of: " + list + ")";
+        }
         return "'" + value + "' is not a valid value for " + key + " (valid: " + list + ")";
     }
     return "'" + key + "' is not an option this core registers";
@@ -527,6 +536,30 @@ bool CoreHost::env(unsigned cmd, void* data) {
         return true;
     }
 
+    // ---- the core's private event channel (vj_frontend_ext.h) ----------------------
+    // Only this app answers; RetroArch gets false and the core never sends an event.
+    case VJ_ENV_HELLO: {
+        vj_env_hello* h = (vj_env_hello*)data;
+        if (!announceExtensions || !h || h->abi != VJ_FRONTEND_EXT_ABI) return false;
+        h->caps_out = VJ_CAP_EVENTS;
+        helloSeen_ = true;
+        return true;
+    }
+    case VJ_ENV_EVENT: {
+        const vj_event* e = (const vj_event*)data;
+        if (!e || !helloSeen_) return false;
+        eventsSeen_++;
+        if (e->type == VJ_EVT_CRASH_WATCHDOG) {
+            // The watchdog's own log line is easy to miss; say it on screen too.  The core rate-limits
+            // each signature (about every 10 s), so this cannot flood.
+            pushMessage(std::string("Core watchdog: ") + (e->s ? e->s : "?") +
+                            " - the game may be stuck (details in the log)",
+                        6000, RETRO_LOG_WARN);
+        }
+        if (onEvent) onEvent(*e);
+        return true;
+    }
+
     // ---- reported unsupported by the app -----------------------------------------
     case RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE:
     case RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE:
@@ -551,6 +584,7 @@ bool CoreHost::startSession(std::string& err) {
     keyboardCb_ = nullptr;
     diskRegistered_ = false;
     variableUpdate_ = false;
+    helloSeen_ = false;
     contentOverrideExts_.clear();
     supportsNoGame_ = false;
     minAudioLatencyMs_ = 0;

@@ -24,7 +24,7 @@ static void usage(const char* argv0) {
         "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
         "  --netplay ROLE        host | join | join-discovered | browse | loopback\n"
         "  --netplay-addr ADDR   join: the host's address (no port)\n"
-        "  --netplay-port N      link port (default 42171; the window offers 42171-42174)\n"
+        "  --netplay-port N      link port, 1-65535 (default 42171; the window offers 42171-42174 and a custom box)\n"
         "  --netplay-device D    jaglink (default) | voicemodem\n"
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"

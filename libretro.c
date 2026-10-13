@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "vj_frontend_ext.h"
 #include "perf_iface.h"
 #include "vjtrace.h"
 #include "crc32.h"
@@ -2122,6 +2123,7 @@ static void netlink_rebuild_host_options(void)
    int cur_host_known;
    int cur_host_is_preset;
    int cur_host_found;
+   int cur_host_was_listed;
    bool options_pushed;
 
    idx = netlink_host_option_index();
@@ -2137,6 +2139,7 @@ static void netlink_rebuild_host_options(void)
    cur_host_known     = 0;
    cur_host_is_preset = 0;
    cur_host_found     = 0;
+   cur_host_was_listed = 0;
    {
       struct retro_variable cur;
 
@@ -2150,6 +2153,17 @@ static void netlink_rebuild_host_options(void)
          cur_host_is_preset = !strcmp(cur_host, "127.0.0.1")
                                || !strcmp(cur_host, "jaghub.local")
                                || !strcmp(cur_host, "vj_netlink.txt");
+         /* Was it in the list the frontend was offering?  A frontend with
+          * free-form option entry (the standalone app) can hold a typed
+          * address that was never a picker row: nothing "dropped off the
+          * LAN" for that, so it must not draw the fallback warning below.
+          * A list-only frontend never holds a value outside its list. */
+         for (i = 0; option_defs_us[idx].values[i].value; i++)
+            if (!strcmp(option_defs_us[idx].values[i].value, cur_host))
+            {
+               cur_host_was_listed = 1;
+               break;
+            }
       }
    }
 
@@ -2257,7 +2271,8 @@ static void netlink_rebuild_host_options(void)
               "discovered peer%s not shown\n",
               peer_count, peer_count == 1 ? "" : "s");
 
-   if (cur_host_known && !cur_host_is_preset && !cur_host_found)
+   if (cur_host_known && !cur_host_is_preset && !cur_host_found
+       && cur_host_was_listed)
    {
       LOG_WRN("[NETLINK] selected host %s dropped off the LAN -- falling "
               "back to 127.0.0.1\n", cur_host);
@@ -3327,6 +3342,41 @@ static int32_t read_tune_exponent(const char *key)
    return (int32_t)((pct * 256) / 100);
 }
 
+/* Free-form clock-scale value ("175" or "175%") -> percent, clamped to
+ * 25..400.  An EXTRA accepted form: the listed values ("0.5x".."3x") are
+ * matched by strcmp before this is ever consulted, and every string the old
+ * ladder did not recognise ("1x", "3x" on the RISC option, garbage, "") has
+ * a non-digit, so it is rejected here and still falls through to 100 -- the
+ * stock behaviour is untouched.  Returns 0 when v is not 1-4 digits with an
+ * optional trailing '%'. */
+static int clock_scale_parse_percent(const char *v, uint32_t *out)
+{
+   uint32_t n = 0;
+   unsigned digits = 0;
+
+   if (!v)
+      return 0;
+   while (*v >= '0' && *v <= '9')
+   {
+      if (++digits > 4)
+         return 0;
+      n = n * 10u + (uint32_t)(*v - '0');
+      v++;
+   }
+   if (digits == 0)
+      return 0;
+   if (*v == '%')
+      v++;
+   if (*v != '\0')
+      return 0;
+   if (n < 25u)
+      n = 25u;
+   if (n > 400u)
+      n = 400u;
+   *out = n;
+   return 1;
+}
+
 static void check_variables(void)
 {
    unsigned i;
@@ -3669,6 +3719,8 @@ static void check_variables(void)
    m68kClockScalePct = 100;
    if (get_variable_pertitle(&var) && var.value)
    {
+      uint32_t typed_pct;
+
       if (strcmp(var.value, "0.5x") == 0)
          m68kClockScalePct = 50;
       else if (strcmp(var.value, "1.5x") == 0)
@@ -3677,6 +3729,8 @@ static void check_variables(void)
          m68kClockScalePct = 200;
       else if (strcmp(var.value, "3x") == 0)
          m68kClockScalePct = 300;
+      else if (clock_scale_parse_percent(var.value, &typed_pct))
+         m68kClockScalePct = typed_pct;   /* free-form "175" / "175%" */
    }
    /* Drop any carried sub-cycle remainder when the scale (possibly)
     * changed, so a new scale starts from a clean accumulator. */
@@ -3687,12 +3741,16 @@ static void check_variables(void)
    riscClockScalePct = 100;
    if (get_variable_pertitle(&var) && var.value)
    {
+      uint32_t typed_pct;
+
       if (strcmp(var.value, "0.5x") == 0)
          riscClockScalePct = 50;
       else if (strcmp(var.value, "1.5x") == 0)
          riscClockScalePct = 150;
       else if (strcmp(var.value, "2x") == 0)
          riscClockScalePct = 200;
+      else if (clock_scale_parse_percent(var.value, &typed_pct))
+         riscClockScalePct = typed_pct;   /* free-form "175" / "175%" */
    }
    /* Drop the GPU's sub-cycle bus-stall remainder when the RISC scale
     * (possibly) changed — mirrors M68KClockScaleReset() above. */
@@ -6791,6 +6849,8 @@ bool retro_load_game(const struct retro_game_info *info)
             && strcmp(timeout_var.value, "off") != 0)
       {
          int parsed_timeout = atoi(timeout_var.value);
+         if (parsed_timeout > 3600)
+            parsed_timeout = 3600;   /* free-form value: one hour is plenty */
          if (parsed_timeout > 0)
             halt_timeout_seconds = parsed_timeout;
       }
@@ -7456,6 +7516,12 @@ void retro_init(void)
     * docs/profiling.md is host-side.  Inert when the frontend declines. */
    VJPerfInit(environ_cb);
 
+   /* Private core -> frontend event channel (src/core/vj_frontend_ext.h).
+    * One HELLO per init; any frontend that does not know it (RetroArch,
+    * everything else) answers false and the channel stays off for the
+    * session, so VJExtEmit() is a single never-taken branch there. */
+   VJExtInit(environ_cb, CORE_VERSION);
+
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
@@ -7561,6 +7627,10 @@ void retro_deinit(void)
     * the same numbers in its UI, but a log line is what can actually be
     * retrieved from a locked-down tvOS box. */
    VJPerfDeinit();
+
+   /* iOS never dlcloses the core: drop the frontend-extension latch so the
+    * next session re-negotiates instead of inheriting this one's answer. */
+   VJExtDeinit();
 
    /* Belt-and-suspenders: shut down emulator subsystems if the frontend
     * calls deinit without unload first (videoBuffer != NULL means a game
@@ -8032,7 +8102,16 @@ void retro_run(void)
        * (the only way to read these numbers on iOS, which has no env). */
       char link_stats[256];
       if (JLinkStatsPoll(link_stats, sizeof(link_stats)))
+      {
          LOG_INF("[NETLINK] %s\n", link_stats);
+         if (VJExtActive())
+         {
+            unsigned st_hops, st_hop_x100, st_slipped, st_timeouts;
+            JLinkStatsLast(&st_hops, &st_hop_x100, &st_slipped, &st_timeouts);
+            VJExtEmit(VJ_EVT_LINK_STATS, st_hops, st_hop_x100, st_slipped,
+                      st_timeouts, NULL);
+         }
+      }
    }
 
    /* Host-side voice chat (#485): capture/gate/send. Never touches the
@@ -8104,12 +8183,27 @@ void retro_run(void)
                                                              : "jaglink");
             netlink_osd("Jaguar link connected (%s)",
                         netlink_device_label(JLinkDevice()));
+            if (VJExtActive())
+            {
+               char peer_desc[160];
+               if (JLinkMode() == JLINK_MODE_TCP_CLIENT)
+                  snprintf(peer_desc, sizeof(peer_desc), "%s %s",
+                           netlink_mode_name(JLinkMode()), JLinkGetTCPHost());
+               else
+                  snprintf(peer_desc, sizeof(peer_desc), "%s",
+                           netlink_mode_name(JLinkMode()));
+               VJExtEmit(VJ_EVT_LINK_UP,
+                         JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? 1u : 0u,
+                         0, 0, 0, peer_desc);
+            }
          }
          else if (netlink_was_up == 1)
          {
             LOG_WRN("[NETLINK] link DOWN (%s) -- peer disconnected\n",
                     netlink_mode_name(JLinkMode()));
             netlink_osd("Jaguar link lost");
+            VJExtEmit(VJ_EVT_LINK_DOWN, 0, 0, 0, 0,
+                      netlink_mode_name(JLinkMode()));
          }
          else
             LOG_INF("[NETLINK] %s open, waiting for peer...\n",
@@ -8135,10 +8229,14 @@ void retro_run(void)
                     "(link timing bug reports are only valid at Off)\n",
                     curSpeedup);
             netlink_osd("Link speed: auto (%ux)", curSpeedup);
+            VJExtEmit(VJ_EVT_WIRE_SPEED, curSpeedup, 1, 0, 0, NULL);
          }
          else if (netlink_was_speedup > 1)
+         {
             LOG_INF("[NETLINK] wire speed back to stock (link dropped, "
                     "option changed, or peer no longer confirmed)\n");
+            VJExtEmit(VJ_EVT_WIRE_SPEED, 1, 0, 0, 0, NULL);
+         }
          netlink_was_speedup = curSpeedup;
       }
    }

@@ -6,12 +6,14 @@
 
 #include "imgui.h"
 #include "shaders.h"
+#include "typed_ui.h"
 #include "ui_util.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <map>
 
 namespace vj {
 
@@ -45,22 +47,36 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
     // A session override (the Netplay window's link mode / host / port, or --option) decides what the core
     // reads, so a pick here would be saved yet never show: the row is read-only until the override ends.
     const bool pinned = host.optionOverridden(d.key);
+    // A key in typed_options.h gets the core's presets plus "Custom..." (a typed value); every other
+    // option is a plain list.
+    const TypedOption* typed = typedOptionFor(d.key);
+    static std::map<std::string, ui::TypedState> typedState;
+    ui::TypedState* ts = typed ? &typedState[d.key] : nullptr;
     ImGui::BeginDisabled(pinned);
-    ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
-    if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
-        for (const OptionValue& v : d.values) {
-            bool sel = (v.value == cur);
-            if (ImGui::Selectable(v.label.empty() ? v.value.c_str() : v.label.c_str(), sel))
-                host.setOptionValue(d.key, v.value);
-            if (sel) ImGui::SetItemDefaultFocus();
+    if (typed) {
+        std::string picked;
+        if (ui::typedCombo("##v", ui::fitWidth(0.34f, 8.0f, 14.0f), *typed, d.values, cur, *ts, picked))
+            host.setOptionValue(d.key, picked);
+    } else {
+        ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
+        if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
+            for (const OptionValue& v : d.values) {
+                bool sel = (v.value == cur);
+                if (ImGui::Selectable(v.label.empty() ? v.value.c_str() : v.label.c_str(), sel))
+                    host.setOptionValue(d.key, v.value);
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
         }
-        ImGui::EndCombo();
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
     // "reset" has a fixed slot so the descriptions stay aligned whether or not it shows.
     if (host.userOptions().count(d.key)) {
-        if (ImGui::SmallButton("reset")) host.resetOptionToDefault(d.key);
+        if (ImGui::SmallButton("reset")) {
+            host.resetOptionToDefault(d.key);
+            if (ts) ts->custom = false;
+        }
     } else {
         ImGui::Dummy(ImVec2(ui::Flow::buttonW("reset"), 1.0f));
     }
@@ -71,6 +87,15 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
         ui::beginWrappedTooltip();
         ImGui::TextUnformatted(info.c_str());
         ui::endWrappedTooltip();
+    }
+    if (typed && ts->custom) {
+        // The typed value, under the row.
+        ImGui::BeginDisabled(pinned);
+        ImGui::Indent();
+        std::string picked;
+        if (ui::typedInput(*typed, cur, *ts, picked)) host.setOptionValue(d.key, picked);
+        ImGui::Unindent();
+        ImGui::EndDisabled();
     }
     if (pinned)
         ui::hint("Set by the Netplay window (or --option) for this session. Disconnect in the Netplay menu to change it here.");

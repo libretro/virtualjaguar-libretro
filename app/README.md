@@ -387,7 +387,7 @@ single instance.
 | game saves `saves/<game>.srm` (EEPROM, SRAM, Memory Track) and the GameDrive SD folder | `saves/` | `saves/instance-N/`; a game's first run there starts from a copy of instance 1's save (read only) |
 | save states `states/`, cheat selections `cheats/games/` | shared | shared: written only when you press save, each file atomically, last save wins. A state saved in one copy loads in another |
 | library cache, box art, database files | shared | shared, written atomically with a per-process temporary name |
-| netplay address (`system/vj_netlink.txt`) | written when you join, as before | not written: the address goes to the core through `VJ_NETLINK_HOST`, which is per process, so two copies can join different hosts |
+| netplay address (`system/vj_netlink.txt`) | written when you join, as before | not written (no copy writes it): the address and port go to the core as per-process option overrides, so two copies can join different hosts |
 
   Why: two copies both writing one `.srm` or one whole-file `config.ini` would silently lose
   one side's changes. Settings you change in a second window are therefore not remembered, so make
@@ -493,17 +493,43 @@ The **Netplay** menu opens a window for the link-cable games (Doom deathmatch, B
 AirCars, and Ultra Vortek over the Voice Modem) between two computers on a local network (or two windows on one machine, see
 [Running several instances](#running-several-instances)). It
 configures the core's existing link networking (`docs/netlink-user-guide.md`) through core options
-and reads the core's `[NETLINK]` log lines for status; it is not rollback netplay, and play over
+and takes status from the core's event channel (see Core events below; a core that never answers
+falls back to reading its `[NETLINK]` log lines); it is not rollback netplay, and play over
 the Internet or a VPN is not supported. Both players need the same game and the same version of
 the app, and the same device (JagLink / CatBox cable or Voice Modem).
 
-- **Host a game** lists this machine's LAN addresses and starts listening on a port (42171-42174).
-- **Join a game** finds hosts on the LAN (the core's UDP beacon) or takes a typed address.
+- **Host a game** lists this machine's LAN addresses and starts listening on a port: one of the
+  core's four presets (42171-42174) or any port from 1 to 65535 under **Custom...**.
+- **Join a game** finds hosts on the LAN (the core's UDP beacon) or takes a typed host name or IPv4
+  address, set straight on the core's host option (the core resolves names itself).
 - Mode, host and port are session overrides and are never saved, so relaunching the app does not start
   listening on its own; the link device is an ordinary saved option.
 - Command line twin: `--netplay host|join|join-discovered|browse|loopback`, `--netplay-addr`,
   `--netplay-port`, `--netplay-device jaglink|voicemodem`. **Advanced > Echo test** runs the link
   against itself with no partner.
+
+## Typed settings
+
+The core publishes every option as a list, but for a handful it reads any value, so Settings >
+Core options shows the core's presets plus a **Custom...** entry that opens a box (applies on Enter
+or when it loses focus; an invalid value says why in red and is not applied). The keys are in
+`src/typed_options.h`, with the range the core actually honours: link port, GDB port (1-65535),
+GDB halt timeout (1-3600 s), mouse / rotary sensitivity (1-1600%), the per-axis dead zone (0-64),
+offset (-64..64) and response curve (1-800%), the link host (host name or IPv4, 1-127
+characters, no IPv6: the link sockets are IPv4), and the M68K / RISC clock scales (a percentage,
+25-400, e.g. `175%`). Saved values and `--option K=V` use the same validators, so
+`--option virtualjaguar_netlink_port=50123` works; every other option stays a strict list.
+Tested by `typed_options` (validators, CoreHost, and the real core reading a custom port, host and
+clock scale).
+
+## Core events
+
+The core reports link up/down, link statistics, wire speed and crash-watchdog hits to the app
+through a private libretro environment call that only this app answers
+(`src/core/vj_frontend_ext.h`, `docs/app-frontend-extension.md`); under RetroArch it is a no-op.
+`CoreHost` answers the handshake and hands each event to `onEvent`; Netplay consumes them instead
+of scraping log text (the log parser remains the fallback), and a crash-watchdog hit shows as an
+on-screen message naming the signature.
 
 ## Smoke tests
 
@@ -570,7 +596,8 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | --- | --- |
 | `cmake/VJCore.cmake` | core + libchdr static libraries from `Makefile.common` |
 | `cmake/VJSmokeTests.cmake` | CTest smoke tests |
-| `src/core_host.*` | libretro host: environment calls, options, SRAM, states, discs |
+| `src/core_host.*` | libretro host: environment calls, options, SRAM, states, discs, the core's private event channel |
+| `src/typed_options.h`, `src/typed_ui.h` | which options take a typed value and their validators; the Custom... combo and box |
 | `src/app.*` | window, GL, main loop, pacing, events, save-state slots, headless runner |
 | `src/video.*` | XRGB8888 texture and presentation (plain, or through the shader chain) |
 | `src/present_util.*` | GL-free: where the picture goes (aspect / integer / stretch), `.slangp` parsing and folder scan |

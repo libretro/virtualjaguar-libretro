@@ -5,7 +5,8 @@ ships: a standalone emulator for macOS, Windows and Linux built on the same core
 
 v3.8.1 is a bug-fix release for the core plus the debut of the standalone app
 (https://github.com/libretro/virtualjaguar-libretro/issues/833). For RetroArch and Provenance users the change is the overclock fix
-below; nothing else in the core changed. No option keys or values changed and the savestate format
+below, plus two small additions for the app (a clock-scale percentage form and a private event
+channel that RetroArch never sees). No option keys or listed values changed and the savestate format
 stays v17.
 
 ---
@@ -28,6 +29,9 @@ stays v17.
   and 2x on 12 titles in HLE and 7 on the real BIOS; stock 1x is unchanged. The Settings
   sublabel and the `[perf]` log line no longer name the RISC clock as a suppressor. Doom's GPU
   loops are still not fast-forwarded, so Doom at 2x still takes about 1.65x the time of 1x.
+- **Clock scale options also accept a percentage; GDB halt timeout clamped.** `175` or `175%`
+  (clamped to 25-400) is read in addition to the listed values, which map exactly as before;
+  the GDB halt timeout is clamped to 3600 seconds.
 
 ---
 
@@ -77,6 +81,15 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   AirCars and Ultra Vortek (over the Voice Modem) on a local network, with LAN discovery
   (https://github.com/libretro/virtualjaguar-libretro/pull/888). While a session is set up, the link settings it controls are shown greyed out in
   Settings (https://github.com/libretro/virtualjaguar-libretro/pull/898).
+- **Typed settings.** Options that take a number or an address (link port and host, GDB port and
+  halt timeout, mouse and rotary sensitivity, the dead zone / offset / response-curve tuning, the
+  clock scales) show the core's presets plus a "Custom..." entry that opens a validated box; an
+  invalid entry says why and changes nothing. The Netplay window takes any port 1-65535 and a typed
+  host name or IPv4 address directly (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+- **Core events for the app.** The core tells the app about link up/down, link statistics, wire
+  speed and crash-watchdog hits over a private channel (`docs/app-frontend-extension.md`) instead
+  of the app reading log text; a watchdog hit now also shows on screen. RetroArch and other
+  frontends never see it (https://github.com/libretro/virtualjaguar-libretro/issues/888).
 - **Local signing.** `app/packaging/local-package.sh --sign` packages your own build and signs it
   with a Developer ID (or Apple Development) identity found in the macOS keychain, or a `.pfx` /
   store certificate on Windows, optionally set in a gitignored `.env`; `--notarize` also notarizes
