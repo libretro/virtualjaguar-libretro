@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "app.h"
+#include "ui_util.h"
 #include "imgui.h"
 #include "netplay.h"
 
@@ -268,7 +269,7 @@ void drawJoin(App& app) {
     }
 
     ImGui::SeparatorText("Type an address");
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.5f, 10.0f, 18.0f));
     bool enter = ImGui::InputTextWithHint("##addr", "192.168.1.20", g_ui.address, sizeof g_ui.address,
                                           ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
@@ -328,8 +329,10 @@ void drawNetplayMenu(App& app) {
 
 void drawNetplay(App& app) {
     initUi(app);
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 34.0f, ImGui::GetFontSize() * 36.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Netplay", &app.showNetplay)) {
+    ui::nextWindow(34.0f, 36.0f, 24.0f, 16.0f);
+    bool open = ImGui::Begin("Netplay", &app.showNetplay);
+    ui::keepOnScreen();
+    if (!open) {
         ImGui::End();
         return;
     }

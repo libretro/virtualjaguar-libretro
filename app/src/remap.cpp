@@ -14,13 +14,23 @@ namespace vj {
 // ---------------------------------------------------------------------------------
 // controls
 // ---------------------------------------------------------------------------------
-static const char* const kCtlId[C_COUNT] = {
+static const char* const kCtlId[] = {
     "up", "down", "left", "right", "a", "b", "c", "option", "pause",
-    "k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "star", "hash", "overlay"};
-static const char* const kCtlLabel[C_COUNT] = {
+    "k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "star", "hash", "overlay",
+    "d", "e", "f", "ax_lx_n", "ax_lx_p", "ax_ly_n", "ax_ly_p", "ax_rx_n", "ax_rx_p", "ax_ry_n", "ax_ry_p",
+    "ax_l2", "ax_r2", "ax_l1", "ax_r1", "pt_l", "pt_r", "pt_u", "pt_d", "mb_l", "mb_r", "gun_reload", "help"};
+static const char* const kCtlLabel[] = {
     "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "A", "B", "C", "Option", "Pause",
-    "Keypad 0", "Keypad 1", "Keypad 2", "Keypad 3", "Keypad 4", "Keypad 5", "Keypad 6", "Keypad 7",
-    "Keypad 8", "Keypad 9", "Keypad *", "Keypad #", "Keypad overlay"};
+    "Keypad 0", "Keypad 1", "Keypad 2", "Keypad 3", "Keypad 4 (Pro: L)", "Keypad 5", "Keypad 6 (Pro: R)",
+    "Keypad 7 (Pro: Z)", "Keypad 8 (Pro: Y)", "Keypad 9 (Pro: X)", "Keypad *", "Keypad #", "Keypad overlay",
+    "D button (analog / 6D)", "E button (6D)", "F button (6D)",
+    "Stick left", "Stick right", "Stick up", "Stick down",
+    "Stick 2 left (6D)", "Stick 2 right (6D)", "Stick 2 up (6D)", "Stick 2 down (6D)",
+    "Left trigger (L2)", "Right trigger (R2)", "Left shoulder (L)", "Right shoulder (R)",
+    "Pointer left", "Pointer right", "Pointer up", "Pointer down",
+    "Mouse button left", "Mouse button right", "Light gun reload (fire off-screen)", "Controls overlay"};
+static_assert(sizeof(kCtlId) / sizeof(kCtlId[0]) == C_COUNT, "one id per control");
+static_assert(sizeof(kCtlLabel) / sizeof(kCtlLabel[0]) == C_COUNT, "one label per control");
 
 const char* ctlId(Ctl c) { return c < C_COUNT ? kCtlId[c] : ""; }
 const char* ctlLabel(Ctl c) { return c < C_COUNT ? kCtlLabel[c] : ""; }
@@ -208,6 +218,45 @@ Profile Profile::builtin(DeviceClass cls) {
         add(p, C_HASH, Binding::key(SDL_SCANCODE_EQUALS));
         add(p, C_HASH, Binding::key(SDL_SCANCODE_KP_MULTIPLY));
         add(p, C_OVERLAY, Binding::key(SDL_SCANCODE_F2));
+        // The exotic devices.  Letters W A S D / I J K L are free (the keypad is the number row,
+        // F1 F2 F5-F8 F11 and Tab are app keys); the face keys are shared with the pad's
+        // (Z/X also fire the mouse buttons, Z is the light gun trigger).
+        // Jaguar Pro Controller (libretro.c, update_input(), pro_controller[]): its X / Y / Z fire
+        // buttons and the Left / Right shoulders are, on the wire, keypad 9 / 8 / 7 and 4 / 6.  The
+        // app presses keypad keys itself, so a keyboard player gets all six face buttons and both
+        // shoulders with no overlay: the top row A S D = X Y Z over the bottom row Z X C = B A C,
+        // and Q / E = Left / Right shoulder.
+        add(p, C_K9, Binding::key(SDL_SCANCODE_A));
+        add(p, C_K8, Binding::key(SDL_SCANCODE_S));
+        add(p, C_K7, Binding::key(SDL_SCANCODE_D));
+        add(p, C_K4, Binding::key(SDL_SCANCODE_Q));
+        add(p, C_K6, Binding::key(SDL_SCANCODE_E));
+        add(p, C_D, Binding::key(SDL_SCANCODE_V));
+        add(p, C_E, Binding::key(SDL_SCANCODE_B));
+        add(p, C_F, Binding::key(SDL_SCANCODE_N));
+        add(p, C_AX_LX_N, Binding::key(SDL_SCANCODE_A));
+        add(p, C_AX_LX_P, Binding::key(SDL_SCANCODE_D));
+        add(p, C_AX_LY_N, Binding::key(SDL_SCANCODE_W));
+        add(p, C_AX_LY_P, Binding::key(SDL_SCANCODE_S));
+        add(p, C_AX_RX_N, Binding::key(SDL_SCANCODE_J));
+        add(p, C_AX_RX_P, Binding::key(SDL_SCANCODE_L));
+        add(p, C_AX_RY_N, Binding::key(SDL_SCANCODE_I));
+        add(p, C_AX_RY_P, Binding::key(SDL_SCANCODE_K));
+        add(p, C_AX_L2, Binding::key(SDL_SCANCODE_Q));
+        add(p, C_AX_R2, Binding::key(SDL_SCANCODE_E));
+        add(p, C_AX_L1, Binding::key(SDL_SCANCODE_U));
+        add(p, C_AX_R1, Binding::key(SDL_SCANCODE_O));
+        // Pointer motion on the arrows: a rotary turns on Left/Right (the core withholds the
+        // D-pad on a rotary port anyway), a stick-less mouse or gun is nudged by all four.
+        add(p, C_PT_L, Binding::key(SDL_SCANCODE_LEFT));
+        add(p, C_PT_R, Binding::key(SDL_SCANCODE_RIGHT));
+        add(p, C_PT_U, Binding::key(SDL_SCANCODE_UP));
+        add(p, C_PT_D, Binding::key(SDL_SCANCODE_DOWN));
+        add(p, C_MB_L, Binding::key(SDL_SCANCODE_Z));
+        add(p, C_MB_R, Binding::key(SDL_SCANCODE_X));
+        add(p, C_GUN_RELOAD, Binding::key(SDL_SCANCODE_R));
+        // F1 (menu bar) and F2 (keypad overlay) are taken; F3 is free.
+        add(p, C_HELP, Binding::key(SDL_SCANCODE_F3));
     } else {
         // SDL's standard gamepad layout.  Chosen so that every keypad key is on the pad
         // without opening the overlay: 0-6 sit where the core's own RetroPad defaults
@@ -236,6 +285,34 @@ Profile Profile::builtin(DeviceClass cls) {
         add(p, C_STAR, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1));
         add(p, C_HASH, Binding::button(SDL_GAMEPAD_BUTTON_GUIDE));
         add(p, C_OVERLAY, Binding::button(SDL_GAMEPAD_BUTTON_MISC1));
+        // The exotic devices.  The buttons ride the same physical inputs the core's own RetroPad
+        // mapping gives them (X is D, the stick clicks are E / F); sticks and triggers are the
+        // analog controls; the right stick is the pointer.
+        add(p, C_D, Binding::button(SDL_GAMEPAD_BUTTON_NORTH));
+        add(p, C_E, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK));
+        add(p, C_F, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_STICK));
+        add(p, C_AX_LX_N, Binding::axis(SDL_GAMEPAD_AXIS_LEFTX, -1));
+        add(p, C_AX_LX_P, Binding::axis(SDL_GAMEPAD_AXIS_LEFTX, 1));
+        add(p, C_AX_LY_N, Binding::axis(SDL_GAMEPAD_AXIS_LEFTY, -1));
+        add(p, C_AX_LY_P, Binding::axis(SDL_GAMEPAD_AXIS_LEFTY, 1));
+        add(p, C_AX_RX_N, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1));
+        add(p, C_AX_RX_P, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1));
+        add(p, C_AX_RY_N, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTY, -1));
+        add(p, C_AX_RY_P, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1));
+        add(p, C_AX_L2, Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1));
+        add(p, C_AX_R2, Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1));
+        add(p, C_AX_L1, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+        add(p, C_AX_R1, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
+        add(p, C_PT_L, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1));
+        add(p, C_PT_R, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1));
+        add(p, C_PT_U, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTY, -1));
+        add(p, C_PT_D, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1));
+        add(p, C_MB_L, Binding::button(SDL_GAMEPAD_BUTTON_SOUTH));
+        add(p, C_MB_R, Binding::button(SDL_GAMEPAD_BUTTON_EAST));
+        add(p, C_GUN_RELOAD, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+        // Back = Pause, Share = keypad overlay, Guide = # (and Back+Start is Tempest 2000's
+        // unlock), so the cheat-sheet rides the touchpad button where there is one; rebindable.
+        add(p, C_HELP, Binding::button(SDL_GAMEPAD_BUTTON_TOUCHPAD));
     }
     return p;
 }
@@ -338,7 +415,7 @@ static bool bindingDown(const Binding& b, const DeviceSnapshot& s, bool dominant
 
 ControlSet evaluate(const Profile& p, const DeviceSnapshot& s) {
     ControlSet out;
-    for (int i = 0; i < C_COUNT; i++) {
+    for (int i = 0; i < C_D; i++) {
         bool dominant = isKeypad((Ctl)i);
         for (const Binding& b : p.binds[(size_t)i]) {
             if (bindingDown(b, s, dominant)) {
@@ -353,6 +430,49 @@ ControlSet evaluate(const Profile& p, const DeviceSnapshot& s) {
         if (x > kStickThreshold) out.set(C_RIGHT);
         if (y < -kStickThreshold) out.set(C_UP);
         if (y > kStickThreshold) out.set(C_DOWN);
+    }
+    return out;
+}
+
+ControlSet evaluateExtra(const Profile& p, const DeviceSnapshot& s) {
+    ControlSet out;
+    for (int i = C_D; i < C_COUNT; i++) {
+        if (isAnalogCtl((Ctl)i)) continue;   // AnalogSet
+        for (const Binding& b : p.binds[(size_t)i]) {
+            if (bindingDown(b, s, false)) {
+                out.set((Ctl)i);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+static int bindingStrength(const Binding& b, const DeviceSnapshot& s, int dz) {
+    switch (b.kind) {
+    case Binding::Key:
+        return (b.code > 0 && b.code < (int)s.key.size() && s.key[(size_t)b.code]) ? 32767 : 0;
+    case Binding::PadButton:
+        return (b.code >= 0 && b.code < (int)s.btn.size() && s.btn[(size_t)b.code]) ? 32767 : 0;
+    case Binding::PadAxis: {
+        if (b.code < 0 || b.code >= (int)s.axis.size()) return 0;
+        int v = b.dir > 0 ? (int)s.axis[(size_t)b.code] : -(int)s.axis[(size_t)b.code];
+        if (v <= dz) return 0;
+        if (dz >= 32767) return 0;
+        return (int)(((long long)(v - dz) * 32767) / (32767 - dz));
+    }
+    default: return 0;
+    }
+}
+
+AnalogSet evaluateAnalog(const Profile& p, const DeviceSnapshot& s, int deadzone) {
+    AnalogSet out;
+    if (deadzone < 0) deadzone = 0;
+    for (int i = C_D; i < C_COUNT; i++) {
+        if (!isAnalogCtl((Ctl)i)) continue;
+        int best = 0;
+        for (const Binding& b : p.binds[(size_t)i]) best = std::max(best, bindingStrength(b, s, deadzone));
+        out.v[(size_t)i] = (int16_t)std::min(best, 32767);
     }
     return out;
 }
@@ -393,10 +513,62 @@ bool CoreInput::isCoreKeypadKey(unsigned rk) {
     return false;
 }
 
+// libretro.c teamtap_map[]: RetroPad id -> Jaguar slot.  Keypad 0-6 are X L R L2 R2 L3 R3.
+int CoreInput::tapPadId(Ctl c) {
+    int id = padId(c);
+    if (id >= 0) return id;
+    switch (c) {
+    case C_K0: return RETRO_DEVICE_ID_JOYPAD_X;
+    case C_K1: return RETRO_DEVICE_ID_JOYPAD_L;
+    case C_K2: return RETRO_DEVICE_ID_JOYPAD_R;
+    case C_K3: return RETRO_DEVICE_ID_JOYPAD_L2;
+    case C_K4: return RETRO_DEVICE_ID_JOYPAD_R2;
+    case C_K5: return RETRO_DEVICE_ID_JOYPAD_L3;
+    case C_K6: return RETRO_DEVICE_ID_JOYPAD_R3;
+    default: return -1;
+    }
+}
+
 void CoreInput::beginFrame() {
     pad_.fill(0);
     keys_.fill(false);
+    extra_.fill(PortExtra());
     synth_ = false;
+}
+
+void CoreInput::addTapControls(unsigned frontendPort, ControlSet c) {
+    if (frontendPort >= pad_.size()) return;
+    for (int i = 0; i < kJaguarControls; i++) {
+        if (!c.test((Ctl)i)) continue;
+        int id = tapPadId((Ctl)i);
+        if (id >= 0) pad_[frontendPort] |= 1u << id;
+    }
+}
+
+void CoreInput::addMouse(unsigned port, int32_t dx, int32_t dy, unsigned buttons) {
+    if (port >= extra_.size()) return;
+    extra_[port].mouseDx += dx;
+    extra_[port].mouseDy += dy;
+    extra_[port].mouseButtons |= buttons;
+}
+
+void CoreInput::setAnalog(unsigned port, unsigned index, unsigned id, int32_t value) {
+    if (port >= extra_.size() || index > 1 || id > 1) return;
+    extra_[port].stick[index][id] = (int16_t)std::max(-32768, std::min(32767, value));
+}
+
+void CoreInput::setAnalogButton(unsigned port, unsigned id, int32_t value) {
+    if (port >= extra_.size() || id >= 16) return;
+    extra_[port].abtn[id] = (int16_t)std::max(0, std::min(32767, value));
+}
+
+void CoreInput::setGun(unsigned port, int32_t x, int32_t y, bool offscreen, unsigned buttons) {
+    if (port >= extra_.size()) return;
+    PortExtra& e = extra_[port];
+    e.gunX = std::max(-0x7fff, std::min(0x7fff, x));
+    e.gunY = std::max(-0x7fff, std::min(0x7fff, y));
+    e.gunOff = offscreen;
+    e.gunButtons = buttons;
 }
 
 void CoreInput::addControls(unsigned port, ControlSet c) {
@@ -424,8 +596,41 @@ void CoreInput::addRawKey(unsigned rk) {
 }
 
 int16_t CoreInput::state(unsigned port, unsigned device, unsigned index, unsigned id) const {
-    (void)index;
     device &= RETRO_DEVICE_MASK;
+    if (device == RETRO_DEVICE_MOUSE) {
+        if (port >= extra_.size()) return 0;
+        const PortExtra& e = extra_[port];
+        auto clamp16 = [](int32_t v) { return (int16_t)std::max(-32768, std::min(32767, v)); };
+        switch (id) {
+        case RETRO_DEVICE_ID_MOUSE_X: return clamp16(e.mouseDx);
+        case RETRO_DEVICE_ID_MOUSE_Y: return clamp16(e.mouseDy);
+        case RETRO_DEVICE_ID_MOUSE_LEFT: return (e.mouseButtons & 1u) ? 1 : 0;
+        case RETRO_DEVICE_ID_MOUSE_RIGHT: return (e.mouseButtons & 2u) ? 1 : 0;
+        default: return 0;
+        }
+    }
+    if (device == RETRO_DEVICE_ANALOG) {
+        if (port >= extra_.size()) return 0;
+        const PortExtra& e = extra_[port];
+        if (index == RETRO_DEVICE_INDEX_ANALOG_BUTTON) return id < 16 ? e.abtn[id] : 0;
+        if (index > 1 || id > 1) return 0;
+        return e.stick[index][id];
+    }
+    if (device == RETRO_DEVICE_LIGHTGUN) {
+        if (port >= extra_.size()) return 0;
+        const PortExtra& e = extra_[port];
+        switch (id) {
+        case RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X: return (int16_t)e.gunX;
+        case RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y: return (int16_t)e.gunY;
+        case RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN: return e.gunOff ? 1 : 0;
+        case RETRO_DEVICE_ID_LIGHTGUN_TRIGGER: return (e.gunButtons & GUN_TRIGGER) ? 1 : 0;
+        case RETRO_DEVICE_ID_LIGHTGUN_AUX_A: return (e.gunButtons & GUN_AUX_A) ? 1 : 0;
+        case RETRO_DEVICE_ID_LIGHTGUN_AUX_B: return (e.gunButtons & GUN_AUX_B) ? 1 : 0;
+        case RETRO_DEVICE_ID_LIGHTGUN_START: return (e.gunButtons & GUN_START) ? 1 : 0;
+        case RETRO_DEVICE_ID_LIGHTGUN_SELECT: return (e.gunButtons & GUN_SELECT) ? 1 : 0;
+        default: return 0;
+        }
+    }
     if (device == RETRO_DEVICE_JOYPAD) {
         if (port >= pad_.size()) return 0;
         uint32_t m = pad_[port];
@@ -568,18 +773,6 @@ BindCapture::Result BindCapture::feed(const SDL_Event& e, Binding& out) {
         }
     }
     return Pending;
-}
-
-// ---------------------------------------------------------------------------------
-// raw-pad ports
-// ---------------------------------------------------------------------------------
-bool deviceNeedsRawPad(int frontendDevice, const std::string& optionValue) {
-    // libretro.c: RETRO_DEVICE_JAG_ANALOG / _DRIVING / _6D (the paddle, subclass 2, is NOT one).
-    if (frontendDevice == (int)RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0) ||
-        frontendDevice == (int)RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1) ||
-        frontendDevice == (int)RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 3))
-        return true;
-    return optionValue == "analog" || optionValue == "driving" || optionValue == "6d";
 }
 
 // ---------------------------------------------------------------------------------

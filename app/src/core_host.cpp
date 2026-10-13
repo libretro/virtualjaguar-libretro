@@ -206,10 +206,22 @@ void CoreHost::captureOptions(const retro_core_options_v2* o) {
             defs_.push_back(std::move(def));
         }
     }
+    locked_.clear();
+    if (optionLock) {
+        for (const OptionDef& d : defs_) {
+            std::string v;
+            if (!optionLock(d.key, v)) continue;
+            bool ok = false;
+            for (const OptionValue& ov : d.values)
+                if (ov.value == v) ok = true;
+            locked_[d.key] = ok ? v : d.defaultValue;
+        }
+    }
     optionPushes_++;
 }
 
 bool CoreHost::optionVisible(const std::string& key) const {
+    if (locked_.count(key)) return false;
     auto it = visibility_.find(key);
     return it == visibility_.end() ? true : it->second;
 }
@@ -221,6 +233,8 @@ static bool validFor(const OptionDef& d, const std::string& v) {
 }
 
 std::string CoreHost::optionValue(const OptionDef& d) const {
+    auto l = locked_.find(d.key);
+    if (l != locked_.end()) return l->second;
     auto s = sessionValues_.find(d.key);
     if (s != sessionValues_.end() && validFor(d, s->second)) return s->second;
     auto u = userValues_.find(d.key);
@@ -253,6 +267,16 @@ std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
     std::vector<std::string> out;
     const std::map<std::string, std::string>& m = sessionOnly ? sessionValues_ : userValues_;
     for (const auto& kv : m) {
+        auto l = locked_.find(kv.first);
+        if (l != locked_.end()) {
+            // The app forces it.  Silently running the forced value would be the "--option did
+            // nothing" trap, so a value that differs is reported (an error for --option, a
+            // warning for a stale saved one).
+            if (kv.second != l->second)
+                out.push_back("'" + kv.first + "' is managed by the app (Settings > Input / Controls)" +
+                              (sessionOnly ? "; --option cannot change it" : "; the saved value is ignored"));
+            continue;
+        }
         std::string p = problemFor(defs_, kv.first, kv.second);
         if (!p.empty()) out.push_back(p);
     }
@@ -353,6 +377,12 @@ bool CoreHost::env(unsigned cmd, void* data) {
             // Pointers into the maps' node-stable strings, or into defs_ (only
             // rebuilt on a definitions push, which also happens on the core's
             // own call stack -- the core copies values before then).
+            auto l = locked_.find(d.key);
+            if (l != locked_.end()) {
+                v->value = l->second.c_str();
+                traceOption(d.key, v->value, "locked");
+                return true;
+            }
             auto s = sessionValues_.find(d.key);
             if (s != sessionValues_.end() && validFor(d, s->second)) {
                 v->value = s->second.c_str();

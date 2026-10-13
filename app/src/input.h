@@ -5,14 +5,16 @@
 // 12-key Jaguar keypad.  The built-in defaults are
 //   keyboard  arrows = d-pad, Z = B, X = A, C = C, Enter = Option,
 //             Right Shift / Backspace = Pause, number row + numpad = keypad,
-//             F2 = keypad overlay
+//             A S D / Q E = the Pro Controller's X Y Z / shoulders (keypad 9 8 7 / 4 6),
+//             F2 = keypad overlay, F3 = controls overlay, F10 = release the mouse
 //   gamepad   SDL's standard layout: South=B, East=A, West=C, Back=Pause,
 //             Start=Option, d-pad / left stick = d-pad; keypad 0-6 on North,
 //             shoulders, triggers and stick clicks, 7/8/9/* on the right stick,
-//             # on Guide, the overlay on Share/Capture.
+//             # on Guide, the overlay on Share/Capture, the controls overlay on Touchpad.
 // How the keypad reaches the core (it has no RetroPad buttons for 7, 8, 9, *, #)
-// is documented in remap.h.  Ports whose device is not a plain pad (6D, analog,
-// driving) and Team Tap sockets get the physical RetroPad instead, as before.
+// is documented in remap.h.  What each port's DEVICE reads (mouse, rotary, analog, light
+// gun, Team Tap ...) and which host controller plays which player is devices.h / router.h;
+// this class only snapshots SDL and hands the snapshot to the Router.
 #pragma once
 #include <SDL3/SDL.h>
 
@@ -23,7 +25,10 @@
 #include <vector>
 
 #include "config.h"
+#include "cheatsheet.h"
+#include "devices.h"
 #include "remap.h"
+#include "router.h"
 
 namespace vj {
 
@@ -36,6 +41,7 @@ public:
     // is false (a text box has focus, or a modifier chord is held) the
     // keyboard contributes nothing.
     void poll(bool captureKeyboard);
+    // retro_input_state_t for every device (joypad, keyboard, mouse, analog, light gun).
     int16_t state(unsigned port, unsigned device, unsigned index, unsigned id) const;
 
     // Map an SDL scancode to a RETROK_* code (0 if none).
@@ -56,16 +62,43 @@ public:
     const std::string& content() const { return content_; }
     void reresolve();   // after any store edit, hot-plug or content change
 
+    // ---- devices (devices.h) --------------------------------------------------------------------
+    // What each Jaguar port holds, from the app's choice and the core's option (devices_ui.cpp).
+    void setPortKinds(DevKind port1, DevKind port2);
+    DevKind portKind(unsigned port) const { return port < 2 ? kind_[port] : DevKind::Pad; }
+    const DeviceSettings& deviceSettings() const { return settings_; }
+    // Which host controller / keyboard drives each player slot right now.
+    const Routes& routes() const { return routes_; }
+    std::array<SlotSource, kSlots> slotConfig() const;
+    // The picture rectangle on screen (video.draw()), for the light gun.
+    void setPicture(float x, float y, float w, float h) { pic_ = PicRect{x, y, w, h}; }
+    const PicRect& picture() const { return pic_; }
+    bool uiWantsKeyboard = false;   // a text box has focus (set once per UI frame)
+    // The controls-overlay key / button was pressed since the last call.
+    bool takeHelpToggle() { bool h = helpToggle_; helpToggle_ = false; return h; }
+    // Mouse capture.  syncMouseCapture() runs once per UI frame: it turns SDL's relative mouse
+    // mode on or off from wantRelativeMouse().  `uiOpen` = a menu, popup or window is open.
+    void syncMouseCapture(SDL_Window* w, bool gameRunning, bool uiOpen, bool uiWantsMouse);
+    bool mouseCaptured() const { return relative_; }
+    bool mouseWanted() const { return devWantsRelativeMouse(mousePortKind()); }
+    std::function<void(const std::string&)> notify;   // OSD toast
+
     struct PadInfo {
         std::string name;
         std::string guid;
-        unsigned port = 0;
+        unsigned port = 0;       // connection order
+        int instance = 0;        // which of several identical models (0 = first)
+        int slot = -1;           // the player slot it drives right now, -1 none
     };
     std::vector<PadInfo> pads() const;
     const Profile& keyboardProfile() const { return kbProfile_; }
     const Profile& padProfile(size_t i) const { return pads_[i].profile; }
 
     KeypadOverlay overlay;
+    ControlsOverlayState controls;   // the controls cheat sheet (cheatsheet.h)
+    // Recompute which host controller / keyboard drives which player slot (poll() does this
+    // every frame; the UI calls it when it needs the answer between polls).
+    void updateRoutes();
     // "Press a button to bind": the next key / pad button / axis push is stored into
     // `layer` for `ctl` (appended when `add`, replacing otherwise) and swallowed.
     void beginCapture(const LayerId& layer, Ctl ctl, bool add);
@@ -73,8 +106,6 @@ public:
     bool capturing() const { return capture_.active(); }
     Ctl captureTarget() const { return capCtl_; }
     DeviceClass captureClass() const { return capLayer_.cls; }
-    // Whether Jaguar port `p` must see the physical RetroPad (6D / analog / driving device).
-    std::function<bool(unsigned port)> portRaw;
     // True while any keypad key is being synthesised (diagnostics / UI).
     bool keypadSynthesised() const { return core_.keypadSynthesised(); }
 
@@ -82,16 +113,15 @@ private:
     struct Pad {
         SDL_Gamepad* handle = nullptr;
         SDL_JoystickID id = 0;
-        uint16_t mask = 0;               // the physical RetroPad (legacy / raw ports)
-        int16_t axis[4] = {0, 0, 0, 0};  // LX LY RX RY
         std::string guid;
         Profile profile;
     };
     void bindCaptured(const Binding& b);
-    void refreshRawPorts();
+    DevKind mousePortKind() const;
 
     std::vector<Pad> pads_;
     CoreInput core_;
+    Router router_;
     Config* cfg_ = nullptr;
     std::unique_ptr<BindingStore> store_;
     std::string content_;
@@ -100,8 +130,21 @@ private:
     LayerId capLayer_;
     Ctl capCtl_ = C_COUNT;
     bool capAdd_ = false;
-    bool rawPort_[2] = {false, false};
-    unsigned rawAge_ = 1000;
+
+    DevKind kind_[2] = {DevKind::Pad, DevKind::Pad};
+    DeviceSettings settings_;
+    Routes routes_;
+    PicRect pic_;
+    bool helpToggle_ = false;
+
+    // pointer
+    bool relative_ = false;        // SDL relative mouse mode is on
+    bool userReleased_ = false;    // F10 / Esc released the mouse; a click on the picture takes it back
+    bool uiWantsMouse_ = false;
+    float accDx_ = 0, accDy_ = 0;  // motion since the last poll (relative mode only)
+    float mouseX_ = 0, mouseY_ = 0;
+    bool mouseInWindow_ = false;
+    bool windowFocused_ = false;
 };
 
 }  // namespace vj

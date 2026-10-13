@@ -46,6 +46,8 @@ struct CliArgs {
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
     std::vector<std::string> cheatCodes;      // add these manual codes
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
+    bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
+    int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
     bool showHelp = false;
     bool showVersion = false;
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
@@ -239,6 +241,5 @@ void drawNetplay(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).
 void drawControlsTab(App& app);
 void drawKeypadOverlay(App& app);
-bool inputPortIsRaw(const App& app, unsigned port);   // port has a device that reads the physical RetroPad
 
 }  // namespace vj
