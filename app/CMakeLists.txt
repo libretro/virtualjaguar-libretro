@@ -186,11 +186,18 @@ set(VJ_APP_SOURCES
     src/core_host.cpp
     src/audio.cpp
     src/video.cpp
+    src/present_util.cpp
+    src/shaders.cpp
+    src/shaders_ui.cpp
     src/input.cpp
     src/ui.cpp
     src/library_ui.cpp)
 
+include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
+
 add_executable(virtualjaguar ${VJ_APP_SOURCES})
+vj_app_shaders(virtualjaguar)
+vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui ${VJ_SDL3_TARGET})

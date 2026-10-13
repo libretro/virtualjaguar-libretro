@@ -4,6 +4,7 @@
 #include "app.h"
 
 #include "imgui.h"
+#include "shaders.h"
 
 #include <algorithm>
 #include <cctype>
@@ -144,6 +145,7 @@ void drawVideoTab(App& app) {
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     ImGui::Checkbox("Show frame rate", &app.showFps);
+    drawShaderSettings(app);
 }
 
 void drawAudioTab(App& app) {
@@ -216,7 +218,11 @@ void drawSettings(App& app) {
     }
     if (ImGui::BeginTabBar("##tabs")) {
         if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video")) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Video", nullptr, app.devSelectVideoTab ? ImGuiTabItemFlags_SetSelected : 0)) {
+            app.devSelectVideoTab = false;
+            drawVideoTab(app);
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Audio")) { drawAudioTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Input")) { drawInputTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Storage")) { drawStorageTab(app); ImGui::EndTabItem(); }
@@ -356,6 +362,7 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Fullscreen", "F11", app.fullscreen)) app.setFullscreen(!app.fullscreen);
         ImGui::MenuItem("Integer scaling", nullptr, &app.present.integerScale);
         ImGui::MenuItem("Smooth filter", nullptr, &app.present.linearFilter);
+        if (ImGui::MenuItem("Shader", nullptr, &app.video.shader.enabled)) app.video.shader.retry();
         ImGui::MenuItem("Show frame rate", nullptr, &app.showFps);
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
@@ -431,6 +438,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
         bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), IM_COL32(230, 230, 230, 255), l1);
         bg->AddText(ImVec2(cx - s2.x * 0.5f, cy + s2.y * 0.2f), IM_COL32(150, 150, 150, 255), l2);
     }
+
+    shaderFrameHook(app);   // file-dialog results and shader notices
 
     if (app.showFps) {
         char buf[64];
