@@ -66,6 +66,26 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   "flips != 0". Exit 77 = private ROM absent (skip, never silent pass). Timing wedges relocate
   rather than disappear — a single-scale run proves nothing (#406 wedged at scales 4,8 before
   Verilator constants, at 3 after). Env: `VJ_SCALES VJ_WINDOW VJ_MIN_FLIPS VJ_WARMUP_W`.
+- `test/tools/test_doom_pace_gate` + `test/tools/test_cf_canary` — **timing-campaign S0 gates**
+  (`docs/timing-campaign-plan.md`, #408/#401), run by `make TEST_EXPORTS=1 test`, ROM-gated (exit 77
+  -> recorded SKIP). **Tracking gates**: expected values live in `test/tools/timing_gate_baseline.txt`
+  = today's numbers beside the silicon target; a regression (moving AWAY from the target, liveness
+  breach) fails, movement TOWARD it prints `MOVED-TOWARD-TARGET` (re-baseline in the same PR).
+  - Doom: attract demo, fields 600..1500, prints `DOOM_PACE_RESULT` (mean fields/flip, gap histogram,
+    per-300-field flips, GPU busy-time/flip). Silicon bar 4.0 fields/flip (#434, band [3.5,4.5]);
+    develop = 1.993 (gaps 1:4 2:446 3:1). Pins the FAST blitter (census config); echoes options.
+    Busy-time = core `gpu_busy_*` census (`src/tom/gpu.c`, TEST_EXPORTS only): cycles outside Doom's
+    three spin loops (windows in the tool, none in `src/`), normalised by cycles/field (442,718 =
+    GPU saturated). The only instrument that moves below the game's 2-field floor. Cross-checks:
+    `--option virtualjaguar_risc_idle_skip=disabled` must give identical numbers; `--no-arm` leaves
+    the census off (overhead timing). `--measure-only --print-baseline` re-measures.
+  - Checkered Flag: loads `states/Checkered Flag (1994).state.auto` (rzip, extracted by the
+    Makefile), no scripted input. Reads the frame-cap budget `$43B0` and fields per game frame
+    (`$41AC` is a 32-bit counter). **The budget is a game-mode variable, not a load output** (0 boot,
+    1 first menu, 2 race; reads 2 here), so the gate is fields/game-frame vs cap (budget+1):
+    3.000 today; FAIL > baseline+0.25 (all three timing options: 5.4; pipeline alone: 4.9) or if the
+    budget rises above baseline; WARN on more overrun frames than baseline (plan 5.3: budget-1/overrun
+    in heavy scenes needs reporter/BigPEmu corroboration).
 - `test/tools/corpus_ab_sweep.sh` — A/B two cores across a ROM corpus, comparing the **full**
   framebuffer hash stream: `corpus_ab_sweep.sh <base-core> <new-core> [rom-dir]`
   (`FRAMES`, `TMO`, `VJ_ROMS`). Use it before merging anything that touches rendering. Two guards,

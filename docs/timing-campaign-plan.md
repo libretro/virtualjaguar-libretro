@@ -55,15 +55,27 @@ Protocol in §5.2.
 ### 1.3 Checkered Flag — the overshoot canary
 
 CF's frame limiter is decoded: budget RAM `$43B0` (0/1/2 = 60/30/20 Hz),
-limiter code at ROM `$8026EE`. In our core the budget reads 0 (60 Hz)
-throughout a race across the whole overclock grid, and BigPEmu's notes say
-CF is "generally playable at 60 Hz" on their side too. CF is therefore not a
-pace-up target but a **did-we-overcharge canary**: a timing model that
-pushes `$43B0` to 2 (20 Hz) in ordinary scenes has overshot. Watching
-`$43B0` with a vjtrace watch during a scripted race is a one-command
-regression probe. A move 0 → 1 in genuinely heavy scenes is *plausible*
-hardware behaviour and needs corroboration (reporter/BigPEmu) before being
-called a regression.
+limiter code at ROM `$8026EE`. BigPEmu's notes say CF is "generally
+playable at 60 Hz" on their side too. CF is not a pace-up target but a
+**did-we-overcharge canary**.
+
+> **Correction (S0, 2026-10):** this section originally said the budget
+> "reads 0 throughout a race" and that a model pushing it to 2 had
+> overshot. That is wrong. `$43B0` is a *game-mode* variable, not a
+> load-dependent output: the ROM writes it from only two mode-setup sites
+> (`$802182` sets 2, `$8094D4` sets 1; boot leaves 0), a 900-field race
+> shows no writes to it, and in a press-driven boot it reads 0 -> 1 after
+> the first menu press -> 2 from the second press on (the race included).
+> The mid-race fixture reads **2 (20 Hz) on stock develop**, so "assert
+> budget 0" fails today and a budget move says nothing about timing. The
+> earlier 0-throughout result was an artefact of which menu state the
+> scripted runs were in. The real overcharge signal is **fields per game
+> frame against the cap (budget+1)**: a frame whose render work does not
+> fit the cap window overruns it. Stock = exactly 3.000 fields/frame
+> (20 Hz, render fits); `gpu_pipeline_timing` alone = 4.9, all three timing
+> options = 5.4 (an overshoot). Overruns in genuinely heavy scenes remain
+> *plausible* hardware behaviour and need corroboration
+> (reporter/BigPEmu) before being called a regression.
 
 ---
 
@@ -192,6 +204,17 @@ JTRM ties (established by #354).
 
 ### S0 — Calibration bar as an automated gate (2 days, risk: low)
 
+**Status: DONE (PR for #408/#401).** `test/tools/test_doom_pace_gate`,
+the `gpu_busy_*` TEST_EXPORTS counter and `test/tools/test_cf_canary`, all
+in `make TEST_EXPORTS=1 test`, ROM-gated (SKIP, never pass). Baselines in
+`test/tools/timing_gate_baseline.txt`; details in `docs/agent/testing.md`.
+Deviations from the bullets below: the gate is a C tool (not a `.sh`) and
+tracks today's numbers rather than asserting 2.00 exactly (develop is 1.993:
+4 one-field gaps); the CF canary uses a mid-race savestate and gates
+fields/game-frame, not `$43B0` itself (see the correction in 1.3). Measured:
+Doom 1.993 fields/flip (gaps 1:4 2:446 3:1), GPU busy-time 0.540 fields/flip
+(GPU ~73% spin), CF 3.000 fields/game-frame at budget 2.
+
 * `doom_pace_gate.sh`: `present_rate_probe`/`frame_hash_ab` over the demo
   steady state (frames 600–1500, windowed), reporting mean fields/flip
   **and the gap histogram** (the distribution is the sensitive instrument —
@@ -200,9 +223,9 @@ JTRM ties (established by #354).
 * Add the **GPU busy-time per flip** counter (census §0's temporary
   instrument) as a permanent `TEST_EXPORTS` perf counter — below the
   2-field floor it is the *only* sensitive instrument (§2.1.3).
-* CF canary: scripted race + vjtrace watch on `$43B0` (`--watch` low bound
-  rounded down to a multiple of 4 per the coverage rule), assert budget
-  stays 0.
+* CF canary: ~~scripted race + vjtrace watch on `$43B0`, assert budget
+  stays 0~~ (premise wrong, see 1.3) — mid-race savestate, fields per game
+  frame vs the cap.
 * Exit 77 when private ROMs are absent (sweep convention), never a silent
   pass.
 
@@ -354,10 +377,11 @@ dylib-swap hazard is documented history).
 
 ### 5.3 Checkered Flag (overshoot canary)
 
-vjtrace watch on `$43B0` during a scripted race at each stage boundary.
-Budget 0 throughout = pass. Budget 1 in heavy scenes = investigate with
-reporter/BigPEmu before judging. Budget 2 anywhere ordinary = overcharge,
-stage fails.
+`test_cf_canary` at each stage boundary (see the 1.3 correction: the
+budget itself is game state, 2 in the race). Fields per game frame at the
+cap (3.000) = pass. Overruns past the cap in heavy scenes = investigate with
+reporter/BigPEmu before judging. Mean span above baseline + 0.25, or the
+budget rising, = overcharge, stage fails.
 
 ### 5.4 Corpus blast-radius sweep
 
