@@ -8,8 +8,8 @@
 #                        OWN CHEAT ENGINE writes a word and a long through the
 #                        emulated 68000 bus -- independent of how the app reads RAM.
 #                        Both BE achievements must unlock and an unlock request must
-#                        go out; the byte nothing writes and the little-endian
-#                        misread of the same word must NOT fire; and nothing may fire
+#                        go out; the byte nothing writes and the
+#                        byte-swapped word (0xI = $CDAB) must NOT fire; and nothing may fire
 #                        BEFORE the write.  --ra-expect-hash checks that rcheevos
 #                        hashed the whole cartridge file (MD5, computed here at
 #                        configure time, independently of the app).  Softcore also

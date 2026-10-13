@@ -596,6 +596,9 @@ void Achievements::mockRespond(const std::string& post, rc_client_server_callbac
         std::stringstream ss;
         ss << f.rdbuf();
         body = ss.str();
+        // awardachievement echoes the id that was sent.
+        const std::string id = formValue(post, "a");
+        for (size_t at; !id.empty() && (at = body.find("@ID@")) != std::string::npos;) body.replace(at, 4, id);
     } else {
         mockUnhandled_.push_back(name);
         std::fprintf(stderr, "[ra-mock] no fixture for r=%s (looked in %s)\n", name.c_str(), mockDir_.c_str());

@@ -11,7 +11,7 @@ Everything lives under `app/`. The core's own `make` build is untouched.
 ## Build
 
 You need CMake 3.20+, a C99/C++17 toolchain and, on Linux, the SDL3 desktop dev
-packages (see below). SDL3 (3.4.16) and Dear ImGui (1.92.8) are downloaded at
+packages (see below). SDL3 (3.4.16), Dear ImGui (1.92.8) and rcheevos (12.5.0) are downloaded at
 configure time, pinned by SHA256. Nothing is vendored in the repo.
 
 ```sh
@@ -42,7 +42,7 @@ sudo apt-get install cmake pkg-config libasound2-dev libpulse-dev libx11-dev \
   libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
   libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev \
   libegl1-mesa-dev libdbus-1-dev libudev-dev libwayland-dev wayland-protocols \
-  libdecor-0-dev
+  libdecor-0-dev libcurl4-openssl-dev
 ```
 
 ### Windows
@@ -123,6 +123,44 @@ Inside: `config.ini` (settings, core option overrides, recents), `saves/`
 (`<game>.srm`: EEPROM, SRAM, Memory Track), `states/` (`<game>.slotN.state` plus a
 `.png` thumbnail), `system/` (BIOS files, only if you want real ones), `imgui.ini`.
 
+## RetroAchievements
+
+**Achievements > Sign in...** takes your RetroAchievements user name and password
+once, gets a login token from the server and keeps **only the token** (`ra.user` and
+`ra.token` in `config.ini`; the password is wiped from memory as soon as the request
+is built). The token is a credential: treat `config.ini` like a password file. Sign out
+deletes it. The menu also has the hardcore toggle, "include unofficial achievements"
+and the **Achievement list** (progress, rich presence). Unlocks, game completion,
+leaderboard attempts / submissions, progress indicators and server problems show as
+toasts.
+
+It is built on rcheevos' `rc_client` (v12.5.0, MIT, fetched at configure time like SDL3):
+
+- **Game identification.** rc_client hashes the file itself: the whole cartridge file for
+  Atari Jaguar (console 17), the second-session boot executable for a `.cue` disc (Atari
+  Jaguar CD, console 77, rcheevos' own cue/bin reader). **`.chd` and `.cdi` discs are not
+  identified** (rcheevos has no reader for them); the game runs and the app says why.
+- **Memory.** The core publishes a memory map (`RETRO_ENVIRONMENT_SET_MEMORY_MAPS`: 2 MB
+  system RAM at `$000000`). rcheevos' `rc_libretro.c`, the same code RetroArch builds,
+  maps addresses onto it; nothing is byte-swapped. The RAM is a big-endian image and
+  Jaguar sets use the big-endian operand sizes (`0xI` 16-bit, `0xG` 32-bit).
+- **Hardcore.** While signed in, hardcore is on and a game is being tracked: loading
+  save states is refused (saving works), pausing is rate-limited (`rc_client_can_pause`),
+  enabling it mid-game restarts the game, core options that rcheevos disallows (today
+  `virtualjaguar_pal = enabled`) pause hardcore, and `Achievements::allowCheats()`,
+  `allowRewind()`, `allowSlowMotion()` and `allowFrameAdvance()` are false so those
+  features (cheats, rewind, slow motion and frame advance are separate pieces) must ask.
+  Fast-forward is allowed (it is not slower than real time). Softcore (the default)
+  restricts nothing, and each state file gets a `.rcp` sidecar so a restored state does
+  not replay stale hit counts.
+- **Network.** libcurl (found at configure time; `libcurl4-openssl-dev` on Linux) or
+  WinHTTP on Windows, on one worker thread; replies are handled on the main thread, so a
+  slow network never delays a frame. Without libcurl the app still builds and the
+  Achievements menu says it is unavailable. Unlocks are retried by rc_client when the
+  network drops.
+- **Tests** never touch the network or an account: `--ra-mock DIR` answers rc_client's
+  requests from `app/tests/ra/<api>.json`. See `cmake/VJAchTests.cmake`.
+
 ## Smoke tests
 
 `virtualjaguar --headless` runs with SDL's dummy video and audio drivers: no
@@ -157,9 +195,13 @@ To regenerate the expected hash after an intentional emulation change:
 | `src/input.*` | keyboard and gamepad to libretro input |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
 | `src/paths.*`, `src/config.*` | data folders (portable mode) and the settings file |
+| `src/achievements.*` | RetroAchievements: rc_client glue, memory, hardcore policy, mock server for tests |
+| `src/achievements_ui.cpp` | ImGui: sign-in, achievement list, toasts, trackers |
+| `src/ach_http.*` | libcurl / WinHTTP worker for rc_client's requests |
+| `cmake/VJRcheevos.cmake`, `cmake/VJAchTests.cmake` | rcheevos fetch + static lib; headless achievement tests |
 
 ## Not in this first piece
 
-Shaders (#834), cheats (#835), RetroAchievements (#836), input remapping (#837),
+Shaders (#834), cheats (#835), input remapping (#837),
 the game library (#838), packaging and signing (#839), the installer (#840).
 Microphone and netpacket are reported unsupported.
