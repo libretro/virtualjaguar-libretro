@@ -45,6 +45,10 @@ sudo apt-get install cmake pkg-config libasound2-dev libpulse-dev libx11-dev \
   libdecor-0-dev libcurl4-openssl-dev
 ```
 
+`libcurl4-openssl-dev` is only for the game library's box art and database downloads
+(see [Game library](#game-library)); without it the app still builds and runs, it just never
+downloads anything.
+
 ### Windows
 
 MinGW-w64 (MSYS2 `mingw-w64-x86_64-gcc`, `cmake`, `ninja`) is the supported
@@ -91,7 +95,8 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | Key | Action |
 | --- | --- |
 | Arrows, Z, X, C, Enter, Right Shift | D-pad, B, A, C, Option, Pause |
-| number row / numpad | Jaguar keypad (the core reads the keyboard device) |
+| number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
+| F2 | keypad overlay |
 | F5 / F7 / F6 | save state / load state / next slot (Shift+F6 previous) |
 | F8, Ctrl/Cmd+R | pause, reset |
 | Tab (hold) | fast-forward |
@@ -102,6 +107,37 @@ Gamepads use SDL's standard layout (South/East/West = B/A/C, Back = Pause,
 Start = Option); the left stick also drives the D-pad. Controller types per
 Jaguar port (Team Tap, rotary, ...) are under **Settings > Input**.
 
+### Controls and the keypad
+
+**Settings > Input** edits the bindings: pick a device (the keyboard, every
+gamepad, or one connected controller model), pick the scope (everywhere, or
+this game only), then **Set** / **Add** a binding and press the key, button or
+stick direction ("press a button to bind"; Esc cancels), **Unbind**, or go back
+to **Default**. Per control, the first of these that defines it wins: this game
+and this controller, this game, this controller, everywhere, built-in default.
+Games are identified by the CRC32 of the cartridge image (the key the core's
+title database uses; copier headers stripped); discs fall back to the file name.
+Everything is stored in `config.ini` as `input.*` keys. Controllers SDL does not
+know can be added with a `gamecontrollerdb.txt` (SDL's format) in the data folder.
+
+The default gamepad layout reaches all twelve keypad keys without the overlay:
+
+| pad | keypad |
+| --- | --- |
+| North, L1, R1, L2, R2, L3, R3 | 0, 1, 2, 3, 4, 5, 6 |
+| right stick left / up / right / down | 7, 8, 9, `*` (dominant axis only, never two keys) |
+| Guide | `#` |
+| Share / Capture, or F2, or View > Keypad overlay | on-screen keypad (D-pad moves, A/B presses, C closes) |
+
+How it reaches the core: pad buttons ride the RetroPad bitmask; the RetroPad has
+no button for keypad 7, 8, 9, `*`, `#`, so keypad keys are delivered as the
+RETRO_DEVICE_KEYBOARD keys `libretro.c` polls (player 1: `0-9 - =`; player 2:
+`p q w e r t y u i o [ ]`). The app announces a keyboard after every load, which
+the core needs before it polls them. This is the core's default input path: with
+**Core Options Remapping** switched on, the core stops polling those keys (the tab
+warns). Ports set to an analog / 6D / driving device, and Team Tap sockets, still
+get the plain RetroPad (so keypad 7-9, `*`, `#` are unreachable behind a Team Tap, as in the core).
+
 **Settings > Core options** is generated from the core's options v2 definitions,
 categories and `SET_CORE_OPTIONS_DISPLAY` visibility included, so a new core
 option shows up with no change to the app. Changes are saved; options that say
@@ -110,6 +146,112 @@ option shows up with no change to the app. Changes are saved; options that say
 Pacing follows the core's reported field rate (60.05445 Hz NTSC, 50.08013 Hz
 PAL). Audio is opened at the core's rate and resampled by SDL, with a small
 playback-ratio correction against the buffered amount so it tracks the video.
+
+## Shaders
+
+**Settings > Video > Shader** (or **View > Shader**) runs the picture through a
+RetroArch `.slangp` preset, on the GL 3.3 presenter, unmodified. Presets come
+from [librashader](https://github.com/SnowflakePowered/librashader) (MPL-2.0),
+which the app loads **at run time**: the build needs no Rust and links nothing
+extra. If the library is missing, the wrong version, or a preset does not
+compile, the picture is drawn plain and a one-line message says why; it is never
+a failure.
+
+- **Library.** At configure time CMake fetches librashader's two MIT-licensed C
+  headers (tag `librashader-v0.12.0`, pinned by SHA256; `-DVJ_LIBRASHADER_INCLUDE_DIR=<dir>`
+  for offline builds, `-DVJ_APP_SHADERS=OFF` to leave it out). At run time the
+  app looks for `librashader.dylib` / `.so` / `.dll` in `$VJ_LIBRASHADER` (a file
+  or folder; a path that does not exist means "missing"), next to the executable
+  (and `../Frameworks` in a macOS bundle), in `<data folder>/librashader/`, and
+  then the system library path (Homebrew's `/opt/homebrew/lib` included).
+  `-DVJ_APP_FETCH_LIBRASHADER=ON` downloads the pinned prebuilt runtime for macOS
+  and Windows (arm64/x86_64) and copies it next to the executable. Upstream
+  publishes no Linux binary: install the distro/OBS package or build it, and it
+  is picked up from the system path.
+- **Presets.** `shaders/` beside the executable holds two small first-party presets
+  (`vj-sharp-bilinear`, `vj-scanlines`, also the offline test fixtures) and, by
+  default, a subset of [libretro/slang-shaders](https://github.com/libretro/slang-shaders)
+  under `shaders/slang-shaders/`: the CRT (CRT-Royale, CRT-Geom, CRT-EasyMode, ...),
+  scanline and interpolation families plus every directory they reference (~23 MB,
+  ~900 files). CMake downloads the tarball for one pinned commit at configure time
+  (SHA256-verified; nothing is committed to this repo), extracts those directories
+  untouched and copies them beside the executable. **Licensing:** slang-shaders has no
+  single licence; each shader states its own (GPL, MIT, public domain, ...) in its
+  header and some directories carry LICENSE/README/THANKS files, all of which travel
+  with the copy together with a `NOTICE-virtualjaguar.txt`. No network, or a hash
+  mismatch, only means no bundled presets (a warning, never a build failure);
+  `-DVJ_APP_BUNDLE_SLANG_SHADERS=OFF` skips it for distro/offline builds and
+  `-DVJ_SLANG_SHADERS_ARCHIVE=<tarball>` supplies a local copy. For the rest of
+  slang-shaders, or a newer copy, set **Preset folder** to a full checkout; the list
+  is searched recursively and filterable, and preset parameters get sliders.
+- **Scaling.** Integer scaling and the aspect modes are independent of shaders
+  (`computePresentRect` in `present_util.cpp`): the chain renders into a texture
+  of exactly the rectangle they pick, so a CRT preset at 3x integer scale looks
+  the same as the plain picture at 3x. Both paths share that one function.
+- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
+
+`vj_shader_tests` (CTest `shaders_unit`, `shaders_bundled`, `shaders_library`, `shaders_gl`) covers
+the pure logic and the missing-library fallback anywhere; the other two need the
+library (and a display, for the GL one) and report **skipped**, not passed,
+without them. Point `VJ_LIBRASHADER` at the library, and optionally
+`VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
+
+## Game library
+
+**File > Game library** (Ctrl/Cmd+L) is an optional grid of your games. It never replaces the
+file picker, drag and drop or the command line, which all keep working.
+
+1. **Add folder...** one or more folders. They are walked recursively (8 levels, symlinked
+   folders inside them are not followed) for the formats the core reads: cartridges
+   `.j64 .jag .rom .abs .cof .prg .bin` and discs `.cue .chd .cdi`. A `.bin` that a `.cue`
+   references is a disc track, not a cartridge, and so is any `.bin` over 8 MiB. Zip is not
+   scanned: the core cannot load it.
+2. **Identification** by CRC32 against libretro-database (see licences below):
+   - cartridges against the No-Intro "Atari - Jaguar" dat, using the whole file first and then
+     the file minus a 512-byte copier header (the same rule as the core's
+     `DetectPrependedHeaderSize`, so a headered dump of a known game still matches);
+   - CD images against the Redump "Atari - Jaguar CD" dat. Redump hashes each track, so a
+     `.cue` is identified by the CRC32 of the first file it references (Track 1). `.chd` and
+     `.cdi` carry no cheap track hash and are matched by file name only.
+   A name-only match is badged `?` (titled and given art from the dat entry), an unidentified
+   file `??` (titled from its file name, no art). Hover a tile for the path, CRC32 and how it
+   was matched.
+3. **Box art** comes from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar)
+   (`thumbnails.libretro.com/Atari - Jaguar/Named_Boxarts/<dat title>.png`; the libretro rule
+   replaces `& * / : ` " < > ? \ |` with `_`). It is fetched only for tiles you can see, one title
+   at a time, on a background thread, and cached under `<data>/thumbnails/` forever: art you
+   have seen works offline. When there is no box art the title screen, then a snapshot, is used;
+   when upstream has none the tile shows a coloured placeholder and the miss is remembered for
+   30 days. Upstream coverage is the limit here: of the 209 titles in the cartridge dat, 70 have
+   art under their exact dat name (64 box art); of the 26 Jaguar CD titles, 12 have a snapshot
+   and none a box art. (Measured against libretro-thumbnails at the pinned dat's date.)
+   **Download box art** turns all downloading off.
+4. **Launch** is a click on the tile; it posts the same "open this path" event as the file
+   dialog. **Close on launch** hides the window afterwards.
+
+Files: `<data>/library/scan.tsv` (the hash cache: a rescan only stats files whose size and
+modification time are unchanged), `<data>/library/db/` (databases fetched by **Update
+database**), `<data>/thumbnails/`. Settings are the `library.*` keys in `config.ini`.
+
+The two dat files are fetched at configure time, pinned to a libretro-database commit and
+SHA256 (`VJ_DB_COMMIT` in `CMakeLists.txt`), and copied next to the executable in
+`libretro-db/`. **Update database** downloads the current files into `<data>/library/db/`; the
+newer of the two copies (by the dat's own `version`) is the one used. Offline build:
+`-DVJ_APP_LIBRETRO_DB_DIR=<folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat'>`;
+`-DVJ_APP_BUNDLE_DB=OFF` skips them (the library then titles games from file names until
+**Update database**).
+
+HTTP is the only network code. SDL3 has no client, so `src/http.cpp` is a blocking GET with
+three compile-time backends: **libcurl** (macOS SDK, `libcurl4-openssl-dev` on Linux, MinGW
+if installed), **WinHTTP** on Windows (part of the OS: no dependency), or none
+(`-DVJ_APP_HTTP=OFF`, or libcurl not found), in which case downloads are simply unavailable.
+It is only ever called from worker threads, never from the UI or emulation loop.
+
+**Licences.** The dats are CC BY-SA 4.0 (libretro-database, derived from No-Intro and Redump
+data). They are not committed to this repository, only downloaded and shipped unmodified
+beside the binary, with attribution here. The box art is the property of its owners; the app
+downloads it to the user's own machine on demand, as RetroArch does, and never redistributes
+it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library was added.
 
 ## Where files go
 
@@ -210,6 +352,16 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
 - `smoke_bad_option`: an `--option` the core does not register is rejected, not
   silently ignored.
 - `smoke_cd`: load the synthetic CD image by path (no BIOS).
+- `library_unit` (`vj_library_tests`): dat parsing, CRC identification of synthetic files
+  (copier-headered and plain carts, a `.cue` set), thumbnail naming against known libretro
+  examples, cache paths, a scan of a temp folder with the hash cache, and on POSIX the whole
+  art pipeline (scan, identify, download, cache, decode, texture; database update; then
+  offline) against a loopback HTTP server. No internet, no GL.
+  `vj_library_tests --scan DIR --db DIR` prints identification counts for a folder (dev tool).
+- `remap_unit`: the remapping logic with no core (bindings, precedence, config
+  round trip, keypad translation, overlay, bind capture, content identity).
+- `input_e2e`: drives the real core with every Jaguar control on both ports and
+  reads back the console's joypad matrix; keypad 7-9, `*`, `#` included.
 
 To regenerate the expected hash after an intentional emulation change:
 `virtualjaguar --headless --frames 300 test/roms/yarc.j64` and update
@@ -223,10 +375,19 @@ To regenerate the expected hash after an intentional emulation change:
 | `cmake/VJSmokeTests.cmake` | CTest smoke tests |
 | `src/core_host.*` | libretro host: environment calls, options, SRAM, states, discs |
 | `src/app.*` | window, GL, main loop, pacing, events, save-state slots, headless runner |
-| `src/video.*` | XRGB8888 texture and aspect-correct / integer-scaled presentation |
+| `src/video.*` | XRGB8888 texture and presentation (plain, or through the shader chain) |
+| `src/present_util.*` | GL-free: where the picture goes (aspect / integer / stretch), `.slangp` parsing and folder scan |
+| `src/shaders.*`, `src/shaders_ui.cpp` | librashader loader and GL filter chain; the Shader section of Settings > Video |
+| `shaders/` | first-party presets copied beside the executable |
+| `cmake/VJShaders.cmake` | pinned header fetch, optional prebuilt runtime, shader tests |
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
-| `src/input.*` | keyboard and gamepad to libretro input |
+| `src/input.*` | keyboard and gamepad snapshots to libretro input |
+| `src/remap.*`, `src/remap_ui.cpp` | profiles, per-game overrides, keypad delivery, overlay, bind capture, and their UI |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
+| `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
+| `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |
+| `src/library_ui.cpp` | the Game library window |
+| `src/http.*` | blocking HTTP(S) GET: libcurl, WinHTTP or nothing |
 | `src/cheats.*` | `.cht` parsing, conversion to core codes, per-game cheat state (no SDL, unit tested) |
 | `src/cheats_core.cpp`, `src/cheats_ui.cpp` | core glue (retro_cheat_*, title identity, CLI) and the Cheats window |
 | `cmake/VJCheatData.cmake`, `cmake/VJCheatManifest.cmake`, `cmake/VJCheatTests.cmake` | pinned optional database download, cheat tests |
@@ -238,6 +399,5 @@ To regenerate the expected hash after an intentional emulation change:
 
 ## Not in this first piece
 
-Shaders (#834), cheats (#835), input remapping (#837),
-the game library (#838), packaging and signing (#839), the installer (#840).
+Packaging and signing (#839), the installer (#840).
 Microphone and netpacket are reported unsupported.

@@ -4,6 +4,7 @@
 #include "app.h"
 
 #include "imgui.h"
+#include "shaders.h"
 
 #include <algorithm>
 #include <cctype>
@@ -144,6 +145,7 @@ void drawVideoTab(App& app) {
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     ImGui::Checkbox("Show frame rate", &app.showFps);
+    drawShaderSettings(app);
 }
 
 void drawAudioTab(App& app) {
@@ -160,15 +162,7 @@ void drawAudioTab(App& app) {
 }
 
 void drawInputTab(App& app) {
-    ImGui::TextWrapped(
-        "Keyboard: arrows = D-pad, Z = B, X = A, C = C, Enter = Option, Right Shift or Backspace = Pause. "
-        "The number row and numpad drive the Jaguar keypad. Gamepads: South/East/West = B/A/C, "
-        "Back = Pause, Start = Option, shoulders and triggers = keypad buttons.");
-    if (ImGui::Checkbox("Left stick also drives the D-pad", &app.input.stickAsDpad)) {}
-    ImGui::Separator();
-    auto names = app.input.gamepadNames();
-    if (names.empty()) ImGui::TextDisabled("No gamepad connected.");
-    for (size_t i = 0; i < names.size(); i++) ImGui::Text("Port %zu: %s", i + 1, names[i].c_str());
+    drawControlsTab(app);
     ImGui::Separator();
     const auto& ports = app.host.controllerPorts();
     if (!app.host.isLoaded() || ports.empty()) {
@@ -216,7 +210,11 @@ void drawSettings(App& app) {
     }
     if (ImGui::BeginTabBar("##tabs")) {
         if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video")) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Video", nullptr, app.devSelectVideoTab ? ImGuiTabItemFlags_SetSelected : 0)) {
+            app.devSelectVideoTab = false;
+            drawVideoTab(app);
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Audio")) { drawAudioTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Input")) { drawInputTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Storage")) { drawStorageTab(app); ImGui::EndTabItem(); }
@@ -305,6 +303,7 @@ void drawMenuBar(App& app) {
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
+        if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show)) app.library.show = !app.library.show;
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list
             for (size_t i = 0; i < list.size(); i++) {
@@ -356,7 +355,9 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Fullscreen", "F11", app.fullscreen)) app.setFullscreen(!app.fullscreen);
         ImGui::MenuItem("Integer scaling", nullptr, &app.present.integerScale);
         ImGui::MenuItem("Smooth filter", nullptr, &app.present.linearFilter);
+        if (ImGui::MenuItem("Shader", nullptr, &app.video.shader.enabled)) app.video.shader.retry();
         ImGui::MenuItem("Show frame rate", nullptr, &app.showFps);
+        ImGui::MenuItem("Keypad overlay", "F2", &app.input.overlay.open);
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
@@ -426,12 +427,14 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
                        io.DisplayFramebufferScale.x);
     } else if (!app.host.isLoaded()) {
         const char* l1 = "Virtual Jaguar";
-        const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open";
+        const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open or File > Game library";
         ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2);
         float cx = areaPos.x + areaSize.x * 0.5f, cy = areaPos.y + areaSize.y * 0.5f;
         bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), IM_COL32(230, 230, 230, 255), l1);
         bg->AddText(ImVec2(cx - s2.x * 0.5f, cy + s2.y * 0.2f), IM_COL32(150, 150, 150, 255), l2);
     }
+
+    shaderFrameHook(app);   // file-dialog results and shader notices
 
     if (app.showFps) {
         char buf[64];
@@ -443,6 +446,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showStates) drawStates(app);
     if (app.showCheats) drawCheats(app);
     if (app.showAbout) drawAbout(app);
+    drawLibrary(app);
+    drawKeypadOverlay(app);
     drawAchievementsUi(app);
     drawOsd(app, areaPos, areaSize);
 
