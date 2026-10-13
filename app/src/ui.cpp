@@ -212,7 +212,7 @@ void drawStorageTab(App& app) {
 }
 
 void drawSettings(App& app) {
-    ui::nextWindow(42.0f, 30.0f, 32.0f, 16.0f);
+    ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
     bool open = ImGui::Begin("Settings", &app.showSettings);
     ui::keepOnScreen();
     if (!open) {

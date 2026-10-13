@@ -198,8 +198,32 @@ without them. Point `VJ_LIBRASHADER` at the library, and optionally
 
 ## Game library
 
-**File > Game library** (Ctrl/Cmd+L) is an optional grid of your games. It never replaces the
-file picker, drag and drop or the command line, which all keep working.
+The library is an optional grid of your games. It never replaces the file picker, drag and drop
+or the command line, which all keep working.
+
+**Home screen.** With no game loaded the main window *is* the library: search, filter, size
+slider, **Add folder...**, rescan, and a click on a tile launches it. With no folders yet it shows
+a short welcome with an **Add folder...** button and the open / drag-and-drop hints. Loading a game
+replaces it with the game; **File > Close game** brings it back. **Settings > Storage > Show the
+game library on the home screen** (`ui.home_library`, also View > Library on home screen) turns it
+off for the old plain welcome. The separate **Game library** window (File > Game library, Ctrl/Cmd+L)
+stays for in-game use (pick another game without closing this one); on the home screen Ctrl/Cmd+L
+puts the cursor in the search box instead of opening a second copy of the same view.
+
+**Sections.** Tabs split the library into **Cartridges**, **Jaguar CD** and **BIOS & system**
+(the choice is remembered, `library.section`). BIOS and system files are not games and are never
+in the game grids: files are recognized by CRC32 (the Series K and Model M boot ROMs, the two
+Stubulator developer ROMs, the retail and developer CD BIOS and the Memory Track cartridge: the
+checksums the core itself checks), by the names the core searches for (`jagboot.rom`, `boot.rom`,
+`jagcd.bin`, `[BIOS] Atari Jaguar ... .j64`, ...), by "bios" or "memory track" in the name of a small
+file (512 KiB or less), or by a `[BIOS]` entry in the dat. The core's own system folder is always
+scanned for these too (only BIOS files are kept from it), so the tab shows what the core can read.
+A BIOS tile says what it is and when the core uses it (for example "Series K boot ROM: used when BIOS
+(Cartridges) = Real"), and whether it sits where the core looks; it does not launch. The core has
+every standard image built in, so none is required. Loose `(Track N).bin` files are skipped like the
+tracks a `.cue` owns.
+
+**File > Game library** (Ctrl/Cmd+L) opens the window.
 
 1. **Add folder...** one or more folders. They are walked recursively (8 levels, symlinked
    folders inside them are not followed) for the formats the core reads: cartridges
@@ -367,6 +391,22 @@ To regenerate the expected hash after an intentional emulation change:
 `virtualjaguar --headless --frames 300 test/roms/yarc.j64` and update
 `VJ_SMOKE_YARC_HASH` in `app/cmake/VJSmokeTests.cmake`.
 
+## Window sizing and UI screenshots
+
+Every window opens at a size in font heights (so it scales with DPI), at most 80% of the main
+window, is constrained to 95% of it each frame (a size saved in `imgui.ini` by a bigger window never
+overflows a smaller one) and is pulled back on screen. Long text wraps, tables stretch, controls take
+a share of the width that is left (`src/ui_util.h`). To check a layout:
+
+```sh
+# window size comes from window.w / window.h in <data>/config.ini; --ui-scale 2 stands in for a HiDPI display
+virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-frame 40 \
+  --show-window settings-input game.j64
+```
+
+`--show-window` takes `settings[-video|-input|-audio|-storage][:FILTER]`, `states`, `about`,
+`cheats`, `library`, `login`, `achievements` and `keypad`.
+
 ## Layout
 
 | file | job |
@@ -386,7 +426,8 @@ To regenerate the expected hash after an intentional emulation change:
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
 | `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |
-| `src/library_ui.cpp` | the Game library window |
+| `src/library_ui.cpp` | the Game library: the home screen and the window |
+| `src/ui_util.h` | layout helpers every window uses: sizes in em clamped to the main window, width fractions, wrapped rows |
 | `src/http.*` | blocking HTTP(S) GET: libcurl, WinHTTP or nothing |
 | `src/cheats.*` | `.cht` parsing, conversion to core codes, per-game cheat state (no SDL, unit tested) |
 | `src/cheats_core.cpp`, `src/cheats_ui.cpp` | core glue (retro_cheat_*, title identity, CLI) and the Cheats window |

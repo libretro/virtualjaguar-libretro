@@ -137,9 +137,7 @@ void drawControlsTab(App& app) {
         st->clearLayer(layer);
         dirty = true;
     }
-    ImGui::SameLine();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%s", scope == 1 ? "overrides for this game" : "your profile; built-in defaults underneath");
+    ui::hint("%s", scope == 1 ? "Overrides for this game." : "Your profile; the built-in defaults are underneath.");
 
     ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
     // The table is as tall as the window allows (what is left minus room for the rows below it).
@@ -148,11 +146,10 @@ void drawControlsTab(App& app) {
     // Fixed columns for the short things; "Bound to" stretches (its text wraps) and gives way first.
     const float btnsW = ui::Flow::buttonW("Set") + ui::Flow::buttonW("Add") + ui::Flow::buttonW("Unbind") +
                         ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3;
-    if (ImGui::BeginTable("##binds", 4, tf, ImVec2(0, tableH))) {
+    if (ImGui::BeginTable("##binds", 3, tf, ImVec2(0, tableH))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
         ImGui::TableSetupColumn("Bound to", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("From", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 5.5f);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, btnsW + ImGui::GetStyle().CellPadding.x);
         ImGui::TableHeadersRow();
         for (int i = 0; i < C_COUNT; i++) {
@@ -164,7 +161,7 @@ void drawControlsTab(App& app) {
             ImGui::TableNextColumn();
             if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
             else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
-            ImGui::TableNextColumn();
+            // Where the binding comes from sits under it (short form; the long one is the tooltip).
             ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
             ImGui::TableNextColumn();
@@ -246,7 +243,7 @@ void drawKeypadOverlay(App& app) {
             if (c < 2) ImGui::SameLine();
         }
     }
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + gridW);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(gridW, f * 15.0f));
     ImGui::TextDisabled("Gamepad: D-pad moves, A/B presses, C closes. The game keeps running underneath.");
     ImGui::PopTextWrapPos();
     ImGui::End();

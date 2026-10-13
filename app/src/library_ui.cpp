@@ -168,11 +168,13 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
 
     float lh = ImGui::GetFontSize() + 2.0f;
     ImVec4 clip(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH);
+    // title (at most two lines), then the status under it; both wrap to the tile and are clipped to its text box
+    float th = std::min(ImGui::CalcTextSize(e.title.c_str(), nullptr, false, cellW - 4).y, lh * 2.0f);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3), IM_COL32(230, 230, 230, 255),
                 e.title.c_str(), nullptr, cellW - 4, &clip);
     const char* st = found ? "In the system folder" : readable ? "Not in the system folder" : "Not read by the core";
     ImU32 sc = found ? IM_COL32(120, 210, 130, 255) : readable ? IM_COL32(230, 180, 90, 255) : IM_COL32(150, 150, 150, 255);
-    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + textH - lh), sc, st, nullptr,
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3 + th), sc, st, nullptr,
                 cellW - 4, &clip);
 
     if (hovered) {
@@ -371,6 +373,7 @@ void drawEmptyHome(App& app, LibraryService& svc) {
     ImGui::PushTextWrapPos(x0 + bw);
     ui::hint("%s", p2);
     ImGui::Dummy(ImVec2(1.0f, gap * 0.5f));
+    ImGui::SetCursorPosX(x0);
     ui::hint("%s", p3);
     ImGui::PopTextWrapPos();
 }
