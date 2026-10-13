@@ -195,6 +195,9 @@ bool App::initImGui() {
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
+    // Opaque windows: the dark theme's 0.94 alpha let the home screen's text show through
+    // (About, Settings).  Overlays that want to be see-through set SetNextWindowBgAlpha.
+    st.Colors[ImGuiCol_WindowBg].w = 1.0f;
     // The UI scale is the display's CONTENT scale (the 200% of a 4K Windows/Linux display), nothing more.
     // SDL_GetWindowDisplayScale() is relative to the window's PIXEL size, so it also contains the pixel density
     // (2.0 on every Retina Mac); ImGui's SDL3 backend lays out in window points and already renders at the
