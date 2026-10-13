@@ -133,6 +133,23 @@
  * discriminator and this section's evidence bar restated for authors.
  * ------------------------------------------------------------------
  *
+ * Compatibility-class pairs (issue #748, the tier-3 rule of #746)
+ *
+ * The fix for a title that only works under a non-default setting is the
+ * MECHANISM -- HLE parity with the boot ROM, the timing model -- not a row.
+ * A compatibility pair is admissible only when that fix is impossible or
+ * cannot be dated, and then:
+ *
+ *  1. `cls` is TITLEDB_CLASS_COMPATIBILITY and `cite` carries the
+ *     measurement (probe, numbers, date) and the mechanism ticket as "#N".
+ *     test_titledb fails a compatibility pair whose cite has no "#N".
+ *  2. The enhancement profile never touches it (get_variable_pertitle()).
+ *  3. It is RETIRED when the cited mechanism lands.  Search this file for
+ *     the ticket number when closing one.
+ *  4. Like every pair, it only fills in an option left at its registered
+ *     default; the user's explicit choice still wins.
+ * ------------------------------------------------------------------
+ *
  * virtualjaguar_risc_idle_skip qualification policy (issue #707,
  * docs/perf-audit/idle-skip-corpus-2026-08.md):
  *
@@ -458,18 +475,22 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Towers II (retail) — 2x: census row "Towers II" 7200f, shaded 0/f
-    * (<10), QUALIFY16 32.6/f (>=5), scene: gameplay (dungeon).
-    * CRC: Towers II (0x83A3FB5D, FF_ROM|FF_VERIFIED) from
-    * src/core/filedb.c line 73. (Excluded: 0x3241AB6A "Towers II" is
-    * FF_ALPINE with no FF_VERIFIED — not the plain retail row.) */
-   {
-      0x83A3FB5D, "Towers II",
-      {
-         { "virtualjaguar_internal_resolution", "2x" },
-         { NULL, NULL }
-      }
-   },
+   /* Towers II (0x83A3FB5D) -- NO ROW, deliberately (#809).  This used to
+    * carry { internal_resolution, 2x } on the census proxy (QUALIFY16
+    * 32.6/f >= 5).  Pixel A/B 2026-10-10, test/tools/hires_shot, Accurate
+    * blitter, per-title defaults off, first-person dungeon: a 2x sweep of
+    * EVERY frame 0..12600 (menus, navigation, d-pad movement; 985.8M
+    * blocks) found 0 non-replicated 2x2 blocks; 1x vs 2x PPMs at frames
+    * 12000 / 13500 / 14800 differ from a 2x2 box-upscale of 1x in 0 of
+    * 78,240 blocks.  Its walks magnify (constant HSCALE $20, VSCALE $22 =
+    * 1.0625x), so the half-step sample re-reads the same texel --
+    * docs/hires-stage0-census.md 9.6.  2x costs ~+16% user CPU there
+    * (142.3 s -> 165.2 s over 14800 frames, one concurrent pair, loaded
+    * host) for no pixel gain.  Do not re-add it from the QUALIFY16 proxy
+    * alone.  Caveat: the file measured is the corpus dump CAF33BD6 (crc32
+    * of the file), NOT this row's 0x83A3FB5D, which is not in the local
+    * corpus; same game/engine is inferred.  filedb.c line 46: 0x3241AB6A
+    * "Towers II" is FF_ALPINE and never had a row. */
 
    /* ------------------------------------------------------------------
     * RISC idle-loop fast-forward rows (issue #707).
@@ -794,11 +815,30 @@ static const TitleDBEntry titledb_table[] = {
     * (BlitDurationSysclks, blitter_mmio.c) for this title; it does not
     * change the model.  Fast/accurate blitters are hash-identical on
     * this title, so neither engine is at fault.
+    * The row selects "m68k" (charge the 68000 only), not "enabled": the
+    * intro needs only the 68000 frozen during ITS blits, and the GPU-side
+    * wait made gameplay worse.  Gameplay is a triple-buffered render that
+    * the GPU builds with ~40 blits per field; making the GPU wait out each
+    * one at the modelled cost (worst-case DRAM row change on every access,
+    * blitter_mmio.c) pushed the frame's draw past the swap at VI, so the
+    * OP showed half-built frames (horizontal tears, sprites dropping out
+    * for a field) at stock speed -- and almost none with the chips
+    * overclocked (#736, 2026-10-11).  Intro frames 0-300 are hash-identical
+    * under "m68k" and "enabled".
+    * COMPATIBILITY row (#748): retire it when blitter bus timing is on
+    * by default for every title -- the no-toggles goal of #408.
     * CRC: White Men Can't Jump (World) from src/core/filedb.c line 37. */
    {
       0x14915F20, "White Men Can't Jump",
       {
-         { "virtualjaguar_blitter_timing", "enabled" },
+         { "virtualjaguar_blitter_timing", "m68k",
+           TITLEDB_CLASS_COMPATIBILITY,
+           "intro logos complete only with the 68000 charged for its "
+           "blits: 111/200 decoder rows done when the zero-time fade "
+           "ended, Trimark + High Voltage logos missing in HLE and BIOS, "
+           "2026-10-07 (#736, PR #827); GPU-side wait left off: it tore "
+           "the gameplay frame, 2026-10-11 (#736); stands in for blitter "
+           "timing on by default (#408)" },
          { NULL, NULL }
       }
    }
@@ -806,6 +846,25 @@ static const TitleDBEntry titledb_table[] = {
 
 static const int titledb_count =
    sizeof(titledb_table) / sizeof(titledb_table[0]);
+
+/*
+ * Disc rows (issue #747): keyed by boot-stub CRC32 in the `crc32` field
+ * (see TitleDBSetDisc in titledb.h for why not the session/track/sector
+ * layout).  Same row discipline as the cart table -- census or
+ * compatibility citation per pair -- and no hooks[].  Get a disc's key
+ * from the RetroArch log: every CD load logs "[titledb] disc boot stub
+ * CRC32 $XXXXXXXX".
+ *
+ * Ships EMPTY: the mechanism lands ahead of the data, like hooks[] and
+ * negative[] did.  Add rows ABOVE the terminator; the count excludes it
+ * (C89 has no empty initializer lists).
+ */
+static const TitleDBEntry titledb_disc_table[] = {
+   { 0, NULL }   /* terminator -- keep last */
+};
+
+static const int titledb_disc_count =
+   (int)(sizeof(titledb_disc_table) / sizeof(titledb_disc_table[0])) - 1;
 
 /* Current loaded title match; NULL if no content is loaded or CRC doesn't match. */
 static const TitleDBEntry *current = NULL;
@@ -821,6 +880,10 @@ static int hooks_override_count = 0;
 static const TitleDBNegativePair *negative_override = NULL;
 static int negative_override_count = 0;
 
+/* Test-only disc-row override; see TitleDBSetDiscRowsForTest below. */
+static const TitleDBEntry *disc_rows_override = NULL;
+static int disc_rows_override_count = 0;
+
 /* Test-only positive-pair override; see TitleDBSetPairsForTest below. */
 static const TitleDBPair *pairs_override = NULL;
 static int pairs_override_count = 0;
@@ -835,11 +898,43 @@ void TitleDBSetCRC(uint32_t crc)
 
    content_crc = crc;
    current = NULL;
+   if (crc == 0)              /* "no content": never a key (#747) */
+      return;
    for (i = 0; i < titledb_count; i++)
    {
       if (titledb_table[i].crc32 == crc)
       {
          current = &titledb_table[i];
+         return;
+      }
+   }
+}
+
+/*
+ * Disc lookup (issue #747): match a boot-stub CRC against the disc table
+ * only.  0 is "no key" and never matches, so a disc with no extractable
+ * stub cannot pick up a row.  content_crc is deliberately left alone --
+ * it is the cartridge CRC (see TitleDBContentCRC).
+ */
+void TitleDBSetDisc(uint32_t boot_stub_crc)
+{
+   const TitleDBEntry *rows = titledb_disc_table;
+   int count = titledb_disc_count;
+   int i;
+
+   current = NULL;
+   if (boot_stub_crc == 0)
+      return;
+   if (disc_rows_override != NULL)
+   {
+      rows  = disc_rows_override;
+      count = disc_rows_override_count;
+   }
+   for (i = 0; i < count; i++)
+   {
+      if (rows[i].crc32 == boot_stub_crc)
+      {
+         current = &rows[i];
          return;
       }
    }
@@ -888,7 +983,7 @@ void TitleDBSetContent(const uint8_t *data, size_t size)
  * half-consulted the shipped table would be exactly as fragile as the
  * shipped-table dependency it exists to remove (issue #590).
  */
-const char *TitleDBOverride(const char *key)
+static const TitleDBPair *titledb_find_pair(const char *key)
 {
    int i;
 
@@ -902,7 +997,7 @@ const char *TitleDBOverride(const char *key)
          if (pairs_override[i].key == NULL)
             break;
          if (strcmp(pairs_override[i].key, key) == 0)
-            return pairs_override[i].value;
+            return &pairs_override[i];
       }
       return NULL;
    }
@@ -915,10 +1010,26 @@ const char *TitleDBOverride(const char *key)
       if (current->pairs[i].key == NULL)
          return NULL;
       if (strcmp(current->pairs[i].key, key) == 0)
-         return current->pairs[i].value;
+         return &current->pairs[i];
    }
 
    return NULL;
+}
+
+const char *TitleDBOverride(const char *key)
+{
+   const TitleDBPair *p = titledb_find_pair(key);
+   return p ? p->value : NULL;
+}
+
+/*
+ * Class of the pair TitleDBOverride() would answer from (issue #748), or
+ * -1 on no pair.  Same lookup, same test-override precedence.
+ */
+int TitleDBOverrideClass(const char *key)
+{
+   const TitleDBPair *p = titledb_find_pair(key);
+   return p ? p->cls : -1;
 }
 
 /*
@@ -1045,6 +1156,32 @@ void TitleDBSetPairsForTest(const TitleDBPair *pairs, int count)
    }
    pairs_override = pairs;
    pairs_override_count = count;
+}
+
+/*
+ * Test-only: rows TitleDBSetDisc() scans instead of the shipped disc table.
+ * NULL restores it.
+ */
+void TitleDBSetDiscRowsForTest(const TitleDBEntry *rows, int count)
+{
+   if (rows == NULL || count <= 0)
+   {
+      disc_rows_override = NULL;
+      disc_rows_override_count = 0;
+      return;
+   }
+   disc_rows_override = rows;
+   disc_rows_override_count = count;
+}
+
+/*
+ * Test-only introspection: the raw disc table (terminator excluded).
+ */
+const TitleDBEntry *TitleDBDiscTable(int *count)
+{
+   if (count != NULL)
+      *count = titledb_disc_count;
+   return titledb_disc_table;
 }
 
 /*

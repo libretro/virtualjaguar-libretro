@@ -58,6 +58,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "vjag_memory.h"
 #include "state.h"
 #include "titledb.h"
+#include "jaggd_fs.h"
 #include "titlehook.h"
 #include "gdbstub.h"
 #include "log.h"
@@ -142,6 +143,12 @@ static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
 /* One-shot latch for the "restart required" notice when the
  * internal-resolution option changes mid-game. */
 static int hires_restart_notice_logged = 0;
+/* Load-time latches for the boot ROM and PAL options (#858): the option
+ * value seen at load, and a one-shot "takes effect on restart" notice. */
+static bool bios_option_at_load        = false;
+static bool ntsc_option_at_load        = true;
+static int  bios_restart_notice_logged = 0;
+static int  pal_restart_notice_logged  = 0;
 /* Same one-shot latch for the enhancement-hooks gate (issue #370).  Hooks
  * are applied once at content load; toggling mid-session cannot un-patch
  * (reverting would need a saved original the design deliberately does not
@@ -484,7 +491,7 @@ static bool content_loaded         = false;
  * everything else keys off jaguar_cd_mode / jaguarCartInserted as before. */
 static bool no_game_active         = false;
 static bool show_cd_options        = true;
-static bool show_cart_bios_option  = true;
+static bool show_cart_options      = true;
 /* 16bpp preview interpretation only matters while texture dump is on
  * (#369).  Defaults visible, like the other show_* gates, so the first
  * update_option_visibility() sees a change and hides it while the dump
@@ -977,6 +984,25 @@ static int netlink_resolve_mode(const char *v)
    return JLINK_MODE_DISABLED;
 }
 
+/* RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY wrapper (#850).
+ *
+ * The call is only a hint, and libretro.h defines its return value as
+ * "this environment call is available" (true even for an option that does
+ * not exist).  A frontend that answers false has no option-visibility
+ * support at all, so every option simply stays visible -- the safe state,
+ * since visibility never changes what an option does.  The first refusal is
+ * latched and the rest of the session stops asking.  -1 = not asked yet.
+ * Reset in retro_deinit (iOS never dlcloses the core). */
+static int option_display_supported = -1;
+
+static void option_display_push(const struct retro_core_option_display *d)
+{
+   if (option_display_supported == 0)
+      return;
+   option_display_supported =
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, (void *)d) ? 1 : 0;
+}
+
 static bool update_option_visibility(void)
 {
    struct retro_core_option_display option_display;
@@ -1011,13 +1037,13 @@ static bool update_option_visibility(void)
 
          build_port_option_key(key, sizeof(key), i, "_numpad_to_kb");
          option_display.key = key;
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         option_display_push(&option_display);
 
          for (j = 0; j < ARRAY_SIZE(retropad_option_map); j++)
          {
             build_port_option_key(key, sizeof(key), i, retropad_option_map[j].suffix);
             option_display.key = key;
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+            option_display_push(&option_display);
          }
       }
 
@@ -1036,14 +1062,27 @@ static bool update_option_visibility(void)
          "virtualjaguar_cd_trace",
          "virtualjaguar_memory_track",
       };
-      bool show_cd_prev        = show_cd_options;
-      bool show_cart_bios_prev = show_cart_bios_option;
+      /* Cartridge-only settings (#850).  Each is inert, or refused, for
+       * CD content: the cartridge BIOS setting is ignored there
+       * (ResolveBootConfig() lets CD Boot Mode drive showBootROM); the
+       * GameDrive is only reached from the cart ROM loader (JGDLoadROM,
+       * file.c); enhancement hooks refuse anything but a cartridge ROM
+       * image (TitleHookApplyROM); blit memoization refuses CD content
+       * (BlitMemoSetMode).  Hidden for CD ONLY -- a RAM-loaded executable
+       * is not CD, so it keeps the full set. */
+      static const char * const cart_only_keys[] = {
+         "virtualjaguar_bios",
+         "virtualjaguar_bios_type",
+         "virtualjaguar_jgd",
+         "virtualjaguar_jgd_sd",
+         "virtualjaguar_enhancement_hooks",
+         "virtualjaguar_blit_memo",
+      };
+      bool show_cd_prev   = show_cd_options;
+      bool show_cart_prev = show_cart_options;
 
-      show_cd_options       = (!content_loaded || jaguar_cd_mode);
-      /* The cartridge BIOS setting is ignored for CD content —
-       * ResolveBootConfig() lets CD Boot Mode drive showBootROM — so
-       * showing it there would advertise a control that does nothing. */
-      show_cart_bios_option = (!content_loaded || !jaguar_cd_mode);
+      show_cd_options   = (!content_loaded || jaguar_cd_mode);
+      show_cart_options = (!content_loaded || !jaguar_cd_mode);
 
       if (force || show_cd_options != show_cd_prev)
       {
@@ -1051,21 +1090,19 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(cd_only_keys); i++)
          {
             option_display.key = cd_only_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
 
-      if (force || show_cart_bios_option != show_cart_bios_prev)
+      if (force || show_cart_options != show_cart_prev)
       {
-         option_display.visible = show_cart_bios_option;
-         option_display.key     = "virtualjaguar_bios";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
-         option_display.key     = "virtualjaguar_bios_type";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display.visible = show_cart_options;
+         for (i = 0; i < ARRAY_SIZE(cart_only_keys); i++)
+         {
+            option_display.key = cart_only_keys[i];
+            option_display_push(&option_display);
+         }
          updated = true;
       }
    }
@@ -1094,8 +1131,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(mouse_keys); i++)
          {
             option_display.key = mouse_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -1123,8 +1159,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(rotary_keys); i++)
          {
             option_display.key = rotary_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -1152,8 +1187,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(analog_keys); i++)
          {
             option_display.key = analog_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -1175,8 +1209,7 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_texdump_16bpp;
          option_display.key     = "virtualjaguar_texdump_16bpp";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
    }
@@ -1192,8 +1225,7 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_texture_replace;
          option_display.key     = "virtualjaguar_texture_replace";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
    }
@@ -1225,16 +1257,14 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_netlink_host;
          option_display.key     = "virtualjaguar_netlink_host";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
       if (force || show_netlink_port != show_netlink_port_prev)
       {
          option_display.visible = show_netlink_port;
          option_display.key     = "virtualjaguar_netlink_port";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         option_display_push(&option_display);
          updated = true;
       }
    }
@@ -1263,8 +1293,7 @@ static bool update_option_visibility(void)
          for (i = 0; i < ARRAY_SIZE(voice_keys); i++)
          {
             option_display.key = voice_keys[i];
-            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                       &option_display);
+            option_display_push(&option_display);
          }
          updated = true;
       }
@@ -2081,6 +2110,8 @@ static int netlink_host_option_index(void)
  * failing), then jaghub.local and vj_netlink.txt -- the existing presets
  * stay selectable, peers are added, not substituted. Capped at
  * JLINK_DISC_MAX_PEERS entries. */
+static bool core_options_push(void);
+
 static void netlink_rebuild_host_options(void)
 {
    int idx, i, n, peer_count, my_device;
@@ -2188,7 +2219,9 @@ static void netlink_rebuild_host_options(void)
    option_defs_us[idx].values[n].value = NULL;
    option_defs_us[idx].values[n].label = NULL;
 
-   options_pushed = environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
+   /* Through the shared push, not &options_us directly: a title that has
+    * option explanations live (#841) must keep them across this rebuild. */
+   options_pushed = core_options_push();
 
    /* SET_CORE_OPTIONS_V2 rebuilds RetroArch's whole core_option_manager
     * from these definitions, which carry no visibility field -- every
@@ -2388,21 +2421,47 @@ static void perf_conflict_append(char *buf, size_t cap, const char *what)
    strncat(buf, what, cap - used - 1);
 }
 
+/* Which options currently switch the RISC idle-skip off.  Mirrors the gate
+ * at the top of DSPExec() (src/jerry/dsp.c) -- see the comment above for what
+ * is deliberately absent.  Shared by the log warning below and the option
+ * sublabel (#841), so the two can never name different suppressors. */
+#define IDLE_SUP_CLOCK 1u
+#define IDLE_SUP_DRAM  2u
+#define IDLE_SUP_PIPE  4u
+#define IDLE_SUP_MEMO  8u
+
+static unsigned idle_skip_suppressor_mask(void)
+{
+   unsigned mask = 0;
+
+   if (riscClockScalePct != 100)
+      mask |= IDLE_SUP_CLOCK;
+   if (busArbiter.enabled)
+      mask |= IDLE_SUP_DRAM;
+   if (vjs.gpuPipelineTiming)
+      mask |= IDLE_SUP_PIPE;
+   if (blitMemoMode != BLIT_MEMO_OFF || blitMemoRecording)
+      mask |= IDLE_SUP_MEMO;
+   return mask;
+}
+
 static void perf_warn_idle_skip_suppressed(void)
 {
    char who[192];
+   unsigned mask;
 
    if (perf_conflict_warned || !vjs.riscIdleSkip)
       return;
 
    who[0] = '\0';
-   if (riscClockScalePct != 100)
+   mask = idle_skip_suppressor_mask();
+   if (mask & IDLE_SUP_CLOCK)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_risc_clock_scale");
-   if (busArbiter.enabled)
+   if (mask & IDLE_SUP_DRAM)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_dram_timing");
-   if (vjs.gpuPipelineTiming)
+   if (mask & IDLE_SUP_PIPE)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_gpu_pipeline_timing");
-   if (blitMemoMode != BLIT_MEMO_OFF || blitMemoRecording)
+   if (mask & IDLE_SUP_MEMO)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_blit_memo");
 
    if (who[0] == '\0')
@@ -2413,6 +2472,447 @@ static void perf_warn_idle_skip_suppressed(void)
            "combination can run slower than idle-skip alone. Your settings "
            "are honored, not overridden.\n", who);
    perf_conflict_warned = 1;
+}
+
+/* Option explanations (issue #841).
+ *
+ * The core makes settings decisions the menu cannot show: a per-title DB row
+ * fills in an option left at its default, the enhancement profile drops or
+ * demotes those presets, and some options silently switch others off (the
+ * idle-skip suppressors above).  Two surfaces tell the player, both mirroring
+ * the [titledb] / [perf] log lines so screen and log agree:
+ *
+ *   - OSD notices (SET_MESSAGE_EXT, via netlink_osd()), edge-triggered and
+ *     latched once per load: one when presets were applied, one when the
+ *     profile suppressed or demoted them;
+ *   - the affected options' `info` (sublabel) amended with one sentence, by
+ *     re-pushing SET_CORE_OPTIONS_V2 with the option COUNT unchanged.
+ *
+ * Observation, not recomputation: get_variable_pertitle() is the single
+ * place a preset is substituted or dropped, so it records what it did per
+ * key (explain_observe) and this code only formats that record.
+ *
+ * Re-push contract.  A V2 push makes RetroArch tear down and rebuild its
+ * option manager (runloop.c): the old values are flushed to disk, the
+ * game/folder option flags are cleared, and the new manager re-detects the
+ * per-game / per-folder file from the content path and reloads values from
+ * it -- so the user's values survive (verified against RetroArch's
+ * runloop.c, see docs/settings-and-performance-guide.md).  A rebuild resets
+ * every row to visible, hence the visibility_force_push after each push.
+ * The push happens ONLY at load end and from check_variables() when an
+ * option change alters the amendment set -- never per frame, and NEVER from
+ * inside update_option_visibility() (the frontend's update-display callback
+ * runs while its menu is iterating options).  The user's value is never
+ * written back (no SET_VARIABLE): the combination is explained, not fixed.
+ *
+ * option_defs_us / options_us are never mutated by this code: amended
+ * definitions live in a static copy, so unload (and the iOS no-dlclose
+ * static reset in retro_deinit) restores the originals simply by pushing
+ * &options_us again or by forgetting the copy. */
+#define EXPLAIN_MAX_OBS     8
+#define EXPLAIN_MAX_AMEND   8
+#define EXPLAIN_NOTE_MAX    384
+#define EXPLAIN_INFO_MAX    3072
+#define EXPLAIN_DEFS_MAX    144
+
+#define EXPLAIN_OBS_NONE    0
+#define EXPLAIN_OBS_APPLIED 1  /* DB value substituted for a default option */
+#define EXPLAIN_OBS_DROPPED 2  /* DB value withheld by the enhancement profile */
+
+/* Compile-time guard (C89 negative-array trick): the static copy below must
+ * hold every definition plus the terminator.  Adding options past the limit
+ * fails the build here instead of truncating the pushed table. */
+typedef char explain_defs_fit_check
+   [(sizeof(option_defs_us) / sizeof(option_defs_us[0])
+     <= EXPLAIN_DEFS_MAX) ? 1 : -1];
+
+typedef struct {
+   char key[64];
+   char value[32];
+   char reason[64];
+   int  state;
+   int  cls;
+} explain_obs_t;
+
+typedef struct {
+   int  idx;                      /* index into option_defs_us */
+   char note[EXPLAIN_NOTE_MAX];
+} explain_amend_t;
+
+static explain_obs_t   explain_obs[EXPLAIN_MAX_OBS];
+static int             explain_obs_count;
+static explain_amend_t explain_cur[EXPLAIN_MAX_AMEND]; /* live in frontend */
+static int             explain_cur_n;
+static int             explain_pushed;   /* amended defs are live */
+static int             explain_load_notice_done;
+static int             explain_suppress_notice_done;
+static char            explain_info_buf[EXPLAIN_MAX_AMEND][EXPLAIN_INFO_MAX];
+static struct retro_core_option_v2_definition
+                       explain_defs[EXPLAIN_DEFS_MAX];
+static struct retro_core_options_v2 explain_opts;
+
+static int explain_find_def(const char *key)
+{
+   int i;
+
+   for (i = 0; option_defs_us[i].key; i++)
+      if (!strcmp(option_defs_us[i].key, key))
+         return i;
+   return -1;
+}
+
+/* Short option name for prose: the definition's desc without its trailing
+ * parenthetical ("Blitter Bus Timing (Experimental)" -> "Blitter Bus
+ * Timing").  Taken from the definitions so wording changes cannot drift. */
+static void explain_option_name(int idx, char *out, size_t cap)
+{
+   const char *desc = option_defs_us[idx].desc;
+   size_t len = strlen(desc);
+   const char *p;
+
+   if (len > 0 && desc[len - 1] == ')')
+   {
+      /* Last " (" that is balanced back to the closing paren. */
+      for (p = desc + len - 1; p > desc; p--)
+         if (p[0] == '(' && p[-1] == ' ')
+         {
+            len = (size_t)(p - desc) - 1;
+            break;
+         }
+   }
+   if (len >= cap)
+      len = cap - 1;
+   memcpy(out, desc, len);
+   out[len] = '\0';
+}
+
+/* Human text for a value: its label when the definition has one, else
+ * on/off for the enabled/disabled pairs, else the raw value. */
+static const char *explain_value_text(int idx, const char *value)
+{
+   const struct retro_core_option_value *v = option_defs_us[idx].values;
+
+   for (; v->value; v++)
+      if (!strcmp(v->value, value))
+      {
+         if (v->label)
+            return v->label;
+         break;
+      }
+   if (!strcmp(value, "enabled"))
+      return "on";
+   if (!strcmp(value, "disabled"))
+      return "off";
+   return value;
+}
+
+/* Record what get_variable_pertitle() did with `key` on this read.  A key
+ * never observed non-NONE stays out of the table; one that was is updated in
+ * place, so a user choosing a value (APPLIED -> NONE) retires its note. */
+static void explain_observe(const char *key, int state, const char *value,
+                            int cls, const char *reason)
+{
+   int i;
+   explain_obs_t *o = NULL;
+
+   for (i = 0; i < explain_obs_count; i++)
+      if (!strcmp(explain_obs[i].key, key))
+      {
+         o = &explain_obs[i];
+         break;
+      }
+   if (!o)
+   {
+      if (state == EXPLAIN_OBS_NONE || explain_obs_count >= EXPLAIN_MAX_OBS)
+         return;
+      o = &explain_obs[explain_obs_count++];
+      snprintf(o->key, sizeof(o->key), "%s", key);
+   }
+   o->state = state;
+   o->cls   = cls;
+   snprintf(o->value, sizeof(o->value), "%s", value ? value : "");
+   snprintf(o->reason, sizeof(o->reason), "%s", reason ? reason : "");
+}
+
+/* Add `note` to the amendment for option `idx`, keeping the list sorted by
+ * idx (so the set compares equal regardless of observation order) and
+ * joining several notes for one option with a space. */
+static void explain_add(explain_amend_t *list, int *n, int idx,
+                        const char *note)
+{
+   int i, j;
+   size_t used;
+
+   for (i = 0; i < *n; i++)
+      if (list[i].idx == idx)
+      {
+         used = strlen(list[i].note);
+         if (used + 2 < sizeof(list[i].note))
+            snprintf(list[i].note + used, sizeof(list[i].note) - used,
+                     " %s", note);
+         return;
+      }
+   if (*n >= EXPLAIN_MAX_AMEND)
+      return;
+   for (i = 0; i < *n && list[i].idx < idx; i++)
+      ;
+   for (j = *n; j > i; j--)
+      list[j] = list[j - 1];
+   list[i].idx = idx;
+   snprintf(list[i].note, sizeof(list[i].note), "%s", note);
+   (*n)++;
+}
+
+/* The amendment set implied by the current state. */
+static void explain_compute(explain_amend_t *out, int *count)
+{
+   int i, idx, n = 0;
+   unsigned mask;
+   char note[EXPLAIN_NOTE_MAX];
+   char who[192];
+   char name[64];
+
+   for (i = 0; i < explain_obs_count; i++)
+   {
+      const explain_obs_t *o = &explain_obs[i];
+
+      if (o->state == EXPLAIN_OBS_NONE)
+         continue;
+      idx = explain_find_def(o->key);
+      if (idx < 0)
+         continue;
+      if (o->state == EXPLAIN_OBS_APPLIED)
+         snprintf(note, sizeof(note),
+                  "This game: set to %s by its per-title preset. Choose a "
+                  "value to override.", explain_value_text(idx, o->value));
+      else
+         snprintf(note, sizeof(note),
+                  "This game's per-title preset (%s) is not applied: %s. "
+                  "Choose it yourself to use it anyway.",
+                  explain_value_text(idx, o->value), o->reason);
+      explain_add(out, &n, idx, note);
+   }
+
+   mask = vjs.riscIdleSkip ? idle_skip_suppressor_mask() : 0;
+   idx  = mask ? explain_find_def("virtualjaguar_risc_idle_skip") : -1;
+   if (idx >= 0)
+   {
+      who[0] = '\0';
+      if (mask & IDLE_SUP_CLOCK)
+      {
+         const char *scale = riscClockScalePct == 50  ? "0.5x"
+                           : riscClockScalePct == 150 ? "1.5x"
+                           : riscClockScalePct == 200 ? "2x" : "non-stock";
+         int c = explain_find_def("virtualjaguar_risc_clock_scale");
+
+         if (c >= 0)
+         {
+            explain_option_name(c, name, sizeof(name));
+            snprintf(note, sizeof(note), "%s %s", name, scale);
+            perf_conflict_append(who, sizeof(who), note);
+         }
+      }
+      if (mask & IDLE_SUP_DRAM)
+         i = explain_find_def("virtualjaguar_dram_timing");
+      else
+         i = -1;
+      if (i >= 0)
+      {
+         explain_option_name(i, name, sizeof(name));
+         perf_conflict_append(who, sizeof(who), name);
+      }
+      if (mask & IDLE_SUP_PIPE)
+         i = explain_find_def("virtualjaguar_gpu_pipeline_timing");
+      else
+         i = -1;
+      if (i >= 0)
+      {
+         explain_option_name(i, name, sizeof(name));
+         perf_conflict_append(who, sizeof(who), name);
+      }
+      if (mask & IDLE_SUP_MEMO)
+         i = explain_find_def("virtualjaguar_blit_memo");
+      else
+         i = -1;
+      if (i >= 0)
+      {
+         explain_option_name(i, name, sizeof(name));
+         perf_conflict_append(who, sizeof(who), name);
+      }
+      if (who[0])
+      {
+         snprintf(note, sizeof(note), "Inactive: suppressed by %s.", who);
+         explain_add(out, &n, idx, note);
+      }
+   }
+   *count = n;
+}
+
+/* Push the current definitions: &options_us untouched when nothing is
+ * amended, else the static amended copy.  Shared with the netlink host
+ * picker rebuild, which also pushes definitions and must not undo these.
+ * The return value is the frontend's, which is "categories enabled", not
+ * "accepted" -- callers wanting more than best-effort must not read it
+ * as success. */
+static bool core_options_push(void)
+{
+   size_t n, i;
+
+   if (explain_cur_n == 0)
+      return environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
+
+   for (n = 0; option_defs_us[n].key; n++)
+      ;
+   memcpy(explain_defs, option_defs_us, (n + 1) * sizeof(explain_defs[0]));
+   for (i = 0; i < (size_t)explain_cur_n; i++)
+   {
+      struct retro_core_option_v2_definition *d =
+         &explain_defs[explain_cur[i].idx];
+      const char *orig = d->info;
+
+      snprintf(explain_info_buf[i], sizeof(explain_info_buf[i]), "%s%s%s",
+               explain_cur[i].note, orig ? " " : "", orig ? orig : "");
+      d->info = explain_info_buf[i];
+      /* A categorized info string would shadow the amended one. */
+      d->info_categorized = NULL;
+   }
+   explain_opts.categories  = options_us.categories;
+   explain_opts.definitions = explain_defs;
+   return environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &explain_opts);
+}
+
+/* Re-push definitions and put the frontend's row visibility back: the
+ * rebuild resets every row to visible (see visibility_force_push). */
+static void explain_repush(void)
+{
+   unsigned version = 0;
+
+   /* Do not send V2 definitions to a frontend that said it cannot take
+    * them.  (core_options_push() itself stays ungated: the netlink picker
+    * has always pushed unconditionally and handles a refusal.) */
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, &version))
+      version = 0;
+   if (version < 2)
+      return;
+   core_options_push();
+   visibility_force_push = 1;
+   update_option_visibility();
+}
+
+static int explain_same(const explain_amend_t *next, int next_n)
+{
+   int i;
+
+   if (next_n != explain_cur_n)
+      return 0;
+   for (i = 0; i < next_n; i++)
+      if (next[i].idx != explain_cur[i].idx
+          || strcmp(next[i].note, explain_cur[i].note) != 0)
+         return 0;
+   return 1;
+}
+
+/* OSD notices.  Each latches for the load, so a menu visit or a repeated
+ * check_variables() never repeats it. */
+static void explain_flush_notices(void)
+{
+   int i, idx, ne = 0, nc = 0;
+   const char *title = TitleDBTitleName();
+   char enh[160], compat[160], name[64], piece[96];
+
+   if (!title)
+      title = "This title";
+
+   if (!explain_load_notice_done)
+   {
+      explain_load_notice_done = 1;
+      enh[0] = compat[0] = '\0';
+      for (i = 0; i < explain_obs_count; i++)
+      {
+         const explain_obs_t *o = &explain_obs[i];
+
+         if (o->state != EXPLAIN_OBS_APPLIED)
+            continue;
+         idx = explain_find_def(o->key);
+         if (idx < 0)
+            continue;
+         explain_option_name(idx, name, sizeof(name));
+         snprintf(piece, sizeof(piece), "%s %s", name,
+                  explain_value_text(idx, o->value));
+         if (o->cls == TITLEDB_CLASS_COMPATIBILITY)
+         {
+            perf_conflict_append(compat, sizeof(compat), piece);
+            nc++;
+         }
+         else
+         {
+            perf_conflict_append(enh, sizeof(enh), piece);
+            ne++;
+         }
+      }
+      if (ne && nc)
+         netlink_osd("%s: %s (enhancement preset%s); %s (compatibility "
+                     "preset%s)", title, enh, ne > 1 ? "s" : "", compat,
+                     nc > 1 ? "s" : "");
+      else if (ne)
+         netlink_osd("%s: %s (enhancement preset%s)", title, enh,
+                     ne > 1 ? "s" : "");
+      else if (nc)
+         netlink_osd("%s: %s (compatibility preset%s)", title, compat,
+                     nc > 1 ? "s" : "");
+   }
+
+   if (!explain_suppress_notice_done)
+      for (i = 0; i < explain_obs_count; i++)
+         if (explain_obs[i].state == EXPLAIN_OBS_DROPPED)
+         {
+            explain_suppress_notice_done = 1;
+            netlink_osd("%s: per-title enhancement presets not applied (%s)",
+                        title, explain_obs[i].reason);
+            break;
+         }
+}
+
+/* Called once the load has resolved every option (end of retro_load_game)
+ * and from check_variables() afterwards.  Notices first, then the sublabel
+ * re-push -- which happens only when the amendment SET changed. */
+static void explain_update(void)
+{
+   explain_amend_t next[EXPLAIN_MAX_AMEND];
+   int next_n = 0;
+
+   if (!environ_cb)
+      return;
+   explain_flush_notices();
+   explain_compute(next, &next_n);
+   if (explain_same(next, next_n))
+      return;
+   memcpy(explain_cur, next, sizeof(next[0]) * (size_t)next_n);
+   explain_cur_n  = next_n;
+   explain_pushed = (next_n > 0);
+   explain_repush();
+}
+
+/* Per-load / unload / deinit reset, iOS-no-dlclose safe.
+ *   0 load start: forget observations and notice latches only.  The live
+ *     amendment record is kept so a stale one from a title that was never
+ *     unloaded is diffed away (and restored) at this load's explain_update.
+ *   1 unload: forget everything and put the original definitions back.
+ *   2 deinit: forget everything, push nothing (the core is going away; the
+ *     next retro_set_environment pushes the pristine tables). */
+static void explain_reset(int mode)
+{
+   int restore = (mode == 1 && explain_pushed && environ_cb);
+
+   explain_obs_count            = 0;
+   explain_load_notice_done     = 0;
+   explain_suppress_notice_done = 0;
+   if (mode == 0)
+      return;
+   explain_cur_n  = 0;
+   explain_pushed = 0;
+   if (restore)
+      explain_repush();
 }
 
 /* Enhancement profile (P9, docs/perf-audit-2026-08.md).
@@ -2576,19 +3076,26 @@ static bool get_variable_pertitle(struct retro_variable *var)
 {
    bool ok = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, var) && var->value;
    const char *ovr, *def;
+   int at_default;
+   int noted = 0;  /* an APPLIED/DROPPED observation was recorded (#841) */
 
    if (!pertitle_enabled)
+   {
+      explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
       return ok;
+   }
 
    def = core_option_default(var->key);
    ovr = TitleDBOverride(var->key);
+   at_default = (!ok || (def && !strcmp(var->value, def)));
 
    /* Enhancement profile (P9): when the profile resolves to 'performance',
     * a DB enhancement default is dropped HERE, before the substitution --
     * exactly as if the title had no row for this key.  Explicit user
     * choices never reach this branch (the substitution below only fires
     * with the option at its registered default), so they are untouched. */
-   if (ovr && enhancement_profile_governs(var->key))
+   if (ovr && enhancement_profile_governs(var->key)
+       && TitleDBOverrideClass(var->key) != TITLEDB_CLASS_COMPATIBILITY)
    {
       const char *why = NULL;
       if (enhancement_profile_suppressing(&why))
@@ -2608,11 +3115,19 @@ static bool get_variable_pertitle(struct retro_variable *var)
                        title ? title : "this title", why);
             enhancement_suppress_logged = 1;
          }
+         /* Only a preset that WOULD have applied (option at default) was
+          * actually dropped; an explicit user value was never in play. */
+         if (at_default)
+         {
+            explain_observe(var->key, EXPLAIN_OBS_DROPPED, ovr,
+                            TITLEDB_CLASS_ENHANCEMENT, why);
+            noted = 1;
+         }
          ovr = NULL;
       }
    }
 
-   if (ovr && (!ok || (def && !strcmp(var->value, def))))
+   if (ovr && at_default)
    {
       if (TitleDBUnsafeValue(var->key, ovr, def))
       {
@@ -2621,17 +3136,32 @@ static bool get_variable_pertitle(struct retro_variable *var)
                     "refusing the per-title default, staying at %s\n",
                     TitleDBTitleName(), var->key, ovr,
                     def ? def : "(unset)");
+         explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
          return ok;
       }
       LOG_INF("[titledb] %s: %s=%s (option at default)\n",
               TitleDBTitleName(), var->key, ovr);
       var->value = ovr;
+      /* A preset equal to the registered default changes nothing the
+       * player could see (a real frontend reports the default for an
+       * untouched option, so e.g. an idle-skip row of "enabled" is a
+       * no-op there): keep the log line above, but neither notice nor
+       * sublabel should claim a change. */
+      if (def && !strcmp(ovr, def))
+         explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
+      else
+         explain_observe(var->key, EXPLAIN_OBS_APPLIED, ovr,
+                         TitleDBOverrideClass(var->key), NULL);
       /* Arms the enhancement-profile 'auto' watch: a session where no DB
        * enhancement default applied has nothing to demote. */
-      if (enhancement_profile_governs(var->key))
+      if (enhancement_profile_governs(var->key)
+          && TitleDBOverrideClass(var->key) != TITLEDB_CLASS_COMPATIBILITY)
          titledb_enhancement_applied = 1;
       return true;
    }
+
+   if (!noted)
+      explain_observe(var->key, EXPLAIN_OBS_NONE, NULL, 0, NULL);
 
    if (ok && TitleDBUnsafeValue(var->key, var->value, def)
        && !titledb_negative_warn_seen(var->key))
@@ -3065,8 +3595,16 @@ static void check_variables(void)
    var.key = "virtualjaguar_blitter_timing";
    var.value = NULL;
    vjs.blitterTiming = false;
+   vjs.blitterTimingGpu = false;
    if (get_variable_pertitle(&var) && var.value)
-      vjs.blitterTiming = (strcmp(var.value, "enabled") == 0);
+   {
+      /* "enabled" prices every blit for both masters; "m68k" charges
+       * only the 68000 (#736: the GPU-side wait is what makes White Men
+       * Can't Jump's frame build overrun the field). */
+      vjs.blitterTimingGpu = (strcmp(var.value, "enabled") == 0);
+      vjs.blitterTiming = vjs.blitterTimingGpu
+                       || (strcmp(var.value, "m68k") == 0);
+   }
 
    /* GPU pipeline/gateway timing (issue #401/#313).  Transient model
     * state must not survive a toggle: a stale gateway timestamp from
@@ -3264,15 +3802,33 @@ static void check_variables(void)
          voicechat_close_mic();
    }
 
+   /* Boot ROM and video standard are latched at content load (#858).
+    * retro_load_game() resolves vjs.useJaguarBIOS after this read (GPU-only
+    * cart autodetect, CD boot mode -> bootConfig.showBootROM), and the DSP
+    * reads it at runtime; PAL feeds the clock macros, but AV timing is only
+    * negotiated at load.  Re-applying either on a later option change (any
+    * option change re-runs this function) would undo the resolution or
+    * half-apply the standard, so after load only log the restart notice. */
    var.key = "virtualjaguar_bios";
    var.value = NULL;
 
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (strcmp(var.value, "enabled") == 0)
-         vjs.useJaguarBIOS = true;
-      else
-         vjs.useJaguarBIOS = false;
+      bool bios_want = (strcmp(var.value, "enabled") == 0);
+      if (!content_loaded)
+      {
+         vjs.useJaguarBIOS = bios_want;
+         bios_option_at_load = bios_want;
+         bios_restart_notice_logged = 0;
+      }
+      else if (bios_want == bios_option_at_load)
+         bios_restart_notice_logged = 0;
+      else if (!bios_restart_notice_logged)
+      {
+         LOG_INF("[BIOS] boot ROM option change to %s takes effect on restart\n",
+                 var.value);
+         bios_restart_notice_logged = 1;
+      }
    }
 
    var.key = "virtualjaguar_bios_type";
@@ -3293,10 +3849,21 @@ static void check_variables(void)
 
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (strcmp(var.value, "enabled") == 0)
-         vjs.hardwareTypeNTSC = false;
-      else
-         vjs.hardwareTypeNTSC = true;
+      bool ntsc_want = (strcmp(var.value, "enabled") != 0);
+      if (!content_loaded)
+      {
+         vjs.hardwareTypeNTSC = ntsc_want;
+         ntsc_option_at_load = ntsc_want;
+         pal_restart_notice_logged = 0;
+      }
+      else if (ntsc_want == ntsc_option_at_load)
+         pal_restart_notice_logged = 0;
+      else if (!pal_restart_notice_logged)
+      {
+         LOG_INF("[VIDEO] PAL option change to %s takes effect on restart\n",
+                 var.value);
+         pal_restart_notice_logged = 1;
+      }
    }
 
    var.key = "virtualjaguar_memory_track";
@@ -3321,6 +3888,22 @@ static void check_variables(void)
    }
    else
       JGDSetMode(JGD_MODE_AUTO);
+
+   /* GameDrive SD card (#783): a host folder acting as the card.  Access
+    * can change live -- turning it off closes every open handle. */
+   var.key = "virtualjaguar_jgd_sd";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (strcmp(var.value, "disabled") == 0)
+         JGDFSSetAccess(JGDFS_ACCESS_OFF);
+      else if (strcmp(var.value, "readonly") == 0)
+         JGDFSSetAccess(JGDFS_ACCESS_READONLY);
+      else
+         JGDFSSetAccess(JGDFS_ACCESS_READWRITE);
+   }
+   else
+      JGDFSSetAccess(JGDFS_ACCESS_READWRITE);
 
    var.key = "virtualjaguar_cd_bios_type";
    var.value = NULL;
@@ -3541,6 +4124,14 @@ static void check_variables(void)
                                        + 0.5));
 
    update_option_visibility();
+
+   /* Option explanations (#841): re-push the sublabels only when this
+    * option change altered the amendment set.  Not on the load path, which
+    * calls it once at the end when blit-memo is resolved (see
+    * perf_warn_idle_skip_suppressed above), and never from the
+    * update-display callback. */
+   if (content_loaded)
+      explain_update();
 }
 
 /* Enhancement profile (P9) runtime demotion: the 'auto' watch measured a
@@ -4685,6 +5276,12 @@ bool retro_serialize(void *data, size_t size)
       return false;
    buf += BlitterHungStateSave(buf);
 
+   /* v17 (#783): GameDrive SD-card handles ("JGF1") -- card-relative path,
+    * access and position per open file/dir.  STRICTLY after BLH1. */
+   if ((size_t)(buf - start) + JGDFSStateSize() > STATE_SIZE)
+      return false;
+   buf += JGDFSStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4944,6 +5541,13 @@ bool retro_unserialize(const void *data, size_t size)
    }
    else
       BlitterHungStateReset();   /* older states: not hung */
+
+   /* v17 (#783): GameDrive SD handles.  Older states carry none, so every
+    * handle closes (a missing magic does the same). */
+   if (version >= STATE_VERSION_JGD_SD)
+      buf += JGDFSStateLoad(buf);
+   else
+      JGDFSCloseAll();
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -5493,6 +6097,41 @@ typedef enum
  * and the load path share it (#651). */
 static disc_boot_status open_disc_and_resolve_boot(const char *path);
 
+/* Per-title DB key for a disc (issue #747): CRC32 of its boot stub.
+ * Probes the image on its own -- open, extract, close -- so it can run
+ * BEFORE the option reads on the load path (check_variables() and the
+ * internal-resolution latch both precede open_disc_and_resolve_boot()),
+ * giving disc rows the same reach as cart rows.  The close leaves CDIntf
+ * exactly as an unopened drive; open_disc_and_resolve_boot() reopens.
+ * No image or no extractable stub (audio-only, damaged CDI V2 rip) is
+ * simply "no key".  The CRC is logged either way so a row author can take
+ * the key straight from the RetroArch log. */
+static void titledb_probe_disc(const char *path)
+{
+   static uint8_t stub[600 * 1024];   /* same bound as jagcd_hle.c */
+   uint32_t load_addr = 0, length = 0, crc = 0;
+
+   if (path && path[0] && CDIntfOpenImage(path))
+   {
+      if (CDIntfExtractBootStub(stub, sizeof(stub), &load_addr, &length)
+          && length > 0)
+         crc = (uint32_t)crc32_calcCheckSum(stub, (unsigned int)length);
+      CDIntfCloseImage();
+      CDIntfClearLastReadVirtualPregap();
+   }
+
+   TitleDBSetDisc(crc);
+   if (crc == 0)
+      LOG_INF("[titledb] disc has no extractable boot stub -- no per-title "
+              "key\n");
+   else if (TitleDBTitleName())
+      LOG_INF("[titledb] disc boot stub CRC32 $%08X: %s\n",
+              (unsigned)crc, TitleDBTitleName());
+   else
+      LOG_INF("[titledb] disc boot stub CRC32 $%08X: no per-title entry\n",
+              (unsigned)crc);
+}
+
 /* ---------------------------------------------------------------------
  * Disk control callbacks (#651)
  *
@@ -5562,6 +6201,13 @@ static bool disk_set_eject_state(bool ejected)
    saved_cd_mode = jaguar_cd_mode;
    memcpy(saved_path, cd_image_path, sizeof(saved_path));
 
+   /* Per-title DB (#747): key the new disc, then re-read the options so a
+    * disc row (cd_boot_mode above all) reaches the boot resolution below.
+    * Nothing else re-runs check_variables() on an insert.  Load-latched
+    * options keep their load-time value, exactly as for a user change. */
+   titledb_probe_disc(disk_image_path[disk_index]);
+   check_variables();
+
    st = open_disc_and_resolve_boot(disk_image_path[disk_index]);
 
    /* NOT a bare JaguarReset(): bios_boot() copies the CD BIOS to $800000
@@ -5593,6 +6239,10 @@ static bool disk_set_eject_state(bool ejected)
       bootConfig     = saved_boot;
       jaguar_cd_mode = saved_cd_mode;
       memcpy(cd_image_path, saved_path, sizeof(cd_image_path));
+      /* Back to the previous disc's per-title row (#747), before the
+       * reopen below -- the probe closes the image it opens. */
+      titledb_probe_disc(cd_image_path[0] != '\0' ? cd_image_path : NULL);
+      check_variables();
       if (cd_image_path[0] != '\0' && !CDIntfOpenImage(cd_image_path))
          LOG_ERR("[CD] disk control: could not reopen the previous disc "
                  "either -- the drive is now empty\n");
@@ -5979,7 +6629,13 @@ bool retro_load_game(const struct retro_game_info *info)
                  "docs/rom-patches.md)\n", (unsigned)TitleDBContentCRC());
    }
    else
+   {
       TitleDBSetContent(NULL, 0);
+      /* Disc rows (#747) are keyed by boot-stub CRC, never by hashing the
+       * image -- see titledb_probe_disc(). */
+      if (is_cd_content)
+         titledb_probe_disc(info->path);
+   }
 
    /* Texture dump (#369): dumps land under the system directory, keyed
     * by the content CRC the DB just latched.  The path is set here once
@@ -6003,6 +6659,28 @@ bool retro_load_game(const struct retro_game_info *info)
          ShadowFBSetEnabled(1);
    }
 
+   /* GameDrive SD card root (#783): <save dir>/jaggd-sd, falling back to
+    * the system directory.  Created lazily on first use.  A frontend that
+    * bypasses libretro.c (Provenance) calls JGDFSSetRoot itself. */
+   {
+      const char *sd_base = NULL;
+      char sd_root[1024];
+      if (!(environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &sd_base)
+            && sd_base && sd_base[0]))
+      {
+         sd_base = NULL;
+         if (!(environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sd_base)
+               && sd_base && sd_base[0]))
+            sd_base = NULL;
+      }
+      if (sd_base
+          && strlcpy(sd_root, sd_base, sizeof(sd_root)) < sizeof(sd_root)
+          && strlcat(sd_root, "/jaggd-sd", sizeof(sd_root)) < sizeof(sd_root))
+         JGDFSSetRoot(sd_root);
+      else
+         JGDFSSetRoot(NULL);
+   }
+
    /* Raw gate read (never through get_variable_pertitle()) so the hires
     * read just below -- which runs before check_variables() -- is already
     * gated correctly even on a frontend that hasn't called
@@ -6022,6 +6700,8 @@ bool retro_load_game(const struct retro_game_info *info)
     * before check_variables() and already consults the profile. */
    enhancement_profile_reset();
    enhancement_profile_read();
+   /* Option explanations (#841): this load observes its own presets. */
+   explain_reset(0);
 
    /* Enhancement-hook gate (issue #370), latched HERE and nowhere else.
     * Read raw for the same reason the gate above is: otherwise a DB row
@@ -6461,7 +7141,8 @@ bool retro_load_game(const struct retro_game_info *info)
     * Cart ROM is not serialized and JaguarReset() never touches it, so
     * this never needs re-applying -- not after retro_reset(), not after
     * unserialize. */
-   TitleHookApplyROM();
+   if (TitleHookApplyROM() > 0)
+      JaguarMirrorCart();   /* the repeats of a 1/2/4 MB cart carry the patch (#851) */
 
    /* Advertise the Jaguar memory map so frontends (RetroArch, etc.) can
     * resolve emulated addresses to host buffers. Required for rcheevos.
@@ -6496,6 +7177,10 @@ bool retro_load_game(const struct retro_game_info *info)
    content_loaded = true;
    no_game_active = (info == NULL);
    update_option_visibility();
+
+   /* Every option is resolved (and blit-memo can finally tell cart from
+    * CD): tell the player which settings the core chose for them (#841). */
+   explain_update();
 
    /* Memory Track NVM BIOS module: on hardware the CD BIOS boot installs
     * it in RAM before the game runs; do the same after the boot strategy
@@ -6607,6 +7292,9 @@ void retro_unload_game(void)
     * are title-scoped like everything above -- the next load re-evaluates
     * from scratch. */
    enhancement_profile_reset();
+   /* Option explanations (#841): forget this title's notes and put the
+    * original option definitions back in the frontend. */
+   explain_reset(1);
    /* Widescreen (#530) is title-scoped like everything above and was
     * missed when it landed (#605).  iOS never dlcloses the core, so
     * leaving these set lets a 16:9 title hand its aspect ratio to the
@@ -6629,7 +7317,7 @@ void retro_unload_game(void)
    enable_alt_inputs = false;
    content_loaded = false;
    show_cd_options = true;
-   show_cart_bios_option = true;
+   show_cart_options = true;
 }
 
 unsigned retro_get_region(void)
@@ -7080,6 +7768,9 @@ void retro_deinit(void)
     * itself is re-read on the next load. */
    enhancement_profile_reset();
    enhancement_profile_opt = 0;
+   /* Option explanations (#841): static reset only -- option_defs_us is
+    * never mutated, so nothing needs restoring in a dying core. */
+   explain_reset(2);
    /* Widescreen (#530/#605): same per-load re-arm as above. */
    widescreen_reset();
 
@@ -7100,7 +7791,8 @@ void retro_deinit(void)
    enable_alt_inputs = false;
    content_loaded = false;
    show_cd_options = true;
-   show_cart_bios_option = true;
+   show_cart_options = true;
+   option_display_supported = -1;
 #ifdef VJ_TRACE
    /* Belt-and-suspenders, matching retro_unload_game() -- see vjt_frame's
     * decl. */
@@ -7352,6 +8044,13 @@ void retro_run(void)
    JLinkFrameTick();
    JLinkPoll();
    UARTPoll();
+   {
+      /* Link health line, about every 5 s while a link carries traffic
+       * (the only way to read these numbers on iOS, which has no env). */
+      char link_stats[256];
+      if (JLinkStatsPoll(link_stats, sizeof(link_stats)))
+         LOG_INF("[NETLINK] %s\n", link_stats);
+   }
 
    /* Host-side voice chat (#485): capture/gate/send. Never touches the
     * emulated UART. PTT is read from the keyboard device.  Re-evaluate
@@ -7514,6 +8213,13 @@ void retro_run(void)
                                                             : BUFPAL) / 2);
       VoiceChatMixInto(sampleBuffer, pairs);
    }
+   /* Netlink reply-wait: the emulation work for this frame is done.  Tell
+    * jlink BEFORE the frontend calls below -- audio_batch_cb blocks when
+    * the frontend's audio buffer is full (audio sync) and video_cb may
+    * block on vsync, and neither is emulation cost (see JLinkFrameEnd). */
+   if (JLinkMode() != JLINK_MODE_DISABLED)
+      JLinkFrameEnd(JaguarGetFieldRateHz());
+
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
 
    /* Give every presented row defined content.

@@ -15,9 +15,34 @@
 extern "C" {
 #endif
 
+/*
+ * Row classes (issue #748) -- the tier-3 contract.
+ *
+ *   ENHANCEMENT    (0, the zero-fill default): a visual/perf lever.  The
+ *                  enhancement profile may decline to apply it (see
+ *                  enhancement_profile_governs() in libretro.c).
+ *   COMPATIBILITY  (1): a setting the title needs to WORK at all -- boot
+ *                  mode, a timing model, a controller type.  Never governed
+ *                  by the enhancement profile.  `cite` is mandatory: the
+ *                  measurement (probe, numbers, date) and the mechanism
+ *                  ticket the row stands in for, as "#N".  test_titledb
+ *                  fails the table if it is missing.  The row is RETIRED,
+ *                  not kept, when that mechanism lands -- the ticket number
+ *                  is how the retirement is found.
+ *
+ * Both classes share the DB's one hard rule: a row only substitutes for an
+ * option left at its registered default, so an explicit user choice always
+ * wins.  Existing two-field initializers stay valid (C89 6.5.7 zero-fills
+ * cls and cite, i.e. an enhancement pair with no citation).
+ */
+#define TITLEDB_CLASS_ENHANCEMENT   0
+#define TITLEDB_CLASS_COMPATIBILITY 1
+
 typedef struct {
    const char *key;     /* core option key, e.g. "virtualjaguar_true_color" */
    const char *value;   /* value to apply when the user left the option at default */
+   int         cls;     /* TITLEDB_CLASS_*; omitted = ENHANCEMENT */
+   const char *cite;    /* COMPATIBILITY: evidence + "#N" mechanism ticket */
 } TitleDBPair;
 
 #define TITLEDB_MAX_PAIRS 4
@@ -128,11 +153,44 @@ void TitleDBSetContent(const uint8_t *data, size_t size);
 void TitleDBSetCRC(uint32_t crc);
 
 /* CRC32 (header-normalized) of the currently loaded content, as last set by
- * TitleDBSetContent/TitleDBSetCRC; 0 when no content is loaded. */
+ * TitleDBSetContent/TitleDBSetCRC; 0 when no content is loaded.  Cartridge
+ * content only: a disc match (TitleDBSetDisc) never sets it, so texture
+ * dump/replace directories keyed on it are unaffected by CD rows. */
 uint32_t TitleDBContentCRC(void);
+
+/*
+ * Disc rows (issue #747).  A Jaguar CD title is keyed by the CRC32 of its
+ * boot stub as CDIntfExtractBootStub() returns it (word-swap undone,
+ * header-validated): measured stable across CUE, CHD and CDI rips of the
+ * same pressing, where the session/track/sector layout is not (CDI rips
+ * carry +150 sectors).  Disc rows live in their OWN table, whose `crc32`
+ * field holds the stub CRC, so a cartridge CRC can never match a disc row
+ * or the reverse.  Same pairs[] / negative[] semantics as cart rows; disc
+ * rows carry no hooks[] (those patch cartridge ROM).
+ *
+ * Known limits of the key: it identifies the boot LOADER, not the game
+ * program -- seven homebrew discs share one loader ($DE7145EE) and
+ * Songbird re-releases share the original's stub.  Discs with no
+ * extractable stub (audio-only, damaged CDI V2 rips) have no key.
+ *
+ * TitleDBSetDisc(0) clears the match.  Like TitleDBSetCRC, it replaces
+ * whatever row was current.
+ */
+void TitleDBSetDisc(uint32_t boot_stub_crc);
+
+/* Test-only: TitleDBSetDisc() scans these rows instead of the shipped disc
+ * table; NULL restores it.  Mirrors TitleDBSetPairsForTest(). */
+void TitleDBSetDiscRowsForTest(const TitleDBEntry *rows, int count);
+
+/* Test-only introspection: the raw disc table. */
+const TitleDBEntry *TitleDBDiscTable(int *count);
 
 /* Lookup: return the preset value for a key in the loaded content, or NULL. */
 const char *TitleDBOverride(const char *key);
+
+/* Class (TITLEDB_CLASS_*) of the pair TitleDBOverride() would answer from
+ * for `key`, or -1 when there is no such pair (issue #748). */
+int TitleDBOverrideClass(const char *key);
 
 /* Negative-entry lookup (issue #464): does the loaded content's row mark
  * `key`=`value` as known-bad?  `option_default` is the key's registered

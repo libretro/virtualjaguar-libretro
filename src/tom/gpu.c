@@ -44,6 +44,11 @@
 
 // Seems alignment in loads & stores was off...
 #define GPU_CORRECT_ALIGNMENT
+/* store (r15+rn) was the only long form left unaligned in GPU local RAM.
+ * Hardware drops A1:A0 for every local-RAM access (MiSTer gpu_mem.v:
+ * ram_addr[11:2] = dataddr[11:2], independent of opcode); Ruiner Pinball
+ * patches movei immediates through it at word-aligned addresses (#866). */
+#define GPU_CORRECT_ALIGNMENT_STORE
 
 /* Bus contention: accumulates stall cycles for GPU external memory
  * accesses within a single instruction.  Reset before each opcode
@@ -641,19 +646,47 @@ static uint32_t gpu_opcode_second_parameter;
 /* Branch delay-slot IRQ hazard state.  gpu_opcode_jump/jr execute their
  * delay-slot instruction inline and then apply the branch target to gpu_pc.
  * If the delay-slot instruction's side effects dispatch a GPU interrupt
- * synchronously -- the canonical case is the CD BIOS / game streaming-ISR
- * epilogue `JUMP T,(Rret)` with `STORE Rflags,(G_FLAGS)` in the delay slot,
- * where the store clears IMASK while a FIFO interrupt is already latched --
- * then GPUHandleIRQs must push the BRANCH TARGET as the return address
+ * synchronously (a GPU interrupt raised by a store in the slot, e.g. a
+ * G_CTRL GPUINT0 self-interrupt while IMASK is already clear), then
+ * GPUHandleIRQs must push the BRANCH TARGET as the return address
  * (the delay slot has completed; the next instruction is the target), and
  * the jump must NOT overwrite gpu_pc afterwards, or the vector jump is
  * clobbered: IMASK stays set forever, no interrupt is ever delivered again,
  * and CD transfers wedge (video_stall / cd_seek_wedge with G_FLAGS IMASK
  * stuck).  Transient within a single opcode's execution -- never live at a
- * savestate boundary, so deliberately not serialized. */
+ * savestate boundary, so deliberately not serialized.
+ *
+ * The canonical CD BIOS / game streaming-ISR epilogue -- `JUMP T,(Rret)`
+ * with an IMASK-clearing `STORE Rflags,(G_FLAGS)` in the delay slot while
+ * a FIFO interrupt is already latched -- used to be the main client of
+ * this.  Since #865 it no longer dispatches inside the slot: the store's
+ * interrupt re-check waits for the store to retire, which jump/jr reach
+ * only AFTER applying the branch target, and that dispatch pushes the same
+ * target-2 return address through the ordinary path. */
 static uint32_t gpu_ds_branch_target;
 static uint8_t  gpu_in_delay_slot;
 static uint8_t  gpu_ds_irq_dispatched;
+
+/* Instruction slots a GPU-issued G_FLAGS store waits out before it
+ * retires: the slot holding the store itself, plus the one instruction
+ * already past Read Operands behind it in the pipeline (JTRM v8 p.59).
+ * While the delay is outstanding the register-bank switch the store
+ * selects has not happened yet -- gpu_reg / gpu_alternate_reg still point
+ * at the bank that was live when the store issued, so EVERY register
+ * operand of the instruction behind it uses the pre-store bank -- and an
+ * IMASK the store cleared is not yet clear for interrupt recognition
+ * (gpuFlagsIRQPending).  The switch is committed (GPUUpdateRegisterBanks)
+ * when the delay reaches zero, before a taken jump/jr's delay slot, or by
+ * an interrupt.  The GPU port of the DSP's D_FLAGS model (#853, #865);
+ * see the G_FLAGS case in GPUWriteLong for the citations. */
+#define GPU_FLAGS_RETIRE_DELAY 2
+static uint32_t gpuFlagsRetireDelay = 0;
+/* A GPU-issued G_FLAGS store cleared IMASK and interrupt recognition has
+ * not re-opened yet.  The GPU's analog of the DSP's IMASKCleared: the
+ * G_FLAGS store used to call GPUHandleIRQs itself, and now the retire
+ * point does instead (GPUExec's countdown, or a taken jump/jr after its
+ * redirect). */
+static uint8_t  gpuFlagsIRQPending = 0;
 
 /* 68K -> GPU-local-RAM communication sync.
  *
@@ -1095,13 +1128,67 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                gpu_flag_z = gpu_flags & ZERO_FLAG;
                gpu_flag_c = (gpu_flags & CARRY_FLAG) >> 1;
                gpu_flag_n = (gpu_flags & NEGA_FLAG) >> 2;
-               GPUUpdateRegisterBanks();
                gpu_control &= ~((gpu_flags & CINT04FLAGS) >> 3);	// Interrupt latch clear bits
-               //Writing here is only an interrupt enable--this approach is just plain wrong!
-               //			GPUHandleIRQs();
-               //This, however, is A-OK! ;-)
-               if (IMASKCleared)						// If IMASK was cleared,
-                  GPUHandleIRQs();					// see if any other interrupts need servicing!
+               /* A G_FLAGS store issued by the GPU itself does not retire
+                * until the instruction behind it is already past Read
+                * Operands.  JTRM v8 p.59: "writing a value to the flag
+                * bits and making use of those flag bits in the following
+                * instruction will not work properly due to pipe-lining
+                * effects" -- at least one other instruction must lie
+                * between (Software Reference v2.4 p.46 says two, four for
+                * an indexed STORE; Hardware Bugs & Warnings p.3 #11 says
+                * two NOPs after a STORE to G_FLAGS or D_FLAGS, naming the
+                * register bank explicitly).  So the instruction already in
+                * flight behind the store still runs with the OLD flags:
+                *
+                *  - Its register operands, sources AND destination, are in
+                *    the PRE-store bank.  The REGPAGE / IMASK bank switch is
+                *    deferred here and committed by GPUExec once the delay
+                *    runs out (GPUFlagsRetire), so nothing per-operand is
+                *    needed.
+                *
+                *  - An IMASK this store cleared is not really clear until
+                *    the store retires, so that same slot still runs masked
+                *    and cannot be preempted.  The interrupt re-check this
+                *    case used to make inside the store moves to the retire
+                *    point (gpuFlagsIRQPending), and GPUHandleIRQs holds
+                *    off while it is outstanding.
+                *
+                * A taken jump/jr commits the bank switch before its inline
+                * delay slot and re-checks interrupts only after applying
+                * the branch target.  JTRM v8 p.39 is explicit here, unlike
+                * the DSP derivation (#853): "Jump instructions are always
+                * atomic with the instruction which succeeds them", and of
+                * the example ISR epilogue `jump (r28); store r29,(r30)`
+                * (the G_FLAGS restore in the delay slot) "Interrupts are
+                * re-enabled on the instruction after the jump".
+                *
+                * WINDOW LENGTH: the store plus ONE instruction
+                * (GPU_FLAGS_RETIRE_DELAY = 2), i.e. v8's "at least one
+                * other instruction", the same length the DSP model uses
+                * (d220aa2, #853).  The stricter SWR/HBW counts are read as
+                * programmer margins; the indexed-STORE extra latency is
+                * not modelled.  See docs/jtrm-errata.md B10.
+                *
+                * Host (68K/DSP/blitter) writes are not in the GPU pipeline
+                * and switch the bank at once.  OR, not assign, for the
+                * re-check: a host write must not drop the interrupt a
+                * still-pending GPU store owes. */
+               if (who == GPU)
+               {
+                  gpuFlagsRetireDelay = GPU_FLAGS_RETIRE_DELAY;
+                  if (IMASKCleared)
+                     gpuFlagsIRQPending = 1;
+               }
+               else
+               {
+                  IMASKCleared = IMASKCleared || gpuFlagsIRQPending;
+                  gpuFlagsRetireDelay = 0;
+                  gpuFlagsIRQPending  = 0;
+                  GPUUpdateRegisterBanks();
+                  if (IMASKCleared)					// If IMASK was cleared,
+                     GPUHandleIRQs();				// see if any other interrupts need servicing!
+               }
                break;
             }
          case 0x04:
@@ -1268,6 +1355,17 @@ void GPUHandleIRQs(void)
    if (gpu_flags & IMASK)
       return;
 
+   /* IMASK reads clear the moment a GPU-issued G_FLAGS store is decoded,
+    * but the store has not retired yet: the instruction behind it is
+    * already in flight and still runs masked (see the G_FLAGS case in
+    * GPUWriteLong).  Leave any latch standing in gpu_control; the retire
+    * point (GPUFlagsRetire) re-checks, at most one instruction later.
+    * This also covers GPUSetIRQLine arriving from an event callback while
+    * a window straddles a slice boundary, and the slice-entry call in
+    * GPUExec. */
+   if (gpuFlagsRetireDelay && gpuFlagsIRQPending)
+      return;
+
    // Get the interrupt latch & enable bits
    bits = (gpu_control >> 6) & 0x1F;
    mask = (gpu_flags >> 4) & 0x1F;
@@ -1291,6 +1389,12 @@ void GPUHandleIRQs(void)
 
    // set the interrupt flag
    gpu_flags |= IMASK;
+   /* Taking an interrupt flushes the pipeline, so an un-retired G_FLAGS
+    * store from before the vector fetch has no in-flight successor left to
+    * shadow -- retire it rather than let it reach into the handler.  Its
+    * owed re-check is this dispatch. */
+   gpuFlagsRetireDelay = 0;
+   gpuFlagsIRQPending  = 0;
    GPUUpdateRegisterBanks();
 
    /* Bank switch: the pipeline model's pending-load tracking is
@@ -1312,8 +1416,9 @@ void GPUHandleIRQs(void)
    gpu_reg[31] -= 4;
    if (gpu_in_delay_slot)
    {
-      /* Dispatch triggered by the delay-slot instruction itself (e.g. an
-       * IMASK-clearing G_FLAGS store in an ISR epilogue's delay slot).
+      /* Dispatch triggered by the delay-slot instruction itself (e.g. a
+       * G_CTRL GPUINT0 self-interrupt; an IMASK-clearing G_FLAGS store in
+       * the slot defers its re-check past the redirect instead, #865).
        * The delay slot has already executed, so the interrupted-code
        * address is the pending BRANCH TARGET, not gpu_pc (which still
        * points just past the delay slot).  Flag the in-flight jump opcode
@@ -1328,6 +1433,22 @@ void GPUHandleIRQs(void)
    // jump  (r30)					; jump to ISR
    // nop
    gpu_pc = gpu_reg[30] = GPU_WORK_RAM_BASE + (which * 0x10);
+}
+
+/* Retire a GPU-issued G_FLAGS store (see the G_FLAGS case in
+ * GPUWriteLong): commit the register-bank switch it selected and, if it
+ * cleared IMASK, re-open interrupt recognition with the check the store
+ * used to make itself.  Off the hot path -- reached only from GPUExec's
+ * countdown and a taken jump/jr while a window or its re-check is owed. */
+static void GPUFlagsRetire(void)
+{
+   gpuFlagsRetireDelay = 0;
+   GPUUpdateRegisterBanks();
+   if (gpuFlagsIRQPending)
+   {
+      gpuFlagsIRQPending = 0;
+      GPUHandleIRQs();
+   }
 }
 
 void GPUSetIRQLine(int irqline, int state)
@@ -1421,6 +1542,8 @@ void GPUReset(void)
    gpu_ds_branch_target  = 0x00000000;
    gpu_in_delay_slot     = 0;
    gpu_ds_irq_dispatched = 0;
+   gpuFlagsRetireDelay   = 0;
+   gpuFlagsIRQPending    = 0;
 
    /* Scheduler-slice sync state.  Like the delay-slot hazard flags above this
     * is transient inside one JaguarExecuteNew() slice and is never live at a
@@ -1573,21 +1696,23 @@ void GPUSyncToM68K(void)
  *     entry, so a probe never spans two calls.
  *
  * (2) No GPU interrupt can be dispatched mid-call for an admitted
- *     body.  STRONGER than the DSP case: GPUExec's only dispatch is
- *     the GPUHandleIRQs() call at slice ENTRY, before the exec loop --
- *     there is no in-loop IMASKCleared re-check because the GPU has no
- *     D_FLAGS retire-delay analog; a G_FLAGS write that clears IMASK
- *     dispatches synchronously INSIDE GPUWriteLong (case 0x00), which
- *     only a store can reach, and the whitelist admits no store.
- *     GPUSetIRQLine's other callers (tom.c timers, op.c, cdrom.c) all
- *     run from event callbacks, i.e. between slices per (1).  So the
- *     probe needs no IMASKCleared/retire-delay reset check at all.
+ *     body.  GPUExec's dispatches are the GPUHandleIRQs() call at slice
+ *     ENTRY, before the exec loop, and the re-check a GPU-issued G_FLAGS
+ *     store owes at its retire point (GPUFlagsRetire, #865: GPUExec's
+ *     countdown or a taken jump/jr's redirect).  Only a store opens such
+ *     a window, the whitelist admits no store, and the taken `jr` that
+ *     enters the probe has already retired any window open ahead of it
+ *     (gpuFlagsRetireDelay == gpuFlagsIRQPending == 0 on return from
+ *     gpu_opcode_jr).  GPUSetIRQLine's other callers (tom.c timers,
+ *     op.c, cdrom.c) all run from event callbacks, i.e. between slices
+ *     per (1).  So the probe needs no retire-delay reset check at all.
  *
  * (3) The register banks cannot move.  gpu_reg / gpu_alternate_reg are
- *     repointed only by GPUUpdateRegisterBanks(), reachable from a
- *     G_FLAGS write (a store -- excluded) or from GPUHandleIRQs
- *     (excluded by (2)).  The probe still records and re-checks the
- *     bank pointer, same belt-and-braces as the DSP.
+ *     repointed only by GPUUpdateRegisterBanks(), reachable from a host
+ *     G_FLAGS write (not inside GPUExec), from retiring a GPU-issued
+ *     G_FLAGS store (needs a store -- excluded, see (2)) or from
+ *     GPUHandleIRQs (excluded by (2)).  The probe still records and
+ *     re-checks the bank pointer, same belt-and-braces as the DSP.
  *
  * (4) GPU-side reads of the admitted EA classes are pure.  GPU local
  *     RAM ($F03000-$F03FFF, 4K -- not the DSP's 8K) is served straight
@@ -2059,9 +2184,10 @@ static int32_t GPUIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 		return cycles;
 	}
 
-	/* No IMASKCleared / retire-delay reset here, deliberately: the GPU
-	 * dispatches an IMASK-clearing G_FLAGS write synchronously inside
-	 * the store itself, and no store is admitted -- see theorem (2). */
+	/* No retire-delay reset here, deliberately: only a G_FLAGS store
+	 * opens a retire window, no store is admitted, and the taken jr
+	 * that got us here retired any window ahead of it -- see theorem
+	 * (2). */
 
 	/* A different loop showed up mid-probe.  Only then -- calling this
 	 * unconditionally would reset the probe of the loop we are actually
@@ -2428,6 +2554,18 @@ void GPUExec(int32_t cycles)
          cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall
                  + (int32_t)gpu_pipe_core_stall;
 
+      /* Age out a G_FLAGS store once the instruction that was already
+       * behind it in the pipeline has run (see GPUWriteLong, G_FLAGS
+       * case).  Retiring commits the register-bank switch the store
+       * selected and re-opens interrupt recognition.  Ahead of the idle
+       * probe and the SINGLE_STEP break below, so neither can skip it. */
+      if (gpuFlagsRetireDelay)
+      {
+         gpuFlagsRetireDelay--;
+         if (gpuFlagsRetireDelay == 0)
+            GPUFlagsRetire();
+      }
+
       /* Idle-loop fast-forward (issue #569, GPU port).  A taken `jr`
        * that landed on or behind its own address, at most 8 words back,
        * is the only candidate; the unsigned difference rejects a
@@ -2685,9 +2823,23 @@ INLINE static void gpu_opcode_jump(void)
 
    if (BRANCH_CONDITION(IMM_2))
    {
+      /* The target register is latched a pipeline stage before a
+       * G_FLAGS store in the slot ahead of us can retire, so RM still
+       * reads the bank that was live when that store issued -- the
+       * switch is deferred until it retires.  See the G_FLAGS case in
+       * GPUWriteLong. */
       uint32_t delayed_pc = RM;
       uint16_t ds_opcode;
       uint32_t ds_index;
+      /* The delay slot is the second instruction behind such a store,
+       * past the retire window: commit the bank switch before it runs.
+       * Interrupt recognition waits until after the redirect below --
+       * JTRM v8 p.39: a jump is atomic with the instruction after it. */
+      if (gpuFlagsRetireDelay)
+      {
+         gpuFlagsRetireDelay = 0;
+         GPUUpdateRegisterBanks();
+      }
       /* Inline delay-slot: fetch-decode-execute one instruction at current
        * PC before applying the branch target.  This replaces the old
        * recursive GPUExec(1) call, avoiding full function-call overhead,
@@ -2724,6 +2876,15 @@ INLINE static void gpu_opcode_jump(void)
        * return address -- do not clobber the vector. */
       if (!gpu_ds_irq_dispatched)
          gpu_pc = delayed_pc;
+      /* AFTER the redirect, never before: a G_FLAGS store the delay slot
+       * just issued (the canonical `jump (Rret); store Rflags,(G_FLAGS)`
+       * ISR epilogue) retires as the pipeline refills from the target, so
+       * the target sees the new bank; and the interrupt re-check it owes
+       * -- or the one a store just ahead of this jump still owes -- now
+       * pushes the target as the return address.  Dispatching before the
+       * gpu_pc assignment would have it overwrite the vector. */
+      if (gpuFlagsRetireDelay || gpuFlagsIRQPending)
+         GPUFlagsRetire();
    }
 }
 
@@ -2738,6 +2899,12 @@ INLINE static void gpu_opcode_jr(void)
       int32_t delayed_pc = gpu_pc + (offset * 2);
       uint16_t ds_opcode;
       uint32_t ds_index;
+      /* Same retire-window commits as gpu_opcode_jump. */
+      if (gpuFlagsRetireDelay)
+      {
+         gpuFlagsRetireDelay = 0;
+         GPUUpdateRegisterBanks();
+      }
       /* Inline delay-slot: fetch-decode-execute one instruction at current
        * PC before applying the branch target.  Same rationale as in
        * gpu_opcode_jump above. */
@@ -2770,6 +2937,9 @@ INLINE static void gpu_opcode_jr(void)
        * the delay-slot instruction. */
       if (!gpu_ds_irq_dispatched)
          gpu_pc = delayed_pc;
+      /* Same post-redirect retire as gpu_opcode_jump. */
+      if (gpuFlagsRetireDelay || gpuFlagsIRQPending)
+         GPUFlagsRetire();
    }
 }
 
@@ -3601,8 +3771,18 @@ size_t GPUStateSave(uint8_t *buf)
    STATE_SAVE_BUF(buf, gpu_reg_bank_0, sizeof(gpu_reg_bank_0));
    STATE_SAVE_BUF(buf, gpu_reg_bank_1, sizeof(gpu_reg_bank_1));
 
-   /* Save which register bank is active (0 or 1) */
-   active_bank = (gpu_reg == gpu_reg_bank_0) ? 0 : 1;
+   /* Bit 0: the live bank.  Bits 1-2: an un-retired G_FLAGS store's
+    * remaining delay (GPU_FLAGS_RETIRE_DELAY).  Bit 3: the interrupt
+    * re-check that store owes (gpuFlagsIRQPending).  While a window is
+    * outstanding the live bank is the PRE-store bank and the switch is
+    * still owed, so a state captured between the store and the
+    * instruction behind it must carry both or that instruction runs in the
+    * wrong bank after a load (run-ahead / netplay, #400 class).  States
+    * written before #865 hold 0 or 1 here, i.e. no window -- no layout
+    * change (v17 extended in place, see state.h). */
+   active_bank = (uint8_t)(((gpu_reg == gpu_reg_bank_0) ? 0 : 1)
+                           | ((gpuFlagsRetireDelay & 3) << 1)
+                           | ((gpuFlagsIRQPending & 1) << 3));
    STATE_SAVE_VAR(buf, active_bank);
 
    STATE_SAVE_VAR(buf, gpu_instruction);
@@ -3639,7 +3819,7 @@ size_t GPUStateLoad(const uint8_t *buf)
 
    /* Restore register bank pointers */
    STATE_LOAD_VAR(buf, active_bank);
-   if (active_bank == 0)
+   if ((active_bank & 1) == 0)
    {
       gpu_reg = gpu_reg_bank_0;
       gpu_alternate_reg = gpu_reg_bank_1;
@@ -3649,6 +3829,11 @@ size_t GPUStateLoad(const uint8_t *buf)
       gpu_reg = gpu_reg_bank_1;
       gpu_alternate_reg = gpu_reg_bank_0;
    }
+   /* An un-retired G_FLAGS store rides in bits 1-3 (see GPUStateSave). */
+   gpuFlagsRetireDelay = (active_bank >> 1) & 3;
+   if (gpuFlagsRetireDelay > GPU_FLAGS_RETIRE_DELAY)
+      gpuFlagsRetireDelay = GPU_FLAGS_RETIRE_DELAY;
+   gpuFlagsIRQPending = (gpuFlagsRetireDelay && (active_bank & 8)) ? 1 : 0;
 
    STATE_LOAD_VAR(buf, gpu_instruction);
    STATE_LOAD_VAR(buf, gpu_opcode_first_parameter);

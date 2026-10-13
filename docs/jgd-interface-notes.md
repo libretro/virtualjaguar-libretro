@@ -372,6 +372,48 @@ Suggested implementation order: (1) register hook + detection handshake +
 blob install — gets "GD Cart Detected" on the JagStudio example; (2) banking
 + >6 MB loader — gets SKYLAR; (3) savestate + core option plumbing + tests.
 
+## 9b. SD-card file API (#783), as implemented
+
+Blob functions 9-16, 20-23 and 26 are answered from a **host folder acting as the SD card**. This supersedes the "file/dir functions return -1" line in §9.
+
+- **The card folder:** `jaggd-sd` inside the frontend's save directory, or the system directory if there is none. It is created on first use.
+  - Core option `virtualjaguar_jgd_sd` sets access: Read/write (default), Read-only, or Disabled.
+  - Frontends that bypass `libretro.c` call `JGDFSSetRoot()` / `JGDFSSetAccess()`.
+- **Call path:** each of those blob slots is one word write, `$C000 | function`, to the `$F16006` backdoor.
+  - The core services the call *during that write*: `JGDHostCall` in `jaggd.c` reads the 68K's d0/d1/a0/a1, and the result goes back in d0 via `m68k_set_reg`.
+  - Safe because the 68K's JERRY writes are synchronous, and the stub's `move.w #imm,abs.l` never touches d0 afterwards.
+  - Only a 68K write triggers it; GPU, DSP and blitter writes to `$F16006` are ignored.
+  - The call completes inside one write, so no half-finished call can land in a savestate.
+- **Emulated memory:** paths and buffers move through `JaguarReadByte`/`JaguarWriteByte` as the 68K, so watchers see the writes.
+  - Paths are capped at 255 characters plus NUL; a path with no terminator fails.
+  - Buffer ranges are checked against the 24-bit bus.
+- **The ABI, from RetroHQ's published `gdbios.h` / `gdbios_bindings.s`** (facts only; their files are not in this tree):
+  - **Open modes** are FatFs `FA_*`: READ `$01`, WRITE `$02`, CREATE_NEW `$04`, CREATE_ALWAYS `$08`, OPEN_ALWAYS `$10`, OPEN_APPEND `$30`. Any write or create flag needs a writable card (the FatFs rule).
+  - **FileRead:** `d0 = flags<<16 | handle`. Flags other than `GD_FREAD_CPU` (0) need `GD_InitGPURead`, which is not emulated, so they return -1. Returns 0 on success. A short read at end of file is success, as with FatFs `f_read`; the program finds the count with FileTell.
+  - **FileSeek:** `d0 = whence<<16 | handle` (SET/CUR/END = 0/1/2), `d1 = offset`.
+  - **FileWrite** returns 0 on success. **FileTell** and **FileSize** return `$FFFFFFFF` on failure.
+  - **FileInfo / DirRead records** are big-endian with no padding, matching FatFs `FILINFO`:
+    - offset 0: u32 size
+    - offset 4: u16 date `(year-1980)<<9 | month<<5 | day`
+    - offset 6: u16 time `hour<<11 | min<<5 | sec/2`
+    - offset 8: u8 attributes (`$10` dir, `$20` file, `$01` read-only card)
+    - offset 9: `char[13]` 8.3 name
+    - offset 22: `char[256]` long name, long form only
+    - Short record 22 bytes, long 278. The date/time comments in `gdbios.h` are swapped; this is the FatFs encoding.
+  - **End of directory:** not documented. DirRead returns -1 *and* writes a record with zeroed names, so a `>= 0` loop and a `name[0] != 0` loop both stop.
+  - **Errors:** every failure is the full 32-bit -1, so `.w` and `.l` sign tests both see it.
+- **Sandbox:**
+  - Accepted: a leading `0:` drive, and both `/` and `\` as separators.
+  - Refused: `..`, any other drive letter, FAT-invalid characters, a file used as a directory, and (on POSIX hosts) any symlink under the root.
+  - Each component is matched case-insensitively, since FAT is.
+- **Limits:**
+  - 8 open files and 4 open directories.
+  - The 8.3 alias of an over-long name is `BASENA~1.EXT`, FatFs's first alias; no collision numbering.
+  - On non-POSIX hosts the timestamp is fixed at 1980-01-01.
+- **Run-ahead / netplay:** writes to the card are host side effects. A run-ahead replay of a positional write rewrites the same bytes, so it converges. A `CREATE_NEW` replayed after rollback finds the file already present and fails, so avoid run-ahead for software that creates files. Netplay peers each have their own card folder; differing contents desync.
+- **Savestate:** see `docs/savestate-compat.md` v17 ("JGF1").
+- **Still out of scope:** GPU and async reads (functions 2, 17-19), GD_Reset (24), and GD_SetLED (25).
+
 ## 10. Test cases
 
 | Title | What it exercises | Local availability |

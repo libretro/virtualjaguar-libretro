@@ -183,7 +183,7 @@ extern uint8_t jagMemSpace[];
 #define M68K_OP_RTE             0x4E73
 /* Series K halt island at boot-ROM offset $5DC: ILLEGAL then BRA.S *
  * ($60FE).  Cart-BIOS mode parks unset exception vectors here so a
- * trap cannot execute PRNG-filled RAM.  Sticky: this BIOS image never
+ * trap cannot run through an unset (zero) vector.  Sticky: this BIOS image never
  * writes a vector table of its own. */
 #define BIOS_ROM_PARK_PC        0x00E005DC
 
@@ -1439,25 +1439,25 @@ void JaguarReset(void)
     * write-protected, SPI idle; the game re-runs GD_Install itself. */
    JGDReset();
 
-   // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
-   // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
-   // In HLE (no-BIOS) mode, zero-fill instead: the real BIOS clears most of RAM
-   // during its init, and many games assume zeroed working memory.
-   if (vjs.useJaguarBIOS)
-   {
-      JaguarSeedPRNG(12345);
-      /* Skip RAM[0..7] (SSP + initial PC vector); fill the rest unless
-       * a RAM-loaded executable lives in this address range. */
-      for(i = 8; i < JAGUAR_RAM_SIZE; i += 4)
-      {
-         uint32_t r = JaguarRand();
-         if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
-             && i >= jaguarLoadedRAMStart && i < jaguarLoadedRAMEnd)
-            continue;
-         SET32(jaguarMainRAM, i, r);
-      }
-   }
-   else
+   /* Power-on RAM: zero-fill RAM[8..] in BOTH boot modes, skipping any
+    * region where a RAM-loaded executable resides (RAM[0..7] is the
+    * SSP + initial PC vector, set below).
+    *
+    * BIOS mode used to fill with a per-word xorshift PRNG to model
+    * undefined DRAM contents.  Real DRAM powers up in near-uniform runs,
+    * not independent random words, and the boot ROM does NOT clear RAM
+    * (frame-610 dumps show $3D000-$FE000 untouched -- so HLE's zero fill
+    * is not "what the BIOS does" either).  The per-word values broke
+    * Fight For Your Life (1996) under BIOS (#856): it sizes a byte fill
+    * from $F9A90, which nothing ever writes; the PRNG word overran the
+    * fill into the GPU parameter block and the GPU job ran away.  Zero
+    * (or $FFFFFFFF) there boots clean.  A uniform fill keeps BIOS and
+    * HLE starting from the same memory.  Known cost: size-coded BootIntros
+    * that seed from power-on RAM (JaGol's Game of Life) get an empty
+    * field.  $FF instead was tried for v3.8.0 and broke homebrew that
+    * expects zeroed BSS (BadCode4, Jaguar Server examples, Mandelbrot).
+    * Tracked in #876.  (JaguarInit's PRNG fill is
+    * overwritten here on every reset.) */
    {
       if (preserveEnd > preserveStart)
       {
@@ -1489,8 +1489,9 @@ void JaguarReset(void)
    {
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
 
-      /* Cart BIOS only.  JaguarReset PRNG-fills RAM[8..] (vectors 2-255)
-       * to mimic power-on DRAM.  Series K never installs a vector table;
+      /* Cart BIOS only.  RAM[8..] (vectors 2-255) is not a real vector
+       * table at this point (zero-filled above; it used to be PRNG-filled,
+       * #856).  Series K never installs a vector table;
        * it copies SSP+PC, copies workspace to $5000, then a 60-byte
        * trampoline to $400-$43B (LEA $400 / JMP $400) -- not the vectors.
        * A GPU-only jagcrypt cart (Fountain, #469) therefore leaves the
@@ -1691,6 +1692,10 @@ void JaguarDone(void)
    JERRYDone();
    JGDDone();
    m68k_done();
+   /* The cart window is static storage: drop this title's image and its
+    * mirrors so the next load (a CD BIOS staged as a cart, a smaller cart)
+    * does not see them.  Stops short of the CDROM overlay at $DFFF00. */
+   memset(jagMemSpace + 0x800000, 0, 0x5FFF00);
 }
 
 uint8_t * GetRamPtr(void)

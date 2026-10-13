@@ -68,6 +68,24 @@ int main(void)
          CHECK(strcmp(t[i].pairs[j].key,
                       "virtualjaguar_enhancement_hooks") != 0,
                "no row names the enhancement-hook gate in its own pairs[]");
+         /* Row class contract (issue #748): a compatibility pair must cite
+          * its measurement AND the mechanism ticket it stands in for, as
+          * "#N" -- the ticket is how the row gets retired. */
+         CHECK(t[i].pairs[j].cls == TITLEDB_CLASS_ENHANCEMENT
+               || t[i].pairs[j].cls == TITLEDB_CLASS_COMPATIBILITY,
+               "pair class is a known class");
+         if (t[i].pairs[j].cls == TITLEDB_CLASS_COMPATIBILITY)
+         {
+            const char *c = t[i].pairs[j].cite;
+            const char *h = c ? strchr(c, '#') : NULL;
+            while (h && !(h[1] >= '0' && h[1] <= '9'))
+               h = strchr(h + 1, '#');
+            if (!h)
+               printf("  (row \"%s\", key %s)\n", t[i].name,
+                      t[i].pairs[j].key);
+            CHECK(h != NULL,
+                  "compatibility pair cites its mechanism ticket (#N)");
+         }
       }
 
       /* Enhancement hooks (issue #370).  The table ships zero hook rows
@@ -292,6 +310,151 @@ int main(void)
       TitleDBSetNegativeForTest(NULL, 0);
       CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "1.5x", "1x") == 0,
             "test setter clears back to normal");
+   }
+   TitleDBSetCRC(0);
+
+   /* Row class lookup (issue #748): TitleDBOverrideClass() answers from the
+    * same pair TitleDBOverride() does, -1 on no pair. */
+   {
+      static TitleDBPair mixed[3];
+
+      TitleDBSetCRC(0);
+      CHECK(TitleDBOverrideClass("virtualjaguar_bios") == -1,
+            "no content -> class -1");
+      CHECK(TitleDBOverrideClass(NULL) == -1, "NULL key -> class -1");
+
+      mixed[0].key   = "virtualjaguar_internal_resolution";
+      mixed[0].value = "2x";
+      mixed[1].key   = "virtualjaguar_bios";
+      mixed[1].value = "enabled";
+      mixed[1].cls   = TITLEDB_CLASS_COMPATIBILITY;
+      mixed[1].cite  = "synthetic (#748)";
+      TitleDBSetPairsForTest(mixed, 2);
+      CHECK(TitleDBOverrideClass("virtualjaguar_internal_resolution")
+            == TITLEDB_CLASS_ENHANCEMENT,
+            "two-field pair defaults to the enhancement class");
+      CHECK(TitleDBOverrideClass("virtualjaguar_bios")
+            == TITLEDB_CLASS_COMPATIBILITY,
+            "compatibility pair reports its class");
+      CHECK(TitleDBOverrideClass("virtualjaguar_true_color") == -1,
+            "key absent from the row -> class -1");
+      TitleDBSetPairsForTest(NULL, 0);
+
+      /* The shipped compatibility row: White Men Can't Jump. */
+      TitleDBSetCRC(0x14915F20);
+      CHECK(TitleDBOverrideClass("virtualjaguar_blitter_timing")
+            == TITLEDB_CLASS_COMPATIBILITY,
+            "WMCJ blitter_timing row is compatibility-class");
+      /* The row charges the 68000 only.  "enabled" also makes the GPU wait
+       * out its own blits, which overran the gameplay frame and tore it
+       * (#736); the intro-logo fix needs only the 68000 side. */
+      {
+         const char *v = TitleDBOverride("virtualjaguar_blitter_timing");
+         CHECK(v != NULL && strcmp(v, "m68k") == 0,
+               "WMCJ blitter_timing row selects the 68000-only model");
+      }
+   }
+   TitleDBSetCRC(0);
+
+   /* Disc rows (issue #747): own table, keyed by boot-stub CRC in crc32.
+    * Shipped-table integrity (vacuous while it ships empty, same as the
+    * hooks[] loop: it validates the FIRST row added) ... */
+   {
+      int dcount = 0;
+      const TitleDBEntry *d = TitleDBDiscTable(&dcount);
+      int ccount = 0;
+      const TitleDBEntry *c = TitleDBTable(&ccount);
+
+      CHECK(dcount >= 0, "disc table count is sane");
+      for (i = 0; i < dcount; i++)
+      {
+         CHECK(d[i].crc32 != 0, "disc row key (boot-stub CRC) is non-zero");
+         CHECK(d[i].name && d[i].name[0], "disc row has a name");
+         CHECK(d[i].pairs[0].key != NULL || d[i].negative[0].key != NULL,
+               "disc row has at least one pair or negative entry");
+         CHECK(d[i].hooks[0].kind == TITLEDB_HOOK_NONE,
+               "disc row carries no hooks[] (hooks patch cartridge ROM)");
+         for (j = i + 1; j < dcount; j++)
+            CHECK(d[i].crc32 != d[j].crc32, "no duplicate disc keys");
+         for (j = 0; j < TITLEDB_MAX_PAIRS && d[i].pairs[j].key; j++)
+         {
+            CHECK(strncmp(d[i].pairs[j].key, "virtualjaguar_", 14) == 0,
+                  "disc pair key is a core option key");
+            CHECK(d[i].pairs[j].value && d[i].pairs[j].value[0],
+                  "disc pair value is non-empty");
+            if (d[i].pairs[j].cls == TITLEDB_CLASS_COMPATIBILITY)
+            {
+               const char *cc = d[i].pairs[j].cite;
+               const char *h = cc ? strchr(cc, '#') : NULL;
+               while (h && !(h[1] >= '0' && h[1] <= '9'))
+                  h = strchr(h + 1, '#');
+               CHECK(h != NULL,
+                     "disc compatibility pair cites its mechanism ticket");
+            }
+         }
+      }
+
+      /* ... and lookup semantics, through the test override. */
+      {
+         static TitleDBEntry rows[2];
+         int clash = 0;
+
+         memset(rows, 0, sizeof(rows));
+         rows[0].crc32 = 0x82B88060;              /* Baldies boot stub */
+         rows[0].name  = "Synthetic disc row";
+         rows[0].pairs[0].key   = "virtualjaguar_cd_boot_mode";
+         rows[0].pairs[0].value = "bios";
+         rows[0].pairs[0].cls   = TITLEDB_CLASS_COMPATIBILITY;
+         rows[0].pairs[0].cite  = "synthetic (#747)";
+         rows[1].crc32 = 0;                       /* zero-key canary */
+         rows[1].name  = "Zero-key canary";
+         rows[1].pairs[0].key   = "virtualjaguar_bios";
+         rows[1].pairs[0].value = "enabled";
+
+         for (i = 0; i < ccount; i++)
+            if (c[i].crc32 == rows[0].crc32)
+               clash = 1;
+         CHECK(!clash, "synthetic disc key is not also a cart CRC");
+
+         TitleDBSetDiscRowsForTest(rows, 2);
+
+         TitleDBSetDisc(0x82B88060);
+         CHECK(TitleDBTitleName()
+               && strcmp(TitleDBTitleName(), "Synthetic disc row") == 0,
+               "disc key matches its disc row");
+         CHECK(TitleDBOverride("virtualjaguar_cd_boot_mode")
+               && strcmp(TitleDBOverride("virtualjaguar_cd_boot_mode"),
+                         "bios") == 0,
+               "disc row answers TitleDBOverride like a cart row");
+         CHECK(TitleDBContentCRC() == 0,
+               "a disc match does not set the cartridge content CRC");
+
+         TitleDBSetCRC(0x82B88060);
+         CHECK(TitleDBTitleName() == NULL,
+               "a cart CRC never matches a disc row");
+
+         TitleDBSetDisc(0);
+         CHECK(TitleDBTitleName() == NULL,
+               "TitleDBSetDisc(0) is no key -- never matches a zero row");
+
+         TitleDBSetCRC(0);
+         CHECK(TitleDBTitleName() == NULL,
+               "TitleDBSetCRC(0) is no key -- never matches");
+
+         TitleDBSetDiscRowsForTest(NULL, 0);
+         TitleDBSetDisc(0x82B88060);
+         CHECK(TitleDBTitleName() == NULL,
+               "override cleared: shipped disc table has no such row");
+
+         /* A cart CRC passed to the disc lookup finds nothing either. */
+         if (ccount > 0)
+         {
+            TitleDBSetDisc(c[0].crc32);
+            CHECK(TitleDBTitleName() == NULL,
+                  "a disc key never matches a cart row");
+         }
+         TitleDBSetDisc(0);
+      }
    }
    TitleDBSetCRC(0);
 

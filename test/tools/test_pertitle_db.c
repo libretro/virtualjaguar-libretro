@@ -82,6 +82,36 @@
  *      shadowHiresN == 1 mid-session, log the [perf] demotion warning
  *      naming the measured overrun, and keep running.
  *
+ * Compatibility-class cases (issue #748), both via a SYNTHETIC row
+ * (TitleDBSetPairsForTest) so the shipped table is not under test:
+ *
+ *  13  AvP, profile=performance, synthetic COMPATIBILITY pair
+ *      internal_resolution=2x -- the profile governs enhancement pairs
+ *      only, so a compatibility pair on a profile-governed key still
+ *      applies: shadowHiresN == 2, no [perf] "not applying" line.  Case 9
+ *      is the same key as an enhancement pair, which the profile drops.
+ *  14  AvP, internal_resolution=2x set EXPLICITLY, synthetic COMPATIBILITY
+ *      pair internal_resolution=1x -- the user's choice still beats a
+ *      compatibility row: shadowHiresN == 2.  (The row's value is the
+ *      registered default so the explicit choice is distinguishable --
+ *      a default-valued user choice cannot be, see case 4.)
+ *
+ * Disc-keyed cases (issue #747) -- the ROM argument is a Jaguar CD image:
+ *
+ *  15  Baldies (Rev 1), CD Boot Mode at its default (hle), PLUS a
+ *      synthetic DISC row keyed on Baldies' boot-stub CRC $82B88060 with a
+ *      compatibility pair cd_boot_mode=bios.  The boot strategy must
+ *      resolve to "bios": the disc key is computed before the option
+ *      reads, so a disc row reaches the boot decision.  Uses
+ *      TitleDBSetDiscRowsForTest, which matches by key only -- unlike the
+ *      pairs override, it cannot pass without the disc lookup working.
+ *  16  Control for 15: the same row keyed on a CRC the disc does NOT have.
+ *      The strategy stays "hle" and no row matches.
+ *  17  Any disc, no override: the core logs the disc's boot-stub CRC so a
+ *      row author can read the key off the log.  Run with --expect-stub
+ *      XXXXXXXX over the CUE, CHD and CDI rips of one pressing, it pins the
+ *      cross-format stability the key depends on.
+ *
  * The [titledb] substitution/miss lines are logged at RETRO_LOG_INFO via
  * LOG_INF(), which the harness's cb_log filters out below RETRO_LOG_WARN
  * unless VJ_HARNESS_LOG_INFO=1 is set (see harness.c) -- this test sets it
@@ -101,6 +131,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include "../harness/harness.h"
 #include "../../src/core/titledb.h"
 
@@ -128,6 +159,23 @@ static TitleDBNegativePair negative_true_color[2];
  * `--option virtualjaguar_true_color=disabled` on case 4 is still the
  * default-valued option under test. */
 static TitleDBPair synthetic_pairs[3];
+
+/* Cases 13/14 (issue #748): one synthetic compatibility pair. */
+static TitleDBPair compat_pairs[2];
+
+/* Cases 15/16 (issue #747): one synthetic disc row. */
+static TitleDBEntry disc_rows[1];
+
+/* Leading layout of struct BootConfig / CDBootStrategy, as in
+ * test_disk_control.c: `strategy` is the last field and `name` the first,
+ * so trailing additions cannot shift what is read. */
+struct pt_strategy { const char *name; };
+struct pt_bootconfig {
+    bool isCDGame;
+    bool showBootROM;
+    bool cdBiosAvailable;
+    const struct pt_strategy *strategy;
+};
 
 /* ----------------------------------------------------------------
  * stderr capture: redirect around the core load so the [titledb]
@@ -252,6 +300,8 @@ int main(int argc, char **argv)
     unsigned nres = 0;
     int pass;
     int did_manual_unload = 0;
+    const char *expect_stub = NULL;
+    struct pt_bootconfig *bootcfg;
 
     /* Pre-parse --case: harness_init_from_args skips unknown flags one
      * token at a time (see its comment "Unknown flag -- skip"), and the
@@ -263,10 +313,12 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--case") == 0 && i + 1 < argc)
             case_num = atoi(argv[i + 1]);
+        if (strcmp(argv[i], "--expect-stub") == 0 && i + 1 < argc)
+            expect_stub = argv[i + 1];
     }
-    if (case_num < 1 || case_num > 12) {
+    if (case_num < 1 || case_num > 17) {
         fprintf(stderr,
-                "usage: test_pertitle_db [core] <rom> --case N[1-12] "
+                "usage: test_pertitle_db [core] <rom> --case N[1-17] "
                 "[--option KEY=VALUE ...]\n");
         return 1;
     }
@@ -304,6 +356,49 @@ int main(int argc, char **argv)
         synthetic_pairs[2].key   = NULL;
         synthetic_pairs[2].value = NULL;
         set_pairs(synthetic_pairs, 2);
+    }
+
+    /* Cases 13/14 (issue #748): a synthetic compatibility pair, installed
+     * before harness_load_rom() for the same reason as cases 4/7. */
+    if (case_num == 13 || case_num == 14) {
+        void (*set_pairs)(const TitleDBPair *, int);
+
+        set_pairs = (void (*)(const TitleDBPair *, int))
+            harness_dlsym(&cfg, "TitleDBSetPairsForTest");
+        if (!set_pairs) {
+            fprintf(stderr, "test_pertitle_db: TitleDBSetPairsForTest not "
+                            "exported -- rebuild with `make TEST_EXPORTS=1`\n");
+            return 1;
+        }
+        compat_pairs[0].key   = "virtualjaguar_internal_resolution";
+        compat_pairs[0].value = (case_num == 13) ? "2x" : "1x";
+        compat_pairs[0].cls   = TITLEDB_CLASS_COMPATIBILITY;
+        compat_pairs[0].cite  = "synthetic test row (#748)";
+        compat_pairs[1].key   = NULL;
+        compat_pairs[1].value = NULL;
+        set_pairs(compat_pairs, 1);
+    }
+
+    /* Cases 15/16 (issue #747): a synthetic disc row, keyed on Baldies'
+     * boot-stub CRC (15) or on one the disc does not have (16). */
+    if (case_num == 15 || case_num == 16) {
+        void (*set_disc)(const TitleDBEntry *, int);
+
+        set_disc = (void (*)(const TitleDBEntry *, int))
+            harness_dlsym(&cfg, "TitleDBSetDiscRowsForTest");
+        if (!set_disc) {
+            fprintf(stderr, "test_pertitle_db: TitleDBSetDiscRowsForTest not "
+                            "exported -- rebuild with `make TEST_EXPORTS=1`\n");
+            return 1;
+        }
+        memset(disc_rows, 0, sizeof(disc_rows));
+        disc_rows[0].crc32 = (case_num == 15) ? 0x82B88060u : 0x0BADD15Cu;
+        disc_rows[0].name  = "Synthetic disc row";
+        disc_rows[0].pairs[0].key   = "virtualjaguar_cd_boot_mode";
+        disc_rows[0].pairs[0].value = "bios";
+        disc_rows[0].pairs[0].cls   = TITLEDB_CLASS_COMPATIBILITY;
+        disc_rows[0].pairs[0].cite  = "synthetic test row (#747)";
+        set_disc(disc_rows, 1);
     }
 
     /* Cases 7/8 (issue #464): install the negative row BEFORE
@@ -593,6 +688,80 @@ int main(int argc, char **argv)
                           : "no [perf] demotion warning found");
         pass = (hires_before == 2) && cb_ok && (hires_after == 1)
             && demote_logged;
+        break;
+    }
+    case 13: {
+        /* Compatibility pair on a profile-governed key, performance
+         * profile: applied anyway, and the profile does not log. */
+        int hires_ok = (*hires_n_ptr == 2);
+        int no_perf  = !log_contains("not applying");
+        results[nres++] = mkres(hires_ok, "case13_compat_not_profile_governed",
+            hires_ok ? "shadowHiresN == 2 (compatibility pair applied under "
+                       "the performance profile)"
+                     : "shadowHiresN != 2 (the profile dropped a "
+                       "compatibility pair!)");
+        results[nres++] = mkres(no_perf, "case13_no_profile_suppression_log",
+            no_perf ? "no [perf] not-applying line"
+                    : "[perf] not-applying line logged for a compatibility "
+                      "pair");
+        pass = hires_ok && no_perf;
+        break;
+    }
+    case 14: {
+        /* Explicit user value beats a compatibility pair. */
+        int hires_ok = (*hires_n_ptr == 2);
+        results[nres++] = mkres(hires_ok, "case14_user_beats_compat_row",
+            hires_ok ? "shadowHiresN == 2 (explicit user choice honored over "
+                       "the compatibility pair)"
+                     : "shadowHiresN != 2 (a compatibility pair overrode an "
+                       "explicit user choice!)");
+        pass = hires_ok;
+        break;
+    }
+    case 15:
+    case 16: {
+        /* Disc row reaches the boot decision (15) / a non-matching key
+         * leaves the default alone (16). */
+        const char *want = (case_num == 15) ? "bios" : "hle";
+        const char *got;
+        int strat_ok, match_log;
+
+        bootcfg = (struct pt_bootconfig *)harness_dlsym(&cfg, "bootConfig");
+        got = (bootcfg && bootcfg->strategy && bootcfg->strategy->name)
+            ? bootcfg->strategy->name : "(none)";
+        strat_ok  = (strcmp(got, want) == 0);
+        match_log = log_contains("disc boot stub CRC32 $82B88060: "
+                                 "Synthetic disc row");
+        if (case_num == 16)
+            match_log = !match_log && log_contains("no per-title entry");
+        results[nres++] = mkres(strat_ok,
+            case_num == 15 ? "case15_disc_row_sets_boot_strategy"
+                           : "case16_unmatched_disc_keeps_default",
+            strat_ok ? (case_num == 15
+                        ? "boot strategy == bios (disc row applied)"
+                        : "boot strategy == hle (no row matched)")
+                     : got);
+        results[nres++] = mkres(match_log,
+            case_num == 15 ? "case15_match_logged" : "case16_miss_logged",
+            match_log ? "[titledb] disc line names the expected outcome"
+                      : "[titledb] disc match/miss line missing or wrong");
+        pass = strat_ok && match_log;
+        break;
+    }
+    case 17: {
+        /* The boot-stub CRC is logged on every CD load (and, with
+         * --expect-stub, is the expected value). */
+        char needle[64];
+        int logged;
+        if (expect_stub)
+            snprintf(needle, sizeof(needle), "disc boot stub CRC32 $%s",
+                     expect_stub);
+        else
+            snprintf(needle, sizeof(needle), "disc boot stub CRC32 $");
+        logged = log_contains(needle);
+        results[nres++] = mkres(logged, "case17_stub_crc_logged",
+            logged ? needle : "no matching [titledb] disc boot stub line");
+        pass = logged;
         break;
     }
     default:

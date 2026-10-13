@@ -214,13 +214,16 @@ static int gpu_pc_valid(uint32_t pc)
 
 static int dsp_pc_valid(uint32_t pc)
 {
-   /* High-byte garbage aliases in this core: GPUReadWord / DSP fetch
-    * and the 68K bus path all do `addr &= 0x00FFFFFF` (gpu.c:331,
-    * jaguar.c m68k_read_memory_*).  $FD012786 fetches from $012786.
-    * Treating that as an escape was a false positive against our own
-    * decode.  DSP has no gpu_runaway twin -- a Defender-style jump
-    * into a data buffer is still invisible here. */
-   pc = pc_canonical(pc);
+   /* Takes the RAW dsp_pc -- deliberately not pc_canonical(), unlike
+    * gpu_pc_valid.  The 24-bit alias argument holds for GPU fetch and the
+    * 68K bus, but DSPExec's own PC-escape bail-out (dsp.c) tests the
+    * unmasked dsp_pc against exactly this predicate and drains the slice
+    * without fetching, so a DSP PC with high-byte garbage executes
+    * nothing: it is an escape by the core's own definition.  Masking hid
+    * Music Demo's HLE runaway to $C1903000 (#853), which an interrupt
+    * kept re-entering, so dsp_wedge never fired either.  DSP still has
+    * no gpu_runaway twin -- a jump into a main-RAM data buffer is
+    * invisible here. */
    if (pc <= MAPPED_CODE_HI) return 1;
    if (dsp_pc_in_local(pc)) return 1;
    return 0;
@@ -565,11 +568,11 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    }
 
    /* ---- DSP PC escape ---- */
-   if (dsp_running && !dsp_pc_valid(cur_dsp_pc))
+   if (dsp_running && !dsp_pc_valid(dsp_pc))
    {
       if (may_log(&last_log_dsp_escape))
          LOG_ERR("[CRASH-DETECT] dsp_pc_escape frame=%u pc=$%08X (valid: $0-$E3FFFF or $F1B000-$F1CFFF)\n",
-                 frame_no, cur_dsp_pc);
+                 frame_no, dsp_pc);
    }
 
    /* ---- GPU wedge: still running, executing NOTHING ----

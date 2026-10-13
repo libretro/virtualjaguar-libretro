@@ -158,12 +158,15 @@
       recovers little.
     </p>
 
-    <h3>Where it does nothing</h3>
+    <h3>Where it does little or nothing</h3>
     <ul>
-      <li><strong>Towers II and I-War</strong> magnify their textures, so the
-      half-step sample lands in the same texel. Towers II measured zero
-      non-uniform blocks over 1.17 billion pixels. I-War&rsquo;s gain here
-      is zero too; its true colour setting is separate.</li>
+      <li><strong>Towers II</strong> magnifies its textures, so the
+      half-step sample lands in the same texel. It measured zero
+      non-uniform blocks over 985 million blocks of menu, navigation and
+      dungeon frames, so it no longer turns 2x on by default. <strong>I-War</strong>
+      is nearly the same: about 1.1-1.4% of blocks gain detail, mostly
+      one-pixel speckle on its few textured objects. Its true colour setting
+      is separate.</li>
       <li><strong>Cybermorph and Checkered Flag</strong> almost never use a
       fractional source walk. Use True Color for Cybermorph instead.</li>
       <li>Iron Soldier 2 on CD is unverified: its gameplay could not be

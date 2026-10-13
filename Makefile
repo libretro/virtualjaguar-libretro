@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.7.1
+CORE_BASE_VERSION := v3.8.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -1348,15 +1348,15 @@ clean:
 		test/test_cart_format test/test_cart_needs_bios test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
-		test/test_state_compat test/test_frontend_pacing test/test_jgd \
+		test/test_state_compat test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
 		test/dump_pc test/heap_search \
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
-		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
+		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db test/tools/test_option_explain \
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
-		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
-		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
+		test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
@@ -1421,16 +1421,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
-		test/test_frontend_pacing test/test_jgd \
-		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
+		test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
+		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace \
 		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_disk_control \
-		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_option_explain test/tools/test_disk_control \
+		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1567,6 +1567,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# never be blamed on a title, and the row cache must ignore docs-only
 	@# changes. Synthetic logs only -- no ROMs, no core, runs in <1s.
 	bash test/tools/matrix_common_test.sh
+	@# Matrix-diff release gate (#749): stage ordering, crash-signature and
+	@# asymmetry detection, exit codes. Synthetic fixtures -- no corpus needed.
+	bash test/test_matrix_diff.sh
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
@@ -1618,6 +1621,17 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/test_wedge_spin ./$(TARGET) "$$rom"; \
 	else \
 		bash scripts/test-skip.sh record "Wedge spin-aliasing (Super Burnout)" "no ROM matching 'Super Burnout*' in the private corpus"; \
+	fi
+	@# #853: the instruction behind a DSP-issued D_FLAGS store must use the
+	@# pre-store register bank.  Music Demo's `store D_FLAGS; movei r31`
+	@# entry escaped the DSP at frame 5 (BIOS) / ran away (HLE) when the
+	@# bank switched inside the store.  Both boot modes.
+	@rom=$$(bash scripts/find-rom.sh 'Music Demo (2002) (ScatoLOGIC).jag' 'Music Demo*.jag' 'Music Demo*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_music_demo_dsp_bank ./$(TARGET) "$$rom" --frames 1200 && \
+		./test/tools/test_music_demo_dsp_bank ./$(TARGET) "$$rom" --frames 1200 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Music Demo DSP bank (#853)" "no ROM matching 'Music Demo*' in the private corpus"; \
 	fi
 	@# ROM lookup goes through scripts/find-rom.sh, which searches the whole
 	@# private corpus case-insensitively and prefers the canonical top-level
@@ -1724,6 +1738,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			--option virtualjaguar_risc_clock_scale=2x; \
 	else \
 		bash scripts/test-skip.sh record "Iron Soldier 1 (audio presence, risc=2x)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
+	fi
+	@# Club Drive under the HLE boot (#744): the 68K rewrites D_PC while
+	@# the DSP runs; when that landed right after an I2S event the DSP
+	@# restarted with IMASK stuck and the game was silent forever.  The
+	@# fix defers DSP interrupt vectoring to the DSP's next instruction.
+	@# Measured on the fix: RMS ~2949, onset frame 6 (develop: RMS 0,
+	@# no onset).  Same envelope as Iron Soldier 1 above.
+	@rom=$$(bash scripts/find-rom.sh 'Club Drive (1994).jag' 'Club Drive*.jag' 'Club Drive*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_presence ./$(TARGET) "$$rom" --label "Club Drive (HLE)" --rms-floor 200 --rms-ceiling 25000 --quiet && \
+		./test/test_audio_clipping ./$(TARGET) "$$rom" --label "Club Drive (HLE)" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Club Drive (HLE audio presence)" "no ROM matching 'Club Drive*' in the private corpus"; \
 	fi
 	@# Save-state determinism: replay the same frames after
 	@# retro_unserialize and require identical video AND audio.  This is
@@ -1872,6 +1899,36 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Upload ILLEGAL park (DEMO1B, accurate blitter)" "no ROM matching 'DEMO1B*' in the private corpus"; \
 	fi
+	@# Cart mirroring (#851): a 2 MiB cart repeats at $$A00000, and Flip Out
+	@# reads $$A02000 expecting its own bytes.  The ROM-free mirror cases live
+	@# in test_cart_format; this is the game that needed them, in HLE and BIOS.
+	@rom=$$(bash scripts/find-rom.sh 'Flip Out (1995).jag' 'Flip Out*.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_flipout_851 ./$(TARGET) --rom "$$rom" --frames 1000 && \
+		./test/tools/test_flipout_851 ./$(TARGET) --rom "$$rom" --frames 1000 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Cart mirror (Flip Out, #851)" "no ROM matching 'Flip Out*' in the private corpus"; \
+	fi
+	@# BIOS-mode power-on RAM (#856): Fight For Your Life sizes a fill from
+	@# $$F9A90, which it never writes; a per-word PRNG value there wrecked the
+	@# GPU job.  Exact good-dump name only: the [a1] bad dump is an authentic
+	@# BIOS reject and would pass vacuously (the test also checks the CRC).
+	@rom=$$(bash scripts/find-rom.sh 'Fight For Your Life (1996).jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_ffyl_856 ./$(TARGET) --rom "$$rom" --frames 1400; \
+	else \
+		bash scripts/test-skip.sh record "BIOS power-on RAM (Fight For Your Life, #856)" "no 'Fight For Your Life (1996).jag' in the private corpus"; \
+	fi
+	@# GPU long-store alignment (#866): Ruiner Pinball patches movei immediates
+	@# through store (r15+rn) at word-aligned GPU RAM addresses; the GPU used to
+	@# escape into DSP RAM at frame ~56.  Exact good-dump name (CRC checked).
+	@rom=$$(bash scripts/find-rom.sh 'Ruiner Pinball (1995).jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_ruiner_866 ./$(TARGET) --rom "$$rom" --frames 600 && \
+		./test/tools/test_ruiner_866 ./$(TARGET) --rom "$$rom" --frames 600 --bios; \
+	else \
+		bash scripts/test-skip.sh record "GPU store alignment (Ruiner Pinball, #866)" "no 'Ruiner Pinball (1995).jag' in the private corpus"; \
+	fi
 	@# Raw-binary load address (#818): all three are linked at $$5000, which
 	@# the containment scorer used to resolve to $$4000 (black screen, 68K
 	@# parked on ILLEGAL; Music Demo --bios sprayed the blitter, #794).
@@ -1896,6 +1953,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
 	else \
 		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Music Demo, #794/#818)" "no ROM matching 'Music Demo*' in the private corpus"; \
+	fi
+	@rom=$$(bash scripts/find-rom.sh 'Native Demo (bin) (1997)*' 'Native Demo*(bin)*'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 && \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Native Demo (bin), #866)" "no ROM matching 'Native Demo (bin)*' in the private corpus"; \
 	fi
 	@# Club Drive GPU runaway (#611): NORMI was one too high, so the clip
 	@# corner table lookup rotated every inserted screen corner; steering
@@ -2009,17 +2073,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# committed in-tree, so its absence means a broken checkout and must
 	@# fail the suite rather than read as a pass -- the same rationale the
 	@# test_state_compat and test_frontend_pacing lines below already state.
-	@# Only the disc half is genuinely optional, and it now records a ledger
-	@# skip so "ran without a disc" is distinguishable from "ran fully".
+	@# The disc half always runs against the in-tree synth_jagcd.chd (#850),
+	@# so CI covers the CD side; a private rip is an extra pass that records a
+	@# ledger skip when absent, so "ran without a disc" stays distinguishable.
 	@VJ_VIS_ROOT="test/roms/private/Jaguar CD/BinCue"; VJ_VIS_DISC=""; \
 		for VJ_VIS_PAT in "Baldies*" "Myst*" "Hover*" "*"; do \
 			[ -n "$$VJ_VIS_DISC" ] && break; \
 			VJ_VIS_DISC=$$(ls "$$VJ_VIS_ROOT"/$$VJ_VIS_PAT/*.cue 2>/dev/null | head -1); \
 		done; \
+		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 test/roms/synth_jagcd.chd --strict || exit 1; \
 		if [ -z "$$VJ_VIS_DISC" ]; then \
-			bash scripts/test-skip.sh record "Core option visibility (disc half)" "no .cue image under test/roms/private/Jaguar CD/BinCue"; \
-		fi; \
-		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"
+			bash scripts/test-skip.sh record "Core option visibility (private-disc half)" "no .cue image under test/roms/private/Jaguar CD/BinCue"; \
+		else \
+			./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"; \
+		fi
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
@@ -2044,6 +2111,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# synthetic (builds its own probe images), so it runs everywhere,
 	@# including checkouts without the private ROM tree.
 	./test/test_jgd ./$(TARGET)
+	@# GameDrive SD-card layer (#783): open dispositions, read-only card,
+	@# sandbox refusals, FILINFO layout, directories, savestate restore that
+	@# never truncates.  Host-only (no core), runs everywhere.
+	./test/test_jaggd_fs
 	@# Frontend pacing / fast-forward contract: the core must not throttle
 	@# itself, and samples-per-frame must match the advertised fps and
 	@# sample_rate, otherwise the frontend's audio driver becomes the pacing
@@ -2092,6 +2163,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# suppresses the DB defaults, an explicit user option beats the
 	@# profile, quality applies them, and the 'auto' runtime demotion
 	@# drops them mid-session on sustained synthetic underrun reports.
+	@# Cases 13/14 cover the compatibility row class (#748): never dropped
+	@# by the enhancement profile, never beats an explicit user choice.
 	@# Cases 7/8 extend this to the negative/known-bad entry class (#464):
 	@# refuse-the-default / honour-and-warn-the-user, via a
 	@# programmatically-installed row (TitleDBSetNegativeForTest) so the
@@ -2128,6 +2201,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 11 --quiet \
 				--option virtualjaguar_enhancement_profile=quality || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 12 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 13 --quiet \
+				--option virtualjaguar_enhancement_profile=performance || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 14 --quiet \
+				--option virtualjaguar_internal_resolution=2x || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
@@ -2140,6 +2217,62 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
+
+	@# Option explanations (#841): OSD notices (SET_MESSAGE_EXT) and the
+	@# amended option sublabels (SET_CORE_OPTIONS_V2 re-push), asserted
+	@# through the harness's env capture.  Cases 3-5 run on the in-tree
+	@# yarc.j64 (no DB row) and never skip; case 4 is the no-notice,
+	@# no-re-push control and case 5 the mid-session change.  Case 1
+	@# (White Men Can't Jump, compatibility row) and cases 2/6 (AvP under
+	@# the performance profile; AvP with a no-op idle-skip row, as a real
+	@# frontend reports defaults) need the private corpus; AvP's CRC is checked
+	@# against the seed first, as the per-title test above does.
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 4 --quiet
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 3 --quiet \
+		--option virtualjaguar_risc_idle_skip=enabled \
+		--option virtualjaguar_risc_clock_scale=2x
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
+	@# #850 follow-ups, all on the in-tree yarc.j64 (never skip): the runtime
+	@# demotion's OSD notice (case 7, via a synthetic enhancement row), the
+	@# restart-required sublabel marker (8), cartridge/CD option visibility
+	@# surviving a definitions re-push (9) and a frontend that refuses the
+	@# visibility call (10).
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 7 --quiet
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 8 --quiet
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 9 --quiet \
+		--option virtualjaguar_risc_idle_skip=enabled \
+		--option virtualjaguar_risc_clock_scale=2x
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 10 --quiet
+	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
+	if [ -n "$$rom" ]; then \
+		wmcj_crc=$$(python3 -c "import zlib,sys; print('0x%08X' % zlib.crc32(open(sys.argv[1],'rb').read()))" "$$rom" 2>/dev/null); \
+		if [ "$$wmcj_crc" = "0x14915F20" ]; then \
+			./test/tools/test_option_explain ./$(TARGET) "$$rom" --case 1 --quiet || exit 1; \
+		else \
+			bash scripts/test-skip.sh record "Option explanations (WMCJ preset notice)" \
+				"WMCJ ROM CRC $$wmcj_crc != 0x14915F20 (seed mismatch)"; \
+		fi; \
+	else \
+		bash scripts/test-skip.sh record "Option explanations (WMCJ preset notice)" \
+			"no ROM matching '*White Men Can*' in the private corpus"; \
+	fi
+	@avp=$$(bash scripts/find-rom.sh 'Alien vs Predator (1994).jag' '*Alien*Predator*.jag' '*Alien*Predator*.j64'); \
+	if [ -n "$$avp" ]; then \
+		avp_crc=$$(python3 -c "import zlib,sys; print('0x%08X' % zlib.crc32(open(sys.argv[1],'rb').read()))" "$$avp" 2>/dev/null); \
+		if [ "$$avp_crc" = "0xDC187F82" ]; then \
+			./test/tools/test_option_explain ./$(TARGET) "$$avp" --case 2 --quiet \
+				--option virtualjaguar_risc_idle_skip=enabled \
+				--option virtualjaguar_enhancement_profile=performance || exit 1; \
+			./test/tools/test_option_explain ./$(TARGET) "$$avp" --case 6 --quiet \
+				--option virtualjaguar_risc_idle_skip=enabled || exit 1; \
+		else \
+			bash scripts/test-skip.sh record "Option explanations (AvP suppression notice)" \
+				"AvP ROM CRC $$avp_crc != 0xDC187F82 (seed mismatch)"; \
+		fi; \
+	else \
+		bash scripts/test-skip.sh record "Option explanations (AvP suppression notice)" \
+			"no ROM matching 'Alien vs Predator*' in the private corpus"; \
+	fi
 
 	@# Disk control interface (#651): boot with NO content, then hand the
 	@# core a disc through the frontend-facing callbacks.  Case 1 asserts
@@ -2185,6 +2318,31 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "Baldies HLE cutscene progression (#738)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
 	fi
 
+	@# Per-title disc rows (#747): disc rows are keyed by boot-stub CRC.
+	@# A synthetic disc row on Baldies' key must reach the boot decision on
+	@# the load path (pertitle 15; 16 is the non-matching control) and on a
+	@# disk-control insert (disk_control 9; 10 is the no-row control).  Case
+	@# 17 pins the key's cross-format stability: the CUE, CHD and CDI rips
+	@# of the same pressing must all log $$82B88060.  Private corpus only.
+	@bal=$$(find -L test/roms/private -iname 'Baldies*Rev 1*.cue' 2>/dev/null | head -1); \
+	if [ -n "$$bal" ]; then \
+		rc=0; \
+		./test/tools/test_pertitle_db ./$(TARGET) "$$bal" --case 15 --quiet || rc=1; \
+		./test/tools/test_pertitle_db ./$(TARGET) "$$bal" --case 16 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$bal" --case 9 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$bal" --case 10 --quiet || rc=1; \
+		for r in "$$bal" \
+		         "$$(find -L test/roms/private -iname 'Baldies*Rev 1*.chd' 2>/dev/null | head -1)" \
+		         "$$(find -L test/roms/private -iname 'baldies.cdi' 2>/dev/null | head -1)"; do \
+			[ -n "$$r" ] || continue; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$r" --case 17 --quiet \
+				--expect-stub 82B88060 || rc=1; \
+		done; \
+		exit $$rc; \
+	else \
+		bash scripts/test-skip.sh record "Per-title disc rows (#747)" "Baldies (USA) (Rev 1).cue not in the private corpus"; \
+	fi
+
 	@# Xenowings in-game video (#811): the GPU's object-list swap is
 	@# `load (r0),r2 / moveq #0,r2`, which only works because the external
 	@# load lands after the moveq (JTRM p.136, TOM bug 13).  Without that
@@ -2214,6 +2372,23 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/wmcj_intro_logo ./$(TARGET) "$$rom" --quiet || exit 1; \
 	else \
 		bash scripts/test-skip.sh record "White Men Can't Jump intro logo (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
+	fi
+
+	@# White Men Can't Jump gameplay (#736): the attract-mode match flickered
+	@# at stock speed (tears, sprites dropping out for a field) because the
+	@# GPU was made to wait out each of its own blits; the titledb row now
+	@# charges the 68000 only.  fb_flicker_probe counts frames where a third
+	@# of the picture reverts to its state two frames earlier, and frames
+	@# spliced from two neighbours, over the demo (frames 1250-1850).  The
+	@# second run is the control: blitter_timing=enabled (the old row) must
+	@# EXCEED the limits, or the metric has gone blind.  Private corpus only.
+	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
+	if [ -n "$$rom" ]; then \
+		$(MAKE) --no-print-directory test/tools/fb_flicker_probe >/dev/null || exit 1; \
+		./test/tools/fb_flicker_probe ./$(TARGET) "$$rom" --frames 1850 --window-start 1250 --max-big 54 --max-splice 6 --quiet || exit 1; \
+		./test/tools/fb_flicker_probe ./$(TARGET) "$$rom" --frames 1850 --window-start 1250 --max-big 54 --max-splice 6 --expect-flicker --option virtualjaguar_blitter_timing=enabled --quiet || exit 1; \
+	else \
+		bash scripts/test-skip.sh record "White Men Can't Jump gameplay flicker (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
 	fi
 
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
@@ -2578,6 +2753,14 @@ test/tools/xenowings_ingame_video: test/tools/xenowings_ingame_video.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
+# White Men Can't Jump gameplay flicker (#736): framebuffer tear/revert metric.
+test/tools/fb_flicker_probe: test/tools/fb_flicker_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
+		-o $@ test/tools/fb_flicker_probe.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 # White Men Can't Jump intro logo (#736): blit-vs-GPU-decoder race.
 test/tools/wmcj_intro_logo: test/tools/wmcj_intro_logo.c \
 		test/harness/harness.c test/harness/harness.h
@@ -2590,6 +2773,16 @@ test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_pertitle_db.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Option explanations (#841): OSD notices + amended option sublabels.
+# gnu99, not c99: harness.c uses POSIX (dlopen/strdup/clock_gettime), which
+# glibc hides from a strictly-conforming translation unit.
+test/tools/test_option_explain: test/tools/test_option_explain.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=gnu99 $(INCFLAGS) \
+		-o $@ test/tools/test_option_explain.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
@@ -2819,6 +3012,21 @@ test/test_state_compat: test/test_state_compat.c \
 # Jaguar GameDrive (JagGD) detection + banking.  Synthetic-only: builds
 # its own probe cartridge images at runtime, no private ROMs needed.
 # Needs jgd*/JGD* from the wide test symbol set.
+JAGGD_FS_TEST_LC = libretro-common/streams/file_stream.c \
+	libretro-common/vfs/vfs_implementation.c \
+	libretro-common/compat/compat_strl.c libretro-common/string/stdstring.c \
+	libretro-common/encodings/encoding_utf.c libretro-common/compat/fopen_utf8.c \
+	libretro-common/file/file_path.c libretro-common/file/file_path_io.c \
+	libretro-common/time/rtime.c libretro-common/compat/compat_strcasestr.c \
+	libretro-common/compat/compat_posix_string.c
+
+test/test_jaggd_fs: test/test_jaggd_fs.c src/core/jaggd_fs.c src/core/jaggd_fs.h
+	@# gnu99, not c99: under strict ISO mode glibc hides the POSIX calls
+	@# (lstat, strdup, fileno, ftruncate) that jaggd_fs.c and the linked
+	@# libretro-common sources use, and Clang rejects the implicit decls.
+	$(CC) -O2 -std=gnu99 $(INCFLAGS) -D__LIBRETRO__ \
+		-o $@ test/test_jaggd_fs.c src/core/jaggd_fs.c $(JAGGD_FS_TEST_LC)
+
 test/test_jgd: test/test_jgd.c \
 		test/harness/harness.c test/harness/harness.h \
 		src/core/state.h src/core/jaggd.h
@@ -2853,6 +3061,14 @@ test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_wedge_spin.c \
 		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/test_music_demo_dsp_bank: test/tools/test_music_demo_dsp_bank.c \
+		test/harness/harness.c test/harness/harness.h \
+		test/harness/dsp_probe.c test/harness/dsp_probe.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_music_demo_dsp_bank.c \
+		test/harness/harness.c test/harness/dsp_probe.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/tools/dsp_idle_probe_falsify: test/tools/dsp_idle_probe_falsify.c \
@@ -2953,6 +3169,27 @@ test/tools/test_upload_illegal_park: test/tools/test_upload_illegal_park.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_upload_illegal_park.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_flipout_851: test/tools/test_flipout_851.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_flipout_851.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_ffyl_856: test/tools/test_ffyl_856.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_ffyl_856.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_ruiner_866: test/tools/test_ruiner_866.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_ruiner_866.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

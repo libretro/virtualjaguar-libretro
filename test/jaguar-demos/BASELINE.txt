@@ -1,4 +1,7 @@
+[FAIL 256/Outline2023/JaGol/JaGol_k.j64
 [FAIL 256/Outline2026/rtb/rtb.j64
+[FAIL 256/algorip/algorip_K.j64
+[FAIL 512/solidWaves/waves_K.j64
 [FAIL 512/solidYARC512/solidYARC512_K.j64
 [FAIL 64/columns32/columns32_K.j64
 [PASS 128/Outline2022/bootMandel/mandel.j64
@@ -12,10 +15,8 @@
 [PASS 256/Outline2022/stars_256/stars_256.j64
 [PASS 256/Outline2022/xor_256/xor_256.j64
 [PASS 256/Outline2023/CRYchedelic/CRYchedelic_k.j64
-[PASS 256/Outline2023/JaGol/JaGol_k.j64
 [PASS 256/Outline2026/Fountain/vj.j64
 [PASS 256/Outline2026/Zini/zini_k.j64
-[PASS 256/algorip/algorip_K.j64
 [PASS 256/anotherCRY/anotherCRY.j64
 [PASS 256/bootMona/bootmona.j64
 [PASS 256/colorTunnel/tunnel.j64
@@ -29,7 +30,6 @@
 [PASS 512/JagRoto512/JagRoto512_K.j64
 [PASS 512/TJ_raytrace/raytrace_k.j64
 [PASS 512/lissa512/lissa512_k.j64
-[PASS 512/solidWaves/waves_K.j64
 [PASS 512/yarc512/yarc512_K.j64
 [PASS 64/movin/mst_K.j64
 [PASS 64/pattern38/pattern38_K.j64

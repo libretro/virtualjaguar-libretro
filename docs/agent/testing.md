@@ -10,6 +10,9 @@ New tests should use `test/harness/harness.h` — shared lib eliminating dlopen/
 boilerplate (see header's AGENT QUICK-START). Features:
 
 - Common CLI: `--json`, `--frames N`, `--bios`, `--option K=V`, `--quiet`.
+  `--bios` sets only the CART BIOS option; CD boot needs `--option virtualjaguar_cd_boot_mode=bios`
+  (check the `[BOOT] CD game, mode=BIOS` log line). `--input-bitmasks` answers GET_INPUT_BITMASKS
+  like RetroArch does (default harness takes the per-button input path).
 - Scripted input: `--press FRAME:BUTTON[:HOLD]` (repeatable; buttons `up down left right a b c
   pause option 0-6`) — enough to navigate menus into gameplay headlessly. Programmatic:
   `harness_press()` / `harness_input_cb`.
@@ -79,6 +82,19 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   id (`<!-- build:<rev> -->`); resume skips only same-build rows, re-runs others. (Resuming from
   an older build used to resurrect ancient rows as "fresh" — the phantom Battle Morph bios
   `? (pc_escape)` `final_pc=$8FBFB758` was such a stale row.)
+- `test/tools/cart_boot_matrix.sh` (cart counterpart; classifier in `test/tools/cart_classify.sh`,
+  probe `cart_boot_probe.c`): BIOS-mode rows are scored from the boot-ROM -> cart handoff
+  (`--post-handoff N`, cap `CART_MATRIX_BIOS_BOOT_FRAMES`, default +700 frames), classes
+  `GAME_CODE`/`BIOS_REJECT` (boot ROM halted on `BRA.S *`, never handed off: red "Jaguar" screen,
+  an authentic reject)/`? (bios_trap)` (cart ran, PC fell back into `$E00000`)/`? (...)`/`LOAD_FAIL`.
+  `bios_ran=0` (headerless RAM-loaded `.jag`, e.g. Music Demo) has no boot phase: whole run scored.
+  Crash-watchdog signatures are never handoff-relative (an early escape is a real bug, #853).
+- `test/tools/matrix_diff.py OLD.md NEW.md` — never-backward gate (#749) between two copies of the
+  same matrix (cart or CD): prints regressed / still-asymmetric / improved, exit 1 on any backward
+  stage move or new crash-watchdog signature, 2 on parse error. `BIOS_REJECT` ranks equal to
+  `GAME_CODE` (GAME_CODE -> BIOS_REJECT = lateral scoring correction; HLE GAME_CODE / BIOS
+  BIOS_REJECT is not an asymmetry). Release-time, corpus machine only
+  (`docs/release-process.md`). Self-test `test/test_matrix_diff.sh` runs in `make test`.
 - CD trace ring: option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1`) records
   `DSA_TX/DSA_RX/SEEK_START/SEEK_DONE/FIFO_FILL/FIFO_DRAIN/STOP/HLE_READ`; dumped on
   `cd_seek_wedge` or on request.
@@ -102,6 +118,17 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   isn't available in the sandbox (some macOS CI runners) — a skip, not a failure.
   `netlink_rebuild_witness.c` proves the `SET_CORE_OPTIONS_V2` rebuild path (option-visibility
   re-push on link-mode change) executes.
+- `test/tools/netlink_sim.c` — deterministic two-instance RetroArch-netpacket simulator (virtual clock,
+  not part of `make test`). Measures the netlink reply wait without host-load noise: a core built from a
+  THROWAWAY worktree patched by `netlink_sim_clockpatch.py` (clock/sleep + byte-event hooks, never
+  applied to `src/`). Doom 2P deathmatch tics/s is the headline number: a tic is 12 one-way single-byte
+  hops (6 per side) and must fit a whole number of video frames, so rates sit on 60/k plateaus
+  (30/20/15/12 tics/s). Knobs: `--delay-ms/--jitter-ms/--spike-pct/--spike-ms`, `--loss-pct` with
+  `--rto-ms` (TCP) or `--udp-rto-ms` (UDP+retransmit model), `--emu-ms`, `--pump-us` (cost of one
+  `poll_receive`; results are sensitive to it, keep it identical across arms), `--audio-block-ms`
+  (frontend cost AFTER the core's frame-end hook), `--btrace` (per-byte link events), `--log` (core log
+  incl. the 5 s `link stats` line), `--corrupt N:XX` (flip one in-flight byte). Every arm of a comparison
+  must use the same flags; `--emu-ms 2` is optimistic for Doom at 2x, also run 6.
 
 ## vjtrace flight recorder (dev-build-only)
 
@@ -162,7 +189,9 @@ heartbeat every 600 frames). Cost enabled: one indirect call + ~256-px hash/fram
 
 - `gpu_pc_escape` — GPU PC outside `[$F03000,$F03FFF] ∪ [$0,$E3FFFF]` (matches JaguarReadX
   decoding: main RAM mirrors bottom 8MB, cart ROM, boot ROM).
-- `dsp_pc_escape` — DSP PC outside `[$F1B000,$F1CFFF] ∪ [$0,$E3FFFF]`.
+- `dsp_pc_escape` — DSP PC outside `[$F1B000,$F1CFFF] ∪ [$0,$E3FFFF]`, tested on the **raw** PC (no
+  24-bit mask, unlike the GPU): DSPExec's own bail-out refuses a high-byte PC, so it executes
+  nothing. The mask hid Music Demo's HLE runaway to `$C1903000` (#853).
 - `inframe_hang` — fired at blit dispatch (not per frame) when `B_COUNT` asks for >2^24 pixels,
   counted the way the accurate (default) engine runs it: outer 0 = 65536 lines (JTRM), inner 0 =
   one step (≤64 px — INNER.NET's zero/underflow detect, which `BlitterMidsummer2` matches;

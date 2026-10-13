@@ -48,6 +48,13 @@ static uint8_t uartTxShift;
 static uint8_t uartTxBusy;      /* shift register clocking out */
 static uint8_t uartRxBusy;      /* an RX frame is in flight */
 
+/* Consecutive ASISTAT reads with nothing to send and nothing received: the
+   game is spinning for link data the partner sends unprompted (Doom's slave
+   side).  Host-side pacing only -- never saved, never visible to the 68K --
+   cleared by any ASIDATA access and at every frame.  See JLinkAwaitIdle. */
+static unsigned uartIdlePolls;
+#define UART_IDLE_POLLS 24
+
 /* Wire-latency enhancement (#498/#552).  See uart.h for the Intent vs
    Effective split -- Intent is config-derived and never saved; Effective
    is what UARTFrameUsec() actually applies and IS saved (THE SHARP EDGE:
@@ -243,6 +250,7 @@ uint16_t UARTReadWord(uint32_t offset)
    switch (offset)
    {
       case 0xF10030:            /* ASIDATA */
+         uartIdlePolls = 0;
          v = uartRxData;
          uartRxFull = 0;
          UARTKickRx();
@@ -261,6 +269,12 @@ uint16_t UARTReadWord(uint32_t offset)
                frame) so the reply lands THIS frame instead of
                quantizing to the next retro_run. */
             JLinkAwaitReply();
+            /* Nothing owed to us and nothing to send, yet the game keeps
+               polling: it is spinning for a byte the partner sends
+               unprompted.  Hold the frame open for it like a reply wait. */
+            if (!JLinkRxPending() && !uartTxBusy && !uartTxHoldFull
+                && ++uartIdlePolls >= UART_IDLE_POLLS)
+               JLinkAwaitIdle();
             if (JLinkRxPending())
                UARTKickRx();
             else if ((++pumpGate & 15u) == 0)
@@ -295,6 +309,7 @@ void UARTWriteWord(uint32_t offset, uint16_t data)
    switch (offset)
    {
       case 0xF10030:            /* ASIDATA */
+         uartIdlePolls = 0;
          if (!uartTxBusy)
          {
             uartTxShift = (uint8_t)(data & 0xFF);
@@ -324,6 +339,7 @@ void UARTWriteWord(uint32_t offset, uint16_t data)
    socket: start an RX frame for any newly arrived transport bytes. */
 void UARTPoll(void)
 {
+   uartIdlePolls = 0;
    UARTKickRx();
 }
 
@@ -346,6 +362,7 @@ void UARTReset(void)
    uartTxShift = 0;
    uartTxBusy = 0;
    uartRxBusy = 0;
+   uartIdlePolls = 0;
    /* A fresh per-game reset drops any prior negotiation -- the link (if
       any) is about to be torn down and reopened by the caller, and a
       stale Effective value would apply accelerated timing to a session

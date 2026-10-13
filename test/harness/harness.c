@@ -181,6 +181,9 @@ static int16_t cb_input_state(unsigned p, unsigned d, unsigned i, unsigned id)
         return active_cfg->input_callback(active_cfg->input_callback_data,
                                           p, d, i, id);
     if (d != RETRO_DEVICE_JOYPAD) return 0;
+    if (id == RETRO_DEVICE_ID_JOYPAD_MASK)
+        return active_cfg->input_bitmasks
+                   ? (int16_t)harness_input_mask(active_cfg, p) : 0;
     for (e = 0; e < active_cfg->num_input_events; e++) {
         const harness_input_event *ev = &active_cfg->input_events[e];
         if (ev->port == p && ev->button == id &&
@@ -430,6 +433,141 @@ static void reg_add_key(const char *key)
     reg_num_keys++;
 }
 
+/* Environment capture (#841): OSD notices (SET_MESSAGE_EXT), the core
+ * option definitions of the first and the latest SET_CORE_OPTIONS_V2[_INTL]
+ * push, and any SET_VARIABLE (which the core must never call).  File-static
+ * rather than in harness_config because the first option push happens inside
+ * retro_set_environment, before a config is attached.  Every string is a
+ * private copy: the core's amended-definition buffers are reused. */
+#define HARNESS_MAX_OSD 32
+static char    *osd_texts[HARNESS_MAX_OSD];
+static unsigned osd_n;
+static unsigned opt_pushes;
+static unsigned set_variable_n;
+static int      variable_update_pending;
+static unsigned opt_pushes_before_load;
+typedef struct {
+    char   **keys;
+    char   **descs;
+    char   **infos;
+    unsigned n;
+} opt_snapshot;
+static opt_snapshot opt_first, opt_latest;
+
+/* SET_CORE_OPTIONS_DISPLAY (#850): the frontend-side visibility of each
+ * key.  Unmentioned = visible (the libretro default), and a definitions
+ * push rebuilds the frontend's option manager with every row visible
+ * again (RetroArch's behaviour), so a push clears the table -- the core
+ * must then re-push visibility, which is exactly what is worth testing.
+ * `refuse` makes the environment call answer false, like a frontend
+ * without option-visibility support. */
+#define HARNESS_MAX_VIS 192
+static struct { char key[64]; int visible; } vis_tab[HARNESS_MAX_VIS];
+static unsigned vis_n;
+static unsigned vis_calls;
+static int      vis_refuse;
+
+static void opt_snapshot_free(opt_snapshot *s)
+{
+    unsigned i;
+    for (i = 0; i < s->n; i++) {
+        free(s->keys[i]); free(s->descs[i]); free(s->infos[i]);
+    }
+    free(s->keys);
+    free(s->descs);
+    free(s->infos);
+    s->keys = NULL;
+    s->descs = NULL;
+    s->infos = NULL;
+    s->n = 0;
+}
+
+static void opt_snapshot_take(opt_snapshot *s,
+                              const struct retro_core_option_v2_definition *d)
+{
+    unsigned n = 0, i;
+    opt_snapshot_free(s);
+    while (d[n].key) n++;
+    s->keys  = (char **)calloc(n ? n : 1, sizeof(char *));
+    s->descs = (char **)calloc(n ? n : 1, sizeof(char *));
+    s->infos = (char **)calloc(n ? n : 1, sizeof(char *));
+    if (!s->keys || !s->descs || !s->infos) return;
+    for (i = 0; i < n; i++) {
+        s->keys[i]  = strdup(d[i].key);
+        s->descs[i] = strdup(d[i].desc ? d[i].desc : "");
+        s->infos[i] = strdup(d[i].info ? d[i].info : "");
+    }
+    s->n = n;
+}
+
+static void opt_capture(const struct retro_core_option_v2_definition *d)
+{
+    if (!d) return;
+    vis_n = 0;   /* a rebuild shows every row again (see vis_tab) */
+    if (opt_pushes == 0) opt_snapshot_take(&opt_first, d);
+    opt_snapshot_take(&opt_latest, d);
+    opt_pushes++;
+}
+
+static const char *opt_snapshot_find(const opt_snapshot *s, const char *key)
+{
+    unsigned i;
+    for (i = 0; i < s->n; i++)
+        if (strcmp(s->keys[i], key) == 0) return s->infos[i];
+    return NULL;
+}
+
+static const char *opt_snapshot_find_desc(const opt_snapshot *s, const char *key)
+{
+    unsigned i;
+    for (i = 0; i < s->n; i++)
+        if (strcmp(s->keys[i], key) == 0) return s->descs[i];
+    return NULL;
+}
+
+static void vis_record(const struct retro_core_option_display *d)
+{
+    unsigned i;
+    if (!d || !d->key) return;
+    for (i = 0; i < vis_n; i++)
+        if (strcmp(vis_tab[i].key, d->key) == 0) {
+            vis_tab[i].visible = d->visible ? 1 : 0;
+            return;
+        }
+    if (vis_n < HARNESS_MAX_VIS) {
+        snprintf(vis_tab[vis_n].key, sizeof(vis_tab[vis_n].key), "%s", d->key);
+        vis_tab[vis_n].visible = d->visible ? 1 : 0;
+        vis_n++;
+    }
+}
+
+int harness_option_visible(const char *key)
+{
+    unsigned i;
+    for (i = 0; i < vis_n; i++)
+        if (strcmp(vis_tab[i].key, key) == 0) return vis_tab[i].visible;
+    return 1;
+}
+unsigned harness_option_display_calls(void) { return vis_calls; }
+void harness_option_display_refuse(int refuse) { vis_refuse = refuse; }
+const char *harness_options_first_desc(const char *key)
+{ return opt_snapshot_find_desc(&opt_first, key); }
+const char *harness_options_def_key(unsigned i)
+{ return i < opt_first.n ? opt_first.keys[i] : NULL; }
+
+unsigned harness_osd_count(void) { return osd_n; }
+const char *harness_osd_text(unsigned i) { return i < osd_n ? osd_texts[i] : NULL; }
+unsigned harness_options_push_count(void) { return opt_pushes; }
+unsigned harness_options_pushes_before_load(void) { return opt_pushes_before_load; }
+unsigned harness_options_def_count_first(void) { return opt_first.n; }
+unsigned harness_options_def_count_latest(void) { return opt_latest.n; }
+const char *harness_options_info(const char *key)
+{ return opt_snapshot_find(&opt_latest, key); }
+const char *harness_options_first_info(const char *key)
+{ return opt_snapshot_find(&opt_first, key); }
+unsigned harness_set_variable_calls(void) { return set_variable_n; }
+void harness_notify_variable_update(void) { variable_update_pending = 1; }
+
 static void reg_record(unsigned cmd, const void *data)
 {
     unsigned i;
@@ -459,6 +597,7 @@ static void reg_record(unsigned cmd, const void *data)
         if (o->definitions)
             for (i = 0; o->definitions[i].key; i++)
                 reg_add_key(o->definitions[i].key);
+        if (o->definitions) opt_capture(o->definitions);
         break;
     }
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
@@ -467,6 +606,7 @@ static void reg_record(unsigned cmd, const void *data)
         if (o->us && o->us->definitions)
             for (i = 0; o->us->definitions[i].key; i++)
                 reg_add_key(o->us->definitions[i].key);
+        if (o->us && o->us->definitions) opt_capture(o->us->definitions);
         break;
     }
     default:
@@ -539,12 +679,47 @@ static bool cb_environment(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
     case RETRO_ENVIRONMENT_SET_VARIABLES:
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
-    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
     case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        /* Opt-in (cfg->core_options_v2), like the other answers below:
+         * tools that predate it keep getting `true` WITHOUT a version
+         * written, i.e. version 0, so the core registers its legacy
+         * SET_VARIABLES list exactly as before.  With the flag set the
+         * core registers through SET_CORE_OPTIONS_V2[_INTL], which the
+         * capture above records, and may re-push definitions later. */
+        if (data && active_cfg && active_cfg->core_options_v2)
+            *(unsigned *)data = 2;
+        return true;
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
+        return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        /* Edge-triggered by harness_notify_variable_update(); otherwise
+         * the flag stays false exactly as before this hook existed. */
+        if (data) {
+            *(bool *)data = variable_update_pending ? true : false;
+            variable_update_pending = 0;
+        }
+        return true;
+    case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
+        /* Recorded for #841; the notice text is the contract. */
+        if (data && osd_n < HARNESS_MAX_OSD) {
+            const struct retro_message_ext *m =
+                (const struct retro_message_ext *)data;
+            osd_texts[osd_n++] = strdup(m->msg ? m->msg : "");
+        }
+        return true;
+    case RETRO_ENVIRONMENT_SET_VARIABLE:
+        set_variable_n++;
+        return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+        /* Recorded for #850.  Before this the harness fell through to the
+         * default (false); the core now reads that as "frontend has no
+         * visibility support", so answer like a frontend that has it. */
+        vis_calls++;
+        if (vis_refuse) return false;
+        vis_record((const struct retro_core_option_display *)data);
         return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
         if (active_cfg) active_cfg->video.set_geometry_calls++;
@@ -598,6 +773,11 @@ static bool cb_environment(unsigned cmd, void *data)
             active_cfg->disk_cb_registered       = 1;
         }
         return true;
+    case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
+        /* Opt-in (--input-bitmasks): RetroArch always answers true, so the
+         * core takes its RETRO_DEVICE_ID_JOYPAD_MASK path there; the
+         * default harness answers false and exercises the per-button path. */
+        return active_cfg && active_cfg->input_bitmasks;
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
         /* Only answer when a tool explicitly opted in (--av-skip-video);
          * otherwise fall through to `default: return false`, which is
@@ -657,6 +837,8 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->quiet = 1;
         } else if (strcmp(argv[i], "--mic-tone") == 0) {
             cfg->mic_tone = 1;
+        } else if (strcmp(argv[i], "--input-bitmasks") == 0) {
+            cfg->input_bitmasks = 1;
         } else if (strcmp(argv[i], "--av-skip-video") == 0) {
             cfg->av_skip_video = 1;
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
@@ -862,6 +1044,7 @@ bool harness_load_rom(harness_config *cfg)
 
     active_rom_data = rom_data;
 
+    opt_pushes_before_load = opt_pushes;
     if (!lr_load_game(&game)) {
         fprintf(stderr, "harness: retro_load_game failed for '%s'\n", cfg->rom_path);
         active_rom_data = NULL;
@@ -899,6 +1082,7 @@ bool harness_load_no_content(harness_config *cfg)
     lr_set_input_poll(cb_input_poll);
     lr_set_input_state(cb_input_state);
 
+    opt_pushes_before_load = opt_pushes;
     if (!lr_load_game(NULL)) {
         fprintf(stderr, "harness: retro_load_game(NULL) failed "
                         "(core may not support no-content boot)\n");

@@ -51,7 +51,14 @@ void JLinkSetTCPEndpoint(const char *host, int port);
 const char *JLinkGetTCPHost(void);
 void JLinkSetWaitEnabled(int enabled);
 void JLinkFrameTick(void);
+void JLinkFrameEnd(double fieldHz);
 void JLinkAwaitReply(void);
+/* Same wait for a byte the partner sends unprompted; call when the game is
+   spinning on the UART status with nothing to send (see jlink.c). */
+void JLinkAwaitIdle(void);
+/* Once per frame: returns 1 and a one-line link health summary in buf about
+   every 5 s while a link carries traffic (see jlink.c). */
+int JLinkStatsPoll(char *buf, size_t len);
 
 int  JLinkOpen(int mode);
 void JLinkClose(void);

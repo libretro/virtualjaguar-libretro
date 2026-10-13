@@ -15,6 +15,7 @@
 #include "voicechat.h"
 #include "state.h"
 #include "uart.h"   /* UARTWireSpeedupIntent/UARTSetWireSpeedupEffective (#552) */
+#include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (JLinkStatsPoll) */
 
 #define JLINK_RING_SIZE 256
 
@@ -152,6 +153,85 @@ static long long jlinkReplyEwmaUsec = 0; /* smoothed reply latency */
 #define JLINK_WAIT_MARGIN_USEC  2000
 #define JLINK_SAMPLE_MAX_USEC  50000   /* slower = not a reply, ignore */
 
+/* Frame-slot fitting.  The per-REPLY timeout above (2*EWMA+margin, clamped
+   to [4,15] ms) says how long to wait for any one answer; it is NOT how
+   much wall clock a frame may spend waiting.  A game like Doom exchanges
+   a tic as a chain of single-byte hops (each side's byte depends on the
+   other's), so the exchange only advances while the core is blocked in
+   the wait, and the per-frame wait budget decides how many hops fit.
+   The old budget (up to 15 ms) ignored what the rest of the frame costs:
+   with ~2 ms of emulation the frame finished at ~18 ms, one video frame
+   late, so the frontend skipped the next vsync -- the core then ran at
+   30 Hz (audio at half rate) with ~13 ms of dead time per frame, and a
+   slower device overran by more.  The budget is now what is left of ONE
+   video frame after the measured emulation cost and a margin for the
+   frontend's own present/audio work:
+       budget = period - emulation - margin
+   so waiting can never push a frame past its vsync.  Emulation alone
+   filling the frame leaves no budget (waiting could only make it worse). */
+#define JLINK_SLOT_MARGIN_USEC  3000
+#define JLINK_SLOT_MIN_USEC     1000   /* below this a wait buys nothing */
+#define JLINK_PERIOD_DEFAULT_USEC 16667
+/* The margin is a guess at the frontend's per-frame cost after our hook
+   (video upload, audio copy, present).  When a frame that waited is nonetheless
+   followed by a frame-to-frame interval well over one period, the guess was
+   too small: widen it by JLINK_SLOT_GROW_USEC (up to JLINK_SLOT_EXTRA_MAX_USEC)
+   and let it decay back after JLINK_SLOT_OK_FRAMES clean frames. */
+#define JLINK_SLOT_GROW_USEC    1000
+#define JLINK_SLOT_DECAY_USEC    500
+#define JLINK_SLOT_EXTRA_MAX_USEC 8000
+#define JLINK_SLOT_OK_FRAMES      60
+/* A frame that overran is also remembered as a floor under the decay.  Without
+   it the widening decays after 60 clean frames, the next frame overruns again,
+   and a frontend whose post-hook cost really exceeds the margin drops a vsync
+   about every 2 s for as long as the link is up (measured in the simulator
+   with 3 ms of frontend cost: 0.5 missed vsyncs/s).  The floor sits one decay
+   step above the extra that failed, never above JLINK_SLOT_FLOOR_MAX_USEC
+   (an emulation-cost spike such as a level load must not pin a huge margin),
+   and relaxes by one step per JLINK_SLOT_FLOOR_RELAX_FRAMES clean frames
+   (1 min) so a transient does not last. */
+#define JLINK_SLOT_FLOOR_MAX_USEC 4000
+#define JLINK_SLOT_FLOOR_RELAX_FRAMES 3600
+#define JLINK_SLOT_SPIKE_USEC     1000   /* emu cost over EWMA = a spike, not margin */
+static long long jlinkFrameStartUsec = 0;  /* 0 = no frame in flight */
+static long long jlinkWaitedUsec = 0;      /* wall clock blocked this frame */
+static long long jlinkEmuEwmaUsec = 0;     /* smoothed non-wait frame cost */
+static int jlinkEmuSamples = 0;
+static int jlinkFramePeriodUsec = JLINK_PERIOD_DEFAULT_USEC;
+static long long jlinkPrevTickUsec = 0;    /* previous frame's start */
+static long long jlinkPrevWaitedUsec = 0;  /* ... and what it waited */
+static int jlinkSlotExtraUsec = 0;         /* learned margin widening */
+static int jlinkSlotOkFrames = 0;
+static int jlinkSlotFloorUsec = 0;         /* decay never goes below this */
+static int jlinkSlotFloorFrames = 0;
+static long long jlinkLastEmuSpikeUsec = 0;/* last frame's emulation cost minus the EWMA */
+static int jlinkFrameBudgetUsec = 0;       /* budget handed to the last frame */
+static int jlinkReplyTimeoutUsec = JLINK_WAIT_FLOOR_USEC;
+
+/* On-device diagnostic window (JLinkStatsPoll).  "Hop" = one of the game's
+   single-byte exchanges: a TX byte out, the partner's next byte back (the
+   same TX-to-first-RX interval that feeds the reply EWMA).  A hop is
+   "slipped" when its reply was not picked up inside a wait (JLinkWaitFor) --
+   it arrived while the core was emulating or between frames -- so it cost
+   the game a frame-boundary wait.  Plain counters, no per-hop logging. */
+#define JLINK_STATS_PERIOD_USEC 5000000LL
+static int jlinkInAwait = 0;               /* inside the JLinkWaitFor loop */
+static unsigned jlinkStatHops = 0;         /* replies observed this window */
+static unsigned jlinkStatSlipped = 0;      /* ... that arrived outside a wait */
+static unsigned jlinkStatWaits = 0;        /* JLinkAwaitReply entries */
+static unsigned jlinkStatTimeouts = 0;     /* waits that gave up */
+static unsigned jlinkStatNoBudget = 0;     /* waits cut off by the frame budget */
+static int jlinkNoBudgetNoted = 0;         /* one count per TX burst */
+static unsigned jlinkStatIdleWaits = 0;    /* idle (unprompted-byte) waits */
+static unsigned jlinkStatIdleHits = 0;     /* ... that ended with data */
+static int jlinkIdleBackoff = 0;           /* frames to skip after a silent idle wait */
+static int jlinkIdleSkip = 0;              /* skip counter, ticked per frame */
+#define JLINK_IDLE_BACKOFF_MAX 32
+static unsigned jlinkStatFrames = 0;       /* frames ticked this window */
+static long long jlinkStatHopUsec = 0;     /* sum of hop (TX -> reply) times */
+static long long jlinkStatWaitUsec = 0;    /* wall clock blocked in waits */
+static long long jlinkStatStartUsec = 0;   /* window start; 0 = not started */
+
 static void JLinkVMDrain(void);
 
 static void JLinkRingPush(uint8_t b)
@@ -174,10 +254,18 @@ static void JLinkRingPush(uint8_t b)
       long long sample = JLinkNowUsec() - jlinkLastTxUsec;
       if (sample >= 0 && sample <= JLINK_SAMPLE_MAX_USEC)
          jlinkReplyEwmaUsec += (sample - jlinkReplyEwmaUsec) / 8;
+      jlinkStatHops++;
+      jlinkStatHopUsec += (sample < 0) ? 0
+                        : (sample > JLINK_SAMPLE_MAX_USEC
+                           ? JLINK_SAMPLE_MAX_USEC : sample);
+      if (!jlinkInAwait)
+         jlinkStatSlipped++;
 #endif
       jlinkSamplePending = 0;
    }
    jlinkAwaitingReply = 0;   /* the partner spoke */
+   jlinkIdleBackoff = 0;     /* ... so it is worth waiting for it again */
+   jlinkIdleSkip = 0;
    /* Counted on ARRIVAL, not on the game draining the ring.  jlinkTxTotal is
     * incremented in JLinkSendByte(), i.e. at the transport boundary; counting
     * RX at JLinkRecvByte() instead measured the other side of the ring, so a
@@ -258,6 +346,26 @@ void JLinkClose(void)
    jlinkSamplePending = 0;
    jlinkLastTxUsec = 0;
    jlinkReplyEwmaUsec = 0;
+   jlinkFrameStartUsec = 0;
+   jlinkWaitedUsec = 0;
+   jlinkEmuEwmaUsec = 0;
+   jlinkEmuSamples = 0;
+   jlinkReplyTimeoutUsec = JLINK_WAIT_FLOOR_USEC;
+   jlinkPrevTickUsec = 0;
+   jlinkPrevWaitedUsec = 0;
+   jlinkSlotExtraUsec = 0;
+   jlinkSlotOkFrames = 0;
+   jlinkSlotFloorUsec = 0;
+   jlinkSlotFloorFrames = 0;
+   jlinkLastEmuSpikeUsec = 0;
+   jlinkFrameBudgetUsec = 0;
+   jlinkInAwait = 0;
+   jlinkNoBudgetNoted = 0;
+   jlinkStatHops = jlinkStatSlipped = jlinkStatWaits = 0;
+   jlinkStatTimeouts = jlinkStatNoBudget = jlinkStatFrames = 0;
+   jlinkStatIdleWaits = jlinkStatIdleHits = 0;
+   jlinkIdleBackoff = jlinkIdleSkip = 0;
+   jlinkStatHopUsec = jlinkStatWaitUsec = jlinkStatStartUsec = 0;
    /* #552: drop any negotiated state along with the connection it was
     * negotiated for.  JLinkNegTick() would self-heal this on the very
     * next frame regardless (its "not connected" branch resets the same
@@ -361,6 +469,7 @@ void JLinkWireSendByte(uint8_t b)
          JLinkTCPSend(b);
       jlinkAwaitingReply = 1;
       jlinkSamplePending = 1;
+      jlinkNoBudgetNoted = 0;
 #ifdef JLINK_HAVE_WAIT
       /* Per TX byte, so the sample measures last-byte-out -> first-byte
          back rather than including our own burst length. */
@@ -723,7 +832,74 @@ void JLinkFrameTick(void)
       budget = JLINK_WAIT_FLOOR_USEC;
    if (budget > JLINK_WAIT_CEIL_USEC)
       budget = JLINK_WAIT_CEIL_USEC;
+   jlinkReplyTimeoutUsec = (int)budget;
+   if (jlinkIdleSkip > 0)
+      jlinkIdleSkip--;
+#ifdef JLINK_HAVE_WAIT
+   /* Frame budget: see "Frame-slot fitting" above.  Only meaningful once
+      the link is up (the clock query is skipped otherwise, #569/P8). */
+   jlinkPrevWaitedUsec = jlinkWaitedUsec;
+   jlinkFrameStartUsec = 0;
+   jlinkWaitedUsec = 0;
+   if (JLinkMode() != JLINK_MODE_DISABLED)
+   {
+      long long interval;
+      jlinkFrameStartUsec = JLinkNowUsec();
+      interval = jlinkFrameStartUsec - jlinkPrevTickUsec;
+      if (jlinkPrevTickUsec != 0 && interval < 4LL * jlinkFramePeriodUsec)
+      {
+         if (jlinkPrevWaitedUsec > 0
+             && interval > (long long)jlinkFramePeriodUsec * 4 / 3)
+         {
+            /* A frame that waited ran past its vsync anyway.  It only raises
+               the floor if its emulation cost was about what the EWMA
+               expected: a frame that overran because emulation spiked (a
+               heavier scene, a level load) says nothing about the margin,
+               and the old behaviour (widen, then decay within seconds) is
+               the right response to it. */
+            int failed = jlinkSlotExtraUsec + JLINK_SLOT_DECAY_USEC;
+            if (failed > JLINK_SLOT_FLOOR_MAX_USEC)
+               failed = JLINK_SLOT_FLOOR_MAX_USEC;
+            if (failed > jlinkSlotFloorUsec
+                && jlinkLastEmuSpikeUsec <= JLINK_SLOT_SPIKE_USEC)
+               jlinkSlotFloorUsec = failed;
+            jlinkSlotExtraUsec += JLINK_SLOT_GROW_USEC;
+            if (jlinkSlotExtraUsec > JLINK_SLOT_EXTRA_MAX_USEC)
+               jlinkSlotExtraUsec = JLINK_SLOT_EXTRA_MAX_USEC;
+            jlinkSlotOkFrames = 0;
+            jlinkSlotFloorFrames = 0;
+         }
+         else if (interval <= (long long)jlinkFramePeriodUsec * 5 / 4)
+         {
+            if (jlinkSlotExtraUsec > jlinkSlotFloorUsec
+                && ++jlinkSlotOkFrames >= JLINK_SLOT_OK_FRAMES)
+            {
+               jlinkSlotExtraUsec -= JLINK_SLOT_DECAY_USEC;
+               if (jlinkSlotExtraUsec < jlinkSlotFloorUsec)
+                  jlinkSlotExtraUsec = jlinkSlotFloorUsec;
+               jlinkSlotOkFrames = 0;
+            }
+            if (jlinkSlotFloorUsec > 0
+                && ++jlinkSlotFloorFrames >= JLINK_SLOT_FLOOR_RELAX_FRAMES)
+            {
+               jlinkSlotFloorUsec -= JLINK_SLOT_DECAY_USEC;
+               if (jlinkSlotFloorUsec < 0)
+                  jlinkSlotFloorUsec = 0;
+               jlinkSlotFloorFrames = 0;
+            }
+         }
+      }
+      jlinkPrevTickUsec = jlinkFrameStartUsec;
+      budget = (long long)jlinkFramePeriodUsec - jlinkEmuEwmaUsec
+               - JLINK_SLOT_MARGIN_USEC - jlinkSlotExtraUsec;
+      if (budget < JLINK_SLOT_MIN_USEC)
+         budget = 0;   /* emulation alone fills the frame: no spare time */
+   }
    jlinkWaitBudgetUsec = (int)budget;
+   jlinkFrameBudgetUsec = jlinkWaitBudgetUsec;
+#else
+   jlinkWaitBudgetUsec = (int)budget;
+#endif
 #ifdef JLINK_HAVE_WAIT
    {
       /* Headless diagnostic: VJ_NETLINK_WAIT_DEBUG=1 logs the adaptive
@@ -742,6 +918,45 @@ void JLinkFrameTick(void)
 #endif
 }
 
+/* Block in wall-clock time, at most limit usec, until a byte is deliverable.
+   Shared by the owed-reply wait and the idle-poll wait below.  Returns 1 when
+   data arrived, 0 on timeout, -1 if the link went away.  Charges the elapsed
+   time against this frame's wait budget. */
+#ifdef JLINK_HAVE_WAIT
+static int JLinkWaitFor(long long limit)
+{
+   long long start, now;
+   int rc = 0;
+   start = JLinkNowUsec();
+   jlinkInAwait = 1;
+   jlinkStatWaits++;
+   for (;;)
+   {
+      JLinkPump();
+      if (JLinkDeliverable() > 0)
+      {
+         rc = 1;
+         break;
+      }
+      if (!JLinkConnected())
+      {
+         rc = -1;           /* peer went away mid-wait */
+         break;
+      }
+      now = JLinkNowUsec();
+      if (now - start >= limit)
+         break;
+      JLinkSleepUsec(500);
+   }
+   jlinkInAwait = 0;
+   now = JLinkNowUsec();
+   jlinkWaitBudgetUsec -= (int)(now - start);
+   jlinkWaitedUsec += now - start;
+   jlinkStatWaitUsec += now - start;
+   return rc;
+}
+#endif
+
 /* Block (bounded) until the partner's reply reaches the RX ring.  Only
    engages while a TX burst is unanswered on a real transport; the games
    call this path thousands of times per frame while spinning, so the
@@ -749,32 +964,206 @@ void JLinkFrameTick(void)
 void JLinkAwaitReply(void)
 {
 #ifdef JLINK_HAVE_WAIT
-   long long start, now;
+   long long limit;
+   int cut;
    if (!jlinkAwaitingReply || jlinkWaitBudgetUsec <= 0
        || JLinkDeliverable() > 0)
+   {
+      /* Frame budget already spent with a reply still owed: this hop will
+         slip to the next frame.  Counted once per TX burst (this path runs
+         thousands of times per frame while the game spins). */
+      if (jlinkAwaitingReply && jlinkWaitBudgetUsec <= 0
+          && !jlinkNoBudgetNoted && JLinkDeliverable() <= 0)
+      {
+         jlinkNoBudgetNoted = 1;
+         jlinkStatNoBudget++;
+      }
       return;
+   }
    if (!JLinkConnected())
       return;
-   start = JLinkNowUsec();
-   for (;;)
+   /* Two separate bounds: how long to wait for THIS reply (adaptive,
+      jlinkReplyTimeoutUsec) and how much of the frame's budget is left. */
+   limit = jlinkWaitBudgetUsec;
+   if (limit > jlinkReplyTimeoutUsec)
+      limit = jlinkReplyTimeoutUsec;
+   cut = (jlinkWaitBudgetUsec <= jlinkReplyTimeoutUsec);
+   if (JLinkWaitFor(limit) == 0)
    {
-      JLinkPump();
-      if (JLinkDeliverable() > 0)
-         break;
-      if (!JLinkConnected())
-         break;             /* peer went away mid-wait */
-      now = JLinkNowUsec();
-      if (now - start >= (long long)jlinkWaitBudgetUsec)
-      {
-         /* Peer silent for the whole budget: disarm until the next TX
-            burst so idle ASISTAT polling doesn't stall every frame. */
-         jlinkAwaitingReply = 0;
-         break;
-      }
-      JLinkSleepUsec(500);
+      /* Peer silent for the whole timeout: disarm until the next TX
+         burst so idle ASISTAT polling doesn't stall every frame. */
+      jlinkAwaitingReply = 0;
+      jlinkIdleSkip = 1;      /* and no idle wait for the rest of this frame */
+      if (cut)
+         jlinkStatNoBudget++;       /* the frame, not the peer, ran out */
+      else
+         jlinkStatTimeouts++;
    }
-   now = JLinkNowUsec();
-   jlinkWaitBudgetUsec -= (int)(now - start);
+#endif
+}
+
+/* Idle wait.  JLinkAwaitReply only engages after we transmitted, but a link
+   game also spins on ASISTAT for a byte the partner sends UNPROMPTED -- in
+   Doom's tic exchange the slave side only ever answers, so every byte the
+   master sends lands while the slave is either emulating or (usually: its
+   frame costs ~2 ms of a 16.7 ms period) already finished and parked in the
+   frontend, and is picked up at the slave's NEXT frame.  Measured in
+   test/tools/netlink_sim.c that makes each master-to-slave hop cost about
+   half a video frame on average no matter how fast the network is (a tic is
+   six of them), and at some phases between the two devices' vsyncs every hop
+   costs a whole frame (5 tics/s).  uart.c calls this when the game has
+   polled ASISTAT many times in a row with nothing to transmit and nothing
+   received (a tight spin for link data); it then blocks exactly like the
+   owed-reply wait, so the byte is seen the moment it arrives.
+   A partner that has nothing to say (menus, no game running) would turn this
+   into a full-budget stall every frame, so a wait that times out backs off
+   exponentially (1, 2, 4 ... 32 frames without idle waits) and any received
+   byte resets it. */
+void JLinkAwaitIdle(void)
+{
+#ifdef JLINK_HAVE_WAIT
+   long long limit;
+   int rc;
+   if (jlinkWaitBudgetUsec <= 0 || jlinkIdleSkip > 0 || JLinkDeliverable() > 0
+       || !JLinkConnected())
+      return;
+   /* A partner on a real transport only: loopback echoes our own bytes (never
+      unprompted ones) and the voice modem's bytes come from a local engine,
+      so waiting for either would just burn the budget. */
+   if (jlinkDevice != JLINK_DEVICE_JAGLINK
+       || (jlinkMode != JLINK_MODE_NETPACKET
+           && jlinkMode != JLINK_MODE_TCP_SERVER
+           && jlinkMode != JLINK_MODE_TCP_CLIENT))
+      return;
+   limit = jlinkWaitBudgetUsec;
+   if (limit > jlinkReplyTimeoutUsec)
+      limit = jlinkReplyTimeoutUsec;
+   jlinkStatIdleWaits++;
+   rc = JLinkWaitFor(limit);
+   if (rc > 0)
+   {
+      jlinkIdleBackoff = 0;
+      jlinkStatIdleHits++;
+   }
+   else if (rc == 0)
+   {
+      jlinkIdleBackoff = jlinkIdleBackoff ? jlinkIdleBackoff * 2 : 1;
+      if (jlinkIdleBackoff > JLINK_IDLE_BACKOFF_MAX)
+         jlinkIdleBackoff = JLINK_IDLE_BACKOFF_MAX;
+      jlinkIdleSkip = jlinkIdleBackoff;
+   }
+#endif
+}
+
+/* End of the emulation work for this video frame (called from retro_run
+   just before the frame is handed to the frontend: audio_batch_cb can block
+   on a full audio buffer and video_cb on vsync, so neither may be inside
+   the measurement).  Feeds the
+   frame-slot fitting in JLinkFrameTick: emulation cost = elapsed minus
+   the wall clock this core spent blocked in JLinkAwaitReply. */
+void JLinkFrameEnd(double fieldHz)
+{
+#ifdef JLINK_HAVE_WAIT
+   long long work;
+   if (jlinkFrameStartUsec == 0)
+      return;
+   work = JLinkNowUsec() - jlinkFrameStartUsec - jlinkWaitedUsec;
+   jlinkFrameStartUsec = 0;
+   if (work < 0)
+      work = 0;
+   if (work > 100000)
+      work = 100000;
+   if (jlinkEmuSamples == 0)
+   {
+      jlinkEmuEwmaUsec = work;
+      jlinkEmuSamples = 1;
+      jlinkLastEmuSpikeUsec = 0;
+   }
+   else
+   {
+      jlinkLastEmuSpikeUsec = work - jlinkEmuEwmaUsec;
+      jlinkEmuEwmaUsec += (work - jlinkEmuEwmaUsec) / 8;
+   }
+   if (fieldHz >= 20.0 && fieldHz <= 130.0)
+      jlinkFramePeriodUsec = (int)(1000000.0 / fieldHz);
+#else
+   (void)fieldHz;
+#endif
+}
+
+/* Once-per-window (5 s) link health line for the frontend log, so a player
+   on a device with no env vars (iOS) can read what the link is costing.
+   Called once per video frame from retro_run right after JLinkFrameTick;
+   returns 1 and fills buf when a window just closed with traffic in it.
+   Costs one clock query per frame while a link is up, nothing otherwise.
+
+   Reading it (Doom tic = ~6 hops per side; a tic needs a whole number of
+   video frames, so hop time decides the game speed):
+     hops/s    replies received per second
+     hop       mean TX-to-reply time = network round trip + partner turnaround
+     wait/hop  wall clock this core spent blocked per hop (JLinkAwaitReply)
+     slipped   hops whose reply was NOT caught inside a wait (it arrived
+               while emulating / between frames): each costs a frame edge
+     timeouts  waits that gave up on the reply timeout (peer silent or spike)
+     budget    waits cut short because the frame's wait budget ran out
+     idle_wait  waits for a byte the partner sent unprompted (the game was
+               spinning on the UART with nothing to send): hits/total
+     budget_us the per-frame wait budget the core is working with, which is
+               frame period - emu - 3000us - margin_adj (emu = measured
+               emulation cost per frame; margin_adj > 0 means frames that
+               waited overran their vsync and the margin was widened) */
+int JLinkStatsPoll(char *buf, size_t len)
+{
+#ifdef JLINK_HAVE_WAIT
+   long long now, span, hopAvg, waitAvg;
+   unsigned hops;
+   int ok = 0;
+   if (jlinkMode == JLINK_MODE_DISABLED || !JLinkConnected())
+   {
+      jlinkStatStartUsec = 0;
+      return 0;
+   }
+   now = jlinkFrameStartUsec ? jlinkFrameStartUsec : JLinkNowUsec();
+   jlinkStatFrames++;
+   if (jlinkStatStartUsec == 0)
+   {
+      jlinkStatStartUsec = now;
+      jlinkStatFrames = 0;
+      return 0;
+   }
+   span = now - jlinkStatStartUsec;
+   if (span < JLINK_STATS_PERIOD_USEC)
+      return 0;
+   hops = jlinkStatHops;
+   if (hops > 0 && buf && len > 0)
+   {
+      hopAvg = jlinkStatHopUsec / (long long)hops;
+      waitAvg = jlinkStatWaitUsec / (long long)hops;
+      snprintf(buf, len,
+               "link stats %lds: hops/s=%u hop=%ld.%ldms wait/hop=%ld.%ldms "
+               "slipped=%u%% (%u/%u) timeouts=%u budget_cut=%u budget_us=%d "
+               "(emu=%ldus margin_adj=%+dus) wait/frame=%ldus idle_wait=%u/%u",
+               (long)(span / 1000000LL),
+               (unsigned)((long long)hops * 1000000LL / span),
+               (long)(hopAvg / 1000), (long)((hopAvg % 1000) / 100),
+               (long)(waitAvg / 1000), (long)((waitAvg % 1000) / 100),
+               (unsigned)(100u * jlinkStatSlipped / hops), jlinkStatSlipped,
+               hops, jlinkStatTimeouts, jlinkStatNoBudget,
+               jlinkFrameBudgetUsec, (long)jlinkEmuEwmaUsec, jlinkSlotExtraUsec,
+               jlinkStatFrames ? (long)(jlinkStatWaitUsec / (long long)jlinkStatFrames)
+                               : 0L,
+               jlinkStatIdleHits, jlinkStatIdleWaits);
+      ok = 1;
+   }
+   jlinkStatStartUsec = now;
+   jlinkStatHops = jlinkStatSlipped = jlinkStatWaits = 0;
+   jlinkStatTimeouts = jlinkStatNoBudget = jlinkStatFrames = 0;
+   jlinkStatIdleWaits = jlinkStatIdleHits = 0;
+   jlinkStatHopUsec = jlinkStatWaitUsec = 0;
+   return ok;
+#else
+   (void)buf; (void)len;
+   return 0;
 #endif
 }
 

@@ -145,6 +145,7 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000, 0x00005000 };
    unsigned bestCandidate = 0;
    unsigned bestScore = 0;
+   unsigned bestHw = 0;
    unsigned bestEntry = 0;
    unsigned entryCandidate = 0;
    unsigned entryScore = 0;
@@ -187,6 +188,7 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    {
       unsigned score = 0;
       unsigned entry = 0;
+      unsigned hw = 0;
       uint32_t base = candidates[i];
 
       for (offset = 0; offset + 6 <= size && offset < 2048; offset += 2)
@@ -210,6 +212,20 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
             uint32_t rel = target - base;
 
             score++;
+
+            /* LEA abs.L at a table whose first long is a Jaguar I/O
+             * address ($F00000-$F1FFFF): the descriptor idiom of a
+             * startup that uploads GPU/DSP code ({dest, size, src}).
+             * Random data lands there with probability ~2^-15, so this
+             * only ever fires under the base the image was linked at. */
+            if ((op & 0xF1FF) == 0x41F9 && !(rel & 1) && rel + 4 <= size)
+            {
+               uint32_t first = GET32(buffer, rel);
+
+               if (first >= 0x00F00000 && first <= 0x00F1FFFF)
+                  hw++;
+            }
+
             if ((op == 0x4EB9 || op == 0x4EF9) && !(rel & 1)
                   && (rel == 0 || GET16(buffer, rel - 2) == 0x4E75
                      || GET16(buffer, rel - 2) == 0x4E73
@@ -218,9 +234,14 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
          }
       }
 
-      if (score > bestScore)
+      /* A pure containment tie falls to the base with more descriptor
+       * hits.  Native Demo (bin) is linked at $5000 but every one of its
+       * references also fits a $4000 window (15 vs 15, no JSR/JMP entry
+       * hits to decide it), so $4000 won and the image ran 4 KiB low. */
+      if (score > bestScore || (score == bestScore && hw > bestHw))
       {
          bestScore = score;
+         bestHw = hw;
          bestCandidate = i;
       }
 
@@ -302,6 +323,55 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    return JST_NONE;
 }
 
+/* Cartridge address decode (issue #851).
+ *
+ * The cart slot decodes $800000-$DFFEFF, but a ROM only drives the address
+ * lines it has: a 2 MB cart repeats at $A00000 and $C00000.  Flip Out depends
+ * on it -- its routine at $11EE94 does a "cmpa.l $A02000.l,a2" that must read
+ * the cart's own word at $2000, and an unmirrored window returns 0 there and
+ * falls into the ILLEGAL that follows.
+ *
+ * Ground truth is the MiSTer Jaguar core (Jaguar.sv: cart_mask[22:20] ANDed
+ * into the cart address): the mask is armed ONLY for an image of exactly
+ * 1, 2 or 4 MiB (mask 000 / 001 / 011) and every other size is left as-is,
+ * so those are the only sizes mirrored here.  Sizes are the physical ROM
+ * (jaguarROMSize, taken after a prepended copier header is stripped).  The
+ * JTRM says nothing on the subject; jag_sim has no size-based decode to
+ * compare against.
+ *
+ * Done once at load: the read path stays a plain jagMemSpace index.  The
+ * final $100 bytes ($DFFF00-$DFFFFF) are the CDROM overlay and never receive
+ * ROM bytes, hence the JGD_AUTO_THRESHOLD ceiling.  MemTrack still owns its
+ * claimed $900000 window because MTClaimsRead() is tested ahead of the ROM
+ * read.  A GameDrive-banked image (JGD_BANKING) is 16 MB of SDRAM with no
+ * mirror and reads through jgdROM, so it is left alone.
+ *
+ * The window beyond the image is also cleared first: jagMemSpace is static,
+ * so without this a previous title's mirror (or the CD BIOS) would survive a
+ * reload in the same process, and unpopulated cart space reads 0. */
+void JaguarMirrorCart(void)
+{
+   uint8_t *cart = jagMemSpace + 0x800000;
+   uint32_t size = jaguarROMSize;
+   uint32_t flat = (size > JGD_AUTO_THRESHOLD) ? JGD_AUTO_THRESHOLD : size;
+   uint32_t off, n;
+
+   memset(cart + flat, 0, JGD_AUTO_THRESHOLD - flat);
+
+   if (JGD_BANKING())
+      return;
+   if (size != 0x100000 && size != 0x200000 && size != 0x400000)
+      return;
+
+   for (off = size; off < JGD_AUTO_THRESHOLD; off += size)
+   {
+      n = JGD_AUTO_THRESHOLD - off;
+      if (n > size)
+         n = size;
+      memcpy(cart + off, cart, n);
+   }
+}
+
 static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
 {
    int fileType;
@@ -359,6 +429,7 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
       jaguarCartInserted = true;
       memcpy(jagMemSpace + 0x800000, buffer, flatSize);
       JGDLoadROM(buffer, jaguarROMSize);
+      JaguarMirrorCart();
 
       /* The common cart layout places a 68K vector table right after a
        * $400-byte header: SSP at cart+$400, PC (the real entry point) at

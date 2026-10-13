@@ -59,6 +59,14 @@
  *      overwritten at exit from a buffer that never saw it).  Guards against
  *      "fixing" #810 by keying SAVE_RAM on a mounted disc.
  *
+ *   9  Per-title disc row on INSERT (#747).  --disc must be Baldies (Rev 1)
+ *      (boot-stub CRC $82B88060).  A synthetic disc row keyed on that CRC
+ *      sets cd_boot_mode=bios; CD Boot Mode is left at its default (hle).
+ *      After the insert the strategy must be "bios": the insert path keys
+ *      the new disc and re-reads the options before resolving the boot.
+ *  10  Control for 9: same disc, no row installed -- the insert resolves
+ *      "hle", so case 9's "bios" can only have come from the row.
+ *
  * Run: test_disk_control <core> --disc <image> --case N [--quiet]
  *      (--disc is required for cases 1, 3, 4, 7 and 8; cases 5 and 6 are
  *       no-disc no-content boot checks.  Case 4 also needs --disc-b.)
@@ -73,6 +81,7 @@
 #include <unistd.h>
 #include "../harness/harness.h"
 #include "../../libretro-common/include/libretro.h"
+#include "../../src/core/titledb.h"
 
 /* Mirrors src/cd/jagcd_boot.h and src/core/settings.h.  Declared here
  * rather than including those headers: settings.h drags in the whole vjs
@@ -249,10 +258,10 @@ int main(int argc, char **argv)
     }
     if (case_num != 1 && case_num != 3 && case_num != 4
         && case_num != 5 && case_num != 6 && case_num != 7
-        && case_num != 8) {
+        && case_num != 8 && case_num != 9 && case_num != 10) {
         fprintf(stderr, "usage: test_disk_control <core> --case N "
                         "[--disc <image>] [--disc-b <image>] [--quiet]\n"
-                        "  N is one of 1|3|4|5|6|7|8.  Cases 1, 3, 4, 7 and 8 "
+                        "  N is one of 1|3|4|5|6|7|8|9|10.  Cases 1, 3, 4, 7-10 "
                         "need --disc <image>; case 4 also needs\n"
                         "  --disc-b <image>.  Cases 5 and 6 (no-content "
                         "boot) take no disc.  Case 8 also wants\n"
@@ -300,6 +309,29 @@ int main(int argc, char **argv)
         fprintf(stderr, "test_disk_control: memory accessors / mtMem not "
                         "exported -- rebuild with `make TEST_EXPORTS=1`\n");
         return 1;
+    }
+
+    /* Case 9 (#747): the synthetic disc row must be in place before the
+     * insert's titledb probe runs; installing it before the load is the
+     * simplest way to guarantee that. */
+    if (case_num == 9) {
+        static TitleDBEntry row[1];
+        void (*set_disc)(const TitleDBEntry *, int) =
+            (void (*)(const TitleDBEntry *, int))
+            harness_dlsym(&cfg, "TitleDBSetDiscRowsForTest");
+        if (!set_disc) {
+            fprintf(stderr, "test_disk_control: TitleDBSetDiscRowsForTest "
+                            "not exported -- rebuild with `make TEST_EXPORTS=1`\n");
+            return 1;
+        }
+        memset(row, 0, sizeof(row));
+        row[0].crc32 = 0x82B88060u;            /* Baldies (Rev 1) boot stub */
+        row[0].name  = "Synthetic disc row";
+        row[0].pairs[0].key   = "virtualjaguar_cd_boot_mode";
+        row[0].pairs[0].value = "bios";
+        row[0].pairs[0].cls   = TITLEDB_CLASS_COMPATIBILITY;
+        row[0].pairs[0].cite  = "synthetic test row (#747)";
+        set_disc(row, 1);
     }
 
     if (!harness_load_no_content(&cfg)) {
@@ -354,6 +386,28 @@ int main(int argc, char **argv)
                    : "isCDGame never went true -- the insert reset the "
                      "machine without re-resolving");
         pass = registered && was_bare_bios && inserted && now_cd;
+        break;
+    }
+    case 9:
+    case 10: {
+        const char *want = (case_num == 9) ? "bios" : "hle";
+        int inserted, ok;
+
+        gi.path  = disc_path;
+        inserted = cfg.disk_cb_registered
+                && cfg.disk_add_image_index()
+                && cfg.disk_replace_image_index(0, &gi)
+                && cfg.disk_set_eject_state(true)
+                && cfg.disk_set_eject_state(false);
+        ok = inserted && bootcfg->isCDGame
+          && strcmp(strategy_name(), want) == 0;
+        results[nres++] = mkres(ok,
+            case_num == 9 ? "case9_disc_row_applies_on_insert"
+                          : "case10_insert_without_row_is_default",
+            ok ? (case_num == 9 ? "insert resolved bios (disc row applied)"
+                                : "insert resolved hle (no row)")
+               : strategy_name());
+        pass = ok;
         break;
     }
     case 4: {

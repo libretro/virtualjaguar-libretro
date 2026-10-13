@@ -72,8 +72,8 @@ void JGDWriteROM8(uint32_t off, uint8_t v);
 /* JERRY register window ($F16000-$F16007), called only when jgdActive. */
 uint16_t JGDControlReadWord(uint32_t offset);
 uint8_t  JGDControlReadByte(uint32_t offset);
-void     JGDControlWriteWord(uint32_t offset, uint16_t data);
-void     JGDControlWriteByte(uint32_t offset, uint8_t data);
+void     JGDControlWriteWord(uint32_t offset, uint16_t data, uint32_t who);
+void     JGDControlWriteByte(uint32_t offset, uint8_t data, uint32_t who);
 
 /* Savestate (fixed-size chunk; all-zero when inactive). */
 size_t JGDStateSave(uint8_t *buf);

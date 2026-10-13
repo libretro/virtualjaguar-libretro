@@ -57,7 +57,11 @@ Everything below is about those.
 
 **Per-Title Enhancement Defaults** (`virtualjaguar_pertitle_defaults`, default
 **enabled**) lets the core recognize a cartridge by its CRC32 and pre-set
-options that were verified to look better on that specific game.
+options for that specific game.
+
+Presets come in two kinds:
+- **Enhancement presets** were verified to look better or run faster on that game.
+- **Compatibility presets** are what a game needs in order to work correctly. They stand in for an emulator fix that hasn't landed, and each one names the ticket for that fix.
 
 Three rules make this safe:
 
@@ -65,8 +69,12 @@ Three rules make this safe:
    left at its shipped default. Change the option yourself — to anything,
    including back to the default value by hand — and the preset stops touching
    it.
-2. **Everything in the table is presentation-only** (see §3). No preset changes
-   emulated state, clock speed, or timing.
+2. **Enhancement presets are presentation-only** (see §3); they never change
+   emulated state, clock speed, or timing. **Compatibility presets may**, because
+   that is what the game needs: today only White Men Can't Jump, which turns on
+   blitter timing. The Enhancement Profile never switches a compatibility preset
+   off. Turning off Per-Title Enhancement Defaults does, and the game may then
+   need that setting by hand.
 3. **A known-bad value is refused, and a warning is logged.** The database also
    carries a negative list. If a preset would set something known to break that
    title, the core declines and logs it. If *you* set that value explicitly, the
@@ -80,9 +88,25 @@ To turn the whole thing off, set **Per-Title Enhancement Defaults** to
 Everything the core does per title is logged with a `[titledb]` prefix, so the
 RetroArch log always tells you exactly what was applied.
 
+**You also see it on screen.** When a game loads with presets applied, a
+4-second notice names the game, each option and its class, for example
+*White Men Can't Jump: Blitter Bus Timing 68000 only (compatibility preset)*. A second
+notice appears if the Enhancement Profile withholds or drops enhancement
+presets (*per-title enhancement presets not applied (performance profile
+selected)*). Both mirror the log lines, show once per load, and never repeat
+per frame. The affected options also explain themselves: their description
+(the sublabel under the option) gains a leading sentence such as *This game:
+set to 2x by its per-title preset. Choose a value to override.*, or, for DSP
+Idle-Loop Fast-Forward, *Inactive: suppressed by RISC (GPU/DSP) Clock Scale
+2x.* The core only explains; it never rewrites a value you chose. Frontends that
+don't support Core Options v2, or that ignore a repeated definition push,
+show the stock text and still get the notices. These sublabels are refreshed
+(one options-menu rebuild) only at load and when an option change alters which
+notes apply.
+
 ### Titles that configure themselves
 
-Twenty-one entries as of v3.5.0. All of them set internal resolution, true
+Twenty-one entries as of v3.5.0 (Towers II has since been removed, #809). All of them set internal resolution, true
 color, or both — nothing else.
 
 | Title | Internal Resolution | True Color |
@@ -98,7 +122,12 @@ color, or both — nothing else.
 | Missile Command 3D | 2x | — |
 | Skyhammer | 2x | on |
 | Tempest 2000 | — | on |
-| Towers II | 2x | — |
+
+Compatibility presets:
+
+| Title | Setting | Stands in for |
+|---|---|---|
+| White Men Can't Jump | Blitter Timing on | blitter timing on by default (#408) |
 
 Note what is **not** in the table: no preset overclocks anything, and no preset
 enables blit memoization. If you see a game running faster or slower than
@@ -409,7 +438,7 @@ completion (Doom's menus and demo, Hover Strike) therefore run too fast.
 |---|---|---|
 | `dram_timing` | realistic DRAM access cost for the GPU and 68000 once they leave their local buses | Each processor pays only its own costs, so relative CPU/GPU timing is preserved. **Disables idle-skip.** |
 | `gpu_pipeline_timing` | the GPU's real instruction costs — single external-memory gateway, register scoreboard, ALU interlocks | **Disables idle-skip.** |
-| `blitter_timing` | charges the 68000 the bus time each blit really takes (on hardware the blitter freezes the cacheless 68000 while it runs) | Does **not** disable idle-skip. |
+| `blitter_timing` | charges the 68000 the bus time each blit really takes (on hardware the blitter freezes the cacheless 68000 while it runs). `enabled` also makes the GPU wait out its own blits; `68000 only` leaves GPU blit chains at full speed | Does **not** disable idle-skip. |
 
 **These are for accuracy investigation, not for everyday play.** They all cost
 performance, by design — they add work the emulator was previously skipping.
@@ -516,21 +545,40 @@ unless you specifically want games to warn that progress cannot be saved.
 
 ## 7. Options that need a restart
 
-Changing these mid-game does nothing visible. Reload the content.
+These are read once, when content loads. Changing them mid-game does not
+take effect: reload the content. Each one's sublabel (the text under the
+option) includes **Restart required: applied when content is loaded.**
 
 | Option | Menu name |
 |---|---|
 | `internal_resolution` | Internal Resolution |
 | `pal` | PAL |
+| `bios` | BIOS (Cartridges) — HLE or the real boot ROM |
 | `bios_type` | Cart BIOS Type — *which* boot ROM (Series K / Model M / Custom) |
 | `cd_bios_type` | CD BIOS Type |
 | `cd_boot_mode` | CD Boot Mode |
 | `memory_track` | Memory Track |
 | `jgd` | Jaguar GameDrive |
 | `enhancement_hooks` | Per-Title Enhancement Hooks |
+| `gdb_stub`, `gdb_bind`, `gdb_port`, `gdb_wait`, `gdb_halt_timeout` | GDB debug stub (developer-facing) |
 
 Everything else — blitter mode, true color, texture replacement, clock scales,
 timing models, idle-skip, CD read speed — takes effect immediately.
+
+### Options that only show for the content you loaded
+
+Once content is loaded the menu hides options that cannot apply to it (if your
+frontend supports hiding options; otherwise everything stays visible and
+nothing else changes). A hidden option keeps its value and still reads
+normally.
+
+- **Cartridge loaded:** the CD-only options are hidden — CD BIOS Type, CD Boot
+  Mode, CD Read Speed, CD Trace and Memory Track.
+- **CD loaded:** the cartridge-only options are hidden — BIOS (Cartridges) and Cart BIOS
+  Type (CD Boot Mode decides there), Jaguar GameDrive and its SD card,
+  Per-Title Enhancement Hooks, and Blit Memoization (which is unavailable for CD
+  content).
+- **Nothing loaded yet:** everything is shown, so you can configure ahead.
 
 ---
 
