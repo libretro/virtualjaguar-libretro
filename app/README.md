@@ -42,8 +42,12 @@ sudo apt-get install cmake pkg-config libasound2-dev libpulse-dev libx11-dev \
   libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
   libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev \
   libegl1-mesa-dev libdbus-1-dev libudev-dev libwayland-dev wayland-protocols \
-  libdecor-0-dev
+  libdecor-0-dev libcurl4-openssl-dev
 ```
+
+`libcurl4-openssl-dev` is only for the game library's box art and database downloads
+(see [Game library](#game-library)); without it the app still builds and runs, it just never
+downloads anything.
 
 ### Windows
 
@@ -160,6 +164,63 @@ library (and a display, for the GL one) and report **skipped**, not passed,
 without them. Point `VJ_LIBRASHADER` at the library, and optionally
 `VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
 
+## Game library
+
+**File > Game library** (Ctrl/Cmd+L) is an optional grid of your games. It never replaces the
+file picker, drag and drop or the command line, which all keep working.
+
+1. **Add folder...** one or more folders. They are walked recursively (8 levels, symlinked
+   folders inside them are not followed) for the formats the core reads: cartridges
+   `.j64 .jag .rom .abs .cof .prg .bin` and discs `.cue .chd .cdi`. A `.bin` that a `.cue`
+   references is a disc track, not a cartridge, and so is any `.bin` over 8 MiB. Zip is not
+   scanned: the core cannot load it.
+2. **Identification** by CRC32 against libretro-database (see licences below):
+   - cartridges against the No-Intro "Atari - Jaguar" dat, using the whole file first and then
+     the file minus a 512-byte copier header (the same rule as the core's
+     `DetectPrependedHeaderSize`, so a headered dump of a known game still matches);
+   - CD images against the Redump "Atari - Jaguar CD" dat. Redump hashes each track, so a
+     `.cue` is identified by the CRC32 of the first file it references (Track 1). `.chd` and
+     `.cdi` carry no cheap track hash and are matched by file name only.
+   A name-only match is badged `?` (titled and given art from the dat entry), an unidentified
+   file `??` (titled from its file name, no art). Hover a tile for the path, CRC32 and how it
+   was matched.
+3. **Box art** comes from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar)
+   (`thumbnails.libretro.com/Atari - Jaguar/Named_Boxarts/<dat title>.png`; the libretro rule
+   replaces `& * / : ` " < > ? \ |` with `_`). It is fetched only for tiles you can see, one title
+   at a time, on a background thread, and cached under `<data>/thumbnails/` forever: art you
+   have seen works offline. When there is no box art the title screen, then a snapshot, is used;
+   when upstream has none the tile shows a coloured placeholder and the miss is remembered for
+   30 days. Upstream coverage is the limit here: of the 209 titles in the cartridge dat, 70 have
+   art under their exact dat name (64 box art); of the 26 Jaguar CD titles, 12 have a snapshot
+   and none a box art. (Measured against libretro-thumbnails at the pinned dat's date.)
+   **Download box art** turns all downloading off.
+4. **Launch** is a click on the tile; it posts the same "open this path" event as the file
+   dialog. **Close on launch** hides the window afterwards.
+
+Files: `<data>/library/scan.tsv` (the hash cache: a rescan only stats files whose size and
+modification time are unchanged), `<data>/library/db/` (databases fetched by **Update
+database**), `<data>/thumbnails/`. Settings are the `library.*` keys in `config.ini`.
+
+The two dat files are fetched at configure time, pinned to a libretro-database commit and
+SHA256 (`VJ_DB_COMMIT` in `CMakeLists.txt`), and copied next to the executable in
+`libretro-db/`. **Update database** downloads the current files into `<data>/library/db/`; the
+newer of the two copies (by the dat's own `version`) is the one used. Offline build:
+`-DVJ_APP_LIBRETRO_DB_DIR=<folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat'>`;
+`-DVJ_APP_BUNDLE_DB=OFF` skips them (the library then titles games from file names until
+**Update database**).
+
+HTTP is the only network code. SDL3 has no client, so `src/http.cpp` is a blocking GET with
+three compile-time backends: **libcurl** (macOS SDK, `libcurl4-openssl-dev` on Linux, MinGW
+if installed), **WinHTTP** on Windows (part of the OS: no dependency), or none
+(`-DVJ_APP_HTTP=OFF`, or libcurl not found), in which case downloads are simply unavailable.
+It is only ever called from worker threads, never from the UI or emulation loop.
+
+**Licences.** The dats are CC BY-SA 4.0 (libretro-database, derived from No-Intro and Redump
+data). They are not committed to this repository, only downloaded and shipped unmodified
+beside the binary, with attribution here. The box art is the property of its owners; the app
+downloads it to the user's own machine on demand, as RetroArch does, and never redistributes
+it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library was added.
+
 ## Where files go
 
 | | |
@@ -188,6 +249,12 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
 - `smoke_bad_option`: an `--option` the core does not register is rejected, not
   silently ignored.
 - `smoke_cd`: load the synthetic CD image by path (no BIOS).
+- `library_unit` (`vj_library_tests`): dat parsing, CRC identification of synthetic files
+  (copier-headered and plain carts, a `.cue` set), thumbnail naming against known libretro
+  examples, cache paths, a scan of a temp folder with the hash cache, and on POSIX the whole
+  art pipeline (scan, identify, download, cache, decode, texture; database update; then
+  offline) against a loopback HTTP server. No internet, no GL.
+  `vj_library_tests --scan DIR --db DIR` prints identification counts for a folder (dev tool).
 
 To regenerate the expected hash after an intentional emulation change:
 `virtualjaguar --headless --frames 300 test/roms/yarc.j64` and update
@@ -209,10 +276,14 @@ To regenerate the expected hash after an intentional emulation change:
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
 | `src/input.*` | keyboard and gamepad to libretro input |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
+| `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
+| `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |
+| `src/library_ui.cpp` | the Game library window |
+| `src/http.*` | blocking HTTP(S) GET: libcurl, WinHTTP or nothing |
 | `src/paths.*`, `src/config.*` | data folders (portable mode) and the settings file |
 
 ## Not in this first piece
 
 Cheats (#835), RetroAchievements (#836), input remapping (#837),
-the game library (#838), packaging and signing (#839), the installer (#840).
+packaging and signing (#839), the installer (#840).
 Microphone and netpacket are reported unsupported.

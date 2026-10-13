@@ -59,3 +59,21 @@ add_test(NAME smoke_cd
 set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
+
+# ---------------------------------------------------------------------------
+# Game library (#838).  vj_library_tests needs no window, no GL and no internet:
+# dat parsing, CRC identification of synthetic files, libretro-thumbnails naming and
+# cache paths, a scan of a temp folder, and (POSIX) the download -> cache -> decode ->
+# texture pipeline against a loopback HTTP server, then again with the server gone.
+# ---------------------------------------------------------------------------
+add_executable(vj_library_tests tests/library_tests.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_library_tests PRIVATE src)
+target_link_libraries(vj_library_tests PRIVATE vj_library ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_library_tests PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_library_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_library_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME library_unit COMMAND vj_library_tests)
+set_tests_properties(library_unit PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")

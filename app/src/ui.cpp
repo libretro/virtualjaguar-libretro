@@ -311,6 +311,7 @@ void drawMenuBar(App& app) {
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
+        if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show)) app.library.show = !app.library.show;
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list
             for (size_t i = 0; i < list.size(); i++) {
@@ -431,7 +432,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
                        io.DisplayFramebufferScale.x);
     } else if (!app.host.isLoaded()) {
         const char* l1 = "Virtual Jaguar";
-        const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open";
+        const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open or File > Game library";
         ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2);
         float cx = areaPos.x + areaSize.x * 0.5f, cy = areaPos.y + areaSize.y * 0.5f;
         bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), IM_COL32(230, 230, 230, 255), l1);
@@ -449,6 +450,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showSettings) drawSettings(app);
     if (app.showStates) drawStates(app);
     if (app.showAbout) drawAbout(app);
+    drawLibrary(app);
     drawOsd(app, areaPos, areaSize);
 
     wantCaptureKeyboard = io.WantCaptureKeyboard;
