@@ -91,7 +91,7 @@ const char* devKindHelp(DevKind k) {
     case DevKind::MouseST:
     case DevKind::MouseAmiga:
     case DevKind::MouseAmigaAD:
-        return "Your mouse or trackpad (captured while the game has focus; F10 releases it). A stick or keys can drive it too.";
+        return "Your mouse or trackpad (captured while the game has focus; Esc or F10 releases it). A stick or keys can drive it too.";
     case DevKind::Rotary:
         return "Tempest 2000's spinner: mouse left/right, or a stick / two keys. Buttons and keypad stay on the pad.";
     case DevKind::Analog: return "Analog stick (Stick controls) plus buttons A-D; the D-pad is the hat.";

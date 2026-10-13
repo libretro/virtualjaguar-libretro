@@ -472,6 +472,27 @@ static void testRouter() {
     }
 }
 
+static void testStickDpad() {
+    // A gamepad's left stick must not also press the D-pad where it is the analog axis.
+    CHECK(stickDrivesDpad(DevKind::Pad, true) && stickDrivesDpad(DevKind::TeamTap, true) && stickDrivesDpad(DevKind::Rotary, true));
+    CHECK(!stickDrivesDpad(DevKind::Pad, false));
+    for (DevKind k : {DevKind::Analog, DevKind::Driving, DevKind::SixD, DevKind::Paddle}) CHECK(!stickDrivesDpad(k, true));
+    DeviceSnapshot up;
+    up.axis[SDL_GAMEPAD_AXIS_LEFTY] = -30000;
+    for (DevKind k : {DevKind::Pad, DevKind::Driving}) {
+        Rig r;
+        r.padp.stickAsDpad = stickDrivesDpad(k, true);   // what InputManager::poll() does
+        r.cfg.kind = {{k, DevKind::Pad}};
+        r.cfg.routes.pad[0] = 0;
+        r.cfg.routes.kb[0] = false;
+        r.frame(DeviceSnapshot(), PointerInput(), {up});
+        bool up_ = r.in.state(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP) == 1;
+        int ay = r.in.state(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+        if (k == DevKind::Pad) CHECK(up_ && ay == 0);          // a plain pad: the stick is the D-pad
+        else CHECK(!up_ && ay < -20000);                      // driving: analog only, no gear shift
+    }
+}
+
 static void testProKeyboard() {
     // The Pro Controller's X Y Z are keypad 9 8 7, its shoulders 4 6 (libretro.c pro_controller[]); the
     // keyboard profile carries them on A S D / Q E.
@@ -558,6 +579,7 @@ int main() {
     testSlots();
     testSettingsAndGeometry();
     testRouter();
+    testStickDpad();
     testProKeyboard();
     testCheatSheet();
     std::printf("devices_unit: %d checks, %d failed\n", g_checks, g_fail);

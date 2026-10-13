@@ -99,7 +99,7 @@ Sheet buildSheet(const Profile& profile, DevKind kind, SheetSource src, const st
     case DevKind::MouseAmiga:
     case DevKind::MouseAmigaAD:
         b.head("Mouse");
-        b.line("Move / click", "your mouse or trackpad (F10 releases it)");
+        b.line("Move / click", "your mouse or trackpad (Esc or F10 releases it)");
         b.ctl(C_PT_L, "Move left");
         b.ctl(C_PT_R, "Move right");
         b.ctl(C_PT_U, "Move up");

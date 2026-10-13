@@ -257,7 +257,16 @@ std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
     std::vector<std::string> out;
     const std::map<std::string, std::string>& m = sessionOnly ? sessionValues_ : userValues_;
     for (const auto& kv : m) {
-        if (locked_.count(kv.first)) continue;   // the app forces it; a stale saved value is ignored
+        auto l = locked_.find(kv.first);
+        if (l != locked_.end()) {
+            // The app forces it.  Silently running the forced value would be the "--option did
+            // nothing" trap, so a value that differs is reported (an error for --option, a
+            // warning for a stale saved one).
+            if (kv.second != l->second)
+                out.push_back("'" + kv.first + "' is managed by the app (Settings > Input / Controls)" +
+                              (sessionOnly ? "; --option cannot change it" : "; the saved value is ignored"));
+            continue;
+        }
         std::string p = problemFor(defs_, kv.first, kv.second);
         if (!p.empty()) out.push_back(p);
     }

@@ -99,7 +99,7 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | A S D, Q E | Jaguar Pro Controller X Y Z and left / right shoulder (keypad 9 8 7, 4 6) |
 | F2 | keypad overlay |
 | F3 | controls overlay: a cheat sheet of your current bindings (also View menu) |
-| F10 | release / re-capture the mouse (see below) |
+| Esc / F10 | release the captured mouse; F10 or a click on the picture captures it again (see below) |
 | F5 / F7 / F6 | save state / load state / next slot (Shift+F6 previous) |
 | F8, Ctrl/Cmd+R | pause, reset |
 | Tab (hold) | fast-forward |
@@ -167,7 +167,7 @@ overrides, integer scaling and HiDPI all land the shot on the pixel under the po
 
 The mouse is captured (SDL relative mode) only while a mouse or rotary is in a port,
 the game window has focus, the game is running and no menu, popup or Settings window is
-open. **F10** (or Esc) releases it; click the picture or press F10 to capture again.
+open. **Esc** or **F10** releases it (F10 may need Fn on a Mac keyboard); click the picture or press F10 to capture again.
 
 The **controls overlay** (F3, the Touchpad button on a gamepad, or View > Controls overlay)
 shows the bindings in effect for Player 1's device - the keyboard's or the gamepad's,

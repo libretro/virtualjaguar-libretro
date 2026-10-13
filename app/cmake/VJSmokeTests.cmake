@@ -10,6 +10,8 @@
 #                   no static state behind (the iOS-style reset path).
 #   smoke_state     save a state (file + thumbnail PNG), run on, load it back, run
 #                   on again: both runs must end on the same frame.
+#   smoke_locked_option  an --option naming a core option the app owns (alt_inputs ...) is rejected
+#                   too, not silently run with the forced value.
 #   smoke_bad_option  an --option key the core never registered must be REJECTED
 #                   (it would otherwise silently run the default).
 #   smoke_cd        the synthetic Jaguar CD image, path-loaded (no BIOS).
@@ -68,6 +70,14 @@ add_test(NAME smoke_bad_option
             --option virtualjaguar_no_such_option=1 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(smoke_bad_option PROPERTIES
     PASS_REGULAR_EXPRESSION "rejected by the core")
+
+# An --option naming a core option the app owns (devices.h, lockedCoreOption) must be rejected too,
+# not silently run with the forced value.
+add_test(NAME smoke_locked_option
+    COMMAND virtualjaguar --headless --frames 5
+            --option virtualjaguar_alt_inputs=enabled "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_locked_option PROPERTIES
+    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core")
 
 add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank

@@ -130,6 +130,12 @@ bool gunCoords(const PicRect& r, float px, float py, int32_t& gx, int32_t& gy);
 // The inverse, for the tests and the crosshair preview.
 void gunToPointer(const PicRect& r, int32_t gx, int32_t gy, float& px, float& py);
 
+// Whether a gamepad's left stick may also press the D-pad on a port holding `kind`.  Not on the
+// analog / driving / 6D / paddle ports: there the stick IS the analog axis, and a D-pad press
+// shifts the driving controller's gear, presses the analog hat, or steers BattleSphere twice.
+// Explicit D-pad bindings still work.
+inline bool stickDrivesDpad(DevKind kind, bool userSetting) { return userSetting && !devIsAbsStick(kind); }
+
 // Which Jaguar port the physical mouse drives: `setting` (0 / 1) if that port holds a pointer-class
 // device, otherwise the first port that does (-1 = none).
 int resolveMousePort(const std::array<DevKind, 2>& kinds, int setting);

@@ -122,13 +122,13 @@ bool InputManager::handleEvent(const SDL_Event& e) {
     } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && mousePortKind() != DevKind::Pad) {
         if (e.key.scancode == SDL_SCANCODE_F10 && devWantsRelativeMouse(mousePortKind())) {
             userReleased_ = relative_;   // F10 toggles: release while captured, take back otherwise
-            if (notify) notify(userReleased_ ? "Mouse released (F10 or click the picture to capture it again)"
-                                             : "Mouse captured (F10 releases it)");
+            if (notify) notify(userReleased_ ? "Mouse released (click the picture or press F10 to capture it again)"
+                                             : "Mouse captured (Esc or F10 releases it)");
             return true;
         }
         if (e.key.scancode == SDL_SCANCODE_ESCAPE && relative_) {
             userReleased_ = true;
-            if (notify) notify("Mouse released (F10 or click the picture to capture it again)");
+            if (notify) notify("Mouse released (click the picture or press F10 to capture it again)");
         }
     }
     if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
@@ -224,7 +224,7 @@ void InputManager::syncMouseCapture(SDL_Window* w, bool gameRunning, bool uiOpen
     if (!SDL_SetWindowRelativeMouseMode(w, want)) return;
     relative_ = want;
     accDx_ = accDy_ = 0;
-    if (want && notify) notify("Mouse captured (F10 releases it)");
+    if (want && notify) notify("Mouse captured (Esc or F10 releases it)");
 }
 
 void InputManager::beginCapture(const LayerId& layer, Ctl ctl, bool add) {
@@ -283,6 +283,8 @@ void InputManager::poll(bool captureKeyboard) {
     }
     kbProfile_.stickAsDpad = false;
 
+    updateRoutes();
+
     // ---- gamepads ----------------------------------------------------------------------
     std::vector<HostSource> padSrc(pads_.size());
     for (size_t i = 0; i < pads_.size(); i++) {
@@ -290,7 +292,12 @@ void InputManager::poll(bool captureKeyboard) {
         SDL_Gamepad* g = p.handle;
         HostSource& hs = padSrc[i];
         hs.overlaySlot = (unsigned)i < 8 ? (unsigned)i : 7u;
-        p.profile.stickAsDpad = stickAsDpad;
+        // The left stick is the analog axis on a stick-device port: no D-pad from it there (devices.h).
+        bool stickDpad = stickAsDpad;
+        for (unsigned sl = 0; sl < kSlots; sl++)
+            if (routes_.pad[sl] == (int)i && slotSocket(sl) == 0)
+                stickDpad = stickDrivesDpad(kind_[slotJaguarPort(sl)], stickDpad);
+        p.profile.stickAsDpad = stickDpad;
         hs.profile = &p.profile;
         for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) hs.snap.btn[(size_t)b] = SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
         for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++) hs.snap.axis[(size_t)a] = SDL_GetGamepadAxis(g, (SDL_GamepadAxis)a);
@@ -302,7 +309,6 @@ void InputManager::poll(bool captureKeyboard) {
     rc.settings = settings_;
     rc.pic = pic_;
     rc.mousePort = resolveMousePort(rc.kind, settings_.mousePort);
-    updateRoutes();
     rc.routes = routes_;
 
     // ---- the pointer ---------------------------------------------------------------------

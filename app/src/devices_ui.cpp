@@ -278,7 +278,7 @@ void drawDevicesPanel(App& app) {
     note("Sensitivity, dead zone and response curve are also in Core options (applied inside the emulated device).");
     if (changed) deviceChanged(app);
     if (in.mouseWanted()) {
-        note("The mouse is captured while the game has focus and no menu is open. F10 (or Esc) releases it; click the picture to capture it again.");
+        note("The mouse is captured while the game has focus and no menu is open. Esc or F10 releases it; click the picture or press F10 to capture it again.");
     }
 
     // ---- overlay --------------------------------------------------------------------------------

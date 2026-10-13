@@ -501,6 +501,13 @@ static void testLockedOptions() {
     CHECK(joypad0Buttons[BUTTON_7] != 0);
     for (const OptionDef& d : g_host->optionDefs())
         if (d.key == "virtualjaguar_alt_inputs") CHECK(g_host->optionValue(d) == "disabled");
+    // ... and an --option naming a locked key is REPORTED (it would otherwise silently run the forced value);
+    // a stale saved value only warns.
+    std::vector<std::string> bad = g_host->checkOverrides(true);
+    CHECKF(bad.size() == 1 && bad[0].find("managed by the app") != std::string::npos, "%zu problems", bad.size());
+    std::vector<std::string> warn = g_host->checkOverrides(false);
+    CHECKF(warn.size() == 1 && warn[0].find("saved value is ignored") != std::string::npos, "%zu warnings", warn.size());
+    g_host->overrideOption("virtualjaguar_p1_numpad_to_kb", "disabled");   // the forced value itself is fine
     CHECK(g_host->checkOverrides(true).empty());
 }
 
