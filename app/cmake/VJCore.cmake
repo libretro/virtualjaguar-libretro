@@ -121,8 +121,22 @@ else()
         -std=c99 -Wno-unused-function -Wno-unused-variable)
     # Optimisation: the Makefile's desktop default is -O3 -DNDEBUG, which is what
     # CMAKE_BUILD_TYPE=Release gives GCC/Clang (the top-level forces Release for
-    # a single-config build with no type).
+    # a single-config build with no type).  RelWithDebInfo would stop at -O2, so
+    # the core is pinned to -O3 in both optimised configs (the Makefile's level
+    # for unix / osx / win; target options come after the config flags, so this
+    # wins).
+    target_compile_options(vj_core PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:-O3>)
+    target_compile_options(vj_libchdr PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:-O3>)
+    # GNU-ld ELF targets (Makefile GC_STYLE=gnu, not win): hidden visibility and
+    # no semantic interposition, so calls and globals inside the core bind
+    # locally instead of through the PLT/GOT of a -fPIC object.  retro_* stay
+    # exported through RETRO_API.
+    if(UNIX AND NOT APPLE)
+        target_compile_options(vj_core PRIVATE -fvisibility=hidden -fno-semantic-interposition)
+    endif()
 endif()
+vj_optimise(vj_core)
+vj_optimise(vj_libchdr)
 
 # System libraries the core itself needs (jlink_tcp sockets, libm).
 if(WIN32)
