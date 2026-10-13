@@ -192,7 +192,7 @@ bool App::initImGui() {
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
-    float scale = SDL_GetWindowDisplayScale(window_);
+    float scale = uiScaleOverride > 0.0f ? uiScaleOverride : SDL_GetWindowDisplayScale(window_);
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
     st.FontScaleDpi = scale;
@@ -683,6 +683,7 @@ int App::run(const CliArgs& a) {
 }
 
 int App::runInteractive(const CliArgs& a) {
+    uiScaleOverride = a.uiScale;
     if (!initWindow() || !initImGui()) return 1;
     applyAudioSettings();
     audio.open(48043.6);
@@ -690,13 +691,19 @@ int App::runInteractive(const CliArgs& a) {
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
-        devSelectVideoTab = a.showWindow.rfind("settings-video", 0) == 0;
+        if (a.showWindow.rfind("settings-video", 0) == 0) devSelectTab = "Video";
+        else if (a.showWindow.rfind("settings-input", 0) == 0) devSelectTab = "Input";
+        else if (a.showWindow.rfind("settings-audio", 0) == 0) devSelectTab = "Audio";
+        else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
     }
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
     else if (a.showWindow == "cheats") showCheats = true;
+    else if (a.showWindow == "login") ach.showLogin = true;
+    else if (a.showWindow == "achievements") ach.showList = true;
+    else if (a.showWindow == "keypad") input.overlay.open = true;
     unsigned uiFrames = 0;
 
     std::string firstErr;

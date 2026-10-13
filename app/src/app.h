@@ -32,7 +32,8 @@ struct CliArgs {
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
-    std::string showWindow;         // dev: open the 'settings', 'states' or 'about' window at start
+    std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
@@ -106,7 +107,8 @@ public:
     bool showAbout = false;
     bool showCheats = false;
     CheatManager cheats;
-    bool devSelectVideoTab = false;   // dev: --show-window settings-video opens Settings on the Video tab
+    std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
+    float uiScaleOverride = 0;        // dev: --ui-scale
     int stateSlot = 0;
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;

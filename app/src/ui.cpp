@@ -209,15 +209,17 @@ void drawSettings(App& app) {
         return;
     }
     if (ImGui::BeginTabBar("##tabs")) {
+        // dev: --show-window settings-video etc. selects a tab once
+        auto tabFlag = [&](const char* name) {
+            if (app.devSelectTab != name) return (ImGuiTabItemFlags)0;
+            app.devSelectTab.clear();
+            return (ImGuiTabItemFlags)ImGuiTabItemFlags_SetSelected;
+        };
         if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video", nullptr, app.devSelectVideoTab ? ImGuiTabItemFlags_SetSelected : 0)) {
-            app.devSelectVideoTab = false;
-            drawVideoTab(app);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Audio")) { drawAudioTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Input")) { drawInputTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Storage")) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Video", nullptr, tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Audio", nullptr, tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
     ImGui::End();
