@@ -231,6 +231,12 @@ static unsigned jlinkStatFrames = 0;       /* frames ticked this window */
 static long long jlinkStatHopUsec = 0;     /* sum of hop (TX -> reply) times */
 static long long jlinkStatWaitUsec = 0;    /* wall clock blocked in waits */
 static long long jlinkStatStartUsec = 0;   /* window start; 0 = not started */
+/* Numeric twin of the last line JLinkStatsPoll() produced (JLinkStatsLast):
+   the frontend-extension LINK_STATS event carries these instead of text. */
+static unsigned jlinkLastStatHopsPerSec = 0;
+static unsigned jlinkLastStatHopX100 = 0;  /* mean hop ms x100 */
+static unsigned jlinkLastStatSlipped = 0;
+static unsigned jlinkLastStatTimeouts = 0;
 
 static void JLinkVMDrain(void);
 
@@ -1139,6 +1145,10 @@ int JLinkStatsPoll(char *buf, size_t len)
    {
       hopAvg = jlinkStatHopUsec / (long long)hops;
       waitAvg = jlinkStatWaitUsec / (long long)hops;
+      jlinkLastStatHopsPerSec = (unsigned)((long long)hops * 1000000LL / span);
+      jlinkLastStatHopX100 = (unsigned)(hopAvg / 10);
+      jlinkLastStatSlipped = jlinkStatSlipped;
+      jlinkLastStatTimeouts = jlinkStatTimeouts;
       snprintf(buf, len,
                "link stats %lds: hops/s=%u hop=%ld.%ldms wait/hop=%ld.%ldms "
                "slipped=%u%% (%u/%u) timeouts=%u budget_cut=%u budget_us=%d "
@@ -1165,6 +1175,19 @@ int JLinkStatsPoll(char *buf, size_t len)
    (void)buf; (void)len;
    return 0;
 #endif
+}
+
+void JLinkStatsLast(unsigned *hopsPerSec, unsigned *hopMsX100,
+                    unsigned *slipped, unsigned *timeouts)
+{
+   if (hopsPerSec)
+      *hopsPerSec = jlinkLastStatHopsPerSec;
+   if (hopMsX100)
+      *hopMsX100 = jlinkLastStatHopX100;
+   if (slipped)
+      *slipped = jlinkLastStatSlipped;
+   if (timeouts)
+      *timeouts = jlinkLastStatTimeouts;
 }
 
 void JLinkPump(void)
