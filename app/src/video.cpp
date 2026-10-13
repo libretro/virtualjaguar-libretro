@@ -21,6 +21,9 @@
 #ifndef GL_TEXTURE_SWIZZLE_A
 #define GL_TEXTURE_SWIZZLE_A 0x8E45
 #endif
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D
+#endif
 
 namespace vj {
 
@@ -55,6 +58,9 @@ void VideoOut::upload(const Frame& f) {
     // of XRGB8888 is garbage and must never reach the blend unit.
     if (f.width != w_ || f.height != h_) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
+        // Level 0 only.  librashader samples this texture with mipmapped min filters;
+        // without a mip chain it would be "incomplete" and read as black.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)f.width, (GLsizei)f.height, 0,
                      GL_BGRA, GL_UNSIGNED_BYTE, f.pixels.data());
         w_ = f.width;
@@ -105,10 +111,11 @@ ImVec4 VideoOut::draw(ImDrawList* dl, ImVec2 pos, ImVec2 size, float coreAspect,
         sf.fps = fps_;
         unsigned out = shader.render(sf);
         if (out) {
-            // The chain draws bottom-up (GL window convention), so the texture is
-            // flipped relative to ImGui's top-down UVs.
+            // librashader writes the output texture in the same row order as its
+            // input (row 0 = top of the picture), so the UVs are the plain ones.
+            // (Checked by `vj_shader_tests gl`, which reads the pixels back.)
             dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)out), ImVec2(r.x / ps, r.y / ps),
-                         ImVec2((r.x + r.w) / ps, (r.y + r.h) / ps), ImVec2(0, 1), ImVec2(1, 0),
+                         ImVec2((r.x + r.w) / ps, (r.y + r.h) / ps), ImVec2(0, 0), ImVec2(1, 1),
                          IM_COL32_WHITE);
             return ImVec4(r.x / ps, r.y / ps, r.w / ps, r.h / ps);
         }

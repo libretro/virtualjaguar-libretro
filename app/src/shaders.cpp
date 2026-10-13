@@ -44,6 +44,9 @@ namespace {
 #ifndef GL_FRAMEBUFFER
 #define GL_FRAMEBUFFER 0x8D40
 #endif
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D
+#endif
 
 typedef void (*BindFramebufferFn)(unsigned, unsigned);
 
@@ -269,7 +272,6 @@ bool ShaderChain::probeLibrary(bool retry) {
         I.lib = h;
         I.inst = inst;
         I.haveFnPtrs = true;
-        inst.instance_loaded = true;
         I.inst.instance_loaded = true;
         libPath_ = bare ? c : absolutePath(c);
         apiVersion_ = (unsigned)inst.instance_api_version();
@@ -483,6 +485,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
         // Shader output alpha is whatever the preset writes; the presenter blends,
         // so sample it as opaque.
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)f.outW, (GLsizei)f.outH, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, nullptr);
         I.outW = f.outW;

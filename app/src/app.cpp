@@ -653,6 +653,7 @@ int App::runInteractive(const CliArgs& a) {
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
+        devSelectVideoTab = a.showWindow.rfind("settings-video", 0) == 0;
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
     }

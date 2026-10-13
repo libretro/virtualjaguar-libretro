@@ -218,7 +218,11 @@ void drawSettings(App& app) {
     }
     if (ImGui::BeginTabBar("##tabs")) {
         if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video")) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Video", nullptr, app.devSelectVideoTab ? ImGuiTabItemFlags_SetSelected : 0)) {
+            app.devSelectVideoTab = false;
+            drawVideoTab(app);
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Audio")) { drawAudioTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Input")) { drawInputTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Storage")) { drawStorageTab(app); ImGui::EndTabItem(); }

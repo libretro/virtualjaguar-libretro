@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "imgui_impl_opengl3_loader.h"
+#include "config.h"
 #include "paths.h"
 #include "present_util.h"
 #include "shaders.h"
@@ -247,10 +248,36 @@ static void testFallback() {
     fs::remove_all(d, ec);
 }
 
+// Optional (VJ_TEST_SLANG_DIR=<slang-shaders checkout>): the parser against ~1500
+// real presets.  Not part of the default run; prints what it finds.
+static void testRealCheckout() {
+    const char* dir = std::getenv("VJ_TEST_SLANG_DIR");
+    if (!dir || !*dir) return;
+    Uint64 t0 = SDL_GetTicks();
+    bool trunc = false;
+    std::vector<std::string> l = scanPresets(dir, 100000, 12, &trunc);
+    Uint64 t1 = SDL_GetTicks();
+    std::string root = dir;
+    if (root.back() != '/') root += '/';
+    size_t bad = 0;
+    for (const std::string& rel : l) {
+        PresetInfo p = inspectPreset(root + rel);
+        if (!p.ok) {
+            if (bad++ < 12) std::printf("  not valid: %s: %s\n", rel.c_str(), p.error.c_str());
+        }
+    }
+    std::printf("slang-shaders: %zu presets found in %llu ms%s, %zu failed inspection (%llu ms total)\n", l.size(),
+                (unsigned long long)(t1 - t0), trunc ? " (truncated)" : "", bad, (unsigned long long)(SDL_GetTicks() - t0));
+    CHECK(l.size() > 100, "a slang-shaders checkout has hundreds of presets");
+    CHECK(inspectPreset(root + "crt/crt-easymode.slangp").ok, "crt-easymode.slangp");
+    CHECK(inspectPreset(root + "crt/crt-geom.slangp").ok, "crt-geom.slangp");
+}
+
 static int runUnit() {
     testRect();
     testPresetParsing();
     testFallback();
+    testRealCheckout();
     std::printf("shader_tests unit: %s (%s headers)\n", g_fail ? "FAIL" : "OK",
                 ShaderChain::builtWithHeaders() ? "with" : "without");
     return g_fail ? 1 : 0;
@@ -333,6 +360,7 @@ static unsigned makeTexture(int w, int h, const std::vector<unsigned char>& rgba
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, 0x813D /*GL_TEXTURE_MAX_LEVEL*/, 0);   // no mip chain; see video.cpp
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, 0x8058 /*GL_RGBA8*/, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     return t;
@@ -409,12 +437,12 @@ static int runGl() {
     CHECK(out != 0, "render returned no texture: %s", sc.lastError().c_str());
     if (out) {
         std::vector<unsigned char> o = readTexture(out, OW, OH);
-        // GL's origin is bottom-left, so the texture's row 0 is the BOTTOM of the
-        // image (this is why the presenter flips its UVs): blue there, red at the top.
-        const unsigned char* bottom = px(o, 64, 6);
-        const unsigned char* top = px(o, 64, OH - 7);
+        // The output texture keeps the input's row order (row 0 = top of the picture),
+        // which is why the presenter draws it with plain UVs: red on top, blue below.
+        const unsigned char* top = px(o, 64, 6);
+        const unsigned char* bottom = px(o, 64, OH - 7);
+        CHECK(top[0] > 240 && top[2] < 15, "top of the picture (row 6) should be red, got %d,%d,%d", top[0], top[1], top[2]);
         CHECK(bottom[2] > 240 && bottom[0] < 15, "bottom of the picture should be blue, got %d,%d,%d", bottom[0], bottom[1], bottom[2]);
-        CHECK(top[0] > 240 && top[2] < 15, "top of the picture should be red, got %d,%d,%d", top[0], top[1], top[2]);
         // crisp edge: the red/blue seam is on a 4-pixel source boundary; one row either
         // side of it is pure, not blended.
         const unsigned char* a = px(o, 64, OH / 2 - 1);
@@ -460,6 +488,39 @@ static int runGl() {
             mx = std::max(mx, v);
         }
         CHECK(mx - mn <= 2, "strength 0 should be flat: min %d max %d", mn, mx);
+    }
+
+    // ---- any other preset on request (a slang-shaders checkout): VJ_TEST_PRESETS="a.slangp;b.slangp" ----
+    if (const char* extra = std::getenv("VJ_TEST_PRESETS")) {
+        f.srcTex = srcTex;
+        std::string list = extra;
+        size_t a0 = 0;
+        while (a0 < list.size()) {
+            size_t b0 = list.find(';', a0);
+            std::string one = list.substr(a0, b0 == std::string::npos ? std::string::npos : b0 - a0);
+            a0 = b0 == std::string::npos ? list.size() : b0 + 1;
+            if (one.empty()) continue;
+            ShaderChain ex;
+            ex.setLibrarySearchDirs({});
+            ex.enabled = true;
+            std::string e2;
+            bool used = ex.usePreset(one, e2);
+            unsigned t = 0;
+            for (int i = 1; used && i <= 3; i++) {   // a few frames: history/feedback passes warm up
+                f.frameCount = (uint64_t)i;
+                t = ex.render(f);
+            }
+            long sum = 0;
+            if (t) {
+                std::vector<unsigned char> o = readTexture(t, OW, OH);
+                for (size_t i = 0; i < o.size(); i += 4) sum += o[i] + o[i + 1] + o[i + 2];
+            }
+            std::printf("preset %s: %s, %zu params, output energy %ld%s%s\n", one.c_str(),
+                        t ? "rendered" : "NOT rendered", ex.params().size(), sum,
+                        t ? "" : " -- ", t ? "" : (used ? ex.lastError().c_str() : e2.c_str()));
+            CHECK(t != 0 && sum > 0, "%s did not render a picture", one.c_str());
+            ex.destroyGL();
+        }
     }
 
     // ---- a shader that does not compile: clean fallback, one notice, no crash ----

@@ -21,7 +21,7 @@ static void usage(const char* argv0) {
         "  --verbose             log the core's INFO messages\n"
         "  --version, --help\n"
         "\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about]\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|settings-video|states|about]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
