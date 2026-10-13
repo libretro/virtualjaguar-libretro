@@ -301,9 +301,9 @@ static void testCore(const std::string& rom) {
         s.port = hostPort;
         s.device = NetDevice::VoiceModem;
         CHECK(np.start(s, err));
+        frames(host, np, 5);
         CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "tcp_server");
         CHECK_EQ(optionOf(host, "virtualjaguar_uart_device"), "voicemodem");
-        frames(host, np, 5);
         CHECK(np.link() == LinkState::Waiting);
         // ...and it really listens there: a partner connecting brings the link up as a Voice Modem.
         sock_t partner = connectTo(hostPort);
@@ -343,6 +343,8 @@ static void testCore(const std::string& rom) {
         s.address = "127.0.0.1";
         s.port = port3;
         CHECK(np.start(s, err));
+        CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "disabled");   // a switch of mode bounces too
+        frames(host, np, 3);
         CHECK_EQ(optionOf(host, "virtualjaguar_netlink"), "tcp_client");
         CHECK_EQ(optionOf(host, "virtualjaguar_netlink_host"), "vj_netlink.txt");
         {

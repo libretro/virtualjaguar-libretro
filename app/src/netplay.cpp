@@ -240,17 +240,21 @@ bool Netplay::start(const NetSettings& s, std::string& err, std::vector<std::str
             return false;
         }
     }
-    const bool sameMode = appliedValid_ && applied_.role == s.role;
-    const bool moved = appliedValid_ && (applied_.port != s.port || applied_.address != s.address);
-    if (sameMode && moved && (s.role == NetRole::Host || s.role == NetRole::Join) && host_.isLoaded()) {
-        // UARTSetLinkMode() only re-opens on a mode change, and the TCP client copies its endpoint
-        // when it opens: go through "disabled" for a couple of frames first.
+    const bool endpoint = s.role == NetRole::Host || s.role == NetRole::Join;
+    const bool changed = appliedValid_ && (applied_.role != s.role ||
+                                           (endpoint && (applied_.port != s.port || applied_.address != s.address)));
+    if (changed && host_.isLoaded()) {
+        // Go through "disabled" for a couple of frames first.  UARTSetLinkMode() only re-opens on a mode
+        // change and the TCP client copies its endpoint when it opens, so a new host or port needs the
+        // bounce; and the core only logs link UP/DOWN on a change, so a switch that goes straight from one
+        // connected link to another would never report the new one.
         setOverride(kModeKey, modeValue(NetRole::Off), nullptr);
         bouncing_ = true;
         bounceFrames_ = 2;
         bounceTarget_ = s;
         want_ = s;
         state_ = LinkState::Waiting;
+        upDevice_.clear();
         peerText_.clear();
         stats_ = LinkStats();
         haveStats_ = false;
