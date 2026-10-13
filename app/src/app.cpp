@@ -67,6 +67,7 @@ void App::loadConfig() {
     present.stretch = cfg.getBool("video.stretch", false);
     present.aspectOverride = cfg.getFloat("video.aspect", 0.0f);
     vsync = cfg.getBool("video.vsync", true);
+    video.shader.loadSettings(cfg, paths.root);
     volume = cfg.getFloat("audio.volume", 1.0f);
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
@@ -88,6 +89,7 @@ void App::saveConfig() {
     cfg.setBool("video.stretch", present.stretch);
     cfg.setFloat("video.aspect", present.aspectOverride);
     cfg.setBool("video.vsync", vsync);
+    video.shader.saveSettings(cfg);
     cfg.setFloat("audio.volume", volume);
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
@@ -507,6 +509,9 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_COMMA:
         if (mod) showSettings = !showSettings;
         break;
+    case SDLK_L:
+        if (mod) library.show = !library.show;
+        break;
     default: break;
     }
 }
@@ -656,6 +661,7 @@ int App::runInteractive(const CliArgs& a) {
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
+        devSelectVideoTab = a.showWindow.rfind("settings-video", 0) == 0;
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
     }
@@ -666,6 +672,10 @@ int App::runInteractive(const CliArgs& a) {
     std::string firstErr;
     if (a.noContent) openNoContent();
     else if (!a.content.empty()) openContent(a.content[0]);
+    library.createTexture = &VideoOut::createTextureRGBA;
+    library.destroyTexture = &VideoOut::destroyTexture;
+    library.start(paths, cfg, !host.isLoaded());
+    if (a.showWindow == "library") library.show = true;
 
     lastTick_ = now();
     fpsWindowStart_ = now();
@@ -678,6 +688,7 @@ int App::runInteractive(const CliArgs& a) {
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         stepEmulation();
+        video.setSourceFps((float)host.fps());
         video.upload(host.frame());
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -714,6 +725,7 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    library.stop();   // joins its threads and frees its textures while the GL context is still alive
     if (a.verbose) {
         double secs = now() - fpsWindowStart_;
         std::fprintf(stderr, "[app] audio: queued %.1f ms, ratio %.5f, underruns %llu\n", audio.queuedMs(),
