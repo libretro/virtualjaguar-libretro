@@ -25,6 +25,9 @@ docs/RELEASE_NOTES_v3.8.1.md
   overlay (F3); mice, rotary, analog, driving, paddle, 6D, light gun
   and Team Tap (#837).
 * Save states with thumbnails and a state manager.
+* Several windows at once: File > New window (Ctrl/Cmd+N). Extra
+  copies get their own save folder, leave the shared settings alone and
+  can be pinned to one controller; netplay on one machine works (#833).
 * Netplay window for the link-cable games on a LAN (not rollback;
   rollback is #864); Settings greys out the link options it controls
   during a session (#898).

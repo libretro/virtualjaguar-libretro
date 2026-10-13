@@ -18,10 +18,18 @@ struct Paths {
     std::string configFile;  // <root>config.ini
     std::string imguiIni;    // <root>imgui.ini
     bool portable = false;
+    int instance = 1;        // 1 = the first copy running on this data folder (instance.h)
+    std::string savesShared;      // instance > 1: the first copy's saves/ folder (read-only fallback for a game's first run)
+    std::string instanceConfig;   // instance > 1: <root>config-N.ini, the only settings file it writes
 
     // Resolves and creates the directories.  Returns false (with `err`) if the
     // data root cannot be created.
     bool resolve(const std::string& overrideDir, std::string& err);
+    // Switches to instance `n` (instance.h).  n <= 1 changes nothing.  Otherwise game saves go
+    // to saves/instance-N/ (the GameDrive SD tree the core keeps under the save folder follows),
+    // and imgui.ini / the settings file get -N names.  Returns false (with `err`) if the
+    // save folder cannot be created.
+    bool applyInstance(int n, std::string& err);
 };
 
 // Directory part / file stem / extension helpers (no filesystem access).

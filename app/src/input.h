@@ -51,6 +51,16 @@ public:
     std::vector<std::string> gamepadNames() const;
     size_t gamepadCount() const { return pads_.size(); }
 
+    // ---- which controllers this copy of the app uses (instance.h) ------------------------------
+    // SDL hands every connected controller to every process, so two copies side by side would both
+    // answer the same pad.  -1 = all (the default), 0 = none (keyboard only), k = only the k-th
+    // connected controller (SDL's enumeration order, which is connection order).  Applies at once to
+    // the controllers already open; hot-plug honours it too.
+    void setPadFilter(int f);
+    int padFilter() const { return padFilter_; }
+    // Names of every controller SDL currently lists (open or not), in the order "controller k" uses.
+    static std::vector<std::string> connectedPadNames();
+
     // ---- remapping (remap.h) ------------------------------------------------------
     // Binds the profiles to the app config and loads <dataRoot>gamecontrollerdb.txt (extra
     // SDL gamepad mappings for controllers SDL does not know) if it exists.
@@ -119,6 +129,9 @@ private:
     void bindCaptured(const Binding& b);
     DevKind mousePortKind() const;
 
+    bool padAllowed(SDL_JoystickID id) const;
+    void openPad(SDL_JoystickID id);
+    int padFilter_ = -1;
     std::vector<Pad> pads_;
     CoreInput core_;
     Router router_;

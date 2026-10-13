@@ -220,6 +220,7 @@ set(VJ_APP_SOURCES
     src/main.cpp
     src/app.cpp
     src/paths.cpp
+    src/instance.cpp
     src/config.cpp
     src/core_host.cpp
     src/audio.cpp

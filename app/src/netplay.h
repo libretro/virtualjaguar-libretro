@@ -89,6 +89,11 @@ public:
 
     // Where the "From file" address is written: the same system directory the core is told about.
     void setSystemDir(const std::string& dir) { systemDir_ = dir; }
+    // A second copy of the app on the same data folder (instance.h) shares this system directory
+    // with the first, and the core's "From file" address (<system>/vj_netlink.txt) is ONE file: two
+    // copies joining different hosts would overwrite each other's.  Such a copy hands the core the
+    // address through VJ_NETLINK_HOST instead -- an environment variable is per process.
+    void setAddressViaEnv(bool on) { addressViaEnv_ = on; }
 
     // ---- control -----------------------------------------------------------
     // Applies `s` (host/join/loopback), or Off to disconnect.  Returns false with `err` when
@@ -144,6 +149,7 @@ private:
     void clearAll();
     bool writeAddressFile(const std::string& addr, std::string& err);
     void setPortEnv(int port, bool on);
+    void setHostEnv(const std::string& addr);   // "" = remove (only if we set it)
 
     CoreHost& host_;
     std::string systemDir_;
@@ -166,6 +172,8 @@ private:
     unsigned speedup_ = 1;
     std::string openError_, discoveryError_, droppedHost_;
     bool portEnvSet_ = false;
+    bool hostEnvSet_ = false;
+    bool addressViaEnv_ = false;
 };
 
 }  // namespace vj
