@@ -382,11 +382,14 @@ typedef struct
    uint32_t blit_cmds, blit_bushi;          /* B_CMD writes, of which BUSHI */
    uint32_t blit_prd, blit_pwr;             /* phrase reads/writes (BENCH_PROFILE) */
    uint32_t vc;                             /* VC at the halfline callback */
+   uint32_t dsp_ext_spin;                   /* of dsp_ext, issued from a DSP window */
+   uint32_t dsp_ins_work, dsp_ins_spin;     /* DSP instructions (needs vjtrace_arm) */
 } vjtrace_bus_hl;
 
 extern int vjtrace_bus_armed;
 void vjtrace_bus_arm(int on);
 void vjtrace_bus_set_m68k_window(uint32_t i, uint32_t lo, uint32_t hi);
+void vjtrace_bus_set_dsp_window(uint32_t i, uint32_t lo, uint32_t hi);
 uint32_t vjtrace_bus_ring_head(void);
 int vjtrace_bus_ring_read(uint32_t idx, vjtrace_bus_hl *out);
 void vjtrace_bus_m68k(uint32_t addr, uint32_t naccesses);

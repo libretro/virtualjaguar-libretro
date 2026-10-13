@@ -59,8 +59,10 @@ static uint32_t cur_frame = 0;
  * call site inside GPUExec()/DSPExec(), so it must be linkable. */
 int vjtrace_armed = 0;
 
-/* Bus census (S2) hook used by vjtrace_emit(); defined further down. */
+/* Bus census (S2) hooks used by vjtrace_emit()/vjtrace_pchist_dsp();
+ * defined further down. */
 static void vjt_bus_blit_cmd(uint32_t cmd);
+static void vjt_bus_dsp_insn(uint32_t pc);
 
 void vjtrace_arm(void)    { vjtrace_armed = 1; }
 void vjtrace_disarm(void) { vjtrace_armed = 0; }
@@ -287,6 +289,8 @@ void vjtrace_pchist_dsp(uint32_t pc)
     * vjtrace_pchist_gpu() above. */
    if (!vjtrace_armed)
       return;
+   if (vjtrace_bus_armed)
+      vjt_bus_dsp_insn(pc);
    dsp_pchist[dsp_pchist_head] = pc;
    dsp_pchist_head = (dsp_pchist_head + 1) & (VJT_PCHIST_CAP - 1);
    if (dsp_pchist_fill < VJT_PCHIST_CAP)
@@ -623,6 +627,10 @@ int vjtrace_bus_armed = 0;
 uint32_t *vjtrace_bus_m68k_pch = NULL;
 uint32_t *vjtrace_bus_gpu_pch  = NULL;
 uint32_t *vjtrace_bus_dsp_pch  = NULL;
+/* DSP instructions by PC (local RAM, by word); needs vjtrace_arm(). */
+uint32_t *vjtrace_bus_dsp_ipch = NULL;
+static uint32_t bus_dsp_nwin = 0;
+static uint32_t bus_dsp_lo[VJT_BUS_MAX_WIN], bus_dsp_hi[VJT_BUS_MAX_WIN];
 
 static vjtrace_bus_hl bus_cur;
 static vjtrace_bus_hl bus_ring[VJT_BUS_RING];
@@ -684,7 +692,9 @@ void vjtrace_bus_arm(int on)
       vjtrace_bus_m68k_pch = (uint32_t *)calloc(VJT_BUS_M68K_PCH, sizeof(uint32_t));
       vjtrace_bus_gpu_pch  = (uint32_t *)calloc(VJT_BUS_GPU_PCH, sizeof(uint32_t));
       vjtrace_bus_dsp_pch  = (uint32_t *)calloc(VJT_BUS_DSP_PCH, sizeof(uint32_t));
-      if (!vjtrace_bus_m68k_pch || !vjtrace_bus_gpu_pch || !vjtrace_bus_dsp_pch)
+      vjtrace_bus_dsp_ipch = (uint32_t *)calloc(VJT_BUS_DSP_PCH, sizeof(uint32_t));
+      if (!vjtrace_bus_m68k_pch || !vjtrace_bus_gpu_pch || !vjtrace_bus_dsp_pch
+          || !vjtrace_bus_dsp_ipch)
          return;
    }
    if (on)
@@ -709,6 +719,35 @@ void vjtrace_bus_set_m68k_window(uint32_t i, uint32_t lo, uint32_t hi)
    bus_m68k_hi[i] = hi;
    if (i + 1 > bus_m68k_nwin)
       bus_m68k_nwin = i + 1;
+}
+
+void vjtrace_bus_set_dsp_window(uint32_t i, uint32_t lo, uint32_t hi)
+{
+   if (i >= VJT_BUS_MAX_WIN)
+      return;
+   bus_dsp_lo[i] = lo;
+   bus_dsp_hi[i] = hi;
+   if (i + 1 > bus_dsp_nwin)
+      bus_dsp_nwin = i + 1;
+}
+
+static int vjt_bus_dsp_in_spin(uint32_t pc)
+{
+   uint32_t i;
+   for (i = 0; i < bus_dsp_nwin; i++)
+      if (pc >= bus_dsp_lo[i] && pc < bus_dsp_hi[i])
+         return 1;
+   return 0;
+}
+
+static void vjt_bus_dsp_insn(uint32_t pc)
+{
+   if (vjt_bus_dsp_in_spin(pc))
+      bus_cur.dsp_ins_spin++;
+   else
+      bus_cur.dsp_ins_work++;
+   if (vjtrace_bus_dsp_ipch && pc >= 0xF1B000 && pc < 0xF1D000)
+      vjtrace_bus_dsp_ipch[(pc - 0xF1B000) >> 1]++;
 }
 
 uint32_t vjtrace_bus_ring_head(void)
@@ -811,6 +850,8 @@ void vjtrace_bus_dsp(uint32_t addr, uint32_t n16)
    bus_cur.dsp_ext += n16;
    bus_cur.dsp_mem += n16 * vjt_bus_price(addr, &bus_row_dsp);
    pc = dsp_pc;
+   if (vjt_bus_dsp_in_spin(pc))
+      bus_cur.dsp_ext_spin += n16;
    if (vjtrace_bus_dsp_pch && pc >= 0xF1B000 && pc < 0xF1D000)
       vjtrace_bus_dsp_pch[(pc - 0xF1B000) >> 1] += n16;
 }

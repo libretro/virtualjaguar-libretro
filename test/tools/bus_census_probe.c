@@ -35,6 +35,7 @@
 #include <string.h>
 #include <stddef.h>
 #include "../harness/harness.h"
+#include "../../src/debug/gdbdisasm.h"
 
 #define MAX_FIELDS 20000
 #define MAXWIN     8
@@ -57,14 +58,17 @@ typedef struct
    uint32_t blit_cmds, blit_bushi;
    uint32_t blit_prd, blit_pwr;
    uint32_t vc;
+   uint32_t dsp_ext_spin;
+   uint32_t dsp_ins_work, dsp_ins_spin;
 } bus_hl;
 
 static const char *col_names =
    "m68k_bus_work,m68k_bus_spin,m68k_clk_work,m68k_clk_spin,m68k_rom_bus,"
    "m68k_stall_clk,gpu_ext_work,gpu_ext_spin,gpu_mem_work,gpu_mem_spin,"
    "gpu_dmaen,gpu_cyc_work,gpu_cyc_total,dsp_ext,dsp_mem,op_clk,op_objs,"
-   "op_release,blit_cmds,blit_bushi,blit_prd,blit_pwr";
-#define NCOL 22
+   "op_release,blit_cmds,blit_bushi,blit_prd,blit_pwr,vc_dup,dsp_ext_spin,"
+   "dsp_ins_work,dsp_ins_spin";
+#define NCOL 26
 
 /* BusArbiter layout prefix (src/core/bus_arbiter.h). */
 typedef struct
@@ -84,8 +88,8 @@ static uint64_t last_hash;
 static int cur_flip;
 static uint8_t flip_at[MAX_FIELDS + 2];
 static unsigned nfields;
-static uint32_t **p_m68k_pch, **p_gpu_pch, **p_dsp_pch;
-static uint32_t *snap_m68k, *snap_gpu, *snap_dsp;
+static uint32_t **p_m68k_pch, **p_gpu_pch, **p_dsp_pch, **p_dsp_ipch;
+static uint32_t *snap_m68k, *snap_gpu, *snap_dsp, *snap_dspi;
 static uint64_t ring_lost;
 
 static void on_video(void *ud, const void *data, unsigned w, unsigned h,
@@ -118,6 +122,7 @@ static void snapshot(void)
    memcpy(snap_m68k, *p_m68k_pch, 0x100000 * sizeof(uint32_t));
    memcpy(snap_gpu, *p_gpu_pch, 0x800 * sizeof(uint32_t));
    memcpy(snap_dsp, *p_dsp_pch, 0x1000 * sizeof(uint32_t));
+   memcpy(snap_dspi, *p_dsp_ipch, 0x1000 * sizeof(uint32_t));
 }
 
 static bool on_frame(void *ud, unsigned frame)
@@ -216,8 +221,12 @@ int main(int argc, char **argv)
    harness_config cfg = HARNESS_CONFIG_DEFAULT;
    const char *out_path = NULL, *frames_path = NULL;
    unsigned a, i, top = 30, f;
-   uint32_t glo[MAXWIN], ghi[MAXWIN], mlo[MAXWIN], mhi[MAXWIN];
-   unsigned ng = 0, nm = 0;
+   uint32_t glo[MAXWIN], ghi[MAXWIN], mlo[MAXWIN], mhi[MAXWIN], dlo[MAXWIN], dhi[MAXWIN];
+   unsigned ng = 0, nm = 0, nd = 0, ndis = 0;
+   uint32_t dis_at[16], dis_n[16];
+   int dis_dsp[16];
+   void (*trace_arm)(void);
+   void (*dsp_setwin)(uint32_t, uint32_t, uint32_t);
    int default_gpu = 1;
    void (*busy_arm)(int);
    void (*busy_reset)(void);
@@ -239,14 +248,25 @@ int main(int argc, char **argv)
       else if (!strcmp(argv[a], "--frames-csv") && (int)a + 1 < argc) frames_path = argv[++a];
       else if (!strcmp(argv[a], "--top") && (int)a + 1 < argc) top = (unsigned)strtoul(argv[++a], NULL, 10);
       else if (!strcmp(argv[a], "--no-default-gpu-win")) default_gpu = 0;
-      else if ((!strcmp(argv[a], "--gpu-win") || !strcmp(argv[a], "--m68k-win")) && (int)a + 1 < argc)
+      else if ((!strcmp(argv[a], "--disasm-gpu") || !strcmp(argv[a], "--disasm-dsp"))
+               && (int)a + 1 < argc && ndis < 16)
       {
-         int is_gpu = !strcmp(argv[a], "--gpu-win");
+         char *c;
+         dis_dsp[ndis] = !strcmp(argv[a], "--disasm-dsp");
+         dis_at[ndis] = (uint32_t)strtoul(argv[++a], &c, 16);
+         dis_n[ndis] = (*c == ':') ? (uint32_t)strtoul(c + 1, NULL, 10) : 16;
+         ndis++;
+      }
+      else if ((!strcmp(argv[a], "--gpu-win") || !strcmp(argv[a], "--m68k-win")
+                || !strcmp(argv[a], "--dsp-win")) && (int)a + 1 < argc)
+      {
+         int kind = !strcmp(argv[a], "--gpu-win") ? 0 : !strcmp(argv[a], "--m68k-win") ? 1 : 2;
          char *c;
          uint32_t l = (uint32_t)strtoul(argv[++a], &c, 16), h2;
          h2 = (*c == ':') ? (uint32_t)strtoul(c + 1, NULL, 16) : l + 2;
-         if (is_gpu && ng < MAXWIN) { glo[ng] = l; ghi[ng] = h2; ng++; }
-         else if (!is_gpu && nm < MAXWIN) { mlo[nm] = l; mhi[nm] = h2; nm++; }
+         if (kind == 0 && ng < MAXWIN) { glo[ng] = l; ghi[ng] = h2; ng++; }
+         else if (kind == 1 && nm < MAXWIN) { mlo[nm] = l; mhi[nm] = h2; nm++; }
+         else if (kind == 2 && nd < MAXWIN) { dlo[nd] = l; dhi[nd] = h2; nd++; }
       }
    }
    if (!harness_init_from_args(&cfg, argc, argv))
@@ -301,10 +321,14 @@ int main(int argc, char **argv)
    p_m68k_pch  = (uint32_t **)harness_dlsym(&cfg, "vjtrace_bus_m68k_pch");
    p_gpu_pch   = (uint32_t **)harness_dlsym(&cfg, "vjtrace_bus_gpu_pch");
    p_dsp_pch   = (uint32_t **)harness_dlsym(&cfg, "vjtrace_bus_dsp_pch");
+   p_dsp_ipch  = (uint32_t **)harness_dlsym(&cfg, "vjtrace_bus_dsp_ipch");
+   trace_arm   = (void (*)(void))harness_dlsym(&cfg, "vjtrace_arm");
+   dsp_setwin  = (void (*)(uint32_t, uint32_t, uint32_t))harness_dlsym(&cfg, "vjtrace_bus_set_dsp_window");
    arb         = (bus_arb_prefix *)harness_dlsym(&cfg, "busArbiter");
    ram         = (uint8_t **)harness_dlsym(&cfg, "jaguarMainRAM");
    if (!busy_arm || !busy_reset || !busy_setwin || !bus_arm || !bus_setwin
-       || !p_head || !p_read || !p_m68k_pch || !p_gpu_pch || !p_dsp_pch || !arb)
+       || !p_head || !p_read || !p_m68k_pch || !p_gpu_pch || !p_dsp_pch || !arb
+       || !p_dsp_ipch || !trace_arm || !dsp_setwin)
    {
       fprintf(stderr, "bus_census_probe: census symbols not exported -- "
                       "build the core with TEST_EXPORTS=1\n");
@@ -315,9 +339,12 @@ int main(int argc, char **argv)
       busy_setwin(i, glo[i], ghi[i]);
    for (i = 0; i < nm; i++)
       bus_setwin(i, mlo[i], mhi[i]);
+   for (i = 0; i < nd; i++)
+      dsp_setwin(i, dlo[i], dhi[i]);
    busy_reset();
    busy_arm(1);
    bus_arm(1);
+   trace_arm();      /* DSP per-instruction hook rides vjtrace_armed */
    if (!*p_m68k_pch)
    {
       fprintf(stderr, "bus_census_probe: census allocation failed\n");
@@ -327,6 +354,7 @@ int main(int argc, char **argv)
    snap_m68k = (uint32_t *)calloc(0x100000, sizeof(uint32_t));
    snap_gpu  = (uint32_t *)calloc(0x800, sizeof(uint32_t));
    snap_dsp  = (uint32_t *)calloc(0x1000, sizeof(uint32_t));
+   snap_dspi = (uint32_t *)calloc(0x1000, sizeof(uint32_t));
    drained = p_head();
    if (out_path)
    {
@@ -415,6 +443,31 @@ int main(int argc, char **argv)
             0xF03000, top, nf, NULL, 0, 0);
    top_list("DSP external 16-bit transactions by DSP PC", *p_dsp_pch, snap_dsp, 0x1000,
             0xF1B000, top, nf, NULL, 0, 0);
+   top_list("DSP instructions by DSP PC", *p_dsp_ipch, snap_dspi, 0x1000,
+            0xF1B000, top, nf, NULL, 0, 0);
+   {
+      uint16_t (*rdw)(uint32_t, uint32_t) =
+         (uint16_t (*)(uint32_t, uint32_t))harness_dlsym(&cfg, "GPUReadWord");
+      for (i = 0; i < ndis && rdw; i++)
+      {
+         uint32_t k;
+         printf("disassembly (%s) at $%06X:\n", dis_dsp[i] ? "DSP" : "GPU", dis_at[i]);
+         for (k = 0; k < dis_n[i]; k++)
+         {
+            uint32_t addr = dis_at[i] + k * 2;
+            uint16_t w, w2, w3;
+            char line[128];
+            int n;
+            w  = rdw(addr, 0);
+            w2 = ((w >> 10) == 38) ? rdw(addr + 2, 0) : 0;
+            w3 = ((w >> 10) == 38) ? rdw(addr + 4, 0) : 0;
+            n = GDBDisasmOne(dis_dsp[i] ? GDBDisasmDSPMnemonics : GDBDisasmGPUMnemonics,
+                             addr, w, w2, w3, line, (int)sizeof(line) - 1);
+            line[n] = '\0';
+            printf("  %s\n", line);
+         }
+      }
+   }
    harness_shutdown(&cfg);
    return 0;
 }
