@@ -190,6 +190,8 @@ set(VJ_APP_SOURCES
     src/shaders.cpp
     src/shaders_ui.cpp
     src/input.cpp
+    src/remap.cpp
+    src/remap_ui.cpp
     src/ui.cpp
     src/library_ui.cpp)
 

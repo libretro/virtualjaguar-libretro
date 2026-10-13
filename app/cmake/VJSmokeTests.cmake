@@ -13,6 +13,13 @@
 #   smoke_bad_option  an --option key the core never registered must be REJECTED
 #                   (it would otherwise silently run the default).
 #   smoke_cd        the synthetic Jaguar CD image, path-loaded (no BIOS).
+#   remap_unit      controller remapping logic (test/remap_test.cpp): binding
+#                   serialisation, profile / per-game override precedence, the
+#                   config round trip, keypad -> core-input translation, the
+#                   keypad overlay, bind capture, content identity.  No core.
+#   input_e2e       the same translation driving the REAL core (test/input_e2e.cpp):
+#                   every Jaguar control on both ports, incl. keypad 7-9 * #,
+#                   must set exactly its joypad-matrix slot.
 #
 # The expected hash is a single value for every OS and CPU: the core is meant to
 # be deterministic (run-ahead and netplay depend on it) and the SIMD blitter
@@ -77,3 +84,29 @@ else()
 endif()
 add_test(NAME library_unit COMMAND vj_library_tests)
 set_tests_properties(library_unit PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# ---------------------------------------------------------------------------
+# Controller remapping tests (no window; remap_unit does not even load the core).
+# ---------------------------------------------------------------------------
+add_executable(vj_remap_test test/remap_test.cpp src/remap.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_remap_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(vj_remap_test PRIVATE ${VJ_SDL3_TARGET})
+
+add_executable(vj_input_e2e test/input_e2e.cpp src/remap.cpp src/config.cpp src/paths.cpp src/core_host.cpp)
+target_include_directories(vj_input_e2e PRIVATE src)
+target_link_libraries(vj_input_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
+
+foreach(_t vj_remap_test vj_input_e2e)
+    if(MSVC)
+        target_compile_options(${_t} PRIVATE /W3 /utf-8)
+        target_compile_definitions(${_t} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(${_t} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+endforeach()
+
+add_test(NAME remap_unit COMMAND vj_remap_test)
+add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")
+set_tests_properties(remap_unit input_e2e PROPERTIES
+    TIMEOUT 300
+    FAIL_REGULAR_EXPRESSION "FAIL ")

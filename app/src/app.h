@@ -183,4 +183,9 @@ private:
 // ImGui frame builder (ui.cpp).
 void drawUi(App& app, bool& wantCaptureKeyboard);
 
+// Controller remapping UI and helpers (remap_ui.cpp).
+void drawControlsTab(App& app);
+void drawKeypadOverlay(App& app);
+bool inputPortIsRaw(const App& app, unsigned port);   // port has a device that reads the physical RetroPad
+
 }  // namespace vj
