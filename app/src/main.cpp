@@ -37,7 +37,7 @@ static void usage(const char* argv0) {
         "  --ra-hardcore         run the mock session in hardcore mode\n"
         "  --ra-poke FRAME:CODE  switch the core cheat CODE on at FRAME (a known RAM write)\n"
         "  --ra-expect-unlock ID / --ra-expect-no-unlock ID / --ra-expect-request NAME / --ra-expect-hash HEX\n"
-        "  --ra-expect-load-error / --ra-expect-hardcore / --ra-expect-softcore\n"
+        "  --ra-expect-load-error / --ra-expect-hardcore / --ra-expect-softcore / --ra-expect-blocked\n"
         "\n"
         "Drop a ROM or disc image on the window, or use File > Open.\n",
         VJ_APP_VERSION, argv0);
@@ -78,6 +78,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--ra-expect-load-error")) a.raExpectLoadError = true;
         else if (!std::strcmp(s, "--ra-expect-hardcore")) a.raExpectHardcore = true;
         else if (!std::strcmp(s, "--ra-expect-softcore")) a.raExpectSoftcore = true;
+        else if (!std::strcmp(s, "--ra-expect-blocked")) a.raExpectBlocked = true;
         else if (!std::strcmp(s, "--frames")) a.frames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--expect-hash")) a.expectHash = need(s);
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);

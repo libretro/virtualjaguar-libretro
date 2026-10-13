@@ -51,6 +51,7 @@ struct CliArgs {
     bool raExpectLoadError = false;                  // the game must NOT be identified
     bool raExpectHardcore = false;                   // hardcore active + state load refused
     bool raExpectSoftcore = false;                   // softcore: save + load state work, progress sidecar written
+    bool raExpectBlocked = false;                    // hardcore wanted, but a disallowed core option must keep it off
 };
 
 struct Osd {

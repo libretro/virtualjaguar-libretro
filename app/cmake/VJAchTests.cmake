@@ -18,6 +18,9 @@
 #   ra_hardcore          same session in hardcore: hardcore is active, a state SAVE
 #                        works, a state LOAD is refused, and cheats / rewind / slow
 #                        motion / frame advance report disallowed.
+#   ra_hardcore_blocked_setting  hardcore wanted but virtualjaguar_pal=enabled (which
+#                        rcheevos' disallowed-settings list forbids): hardcore stays
+#                        off, the blocker is named, and states load normally.
 #   ra_cd_chd_unsupported  a .chd disc is not identified (rcheevos cannot read CHD);
 #                        the game still runs and the app says why instead of hashing
 #                        garbage.
@@ -46,12 +49,18 @@ add_test(NAME ra_hardcore
             --ra-expect-hash ${VJ_YARC_MD5}
             "${VJ_ROMS}/yarc.j64")
 
+add_test(NAME ra_hardcore_blocked_setting
+    COMMAND virtualjaguar --headless --frames 60
+            --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-expect-blocked
+            --option virtualjaguar_pal=enabled
+            "${VJ_ROMS}/yarc.j64")
+
 add_test(NAME ra_cd_chd_unsupported
     COMMAND virtualjaguar --headless --frames 120 --allow-blank
             --ra-mock "${VJ_RA_FIX}" --ra-expect-load-error
             "${VJ_ROMS}/synth_jagcd.chd")
 
-set_tests_properties(ra_unlock_softcore ra_hardcore ra_cd_chd_unsupported PROPERTIES
+set_tests_properties(ra_unlock_softcore ra_hardcore ra_hardcore_blocked_setting ra_cd_chd_unsupported PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
 
@@ -63,3 +72,15 @@ target_compile_definitions(ach_http_test PRIVATE ${VJ_ACH_DEFS})
 target_link_libraries(ach_http_test PRIVATE ${VJ_ACH_LIBS} Threads::Threads)
 add_test(NAME ach_http COMMAND ach_http_test)
 set_tests_properties(ach_http PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+# Optional, ROM-gated: point VJ_RA_TEST_CUE at any Jaguar CD .cue to prove rcheevos
+# identifies a real disc (the second-session boot executable is hashed).  Skipped
+# (not registered) when unset or missing, so CI -- which has no discs -- never sees it.
+set(VJ_RA_TEST_CUE "" CACHE FILEPATH "Optional Jaguar CD .cue for the ra_cd_cue test")
+if(VJ_RA_TEST_CUE AND EXISTS "${VJ_RA_TEST_CUE}")
+    add_test(NAME ra_cd_cue
+        COMMAND virtualjaguar --headless --frames 60 --allow-blank
+                --ra-mock "${VJ_RA_FIX}" --ra-expect-request achievementsets
+                "${VJ_RA_TEST_CUE}")
+    set_tests_properties(ra_cd_cue PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "headless: FAIL")
+endif()

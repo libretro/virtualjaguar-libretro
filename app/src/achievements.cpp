@@ -672,7 +672,9 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         fail("game hash " + a.raExpectHash + " was never sent (sent:" + seen + ")");
     }
     if (a.raExpectLoadError && !loadFailed_) fail("expected the game NOT to be identified, but it was");
-    if (!a.raExpectLoadError && loadFailed_ && !a.raExpectUnlock.empty()) fail("the game was not identified");
+    if (!a.raExpectLoadError && loadFailed_ &&
+        (!a.raExpectUnlock.empty() || !a.raExpectRequests.empty() || !a.raExpectHash.empty()))
+        fail("the game was not identified");
 
     if (a.raExpectHardcore) {
         // Hardcore must be on and must refuse a state load; saving stays allowed.
@@ -682,6 +684,16 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         if (app_->loadState(0)) fail("a state load was ALLOWED in hardcore");
         if (allowCheats() || allowRewind() || allowSlowMotion() || allowFrameAdvance()) fail("a restricted feature is allowed in hardcore");
     }
+    if (a.raExpectBlocked) {
+        // Hardcore was asked for, but a core option rcheevos disallows must keep it
+        // off (and say which one) -- the player gets softcore, not a silent bypass.
+        if (!hardcoreWanted_) fail("hardcore was not requested");
+        if (hardcoreActive()) fail("hardcore is active despite a disallowed setting");
+        if (hardcoreBlocker().find("virtualjaguar_pal") == std::string::npos)
+            fail("the blocking setting was not reported (got \"" + hardcoreBlocker() + "\")");
+        if (rc_client_get_hardcore_enabled(client_) != 0) fail("rc_client is still in hardcore");
+        if (!allowStateLoad()) fail("state loads are refused although hardcore is off");
+    }
     if (a.raExpectSoftcore) {
         if (hardcoreActive()) fail("hardcore is unexpectedly active");
         if (!app_->saveState(0)) fail("could not save a state");
@@ -689,7 +701,8 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         if (!app_->loadState(0)) fail("a state load was refused in softcore");
     }
     if (ok)
-        std::printf("ra: OK (%zu unlock(s), %zu request(s): %s)\n", unlocked_.size(), mockLog_.size(),
+        std::printf("ra: OK (%zu unlock(s), game hash %s, %zu request(s): %s)\n", unlocked_.size(),
+                    mockHashes_.empty() ? "-" : mockHashes_.front().c_str(), mockLog_.size(),
                     [&] {
                         std::string s;
                         for (const std::string& r : mockLog_) s += (s.empty() ? "" : ",") + r;
