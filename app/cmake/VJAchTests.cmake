@@ -18,6 +18,11 @@
 #   ra_hardcore          same session in hardcore: hardcore is active, a state SAVE
 #                        works, a state LOAD is refused, and cheats / rewind / slow
 #                        motion / frame advance report disallowed.
+#   ra_hardcore_late_signin  signing in with hardcore on while a game is already
+#                        running restarts it exactly once (clean start); the mock
+#                        answers from pump(), one frame later, like the network.
+#   ra_cart_bin_extension  a .bin cartridge is hashed as a cartridge (it is a cart
+#                        extension for this core, not a disc track).
 #   ra_hardcore_blocked_setting  hardcore wanted but virtualjaguar_pal=enabled (which
 #                        rcheevos' disallowed-settings list forbids): hardcore stays
 #                        off, the blocker is named, and states load normally.
@@ -39,15 +44,33 @@ add_test(NAME ra_unlock_softcore
             --ra-expect-no-unlock 1003 --ra-expect-no-unlock 1004
             --ra-expect-request login2 --ra-expect-request awardachievement
             --ra-expect-hash ${VJ_YARC_MD5}
-            --ra-expect-softcore
+            --ra-expect-softcore --ra-expect-reset 0
             "${VJ_ROMS}/yarc.j64")
 
 add_test(NAME ra_hardcore
     COMMAND virtualjaguar --headless --frames 120
             --ra-mock "${VJ_RA_FIX}" --ra-hardcore
-            --ra-expect-hardcore
+            --ra-expect-hardcore --ra-expect-reset 0
             --ra-expect-hash ${VJ_YARC_MD5}
             "${VJ_ROMS}/yarc.j64")
+
+# Signing in LATE (frame 40, the game already running unrestricted) with hardcore
+# wanted must restart the game once: a hardcore run starts from a clean boot.
+add_test(NAME ra_hardcore_late_signin
+    COMMAND virtualjaguar --headless --frames 120
+            --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40
+            --ra-expect-hardcore --ra-expect-reset 1
+            --ra-expect-hash ${VJ_YARC_MD5}
+            "${VJ_ROMS}/yarc.j64")
+
+# .bin is a CARTRIDGE extension for this core (not a disc track): it must be
+# hashed as a cartridge, i.e. to the same MD5 as the .j64 it was copied from.
+configure_file("${VJ_ROMS}/yarc.j64" "${CMAKE_CURRENT_BINARY_DIR}/yarc_as_cart.bin" COPYONLY)
+add_test(NAME ra_cart_bin_extension
+    COMMAND virtualjaguar --headless --frames 60
+            --ra-mock "${VJ_RA_FIX}" --ra-expect-request achievementsets
+            --ra-expect-hash ${VJ_YARC_MD5}
+            "${CMAKE_CURRENT_BINARY_DIR}/yarc_as_cart.bin")
 
 add_test(NAME ra_hardcore_blocked_setting
     COMMAND virtualjaguar --headless --frames 60
@@ -60,7 +83,8 @@ add_test(NAME ra_cd_chd_unsupported
             --ra-mock "${VJ_RA_FIX}" --ra-expect-load-error
             "${VJ_ROMS}/synth_jagcd.chd")
 
-set_tests_properties(ra_unlock_softcore ra_hardcore ra_hardcore_blocked_setting ra_cd_chd_unsupported PROPERTIES
+set_tests_properties(ra_unlock_softcore ra_hardcore ra_hardcore_late_signin ra_cart_bin_extension
+                     ra_hardcore_blocked_setting ra_cd_chd_unsupported PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
 

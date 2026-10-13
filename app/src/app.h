@@ -51,6 +51,8 @@ struct CliArgs {
     bool raExpectLoadError = false;                  // the game must NOT be identified
     bool raExpectHardcore = false;                   // hardcore active + state load refused
     bool raExpectSoftcore = false;                   // softcore: save + load state work, progress sidecar written
+    unsigned raLoginAt = 0;                          // delay the mock sign-in to this frame (a late sign-in)
+    int raExpectReset = -1;                          // exact number of clean-start restarts (-1 = don't check)
     bool raExpectBlocked = false;                    // hardcore wanted, but a disallowed core option must keep it off
 };
 

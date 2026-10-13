@@ -23,6 +23,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <string>
@@ -146,6 +147,9 @@ private:
     unsigned unlockedBeforePoke_ = 0;
     unsigned pokeIndex_ = 0;
     unsigned mockFrames_ = 0;
+    unsigned hardcoreResets_ = 0;      // clean-start restarts performed (tests)
+    unsigned loginAt_ = 0;             // headless: delay the mock sign-in to this frame
+    bool ranUnrestricted_ = false;     // frames ran (or states loaded) outside hardcore since boot/reset
     double lastSettingsCheck_ = 0;
     std::string blocker_;
     std::string status_;
@@ -156,6 +160,9 @@ private:
 
     // headless / mock server
     std::string mockDir_;
+    struct MockReply { rc_client_server_callback_t cb; void* cbdata; std::string body; int status; };
+    std::deque<MockReply> mockQueue_;
+    void mockDeliver();
     std::vector<std::string> mockLog_;
     std::vector<std::string> mockHashes_;
     std::vector<std::string> mockUnhandled_;

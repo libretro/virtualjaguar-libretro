@@ -119,7 +119,7 @@ struct AchCallbacks {
         } else {
             std::string msg = error ? error : "login failed";
             a->setStatus("Sign-in failed: " + msg);
-            if (ud && result == RC_INVALID_CREDENTIALS) {
+            if (ud && result == RC_INVALID_CREDENTIALS && !a->mockMode()) {
                 // A stale token: forget it so the next start does not retry forever.
                 a->app_->cfg.erase("ra.token");
                 a->app_->saveConfig();
@@ -156,6 +156,14 @@ struct AchCallbacks {
             a->setStatus("Not tracking this game: " + msg);
         }
         a->applyHardcore();
+        // Hardcore starts from a clean boot.  Turning it on mid-game raises
+        // rc_client's RESET itself; this covers the other doors in -- signing in,
+        // or enabling RetroAchievements, while a game that has been running
+        // unrestricted (states loaded, cheats on) is already open.
+        if (result == RC_OK && a->gameKnown_ && rc_client_get_hardcore_enabled(c) && a->ranUnrestricted_) {
+            a->resetPending_ = true;
+            a->toast("Hardcore mode", "Restarting the game: a hardcore run must start from a clean boot.", 1, 6);
+        }
     }
 };
 
@@ -215,7 +223,9 @@ void Achievements::shutdown() {
 
 uint32_t Achievements::consoleId(const std::string& path) const {
     const std::string e = lowerExt(path);
-    if (e == "cue" || e == "chd" || e == "cdi" || e == "iso" || e == "bin" || e == "gdi") return RC_CONSOLE_ATARI_JAGUAR_CD;
+    // The core's own disc list (libretro.c: need_fullpath "cue|cdi|chd").  NOT bin:
+    // that is a cartridge extension for this core, and hashing it as a disc fails.
+    if (e == "cue" || e == "chd" || e == "cdi") return RC_CONSOLE_ATARI_JAGUAR_CD;
     return RC_CONSOLE_ATARI_JAGUAR;
 }
 
@@ -267,6 +277,7 @@ void Achievements::beginLoad() {
 void Achievements::onContentLoaded() {
     if (!client_) return;
     loadedPath_ = app_->host.contentPath();
+    ranUnrestricted_ = false;   // a fresh boot
     trackers.clear();
     challenges.clear();
     beginLoad();
@@ -285,11 +296,13 @@ void Achievements::onContentClosed() {
 }
 
 void Achievements::onReset() {
+    ranUnrestricted_ = false;
     if (client_ && rc_client_is_game_loaded(client_)) rc_client_reset(client_);
 }
 
 void Achievements::afterFrame() {
     if (!client_) return;
+    if (!hardcoreActive()) ranUnrestricted_ = true;   // this game has run (or loaded states) outside hardcore
     if (mockMode() && app_ && app_->window()) headlessFrame(++mockFrames_);   // pokes in a windowed mock session
     if (rc_client_is_game_loaded(client_) && memoryReady_) rc_client_do_frame(client_);
     else rc_client_idle(client_);
@@ -298,12 +311,14 @@ void Achievements::afterFrame() {
 void Achievements::pump() {
     if (!client_) return;
     http_.pump();
+    mockDeliver();
     rc_client_idle(client_);
     if (resetPending_) {
         resetPending_ = false;
         // Turning hardcore on mid-game restarts the game (rc_client's rule: the
         // run must start clean).  retro_cheat_reset: cheats may not outlive it.
         retro_cheat_reset();
+        hardcoreResets_++;
         if (app_ && app_->host.isLoaded()) app_->reset();
     }
     if (app_) {
@@ -445,7 +460,7 @@ void Achievements::logout() {
     loginPending_ = false;
     trackers.clear();
     challenges.clear();
-    if (app_) {
+    if (app_ && !mockMode()) {   // a mock session never owns the real token
         app_->cfg.erase("ra.token");
         app_->saveConfig();
     }
@@ -610,12 +625,22 @@ void Achievements::mockRespond(const std::string& post, rc_client_server_callbac
         body = "{\"Success\":false,\"Error\":\"mock: no fixture\"}";
         status = 404;
     }
-    rc_api_server_response_t sr;
-    std::memset(&sr, 0, sizeof sr);
-    sr.body = body.c_str();
-    sr.body_length = body.size();
-    sr.http_status_code = status;
-    cb(&sr, cbdata);
+    // Delivered from pump(), like a real reply: the production code never sees
+    // a response arrive inside the call that asked for it.
+    mockQueue_.push_back(MockReply{cb, cbdata, std::move(body), status});
+}
+
+void Achievements::mockDeliver() {
+    std::deque<MockReply> ready;
+    ready.swap(mockQueue_);   // callbacks may queue the next request
+    for (MockReply& r : ready) {
+        rc_api_server_response_t sr;
+        std::memset(&sr, 0, sizeof sr);
+        sr.body = r.body.c_str();
+        sr.body_length = r.body.size();
+        sr.http_status_code = r.status;
+        r.cb(&sr, r.cbdata);
+    }
 }
 
 bool Achievements::headlessSetup(const CliArgs& a) {
@@ -624,13 +649,21 @@ bool Achievements::headlessSetup(const CliArgs& a) {
     hardcoreWanted_ = a.raHardcore;
     rc_client_set_hardcore_enabled(client_, hardcoreWanted_ ? 1 : 0);
     for (const auto& p : a.raPokes) pokes_.push_back(Poke{p.first, p.second, false});
-    loginPending_ = true;
-    // The mock accepts any token; this is the login path of a real start-up.
-    rc_client_begin_login_with_token(client_, mockUser_.c_str(), "mock-token", &AchCallbacks::loginDone, (void*)1);
+    loginAt_ = a.raLoginAt;
+    if (loginAt_ == 0) {
+        loginPending_ = true;
+        // The mock accepts any token; this is the login path of a real start-up.
+        rc_client_begin_login_with_token(client_, mockUser_.c_str(), "mock-token", &AchCallbacks::loginDone, (void*)1);
+    }
     return true;
 }
 
 void Achievements::headlessFrame(unsigned frame) {
+    if (loginAt_ && frame >= loginAt_ && !loginPending_ && !signedIn()) {
+        // A late sign-in: the game has been running for a while already.
+        loginPending_ = true;
+        rc_client_begin_login_with_token(client_, mockUser_.c_str(), "mock-token", &AchCallbacks::loginDone, (void*)1);
+    }
     for (Poke& p : pokes_) {
         if (p.done || p.frame > frame) continue;
         p.done = true;
@@ -684,6 +717,8 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         if (app_->loadState(0)) fail("a state load was ALLOWED in hardcore");
         if (allowCheats() || allowRewind() || allowSlowMotion() || allowFrameAdvance()) fail("a restricted feature is allowed in hardcore");
     }
+    if (a.raExpectReset >= 0 && (int)hardcoreResets_ != a.raExpectReset)
+        fail("expected " + std::to_string(a.raExpectReset) + " hardcore restart(s), saw " + std::to_string(hardcoreResets_));
     if (a.raExpectBlocked) {
         // Hardcore was asked for, but a core option rcheevos disallows must keep it
         // off (and say which one) -- the player gets softcore, not a silent bypass.
