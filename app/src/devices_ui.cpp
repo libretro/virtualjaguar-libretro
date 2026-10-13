@@ -45,6 +45,7 @@ void inputFrame(App& app) {
         if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) uiOpen = true;
         // A captured mouse has no position, so what ImGui thinks it hovers is stale then.
         wantsMouse = io.WantCaptureMouse && !in.mouseCaptured();
+        in.uiWantsKeyboard = io.WantCaptureKeyboard;
     }
     // The controls overlay is informational (NoInputs) and deliberately NOT part of uiOpen.
     in.syncMouseCapture(app.window(), app.host.isLoaded() && !app.paused, uiOpen || wantsMouse, wantsMouse);

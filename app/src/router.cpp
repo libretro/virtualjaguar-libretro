@@ -36,16 +36,14 @@ void Router::reset() {
     for (auto& c : cursor_) c[0] = c[1] = 0.5f;
     gunOnStick_[0] = gunOnStick_[1] = false;
     lastX_[0] = lastX_[1] = lastY_[0] = lastY_[1] = -1;
-    for (bool& b : prevHelp_) b = false;
 }
 
-Router::Result Router::route(const RouterConfig& cfg, const std::vector<HostSource>& pads, const HostSource* kb,
+void Router::route(const RouterConfig& cfg, const std::vector<HostSource>& pads, const HostSource* kb,
                              const PointerInput& ptr, KeypadOverlay* overlay, CoreInput& out) {
-    Result res;
     std::array<SlotAcc, kSlots> acc;
     const int dz = cfg.settings.deadzone();
 
-    auto gather = [&](const HostSource& src, unsigned slot, unsigned helpIdx) {
+    auto gather = [&](const HostSource& src, unsigned slot) {
         if (!src.profile) return;
         ControlSet cs = evaluate(*src.profile, src.snap);
         ControlSet ex = evaluateExtra(*src.profile, src.snap);
@@ -60,10 +58,7 @@ Router::Result Router::route(const RouterConfig& cfg, const std::vector<HostSour
         } else {
             cs.clear(C_OVERLAY);
         }
-        bool help = ex.test(C_HELP);
-        if (help && helpIdx < 9 && !prevHelp_[helpIdx]) res.helpToggle = true;
-        if (helpIdx < 9) prevHelp_[helpIdx] = help;
-        ex.clear(C_HELP);
+        ex.clear(C_HELP);   // an app action, handled where the key event arrives (InputManager::handleEvent)
         SlotAcc& a = acc[slot];
         a.cs.bits |= cs.bits;
         a.ex.bits |= ex.bits;
@@ -72,8 +67,8 @@ Router::Result Router::route(const RouterConfig& cfg, const std::vector<HostSour
 
     for (unsigned s = 0; s < kSlots; s++) {
         int p = cfg.routes.pad[s];
-        if (p >= 0 && (size_t)p < pads.size()) gather(pads[(size_t)p], s, (unsigned)p < 8 ? (unsigned)p : 8u);
-        if (cfg.routes.kb[s] && kb) gather(*kb, s, 8);
+        if (p >= 0 && (size_t)p < pads.size()) gather(pads[(size_t)p], s);
+        if (cfg.routes.kb[s] && kb) gather(*kb, s);
     }
 
     // ---- every slot ---------------------------------------------------------------------------------
@@ -209,7 +204,6 @@ Router::Result Router::route(const RouterConfig& cfg, const std::vector<HostSour
         }
         }
     }
-    return res;
 }
 
 }  // namespace vj

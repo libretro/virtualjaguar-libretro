@@ -91,8 +91,19 @@ bool InputManager::handleEvent(const SDL_Event& e) {
             e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION)
             return true;
     }
-    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) controls.lastInputWasPad = true;
-    else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) controls.lastInputWasPad = false;
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        controls.lastInputWasPad = true;
+        // The controls-overlay key / button: event driven, so it also works while paused.
+        for (const Pad& p : pads_)
+            if (p.id == e.gbutton.which)
+                for (const Binding& b : p.profile.binds[C_HELP])
+                    if (b.kind == Binding::PadButton && b.code == (int)e.gbutton.button) helpToggle_ = true;
+    } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+        controls.lastInputWasPad = false;
+        if (!uiWantsKeyboard && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)))
+            for (const Binding& b : kbProfile_.binds[C_HELP])
+                if (b.kind == Binding::Key && b.code == (int)e.key.scancode) helpToggle_ = true;
+    }
     // ---- the pointer (devices.h): never consumed, the UI needs the same events ------------------
     if (e.type == SDL_EVENT_MOUSE_MOTION) {
         mouseX_ = e.motion.x;
@@ -316,8 +327,7 @@ void InputManager::poll(bool captureKeyboard) {
     pi.x = mx;
     pi.y = my;
 
-    Router::Result r = router_.route(rc, padSrc, &kb, pi, &overlay, core_);
-    if (r.helpToggle) helpToggle_ = true;
+    router_.route(rc, padSrc, &kb, pi, &overlay, core_);   // (the controls-overlay key is handled in handleEvent)
 
     // Keys the overlay is holding down (a mouse click or a gamepad press in the overlay).
     core_.addControls(overlay.port > 1 ? 0u : overlay.port, overlay.held());

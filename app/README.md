@@ -96,7 +96,10 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | --- | --- |
 | Arrows, Z, X, C, Enter, Right Shift | D-pad, B, A, C, Option, Pause |
 | number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
+| A S D, Q E | Jaguar Pro Controller X Y Z and left / right shoulder (keypad 9 8 7, 4 6) |
 | F2 | keypad overlay |
+| F3 | controls overlay: a cheat sheet of your current bindings (also View menu) |
+| F10 | release / re-capture the mouse (see below) |
 | F5 / F7 / F6 | save state / load state / next slot (Shift+F6 previous) |
 | F8, Ctrl/Cmd+R | pause, reset |
 | Tab (hold) | fast-forward |
@@ -105,7 +108,7 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 
 Gamepads use SDL's standard layout (South/East/West = B/A/C, Back = Pause,
 Start = Option); the left stick also drives the D-pad. Controller types per
-Jaguar port (Team Tap, rotary, ...) are under **Settings > Input**.
+Jaguar port (Team Tap, rotary, ...) are under **Settings > Input > Devices & players**.
 
 ### Controls and the keypad
 
@@ -133,10 +136,44 @@ How it reaches the core: pad buttons ride the RetroPad bitmask; the RetroPad has
 no button for keypad 7, 8, 9, `*`, `#`, so keypad keys are delivered as the
 RETRO_DEVICE_KEYBOARD keys `libretro.c` polls (player 1: `0-9 - =`; player 2:
 `p q w e r t y u i o [ ]`). The app announces a keyboard after every load, which
-the core needs before it polls them. This is the core's default input path: with
-**Core Options Remapping** switched on, the core stops polling those keys (the tab
-warns). Ports set to an analog / 6D / driving device, and Team Tap sockets, still
-get the plain RetroPad (so keypad 7-9, `*`, `#` are unreachable behind a Team Tap, as in the core).
+the core needs before it polls them. This is the core's default input path, so the
+core's own remapping options (`virtualjaguar_alt_inputs`, `*_numpad_to_kb`, `*_retropad_*`
+and the per-port device options) are forced to their defaults and hidden: this tab
+and **Devices & players** do all of that. Team Tap sockets read only the RetroPad, so
+there keypad 0-6 ride X, L, R, L2, R2, L3, R3 and keypad 7-9, `*`, `#` are unreachable
+(a limit of the core).
+
+### Devices, players and the mouse
+
+**Settings > Input > Devices & players** (everywhere, or this game only; stored as
+`input.port.N` / `input.game.<id>.port.N`) picks the device in each Jaguar port from the
+core's own list and calls `retro_set_controller_port_device`:
+
+| device | driven by (defaults, all rebindable under *Key / button bindings*) |
+| --- | --- |
+| Standard Joypad, Pro Controller | the pad and keypad bindings above |
+| ST / Amiga mouse (port 2) | the mouse or trackpad (captured); or the right stick / arrows; Z X or South East are the buttons |
+| Rotary (either port) | mouse left / right, or two keys (Left / Right), or the right stick; speed in *Tuning* |
+| Analog, driving, paddle | left stick or `A D W S`; driving: Right trigger / `E` accelerator, Left trigger / `Q` brake; D = North or `V` |
+| 6D | both sticks (`A D W S`, `J L I K`), triggers (`Q E`), shoulders (`U O`), A-F, Option = G, Pause = Rezero |
+| Light gun (port 1) | the mouse over the picture, left click fires, right click (or `R`) fires off-screen to reload; a stick or arrows can aim too |
+| Team Tap | one controller (or the keyboard) per socket, chosen under *Players* |
+
+The *Players* section lists the active player slots (two, plus three more behind each
+Team Tap) and which controller plays each: *Automatic* hands controllers out in plug-in
+order (the first two play players 1 and 2, as before), or pick one by model and number.
+The light gun aims with the rectangle the picture is drawn in, so scaling, aspect
+overrides, integer scaling and HiDPI all land the shot on the pixel under the pointer.
+
+The mouse is captured (SDL relative mode) only while a mouse or rotary is in a port,
+the game window has focus, the game is running and no menu, popup or Settings window is
+open. **F10** (or Esc) releases it; click the picture or press F10 to capture again.
+
+The **controls overlay** (F3, the Touchpad button on a gamepad, or View > Controls overlay)
+shows the bindings in effect for Player 1's device - the keyboard's or the gamepad's,
+whichever you last used - and never takes input. It appears by itself for a few seconds
+when a game starts with no gamepad on Player 1, and once per controller model for
+gamepads; **Settings > Input > Devices & players** turns that off.
 
 **Settings > Core options** is generated from the core's options v2 definitions,
 categories and `SET_CORE_OPTIONS_DISPLAY` visibility included, so a new core
@@ -362,6 +399,15 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   round trip, keypad translation, overlay, bind capture, content identity).
 - `input_e2e`: drives the real core with every Jaguar control on both ports and
   reads back the console's joypad matrix; keypad 7-9, `*`, `#` included.
+- `devices_unit` / `devices_e2e`: the non-pad devices (kinds, per-game persistence, Team Tap
+  player slots, light-gun geometry, mouse-capture policy, locked core options, the Pro
+  Controller keyboard layout, the controls cheat sheet and its auto-show rule), then the
+  same host-input routing driving the real core and reading back the mouse / rotary
+  quadrature state, analog / driving / 6D values decoded off `$F14000` as a game does,
+  the paddle ADC at `$F17C00`, the light gun's aim point and the Team Tap socket slots.
+  Every group has a negative control (no host input reads the rest value).
+- `controls_overlay_*`: the overlay through the real app: shown for a keyboard player,
+  hidden after "don't show again", text follows a saved rebinding.
 
 To regenerate the expected hash after an intentional emulation change:
 `virtualjaguar --headless --frames 300 test/roms/yarc.j64` and update
@@ -383,6 +429,10 @@ To regenerate the expected hash after an intentional emulation change:
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
 | `src/input.*` | keyboard and gamepad snapshots to libretro input |
 | `src/remap.*`, `src/remap_ui.cpp` | profiles, per-game overrides, keypad delivery, overlay, bind capture, and their UI |
+| `src/devices.*` | device kinds, per-port / per-game selection, player slots (Team Tap), light-gun geometry, mouse-capture policy, locked core options |
+| `src/router.*` | host input to what the core reads for every device (SDL-free, tested against the real core) |
+| `src/devices_ui.*` | Settings > Input > Devices & players, claiming devices with the core, per-frame mouse capture |
+| `src/cheatsheet.*`, `src/cheatsheet_ui.cpp` | the controls cheat sheet: text, auto-show rule, window |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
 | `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |

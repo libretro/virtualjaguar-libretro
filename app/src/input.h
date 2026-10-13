@@ -73,7 +73,8 @@ public:
     // The picture rectangle on screen (video.draw()), for the light gun.
     void setPicture(float x, float y, float w, float h) { pic_ = PicRect{x, y, w, h}; }
     const PicRect& picture() const { return pic_; }
-    // A C_HELP edge happened since the last call (the controls overlay key).
+    bool uiWantsKeyboard = false;   // a text box has focus (set once per UI frame)
+    // The controls-overlay key / button was pressed since the last call.
     bool takeHelpToggle() { bool h = helpToggle_; helpToggle_ = false; return h; }
     // Mouse capture.  syncMouseCapture() runs once per UI frame: it turns SDL's relative mouse
     // mode on or off from wantRelativeMouse().  `uiOpen` = a menu, popup or window is open.

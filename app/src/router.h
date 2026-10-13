@@ -47,12 +47,9 @@ struct SlotAcc {
 
 class Router {
 public:
-    struct Result {
-        bool helpToggle = false;    // a C_HELP edge (the controls overlay)
-    };
     void reset();
     // `pads` and `kb` are indexed by Routes::pad / Routes::kb.  `overlay` may be null.
-    Result route(const RouterConfig& cfg, const std::vector<HostSource>& pads, const HostSource* kb,
+    void route(const RouterConfig& cfg, const std::vector<HostSource>& pads, const HostSource* kb,
                  const PointerInput& ptr, KeypadOverlay* overlay, CoreInput& out);
 
 private:
@@ -60,7 +57,6 @@ private:
     float cursor_[2][2] = {{0.5f, 0.5f}, {0.5f, 0.5f}};   // stick-driven aim, fraction of the picture
     bool gunOnStick_[2] = {false, false};
     float lastX_[2] = {-1, -1}, lastY_[2] = {-1, -1};
-    bool prevHelp_[9] = {false, false, false, false, false, false, false, false, false};
 };
 
 // Tuning constants (documented in the PR): counts per emulated frame at full deflection.
