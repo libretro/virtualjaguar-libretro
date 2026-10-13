@@ -37,6 +37,18 @@ std::string bindingsText(const std::vector<Binding>& v) {
     return s;
 }
 
+// The "From" column is narrow: the long forms ("global, this controller") are in the tooltip.
+const char* sourceShort(Source s) {
+    switch (s) {
+    case SRC_DEFAULT: return "default";
+    case SRC_GLOBAL: return "global";
+    case SRC_GLOBAL_PAD: return "controller";
+    case SRC_GAME: return "this game";
+    case SRC_GAME_PAD: return "game+pad";
+    }
+    return "";
+}
+
 std::string optionIs(const App& app, const char* key) {
     for (const OptionDef& d : app.host.optionDefs())
         if (d.key == key) return app.host.optionValue(d);
@@ -88,7 +100,7 @@ void drawControlsTab(App& app) {
 
     if (device == 0) {
         int kp = st->keyboardPort();
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 11.0f);
         if (ImGui::Combo("Keyboard plays", &kp, "Jaguar port 1\0Jaguar port 2\0")) {
             st->setKeyboardPort(kp);
             app.cfg.save();
@@ -109,7 +121,9 @@ void drawControlsTab(App& app) {
         if (inputPortIsRaw(app, p))
             ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
                                "Jaguar port %u has an analog / 6D / driving device: gamepad bindings are bypassed there.", p + 1);
-    ImGui::TextDisabled("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
+    ImGui::PopStyleColor();
 
     // ---- the table -----------------------------------------------------------------------------
     Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId);
@@ -130,10 +144,10 @@ void drawControlsTab(App& app) {
     ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
     if (ImGui::BeginTable("##binds", 4, tf, ImVec2(0, ImGui::GetFontSize() * 17.0f))) {
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+        ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 7.0f);
         ImGui::TableSetupColumn("Bound to");
-        ImGui::TableSetupColumn("From", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 9.0f);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 15.0f);
+        ImGui::TableSetupColumn("From", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
         ImGui::TableHeadersRow();
         for (int i = 0; i < C_COUNT; i++) {
             Ctl c = (Ctl)i;
@@ -145,7 +159,8 @@ void drawControlsTab(App& app) {
             if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
             else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", sourceLabel(prof.source[(size_t)i]));
+            ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
             ImGui::TableNextColumn();
             if (ImGui::SmallButton("Set")) in.beginCapture(layer, c, false);
             ImGui::SameLine();
@@ -181,8 +196,9 @@ void drawKeypadOverlay(App& app) {
     if (!ov.open) return;
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float f = ImGui::GetFontSize();
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - f * 14.0f, vp->Pos.y + vp->Size.y - f * 17.0f),
-                            ImGuiCond_FirstUseEver);
+    // Bottom-right corner, clear of the OSD and the menu bar.
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - f, vp->Pos.y + vp->Size.y - f * 2.5f),
+                            ImGuiCond_FirstUseEver, ImVec2(1.0f, 1.0f));
     ImGuiWindowFlags wf = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
                           ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
     if (!ImGui::Begin("Jaguar keypad", &ov.open, wf)) {
