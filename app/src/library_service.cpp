@@ -188,7 +188,7 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
     }
     downloadArt = cfg.getBool("library.art", true);
     hideOnLaunch = cfg.getBool("library.hide_on_launch", true);
-    cellScale = std::min(2.0f, std::max(0.5f, cfg.getFloat("library.size", 1.0f)));
+    cellScale = lib::clampTileScale(cfg.getFloat("library.size", lib::kTileScaleDefault));
     section = std::min(2, std::max(0, cfg.getInt("library.section", 0)));
     systemDir = paths.system;
 
@@ -206,6 +206,7 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
 }
 
 void LibraryService::stop() {
+    if (zoomSaveAt_) saveSettings();
     cancel_ = true;
     scanCancel_ = true;
     scanW_.stop();
@@ -221,7 +222,14 @@ void LibraryService::stop() {
     started_ = false;
 }
 
+void LibraryService::zoomChanged() { zoomSaveAt_ = SDL_GetTicks() + 600; }
+
+void LibraryService::flushZoom() {
+    if (zoomSaveAt_ && SDL_GetTicks() >= zoomSaveAt_) saveSettings();
+}
+
 void LibraryService::saveSettings() {
+    zoomSaveAt_ = 0;
     if (!cfg_) return;
     for (int i = 0; i < kMaxFolders; i++) {
         std::string k = "library.dir." + std::to_string(i);

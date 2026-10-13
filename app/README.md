@@ -243,7 +243,11 @@ or the command line, which all keep working.
 
 **Home screen.** With no game loaded the main window *is* the library: search, filter, size
 slider, **Add folder...**, rescan, and a click on a tile launches it. With no folders yet it shows
-a short welcome with an **Add folder...** button and the open / drag-and-drop hints. Loading a game
+a short welcome with an **Add folder...** button and the open / drag-and-drop hints. **Tile size**
+(0.5x to 2.5x, default 1.0x, `library.size`) is the slider, and also a trackpad pinch (where SDL
+reports one: macOS), Ctrl/Cmd+mouse wheel and Ctrl/Cmd + `+` / `-` / `0` (reset) while the pointer is
+over the grid or the library has the keyboard focus; never during gameplay or while typing in a
+field. Loading a game
 replaces it with the game; **File > Close game** brings it back. **Settings > Storage > Show the
 game library on the home screen** (`ui.home_library`, also View > Library on home screen) turns it
 off for the old plain welcome. The separate **Game library** window (File > Game library, Ctrl/Cmd+L)

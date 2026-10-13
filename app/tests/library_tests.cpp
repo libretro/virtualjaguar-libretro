@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -549,6 +550,67 @@ static void testBiosInLibraryFolders() {
     CHECK(!svc.installBios(by["Game (World).j64"]));   // not a BIOS
 }
 
+// ---- tile zoom (pinch, Ctrl/Cmd+wheel, Ctrl/Cmd +/-/0 share this math) ------------------------------------------
+
+static void testTileZoom() {
+    const float eps = 1e-4f;
+    auto near = [&](float a, float b) { return std::fabs(a - b) < eps; };
+    CHECK(lib::kTileScaleMin < lib::kTileScaleDefault && lib::kTileScaleDefault < lib::kTileScaleMax);
+    CHECK(near(lib::kTileScaleDefault, 1.0f));   // the shipped default stays 1.0x
+    // clamp
+    CHECK(near(lib::clampTileScale(1.0f), 1.0f));
+    CHECK(near(lib::clampTileScale(-3.0f), lib::kTileScaleMin));
+    CHECK(near(lib::clampTileScale(0.0f), lib::kTileScaleMin));
+    CHECK(near(lib::clampTileScale(99.0f), lib::kTileScaleMax));
+    CHECK(near(lib::clampTileScale(std::nanf("")), lib::kTileScaleDefault));
+    CHECK(near(lib::clampTileScale(INFINITY), lib::kTileScaleDefault));
+    // steps are multiplicative and reversible
+    CHECK(near(lib::zoomTileScale(1.0f, 1.0f), lib::kTileScaleStep));
+    CHECK(near(lib::zoomTileScale(lib::zoomTileScale(1.0f, 3.0f), -3.0f), 1.0f));
+    CHECK(near(lib::zoomTileScale(1.0f, 0.5f), std::sqrt(lib::kTileScaleStep)));   // a fractional trackpad delta
+    CHECK(near(lib::zoomTileScale(1.0f, 0.0f), 1.0f));
+    // ... and stop at the ends, however far the wheel goes
+    CHECK(near(lib::zoomTileScale(1.0f, 1000.0f), lib::kTileScaleMax));
+    CHECK(near(lib::zoomTileScale(1.0f, -1000.0f), lib::kTileScaleMin));
+    CHECK(near(lib::zoomTileScale(lib::kTileScaleMax, 1.0f), lib::kTileScaleMax));
+    CHECK(near(lib::zoomTileScale(lib::kTileScaleMin, -1.0f), lib::kTileScaleMin));
+    CHECK(near(lib::zoomTileScale(1.0f, std::nanf("")), 1.0f));
+    // a pinch factor is applied as is (>1 zooms in), junk is ignored, a glitch cannot jump
+    CHECK(near(lib::pinchTileScale(1.0f, 1.25f), 1.25f));
+    CHECK(near(lib::pinchTileScale(1.0f, 0.8f), 0.8f));
+    CHECK(near(lib::pinchTileScale(1.0f, 1.0f), 1.0f));
+    CHECK(near(lib::pinchTileScale(1.0f, 0.0f), 1.0f));
+    CHECK(near(lib::pinchTileScale(1.0f, -2.0f), 1.0f));
+    CHECK(near(lib::pinchTileScale(1.0f, std::nanf("")), 1.0f));
+    CHECK(near(lib::pinchTileScale(1.0f, 50.0f), 2.0f));
+    CHECK(near(lib::pinchTileScale(2.0f, 1.5f), lib::kTileScaleMax));
+    // the config value is clamped when read and written back after a zoom
+    std::string root = g_tmp + "zoom-root/";
+    Paths paths;
+    paths.root = root;
+    Config cfg;
+    cfg.setPath(root + "config.ini");
+    cfg.setFloat("library.size", 9.0f);   // hand-edited nonsense
+    {
+        LibraryService svc;
+        svc.start(paths, cfg, false);
+        CHECK(near(svc.cellScale, lib::kTileScaleMax));
+        svc.cellScale = lib::pinchTileScale(svc.cellScale, 0.5f);
+        svc.zoomChanged();
+        svc.stop();   // the pending zoom is written on the way out
+    }
+    CHECK(near(cfg.getFloat("library.size", 0.0f), lib::kTileScaleMax * 0.5f));
+    {
+        Config again;
+        again.setPath(root + "config.ini");
+        CHECK(again.load(root + "config.ini"));
+        LibraryService svc;
+        svc.start(paths, again, false);
+        CHECK(near(svc.cellScale, lib::kTileScaleMax * 0.5f));   // survives a restart
+        svc.stop();
+    }
+}
+
 // ---- loopback HTTP server (POSIX) ------------------------------------------------------------------------------
 
 #ifndef _WIN32
@@ -925,6 +987,7 @@ int main(int argc, char** argv) {
     testScanAndIdentify();
     testBiosClassification();
     testBiosInLibraryFolders();
+    testTileZoom();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();

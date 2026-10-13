@@ -158,6 +158,17 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs);
 // "Iron_Soldier.v1.04.j64" is not a title, but "Iron Soldier (World).j64" nearly is.
 std::string titleFromFileStem(const std::string& stem);
 
+// ---- tile zoom ----------------------------------------------------------------------------
+// The library grid's tile size is one multiplier (the toolbar slider, the config key library.size, pinch,
+// Ctrl/Cmd+wheel and Ctrl/Cmd +/-/0 all drive it).  One clamp and one step, so they cannot disagree.
+const float kTileScaleMin = 0.5f;
+const float kTileScaleMax = 2.5f;
+const float kTileScaleDefault = 1.0f;
+const float kTileScaleStep = 1.1f;   // one wheel notch / key press multiplies the size by this
+float clampTileScale(float s);                           // into [min, max]; NaN / infinite -> the default
+float zoomTileScale(float cur, float steps);             // cur * 1.1^steps, clamped; steps may be fractional (trackpad)
+float pinchTileScale(float cur, float factor);           // factor = SDL's per-update pinch scale (>1 zooms in); junk is ignored
+
 // ---- scan cache on disk ---------------------------------------------------------------------
 
 std::string serializeCache(const std::vector<ScanFile>& files);

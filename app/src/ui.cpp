@@ -315,6 +315,7 @@ void drawAbout(App& app) {
         {"Tab (hold)", "fast-forward"},
         {"Ctrl/Cmd+O", "open a game"},
         {"Ctrl/Cmd+L", "game library"},
+        {"Ctrl/Cmd+wheel, +/-/0", "library tile size (trackpad: pinch)"},
         {"Ctrl/Cmd+R", "reset"},
     };
     if (ImGui::BeginTable("##keys", 2, ImGuiTableFlags_SizingFixedFit)) {

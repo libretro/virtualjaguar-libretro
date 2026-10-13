@@ -53,7 +53,7 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
     float sw = ui::em(8.0f);
     flow.next(sw);
     ImGui::SetNextItemWidth(sw);
-    ImGui::SliderFloat("##size", &svc.cellScale, 0.6f, 2.0f, "Size %.1fx");
+    ImGui::SliderFloat("##size", &svc.cellScale, lib::kTileScaleMin, lib::kTileScaleMax, "Size %.1fx");
     if (ImGui::IsItemDeactivatedAfterEdit()) svc.saveSettings();
 
     flow.next(ui::Flow::buttonW("Add folder..."));
@@ -285,7 +285,50 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     if (clicked) svc.launch(e);
 }
 
+// ---- zoom ------------------------------------------------------------------------------------------------------
+// Ctrl+wheel (Cmd on macOS), Ctrl/Cmd + '+' '-' '0', and the trackpad pinch (app.cpp, which asks gridHoverFrame
+// whether the pointer is over the grid) all change svc.cellScale, the value the toolbar slider edits.
+// ImGui swaps Ctrl and Cmd on macOS, so KeyCtrl is the platform's shortcut key there and KeySuper the other one:
+// either zooms.
+
+bool zoomModHeld() {
+    const ImGuiIO& io = ImGui::GetIO();
+    return io.KeyCtrl || io.KeySuper;
+}
+
+// Scrolling is off while the modifier is held: the wheel then means zoom, not scroll.
+ImGuiWindowFlags gridWindowFlags() { return zoomModHeld() ? ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None; }
+
+// Called inside the grid's child window, so "hovered" and "focused" are about this view alone: another window
+// on top, a text field being edited or a game with no library showing never zooms it.
+void handleZoomInput(LibraryService& svc) {
+    svc.flushZoom();
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool hovered = ImGui::IsWindowHovered();
+    if (hovered) svc.gridHoverFrame = ImGui::GetFrameCount();
+    if (io.WantTextInput) return;
+    float steps = 0.0f;
+    bool reset = false;
+    if (zoomModHeld()) {
+        if (hovered && io.MouseWheel != 0.0f) steps += io.MouseWheel;
+        // the home screen has no keyboard focus of its own: it counts when no other window has it
+        const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
+                             !ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow);
+        if (focused) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) steps += 1.0f;
+            if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) steps -= 1.0f;
+            if (ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) reset = true;
+        }
+    }
+    float next = reset ? lib::kTileScaleDefault : steps != 0.0f ? lib::zoomTileScale(svc.cellScale, steps) : svc.cellScale;
+    if (next != svc.cellScale) {
+        svc.cellScale = next;
+        svc.zoomChanged();
+    }
+}
+
 void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filter) {
+    handleZoomInput(svc);
     const std::vector<lib::Entry>& all = svc.entries();
     std::vector<const lib::Entry*> shown;
     shown.reserve(all.size());
@@ -416,7 +459,7 @@ void drawLibraryHome(App& app, float x, float y, float w, float h) {
             drawFolders(svc);
             drawStatus(svc);
             ImGui::Separator();
-            ImGui::BeginChild("##homegrid", ImVec2(0, 0), ImGuiChildFlags_None);
+            ImGui::BeginChild("##homegrid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());
             drawGrid(app, svc, lower(g_search), g_filter);
             ImGui::EndChild();
         }
@@ -443,7 +486,7 @@ void drawLibrary(App& app) {
     drawFolders(svc);
     drawStatus(svc);
     ImGui::Separator();
-    ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());
     drawGrid(app, svc, lower(g_search), g_filter);
     ImGui::EndChild();
     ImGui::End();

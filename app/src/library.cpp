@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -743,6 +744,25 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs) {
         }
     }
     return e;
+}
+
+// ---- tile zoom -----------------------------------------------------------------------------------------
+
+float clampTileScale(float s) {
+    if (!std::isfinite(s)) return kTileScaleDefault;
+    return std::min(kTileScaleMax, std::max(kTileScaleMin, s));
+}
+
+float zoomTileScale(float cur, float steps) {
+    if (!std::isfinite(steps)) return clampTileScale(cur);
+    steps = std::min(20.0f, std::max(-20.0f, steps));   // a runaway wheel delta cannot overflow the power
+    return clampTileScale(clampTileScale(cur) * std::pow(kTileScaleStep, steps));
+}
+
+float pinchTileScale(float cur, float factor) {
+    if (!std::isfinite(factor) || factor <= 0.0f) return clampTileScale(cur);
+    factor = std::min(2.0f, std::max(0.5f, factor));    // one update is a small change; a glitch is not a jump
+    return clampTileScale(clampTileScale(cur) * factor);
 }
 
 // ---- scan cache serialisation --------------------------------------------------------------------------------
