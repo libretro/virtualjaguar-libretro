@@ -70,7 +70,7 @@ static uint32_t *p_gpu_ops, *p_gpu_fires;
 static void    (*p_dsp_setflags)(uint32_t);
 
 static size_t (*p_serialize_size)(void);
-static int    (*p_serialize)(void *, size_t);
+static bool   (*p_serialize)(void *, size_t);
 static void    *g_state_buf;
 static size_t   g_state_size;
 
@@ -226,7 +226,7 @@ int main(int argc, char **argv)
     }
 
     p_serialize_size = (size_t (*)(void))harness_dlsym(&cfg, "retro_serialize_size");
-    p_serialize      = (int (*)(void *, size_t))harness_dlsym(&cfg, "retro_serialize");
+    p_serialize      = (bool (*)(void *, size_t))harness_dlsym(&cfg, "retro_serialize");
     if (g_state_every && p_serialize_size) {
         g_state_size = p_serialize_size();
         g_state_buf  = calloc(1, g_state_size);
