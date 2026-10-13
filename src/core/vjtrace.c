@@ -680,6 +680,7 @@ static uint32_t inj_B = 0;          /* last line's OP+refresh burst, sysclks */
 static uint32_t inj_dsp = 0;        /* last line's DSP occupancy, sysclks */
 static uint32_t inj_blit_debt = 0;  /* blitter bus time not yet elapsed */
 static uint32_t inj_line_op = 0, inj_line_dsp = 0, inj_hl = 0;
+static uint32_t inj_line_objs = 0, inj_w_op256 = 0;   /* OP wait, x256 */
 static uint32_t inj_frac = 0;       /* 1/256-sysclk remainder */
 static uint32_t inj_blit_c = 0, inj_H = 0, inj_ref = 0;   /* x256 */
 uint64_t vjtrace_bus_inject_sysclks = 0;
@@ -703,16 +704,31 @@ static void vjt_bus_inject_halfline(void)
    const uint32_t T = 1690;
    uint32_t room;
    inj_line_op  += bus_cur.op_clk;
+   inj_line_objs += bus_cur.op_objs;
    inj_line_dsp += bus_cur.dsp_mem;
    inj_blit_debt += (bus_cur.blit_prd + bus_cur.blit_pwr) * inj_blit_c / 256u;
    if (++inj_hl < 2)
       return;
    /* one video line = two halflines; refresh grouped after the OP */
-   inj_B   = inj_line_op + (uint32_t)((T / 384.0) * inj_ref / 256u);
+   {
+      uint32_t ref = (uint32_t)((T / 384.0) * inj_ref / 256u);
+      if (inj_line_op > T)
+         inj_line_op = T;
+      inj_B = inj_line_op + ref;
+      if (inj_B > T)
+         inj_B = T;
+      /* low level: per-object bursts (gaps between objects let the GPU
+       * in); central/high: one contiguous burst per line (RELEASE clear) */
+      if (bus_inject == 1 && inj_line_objs > 1)
+         inj_w_op256 = (inj_line_op * inj_line_op / inj_line_objs * 256u
+                        + ref * ref * 256u) / (2u * T);
+      else
+         inj_w_op256 = (inj_B * inj_B * 256u) / (2u * T);
+   }
    inj_dsp = inj_line_dsp;
    room = (inj_B < T) ? T - inj_B : 0;
    inj_blit_debt = (inj_blit_debt > room) ? inj_blit_debt - room : 0;
-   inj_line_op = inj_line_dsp = inj_hl = 0;
+   inj_line_op = inj_line_dsp = inj_hl = inj_line_objs = 0;
 }
 
 static void vjt_bus_inject_charge(void)
@@ -732,7 +748,7 @@ static void vjt_bus_inject_charge(void)
       ud256 = 256u;
    busy += inj_dsp;
    pidle256 = (busy >= T) ? 0 : (uint32_t)(((T - busy) * 256u) / T);
-   w256 = (B * B * 256u) / (2u * T)                     /* OP + refresh */
+   w256 = inj_w_op256                                   /* OP + refresh */
         + ub256 * inj_blit_c / 512u                      /* blit resid. */
         + ud256 * 27u / 10u                              /* DSP 2x2.7/2 */
         + (pidle256 * inj_H) / 256u;                     /* handoff */
