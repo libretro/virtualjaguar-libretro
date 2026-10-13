@@ -10,16 +10,23 @@
 
 namespace vj {
 
-void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
-    ControlsOverlayState& st = app.input.controls;
-    if (!st.show || !app.host.isLoaded()) return;
+Sheet currentControlsSheet(App& app) {
     InputManager& in = app.input;
     in.updateRoutes();
     const int pad = in.routes().pad[0];
-    const bool usePad = pad >= 0 && (size_t)pad < in.pads().size() && in.controls.lastInputWasPad;
+    std::vector<InputManager::PadInfo> pads = in.pads();
+    const bool usePad = pad >= 0 && (size_t)pad < pads.size() && in.controls.lastInputWasPad;
     const Profile& prof = usePad ? in.padProfile((size_t)pad) : in.keyboardProfile();
-    std::string devName = usePad ? in.pads()[(size_t)pad].name : "";
-    Sheet sheet = buildSheet(prof, in.portKind(0), usePad ? SheetSource::Gamepad : SheetSource::Keyboard, devName);
+    return buildSheet(prof, in.portKind(0), usePad ? SheetSource::Gamepad : SheetSource::Keyboard,
+                      usePad ? pads[(size_t)pad].name : std::string());
+}
+
+std::string controlsOverlayText(App& app) { return currentControlsSheet(app).text(); }
+
+void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
+    ControlsOverlayState& st = app.input.controls;
+    if (!st.show || !app.host.isLoaded()) return;
+    Sheet sheet = currentControlsSheet(app);
 
     ImGuiIO& io = ImGui::GetIO();
     const float f = ImGui::GetFontSize();

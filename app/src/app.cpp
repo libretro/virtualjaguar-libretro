@@ -818,6 +818,12 @@ int App::runHeadless(const CliArgs& a) {
             std::fprintf(stderr, "headless: FAIL an --option override was rejected by the core\n");
             return 2;
         }
+        if (a.printControls) std::printf("%s", controlsOverlayText(*this).c_str());
+        if (a.expectControls >= 0 && (input.controls.show ? 1 : 0) != a.expectControls) {
+            std::fprintf(stderr, "headless: FAIL the controls overlay is %s after the load, expected %s\n",
+                         input.controls.show ? "showing" : "hidden", a.expectControls ? "showing" : "hidden");
+            return 1;
+        }
         audioFramesSeen_ = 0;
         for (unsigned i = 0; i < a.frames; i++) {
             ach.headlessFrame(i);

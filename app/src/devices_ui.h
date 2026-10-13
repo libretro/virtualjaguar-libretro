@@ -2,6 +2,9 @@
 // panel, the per-frame mouse-capture and controls-overlay housekeeping, the cheat-sheet window.
 #pragma once
 
+#include <string>
+
+#include "cheatsheet.h"
 #include "imgui.h"
 
 namespace vj {
@@ -18,6 +21,11 @@ void inputFrame(App& app);
 
 // A game was just loaded: show the controls overlay by itself when the auto-show rule says so.
 void controlsOverlayOnLoad(App& app);
+
+// The sheet for Player 1 as it is drawn: the active profile (global, per-controller and per-game
+// layers applied) of whatever the player is using, for the device in port 1.
+Sheet currentControlsSheet(App& app);
+std::string controlsOverlayText(App& app);   // the same, as plain text (--print-controls)
 
 void drawDevicesPanel(App& app);   // Settings > Input > Devices
 void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize);

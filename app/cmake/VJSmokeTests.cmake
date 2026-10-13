@@ -132,3 +132,35 @@ add_test(NAME devices_e2e COMMAND vj_devices_e2e "${VJ_ROMS}/yarc.j64")
 set_tests_properties(remap_unit input_e2e devices_unit devices_e2e PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# ---------------------------------------------------------------------------
+# Controls cheat-sheet overlay, through the real App (headless, no window).
+#
+#   controls_overlay_keyboard   no gamepad on Player 1 (headless has none): the overlay is
+#                               showing after the load, and its text is the keyboard
+#                               profile's bindings (B = Z, the Pro Controller's X = A ...).
+#   controls_overlay_dismissed  "don't show again" (ui.controls.autoshow=0): hidden.
+#   controls_overlay_rebound    a saved global rebinding (B = M, scancode 16) changes the text;
+#                               the per-game layer is covered by devices_unit.
+# ---------------------------------------------------------------------------
+set(VJ_CTL_DISMISSED "${CMAKE_BINARY_DIR}/ctl_dismissed")
+set(VJ_CTL_REBOUND "${CMAKE_BINARY_DIR}/ctl_rebound")
+file(MAKE_DIRECTORY "${VJ_CTL_DISMISSED}" "${VJ_CTL_REBOUND}")
+file(WRITE "${VJ_CTL_DISMISSED}/config.ini" "ui.controls.autoshow=0\n")
+file(WRITE "${VJ_CTL_REBOUND}/config.ini" "input.kb.b=k16\n")
+
+add_test(NAME controls_overlay_keyboard
+    COMMAND virtualjaguar --headless --frames 5 --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
+set_tests_properties(controls_overlay_keyboard PROPERTIES
+    PASS_REGULAR_EXPRESSION "Player 1: Standard Joypad - keyboard.*B: Z.*Keypad 9 \\(Pro: X\\): [^\n]*, A\n")
+
+add_test(NAME controls_overlay_dismissed
+    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_DISMISSED}" --expect-controls-overlay hidden "${VJ_ROMS}/yarc.j64")
+
+add_test(NAME controls_overlay_rebound
+    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_REBOUND}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
+set_tests_properties(controls_overlay_rebound PROPERTIES
+    PASS_REGULAR_EXPRESSION "  B: M\n")
+set_tests_properties(controls_overlay_keyboard controls_overlay_dismissed controls_overlay_rebound PROPERTIES
+    TIMEOUT 120
+    FAIL_REGULAR_EXPRESSION "headless: FAIL")
