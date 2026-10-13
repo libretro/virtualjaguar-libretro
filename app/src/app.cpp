@@ -899,8 +899,10 @@ int App::runHeadless(const CliArgs& a) {
             double wall = (double)(SDL_GetPerformanceCounter() - hlT0) / (double)perfFreq_;
             double run = (double)hlRun / (double)perfFreq_;
             double cpu = Perf::cpuSeconds() - hlCpu0;
-            std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %.3f s (%.1f fps) %s\n",
-                         a.frames, wall, a.frames / wall, run, a.frames / run, cpu, a.frames / cpu, path.c_str());
+            char cpuTxt[48] = "n/a";
+            if (hlCpu0 >= 0 && cpu > 0) std::snprintf(cpuTxt, sizeof cpuTxt, "%.3f s (%.1f fps)", cpu, a.frames / cpu);
+            std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
+                         a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, path.c_str());
             int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;
