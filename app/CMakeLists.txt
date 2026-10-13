@@ -141,10 +141,13 @@ include(VJCore)
 # dependency).  Neither found: the feature degrades to "no downloads".
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/http.cpp)
+add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/disc_hash.cpp src/http.cpp)
 target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
 target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
+# .chd track-1 checksums for disc identification (the same libchdr the core reads CHDs with)
+target_include_directories(vj_library PRIVATE "${VJ_ROOT}/deps/libchdr/include")
+target_link_libraries(vj_library PRIVATE vj_libchdr)
 set(VJ_HTTP_BACKEND "none")
 if(VJ_APP_HTTP)
     if(WIN32)

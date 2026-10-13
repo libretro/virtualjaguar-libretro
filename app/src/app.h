@@ -196,6 +196,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_GLContext gl_ = nullptr;
     bool imguiUp_ = false;
+    float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)
     uint32_t openDialogEvent_ = 0;
     bool inputCaptured_ = false;
 

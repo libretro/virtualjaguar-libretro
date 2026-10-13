@@ -286,11 +286,22 @@ tracks a `.cue` owns.
      the file minus a 512-byte copier header (the same rule as the core's
      `DetectPrependedHeaderSize`, so a headered dump of a known game still matches);
    - CD images against the Redump "Atari - Jaguar CD" dat. Redump hashes each track, so a
-     `.cue` is identified by the CRC32 of the first file it references (Track 1). `.chd` and
-     `.cdi` carry no cheap track hash and are matched by file name only.
+     `.cue` is identified by the CRC32 of the first file it references (Track 1). A `.chd` is
+     identified the same way: its Track 1 sectors are read back as the Redump `.bin` has them (the
+     way the core reads them: subcode dropped, audio put back in `.bin` byte order, a virtual
+     pregap left out). A `.chd` with several audio tracks and no session metadata (which the core
+     refuses too) is not hashed. A `.cdi` is hashed best-effort from its Track 1 descriptor;
+     rips whose layout differs from the descriptors (the core repairs these) will not match.
+     This is verified against synthetic images; real Redump CHDs are still to be checked.
+   - when the checksum does not match (a bin/cue or `.cdi` that is not a Redump dump) the disc is
+     matched by name: the file name, then the name of its folder, against the dat's titles with
+     case, punctuation, region and `(Track N)` / `(Disc N)` tags ignored. An exact title wins; a
+     file name that is the start of exactly one longer title also matches (file name only, 4+
+     characters). A name that fits two games (a two-disc set, "Space" for "Space Ace" and "Space
+     Ace Gold") matches neither: it stays unidentified rather than guessing.
    A name-only match is badged `?` (titled and given art from the dat entry), an unidentified
    file `??` (titled from its file name, no art). Hover a tile for the path, CRC32 and how it
-   was matched.
+   was identified (checksum, file name, folder name, or not at all).
 3. **Box art** comes from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar)
    (`thumbnails.libretro.com/Atari - Jaguar/Named_Boxarts/<dat title>.png`; the libretro rule
    replaces `& * / : ` " < > ? \ |` with `_`). It is fetched only for tiles you can see, one title
@@ -301,12 +312,23 @@ tracks a `.cue` owns.
    art under their exact dat name (64 box art); of the 26 Jaguar CD titles, 12 have a snapshot
    and none a box art. (Measured against libretro-thumbnails at the pinned dat's date.)
    **Download box art** turns all downloading off.
+   **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
+   downloaded art. A tile with no art is a drawn card with the game's title and a `CD` / `Cart`
+   badge. Right-click a tile > **Set cover image...** (PNG) to give it one, or drop a PNG onto the
+   tile while the library is showing (a PNG dropped anywhere else is opened as before, and fails
+   as not a game); **Remove cover image** undoes it. The PNG is copied to
+   `<data>/covers/custom/<key>.png` (the dat title when the game is identified, else a checksum
+   of the disc or of its path). For many at once, put PNGs named after the game in
+   `<data>/covers/`, e.g. `<data>/covers/Myst (USA).png` (dat title first, then the title shown
+   on the tile), then press **Rescan**. A cover you set beats the folder, which beats a
+   downloaded image, which beats the card. Only PNG is read: SDL3 has no JPEG decoder and the app
+   adds no dependency for one. Covers larger than 8192 px or 32 MB are refused.
 4. **Launch** is a click on the tile; it posts the same "open this path" event as the file
    dialog. **Close on launch** hides the window afterwards.
 
 Files: `<data>/library/scan.tsv` (the hash cache: a rescan only stats files whose size and
 modification time are unchanged), `<data>/library/db/` (databases fetched by **Update
-database**), `<data>/thumbnails/`. Settings are the `library.*` keys in `config.ini`.
+database**), `<data>/thumbnails/`, `<data>/covers/` (your cover art). Settings are the `library.*` keys in `config.ini`.
 
 The two dat files are fetched at configure time, pinned to a libretro-database commit and
 SHA256 (`VJ_DB_COMMIT` in `CMakeLists.txt`), and copied next to the executable in
