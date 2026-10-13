@@ -179,7 +179,7 @@ void drawCheats(App& app) {
     ImGui::EndDisabled();
     if (hardcore)
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-                           "Disabled in hardcore mode (your saved cheats are kept, and come back when it ends).");
+                           "Disabled in hardcore mode (saved cheats are kept).");
     if (cm.appliedSegments() > CheatManager::kCoreLimit)
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%u writes: the core keeps only the first %u.",
                            cm.appliedSegments(), CheatManager::kCoreLimit);

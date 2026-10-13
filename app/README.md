@@ -181,6 +181,11 @@ It is built on rcheevos' `rc_client` (v12.5.0, MIT, fetched at configure time li
   Fast-forward is allowed (it is not slower than real time). Softcore (the default)
   restricts nothing, and each state file gets a `.rcp` sidecar so a restored state does
   not replay stale hit counts.
+- **Cheats.** No cheat reaches the core while hardcore is active: the cheat manager's `apply()`
+  consults `Achievements::allowCheats()`, so loads, state restores, the window, manual codes and
+  `--cheat`/`--cheat-on` all obey it. Entering hardcore empties the core's list, leaving it (softcore,
+  sign-out, RetroAchievements off) puts the saved per-game selections back; they are never changed on
+  disk meanwhile. The Cheats window stays openable with its controls disabled and says why.
 - **Network.** libcurl (found at configure time; `libcurl4-openssl-dev` on Linux) or
   WinHTTP on Windows, on one worker thread; replies are handled on the main thread, so a
   slow network never delays a frame. Without libcurl the app still builds and the

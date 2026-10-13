@@ -80,9 +80,9 @@ void cheatsInit(App& app, const CliArgs& a) {
     app.ach.onHardcoreChanged = [&app](bool hardcore) {
         app.cheats.apply();   // empties the core's list; re-sends the selections only when allowed
         const unsigned n = app.cheats.active() ? app.cheats.enabledCount() : 0;
-        if (hardcore)
-            app.ach.notice("Cheats are off", "Hardcore mode: no cheat reaches the game." + std::string(n ? " Your saved cheats come back when it ends." : ""));
-        else if (n)
+        if (hardcore && n)
+            app.ach.notice("Cheats are off", "Hardcore mode: no cheat reaches the game. Your saved cheats come back when it ends.");
+        else if (!hardcore && n)
             app.ach.notice("Cheats are back", std::to_string(n) + " cheat" + (n == 1 ? "" : "s") + " applied again (hardcore ended).");
     };
     cm.warn = [&app](const std::string& m) {
