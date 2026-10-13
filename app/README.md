@@ -123,6 +123,26 @@ Inside: `config.ini` (settings, core option overrides, recents), `saves/`
 (`<game>.srm`: EEPROM, SRAM, Memory Track), `states/` (`<game>.slotN.state` plus a
 `.png` thumbnail), `system/` (BIOS files, only if you want real ones), `imgui.ini`.
 
+## Cheats
+
+Emulation > Cheats... lists the cheats of the libretro cheat database for the running
+game, with a toggle each, plus manual codes (hex `ADDRESS:VALUE`, `+` to join
+several). What is on is remembered per game (`<data>/cheats/games/<key>.ini`, keyed
+by the cartridge CRC32; discs by the core's title row or file name) and sent to the
+core again after every load and state restore.
+
+The cheat files are not part of this repository (the database is CC BY-SA 4.0).
+Put the `.cht` files of `libretro-database/cht/Atari - Jaguar` in
+`<data>/cheats/`, point the window's "Cheat library" box (or `--cheats-dir`) at a
+folder of them, or configure with `-DVJ_APP_FETCH_CHEATS=ON` to download a pinned
+copy (one commit, SHA-256 per file) to `<build>/cheats/`, next to the program.
+A set is picked by name from the core's own title (or the file name); with several
+matches, you choose. Jaguar cheats are credited to Gent of Emucheats.
+
+Database entries are RetroArch memory cheats (decimal address/value, width in
+`memory_search_size`); they become the core's hex codes, value little-endian in
+memory as RetroArch writes it. `cheatN_enable` is ignored: nothing starts on.
+
 ## Smoke tests
 
 `virtualjaguar --headless` runs with SDL's dummy video and audio drivers: no
@@ -156,6 +176,9 @@ To regenerate the expected hash after an intentional emulation change:
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
 | `src/input.*` | keyboard and gamepad to libretro input |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
+| `src/cheats.*` | `.cht` parsing, conversion to core codes, per-game cheat state (no SDL, unit tested) |
+| `src/cheats_core.cpp`, `src/cheats_ui.cpp` | core glue (retro_cheat_*, title identity, CLI) and the Cheats window |
+| `cmake/VJCheatData.cmake`, `cmake/VJCheatManifest.cmake`, `cmake/VJCheatTests.cmake` | pinned optional database download, cheat tests |
 | `src/paths.*`, `src/config.*` | data folders (portable mode) and the settings file |
 
 ## Not in this first piece

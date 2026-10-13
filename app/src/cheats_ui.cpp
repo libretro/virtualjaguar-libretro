@@ -115,8 +115,10 @@ void drawUserCheats(App& app) {
         }
     }
     if (!g_ui.error.empty()) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", g_ui.error.c_str());
-    ImGui::TextDisabled("Hex ADDRESS:VALUE; 2, 4 or 8 value digits write a byte, word or long.\n"
-                        "Join several with '+'. Addresses are Jaguar bus addresses (RAM is 000000-1FFFFF).");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Hex ADDRESS:VALUE; 2, 4 or 8 value digits write a byte, word or long. "
+                       "Join several with '+'. Addresses are Jaguar bus addresses (RAM is 000000-1FFFFF).");
+    ImGui::PopStyleColor();
 }
 
 void drawLibrary(App& app) {
@@ -144,7 +146,9 @@ void drawLibrary(App& app) {
         "Cheat sets are the .cht files of the libretro cheat database (libretro-database, folder "
         "cht/Atari - Jaguar). Copy them into the cheats folder above, or build with "
         "-DVJ_APP_FETCH_CHEATS=ON to download a pinned copy next to the program.");
-    ImGui::TextDisabled("Database: libretro-database, CC BY-SA 4.0. Jaguar cheats by Gent (Emucheats).");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Database: libretro-database, CC BY-SA 4.0. Jaguar cheats by Gent (Emucheats).");
+    ImGui::PopStyleColor();
 }
 
 }  // namespace
