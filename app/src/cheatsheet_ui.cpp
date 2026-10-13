@@ -42,43 +42,58 @@ void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
 
     ImGui::SetNextWindowPos(ImVec2(areaPos.x + areaSize.x * 0.5f, areaPos.y + f * 0.6f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.74f);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(f * 12.0f, 0), ImVec2(maxW, std::max(f * 6.0f, areaSize.y * 0.96f)));
+    // An explicit width (height auto-fits): wrapped text and auto-resize would otherwise chase each other.
+    ImGui::SetNextWindowSize(ImVec2(columns == 2 ? maxW : std::min(maxW, f * 34.0f * scale + f), 0), ImGuiCond_Always);
     ImGuiWindowFlags wf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                           ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings |
-                          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
+                          ImGuiWindowFlags_NoBringToFrontOnFocus;
     (void)io;
     if (!ImGui::Begin("##controls_overlay", nullptr, wf)) {
         ImGui::End();
         return;
     }
+    auto drawLine = [](const SheetLine& l) {
+        if (l.heading) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.85f, 1.0f, 1.0f));
+            ImGui::TextWrapped("%s", l.label.c_str());
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextWrapped("%s: %s", l.label.c_str(), l.keys.c_str());
+        }
+    };
     ImGui::PushFont(nullptr, f * scale);
-    ImGui::PushTextWrapPos(maxW - f);
-    ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.45f, 1.0f), "%s", sheet.title.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.9f, 0.45f, 1.0f));
+    ImGui::TextWrapped("%s", sheet.title.c_str());
+    ImGui::PopStyleColor();
     ImGui::Separator();
     if (columns == 2 && ImGui::BeginTable("##cs", 2, ImGuiTableFlags_SizingStretchSame)) {
-        size_t half = (sheet.lines.size() + 1) / 2;
-        // Never split a section in half: move the break to the next heading.
-        while (half < sheet.lines.size() && !sheet.lines[half].heading) half++;
+        // Never split a section: break at the heading that balances the two columns best.
+        size_t half = sheet.lines.size(), bestSpread = sheet.lines.size();
+        for (size_t i = 1; i < sheet.lines.size(); i++) {
+            if (!sheet.lines[i].heading) continue;
+            size_t spread = i > sheet.lines.size() - i ? i - (sheet.lines.size() - i) : (sheet.lines.size() - i) - i;
+            if (spread < bestSpread) {
+                bestSpread = spread;
+                half = i;
+            }
+        }
         ImGui::TableNextRow();
         for (int col = 0; col < 2; col++) {
             ImGui::TableSetColumnIndex(col);
             size_t a = col == 0 ? 0 : half, b = col == 0 ? half : sheet.lines.size();
             for (size_t i = a; i < b; i++) {
                 const SheetLine& l = sheet.lines[i];
-                if (l.heading) ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "%s", l.label.c_str());
-                else ImGui::TextWrapped("%s: %s", l.label.c_str(), l.keys.c_str());
+                drawLine(l);
             }
         }
         ImGui::EndTable();
     } else {
-        for (const SheetLine& l : sheet.lines) {
-            if (l.heading) ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "%s", l.label.c_str());
-            else ImGui::TextWrapped("%s: %s", l.label.c_str(), l.keys.c_str());
-        }
+        for (const SheetLine& l : sheet.lines) drawLine(l);
     }
     ImGui::Separator();
-    ImGui::TextDisabled("Hide: the Controls overlay key. Rebind: Settings > Input.");
-    ImGui::PopTextWrapPos();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Hide: the Controls overlay key. Rebind: Settings > Input.");
+    ImGui::PopStyleColor();
     ImGui::PopFont();
     ImGui::End();
 }

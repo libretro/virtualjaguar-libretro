@@ -4,6 +4,7 @@
 #include "libretro.h"
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdio>
 #include <vector>
 
@@ -89,6 +90,16 @@ void controlsOverlayOnLoad(App& app) {
 // ---------------------------------------------------------------------------------
 namespace {
 
+// Long hints wrap inside the window instead of running off its edge.
+void note(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrappedV(fmt, args);
+    ImGui::PopStyleColor();
+    va_end(args);
+}
+
 struct Choice {
     std::string desc;
     int id;
@@ -138,7 +149,7 @@ void drawDevicesPanel(App& app) {
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", game.c_str());
     }
-    ImGui::TextDisabled("Choices apply to this scope; a game's own choice overrides the global one.");
+    note("Choices apply to this scope; a game's own choice overrides the global one.");
     ImGui::Separator();
 
     // ---- ports ----------------------------------------------------------------------------------
@@ -170,9 +181,9 @@ void drawDevicesPanel(App& app) {
         DevKind k = in.portKind(p);
         ImGui::SameLine();
         ImGui::TextDisabled("now: %s", devKindLabel(k));
-        ImGui::TextDisabled("    %s", devKindHelp(k));
+        note("%s", devKindHelp(k));
     }
-    if (!app.host.isLoaded()) ImGui::TextDisabled("The list is the core's own once a game is loaded.");
+    if (!app.host.isLoaded()) note("The list is the core's own once a game is loaded.");
 
     // ---- players --------------------------------------------------------------------------------
     ImGui::SeparatorText("Players: which controller plays whom");
@@ -227,7 +238,7 @@ void drawDevicesPanel(App& app) {
         ImGui::PopID();
     }
     int kp = in.store() ? in.store()->keyboardPort() : 0;
-    ImGui::TextDisabled("With no explicit choice the keyboard plays %s and controllers are handed out in the order they were plugged in.",
+    note("With no explicit choice the keyboard plays %s and controllers are handed out in the order they were plugged in.",
                         kp == 0 ? "Player 1" : "Player 2");
 
     // ---- tuning ---------------------------------------------------------------------------------
@@ -264,10 +275,10 @@ void drawDevicesPanel(App& app) {
         DeviceSettings::set(app.cfg, sc, "gun_source", std::to_string(gs));
         changed = true;
     }
-    ImGui::TextDisabled("Sensitivity, dead zone and response curve are also in Core options (applied inside the emulated device).");
+    note("Sensitivity, dead zone and response curve are also in Core options (applied inside the emulated device).");
     if (changed) deviceChanged(app);
     if (in.mouseWanted()) {
-        ImGui::TextDisabled("The mouse is captured while the game has focus and no menu is open. F10 (or Esc) releases it; click the picture to capture it again.");
+        note("The mouse is captured while the game has focus and no menu is open. F10 (or Esc) releases it; click the picture to capture it again.");
     }
 
     // ---- overlay --------------------------------------------------------------------------------
@@ -277,7 +288,7 @@ void drawDevicesPanel(App& app) {
         app.cfg.setBool("ui.controls.autoshow", as);
         app.cfg.save();
     }
-    ImGui::TextDisabled("Keyboard players always get it at boot; a gamepad player once per controller model.");
+    note("Keyboard players always get it at boot; a gamepad player once per controller model.");
     if (ImGui::Button(in.controls.show ? "Hide the overlay now" : "Show the overlay now")) {
         in.controls.show = !in.controls.show;
         in.controls.hideAt = 0;
