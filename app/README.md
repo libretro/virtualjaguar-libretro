@@ -138,15 +138,17 @@ It is built on rcheevos' `rc_client` (v12.5.0, MIT, fetched at configure time li
 
 - **Game identification.** rc_client hashes the file itself: the whole cartridge file for
   Atari Jaguar (console 17), the second-session boot executable for a `.cue` disc (Atari
-  Jaguar CD, console 77, rcheevos' own cue/bin reader). **`.chd` and `.cdi` discs are not
-  identified** (rcheevos has no reader for them); the game runs and the app says why.
+  Jaguar CD, console 77, rcheevos' built-in cue/bin reader). **`.chd` and `.cdi` discs are not
+  identified yet**: rcheevos' built-in reader covers cue/bin only and this app has not
+  supplied a CHD/CDI reader (RetroArch installs its own CD reader). The game runs and the
+  app says why. A `.bin` file is a cartridge for this core and is hashed as one.
 - **Memory.** The core publishes a memory map (`RETRO_ENVIRONMENT_SET_MEMORY_MAPS`: 2 MB
   system RAM at `$000000`). rcheevos' `rc_libretro.c`, the same code RetroArch builds,
   maps addresses onto it; nothing is byte-swapped. The RAM is a big-endian image and
   Jaguar sets use the big-endian operand sizes (`0xI` 16-bit, `0xG` 32-bit).
 - **Hardcore.** While signed in, hardcore is on and a game is being tracked: loading
   save states is refused (saving works), pausing is rate-limited (`rc_client_can_pause`),
-  enabling it mid-game restarts the game, core options that rcheevos disallows (today
+  enabling it mid-game (or signing in mid-game with it on) restarts the game for a clean run, core options that rcheevos disallows (today
   `virtualjaguar_pal = enabled`) pause hardcore, and `Achievements::allowCheats()`,
   `allowRewind()`, `allowSlowMotion()` and `allowFrameAdvance()` are false so those
   features (cheats, rewind, slow motion and frame advance are separate pieces) must ask.
