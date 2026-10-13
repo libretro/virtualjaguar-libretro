@@ -124,9 +124,9 @@ jobs:
       run: |
         lib=$(find app/build -name 'libvj_core.a' | head -1)
         [ -n "$lib" ] || { echo "libvj_core.a not found"; exit 1; }
-        which nm
-        nm "$lib" 2>/dev/null | grep -E 'blitter_simd_ops' || true
-        n=$(nm "$lib" 2>/dev/null | grep -cE ' [A-Z] _?blitter_simd_ops$' || true)
+        NM="$(command -v nm || command -v llvm-nm)"; echo "nm: $NM"
+        "$NM" "$lib" 2>/dev/null | grep -E 'blitter_simd_ops' || true
+        n=$("$NM" "$lib" 2>/dev/null | grep -cE ' [A-Z] _?blitter_simd_ops$' || true)
         echo "blitter_simd_ops definitions: $n"
         [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
 

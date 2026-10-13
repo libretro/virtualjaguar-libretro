@@ -1,6 +1,6 @@
 ; Inno Setup script for the Virtual Jaguar installer (#839).
 ; Built by app/packaging/windows/package.sh:
-;   ISCC /DAppVersion=4.0.0 /DSourceDir=<staged tree> /DOutputDir=<dir> /DOutputName=<name> virtualjaguar.iss
+;   ISCC [/DArm64] /DAppVersion=4.0.0 /DSourceDir=<staged tree> /DOutputDir=<dir> /DOutputName=<name> virtualjaguar.iss
 ; Per-user by default (no admin prompt); the first dialog offers "all users".  The installed
 ; program is NOT portable (no portable.txt), so settings, saves and states live in
 ; %APPDATA%\VirtualJaguar and survive an uninstall.
@@ -32,8 +32,14 @@ DefaultGroupName=Virtual Jaguar
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
+; x64: also installs on ARM64 Windows (x64 emulation).  arm64: native ARM64 Windows only.
+#ifdef Arm64
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
