@@ -60,7 +60,9 @@ A standalone front end for the same core, in `app/`: SDL3 for window, audio and 
 | --- | --- |
 | macOS 11+, Apple Silicon and Intel | `VirtualJaguar-X.Y.Z-macos-universal.zip` |
 | Windows x64 | `VirtualJaguar-X.Y.Z-windows-x64.zip` (portable) or `...-windows-x64-setup.exe` (installer) |
+| Windows ARM64 | `VirtualJaguar-X.Y.Z-windows-arm64.zip` (portable) or `...-windows-arm64-setup.exe` (installer) |
 | Linux x86_64, aarch64 | `VirtualJaguar-X.Y.Z-linux-<arch>.AppImage` or `virtualjaguar_X.Y.Z_<amd64\|arm64>.deb` |
+| Linux x86_64 (Flatpak) | `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`: `flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`, then `flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` (no shaders yet) |
 
 Until signing is configured for the release, macOS may need right-click > Open the first time and Windows SmartScreen may warn about the installer. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
 
