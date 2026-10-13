@@ -188,7 +188,7 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
     }
     downloadArt = cfg.getBool("library.art", true);
     hideOnLaunch = cfg.getBool("library.hide_on_launch", true);
-    cellScale = std::min(2.0f, std::max(0.5f, cfg.getFloat("library.size", 1.0f)));
+    cellScale = lib::clampTileScale(cfg.getFloat("library.size", lib::kTileScaleDefault));
     section = std::min(2, std::max(0, cfg.getInt("library.section", 0)));
     systemDir = paths.system;
 
@@ -206,6 +206,7 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
 }
 
 void LibraryService::stop() {
+    if (zoomSaveAt_) saveSettings();
     cancel_ = true;
     scanCancel_ = true;
     scanW_.stop();
@@ -221,7 +222,14 @@ void LibraryService::stop() {
     started_ = false;
 }
 
+void LibraryService::zoomChanged() { zoomSaveAt_ = SDL_GetTicks() + 600; }
+
+void LibraryService::flushZoom() {
+    if (zoomSaveAt_ && SDL_GetTicks() >= zoomSaveAt_) saveSettings();
+}
+
 void LibraryService::saveSettings() {
+    zoomSaveAt_ = 0;
     if (!cfg_) return;
     for (int i = 0; i < kMaxFolders; i++) {
         std::string k = "library.dir." + std::to_string(i);
@@ -314,6 +322,33 @@ void SDLCALL LibraryService::folderDone(void* ud, const char* const* list, int) 
 void LibraryService::addFolderDialog(SDL_Window* parent) {
     std::string def = folders_.empty() ? std::string() : folders_.back();
     SDL_ShowOpenFolderDialog(&LibraryService::folderDone, this, parent, def.empty() ? nullptr : def.c_str(), false);
+}
+
+bool LibraryService::installBios(const lib::Entry& e) {
+    if (systemDir.empty()) {
+        setStatus("No system folder to copy the BIOS into.");
+        return false;
+    }
+    const std::string name = lib::biosInstallName(e.bios, e.file.size);
+    if (name.empty()) {
+        setStatus("The core would not read this file from its system folder either.");
+        return false;
+    }
+    std::string dir = systemDir;
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
+    const std::string dest = dir + name;
+    SDL_PathInfo pi;
+    if (SDL_GetPathInfo(dest.c_str(), &pi)) {   // never replace what the user already has there
+        setStatus(name + " is already in the system folder; remove or rename it first to replace it.");
+        return false;
+    }
+    size_t sz = 0;
+    void* data = SDL_LoadFile(e.file.path.c_str(), &sz);
+    bool ok = data && sz == e.file.size && writeFileAtomic(dest, data, sz);
+    SDL_free(data);
+    setStatus(ok ? "Copied to the system folder as " + name + "." : "Could not copy " + name + " to the system folder.");
+    if (ok) rescan();
+    return ok;
 }
 
 void LibraryService::rescan() {

@@ -100,6 +100,9 @@ struct BiosInfo {
 // track" in the name).  Names only count for small files (<= 512 KiB): no BIOS is larger.
 BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole);
 const char* biosRoleLabel(BiosRole r);   // "Cart boot ROM", "CD BIOS", ...
+// Tests only: teach classifyBios one more checksum (the real BIOS images cannot be committed, so a
+// fixture's checksum is registered instead).
+void addKnownBiosForTest(uint32_t crc, BiosRole role, const char* title);
 // Will the core read this file where it is, and when?  Decided from what libretro.c does (file
 // NAME, FOLDER and SIZE; the checksum only names the image): the cart boot ROM search
 // (load_external_cart_boot_rom: jagboot.rom, boot.rom, boot0.rom and the "[BIOS] Atari Jaguar..." names, in the
@@ -112,6 +115,12 @@ struct BiosUse {
     std::string text;      // when / why not, a sentence or two for the tooltip
 };
 BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const std::string& systemDir);
+// The core reads BIOS files only from its system folder, under fixed names.  A BIOS found in a library
+// folder can be copied there: this is the file name (relative to the system folder) the copy must have for the
+// core to pick it up, or "" when no copy would help (the Series K image, which is built in and never read; the
+// Memory Track and other data files; a size the core rejects).  Retail and developer CD BIOS, and the Model M
+// boot ROM, get the names that select them; any other boot ROM becomes jagboot.rom (Cart BIOS Type = Custom).
+std::string biosInstallName(const BiosInfo& b, uint64_t size);
 
 // A scanned file plus what the dats say about it.
 struct Entry {
@@ -148,6 +157,17 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs);
 
 // "Iron_Soldier.v1.04.j64" is not a title, but "Iron Soldier (World).j64" nearly is.
 std::string titleFromFileStem(const std::string& stem);
+
+// ---- tile zoom ----------------------------------------------------------------------------
+// The library grid's tile size is one multiplier (the toolbar slider, the config key library.size, pinch,
+// Ctrl/Cmd+wheel and Ctrl/Cmd +/-/0 all drive it).  One clamp and one step, so they cannot disagree.
+const float kTileScaleMin = 0.5f;
+const float kTileScaleMax = 2.5f;
+const float kTileScaleDefault = 1.0f;
+const float kTileScaleStep = 1.1f;   // one wheel notch / key press multiplies the size by this
+float clampTileScale(float s);                           // into [min, max]; NaN / infinite -> the default
+float zoomTileScale(float cur, float steps);             // cur * 1.1^steps, clamped; steps may be fractional (trackpad)
+float pinchTileScale(float cur, float factor);           // factor = SDL's per-update pinch scale (>1 zooms in); junk is ignored
 
 // ---- scan cache on disk ---------------------------------------------------------------------
 

@@ -79,7 +79,12 @@ public:
     bool hideOnLaunch = true;
     bool focusSearch = false;   // UI: put the cursor in the search box on the next frame (Ctrl/Cmd+L on the home screen)
     std::atomic<bool> downloadArt{true};   // UI writes, the decode worker reads
-    float cellScale = 1.0f;
+    float cellScale = 1.0f;     // tile size multiplier, lib::clampTileScale range
+    // Zoom (pinch, Ctrl/Cmd+wheel, Ctrl/Cmd +/-/0): the grid publishes the frame it was under the pointer, the
+    // app's pinch handler zooms only then; changes are written to the config once they settle.
+    int gridHoverFrame = -1000;
+    void zoomChanged();         // a zoom step happened: schedule the config write
+    void flushZoom();           // UI, every frame: writes the config once the zoom has settled
     int section = 0;            // lib::Section shown (Cartridges, Jaguar CD, BIOS); remembered in config
     std::string systemDir;      // the core's system folder, for BIOS files and the notes on them
     const std::vector<lib::Entry>& entries() const { return entries_; }
@@ -103,6 +108,9 @@ public:
     void updateDatabase();                       // download newer dat files (user action)
     void launch(const lib::Entry& e);            // asks the app to open it (a drop-style event)
     void setDownloadArt(bool on);
+    // Copies a BIOS found in a library folder into the core's system folder under the name the core
+    // searches for (lib::biosInstallName), never over an existing file.  The result goes to status().
+    bool installBios(const lib::Entry& e);
     void saveSettings();
 
     // Art for an entry: starts loading on first use, returns what is ready now.
@@ -161,6 +169,7 @@ private:
     std::vector<std::string> pickedFolders_;  // dialog thread -> main
     bool datsChanged_ = false;
     std::string status_;
+    uint64_t zoomSaveAt_ = 0;   // SDL ticks (ms) when to write library.size, 0 = nothing pending
     std::map<std::string, double> netFail_;   // "key|type" -> time of last transient failure
     std::atomic<bool> cancel_{false};
     std::atomic<bool> scanCancel_{false};

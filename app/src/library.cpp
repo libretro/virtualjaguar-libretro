@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -297,6 +298,15 @@ bool inList(const char* const* list, const std::string& name) {
     return false;
 }
 
+// The same, ignoring case: a dump named JAGCD.BIN is as much a CD BIOS as jagcd.bin (macOS and Windows
+// volumes are case-insensitive, and archives of dumps are full of upper-case names).
+bool inListCI(const char* const* list, const std::string& name) {
+    const std::string ln = lowerStr(name);
+    for (; *list; list++)
+        if (ln == lowerStr(*list)) return true;
+    return false;
+}
+
 bool hasWord(const std::string& lowerName, const char* w) { return lowerName.find(w) != std::string::npos; }
 
 }  // namespace
@@ -311,9 +321,30 @@ const char* biosRoleLabel(BiosRole r) {
     }
 }
 
+namespace {
+struct ExtraBios {
+    uint32_t crc;
+    BiosRole role;
+    std::string title;
+};
+std::vector<ExtraBios>& extraKnownBios() {   // tests only
+    static std::vector<ExtraBios> v;
+    return v;
+}
+}  // namespace
+
+void addKnownBiosForTest(uint32_t crc, BiosRole role, const char* title) { extraKnownBios().push_back({crc, role, title}); }
+
 BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole) {
     BiosInfo b;
     if (crcWhole) {
+        for (const ExtraBios& k : extraKnownBios()) {
+            if (k.crc != crcWhole) continue;
+            b.role = k.role;
+            b.recognized = true;
+            b.title = k.title;
+            return b;
+        }
         for (const KnownBios& k : kKnownBios) {
             if (k.crc != crcWhole) continue;
             b.role = k.role;
@@ -327,9 +358,9 @@ BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole)
     const std::string lname = lowerStr(base);
     const std::string stem = stemOf(path);
     const bool tagged = lname.rfind("[bios]", 0) == 0;
-    if (inList(kCdBiosNames, base)) {
+    if (inListCI(kCdBiosNames, base)) {
         b.role = BiosRole::CdBios;
-    } else if (inList(kCartBootNames, base) || lname == "jagboot.rom" || lname == "jagboot_m.rom" ||
+    } else if (inListCI(kCartBootNames, base) || lname == "jagboot.rom" || lname == "jagboot_m.rom" ||
                lname == "boot.rom" || lname == "boot0.rom") {
         b.role = BiosRole::CartBoot;
     } else if (tagged || hasWord(lname, "bios")) {
@@ -411,6 +442,27 @@ BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const
     default: u.text = "The core does not read this file."; break;
     }
     return u;
+}
+
+std::string biosInstallName(const BiosInfo& b, uint64_t size) {
+    const std::string lt = lowerStr(b.title);
+    if (b.role == BiosRole::CartBoot) {
+        if (size != 0x20000) return "";
+        if (b.recognized && lt.find("series k") != std::string::npos) return "";   // the built-in image: never read
+        if (b.recognized && lt.find("model m") != std::string::npos) return "jagboot_m.rom";
+        if (b.recognized && lt.find("stubulator '93") != std::string::npos)
+            return "[BIOS] Atari Jaguar Stubulator '93 (World).j64";
+        if (b.recognized && lt.find("stubulator '94") != std::string::npos)
+            return "[BIOS] Atari Jaguar Stubulator '94 (World).j64";
+        return "jagboot.rom";
+    }
+    if (b.role == BiosRole::CdBios) {
+        if (size != 0x40000) return "";
+        if (b.recognized && lt.find("developer") != std::string::npos) return "[BIOS] Atari Jaguar Developer CD (World).bin";
+        if (b.recognized) return "[BIOS] Atari Jaguar CD (World).bin";
+        return "jagcd.bin";
+    }
+    return "";
 }
 
 // ---- scanning ----------------------------------------------------------------------------------------------
@@ -692,6 +744,25 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs) {
         }
     }
     return e;
+}
+
+// ---- tile zoom -----------------------------------------------------------------------------------------
+
+float clampTileScale(float s) {
+    if (!std::isfinite(s)) return kTileScaleDefault;
+    return std::min(kTileScaleMax, std::max(kTileScaleMin, s));
+}
+
+float zoomTileScale(float cur, float steps) {
+    if (!std::isfinite(steps)) return clampTileScale(cur);
+    steps = std::min(20.0f, std::max(-20.0f, steps));   // a runaway wheel delta cannot overflow the power
+    return clampTileScale(clampTileScale(cur) * std::pow(kTileScaleStep, steps));
+}
+
+float pinchTileScale(float cur, float factor) {
+    if (!std::isfinite(factor) || factor <= 0.0f) return clampTileScale(cur);
+    factor = std::min(2.0f, std::max(0.5f, factor));    // one update is a small change; a glitch is not a jump
+    return clampTileScale(clampTileScale(cur) * factor);
 }
 
 // ---- scan cache serialisation --------------------------------------------------------------------------------

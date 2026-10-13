@@ -591,6 +591,15 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         fastForward = false;
         break;
+    case SDL_EVENT_PINCH_UPDATE:
+        // Trackpad pinch (macOS; SDL sends the change since the last update): zooms the library's tiles, and only
+        // while the library is showing with the pointer over its grid and no text field being edited.
+        if (imguiUp_ && (homeVisible() || library.show) && !ImGui::GetIO().WantTextInput &&
+            ImGui::GetFrameCount() - library.gridHoverFrame <= 1) {
+            library.cellScale = lib::pinchTileScale(library.cellScale, e.pinch.scale);
+            library.zoomChanged();
+        }
+        break;
     default: break;
     }
 }

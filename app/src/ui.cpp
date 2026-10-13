@@ -298,6 +298,15 @@ void drawAbout(App& app) {
     ImGui::Text("Virtual Jaguar %s", VJ_APP_VERSION);
     ImGui::TextDisabled("Atari Jaguar emulator. GPLv3.");
     ImGui::Separator();
+    ImGui::TextUnformatted("Authors");
+    ImGui::PushTextWrapPos(0.0f);   // to the window's content width
+    ImGui::TextWrapped("Virtual Jaguar app and core: Joseph Mattiello (@JoeMatt)");
+    ImGui::TextDisabled("Based on the original Virtual Jaguar by James Hammons (Shamus), after David Raingeard's "
+                        "original and the SDLEMU port by Niels Wagenaar and Carwin Jones.");
+    ImGui::TextDisabled("libretro port: libretro/RetroArch contributors.");
+    ImGui::PopTextWrapPos();
+    ImGui::TextLinkOpenURL("All contributors", "https://github.com/libretro/virtualjaguar-libretro/graphs/contributors");
+    ImGui::Separator();
     ImGui::Text("Core:    %s %s", app.host.coreName()[0] ? app.host.coreName() : "Virtual Jaguar",
                 app.host.coreVersion());
     int sdl = SDL_GetVersion();
@@ -313,6 +322,7 @@ void drawAbout(App& app) {
         {"Tab (hold)", "fast-forward"},
         {"Ctrl/Cmd+O", "open a game"},
         {"Ctrl/Cmd+L", "game library"},
+        {"Ctrl/Cmd+wheel, +/-/0", "library tile size (trackpad: pinch)"},
         {"Ctrl/Cmd+R", "reset"},
     };
     if (ImGui::BeginTable("##keys", 2, ImGuiTableFlags_SizingFixedFit)) {

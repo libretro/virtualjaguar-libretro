@@ -53,7 +53,7 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
     float sw = ui::em(8.0f);
     flow.next(sw);
     ImGui::SetNextItemWidth(sw);
-    ImGui::SliderFloat("##size", &svc.cellScale, 0.6f, 2.0f, "Size %.1fx");
+    ImGui::SliderFloat("##size", &svc.cellScale, lib::kTileScaleMin, lib::kTileScaleMax, "Size %.1fx");
     if (ImGui::IsItemDeactivatedAfterEdit()) svc.saveSettings();
 
     flow.next(ui::Flow::buttonW("Add folder..."));
@@ -142,16 +142,31 @@ void drawStatus(LibraryService& svc) {
 }
 
 // A BIOS or system file: shows what it is and whether the core will read it where it is.  It is not
-// content, so a click does nothing.
+// content, so a click never launches it; on a file the core would read from its system folder but this
+// is elsewhere, a click offers to copy it there.
 void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImGui::PushID(e.file.path.c_str());
-    ImGui::InvisibleButton("##cell", ImVec2(cellW, artH + textH));
+    bool clicked = ImGui::InvisibleButton("##cell", ImVec2(cellW, artH + textH));
     bool hovered = ImGui::IsItemHovered();
-    ImGui::PopID();
     const lib::BiosInfo& b = e.bios;
     const lib::BiosUse use = lib::biosUse(b, e.file.path, e.file.size, svc.systemDir);
+    const std::string installAs = use.core || svc.systemDir.empty() ? std::string() : lib::biosInstallName(b, e.file.size);
+    if (clicked && !installAs.empty()) ImGui::OpenPopup("##install");
+    if (ImGui::BeginPopup("##install")) {
+        ImGui::Text("Copy to the system folder as");
+        ImGui::TextDisabled("%s", installAs.c_str());
+        if (ImGui::Button("Copy")) {
+            svc.installBios(e);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    const bool popupOpen = ImGui::IsPopupOpen("##install");   // under this tile's ID scope
+    ImGui::PopID();
     const bool found = use.core;
     const bool readable = b.role == lib::BiosRole::CartBoot || b.role == lib::BiosRole::CdBios;
 
@@ -178,7 +193,7 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + textH - lh), sc, st, nullptr,
                 cellW - 4, &clip);
 
-    if (hovered) {
+    if (hovered && !popupOpen) {
         ui::beginWrappedTooltip();
         ImGui::TextWrapped("%s", e.title.c_str());
         ImGui::TextDisabled("%s%s", lib::biosRoleLabel(b.role), b.recognized ? "" : " (checksum not in the core's list)");
@@ -187,6 +202,8 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
         if (e.file.crcWhole) ImGui::TextDisabled("CRC32 %08X", e.file.crcWhole);
         ImGui::Spacing();
         ImGui::TextWrapped("%s", use.text.c_str());
+        if (!installAs.empty())
+            ImGui::TextWrapped("Click to copy it to the system folder as %s, where the core looks for it.", installAs.c_str());
         if (readable)
             ImGui::TextWrapped("The core has built-in copies of the Series K and Model M boot ROMs and both CD BIOS "
                                "images, so nothing is missing without this file.");
@@ -268,7 +285,50 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     if (clicked) svc.launch(e);
 }
 
+// ---- zoom ------------------------------------------------------------------------------------------------------
+// Ctrl+wheel (Cmd on macOS), Ctrl/Cmd + '+' '-' '0', and the trackpad pinch (app.cpp, which asks gridHoverFrame
+// whether the pointer is over the grid) all change svc.cellScale, the value the toolbar slider edits.
+// ImGui swaps Ctrl and Cmd on macOS, so KeyCtrl is the platform's shortcut key there and KeySuper the other one:
+// either zooms.
+
+bool zoomModHeld() {
+    const ImGuiIO& io = ImGui::GetIO();
+    return io.KeyCtrl || io.KeySuper;
+}
+
+// Scrolling is off while the modifier is held: the wheel then means zoom, not scroll.
+ImGuiWindowFlags gridWindowFlags() { return zoomModHeld() ? ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None; }
+
+// Called inside the grid's child window, so "hovered" and "focused" are about this view alone: another window
+// on top, a text field being edited or a game with no library showing never zooms it.
+void handleZoomInput(LibraryService& svc) {
+    svc.flushZoom();
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool hovered = ImGui::IsWindowHovered();
+    if (hovered) svc.gridHoverFrame = ImGui::GetFrameCount();
+    if (io.WantTextInput) return;
+    float steps = 0.0f;
+    bool reset = false;
+    if (zoomModHeld()) {
+        if (hovered && io.MouseWheel != 0.0f) steps += io.MouseWheel;
+        // the home screen has no keyboard focus of its own: it counts when no other window has it
+        const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
+                             !ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow);
+        if (focused) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) steps += 1.0f;
+            if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) steps -= 1.0f;
+            if (ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) reset = true;
+        }
+    }
+    float next = reset ? lib::kTileScaleDefault : steps != 0.0f ? lib::zoomTileScale(svc.cellScale, steps) : svc.cellScale;
+    if (next != svc.cellScale) {
+        svc.cellScale = next;
+        svc.zoomChanged();
+    }
+}
+
 void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filter) {
+    handleZoomInput(svc);
     const std::vector<lib::Entry>& all = svc.entries();
     std::vector<const lib::Entry*> shown;
     shown.reserve(all.size());
@@ -399,7 +459,7 @@ void drawLibraryHome(App& app, float x, float y, float w, float h) {
             drawFolders(svc);
             drawStatus(svc);
             ImGui::Separator();
-            ImGui::BeginChild("##homegrid", ImVec2(0, 0), ImGuiChildFlags_None);
+            ImGui::BeginChild("##homegrid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());
             drawGrid(app, svc, lower(g_search), g_filter);
             ImGui::EndChild();
         }
@@ -426,7 +486,7 @@ void drawLibrary(App& app) {
     drawFolders(svc);
     drawStatus(svc);
     ImGui::Separator();
-    ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());
     drawGrid(app, svc, lower(g_search), g_filter);
     ImGui::EndChild();
     ImGui::End();
