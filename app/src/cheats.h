@@ -105,6 +105,12 @@ public:
     std::function<void()> resetSink;
     std::function<void(unsigned index, bool enabled, const char* code)> setSink;
     std::function<void(const std::string&)> warn;
+    // RetroAchievements hardcore (#836): returns true while no cheat may reach the
+    // core.  apply() then still empties the core's list but sends nothing; the
+    // saved selections are neither touched nor forgotten, so they go back in the
+    // next apply() after the block lifts.  Null = never blocked (unit tests).
+    std::function<bool()> blocked;
+    bool blockedNow() const { return blocked && blocked(); }
 
     // ---- library ----------------------------------------------------------
     // Directories searched (in order) for *.cht files.  A directory named

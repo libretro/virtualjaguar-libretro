@@ -653,6 +653,7 @@ void CheatManager::setUserEnabled(size_t i, bool on) {
 void CheatManager::apply() {
     appliedSegments_ = 0;
     if (resetSink) resetSink();
+    if (blockedNow()) return;   // hardcore: the core's list stays empty
     if (setLoaded_) {
         for (size_t i = 0; i < set_.cheats.size(); i++) {
             const ChtCheat& c = set_.cheats[i];

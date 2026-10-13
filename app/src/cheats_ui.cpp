@@ -167,22 +167,32 @@ void drawCheats(App& app) {
         return;
     }
     const GameIdentity& g = cm.game();
+    const bool hardcore = cm.blockedNow();
     ImGui::Text("%s", !g.title.empty() ? g.title.c_str() : g.fileStem.c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("(%s)", g.key.c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("%u on", cm.enabledCount());
     ImGui::SameLine();
+    ImGui::BeginDisabled(hardcore);
     if (ImGui::SmallButton("Turn all off")) cm.disableAll();
+    ImGui::EndDisabled();
+    if (hardcore)
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                           "Disabled in hardcore mode (saved cheats are kept).");
     if (cm.appliedSegments() > CheatManager::kCoreLimit)
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%u writes: the core keeps only the first %u.",
                            cm.appliedSegments(), CheatManager::kCoreLimit);
     ImGui::Separator();
 
+    ImGui::BeginDisabled(hardcore);
     drawSetPicker(app);
+    ImGui::EndDisabled();
     ImGui::BeginChild("##cheatlist", ImVec2(0, 0), ImGuiChildFlags_Borders);
+    ImGui::BeginDisabled(hardcore);   // toggles, set choice and manual codes: nothing changes in hardcore
     drawSetCheats(app);
     drawUserCheats(app);
+    ImGui::EndDisabled();
     ImGui::Spacing();
     drawCheatLibrary(app);
     ImGui::EndChild();

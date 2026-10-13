@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "achievements.h"
 #include "audio.h"
 #include "cheats.h"
 #include "config.h"
@@ -45,6 +46,24 @@ struct CliArgs {
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
     bool showHelp = false;
     bool showVersion = false;
+    // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
+    // headless; the only server is the canned-JSON mock, so a test can never reach
+    // (or authenticate against) the real service.
+    std::string raMock;                              // directory of <api>.json canned replies
+    bool raHardcore = false;                         // run the mock session in hardcore
+    std::vector<std::pair<unsigned, std::string>> raPokes;   // FRAME:CODE -> core cheat switched on at FRAME
+    std::vector<unsigned> raExpectUnlock;            // achievement ids that must fire
+    std::vector<unsigned> raExpectNoUnlock;          // ... and ids that must not
+    std::vector<std::string> raExpectRequests;       // API names ("awardachievement") that must have been sent
+    std::string raExpectHash;                        // the game hash the client must have asked about
+    bool raExpectLoadError = false;                  // the game must NOT be identified
+    bool raExpectHardcore = false;                   // hardcore active + state load refused
+    bool raExpectSoftcore = false;                   // softcore: save + load state work, progress sidecar written
+    unsigned raLoginAt = 0;                          // delay the mock sign-in to this frame (a late sign-in)
+    std::vector<std::pair<unsigned, std::string>> raSteps;   // FRAME:ACTION (hardcore:on|off, signout, poke:A=V, expect:A=V)
+    std::vector<std::string> raExpectNotice;         // a player-facing notice containing this text must have been shown
+    int raExpectReset = -1;                          // exact number of clean-start restarts (-1 = don't check)
+    bool raExpectBlocked = false;                    // hardcore wanted, but a disallowed core option must keep it off
 };
 
 struct Osd {
@@ -74,6 +93,7 @@ public:
     VideoOut video;
     InputManager input;
     LibraryService library;   // optional game library (#838); idle until start()ed
+    Achievements ach;   // RetroAchievements (#836)
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
