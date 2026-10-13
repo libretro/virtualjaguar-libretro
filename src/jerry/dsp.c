@@ -717,17 +717,82 @@ static void DSPPipeMemAccess(uint32_t addr, int isLoad, int isLong)
 	}
 }
 
-/* Hook for the load/store opcode bodies.  Model on: gateway + scoreboard
- * semantics above (the access runs in the background).  Model off with
- * dram_timing on: the immediate self-cost the GPU pays in the same
- * configuration (GPU_EXT_ACCESS).  Both off: nothing, as before. */
+/* Which DSP timing path this slice runs: 0 none (the default, byte-
+ * identical to the untimed core), 1 dram_timing self-cost, 2 the
+ * pipeline model.  Latched at DSPExec entry from the two options, which
+ * only check_variables() changes between retro_run() calls -- the same
+ * reasoning as GPUExec's cached locals (#532).  One byte so the untimed
+ * hot path pays a single load + never-taken branch per load/store
+ * instead of two option reads. */
+static uint8_t dsp_mem_timed = 0;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define DSP_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER) && _MSC_VER >= 1400
+#define DSP_NOINLINE __declspec(noinline)
+#else
+#define DSP_NOINLINE
+#endif
+
+/* Model on: gateway + scoreboard semantics above (the access runs in
+ * the background).  dram_timing only: the immediate self-cost the GPU
+ * pays in the same configuration (GPU_EXT_ACCESS). */
+static DSP_NOINLINE void DSPMemTimed(uint32_t addr, int isLoad, int isLong)
+{
+	if (dsp_mem_timed == 2)
+		DSPPipeMemAccess(addr, isLoad, isLong);
+	else
+		dsp_bus_stall += bus_arbiter_dsp_access(addr, isLong);
+}
+
+/* Hook for the load/store opcode bodies.  Both options off: nothing. */
 #define DSP_PIPE_MEM(addr, isLoad, isLong) \
 	do { \
-		if (vjs.gpuPipelineTiming) \
-			DSPPipeMemAccess((addr), (isLoad), (isLong)); \
-		else if (busArbiter.enabled) \
-			dsp_bus_stall += bus_arbiter_dsp_access((addr), (isLong)); \
+		if (dsp_mem_timed) \
+			DSPMemTimed((addr), (isLoad), (isLong)); \
 	} while (0)
+
+/* Cycles to deduct for the instruction that just executed on a timed
+ * slice (dsp_mem_timed != 0).  Kept out of DSPExec's loop so the
+ * untimed path there is exactly the legacy table lookup. */
+static DSP_NOINLINE int32_t DSPTimedCharge(uint32_t index, uint32_t riscScale)
+{
+	uint32_t bus = dsp_bus_stall;
+	int32_t cost;
+
+	if (dsp_mem_timed == 2)
+	{
+		/* Base cost 1 (R1) replaces the legacy table under the model
+		 * -- see the model header.  Core stalls are already in the
+		 * DSP's own cycle domain; bus stalls are wall time and are
+		 * rescaled under risc_clock_scale (bus_arbiter.h contract). */
+		dsp_pipe_clock += 1u + (uint64_t)dsp_bus_stall + dsp_pipe_core_stall;
+		dsp_pipe_prev_dest =
+			(dsp_pipe_flags[index] & 4) ? (uint8_t)dsp_opcode_second_parameter
+			                            : (uint8_t)0xFF;
+		dsp_pipe_prev_flags = dsp_pipe_sets_flags[index];
+		/* DIV runs 16 background ticks; only USE of the quotient
+		 * blocks (R15). */
+		if (index == 21)
+		{
+			dsp_reg_ready[dsp_opcode_second_parameter] =
+				dsp_pipe_clock + DSP_PIPE_DIV_TICKS;
+			dsp_reg_ready_ext[dsp_opcode_second_parameter] = 0;
+		}
+		cost = 1 + (int32_t)dsp_pipe_core_stall;
+	}
+	else
+		cost = dsp_opcode_cycles[index];   /* dram_timing: legacy base */
+	if (bus != 0 && riscScale != 100u)
+	{
+		dsp_stall_scale_accum += bus * riscScale;
+		bus = dsp_stall_scale_accum / 100u;
+		dsp_stall_scale_accum %= 100u;
+	}
+	dsp_bus_stall = 0;
+	dsp_pipe_core_stall = 0;
+	return cost + (int32_t)bus;
+}
 
 
 
@@ -2363,6 +2428,7 @@ void DSPExec(int32_t cycles)
 	/* Slice-invariant settings cached in locals, as in GPUExec (issue
 	 * #532): written only by check_variables() between retro_run()s. */
 	int pipeTiming;
+	int dsp_mem_timed_local;
 	uint32_t riscScale;
 	/* Issue #811 late load write-back, armed for exactly the next
 	 * instruction (see dsp_ldx_slot). */
@@ -2393,7 +2459,9 @@ void DSPExec(int32_t cycles)
 	 * slice. */
 	gdbArmedSlice = gdbArmedDSP;
 	dsp_in_exec++;
-	pipeTiming = vjs.gpuPipelineTiming ? 1 : 0;
+	dsp_mem_timed = vjs.gpuPipelineTiming ? 2 : (busArbiter.enabled ? 1 : 0);
+	dsp_mem_timed_local = dsp_mem_timed;
+	pipeTiming = (dsp_mem_timed_local == 2);
 	riscScale  = riscClockScalePct;
 
 	/* Idle-loop fast-forward gates (issue #569).  Every one of these adds
@@ -2583,57 +2651,10 @@ void DSPExec(int32_t cycles)
 			dsp_executeOpcode(index);
 			divArmed = NULL;
 		}
-		if (pipeTiming)
-		{
-			/* Base cost 1 (R1) replaces the legacy table under the model
-			 * -- see the model header.  Core stalls are already in the
-			 * DSP's own cycle domain; bus stalls are wall time and are
-			 * rescaled under risc_clock_scale (bus_arbiter.h contract). */
-			uint32_t bus = dsp_bus_stall;
-
-			dsp_pipe_clock += 1u + (uint64_t)dsp_bus_stall
-			                + dsp_pipe_core_stall;
-			dsp_pipe_prev_dest =
-				(dsp_pipe_flags[index] & 4) ? (uint8_t)dsp_opcode_second_parameter
-				                            : (uint8_t)0xFF;
-			dsp_pipe_prev_flags = dsp_pipe_sets_flags[index];
-			/* DIV runs 16 background ticks; only USE of the quotient
-			 * blocks (R15). */
-			if (index == 21)
-			{
-				dsp_reg_ready[dsp_opcode_second_parameter] =
-					dsp_pipe_clock + DSP_PIPE_DIV_TICKS;
-				dsp_reg_ready_ext[dsp_opcode_second_parameter] = 0;
-			}
-			if (riscScale != 100u && bus != 0)
-			{
-				dsp_stall_scale_accum += bus * riscScale;
-				bus = dsp_stall_scale_accum / 100u;
-				dsp_stall_scale_accum %= 100u;
-			}
-			cycles -= 1 + (int32_t)bus + (int32_t)dsp_pipe_core_stall;
-			dsp_bus_stall = 0;
-			dsp_pipe_core_stall = 0;
-		}
-		else
-		{
+		if (dsp_mem_timed_local == 0)
 			cycles -= dsp_opcode_cycles[index];
-			/* dram_timing self-cost (DSP_PIPE_MEM), wall time.  Never
-			 * nonzero with dram_timing off. */
-			if (dsp_bus_stall)
-			{
-				uint32_t bus = dsp_bus_stall;
-
-				if (riscScale != 100u)
-				{
-					dsp_stall_scale_accum += bus * riscScale;
-					bus = dsp_stall_scale_accum / 100u;
-					dsp_stall_scale_accum %= 100u;
-				}
-				cycles -= (int32_t)bus;
-				dsp_bus_stall = 0;
-			}
-		}
+		else
+			cycles -= DSPTimedCharge(index, riscScale);
 
 		/* Issue #811: the previous instruction was an external load and
 		 * this one overwrote its target -- the load data lands last. */
@@ -2881,6 +2902,7 @@ INLINE static void dsp_opcode_jump(void)
 		uint32_t delayed_pc = RM;
 		uint16_t ds_opcode;
 		uint32_t ds_index;
+		int dsTimed = (dsp_mem_timed == 2);   /* read once: opaque call below */
 		/* The delay slot is the second instruction behind such a store,
 		 * past the retire window: commit the switch before it runs. */
 		if (dspFlagsRetireDelay)
@@ -2904,10 +2926,10 @@ INLINE static void dsp_opcode_jump(void)
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
-		if (vjs.gpuPipelineTiming)
+		if (dsTimed)
 			DSPPipeCheckUse(ds_index);
 		dsp_executeOpcode(ds_index);
-		if (vjs.gpuPipelineTiming)
+		if (dsTimed)
 		{
 			/* The inlined delay slot is never charged by DSPExec's loop;
 			 * a taken JUMP adds ~2 dead refill ticks (R12).  Model only,
@@ -2940,6 +2962,7 @@ INLINE static void dsp_opcode_jr(void)
 		int32_t delayed_pc = dsp_pc + (offset * 2);
 		uint16_t ds_opcode;
 		uint32_t ds_index;
+		int dsTimed = (dsp_mem_timed == 2);   /* read once: opaque call below */
 		/* Same retire-window commits as dsp_opcode_jump. */
 		if (dspFlagsRetireDelay)
 		{
@@ -2961,10 +2984,10 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
-		if (vjs.gpuPipelineTiming)
+		if (dsTimed)
 			DSPPipeCheckUse(ds_index);
 		dsp_executeOpcode(ds_index);
-		if (vjs.gpuPipelineTiming)
+		if (dsTimed)
 		{
 			/* Delay-slot charge + taken-JR refill (~3 dead ticks, R13). */
 			dsp_pipe_core_stall += 1u + 3u;
