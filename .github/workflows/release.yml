@@ -905,6 +905,11 @@ jobs:
         if: github.ref == 'refs/heads/develop'
         # Never fail the publish over the issue: the binaries are already out.
         continue-on-error: true
+        env:
+          # The app section is listed only when this nightly actually carries
+          # app packages (the job skips commits without app/, and a failed
+          # package build does not block the core nightly).
+          APP_BUILT: ${{ needs.app-packages.result == 'success' }}
         run: |
           set -e
           SHORT_SHA="${{ steps.prep_body.outputs.short_sha }}"
@@ -918,7 +923,42 @@ jobs:
             echo "| **Built** | $(date -u '+%Y-%m-%d %H:%M UTC') |"
             echo "| **Download** | [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly) |"
             echo "| **CI run** | [build log](${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}) |"
+            if [ "$APP_BUILT" = "true" ]; then
+              echo "| **App** | [Virtual Jaguar 4.0 desktop app](#the-virtual-jaguar-app-nightly) (macOS, Windows, Linux) |"
+            fi
             echo
+            if [ "$APP_BUILT" = "true" ]; then
+              DL="${GITHUB_SERVER_URL}/${REPO}/releases/download/nightly"
+              RAW="https://raw.githubusercontent.com/${REPO}/develop/tools"
+              echo "### The Virtual Jaguar app (nightly)"
+              echo
+              echo "The standalone desktop app, built from this same commit. These links always point at the newest nightly."
+              echo
+              echo "| System | Download |"
+              echo "|---|---|"
+              echo "| macOS (Apple Silicon + Intel) | [VirtualJaguar-nightly-macos-universal.zip](${DL}/VirtualJaguar-nightly-macos-universal.zip) |"
+              echo "| Windows x64 | [portable .zip](${DL}/VirtualJaguar-nightly-windows-x64.zip) · [installer .exe](${DL}/VirtualJaguar-nightly-windows-x64-setup.exe) |"
+              echo "| Linux x86_64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-x86_64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_amd64.deb) |"
+              echo "| Linux aarch64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-aarch64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_arm64.deb) |"
+              echo
+              echo "Or install / update it with one line (pass \`--what both\` for the app and the RetroArch core):"
+              echo
+              echo '```sh'
+              echo "curl -fsSL ${RAW}/install.sh | sh -s -- --what app --channel nightly"
+              echo '```'
+              echo
+              echo '```powershell'
+              echo "\$env:VJ_WHAT='app'; \$env:VJ_CHANNEL='nightly'; irm ${RAW}/install.ps1 | iex"
+              echo '```'
+              echo
+              P="Nightly app builds are signed and notarized only once the release signing"
+              P="$P secrets are configured; until then macOS needs right-click > Open the first"
+              P="$P time and Windows SmartScreen may warn."
+              echo "$P"
+              echo
+              echo "---"
+              echo
+            fi
             echo "---"
             echo
             echo "### What these are"
