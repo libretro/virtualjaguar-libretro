@@ -28,12 +28,16 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(VJ_APP_SYSTEM_SDL3 "Use an installed SDL3 (find_package) instead of fetching one" OFF)
 option(VJ_APP_BUILD_TESTS "Build the headless smoke tests (CTest)" ON)
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
+option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
+option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configure time and copy them next to the binary" ON)
+set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH
+    "Offline builds: a folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat' to use instead of downloading them")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 # ---------------------------------------------------------------------------
 # Dependencies (pinned; bump deliberately).
-#   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8 (MIT)
+#   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8 (MIT)   rcheevos v12.5.0 (MIT)
 # For offline/dev iteration: -DFETCHCONTENT_SOURCE_DIR_SDL3=<dir>
 #                            -DFETCHCONTENT_SOURCE_DIR_IMGUI=<dir>
 # ---------------------------------------------------------------------------
@@ -93,6 +97,85 @@ endif()
 include(VJCore)
 
 # ---------------------------------------------------------------------------
+# Game library (#838): scanning, identification, box art.  vj_library has no GL
+# and no ImGui, so the headless tests (app/tests) link it too.
+# HTTP: SDL3 has no client.  libcurl where the platform ships it (macOS SDK,
+# libcurl4-openssl-dev on Linux), WinHTTP on Windows (part of the OS, no
+# dependency).  Neither found: the feature degrades to "no downloads".
+# ---------------------------------------------------------------------------
+find_package(Threads REQUIRED)
+add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/http.cpp)
+target_include_directories(vj_library PUBLIC src)
+target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
+set(VJ_HTTP_BACKEND "none")
+if(VJ_APP_HTTP)
+    if(WIN32)
+        target_compile_definitions(vj_library PRIVATE VJ_HTTP_WINHTTP)
+        target_link_libraries(vj_library PRIVATE winhttp)
+        set(VJ_HTTP_BACKEND "WinHTTP")
+    else()
+        find_package(CURL QUIET)
+        if(CURL_FOUND)
+            target_compile_definitions(vj_library PRIVATE VJ_HTTP_CURL)
+            target_link_libraries(vj_library PRIVATE CURL::libcurl)
+            set(VJ_HTTP_BACKEND "libcurl")
+        endif()
+    endif()
+endif()
+message(STATUS "App HTTP backend: ${VJ_HTTP_BACKEND}")
+if(MSVC)
+    target_compile_options(vj_library PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_library PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_library PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    if(VJ_APP_WERROR)
+        target_compile_options(vj_library PRIVATE -Werror)
+    endif()
+endif()
+
+# libretro-database dat files (CC-BY-SA-4.0; never committed here).  Pinned to a
+# commit and SHA256 like SDL3 and Dear ImGui; copied next to the binary.
+set(VJ_DB_COMMIT 12c21cf79f1e20eff6ac68b80875816c717d0a7a)
+set(VJ_DB_DIR "${CMAKE_BINARY_DIR}/libretro-db")
+set(VJ_DB_HAVE OFF)
+if(VJ_APP_BUNDLE_DB)
+    file(MAKE_DIRECTORY "${VJ_DB_DIR}")
+    set(_vj_db_names "Atari - Jaguar.dat" "Atari - Jaguar CD.dat")
+    set(_vj_db_paths "no-intro/Atari%20-%20Jaguar.dat" "redump/Atari%20-%20Jaguar%20CD.dat")
+    set(_vj_db_sha256
+        "704fdf2f14e14bdae07836f2ff5600c223b38df870d81dbcd3acc0f04c846299"
+        "6cb715e076d7a3a3e106d33c73207aa8068256533bc2b4e08eb6e1ce19d3cc8f")
+    set(_vj_db_ok 0)
+    foreach(_i RANGE 0 1)
+        list(GET _vj_db_names ${_i} _n)
+        list(GET _vj_db_paths ${_i} _p)
+        list(GET _vj_db_sha256 ${_i} _h)
+        if(VJ_APP_LIBRETRO_DB_DIR AND EXISTS "${VJ_APP_LIBRETRO_DB_DIR}/${_n}")
+            configure_file("${VJ_APP_LIBRETRO_DB_DIR}/${_n}" "${VJ_DB_DIR}/${_n}" COPYONLY)
+            math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
+        else()
+            file(DOWNLOAD
+                "https://raw.githubusercontent.com/libretro/libretro-database/${VJ_DB_COMMIT}/metadat/${_p}"
+                "${VJ_DB_DIR}/${_n}"
+                EXPECTED_HASH SHA256=${_h}
+                TLS_VERIFY ON
+                STATUS _st)
+            list(GET _st 0 _rc)
+            if(_rc EQUAL 0)
+                math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
+            else()
+                file(REMOVE "${VJ_DB_DIR}/${_n}")
+                message(WARNING "Could not fetch '${_n}' (${_st}). The game library will title games from file names "
+                                "until 'Update database' is used; for offline builds set -DVJ_APP_LIBRETRO_DB_DIR=<dir>.")
+            endif()
+        endif()
+    endforeach()
+    if(_vj_db_ok GREATER 0)
+        set(VJ_DB_HAVE ON)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # The app.
 # ---------------------------------------------------------------------------
 set(VJ_APP_SOURCES
@@ -103,13 +186,33 @@ set(VJ_APP_SOURCES
     src/core_host.cpp
     src/audio.cpp
     src/video.cpp
+    src/present_util.cpp
+    src/shaders.cpp
+    src/shaders_ui.cpp
     src/input.cpp
-    src/ui.cpp)
+    src/remap.cpp
+    src/remap_ui.cpp
+    src/ui.cpp
+    src/library_ui.cpp
+    src/cheats.cpp
+    src/cheats_core.cpp
+    src/cheats_ui.cpp
+    src/achievements.cpp
+    src/achievements_ui.cpp
+    src/ach_http.cpp)
+
+# RetroAchievements (#836): rcheevos + HTTP transport.
+include(VJRcheevos)
+
+include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
 add_executable(virtualjaguar ${VJ_APP_SOURCES})
+vj_app_shaders(virtualjaguar)
+vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
-target_link_libraries(virtualjaguar PRIVATE vj_core vj_imgui ${VJ_SDL3_TARGET})
+target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
+target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}")
 if(MSVC)
@@ -124,8 +227,19 @@ else()
         target_compile_options(virtualjaguar PRIVATE -Werror)
     endif()
 endif()
+if(VJ_DB_HAVE)
+    add_custom_command(TARGET virtualjaguar POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${VJ_DB_DIR}" "$<TARGET_FILE_DIR:virtualjaguar>/libretro-db")
+endif()
 # Windows: the executable keeps the console subsystem for now.  A GUI-subsystem
 # build would swallow the headless smoke test's stdout; packaging (#839) decides.
+
+# Install layout: the executable in <prefix>/bin; data that belongs beside it (the
+# bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
+install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
+
+# The libretro Jaguar cheat database (#835): pinned download, bundled by default.
+include(VJCheatData)
 
 # ---------------------------------------------------------------------------
 # Headless smoke tests (SDL dummy drivers, no window, no GL).
@@ -133,4 +247,6 @@ endif()
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
     include(VJSmokeTests)
+    include(VJAchTests)
+    include(VJCheatTests)
 endif()

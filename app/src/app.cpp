@@ -61,11 +61,13 @@ double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)p
 // ---------------------------------------------------------------------------------
 void App::loadConfig() {
     cfg.load(paths.configFile);
+    input.init(cfg, paths.root);
     present.integerScale = cfg.getBool("video.integer", false);
     present.linearFilter = cfg.getBool("video.linear", false);
     present.stretch = cfg.getBool("video.stretch", false);
     present.aspectOverride = cfg.getFloat("video.aspect", 0.0f);
     vsync = cfg.getBool("video.vsync", true);
+    video.shader.loadSettings(cfg, paths.root);
     volume = cfg.getFloat("audio.volume", 1.0f);
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
@@ -87,6 +89,7 @@ void App::saveConfig() {
     cfg.setBool("video.stretch", present.stretch);
     cfg.setFloat("video.aspect", present.aspectOverride);
     cfg.setBool("video.vsync", vsync);
+    video.shader.saveSettings(cfg);
     cfg.setFloat("audio.volume", volume);
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
@@ -207,6 +210,7 @@ bool App::initImGui() {
 }
 
 void App::shutdown() {
+    ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
     video.shutdown();
@@ -238,6 +242,7 @@ void App::wireHost() {
         if (!fastForward && !mute) audio.push(d, n);
     };
     host.inputPoll = [this]() { input.poll(!inputCaptured_); };
+    input.portRaw = [this](unsigned p) { return inputPortIsRaw(*this, p); };
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
         return input.state(p, d, i, id);
     };
@@ -273,6 +278,8 @@ bool App::openContent(const std::string& pathIn) {
     host.setDirectories(paths.system, paths.saves);
     std::string err;
     if (!host.loadContent(path, err)) {
+        ach.onContentClosed();
+        cheatsOnClose(*this);
         toast("Could not open " + pathStem(path) + ": " + err, 5.0, 3);
         std::fprintf(stderr, "open failed: %s\n", err.c_str());
         return false;
@@ -298,8 +305,11 @@ bool App::openContent(const std::string& pathIn) {
         int dev = cfg.getInt("port." + std::to_string(p), -1);
         if (dev >= 0) host.setControllerDevice(p, (unsigned)dev);
     }
+    input.setContent(contentIdentity(path));   // selects the per-game control overrides
     addRecent(path);
     invalidateThumbs();
+    ach.onContentLoaded();   // identify the game, look up its achievements
+    cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
     toast("Loaded " + host.contentName());
     saveConfig();
     return true;
@@ -309,6 +319,7 @@ bool App::openNoContent() {
     host.setDirectories(paths.system, paths.saves);
     std::string err;
     if (!host.loadNoContent(err)) {
+        ach.onContentClosed();
         toast("Could not boot: " + err, 5.0, 3);
         return false;
     }
@@ -319,6 +330,9 @@ bool App::openNoContent() {
     accum_ = 0;
     lastTick_ = now();
     invalidateThumbs();
+    ach.onContentClosed();   // no game, so nothing to look up
+    cheatsOnClose(*this);
+    input.setContent("");
     toast("Booted with no cartridge");
     return true;
 }
@@ -335,17 +349,29 @@ bool App::reloadContent() {
 void App::closeContent() {
     if (!host.isLoaded()) return;
     host.unloadContent();
+    ach.onContentClosed();
+    cheatsOnClose(*this);
     audio.clear();
     invalidateThumbs();
+    input.setContent("");
 }
 
 void App::reset() {
     if (!host.isLoaded()) return;
     host.reset();
+    ach.onReset();
     toast("Reset");
 }
 
 void App::togglePause() {
+    if (!paused) {
+        // Hardcore rations pausing (rc_client_can_pause); softcore never refuses.
+        std::string why;
+        if (!ach.allowPause(why)) {
+            toast(why, 2.5, 2);
+            return;
+        }
+    }
     paused = !paused;
     audio.setPaused(paused);
     toast(paused ? "Paused" : "Resumed", 1.2);
@@ -412,6 +438,7 @@ bool App::saveState(int slot) {
         VideoOut::destroyTexture(it->second.tex);
         thumbs_.erase(it);
     }
+    ach.onStateSaved(statePath(slot));
     toast("State saved to slot " + std::to_string(slot));
     return true;
 }
@@ -419,6 +446,10 @@ bool App::saveState(int slot) {
 bool App::loadState(int slot) {
     if (!host.isLoaded()) {
         toast("No game loaded");
+        return false;
+    }
+    if (!ach.allowStateLoad()) {
+        toast("Hardcore mode: loading save states is disabled", 3.5, 2);
         return false;
     }
     if (!slotExists(slot)) {
@@ -431,6 +462,8 @@ bool App::loadState(int slot) {
         return false;
     }
     audio.clear();
+    cheatsAfterStateLoad(*this);
+    ach.onStateLoaded(statePath(slot));
     toast("State loaded from slot " + std::to_string(slot));
     return true;
 }
@@ -502,6 +535,9 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_COMMA:
         if (mod) showSettings = !showSettings;
         break;
+    case SDLK_L:
+        if (mod) library.show = !library.show;
+        break;
     default: break;
     }
 }
@@ -571,6 +607,7 @@ void App::stepEmulation() {
         host.wantVideo = (i == frames - 1);
         if (!fastForward) audio.update();
         host.runFrame();
+        ach.afterFrame();
         fpsWindowFrames_++;
     }
     host.wantVideo = true;
@@ -629,6 +666,8 @@ int App::run(const CliArgs& a) {
     host.setLogVerbose(a.verbose);
     loadConfig();
     wireHost();
+    ach.init(*this, a);
+    cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
 
@@ -651,16 +690,22 @@ int App::runInteractive(const CliArgs& a) {
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
+        devSelectVideoTab = a.showWindow.rfind("settings-video", 0) == 0;
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
     }
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
+    else if (a.showWindow == "cheats") showCheats = true;
     unsigned uiFrames = 0;
 
     std::string firstErr;
     if (a.noContent) openNoContent();
     else if (!a.content.empty()) openContent(a.content[0]);
+    library.createTexture = &VideoOut::createTextureRGBA;
+    library.destroyTexture = &VideoOut::destroyTexture;
+    library.start(paths, cfg, !host.isLoaded());
+    if (a.showWindow == "library") library.show = true;
 
     lastTick_ = now();
     fpsWindowStart_ = now();
@@ -672,7 +717,9 @@ int App::runInteractive(const CliArgs& a) {
         if (quit) break;
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
+        ach.pump();
         stepEmulation();
+        video.setSourceFps((float)host.fps());
         video.upload(host.frame());
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -709,6 +756,7 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    library.stop();   // joins its threads and frees its textures while the GL context is still alive
     if (a.verbose) {
         double secs = now() - fpsWindowStart_;
         std::fprintf(stderr, "[app] audio: queued %.1f ms, ratio %.5f, underruns %llu\n", audio.queuedMs(),
@@ -770,12 +818,17 @@ int App::runHeadless(const CliArgs& a) {
         }
         audioFramesSeen_ = 0;
         for (unsigned i = 0; i < a.frames; i++) {
+            ach.headlessFrame(i);
             audio.update();
             host.runFrame();
+            ach.afterFrame();
+            ach.pump();
             if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time
             for (const OsdMessage& m : host.takeMessages())
                 std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
         }
+        if (!cheatsHeadlessCheck(*this, a)) rc = 1;
+        if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = host.frame();
         HeadlessResult r;
         r.path = path;
@@ -812,6 +865,7 @@ int App::runHeadless(const CliArgs& a) {
             for (int i = 0; i < 60; i++) { audio.update(); host.runFrame(); }
             uint32_t h2 = frameHash();
             std::printf("STATE roundtrip %08x %08x\n", h1, h2);
+            if (!cheatsHeadlessCheck(*this, a)) rc = 1;   // the cheats must still hold after a restore
             if (h1 != h2) {
                 std::fprintf(stderr, "headless: FAIL state restore diverged (%08x vs %08x)\n", h1, h2);
                 rc = 1;

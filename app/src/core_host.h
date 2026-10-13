@@ -119,6 +119,9 @@ public:
     unsigned minAudioLatencyMs() const { return minAudioLatencyMs_; }
 
     // ---- keyboard device presence (libretro SET_KEYBOARD_CALLBACK) --------
+    // After every load the host announces a keyboard (see finishLoad); the input
+    // end-to-end test switches this off to prove the keypad needs the announcement.
+    bool announceKeyboard = true;
     void sendKeyEvent(bool down, unsigned retroKey, uint32_t character, uint16_t mods);
 
     // ---- options ----------------------------------------------------------
@@ -142,6 +145,13 @@ public:
     // `sessionOnly` = the --option overrides; false = the saved config.ini ones.
     std::vector<std::string> checkOverrides(bool sessionOnly) const;
     unsigned visibleOptionCount() const;
+
+    // ---- memory (achievements) --------------------------------------------
+    // The map the core published with SET_MEMORY_MAPS (valid while content is
+    // loaded); null/empty before the first load.
+    const retro_memory_map* memoryMap() const { return memMap_.num_descriptors ? &memMap_ : nullptr; }
+    // retro_get_memory_data/size for RETRO_MEMORY_*; false when the region is absent.
+    bool memoryRegion(unsigned id, uint8_t*& data, size_t& size) const;
 
     // ---- messages ---------------------------------------------------------
     std::vector<OsdMessage> takeMessages();
@@ -217,6 +227,10 @@ private:
     std::vector<std::vector<ControllerType>> controllerPorts_;
     retro_disk_control_ext_callback disk_{};
     bool diskRegistered_ = false;
+
+    // SET_MEMORY_MAPS copy
+    std::vector<retro_memory_descriptor> memDescs_;
+    retro_memory_map memMap_{};
 
     // SRAM bookkeeping
     uint32_t lastSaveHash_ = 0;
