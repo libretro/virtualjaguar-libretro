@@ -410,6 +410,7 @@ void drawMenuBar(App& app) {
         ImGui::EndMenu();
     }
     drawAchievementsMenu(app);
+    drawNetplayMenu(app);
     if (ImGui::BeginMenu("Help")) {
         if (ImGui::MenuItem("About")) app.showAbout = true;
         ImGui::EndMenu();
@@ -497,6 +498,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showSettings) drawSettings(app);
     if (app.showStates) drawStates(app);
     if (app.showCheats) drawCheats(app);
+    if (app.showNetplay) drawNetplay(app);
     if (app.showAbout) drawAbout(app);
     drawLibrary(app);
     drawKeypadOverlay(app);

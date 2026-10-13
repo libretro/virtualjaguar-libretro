@@ -19,6 +19,7 @@ on:
       - 'Makefile.common'
       - 'test/roms/**'
       - '.github/workflows/app.yml'
+      - '.github/workflows/app-package.yml'
   pull_request:
     # feat/833-app-shell: the v4.0 app pieces (#834-#838) are stacked PRs on
     # the shell branch until #867 lands; without it they get no app build.
@@ -33,6 +34,7 @@ on:
       - 'Makefile.common'
       - 'test/roms/**'
       - '.github/workflows/app.yml'
+      - '.github/workflows/app-package.yml'
   workflow_dispatch:
 
 concurrency:
@@ -131,3 +133,91 @@ jobs:
           app/build/Release/virtualjaguar.exe
         if-no-files-found: error
         retention-days: 7
+
+  # ------------------------------------------------------------------------------------------
+  # Installable packages (macOS .zip, Windows .zip/-setup.exe, Linux .AppImage/.deb), built
+  # by the reusable app-package.yml that release.yml also calls for tags and nightlies.  PR
+  # packages are unsigned (no secrets are passed): see the comment below the table.
+  # ------------------------------------------------------------------------------------------
+  package:
+    name: Packages
+    if: github.event_name != 'push'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/app-package.yml
+    with:
+      release_tag: ${{ github.event_name == 'pull_request' && format('pr{0}', github.event.number) || 'dev' }}
+      sign: false
+
+  # One sticky comment per PR, found and updated by a hidden marker.  Skipped on fork PRs:
+  # their GITHUB_TOKEN is read-only.  (The step summary lists the same links for them.)
+  package-comment:
+    name: Link the packages on the PR
+    needs: [package]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: List this run's packages
+        id: list
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const run = context.runId;
+            const base = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}`;
+            const runUrl = `${base}/actions/runs/${run}`;
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner, repo: context.repo.repo, run_id: run, per_page: 100,
+            });
+            const pkgs = data.artifacts.filter(a => a.name.startsWith('app-package-') && !a.expired)
+                                       .sort((a, b) => a.name.localeCompare(b.name));
+            const names = {
+              'app-package-macos-universal': 'macOS (universal): .zip',
+              'app-package-windows-x64': 'Windows x64: portable .zip + -setup.exe',
+              'app-package-linux-x86_64': 'Linux x86_64: .AppImage + .deb',
+              'app-package-linux-aarch64': 'Linux aarch64: .AppImage + .deb',
+            };
+            const sha = context.payload.pull_request.head.sha;
+            let rows = pkgs.map(a =>
+              `| ${names[a.name] || a.name} | [${a.name}](${runUrl}/artifacts/${a.id}) | ${(a.size_in_bytes / 1048576).toFixed(1)} MB |`);
+            if (!rows.length) rows = ['| _no packages: the package jobs failed or were skipped_ | | |'];
+            const marker = '<!-- vj-app-packages -->';
+            const body = [
+              marker,
+              '### App packages',
+              '',
+              `Built from \`${sha.slice(0, 7)}\` ([workflow run](${runUrl})).`,
+              '',
+              '| Platform | Download | Size |',
+              '|---|---|---|',
+              ...rows,
+              '',
+              '> Unsigned PR builds. Downloading an artifact needs a GitHub login. macOS: right-click > Open the first time',
+              '> (or `xattr -dr com.apple.quarantine "Virtual Jaguar.app"`). Windows: SmartScreen may warn. Linux AppImage:',
+              '> `chmod +x` it. Tagged releases and nightlies are signed once the signing secrets are configured.',
+              '',
+              `<sub>Updated by CI at ${new Date().toISOString()}</sub>`,
+            ].join('\n');
+
+            // Always: the step summary (fork PRs cannot comment).
+            await core.summary.addRaw(body.replace(marker, ''), true).write();
+
+            const fork = context.payload.pull_request.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`;
+            if (fork) {
+              core.notice('Fork PR: the token is read-only, so no PR comment. The links are in the job summary.');
+              return;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
