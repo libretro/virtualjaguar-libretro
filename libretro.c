@@ -3595,8 +3595,16 @@ static void check_variables(void)
    var.key = "virtualjaguar_blitter_timing";
    var.value = NULL;
    vjs.blitterTiming = false;
+   vjs.blitterTimingGpu = false;
    if (get_variable_pertitle(&var) && var.value)
-      vjs.blitterTiming = (strcmp(var.value, "enabled") == 0);
+   {
+      /* "enabled" prices every blit for both masters; "m68k" charges
+       * only the 68000 (#736: the GPU-side wait is what makes White Men
+       * Can't Jump's frame build overrun the field). */
+      vjs.blitterTimingGpu = (strcmp(var.value, "enabled") == 0);
+      vjs.blitterTiming = vjs.blitterTimingGpu
+                       || (strcmp(var.value, "m68k") == 0);
+   }
 
    /* GPU pipeline/gateway timing (issue #401/#313).  Transient model
     * state must not survive a toggle: a stale gateway timestamp from
@@ -8036,6 +8044,13 @@ void retro_run(void)
    JLinkFrameTick();
    JLinkPoll();
    UARTPoll();
+   {
+      /* Link health line, about every 5 s while a link carries traffic
+       * (the only way to read these numbers on iOS, which has no env). */
+      char link_stats[256];
+      if (JLinkStatsPoll(link_stats, sizeof(link_stats)))
+         LOG_INF("[NETLINK] %s\n", link_stats);
+   }
 
    /* Host-side voice chat (#485): capture/gate/send. Never touches the
     * emulated UART. PTT is read from the keyboard device.  Re-evaluate

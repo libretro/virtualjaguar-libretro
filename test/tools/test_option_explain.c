@@ -18,10 +18,10 @@
  * One process per --case (a fresh core load each, like a frontend restart):
  *
  *   1  White Men Can't Jump (CRC $14915F20), defaults.  Its COMPATIBILITY
- *      row turns blitter bus timing on: exactly one notice naming the title,
- *      the option and "(compatibility preset)"; the blitter_timing info is
- *      amended ("This game: set to on by its per-title preset...") with the
- *      original text kept; one re-push at load, none per frame; the option
+ *      row turns blitter bus timing on for the 68000 only (#736): exactly
+ *      one notice naming the title, the option and "(compatibility
+ *      preset)"; the blitter_timing info is amended ("This game: set to
+ *      68000 only by its per-title preset...") with the original text kept; one re-push at load, none per frame; the option
  *      count is unchanged; other options' info untouched; unload restores
  *      the original info.
  *   2  Alien vs Predator (CRC $DC187F82), enhancement_profile=performance:
@@ -284,7 +284,7 @@ int main(int argc, char **argv)
                     : detail[0]);
 
         amended = info_has("virtualjaguar_blitter_timing",
-                           "This game: set to on by its per-title preset");
+                           "This game: set to 68000 only by its per-title preset");
         kept    = first && now && strstr(now, first) != NULL;
         orig_clean = first && !strstr(first, "per-title preset");
         results[nres++] = mkres(amended && kept && orig_clean,

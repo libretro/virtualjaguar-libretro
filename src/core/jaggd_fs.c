@@ -74,6 +74,10 @@ static int jgdfs_ci_equal(const char *a, const char *b)
 /* root + "/" + rel (rel may be ""). */
 static int jgdfs_host_path(const char *rel, char *out, size_t out_sz)
 {
+   /* No card: never build a path (an empty root would make "/" + rel,
+    * an absolute host path -- reachable from a savestate's handles). */
+   if (fs_access == JGDFS_ACCESS_OFF || !fs_root[0])
+      return 0;
    if (strlcpy(out, fs_root, out_sz) >= out_sz)
       return 0;
    if (rel[0])

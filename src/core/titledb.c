@@ -815,19 +815,30 @@ static const TitleDBEntry titledb_table[] = {
     * (BlitDurationSysclks, blitter_mmio.c) for this title; it does not
     * change the model.  Fast/accurate blitters are hash-identical on
     * this title, so neither engine is at fault.
+    * The row selects "m68k" (charge the 68000 only), not "enabled": the
+    * intro needs only the 68000 frozen during ITS blits, and the GPU-side
+    * wait made gameplay worse.  Gameplay is a triple-buffered render that
+    * the GPU builds with ~40 blits per field; making the GPU wait out each
+    * one at the modelled cost (worst-case DRAM row change on every access,
+    * blitter_mmio.c) pushed the frame's draw past the swap at VI, so the
+    * OP showed half-built frames (horizontal tears, sprites dropping out
+    * for a field) at stock speed -- and almost none with the chips
+    * overclocked (#736, 2026-10-11).  Intro frames 0-300 are hash-identical
+    * under "m68k" and "enabled".
     * COMPATIBILITY row (#748): retire it when blitter bus timing is on
     * by default for every title -- the no-toggles goal of #408.
     * CRC: White Men Can't Jump (World) from src/core/filedb.c line 37. */
    {
       0x14915F20, "White Men Can't Jump",
       {
-         { "virtualjaguar_blitter_timing", "enabled",
+         { "virtualjaguar_blitter_timing", "m68k",
            TITLEDB_CLASS_COMPATIBILITY,
-           "intro logos complete only with blit time modelled: 111/200 "
-           "decoder rows done when the zero-time fade ended, Trimark + "
-           "High Voltage logos missing in HLE and BIOS, 2026-10-07 "
-           "(#736, PR #827); stands in for blitter timing on by "
-           "default (#408)" },
+           "intro logos complete only with the 68000 charged for its "
+           "blits: 111/200 decoder rows done when the zero-time fade "
+           "ended, Trimark + High Voltage logos missing in HLE and BIOS, "
+           "2026-10-07 (#736, PR #827); GPU-side wait left off: it tore "
+           "the gameplay frame, 2026-10-11 (#736); stands in for blitter "
+           "timing on by default (#408)" },
          { NULL, NULL }
       }
    }

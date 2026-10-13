@@ -118,6 +118,17 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   isn't available in the sandbox (some macOS CI runners) — a skip, not a failure.
   `netlink_rebuild_witness.c` proves the `SET_CORE_OPTIONS_V2` rebuild path (option-visibility
   re-push on link-mode change) executes.
+- `test/tools/netlink_sim.c` — deterministic two-instance RetroArch-netpacket simulator (virtual clock,
+  not part of `make test`). Measures the netlink reply wait without host-load noise: a core built from a
+  THROWAWAY worktree patched by `netlink_sim_clockpatch.py` (clock/sleep + byte-event hooks, never
+  applied to `src/`). Doom 2P deathmatch tics/s is the headline number: a tic is 12 one-way single-byte
+  hops (6 per side) and must fit a whole number of video frames, so rates sit on 60/k plateaus
+  (30/20/15/12 tics/s). Knobs: `--delay-ms/--jitter-ms/--spike-pct/--spike-ms`, `--loss-pct` with
+  `--rto-ms` (TCP) or `--udp-rto-ms` (UDP+retransmit model), `--emu-ms`, `--pump-us` (cost of one
+  `poll_receive`; results are sensitive to it, keep it identical across arms), `--audio-block-ms`
+  (frontend cost AFTER the core's frame-end hook), `--btrace` (per-byte link events), `--log` (core log
+  incl. the 5 s `link stats` line), `--corrupt N:XX` (flip one in-flight byte). Every arm of a comparison
+  must use the same flags; `--emu-ms 2` is optimistic for Doom at 2x, also run 6.
 
 ## vjtrace flight recorder (dev-build-only)
 

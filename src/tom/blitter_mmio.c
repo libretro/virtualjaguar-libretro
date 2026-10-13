@@ -164,6 +164,10 @@ static void BlitterTimingChargeAccess(uint32_t who)
    uint32_t remaining;
    if (!vjs.blitterTiming || blitterBusyClks == 0)
       return;
+   /* m68k-only mode: the GPU neither waits for the blitter nor closes
+    * the window the 68000 will pay (see blitterBusyClks' kick site). */
+   if (who == GPU && !vjs.blitterTimingGpu)
+      return;
    remaining = BlitterTimingConsumeWait();
    if (who == GPU)
       GPUChargeBusStall(remaining);
@@ -609,7 +613,8 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * blit chains (Doom's menu erase/draw sequences) serialize at
        * the real bus rate, while a master that fires one blit and
        * walks away pays nothing further. */
-      blitterBusyClks = busClks;
+      if (who != GPU || vjs.blitterTimingGpu)
+         blitterBusyClks = busClks;
    }
 }
 

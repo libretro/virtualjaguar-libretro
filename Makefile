@@ -183,7 +183,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.7.1
+CORE_BASE_VERSION := v3.8.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -1355,7 +1355,7 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db test/tools/test_option_explain \
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
-		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
@@ -1430,7 +1430,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_option_explain test/tools/test_disk_control \
-		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
+		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1909,6 +1909,26 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Cart mirror (Flip Out, #851)" "no ROM matching 'Flip Out*' in the private corpus"; \
 	fi
+	@# BIOS-mode power-on RAM (#856): Fight For Your Life sizes a fill from
+	@# $$F9A90, which it never writes; a per-word PRNG value there wrecked the
+	@# GPU job.  Exact good-dump name only: the [a1] bad dump is an authentic
+	@# BIOS reject and would pass vacuously (the test also checks the CRC).
+	@rom=$$(bash scripts/find-rom.sh 'Fight For Your Life (1996).jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_ffyl_856 ./$(TARGET) --rom "$$rom" --frames 1400; \
+	else \
+		bash scripts/test-skip.sh record "BIOS power-on RAM (Fight For Your Life, #856)" "no 'Fight For Your Life (1996).jag' in the private corpus"; \
+	fi
+	@# GPU long-store alignment (#866): Ruiner Pinball patches movei immediates
+	@# through store (r15+rn) at word-aligned GPU RAM addresses; the GPU used to
+	@# escape into DSP RAM at frame ~56.  Exact good-dump name (CRC checked).
+	@rom=$$(bash scripts/find-rom.sh 'Ruiner Pinball (1995).jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_ruiner_866 ./$(TARGET) --rom "$$rom" --frames 600 && \
+		./test/tools/test_ruiner_866 ./$(TARGET) --rom "$$rom" --frames 600 --bios; \
+	else \
+		bash scripts/test-skip.sh record "GPU store alignment (Ruiner Pinball, #866)" "no 'Ruiner Pinball (1995).jag' in the private corpus"; \
+	fi
 	@# Raw-binary load address (#818): all three are linked at $$5000, which
 	@# the containment scorer used to resolve to $$4000 (black screen, 68K
 	@# parked on ILLEGAL; Music Demo --bios sprayed the blitter, #794).
@@ -1933,6 +1953,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
 	else \
 		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Music Demo, #794/#818)" "no ROM matching 'Music Demo*' in the private corpus"; \
+	fi
+	@rom=$$(bash scripts/find-rom.sh 'Native Demo (bin) (1997)*' 'Native Demo*(bin)*'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 && \
+		./test/tools/test_raw_binary_boot ./$(TARGET) --rom "$$rom" --expect-base 0x5000 --bios; \
+	else \
+		bash scripts/test-skip.sh record "Raw binary at \$$5000 (Native Demo (bin), #866)" "no ROM matching 'Native Demo (bin)*' in the private corpus"; \
 	fi
 	@# Club Drive GPU runaway (#611): NORMI was one too high, so the clip
 	@# corner table lookup rotated every inserted screen corner; steering
@@ -2347,6 +2374,23 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "White Men Can't Jump intro logo (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
 	fi
 
+	@# White Men Can't Jump gameplay (#736): the attract-mode match flickered
+	@# at stock speed (tears, sprites dropping out for a field) because the
+	@# GPU was made to wait out each of its own blits; the titledb row now
+	@# charges the 68000 only.  fb_flicker_probe counts frames where a third
+	@# of the picture reverts to its state two frames earlier, and frames
+	@# spliced from two neighbours, over the demo (frames 1250-1850).  The
+	@# second run is the control: blitter_timing=enabled (the old row) must
+	@# EXCEED the limits, or the metric has gone blind.  Private corpus only.
+	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
+	if [ -n "$$rom" ]; then \
+		$(MAKE) --no-print-directory test/tools/fb_flicker_probe >/dev/null || exit 1; \
+		./test/tools/fb_flicker_probe ./$(TARGET) "$$rom" --frames 1850 --window-start 1250 --max-big 54 --max-splice 6 --quiet || exit 1; \
+		./test/tools/fb_flicker_probe ./$(TARGET) "$$rom" --frames 1850 --window-start 1250 --max-big 54 --max-splice 6 --expect-flicker --option virtualjaguar_blitter_timing=enabled --quiet || exit 1; \
+	else \
+		bash scripts/test-skip.sh record "White Men Can't Jump gameplay flicker (#736)" "no ROM matching '*White Men Can*' in the private corpus"; \
+	fi
+
 	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
 		"no one-session (Red Book) disc in the private corpus"
 	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
@@ -2706,6 +2750,14 @@ test/tools/xenowings_ingame_video: test/tools/xenowings_ingame_video.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
 		-o $@ test/tools/xenowings_ingame_video.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# White Men Can't Jump gameplay flicker (#736): framebuffer tear/revert metric.
+test/tools/fb_flicker_probe: test/tools/fb_flicker_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 -I. -I./test/harness $(INCFLAGS) \
+		-o $@ test/tools/fb_flicker_probe.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
@@ -3124,6 +3176,20 @@ test/tools/test_flipout_851: test/tools/test_flipout_851.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_flipout_851.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_ffyl_856: test/tools/test_ffyl_856.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_ffyl_856.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_ruiner_866: test/tools/test_ruiner_866.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_ruiner_866.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

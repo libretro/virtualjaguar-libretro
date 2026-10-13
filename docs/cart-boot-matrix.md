@@ -28,158 +28,158 @@ tag until it has a ticket and an explicit deferral.  Checklist:
 
 | Title | HLE | HLE notes | Real BIOS | BIOS notes |
 |---|---|---|---|---|
-| Aircars (USA) (Beta) (1994-11-14) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Aircars (USA) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Alien vs Predator (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Alien vs Predator (Alpha) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Alien vs Predator (Alpha) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Arkanna Demo (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Assassin Demo, The - Release 2 (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Assassin Demo, The Part 1 (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Assassin Demo, The Part 1 (for BJL) (1999) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Asteroid (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Atari Karts (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Attack of the Mutant Penguins (1996) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| BadCode0 by Badcoder (bin) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode0 by Badcoder (cof) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode1 by Badcoder (bin) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode1 by Badcoder (cof) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode2 by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode2 by Badcoder (cof) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode3 by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode3 by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode4 (Metal) by Badcoder (bin) (2000) (PD) [a1] | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| BadCode4 (Metal) by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode4 (Metal) by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode4 (Metal) by Badcoder (rom) (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| BadCode4 (Modified) by Badcoder (bin) (2000) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| BadCode4 (Modified) by Badcoder (jag) (2000) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| BadCode4 (Modified) by Badcoder (rom) (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| BadCode4 by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode4 by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode4C by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode4C by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| BadCode4N by Badcoder (bin) (2000) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| BadCode4N by Badcoder (jag) (2000) (PD)badcde4n | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Brutal Sports Football (1994) (Telegames) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Bubsy - Fractured Furry Tails (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Cannon Fodder (1995) (Computer West) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Checkered Flag (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Chroma-Luma Color Pick (Mouse) by Matthias Domin (1996) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Chroma-Luma Color Pick by Matthias Domin (bin) (1996) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Chroma-Luma Color Pick by Matthias Domin (jag) (1996) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Chroma-Luma Color Pick by Matthias Domin (jag) (1996) (PD)[a1] | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Club Drive (1994) | GAME_CODE | video, silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| CRZ Demo (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Cybermorph (1993) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Cybermorph_(1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Defender 2000 (1996) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| DEMO1 (bin) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| DEMO1 (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| DEMO1B (PD) [a1] | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| DEMO1B (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| DEMO1C (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Doom (World) EX 2 | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Doom (World) EX | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Doom - Evil Unleashed (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Double Dragon V (1995) (Williams) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Dragon - The Bruce Lee Story (1994) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Drumpad by Robert Jurziga (2002) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Drumpad2 by Robert Jurziga (2002) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Evolution - Dino Dudes (1993) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Fever Pitch Soccer (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Fight For Your Life (1996) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Fight For Your Life (1996) [a2] | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Fight For Your Life (1996) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Flashback (1995) (U.S. Gold) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Flip Out (1995) | GAME_CODE | static video, silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| FORCE Design - Legion Force Jidai Intro Demo 0! (2001) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Gorf 2000 (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Hover Strike (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Hubble Fade by Robert Jurziga (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Hubble Nebula by Robert Jurziga (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| I-War (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| International Sensible Soccer (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Iron Soldier (1994) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Iron Soldier (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Iron Soldier (World) (v1.04) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Iron Soldier 2 (World) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Iron Soldier | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| JagFest Demo (2001) (PD) | GAME_CODE | static video, audio | GAME_CODE | static video, audio |<!-- build:43a6e9083902 -->
-| JagMania (Apr 18) (1998) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| JagMania (Aug 31) (2000) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| JagMania (Jan 06) (2001) (PD) | GAME_CODE | static video, audio | GAME_CODE | static video, audio |<!-- build:43a6e9083902 -->
-| JagMania (Jul 8) (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| JagMania (Sep 10) (2000) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| JagMarble (1999) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| JagMarble (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| JagMarble (Jul 13) (1997) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Jaguar Server (Program Examples) - 27OBJ (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Jaguar Server (Program Examples) - 50HZ (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), audio; inframe_hang |<!-- build:43a6e9083902 -->
-| Jaguar Server (Program Examples) - 60HZ (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), audio; inframe_hang |<!-- build:43a6e9083902 -->
-| Jaguar Server (Program Examples) - INTRO (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Jaguar Server (Program Examples) - INTROMOD (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Jaguar Server (Program Examples) - SCALE (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Jaguar Server (Program Examples) - SCALE3 (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Jaguar Server 1.08 UPDATE - JAGOS (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Jaguar Server 1.08 UPDATE - KEYB (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Jaguar Tetris (1995) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| JDC Demo V1 (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| JDC Demo V2 (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| JDC Demo V3 - E-JagFest Demo by Lars Hannig (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| JDC Example by Lars Hannig (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Joypad-TeamTap Tester by Matthias Domin (2000) (PD) [a1] | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Joypad-TeamTap Tester by Matthias Domin (2000) (PD) [a2] | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Joypad-TeamTap Tester by Matthias Domin (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| JSSDemo (Jaguar Sound System) V1.0b (08.11.2002) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| JSSDemoII (Jaguar Sound System) V1.0b (10.11.2002) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Kasumi Ninja (1994) [a1] | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Kasumi Ninja (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Kasumi Ninja (World) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Ladybug Demo (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Ladybug Demo (rom) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Mandelbrot Demo (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Memory Dump by Matthias Domin (1999) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Missile Command 3D (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Music Demo (2002) (ScatoLOGIC) | GAME_CODE | black video (headless — undetermined), silent | ? (pc_escape) | final_pc=$6D2710; gpu_wedge,inframe_hang |<!-- build:43a6e9083902 -->
-| Native Demo (bin) (1997) | GAME_CODE | static video, audio; gpu_pc_escape,inframe_hang | GAME_CODE | black video (headless — undetermined), silent; video_stall |<!-- build:43a6e9083902 -->
-| Native Demo (jag) (1997) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| NBA Jam TE (1996) | GAME_CODE | static video, silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Painter (1996) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:43a6e9083902 -->
-| Painter (bin) (1996) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | static video, silent; inframe_hang |<!-- build:43a6e9083902 -->
-| PAULA Preview Demo 2 by Robert Jurziga (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| PAULA Preview Demo by Robert Jurziga (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:43a6e9083902 -->
-| Phase Zero (2000) (PD) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Phase Zero (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Pinball Fantasies (1995) (Computer West) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Pitfall - The Mayan Adventure (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| PlaySFX V1.0 by Robert Jurziga (2003) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:43a6e9083902 -->
-| Power Drive Rally (1995) (TWI) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| QSOUND Demo (PD) | GAME_CODE | static video, audio | GAME_CODE | static video, audio |<!-- build:43a6e9083902 -->
-| Raiden (1994) | GAME_CODE | video, silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Raiden | GAME_CODE | video, silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Rayman (1995) (UBI Soft) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Rayman Demo (1995) (UBI Soft) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Rayman Demo (1995) (UBI Soft) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Ruiner Pinball (1995) | GAME_CODE | black video (headless — undetermined), silent; gpu_pc_escape,video_stall | GAME_CODE | video, audio; gpu_pc_escape |<!-- build:43a6e9083902 -->
-| Skyhammer (World) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| SlamRacer Demo (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| SlamRacer Intro (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Super Burnout (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Super Cross 3D (1995) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Super Cross 3D (1995) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Super Cross 3D (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Syndicate (1995) (Ocean) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Tempest 2000 (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Theme Park (1995) (Ocean) | GAME_CODE | video, silent | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Towers II (World) | GAME_CODE | static video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Trevor McFur in the Crescent Galaxy (1993) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Troy Aikman NFL Football (1995) (Williams) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Ultra Vortek (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Ultra Vortek (Beta) (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Ultra Vortek (Beta) (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Val D'Isere Skiing & Snowboarding (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| White Men Can't Jump (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Wolfenstein 3D (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Zool 2 (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
-| Zoop! (1996) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:43a6e9083902 -->
+| Aircars (USA) (Beta) (1994-11-14) | GAME_CODE | static video, audio | GAME_CODE | static video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Aircars (USA) | GAME_CODE | static video, audio | GAME_CODE | static video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Alien vs Predator (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Alien vs Predator (Alpha) | GAME_CODE | static video, audio | GAME_CODE | static video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Alien vs Predator (Alpha) | GAME_CODE | static video, audio | GAME_CODE | static video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Arkanna Demo (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Assassin Demo, The - Release 2 (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Assassin Demo, The Part 1 (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Assassin Demo, The Part 1 (for BJL) (1999) (PD) | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Asteroid (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Atari Karts (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Attack of the Mutant Penguins (1996) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| BadCode0 by Badcoder (bin) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode0 by Badcoder (cof) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode1 by Badcoder (bin) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode1 by Badcoder (cof) (1999) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode2 by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode2 by Badcoder (cof) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode3 by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode3 by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode4 (Metal) by Badcoder (bin) (2000) (PD) [a1] | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| BadCode4 (Metal) by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode4 (Metal) by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode4 (Metal) by Badcoder (rom) (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| BadCode4 (Modified) by Badcoder (bin) (2000) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| BadCode4 (Modified) by Badcoder (jag) (2000) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| BadCode4 (Modified) by Badcoder (rom) (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| BadCode4 by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode4 by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode4C by Badcoder (bin) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode4C by Badcoder (jag) (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| BadCode4N by Badcoder (bin) (2000) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| BadCode4N by Badcoder (jag) (2000) (PD)badcde4n | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| Brutal Sports Football (1994) (Telegames) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Bubsy - Fractured Furry Tails (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Cannon Fodder (1995) (Computer West) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Checkered Flag (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Chroma-Luma Color Pick (Mouse) by Matthias Domin (1996) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Chroma-Luma Color Pick by Matthias Domin (bin) (1996) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Chroma-Luma Color Pick by Matthias Domin (jag) (1996) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Chroma-Luma Color Pick by Matthias Domin (jag) (1996) (PD)[a1] | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Club Drive (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| CRZ Demo (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Cybermorph (1993) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Cybermorph_(1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f433) |<!-- build:31c2766595a7 -->
+| Defender 2000 (1996) | GAME_CODE | static video, audio | GAME_CODE | static video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| DEMO1 (bin) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| DEMO1 (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| DEMO1B (PD) [a1] | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| DEMO1B (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| DEMO1C (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Doom (World) EX 2 | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Doom (World) EX | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Doom - Evil Unleashed (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Double Dragon V (1995) (Williams) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Dragon - The Bruce Lee Story (1994) | GAME_CODE | static video, audio | GAME_CODE | static video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Drumpad by Robert Jurziga (2002) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Drumpad2 by Robert Jurziga (2002) (PD) | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Evolution - Dino Dudes (1993) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Fever Pitch Soccer (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Fight For Your Life (1996) [a1] | GAME_CODE | video, audio | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Fight For Your Life (1996) [a2] | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Fight For Your Life (1996) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Flashback (1995) (U.S. Gold) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Flip Out (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| FORCE Design - Legion Force Jidai Intro Demo 0! (2001) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Gorf 2000 (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Hover Strike (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Hubble Fade by Robert Jurziga (PD) | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Hubble Nebula by Robert Jurziga (PD) | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| I-War (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| International Sensible Soccer (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Iron Soldier (1994) [a1] | GAME_CODE | video, audio | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Iron Soldier (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Iron Soldier (World) (v1.04) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Iron Soldier 2 (World) | GAME_CODE | video, audio | GAME_CODE | video, audio (handoff not observed; whole run scored) |<!-- build:31c2766595a7 -->
+| Iron Soldier | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| JagFest Demo (2001) (PD) | GAME_CODE | static video, audio | GAME_CODE | static video, audio |<!-- build:31c2766595a7 -->
+| JagMania (Apr 18) (1998) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| JagMania (Aug 31) (2000) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| JagMania (Jan 06) (2001) (PD) | GAME_CODE | static video, audio | GAME_CODE | static video, audio |<!-- build:31c2766595a7 -->
+| JagMania (Jul 8) (2000) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| JagMania (Sep 10) (2000) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| JagMarble (1999) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| JagMarble (2000) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| JagMarble (Jul 13) (1997) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Jaguar Server (Program Examples) - 27OBJ (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Jaguar Server (Program Examples) - 50HZ (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Jaguar Server (Program Examples) - 60HZ (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Jaguar Server (Program Examples) - INTRO (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Jaguar Server (Program Examples) - INTROMOD (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Jaguar Server (Program Examples) - SCALE (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Jaguar Server (Program Examples) - SCALE3 (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Jaguar Server 1.08 UPDATE - JAGOS (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Jaguar Server 1.08 UPDATE - KEYB (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Jaguar Tetris (1995) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| JDC Demo V1 (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| JDC Demo V2 (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| JDC Demo V3 - E-JagFest Demo by Lars Hannig (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| JDC Example by Lars Hannig (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Joypad-TeamTap Tester by Matthias Domin (2000) (PD) [a1] | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Joypad-TeamTap Tester by Matthias Domin (2000) (PD) [a2] | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Joypad-TeamTap Tester by Matthias Domin (2000) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| JSSDemo (Jaguar Sound System) V1.0b (08.11.2002) (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| JSSDemoII (Jaguar Sound System) V1.0b (10.11.2002) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Kasumi Ninja (1994) [a1] | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Kasumi Ninja (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Kasumi Ninja (World) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Ladybug Demo (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Ladybug Demo (rom) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Mandelbrot Demo (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Memory Dump by Matthias Domin (1999) (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Missile Command 3D (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Music Demo (2002) (ScatoLOGIC) | GAME_CODE | static video, audio | GAME_CODE | static video, audio |<!-- build:31c2766595a7 -->
+| Native Demo (bin) (1997) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Native Demo (jag) (1997) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| NBA Jam TE (1996) | GAME_CODE | static video, silent | GAME_CODE | static video, silent (after handoff f611) |<!-- build:31c2766595a7 -->
+| Painter (1996) (PD) | GAME_CODE | video, silent | GAME_CODE | video, silent |<!-- build:31c2766595a7 -->
+| Painter (bin) (1996) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| PAULA Preview Demo 2 by Robert Jurziga (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| PAULA Preview Demo by Robert Jurziga (PD) | GAME_CODE | static video, silent | GAME_CODE | static video, silent |<!-- build:31c2766595a7 -->
+| Phase Zero (2000) (PD) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Phase Zero (2000) (PD) | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Pinball Fantasies (1995) (Computer West) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Pitfall - The Mayan Adventure (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| PlaySFX V1.0 by Robert Jurziga (2003) (PD) | GAME_CODE | black video (headless — undetermined), silent | GAME_CODE | black video (headless — undetermined), silent |<!-- build:31c2766595a7 -->
+| Power Drive Rally (1995) (TWI) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f525) |<!-- build:31c2766595a7 -->
+| QSOUND Demo (PD) | GAME_CODE | static video, audio | GAME_CODE | static video, audio |<!-- build:31c2766595a7 -->
+| Raiden (1994) | GAME_CODE | video, silent | GAME_CODE | video, audio (handoff not observed; whole run scored) |<!-- build:31c2766595a7 -->
+| Raiden | GAME_CODE | video, silent | GAME_CODE | video, audio (handoff not observed; whole run scored) |<!-- build:31c2766595a7 -->
+| Rayman (1995) (UBI Soft) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Rayman Demo (1995) (UBI Soft) | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Rayman Demo (1995) (UBI Soft) | GAME_CODE | black video (headless — undetermined), silent | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Ruiner Pinball (1995) | GAME_CODE | static video, silent | GAME_CODE | static video, silent (after handoff f492) |<!-- build:31c2766595a7 -->
+| Skyhammer (World) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| SlamRacer Demo (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| SlamRacer Intro (PD) | GAME_CODE | video, audio | GAME_CODE | video, audio |<!-- build:31c2766595a7 -->
+| Super Burnout (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Super Cross 3D (1995) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Super Cross 3D (1995) [a1] | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Super Cross 3D (1995) | GAME_CODE | video, audio | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Syndicate (1995) (Ocean) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Tempest 2000 (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Theme Park (1995) (Ocean) | GAME_CODE | video, silent | GAME_CODE | video, silent (after handoff f492) |<!-- build:31c2766595a7 -->
+| Towers II (World) | GAME_CODE | static video, audio | GAME_CODE | static video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Trevor McFur in the Crescent Galaxy (1993) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Troy Aikman NFL Football (1995) (Williams) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Ultra Vortek (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f611) |<!-- build:31c2766595a7 -->
+| Ultra Vortek (Beta) (1995) | GAME_CODE | video, audio | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Ultra Vortek (Beta) (1995) | GAME_CODE | video, audio | BIOS_REJECT | boot ROM halted at $0050B6 without handing off to the cart (red "Jaguar" reject screen) |<!-- build:31c2766595a7 -->
+| Val D'Isere Skiing & Snowboarding (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| White Men Can't Jump (1995) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f621) |<!-- build:31c2766595a7 -->
+| Wolfenstein 3D (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Zool 2 (1994) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f492) |<!-- build:31c2766595a7 -->
+| Zoop! (1996) | GAME_CODE | video, audio | GAME_CODE | video, audio (after handoff f433) |<!-- build:31c2766595a7 -->
