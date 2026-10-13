@@ -60,9 +60,8 @@ modules:
       - test -d /app/bin/shaders/slang-shaders
       - test -f /app/share/metainfo/io.github.libretro.VirtualJaguar.metainfo.xml
       - test -f /app/share/applications/io.github.libretro.VirtualJaguar.desktop
-      - ldd /app/bin/virtualjaguar | tee /tmp/vj-ldd.txt
-      - grep -q libcurl /tmp/vj-ldd.txt
-      - "! grep -q 'not found' /tmp/vj-ldd.txt"
+      - ldd /app/bin/virtualjaguar | grep -q libcurl
+      - "! ldd /app/bin/virtualjaguar | grep -q 'not found'"
     sources:
       # BEGIN-LOCAL-SOURCE (render.sh swaps this block for the release tag's git source)
       - type: dir
