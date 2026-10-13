@@ -94,6 +94,13 @@ jobs:
         $r | Format-Table -AutoSize | Out-String | Write-Host
         if ($r) { exit 1 }
 
-    - name: Installer suite
-      shell: ${{ matrix.shell }}
-      run: ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File test/installer/test_install_ps1.ps1
+    # `shell:` cannot take a matrix expression, so one step per host.
+    - name: Installer suite (Windows PowerShell 5.1)
+      if: matrix.shell == 'powershell'
+      shell: powershell
+      run: powershell -NoProfile -ExecutionPolicy Bypass -File test/installer/test_install_ps1.ps1
+
+    - name: Installer suite (PowerShell 7)
+      if: matrix.shell == 'pwsh'
+      shell: pwsh
+      run: pwsh -NoProfile -ExecutionPolicy Bypass -File test/installer/test_install_ps1.ps1
