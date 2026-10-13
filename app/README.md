@@ -311,6 +311,12 @@ tracks a `.cue` owns.
    30 days. Upstream coverage is the limit here: of the 209 titles in the cartridge dat, 70 have
    art under their exact dat name (64 box art); of the 26 Jaguar CD titles, 12 have a snapshot
    and none a box art. (Measured against libretro-thumbnails at the pinned dat's date.)
+   For Jaguar CD titles libretro-thumbnails is asked first and, on a miss, the project site's mirror
+   (`jaguar.provenance-emu.com/thumbnails/Atari - Jaguar CD/...`, box art from TheGamesDB plus title screens and snaps
+   made with this emulator, hosted until libretro-thumbnails has a Jaguar CD repository, issue #141 there); each
+   source has its own cache folder and miss markers (the mirror's expire after 7 days), so mirror art never hides
+   upstream art that appears later. Set `library.art_mirror` in `config.ini`
+   to another base URL, or to an empty value to turn the mirror off.
    **Download box art** turns all downloading off.
    **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
    downloaded art. A tile with no art is a drawn card with the game's title and a `CD` / `Cart`

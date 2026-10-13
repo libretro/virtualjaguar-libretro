@@ -18,6 +18,7 @@ docs/RELEASE_NOTES_v3.8.1.md
   system tabs, CRC32 identification, box art on demand (#838).
   Jaguar CD has no upstream art: title cards, plus your own PNG covers
   (right-click a tile, drop a PNG on it, or a covers folder).
+  Disc art falls back to a set hosted on the project site.
   .chd discs are checksummed, .cdi best-effort, and non-Redump rips
   match by file/folder name when unambiguous.
 * Shaders: RetroArch .slangp presets via librashader, slang-shaders
