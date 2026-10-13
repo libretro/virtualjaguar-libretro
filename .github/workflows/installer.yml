@@ -91,7 +91,7 @@ jobs:
         #   PSUseSingularNouns / PSUseApprovedVerbs / ShouldProcess  internal helper naming
         # Everything else at Warning or above must be clean.
         $exclude = 'PSAvoidUsingWriteHost', 'PSReviewUnusedParameter', 'PSAvoidUsingEmptyCatchBlock',
-                   'PSUseSingularNouns', 'PSUseApprovedVerbs', 'PSUseShouldProcessForStateChangingFunctions'
+                    'PSUseSingularNouns', 'PSUseApprovedVerbs', 'PSUseShouldProcessForStateChangingFunctions'
         $r = Invoke-ScriptAnalyzer -Path tools/install.ps1 -Severity Error, Warning -ExcludeRule $exclude
         $r | Format-Table -AutoSize | Out-String | Write-Host
         if ($r) { exit 1 }

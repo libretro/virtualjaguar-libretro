@@ -924,7 +924,7 @@ jobs:
             echo "| **Download** | [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly) |"
             echo "| **CI run** | [build log](${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}) |"
             if [ "$APP_BUILT" = "true" ]; then
-              echo "| **App** | [Virtual Jaguar 4.0 desktop app](#the-virtual-jaguar-app-nightly) (macOS, Windows, Linux) |"
+              echo "| **App** | [Virtual Jaguar desktop app](#the-virtual-jaguar-app-nightly) (macOS, Windows, Linux) |"
             fi
             echo
             if [ "$APP_BUILT" = "true" ]; then

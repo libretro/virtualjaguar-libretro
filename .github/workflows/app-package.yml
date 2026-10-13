@@ -164,8 +164,8 @@ jobs:
         id: sign
         run: |
           if [ "${{ inputs.sign }}" = "true" ] \
-             && [ -n "$APPLE_DEVELOPER_ID_P12_BASE64" ] && [ -n "$APPLE_DEVELOPER_ID_P12_PASSWORD" ] \
-             && [ -n "$APPLE_NOTARY_KEY_ID" ] && [ -n "$APPLE_NOTARY_ISSUER_ID" ] && [ -n "$APPLE_NOTARY_KEY_P8_BASE64" ]; then
+              && [ -n "$APPLE_DEVELOPER_ID_P12_BASE64" ] && [ -n "$APPLE_DEVELOPER_ID_P12_PASSWORD" ] \
+              && [ -n "$APPLE_NOTARY_KEY_ID" ] && [ -n "$APPLE_NOTARY_ISSUER_ID" ] && [ -n "$APPLE_NOTARY_KEY_P8_BASE64" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "Developer ID signing + notarization: ON"
           else

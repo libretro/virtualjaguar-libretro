@@ -184,7 +184,7 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, run_id: run, per_page: 100,
             });
             const pkgs = data.artifacts.filter(a => a.name.startsWith('app-package-') && !a.expired)
-                                       .sort((a, b) => a.name.localeCompare(b.name));
+                                        .sort((a, b) => a.name.localeCompare(b.name));
             const names = {
               'app-package-macos-universal': 'macOS (universal): .zip',
               'app-package-windows-x64': 'Windows x64: portable .zip + -setup.exe',

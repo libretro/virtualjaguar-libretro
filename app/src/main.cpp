@@ -1,4 +1,4 @@
-// Virtual Jaguar 4.0 -- standalone app entry point.
+// Virtual Jaguar -- standalone app entry point.
 #include <SDL3/SDL_main.h>
 
 #include <cstdio>

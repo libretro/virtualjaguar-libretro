@@ -494,7 +494,8 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/ach_http.*` | libcurl / WinHTTP worker for rc_client's requests |
 | `cmake/VJRcheevos.cmake`, `cmake/VJAchTests.cmake` | rcheevos fetch + static lib; headless achievement tests |
 
-## Not in this first piece
+## Not supported yet
 
-Packaging and signing (#839), the installer (#840).
+General rollback netplay for any game (#864); the Netplay window covers the link-cable
+games only.
 Microphone and netpacket are reported unsupported.
