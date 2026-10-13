@@ -1,0 +1,303 @@
+# Virtual Jaguar 4.0 standalone app -- SDL3 + Dear ImGui + OpenGL 3.3 core.
+#
+# Build (from the repo root):
+#   cmake -S app -B app/build -DCMAKE_BUILD_TYPE=Release
+#   cmake --build app/build -j
+#   ctest --test-dir app/build -C Release --output-on-failure
+#
+# The core (C89) is compiled from the sources listed in ../Makefile.common and
+# linked statically; the app (C++17) drives it through the retro_* API only.
+# The core's own Makefile build is unaffected by anything in this directory.
+
+cmake_minimum_required(VERSION 3.20)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+# The app ships inside the core's releases, so it carries the core's version:
+# CORE_BASE_VERSION in the top-level Makefile (e.g. "v3.8.1").  One source of
+# truth means the packaging tag check, the About box, package metadata and the
+# HTTP / RetroAchievements User-Agent can never drift from the core.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../Makefile" _vj_core_ver_line
+     REGEX "^CORE_BASE_VERSION[ \t]*:=")
+string(REGEX REPLACE "^CORE_BASE_VERSION[ \t]*:=[ \t]*v?([0-9]+\\.[0-9]+\\.[0-9]+).*$" "\\1"
+       VJ_CORE_VERSION "${_vj_core_ver_line}")
+if(NOT VJ_CORE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "could not read CORE_BASE_VERSION from ../Makefile (got '${_vj_core_ver_line}')")
+endif()
+
+project(VirtualJaguar LANGUAGES C CXX
+        VERSION ${VJ_CORE_VERSION}
+        DESCRIPTION "Virtual Jaguar - Atari Jaguar emulator")
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_C_STANDARD_REQUIRED OFF)   # the core is built with the toolchain default
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Packaging (#839): install layout, Windows resources/subsystem, Linux desktop files.
+# Deferred to the end of this file, so it sees every target and every feature's install().
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/VJPackage.cmake")
+
+option(VJ_APP_SYSTEM_SDL3 "Use an installed SDL3 (find_package) instead of fetching one" OFF)
+option(VJ_APP_BUILD_TESTS "Build the headless smoke tests (CTest)" ON)
+option(VJ_APP_LTO "Link-time optimisation (IPO) for the core, libchdr and the app in Release / RelWithDebInfo builds" OFF)
+option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
+option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
+option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configure time and copy them next to the binary" ON)
+set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH
+    "Offline builds: a folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat' to use instead of downloading them")
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+# ---------------------------------------------------------------------------
+# Dependencies (pinned; bump deliberately).
+#   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8 (MIT)   rcheevos v12.5.0 (MIT)
+# For offline/dev iteration: -DFETCHCONTENT_SOURCE_DIR_SDL3=<dir>
+#                            -DFETCHCONTENT_SOURCE_DIR_IMGUI=<dir>
+# ---------------------------------------------------------------------------
+include(FetchContent)
+set(FETCHCONTENT_QUIET ON)
+
+if(VJ_APP_SYSTEM_SDL3)
+    find_package(SDL3 REQUIRED CONFIG)
+else()
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON  CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF  CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(SDL3
+        URL      https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+        URL_HASH SHA256=7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(SDL3)
+endif()
+
+FetchContent_Declare(imgui
+    URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8.tar.gz
+    URL_HASH SHA256=fecb33d33930e12ff53a34064e9d3a06c8f7c3e04408f14cd36c80e3faac863b
+    DOWNLOAD_EXTRACT_TIMESTAMP ON)
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    FetchContent_MakeAvailable(imgui)
+endif()
+
+if(TARGET SDL3::SDL3)
+    set(VJ_SDL3_TARGET SDL3::SDL3)
+elseif(TARGET SDL3::SDL3-static)
+    set(VJ_SDL3_TARGET SDL3::SDL3-static)
+else()
+    message(FATAL_ERROR "No SDL3 target found")
+endif()
+
+add_library(vj_imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+target_include_directories(vj_imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(vj_imgui PUBLIC ${VJ_SDL3_TARGET})
+if(APPLE)
+    target_compile_definitions(vj_imgui PUBLIC GL_SILENCE_DEPRECATION)
+endif()
+
+# ---------------------------------------------------------------------------
+# The core.
+# ---------------------------------------------------------------------------
+# Optimised builds only: Release and RelWithDebInfo get LTO when it is asked for
+# and the toolchain supports it; Debug never does.
+set(VJ_LTO_ENABLED OFF)
+if(VJ_APP_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _vj_ipo OUTPUT _vj_ipo_msg LANGUAGES C CXX)
+    if(_vj_ipo)
+        set(VJ_LTO_ENABLED ON)
+    else()
+        message(WARNING "VJ_APP_LTO requested but the toolchain has no IPO support: ${_vj_ipo_msg}")
+    endif()
+endif()
+message(STATUS "App LTO: ${VJ_LTO_ENABLED}  (build type: ${CMAKE_BUILD_TYPE}${CMAKE_CONFIGURATION_TYPES})")
+function(vj_optimise target)
+    if(VJ_LTO_ENABLED)
+        set_target_properties(${target} PROPERTIES
+            INTERPROCEDURAL_OPTIMIZATION_RELEASE ON
+            INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+    endif()
+endfunction()
+include(VJCore)
+
+# ---------------------------------------------------------------------------
+# Game library (#838): scanning, identification, box art.  vj_library has no GL
+# and no ImGui, so the headless tests (app/tests) link it too.
+# HTTP: SDL3 has no client.  libcurl where the platform ships it (macOS SDK,
+# libcurl4-openssl-dev on Linux), WinHTTP on Windows (part of the OS, no
+# dependency).  Neither found: the feature degrades to "no downloads".
+# ---------------------------------------------------------------------------
+find_package(Threads REQUIRED)
+add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/http.cpp)
+target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
+target_include_directories(vj_library PUBLIC src)
+target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
+set(VJ_HTTP_BACKEND "none")
+if(VJ_APP_HTTP)
+    if(WIN32)
+        target_compile_definitions(vj_library PRIVATE VJ_HTTP_WINHTTP)
+        target_link_libraries(vj_library PRIVATE winhttp)
+        set(VJ_HTTP_BACKEND "WinHTTP")
+    else()
+        find_package(CURL QUIET)
+        if(CURL_FOUND)
+            target_compile_definitions(vj_library PRIVATE VJ_HTTP_CURL)
+            target_link_libraries(vj_library PRIVATE CURL::libcurl)
+            set(VJ_HTTP_BACKEND "libcurl")
+        endif()
+    endif()
+endif()
+message(STATUS "App HTTP backend: ${VJ_HTTP_BACKEND}")
+if(MSVC)
+    target_compile_options(vj_library PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_library PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_library PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    if(VJ_APP_WERROR)
+        target_compile_options(vj_library PRIVATE -Werror)
+    endif()
+endif()
+
+# libretro-database dat files (CC-BY-SA-4.0; never committed here).  Pinned to a
+# commit and SHA256 like SDL3 and Dear ImGui; copied next to the binary.
+set(VJ_DB_COMMIT 12c21cf79f1e20eff6ac68b80875816c717d0a7a)
+set(VJ_DB_DIR "${CMAKE_BINARY_DIR}/libretro-db")
+set(VJ_DB_HAVE OFF)
+if(VJ_APP_BUNDLE_DB)
+    file(MAKE_DIRECTORY "${VJ_DB_DIR}")
+    set(_vj_db_names "Atari - Jaguar.dat" "Atari - Jaguar CD.dat")
+    set(_vj_db_paths "no-intro/Atari%20-%20Jaguar.dat" "redump/Atari%20-%20Jaguar%20CD.dat")
+    set(_vj_db_sha256
+        "704fdf2f14e14bdae07836f2ff5600c223b38df870d81dbcd3acc0f04c846299"
+        "6cb715e076d7a3a3e106d33c73207aa8068256533bc2b4e08eb6e1ce19d3cc8f")
+    set(_vj_db_ok 0)
+    foreach(_i RANGE 0 1)
+        list(GET _vj_db_names ${_i} _n)
+        list(GET _vj_db_paths ${_i} _p)
+        list(GET _vj_db_sha256 ${_i} _h)
+        if(VJ_APP_LIBRETRO_DB_DIR AND EXISTS "${VJ_APP_LIBRETRO_DB_DIR}/${_n}")
+            configure_file("${VJ_APP_LIBRETRO_DB_DIR}/${_n}" "${VJ_DB_DIR}/${_n}" COPYONLY)
+            math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
+        else()
+            file(DOWNLOAD
+                "https://raw.githubusercontent.com/libretro/libretro-database/${VJ_DB_COMMIT}/metadat/${_p}"
+                "${VJ_DB_DIR}/${_n}"
+                EXPECTED_HASH SHA256=${_h}
+                TLS_VERIFY ON
+                STATUS _st)
+            list(GET _st 0 _rc)
+            if(_rc EQUAL 0)
+                math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
+            else()
+                file(REMOVE "${VJ_DB_DIR}/${_n}")
+                message(WARNING "Could not fetch '${_n}' (${_st}). The game library will title games from file names "
+                                "until 'Update database' is used; for offline builds set -DVJ_APP_LIBRETRO_DB_DIR=<dir>.")
+            endif()
+        endif()
+    endforeach()
+    if(_vj_db_ok GREATER 0)
+        set(VJ_DB_HAVE ON)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# The app.
+# ---------------------------------------------------------------------------
+set(VJ_APP_SOURCES
+    src/main.cpp
+    src/app.cpp
+    src/paths.cpp
+    src/config.cpp
+    src/core_host.cpp
+    src/audio.cpp
+    src/video.cpp
+    src/present_util.cpp
+    src/shaders.cpp
+    src/shaders_ui.cpp
+    src/input.cpp
+    src/remap.cpp
+    src/remap_ui.cpp
+    src/devices.cpp
+    src/router.cpp
+    src/cheatsheet.cpp
+    src/cheatsheet_ui.cpp
+    src/devices_ui.cpp
+    src/ui.cpp
+    src/library_ui.cpp
+    src/cheats.cpp
+    src/cheats_core.cpp
+    src/cheats_ui.cpp
+    src/achievements.cpp
+    src/achievements_ui.cpp
+    src/ach_http.cpp
+    src/netplay.cpp
+    src/netplay_addr.cpp
+    src/netplay_ui.cpp)
+
+# RetroAchievements (#836): rcheevos + HTTP transport.
+include(VJRcheevos)
+
+include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
+
+add_executable(virtualjaguar ${VJ_APP_SOURCES})
+vj_app_shaders(virtualjaguar)
+vj_app_shader_assets(virtualjaguar)
+set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
+vj_optimise(virtualjaguar)
+target_include_directories(virtualjaguar PRIVATE src)
+target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
+target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
+if(WIN32)
+    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
+endif()
+target_compile_definitions(virtualjaguar PRIVATE
+    VJ_APP_VERSION="${PROJECT_VERSION}")
+if(MSVC)
+    target_compile_options(virtualjaguar PRIVATE /W3 /utf-8)
+    target_compile_definitions(virtualjaguar PRIVATE _CRT_SECURE_NO_WARNINGS)
+    if(VJ_APP_WERROR)
+        target_compile_options(virtualjaguar PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(virtualjaguar PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    if(VJ_APP_WERROR)
+        target_compile_options(virtualjaguar PRIVATE -Werror)
+    endif()
+endif()
+if(VJ_DB_HAVE)
+    add_custom_command(TARGET virtualjaguar POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${VJ_DB_DIR}" "$<TARGET_FILE_DIR:virtualjaguar>/libretro-db")
+endif()
+# Windows: the executable keeps the console subsystem for now.  A GUI-subsystem
+# build would swallow the headless smoke test's stdout; packaging (#839) decides.
+
+# Install layout: the executable in <prefix>/bin; data that belongs beside it (the
+# bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
+install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
+
+# The libretro Jaguar cheat database (#835): pinned download, bundled by default.
+include(VJCheatData)
+
+# ---------------------------------------------------------------------------
+# Headless smoke tests (SDL dummy drivers, no window, no GL).
+# ---------------------------------------------------------------------------
+if(VJ_APP_BUILD_TESTS)
+    enable_testing()
+    include(VJSmokeTests)
+    include(VJAchTests)
+    include(VJCheatTests)
+    include(VJNetplayTests)
+endif()

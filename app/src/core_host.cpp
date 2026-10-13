@@ -1,0 +1,799 @@
+#include "core_host.h"
+
+#include "paths.h"
+
+#include <vfs/vfs_implementation.h>
+
+#include <algorithm>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+
+// The core's public libretro entry points (statically linked).
+extern "C" {
+void retro_set_environment(retro_environment_t);
+void retro_set_video_refresh(retro_video_refresh_t);
+void retro_set_audio_sample(retro_audio_sample_t);
+void retro_set_audio_sample_batch(retro_audio_sample_batch_t);
+void retro_set_input_poll(retro_input_poll_t);
+void retro_set_input_state(retro_input_state_t);
+void retro_init(void);
+void retro_deinit(void);
+void retro_get_system_info(struct retro_system_info*);
+void retro_get_system_av_info(struct retro_system_av_info*);
+void retro_set_controller_port_device(unsigned, unsigned);
+void retro_reset(void);
+void retro_run(void);
+size_t retro_serialize_size(void);
+bool retro_serialize(void*, size_t);
+bool retro_unserialize(const void*, size_t);
+bool retro_load_game(const struct retro_game_info*);
+void retro_unload_game(void);
+void* retro_get_memory_data(unsigned);
+size_t retro_get_memory_size(unsigned);
+}
+
+namespace vj {
+
+namespace {
+
+// ---- logging ----------------------------------------------------------------
+bool g_logVerbose = false;
+
+void RETRO_CALLCONV logCb(enum retro_log_level level, const char* fmt, ...) {
+    CoreHost& h = CoreHost::instance();
+    const bool print = level >= RETRO_LOG_WARN || g_logVerbose;
+    if (!print && !h.onLog) return;
+    static const char* const tag[] = {"DEBUG", "INFO", "WARN", "ERROR"};
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    // The tap sees every line, INFO included: the Netplay window reads the core's
+    // "[NETLINK] link UP / link stats" lines from here (they are INFO).
+    if (h.onLog) {
+        std::string line(buf);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        h.onLog((int)level, line.c_str());
+    }
+    if (!print) return;
+    std::fprintf(stderr, "[core %s] %s", (unsigned)level < 4 ? tag[level] : "?", buf);
+    size_t n = std::strlen(buf);
+    if (n == 0 || buf[n - 1] != '\n') std::fputc('\n', stderr);
+}
+
+// ---- VFS: hand the core libretro-common's own implementation -----------------
+// (already linked into the core), wrapped to the interface's handle types.
+using VFile = retro_vfs_file_handle;
+using VDir = retro_vfs_dir_handle;
+libretro_vfs_implementation_file* F(VFile* h) { return reinterpret_cast<libretro_vfs_implementation_file*>(h); }
+libretro_vfs_implementation_dir* D(VDir* h) { return reinterpret_cast<libretro_vfs_implementation_dir*>(h); }
+
+const char* RETRO_CALLCONV vfsGetPath(VFile* s) { return retro_vfs_file_get_path_impl(F(s)); }
+VFile* RETRO_CALLCONV vfsOpen(const char* p, unsigned m, unsigned h) { return reinterpret_cast<VFile*>(retro_vfs_file_open_impl(p, m, h)); }
+int RETRO_CALLCONV vfsClose(VFile* s) { return retro_vfs_file_close_impl(F(s)); }
+int64_t RETRO_CALLCONV vfsSize(VFile* s) { return retro_vfs_file_size_impl(F(s)); }
+int64_t RETRO_CALLCONV vfsTruncate(VFile* s, int64_t l) { return retro_vfs_file_truncate_impl(F(s), l); }
+int64_t RETRO_CALLCONV vfsTell(VFile* s) { return retro_vfs_file_tell_impl(F(s)); }
+int64_t RETRO_CALLCONV vfsSeek(VFile* s, int64_t o, int w) { return retro_vfs_file_seek_impl(F(s), o, w); }
+int64_t RETRO_CALLCONV vfsRead(VFile* s, void* b, uint64_t n) { return retro_vfs_file_read_impl(F(s), b, n); }
+int64_t RETRO_CALLCONV vfsWrite(VFile* s, const void* b, uint64_t n) { return retro_vfs_file_write_impl(F(s), b, n); }
+int RETRO_CALLCONV vfsFlush(VFile* s) { return retro_vfs_file_flush_impl(F(s)); }
+int RETRO_CALLCONV vfsRemove(const char* p) { return retro_vfs_file_remove_impl(p); }
+int RETRO_CALLCONV vfsRename(const char* a, const char* b) { return retro_vfs_file_rename_impl(a, b); }
+int RETRO_CALLCONV vfsStat(const char* p, int32_t* sz) { return retro_vfs_stat_impl(p, sz); }
+int RETRO_CALLCONV vfsMkdir(const char* d) { return retro_vfs_mkdir_impl(d); }
+VDir* RETRO_CALLCONV vfsOpendir(const char* d, bool h) { return reinterpret_cast<VDir*>(retro_vfs_opendir_impl(d, h)); }
+bool RETRO_CALLCONV vfsReaddir(VDir* d) { return retro_vfs_readdir_impl(D(d)); }
+const char* RETRO_CALLCONV vfsDirentName(VDir* d) { return retro_vfs_dirent_get_name_impl(D(d)); }
+bool RETRO_CALLCONV vfsDirentIsDir(VDir* d) { return retro_vfs_dirent_is_dir_impl(D(d)); }
+int RETRO_CALLCONV vfsClosedir(VDir* d) { return retro_vfs_closedir_impl(D(d)); }
+
+retro_vfs_interface g_vfs = {
+    vfsGetPath, vfsOpen, vfsClose, vfsSize, vfsTell, vfsSeek, vfsRead, vfsWrite, vfsFlush,
+    vfsRemove, vfsRename, vfsTruncate, vfsStat, vfsMkdir, vfsOpendir, vfsReaddir,
+    vfsDirentName, vfsDirentIsDir, vfsClosedir};
+
+std::string str(const char* s) { return s ? s : ""; }
+
+uint32_t fnv1a(const unsigned char* p, size_t n) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n; i++) {
+        h ^= p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// Static strings whose address is handed to the core (system/save dir).
+std::string g_systemDirStr, g_saveDirStr;
+
+retro_audio_buffer_status_callback_t g_audioBufferCb = nullptr;
+
+}  // namespace
+
+CoreHost& CoreHost::instance() {
+    static CoreHost h;
+    return h;
+}
+
+void CoreHost::setDirectories(const std::string& systemDir, const std::string& saveDir) {
+    systemDir_ = systemDir;
+    saveDir_ = saveDir;
+    g_systemDirStr = systemDir;
+    g_saveDirStr = saveDir;
+}
+
+std::string CoreHost::validExtensions() {
+    retro_system_info si;
+    std::memset(&si, 0, sizeof si);
+    retro_get_system_info(&si);
+    return str(si.valid_extensions);
+}
+
+float CoreHost::aspect() const {
+    float a = avInfo_.geometry.aspect_ratio;
+    if (a > 0.0f) return a;
+    if (frame_.height) return (float)frame_.width / (float)frame_.height;
+    return 4.0f / 3.0f;
+}
+
+// ---- static trampolines --------------------------------------------------------
+bool CoreHost::envCb(unsigned cmd, void* data) { return instance().env(cmd, data); }
+
+void CoreHost::videoCb(const void* data, unsigned w, unsigned h, size_t pitch) {
+    CoreHost& s = instance();
+    if (!data) return;  // duplicated frame: keep the previous pixels
+    Frame& f = s.frame_;
+    f.width = w;
+    f.height = h;
+    f.pixels.resize((size_t)w * h);
+    const unsigned char* src = (const unsigned char*)data;
+    for (unsigned y = 0; y < h; y++)
+        std::memcpy(&f.pixels[(size_t)y * w], src + (size_t)y * pitch, (size_t)w * 4);
+    f.serial = ++s.serial_;
+}
+
+void CoreHost::audioSampleCb(int16_t l, int16_t r) {
+    CoreHost& s = instance();
+    int16_t b[2] = {l, r};
+    if (s.onAudio) s.onAudio(b, 1);
+}
+
+size_t CoreHost::audioBatchCb(const int16_t* data, size_t frames) {
+    CoreHost& s = instance();
+    if (s.onAudio) s.onAudio(data, frames);
+    return frames;
+}
+
+void CoreHost::inputPollCb() {
+    CoreHost& s = instance();
+    if (s.inputPoll) s.inputPoll();
+}
+
+int16_t CoreHost::inputStateCb(unsigned port, unsigned device, unsigned index, unsigned id) {
+    CoreHost& s = instance();
+    return s.inputState ? s.inputState(port, device, index, id) : 0;
+}
+
+// ---- options -------------------------------------------------------------------
+void CoreHost::captureOptions(const retro_core_options_v2* o) {
+    if (!o) return;
+    categories_.clear();
+    defs_.clear();
+    // A definitions push rebuilds the frontend's option manager with every row
+    // visible again (RetroArch's behaviour; harness.c models the same).  The
+    // core re-pushes visibility afterwards.
+    visibility_.clear();
+    if (o->categories) {
+        for (const retro_core_option_v2_category* c = o->categories; c->key; c++)
+            categories_.push_back({str(c->key), str(c->desc), str(c->info)});
+    }
+    if (o->definitions) {
+        for (const retro_core_option_v2_definition* d = o->definitions; d->key; d++) {
+            OptionDef def;
+            def.key = d->key;
+            def.desc = str(d->desc);
+            def.descCategorized = str(d->desc_categorized);
+            def.info = str(d->info);
+            def.infoCategorized = str(d->info_categorized);
+            def.categoryKey = str(d->category_key);
+            def.defaultValue = str(d->default_value);
+            for (int i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && d->values[i].value; i++)
+                def.values.push_back({d->values[i].value, str(d->values[i].label)});
+            if (def.defaultValue.empty() && !def.values.empty()) def.defaultValue = def.values[0].value;
+            defs_.push_back(std::move(def));
+        }
+    }
+    locked_.clear();
+    if (optionLock) {
+        for (const OptionDef& d : defs_) {
+            std::string v;
+            if (!optionLock(d.key, v)) continue;
+            bool ok = false;
+            for (const OptionValue& ov : d.values)
+                if (ov.value == v) ok = true;
+            locked_[d.key] = ok ? v : d.defaultValue;
+        }
+    }
+    optionPushes_++;
+}
+
+bool CoreHost::optionVisible(const std::string& key) const {
+    if (locked_.count(key)) return false;
+    auto it = visibility_.find(key);
+    return it == visibility_.end() ? true : it->second;
+}
+
+static bool validFor(const OptionDef& d, const std::string& v) {
+    for (const OptionValue& ov : d.values)
+        if (ov.value == v) return true;
+    return false;
+}
+
+std::string CoreHost::optionValue(const OptionDef& d) const {
+    auto l = locked_.find(d.key);
+    if (l != locked_.end()) return l->second;
+    auto s = sessionValues_.find(d.key);
+    if (s != sessionValues_.end() && validFor(d, s->second)) return s->second;
+    auto u = userValues_.find(d.key);
+    if (u != userValues_.end() && validFor(d, u->second)) return u->second;
+    return d.defaultValue;
+}
+
+void CoreHost::loadUserOptions(const std::vector<std::pair<std::string, std::string>>& kv) {
+    for (const auto& p : kv) userValues_[p.first] = p.second;
+}
+
+void CoreHost::overrideOption(const std::string& key, const std::string& value) {
+    sessionValues_[key] = value;
+    variableUpdate_ = true;
+}
+
+static std::string problemFor(const std::vector<OptionDef>& defs, const std::string& key,
+                              const std::string& value) {
+    for (const OptionDef& d : defs) {
+        if (d.key != key) continue;
+        if (validFor(d, value)) return "";
+        std::string list;
+        for (const OptionValue& v : d.values) list += (list.empty() ? "" : ", ") + v.value;
+        return "'" + value + "' is not a valid value for " + key + " (valid: " + list + ")";
+    }
+    return "'" + key + "' is not an option this core registers";
+}
+
+std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
+    std::vector<std::string> out;
+    const std::map<std::string, std::string>& m = sessionOnly ? sessionValues_ : userValues_;
+    for (const auto& kv : m) {
+        auto l = locked_.find(kv.first);
+        if (l != locked_.end()) {
+            // The app forces it.  Silently running the forced value would be the "--option did
+            // nothing" trap, so a value that differs is reported (an error for --option, a
+            // warning for a stale saved one).
+            if (kv.second != l->second)
+                out.push_back("'" + kv.first + "' is managed by the app (Settings > Input / Controls)" +
+                              (sessionOnly ? "; --option cannot change it" : "; the saved value is ignored"));
+            continue;
+        }
+        std::string p = problemFor(defs_, kv.first, kv.second);
+        if (!p.empty()) out.push_back(p);
+    }
+    return out;
+}
+
+unsigned CoreHost::visibleOptionCount() const {
+    unsigned n = 0;
+    for (const OptionDef& d : defs_)
+        if (optionVisible(d.key)) n++;
+    return n;
+}
+
+void CoreHost::setOptionValue(const std::string& key, const std::string& value) {
+    userValues_[key] = value;
+    variableUpdate_ = true;
+    if (onOptionChanged) onOptionChanged(key, value, false);
+    if (updateDisplayCb_) updateDisplayCb_();
+}
+
+void CoreHost::clearOverride(const std::string& key) {
+    if (sessionValues_.erase(key)) variableUpdate_ = true;
+}
+
+void CoreHost::resetOptionToDefault(const std::string& key) {
+    userValues_.erase(key);
+    variableUpdate_ = true;
+    if (onOptionChanged) onOptionChanged(key, "", true);
+    if (updateDisplayCb_) updateDisplayCb_();
+}
+
+// ---- messages ------------------------------------------------------------------
+std::vector<OsdMessage> CoreHost::takeMessages() {
+    std::vector<OsdMessage> out;
+    out.swap(messages_);
+    return out;
+}
+
+void CoreHost::pushMessage(const std::string& text, uint32_t ms, int level) {
+    OsdMessage m;
+    m.text = text;
+    m.durationMs = ms;
+    m.level = level;
+    messages_.push_back(std::move(m));
+}
+
+// ---- environment ---------------------------------------------------------------
+// --verbose: say once per change when the core is handed a non-default value.
+void CoreHost::traceOption(const std::string& key, const char* value, const char* why) {
+    if (!logVerbose_) return;
+    std::string& last = optionTrace_[key];
+    if (last == value) return;
+    last = value;
+    std::fprintf(stderr, "[app] option %s=%s (%s)\n", key.c_str(), value, why);
+}
+
+bool CoreHost::env(unsigned cmd, void* data) {
+    // Experimental flag bit is part of some command ids; compare masked.
+    switch (cmd) {
+    case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+        ((retro_log_callback*)data)->log = logCb;
+        return true;
+
+    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+        return data && *(const retro_pixel_format*)data == RETRO_PIXEL_FORMAT_XRGB8888;
+
+    // ---- core options (v2 only; the legacy lists are reported unsupported) ----
+    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        if (data) *(unsigned*)data = 2;
+        return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+        captureOptions((const retro_core_options_v2*)data);
+        return true;  // "true" = categories supported
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+        // We never answer GET_LANGUAGE, so `local` is NULL and `us` is the table.
+        const retro_core_options_v2_intl* o = (const retro_core_options_v2_intl*)data;
+        captureOptions(o ? o->us : nullptr);
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_VARIABLES:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL:
+        return false;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK:
+        updateDisplayCb_ = data ? ((const retro_core_options_update_display_callback*)data)->callback : nullptr;
+        return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY: {
+        const retro_core_option_display* d = (const retro_core_option_display*)data;
+        if (d && d->key) visibility_[d->key] = d->visible;
+        return true;
+    }
+    case RETRO_ENVIRONMENT_GET_VARIABLE: {
+        retro_variable* v = (retro_variable*)data;
+        if (!v || !v->key) return false;
+        v->value = nullptr;
+        for (const OptionDef& d : defs_) {
+            if (d.key != v->key) continue;
+            // Pointers into the maps' node-stable strings, or into defs_ (only
+            // rebuilt on a definitions push, which also happens on the core's
+            // own call stack -- the core copies values before then).
+            auto l = locked_.find(d.key);
+            if (l != locked_.end()) {
+                v->value = l->second.c_str();
+                traceOption(d.key, v->value, "locked");
+                return true;
+            }
+            auto s = sessionValues_.find(d.key);
+            if (s != sessionValues_.end() && validFor(d, s->second)) {
+                v->value = s->second.c_str();
+                traceOption(d.key, v->value, "override");
+                return true;
+            }
+            auto u = userValues_.find(d.key);
+            if (u != userValues_.end() && validFor(d, u->second)) {
+                v->value = u->second.c_str();
+                traceOption(d.key, v->value, "saved");
+                return true;
+            }
+            v->value = d.defaultValue.c_str();
+            return true;
+        }
+        return false;
+    }
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        if (data) *(bool*)data = variableUpdate_;
+        variableUpdate_ = false;
+        return true;
+    case RETRO_ENVIRONMENT_SET_VARIABLE:
+        return false;  // the core must never call this; refuse loudly in the log
+    case RETRO_ENVIRONMENT_GET_LANGUAGE:
+        return false;
+
+    // ---- geometry / AV -------------------------------------------------------
+    case RETRO_ENVIRONMENT_SET_GEOMETRY:
+        if (data) avInfo_.geometry = *(const retro_game_geometry*)data;
+        return true;
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+        if (data) avInfo_ = *(const retro_system_av_info*)data;
+        return true;
+    case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
+        if (data) {
+            int flags = RETRO_AV_ENABLE_AUDIO;
+            if (wantVideo) flags |= RETRO_AV_ENABLE_VIDEO;
+            *(int*)data = flags;
+        }
+        return true;
+    case RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK:
+        g_audioBufferCb = data ? ((const retro_audio_buffer_status_callback*)data)->callback : nullptr;
+        return true;
+    case RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY:
+        if (data) minAudioLatencyMs_ = *(const unsigned*)data;
+        return true;
+
+    // ---- directories / VFS ---------------------------------------------------
+    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+        *(const char**)data = g_systemDirStr.c_str();
+        return true;
+    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+        *(const char**)data = g_saveDirStr.c_str();
+        return true;
+    case RETRO_ENVIRONMENT_GET_VFS_INTERFACE: {
+        retro_vfs_interface_info* i = (retro_vfs_interface_info*)data;
+        if (!i) return false;
+        if (i->required_interface_version > 3) return false;
+        i->required_interface_version = 3;
+        i->iface = &g_vfs;
+        return true;
+    }
+
+    // ---- input ---------------------------------------------------------------
+    case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
+        return true;
+    case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
+        return true;  // descriptors are for remapping UIs (#837)
+    case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO: {
+        controllerPorts_.clear();
+        const retro_controller_info* ci = (const retro_controller_info*)data;
+        for (; ci && ci->types; ci++) {
+            std::vector<ControllerType> port;
+            for (unsigned i = 0; i < ci->num_types; i++)
+                port.push_back({str(ci->types[i].desc), ci->types[i].id});
+            controllerPorts_.push_back(std::move(port));
+        }
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
+        keyboardCb_ = data ? ((const retro_keyboard_callback*)data)->callback : nullptr;
+        return true;
+
+    // ---- disk control --------------------------------------------------------
+    case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION:
+        if (data) *(unsigned*)data = 1;
+        return true;
+    case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
+        if (data) {
+            disk_ = *(const retro_disk_control_ext_callback*)data;
+            diskRegistered_ = true;
+        }
+        return true;
+    case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
+        return false;  // we only speak the ext interface
+
+    // ---- state / misc --------------------------------------------------------
+    case RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT:
+        if (data) *(int*)data = RETRO_SAVESTATE_CONTEXT_NORMAL;
+        return true;
+    case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
+        return true;
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+        // Kept (deep-copied) for achievements (#836): rcheevos resolves emulated
+        // addresses through this very map, as RetroArch does.
+        const retro_memory_map* m = (const retro_memory_map*)data;
+        memDescs_.clear();
+        memMap_ = retro_memory_map{};
+        if (m && m->descriptors)
+            memDescs_.assign(m->descriptors, m->descriptors + m->num_descriptors);
+        memMap_.descriptors = memDescs_.empty() ? nullptr : memDescs_.data();
+        memMap_.num_descriptors = (unsigned)memDescs_.size();
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
+        return true;
+    case RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL:
+        return true;
+    case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
+        supportsNoGame_ = data && *(const bool*)data;
+        return true;
+    case RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE: {
+        contentOverrideExts_.clear();
+        const retro_system_content_info_override* o = (const retro_system_content_info_override*)data;
+        // Only the need_fullpath rows matter to us: those extensions are handed
+        // over as a path, never as a memory image.
+        for (; o && o->extensions; o++)
+            if (o->need_fullpath) contentOverrideExts_ += std::string(contentOverrideExts_.empty() ? "" : "|") + o->extensions;
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_MESSAGE_EXT: {
+        const retro_message_ext* m = (const retro_message_ext*)data;
+        if (!m || !m->msg) return true;
+        if (m->target == RETRO_MESSAGE_TARGET_LOG || m->target == RETRO_MESSAGE_TARGET_ALL)
+            logCb(m->level, "%s", m->msg);
+        if (m->target != RETRO_MESSAGE_TARGET_LOG) pushMessage(m->msg, m->duration ? m->duration : 3000, m->level);
+        return true;
+    }
+
+    // ---- reported unsupported by the app -----------------------------------------
+    case RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE:
+    case RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE:
+    case RETRO_ENVIRONMENT_GET_PERF_INTERFACE:
+    default:
+        return false;
+    }
+}
+
+// ---- content -------------------------------------------------------------------
+bool CoreHost::startSession(std::string& err) {
+    g_logVerbose = logVerbose_;
+    // Tear down the previous game completely (the iOS path: statics are reset in
+    // retro_unload_game / retro_deinit, then the whole init sequence runs again).
+    stopSession();
+
+    categories_.clear();
+    defs_.clear();
+    visibility_.clear();
+    controllerPorts_.clear();
+    updateDisplayCb_ = nullptr;
+    keyboardCb_ = nullptr;
+    diskRegistered_ = false;
+    variableUpdate_ = false;
+    contentOverrideExts_.clear();
+    supportsNoGame_ = false;
+    minAudioLatencyMs_ = 0;
+    g_audioBufferCb = nullptr;
+    frame_ = Frame();
+    frameCount_ = 0;
+
+    retro_set_environment(envCb);
+    retro_init();
+    initialized_ = true;
+    retro_set_video_refresh(videoCb);
+    retro_set_audio_sample(audioSampleCb);
+    retro_set_audio_sample_batch(audioBatchCb);
+    retro_set_input_poll(inputPollCb);
+    retro_set_input_state(inputStateCb);
+    std::memset(&sysInfo_, 0, sizeof sysInfo_);
+    retro_get_system_info(&sysInfo_);
+    if (defs_.empty()) {
+        err = "core did not register its options";
+        return false;
+    }
+    return true;
+}
+
+bool CoreHost::finishLoad(const std::string& label, std::string& err) {
+    std::memset(&avInfo_, 0, sizeof avInfo_);
+    retro_get_system_av_info(&avInfo_);
+    loaded_ = true;
+    contentName_ = label;
+    // A desktop host always has a keyboard.  The core only polls its keypad key fallbacks
+    // (the only route to keypad 7-9, * and #) once it has seen a keyboard event, and
+    // retro_deinit forgets that on every load, so a gamepad-only player would otherwise
+    // never get a keypad.  (libretro.c: kb_event_seen / keyboard_event_cb.)
+    if (announceKeyboard) sendKeyEvent(false, 0, 0, 0);
+    loadSaveRam();
+    // Re-read AV info after the SRAM write: region (PAL/NTSC) is latched at load.
+    retro_get_system_av_info(&avInfo_);
+    (void)err;
+    return true;
+}
+
+bool CoreHost::loadContent(const std::string& path, std::string& err) {
+    if (!startSession(err)) return false;
+
+    retro_game_info gi;
+    std::memset(&gi, 0, sizeof gi);
+    gi.path = path.c_str();
+
+    std::string ext = pathExt(path);
+    bool fullpath = false;
+    {
+        const std::string& list = contentOverrideExts_;
+        size_t pos = 0;
+        while (pos <= list.size()) {
+            size_t bar = list.find('|', pos);
+            std::string tok = list.substr(pos, bar == std::string::npos ? std::string::npos : bar - pos);
+            if (tok == ext) fullpath = true;
+            if (bar == std::string::npos) break;
+            pos = bar + 1;
+        }
+    }
+    contentData_.clear();
+    if (fullpath) {
+        if (!fileExists(path)) {
+            err = "cannot open " + path;
+            stopSession();
+            return false;
+        }
+    } else {
+        if (!readFile(path, contentData_) || contentData_.empty()) {
+            err = "cannot read " + path;
+            stopSession();
+            return false;
+        }
+        gi.data = contentData_.data();
+        gi.size = contentData_.size();
+    }
+
+    contentPath_ = path;
+    if (!retro_load_game(&gi)) {
+        err = "the core rejected " + path;
+        contentPath_.clear();
+        stopSession();
+        return false;
+    }
+    return finishLoad(pathStem(path), err);
+}
+
+bool CoreHost::loadNoContent(std::string& err) {
+    if (!startSession(err)) return false;
+    if (!supportsNoGame_) {
+        err = "the core does not support booting without content";
+        stopSession();
+        return false;
+    }
+    contentPath_.clear();
+    if (!retro_load_game(nullptr)) {
+        err = "the core failed to boot without content";
+        stopSession();
+        return false;
+    }
+    return finishLoad("(no cartridge)", err);
+}
+
+void CoreHost::stopSession() {
+    if (loaded_) {
+        flushSaveRam(true);
+        retro_unload_game();
+        loaded_ = false;
+    }
+    if (initialized_) {
+        retro_deinit();
+        initialized_ = false;
+    }
+    // The core must not reference the image any more.
+    contentData_.clear();
+    contentData_.shrink_to_fit();
+    contentPath_.clear();
+    contentName_.clear();
+    saveHashValid_ = false;
+    g_audioBufferCb = nullptr;
+    updateDisplayCb_ = nullptr;   // belongs to the core instance that just went away
+    keyboardCb_ = nullptr;
+    diskRegistered_ = false;
+    memDescs_.clear();   // the descriptors point into the core instance that just went away
+    memMap_ = retro_memory_map{};
+}
+
+bool CoreHost::memoryRegion(unsigned id, uint8_t*& data, size_t& size) const {
+    data = nullptr;
+    size = 0;
+    if (!loaded_) return false;
+    data = (uint8_t*)retro_get_memory_data(id);
+    size = data ? retro_get_memory_size(id) : 0;
+    return data && size;
+}
+
+void CoreHost::unloadContent() { stopSession(); }
+
+void CoreHost::runFrame() {
+    if (!loaded_) return;
+    if (g_audioBufferCb && audioBufferStatus) {
+        bool active = false, underrun = false;
+        unsigned occ = 0;
+        audioBufferStatus(active, occ, underrun);
+        g_audioBufferCb(active, occ, underrun);
+    }
+    retro_run();
+    frameCount_++;
+}
+
+void CoreHost::reset() {
+    if (loaded_) retro_reset();
+}
+
+void CoreHost::sendKeyEvent(bool down, unsigned retroKey, uint32_t character, uint16_t mods) {
+    if (keyboardCb_) keyboardCb_(down, retroKey, character, mods);
+}
+
+// ---- save states -----------------------------------------------------------------
+bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
+    if (!loaded_) { err = "no game loaded"; return false; }
+    size_t size = retro_serialize_size();
+    if (!size) { err = "the core cannot save states"; return false; }
+    std::vector<unsigned char> buf(size);
+    if (!retro_serialize(buf.data(), size)) { err = "retro_serialize failed"; return false; }
+    if (!writeFileAtomic(path, buf.data(), size)) { err = "cannot write " + path; return false; }
+    return true;
+}
+
+bool CoreHost::loadStateFromFile(const std::string& path, std::string& err) {
+    if (!loaded_) { err = "no game loaded"; return false; }
+    std::vector<unsigned char> buf;
+    if (!readFile(path, buf) || buf.empty()) { err = "cannot read " + path; return false; }
+    if (!retro_unserialize(buf.data(), buf.size())) { err = "the core rejected the state"; return false; }
+    return true;
+}
+
+// ---- SRAM -------------------------------------------------------------------------
+std::string CoreHost::saveRamPath() const {
+    if (contentName_.empty()) return "";
+    return saveDir_ + contentName_ + ".srm";
+}
+
+void CoreHost::loadSaveRam() {
+    saveHashValid_ = false;
+    std::string p = saveRamPath();
+    void* mem = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    if (p.empty() || !mem || !size) return;
+    std::vector<unsigned char> buf;
+    if (readFile(p, buf) && !buf.empty()) {
+        // A shorter/longer file than the current layout is copied as far as it fits.
+        std::memcpy(mem, buf.data(), std::min(size, buf.size()));
+    }
+    lastSaveHash_ = fnv1a((const unsigned char*)mem, size);
+    saveHashValid_ = true;
+}
+
+bool CoreHost::flushSaveRam(bool force) {
+    if (!loaded_) return true;
+    std::string p = saveRamPath();
+    void* mem = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    if (p.empty() || !mem || !size) return true;
+    uint32_t h = fnv1a((const unsigned char*)mem, size);
+    if (!force && saveHashValid_ && h == lastSaveHash_) return true;
+    // Never create an all-default file for a game that never wrote anything.
+    if (!saveHashValid_ && !force) { lastSaveHash_ = h; saveHashValid_ = true; return true; }
+    if (saveHashValid_ && h == lastSaveHash_) return true;
+    if (!writeFileAtomic(p, mem, size)) return false;
+    lastSaveHash_ = h;
+    saveHashValid_ = true;
+    return true;
+}
+
+// ---- controllers / discs -------------------------------------------------------------
+void CoreHost::setControllerDevice(unsigned port, unsigned device) {
+    if (loaded_) retro_set_controller_port_device(port, device);
+}
+
+DiscInfo CoreHost::discInfo() {
+    DiscInfo d;
+    if (!loaded_ || !diskRegistered_ || !disk_.get_num_images) return d;
+    d.count = disk_.get_num_images();
+    d.available = d.count > 0;
+    d.ejected = disk_.get_eject_state ? disk_.get_eject_state() : false;
+    d.index = disk_.get_image_index ? disk_.get_image_index() : 0;
+    for (unsigned i = 0; i < d.count; i++) {
+        char label[256] = {0};
+        std::string name;
+        if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0])
+            name = label;
+        else if (disk_.get_image_path && disk_.get_image_path(i, label, sizeof label) && label[0])
+            name = pathStem(label);
+        else
+            name = "Disc " + std::to_string(i + 1);
+        d.labels.push_back(name);
+    }
+    return d;
+}
+
+void CoreHost::discSetEject(bool eject) {
+    if (loaded_ && diskRegistered_ && disk_.set_eject_state) disk_.set_eject_state(eject);
+}
+
+void CoreHost::discSetIndex(unsigned idx) {
+    if (loaded_ && diskRegistered_ && disk_.set_image_index) disk_.set_image_index(idx);
+}
+
+}  // namespace vj

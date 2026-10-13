@@ -1,0 +1,235 @@
+name: Standalone App
+
+# Builds the SDL3 + Dear ImGui desktop app in app/ (CMake) on macOS, Linux and
+# Windows and runs its headless smoke tests (SDL dummy drivers, the in-tree
+# public ROM test/roms/yarc.j64, frame-hash check).  The core's own Makefile
+# build is covered by c-cpp.yml; this job proves the *second* build of the same
+# sources (CMake, parsed from Makefile.common) and the app on top of it.
+
+on:
+  push:
+    branches: [ master, develop ]
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'libretro.c'
+      - 'libretro_core_options*.h'
+      - 'libretro-common/**'
+      - 'deps/libchdr/**'
+      - 'Makefile.common'
+      - 'test/roms/**'
+      - '.github/workflows/app.yml'
+      - '.github/workflows/app-package.yml'
+  pull_request:
+    # feat/833-app-shell: the v4.0 app pieces (#834-#838) are stacked PRs on
+    # the shell branch until #867 lands; without it they get no app build.
+    branches: [ develop, master, feat/833-app-shell ]
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'libretro.c'
+      - 'libretro_core_options*.h'
+      - 'libretro-common/**'
+      - 'deps/libchdr/**'
+      - 'Makefile.common'
+      - 'test/roms/**'
+      - '.github/workflows/app.yml'
+      - '.github/workflows/app-package.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  app:
+    name: App ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    # The MSVC row is the first time the whole core meets cl.exe (the msvc-check
+    # job in c-cpp.yml deliberately skips ~31 sources, see scripts/check-msvc-sources.sh
+    # and #679).  It reports but does not gate until it has gone green once.
+    continue-on-error: ${{ matrix.config.experimental || false }}
+    defaults:
+      run:
+        shell: ${{ matrix.config.shell || 'bash' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: 'macOS arm64'
+            os: macos-latest
+
+          - name: 'Linux x86_64'
+            os: ubuntu-latest
+
+          - name: 'Linux aarch64'
+            os: ubuntu-24.04-arm
+
+          # MinGW-w64: the same toolchain the core's Windows release build uses.
+          - name: 'Windows x86_64 (MinGW)'
+            os: windows-latest
+            shell: 'msys2 {0}'
+            msys2: true
+
+          - name: 'Windows x86_64 (MSVC, experimental)'
+            os: windows-latest
+            msvc: true
+            experimental: true
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Linux build dependencies (SDL3 needs the desktop dev packages)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq cmake pkg-config \
+          libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev \
+          libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+          libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libegl1-mesa-dev \
+          libdbus-1-dev libudev-dev libwayland-dev wayland-protocols libdecor-0-dev \
+          libcurl4-openssl-dev
+
+    - name: Set up MSYS2
+      if: matrix.config.msys2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: false
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-cmake
+          mingw-w64-x86_64-ninja
+
+    - name: Configure
+      run: cmake -S app -B app/build -DCMAKE_BUILD_TYPE=Release ${{ matrix.config.msys2 && '-G Ninja' || '' }}
+
+    - name: Build
+      run: cmake --build app/build --config Release -j4
+
+    # Makefile.common selects ONE blitter_simd_<arch>.c; this build compiles all
+    # three behind -DBLITTER_SIMD_AUTODETECT (as Package.swift does) and each
+    # guards itself.  Exactly one blitter_simd_ops may exist, or the blitter
+    # would inline one implementation while the vtable tests another.
+    - name: Exactly one SIMD vtable in the core library
+      if: ${{ !matrix.config.msvc }}
+      run: |
+        lib=$(find app/build -name 'libvj_core.a' | head -1)
+        [ -n "$lib" ] || { echo "libvj_core.a not found"; exit 1; }
+        n=$(nm "$lib" 2>/dev/null | grep -cE ' [A-Z] _?blitter_simd_ops$' || true)
+        echo "blitter_simd_ops definitions: $n"
+        [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
+
+    - name: Smoke tests (headless, SDL dummy drivers)
+      run: ctest --test-dir app/build -C Release --output-on-failure
+
+    # Informational: the emulation speed of this build, taken from the app's own
+    # timer (CPU seconds per frame over the run), so optimisation changes (LTO,
+    # flags) can be compared across the five platforms from the job logs.
+    # Shared runners are noisy; read it as a trend, never as a gate.
+    - name: Headless speed (informational)
+      run: |
+        exe=$(find app/build -maxdepth 2 \( -name virtualjaguar -o -name virtualjaguar.exe \) -type f | head -1)
+        echo "binary: $exe"
+        for i in 1 2 3; do
+          "$exe" --headless --frames 1500 test/roms/yarc.j64 2>&1 | grep '^TIMING' || true
+        done
+
+    - name: Upload binary
+      uses: actions/upload-artifact@v7
+      with:
+        name: virtualjaguar-${{ matrix.config.name }}
+        path: |
+          app/build/virtualjaguar
+          app/build/virtualjaguar.exe
+          app/build/Release/virtualjaguar.exe
+        if-no-files-found: error
+        retention-days: 7
+
+  # ------------------------------------------------------------------------------------------
+  # Installable packages (macOS .zip, Windows .zip/-setup.exe, Linux .AppImage/.deb), built
+  # by the reusable app-package.yml that release.yml also calls for tags and nightlies.  PR
+  # packages are unsigned (no secrets are passed): see the comment below the table.
+  # ------------------------------------------------------------------------------------------
+  package:
+    name: Packages
+    if: github.event_name != 'push'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/app-package.yml
+    with:
+      release_tag: ${{ github.event_name == 'pull_request' && format('pr{0}', github.event.number) || 'dev' }}
+      sign: false
+
+  # One sticky comment per PR, found and updated by a hidden marker.  Skipped on fork PRs:
+  # their GITHUB_TOKEN is read-only.  (The step summary lists the same links for them.)
+  package-comment:
+    name: Link the packages on the PR
+    needs: [package]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: List this run's packages
+        id: list
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const run = context.runId;
+            const base = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}`;
+            const runUrl = `${base}/actions/runs/${run}`;
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner, repo: context.repo.repo, run_id: run, per_page: 100,
+            });
+            const pkgs = data.artifacts.filter(a => a.name.startsWith('app-package-') && !a.expired)
+                                        .sort((a, b) => a.name.localeCompare(b.name));
+            const names = {
+              'app-package-macos-universal': 'macOS (universal): .zip',
+              'app-package-windows-x64': 'Windows x64: portable .zip + -setup.exe',
+              'app-package-linux-x86_64': 'Linux x86_64: .AppImage + .deb',
+              'app-package-linux-aarch64': 'Linux aarch64: .AppImage + .deb',
+            };
+            const sha = context.payload.pull_request.head.sha;
+            let rows = pkgs.map(a =>
+              `| ${names[a.name] || a.name} | [${a.name}](${runUrl}/artifacts/${a.id}) | ${(a.size_in_bytes / 1048576).toFixed(1)} MB |`);
+            if (!rows.length) rows = ['| _no packages: the package jobs failed or were skipped_ | | |'];
+            const marker = '<!-- vj-app-packages -->';
+            const body = [
+              marker,
+              '### App packages',
+              '',
+              `Built from \`${sha.slice(0, 7)}\` ([workflow run](${runUrl})).`,
+              '',
+              '| Platform | Download | Size |',
+              '|---|---|---|',
+              ...rows,
+              '',
+              '> Unsigned PR builds. Downloading an artifact needs a GitHub login. macOS: right-click > Open the first time',
+              '> (or `xattr -dr com.apple.quarantine "Virtual Jaguar.app"`). Windows: SmartScreen may warn. Linux AppImage:',
+              '> `chmod +x` it. Tagged releases and nightlies are signed once the signing secrets are configured.',
+              '',
+              `<sub>Updated by CI at ${new Date().toISOString()}</sub>`,
+            ].join('\n');
+
+            // Always: the step summary (fork PRs cannot comment).
+            await core.summary.addRaw(body.replace(marker, ''), true).write();
+
+            const fork = context.payload.pull_request.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`;
+            if (fork) {
+              core.notice('Fork PR: the token is read-only, so no PR comment. The links are in the job summary.');
+              return;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }

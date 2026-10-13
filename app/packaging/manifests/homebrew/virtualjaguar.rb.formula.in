@@ -1,0 +1,39 @@
+# Source-build formula for a tap (macOS and Linux).  The prebuilt, signed macOS app is the
+# cask; this formula is for people who want the command-line install on Linux or a build
+# against Homebrew's own SDL3.  The configure step downloads the pinned data (cheats,
+# libretro-db, shader subset) -- fine for a tap, not for homebrew-core, whose builds are
+# offline: add the -D...=OFF switches below (and `resource` blocks) if this ever moves there.
+class Virtualjaguar < Formula
+  desc "Atari Jaguar and Jaguar CD emulator"
+  homepage "https://jaguar.provenance-emu.com/"
+  url "https://github.com/libretro/virtualjaguar-libretro/archive/refs/tags/v@VERSION@.tar.gz"
+  sha256 "@SHA_SOURCE@"
+  license "GPL-3.0-only"
+  head "https://github.com/libretro/virtualjaguar-libretro.git", branch: "develop"
+
+  depends_on "cmake" => :build
+  depends_on "pkgconf" => :build
+  depends_on "curl"
+  depends_on "sdl3"
+
+  on_linux do
+    depends_on "mesa"
+  end
+
+  def install
+    args = %W[
+      -DVJ_APP_SYSTEM_SDL3=ON
+      -DVJ_APP_BUILD_TESTS=OFF
+      -DCMAKE_INSTALL_PREFIX=#{libexec}
+    ]
+    system "cmake", "-S", "app", "-B", "build", *args, *std_cmake_args(install_prefix: libexec)
+    system "cmake", "--build", "build"
+    system "cmake", "--install", "build"
+    # The app finds its data beside the executable, so keep it in libexec and link the binary.
+    bin.install_symlink libexec/"bin/virtualjaguar"
+  end
+
+  test do
+    assert_match "Virtual Jaguar", shell_output("#{bin}/virtualjaguar --version")
+  end
+end

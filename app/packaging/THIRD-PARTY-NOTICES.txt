@@ -1,0 +1,41 @@
+Virtual Jaguar -- third-party components in the app packages
+=============================================================
+
+Virtual Jaguar itself is free software under the GNU General Public License
+v3.0 (LICENSE.txt).  Source: https://github.com/libretro/virtualjaguar-libretro
+
+Linked into the program (all compatible with the GPLv3):
+
+  SDL3                 zlib license        https://libsdl.org
+  Dear ImGui           MIT                 https://github.com/ocornut/imgui
+  libchdr              BSD-3-Clause        https://github.com/rtissera/libchdr
+    with LZMA SDK (public domain), miniz (MIT), Zstandard (BSD-3-Clause)
+
+Shipped as separate files beside the program (not linked into it):
+
+  librashader runtime  (librashader.dll / .dylib, macOS and Windows packages)
+                       MPL-2.0.  An unmodified upstream release binary, loaded at run
+                       time when you turn shaders on.  Its source code is at
+                       https://github.com/SnowflakePowered/librashader (tag
+                       librashader-v0.12.0); the MPL-2.0 text is at
+                       https://www.mozilla.org/MPL/2.0/.  You can replace the file with
+                       your own build of the same library.
+
+  shaders/slang-shaders/
+                       An unmodified subset of https://github.com/libretro/slang-shaders.
+                       There is no single licence: every shader states its own in its
+                       header (GPL, MIT, public domain, ...) and the per-folder
+                       LICENSE/README files are included.  See
+                       shaders/slang-shaders/NOTICE-virtualjaguar.txt.
+
+  cheats/              The Atari Jaguar cheat files of libretro-database, created by Gent
+                       of Emucheats.  Creative Commons Attribution-ShareAlike 4.0
+                       International; the licence text is cheats/LICENSE-libretro-database.txt.
+
+  libretro-db/         The Atari Jaguar and Jaguar CD .dat files of libretro-database
+                       (no-intro / redump metadata).  Creative Commons
+                       Attribution-ShareAlike 4.0 International
+                       (https://github.com/libretro/libretro-database).
+
+Anything absent from your package (for example a build made with the bundling options
+off) is simply not there; the program works without it.
