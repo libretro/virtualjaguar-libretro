@@ -35,10 +35,32 @@ void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
     const float maxW = std::max(f * 14.0f, std::min(areaSize.x * 0.96f, wide ? areaSize.x * 0.62f : areaSize.x * 0.94f));
     const int columns = wide && sheet.lines.size() > 16 ? 2 : 1;
 
-    // Shrink the text until the sheet fits the area's height (floor 60%).
-    float rows = (float)sheet.lines.size() / (float)columns + 3.0f;
-    float need = rows * (f + ImGui::GetStyle().ItemSpacing.y);
-    float scale = std::max(0.6f, std::min(1.0f, areaSize.y * 0.92f / std::max(need, 1.0f)));
+    // Shrink the text until the sheet fits the area's height (floor 60%); when even that is not enough
+    // (a very small window) the twelve keypad lines collapse into one hint.
+    auto fitScale = [&](size_t lines) {
+        float rows = (float)lines / (float)columns + 3.0f;
+        float need = rows * (f + ImGui::GetStyle().ItemSpacing.y);
+        return areaSize.y * 0.92f / std::max(need, 1.0f);
+    };
+    if (fitScale(sheet.lines.size()) < 0.6f) {
+        std::vector<SheetLine> kept;
+        bool inKeypad = false;
+        for (const SheetLine& l : sheet.lines) {
+            if (l.heading) {
+                inKeypad = l.label.rfind("Keypad", 0) == 0;
+                if (inKeypad) {
+                    SheetLine hint;
+                    hint.label = "Keypad";
+                    hint.keys = "number row / numpad, the full list is in Settings > Input";
+                    kept.push_back(hint);
+                    continue;
+                }
+            }
+            if (!inKeypad) kept.push_back(l);
+        }
+        sheet.lines = kept;
+    }
+    const float scale = std::max(0.5f, std::min(1.0f, fitScale(sheet.lines.size())));
 
     ImGui::SetNextWindowPos(ImVec2(areaPos.x + areaSize.x * 0.5f, areaPos.y + f * 0.6f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.74f);
