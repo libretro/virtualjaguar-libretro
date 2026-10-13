@@ -21,7 +21,7 @@ on:
       - '.github/workflows/app.yml'
       - '.github/workflows/app-package.yml'
   pull_request:
-    branches: [ develop, master ]
+    branches: [ develop, master, 'release/**' ]
     paths:
       - 'app/**'
       - 'src/**'
@@ -69,6 +69,19 @@ jobs:
             shell: 'msys2 {0}'
             msys2: true
 
+          # Native ARM64 Windows runner, MSYS2 CLANGARM64 (clang + libc++ + lld, the ARM64
+          # flavour of the same MinGW-w64 environment).  The core's blitter picks NEON.
+          - name: 'Windows ARM64 (MinGW clang)'
+            os: windows-11-arm
+            shell: 'msys2 {0}'
+            msys2: true
+            msystem: CLANGARM64
+            cmake_extra: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
+            msys2_pkgs: >-
+              mingw-w64-clang-aarch64-clang
+              mingw-w64-clang-aarch64-cmake
+              mingw-w64-clang-aarch64-ninja
+
           - name: 'Windows x86_64 (MSVC, experimental)'
             os: windows-latest
             msvc: true
@@ -92,15 +105,12 @@ jobs:
       if: matrix.config.msys2
       uses: msys2/setup-msys2@v2
       with:
-        msystem: MINGW64
+        msystem: ${{ matrix.config.msystem || 'MINGW64' }}
         update: false
-        install: >-
-          mingw-w64-x86_64-gcc
-          mingw-w64-x86_64-cmake
-          mingw-w64-x86_64-ninja
+        install: ${{ matrix.config.msys2_pkgs || 'mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja' }}
 
     - name: Configure
-      run: cmake -S app -B app/build -DCMAKE_BUILD_TYPE=Release ${{ matrix.config.msys2 && '-G Ninja' || '' }}
+      run: cmake -S app -B app/build -DCMAKE_BUILD_TYPE=Release ${{ matrix.config.msys2 && '-G Ninja' || '' }} ${{ matrix.config.cmake_extra || '' }}
 
     - name: Build
       run: cmake --build app/build --config Release -j4
@@ -114,6 +124,8 @@ jobs:
       run: |
         lib=$(find app/build -name 'libvj_core.a' | head -1)
         [ -n "$lib" ] || { echo "libvj_core.a not found"; exit 1; }
+        which nm
+        nm "$lib" 2>/dev/null | grep -E 'blitter_simd_ops' || true
         n=$(nm "$lib" 2>/dev/null | grep -cE ' [A-Z] _?blitter_simd_ops$' || true)
         echo "blitter_simd_ops definitions: $n"
         [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
@@ -188,6 +200,8 @@ jobs:
             const names = {
               'app-package-macos-universal': 'macOS (universal): .zip',
               'app-package-windows-x64': 'Windows x64: portable .zip + -setup.exe',
+              'app-package-windows-arm64': 'Windows ARM64: portable .zip + -setup.exe',
+              'app-package-flatpak': 'Linux x86_64: Flatpak bundle (.flatpak)',
               'app-package-linux-x86_64': 'Linux x86_64: .AppImage + .deb',
               'app-package-linux-aarch64': 'Linux aarch64: .AppImage + .deb',
             };
