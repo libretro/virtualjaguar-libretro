@@ -558,18 +558,48 @@ jobs:
     uses: ./.github/workflows/chdman-tools.yml
 
   # ----------------------------------------------------------------
+  # Standalone app packages (#839): macOS dmg/zip, Windows zip/setup,
+  # Linux AppImage/deb.  One reusable workflow also used by app.yml for
+  # PRs.  It uploads only final, contract-named files as `app-package-*`
+  # artifacts, so the release/nightly jobs' flatten-and-checksum steps
+  # attach them next to the cores with no further logic.  On a tag whose
+  # version is not the app's (a core-only release) it builds nothing.
+  # ----------------------------------------------------------------
+  app-packages:
+    name: App packages
+    needs: [guard]
+    uses: ./.github/workflows/app-package.yml
+    with:
+      release_tag: ${{ github.ref_type == 'tag' && github.ref_name || (github.ref == 'refs/heads/develop' && 'nightly' || 'prerelease') }}
+      sign: true
+    secrets: inherit
+
+  # ----------------------------------------------------------------
   # Release: collect all artifacts, generate SHA256SUMS, build the
   # release body from docs/RELEASE_NOTES_v<TAG>.md (artifact list
   # and embedded SHA256 checksums always appended), then create the
   # tagged release.  See SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
-    needs: [build, vita-build, switch-build, jagcd-tools]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
     # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
     # tag (release-notes lookup, release title, `gh release create <TAG>`), so
     # this guard is what keeps a develop push from creating a release literally
     # named "develop".  The nightly job handles that case instead.
-    if: startsWith(github.ref, 'refs/tags/v')
+    #
+    # The status checks spell out what the implicit success() gate meant before
+    # app-packages existed (every need succeeded), with one addition: the app
+    # job may be `skipped`, which is what a tag without an app to package
+    # produces.  A FAILED app job still blocks the release, like a failed
+    # tools build: re-run the failed jobs and the release follows.
+    if: |
+      startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
+      && needs.build.result == 'success'
+      && needs.vita-build.result == 'success'
+      && needs.switch-build.result == 'success'
+      && needs.jagcd-tools.result == 'success'
+      && (needs.app-packages.result == 'success' || needs.app-packages.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -679,7 +709,9 @@ jobs:
   # ----------------------------------------------------------------
   nightly:
     name: Update rolling prerelease
-    needs: [build, vita-build, switch-build, jagcd-tools]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    # The app packages (app-packages) are waited for and not required either:
+    # a macOS notarization outage must not withhold the core nightly.
     # Wait for the tools build, but do not REQUIRE it.  chdman is an
     # auxiliary desktop helper; the nightly's product is the 24 core
     # binaries.  Gating the publish on it meant a missing pkg-config

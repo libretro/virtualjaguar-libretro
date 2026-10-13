@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened runtime enables library validation: the process may only load dylibs
+         signed by Apple or by OUR team.  The bundled librashader.dylib is re-signed with
+         our identity, so it loads without any exception.  The shader code also looks in
+         /opt/homebrew/lib and /usr/local/lib (a user's own librashader build, signed by
+         someone else or ad hoc), which library validation would refuse.  This entitlement
+         allows that; it is the ONLY exception.  Remove it to forbid user-supplied
+         librashader builds. No JIT, no microphone, no camera: nothing else is needed, and
+         the app is not sandboxed. -->
+    <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>

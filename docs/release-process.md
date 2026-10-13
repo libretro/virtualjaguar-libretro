@@ -170,6 +170,41 @@ queue contention ever becomes a problem, the lever is a `paths-ignore` for
 docs-only pushes — not a smaller matrix. (Test it carefully: path filters
 interact badly with tag pushes, and this workflow serves both.)
 
+### 3c. Standalone app packages (#839)
+
+`release.yml`'s `app-packages` job calls the reusable `.github/workflows/app-package.yml`, which
+builds the desktop app in `app/` for macOS, Windows and Linux and uploads each platform's final
+files as an `app-package-<platform>` artifact. The `release` and `nightly` jobs flatten every
+artifact into `release/`, so the packages are checksummed into `SHA256SUMS.txt` and attached to
+the same GitHub release as the cores with no extra publishing logic. Nightly assets are replaced
+in place with `--clobber`, as before.
+
+| Asset | Contents |
+|---|---|
+| `VirtualJaguar-X.Y.Z-macos-universal.dmg` | `Virtual Jaguar.app` (arm64 + x86_64) |
+| `VirtualJaguar-X.Y.Z-macos-universal.zip` | the same `.app`, zipped (Homebrew cask) |
+| `VirtualJaguar-X.Y.Z-windows-x64.zip` | portable folder (`portable.txt` inside) |
+| `VirtualJaguar-X.Y.Z-windows-x64-setup.exe` | Inno Setup installer |
+| `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | AppImages |
+| `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | Debian packages |
+
+`X.Y.Z` is the tag without its `v` (`v4.0.0-rc1` gives `4.0.0-rc1`). Nightlies use `nightly`
+(`VirtualJaguar-nightly-windows-x64.zip`) and the `release/**` lane uses `prerelease`.
+
+- **Version guard.** The app reports the version in `app/CMakeLists.txt` (`project(VERSION ...)`).
+  On a tag whose version (minus any `-suffix`) differs from it, the job logs a warning and builds
+  nothing, so a core-only release (say `v3.9.0`) never ships an app that says `4.0.0`. Bump the
+  app version in the release commit to ship packages with a tag. A commit with no `app/` is skipped too.
+- **Gating.** A tagged release needs the app job to succeed (or be skipped); re-run the failed jobs
+  and the release follows. The nightly waits for it but does not require it, like the jagcd tools,
+  so an Apple notarization outage cannot withhold the core nightly.
+- **Signing** is optional and secret-driven (macOS Developer ID + notarization, Windows SignPath);
+  without the secrets the packages are built unsigned and the log warns. The secrets, the
+  hardened-runtime reasoning and the manual steps are in [`app/packaging/README.md`](../app/packaging/README.md).
+- **After the release**, a maintainer fills the Homebrew, winget, Scoop and Flatpak templates from
+  the published `SHA256SUMS.txt` (`app/packaging/manifests/render.sh`) and submits them. CI never
+  submits to external repositories.
+
 ### 4. Post-tag: update libretro-super
 
 RetroArch ships with a `.info` file per core, sourced from `libretro/libretro-super/dist/info/`. Update is **manual** — there's no automated mirror.

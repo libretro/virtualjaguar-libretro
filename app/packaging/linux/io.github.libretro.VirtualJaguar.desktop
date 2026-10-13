@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Virtual Jaguar
+GenericName=Atari Jaguar Emulator
+Comment=Play Atari Jaguar and Jaguar CD games
+Exec=virtualjaguar %f
+Icon=io.github.libretro.VirtualJaguar
+Terminal=false
+Categories=Game;Emulator;
+Keywords=Atari;Jaguar;emulator;retro;
+StartupWMClass=virtualjaguar

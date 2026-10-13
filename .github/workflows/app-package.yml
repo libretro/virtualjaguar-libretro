@@ -1,0 +1,532 @@
+name: App packages
+
+# Builds every installable package of the standalone app (app/) and uploads each platform's
+# FINAL, contract-named files as one workflow artifact (`app-package-<platform>`).  It never
+# publishes anything: callers decide what to do with the artifacts.
+#
+#   release.yml  tags v*      -> release job collects the artifacts next to the core assets
+#                develop      -> nightly job (names use `nightly`), updated in place
+#                release/**   -> prerelease lane (names use `prerelease`)
+#   app.yml      pull request -> artifacts + a sticky PR comment linking them
+#   dispatch     manual run   -> artifacts only (set `sign` to exercise the signing path)
+#
+# Asset names (X.Y.Z = the tag without the leading v; `nightly` / `prNNN` otherwise):
+#   VirtualJaguar-X.Y.Z-macos-universal.dmg          VirtualJaguar-X.Y.Z-macos-universal.zip
+#   VirtualJaguar-X.Y.Z-windows-x64.zip              VirtualJaguar-X.Y.Z-windows-x64-setup.exe
+#   VirtualJaguar-X.Y.Z-linux-x86_64.AppImage        VirtualJaguar-X.Y.Z-linux-aarch64.AppImage
+#   virtualjaguar_X.Y.Z_amd64.deb                    virtualjaguar_X.Y.Z_arm64.deb
+#
+# Signing (all optional; without the secrets the packages are built unsigned and the log says so):
+#   macOS    APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD,
+#            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64
+#   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub until
+#            the SignPath Foundation application is approved
+# Details: app/packaging/README.md.
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "v4.0.0 | nightly | prerelease | pr123 | dev"
+        type: string
+        required: true
+      sign:
+        description: "Sign (and notarize) when the secrets exist"
+        type: boolean
+        default: false
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64:
+        required: false
+      APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
+      APPLE_NOTARY_KEY_P8_BASE64:
+        required: false
+      SIGNPATH_API_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Label used in the file names (v4.0.0, nightly, dev, ...)"
+        type: string
+        default: dev
+      sign:
+        description: "Sign and notarize (needs the secrets). Never publishes."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # The frame hash of the in-tree public ROM after 300 frames (app/cmake/VJSmokeTests.cmake).
+  SMOKE_HASH: f4c30ea3
+  SMOKE_ROM: test/roms/yarc.j64
+
+jobs:
+  # ------------------------------------------------------------------------------------------
+  # Names, versions and the "is there an app to package at this commit" guard.
+  # ------------------------------------------------------------------------------------------
+  meta:
+    name: Package metadata
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.m.outputs.run }}
+      label: ${{ steps.m.outputs.label }}
+      short_version: ${{ steps.m.outputs.short_version }}
+      deb_version: ${{ steps.m.outputs.deb_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: m
+        env:
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -eu
+          run=true
+          if [ ! -f app/CMakeLists.txt ]; then
+            echo "::warning::no app/ at this commit (a core-only tag or branch): no app packages"
+            run=false
+          fi
+          proj=""
+          [ -f app/CMakeLists.txt ] && proj="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p' app/CMakeLists.txt | head -1)"
+          sha7="${GITHUB_SHA:0:7}"
+          case "$TAG" in
+            v[0-9]*)
+              label="${TAG#v}"
+              base="${label%%-*}"
+              short="$base"
+              if [ -n "$proj" ] && [ "$base" != "$proj" ]; then
+                # A core-only release must not ship an app that reports another version.
+                echo "::warning::tag $TAG does not match the app version $proj (app/CMakeLists.txt): skipping app packages." \
+                  "Bump the app version in the release commit to ship them."
+                run=false
+              fi
+              deb="$(printf '%s' "$label" | sed 's/-/~/')" ;;
+            *)
+              label="$TAG"; short="${proj:-0.0.0}"
+              # Debian versions cannot be words: 4.0.0~nightly.<sha> sorts before 4.0.0.
+              deb="${short}~${TAG//[^A-Za-z0-9]/}.${sha7}" ;;
+          esac
+          { echo "run=$run"; echo "label=$label"; echo "short_version=$short"; echo "deb_version=$deb"; } >> "$GITHUB_OUTPUT"
+          echo "label=$label short=$short deb=$deb app_version=$proj run=$run"
+
+  # ------------------------------------------------------------------------------------------
+  # Package-manager templates must always render and parse (they are filled for real, with the
+  # release's checksums, by a maintainer after the release; see app/packaging/README.md).
+  # ------------------------------------------------------------------------------------------
+  manifests:
+    name: Package-manager templates
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Render with placeholder checksums and parse every output
+        run: |
+          set -eu
+          v=4.0.0
+          d="$RUNNER_TEMP/sums"; mkdir -p "$d"
+          for f in macos-universal.zip windows-x64.zip windows-x64-setup.exe; do
+            echo "$(printf '%s' "$f" | sha256sum | cut -d' ' -f1)  VirtualJaguar-$v-$f"
+          done > "$d/SHA256SUMS.txt"
+          bash app/packaging/manifests/render.sh --version "$v" --sums "$d/SHA256SUMS.txt" --out "$RUNNER_TEMP/manifests"
+          cd "$RUNNER_TEMP/manifests"
+          ruby -c homebrew/virtualjaguar.rb homebrew/virtualjaguar-formula.rb
+          python3 -c 'import json,sys; json.load(open("scoop/virtualjaguar.json"))'
+          for y in winget/*.yaml flatpak/*.yml; do ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$y"; echo "ok $y"; done
+
+  # ------------------------------------------------------------------------------------------
+  # macOS: universal .app (arm64 + x86_64), signed + notarized + stapled when the secrets exist.
+  # Two single-arch builds merged with lipo, not one multi-arch configure: the optional
+  # librashader runtime is fetched per architecture.
+  # ------------------------------------------------------------------------------------------
+  macos:
+    name: macOS universal
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: macos-latest
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
+      MIN_MACOS: '11.0'
+      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+      APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Decide whether to sign
+        id: sign
+        run: |
+          if [ "${{ inputs.sign }}" = "true" ] \
+             && [ -n "$APPLE_DEVELOPER_ID_P12_BASE64" ] && [ -n "$APPLE_DEVELOPER_ID_P12_PASSWORD" ] \
+             && [ -n "$APPLE_NOTARY_KEY_ID" ] && [ -n "$APPLE_NOTARY_ISSUER_ID" ] && [ -n "$APPLE_NOTARY_KEY_P8_BASE64" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Developer ID signing + notarization: ON"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS package is NOT Developer ID signed or notarized" \
+              "(signing not requested here, or the APPLE_* secrets are missing)." \
+              "It is ad-hoc signed; Gatekeeper refuses it until right-click > Open."
+          fi
+
+      - name: Build both architectures
+        run: |
+          set -eu
+          for arch in arm64 x86_64; do
+            cmake -S app -B "build-$arch" -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS" \
+              -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION"
+            cmake --build "build-$arch" --config Release -j4
+            cmake --install "build-$arch" --prefix "$PWD/stage-$arch"
+          done
+
+      - name: Smoke tests (arm64 native; x86_64 under Rosetta when present)
+        run: |
+          set -eu
+          ctest --test-dir build-arm64 -C Release --output-on-failure
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 build-x86_64/virtualjaguar --headless --frames 300 \
+              --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+          else
+            echo "::warning::Rosetta is not available on this runner: the x86_64 slice was built but not run"
+          fi
+
+      - name: Assemble the universal app
+        run: |
+          set -eu
+          P=app/packaging/macos
+          bash $P/make-universal.sh stage-arm64 stage-x86_64 stage-universal
+          bash $P/make-app.sh stage-universal "dist/Virtual Jaguar.app" "$SHORT_VERSION" "${GITHUB_RUN_NUMBER}" "$MIN_MACOS"
+          bash $P/check-universal.sh "dist/Virtual Jaguar.app" "$MIN_MACOS"
+          for d in cheats libretro-db shaders; do
+            if [ -d "build-arm64/$d" ]; then
+              test -d "dist/Virtual Jaguar.app/Contents/Resources/$d" || { echo "::error::$d/ missing from the bundle"; exit 1; }
+            fi
+          done
+
+      - name: Smoke-test the BUNDLE (base path is Contents/Resources)
+        run: |
+          set -eu
+          app="$PWD/dist/Virtual Jaguar.app"
+          t="$(mktemp -d)"; cp -R "$app" "$t/"; tapp="$t/Virtual Jaguar.app"
+          exe="$tapp/Contents/MacOS/virtualjaguar"
+          "$exe" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 "$exe" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+          fi
+          # portable.txt beside the executable's SDL base path makes the app create data/ there:
+          # proves SDL_GetBasePath() is Contents/Resources, where the bundled data lives.
+          touch "$tapp/Contents/Resources/portable.txt"
+          "$exe" --headless --frames 5 "$SMOKE_ROM" >/dev/null
+          test -d "$tapp/Contents/Resources/data" || { echo "::error::SDL base path is not Contents/Resources"; exit 1; }
+          rm -rf "$t"
+
+      - name: Import the signing certificate
+        if: steps.sign.outputs.enabled == 'true'
+        run: bash app/packaging/macos/codesign.sh import-cert
+
+      - name: Sign the app
+        run: |
+          set -eu
+          if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
+            bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app"
+          else
+            bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app" adhoc
+          fi
+
+      - name: Notarize and staple the app
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          set -eu
+          ditto -c -k --keepParent "dist/Virtual Jaguar.app" "$RUNNER_TEMP/notarize-app.zip"
+          bash app/packaging/macos/codesign.sh notarize "$RUNNER_TEMP/notarize-app.zip"
+          bash app/packaging/macos/codesign.sh staple "dist/Virtual Jaguar.app"
+          spctl -a -t exec -vv "dist/Virtual Jaguar.app"
+
+      - name: Make the zip (Homebrew cask) and the DMG
+        run: |
+          set -eu
+          mkdir -p out
+          ditto -c -k --sequesterRsrc --keepParent "dist/Virtual Jaguar.app" "out/VirtualJaguar-${LABEL}-macos-universal.zip"
+          bash app/packaging/macos/make-dmg.sh "dist/Virtual Jaguar.app" "out/VirtualJaguar-${LABEL}-macos-universal.dmg"
+          if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
+            dmg="out/VirtualJaguar-${LABEL}-macos-universal.dmg"
+            bash app/packaging/macos/codesign.sh sign-file "$dmg"
+            bash app/packaging/macos/codesign.sh notarize "$dmg"
+            bash app/packaging/macos/codesign.sh staple "$dmg"
+            spctl -a -t open --context context:primary-signature -vv "$dmg"
+          fi
+          ls -la out
+
+      - name: Remove the temporary keychain
+        if: always() && steps.sign.outputs.enabled == 'true'
+        run: security delete-keychain vj-signing.keychain-db || true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-macos-universal
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------
+  # Windows x64 (MinGW-w64, the core's own Windows toolchain): portable zip + Inno Setup installer.
+  # ------------------------------------------------------------------------------------------
+  windows:
+    name: Windows x64
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
+      SIGNPATH_ENABLED: ${{ inputs.sign && secrets.SIGNPATH_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            zip
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure and build (GUI subsystem, static runtime)
+        run: |
+          set -eu
+          cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION"
+          cmake --build build -j4
+
+      - name: Smoke tests (GUI-subsystem exe, output through pipes)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: The exe must import only Windows system DLLs
+        run: |
+          set -eu
+          objdump -p build/virtualjaguar.exe | awk '/DLL Name/ {print $3}' | sort -u | tee dlls.txt
+          if grep -qiE 'libstdc|libgcc|libwinpthread|SDL3|libcurl' dlls.txt; then
+            echo "::error::virtualjaguar.exe depends on a non-system DLL (static runtime not in effect)"; exit 1
+          fi
+          # GUI subsystem = 2 (console = 3)
+          objdump -p build/virtualjaguar.exe | awk '/Subsystem/ {print}' | tee subsystem.txt
+          grep -qi 'windows GUI' subsystem.txt || { echo "::error::not a GUI-subsystem executable"; exit 1; }
+
+      - name: Install tree
+        run: cmake --install build --prefix "$PWD/stage"
+
+      # ---- SignPath (stub): runs only with the `sign` input and SIGNPATH_API_TOKEN; the SignPath
+      # Foundation application is not approved yet, so this is dormant. -----------------------
+      - name: SignPath - upload the unsigned exe
+        id: sp_up_exe
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: signpath-unsigned-exe
+          path: stage/bin/virtualjaguar.exe
+          retention-days: 1
+      - name: SignPath - sign the exe
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'virtualjaguar' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.sp_up_exe.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-exe
+      - name: SignPath - put the signed exe in the install tree
+        if: env.SIGNPATH_ENABLED == 'true'
+        run: |
+          set -eu
+          cp signed-exe/virtualjaguar.exe stage/bin/virtualjaguar.exe
+          # The intermediate artifact must not reach a release (the release job flattens every artifact).
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ steps.sp_up_exe.outputs.artifact-id }}" || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install Inno Setup (pinned, digest-verified)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+            $sha = "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
+            Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\innosetup.exe"
+            if ((Get-FileHash "$env:RUNNER_TEMP\innosetup.exe" -Algorithm SHA256).Hash.ToLower() -ne $sha) { throw "Inno Setup digest mismatch" }
+            Start-Process "$env:RUNNER_TEMP\innosetup.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          "Inno Setup: $iscc"
+
+      - name: Package (portable zip + installer)
+        run: |
+          set -eu
+          bash app/packaging/windows/package.sh stage "$LABEL" out \
+            --installer "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+
+      - name: SignPath - upload the unsigned installer
+        id: sp_up_setup
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: signpath-unsigned-setup
+          path: out/VirtualJaguar-${{ needs.meta.outputs.label }}-windows-x64-setup.exe
+          retention-days: 1
+      - name: SignPath - sign the installer (request)
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'virtualjaguar' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.sp_up_setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-setup
+      - name: SignPath - replace the installer
+        if: env.SIGNPATH_ENABLED == 'true'
+        run: |
+          set -eu
+          cp signed-setup/*.exe "out/VirtualJaguar-${LABEL}-windows-x64-setup.exe"
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ steps.sp_up_setup.outputs.artifact-id }}" || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Warn when unsigned
+        if: env.SIGNPATH_ENABLED != 'true'
+        run: echo "::warning::Windows binaries are NOT code signed (SignPath not configured or not requested). SmartScreen will warn on first run."
+
+      - name: Smoke-test the PORTABLE zip
+        run: |
+          set -eu
+          t="$RUNNER_TEMP/portable"; rm -rf "$t"; mkdir -p "$t"
+          unzip -q "out/VirtualJaguar-${LABEL}-windows-x64.zip" -d "$t"
+          cd "$t/VirtualJaguar"
+          ./virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          test -d data || { echo "::error::portable.txt did not make the app use .\\data"; exit 1; }
+          cd "$GITHUB_WORKSPACE"
+          bash app/packaging/check-payload.sh build "$t/VirtualJaguar" virtualjaguar.exe
+
+      - name: Smoke-test the INSTALLER (silent install, run, silent uninstall)
+        run: |
+          set -eu
+          export MSYS2_ARG_CONV_EXCL='*'
+          dir='C:\vjtest'
+          "out/VirtualJaguar-${LABEL}-windows-x64-setup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER "/DIR=$dir" "/LOG=$(cygpath -w "$RUNNER_TEMP/inno.log")"
+          ls /c/vjtest
+          test -f /c/vjtest/virtualjaguar.exe
+          test ! -f /c/vjtest/portable.txt || { echo "::error::installer must not ship portable.txt"; exit 1; }
+          /c/vjtest/virtualjaguar.exe --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          /c/vjtest/unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          sleep 5
+          test ! -f /c/vjtest/virtualjaguar.exe || { echo "::error::uninstall left the program behind"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-windows-x64
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------
+  # Linux: AppImage + .deb on x86_64 and aarch64.  Built on Ubuntu 22.04 (glibc 2.35), the oldest
+  # runner image, so the packages run on anything from Debian 12 / Ubuntu 22.04 up.
+  # ------------------------------------------------------------------------------------------
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            debarch: amd64
+            os: ubuntu-22.04
+          - arch: aarch64
+            debarch: arm64
+            os: ubuntu-22.04-arm
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
+      DEB_VERSION: ${{ needs.meta.outputs.deb_version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake pkg-config curl dpkg-dev desktop-file-utils appstream \
+            libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev \
+            libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libegl1-mesa-dev \
+            libdbus-1-dev libudev-dev libwayland-dev wayland-protocols libdecor-0-dev \
+            libcurl4-openssl-dev
+
+      - name: Build
+        run: |
+          set -eu
+          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_PACKAGE_VERSION="$SHORT_VERSION"
+          cmake --build build -j"$(nproc)"
+          ctest --test-dir build --output-on-failure
+
+      - name: Validate the desktop file and appstream metadata
+        run: |
+          set -eu
+          cmake --install build --prefix "$RUNNER_TEMP/inst"
+          desktop-file-validate "$RUNNER_TEMP"/inst/share/applications/*.desktop
+          appstreamcli validate --no-net "$RUNNER_TEMP"/inst/share/metainfo/*.metainfo.xml
+
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p out
+          bash app/packaging/linux/make-appimage.sh build "out/VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage" "${{ matrix.arch }}"
+          bash app/packaging/linux/make-deb.sh build "out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb" "${{ matrix.debarch }}" "$DEB_VERSION"
+
+      - name: Smoke-test the AppImage
+        run: |
+          set -eu
+          f="out/VirtualJaguar-${LABEL}-linux-${{ matrix.arch }}.AppImage"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          "./$f" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+          # Where is the payload?  Extract and compare with the build tree.
+          "./$f" --appimage-extract >/dev/null
+          bash app/packaging/check-payload.sh build squashfs-root/usr/bin virtualjaguar
+          ldd squashfs-root/usr/bin/virtualjaguar | tee ldd.txt
+          if grep -q 'not found' ldd.txt; then echo "::error::unresolved libraries in the AppImage"; exit 1; fi
+          rm -rf squashfs-root
+
+      - name: Smoke-test the .deb (install, run through /usr/bin, check payload, remove)
+        run: |
+          set -eu
+          f="out/virtualjaguar_${LABEL}_${{ matrix.debarch }}.deb"
+          sudo apt-get install -y -qq --no-install-recommends "./$f"
+          test -L /usr/bin/virtualjaguar
+          virtualjaguar --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+          bash app/packaging/check-payload.sh build /usr/lib/virtualjaguar virtualjaguar
+          dpkg -L virtualjaguar | head -40
+          sudo apt-get remove -y -qq virtualjaguar
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-linux-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
