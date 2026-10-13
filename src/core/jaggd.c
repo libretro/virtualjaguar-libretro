@@ -613,6 +613,9 @@ static void JGDHostCall(unsigned fn)
          if (JGDRangeOK(a0, lng ? JGDFS_INFO_LONG_SIZE
                                 : JGDFS_INFO_SHORT_SIZE))
          {
+            /* JGDFSDirRead leaves `info` untouched on a bad handle; zero it
+             * so no host stack bytes reach emulated RAM. */
+            memset(info, 0, sizeof(info));
             res = JGDFSDirRead(h, info, lng);
             /* The end-of-directory record (zeroed name) is written too. */
             JGDPutBytes(a0, info, lng ? JGDFS_INFO_LONG_SIZE

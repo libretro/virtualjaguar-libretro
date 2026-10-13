@@ -200,6 +200,20 @@ int main(void)
    JGDFSStateLoad(state);
    CHECK(JGDFSTell(h2) == 0xFFFFFFFFu,
          "a zero (pre-chunk) state closes everything");
+   /* No card root: a state's handles must not reopen as "/" + path.
+    * Point the saved path at the card through the host root, so the
+    * unchecked join would really find the file.  Records: 4-byte magic,
+    * then 8 file + 4 directory slots of equal size, path at +8. */
+   h2 = JGDFSOpen("/hello.txt", JGDFS_FOPEN_READ);
+   JGDFSStateSave(state);
+   JGDFSCloseAll();
+   snprintf((char *)state + 4 + (size_t)h2 * ((JGDFSStateSize() - 4) / 12) + 8,
+            256, "%s/hello.txt", root + 1);
+   JGDFSSetRoot("");
+   JGDFSStateLoad(state);
+   CHECK(JGDFSTell(h2) == 0xFFFFFFFFu,
+         "no card root: state load reopens nothing");
+   JGDFSSetRoot(root);
    free(state);
 
    /* ---- read-only card ---- */
