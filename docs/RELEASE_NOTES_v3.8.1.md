@@ -44,6 +44,9 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   (https://github.com/libretro/virtualjaguar-libretro/issues/838, https://github.com/libretro/virtualjaguar-libretro/pull/881, https://github.com/libretro/virtualjaguar-libretro/pull/889). BIOS files anywhere under a library folder show in the BIOS tab,
   and one click copies a BIOS into the system folder under the name the core reads; Ctrl/Cmd
   + scroll (or a trackpad pinch on macOS) resizes the tiles (https://github.com/libretro/virtualjaguar-libretro/pull/899).
+- **Covers for Jaguar CD.** libretro-thumbnails has no Jaguar CD art, so discs now get a
+  readable title card, and you can set your own cover: right-click a tile > Set cover image
+  (PNG), drop a PNG on a tile, or put `<Title>.png` files in the app's `covers` folder.
 - **Shaders.** RetroArch `.slangp` presets through librashader, with CRT, scanline and
   sharp-bilinear presets from libretro's slang-shaders bundled, plus integer scaling
   (https://github.com/libretro/virtualjaguar-libretro/issues/834, https://github.com/libretro/virtualjaguar-libretro/pull/880). Builds from source fetch the librashader runtime on macOS and Windows by

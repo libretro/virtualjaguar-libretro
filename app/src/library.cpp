@@ -703,6 +703,50 @@ std::string titleFromFileStem(const std::string& stem) {
     return trimStr(s);
 }
 
+std::string titleFromDiscStem(const std::string& stem) {
+    std::string s = titleFromFileStem(stem);
+    auto endsWithCI = [](const std::string& str, const char* suf) {
+        size_t n = std::strlen(suf);
+        if (str.size() < n) return false;
+        for (size_t i = 0; i < n; i++)
+            if (std::tolower((unsigned char)str[str.size() - n + i]) != suf[i]) return false;
+        return true;
+    };
+    for (int pass = 0; pass < 4; pass++) {   // a few markers can stack: "Game (Track 1).bin"
+        std::string before = s;
+        for (const char* ext : {".bin", ".img", ".iso", ".cue"})
+            if (endsWithCI(s, ext)) s = trimStr(s.substr(0, s.size() - 4));
+        // "(Track N)" / "[Track N]" with one to three digits
+        if (!s.empty() && (s.back() == ')' || s.back() == ']')) {
+            const char open = s.back() == ')' ? '(' : '[';
+            size_t o = s.find_last_of(open);
+            if (o != std::string::npos) {
+                std::string inner = lowerStr(trimStr(s.substr(o + 1, s.size() - o - 2)));
+                bool ok = inner.size() >= 7 && inner.size() <= 9 && inner.compare(0, 6, "track ") == 0;
+                for (size_t i = 6; ok && i < inner.size(); i++) ok = std::isdigit((unsigned char)inner[i]) != 0;
+                if (ok) s = trimStr(s.substr(0, o));
+            }
+        }
+        // " - Track N" at the very end (the hyphen is what makes it safe: a title may end in "Track 2")
+        {
+            size_t t = s.size();
+            while (t > 0 && std::isdigit((unsigned char)s[t - 1])) t--;
+            if (t < s.size() && s.size() - t <= 3 && t >= 6 && lowerStr(s.substr(t - 6, 6)) == "track ") {
+                std::string head = trimStr(s.substr(0, t - 6));
+                if (head.size() > 1 && head.back() == '-') s = trimStr(head.substr(0, head.size() - 1));
+            }
+        }
+        if (s == before) break;
+    }
+    std::string out;   // collapse runs of spaces
+    for (char c : s) {
+        if (c == ' ' && !out.empty() && out.back() == ' ') continue;
+        out += c;
+    }
+    out = trimStr(out);
+    return out.empty() ? titleFromFileStem(stem) : out;
+}
+
 Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs) {
     Entry e;
     e.file = f;
@@ -723,7 +767,7 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs) {
         e.datName = g->name;
         e.region = g->region;
     } else {
-        e.title = titleFromFileStem(stemOf(f.path));
+        e.title = f.kind == Kind::Disc ? titleFromDiscStem(stemOf(f.path)) : titleFromFileStem(stemOf(f.path));
     }
     e.section = f.kind == Kind::Disc ? Section::Disc : Section::Cart;
     if (f.kind == Kind::Cart) {
@@ -861,6 +905,77 @@ std::string thumbnailCachePath(const std::string& root, const std::string& type,
 
 std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title) {
     return thumbnailCachePath(root, type, title) + ".miss";
+}
+
+// ---- covers ------------------------------------------------------------------------------------------------------
+
+namespace {
+
+// A file name from arbitrary text: the thumbnail replacements plus the control characters and trailing dots /
+// spaces Windows refuses; never empty.
+std::string coverFileName(const std::string& name) {
+    std::string s = sanitizeThumbName(name);
+    for (char& c : s)
+        if ((unsigned char)c < 32) c = '_';
+    while (!s.empty() && (s.back() == '.' || s.back() == ' ')) s.pop_back();
+    return s.empty() ? std::string("_") : s;
+}
+
+}  // namespace
+
+std::string coverKey(const Entry& e) {
+    char buf[32];
+    if (!e.datName.empty()) return e.datName;
+    if (e.file.crcWhole) {
+        std::snprintf(buf, sizeof buf, "crc-%08X", (unsigned)e.file.crcWhole);
+        return buf;
+    }
+    std::snprintf(buf, sizeof buf, "path-%08X", (unsigned)crc32Update(0, e.file.path.data(), e.file.path.size()));
+    return buf;
+}
+
+std::string customCoverPath(const std::string& root, const std::string& key) {
+    return root + "covers/custom/" + coverFileName(key) + ".png";
+}
+
+std::string localCoverPath(const std::string& root, const std::string& name) {
+    return root + "covers/" + coverFileName(name) + ".png";
+}
+
+std::vector<std::string> localCoverPaths(const std::string& root, const std::string& key, const std::string& title,
+                                         const std::string& datName) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& p) {
+        if (std::find(out.begin(), out.end(), p) == out.end()) out.push_back(p);
+    };
+    add(customCoverPath(root, key));
+    if (!datName.empty()) add(localCoverPath(root, datName));
+    if (!title.empty()) add(localCoverPath(root, title));
+    return out;
+}
+
+CoverChoice chooseCover(const std::string& root, const std::string& key, const std::string& title,
+                        const std::string& datName, const std::function<bool(const std::string&)>& exists) {
+    CoverChoice c;
+    const std::vector<std::string> local = localCoverPaths(root, key, title, datName);
+    for (size_t i = 0; i < local.size(); i++) {
+        if (exists(local[i])) {
+            c.source = i == 0 ? CoverSource::Custom : CoverSource::LocalFolder;
+            c.path = local[i];
+            return c;
+        }
+    }
+    if (!datName.empty()) {
+        for (const char* type : kThumbTypes) {
+            std::string p = thumbnailCachePath(root, type, datName);
+            if (exists(p)) {
+                c.source = CoverSource::Downloaded;
+                c.path = p;
+                return c;
+            }
+        }
+    }
+    return c;
 }
 
 }  // namespace lib

@@ -157,6 +157,10 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs);
 
 // "Iron_Soldier.v1.04.j64" is not a title, but "Iron Soldier (World).j64" nearly is.
 std::string titleFromFileStem(const std::string& stem);
+// The same for a disc image that no dat identified: also drops a trailing "(Track N)" / "[Track N]" /
+// " - Track N" and a doubled ".bin" / ".img" / ".iso" before the extension, and collapses runs of spaces.
+// "(Disc N)" and revision tags are kept: they tell multi-disc sets and releases apart.
+std::string titleFromDiscStem(const std::string& stem);
 
 // ---- tile zoom ----------------------------------------------------------------------------
 // The library grid's tile size is one multiplier (the toolbar slider, the config key library.size, pinch,
@@ -189,6 +193,33 @@ std::string thumbnailCachePath(const std::string& root, const std::string& type,
 // Marker next to it recording "the server said 404" (retried after kMissRetrySeconds).
 std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title);
 constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;
+
+// ---- covers -------------------------------------------------------------------------------------------------
+// What a tile shows, first match wins:
+//   1. a cover set on that tile      <root>covers/custom/<key>.png   (Set cover image..., drop a PNG on the tile)
+//   2. the local art folder          <root>covers/<sanitized title>.png   by dat name, then by the displayed name
+//   3. a downloaded libretro-thumbnails image (only for titles a dat identified)
+//   4. a drawn placeholder card
+// Covers are PNG: the app decodes with SDL, which reads PNG and BMP and no JPEG, and a new decoder is not
+// worth a dependency for this.
+
+// Stable identity of a tile for covers and the art slot: the dat name when identified, else the checksum the
+// scanner computed (survives moving the folder), else a checksum of the path (.chd / .cdi are not hashed).
+std::string coverKey(const Entry& e);
+std::string customCoverPath(const std::string& root, const std::string& key);   // <root>covers/custom/<key>.png
+std::string localCoverPath(const std::string& root, const std::string& name);   // <root>covers/<name>.png
+// The covers a user put on disk for this tile, in precedence order (1 then 2 above); duplicates removed.
+std::vector<std::string> localCoverPaths(const std::string& root, const std::string& key,
+                                         const std::string& title, const std::string& datName);
+enum class CoverSource { None, Custom, LocalFolder, Downloaded };
+struct CoverChoice {
+    CoverSource source = CoverSource::None;
+    std::string path;
+};
+// Which file a tile would show right now, given a file-exists predicate (a downloaded thumbnail counts only
+// for an identified title).  The service decodes in exactly this order; this is the testable statement of it.
+CoverChoice chooseCover(const std::string& root, const std::string& key, const std::string& title,
+                        const std::string& datName, const std::function<bool(const std::string&)>& exists);
 
 }  // namespace lib
 }  // namespace vj

@@ -16,6 +16,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "config.h"
@@ -861,10 +862,14 @@ static void testServicePipeline() {
         }
         CHECK(srv.totalHits() == hitsBefore);
 
-        // an unidentified entry has no art key and never touches the network
+        // an unidentified entry has no thumbnail name: it ends up Missing without ever touching the network
         lib::Entry unknown = *a;
         unknown.datName.clear();
-        CHECK(svc.art(unknown).state == ArtView::Missing);
+        unknown.file.crcWhole = 0x0BADF00Du;   // its own slot (the tile key is the checksum, not the title)
+        int hitsUnknown = srv.totalHits();
+        ArtView vu;
+        CHECK(waitFor(svc, [&] { vu = svc.art(unknown); return vu.state == ArtView::Missing; }));
+        CHECK(srv.totalHits() == hitsUnknown);
 
         // launching posts the same "open this path" event the file dialog does
         SDL_FlushEvents(SDL_EVENT_USER, SDL_EVENT_USER);
@@ -934,6 +939,224 @@ static void testServicePipeline() {
 
 #endif  // !_WIN32
 
+// ---- covers (#838): display names, tile keys, precedence, the service ---------------------------------------------------
+
+static std::vector<unsigned char> makeCoverPng(const std::string& name, int w, int h, unsigned char shade) {
+    SDL_Surface* s = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    SDL_FillSurfaceRect(s, nullptr, SDL_MapSurfaceRGBA(s, shade, 100, 200, 255));
+    std::string path = g_tmp + name;
+    SDL_SavePNG(s, path.c_str());
+    SDL_DestroySurface(s);
+    std::vector<unsigned char> out;
+    readFile(path, out);
+    return out;
+}
+
+static void testDiscTitles() {
+    CHECK_EQ(lib::titleFromDiscStem("Myst (USA) (Track 1)"), "Myst (USA)");
+    CHECK_EQ(lib::titleFromDiscStem("Myst_(USA)_(Track_01)"), "Myst (USA)");
+    CHECK_EQ(lib::titleFromDiscStem("Battlemorph [Track 1]"), "Battlemorph");
+    CHECK_EQ(lib::titleFromDiscStem("Highlander - Track 01"), "Highlander");
+    CHECK_EQ(lib::titleFromDiscStem("Space Ace.bin"), "Space Ace");
+    CHECK_EQ(lib::titleFromDiscStem("Dragons Lair (Track 1).bin"), "Dragons Lair");
+    CHECK_EQ(lib::titleFromDiscStem("Blue   Lightning"), "Blue Lightning");
+    // kept: multi-disc and revision tags tell releases apart, and a title may end in "Track 2"
+    CHECK_EQ(lib::titleFromDiscStem("Primal Rage (Disc 2)"), "Primal Rage (Disc 2)");
+    CHECK_EQ(lib::titleFromDiscStem("Baldies (Rev 1)"), "Baldies (Rev 1)");
+    CHECK_EQ(lib::titleFromDiscStem("Super Track 2"), "Super Track 2");
+    CHECK_EQ(lib::titleFromDiscStem("Track 1"), "Track 1");        // never reduced to nothing
+    CHECK_EQ(lib::titleFromDiscStem("(Track 1)"), "(Track 1)");
+
+    lib::ScanFile f;
+    f.path = "/rips/Unlisted Disc (USA) (Track 1).cue";
+    f.kind = lib::Kind::Disc;
+    lib::Entry e = lib::identify(f, nullptr, nullptr);
+    CHECK_EQ(e.title, "Unlisted Disc (USA)");
+    CHECK(e.datName.empty() && e.section == lib::Section::Disc);
+    f.path = "/carts/Some_Cart_(Track 1).j64";   // carts keep the plain rule: "(Track 1)" is not noise there
+    f.kind = lib::Kind::Cart;
+    CHECK_EQ(lib::identify(f, nullptr, nullptr).title, "Some Cart (Track 1)");
+}
+
+static void testCoverLookup() {
+    lib::Entry e;
+    e.datName = "Pipeline: Test & Co (World)";
+    e.title = e.datName;
+    CHECK_EQ(lib::coverKey(e), e.datName);
+    e.datName.clear();
+    e.file.path = "/rips/a.cue";
+    e.file.crcWhole = 0xABCDEF01u;
+    CHECK_EQ(lib::coverKey(e), "crc-ABCDEF01");   // a content fingerprint: survives moving the folder
+    e.file.path = "/elsewhere/renamed.cue";
+    CHECK_EQ(lib::coverKey(e), "crc-ABCDEF01");
+    e.file.crcWhole = 0;
+    std::string k1 = lib::coverKey(e);
+    CHECK(k1.rfind("path-", 0) == 0 && k1.size() == 5 + 8);
+    e.file.path = "/elsewhere/other.chd";
+    CHECK(lib::coverKey(e) != k1);
+
+    CHECK_EQ(lib::customCoverPath("/d/", "Ecco: The Tides"), "/d/covers/custom/Ecco_ The Tides.png");
+    CHECK_EQ(lib::localCoverPath("/d/", "A/B? (USA)"), "/d/covers/A_B_ (USA).png");
+    CHECK_EQ(lib::localCoverPath("/d/", ".."), "/d/covers/_.png");   // no escaping the folder
+    CHECK_EQ(lib::localCoverPath("/d/", "Game. "), "/d/covers/Game.png");
+
+    // precedence: custom > local folder (dat name, then shown name) > downloaded > nothing
+    std::set<std::string> have;
+    auto exists = [&](const std::string& p) { return have.count(p) != 0; };
+    const std::string root = "/d/", key = "Dat Name (USA)", title = "Shown Name", dat = "Dat Name (USA)";
+    CHECK(lib::chooseCover(root, key, title, dat, exists).source == lib::CoverSource::None);
+    have.insert(lib::thumbnailCachePath(root, "Named_Snaps", dat));
+    lib::CoverChoice c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Snaps", dat));
+    have.insert(lib::localCoverPath(root, title));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::LocalFolder && c.path == lib::localCoverPath(root, title));
+    have.insert(lib::localCoverPath(root, dat));   // the dat name outranks the shown name
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::LocalFolder && c.path == lib::localCoverPath(root, dat));
+    have.insert(lib::customCoverPath(root, key));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Custom && c.path == lib::customCoverPath(root, key));
+    // an unidentified tile never counts a downloaded thumbnail, and has no dat-name local lookup
+    have.clear();
+    have.insert(lib::thumbnailCachePath(root, "Named_Boxarts", title));
+    CHECK(lib::chooseCover(root, "crc-00000001", title, "", exists).source == lib::CoverSource::None);
+    have.insert(lib::localCoverPath(root, title));
+    CHECK(lib::chooseCover(root, "crc-00000001", title, "", exists).source == lib::CoverSource::LocalFolder);
+}
+
+static void testCoverService() {
+    std::string root = g_tmp + "cover-root/";
+    std::string games = g_tmp + "cover-games/";
+    std::error_code ec;
+    fs::create_directories(root + "library/db", ec);
+    std::vector<unsigned char> u1 = noise(2352 * 30, 31), d1 = noise(2352 * 30, 32);
+    writeBytes(games + "Unlisted Disc (USA) (Track 1).bin", u1);
+    writeText(games + "Unlisted Disc (USA).cue",
+              "FILE \"Unlisted Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    writeBytes(games + "Listed Disc (USA) (Track 1).bin", d1);
+    writeText(games + "Listed Disc (USA).cue",
+              "FILE \"Listed Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    writeBytes(games + "Image Only (USA).chd", noise(4096, 33));   // .chd: never hashed, keyed by path
+    writeText(root + "library/db/Atari - Jaguar CD.dat",
+              datText("2099.01.01", datGame("Listed Disc (USA)", "Listed Disc (USA) (Track 1).bin", crcOf(d1)) +
+                                        datGame("F1", "x", 1) + datGame("F2", "x", 2) + datGame("F3", "x", 3) + datGame("F4", "x", 4)));
+    writeText(root + "not-a-png.png", "this is not an image, just text that is long enough to pass for a file");
+
+    Paths paths;
+    paths.root = root;
+    Config cfg;
+    cfg.setPath(root + "config.ini");
+    cfg.set("library.dir.0", games.substr(0, games.size() - 1));
+    struct Fake {
+        int created = 0, destroyed = 0, lastW = 0, lastH = 0;
+    } fake;
+    LibraryService svc;
+    svc.createTexture = [&](const void*, int w, int h) { fake.created++; fake.lastW = w; fake.lastH = h; return (unsigned)fake.created; };
+    svc.destroyTexture = [&](unsigned) { fake.destroyed++; };
+    svc.artBaseUrl = "http://127.0.0.1:1/";   // nothing listens: any request would fail loudly
+    svc.dbBaseUrl = svc.artBaseUrl;
+    svc.start(paths, cfg, false);
+    svc.setDownloadArt(false);
+    auto pumpUntil = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            svc.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    auto find = [&](const std::string& title) {
+        lib::Entry e;
+        for (const lib::Entry& x : svc.entries())
+            if (x.title == title) e = x;
+        return e;   // a copy: a rescan rebuilds the list
+    };
+    CHECK(pumpUntil([&] { return !svc.scanning() && svc.entries().size() == 3; }));
+    lib::Entry un = find("Unlisted Disc (USA)"), listed = find("Listed Disc (USA)"), chd = find("Image Only (USA)");
+    CHECK(!un.file.path.empty() && !listed.file.path.empty() && !chd.file.path.empty());
+    CHECK(un.datName.empty() && listed.match == lib::Match::Crc && chd.datName.empty());
+    CHECK(lib::coverKey(un).rfind("crc-", 0) == 0 && lib::coverKey(chd).rfind("path-", 0) == 0);
+
+    // nothing anywhere: Missing, for the unidentified and for the identified (downloads are off)
+    ArtView v;
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Missing; }));
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Missing; }));
+    CHECK(!svc.netBusy());
+
+    // 1. a PNG named after the game in <data>/covers/ (Rescan makes tiles look again)
+    makeCoverPng("local.png", 40, 80, 10);
+    fs::create_directories(fs::u8path(root + "covers"), ec);
+    fs::copy_file(fs::u8path(g_tmp + "local.png"), fs::u8path(root + "covers/Unlisted Disc (USA).png"), fs::copy_options::overwrite_existing, ec);
+    CHECK(!ec);
+    svc.rescan();
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready; }));
+    CHECK(v.w == 40 && v.h == 80);
+    lib::Entry un2 = find("Unlisted Disc (USA)");   // a rescan rebuilds entries: the key is unchanged
+    CHECK(pumpUntil([&] { return !svc.scanning(); }));
+    un = find("Unlisted Disc (USA)");
+    listed = find("Listed Disc (USA)");
+    chd = find("Image Only (USA)");
+
+    // 2. a cover set on the tile beats the folder; remove goes back to the folder's
+    makeCoverPng("mine.png", 90, 30, 200);
+    CHECK(!svc.hasCustomCover(un));
+    CHECK(svc.setCover(un, g_tmp + "mine.png"));
+    CHECK(svc.hasCustomCover(un));
+    CHECK(fs::exists(fs::u8path(lib::customCoverPath(root, lib::coverKey(un)))));
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready && v.w == 90; }));
+    CHECK(v.h == 30);
+    int destroyedBefore = fake.destroyed;
+    svc.removeCover(un);
+    CHECK(!svc.hasCustomCover(un));
+    CHECK(fake.destroyed > destroyedBefore);   // the old texture went away with the cover
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready && v.w == 40; }));
+    CHECK(v.h == 80);
+    CHECK(fs::exists(fs::u8path(root + "covers/Unlisted Disc (USA).png")));   // the user's own file is never deleted
+
+    // 3. identified: custom > downloaded cache (downloads off, so only what is on disk counts)
+    std::string cached = lib::thumbnailCachePath(root, "Named_Boxarts", listed.datName);
+    makeCoverPng("cached.png", 64, 64, 50);
+    fs::create_directories(fs::u8path(cached).parent_path(), ec);
+    fs::copy_file(fs::u8path(g_tmp + "cached.png"), fs::u8path(cached), fs::copy_options::overwrite_existing, ec);
+    CHECK(!ec);
+    svc.rescan();   // the earlier Missing is forgotten
+    CHECK(pumpUntil([&] { return !svc.scanning(); }));
+    listed = find("Listed Disc (USA)");
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready; }));
+    CHECK(v.w == 64 && v.h == 64);   // downloaded
+    makeCoverPng("tiny.png", 20, 20, 120);
+    CHECK(svc.setCover(listed, g_tmp + "tiny.png"));
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready && v.w == 20; }));
+    CHECK(fs::exists(fs::u8path(lib::customCoverPath(root, "Listed Disc (USA)"))));
+    svc.removeCover(listed);
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready && v.w == 64; }));
+
+    // 4. an image the decoder cannot read is refused and leaves nothing behind
+    chd = find("Image Only (USA)");
+    CHECK(!svc.setCover(chd, root + "not-a-png.png"));
+    CHECK(svc.status().find("PNG") != std::string::npos);
+    CHECK(!svc.hasCustomCover(chd));
+    CHECK(!svc.setCover(chd, root + "does-not-exist.png"));
+    CHECK(svc.setCover(chd, g_tmp + "mine.png"));   // .chd tiles are keyed by their path
+    CHECK(pumpUntil([&] { v = svc.art(chd); return v.state == ArtView::Ready && v.w == 90; }));
+
+    // 5. finding the tile under a dropped file
+    svc.tiles.clear();
+    svc.tilesFrame = 100;
+    LibraryService::CoverTile t;
+    t.x0 = 10; t.y0 = 20; t.x1 = 110; t.y1 = 160; t.key = "k1"; t.title = "T1";
+    svc.tiles.push_back(t);
+    t.x0 = 120; t.x1 = 220; t.key = "k2";
+    svc.tiles.push_back(t);
+    CHECK(svc.tileAt(50, 50, 100) && svc.tileAt(50, 50, 100)->key == "k1");
+    CHECK(svc.tileAt(130, 159, 101) && svc.tileAt(130, 159, 101)->key == "k2");
+    CHECK(!svc.tileAt(115, 50, 100));    // the gap between tiles
+    CHECK(!svc.tileAt(50, 160, 100));    // the far edge is outside
+    CHECK(!svc.tileAt(50, 50, 200));     // the grid has not been drawn for a while: nothing is under the pointer
+    svc.stop();
+}
+
 // ---- dev tool -------------------------------------------------------------------------------------------------------
 
 static int scanTool(const std::string& dir, const std::string& dbDir) {
@@ -988,6 +1211,9 @@ int main(int argc, char** argv) {
     testBiosClassification();
     testBiosInLibraryFolders();
     testTileZoom();
+    testDiscTitles();
+    testCoverLookup();
+    testCoverService();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();

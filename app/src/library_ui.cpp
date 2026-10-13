@@ -141,6 +141,13 @@ void drawStatus(LibraryService& svc) {
     }
 }
 
+// The Jaguar CD tab: libretro-thumbnails has no repository for the system at all, so say why tiles are plain.
+void drawSectionHint(const LibraryService& svc) {
+    if (svc.section == (int)lib::Section::Disc)
+        ui::hint("libretro-thumbnails has no Jaguar CD art yet -- right-click a disc to set a cover "
+                 "(or drop a PNG on it).");
+}
+
 // A BIOS or system file: shows what it is and whether the core will read it where it is.  It is not
 // content, so a click never launches it; on a file the core would read from its system folder but this
 // is elsewhere, a click offers to copy it there.
@@ -211,6 +218,33 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
     }
 }
 
+// A small dark label in a tile's corner ("CD", "Cart").
+void drawBadge(ImDrawList* dl, ImVec2 at, const char* label) {
+    dl->AddRectFilled(at, ImVec2(at.x + ImGui::CalcTextSize(label).x + 8, at.y + ImGui::GetFontSize() + 2),
+                      IM_COL32(20, 20, 20, 200), 3.0f);
+    dl->AddText(ImVec2(at.x + 4, at.y + 1), IM_COL32(255, 255, 255, 255), label);
+}
+
+// The card shown while a tile has no art: a colour from the title, the title itself, and a CD / Cart badge.
+void drawPlaceholder(ImDrawList* dl, ImVec2 a0, ImVec2 a1, const lib::Entry& e, bool loading) {
+    ImColor c = ImColor::HSV((float)(fnv(e.title) % 360) / 360.0f, 0.35f, 0.45f);
+    ImVec2 i0(a0.x + 6, a0.y + 6), i1(a1.x - 6, a1.y - 6);
+    dl->AddRectFilled(i0, i1, c, 4.0f);
+    const float pad = 8.0f;
+    const float top = a0.y + 6 + ImGui::GetFontSize() + 8;   // below the badge
+    ImVec4 clip(i0.x + pad, top, i1.x - pad, i1.y - pad);
+    const float fs = ImGui::GetFontSize() * 1.1f;
+    const float ww = std::max(8.0f, clip.z - clip.x);
+    const std::string& t = e.title.empty() ? e.file.path : e.title;
+    ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, 1e9f, ww, t.c_str());
+    float y = std::max(top, (top + clip.w - ts.y) * 0.5f);
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(clip.x, y), IM_COL32(255, 255, 255, 235), t.c_str(), nullptr, ww, &clip);
+    if (loading) {
+        ImVec2 ds = ImGui::CalcTextSize("...");
+        dl->AddText(ImVec2((a0.x + a1.x - ds.x) * 0.5f, i1.y - ds.y - 2), IM_COL32(255, 255, 255, 150), "...");
+    }
+}
+
 void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
@@ -218,36 +252,51 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     ImGui::PushID(e.file.path.c_str());
     bool clicked = ImGui::InvisibleButton("##cell", total);
     bool hovered = ImGui::IsItemHovered();
+    // Right-click: set or remove this tile's cover.  The menu is built only while it is open, so the
+    // "has a cover" check is not run for every tile every frame.
+    if (ImGui::BeginPopupContextItem("##cellmenu")) {
+        if (ImGui::MenuItem("Set cover image...")) svc.setCoverDialog(app.window(), e);
+        if (ImGui::MenuItem("Remove cover image", nullptr, false, svc.hasCustomCover(e))) svc.removeCover(e);
+        ImGui::Separator();
+        ImGui::TextDisabled("PNG only.  You can also drop a PNG on this tile.");
+        ImGui::EndPopup();
+    }
+    const bool popupOpen = ImGui::IsPopupOpen("##cellmenu");   // under this tile's ID scope
     ImGui::PopID();
+    {   // for a file dropped on the window: which tile is under the pointer (clipped to the visible grid)
+        ImVec2 cmin = dl->GetClipRectMin(), cmax = dl->GetClipRectMax();
+        LibraryService::CoverTile t;
+        t.x0 = std::max(p0.x, cmin.x);
+        t.y0 = std::max(p0.y, cmin.y);
+        t.x1 = std::min(p0.x + total.x, cmax.x);
+        t.y1 = std::min(p0.y + total.y, cmax.y);
+        if (t.x1 > t.x0 && t.y1 > t.y0) {
+            t.key = lib::coverKey(e);
+            t.title = e.title;
+            t.datName = e.datName;
+            svc.tiles.push_back(std::move(t));
+        }
+    }
 
     ImVec2 a0 = p0, a1(p0.x + cellW, p0.y + artH);
     dl->AddRectFilled(a0, a1, hovered ? IM_COL32(60, 64, 76, 255) : IM_COL32(38, 40, 48, 255), 4.0f);
 
     ArtView v = svc.art(e);
+    bool placeholder = false;
     if (v.state == ArtView::Ready && v.tex && v.w > 0 && v.h > 0) {
         float k = std::min((cellW - 4.0f) / (float)v.w, (artH - 4.0f) / (float)v.h);
         float w = (float)v.w * k, h = (float)v.h * k;
         ImVec2 i0(p0.x + (cellW - w) * 0.5f, p0.y + (artH - h) * 0.5f);
         dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)v.tex), i0, ImVec2(i0.x + w, i0.y + h));
     } else {
-        // Placeholder: a colour from the title and its first letter; "..." while the art is on its way.
-        ImColor c = ImColor::HSV((float)(fnv(e.title) % 360) / 360.0f, 0.35f, 0.45f);
-        dl->AddRectFilled(ImVec2(a0.x + 6, a0.y + 6), ImVec2(a1.x - 6, a1.y - 6), c, 4.0f);
-        char glyph[2] = {e.title.empty() ? '?' : (char)std::toupper((unsigned char)e.title[0]), 0};
-        const char* txt = v.state == ArtView::Loading ? "..." : glyph;
-        float fs = ImGui::GetFontSize() * 2.2f;
-        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, 1e9f, 0.0f, txt);
-        dl->AddText(ImGui::GetFont(), fs, ImVec2(p0.x + (cellW - ts.x) * 0.5f, p0.y + (artH - ts.y) * 0.5f),
-                    IM_COL32(255, 255, 255, 200), txt);
+        drawPlaceholder(dl, a0, a1, e, v.state == ArtView::Loading);
+        placeholder = true;
     }
     if (hovered) dl->AddRect(a0, a1, IM_COL32(120, 170, 255, 255), 4.0f, 0, 2.0f);
 
     // badges
-    if (e.file.kind == lib::Kind::Disc) {
-        dl->AddRectFilled(ImVec2(a0.x + 4, a0.y + 4), ImVec2(a0.x + 4 + ImGui::CalcTextSize("CD").x + 8, a0.y + 4 + ImGui::GetFontSize() + 2),
-                          IM_COL32(20, 20, 20, 200), 3.0f);
-        dl->AddText(ImVec2(a0.x + 8, a0.y + 5), IM_COL32(255, 255, 255, 255), "CD");
-    }
+    if (e.file.kind == lib::Kind::Disc) drawBadge(dl, ImVec2(a0.x + 4, a0.y + 4), "CD");
+    else if (placeholder) drawBadge(dl, ImVec2(a0.x + 4, a0.y + 4), "Cart");
     if (e.match != lib::Match::Crc) {
         const char* q = e.match == lib::Match::Name ? "?" : "??";
         float w = ImGui::CalcTextSize(q).x + 8;
@@ -261,7 +310,7 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3),
                 IM_COL32(230, 230, 230, 255), e.title.c_str(), nullptr, cellW - 4, &clip);
 
-    if (hovered) {
+    if (hovered && !popupOpen) {
         ui::beginWrappedTooltip();
         ImGui::TextWrapped("%s", e.title.c_str());
         ImGui::Separator();
@@ -280,6 +329,8 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
                                     : "Not in the database; titled from the file name.");
             break;
         }
+        if (placeholder && v.state != ArtView::Loading)
+            ImGui::TextDisabled("No cover: right-click to set one, or drop a PNG on this tile.");
         ui::endWrappedTooltip();
     }
     if (clicked) svc.launch(e);
@@ -329,6 +380,8 @@ void handleZoomInput(LibraryService& svc) {
 
 void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filter) {
     handleZoomInput(svc);
+    svc.tiles.clear();
+    svc.tilesFrame = ImGui::GetFrameCount();
     const std::vector<lib::Entry>& all = svc.entries();
     std::vector<const lib::Entry*> shown;
     shown.reserve(all.size());
@@ -458,6 +511,7 @@ void drawLibraryHome(App& app, float x, float y, float w, float h) {
             drawSections(svc, "##homesec", g_homeSec);
             drawFolders(svc);
             drawStatus(svc);
+            drawSectionHint(svc);
             ImGui::Separator();
             ImGui::BeginChild("##homegrid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());
             drawGrid(app, svc, lower(g_search), g_filter);
@@ -485,6 +539,7 @@ void drawLibrary(App& app) {
     drawSections(svc, "##winsec", g_winSec);
     drawFolders(svc);
     drawStatus(svc);
+    drawSectionHint(svc);
     ImGui::Separator();
     ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());
     drawGrid(app, svc, lower(g_search), g_filter);

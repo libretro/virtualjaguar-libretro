@@ -113,8 +113,29 @@ public:
     bool installBios(const lib::Entry& e);
     void saveSettings();
 
-    // Art for an entry: starts loading on first use, returns what is ready now.
+    // Art for an entry: starts loading on first use, returns what is ready now.  Every entry has a slot (the
+    // key is lib::coverKey): a cover set on the tile or a PNG in <data>/covers/ shows for unidentified discs too;
+    // only identified titles ever reach the network.
     ArtView art(const lib::Entry& e);
+
+    // ---- custom covers (PNG, copied into <data>/covers/custom/) ----
+    bool setCover(const lib::Entry& e, const std::string& imagePath);
+    void removeCover(const lib::Entry& e);
+    bool hasCustomCover(const lib::Entry& e) const;
+    void setCoverDialog(SDL_Window* parent, const lib::Entry& e);   // async; the choice arrives through pump()
+    std::string coversDir() const { return root_ + "covers/"; }
+    // The visible tiles of the last drawn grid, so a file dropped on the window can find the tile under it.
+    struct CoverTile {
+        float x0, y0, x1, y1;
+        std::string key;
+        std::string title;
+        std::string datName;
+    };
+    std::vector<CoverTile> tiles;   // UI thread only
+    int tilesFrame = -1000;         // the UI frame that filled `tiles`
+    const CoverTile* tileAt(float x, float y, int frame) const;
+    // A cover set from a drop or the dialog by key (what the tile record carries).
+    bool setCoverKey(const std::string& key, const std::string& imagePath);
 
     // Where things live, for the UI and for tests.
     std::string libDir() const { return libDir_; }
@@ -125,10 +146,16 @@ private:
         unsigned tex = 0;
         int w = 0, h = 0;
         double lastWanted = 0;       // time of the last art() call (monotonic seconds)
+        unsigned gen = 0;            // bumped when a cover is set or removed: results of an older job are dropped
         double retryAt = 0;          // transient failure: ask again after this time (monotonic seconds)
+    };
+    struct ArtJob {                  // what a decode / fetch job needs to know about its tile
+        std::string key, title, datName;
+        unsigned gen = 0;
     };
     struct Decoded {
         std::string key;
+        unsigned gen = 0;
         int w = 0, h = 0;
         bool transientFail = false;  // nothing cached and the network failed (not a 404)
         std::vector<unsigned char> rgba;   // empty = no art
@@ -138,10 +165,10 @@ private:
     void reidentify();
     void saveCache(const std::vector<lib::ScanFile>& files);
     void loadCache();
-    void requestArt(const std::string& key);
-    void decodeJob(const std::string& key);
-    void fetchJob(const std::string& key, const std::string& type);
+    void decodeJob(const ArtJob& job);
+    void fetchJob(const ArtJob& job, const std::string& type);
     bool wanted(const std::string& key);
+    void invalidateArt(const std::string& key);   // main thread: forget what the slot holds, load again
     void setStatus(const std::string& s);
     void publish(Decoded&& d);
     double nowSec() const;
@@ -167,6 +194,7 @@ private:
     std::vector<lib::ScanFile> scanResult_;   // worker -> main
     bool scanResultReady_ = false;
     std::vector<std::string> pickedFolders_;  // dialog thread -> main
+    std::vector<std::pair<std::string, std::string>> pickedCovers_;   // (tile key, image path), dialog thread -> main
     bool datsChanged_ = false;
     std::string status_;
     uint64_t zoomSaveAt_ = 0;   // SDL ticks (ms) when to write library.size, 0 = nothing pending
@@ -179,6 +207,7 @@ private:
 
     Worker scanW_, decodeW_, netW_;
     static void SDLCALL folderDone(void* ud, const char* const* list, int filter);
+    static void SDLCALL coverDone(void* ud, const char* const* list, int filter);
 };
 
 

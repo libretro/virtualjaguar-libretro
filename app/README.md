@@ -301,12 +301,23 @@ tracks a `.cue` owns.
    art under their exact dat name (64 box art); of the 26 Jaguar CD titles, 12 have a snapshot
    and none a box art. (Measured against libretro-thumbnails at the pinned dat's date.)
    **Download box art** turns all downloading off.
+   **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
+   downloaded art. A tile with no art is a drawn card with the game's title and a `CD` / `Cart`
+   badge. Right-click a tile > **Set cover image...** (PNG) to give it one, or drop a PNG onto the
+   tile while the library is showing (a PNG dropped anywhere else is opened as before, and fails
+   as not a game); **Remove cover image** undoes it. The PNG is copied to
+   `<data>/covers/custom/<key>.png` (the dat title when the game is identified, else a checksum
+   of the disc or of its path). For many at once, put PNGs named after the game in
+   `<data>/covers/`, e.g. `<data>/covers/Myst (USA).png` (dat title first, then the title shown
+   on the tile), then press **Rescan**. A cover you set beats the folder, which beats a
+   downloaded image, which beats the card. Only PNG is read: SDL3 has no JPEG decoder and the app
+   adds no dependency for one. Covers larger than 8192 px or 32 MB are refused.
 4. **Launch** is a click on the tile; it posts the same "open this path" event as the file
    dialog. **Close on launch** hides the window afterwards.
 
 Files: `<data>/library/scan.tsv` (the hash cache: a rescan only stats files whose size and
 modification time are unchanged), `<data>/library/db/` (databases fetched by **Update
-database**), `<data>/thumbnails/`. Settings are the `library.*` keys in `config.ini`.
+database**), `<data>/thumbnails/`, `<data>/covers/` (your cover art). Settings are the `library.*` keys in `config.ini`.
 
 The two dat files are fetched at configure time, pinned to a libretro-database commit and
 SHA256 (`VJ_DB_COMMIT` in `CMakeLists.txt`), and copied next to the executable in

@@ -77,6 +77,15 @@ bool pathExists(const std::string& p, int64_t* mtimeSec = nullptr) {
     return true;
 }
 
+const size_t kMaxCoverBytes = 32u << 20;   // a cover on disk (the thumbnail cache is capped at kMaxArtBytes)
+
+// A cover, size-checked so a huge file cannot exhaust memory on the decode thread.
+bool readArtFile(const std::string& path, std::vector<unsigned char>& out) {
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(path.c_str(), &info) || info.type != SDL_PATHTYPE_FILE || info.size > kMaxCoverBytes) return false;
+    return readFile(path, out);
+}
+
 std::string lowerCopy(std::string s) {
     for (char& c : s) c = (char)std::tolower((unsigned char)c);
     return s;
@@ -353,6 +362,11 @@ bool LibraryService::installBios(const lib::Entry& e) {
 
 void LibraryService::rescan() {
     if (!started_) return;
+    {   // covers dropped into <data>/covers/ since a tile last looked: ask again
+        std::lock_guard<std::mutex> g(m_);
+        for (auto& kv : slots_)
+            if (kv.second.state == ArtView::Missing) kv.second.state = ArtView::None;
+    }
     if (folders_.empty() && systemDir.empty()) {
         files_.clear();
         reidentify();
@@ -478,14 +492,14 @@ void LibraryService::publish(Decoded&& d) {
 
 ArtView LibraryService::art(const lib::Entry& e) {
     ArtView v;
-    if (e.datName.empty()) {
-        v.state = ArtView::Missing;
-        return v;
-    }
+    ArtJob job;
+    job.key = lib::coverKey(e);
+    job.title = e.title;
+    job.datName = e.datName;
     bool request = false;
     {
         std::lock_guard<std::mutex> g(m_);
-        Slot& s = slots_[e.datName];
+        Slot& s = slots_[job.key];
         double t = nowSec();
         s.lastWanted = t;
         if (s.state == ArtView::Missing && s.retryAt > 0 && t > s.retryAt) s.state = ArtView::None;
@@ -493,76 +507,185 @@ ArtView LibraryService::art(const lib::Entry& e) {
             s.state = ArtView::Loading;
             request = true;
         }
+        job.gen = s.gen;
         v.state = s.state;
         v.tex = s.tex;
         v.w = s.w;
         v.h = s.h;
     }
-    if (request) {
-        const std::string key = e.datName;
-        decodeW_.post([this, key]() { decodeJob(key); });
-    }
+    if (request) decodeW_.post([this, job]() { decodeJob(job); });
     return v;
 }
 
-// Decode thread: cached file -> pixels; otherwise hand the download to the net thread.
-void LibraryService::decodeJob(const std::string& key) {
+void LibraryService::invalidateArt(const std::string& key) {
+    std::lock_guard<std::mutex> g(m_);
+    auto it = slots_.find(key);
+    if (it == slots_.end()) return;
+    Slot& s = it->second;
+    if (s.tex && destroyTexture) {
+        destroyTexture(s.tex);
+        if (textureCount_) textureCount_--;
+    }
+    s.tex = 0;
+    s.w = s.h = 0;
+    s.state = ArtView::None;
+    s.retryAt = 0;
+    s.gen++;
+}
+
+const LibraryService::CoverTile* LibraryService::tileAt(float x, float y, int frame) const {
+    if (frame - tilesFrame > 2) return nullptr;   // the grid is not on screen
+    for (const CoverTile& t : tiles)
+        if (x >= t.x0 && x < t.x1 && y >= t.y0 && y < t.y1) return &t;
+    return nullptr;
+}
+
+// ---- custom covers ---------------------------------------------------------------------------------------------------------
+
+bool LibraryService::hasCustomCover(const lib::Entry& e) const {
+    return pathExists(lib::customCoverPath(root_, lib::coverKey(e)));
+}
+
+bool LibraryService::setCover(const lib::Entry& e, const std::string& imagePath) {
+    return setCoverKey(lib::coverKey(e), imagePath);
+}
+
+// Validates the image (PNG signature + a full decode), then keeps a verbatim copy: the original stays
+// available for a larger tile size later, and the user's file is never touched.
+bool LibraryService::setCoverKey(const std::string& key, const std::string& imagePath) {
+    if (!started_) return false;
+    std::vector<unsigned char> bytes;
+    if (!readArtFile(imagePath, bytes)) {
+        setStatus("Cover not set: cannot read that file (or it is over 32 MB).");
+        return false;
+    }
+    int w = 0, h = 0;
+    std::vector<unsigned char> px;
+    if (!isPng(bytes) || !decodePng(bytes, w, h, px)) {
+        setStatus("Cover not set: only PNG images are supported (up to 8192 x 8192).");
+        return false;
+    }
+    const std::string dest = lib::customCoverPath(root_, key);
+    SDL_CreateDirectory((root_ + "covers/").c_str());
+    SDL_CreateDirectory((root_ + "covers/custom/").c_str());
+    if (!writeFileAtomic(dest, bytes.data(), bytes.size())) {
+        setStatus("Cover not set: cannot write into the covers folder.");
+        return false;
+    }
+    invalidateArt(key);
+    setStatus("Cover image set.");
+    return true;
+}
+
+void LibraryService::removeCover(const lib::Entry& e) {
+    const std::string key = lib::coverKey(e);
+    const std::string p = lib::customCoverPath(root_, key);
+    if (pathExists(p)) SDL_RemovePath(p.c_str());
+    invalidateArt(key);
+    setStatus("Cover image removed.");
+}
+
+namespace {
+struct CoverDialog {
+    LibraryService* self;
+    std::string key;
+};
+}  // namespace
+
+void SDLCALL LibraryService::coverDone(void* ud, const char* const* list, int) {
+    // May run on another thread: just queue the choice for pump().
+    CoverDialog* d = (CoverDialog*)ud;
+    if (list && list[0]) {
+        std::lock_guard<std::mutex> g(d->self->m_);
+        d->self->pickedCovers_.emplace_back(d->key, list[0]);
+    }
+    delete d;
+}
+
+void LibraryService::setCoverDialog(SDL_Window* parent, const lib::Entry& e) {
+    static const SDL_DialogFileFilter filters[] = {{"PNG images", "png"}};
+    SDL_ShowOpenFileDialog(&LibraryService::coverDone, new CoverDialog{this, lib::coverKey(e)}, parent, filters, 1, nullptr,
+                           false);
+}
+
+// ---- box art pipeline ------------------------------------------------------------------------------------------------------
+
+// Decode thread: a cover on disk (set on the tile, then the local art folder) -> pixels; otherwise a cached
+// download; otherwise, for an identified title, hand the download to the net thread.
+void LibraryService::decodeJob(const ArtJob& job) {
     if (cancel_.load()) return;
-    if (!wanted(key)) {
+    if (!wanted(job.key)) {
         std::lock_guard<std::mutex> g(m_);
-        auto it = slots_.find(key);
+        auto it = slots_.find(job.key);
         if (it != slots_.end() && it->second.state == ArtView::Loading) it->second.state = ArtView::None;
         return;
     }
+    for (const std::string& path : lib::localCoverPaths(root_, job.key, job.title, job.datName)) {
+        if (!pathExists(path)) continue;
+        std::vector<unsigned char> bytes;
+        Decoded d;
+        d.key = job.key;
+        d.gen = job.gen;
+        if (readArtFile(path, bytes) && decodePng(bytes, d.w, d.h, d.rgba)) {   // a bad file of the user's is skipped, never deleted
+            publish(std::move(d));
+            return;
+        }
+    }
+    const std::string& key = job.datName;   // the libretro-thumbnails name; empty = never on the network
     bool transient = false;
-    for (const char* type : lib::kThumbTypes) {
-        std::string cache = lib::thumbnailCachePath(root_, type, key);
-        if (pathExists(cache)) {
-            std::vector<unsigned char> bytes;
-            Decoded d;
-            d.key = key;
-            if (readFile(cache, bytes) && decodePng(bytes, d.w, d.h, d.rgba)) {
-                publish(std::move(d));
-                return;
+    if (!key.empty()) {
+        for (const char* type : lib::kThumbTypes) {
+            std::string cache = lib::thumbnailCachePath(root_, type, key);
+            if (pathExists(cache)) {
+                std::vector<unsigned char> bytes;
+                Decoded d;
+                d.key = job.key;
+                d.gen = job.gen;
+                if (readFile(cache, bytes) && decodePng(bytes, d.w, d.h, d.rgba)) {
+                    publish(std::move(d));
+                    return;
+                }
+                SDL_RemovePath(cache.c_str());   // corrupt or partial: fetch it again next time
             }
-            SDL_RemovePath(cache.c_str());   // corrupt or partial: fetch it again next time
-        }
-        int64_t missTime = 0;
-        std::string miss = lib::thumbnailMissPath(root_, type, key);
-        if (pathExists(miss, &missTime)) {
-            SDL_Time nowNs = 0;
-            SDL_GetCurrentTime(&nowNs);
-            if ((int64_t)(nowNs / 1000000000LL) - missTime < lib::kMissRetrySeconds) continue;
-            SDL_RemovePath(miss.c_str());
-        }
-        if (!downloadArt || !http::available()) continue;
-        {
-            std::lock_guard<std::mutex> g(m_);
-            auto f = netFail_.find(key + "|" + type);
-            if (f != netFail_.end() && nowSec() - f->second < kRetryAfterFailure) {
-                transient = true;
-                continue;
+            int64_t missTime = 0;
+            std::string miss = lib::thumbnailMissPath(root_, type, key);
+            if (pathExists(miss, &missTime)) {
+                SDL_Time nowNs = 0;
+                SDL_GetCurrentTime(&nowNs);
+                if ((int64_t)(nowNs / 1000000000LL) - missTime < lib::kMissRetrySeconds) continue;
+                SDL_RemovePath(miss.c_str());
             }
+            if (!downloadArt || !http::available()) continue;
+            {
+                std::lock_guard<std::mutex> g(m_);
+                auto f = netFail_.find(key + "|" + type);
+                if (f != netFail_.end() && nowSec() - f->second < kRetryAfterFailure) {
+                    transient = true;
+                    continue;
+                }
+            }
+            const std::string t = type;
+            netW_.post([this, job, t]() { fetchJob(job, t); });
+            return;
         }
-        const std::string t = type;
-        netW_.post([this, key, t]() { fetchJob(key, t); });
-        return;
     }
     Decoded none;
-    none.key = key;
+    none.key = job.key;
+    none.gen = job.gen;
     none.transientFail = transient;
     publish(std::move(none));
 }
 
 // Net thread: one download.  Always ends by asking the decode thread to look again.
-void LibraryService::fetchJob(const std::string& key, const std::string& type) {
+void LibraryService::fetchJob(const ArtJob& job, const std::string& type) {
     if (cancel_.load()) return;
-    if (!wanted(key)) {
+    if (!wanted(job.key)) {
         std::lock_guard<std::mutex> g(m_);
-        auto it = slots_.find(key);
+        auto it = slots_.find(job.key);
         if (it != slots_.end() && it->second.state == ArtView::Loading) it->second.state = ArtView::None;
         return;
     }
+    const std::string& key = job.datName;
     netJobs_++;
     http::Response r;
     bool ok = http::get(lib::thumbnailUrl(type, key, artBaseUrl), r, kMaxArtBytes, &cancel_);
@@ -584,7 +707,7 @@ void LibraryService::fetchJob(const std::string& key, const std::string& type) {
                       (ok ? "HTTP " + std::to_string(r.status) : r.error));
     }
     netJobs_--;
-    if (!cancel_.load()) decodeW_.post([this, key]() { decodeJob(key); });
+    if (!cancel_.load()) decodeW_.post([this, job]() { decodeJob(job); });
 }
 
 // ---- per frame ---------------------------------------------------------------------------------------------------------------
@@ -592,12 +715,14 @@ void LibraryService::fetchJob(const std::string& key, const std::string& type) {
 void LibraryService::pump() {
     if (!started_) return;
     std::vector<std::string> picked;
+    std::vector<std::pair<std::string, std::string>> covers;
     std::vector<Decoded> dec;
     std::vector<lib::ScanFile> scan;
     bool haveScan = false, dats = false;
     {
         std::lock_guard<std::mutex> g(m_);
         picked.swap(pickedFolders_);
+        covers.swap(pickedCovers_);
         if (scanResultReady_) {
             scan.swap(scanResult_);
             scanResultReady_ = false;
@@ -608,6 +733,7 @@ void LibraryService::pump() {
         dec.swap(decoded_);
     }
     for (const std::string& p : picked) addFolder(p);
+    for (const auto& c : covers) setCoverKey(c.first, c.second);
     if (dats) loadDats();
     if (haveScan) files_ = std::move(scan);
     if (dats || haveScan) {
@@ -633,6 +759,7 @@ void LibraryService::pump() {
         auto it = slots_.find(d.key);
         if (it == slots_.end()) continue;
         Slot& s = it->second;
+        if (d.gen != s.gen) continue;   // a cover was set or removed since this job started: a fresh job follows
         if (d.rgba.empty() || !createTexture) {
             s.state = ArtView::Missing;
             s.retryAt = d.transientFail ? nowSec() + kRetryAfterFailure : 0;

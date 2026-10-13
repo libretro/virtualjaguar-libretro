@@ -567,8 +567,26 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
         quit = true;
         break;
+    case SDL_EVENT_DROP_POSITION:
+        dropX_ = e.drop.x;
+        dropY_ = e.drop.y;
+        break;
     case SDL_EVENT_DROP_FILE:
-        if (e.drop.data) handleDrop(e.drop.data);
+        if (!e.drop.data) break;
+        {
+            // A PNG dropped on a library tile is that tile's cover; anything else opens as before.
+            const std::string path = e.drop.data;
+            if (imguiUp_ && (homeVisible() || library.show) && pathExt(path) == "png") {
+                const float x = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.x : dropX_;
+                const float y = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.y : dropY_;
+                const LibraryService::CoverTile* t = library.tileAt(x, y, ImGui::GetFrameCount());
+                if (t) {
+                    library.setCoverKey(t->key, path);
+                    break;
+                }
+            }
+            handleDrop(path);
+        }
         break;
     case SDL_EVENT_USER:
         if (e.user.code == 0x56414A47 && e.user.data1) {
