@@ -5,6 +5,7 @@
 #pragma once
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vj {
@@ -14,6 +15,12 @@ public:
     bool load(const std::string& path);   // missing file is not an error
     bool save();                          // no-op unless dirty
     void setPath(const std::string& p) { path_ = p; }
+    // Merges the keys of another file over what is loaded (no dirty flag; a missing file is fine).
+    void overlay(const std::string& path);
+    // Several running copies (instance.h): a secondary copy writes ONLY keys with one of these
+    // prefixes, to its own file (setPath), never the whole map -- so it can neither overwrite the
+    // shared config.ini nor freeze a stale snapshot of it.  Empty list = write everything (default).
+    void setSavePrefixes(std::vector<std::string> p) { savePrefixes_ = std::move(p); }
 
     std::string get(const std::string& key, const std::string& def = "") const;
     int getInt(const std::string& key, int def) const;
@@ -33,6 +40,7 @@ public:
 private:
     std::string path_;
     std::map<std::string, std::string> map_;
+    std::vector<std::string> savePrefixes_;
     bool dirty_ = false;
 };
 

@@ -185,6 +185,16 @@ void Netplay::setPortEnv(int port, bool on) {
     }
 }
 
+void Netplay::setHostEnv(const std::string& addr) {
+    if (!addr.empty()) {
+        putEnv("VJ_NETLINK_HOST", addr.c_str());
+        hostEnvSet_ = true;
+    } else if (hostEnvSet_) {
+        putEnv("VJ_NETLINK_HOST", "");
+        hostEnvSet_ = false;
+    }
+}
+
 bool Netplay::writeAddressFile(const std::string& addr, std::string& err) {
     if (systemDir_.empty()) {
         err = "no system directory to keep the address in";
@@ -200,8 +210,11 @@ bool Netplay::writeAddressFile(const std::string& addr, std::string& err) {
 }
 
 bool Netplay::applyNow(const NetSettings& s, std::string& err, std::vector<std::string>* restartKeys) {
-    if (s.role == NetRole::Join && !s.address.empty()) {
-        if (!writeAddressFile(s.address, err)) return false;
+    if (s.role == NetRole::Join && !s.address.empty() && addressViaEnv_) {
+        setHostEnv(s.address);
+    } else {
+        setHostEnv("");
+        if (s.role == NetRole::Join && !s.address.empty() && !writeAddressFile(s.address, err)) return false;
     }
     setOverride(kModeKey, modeValue(s.role), restartKeys);
 
@@ -287,6 +300,7 @@ void Netplay::clearAll() {
     host_.clearOverride(kHostKey);
     host_.clearOverride(kPortKey);
     setPortEnv(0, false);
+    setHostEnv("");
     bouncing_ = false;
     want_ = NetSettings();
     applied_ = NetSettings();
@@ -403,7 +417,8 @@ std::vector<std::string> Netplay::notices() const {
     if (!discoveryError_.empty() && (want_.role == NetRole::Host || want_.role == NetRole::Join))
         n.push_back(discoveryError_);
     std::string env = envOverride();
-    if (!env.empty() && configured() && !(portEnvSet_ && env == "VJ_NETLINK_PORT"))
+    if (!env.empty() && configured() && !(portEnvSet_ && env == "VJ_NETLINK_PORT") &&
+        !(hostEnvSet_ && env == "VJ_NETLINK_HOST"))
         n.push_back("The environment variable " + env + " is set and overrides what is chosen here.");
     return n;
 }

@@ -80,6 +80,8 @@ public:
 
     // ---- configuration (set before the first load) -----------------------
     void setDirectories(const std::string& systemDir, const std::string& saveDir);
+    // Where a game's .srm is read from when saveDir has none yet (read-only; instance.h).
+    void setSaveFallbackDir(const std::string& dir) { saveFallbackDir_ = dir; }
     void setLogVerbose(bool v) { logVerbose_ = v; }
     // Every line the core logs, at any level (even those --verbose would hide), already
     // formatted and without the trailing newline.  Called on the emulation thread.
@@ -207,7 +209,8 @@ private:
     void stopSession();
     void loadSaveRam();
 
-    std::string systemDir_, saveDir_;
+    std::string systemDir_, saveDir_, saveFallbackDir_;
+    std::string saveFallbackPath() const;
     bool logVerbose_ = false;
 
     bool initialized_ = false;  // retro_init has run (and retro_deinit has not)

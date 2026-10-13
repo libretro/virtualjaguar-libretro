@@ -58,6 +58,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   Mice, the Tempest 2000 rotary controller, analog, driving, paddle, 6D, light gun and
   Team Tap are chosen under Settings > Input > Devices & players
   (https://github.com/libretro/virtualjaguar-libretro/issues/837, https://github.com/libretro/virtualjaguar-libretro/pull/879, https://github.com/libretro/virtualjaguar-libretro/pull/887).
+- **Several windows at once.** File > New window (Ctrl/Cmd+N), or `open -n` on macOS, starts
+  another copy for netplay tests on one machine or local multiplayer. Extra copies keep their
+  game saves in their own folder and never rewrite the shared settings, and each can be pinned to
+  one controller (Settings > Input) (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Save states** with thumbnails (F5 save, F7 load, F6 slot) and a state manager.
 - **Netplay for the link-cable games.** A Netplay window hosts or joins Doom, BattleSphere,
   AirCars and Ultra Vortek (over the Voice Modem) on a local network, with LAN discovery

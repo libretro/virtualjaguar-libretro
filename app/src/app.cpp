@@ -62,7 +62,15 @@ double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)p
 // ---------------------------------------------------------------------------------
 void App::loadConfig() {
     cfg.load(paths.configFile);
+    if (paths.instance > 1) {
+        // A second copy (instance.h): start from the shared settings, but never write them.  Only
+        // this window's own size and controller choice are kept, in config-N.ini.
+        cfg.overlay(paths.instanceConfig);
+        cfg.setPath(paths.instanceConfig);
+        cfg.setSavePrefixes({"window.", "input.pads."});
+    }
     input.init(cfg, paths.root);
+    input.setPadFilter(parsePadFilter(cfg.get(instancePadKey(paths.instance), "all")));
     present.integerScale = cfg.getBool("video.integer", false);
     present.linearFilter = cfg.getBool("video.linear", false);
     present.stretch = cfg.getBool("video.stretch", false);
@@ -163,7 +171,8 @@ bool App::initWindow() {
     int w = cfg.getInt("window.w", 960), h = cfg.getInt("window.h", 760);
     w = std::max(320, w);
     h = std::max(240, h);
-    window_ = SDL_CreateWindow("Virtual Jaguar", w, h,
+    const std::string firstTitle = "Virtual Jaguar" + instanceTitleSuffix(paths.instance);
+    window_ = SDL_CreateWindow(firstTitle.c_str(), w, h,
                                SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window_) {
         std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());
@@ -280,6 +289,16 @@ void App::applyVsync() {
 void App::applyAudioSettings() {
     audio.setVolume(volume);
     audio.setTargetMs(audioTargetMs);
+}
+
+void App::newWindow() {
+    std::string err;
+    if (!spawnNewInstance(dataDirArg_, err)) {
+        toast("Could not open a new window: " + err, 5.0, 3);
+        std::fprintf(stderr, "new window failed: %s\n", err.c_str());
+        return;
+    }
+    toast("Opening another window...", 2.0);
 }
 
 void App::toggleLibrary() {
@@ -558,6 +577,9 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_L:
         if (mod) toggleLibrary();
         break;
+    case SDLK_N:
+        if (mod) newWindow();
+        break;
     default: break;
     }
 }
@@ -658,6 +680,7 @@ void App::updateTitle() {
     lastTitle_ = t;
     std::string title = "Virtual Jaguar";
     if (host.isLoaded() && !host.contentName().empty()) title += " - " + host.contentName();
+    title += instanceTitleSuffix(paths.instance);
     if (paused) title += " [paused]";
     SDL_SetWindowTitle(window_, title.c_str());
 }
@@ -695,8 +718,25 @@ int App::run(const CliArgs& a) {
         std::fprintf(stderr, "%s\n", err.c_str());
         return 1;
     }
+    dataDirArg_ = a.dataDir.empty() ? "" : absolutePath(a.dataDir);
+    // Which copy is this?  The first on a data folder is instance 1 and behaves exactly as it always
+    // did; later ones get their own save folder and never write the shared settings (instance.h).
+    const int inst = instanceLock_.acquire(paths.root);
+    if (inst == 0) {
+        std::fprintf(stderr, "%d copies of Virtual Jaguar are already running on %s\n", kMaxInstances, paths.root.c_str());
+        return 1;
+    }
+    if (!paths.applyInstance(inst, err)) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+        return 1;
+    }
     host.setLogVerbose(a.verbose);
     loadConfig();
+    if (paths.instance > 1) {
+        host.setSaveFallbackDir(paths.savesShared);
+        netplay.setAddressViaEnv(true);
+        std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());
+    }
     wireHost();
     ach.init(*this, a);
     cheatsInit(*this, a);
@@ -742,6 +782,10 @@ int App::runInteractive(const CliArgs& a) {
     unsigned uiFrames = 0;
 
     std::string firstErr;
+    if (paths.instance > 1)
+        toast("Instance " + std::to_string(paths.instance) + ": game saves go to saves/instance-" +
+                  std::to_string(paths.instance) + "/, and settings changes are not kept (except window size and controllers)",
+              7.0);
     if (a.noContent) openNoContent();
     else if (!a.content.empty()) openContent(a.content[0]);
     library.createTexture = &VideoOut::createTextureRGBA;
@@ -864,7 +908,8 @@ int App::runHeadless(const CliArgs& a) {
     int rc = 0;
     for (const std::string& path : list) {
         // A private, empty save directory per load.
-        std::string saves = paths.root + "saves" + std::to_string(headlessLoads_++) + "/";
+        std::string saves = paths.root + "saves" + (paths.instance > 1 ? "-i" + std::to_string(paths.instance) + "-" : "") +
+                            std::to_string(headlessLoads_++) + "/";
         SDL_CreateDirectory(saves.c_str());
         paths.saves = saves;
 

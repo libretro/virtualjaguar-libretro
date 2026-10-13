@@ -16,6 +16,7 @@
 #include "config.h"
 #include "core_host.h"
 #include "input.h"
+#include "instance.h"
 #include "library_service.h"
 #include "netplay.h"
 #include "paths.h"
@@ -143,6 +144,7 @@ public:
     void closeContent();
     void showOpenDialog();
     bool homeVisible() const { return homeLibrary && !host.isLoaded(); }   // is the library standing in for the game?
+    void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
     void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
     void reset();
     void togglePause();
@@ -211,6 +213,8 @@ private:
 
     std::vector<Osd> osd_;
     std::map<int, SlotThumb> thumbs_;
+    InstanceLock instanceLock_;       // held for the whole run; the number lives in paths.instance
+    std::string dataDirArg_;          // --data-dir as given (forwarded to a New Window copy)
     std::string headlessTmp_;
     unsigned headlessLoads_ = 0;
 
