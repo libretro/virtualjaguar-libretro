@@ -75,6 +75,66 @@ Signing runs only when the caller asks (`release.yml` does, PRs do not) and the 
 are never notarized: a notarization round trip per push is slow and the PRs come from branches that
 should not get certificate access by default.
 
+## Signing locally
+
+`local-package.sh` packages a normal build on your own machine and signs it with a certificate it
+finds there; CI is unaffected. Build first, then:
+
+```sh
+cmake -S app -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4
+bash app/packaging/local-package.sh --sign              # dist/Virtual Jaguar.app (+ a .zip)
+bash app/packaging/local-package.sh --notarize          # also submit to Apple, staple, spctl
+```
+
+Without `--sign` it only assembles (macOS ad-hoc signs, as Apple Silicon requires). The local build is
+host-architecture only; the universal build is CI's.
+
+**Settings** come from the environment, then from a repo-root `.env` (gitignored; copy
+[`env.example`](env.example), which lists every key). Only `VJ_*` and `APPLE_*` keys are read, values
+are literal (nothing is evaluated), and a variable already set in your shell wins. A value written as
+`op://vault/item/field` is resolved with the 1Password CLI when `op` is installed, so a secret need not
+sit in the file (for `APPLE_NOTARY_KEY_PATH` and `VJ_SIGN_PFX` the item is written to a private temp file for
+the run). `VJ_ENV_FILE` points at another file. Values are never printed, only key names.
+
+macOS identity, first match wins:
+
+1. `VJ_SIGN_IDENTITY`: a name, a SHA-1 hash, or `-` for ad hoc
+2. the newest-expiring valid **Developer ID Application** identity in your keychain (chosen and passed
+   by SHA-1, so renewed duplicates with the same name are not ambiguous)
+3. **Apple Development** (runs on this Mac; cannot be notarized, and a warning says so)
+4. ad hoc
+
+It prints the identity name and expiry it picked. List yours with
+`security find-identity -v -p codesigning`. The first signature may raise a keychain prompt for the
+private key: click Always Allow.
+
+Notarization (`--notarize`, needs a Developer ID identity), first match wins:
+
+1. `VJ_NOTARY_PROFILE`: a keychain profile. Recommended, since no secret leaves the keychain. Create it once:
+   `xcrun notarytool store-credentials vj-notary --key AuthKey_XXXX.p8 --key-id KEYID --issuer ISSUER-UUID`
+2. `APPLE_NOTARY_KEY_ID` + `APPLE_NOTARY_ISSUER_ID` + `APPLE_NOTARY_KEY_PATH` (the `.p8` on disk)
+
+Notarizing uploads the app to Apple and waits for the verdict, then staples the ticket and runs
+`spctl -a -t exec -vv`. Hardened runtime and the entitlements are the same as CI's.
+
+Windows (Git Bash / MSYS2; builds the portable zip, plus the installer when Inno Setup's `ISCC.exe` is
+found), certificate, first match wins:
+
+1. `VJ_SIGN_PFX` (+ `VJ_SIGN_PFX_PASSWORD`): a `.pfx` file
+2. `VJ_SIGN_CERT_SHA1`: the thumbprint of a certificate in the CurrentUser\My store
+3. `signtool sign /a`, which picks an installed code-signing certificate; none usable means unsigned,
+   with a message
+
+`signtool.exe` is found on `PATH` or in the newest Windows SDK under
+`C:\Program Files (x86)\Windows Kits\10\bin\*\x64`; `VJ_SIGNTOOL` overrides. It signs `virtualjaguar.exe`,
+the DLLs, and the installer, timestamped with `/tr` `VJ_SIGN_TIMESTAMP_URL` (default
+`http://timestamp.digicert.com`, SHA-256). This path has not been run on Windows yet. Note `signtool /p` shows
+the password in the process list; prefer the store thumbprint on a shared machine.
+
+**Dev executable.** `-DVJ_APP_SIGN_DEV_BUILD=ON` (macOS, default OFF) signs `build/virtualjaguar` after
+every build with the identity chosen above, so macOS stops re-prompting for network and keychain access
+after each rebuild of an unsigned binary. It does not use hardened runtime and never fails the build.
+
 ## macOS notes
 
 * **Layout.** `SDL_GetBasePath()` in a `.app` is `Contents/Resources/` (SDL's default `resource`

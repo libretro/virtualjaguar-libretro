@@ -2,6 +2,11 @@
 /build/
 /build-app/
 
+# Local signing settings (app/packaging/env.example) and local package output (dist/ also holds tracked files)
+/.env
+/dist/Virtual Jaguar.app/
+/dist/VirtualJaguar-*-local.zip
+
 # Legacy local path (older CI recipe); keep ignored if present
 /test_memory_map
 

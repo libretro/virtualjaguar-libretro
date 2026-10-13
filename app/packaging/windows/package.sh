@@ -31,6 +31,14 @@ cp "$prefix/share/doc/virtualjaguar/LICENSE.txt" \
 cp "$here/../icons/virtualjaguar.ico" "$work/tree/virtualjaguar.ico"
 [ -f "$tree/virtualjaguar.exe" ] || { echo "no virtualjaguar.exe in the install tree" >&2; exit 1; }
 
+# Optional local signing hook (local-package.sh --sign sets VJ_SIGN_CMD; CI leaves it unset).
+sign_files() { if [ -n "${VJ_SIGN_CMD:-}" ]; then "$VJ_SIGN_CMD" "$@"; fi; }
+if [ -n "${VJ_SIGN_CMD:-}" ]; then
+  sign_list=()
+  while IFS= read -r -d '' f; do sign_list+=("$f"); done < <(find "$tree" -type f \( -name '*.exe' -o -name '*.dll' \) -print0)
+  sign_files "${sign_list[@]}"
+fi
+
 # The installer is built from the tree WITHOUT portable.txt.
 if [ -n "$iscc" ]; then
   MSYS2_ARG_CONV_EXCL='*' "$iscc" \
@@ -40,6 +48,7 @@ if [ -n "$iscc" ]; then
     ${arm64_def:+"$arm64_def"} \
     "/DOutputName=VirtualJaguar-${label}-windows-${arch}-setup" \
     "$(cygpath -w "$here/virtualjaguar.iss")"
+  sign_files "$out/VirtualJaguar-${label}-windows-x64-setup.exe"
 fi
 
 # Portable: the same tree plus portable.txt (keeps settings in .\data).
