@@ -31,7 +31,8 @@ Correct by default. Full notes: docs/RELEASE_NOTES_v3.8.0.md
 * GameDrive SD card backed by a host folder, jaggd-sd in the save
   directory (#783, #844). New option "Jaguar GameDrive SD Card"
   (Read/write by default, Read-only, Disabled). GPU and async reads are
-  not implemented yet.
+  not implemented yet. A bad directory handle no longer leaks host
+  memory, and a state with no card configured reopens nothing.
 * Per-title rows are enhancement or compatibility class; compatibility
   rows are never withheld and cite their ticket (#748, #842). CD titles
   are keyed by boot-stub CRC32; the disc table ships empty (#747, #843).
@@ -71,6 +72,10 @@ Correct by default. Full notes: docs/RELEASE_NOTES_v3.8.0.md
 * Headless-verified only: Flip Out, Fight For Your Life BIOS, White Men
   Can't Jump, Ruiner Pinball, Native Demo (bin), the GPU retire window,
   BIOS/PAL latching, preset notices and the GameDrive SD card.
+* JaGol (JaguarDemos) shows an almost empty field: it seeds from
+  power-on RAM, now zero in BIOS mode (#876). algorip and solidWaves are
+  also marked FAIL in the JaguarDemos baseline; their old pass was
+  random RAM on screen (#877).
 * #737 (FMV interactive scenes) closed with no core defect found.
 
 

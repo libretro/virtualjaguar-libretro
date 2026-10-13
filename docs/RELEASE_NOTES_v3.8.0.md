@@ -56,7 +56,8 @@ below, and they are collected under Known issues.
   68K took an address error into the boot ROM at frame 1032. HLE zero-fills and never hit
   it. BIOS mode now zero-fills too. Power-on DRAM contents are undefined on hardware, but
   real parts come up in near-uniform runs, not independent random words. RAM-loaded images
-  and the first 8 bytes are still preserved. `test_ffyl_856` now runs 1400 frames to game
+  and the first 8 bytes are still preserved. One known cost: the JaGol intro seeds its Game
+  of Life from power-on RAM and now shows an almost empty field (see Known issues). `test_ffyl_856` now runs 1400 frames to game
   code. The good dump is CRC `B14C4753`; the `[a1]` dump is an authentic BIOS reject.
   Headless-verified only.
 - **Club Drive audio under HLE (https://github.com/libretro/virtualjaguar-libretro/issues/744, https://github.com/libretro/virtualjaguar-libretro/pull/849).** Club Drive was silent under the default HLE
@@ -138,6 +139,8 @@ and symlinks are refused, and names match case-insensitively.
 - Open files are saved in savestates (see below). Loading a state never creates, truncates
   or appends to a file, but writes already made stay made, so run-ahead and netplay can
   repeat host-side writes. See `docs/jgd-interface-notes.md`.
+- Hardened before release: a directory read with a bad handle no longer copies host memory
+  into the game, and a state loaded with no card configured reopens nothing.
 - Not yet: GPU and asynchronous reads still return -1. Tested with a synthetic probe only;
   acceptance with a real JagOS ROM is pending.
 
@@ -208,6 +211,9 @@ matrix.
     scored them as game code (Flip Out's HLE `ILLEGAL` loop runs in cartridge space, and the
     old BIOS rows counted the boot-ROM intro).
 - **CD corpus: 28 of 28 discs** reach game code in both modes, no row changed.
+- **JaguarDemos full suite (49 public demos):** no regressions against the updated baseline.
+  Three rows were rebaselined from PASS to FAIL (JaGol, algorip, solidWaves); see Known
+  issues.
 - The matrices record a stage plus coarse video and audio flags; they cannot see most
   rendering or audio changes. The cart matrix runs the Fast blitter only.
 - **`make TEST_EXPORTS=1 test` exits 0** on the corpus machine with the private ROMs, and the
@@ -250,6 +256,12 @@ matrix.
   card (https://github.com/libretro/virtualjaguar-libretro/pull/844). https://github.com/libretro/virtualjaguar-libretro/pull/871's netplay gains are simulator numbers.
 - **Doom netplay over Wi-Fi** stays slower than single player; epic https://github.com/libretro/virtualjaguar-libretro/issues/864.
 - **White Men Can't Jump** still flickers somewhat, less than before (https://github.com/libretro/virtualjaguar-libretro/issues/736).
+- **JaGol (JaguarDemos, Outline 2023)** shows an almost empty field: it seeds its Game of
+  Life from power-on RAM, which is now zero in BIOS mode. No uniform fill suits every title
+  (a random fill breaks Fight For Your Life, an `$FF` fill breaks homebrew that expects zeroed
+  memory); https://github.com/libretro/virtualjaguar-libretro/issues/876 tracks a better model. The JaguarDemos baseline also marks algorip and
+  solidWaves as failing: their earlier pass came from random RAM shown before the intro drew
+  (algorip renders correctly; the probe's sampling misses it, https://github.com/libretro/virtualjaguar-libretro/issues/877).
 - **Ruiner Pinball** no longer crashes its GPU; whether it plays correctly is unconfirmed.
 - Still open in this milestone: the HLE-vs-BIOS asymmetry list (https://github.com/libretro/virtualjaguar-libretro/issues/744), I-War needing
   Hardware Timing options (https://github.com/libretro/virtualjaguar-libretro/issues/634) and Checkered Flag's frame cap (https://github.com/libretro/virtualjaguar-libretro/issues/656).
@@ -266,7 +278,7 @@ matrix.
   save directory when GameDrive software uses it).
 - **New value:** Blitter Bus Timing "68000 only". Existing values keep their meaning.
 - **BIOS (Cartridges)** and **PAL** now change only on the next content load.
-- **BIOS-mode power-on RAM** is zero-filled, as in HLE.
+- **BIOS-mode power-on RAM** is zero-filled, as in HLE (it was a per-word random pattern).
 
 ## Downloads
 
