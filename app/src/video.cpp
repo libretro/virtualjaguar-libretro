@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "perf.h"
 #include "present_util.h"
 
 // Entry points come from the ImGui GL3 backend's own loader (declarations
@@ -106,10 +107,19 @@ ImVec4 VideoOut::draw(ImDrawList* dl, ImVec2 pos, ImVec2 size, float coreAspect,
         sf.srcH = h_;
         sf.outW = (unsigned)rw;
         sf.outH = (unsigned)rh;
+        if (perf && perf->on && perf->forceW) {   // dev: profile the chain at another resolution
+            sf.outW = perf->forceW;
+            sf.outH = perf->forceH;
+        }
         sf.frameCount = emuFrames_;
         sf.aspect = rh > 0 ? rw / rh : 0.0f;
         sf.fps = fps_;
+        uint64_t pt0 = perf && perf->on ? perf->tick() : 0;
         unsigned out = shader.render(sf);
+        if (pt0) {
+            if (perf->gpu) Perf::finish();
+            perf->add(Perf::Shader, 1000.0 * (double)(perf->tick() - pt0) / (double)perf->freq);
+        }
         if (out) {
             // librashader writes the output texture in the same row order as its
             // input (row 0 = top of the picture), so the UVs are the plain ones.

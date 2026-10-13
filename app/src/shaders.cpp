@@ -65,6 +65,16 @@ struct ShaderChain::Impl {
     BindFramebufferFn bindFbo = nullptr;
     bool haveFnPtrs = false;
 
+    // The inputs the output texture was last rendered from.  A UI frame that
+    // would feed the chain the very same inputs (the display refreshes faster
+    // than the core, the game is paused, a window repaint) reuses the texture:
+    // same pixels, no GPU work, and the chain's history/feedback textures see
+    // each emulated frame exactly once, as they do in RetroArch.
+    bool haveOut = false;
+    uint64_t keyFrame = 0;
+    unsigned keySrcTex = 0, keySrcW = 0, keySrcH = 0, keyOutW = 0, keyOutH = 0;
+    float keyAspect = 0, keyFps = 0;
+
     // Turns a librashader error into text and releases it.
     std::string take(libra_error_t e) {
         if (!e) return std::string();
@@ -83,6 +93,7 @@ struct ShaderChain::Impl {
     }
 
     void freeChain() {
+        haveOut = false;
         if (chain && inst.gl_filter_chain_free) take(inst.gl_filter_chain_free(&chain));
         chain = nullptr;
     }
@@ -401,6 +412,7 @@ void ShaderChain::resetParams() {
 void ShaderChain::paramChanged(size_t i) {
 #if defined(VJ_HAVE_LIBRASHADER)
     if (i >= params_.size() || !impl_->chain) return;
+    impl_->haveOut = false;   // the next frame must re-render with the new value
     libra_error_t e = impl_->inst.gl_filter_chain_set_param(&impl_->chain, params_[i].name.c_str(), params_[i].value);
     if (e) impl_->take(e);
 #else
@@ -481,6 +493,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
     }
 
     if (!I.outTex || I.outW != f.outW || I.outH != f.outH) {
+        I.haveOut = false;
         if (!I.outTex) {
             GLuint t = 0;
             glGenTextures(1, &t);
@@ -499,6 +512,13 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
                      GL_UNSIGNED_BYTE, nullptr);
         I.outW = f.outW;
         I.outH = f.outH;
+    }
+
+    if (reuseOutput && I.haveOut && I.keyFrame == f.frameCount && I.keySrcTex == f.srcTex && I.keySrcW == f.srcW &&
+        I.keySrcH == f.srcH && I.keyOutW == f.outW && I.keyOutH == f.outH && I.keyAspect == f.aspect &&
+        I.keyFps == f.fps) {
+        reuses_++;
+        return I.outTex;
     }
 
     libra_image_gl_t in;
@@ -540,6 +560,16 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
         std::string why = I.take(e);
         return fail(why.empty() ? "frame error" : why);
     }
+    runs_++;
+    I.haveOut = true;
+    I.keyFrame = f.frameCount;
+    I.keySrcTex = f.srcTex;
+    I.keySrcW = f.srcW;
+    I.keySrcH = f.srcH;
+    I.keyOutW = f.outW;
+    I.keyOutH = f.outH;
+    I.keyAspect = f.aspect;
+    I.keyFps = f.fps;
     return I.outTex;
 #endif
 }

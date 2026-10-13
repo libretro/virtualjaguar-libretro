@@ -29,6 +29,8 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
+        "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X]\n"
         "     [--show-window settings[-video|-input|-audio|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls]\n"
         "\n"
@@ -128,6 +130,19 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--netplay-expect-discovery")) a.netplay.expectDiscoverySec = std::strtod(need(s), nullptr);
         else if (!std::strcmp(s, "--frames")) a.frames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--expect-hash")) a.expectHash = need(s);
+        else if (!std::strcmp(s, "--perf-frames")) a.perfFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--perf-gpu")) a.perfGpu = true;
+        else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;
+        else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
+        else if (!std::strcmp(s, "--perf-shader-out")) {
+            unsigned w = 0, h = 0;
+            if (std::sscanf(need(s), "%ux%u", &w, &h) != 2 || !w || !h) {
+                std::fprintf(stderr, "--perf-shader-out wants WxH\n");
+                return 2;
+            }
+            a.perfShaderW = w;
+            a.perfShaderH = h;
+        }
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);

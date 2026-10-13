@@ -623,7 +623,9 @@ void App::stepEmulation() {
     for (int i = 0; i < frames; i++) {
         host.wantVideo = (i == frames - 1);
         if (!fastForward) audio.update();
+        uint64_t r0 = perf.on ? perf.tick() : 0;
         host.runFrame();
+        if (r0) perf.add(Perf::Retro, 1000.0 * (double)(perf.tick() - r0) / (double)perf.freq);
         ach.afterFrame();
         netplay.afterFrame();
         fpsWindowFrames_++;
@@ -739,8 +741,25 @@ int App::runInteractive(const CliArgs& a) {
     lastTick_ = now();
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
+    perf.init(a.perfFrames, a.perfGpu);
+    video.shader.reuseOutput = !a.perfNoReuse;
+    perf.forceW = a.perfShaderW;
+    perf.forceH = a.perfShaderH;
+    video.perf = &perf;
 
     while (!quit) {
+        if (perf.frameBegin()) {
+            int pw = 0, ph = 0;
+            SDL_GetWindowSizeInPixels(window_, &pw, &ph);
+            perf.note = "window " + std::to_string(pw) + "x" + std::to_string(ph) + " px, vsync " + (vsync ? "on" : "off") +
+                        ", shader " + (video.shader.active() ? pathStem(video.shader.preset) : std::string("none")) +
+                        ", source " + std::to_string(video.frameWidth()) + "x" + std::to_string(video.frameHeight());
+            perf.note += ", chain runs " + std::to_string(video.shader.chainRuns()) + " reuses " +
+                         std::to_string(video.shader.chainReuses());
+            perf.report(host.contentName().c_str());
+            break;
+        }
+        if (a.perfPause && perf.seen == 30 && !paused && host.isLoaded()) togglePause();   // after a few real frames
         SDL_Event e;
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;
@@ -748,9 +767,13 @@ int App::runInteractive(const CliArgs& a) {
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
+        perf.lap(Perf::Events);
         stepEmulation();
+        perf.lap(Perf::Step);
         video.setSourceFps((float)host.fps());
         video.upload(host.frame());
+        if (perf.on && perf.gpu) Perf::finish();
+        perf.lap(Perf::Upload);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -759,11 +782,14 @@ int App::runInteractive(const CliArgs& a) {
         drawUi(*this, capKb);
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        if (perf.on && perf.gpu) Perf::finish();
+        perf.lap(Perf::Ui);
         if (!a.screenshot.empty() && ++uiFrames == a.screenshotFrame) {
             saveWindowScreenshot(a.screenshot);
             quit = true;
         }
         SDL_GL_SwapWindow(window_);
+        perf.lap(Perf::Present);
 
         updateTitle();
         double t = now();
@@ -777,6 +803,8 @@ int App::runInteractive(const CliArgs& a) {
             double wait = (host.isLoaded() && !paused) ? period - accum_ - 0.001 : 0.008;
             if (wait > 0.0005) SDL_DelayNS((Uint64)(std::min(wait, 0.016) * 1e9));
         }
+        perf.lap(Perf::Sleep);
+        perf.frameEnd();
     }
 
     int w = 0, h = 0;
@@ -853,10 +881,14 @@ int App::runHeadless(const CliArgs& a) {
             return 1;
         }
         audioFramesSeen_ = 0;
+        uint64_t hlT0 = SDL_GetPerformanceCounter(), hlRun = 0;
+        double hlCpu0 = Perf::cpuSeconds();
         for (unsigned i = 0; i < a.frames; i++) {
             ach.headlessFrame(i);
             audio.update();
+            uint64_t hr0 = SDL_GetPerformanceCounter();
             host.runFrame();
+            hlRun += SDL_GetPerformanceCounter() - hr0;
             ach.afterFrame();
             ach.pump();
             if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time
@@ -864,6 +896,13 @@ int App::runHeadless(const CliArgs& a) {
                 std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
         }
         {
+            double wall = (double)(SDL_GetPerformanceCounter() - hlT0) / (double)perfFreq_;
+            double run = (double)hlRun / (double)perfFreq_;
+            double cpu = Perf::cpuSeconds() - hlCpu0;
+            char cpuTxt[48] = "n/a";
+            if (hlCpu0 >= 0 && cpu > 0) std::snprintf(cpuTxt, sizeof cpuTxt, "%.3f s (%.1f fps)", cpu, a.frames / cpu);
+            std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
+                         a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, path.c_str());
             int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;

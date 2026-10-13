@@ -83,6 +83,11 @@ public:
     // GL name, or 0 meaning "draw the plain picture" (disabled, library missing,
     // preset broken, GL error).  The first failure of a kind queues a notice.
     unsigned render(const ShaderFrame& f);
+    // How many calls ran the chain, and how many reused the previous output because
+    // nothing it depends on had changed (same emulated frame, same size).
+    bool reuseOutput = true;   // false: run the chain on every call (dev: --perf-no-reuse, for before/after numbers)
+    uint64_t chainRuns() const { return runs_; }
+    uint64_t chainReuses() const { return reuses_; }
     // Frees GL objects; call with the context still current (shutdown).
     void destroyGL();
     // Clears a sticky failure so the next frame tries again.
@@ -111,6 +116,7 @@ private:
     std::string notice_;
     bool noticedMissing_ = false;
     std::vector<ShaderParam> params_;
+    uint64_t runs_ = 0, reuses_ = 0;
 
     void setNotice(const std::string& s);
 };

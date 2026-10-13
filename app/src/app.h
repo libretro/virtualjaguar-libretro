@@ -19,6 +19,7 @@
 #include "library_service.h"
 #include "netplay.h"
 #include "paths.h"
+#include "perf.h"
 #include "video.h"
 
 namespace vj {
@@ -50,6 +51,11 @@ struct CliArgs {
     int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
     bool showHelp = false;
     bool showVersion = false;
+    unsigned perfFrames = 0;        // dev: profile this many UI frames (after a warm-up), print the phase costs, exit
+    bool perfGpu = false;           // dev: glFinish around the shader chain / UI so the numbers include GPU time
+    unsigned perfShaderW = 0, perfShaderH = 0;   // dev: run the shader chain at this output size (4K cost on a 1080p display)
+    bool perfNoReuse = false;       // dev: disable the shader output reuse (before/after comparison)
+    bool perfPause = false;         // dev: pause after loading (idle-cost profile)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -99,6 +105,7 @@ public:
     InputManager input;
     LibraryService library;   // optional game library (#838); idle until start()ed
     Achievements ach;   // RetroAchievements (#836)
+    Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
 
     // ---- state ----------------------------------------------------------------

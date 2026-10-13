@@ -123,6 +123,18 @@ jobs:
     - name: Smoke tests (headless, SDL dummy drivers)
       run: ctest --test-dir app/build -C Release --output-on-failure
 
+    # Informational: the emulation speed of this build, taken from the app's own
+    # timer (CPU seconds per frame over the run), so optimisation changes (LTO,
+    # flags) can be compared across the five platforms from the job logs.
+    # Shared runners are noisy; read it as a trend, never as a gate.
+    - name: Headless speed (informational)
+      run: |
+        exe=$(find app/build -maxdepth 2 \( -name virtualjaguar -o -name virtualjaguar.exe \) -type f | head -1)
+        echo "binary: $exe"
+        for i in 1 2 3; do
+          "$exe" --headless --frames 1500 test/roms/yarc.j64 2>&1 | grep '^TIMING' || true
+        done
+
     - name: Upload binary
       uses: actions/upload-artifact@v7
       with:

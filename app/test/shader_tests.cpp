@@ -511,6 +511,15 @@ static int runGl() {
         g.outH = 48;
         CHECK(sc.render(g) != 0, "render after a size change");
         CHECK(sc.render(f) != 0, "and back");
+        // The same emulated frame at the same size is not rendered twice; a new
+        // frame (or a changed size) is.
+        uint64_t r0 = sc.chainRuns(), u0 = sc.chainReuses();
+        unsigned again = sc.render(f);
+        CHECK(again != 0 && sc.chainRuns() == r0 && sc.chainReuses() == u0 + 1, "same frame, same size: output reused");
+        ShaderFrame nf = f;
+        nf.frameCount = f.frameCount + 1;
+        CHECK(sc.render(nf) != 0 && sc.chainRuns() == r0 + 1, "next frame: chain runs");
+        f.frameCount = nf.frameCount;
     }
 
     // ---- scanlines: a flat white source must come out with bright and dark rows ----
