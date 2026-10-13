@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "library.h"
+#include "library_lists.h"
 
 namespace vj {
 
@@ -141,8 +142,46 @@ public:
     // A cover set from a drop or the dialog by key (what the tile record carries).
     bool setCoverKey(const std::string& key, const std::string& imagePath);
 
+    // ---- favorites and recently played (library_lists.h; the file and the several-instances rule are explained there) ----
+    // Where each shows: lib::ShowAs (hidden / its own tab / strips on the Cartridges + CD tabs / both).  Settings:
+    // library.favorites.show and library.recents.show.
+    int favoritesShow = lib::kFavoritesDefault;
+    int recentsShow = lib::kRecentsDefault;
+    bool isFavorite(const lib::Entry& e) const;
+    void setFavorite(const lib::Entry& e, bool on);
+    bool isRecent(const lib::Entry& e) const;
+    void removeRecent(const lib::Entry& e);
+    void clearRecents();
+    // App::openContent calls this for every game that booted, from the library, a drop, File > Open or the
+    // command line: it goes to the front of the recents when it is one of the library's games (or the library has
+    // not been scanned yet, so it cannot be told).
+    void noteLaunched(const std::string& absPath);
+    // The library entries behind the lists, resolved against what the last scan found: favorites by title,
+    // recents newest first.  A game whose file is gone (unplugged drive) is skipped, not forgotten.  The
+    // reference stays valid until the next call (the lists are rebuilt only when they or the scan changed).
+    const std::vector<lib::Resolved>& favoriteEntries();
+    const std::vector<lib::Resolved>& recentEntries();
+    // The tab to show for the remembered one, given the display options.
+    int activeTab() const { return lib::effectiveTab(section, favoritesShow, recentsShow); }
+
+    // ---- save states (the Save states tab, the tile menu's Load state) ----
+    // Every game with states in the states folder, newest first.  Re-listed at most once a second (and at once
+    // after the library deletes one).
+    const std::vector<lib::StateGame>& stateGames();
+    const lib::StateGame* statesFor(const lib::Entry& e);   // by the file stem the states are named with
+    const lib::Entry* entryForState(const lib::StateGame& g) const { return lib::entryForStem(entries_, g.stem); }
+    void invalidateStates() { statesAt_ = -1000.0; }
+    ArtView stateThumb(const lib::StateInfo& s);            // the screenshot saved with the state
+    bool deleteState(const lib::StateInfo& s);
+    // Boot `e` and load its state from `slot` (App handles the event: same game running = just load).
+    void launchState(const lib::Entry& e, int slot);
+    // How many running copies this is (Paths::instance): shown in the settings help, nothing else changes.
+    int instance = 1;
+
     // Where things live, for the UI and for tests.
     std::string libDir() const { return libDir_; }
+    std::string statesDir() const { return statesDir_; }
+    std::string userFile() const { return libDir_ + "user.tsv"; }
 
 private:
     struct Slot {
@@ -179,7 +218,7 @@ private:
     double nowSec() const;
 
     // paths/config (set in start)
-    std::string root_, libDir_, dbDir_, cachePath_, bundledDir_;
+    std::string root_, libDir_, dbDir_, cachePath_, bundledDir_, statesDir_;
     Config* cfg_ = nullptr;
     bool started_ = false;
     bool glAlive_ = false;
@@ -210,6 +249,26 @@ private:
     std::atomic<size_t> scanDone_{0}, scanTotal_{0};
     std::atomic<int> netJobs_{0};
 
+    // personal lists
+    lib::UserStore user_;
+    unsigned entriesGen_ = 1;                  // bumped when entries_ is rebuilt
+    unsigned resolvedUserGen_ = 0, resolvedEntriesGen_ = 0;
+    std::vector<lib::Resolved> favResolved_, recResolved_;
+    double userCheckAt_ = 0;
+    void resolveLists();
+    // save states
+    std::vector<lib::StateGame> stateGames_;
+    double statesAt_ = -1000.0;
+    struct ThumbSlot {
+        ArtView::State state = ArtView::None;
+        unsigned tex = 0;
+        int w = 0, h = 0;
+        int64_t mtimeNs = 0;         // of the state file this was made from
+        double lastWanted = 0;
+    };
+    std::map<std::string, ThumbSlot> stateThumbs_;   // by state path; main thread only
+    int thumbLoads_ = 0;                             // decoded this frame (reset by pump)
+
     Worker scanW_, decodeW_, netW_;
     static void SDLCALL folderDone(void* ud, const char* const* list, int filter);
     static void SDLCALL coverDone(void* ud, const char* const* list, int filter);
@@ -217,6 +276,7 @@ private:
 
 
 class App;
+void drawLibraryListOptions(LibraryService& svc);   // library_ui.cpp: where Favorites / Recently played show (also in Settings)
 void drawLibrary(App& app);   // library_ui.cpp: the Game library window (also pumps the service)
 
 }  // namespace vj

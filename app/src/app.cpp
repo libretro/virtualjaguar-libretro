@@ -316,6 +316,7 @@ void App::setFullscreen(bool fs) {
 // ---------------------------------------------------------------------------------
 bool App::openContent(const std::string& pathIn) {
     const std::string path = absolutePath(pathIn);
+    pendingStateSlot_ = -1;   // a state load queued for the previous game does not follow to this one
     host.setDirectories(paths.system, paths.saves);
     std::string err;
     if (!host.loadContent(path, err)) {
@@ -345,6 +346,7 @@ bool App::openContent(const std::string& pathIn) {
     applyPortDevices(*this);                   // the controller types chosen in Settings, per game or global
     controlsOverlayOnLoad(*this);
     addRecent(path);
+    library.noteLaunched(path);   // the library's recently played (library_lists.h)
     invalidateThumbs();
     ach.onContentLoaded();   // identify the game, look up its achievements
     cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
@@ -387,6 +389,7 @@ bool App::reloadContent() {
 
 void App::closeContent() {
     if (!host.isLoaded()) return;
+    pendingStateSlot_ = -1;
     host.unloadContent();
     ach.onContentClosed();
     cheatsOnClose(*this);
@@ -427,6 +430,25 @@ void App::showOpenDialog() {
                            g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
 }
 
+// The library's save-state tab and tile menu: the game running already (same file) just loads the state;
+// anything else is opened first and the state loaded once it has run a couple of frames.
+void App::openAndLoadState(const std::string& pathIn, int slot) {
+    if (pathIn.empty() || slot < 0) return;
+    const std::string path = absolutePath(pathIn);
+    if (!ach.allowStateLoad()) {   // before leaving the running game for one whose state would be refused
+        toast("Hardcore mode: loading save states is disabled", 3.5, 2);
+        return;
+    }
+    stateSlot = slot;
+    if (host.isLoaded() && host.contentPath() == path) {
+        loadState(slot);
+        return;
+    }
+    handleDrop(path);
+    if (host.isLoaded() && host.contentPath() == path) pendingStateSlot_ = slot;   // cleared if the open failed
+    pendingStateFrames_ = 2;
+}
+
 void App::handleDrop(const std::string& path) {
     if (path.empty()) return;
     // Save the old game's SRAM first (openContent -> loadContent does too, but
@@ -439,10 +461,10 @@ void App::handleDrop(const std::string& path) {
 // save states
 // ---------------------------------------------------------------------------------
 std::string App::statePath(int slot) const {
-    return paths.states + host.contentName() + ".slot" + std::to_string(slot) + ".state";
+    return paths.states + lib::stateFileName(host.contentName(), slot);
 }
 std::string App::thumbPath(int slot) const {
-    return paths.states + host.contentName() + ".slot" + std::to_string(slot) + ".png";
+    return paths.states + lib::thumbFileName(host.contentName(), slot);
 }
 bool App::slotExists(int slot) const {
     return host.isLoaded() && fileExists(statePath(slot));
@@ -618,6 +640,10 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
             handleDrop(p);
+        } else if (e.user.code == 0x56414A53 && e.user.data1) {   // 'VAJS': the library's "load this state"
+            std::string p = (const char*)e.user.data1;
+            SDL_free(e.user.data1);
+            openAndLoadState(p, (int)(intptr_t)e.user.data2 - 1);
         }
         break;
     case SDL_EVENT_KEY_DOWN:
@@ -683,6 +709,14 @@ void App::stepEmulation() {
         fpsWindowFrames_++;
     }
     host.wantVideo = true;
+    if (pendingStateSlot_ >= 0 && frames > 0) {
+        pendingStateFrames_ -= frames;
+        if (pendingStateFrames_ <= 0) {
+            const int slot = pendingStateSlot_;
+            pendingStateSlot_ = -1;
+            loadState(slot);
+        }
+    }
     for (const OsdMessage& m : host.takeMessages())
         toast(m.text, m.durationMs / 1000.0, m.level);
 }

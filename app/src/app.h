@@ -139,6 +139,7 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
+    void openAndLoadState(const std::string& path, int slot);   // the library: open `path`, then load its state `slot`
     bool openNoContent();
     bool reloadContent();
     void closeContent();
@@ -190,6 +191,8 @@ private:
     void updateTitle();
     uint32_t frameHash() const;
 
+    int pendingStateSlot_ = -1;       // openAndLoadState: load this slot after the new game has run a few frames
+    int pendingStateFrames_ = 0;
     bool headless_ = false;
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;

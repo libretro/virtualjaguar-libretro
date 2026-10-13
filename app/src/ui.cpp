@@ -230,6 +230,7 @@ void drawStorageTab(App& app) {
     ImGui::Checkbox("Show the game library on the home screen", &app.homeLibrary);
     ui::hint("When no game is loaded the window shows your library (add folders there). Off: a plain "
              "welcome message instead; File > Game library (Ctrl/Cmd+L) still opens the library in its own window.");
+    drawLibraryListOptions(app.library);
 }
 
 void drawSettings(App& app) {

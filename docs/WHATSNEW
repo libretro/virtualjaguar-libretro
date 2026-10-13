@@ -23,6 +23,10 @@ docs/RELEASE_NOTES_v3.8.1.md
   Disc art falls back to a set hosted on the project site.
   .chd discs are checksummed, .cdi best-effort, and non-Redump rips
   match by file/folder name when unambiguous.
+* Library favorites (star a tile), Recently played and a Save states
+  tab with each state's screenshot (click to start from it); each list
+  shows as a tab, a strip on the Cartridges/CD tabs, both or hidden.
+  Right-click a game: Play, Load state, favorite, Show in Finder (#838).
 * Shaders: RetroArch .slangp presets via librashader, slang-shaders
   CRT/scanline/sharp-bilinear presets bundled, integer scaling (#834).
 * Cheats: libretro cheat database bundled, plus manual codes (#835).

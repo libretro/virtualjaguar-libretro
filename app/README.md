@@ -278,6 +278,27 @@ Memory Track and files whose size the core rejects get no copy offer. The core h
 every standard image built in, so none is required. Loose `(Track N).bin` files are skipped like the
 tracks a `.cue` owns.
 
+**Favorites, recently played and save states.** Click the star on a tile (or right-click > **Add to
+Favorites**) and the game is a favorite; every game that boots, from the library, a drop, File > Open or the
+command line, goes to the front of **Recently played** (the last 20; right-click > **Remove from Recently
+Played**, or **Clear**). Where each list shows is up to you, separately, under **Favorites & recents...** in the
+library toolbar and in Settings > Storage (`library.favorites.show`, `library.recents.show`: 0 hidden, 1 its
+own tab, 2 a strip at the top of the Cartridges and Jaguar CD tabs, 3 both, the default). A tab lists both
+media (favorites by title, recents newest first); a strip is one scrolling row at the top of each media tab with
+that media's games only, under the same search and filter. The **Save states** tab lists every game that has
+states, newest first, with the screenshot saved with each state, its slot and when it was saved: click one to
+start the game from that moment (a state of the game already running just loads into it), **Delete** asks first
+and removes the state, its screenshot and its RetroAchievements sidecar. Right-clicking any game tile gives
+**Play**, **Load state** (the game's states with screenshots, newest first), **Add/Remove Favorite**,
+**Remove from Recently Played**, the cover items, **Show in Finder / File Explorer / file manager** (the
+containing folder) and **Copy path**. Lists remember a game by path, checksum and dat name together, so moving
+a folder or an update that identifies a game does not lose it; a game whose file is away (an unplugged drive)
+is skipped but not forgotten. A game booted from outside the library folders is not listed. Hardcore
+RetroAchievements mode refuses a state load before leaving the running game.
+The lists live in `<data>/library/user.tsv`, not in `config.ini` (rules for several copies in
+[Running several instances](#running-several-instances)). Save states are named `<file name>.slotN.state` in
+`<data>/states/`, as always, so two games whose files share a name share states.
+
 **File > Game library** (Ctrl/Cmd+L) opens the window.
 
 1. **Add folder...** one or more folders. They are walked recursively (8 levels, symlinked
@@ -387,6 +408,8 @@ single instance.
 | game saves `saves/<game>.srm` (EEPROM, SRAM, Memory Track) and the GameDrive SD folder | `saves/` | `saves/instance-N/`; a game's first run there starts from a copy of instance 1's save (read only) |
 | save states `states/`, cheat selections `cheats/games/` | shared | shared: written only when you press save, each file atomically, last save wins. A state saved in one copy loads in another |
 | library cache, box art, database files | shared | shared, written atomically with a per-process temporary name |
+| favorites and recently played `library/user.tsv` | shared | shared and written by every copy, but as **operations**: each change re-reads the file, applies that one change (star, play, remove, clear) and writes it atomically, so a copy never replays a stale snapshot over another's list; two changes in the same few milliseconds can lose one. Other copies pick a change up within a second |
+| library display options (`library.*` in `config.ini`) | saved with the other settings | read, not saved (like every setting) |
 | netplay address (`system/vj_netlink.txt`) | written when you join, as before | not written (no copy writes it): the address and port go to the core as per-process option overrides, so two copies can join different hosts |
 
   Why: two copies both writing one `.srm` or one whole-file `config.ini` would silently lose
@@ -551,7 +574,10 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   (copier-headered and plain carts, a `.cue` set), thumbnail naming against known libretro
   examples, cache paths, a scan of a temp folder with the hash cache, and on POSIX the whole
   art pipeline (scan, identify, download, cache, decode, texture; database update; then
-  offline) against a loopback HTTP server. No internet, no GL.
+  offline) against a loopback HTTP server; favorites / recents (persistence, ordering, matching by
+  path, checksum and name, the shared file under two simulated copies), the favorites / recents display
+  options and tab layout, and save-state naming, listing and deletion over synthetic state files. No
+  internet, no GL.
   `vj_library_tests --scan DIR --db DIR` prints identification counts for a folder (dev tool).
 - `remap_unit`: the remapping logic with no core (bindings, precedence, config
   round trip, keypad translation, overlay, bind capture, content identity).
@@ -613,6 +639,7 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/cheatsheet.*`, `src/cheatsheet_ui.cpp` | the controls cheat sheet: text, auto-show rule, window |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
+| `src/library_lists.*` | favorites, recently played, display options, tab layout, save-state listing (pure) |
 | `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |
 | `src/library_ui.cpp` | the Game library: the home screen and the window |
 | `src/ui_util.h` | layout helpers every window uses: sizes in em clamped to the main window, width fractions, wrapped rows |
