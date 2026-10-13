@@ -29,7 +29,7 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about|cheats]\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about|cheats|netplay]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"

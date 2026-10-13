@@ -699,6 +699,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
     else if (a.showWindow == "cheats") showCheats = true;
+    else if (a.showWindow == "netplay") showNetplay = true;
     unsigned uiFrames = 0;
 
     std::string firstErr;
