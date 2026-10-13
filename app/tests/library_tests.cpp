@@ -25,6 +25,7 @@
 
 #ifndef _WIN32
 #include <arpa/inet.h>
+#include <csignal>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -688,6 +689,9 @@ int main(int argc, char** argv) {
             if (!std::strcmp(argv[i], "--db")) db = argv[i + 1];
         return scanTool(argv[2], db);
     }
+#ifndef _WIN32
+    std::signal(SIGPIPE, SIG_IGN);   // the loopback server writes to clients that hang up on purpose
+#endif
     SDL_Init(SDL_INIT_EVENTS);
     g_tmp = mkTmp();
     std::printf("library tests, HTTP backend: %s\n", http::backendName());
