@@ -54,3 +54,12 @@ add_test(NAME ra_cd_chd_unsupported
 set_tests_properties(ra_unlock_softcore ra_hardcore ra_cd_chd_unsupported PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
+
+# The HTTP transport against a throwaway local server (no internet).  Exit 77 =
+# skipped (Windows, or a build without libcurl).
+add_executable(ach_http_test tests/ach_http_test.cpp src/ach_http.cpp)
+target_include_directories(ach_http_test PRIVATE src)
+target_compile_definitions(ach_http_test PRIVATE ${VJ_ACH_DEFS})
+target_link_libraries(ach_http_test PRIVATE ${VJ_ACH_LIBS} Threads::Threads)
+add_test(NAME ach_http COMMAND ach_http_test)
+set_tests_properties(ach_http PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)

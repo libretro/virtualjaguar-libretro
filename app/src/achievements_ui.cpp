@@ -42,6 +42,7 @@ void drawLogin(App& app) {
         a.login(a.userBuf, a.passBuf);
         // The request is built; the password is not needed any more.
         std::memset(a.passBuf, 0, sizeof a.passBuf);
+        ImGui::ClearActiveID();   // ImGui keeps its own copy of the text while the box is active
     }
     if (!a.statusLine().empty()) ImGui::TextWrapped("%s", a.statusLine().c_str());
     ImGui::End();
