@@ -49,6 +49,8 @@ struct CliArgs {
     bool showVersion = false;
     unsigned perfFrames = 0;        // dev: profile this many UI frames (after a warm-up), print the phase costs, exit
     bool perfGpu = false;           // dev: glFinish around the shader chain / UI so the numbers include GPU time
+    unsigned perfShaderW = 0, perfShaderH = 0;   // dev: run the shader chain at this output size (4K cost on a 1080p display)
+    bool perfNoReuse = false;       // dev: disable the shader output reuse (before/after comparison)
     bool perfPause = false;         // dev: pause after loading (idle-cost profile)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach

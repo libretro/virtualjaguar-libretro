@@ -85,6 +85,7 @@ public:
     unsigned render(const ShaderFrame& f);
     // How many calls ran the chain, and how many reused the previous output because
     // nothing it depends on had changed (same emulated frame, same size).
+    bool reuseOutput = true;   // false: run the chain on every call (dev: --perf-no-reuse, for before/after numbers)
     uint64_t chainRuns() const { return runs_; }
     uint64_t chainReuses() const { return reuses_; }
     // Frees GL objects; call with the context still current (shutdown).

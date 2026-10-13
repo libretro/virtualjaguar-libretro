@@ -514,7 +514,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
         I.outH = f.outH;
     }
 
-    if (I.haveOut && I.keyFrame == f.frameCount && I.keySrcTex == f.srcTex && I.keySrcW == f.srcW &&
+    if (reuseOutput && I.haveOut && I.keyFrame == f.frameCount && I.keySrcTex == f.srcTex && I.keySrcW == f.srcW &&
         I.keySrcH == f.srcH && I.keyOutW == f.outW && I.keyOutH == f.outH && I.keyAspect == f.aspect &&
         I.keyFps == f.fps) {
         reuses_++;

@@ -107,6 +107,10 @@ ImVec4 VideoOut::draw(ImDrawList* dl, ImVec2 pos, ImVec2 size, float coreAspect,
         sf.srcH = h_;
         sf.outW = (unsigned)rw;
         sf.outH = (unsigned)rh;
+        if (perf && perf->on && perf->forceW) {   // dev: profile the chain at another resolution
+            sf.outW = perf->forceW;
+            sf.outH = perf->forceH;
+        }
         sf.frameCount = emuFrames_;
         sf.aspect = rh > 0 ? rw / rh : 0.0f;
         sf.fps = fps_;

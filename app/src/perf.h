@@ -30,6 +30,7 @@ struct Perf {
     bool on = false;
     bool gpu = false;            // glFinish after the shader chain and after the UI: true GPU cost
     unsigned warmup = 120;       // frames discarded
+    unsigned forceW = 0, forceH = 0;   // run the shader chain at this output size
     unsigned target = 0;         // frames measured, then quit
     unsigned seen = 0;
     uint64_t freq = 1;

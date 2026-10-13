@@ -713,8 +713,10 @@ int App::runInteractive(const CliArgs& a) {
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
     perf.init(a.perfFrames, a.perfGpu);
+    video.shader.reuseOutput = !a.perfNoReuse;
+    perf.forceW = a.perfShaderW;
+    perf.forceH = a.perfShaderH;
     video.perf = &perf;
-    if (a.perfPause && host.isLoaded()) togglePause();
 
     while (!quit) {
         if (perf.frameBegin()) {
@@ -723,9 +725,12 @@ int App::runInteractive(const CliArgs& a) {
             perf.note = "window " + std::to_string(pw) + "x" + std::to_string(ph) + " px, vsync " + (vsync ? "on" : "off") +
                         ", shader " + (video.shader.active() ? pathStem(video.shader.preset) : std::string("none")) +
                         ", source " + std::to_string(video.frameWidth()) + "x" + std::to_string(video.frameHeight());
+            perf.note += ", chain runs " + std::to_string(video.shader.chainRuns()) + " reuses " +
+                         std::to_string(video.shader.chainReuses());
             perf.report(host.contentName().c_str());
             break;
         }
+        if (a.perfPause && perf.seen == 30 && !paused && host.isLoaded()) togglePause();   // after a few real frames
         SDL_Event e;
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;

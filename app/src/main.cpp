@@ -21,7 +21,7 @@ static void usage(const char* argv0) {
         "  --verbose             log the core's INFO messages\n"
         "  --version, --help\n"
         "\n"
-        "dev: --perf-frames N [--perf-gpu] [--perf-pause]  print where a UI frame's time goes over N frames, then exit\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-shader-out WxH]  print where a UI frame's time goes over N frames, then exit\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about|cheats]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
@@ -106,6 +106,16 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--perf-frames")) a.perfFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--perf-gpu")) a.perfGpu = true;
         else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;
+        else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
+        else if (!std::strcmp(s, "--perf-shader-out")) {
+            unsigned w = 0, h = 0;
+            if (std::sscanf(need(s), "%ux%u", &w, &h) != 2 || !w || !h) {
+                std::fprintf(stderr, "--perf-shader-out wants WxH\n");
+                return 2;
+            }
+            a.perfShaderW = w;
+            a.perfShaderH = h;
+        }
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
