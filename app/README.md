@@ -91,7 +91,8 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | Key | Action |
 | --- | --- |
 | Arrows, Z, X, C, Enter, Right Shift | D-pad, B, A, C, Option, Pause |
-| number row / numpad | Jaguar keypad (the core reads the keyboard device) |
+| number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
+| F2 | keypad overlay |
 | F5 / F7 / F6 | save state / load state / next slot (Shift+F6 previous) |
 | F8, Ctrl/Cmd+R | pause, reset |
 | Tab (hold) | fast-forward |
@@ -101,6 +102,37 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 Gamepads use SDL's standard layout (South/East/West = B/A/C, Back = Pause,
 Start = Option); the left stick also drives the D-pad. Controller types per
 Jaguar port (Team Tap, rotary, ...) are under **Settings > Input**.
+
+### Controls and the keypad
+
+**Settings > Input** edits the bindings: pick a device (the keyboard, every
+gamepad, or one connected controller model), pick the scope (everywhere, or
+this game only), then **Set** / **Add** a binding and press the key, button or
+stick direction ("press a button to bind"; Esc cancels), **Unbind**, or go back
+to **Default**. Per control, the first of these that defines it wins: this game
+and this controller, this game, this controller, everywhere, built-in default.
+Games are identified by the CRC32 of the cartridge image (the key the core's
+title database uses; copier headers stripped); discs fall back to the file name.
+Everything is stored in `config.ini` as `input.*` keys. Controllers SDL does not
+know can be added with a `gamecontrollerdb.txt` (SDL's format) in the data folder.
+
+The default gamepad layout reaches all twelve keypad keys without the overlay:
+
+| pad | keypad |
+| --- | --- |
+| North, L1, R1, L2, R2, L3, R3 | 0, 1, 2, 3, 4, 5, 6 |
+| right stick left / up / right / down | 7, 8, 9, `*` (dominant axis only, never two keys) |
+| Guide | `#` |
+| Share / Capture, or F2, or View > Keypad overlay | on-screen keypad (D-pad moves, A/B presses, C closes) |
+
+How it reaches the core: pad buttons ride the RetroPad bitmask; the RetroPad has
+no button for keypad 7, 8, 9, `*`, `#`, so keypad keys are delivered as the
+RETRO_DEVICE_KEYBOARD keys `libretro.c` polls (player 1: `0-9 - =`; player 2:
+`p q w e r t y u i o [ ]`). The app announces a keyboard after every load, which
+the core needs before it polls them. This is the core's default input path: with
+**Core Options Remapping** switched on, the core stops polling those keys (the tab
+warns). Ports set to an analog / 6D / driving device, and Team Tap sockets, still
+get the plain RetroPad (so keypad 7-9, `*`, `#` are unreachable behind a Team Tap, as in the core).
 
 **Settings > Core options** is generated from the core's options v2 definitions,
 categories and `SET_CORE_OPTIONS_DISPLAY` visibility included, so a new core
@@ -139,6 +171,10 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
 - `smoke_bad_option`: an `--option` the core does not register is rejected, not
   silently ignored.
 - `smoke_cd`: load the synthetic CD image by path (no BIOS).
+- `remap_unit`: the remapping logic with no core (bindings, precedence, config
+  round trip, keypad translation, overlay, bind capture, content identity).
+- `input_e2e`: drives the real core with every Jaguar control on both ports and
+  reads back the console's joypad matrix; keypad 7-9, `*`, `#` included.
 
 To regenerate the expected hash after an intentional emulation change:
 `virtualjaguar --headless --frames 300 test/roms/yarc.j64` and update
@@ -154,12 +190,13 @@ To regenerate the expected hash after an intentional emulation change:
 | `src/app.*` | window, GL, main loop, pacing, events, save-state slots, headless runner |
 | `src/video.*` | XRGB8888 texture and aspect-correct / integer-scaled presentation |
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
-| `src/input.*` | keyboard and gamepad to libretro input |
+| `src/input.*` | keyboard and gamepad snapshots to libretro input |
+| `src/remap.*`, `src/remap_ui.cpp` | profiles, per-game overrides, keypad delivery, overlay, bind capture, and their UI |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
 | `src/paths.*`, `src/config.*` | data folders (portable mode) and the settings file |
 
 ## Not in this first piece
 
-Shaders (#834), cheats (#835), RetroAchievements (#836), input remapping (#837),
-the game library (#838), packaging and signing (#839), the installer (#840).
+Shaders (#834), cheats (#835), RetroAchievements (#836), the game library (#838),
+packaging and signing (#839), the installer (#840).
 Microphone and netpacket are reported unsupported.
