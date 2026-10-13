@@ -437,12 +437,14 @@ static void GPUPipeMemAccess(uint32_t addr, int isLoad)
  * dram_timing immediate self-cost, exactly as before. */
 #define GPU_PIPE_LOAD(addr) \
    do { \
+      VJT_BUS_GPU(addr); \
       GPULoadNoteExternal(addr); \
       if (vjs.gpuPipelineTiming) GPUPipeMemAccess((addr), 1); \
       else GPU_EXT_ACCESS(addr); \
    } while (0)
 #define GPU_PIPE_STORE(addr) \
    do { \
+      VJT_BUS_GPU(addr); \
       if (vjs.gpuPipelineTiming) GPUPipeMemAccess((addr), 0); \
       else GPU_EXT_ACCESS(addr); \
    } while (0)

@@ -16,6 +16,8 @@
 #include "../m68000/m68kinterface.h" /* m68k_get_reg */
 #include "../tom/tom.h"              /* tomRam8 for halfline (VC) and TOMREG snapshot section */
 #include "../jerry/dsp.h"            /* DSP declarations: DSPGetRAM, DSPGetFlags */
+#include "bus_arbiter.h"             /* busArbiter MEMCON-derived costs (bus census) */
+#include "perf_counters.h"           /* perf_counters_find (bus census) */
 
 /* gpu_pc and dsp_pc are plain globals defined in src/tom/gpu.c and
  * src/jerry/dsp.c respectively; neither is declared extern in gpu.h /
@@ -56,6 +58,9 @@ static uint32_t cur_frame = 0;
 /* Non-static: the VJT_PCHIST_* macros in vjtrace.h test this at the
  * call site inside GPUExec()/DSPExec(), so it must be linkable. */
 int vjtrace_armed = 0;
+
+/* Bus census (S2) hook used by vjtrace_emit(); defined further down. */
+static void vjt_bus_blit_cmd(uint32_t cmd);
 
 void vjtrace_arm(void)    { vjtrace_armed = 1; }
 void vjtrace_disarm(void) { vjtrace_armed = 0; }
@@ -159,6 +164,8 @@ static uint32_t vjt_pc_of(uint32_t who)
 void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value)
 {
    vjtrace_ev *e;
+   if (type == VJT_EV_BLIT_CMD && vjtrace_bus_armed)
+      vjt_bus_blit_cmd(addr);
    /* Gated centrally here rather than at each of the ~15 VJT_EMIT call
     * sites (tom.c, op.c, blitter.c, gpu.c, m68kinterface.c): one check
     * covers all of them, including IRQ/OP/blitter events that fire every
@@ -596,6 +603,260 @@ void vjtrace_shutdown(void)
     * (monotonic filename counter, not part of the leak or the ring
     * state) -- deliberately left alone here; it just continues counting
     * across a reload in the same process, which is cosmetic only. */
+}
+
+/* ------------------------------------------------------------------ *
+ * Bus-traffic census (timing campaign S2) -- contract in vjtrace.h.
+ * ------------------------------------------------------------------ */
+
+#define VJT_BUS_RING 8192u                 /* halflines (~15 fields) */
+#define VJT_BUS_M68K_PCH 0x100000u          /* 68K PCs < $200000, by word */
+#define VJT_BUS_GPU_PCH  0x800u             /* GPU local RAM, by word */
+#define VJT_BUS_DSP_PCH  0x1000u            /* DSP local RAM, by word */
+
+int vjtrace_bus_armed = 0;
+/* Cumulative per-PC histograms, allocated on first arm and exported so a
+ * probe can name the loops the windows should cover:
+ *   vjtrace_bus_m68k_pch[pc>>1]   68K sysclks by instruction-start PC
+ *   vjtrace_bus_gpu_pch[(pc-$F03000)>>1]  GPU external transactions by PC
+ *   vjtrace_bus_dsp_pch[(pc-$F1B000)>>1]  DSP external transactions by PC */
+uint32_t *vjtrace_bus_m68k_pch = NULL;
+uint32_t *vjtrace_bus_gpu_pch  = NULL;
+uint32_t *vjtrace_bus_dsp_pch  = NULL;
+
+static vjtrace_bus_hl bus_cur;
+static vjtrace_bus_hl bus_ring[VJT_BUS_RING];
+static uint32_t bus_head = 0;
+static uint32_t bus_m68k_nwin = 0;
+static uint32_t bus_m68k_lo[VJT_BUS_MAX_WIN], bus_m68k_hi[VJT_BUS_MAX_WIN];
+static uint32_t bus_row_gpu = 0xFFFFFFFFu, bus_row_dsp = 0xFFFFFFFFu;
+static uint32_t bus_m68k_pc = 0;
+static int32_t  bus_m68k_rem = 0;
+static int      bus_m68k_valid = 0;
+static int      bus_m68k_spin = 0;
+static uint64_t bus_gpu_work0 = 0, bus_gpu_total0 = 0;
+static unsigned long long *bus_perf_prd = NULL, *bus_perf_pwr = NULL;
+static unsigned long long bus_prd0 = 0, bus_pwr0 = 0;
+
+/* 68K instruction-start PC ring (src/core/jaguar.c, see vjt_pc_of()). */
+extern uint32_t pcQueue[];
+extern uint32_t pcQPtr;
+
+/* gpu_busy census (src/tom/gpu.c, VJ_TRACE): windows + cumulative cycles. */
+extern uint32_t gpu_busy_nwin;
+extern uint32_t gpu_busy_win_lo[];
+extern uint32_t gpu_busy_win_hi[];
+extern uint64_t gpu_busy_work_cycles;
+extern uint64_t gpu_busy_total_cycles;
+
+static uint32_t vjt_bus_price(uint32_t addr, uint32_t *row)
+{
+   uint32_t r;
+   addr &= 0xFFFFFF;
+   if (addr < 0x200000)
+   {
+      r = addr >> 12;
+      if (r == *row)
+         return 2;
+      *row = r;
+      return 2u + busArbiter.dram_row_miss;
+   }
+   if (addr >= 0x800000 && addr < 0xE40000)
+      return busArbiter.rom_clocks;
+   if (addr >= 0xDFFF00)
+      return 2;
+   return 2u + busArbiter.dram_row_miss;
+}
+
+static int vjt_bus_m68k_in_spin(uint32_t pc)
+{
+   uint32_t i;
+   for (i = 0; i < bus_m68k_nwin; i++)
+      if (pc >= bus_m68k_lo[i] && pc < bus_m68k_hi[i])
+         return 1;
+   return 0;
+}
+
+void vjtrace_bus_arm(int on)
+{
+   if (on && !vjtrace_bus_m68k_pch)
+   {
+      vjtrace_bus_m68k_pch = (uint32_t *)calloc(VJT_BUS_M68K_PCH, sizeof(uint32_t));
+      vjtrace_bus_gpu_pch  = (uint32_t *)calloc(VJT_BUS_GPU_PCH, sizeof(uint32_t));
+      vjtrace_bus_dsp_pch  = (uint32_t *)calloc(VJT_BUS_DSP_PCH, sizeof(uint32_t));
+      if (!vjtrace_bus_m68k_pch || !vjtrace_bus_gpu_pch || !vjtrace_bus_dsp_pch)
+         return;
+   }
+   if (on)
+   {
+      memset(&bus_cur, 0, sizeof(bus_cur));
+      bus_m68k_valid = 0;
+      bus_gpu_work0  = gpu_busy_work_cycles;
+      bus_gpu_total0 = gpu_busy_total_cycles;
+      bus_perf_prd = perf_counters_find("blitter_phrase_reads");
+      bus_perf_pwr = perf_counters_find("blitter_phrase_writes");
+      bus_prd0 = bus_perf_prd ? *bus_perf_prd : 0;
+      bus_pwr0 = bus_perf_pwr ? *bus_perf_pwr : 0;
+   }
+   vjtrace_bus_armed = on ? 1 : 0;
+}
+
+void vjtrace_bus_set_m68k_window(uint32_t i, uint32_t lo, uint32_t hi)
+{
+   if (i >= VJT_BUS_MAX_WIN)
+      return;
+   bus_m68k_lo[i] = lo;
+   bus_m68k_hi[i] = hi;
+   if (i + 1 > bus_m68k_nwin)
+      bus_m68k_nwin = i + 1;
+}
+
+uint32_t vjtrace_bus_ring_head(void)
+{
+   return bus_head;
+}
+
+int vjtrace_bus_ring_read(uint32_t idx, vjtrace_bus_hl *out)
+{
+   if (!out || idx >= bus_head || bus_head - idx > VJT_BUS_RING)
+      return 0;
+   *out = bus_ring[idx % VJT_BUS_RING];
+   return 1;
+}
+
+void vjtrace_bus_m68k(uint32_t addr, uint32_t naccesses)
+{
+   uint32_t pc;
+   addr &= 0xFFFFFF;
+   pc = pcQueue[(pcQPtr - 1) & 0x3FF];
+   if (vjt_bus_m68k_in_spin(pc))
+      bus_cur.m68k_bus_spin += naccesses;
+   else
+      bus_cur.m68k_bus_work += naccesses;
+   if (addr >= 0x800000 && addr < 0xE40000)
+      bus_cur.m68k_rom_bus += naccesses;
+}
+
+/* Called before each 68K instruction: the clocks since the previous call
+ * belong to the previous instruction.  A slice boundary (remaining went
+ * UP) is closed by vjtrace_bus_m68k_slice_end() instead. */
+void vjtrace_bus_m68k_insn(uint32_t pc, int32_t remaining)
+{
+   int32_t d;
+   if (bus_m68k_valid && remaining <= bus_m68k_rem)
+   {
+      d = bus_m68k_rem - remaining;
+      if (bus_m68k_spin)
+         bus_cur.m68k_clk_spin += 2u * (uint32_t)d;
+      else
+         bus_cur.m68k_clk_work += 2u * (uint32_t)d;
+      if (vjtrace_bus_m68k_pch && bus_m68k_pc < 0x200000)
+         vjtrace_bus_m68k_pch[bus_m68k_pc >> 1] += 2u * (uint32_t)d;
+   }
+   bus_m68k_pc = pc;
+   bus_m68k_spin = vjt_bus_m68k_in_spin(pc);
+   bus_m68k_rem = remaining;
+   bus_m68k_valid = 1;
+}
+
+void vjtrace_bus_m68k_slice_end(int32_t remaining)
+{
+   if (bus_m68k_valid)
+      vjtrace_bus_m68k_insn(bus_m68k_pc, remaining);
+   bus_m68k_valid = 0;
+}
+
+void vjtrace_bus_m68k_stall(uint32_t cycles68k)
+{
+   bus_cur.m68k_stall_clk += 2u * cycles68k;
+}
+
+void vjtrace_bus_gpu(uint32_t addr)
+{
+   uint32_t pc, i, price;
+   int spin = 0;
+   addr &= 0xFFFFFF;
+   if (addr >= 0xF02000 && addr <= 0xF03FFF)
+      return;                       /* GPU local bus: no external cycle */
+   pc = gpu_pc - 2;                 /* load/store opcodes are one word */
+   for (i = 0; i < gpu_busy_nwin; i++)
+      if (pc >= gpu_busy_win_lo[i] && pc < gpu_busy_win_hi[i])
+      {
+         spin = 1;
+         break;
+      }
+   price = vjt_bus_price(addr, &bus_row_gpu);
+   if (spin)
+   {
+      bus_cur.gpu_ext_spin++;
+      bus_cur.gpu_mem_spin += price;
+   }
+   else
+   {
+      bus_cur.gpu_ext_work++;
+      bus_cur.gpu_mem_work += price;
+   }
+   if (GPUGetFlags() & 0x8000)
+      bus_cur.gpu_dmaen++;
+   if (vjtrace_bus_gpu_pch && pc >= 0xF03000 && pc < 0xF04000)
+      vjtrace_bus_gpu_pch[(pc - 0xF03000) >> 1]++;
+}
+
+void vjtrace_bus_dsp(uint32_t addr, uint32_t n16)
+{
+   uint32_t pc;
+   addr &= 0xFFFFFF;
+   if (addr >= 0xF10000 && addr <= 0xF1FFFF)
+      return;                       /* JERRY-internal: not the main bus */
+   bus_cur.dsp_ext += n16;
+   bus_cur.dsp_mem += n16 * vjt_bus_price(addr, &bus_row_dsp);
+   pc = dsp_pc;
+   if (vjtrace_bus_dsp_pch && pc >= 0xF1B000 && pc < 0xF1D000)
+      vjtrace_bus_dsp_pch[(pc - 0xF1B000) >> 1] += n16;
+}
+
+void vjtrace_bus_op(uint32_t sysclks)
+{
+   bus_cur.op_clk += sysclks;
+}
+
+void vjtrace_bus_op_object(int release)
+{
+   bus_cur.op_objs++;
+   if (release)
+      bus_cur.op_release++;
+}
+
+static void vjt_bus_blit_cmd(uint32_t cmd)
+{
+   bus_cur.blit_cmds++;
+   if (cmd & 0x20000000u)           /* B_CMD bit 29 BUSHI (JTRM v8 p.75) */
+      bus_cur.blit_bushi++;
+}
+
+void vjtrace_bus_halfline(uint32_t vc)
+{
+   uint64_t w, t;
+   w = gpu_busy_work_cycles;
+   t = gpu_busy_total_cycles;
+   bus_cur.gpu_cyc_work  = (uint32_t)(w - bus_gpu_work0);
+   bus_cur.gpu_cyc_total = (uint32_t)(t - bus_gpu_total0);
+   bus_gpu_work0 = w;
+   bus_gpu_total0 = t;
+   if (bus_perf_prd)
+   {
+      bus_cur.blit_prd = (uint32_t)(*bus_perf_prd - bus_prd0);
+      bus_prd0 = *bus_perf_prd;
+   }
+   if (bus_perf_pwr)
+   {
+      bus_cur.blit_pwr = (uint32_t)(*bus_perf_pwr - bus_pwr0);
+      bus_pwr0 = *bus_perf_pwr;
+   }
+   bus_cur.vc = vc;
+   bus_ring[bus_head % VJT_BUS_RING] = bus_cur;
+   bus_head++;
+   memset(&bus_cur, 0, sizeof(bus_cur));
 }
 
 #else /* !VJ_TRACE */

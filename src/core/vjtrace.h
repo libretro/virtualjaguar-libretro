@@ -335,6 +335,80 @@ extern int vjtrace_armed;
 #define VJT_PCHIST_GPU(pc)     do { if (vjtrace_armed) vjtrace_pchist_gpu(pc); } while (0)
 #define VJT_PCHIST_DSP(pc)     do { if (vjtrace_armed) vjtrace_pchist_dsp(pc); } while (0)
 
+/* ---- Bus-traffic census (timing campaign S2, docs/timing-campaign-plan.md).
+ *
+ * Counts every bus master's external traffic per HALFLINE, independent
+ * of busArbiter.enabled (the dram_timing option): the existing charge
+ * sites only run with that option on, which is how an earlier census read
+ * "0 GPU external accesses" with timing off.  Nothing here charges or
+ * changes emulated time; it only counts.  Test ABI only (VJ_TRACE ==
+ * TEST_EXPORTS=1), disarmed by default, one never-taken branch per hook
+ * while disarmed.
+ *
+ * Masters and units:
+ *   68K   16-bit bus cycles (a longword = 2), split work/spin by the
+ *         instruction-start PC against caller windows; 68K clocks per
+ *         instruction (deltas of regs.remainingCycles between
+ *         M68KInstructionHook calls, closed at slice end) split the same
+ *         way; pending-stall clocks drained by M68KExecuteWithStalls.
+ *   GPU   external transactions from the load/store hook (a phrase LOADP
+ *         = 1), split by GPU PC against the gpu_busy_* windows; GPU
+ *         work/total cycles are sampled from the gpu_busy census.
+ *   DSP   16-bit transactions (JTRM v8 p.99: 16-bit external interface)
+ *         seen at the Jaguar dispatch with who == DSP.
+ *   OP    the model's own OP-occupancy rule (bus_arbiter_op_charge
+ *         sites: 1 sysclk per 32-bit fetch/write-back + a row change per
+ *         rendered object), but UNGATED.
+ *   Blitter  B_CMD count and BUSHI (bit 29) count per halfline; phrase
+ *         traffic comes from the BENCH_PROFILE perf counters, sampled.
+ * Idle-bus memory-cycle price per access (sysclks) uses a per-master
+ * open-DRAM-row tracker (4 KB rows) and busArbiter's MEMCON-derived
+ * costs: page hit 2, miss 2 + row change, ROM rom_clocks, I/O 2. */
+#define VJT_BUS_MAX_WIN 8
+typedef struct
+{
+   uint32_t m68k_bus_work, m68k_bus_spin;   /* 16-bit bus cycles */
+   uint32_t m68k_clk_work, m68k_clk_spin;   /* sysclks (= 2 x 68K clocks) */
+   uint32_t m68k_rom_bus;                   /* of which cart/boot ROM */
+   uint32_t m68k_stall_clk;                 /* pending-stall sysclks drained */
+   uint32_t gpu_ext_work, gpu_ext_spin;     /* GPU external transactions */
+   uint32_t gpu_mem_work, gpu_mem_spin;     /* their idle-bus memory sysclks */
+   uint32_t gpu_dmaen;                      /* transactions with FLAGS.DMAEN */
+   uint32_t gpu_cyc_work, gpu_cyc_total;    /* gpu_busy deltas (GPU cycles) */
+   uint32_t dsp_ext, dsp_mem;               /* DSP 16-bit transactions, sysclks */
+   uint32_t op_clk;                         /* OP occupancy, model rule, ungated */
+   uint32_t op_objs;                        /* rendered bitmap/scaled objects */
+   uint32_t op_release;                     /* ... of which RELEASE (bit 48) set */
+   uint32_t blit_cmds, blit_bushi;          /* B_CMD writes, of which BUSHI */
+   uint32_t blit_prd, blit_pwr;             /* phrase reads/writes (BENCH_PROFILE) */
+   uint32_t vc;                             /* VC at the halfline callback */
+} vjtrace_bus_hl;
+
+extern int vjtrace_bus_armed;
+void vjtrace_bus_arm(int on);
+void vjtrace_bus_set_m68k_window(uint32_t i, uint32_t lo, uint32_t hi);
+uint32_t vjtrace_bus_ring_head(void);
+int vjtrace_bus_ring_read(uint32_t idx, vjtrace_bus_hl *out);
+void vjtrace_bus_m68k(uint32_t addr, uint32_t naccesses);
+void vjtrace_bus_m68k_insn(uint32_t pc, int32_t remaining);
+void vjtrace_bus_m68k_slice_end(int32_t remaining);
+void vjtrace_bus_m68k_stall(uint32_t cycles68k);
+void vjtrace_bus_gpu(uint32_t addr);
+void vjtrace_bus_dsp(uint32_t addr, uint32_t n16);
+void vjtrace_bus_op(uint32_t sysclks);
+void vjtrace_bus_op_object(int release);
+void vjtrace_bus_halfline(uint32_t vc);
+
+#define VJT_BUS_M68K(a, n)        do { if (vjtrace_bus_armed) vjtrace_bus_m68k((a), (n)); } while (0)
+#define VJT_BUS_M68K_INSN(pc, r)  do { if (vjtrace_bus_armed) vjtrace_bus_m68k_insn((pc), (r)); } while (0)
+#define VJT_BUS_M68K_END(r)       do { if (vjtrace_bus_armed) vjtrace_bus_m68k_slice_end(r); } while (0)
+#define VJT_BUS_M68K_STALL(c)     do { if (vjtrace_bus_armed) vjtrace_bus_m68k_stall(c); } while (0)
+#define VJT_BUS_GPU(a)            do { if (vjtrace_bus_armed) vjtrace_bus_gpu(a); } while (0)
+#define VJT_BUS_DSP(w, a, n)      do { if (vjtrace_bus_armed && (w) == DSP) vjtrace_bus_dsp((a), (n)); } while (0)
+#define VJT_BUS_OP(w, c)          do { if (vjtrace_bus_armed && (w) == OP) vjtrace_bus_op(c); } while (0)
+#define VJT_BUS_OP_OBJ(rel)       do { if (vjtrace_bus_armed) vjtrace_bus_op_object(rel); } while (0)
+#define VJT_BUS_HALFLINE(vc)      do { if (vjtrace_bus_armed) vjtrace_bus_halfline(vc); } while (0)
+
 #else /* !VJ_TRACE */
 
 #define VJT_EMIT(t, w, a, v)   do { } while (0)
@@ -342,6 +416,15 @@ extern int vjtrace_armed;
 #define VJT_WATCH_RD(a, v, w)  do { } while (0)
 #define VJT_PCHIST_GPU(pc)     do { } while (0)
 #define VJT_PCHIST_DSP(pc)     do { } while (0)
+#define VJT_BUS_M68K(a, n)        do { } while (0)
+#define VJT_BUS_M68K_INSN(pc, r)  do { } while (0)
+#define VJT_BUS_M68K_END(r)       do { } while (0)
+#define VJT_BUS_M68K_STALL(c)     do { } while (0)
+#define VJT_BUS_GPU(a)            do { } while (0)
+#define VJT_BUS_DSP(w, a, n)      do { } while (0)
+#define VJT_BUS_OP(w, c)          do { } while (0)
+#define VJT_BUS_OP_OBJ(rel)       do { } while (0)
+#define VJT_BUS_HALFLINE(vc)      do { } while (0)
 
 #endif /* VJ_TRACE */
 
