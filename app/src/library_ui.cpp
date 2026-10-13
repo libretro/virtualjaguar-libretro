@@ -230,10 +230,10 @@ void drawPlaceholder(ImDrawList* dl, ImVec2 a0, ImVec2 a1, const lib::Entry& e, 
     ImColor c = ImColor::HSV((float)(fnv(e.title) % 360) / 360.0f, 0.35f, 0.45f);
     ImVec2 i0(a0.x + 6, a0.y + 6), i1(a1.x - 6, a1.y - 6);
     dl->AddRectFilled(i0, i1, c, 4.0f);
-    const float pad = 8.0f;
+    const float pad = 5.0f;
     const float top = a0.y + 6 + ImGui::GetFontSize() + 8;   // below the badge
     ImVec4 clip(i0.x + pad, top, i1.x - pad, i1.y - pad);
-    const float fs = ImGui::GetFontSize() * 1.1f;
+    const float fs = ImGui::GetFontSize();
     const float ww = std::max(8.0f, clip.z - clip.x);
     const std::string& t = e.title.empty() ? e.file.path : e.title;
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, 1e9f, ww, t.c_str());
