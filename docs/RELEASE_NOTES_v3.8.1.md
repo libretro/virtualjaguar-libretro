@@ -5,7 +5,8 @@ ships: a standalone emulator for macOS, Windows and Linux built on the same core
 
 v3.8.1 is a bug-fix release for the core plus the debut of the standalone app
 (https://github.com/libretro/virtualjaguar-libretro/issues/833). For RetroArch and Provenance users the change is the overclock fix
-below; nothing else in the core changed. No option keys or values changed and the savestate format
+below, plus two small additions for the app (a clock-scale percentage form and a private event
+channel that RetroArch never sees). No option keys or listed values changed and the savestate format
 stays v17.
 
 ---
@@ -28,11 +29,9 @@ stays v17.
   and 2x on 12 titles in HLE and 7 on the real BIOS; stock 1x is unchanged. The Settings
   sublabel and the `[perf]` log line no longer name the RISC clock as a suppressor. Doom's GPU
   loops are still not fast-forwarded, so Doom at 2x still takes about 1.65x the time of 1x.
-- **Clock scale options also accept a percentage; GDB halt timeout clamped.** The M68K and RISC
-  clock scale options read `175` or `175%` (clamped to 25-400) in addition to the listed values,
-  which map exactly as before, so a frontend with free-form entry (the desktop app) can set any
-  scale; stock 1x is unchanged. The GDB halt timeout is clamped to 3600 seconds. A typed link host
-  that is not a discovered peer no longer draws the "dropped off the LAN" warning.
+- **Clock scale options also accept a percentage; GDB halt timeout clamped.** `175` or `175%`
+  (clamped to 25-400) is read in addition to the listed values, which map exactly as before;
+  the GDB halt timeout is clamped to 3600 seconds.
 
 ---
 

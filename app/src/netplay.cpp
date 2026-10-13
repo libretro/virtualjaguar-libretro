@@ -367,7 +367,7 @@ void Netplay::onCoreEvent(const vj_event& e) {
         upDevice_ = e.a ? "voicemodem" : "jaglink";
         if (e.s) {
             const char* sp = std::strchr(e.s, ' ');   // "tcp_client <host>"
-            peerText_ = sp ? sp + 1 : "";
+            if (sp) peerText_ = sp + 1;
         }
         openError_.clear();
         break;

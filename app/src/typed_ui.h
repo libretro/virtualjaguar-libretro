@@ -22,6 +22,7 @@ namespace ui {
 struct TypedState {
     bool custom = false;     // the "Custom..." box is open
     bool focus = false;      // give the box keyboard focus on its next draw
+    bool autoOpened = false; // the box opened because the value was no preset (not because the user asked)
     char buf[160] = "";
 };
 
@@ -43,9 +44,16 @@ inline bool typedCombo(const char* label, float width, const TypedOption& t, con
             curLabel = v.label.empty() ? v.value.c_str() : v.label.c_str();
             break;
         }
+    // A box that opened by itself (the value was no preset) closes once the value is a preset again --
+    // a session override ended, or a reset.  A box the user opened stays until they pick a preset.
+    if (isPreset && st.custom && st.autoOpened) {
+        st.custom = false;
+        st.autoOpened = false;
+    }
     // A saved custom value comes back as an open box showing it.
     if (!isPreset && !st.custom) {
         st.custom = true;
+        st.autoOpened = true;
         std::snprintf(st.buf, sizeof st.buf, "%s", current.c_str());
     }
     std::string shown;
@@ -69,6 +77,7 @@ inline bool typedCombo(const char* label, float width, const TypedOption& t, con
         ImGui::Separator();
         if (ImGui::Selectable("Custom...", st.custom)) {
             st.custom = true;
+            st.autoOpened = false;
             st.focus = true;
             // Start from the current value when it is a number / address (an "off" or "1x" preset is not).
             std::snprintf(st.buf, sizeof st.buf, "%s", validTypedValue(t, current) ? current.c_str() : "");

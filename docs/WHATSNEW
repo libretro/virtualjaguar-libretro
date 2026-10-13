@@ -10,9 +10,8 @@ docs/RELEASE_NOTES_v3.8.1.md
   audio and savestates byte-identical on/off). Core fps at 2x: Doom
   52 -> 82, AvP 71 -> 204, Tempest 2000 77 -> 209. 1x unchanged; no
   option or savestate (v17) changes.
-* The M68K and RISC clock scale options also accept a percentage
-  (25-400, e.g. 175%); listed values and stock 1x are unchanged. The
-  GDB halt timeout is clamped to one hour.
+* Clock scale options also accept a percentage (25-400, e.g. 175%);
+  listed values and stock 1x unchanged. GDB halt timeout clamped to 1 h.
 
 == Desktop app ==
 * Standalone emulator for macOS, Windows and Linux in app/: SDL3,

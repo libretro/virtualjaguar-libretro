@@ -8,20 +8,72 @@
 //   * a saved / session value that passes the key's validator is handed to the core; one that does not
 //     falls back to the default and is reported by checkOverrides() with the reason; list-only options
 //     stay strict;
-//   * end to end: a custom link port (50123), a typed host name and custom clock-scale percentages are
-//     read by the core and shown in its own log lines ("[NETLINK] mode=... port=50123",
+//   * end to end: a custom link port, a typed host name and custom clock-scale percentages are
+//     read by the core and shown in its own log lines ("[NETLINK] mode=... port=N",
 //     "[CLOCK] ... M68K 175%, RISC 250%").  The clock-scale list values still map as before.
 #include "core_host.h"
 #include "typed_options.h"
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+typedef SOCKET sock_t;
+static const sock_t kBadSock = INVALID_SOCKET;
+static void closeSock(sock_t s) { closesocket(s); }
+#else
+#  include <arpa/inet.h>
+#  include <netinet/in.h>
+#  include <sys/socket.h>
+#  include <unistd.h>
+typedef int sock_t;
+static const sock_t kBadSock = -1;
+static void closeSock(sock_t s) { close(s); }
+#endif
+
 using namespace vj;
+
+// Ports are picked at run time from 20000-29999 (below every OS's ephemeral range) and probed free for
+// TCP and UDP, like the netplay test does: a hard-coded port collides with a concurrent run.
+static sockaddr_in loopbackAddr(int port) {
+    sockaddr_in sa;
+    std::memset(&sa, 0, sizeof sa);
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((unsigned short)port);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    return sa;
+}
+static bool bindsOn(int type, int port) {
+    sock_t s = socket(AF_INET, type, 0);
+    if (s == kBadSock) return false;
+    sockaddr_in sa = loopbackAddr(port);
+    const bool ok = bind(s, (sockaddr*)&sa, sizeof sa) == 0;
+    closeSock(s);
+    return ok;
+}
+static int pickFreePort(int avoid = 0) {
+    const unsigned long long seed = (unsigned long long)std::time(nullptr) * 2654435761ull + (unsigned long long)avoid;
+    for (int i = 0; i < 200; i++) {
+        const int port = 20000 + (int)((seed + (unsigned long long)i * 7919ull) % 10000ull);
+        if (port != avoid && bindsOn(SOCK_STREAM, port) && bindsOn(SOCK_DGRAM, port)) return port;
+    }
+    return 0;
+}
+static bool canConnect(int port) {
+    sock_t s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == kBadSock) return false;
+    sockaddr_in sa = loopbackAddr(port);
+    const bool ok = connect(s, (sockaddr*)&sa, sizeof sa) == 0;
+    closeSock(s);
+    return ok;
+}
 
 static int g_fail = 0, g_checks = 0;
 #define CHECK(cond)                                                                    \
@@ -127,14 +179,27 @@ int main(int argc, char** argv) {
     std::vector<std::string> log;
     host.onLog = [&log](int, const char* text) { if (text) log.push_back(text); };
     // Saved values present BEFORE the load, as config.ini would provide them.
-    host.loadUserOptions({{"virtualjaguar_netlink_port", "50123"},
+    host.loadUserOptions({{"virtualjaguar_netlink_port", linkPortStr},
                           {"virtualjaguar_gdb_halt_timeout", "9999"},          // out of range: ignored
                           {"virtualjaguar_frameskip_max", "7"}});               // list-only: still strict
-    // The core's LAN discovery socket: keep it off the default port so this cannot collide with a game.
 #ifdef _WIN32
-    _putenv_s("VJ_DISC_PORT", std::to_string(20000 + (std::time(nullptr) % 9000)).c_str());
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+    // The core's LAN discovery socket stays off the default port; the link ports are free ones outside
+    // the four presets.
+    const int discPort = pickFreePort();
+    const int linkPort = pickFreePort(discPort);
+    const int linkPort2 = pickFreePort(linkPort);
+    if (!discPort || !linkPort || !linkPort2) {
+        std::fprintf(stderr, "FAIL no free port\n");
+        return 1;
+    }
+    const std::string linkPortStr = std::to_string(linkPort), linkPort2Str = std::to_string(linkPort2);
+#ifdef _WIN32
+    _putenv_s("VJ_DISC_PORT", std::to_string(discPort).c_str());
 #else
-    setenv("VJ_DISC_PORT", std::to_string(20000 + (std::time(nullptr) % 9000)).c_str(), 1);
+    setenv("VJ_DISC_PORT", std::to_string(discPort).c_str(), 1);
 #endif
     std::string err;
     if (!host.loadContent(argv[1], err)) {
@@ -151,7 +216,7 @@ int main(int argc, char** argv) {
     auto frames = [&](int n) { for (int i = 0; i < n; i++) host.runFrame(); };
 
     // ---- CoreHost's acceptance ---------------------------------------------------------------------
-    CHECK_EQ(optionOf(host, "virtualjaguar_netlink_port"), "50123");                 // a custom saved value is honoured
+    CHECK_EQ(optionOf(host, "virtualjaguar_netlink_port"), linkPortStr);                 // a custom saved value is honoured
     CHECK_EQ(optionOf(host, "virtualjaguar_gdb_halt_timeout"), "off");               // an invalid one falls back to default
     CHECK_EQ(optionOf(host, "virtualjaguar_frameskip_max"), "3");                    // lists stay strict
     {
@@ -189,13 +254,15 @@ int main(int argc, char** argv) {
     log.clear();
     host.overrideOption("virtualjaguar_netlink", "tcp_server");
     frames(3);
-    CHECK(sawLog("mode=tcp_server") && sawLog("port=50123"));
+    CHECK(sawLog("mode=tcp_server") && sawLog("port=" + linkPortStr));
+    CHECK(!sawLog("failed to open"));
+    CHECK(canConnect(linkPort));   // the core really listens on the typed port
     log.clear();
     host.overrideOption("virtualjaguar_netlink", "tcp_client");
     host.overrideOption("virtualjaguar_netlink_host", "localhost");   // a typed NAME, not a list row
-    host.setOptionValue("virtualjaguar_netlink_port", "50124");
+    host.setOptionValue("virtualjaguar_netlink_port", linkPort2Str);
     frames(3);
-    CHECK(sawLog("peer=localhost:50124"));
+    CHECK(sawLog("peer=localhost:" + linkPort2Str));
     host.overrideOption("virtualjaguar_netlink", "disabled");
     frames(3);
 
