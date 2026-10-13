@@ -204,8 +204,9 @@ a failure.
   or folder; a path that does not exist means "missing"), next to the executable
   (and `../Frameworks` in a macOS bundle), in `<data folder>/librashader/`, and
   then the system library path (Homebrew's `/opt/homebrew/lib` included).
-  `-DVJ_APP_FETCH_LIBRASHADER=ON` downloads the pinned prebuilt runtime for macOS
-  and Windows (arm64/x86_64) and copies it next to the executable. Upstream
+  On macOS and Windows the build downloads the pinned prebuilt runtime (arm64/x86_64)
+  and copies it next to the executable (`-DVJ_APP_FETCH_LIBRASHADER=OFF` for offline
+  builds). Upstream
   publishes no Linux binary: install the distro/OBS package or build it, and it
   is picked up from the system path.
 - **Presets.** `shaders/` beside the executable holds two small first-party presets

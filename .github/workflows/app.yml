@@ -118,8 +118,10 @@ jobs:
         echo "blitter_simd_ops definitions: $n"
         [ "$n" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops, found $n"; exit 1; }
 
+    # shaders_gl renders through the real librashader (fetched by default on macOS and
+    # Windows) on a hidden GL context; a GPU-less runner hangs until the timeout.
     - name: Smoke tests (headless, SDL dummy drivers)
-      run: ctest --test-dir app/build -C Release --output-on-failure
+      run: ctest --test-dir app/build -C Release --output-on-failure -E shaders_gl
 
     # Informational: the emulation speed of this build, taken from the app's own
     # timer (CPU seconds per frame over the run), so optimisation changes (LTO,
