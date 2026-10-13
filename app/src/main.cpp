@@ -21,7 +21,15 @@ static void usage(const char* argv0) {
         "  --verbose             log the core's INFO messages\n"
         "  --version, --help\n"
         "\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about|cheats]\n"
+        "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
+        "  --netplay ROLE        host | join | join-discovered | browse | loopback\n"
+        "  --netplay-addr ADDR   join: the host's address (no port)\n"
+        "  --netplay-port N      link port (default 42171; the window offers 42171-42174)\n"
+        "  --netplay-device D    jaglink (default) | voicemodem\n"
+        "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
+        "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
+        "\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about|cheats|netplay]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -100,6 +108,12 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--ra-expect-notice")) a.raExpectNotice.emplace_back(need(s));
         else if (!std::strcmp(s, "--ra-login-at")) a.raLoginAt = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--ra-expect-reset")) a.raExpectReset = (int)std::strtol(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--netplay")) a.netplay.role = need(s);
+        else if (!std::strcmp(s, "--netplay-addr")) a.netplay.address = need(s);
+        else if (!std::strcmp(s, "--netplay-device")) a.netplay.device = need(s);
+        else if (!std::strcmp(s, "--netplay-port")) a.netplay.port = (int)std::strtol(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--netplay-expect-link")) a.netplay.expectLinkSec = std::strtod(need(s), nullptr);
+        else if (!std::strcmp(s, "--netplay-expect-discovery")) a.netplay.expectDiscoverySec = std::strtod(need(s), nullptr);
         else if (!std::strcmp(s, "--frames")) a.frames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--expect-hash")) a.expectHash = need(s);
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);

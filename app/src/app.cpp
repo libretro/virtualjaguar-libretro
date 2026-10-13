@@ -608,6 +608,7 @@ void App::stepEmulation() {
         if (!fastForward) audio.update();
         host.runFrame();
         ach.afterFrame();
+        netplay.afterFrame();
         fpsWindowFrames_++;
     }
     host.wantVideo = true;
@@ -670,6 +671,7 @@ int App::run(const CliArgs& a) {
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
+    if (!netplayInit(*this, a)) return 2;
 
     int rc = a.headless ? runHeadless(a) : runInteractive(a);
 
@@ -697,6 +699,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
     else if (a.showWindow == "cheats") showCheats = true;
+    else if (a.showWindow == "netplay") showNetplay = true;
     unsigned uiFrames = 0;
 
     std::string firstErr;
@@ -826,6 +829,11 @@ int App::runHeadless(const CliArgs& a) {
             if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time
             for (const OsdMessage& m : host.takeMessages())
                 std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+        }
+        {
+            int nr = netplayHeadlessCheck(*this, a);
+            if (nr == 1) rc = 1;
+            else if (nr == 77 && rc == 0) rc = 77;
         }
         if (!cheatsHeadlessCheck(*this, a)) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
