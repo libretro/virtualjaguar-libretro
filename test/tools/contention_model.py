@@ -2,10 +2,10 @@
 """contention_model.py -- timing-campaign S2 arithmetic (docs/timing-campaign-plan.md S2).
 
 Reads a bus_census_probe per-halfline CSV (+ its frames CSV) and multiplies
-the MEASURED traffic by a FIXED latency function (written down before the
-numbers were looked at; see the S2 section of the plan for the provenance of
-every term).  Nothing is fitted: each term has a low / central / high value
-from its evidence, and the script reports all three.
+the MEASURED traffic by a FIXED latency function: constants taken from
+JTRM / gpu-timing-spec bounds, not fitted to any outcome (gpu-timing-spec.md
+section 15 has the provenance of every term).  Each term has a low /
+central / high value from its evidence, and the script reports all three.
 
 Per-access expected wait for a master M arriving uniformly in a video line
 of T sysclks (re-arbitration at every memory-cycle ack, JTRM v8 p.36):

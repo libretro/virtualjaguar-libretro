@@ -262,8 +262,9 @@ Measurement before model; this stage writes no shipped behaviour.
 TEST_EXPORTS only, release objects byte-identical), arithmetic in
 `test/tools/contention_model.py`, latency function and provenance in
 `gpu-timing-spec.md` §15, one-shot cross-check `VJ_S2_INJECT`. Doom
-attract demo, fields 600..1500, accurate blitter, deterministic (repeat run
-byte-identical; idle skip on/off identical).
+attract demo, fields 600..1500, accurate blitter, deterministic (repeat
+run's per-halfline CSV byte-identical; idle skip on/off and internal
+resolution 2x/1x give identical traffic).
 
 *Traffic per field (stock config):*
 
@@ -293,24 +294,37 @@ slack. GPU busy 0.54 field/flip.
 | DSP+68K chain (not critical) | 0.30 / 0.47 / 0.97 | 0.27 / 0.44 / 0.97 |
 | serialized sum (unphysical upper bound) | 0.61 / 0.93 / 1.65 | 0.53 / 0.91 / 1.71 |
 
-*Cross-check — the emulator maps it onto the present rate*
-(`VJ_S2_INJECT`, GPU accesses only, expectations recorded before the runs):
-stock 1.993 -> **2.000 / 2.020 / 2.041** fields/flip (busy 0.54 -> 0.71 /
-0.81 / 0.94); all-three base 2.245 -> **2.401 / 2.501 / 2.709**. So the
-present-rate contribution is +0.01..+0.05 on the stock base and
-+0.16..+0.46 on the all-three base, against the >= 1.0 the gate needs and
-the ~+1.75 the 4.0 bar needs.
+*Cross-check — the emulator maps the GPU-wait part onto the present rate*
+(`VJ_S2_INJECT`). Scope: it injects the **GPU work/spin access waits
+only** — not the blit stretch (about half of the GPU-chain figure above)
+and not the DSP/68K terms; on the all-three base its handoff term slightly
+double-counts the model's existing 2-sysclk grant charge. Stock 1.993 ->
+**2.000 / 2.020 / 2.041** fields/flip (busy 0.54 -> 0.71 / 0.81 / 0.94);
+all-three base 2.245 -> **2.401 / 2.501 / 2.709**: +0.01..+0.05 on the
+stock base, +0.16..+0.46 on the all-three base, against the >= 1.0 the gate
+needs and the ~+1.75 the 4.0 bar needs. Adding the uninjected blit stretch
+at face value (<= 0.31) still leaves every bound short. Disclosure: the
+low level was re-run once after the first pass, because the kernel's low
+level used the contiguous OP burst instead of the model's per-object
+bursts (a mismatch, fixed); the first pass gave stock 2.007, all-three
+2.455, CF 4.46. Expectations written before the runs: stock 1.99-2.10
+(held), all-three 2.3-2.9 (held), CF low within the cap (**wrong**, below).
 
-*Sanity checks.* Checkered Flag (mid-race state): the same function fails
+*Sanity checks.* **Checkered Flag: FAILED.** The same function overshoots
 the canary at every level — mean fields/game-frame 3.000 -> 3.92 / 4.49 /
-4.95 (fail > 3.25); CF carries 2.5x Doom's OP traffic (lines 33-61:
-~490 sysclks/line) and is a knife edge (low-level injection adds only 2.7%
-GPU cycles yet moves the span from 3 to 3.9; S0 measured 4.9 with
-`gpu_pipeline_timing` alone), so the canary cannot arbitrate any
-GPU-cost model until a silicon reference for CF's race rate exists. Control
-title Bubsy (VBL-locked, 68K 86% in its VBL wait): +0.003 GPU / +0.10..0.25
-68K+DSP field per flip against ~0.86 field of 68K slack — no pace change
-predicted.
+4.95 (fail > 3.25). CF carries 2.5x Doom's OP traffic (lines 33-61: ~490
+sysclks/line), so its per-access GPU wait is 9 / 36 / 42 sysclks. The
+failure supports NO-GO: a model sized for Doom's residual would already
+break CF. Unexplained and recorded as a *hypothesis*, not a finding: CF may
+be a knife edge — the low level adds only 2.7% GPU cycles (331.8k ->
+340.8k per field) yet moves most spans from 3 to 4 fields, while
+`gpu_pipeline_timing` alone adds 16% (-> 385.7k) and gives 4.9 (S0);
+quantized spans would explain the step, an injection artifact at a
+GPU/68K sync point has not been ruled out. Control title Bubsy (VBL-locked,
+68K 86% in its `$264A8` VBL wait): model +0.003 GPU / +0.10..0.25 68K+DSP
+field per flip; `VJ_S2_INJECT=3` moves it 1.186 -> 1.211 fields/flip
+(+2%) vs Doom's +0.46 on the all-three base. The control exercises the GPU
+side only (the 68K stretch is not injected).
 
 *Corrections to this plan's premises:* (1) the H-A plausibility arithmetic
 (2.3) priced all 24k GPU external accesses; 94% are spin polls whose delay
@@ -320,8 +334,10 @@ it cannot own the residual. (3) H-C: the DSP is not small in *traffic*
 fields of slack; it crosses 2 fields only if S1 prices each 16-bit DSP
 external transaction at >= ~11 sysclks *beyond* contention (3 fields at
 ~25). (4) The emulated 68K executes 6.1% more cycles than wall time
-(469.9k vs 442.7k sysclks/field): `JaguarExecuteNew` discards
-`m68k_execute`'s per-slice overshoot — S4-relevant, not Doom-relevant.
+(469.9k vs 442.7k sysclks/field, measured). Mechanism *read from code, not
+instrumented per slice*: `M68KExecuteWithStalls` hands `m68k_execute` a
+fresh budget each slice and nothing carries the final instruction's
+overshoot (`remainingCycles` < 0) forward. S4-relevant, not Doom-relevant.
 
 Plan bullets as originally written:
 
@@ -556,8 +572,9 @@ work > shipped option (never)**.
 read-derived latency function (`gpu-timing-spec.md` §15) times the measured
 traffic supplies **0.31 / 0.46 / 0.68 field/flip** of extra wall time on
 Doom's critical (GPU) chain — every bound below 1.0 — and the emulator,
-fed that function, moves the present rate by +0.01..+0.05 (stock) or
-+0.16..+0.46 (all three timing options on). Only the unphysical
+fed its GPU-wait part, moves the present rate by +0.01..+0.05 (stock) or
++0.16..+0.46 (all three timing options on). The Checkered Flag sanity check
+fails at every level, which points the same way. Only the unphysical
 serialized sum of all chains reaches 1.0, at the top of its bounds. The
 numbers do not land "in between" in any way that matters: even the high
 bound leaves the all-three configuration at 2.71 fields/flip, short of the
