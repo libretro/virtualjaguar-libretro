@@ -1358,7 +1358,7 @@ clean:
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
 		test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
-		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
+		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab test/tools/idle_skip_scale_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
 		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
@@ -1423,7 +1423,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd test/test_jaggd_fs \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace \
-		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify \
+		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify test/tools/idle_skip_scale_ab \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader test/test_crash_detect_cd_wedge test/test_crash_detect_inframe \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
@@ -1774,6 +1774,24 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# would silently disable the feature) and the compound-period
 	@# store-hiding exploit must still be rejected.
 	./test/tools/gpu_idle_probe_falsify ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# The fast-forward is exact under any RISC clock scale (it used to be
+	@# switched off at != 1x): same machine, same scale, skip on vs off must
+	@# produce byte-identical per-frame state digests (framebuffer, audio,
+	@# GPU + DSP registers / PC / opcode counts, periodic savestate), and the
+	@# on arm must really have fired on both processors (--require-fires) so
+	@# "identical" cannot be vacuous.  A skip that mis-scales its cost shows
+	@# up as a diverging loop counter.  yarc.j64 is in-tree: never skips.
+	@d=$$(mktemp -d) || exit 1; \
+	for sc in 0.5x 1.5x 2x; do \
+		echo "idle_skip_scale_ab: RISC clock scale $$sc"; \
+		./test/tools/idle_skip_scale_ab ./$(TARGET) test/roms/yarc.j64 --quiet \
+			--csv $$d/off.csv --option virtualjaguar_risc_clock_scale=$$sc \
+			--option virtualjaguar_risc_idle_skip=disabled || { rm -rf $$d; exit 1; }; \
+		./test/tools/idle_skip_scale_ab ./$(TARGET) test/roms/yarc.j64 --quiet \
+			--csv $$d/on.csv --require-fires --option virtualjaguar_risc_clock_scale=$$sc \
+			--option virtualjaguar_risc_idle_skip=enabled || { rm -rf $$d; exit 1; }; \
+		cmp $$d/off.csv $$d/on.csv || { echo "FAIL: skip on != skip off at $$sc"; rm -rf $$d; exit 1; }; \
+	done; rm -rf $$d
 	@# Texture dump mode (issue #369): identity-contract freeze vs the
 	@# committed golden list, determinism, fast/accurate engine
 	@# independence, machine inertness (fb hashes + savestate digests
@@ -2230,6 +2248,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 4 --quiet
 	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 3 --quiet \
 		--option virtualjaguar_risc_idle_skip=enabled \
+		--option virtualjaguar_dram_timing=enabled
+	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 11 --quiet \
+		--option virtualjaguar_risc_idle_skip=enabled \
 		--option virtualjaguar_risc_clock_scale=2x
 	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
 	@# #850 follow-ups, all on the in-tree yarc.j64 (never skip): the runtime
@@ -2241,7 +2262,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 8 --quiet
 	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 9 --quiet \
 		--option virtualjaguar_risc_idle_skip=enabled \
-		--option virtualjaguar_risc_clock_scale=2x
+		--option virtualjaguar_dram_timing=enabled
 	./test/tools/test_option_explain ./$(TARGET) test/roms/yarc.j64 --case 10 --quiet
 	@rom=$$(bash scripts/find-rom.sh "White Men Can't Jump*.jag" "*White Men Can*"); \
 	if [ -n "$$rom" ]; then \
@@ -3092,6 +3113,15 @@ test/tools/gpu_idle_probe_falsify: test/tools/gpu_idle_probe_falsify.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/gpu_idle_probe_falsify.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Idle-skip exactness under a non-stock RISC clock scale; run twice (skip
+# off / on) by the `test` target and the digests compared.
+test/tools/idle_skip_scale_ab: test/tools/idle_skip_scale_ab.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/idle_skip_scale_ab.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 

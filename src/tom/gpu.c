@@ -2411,10 +2411,20 @@ void GPUExec(int32_t cycles)
     * The vjtrace/gdb checks are RUNTIME checks for the same reason as
     * the DSP's: the test ABI is built with -DVJ_TRACE, and a compile-
     * time gate would make every headless harness silently measure a
-    * disabled feature. */
+    * disabled feature.
+    *
+    * riscClockScalePct is deliberately NOT a gate (#378): the scaled
+    * budget is handed out by JaguarExecuteNew, and the probe measures
+    * cost/opcost from live `cycles` deltas, so everything it skips is
+    * already in the scaled domain.  The one scale-dependent term in the
+    * loop below is gpu_stall_scale_accum, which only moves when
+    * gpu_bus_stall != 0, and that is structurally 0 in an admitted body:
+    * GPU_EXT_ACCESS charges only under busArbiter.enabled, pipeline
+    * stalls only under pipeTiming (both gated here), and
+    * GPUChargeBusStall is reached only by a blitter-register access,
+    * which GPU_IDLE_EA_OK (RAM / local SRAM only) never admits. */
    idleSkipActive = vjs.riscIdleSkip
                  && !blitMemoMode && !blitMemoRecording
-                 && riscClockScalePct == 100
                  && !busArbiter.enabled
                  && !vjs.gpuPipelineTiming
                  && !(gpu_control & 0x18);

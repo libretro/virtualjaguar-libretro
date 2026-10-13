@@ -2095,15 +2095,15 @@ void DSPExec(int32_t cycles)
 	 *     families note reads and writes for the memo (blit_memo.h:64-65,
 	 *     src/core/jaguar.c:1139), and skipping loads would change what
 	 *     the memo records;
-	 *   - riscClockScalePct != 100: strictly speaking this one is
-	 *     conservative rather than necessary -- SCALE_RISC_CYCLES is
-	 *     applied where the budget is handed out (jaguar.c), not inside
+	 *   - riscClockScalePct is deliberately NOT a gate (#378 overclock
+	 *     presets): SCALE_RISC_CYCLES is applied where the budget is handed out (jaguar.c), not inside
 	 *     DSPExec, so `cycles` here is already in the same currency the
-	 *     measured per-iteration cost was charged in.  It stays because
-	 *     the overclock presets (#378) are themselves an accuracy
-	 *     trade-off already under investigation, and stacking a second
-	 *     non-stock execution path underneath them is not something this
-	 *     change should do unasked;
+	 *     measured per-iteration cost was charged in -- cost and opcost
+	 *     are measured from live `cycles` deltas, never recomputed, and
+	 *     nothing per-instruction in this function depends on the scale.
+	 *     Scaling `n` or `cost` again would double-scale.  The GPU has
+	 *     one scale-dependent per-instruction term (gpu_stall_scale_accum);
+	 *     see the note in GPUExec;
 	 *   - busArbiter.enabled (the dram_timing option): bus occupancy is
 	 *     accounted per access.  Belt-and-braces here -- dsp.c never
 	 *     touches busArbiter and JaguarReadLong charges it only for
@@ -2127,7 +2127,6 @@ void DSPExec(int32_t cycles)
 	 *     release builds. */
 	idleSkipActive = vjs.riscIdleSkip
 	              && !blitMemoMode && !blitMemoRecording
-	              && riscClockScalePct == 100
 	              && !busArbiter.enabled
 	              && !vjs.gpuPipelineTiming
 	              && !(dsp_control & 0x18);

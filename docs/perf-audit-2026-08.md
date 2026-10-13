@@ -119,7 +119,7 @@ test (`crash_detect.c:452-482`) still sees progress):
   is *not* charged by the outer loop (see `gpu.c:1815-1822` comment). Safest: measure it from
   the two probe iterations (`cycles_before - cycles_after`) rather than recomputing.
 - Gate OFF when `vjs.gpuPipelineTiming`/DSP pipeline timing is on, when `busArbiter.enabled`
-  (`dram_timing`), when `riscClockScalePct != 100`, and under `VJ_TRACE` PCHIST — those
+  (`dram_timing`), and under `VJ_TRACE` PCHIST (the `riscClockScalePct != 100` gate planned here was dropped once the skip was proven exact under any RISC clock scale: cost is measured from the scaled budget itself) — those
   paths have per-instruction state the extrapolation would have to model. Stock settings
   are the ones the Pi/A10X users run.
 - Exit conditions are automatic: the ISR (delivered at the next slice entry) changes the
