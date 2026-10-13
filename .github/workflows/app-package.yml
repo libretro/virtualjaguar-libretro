@@ -493,6 +493,59 @@ jobs:
           retention-days: 14
 
   # ------------------------------------------------------------------------------------------
+  # Flatpak (x86_64): one self-contained .flatpak bundle (the runtime comes from Flathub when the
+  # user installs it).  Built OFFLINE from app/packaging/flatpak/*.yml, whose every dependency is a
+  # hash-pinned manifest source, inside the Flathub CI image for the manifest's runtime.  Never
+  # submitted to Flathub from here.  aarch64 is not built yet (see app/packaging/README.md).
+  # ------------------------------------------------------------------------------------------
+  flatpak:
+    name: Flatpak x86_64
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    env:
+      LABEL: ${{ needs.meta.outputs.label }}
+      APP_ID: io.github.libretro.VirtualJaguar
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the bundle
+        # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
+        # own artifact would be named app-<arch>.flatpak and not app-package-*, and the release
+        # jobs attach every artifact they find; the final file is uploaded below.
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3
+        with:
+          bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
+          manifest-path: app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+          arch: x86_64
+          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/CMakeLists.txt', 'app/cmake/**') }}
+          upload-artifact: false
+
+      - name: Smoke-test the bundle (install, run headless against the public ROM)
+        run: |
+          set -eu
+          f="VirtualJaguar-${LABEL}-linux-x86_64.flatpak"
+          ls -la "$f"
+          flatpak install --user -y --noninteractive "./$f"
+          flatpak info --user "$APP_ID"
+          # The sandbox only sees the repository because it is passed in here, read-only.
+          flatpak run --user --filesystem="$GITHUB_WORKSPACE:ro" "$APP_ID" \
+            --headless --frames 300 --expect-hash "$SMOKE_HASH" "$GITHUB_WORKSPACE/$SMOKE_ROM"
+          # The bundled data must be beside the executable inside the sandbox.
+          flatpak run --user --command=sh "$APP_ID" -c \
+            'ls /app/bin/cheats | head -3 && ls "/app/bin/libretro-db" && test -d /app/bin/shaders/slang-shaders && ls /app/share/metainfo'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-package-flatpak
+          path: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------
   # Linux: AppImage + .deb on x86_64 and aarch64.  Built on Ubuntu 22.04 (glibc 2.35), the oldest
   # runner image, so the packages run on anything from Debian 12 / Ubuntu 22.04 up.
   # ------------------------------------------------------------------------------------------

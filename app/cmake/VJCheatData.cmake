@@ -7,6 +7,11 @@
 # credit README, so the CC BY-SA 4.0 attribution travels with the files.  Anything a
 # packaging step (#839) takes from the install tree gets them too.
 #
+#   -DVJ_APP_CHEATS_SOURCE_DIR=<dir>   offline builds (Flatpak): take the 41 .cht files and
+#                                LICENSE-libretro-database.txt from this folder (flat, by the
+#                                names in VJCheatManifest.cmake) instead of downloading.  Every
+#                                file is still checked against its pinned SHA-256; nothing is
+#                                downloaded when this is set.
 #   -DVJ_APP_FETCH_CHEATS=OFF    no download, nothing bundled (offline / distro builds);
 #                                the app still works: point it at any folder of .cht
 #                                files from the Cheats window or with --cheats-dir
@@ -24,6 +29,7 @@
 # it.
 option(VJ_APP_FETCH_CHEATS "Download the pinned libretro Jaguar cheat database (CC BY-SA 4.0) and bundle it with the program" ON)
 
+set(VJ_APP_CHEATS_SOURCE_DIR "" CACHE PATH "Offline builds: a folder holding the pinned .cht files and LICENSE-libretro-database.txt")
 set(VJ_CHEATS_DIR "")
 if(NOT VJ_APP_FETCH_CHEATS)
     return()
@@ -52,8 +58,18 @@ foreach(_entry IN LISTS VJ_CHEAT_DB_FILES)
             file(REMOVE "${_dest}")
         endif()
     endif()
+    if(NOT _have AND VJ_APP_CHEATS_SOURCE_DIR AND EXISTS "${VJ_APP_CHEATS_SOURCE_DIR}/${_name}")
+        configure_file("${VJ_APP_CHEATS_SOURCE_DIR}/${_name}" "${_dest}" COPYONLY)
+        file(SHA256 "${_dest}" _cur)
+        if(_cur STREQUAL _sha)
+            set(_have 1)
+        else()
+            message(WARNING "VJCheatData: ${VJ_APP_CHEATS_SOURCE_DIR}/${_name} is not the pinned file; ignoring it")
+            file(REMOVE "${_dest}")
+        endif()
+    endif()
     if(NOT _have)
-        if(_vj_cheat_offline)
+        if(_vj_cheat_offline OR VJ_APP_CHEATS_SOURCE_DIR)
             math(EXPR _vj_cheat_bad "${_vj_cheat_bad}+1")
             continue()
         endif()
@@ -90,7 +106,17 @@ if(EXISTS "${_vj_cheat_license}")
         file(REMOVE "${_vj_cheat_license}")
     endif()
 endif()
-if(NOT _vj_cheat_license_ok AND NOT _vj_cheat_offline)
+if(NOT _vj_cheat_license_ok AND VJ_APP_CHEATS_SOURCE_DIR AND EXISTS "${VJ_APP_CHEATS_SOURCE_DIR}/LICENSE-libretro-database.txt")
+    configure_file("${VJ_APP_CHEATS_SOURCE_DIR}/LICENSE-libretro-database.txt" "${_vj_cheat_license}" COPYONLY)
+    file(SHA256 "${_vj_cheat_license}" _cur)
+    if(_cur STREQUAL VJ_CHEAT_DB_LICENSE_SHA256)
+        set(_vj_cheat_license_ok 1)
+    else()
+        message(WARNING "VJCheatData: the supplied LICENSE is not the pinned file; ignoring it")
+        file(REMOVE "${_vj_cheat_license}")
+    endif()
+endif()
+if(NOT _vj_cheat_license_ok AND NOT _vj_cheat_offline AND NOT VJ_APP_CHEATS_SOURCE_DIR)
     file(DOWNLOAD "${VJ_CHEAT_DB_LICENSE_URL}" "${_vj_cheat_license}" STATUS _st TIMEOUT 30)
     list(GET _st 0 _rc)
     if(_rc EQUAL 0)
