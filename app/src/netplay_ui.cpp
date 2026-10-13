@@ -2,6 +2,7 @@
 // headless tests, and the glue between Netplay and the App.  See netplay.h for what is (not) being done.
 #include <algorithm>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
@@ -33,6 +34,16 @@ const ImVec4 kGreen(0.45f, 0.85f, 0.5f, 1.0f);
 const ImVec4 kAmber(1.0f, 0.8f, 0.4f, 1.0f);
 const ImVec4 kRed(1.0f, 0.5f, 0.5f, 1.0f);
 const ImVec4 kGrey(0.6f, 0.6f, 0.6f, 1.0f);
+
+// Greyed text that wraps (ImGui::TextDisabled does not).
+void hint(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrappedV(fmt, ap);
+    ImGui::PopStyleColor();
+    va_end(ap);
+}
 
 void initUi(App& app) {
     if (g_ui.init) return;
@@ -135,7 +146,7 @@ void drawLinkActivity(App& app) {
             ImGui::TreePop();
         }
     } else {
-        ImGui::TextDisabled("Connected, no game traffic yet. Start the game's link / network mode (see below).");
+        hint("Connected, no game traffic yet. Start the game's link / network mode (see below).");
     }
     if (np.wireSpeedup() > 1)
         ImGui::TextDisabled("Link speed-up x%u agreed with your partner.", np.wireSpeedup());
@@ -161,9 +172,9 @@ void deviceChoice(App& app) {
     }
 }
 
-void portCombo() {
+void portCombo(int live) {   // live > 0: what the running link uses (the box is locked then)
     char lab[16];
-    std::snprintf(lab, sizeof lab, "%d", kPorts[g_ui.portIdx]);
+    std::snprintf(lab, sizeof lab, "%d", live > 0 ? live : kPorts[g_ui.portIdx]);
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
     if (ImGui::BeginCombo("Port", lab)) {
         for (int i = 0; i < 4; i++) {
@@ -180,14 +191,14 @@ void drawHost(App& app) {
     ImGui::TextWrapped("Start a game, then have your partner join it from their Netplay window. "
                        "Make sure you both picked the same device above.");
     ImGui::BeginDisabled(hosting);
-    portCombo();
+    portCombo(hosting ? np.settings().port : 0);
     ImGui::EndDisabled();
     refreshLan(app);
     ImGui::SeparatorText("Your addresses");
     if (g_ui.lan.empty()) {
         ImGui::TextColored(kAmber, "This computer does not seem to be on a network.");
     } else {
-        ImGui::TextDisabled("Your partner can pick you from their list, or type one of these:");
+        hint("Your partner can pick you from their list, or type one of these:");
         for (size_t i = 0; i < g_ui.lan.size(); i++) {
             ImGui::PushID((int)i);
             ImGui::Text("%s", g_ui.lan[i].ip.c_str());
@@ -205,7 +216,7 @@ void drawHost(App& app) {
     } else if (ImGui::Button("Stop hosting")) {
         app.netplay.stop();
     }
-    ImGui::TextDisabled("If your partner cannot connect, allow Virtual Jaguar through the firewall when asked.");
+    hint("If your partner cannot connect, allow Virtual Jaguar through the firewall when asked.");
 }
 
 void drawJoin(App& app) {
@@ -214,7 +225,7 @@ void drawJoin(App& app) {
     const bool dialing = joined && !np.settings().address.empty();
     ImGui::TextWrapped("Ask your partner to host, then pick them below or type their address.");
     ImGui::BeginDisabled(dialing);
-    portCombo();
+    portCombo(dialing ? np.settings().port : 0);
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("(the host must use the same)");
@@ -227,10 +238,10 @@ void drawJoin(App& app) {
     } else {
         std::vector<DiscoveredHost> found = np.discovered();
         if (found.empty()) {
-            ImGui::TextDisabled(app.host.isLoaded()
-                                    ? "None found yet. The host needs a game running and to be hosting. Some Wi-Fi\n"
-                                      "networks block this; type the address instead."
-                                    : "Open a game first: the search runs while a game is running.");
+            hint("%s", app.host.isLoaded()
+                           ? "None found yet. The host needs a game running and to be hosting. Some Wi-Fi networks "
+                             "block this; type the address instead."
+                           : "Open a game first: the search runs while a game is running.");
         }
         for (size_t i = 0; i < found.size(); i++) {
             const DiscoveredHost& h = found[i];
@@ -359,9 +370,9 @@ void drawNetplay(App& app) {
         } else if (ImGui::Button("Stop echo test")) {
             np.stop();
         }
-        ImGui::TextDisabled("The console hears its own link traffic; games will say no players were found.");
+        hint("The console hears its own link traffic; games will say no players were found.");
         if (app.host.isLoaded() && ImGui::Button("Restart game")) app.reloadContent();
-        ImGui::TextDisabled("Not normally needed: link changes apply straight away.");
+        hint("Not normally needed: link changes apply straight away.");
     }
     ImGui::End();
 
