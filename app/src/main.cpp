@@ -31,6 +31,14 @@ static void usage(const char* argv0) {
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
         "\n"
+        "RetroAchievements test hooks (headless only; the only server is a directory of canned\n"
+        "<api>.json replies, so nothing here can reach or sign in to the real service):\n"
+        "  --ra-mock DIR         answer rc_client's requests from DIR/<r>.json and sign in as a mock user\n"
+        "  --ra-hardcore         run the mock session in hardcore mode\n"
+        "  --ra-poke FRAME:CODE  switch the core cheat CODE on at FRAME (a known RAM write)\n"
+        "  --ra-expect-unlock ID / --ra-expect-no-unlock ID / --ra-expect-request NAME / --ra-expect-hash HEX\n"
+        "  --ra-expect-load-error / --ra-expect-hardcore / --ra-expect-softcore\n"
+        "\n"
         "Drop a ROM or disc image on the window, or use File > Open.\n",
         VJ_APP_VERSION, argv0);
 }
@@ -52,6 +60,24 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
         else if (!std::strcmp(s, "--no-content")) a.noContent = true;
         else if (!std::strcmp(s, "--verbose")) a.verbose = true;
+        else if (!std::strcmp(s, "--ra-mock")) a.raMock = need(s);
+        else if (!std::strcmp(s, "--ra-hardcore")) a.raHardcore = true;
+        else if (!std::strcmp(s, "--ra-poke")) {
+            std::string v = need(s);
+            size_t c = v.find(':');
+            if (c == std::string::npos || c == 0) {
+                std::fprintf(stderr, "--ra-poke wants FRAME:CODE, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.raPokes.emplace_back((unsigned)std::strtoul(v.c_str(), nullptr, 10), v.substr(c + 1));
+        }
+        else if (!std::strcmp(s, "--ra-expect-unlock")) a.raExpectUnlock.push_back((unsigned)std::strtoul(need(s), nullptr, 10));
+        else if (!std::strcmp(s, "--ra-expect-no-unlock")) a.raExpectNoUnlock.push_back((unsigned)std::strtoul(need(s), nullptr, 10));
+        else if (!std::strcmp(s, "--ra-expect-request")) a.raExpectRequests.emplace_back(need(s));
+        else if (!std::strcmp(s, "--ra-expect-hash")) a.raExpectHash = need(s);
+        else if (!std::strcmp(s, "--ra-expect-load-error")) a.raExpectLoadError = true;
+        else if (!std::strcmp(s, "--ra-expect-hardcore")) a.raExpectHardcore = true;
+        else if (!std::strcmp(s, "--ra-expect-softcore")) a.raExpectSoftcore = true;
         else if (!std::strcmp(s, "--frames")) a.frames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--expect-hash")) a.expectHash = need(s);
         else if (!std::strcmp(s, "--screenshot")) a.screenshot = need(s);

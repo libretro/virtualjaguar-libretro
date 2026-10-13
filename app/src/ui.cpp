@@ -364,6 +364,7 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Mute", nullptr, &app.mute)) app.applyAudioSettings();
         ImGui::EndMenu();
     }
+    drawAchievementsMenu(app);
     if (ImGui::BeginMenu("Help")) {
         if (ImGui::MenuItem("About")) app.showAbout = true;
         ImGui::EndMenu();
@@ -440,6 +441,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showSettings) drawSettings(app);
     if (app.showStates) drawStates(app);
     if (app.showAbout) drawAbout(app);
+    drawAchievementsUi(app);
     drawOsd(app, areaPos, areaSize);
 
     wantCaptureKeyboard = io.WantCaptureKeyboard;

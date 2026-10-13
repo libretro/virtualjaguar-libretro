@@ -441,8 +441,18 @@ bool CoreHost::env(unsigned cmd, void* data) {
         return true;
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
         return true;
-    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
-        return true;  // consumed by cheat/achievement tooling (#835, #836)
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+        // Kept (deep-copied) for achievements (#836): rcheevos resolves emulated
+        // addresses through this very map, as RetroArch does.
+        const retro_memory_map* m = (const retro_memory_map*)data;
+        memDescs_.clear();
+        memMap_ = retro_memory_map{};
+        if (m && m->descriptors)
+            memDescs_.assign(m->descriptors, m->descriptors + m->num_descriptors);
+        memMap_.descriptors = memDescs_.empty() ? nullptr : memDescs_.data();
+        memMap_.num_descriptors = (unsigned)memDescs_.size();
+        return true;
+    }
     case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
         return true;
     case RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL:
@@ -611,6 +621,17 @@ void CoreHost::stopSession() {
     updateDisplayCb_ = nullptr;   // belongs to the core instance that just went away
     keyboardCb_ = nullptr;
     diskRegistered_ = false;
+    memDescs_.clear();   // the descriptors point into the core instance that just went away
+    memMap_ = retro_memory_map{};
+}
+
+bool CoreHost::memoryRegion(unsigned id, uint8_t*& data, size_t& size) const {
+    data = nullptr;
+    size = 0;
+    if (!loaded_) return false;
+    data = (uint8_t*)retro_get_memory_data(id);
+    size = data ? retro_get_memory_size(id) : 0;
+    return data && size;
 }
 
 void CoreHost::unloadContent() { stopSession(); }

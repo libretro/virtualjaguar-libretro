@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "achievements.h"
 #include "audio.h"
 #include "config.h"
 #include "core_host.h"
@@ -37,6 +38,19 @@ struct CliArgs {
     std::string dumpFrame;          // headless: write the final frame of each game as PNG (<path>.N.png)
     bool showHelp = false;
     bool showVersion = false;
+    // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
+    // headless; the only server is the canned-JSON mock, so a test can never reach
+    // (or authenticate against) the real service.
+    std::string raMock;                              // directory of <api>.json canned replies
+    bool raHardcore = false;                         // run the mock session in hardcore
+    std::vector<std::pair<unsigned, std::string>> raPokes;   // FRAME:CODE -> core cheat switched on at FRAME
+    std::vector<unsigned> raExpectUnlock;            // achievement ids that must fire
+    std::vector<unsigned> raExpectNoUnlock;          // ... and ids that must not
+    std::vector<std::string> raExpectRequests;       // API names ("awardachievement") that must have been sent
+    std::string raExpectHash;                        // the game hash the client must have asked about
+    bool raExpectLoadError = false;                  // the game must NOT be identified
+    bool raExpectHardcore = false;                   // hardcore active + state load refused
+    bool raExpectSoftcore = false;                   // softcore: save + load state work, progress sidecar written
 };
 
 struct Osd {
@@ -65,6 +79,7 @@ public:
     AudioOut audio;
     VideoOut video;
     InputManager input;
+    Achievements ach;   // RetroAchievements (#836)
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
