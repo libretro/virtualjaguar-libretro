@@ -22,7 +22,21 @@ titles such as `yarc_reloaded`) are probed with `--bios` and PAL, matching
 JaguarDemos' own `Rules.launch`.  Size-coded pads prefer `vj.j64` then
 Series K (`*_K`) because the embedded cart boot ROM is Series K.
 Remaining `[FAIL …]` rows in `BASELINE.txt` are accuracy gaps, not
-"HLE never started".  Smoke never rewrites `BASELINE.txt`; use
+"HLE never started".
+
+Three rows flipped PASS -> FAIL in v3.8.0 when BIOS-mode power-on RAM became a
+zero fill (#856, #868); see the release PR #875, #876 (RAM model) and #877
+(probe sampling):
+
+- `256/Outline2023/JaGol` seeds its Game of Life from power-on RAM, so zeroed
+  RAM leaves an almost empty field.  Real RAM is not blank, but no uniform
+  fill suits everything (random breaks Fight For Your Life, `$FF` breaks
+  homebrew that expects zeroed BSS).
+- `256/algorip` renders the same picture under every fill; the probe samples
+  every 4th pixel of every 4th row and misses its pattern.
+- `512/solidWaves` draws nothing under any fill.
+- The old PASS for all three came from random power-on RAM shown before the
+  intro drew (`nonblack_max_pct` is a peak over the run).  Smoke never rewrites `BASELINE.txt`; use
 `make jaguar-demos-baseline` (full sweep) when the PASS/FAIL set changes.
 
 ## Targets

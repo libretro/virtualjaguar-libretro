@@ -1,3 +1,84 @@
+Virtual Jaguar v3.8.0 libretro
+------------------------------
+
+Correct by default. Full notes: docs/RELEASE_NOTES_v3.8.0.md
+
+== Game fixes ==
+* Flip Out runs in both boot modes (#851, #855). 1, 2 and 4 MB cart
+  images now repeat across the cart window, as on hardware (MiSTer
+  cart_mask). Headless-verified only.
+* Fight For Your Life (1996) boots on the real BIOS (#856, #868).
+  BIOS-mode power-on RAM is now zero-filled like HLE; the random fill
+  let a game fill overrun the GPU's parameter block. Headless only.
+* Club Drive has audio under HLE (#744, #849). DSP interrupts are taken
+  at the DSP's next instruction, not inside the I2S event callback.
+  Confirmed by ear in RetroArch on iOS.
+* White Men Can't Jump gameplay stops tearing (#736, #870). Blitter Bus
+  Timing gains a "68000 only" value and the title's preset uses it; the
+  intro logo fix still holds. Some flicker remains. Headless only.
+* Music Demo: no DSP runaway at start (#853, #862). Instructions right
+  after a D_FLAGS store use the old register bank (JTRM v8 p.109).
+  Confirmed in RetroArch on iOS. The GPU gets the same retire window
+  for G_FLAGS (#865, #869); no title is known to change.
+* Ruiner Pinball: no GPU escape (#866, #873). Every GPU long-store form
+  now drops the low address bits. Native Demo (bin) loads at $5000 and
+  boots (#866, #872). Both headless only.
+* Doom 2-player netplay holds 60 fps instead of 30 Hz (#860, #861,
+  #871). Over Wi-Fi it is still slower than single player: the link
+  protocol is latency-bound (epic #864).
+
+== New ==
+* GameDrive SD card backed by a host folder, jaggd-sd in the save
+  directory (#783, #844). New option "Jaguar GameDrive SD Card"
+  (Read/write by default, Read-only, Disabled). GPU and async reads are
+  not implemented yet. A bad directory handle no longer leaks host
+  memory, and a state with no card configured reopens nothing.
+* Per-title rows are enhancement or compatibility class; compatibility
+  rows are never withheld and cite their ticket (#748, #842). CD titles
+  are keyed by boot-stub CRC32; the disc table ships empty (#747, #843).
+* RetroArch shows which per-title presets were applied at load; option
+  sublabels explain the current state; load-only options say "Restart
+  required"; cartridge-only options are hidden for CD content (#841,
+  #847, #850, #859).
+* BIOS (Cartridges) and PAL apply only at content load; a mid-game change
+  logs a "takes effect on restart" line (#858, #863).
+* Towers II no longer defaults to 2x internal resolution (#809, #848).
+
+== Savestates ==
+* Version 17. v16 and older states still load; v17 states do not load
+  in older builds.
+* Appended chunk: JGF1 (GameDrive SD handles, #844). The DSP and GPU
+  retire windows use spare bits of an existing byte. See
+  docs/savestate-compat.md.
+
+== Testing ==
+* Release gate vs v3.7.1: no row moved backward in either matrix.
+* Cart corpus, 155 titles: 155/155 HLE reach game code; BIOS 141 game
+  code + 14 BIOS_REJECT (alternate/bad dumps the boot ROM refuses, now
+  visible because BIOS rows are scored from the handoff, #852, #854).
+  8 rows improved (Ruiner Pinball, Native Demo (bin), Music Demo BIOS,
+  Jaguar Server 50/60 Hz and Painter BIOS).
+* CD corpus: 28 of 28 discs reach game code in both modes, unchanged.
+* make test passes on the corpus machine with the audio pair run.
+
+== Developer / CI ==
+* matrix_diff.py and the never-backward pre-tag gate (#749, #846).
+* cart_boot_probe --post-handoff, cart_classify.sh with BIOS_REJECT and
+  ? (bios_trap) (#852, #854).
+* Harness --input-bitmasks (#857); netlink_sim and netlink delay-proxy
+  jitter/spike/loss options (#861, #871).
+
+== Known issues ==
+* Headless-verified only: Flip Out, Fight For Your Life BIOS, White Men
+  Can't Jump, Ruiner Pinball, Native Demo (bin), the GPU retire window,
+  BIOS/PAL latching, preset notices and the GameDrive SD card.
+* JaGol (JaguarDemos) shows an almost empty field: it seeds from
+  power-on RAM, now zero in BIOS mode (#876). algorip and solidWaves are
+  also marked FAIL in the JaguarDemos baseline; their old pass was
+  random RAM on screen (#877).
+* #737 (FMV interactive scenes) closed with no core defect found.
+
+
 Virtual Jaguar v3.7.1 libretro
 ------------------------------
 

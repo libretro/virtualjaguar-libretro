@@ -1452,7 +1452,11 @@ void JaguarReset(void)
     * from $F9A90, which nothing ever writes; the PRNG word overran the
     * fill into the GPU parameter block and the GPU job ran away.  Zero
     * (or $FFFFFFFF) there boots clean.  A uniform fill keeps BIOS and
-    * HLE starting from the same memory.  (JaguarInit's PRNG fill is
+    * HLE starting from the same memory.  Known cost: size-coded BootIntros
+    * that seed from power-on RAM (JaGol's Game of Life) get an empty
+    * field.  $FF instead was tried for v3.8.0 and broke homebrew that
+    * expects zeroed BSS (BadCode4, Jaguar Server examples, Mandelbrot).
+    * Tracked in #876.  (JaguarInit's PRNG fill is
     * overwritten here on every reset.) */
    {
       if (preserveEnd > preserveStart)
