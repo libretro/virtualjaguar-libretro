@@ -4,6 +4,9 @@
 //   vj_shader_tests gl        renders pixels through the bundled presets      (exit 77 = skipped)
 // Exit code 77 is CTest's SKIP_RETURN_CODE: the machine lacks the library or a
 // display, which is not a failure and must not be reported as a pass.
+#ifdef _WIN32
+#define NOMINMAX
+#endif
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -284,6 +287,52 @@ static int runUnit() {
 }
 
 // ---------------------------------------------------------------------------------------
+// bundled slang-shaders subset
+// ---------------------------------------------------------------------------------------
+
+#ifdef VJ_SLANG_DIR
+static const char* const kBundledMustWork[] = {
+    "crt/crt-easymode.slangp",        "crt/crt-geom.slangp",
+    "crt/crt-royale.slangp",          "crt/crt-lottes.slangp",
+    "pixel-art-scaling/sharp-bilinear-simple.slangp",
+    "interpolation/bicubic.slangp",   "bilinear.slangp", "nearest.slangp",
+};
+
+static int runBundled() {
+    std::string root = VJ_SLANG_DIR;
+    if (root.empty() || !fs::is_directory(fs::u8path(root))) {
+        std::printf("shader_tests bundled: SKIP (no bundled subset)\n");
+        return 77;
+    }
+    if (root.back() != '/') root += '/';
+    bool trunc = false;
+    std::vector<std::string> l = scanPresets(root, 100000, 12, &trunc);
+    size_t bad = 0;
+    for (const std::string& rel : l) {
+        PresetInfo p = inspectPreset(root + rel);
+        if (!p.ok && bad++ < 15) std::printf("  not valid: %s: %s\n", rel.c_str(), p.error.c_str());
+    }
+    std::printf("bundled slang-shaders: %zu presets, %zu failed inspection\n", l.size(), bad);
+    CHECK(l.size() > 400, "expected hundreds of presets, got %zu", l.size());
+    // A handful may be broken upstream; the closure must still be essentially complete.
+    CHECK(bad * 50 <= l.size(), "too many presets with missing files: %zu of %zu", bad, l.size());
+    for (const char* rel : kBundledMustWork) {
+        PresetInfo p = inspectPreset(root + rel);
+        CHECK(p.ok, "%s: %s", rel, p.error.c_str());
+    }
+    CHECK(fs::exists(fs::u8path(root + "NOTICE-virtualjaguar.txt")), "notice file");
+    CHECK(fs::exists(fs::u8path(root + "crt/shaders/crt-royale/LICENSE.TXT")), "crt-royale licence travels with it");
+    std::printf("shader_tests bundled: %s\n", g_fail ? "FAIL" : "OK");
+    return g_fail ? 1 : 0;
+}
+#else
+static int runBundled() {
+    std::printf("shader_tests bundled: SKIP (no bundled subset)\n");
+    return 77;
+}
+#endif
+
+// ---------------------------------------------------------------------------------------
 // library
 // ---------------------------------------------------------------------------------------
 
@@ -490,6 +539,37 @@ static int runGl() {
         CHECK(mx - mn <= 2, "strength 0 should be flat: min %d max %d", mn, mx);
     }
 
+#ifdef VJ_SLANG_DIR
+    // ---- the bundled slang-shaders presets that must work on this GL ----
+    {
+        std::string root = VJ_SLANG_DIR;
+        if (!root.empty() && root.back() != '/') root += '/';
+        for (const char* rel : kBundledMustWork) {
+            if (!fs::exists(fs::u8path(root + rel))) continue;   // bundling was skipped
+            ShaderChain ex;
+            ex.setLibrarySearchDirs({});
+            ex.enabled = true;
+            std::string e2;
+            bool used = ex.usePreset(root + rel, e2);
+            unsigned t = 0;
+            for (int i = 1; used && i <= 4; i++) {
+                f.srcTex = srcTex;
+                f.frameCount = (uint64_t)i;
+                t = ex.render(f);
+            }
+            long sum = 0;
+            if (t) {
+                std::vector<unsigned char> o = readTexture(t, OW, OH);
+                for (size_t i = 0; i < o.size(); i += 4) sum += o[i] + o[i + 1] + o[i + 2];
+            }
+            std::printf("bundled %s: %s (energy %ld)%s%s\n", rel, t && sum > 0 ? "renders" : "FAILS", sum,
+                        t ? "" : " -- ", t ? "" : (used ? ex.lastError().c_str() : e2.c_str()));
+            CHECK(t != 0 && sum > 0, "%s did not render a picture", rel);
+            ex.destroyGL();
+        }
+    }
+#endif
+
     // ---- any other preset on request (a slang-shaders checkout): VJ_TEST_PRESETS="a.slangp;b.slangp" ----
     if (const char* extra = std::getenv("VJ_TEST_PRESETS")) {
         f.srcTex = srcTex;
@@ -559,6 +639,7 @@ static int runGl() {
 int main(int argc, char** argv) {
     std::string mode = argc > 1 ? argv[1] : "unit";
     if (mode == "unit") return runUnit();
+    if (mode == "bundled") return runBundled();
     if (mode == "library") return runLibrary();
     if (mode == "gl") return runGl();
     std::fprintf(stderr, "usage: %s unit|library|gl\n", argv[0]);

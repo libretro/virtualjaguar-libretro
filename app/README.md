@@ -132,19 +132,29 @@ a failure.
   and Windows (arm64/x86_64) and copies it next to the executable. Upstream
   publishes no Linux binary: install the distro/OBS package or build it, and it
   is picked up from the system path.
-- **Presets.** Two first-party presets ship in `shaders/` (copied beside the
-  executable): `vj-sharp-bilinear` and `vj-scanlines` (with parameters). For
-  CRT-Royale, CRT-Geom and the rest, set **Preset folder** to a clone of
-  [libretro/slang-shaders](https://github.com/libretro/slang-shaders); the list
+- **Presets.** `shaders/` beside the executable holds two small first-party presets
+  (`vj-sharp-bilinear`, `vj-scanlines`, also the offline test fixtures) and, by
+  default, a subset of [libretro/slang-shaders](https://github.com/libretro/slang-shaders)
+  under `shaders/slang-shaders/`: the CRT (CRT-Royale, CRT-Geom, CRT-EasyMode, ...),
+  scanline and interpolation families plus every directory they reference (~23 MB,
+  ~900 files). CMake downloads the tarball for one pinned commit at configure time
+  (SHA256-verified; nothing is committed to this repo), extracts those directories
+  untouched and copies them beside the executable. **Licensing:** slang-shaders has no
+  single licence; each shader states its own (GPL, MIT, public domain, ...) in its
+  header and some directories carry LICENSE/README/THANKS files, all of which travel
+  with the copy together with a `NOTICE-virtualjaguar.txt`. No network, or a hash
+  mismatch, only means no bundled presets (a warning, never a build failure);
+  `-DVJ_APP_BUNDLE_SLANG_SHADERS=OFF` skips it for distro/offline builds and
+  `-DVJ_SLANG_SHADERS_ARCHIVE=<tarball>` supplies a local copy. For the rest of
+  slang-shaders, or a newer copy, set **Preset folder** to a full checkout; the list
   is searched recursively and filterable, and preset parameters get sliders.
-  slang-shaders is **not** bundled: its files carry many different licences.
 - **Scaling.** Integer scaling and the aspect modes are independent of shaders
   (`computePresentRect` in `present_util.cpp`): the chain renders into a texture
   of exactly the rectangle they pick, so a CRT preset at 3x integer scale looks
   the same as the plain picture at 3x. Both paths share that one function.
 - **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
 
-`vj_shader_tests` (CTest `shaders_unit`, `shaders_library`, `shaders_gl`) covers
+`vj_shader_tests` (CTest `shaders_unit`, `shaders_bundled`, `shaders_library`, `shaders_gl`) covers
 the pure logic and the missing-library fallback anywhere; the other two need the
 library (and a display, for the GL one) and report **skipped**, not passed,
 without them. Point `VJ_LIBRASHADER` at the library, and optionally

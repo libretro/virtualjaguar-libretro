@@ -155,13 +155,17 @@ void drawShaderSettings(App& app) {
     if (!g_presetError.empty()) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", g_presetError.c_str());
     else if (!sc.lastError().empty()) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", sc.lastError().c_str());
 
-    // Built-in presets that ship with the app.
+    // Built-in presets that ship with the app (shaders/ beside the executable: ours plus
+    // the bundled libretro/slang-shaders subset).
     std::string bd = builtinDir();
     if (!g_builtin.valid && !bd.empty()) rescan(g_builtin, bd);
     if (!g_builtin.items.empty()) {
         ImGui::Spacing();
-        ImGui::Text("Built-in");
-        drawList(app, g_builtin, "##builtin", ImGui::GetTextLineHeightWithSpacing() * 3.5f);
+        ImGui::Text("Built-in (%zu presets)", g_builtin.items.size());
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        ImGui::InputTextWithHint("##bfilter", "filter (crt, scanline, ...)", g_filter, sizeof g_filter);
+        drawList(app, g_builtin, "##builtin", ImGui::GetTextLineHeightWithSpacing() * 8.0f);
     }
 
     // A slang-shaders checkout (or any folder of presets).
