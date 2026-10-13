@@ -1,3 +1,47 @@
+Virtual Jaguar v3.8.1 libretro
+------------------------------
+
+RISC overclock fix + the desktop app. Full notes:
+docs/RELEASE_NOTES_v3.8.1.md
+
+== Core fix ==
+* RISC clock 0.5x/1.5x/2x no longer turns the GPU/DSP idle-loop
+  fast-forward off (#891). The skip is exact at any scale (video,
+  audio and savestates byte-identical on/off). Core fps at 2x: Doom
+  52 -> 82, AvP 71 -> 204, Tempest 2000 77 -> 209. 1x unchanged; no
+  option or savestate (v17) changes.
+
+== Desktop app ==
+* Standalone emulator for macOS, Windows and Linux in app/: SDL3,
+  Dear ImGui, OpenGL 3.3, driving the core through the retro_* API.
+* Game library on the home screen: Cartridges, Jaguar CD and BIOS &
+  system tabs, CRC32 identification, box art on demand (#838).
+* Shaders: RetroArch .slangp presets via librashader, slang-shaders
+  CRT/scanline/sharp-bilinear presets bundled, integer scaling (#834).
+* Cheats: libretro cheat database bundled, plus manual codes (#835).
+* RetroAchievements: softcore default, optional hardcore (#836).
+* Controls: per-device and per-game remapping, 12-key keypad on a
+  gamepad, 6-button keyboard layout, on-screen keypad (F2), controls
+  overlay (F3); mice, rotary, analog, driving, paddle, 6D, light gun
+  and Team Tap (#837).
+* Save states with thumbnails and a state manager.
+* Netplay window for the link-cable games on a LAN (not rollback;
+  rollback is #864); Settings greys out the link options it controls
+  during a session (#898).
+* BIOS files in library folders show in the BIOS tab and can be
+  copied to the system folder in one click; Ctrl/Cmd+scroll or pinch
+  resizes the library tiles (#899).
+* Packages: macOS universal zip, Windows zip and installer, Linux
+  AppImage and .deb (#839, #840); nightly builds linked from the
+  pinned builds issue.
+
+== Known issues ==
+* Packages are unsigned: right-click > Open on macOS; SmartScreen may
+  warn on Windows.
+* Shaders may be unavailable on Intel Macs (arm64-only librashader in
+  the universal package); Linux needs librashader installed.
+* RetroAchievements does not identify .chd or .cdi discs yet.
+
 Virtual Jaguar v3.8.0 libretro
 ------------------------------
 
