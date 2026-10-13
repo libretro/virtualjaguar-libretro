@@ -115,7 +115,9 @@ struct BusArbiter {
     /* Calibration multiplier applied to charged cycles.  NOT a user
      * option: settable only via the VJ_DRAM_SCALE env var while the
      * correct physical cost (OP occupancy, load latency, master
-     * handoff) is being pinned down against measured game pace. */
+     * handoff) is being pinned down against measured game pace.
+     * Applies to the GPU, 68K, OP and refresh charges only -- the DSP's
+     * bus_arbiter_dsp_access() always returns the 1x cost (#892). */
     uint8_t contention_scale;
 
     /* 68K self-cost carry: sub-cycle remainder from converting wall
@@ -181,7 +183,7 @@ uint32_t bus_arbiter_charge_access(int master, uint32_t addr);
 uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses,
                                  uint32_t scale_pct);
 
-/* DSP self-cost (system clocks, scaled by contention_scale) for one
+/* DSP self-cost (system clocks, NOT scaled by contention_scale) for one
  * external LOAD/STORE at `addr`; 0 for the DSP's own local bus.  JERRY
  * has a 16-bit interface to external memory (JTRM v8 p.97; XD pin
  * note p.124), so a long transfer (`is_long` != 0) is split by JERRY's

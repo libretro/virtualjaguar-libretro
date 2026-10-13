@@ -230,8 +230,8 @@ int main(void)
     check(bus_arbiter_dsp_access(0x00F00050, 1) == 2 + 1 + 2,
           "DSP: TOM register long = two I/O cycles + pause");
     busArbiter.contention_scale = 2;
-    check(bus_arbiter_dsp_access(0x00080000, 1) == 16,
-          "DSP: contention_scale multiplies the whole access");
+    check(bus_arbiter_dsp_access(0x00080000, 1) == 8,
+          "DSP: contention_scale (VJ_DRAM_SCALE) does not scale the DSP");
     busArbiter.contention_scale = 1;
 
     return fails ? 1 : 0;

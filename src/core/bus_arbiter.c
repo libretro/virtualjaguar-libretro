@@ -221,8 +221,12 @@ uint32_t bus_arbiter_dsp_access(uint32_t addr, int is_long)
         second = (addr < 0x800000) ? DRAM_PAGE_CYCLE : first;
         cost += DSP_SPLIT_PAUSE_CLKS + second;
     }
-    if (busArbiter.contention_scale > 1)
-        cost *= busArbiter.contention_scale;
+    /* Deliberately NOT multiplied by contention_scale (maintainer
+     * decision on #892).  VJ_DRAM_SCALE is the #406 stress knob for the
+     * GPU/68K liveness sweep and keeps scaling exactly what it scaled
+     * before S1; the DSP always pays its real 1x bus cost.  Scaling it
+     * too starved Doom's MiniLoop on the dspfinished handshake at
+     * scales >= 10 -- a property of the stress knob, not of hardware. */
     return cost;
 }
 
