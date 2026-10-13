@@ -50,7 +50,7 @@ function New-Release([string]$Dir, [string]$AppVer, [string]$Marker) {
     New-Item -ItemType Directory -Force -Path (Join-Path $w 'VirtualJaguar') | Out-Null
     Set-Content -LiteralPath (Join-Path $w 'VirtualJaguar/virtualjaguar.exe') -Value "exe $Marker"
     Set-Content -LiteralPath (Join-Path $w 'VirtualJaguar/README.txt') -Value $Marker
-    Compress-Archive -Path (Join-Path $w 'VirtualJaguar/*') -DestinationPath (Join-Path $Dir "VirtualJaguar-$AppVer-windows-x64.zip") -Force
+    Compress-Archive -Path (Join-Path $w 'VirtualJaguar') -DestinationPath (Join-Path $Dir "VirtualJaguar-$AppVer-windows-x64.zip") -Force
     Set-Content -LiteralPath (Join-Path $Dir "VirtualJaguar-$AppVer-windows-x64-setup.exe") -Value "setup $Marker"
     Remove-Item -LiteralPath $w -Recurse -Force
   }
@@ -69,7 +69,12 @@ New-PeStub (Join-Path $RA 'retroarch.exe') 'x64' 'fake-ra'
 Set-Content -LiteralPath (Join-Path $RA 'retroarch.cfg') -Value 'libretro_directory = ":\cores"'
 
 # --- runner ----------------------------------------------------------------
-function Url([string]$p) { return ('file://' + ($p -replace '\\', '/')).Replace('file://C:', 'file:///C:') }
+function Url([string]$p) {
+  $full = [IO.Path]::GetFullPath($p)
+  # [Uri] reads a bare '/unix/path' as relative on macOS/Linux; on Windows it yields file:///C:/...
+  if ($full.StartsWith('/')) { return 'file://' + $full }
+  return ([Uri]$full).AbsoluteUri
+}
 function Invoke-Vj([string]$Base, [string[]]$ScriptArgs) {
   $env:VJ_INSTALL_BASE_URL = Url $Base
   $env:VJ_INSTALL_RETROARCH = (Join-Path $RA 'retroarch.exe')
@@ -77,7 +82,11 @@ function Invoke-Vj([string]$Base, [string[]]$ScriptArgs) {
   $env:VJ_INSTALL_ALLOW_ANY_OS = '1'
   $env:LOCALAPPDATA = Join-Path $T 'localappdata'
   $env:APPDATA = Join-Path $T 'appdata'
+  # Windows PowerShell 5.1 turns the first stderr line of a native process into a
+  # terminating error under 'Stop'; the child's own exit code is what we assert on.
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   $out = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $script @ScriptArgs 2>&1 | Out-String
+  $ErrorActionPreference = $eap
   return @{ Out = $out; Rc = $LASTEXITCODE }
 }
 function Snapshot([string[]]$Dirs) {
@@ -86,6 +95,7 @@ function Snapshot([string[]]$Dirs) {
 }
 
 Write-Host "host: $hostExe  (PowerShell $($PSVersionTable.PSVersion))"
+$LAD = Join-Path $T 'localappdata/VirtualJaguar'
 $AD = Join-Path $T 'apps'; $CD = Join-Path $RA 'cores'
 
 # --- no app published (today's releases) ------------------------------------
@@ -99,11 +109,11 @@ Check 'both with no app published still succeeds' ($r.Rc -eq 0) $r.Out
 Check 'both: core planned (x86_64 from the PE header)' ($r.Out -like '*would install virtualjaguar_libretro-windows-x86_64.dll*') $r.Out
 
 # --- legacy-style default: core only, dry run changes nothing -----------------
-$s0 = Snapshot @($T + '/localappdata', $AD, $CD)
+$s0 = Snapshot @($LAD, $AD, $CD)
 $r = Invoke-Vj $Old @('-Yes', '-DryRun')
 Check 'default run (cfg ":\cores" resolved against retroarch.exe) plans the core' ($r.Rc -eq 0 -and $r.Out -like "*$((Join-Path $RA 'cores'))*") $r.Out
 Check 'default run does not mention the app' ($r.Out -notlike '*Virtual Jaguar app*') $r.Out
-Check 'dry-run changed nothing' ($s0 -eq (Snapshot @($T + '/localappdata', $AD, $CD))) ''
+Check 'dry-run changed nothing' ($s0 -eq (Snapshot @($LAD, $AD, $CD))) ''
 
 # --- app plans ----------------------------------------------------------------
 $r = Invoke-Vj $New @('-What', 'app', '-Channel', 'nightly', '-DryRun', '-AppDest', $AD)
@@ -113,8 +123,8 @@ Check 'plan mentions the Start-menu shortcut' ($r.Out -like '*Start-menu shortcu
 $r = Invoke-Vj $New @('-What', 'app', '-DryRun', '-AppDest', $AD)
 Check 'latest resolves the version from SHA256SUMS' ($r.Out -like '*(version 4.0.0)*') $r.Out
 $r = Invoke-Vj $New @('-What', 'app', '-DryRun', '-AppFormat', 'setup', '-Channel', 'v4.0.0')
-Check 'setup format plans the silent installer' ($r.Out -like '*setup.exe /VERYSILENT /NORESTART*' -and $r.Out -like '*windows-x64-setup.exe*') $r.Out
-Check 'dry-run (all of the above) changed nothing' ($s0 -eq (Snapshot @($T + '/localappdata', $AD, $CD))) ''
+Check 'setup format plans the silent installer' ($r.Out -like '*setup.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES*' -and $r.Out -like '*windows-x64-setup.exe*') $r.Out
+Check 'dry-run (all of the above) changed nothing' ($s0 -eq (Snapshot @($LAD, $AD, $CD))) ''
 
 # --- real install into temp dirs, update, force -------------------------------
 $r = Invoke-Vj $New @('-What', 'app', '-Channel', 'nightly', '-Yes', '-AppDest', $AD, '-NoShortcut')
@@ -135,6 +145,11 @@ $r = Invoke-Vj $New2 @('-What', 'app', '-Channel', 'nightly', '-Yes', '-AppDest'
 Check 'new nightly is an update' ($r.Out -like '*update:*') $r.Out
 Check 'previous app kept aside' (Test-Path "$AD.bak") $r.Out
 Check 'new exe in place' ((Get-Content -LiteralPath (Join-Path $AD 'virtualjaguar.exe')) -like '*nightly-two*') ''
+Check 'no doubled folder (zip has one top folder)' (-not (Test-Path (Join-Path $AD 'VirtualJaguar'))) ''
+
+# a nightly reports the project version (4.0.0) like a release: a release must still update it
+$r = Invoke-Vj $New @('-What', 'app', '-Channel', 'v4.0.0', '-DryRun', '-AppDest', $AD)
+Check 'nightly install is updated by the release of the same project version' ($r.Out -like '*update:*' -and $r.Out -notlike '*already up to date*') $r.Out
 
 $r = Invoke-Vj $New @('-List', '-CoreDir', $CD, '-AppDest', $AD)
 Check '-List shows the installed app' ($r.Out -like '*installed (portable)*') $r.Out
@@ -171,10 +186,20 @@ $AD3 = Join-Path $T 'apps3'; $CD3 = Join-Path $T 'cores3'; New-Item -ItemType Di
 $r = Invoke-Vj $New @('-What', 'both', '-Yes', '-Channel', 'v4.0.0', '-CoreDir', $CD3, '-AppDest', $AD3, '-NoShortcut')
 Check 'both installs' ($r.Rc -eq 0 -and (Test-Path (Join-Path $CD3 'virtualjaguar_libretro.dll')) -and (Test-Path (Join-Path $AD3 'virtualjaguar.exe'))) $r.Out
 
+# --- Start-menu shortcut (Windows only: WScript.Shell) ---------------------------
+if ($env:OS -eq 'Windows_NT') {
+  $sm = Join-Path $T 'appdata\Microsoft\Windows\Start Menu\Programs'
+  New-Item -ItemType Directory -Force -Path $sm | Out-Null
+  $r = Invoke-Vj $New @('-What', 'app', '-Yes', '-Channel', 'v4.0.0', '-AppDest', (Join-Path $T 'apps-lnk'))
+  Check 'Start-menu shortcut created' ((Test-Path (Join-Path $sm 'Virtual Jaguar.lnk')) -and $r.Rc -eq 0) $r.Out
+}
+
 # --- irm | iex shape: runs in-process, must not exit the host -------------------
 $env:VJ_INSTALL_BASE_URL = Url $Old
 $env:VJ_WHAT = 'app'; $env:VJ_DRYRUN = '1'; $env:VJ_APP_DEST = $AD
+$ErrorActionPreference = 'Continue'
 $out = & $hostExe -NoProfile -Command "iex (Get-Content -Raw '$script'); 'STILL-ALIVE'" 2>&1 | Out-String
+$ErrorActionPreference = 'Stop'
 Check 'iex form: env-var config works and the session survives' ($out -like '*No app build is published*' -and $out -like '*STILL-ALIVE*') $out
 Remove-Item Env:VJ_WHAT, Env:VJ_DRYRUN, Env:VJ_APP_DEST
 

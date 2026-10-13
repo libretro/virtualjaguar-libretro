@@ -95,7 +95,13 @@ PL
   fi
   command rm -rf "$w"
   for a in x86_64 aarch64; do
-    printf '#!/bin/sh\necho %s %s\n' "$mk" "$a" > "$d/VirtualJaguar-$v-linux-$a.AppImage"
+    cat > "$d/VirtualJaguar-$v-linux-$a.AppImage" <<AI
+#!/bin/sh
+# fake AppImage $mk $a
+case "\$1" in --appimage-extract)
+  mkdir -p squashfs-root/usr/share/icons/hicolor/256x256/apps
+  echo png > squashfs-root/usr/share/icons/hicolor/256x256/apps/io.github.libretro.VirtualJaguar.png ;; esac
+AI
   done
   for a in amd64 arm64; do
     printf 'fake deb %s %s\n' "$mk" "$a" > "$d/virtualjaguar_${v}_$a.deb"
@@ -209,7 +215,8 @@ run_suite() {
             check_true "app bundle installed" test -x "$TARGET/Contents/MacOS/virtualjaguar" ;;
     *)      TARGET="$AD/VirtualJaguar.AppImage"
             check_true "AppImage installed and executable" test -x "$TARGET"
-            check_true "desktop entry written" test -f "$H/.local/share/applications/virtualjaguar.desktop" ;;
+            check_true "desktop entry uses the shared id" /usr/bin/grep -q '^Icon=io.github.libretro.VirtualJaguar$' "$H/.local/share/applications/io.github.libretro.VirtualJaguar.desktop"
+            check_true "icon extracted from the AppImage" test -f "$H/.local/share/icons/hicolor/256x256/apps/io.github.libretro.VirtualJaguar.png" ;;
   esac
   check_has "SHA-256 verified" "$OUT" "SHA-256 matches SHA256SUMS.txt"
   RCPT=$(find "$H" -name install-receipt | head -1)
@@ -232,6 +239,12 @@ run_suite() {
     *)      check_true "previous AppImage kept aside" test -f "$TARGET.bak"
             check_true "new AppImage in place" /usr/bin/grep -q nightly-two "$TARGET" ;;
   esac
+
+  # a nightly bundle reports the project version (4.0.0) like a release: the release must
+  # still be offered as an update (decided from the receipt, not Info.plist)
+  vj "$SH" "$NEW2" "$H" --app --channel v4.0.0 --dry-run --app-dest "$AD"
+  check_has "release offered over a nightly of the same project version" "$OUT" "update:"
+  check_lacks "... and not called up to date" "$OUT" "already up to date"
 
   # --list reports the install
   vj "$SH" "$NEW" "$H" --list --dest "$CD" --app-dest "$AD"

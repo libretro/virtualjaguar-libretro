@@ -81,9 +81,16 @@ jobs:
       shell: pwsh
       run: |
         if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Force -Scope CurrentUser }
-        # Write-Host is deliberate: this is an interactive installer whose output must not
-        # land in the pipeline.  Everything else at Warning or above must be clean.
-        $r = Invoke-ScriptAnalyzer -Path tools/install.ps1 -Severity Error, Warning -ExcludeRule PSAvoidUsingWriteHost, PSUseShouldProcessForStateChangingFunctions, PSUseApprovedVerbs, PSAvoidAssignmentToAutomaticVariable
+        # Excluded on purpose:
+        #   PSAvoidUsingWriteHost   an interactive installer; its output must not enter the pipeline
+        #   PSReviewUnusedParameter the script-level params are read by the helper functions
+        #                           through dynamic scoping, which the rule cannot see
+        #   PSAvoidUsingEmptyCatchBlock  best-effort probes (registry, winget, COM) that may fail
+        #   PSUseSingularNouns / PSUseApprovedVerbs / ShouldProcess  internal helper naming
+        # Everything else at Warning or above must be clean.
+        $exclude = 'PSAvoidUsingWriteHost', 'PSReviewUnusedParameter', 'PSAvoidUsingEmptyCatchBlock',
+                   'PSUseSingularNouns', 'PSUseApprovedVerbs', 'PSUseShouldProcessForStateChangingFunctions'
+        $r = Invoke-ScriptAnalyzer -Path tools/install.ps1 -Severity Error, Warning -ExcludeRule $exclude
         $r | Format-Table -AutoSize | Out-String | Write-Host
         if ($r) { exit 1 }
 

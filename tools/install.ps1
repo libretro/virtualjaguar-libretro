@@ -44,7 +44,7 @@
 .PARAMETER AppFormat
   portable (zip, default) | setup (the installer .exe).
 .PARAMETER SetupArgs
-  Arguments for the setup .exe.  Default: /VERYSILENT /NORESTART
+  Arguments for the setup .exe.  Default: /VERYSILENT /NORESTART /SUPPRESSMSGBOXES (Inno Setup)
 .PARAMETER Yes
   No prompts, take every default.
 .PARAMETER DryRun
@@ -63,13 +63,17 @@ param(
   [string]$CoreDir    = $env:VJ_CORE_DIR,
   [string]$AppDest    = $env:VJ_APP_DEST,
   [string]$AppFormat  = $env:VJ_APP_FORMAT,
-  [string]$SetupArgs  = $(if ($env:VJ_SETUP_ARGS) { $env:VJ_SETUP_ARGS } else { '/VERYSILENT /NORESTART' }),
+  [string]$SetupArgs  = $(if ($env:VJ_SETUP_ARGS) { $env:VJ_SETUP_ARGS } else { '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES' }),
   [switch]$Yes        = [bool]$env:VJ_YES,
   [switch]$DryRun     = [bool]$env:VJ_DRYRUN,
   [switch]$List,
   [switch]$Force      = [bool]$env:VJ_FORCE,
   [switch]$NoShortcut
 )
+
+# Windows PowerShell 5.1 renders the progress bar so slowly that downloads crawl, and
+# redirected output gets CLIXML progress records.
+$ProgressPreference = 'SilentlyContinue'
 
 $script:Repo      = 'libretro/virtualjaguar-libretro'
 $script:CoreBase  = 'virtualjaguar_libretro'
@@ -251,15 +255,32 @@ function Find-InstalledApp {
     return @{ Kind = 'portable'; Path = $dest; Version = $v }
   }
   if (($wantSetup -or -not $AppFormat) -and $env:OS -eq 'Windows_NT') {
-    $roots = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-               'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-               'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
+    # The Inno Setup AppId is fixed: {6D1A0C3E-5B7F-4C42-9E17-0A8F3E2B5C91} -> "<AppId>_is1".
+    # Per-user installs register under HKCU; also look at HKLM and by display name.
+    $id = '{6D1A0C3E-5B7F-4C42-9E17-0A8F3E2B5C91}_is1'
+    $roots = @("HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$id",
+               "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$id",
+               "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$id")
+    $hit = $null
     foreach ($r in $roots) {
-      try {
-        $hit = Get-ItemProperty -Path $r -ErrorAction SilentlyContinue |
-          Where-Object { $_.DisplayName -like 'Virtual Jaguar*' } | Select-Object -First 1
-        if ($hit) { return @{ Kind = 'setup'; Path = [string]$hit.InstallLocation; Version = [string]$hit.DisplayVersion } }
-      } catch { }
+      try { $k = Get-ItemProperty -Path $r -ErrorAction SilentlyContinue; if ($k) { $hit = $k; break } } catch { }
+    }
+    if (-not $hit) {
+      foreach ($r in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                     'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*') {
+        try {
+          $hit = Get-ItemProperty -Path $r -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like 'Virtual Jaguar*' } | Select-Object -First 1
+          if ($hit) { break }
+        } catch { }
+      }
+    }
+    if ($hit) {
+      $v = [string]$hit.DisplayVersion
+      # Nightlies carry the project version (4.0.0), not "nightly": the receipt knows.
+      if ($rc['kind'] -eq 'setup' -and $rc['version'] -eq 'nightly') { $v = 'nightly' }
+      return @{ Kind = 'setup'; Path = [string]$hit.InstallLocation; Version = $v }
     }
   }
   return $null
@@ -456,7 +477,7 @@ function Write-NoAppBuild([string]$Why) {
   Write-Host '  No app build is published for this channel yet.'
   Write-Host "  $Why"
   Write-Host '  The standalone app ships from v4.0.  To get the core now:  -What core'
-  Write-Host '  Try the nightly channel:  -What app -Channel nightly'
+  if ($Channel -ne 'nightly') { Write-Host '  Try the nightly channel:  -What app -Channel nightly' }
 }
 
 function Install-App([string]$Work) {
@@ -552,7 +573,10 @@ function Install-App([string]$Work) {
         Move-Item -LiteralPath $dest -Destination $backup -ErrorAction Stop
         Write-Ok "old app kept as $(Split-Path $backup -Leaf)"
       }
-      Copy-Item -LiteralPath $srcRoot -Destination $dest -Recurse -Force -ErrorAction Stop
+      # The zip has one top folder (VirtualJaguar\virtualjaguar.exe).  Copy its CONTENTS into
+      # $dest so the exe ends up at $dest\virtualjaguar.exe, never $dest\VirtualJaguar\...
+      New-Item -ItemType Directory -Force -Path $dest | Out-Null
+      Copy-Item -Path (Join-Path $srcRoot '*') -Destination $dest -Recurse -Force -ErrorAction Stop
     } catch {
       if ($backup -and -not (Test-Path -LiteralPath $dest)) { Move-Item -LiteralPath $backup -Destination $dest -ErrorAction SilentlyContinue }
       Stop-Install "could not install into $dest : $($_.Exception.Message)"
@@ -622,7 +646,10 @@ function Invoke-VjInstall {
       Write-Host '  1) latest release          stable, recommended'
       Write-Host '  2) nightly                 every push to develop; gated on compiling, not on tests'
       Write-Host '  3) a specific version      e.g. v4.0.0'
-      switch (Read-Choice '  Number' '1') { '2' { $script:Channel = 'nightly' } '3' { $script:Channel = Read-Choice '  Tag' 'v4.0.0' } }
+      # A LOCAL assignment, not $script:Channel: under `& ([scriptblock]::Create(...))` the
+      # parameter lives in the block's own scope and $script: would miss it.  Callees read
+      # $Channel through dynamic scoping, which sees this one in every invocation form.
+      switch (Read-Choice '  Number' '1') { '2' { $Channel = 'nightly' } '3' { $Channel = Read-Choice '  Tag' 'v4.0.0' } }
     }
 
     $coreRc = 0; $appRc = 0

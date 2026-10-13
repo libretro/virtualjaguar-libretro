@@ -794,6 +794,12 @@ app_detect() {
       esac
       ;;
   esac
+  # Nightlies and PR builds report the PROJECT version (4.0.0) in Info.plist / dpkg, the
+  # same string a release uses, so that string cannot tell them apart.  If our receipt
+  # says this install came from a nightly, it is "nightly" whatever the bundle claims.
+  if [ -n "$INST_KIND" ] && [ "$(rcpt_get path)" = "$INST_PATH" ] && [ "$(rcpt_get version)" = nightly ]; then
+    INST_VER=nightly
+  fi
   return 0
 }
 
@@ -836,7 +842,7 @@ app_no_build() {
   say "  ${B}No app build is published for this channel yet.${R}"
   say "  $1"
   say "  The standalone app ships from v4.0.  To get the core now:  $SELF --core"
-  say "  Try the nightly channel:  $SELF --app --channel nightly"
+  [ "$CHANNEL" = nightly ] || say "  Try the nightly channel:  $SELF --app --channel nightly"
   return 3
 }
 
@@ -1066,24 +1072,48 @@ app_install_appimage() {
   INST_KIND_NEW=appimage
   ok "installed -> $ATARGET"
 
-  _apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  _data="${XDG_DATA_HOME:-$HOME/.local/share}"
+  _apps="$_data/applications"
+  _did=io.github.libretro.VirtualJaguar    # desktop id and icon name, as the .deb uses
   mkdir -p "$_apps" 2>/dev/null || true
-  cat > "$_apps/virtualjaguar.desktop" 2>/dev/null <<DESK || warn "could not write the .desktop entry"
+  cat > "$_apps/$_did.desktop" 2>/dev/null <<DESK || warn "could not write the .desktop entry"
 [Desktop Entry]
 Type=Application
 Name=Virtual Jaguar
 Comment=Atari Jaguar emulator
 Exec="$ATARGET" %f
-Icon=virtualjaguar
+Icon=$_did
 Terminal=false
 Categories=Game;Emulator;
-MimeType=application/x-atari-jaguar-rom;
 DESK
-  [ -f "$_apps/virtualjaguar.desktop" ] && ok "menu entry -> $_apps/virtualjaguar.desktop"
+  [ -f "$_apps/$_did.desktop" ] && ok "menu entry -> $_apps/$_did.desktop"
+  # Icons: the AppImage carries its hicolor tree.  --appimage-extract needs no FUSE; the
+  # file has already been verified against SHA256SUMS.txt.  Best effort: a menu entry
+  # without an icon is still a working entry.
+  _ex="$WORK/app/ai"; mkdir -p "$_ex"
+  ( cd "$_ex" && "$ATARGET" --appimage-extract 'usr/share/icons' >/dev/null 2>&1 ) || true
+  if [ -d "$_ex/squashfs-root/usr/share/icons/hicolor" ]; then
+    mkdir -p "$_data/icons/hicolor" 2>/dev/null || true
+    if command cp -R "$_ex/squashfs-root/usr/share/icons/hicolor/." "$_data/icons/hicolor/" 2>/dev/null; then
+      ok "icons -> $_data/icons/hicolor"
+      command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$_data/icons/hicolor" >/dev/null 2>&1 || true
+    fi
+  else
+    note "no icon found inside the AppImage; the menu entry will use a generic one"
+  fi
   command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$_apps" >/dev/null 2>&1 || true
 
   case ":$PATH:" in *":$ADIR:"*) ;; *) note "$ADIR is not on your PATH; start it from the menu or run $ATARGET" ;; esac
-  if ! { ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; } && [ ! -e /usr/lib/libfuse.so.2 ]; then
+  # ldconfig is in /sbin, which a non-root PATH on Debian lacks; the library sits in a
+  # multiarch directory, so also look there.
+  _fuse=0
+  { /sbin/ldconfig -p 2>/dev/null || ldconfig -p 2>/dev/null; } | grep -q 'libfuse\.so\.2' && _fuse=1
+  # (listed, not globbed: an unmatched glob is a hard error in zsh)
+  for _l in /usr/lib /usr/lib64 /lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu \
+            /lib/x86_64-linux-gnu /lib/aarch64-linux-gnu; do
+    [ -e "$_l/libfuse.so.2" ] && _fuse=1
+  done
+  if [ "$_fuse" -eq 0 ]; then
     warn "AppImages need FUSE 2 (libfuse.so.2).  Debian/Ubuntu: sudo apt install libfuse2"
     warn "  (Ubuntu 24.04: libfuse2t64).  Without it:  $ATARGET --appimage-extract-and-run"
   fi
