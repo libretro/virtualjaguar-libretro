@@ -25,6 +25,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD_REQUIRED OFF)   # the core is built with the toolchain default
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Packaging (#839): install layout, Windows resources/subsystem, Linux desktop files.
+# Deferred to the end of this file, so it sees every target and every feature's install().
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/VJPackage.cmake")
+
 option(VJ_APP_SYSTEM_SDL3 "Use an installed SDL3 (find_package) instead of fetching one" OFF)
 option(VJ_APP_BUILD_TESTS "Build the headless smoke tests (CTest)" ON)
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
@@ -204,7 +208,10 @@ set(VJ_APP_SOURCES
     src/cheats_ui.cpp
     src/achievements.cpp
     src/achievements_ui.cpp
-    src/ach_http.cpp)
+    src/ach_http.cpp
+    src/netplay.cpp
+    src/netplay_addr.cpp
+    src/netplay_ui.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
@@ -218,6 +225,9 @@ set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
+if(WIN32)
+    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
+endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}")
 if(MSVC)
@@ -254,4 +264,5 @@ if(VJ_APP_BUILD_TESTS)
     include(VJSmokeTests)
     include(VJAchTests)
     include(VJCheatTests)
+    include(VJNetplayTests)
 endif()

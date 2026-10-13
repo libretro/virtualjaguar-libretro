@@ -41,13 +41,23 @@ namespace {
 bool g_logVerbose = false;
 
 void RETRO_CALLCONV logCb(enum retro_log_level level, const char* fmt, ...) {
-    if (level < RETRO_LOG_WARN && !g_logVerbose) return;
+    CoreHost& h = CoreHost::instance();
+    const bool print = level >= RETRO_LOG_WARN || g_logVerbose;
+    if (!print && !h.onLog) return;
     static const char* const tag[] = {"DEBUG", "INFO", "WARN", "ERROR"};
     char buf[1024];
     va_list ap;
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
+    // The tap sees every line, INFO included: the Netplay window reads the core's
+    // "[NETLINK] link UP / link stats" lines from here (they are INFO).
+    if (h.onLog) {
+        std::string line(buf);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        h.onLog((int)level, line.c_str());
+    }
+    if (!print) return;
     std::fprintf(stderr, "[core %s] %s", (unsigned)level < 4 ? tag[level] : "?", buf);
     size_t n = std::strlen(buf);
     if (n == 0 || buf[n - 1] != '\n') std::fputc('\n', stderr);
@@ -285,6 +295,10 @@ void CoreHost::setOptionValue(const std::string& key, const std::string& value) 
     variableUpdate_ = true;
     if (onOptionChanged) onOptionChanged(key, value, false);
     if (updateDisplayCb_) updateDisplayCb_();
+}
+
+void CoreHost::clearOverride(const std::string& key) {
+    if (sessionValues_.erase(key)) variableUpdate_ = true;
 }
 
 void CoreHost::resetOptionToDefault(const std::string& key) {

@@ -189,6 +189,8 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
     downloadArt = cfg.getBool("library.art", true);
     hideOnLaunch = cfg.getBool("library.hide_on_launch", true);
     cellScale = std::min(2.0f, std::max(0.5f, cfg.getFloat("library.size", 1.0f)));
+    section = std::min(2, std::max(0, cfg.getInt("library.section", 0)));
+    systemDir = paths.system;
 
     loadDats();
     loadCache();
@@ -199,7 +201,7 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
     netW_.start();
     started_ = true;
     glAlive_ = true;
-    if (!folders_.empty()) rescan();
+    rescan();   // also with no folders: the system folder's BIOS files
     show = showIfConfigured && !folders_.empty();
 }
 
@@ -229,6 +231,7 @@ void LibraryService::saveSettings() {
     cfg_->setBool("library.art", downloadArt);
     cfg_->setBool("library.hide_on_launch", hideOnLaunch);
     cfg_->setFloat("library.size", cellScale);
+    cfg_->setInt("library.section", section);
     cfg_->save();
 }
 
@@ -315,7 +318,7 @@ void LibraryService::addFolderDialog(SDL_Window* parent) {
 
 void LibraryService::rescan() {
     if (!started_) return;
-    if (folders_.empty()) {
+    if (folders_.empty() && systemDir.empty()) {
         files_.clear();
         reidentify();
         saveCache(files_);
@@ -325,6 +328,7 @@ void LibraryService::rescan() {
     for (const lib::ScanFile& f : files_) cache[f.path] = f;
     lib::ScanOptions opt;
     opt.folders = folders_;
+    opt.systemFolder = systemDir;   // BIOS / system files there show in the BIOS section
     scanCancel_ = true;      // an older scan still running stops early
     scanning_ = true;
     scanDone_ = 0;
@@ -575,7 +579,11 @@ void LibraryService::pump() {
         reidentify();
         if (haveScan) {
             char buf[160];
-            std::snprintf(buf, sizeof buf, "%zu games, %zu identified", entries_.size(), identified_);
+            size_t bios = 0;
+            for (const lib::Entry& en : entries_)
+                if (en.section == lib::Section::Bios) bios++;
+            std::snprintf(buf, sizeof buf, "%zu games, %zu identified, %zu BIOS / system files",
+                          entries_.size() - bios, identified_, bios);
             // keep an error message from a download visible; overwrite only the neutral ones
             std::string cur = status();
             if (cur.empty() || cur.find("failed") == std::string::npos) setStatus(buf);

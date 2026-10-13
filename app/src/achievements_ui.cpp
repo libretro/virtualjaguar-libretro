@@ -10,6 +10,7 @@
 #include <ctime>
 
 #include "app.h"
+#include "ui_util.h"
 #include "rc_client.h"
 
 namespace vj {
@@ -18,9 +19,11 @@ namespace {
 
 void drawLogin(App& app) {
     Achievements& a = app.ach;
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 26.0f, 0), ImGuiCond_FirstUseEver);
+    ui::nextWindow(28.0f, 0.0f, 0.0f, 0.0f, ui::WinFit::FixedWidth);   // fixed width, height follows the text
     bool open = true;
-    if (!ImGui::Begin("Sign in to RetroAchievements", &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+    bool shown = ImGui::Begin("Sign in to RetroAchievements", &open, ImGuiWindowFlags_AlwaysAutoResize);
+    ui::keepOnScreen();
+    if (!shown) {
         ImGui::End();
         if (!open) a.showLogin = false;
         return;
@@ -28,13 +31,15 @@ void drawLogin(App& app) {
     ImGui::TextWrapped("Your password is sent once to retroachievements.org to get a login token. Only the token "
                        "is saved (in the app's config file); the password is wiped as soon as you press Sign in.");
     ImGui::Separator();
-    if (!AchHttp::available()) ImGui::TextColored(ImVec4(1, 0.6f, 0.4f, 1), "This build has no HTTP support.");
+    if (!AchHttp::available()) ui::coloredWrapped(ImVec4(1, 0.6f, 0.4f, 1), "This build has no HTTP support.");
     const bool busy = a.loginBusy();
     ImGui::BeginDisabled(busy);
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::PushItemWidth(ui::fitWidth(0.62f, 10.0f, 24.0f));
     ImGui::InputText("User name", a.userBuf, sizeof a.userBuf);
     bool enter = ImGui::InputText("Password", a.passBuf, sizeof a.passBuf,
                                   ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::PopItemWidth();
     bool go = ImGui::Button("Sign in") || enter;
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -62,8 +67,10 @@ const char* stateLabel(uint8_t unlocked) {
 void drawList(App& app) {
     Achievements& a = app.ach;
     rc_client_t* c = a.client();
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 34.0f, ImGui::GetFontSize() * 30.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Achievements", &a.showList)) {
+    ui::nextWindow(34.0f, 30.0f, 22.0f, 14.0f);
+    bool shown = ImGui::Begin("Achievements", &a.showList);
+    ui::keepOnScreen();
+    if (!shown) {
         ImGui::End();
         return;
     }
@@ -73,11 +80,11 @@ void drawList(App& app) {
         ImGui::End();
         return;
     }
-    ImGui::Text("%s", g->title ? g->title : "");
+    ImGui::TextWrapped("%s", g->title ? g->title : "");
     rc_client_user_game_summary_t s;
     rc_client_get_user_game_summary(c, &s);
-    ImGui::TextDisabled("%u of %u achievements, %u of %u points   %s", s.num_unlocked_achievements, s.num_core_achievements,
-                        s.points_unlocked, s.points_core, rc_client_get_hardcore_enabled(c) ? "Hardcore" : "Softcore");
+    ui::hint("%u of %u achievements, %u of %u points   %s", s.num_unlocked_achievements, s.num_core_achievements,
+             s.points_unlocked, s.points_core, rc_client_get_hardcore_enabled(c) ? "Hardcore" : "Softcore");
     if (s.num_core_achievements)
         ImGui::ProgressBar((float)s.num_unlocked_achievements / (float)s.num_core_achievements, ImVec2(-1, 0));
     if (rc_client_has_rich_presence(c)) {
@@ -101,8 +108,11 @@ void drawList(App& app) {
                 const rc_client_achievement_t* ac = bk.achievements[i];
                 ImGui::PushID((int)ac->id);
                 const bool done = ac->unlocked != 0;
-                ImGui::TextColored(done ? ImVec4(0.95f, 0.82f, 0.35f, 1) : ImVec4(0.85f, 0.85f, 0.85f, 1), "%s  (%u)",
-                                   ac->title ? ac->title : "", ac->points);
+                {
+                    char line[320];
+                    std::snprintf(line, sizeof line, "%s  (%u)", ac->title ? ac->title : "", ac->points);
+                    ui::coloredWrapped(done ? ImVec4(0.95f, 0.82f, 0.35f, 1) : ImVec4(0.85f, 0.85f, 0.85f, 1), line);
+                }
                 ImGui::Indent();
                 if (ac->description && ac->description[0]) ImGui::TextWrapped("%s", ac->description);
                 if (done && ac->unlock_time) {
@@ -224,7 +234,7 @@ void drawAchievementsMenu(App& app) {
     if (ImGui::MenuItem("Achievement list...", nullptr, false, app.host.isLoaded())) a.showList = true;
     if (!a.statusLine().empty()) {
         ImGui::Separator();
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::PushTextWrapPos(std::min(ImGui::GetFontSize() * 24.0f, ui::workSize().x * 0.6f));
         ImGui::TextDisabled("%s", a.statusLine().c_str());
         ImGui::PopTextWrapPos();
     }

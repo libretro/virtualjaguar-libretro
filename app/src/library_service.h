@@ -62,7 +62,7 @@ public:
     ~LibraryService();
 
     // ---- lifecycle (main thread) ----
-    void start(const Paths& paths, Config& cfg, bool showIfConfigured);
+    void start(const Paths& paths, Config& cfg, bool showIfConfigured);   // paths.system is the BIOS folder
     void stop();                    // joins the workers and frees GL textures; GL context must be current
 
     // ---- once per UI frame (main thread, GL current) ----
@@ -77,8 +77,11 @@ public:
     // ---- state the UI reads ----
     bool show = false;
     bool hideOnLaunch = true;
+    bool focusSearch = false;   // UI: put the cursor in the search box on the next frame (Ctrl/Cmd+L on the home screen)
     std::atomic<bool> downloadArt{true};   // UI writes, the decode worker reads
     float cellScale = 1.0f;
+    int section = 0;            // lib::Section shown (Cartridges, Jaguar CD, BIOS); remembered in config
+    std::string systemDir;      // the core's system folder, for BIOS files and the notes on them
     const std::vector<lib::Entry>& entries() const { return entries_; }
     const std::vector<std::string>& folders() const { return folders_; }
     bool scanning() const { return scanning_.load(); }

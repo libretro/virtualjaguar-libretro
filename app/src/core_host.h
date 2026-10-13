@@ -81,6 +81,9 @@ public:
     // ---- configuration (set before the first load) -----------------------
     void setDirectories(const std::string& systemDir, const std::string& saveDir);
     void setLogVerbose(bool v) { logVerbose_ = v; }
+    // Every line the core logs, at any level (even those --verbose would hide), already
+    // formatted and without the trailing newline.  Called on the emulation thread.
+    std::function<void(int level, const char* text)> onLog;
     // Called for every audio batch the core emits (interleaved L/R int16).
     std::function<void(const int16_t*, size_t frames)> onAudio;
     // Per-frame input.  Port/device/index/id exactly as retro_input_state_t.
@@ -145,6 +148,8 @@ public:
     std::function<void(const std::string& key, const std::string& value, bool erased)> onOptionChanged;
     // Applied without being persisted: e.g. the smoke test forces a value.
     void overrideOption(const std::string& key, const std::string& value);
+    // Drops an overrideOption() value (the saved value, or the default, applies again).
+    void clearOverride(const std::string& key);
     // Overrides naming an option the core never registered, or a value outside
     // its list, are otherwise silently ignored (the run would measure the
     // default).  Valid only after the definitions were pushed (i.e. after a load).

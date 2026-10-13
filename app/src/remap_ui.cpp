@@ -4,6 +4,7 @@
 #include "devices.h"
 #include "libretro.h"
 #include "imgui.h"
+#include "ui_util.h"
 
 #include <cstdio>
 #include <cstring>
@@ -64,7 +65,7 @@ void drawControlsTab(App& app) {
     // ---- which layer is being edited ----------------------------------------------------
     std::string devLabel = device == 0 ? "Keyboard" : device == 1 ? "Gamepads (every controller)"
                                                                   : pads[(size_t)device - 2].name + " (this model)";
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 22.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.6f, 12.0f, 28.0f));
     if (ImGui::BeginCombo("Device", devLabel.c_str())) {
         if (ImGui::Selectable("Keyboard", device == 0)) device = 0;
         if (ImGui::Selectable("Gamepads (every controller)", device == 1)) device = 1;
@@ -81,10 +82,7 @@ void drawControlsTab(App& app) {
     ImGui::BeginDisabled(!haveGame);
     ImGui::RadioButton("This game only", &scope, 1);
     ImGui::EndDisabled();
-    if (haveGame) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%s)", in.content().c_str());
-    }
+    if (haveGame) ui::hint("Game: %s", in.content().c_str());
 
     LayerId layer;
     layer.cls = device == 0 ? DeviceClass::Keyboard : DeviceClass::Gamepad;
@@ -93,63 +91,69 @@ void drawControlsTab(App& app) {
 
     if (device == 0) {
         int kp = st->keyboardPort();
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 11.0f);
+        ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 9.0f, 14.0f));
         if (ImGui::Combo("Keyboard plays", &kp, "Jaguar port 1\0Jaguar port 2\0")) {
             st->setKeyboardPort(kp);
             app.cfg.save();
         }
     } else {
         ImGui::Checkbox("Left stick also drives the D-pad", &in.stickAsDpad);
-        if (pads.empty()) ImGui::TextDisabled("No gamepad connected.");
+        if (pads.empty()) ui::hint("No gamepad connected.");
         else
-            for (const InputManager::PadInfo& p : pads)
-                ImGui::BulletText("%s: %s", p.slot >= 0 ? slotName((unsigned)p.slot).c_str() : "(not assigned)", p.name.c_str());
-        ImGui::TextDisabled("Which controller plays which player: Settings > Input > Players.");
+            for (const InputManager::PadInfo& p : pads) {
+                ImGui::Bullet();
+                ImGui::TextWrapped("%s: %s", p.slot >= 0 ? slotName((unsigned)p.slot).c_str() : "(not assigned)", p.name.c_str());
+            }
+        ui::hint("Which controller plays which player: Settings > Input > Devices & players.");
     }
 
     // ---- caveats the core imposes --------------------------------------------------------
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
-    ImGui::PopStyleColor();
+    ui::hint("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
 
     // ---- the table -----------------------------------------------------------------------------
     Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId);
     bool dirty = false;
     ImGui::Separator();
     if (in.capturing()) {
-        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Press %s for \"%s\"  (Esc cancels)",
-                           layer.cls == DeviceClass::Keyboard ? "a key" : "a gamepad button or push a stick/trigger",
-                           ctlLabel(in.captureTarget()));
+        char m[192];
+        std::snprintf(m, sizeof m, "Press %s for \"%s\"  (Esc cancels)",
+                      layer.cls == DeviceClass::Keyboard ? "a key" : "a gamepad button or push a stick/trigger",
+                      ctlLabel(in.captureTarget()));
+        ui::coloredWrapped(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), m);
     }
     if (ImGui::SmallButton("Reset this layer")) {
         st->clearLayer(layer);
         dirty = true;
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", scope == 1 ? "overrides for this game" : "your profile; built-in defaults underneath");
+    ui::hint("%s", scope == 1 ? "Overrides for this game." : "Your profile; the built-in defaults are underneath.");
 
     ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
-    if (ImGui::BeginTable("##binds", 4, tf, ImVec2(0, ImGui::GetFontSize() * 17.0f))) {
+    // The table is as tall as the window allows (what is left minus room for the rows below it).
+    const float tableH = std::min(ImGui::GetFontSize() * 40.0f,
+                                  std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFontSize() * 7.0f));
+    // Fixed columns for the short things; "Bound to" stretches (its text wraps) and gives way first.
+    const float btnsW = ui::Flow::buttonW("Set") + ui::Flow::buttonW("Add") + ui::Flow::buttonW("Unbind") +
+                        ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3;
+    if (ImGui::BeginTable("##binds", 3, tf, ImVec2(0, tableH))) {
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 7.0f);
-        ImGui::TableSetupColumn("Bound to");
-        ImGui::TableSetupColumn("From", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
+        ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
+        ImGui::TableSetupColumn("Bound to", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, btnsW + ImGui::GetStyle().CellPadding.x);
         ImGui::TableHeadersRow();
         for (const Section& sec : kSections) {
             ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", sec.title);
+            ImGui::TableSetColumnIndex(1);
+            ui::hint("%s", sec.title);
             for (int i = sec.first; i <= sec.last; i++) {
                 Ctl c = (Ctl)i;
                 ImGui::PushID(i);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(ctlLabel(c));
+                ImGui::TextWrapped("%s", ctlLabel(c));
                 ImGui::TableNextColumn();
                 if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
                 else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
-                ImGui::TableNextColumn();
+                // Where the binding comes from sits under it (short form; the long one is the tooltip).
                 ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
                 ImGui::TableNextColumn();
@@ -179,11 +183,12 @@ void drawControlsTab(App& app) {
     }
     ImGui::Spacing();
     if (ImGui::Button("Keypad overlay")) in.overlay.open = !in.overlay.open;
-    ImGui::SameLine();
-    ImGui::TextDisabled("Opens the on-screen keypad (F2 or the 'Keypad overlay' control).");
-    if (ImGui::Button("Controls overlay")) app.input.controls.show = !app.input.controls.show; app.input.controls.hideAt = 0;
-    ImGui::SameLine();
-    ImGui::TextDisabled("A cheat sheet of Player 1's bindings (F3, or the 'Controls overlay' control).");
+    ui::hint("Opens the on-screen keypad (F2 or the 'Keypad overlay' control).");
+    if (ImGui::Button("Controls overlay")) {
+        app.input.controls.show = !app.input.controls.show;
+        app.input.controls.hideAt = 0;
+    }
+    ui::hint("A cheat sheet of Player 1's bindings (F3, or the 'Controls overlay' control).");
 }
 
 void drawKeypadOverlay(App& app) {
@@ -196,7 +201,16 @@ void drawKeypadOverlay(App& app) {
                             ImGuiCond_FirstUseEver, ImVec2(1.0f, 1.0f));
     ImGuiWindowFlags wf = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
                           ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-    if (!ImGui::Begin("Jaguar keypad", &ov.open, wf)) {
+    // The keys are 3 across; the window is as wide as they are and the help text wraps to that.
+    // In a small main window the keys shrink so the pad never takes more than half of its height.
+    const float k = std::min(1.0f, vp->WorkSize.y * 0.5f / (f * 2.6f * 5.4f));
+    const ImVec2 sz(f * 3.4f * k, f * 2.6f * k);
+    const float gridW = sz.x * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(gridW + ImGui::GetStyle().WindowPadding.x * 2.0f, 0.0f),
+                                        ImVec2(vp->WorkSize.x * 0.95f, vp->WorkSize.y * 0.95f));
+    bool shown = ImGui::Begin("Jaguar keypad", &ov.open, wf);
+    ui::keepOnScreen();
+    if (!shown) {
         ImGui::End();
         return;
     }
@@ -205,7 +219,6 @@ void drawKeypadOverlay(App& app) {
     ImGui::SameLine();
     ImGui::RadioButton("Player 2", &p, 1);
     ov.port = (unsigned)p;
-    ImVec2 sz(f * 3.4f, f * 2.6f);
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 3; c++) {
             Ctl key = KeypadOverlay::keyAt(r, c);
@@ -228,8 +241,9 @@ void drawKeypadOverlay(App& app) {
             if (c < 2) ImGui::SameLine();
         }
     }
-    ImGui::TextDisabled("Gamepad: D-pad moves, A/B presses, C closes.");
-    ImGui::TextDisabled("The game keeps running underneath.");
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(gridW, f * 15.0f));
+    ImGui::TextDisabled("Gamepad: D-pad moves, A/B presses, C closes. The game keeps running underneath.");
+    ImGui::PopTextWrapPos();
     ImGui::End();
 }
 

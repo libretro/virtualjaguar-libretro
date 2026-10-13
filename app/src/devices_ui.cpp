@@ -2,9 +2,9 @@
 
 #include "app.h"
 #include "libretro.h"
+#include "ui_util.h"
 
 #include <algorithm>
-#include <cstdarg>
 #include <cstdio>
 #include <vector>
 
@@ -90,16 +90,6 @@ void controlsOverlayOnLoad(App& app) {
 // ---------------------------------------------------------------------------------
 namespace {
 
-// Long hints wrap inside the window instead of running off its edge.
-void note(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrappedV(fmt, args);
-    ImGui::PopStyleColor();
-    va_end(args);
-}
-
 struct Choice {
     std::string desc;
     int id;
@@ -125,14 +115,6 @@ void deviceChanged(App& app) {
 
 }  // namespace
 
-static bool g_wantInputTab = false;
-void requestInputTab() { g_wantInputTab = true; }
-bool takeInputTabRequest() {
-    bool b = g_wantInputTab;
-    g_wantInputTab = false;
-    return b;
-}
-
 void drawDevicesPanel(App& app) {
     InputManager& in = app.input;
     const std::string game = in.content();
@@ -146,10 +128,9 @@ void drawDevicesPanel(App& app) {
     ImGui::RadioButton("This game only", &scope, 1);
     ImGui::EndDisabled();
     if (!game.empty()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%s)", game.c_str());
+        ui::hint("(%s)", game.c_str());
     }
-    note("Choices apply to this scope; a game's own choice overrides the global one.");
+    ui::hint("Choices apply to this scope; a game's own choice overrides the global one.");
     ImGui::Separator();
 
     // ---- ports ----------------------------------------------------------------------------------
@@ -164,7 +145,7 @@ void drawDevicesPanel(App& app) {
         if (scope == 1 && !defined) shown = "(same as everywhere) " + shown;
         char label[32];
         std::snprintf(label, sizeof label, "Jaguar port %u", p + 1);
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 20.0f);
+        ImGui::SetNextItemWidth(ui::fitWidth(0.55f, 14.0f, 30.0f));
         if (ImGui::BeginCombo(label, shown.c_str())) {
             if (scope == 1 && ImGui::Selectable("(same as everywhere)", !defined)) {
                 clearPortDevice(app.cfg, p, sc);
@@ -179,11 +160,9 @@ void drawDevicesPanel(App& app) {
             ImGui::EndCombo();
         }
         DevKind k = in.portKind(p);
-        ImGui::SameLine();
-        ImGui::TextDisabled("now: %s", devKindLabel(k));
-        note("%s", devKindHelp(k));
+        ui::hint("Now: %s. %s", devKindLabel(k), devKindHelp(k));
     }
-    if (!app.host.isLoaded()) note("The list is the core's own once a game is loaded.");
+    if (!app.host.isLoaded()) ui::hint("The list is the core's own once a game is loaded.");
 
     // ---- players --------------------------------------------------------------------------------
     ImGui::SeparatorText("Players: which controller plays whom");
@@ -201,7 +180,7 @@ void drawDevicesPanel(App& app) {
         if (in.routes().kb[s]) now = p >= 0 ? now + " + keyboard" : "keyboard";
         std::string label = slotName(s);
         ImGui::PushID((int)s);
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 20.0f);
+        ImGui::SetNextItemWidth(ui::fitWidth(0.55f, 14.0f, 30.0f));
         std::string caption = (scope == 1 && !defined ? "(same as everywhere) " : "") +
                               (cur.kind == SlotSource::Auto ? "Automatic" : cur.kind == SlotSource::None ? "Nobody"
                                : cur.kind == SlotSource::Keyboard ? "Keyboard" : "Gamepad: " + cur.guid.substr(0, 8)) +
@@ -238,7 +217,7 @@ void drawDevicesPanel(App& app) {
         ImGui::PopID();
     }
     int kp = in.store() ? in.store()->keyboardPort() : 0;
-    note("With no explicit choice the keyboard plays %s and controllers are handed out in the order they were plugged in.",
+    ui::hint("With no explicit choice the keyboard plays %s and controllers are handed out in the order they were plugged in.",
                         kp == 0 ? "Player 1" : "Player 2");
 
     // ---- tuning ---------------------------------------------------------------------------------
@@ -246,7 +225,7 @@ void drawDevicesPanel(App& app) {
     DeviceSettings ds = DeviceSettings::load(app.cfg, sc);
     bool changed = false;
     auto slider = [&](const char* key, const char* label, float v, float lo, float hi, const char* fmt) {
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 10.0f, 20.0f));
         if (ImGui::SliderFloat(label, &v, lo, hi, fmt, ImGuiSliderFlags_Logarithmic)) {
             char b[32];
             std::snprintf(b, sizeof b, "%.3f", v);
@@ -258,27 +237,27 @@ void drawDevicesPanel(App& app) {
     slider("rotary_speed", "Rotary speed", ds.rotarySpeed, 0.1f, 8.0f, "%.2fx");
     slider("stick_speed", "Stick / key pointer speed", ds.stickSpeed, 0.1f, 8.0f, "%.2fx");
     int dz = ds.deadzonePct;
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 10.0f, 20.0f));
     if (ImGui::SliderInt("Stick dead zone", &dz, 0, 40, "%d%%")) {
         DeviceSettings::set(app.cfg, sc, "deadzone", std::to_string(dz));
         changed = true;
     }
     int mp = ds.mousePort + 1;
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 10.0f, 20.0f));
     if (ImGui::Combo("Mouse drives", &mp, "Automatic\0Jaguar port 1\0Jaguar port 2\0")) {
         DeviceSettings::set(app.cfg, sc, "mouse_port", std::to_string(mp - 1));
         changed = true;
     }
     int gs = ds.gunSource;
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 10.0f, 20.0f));
     if (ImGui::Combo("Light gun aims with", &gs, "Automatic\0Mouse only\0Stick / keys only\0")) {
         DeviceSettings::set(app.cfg, sc, "gun_source", std::to_string(gs));
         changed = true;
     }
-    note("Sensitivity, dead zone and response curve are also in Core options (applied inside the emulated device).");
+    ui::hint("Sensitivity, dead zone and response curve are also in Core options (applied inside the emulated device).");
     if (changed) deviceChanged(app);
     if (in.mouseWanted()) {
-        note("The mouse is captured while the game has focus and no menu is open. Esc or F10 releases it; click the picture or press F10 to capture it again.");
+        ui::hint("The mouse is captured while the game has focus and no menu is open. Esc or F10 releases it; click the picture or press F10 to capture it again.");
     }
 
     // ---- overlay --------------------------------------------------------------------------------
@@ -288,7 +267,7 @@ void drawDevicesPanel(App& app) {
         app.cfg.setBool("ui.controls.autoshow", as);
         app.cfg.save();
     }
-    note("Keyboard players always get it at boot; a gamepad player once per controller model.");
+    ui::hint("Keyboard players always get it at boot; a gamepad player once per controller model.");
     if (ImGui::Button(in.controls.show ? "Hide the overlay now" : "Show the overlay now")) {
         in.controls.show = !in.controls.show;
         in.controls.hideAt = 0;

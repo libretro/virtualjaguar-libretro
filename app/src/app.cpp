@@ -73,6 +73,7 @@ void App::loadConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
+    homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     g_lastDir = cfg.get("ui.last_dir", "");
@@ -95,6 +96,7 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
+    cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
@@ -193,7 +195,17 @@ bool App::initImGui() {
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
-    float scale = SDL_GetWindowDisplayScale(window_);
+    // The UI scale is the display's CONTENT scale (the 200% of a 4K Windows/Linux display), nothing more.
+    // SDL_GetWindowDisplayScale() is relative to the window's PIXEL size, so it also contains the pixel density
+    // (2.0 on every Retina Mac); ImGui's SDL3 backend lays out in window points and already renders at the
+    // pixel density (DisplayFramebufferScale), so using it directly doubled everything on a Retina Mac and
+    // every window came out twice as wide as intended.  (Dear ImGui's own SDL3 example uses the content scale.)
+    float scale = uiScaleOverride;
+    if (scale <= 0.0f) {
+        float density = SDL_GetWindowPixelDensity(window_);
+        scale = SDL_GetWindowDisplayScale(window_) / (density > 0.0f ? density : 1.0f);
+        scale *= std::min(4.0f, std::max(0.5f, cfg.getFloat("ui.scale", 1.0f)));   // user preference on top
+    }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
     st.FontScaleDpi = scale;
@@ -265,6 +277,11 @@ void App::applyVsync() {
 void App::applyAudioSettings() {
     audio.setVolume(volume);
     audio.setTargetMs(audioTargetMs);
+}
+
+void App::toggleLibrary() {
+    if (homeVisible()) library.focusSearch = true;   // already showing: put the cursor in the search box
+    else library.show = !library.show;
 }
 
 void App::setFullscreen(bool fs) {
@@ -536,7 +553,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (mod) showSettings = !showSettings;
         break;
     case SDLK_L:
-        if (mod) library.show = !library.show;
+        if (mod) toggleLibrary();
         break;
     default: break;
     }
@@ -608,6 +625,7 @@ void App::stepEmulation() {
         if (!fastForward) audio.update();
         host.runFrame();
         ach.afterFrame();
+        netplay.afterFrame();
         fpsWindowFrames_++;
     }
     host.wantVideo = true;
@@ -670,6 +688,7 @@ int App::run(const CliArgs& a) {
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
+    if (!netplayInit(*this, a)) return 2;
 
     int rc = a.headless ? runHeadless(a) : runInteractive(a);
 
@@ -683,6 +702,7 @@ int App::run(const CliArgs& a) {
 }
 
 int App::runInteractive(const CliArgs& a) {
+    uiScaleOverride = a.uiScale;
     if (!initWindow() || !initImGui()) return 1;
     applyAudioSettings();
     audio.open(48043.6);
@@ -690,14 +710,20 @@ int App::runInteractive(const CliArgs& a) {
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
-        devSelectVideoTab = a.showWindow.rfind("settings-video", 0) == 0;
-        if (a.showWindow.rfind("settings-input", 0) == 0) requestInputTab();
+        if (a.showWindow.rfind("settings-video", 0) == 0) devSelectTab = "Video";
+        else if (a.showWindow.rfind("settings-input", 0) == 0) devSelectTab = "Input";
+        else if (a.showWindow.rfind("settings-audio", 0) == 0) devSelectTab = "Audio";
+        else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
     }
     else if (a.showWindow == "states") showStates = true;
     else if (a.showWindow == "about") showAbout = true;
     else if (a.showWindow == "cheats") showCheats = true;
+    else if (a.showWindow == "login") ach.showLogin = true;
+    else if (a.showWindow == "achievements") ach.showList = true;
+    else if (a.showWindow == "keypad") input.overlay.open = true;
+    else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "controls") input.controls.show = true;
     unsigned uiFrames = 0;
 
@@ -706,7 +732,8 @@ int App::runInteractive(const CliArgs& a) {
     else if (!a.content.empty()) openContent(a.content[0]);
     library.createTexture = &VideoOut::createTextureRGBA;
     library.destroyTexture = &VideoOut::destroyTexture;
-    library.start(paths, cfg, !host.isLoaded());
+    // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
+    library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
     if (a.showWindow == "library") library.show = true;
 
     lastTick_ = now();
@@ -835,6 +862,11 @@ int App::runHeadless(const CliArgs& a) {
             if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time
             for (const OsdMessage& m : host.takeMessages())
                 std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+        }
+        {
+            int nr = netplayHeadlessCheck(*this, a);
+            if (nr == 1) rc = 1;
+            else if (nr == 77 && rc == 0) rc = 77;
         }
         if (!cheatsHeadlessCheck(*this, a)) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;

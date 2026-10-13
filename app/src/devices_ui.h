@@ -28,9 +28,7 @@ Sheet currentControlsSheet(App& app);
 std::string controlsOverlayText(App& app);   // the same, as plain text (--print-controls)
 
 void drawDevicesPanel(App& app);
-// dev: --show-window settings-input opens Settings on the Input tab (for screenshots).
-void requestInputTab();
-bool takeInputTabRequest();   // Settings > Input > Devices
+   // Settings > Input > Devices
 void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize);
 
 }  // namespace vj
