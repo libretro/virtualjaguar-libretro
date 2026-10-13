@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "audio.h"
+#include "cheats.h"
 #include "config.h"
 #include "core_host.h"
 #include "input.h"
@@ -36,6 +37,12 @@ struct CliArgs {
     unsigned frames = 300;          // headless frames per content
     std::string expectHash;         // headless: expected hash of the FIRST content
     std::string dumpFrame;          // headless: write the final frame of each game as PNG (<path>.N.png)
+    // cheats (#835): the command-line twins of the Cheats window, used by the headless tests
+    std::string cheatsDir;                    // extra folder of .cht files
+    std::string cheatSet;                     // select this cheat set (file stem) for the game
+    std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
+    std::vector<std::string> cheatCodes;      // add these manual codes
+    std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
     bool showHelp = false;
     bool showVersion = false;
 };
@@ -77,6 +84,8 @@ public:
     bool showSettings = false;
     bool showStates = false;
     bool showAbout = false;
+    bool showCheats = false;
+    CheatManager cheats;
     bool devSelectVideoTab = false;   // dev: --show-window settings-video opens Settings on the Video tab
     int stateSlot = 0;
     char optionFilter[64] = "";   // core-options search box
@@ -183,6 +192,14 @@ private:
 // ImGui frame builder (ui.cpp).
 void drawUi(App& app, bool& wantCaptureKeyboard);
 
+// Cheats (cheats_core.cpp / cheats_ui.cpp).
+void cheatsInit(App& app, const CliArgs& a);        // wire the core sinks, find the library
+void cheatsAfterLoad(App& app);                     // a game was (re)loaded: its cheats go back in
+void cheatsAfterStateLoad(App& app);                // a state was restored
+void cheatsOnClose(App& app);                       // no game any more
+void cheatsSetUserDir(App& app, const std::string& dir);
+bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
+void drawCheats(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).
 void drawControlsTab(App& app);
 void drawKeypadOverlay(App& app);

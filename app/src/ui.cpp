@@ -338,6 +338,7 @@ void drawMenuBar(App& app) {
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("State manager...", nullptr, false, loaded)) app.showStates = true;
+        if (ImGui::MenuItem("Cheats...", nullptr, false, loaded)) app.showCheats = true;
         DiscInfo disc = host.discInfo();
         if (disc.available) {
             ImGui::Separator();
@@ -442,6 +443,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
 
     if (app.showSettings) drawSettings(app);
     if (app.showStates) drawStates(app);
+    if (app.showCheats) drawCheats(app);
     if (app.showAbout) drawAbout(app);
     drawLibrary(app);
     drawKeypadOverlay(app);

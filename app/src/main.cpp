@@ -21,7 +21,7 @@ static void usage(const char* argv0) {
         "  --verbose             log the core's INFO messages\n"
         "  --version, --help\n"
         "\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about]\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--show-window settings|states|about|cheats]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -30,6 +30,13 @@ static void usage(const char* argv0) {
         "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
+        "\n"
+        "cheats (the command-line twins of the Cheats window; also work headless):\n"
+        "  --cheats-dir DIR      look for .cht files (libretro cheat database) in DIR too\n"
+        "  --cheat-set NAME      use the cheat set NAME.cht for the loaded game (remembered)\n"
+        "  --cheat-on CHEAT      turn on a database cheat by description, id or position (repeatable)\n"
+        "  --cheat CODE          add a manual code, hex ADDRESS:VALUE e.g. 00007D3D:05 (repeatable)\n"
+        "  --expect-ram A=VV     headless: fail unless main-RAM byte A (hex) is VV (hex) at the end\n"
         "\n"
         "Drop a ROM or disc image on the window, or use File > Open.\n",
         VJ_APP_VERSION, argv0);
@@ -61,6 +68,25 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);
         else if (!std::strcmp(s, "--data-dir")) a.dataDir = need(s);
+        else if (!std::strcmp(s, "--cheats-dir")) a.cheatsDir = need(s);
+        else if (!std::strcmp(s, "--cheat-set")) a.cheatSet = need(s);
+        else if (!std::strcmp(s, "--cheat-on")) a.cheatOn.emplace_back(need(s));
+        else if (!std::strcmp(s, "--cheat")) a.cheatCodes.emplace_back(need(s));
+        else if (!std::strcmp(s, "--expect-ram")) {
+            std::string kv = need(s);
+            size_t eq = kv.find('=');
+            char *e1 = nullptr, *e2 = nullptr;
+            unsigned long addr = 0, val = 0;
+            if (eq != std::string::npos) {
+                addr = std::strtoul(kv.c_str(), &e1, 16);
+                val = std::strtoul(kv.c_str() + eq + 1, &e2, 16);
+            }
+            if (eq == std::string::npos || e1 != kv.c_str() + eq || !*(kv.c_str() + eq + 1) || *e2 || val > 0xFF) {
+                std::fprintf(stderr, "--expect-ram wants ADDR=VV (hex, one byte), got '%s'\n", kv.c_str());
+                return 2;
+            }
+            a.expectRam.emplace_back((uint32_t)addr, (uint8_t)val);
+        }
         else if (!std::strcmp(s, "--option")) {
             std::string kv = need(s);
             size_t eq = kv.find('=');

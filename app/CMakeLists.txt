@@ -193,7 +193,10 @@ set(VJ_APP_SOURCES
     src/remap.cpp
     src/remap_ui.cpp
     src/ui.cpp
-    src/library_ui.cpp)
+    src/library_ui.cpp
+    src/cheats.cpp
+    src/cheats_core.cpp
+    src/cheats_ui.cpp)
 
 include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
@@ -224,10 +227,18 @@ endif()
 # Windows: the executable keeps the console subsystem for now.  A GUI-subsystem
 # build would swallow the headless smoke test's stdout; packaging (#839) decides.
 
+# Install layout: the executable in <prefix>/bin; data that belongs beside it (the
+# bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
+install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
+
+# The libretro Jaguar cheat database (#835): pinned download, bundled by default.
+include(VJCheatData)
+
 # ---------------------------------------------------------------------------
 # Headless smoke tests (SDL dummy drivers, no window, no GL).
 # ---------------------------------------------------------------------------
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
     include(VJSmokeTests)
+    include(VJCheatTests)
 endif()
