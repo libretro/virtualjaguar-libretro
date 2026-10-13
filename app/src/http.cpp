@@ -79,7 +79,7 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
     Ctx ctx{&resp, maxBytes, cancel};
     char errbuf[CURL_ERROR_SIZE] = {0};
     curl_easy_setopt(h, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(h, CURLOPT_USERAGENT, "VirtualJaguar/4.0 (+https://github.com/libretro/virtualjaguar-libretro)");
+    curl_easy_setopt(h, CURLOPT_USERAGENT, "VirtualJaguar/" VJ_APP_VERSION " (+https://github.com/libretro/virtualjaguar-libretro)");
     curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(h, CURLOPT_MAXREDIRS, 5L);
 #if LIBCURL_VERSION_NUM >= 0x075500
@@ -163,7 +163,7 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
     path.append(uc.lpszExtraInfo, uc.dwExtraInfoLength);
     bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
 
-    Handle session(WinHttpOpen(L"VirtualJaguar/4.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+    Handle session(WinHttpOpen(L"VirtualJaguar/" VJ_APP_VERSION, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
                                WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session.h) {
         resp.error = "WinHttpOpen failed";

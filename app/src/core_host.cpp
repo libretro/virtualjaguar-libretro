@@ -492,7 +492,7 @@ bool CoreHost::env(unsigned cmd, void* data) {
         return true;
     }
 
-    // ---- reported unsupported in 4.0 -----------------------------------------
+    // ---- reported unsupported by the app -----------------------------------------
     case RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE:
     case RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE:
     case RETRO_ENVIRONMENT_GET_PERF_INTERFACE:
