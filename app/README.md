@@ -400,6 +400,23 @@ It is built on rcheevos' `rc_client` (v12.5.0, MIT, fetched at configure time li
 - **Tests** never touch the network or an account: `--ra-mock DIR` answers rc_client's
   requests from `app/tests/ra/<api>.json`. See `cmake/VJAchTests.cmake`.
 
+## Netplay
+
+The **Netplay** menu opens a window for the link-cable games (Doom deathmatch, BattleSphere,
+AirCars, and Ultra Vortek over the Voice Modem) between two computers on a local network. It
+configures the core's existing link networking (`docs/netlink-user-guide.md`) through core options
+and reads the core's `[NETLINK]` log lines for status; it is not rollback netplay, and play over
+the Internet or a VPN is not supported. Both players need the same game and the same version of
+the app, and the same device (JagLink / CatBox cable or Voice Modem).
+
+- **Host a game** lists this machine's LAN addresses and starts listening on a port (42171-42174).
+- **Join a game** finds hosts on the LAN (the core's UDP beacon) or takes a typed address.
+- Mode, host and port are session overrides and are never saved, so relaunching the app does not start
+  listening on its own; the link device is an ordinary saved option.
+- Command line twin: `--netplay host|join|join-discovered|browse|loopback`, `--netplay-addr`,
+  `--netplay-port`, `--netplay-device jaglink|voicemodem`. **Advanced > Echo test** runs the link
+  against itself with no partner.
+
 ## Smoke tests
 
 `virtualjaguar --headless` runs with SDL's dummy video and audio drivers: no
