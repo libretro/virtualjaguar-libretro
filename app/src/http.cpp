@@ -1,5 +1,6 @@
 #include "http.h"
 
+#include <csignal>
 #include <cstring>
 #include <mutex>
 
@@ -62,7 +63,14 @@ bool get(const std::string& url, Response& resp, size_t maxBytes, const std::ato
         resp.error = "unsupported URL scheme";
         return false;
     }
-    std::call_once(g_curlInit, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+    std::call_once(g_curlInit, [] {
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+#ifndef _WIN32
+        // CURLOPT_NOSIGNAL (set below, required for threads) also stops libcurl guarding against
+        // SIGPIPE; a server dropping a TLS connection must not be able to kill a running game.
+        std::signal(SIGPIPE, SIG_IGN);
+#endif
+    });
     CURL* h = curl_easy_init();
     if (!h) {
         resp.error = "curl_easy_init failed";

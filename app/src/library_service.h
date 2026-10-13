@@ -77,7 +77,7 @@ public:
     // ---- state the UI reads ----
     bool show = false;
     bool hideOnLaunch = true;
-    bool downloadArt = true;
+    std::atomic<bool> downloadArt{true};   // UI writes, the decode worker reads
     float cellScale = 1.0f;
     const std::vector<lib::Entry>& entries() const { return entries_; }
     const std::vector<std::string>& folders() const { return folders_; }
