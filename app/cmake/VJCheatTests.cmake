@@ -44,7 +44,7 @@ add_test(NAME cheat_apply_control
 set_tests_properties(cheat_apply_control PROPERTIES PASS_REGULAR_EXPRESSION "${_no_cheat}")
 
 add_test(NAME cheat_state
-    COMMAND virtualjaguar --headless --frames 120 --state-roundtrip
+    COMMAND virtualjaguar --headless --frames 240 --state-roundtrip
             --cheat 001F0000:AB --expect-ram 1F0000=AB "${VJ_ROMS}/jagniccc.j64")
 
 set(_pd "${CMAKE_BINARY_DIR}/cheat-persist-data")
@@ -99,10 +99,10 @@ if(VJ_CHEATS_DIR AND EXISTS "${VJ_CHEATS_DIR}/Tempest 2000.cht")
         message(STATUS "VJCheatTests: Tempest 2000 for the database test: ${_t2k}")
         # No --cheat-set: the set is chosen by the core's own title ("Tempest 2000").
         add_test(NAME cheat_tempest_lives
-            COMMAND virtualjaguar --headless --frames 300 --cheats-dir "${VJ_CHEATS_DIR}"
+            COMMAND virtualjaguar --headless --frames 600 --cheats-dir "${VJ_CHEATS_DIR}"
                     --cheat-on "Infinite Lives" --expect-ram 7D3D=05 "${_t2k}")
         add_test(NAME cheat_tempest_control
-            COMMAND virtualjaguar --headless --frames 300 --cheats-dir "${VJ_CHEATS_DIR}"
+            COMMAND virtualjaguar --headless --frames 600 --cheats-dir "${VJ_CHEATS_DIR}"
                     --expect-ram 7D3D=05 "${_t2k}")
         set_tests_properties(cheat_tempest_control PROPERTIES
             PASS_REGULAR_EXPRESSION "headless: FAIL ram 0x007D3D is [0-9A-F]+, expected 05")
