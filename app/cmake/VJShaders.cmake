@@ -7,8 +7,10 @@
 #
 #   VJ_APP_SHADERS              ON   build the shader path at all
 #   VJ_LIBRASHADER_INCLUDE_DIR  ""   use librashader.h + librashader_ld.h from here (offline)
-#   VJ_APP_FETCH_LIBRASHADER    OFF  also download the prebuilt library (macOS, Windows;
+#   VJ_APP_FETCH_LIBRASHADER    ON*  also download the prebuilt library (macOS, Windows;
 #                                    pinned by SHA256) and copy it beside the executable.
+#                                    *ON on macOS and Windows, OFF elsewhere; set OFF for
+#                                    offline builds.
 #                                    Upstream publishes no Linux binary: install the
 #                                    distro/OBS package or build it, then it is found on
 #                                    the system path.
@@ -23,7 +25,13 @@
 # the newest tag that has prebuilt binaries attached.
 
 option(VJ_APP_SHADERS "Build librashader (RetroArch shader preset) support" ON)
-option(VJ_APP_FETCH_LIBRASHADER "Download the prebuilt librashader runtime and ship it beside the executable" OFF)
+# On by default where upstream publishes a binary, so a plain local build has working shaders.
+if(APPLE OR WIN32)
+    set(_vj_fetch_rashader_default ON)
+else()
+    set(_vj_fetch_rashader_default OFF)
+endif()
+option(VJ_APP_FETCH_LIBRASHADER "Download the prebuilt librashader runtime and ship it beside the executable" ${_vj_fetch_rashader_default})
 set(VJ_LIBRASHADER_INCLUDE_DIR "" CACHE PATH "Directory holding librashader.h and librashader_ld.h (skips the download)")
 
 set(VJ_LIBRASHADER_TAG "librashader-v0.12.0")
