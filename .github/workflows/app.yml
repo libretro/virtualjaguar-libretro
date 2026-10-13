@@ -20,7 +20,9 @@ on:
       - 'test/roms/**'
       - '.github/workflows/app.yml'
   pull_request:
-    branches: [ develop, master ]
+    # feat/833-app-shell: the v4.0 app pieces (#834-#838) are stacked PRs on
+    # the shell branch until #867 lands; without it they get no app build.
+    branches: [ develop, master, feat/833-app-shell ]
     paths:
       - 'app/**'
       - 'src/**'
