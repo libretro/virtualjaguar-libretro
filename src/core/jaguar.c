@@ -1439,22 +1439,26 @@ void JaguarReset(void)
     * write-protected, SPI idle; the game re-runs GD_Install itself. */
    JGDReset();
 
-   /* Power-on RAM: zero-fill RAM[8..] in BOTH boot modes, skipping any
-    * region where a RAM-loaded executable resides (RAM[0..7] is the
-    * SSP + initial PC vector, set below).
+   /* Power-on RAM: fill RAM[8..] uniformly -- $FF bytes under the real
+    * boot ROM, zero in HLE -- skipping any region where a RAM-loaded
+    * executable resides (RAM[0..7] is the SSP + initial PC vector, set
+    * below).
     *
     * BIOS mode used to fill with a per-word xorshift PRNG to model
     * undefined DRAM contents.  Real DRAM powers up in near-uniform runs,
     * not independent random words, and the boot ROM does NOT clear RAM
-    * (frame-610 dumps show $3D000-$FE000 untouched -- so HLE's zero fill
-    * is not "what the BIOS does" either).  The per-word values broke
-    * Fight For Your Life (1996) under BIOS (#856): it sizes a byte fill
-    * from $F9A90, which nothing ever writes; the PRNG word overran the
-    * fill into the GPU parameter block and the GPU job ran away.  Zero
-    * (or $FFFFFFFF) there boots clean.  A uniform fill keeps BIOS and
-    * HLE starting from the same memory.  (JaguarInit's PRNG fill is
-    * overwritten here on every reset.) */
+    * (frame-610 dumps show $3D000-$FE000 untouched).  The per-word values
+    * broke Fight For Your Life (1996) under BIOS (#856): it sizes a byte
+    * fill from $F9A90, which nothing ever writes; the PRNG word overran
+    * the fill into the GPU parameter block and the GPU job ran away.
+    * Zero or $FFFFFFFF there boots clean.  BIOS mode is NOT zero: size-
+    * coded BootIntros read power-on RAM directly (JaGol seeds its Game of
+    * Life from it, so all-zero RAM leaves an empty board), and on real
+    * hardware RAM is not blank.  HLE keeps its long-standing zero fill.
+    * (JaguarInit's PRNG fill is overwritten here on every reset.) */
    {
+      int fill = vjs.useJaguarBIOS ? 0xFF : 0;
+
       if (preserveEnd > preserveStart)
       {
          if (preserveStart < clearStart)
@@ -1464,14 +1468,14 @@ void JaguarReset(void)
 
          if (preserveStart < preserveEnd)
          {
-            memset(jaguarMainRAM + clearStart, 0, preserveStart - clearStart);
-            memset(jaguarMainRAM + preserveEnd, 0, clearEnd - preserveEnd);
+            memset(jaguarMainRAM + clearStart, fill, preserveStart - clearStart);
+            memset(jaguarMainRAM + preserveEnd, fill, clearEnd - preserveEnd);
          }
          else
-            memset(jaguarMainRAM + clearStart, 0, clearEnd - clearStart);
+            memset(jaguarMainRAM + clearStart, fill, clearEnd - clearStart);
       }
       else
-         memset(jaguarMainRAM + clearStart, 0, clearEnd - clearStart);
+         memset(jaguarMainRAM + clearStart, fill, clearEnd - clearStart);
    }
 
    // New timer base code stuffola...
