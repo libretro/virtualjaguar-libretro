@@ -1,4 +1,4 @@
-# Virtual Jaguar 4.0 standalone app -- SDL3 + Dear ImGui + OpenGL 3.3 core.
+# Virtual Jaguar standalone app -- SDL3 + Dear ImGui + OpenGL 3.3 core.
 #
 # Build (from the repo root):
 #   cmake -S app -B app/build -DCMAKE_BUILD_TYPE=Release

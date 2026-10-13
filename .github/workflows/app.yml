@@ -21,9 +21,7 @@ on:
       - '.github/workflows/app.yml'
       - '.github/workflows/app-package.yml'
   pull_request:
-    # feat/833-app-shell: the v4.0 app pieces (#834-#838) are stacked PRs on
-    # the shell branch until #867 lands; without it they get no app build.
-    branches: [ develop, master, feat/833-app-shell ]
+    branches: [ develop, master ]
     paths:
       - 'app/**'
       - 'src/**'

@@ -6,7 +6,6 @@ name: Installer scripts
 # with HOME / LOCALAPPDATA in a temp dir, so nothing real is installed.
 #
 # The app's path filter (app.yml) does not cover tools/, hence a workflow of its own.
-# feat/833-app-shell is listed because the v4.0 app PRs are stacked on it until #867 lands.
 
 on:
   push:
@@ -18,7 +17,7 @@ on:
       - 'site/pages/index.html'
       - '.github/workflows/installer.yml'
   pull_request:
-    branches: [ develop, master, feat/833-app-shell ]
+    branches: [ develop, master ]
     paths:
       - 'tools/install.sh'
       - 'tools/install.ps1'

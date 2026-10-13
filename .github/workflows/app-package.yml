@@ -27,7 +27,7 @@ on:
   workflow_call:
     inputs:
       release_tag:
-        description: "v4.0.0 | nightly | prerelease | pr123 | dev"
+        description: "v3.8.1 | nightly | prerelease | pr123 | dev"
         type: string
         required: true
       sign:
@@ -50,7 +50,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Label used in the file names (v4.0.0, nightly, dev, ...)"
+        description: "Label used in the file names (v3.8.1, nightly, dev, ...)"
         type: string
         default: dev
       sign:
@@ -91,7 +91,8 @@ jobs:
             run=false
           fi
           proj=""
-          [ -f app/CMakeLists.txt ] && proj="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p' app/CMakeLists.txt | head -1)"
+          # app/CMakeLists.txt takes its version from CORE_BASE_VERSION in the Makefile.
+          [ -f app/CMakeLists.txt ] && proj="$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:=[[:space:]]*v\{0,1\}\([0-9][0-9.]*\).*/\1/p' Makefile | head -1)"
           sha7="${GITHUB_SHA:0:7}"
           case "$TAG" in
             v[0-9]*)
@@ -99,15 +100,15 @@ jobs:
               base="${label%%-*}"
               short="$base"
               if [ -n "$proj" ] && [ "$base" != "$proj" ]; then
-                # A core-only release must not ship an app that reports another version.
-                echo "::warning::tag $TAG does not match the app version $proj (app/CMakeLists.txt): skipping app packages." \
-                  "Bump the app version in the release commit to ship them."
+                # The app must report the version in its file names.
+                echo "::warning::tag $TAG does not match the app version $proj (CORE_BASE_VERSION in the Makefile): skipping app packages." \
+                  "Bump CORE_BASE_VERSION in the release commit to ship them."
                 run=false
               fi
               deb="$(printf '%s' "$label" | sed 's/-/~/')" ;;
             *)
               label="$TAG"; short="${proj:-0.0.0}"
-              # Debian versions cannot be words: 4.0.0~nightly.<sha> sorts before 4.0.0.
+              # Debian versions cannot be words: 3.8.1~nightly.<sha> sorts before 3.8.1.
               deb="${short}~${TAG//[^A-Za-z0-9]/}.${sha7}" ;;
           esac
           { echo "run=$run"; echo "label=$label"; echo "short_version=$short"; echo "deb_version=$deb"; } >> "$GITHUB_OUTPUT"
@@ -127,7 +128,7 @@ jobs:
       - name: Render with placeholder checksums and parse every output
         run: |
           set -eu
-          v=4.0.0
+          v=1.2.3
           d="$RUNNER_TEMP/sums"; mkdir -p "$d"
           for f in macos-universal.zip windows-x64.zip windows-x64-setup.exe; do
             echo "$(printf '%s' "$f" | sha256sum | cut -d' ' -f1)  VirtualJaguar-$v-$f"
