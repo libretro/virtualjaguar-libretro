@@ -2,6 +2,7 @@
 // from the libretro cheat database), toggle its cheats, add manual codes.
 #include "app.h"
 #include "cheats.h"
+#include "ui_util.h"
 
 #include "imgui.h"
 
@@ -32,7 +33,7 @@ void drawSetPicker(App& app) {
     CheatManager& cm = app.cheats;
     const std::vector<ChtRef>& lib = cm.library();
     std::string current = cm.selectedStem().empty() ? "(no cheat set)" : cm.selectedStem();
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.62f, 12.0f, 32.0f));
     if (ImGui::BeginCombo("Cheat set", current.c_str())) {
         ImGui::InputTextWithHint("##setfilter", "Filter", g_ui.filter, sizeof g_ui.filter);
         std::string f = lowerCopy(g_ui.filter);
@@ -55,7 +56,7 @@ void drawSetPicker(App& app) {
         ImGui::EndCombo();
     }
     std::string st = cm.setStatus();
-    if (!st.empty()) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%s", st.c_str());
+    if (!st.empty()) ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), st.c_str());
 }
 
 void drawSetCheats(App& app) {
@@ -70,7 +71,13 @@ void drawSetCheats(App& app) {
         bool on = cm.isEnabled(c);
         ImGui::BeginDisabled(!c.supported);
         std::string label = c.desc + (c.parts > 1 ? "  (" + std::to_string(c.parts) + " parts)" : std::string());
-        if (ImGui::Checkbox(label.c_str(), &on)) cm.setEnabled(c, on);
+        // A checkbox label cannot wrap, so the description is a wrapped text beside an empty-label box;
+        // clicking the text toggles too.
+        if (ImGui::Checkbox("##on", &on)) cm.setEnabled(c, on);
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextWrapped("%s", label.c_str());
+        if (ImGui::IsItemClicked()) cm.setEnabled(c, !on);
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (c.supported) ImGui::SetTooltip("%s", c.code.c_str());
@@ -88,23 +95,30 @@ void drawUserCheats(App& app) {
     for (size_t i = 0; i < list.size(); i++) {
         ImGui::PushID((int)(10000 + i));
         bool on = list[i].enabled;
-        if (ImGui::Checkbox(list[i].desc.c_str(), &on)) cm.setUserEnabled(i, on);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", list[i].code.c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", list[i].code.c_str());
+        if (ImGui::Checkbox("##on", &on)) cm.setUserEnabled(i, on);
         ImGui::SameLine();
         if (ImGui::SmallButton("remove")) removeIdx = (int)i;
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextWrapped("%s  %s", list[i].desc.c_str(), list[i].code.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", list[i].code.c_str());
         ImGui::PopID();
     }
     if (removeIdx >= 0) cm.removeUser((size_t)removeIdx);
 
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+    // Name and code share the row (name a third, code the rest); Add drops to the next row in a narrow window.
+    float rowW = ImGui::GetContentRegionAvail().x, sp = ImGui::GetStyle().ItemSpacing.x;
+    float addW = ui::Flow::buttonW("Add");
+    bool oneRow = rowW > ImGui::GetFontSize() * 30.0f;
+    float nameW = oneRow ? (rowW - addW - sp * 2) * 0.34f : rowW * 0.4f;
+    float codeW = oneRow ? (rowW - addW - sp * 2) - nameW : rowW - nameW - sp;
+    ImGui::SetNextItemWidth(std::max(1.0f, nameW));
     ImGui::InputTextWithHint("##udesc", "Name", g_ui.desc, sizeof g_ui.desc);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
+    ImGui::SetNextItemWidth(std::max(1.0f, codeW));
     bool enter = ImGui::InputTextWithHint("##ucode", "Code, e.g. 00007D3D:05", g_ui.code, sizeof g_ui.code,
                                           ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
+    if (oneRow) ImGui::SameLine();
     if (ImGui::Button("Add") || enter) {
         std::string err;
         if (cm.addUser(g_ui.desc, g_ui.code, err)) {
@@ -114,7 +128,7 @@ void drawUserCheats(App& app) {
             g_ui.error = err;
         }
     }
-    if (!g_ui.error.empty()) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", g_ui.error.c_str());
+    if (!g_ui.error.empty()) ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), g_ui.error.c_str());
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Hex ADDRESS:VALUE; 2, 4 or 8 value digits write a byte, word or long. "
                        "Join several with '+'. Addresses are Jaguar bus addresses (RAM is 000000-1FFFFF).");
@@ -128,9 +142,15 @@ static void drawCheatLibrary(App& app) {
         std::snprintf(g_ui.dir, sizeof g_ui.dir, "%s", app.cfg.get("cheats.dir", "").c_str());
         g_ui.dirInit = true;
     }
-    ImGui::Text("%zu cheat file%s found in:", cm.library().size(), cm.library().size() == 1 ? "" : "s");
-    for (const std::string& d : cm.libraryDirs()) ImGui::BulletText("%s", d.c_str());
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 28.0f);
+    ImGui::TextWrapped("%zu cheat file%s found in:", cm.library().size(), cm.library().size() == 1 ? "" : "s");
+    for (const std::string& d : cm.libraryDirs()) {
+        ImGui::Bullet();
+        ImGui::TextWrapped("%s", d.c_str());
+    }
+    // The folder box takes what the "Use folder" button leaves.
+    ImGui::SetNextItemWidth(std::max(ImGui::GetFontSize() * 8.0f,
+                                     ImGui::GetContentRegionAvail().x - ui::Flow::buttonW("Use folder") -
+                                         ImGui::GetStyle().ItemSpacing.x));
     ImGui::InputTextWithHint("##cdir", "Extra folder with .cht files", g_ui.dir, sizeof g_ui.dir);
     ImGui::SameLine();
     if (ImGui::Button("Use folder")) cheatsSetUserDir(app, g_ui.dir);
@@ -154,8 +174,10 @@ static void drawCheatLibrary(App& app) {
 }  // namespace
 
 void drawCheats(App& app) {
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 40.0f, ImGui::GetFontSize() * 32.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Cheats", &app.showCheats)) {
+    ui::nextWindow(40.0f, 32.0f, 24.0f, 14.0f);
+    bool open = ImGui::Begin("Cheats", &app.showCheats);
+    ui::keepOnScreen();
+    if (!open) {
         ImGui::End();
         return;
     }
@@ -168,21 +190,20 @@ void drawCheats(App& app) {
     }
     const GameIdentity& g = cm.game();
     const bool hardcore = cm.blockedNow();
-    ImGui::Text("%s", !g.title.empty() ? g.title.c_str() : g.fileStem.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%s)", g.key.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("%u on", cm.enabledCount());
+    ImGui::TextWrapped("%s", !g.title.empty() ? g.title.c_str() : g.fileStem.c_str());
+    ui::hint("%s    %u on", g.key.c_str(), cm.enabledCount());
     ImGui::SameLine();
     ImGui::BeginDisabled(hardcore);
     if (ImGui::SmallButton("Turn all off")) cm.disableAll();
     ImGui::EndDisabled();
     if (hardcore)
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-                           "Disabled in hardcore mode (saved cheats are kept).");
-    if (cm.appliedSegments() > CheatManager::kCoreLimit)
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%u writes: the core keeps only the first %u.",
-                           cm.appliedSegments(), CheatManager::kCoreLimit);
+        ui::coloredWrapped(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Disabled in hardcore mode (saved cheats are kept).");
+    if (cm.appliedSegments() > CheatManager::kCoreLimit) {
+        char m[96];
+        std::snprintf(m, sizeof m, "%u writes: the core keeps only the first %u.", cm.appliedSegments(),
+                      CheatManager::kCoreLimit);
+        ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), m);
+    }
     ImGui::Separator();
 
     ImGui::BeginDisabled(hardcore);

@@ -33,7 +33,8 @@ struct CliArgs {
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
-    std::string showWindow;         // dev: open the 'settings', 'states' or 'about' window at start
+    std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
@@ -108,9 +109,11 @@ public:
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
+    bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
     bool showNetplay = false;
     CheatManager cheats;
-    bool devSelectVideoTab = false;   // dev: --show-window settings-video opens Settings on the Video tab
+    std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
+    float uiScaleOverride = 0;        // dev: --ui-scale
     int stateSlot = 0;
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;
@@ -130,6 +133,8 @@ public:
     bool reloadContent();
     void closeContent();
     void showOpenDialog();
+    bool homeVisible() const { return homeLibrary && !host.isLoaded(); }   // is the library standing in for the game?
+    void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
     void reset();
     void togglePause();
     void setFullscreen(bool fs);
@@ -224,6 +229,8 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
+void drawLibraryHome(App& app, float x, float y, float w, float h);
 // Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.
 bool netplayInit(App& app, const CliArgs& a);               // log tap + --netplay*; false = bad arguments
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)

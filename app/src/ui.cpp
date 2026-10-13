@@ -5,6 +5,7 @@
 
 #include "imgui.h"
 #include "shaders.h"
+#include "ui_util.h"
 
 #include <algorithm>
 #include <cctype>
@@ -39,7 +40,8 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
     const std::string& info = (inCategory && !d.infoCategorized.empty()) ? d.infoCategorized : d.info;
 
     ImGui::PushID(d.key.c_str());
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 11.0f);
+    // The value box takes a share of the width; the description wraps in what is left.
+    ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
     if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
         for (const OptionValue& v : d.values) {
             bool sel = (v.value == cur);
@@ -50,17 +52,19 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
         ImGui::EndCombo();
     }
     ImGui::SameLine();
-    ImGui::TextUnformatted(title.c_str());
-    if (!info.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
-        ImGui::TextUnformatted(info.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
-    }
+    // "reset" has a fixed slot so the descriptions stay aligned whether or not it shows.
     if (host.userOptions().count(d.key)) {
-        ImGui::SameLine();
         if (ImGui::SmallButton("reset")) host.resetOptionToDefault(d.key);
+    } else {
+        ImGui::Dummy(ImVec2(ui::Flow::buttonW("reset"), 1.0f));
+    }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextWrapped("%s", title.c_str());
+    if (!info.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ui::beginWrappedTooltip();
+        ImGui::TextUnformatted(info.c_str());
+        ui::endWrappedTooltip();
     }
     ImGui::PopID();
 }
@@ -80,10 +84,9 @@ void drawCoreOptions(App& app) {
     }
     if (host.isLoaded()) {
         if (ImGui::Button("Restart game to apply")) app.reloadContent();
-        ImGui::SameLine();
-        ImGui::TextDisabled("'Restart required' options apply on the next load.");
+        ui::hint("'Restart required' options apply on the next load.");
     }
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.5f, 10.0f, 24.0f));
     ImGui::InputTextWithHint("##filter", "Filter options", app.optionFilter, sizeof app.optionFilter);
     std::string f = lower(app.optionFilter);
     ImGui::Separator();
@@ -131,15 +134,14 @@ void drawVideoTab(App& app) {
     PresentOptions& p = app.present;
     ImGui::Checkbox("Integer scaling", &p.integerScale);
     ImGui::Checkbox("Smooth (bilinear) filter", &p.linearFilter);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(off when integer scaling)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Has no effect while integer scaling is on.");
     ImGui::Checkbox("Stretch to window (ignore aspect ratio)", &p.stretch);
     static const char* aspects[] = {"Core default", "4:3", "16:9", "8:7 (square pixels)"};
     static const float vals[] = {0.0f, 4.0f / 3.0f, 16.0f / 9.0f, 8.0f / 7.0f};
     int sel = 0;
     for (int i = 0; i < 4; i++)
         if (std::abs(p.aspectOverride - vals[i]) < 1e-3f) sel = i;
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 11.0f);
+    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 9.0f, 16.0f));
     if (ImGui::Combo("Aspect ratio", &sel, aspects, 4)) p.aspectOverride = vals[sel];
     if (ImGui::Checkbox("VSync", &app.vsync)) app.applyVsync();
     bool fs = app.fullscreen;
@@ -150,15 +152,17 @@ void drawVideoTab(App& app) {
 
 void drawAudioTab(App& app) {
     bool changed = false;
+    ImGui::PushItemWidth(ui::fitWidth(0.55f, 10.0f, 28.0f));
     changed |= ImGui::SliderFloat("Volume", &app.volume, 0.0f, 1.0f, "%.2f");
     changed |= ImGui::Checkbox("Mute", &app.mute);
     changed |= ImGui::SliderFloat("Buffer target (ms)", &app.audioTargetMs, 20.0f, 200.0f, "%.0f");
+    ImGui::PopItemWidth();
     if (changed) app.applyAudioSettings();
     ImGui::Separator();
-    ImGui::Text("Buffered: %.1f ms   playback ratio: %.5f   underruns: %llu", app.audio.queuedMs(),
-                app.audio.ratio(), (unsigned long long)app.audio.underruns());
+    ImGui::TextWrapped("Buffered: %.1f ms   playback ratio: %.5f   underruns: %llu", app.audio.queuedMs(),
+                       app.audio.ratio(), (unsigned long long)app.audio.underruns());
     if (app.host.isLoaded())
-        ImGui::Text("Core rate: %.2f Hz at %.5f fields/s", app.host.sampleRate(), app.host.fps());
+        ImGui::TextWrapped("Core rate: %.2f Hz at %.5f fields/s", app.host.sampleRate(), app.host.fps());
 }
 
 void drawInputTab(App& app) {
@@ -177,7 +181,7 @@ void drawInputTab(App& app) {
             if ((int)t.id == cur) shown = t.desc.c_str();
         char label[32];
         std::snprintf(label, sizeof label, "Jaguar port %u", p + 1);
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18.0f);
+        ImGui::SetNextItemWidth(ui::fitWidth(0.5f, 12.0f, 24.0f));
         if (ImGui::BeginCombo(label, shown)) {
             for (const ControllerType& t : ports[p]) {
                 if (ImGui::Selectable(t.desc.c_str(), (int)t.id == cur)) {
@@ -194,30 +198,39 @@ void drawStorageTab(App& app) {
     ImGui::Text("Data folder%s:", app.paths.portable ? " (portable mode)" : "");
     ImGui::TextWrapped("%s", app.paths.root.c_str());
     ImGui::Separator();
-    ImGui::Text("Saves:   %s", app.paths.saves.c_str());
-    ImGui::Text("States:  %s", app.paths.states.c_str());
-    ImGui::Text("System:  %s", app.paths.system.c_str());
+    // Paths are long and have no spaces to break at: ImGui wraps them at the window edge.
+    ImGui::TextWrapped("Saves: %s", app.paths.saves.c_str());
+    ImGui::TextWrapped("States: %s", app.paths.states.c_str());
+    ImGui::TextWrapped("System: %s", app.paths.system.c_str());
     ImGui::Separator();
-    ImGui::Checkbox("Flush saves (SRAM / EEPROM / Memory Track) every few seconds", &app.autosaveSram);
-    ImGui::TextDisabled("HLE boot is the default, so no BIOS file is needed.");
+    ImGui::Checkbox("Flush saves every few seconds", &app.autosaveSram);
+    ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed.");
+    ImGui::SeparatorText("Game library");
+    ImGui::Checkbox("Show the game library on the home screen", &app.homeLibrary);
+    ui::hint("When no game is loaded the window shows your library (add folders there). Off: a plain "
+             "welcome message instead; File > Game library (Ctrl/Cmd+L) still opens the library in its own window.");
 }
 
 void drawSettings(App& app) {
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 42.0f, ImGui::GetFontSize() * 30.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Settings", &app.showSettings)) {
+    ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
+    bool open = ImGui::Begin("Settings", &app.showSettings);
+    ui::keepOnScreen();
+    if (!open) {
         ImGui::End();
         return;
     }
-    if (ImGui::BeginTabBar("##tabs")) {
+    if (ImGui::BeginTabBar("##tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+        // dev: --show-window settings-video etc. selects a tab once
+        auto tabFlag = [&](const char* name) {
+            if (app.devSelectTab != name) return (ImGuiTabItemFlags)0;
+            app.devSelectTab.clear();
+            return (ImGuiTabItemFlags)ImGuiTabItemFlags_SetSelected;
+        };
         if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video", nullptr, app.devSelectVideoTab ? ImGuiTabItemFlags_SetSelected : 0)) {
-            app.devSelectVideoTab = false;
-            drawVideoTab(app);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Audio")) { drawAudioTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Input")) { drawInputTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Storage")) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Video", nullptr, tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Audio", nullptr, tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
     ImGui::End();
@@ -226,8 +239,10 @@ void drawSettings(App& app) {
 // ---- save-state manager --------------------------------------------------------------------
 
 void drawStates(App& app) {
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 44.0f, ImGui::GetFontSize() * 30.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Save states", &app.showStates)) {
+    ui::nextWindow(44.0f, 30.0f, 22.0f, 14.0f);
+    bool open = ImGui::Begin("Save states", &app.showStates);
+    ui::keepOnScreen();
+    if (!open) {
         ImGui::End();
         return;
     }
@@ -236,9 +251,12 @@ void drawStates(App& app) {
         ImGui::End();
         return;
     }
-    ImGui::Text("%s", app.host.contentName().c_str());
-    float cell = ImGui::GetFontSize() * 9.5f;
-    int perRow = std::max(1, (int)(ImGui::GetContentRegionAvail().x / (cell + ImGui::GetStyle().ItemSpacing.x)));
+    ImGui::TextWrapped("%s", app.host.contentName().c_str());
+    // As many columns as fit at a comfortable thumbnail size, then the thumbnails share the row evenly.
+    float gap = ImGui::GetStyle().ItemSpacing.x;
+    float avail = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
+    int perRow = std::max(1, (int)((avail + gap) / (ImGui::GetFontSize() * 9.0f + gap)));
+    float cell = std::min(ImGui::GetFontSize() * 14.0f, std::max(ImGui::GetFontSize() * 6.0f, (avail - gap * (perRow - 1)) / perRow));
     for (int s = 0; s < 10; s++) {
         if (s % perRow != 0) ImGui::SameLine();
         ImGui::BeginGroup();
@@ -278,7 +296,10 @@ void drawStates(App& app) {
 }
 
 void drawAbout(App& app) {
-    if (!ImGui::Begin("About Virtual Jaguar", &app.showAbout, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ui::nextWindow(30.0f, 0.0f, 0.0f, 0.0f, ui::WinFit::FixedWidth);
+    bool open = ImGui::Begin("About Virtual Jaguar", &app.showAbout, ImGuiWindowFlags_AlwaysAutoResize);
+    ui::keepOnScreen();
+    if (!open) {
         ImGui::End();
         return;
     }
@@ -291,8 +312,29 @@ void drawAbout(App& app) {
     ImGui::Text("SDL:     %d.%d.%d", SDL_VERSIONNUM_MAJOR(sdl), SDL_VERSIONNUM_MINOR(sdl), SDL_VERSIONNUM_MICRO(sdl));
     ImGui::Text("Dear ImGui: %s", ImGui::GetVersion());
     ImGui::Separator();
-    ImGui::TextUnformatted("F1 menu   F5/F7 save/load state   F6 next slot   F8 pause\n"
-                           "F11 or Alt+Enter fullscreen   Tab fast-forward   Ctrl/Cmd+O open   Ctrl/Cmd+R reset");
+    static const char* const keys[][2] = {
+        {"F1", "show or pin the menu bar (fullscreen)"},
+        {"F5 / F7", "save / load state"},
+        {"F6", "next state slot (Shift: previous)"},
+        {"F8", "pause"},
+        {"F11, Alt+Enter", "fullscreen"},
+        {"Tab (hold)", "fast-forward"},
+        {"Ctrl/Cmd+O", "open a game"},
+        {"Ctrl/Cmd+L", "game library"},
+        {"Ctrl/Cmd+R", "reset"},
+    };
+    if (ImGui::BeginTable("##keys", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("##k", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 9.0f);
+        ImGui::TableSetupColumn("##a", ImGuiTableColumnFlags_WidthStretch);
+        for (const auto& kv : keys) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(kv[0]);
+            ImGui::TableNextColumn();
+            ImGui::TextWrapped("%s", kv[1]);
+        }
+        ImGui::EndTable();
+    }
     ImGui::End();
 }
 
@@ -303,7 +345,7 @@ void drawMenuBar(App& app) {
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
-        if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show)) app.library.show = !app.library.show;
+        if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show && !app.homeVisible())) app.toggleLibrary();
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list
             for (size_t i = 0; i < list.size(); i++) {
@@ -358,6 +400,7 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Shader", nullptr, &app.video.shader.enabled)) app.video.shader.retry();
         ImGui::MenuItem("Show frame rate", nullptr, &app.showFps);
         ImGui::MenuItem("Keypad overlay", "F2", &app.input.overlay.open);
+        ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
@@ -384,11 +427,13 @@ void drawOsd(App& app, ImVec2 areaPos, ImVec2 areaSize) {
     list.erase(std::remove_if(list.begin(), list.end(), [&](const Osd& o) { return t - o.born > o.life; }), list.end());
     float y = areaPos.y + areaSize.y - ImGui::GetFontSize() * 0.8f;
     float pad = ImGui::GetFontSize() * 0.4f;
+    // Long messages (an error with a path in it) wrap instead of running off the window.
+    float wrap = std::max(ImGui::GetFontSize() * 8.0f, std::min(ImGui::GetFontSize() * 44.0f, areaSize.x - ImGui::GetFontSize() * 2.0f - pad * 2));
     for (size_t i = list.size(); i-- > 0;) {
         const Osd& o = list[i];
         float age = (float)(t - o.born), left = (float)o.life - age;
         float a = std::min(1.0f, std::min(left / 0.5f, age / 0.1f + 0.3f));
-        ImVec2 ts = ImGui::CalcTextSize(o.text.c_str());
+        ImVec2 ts = ImGui::CalcTextSize(o.text.c_str(), nullptr, false, wrap);
         y -= ts.y + pad * 2;
         ImVec2 p0(areaPos.x + ImGui::GetFontSize() * 0.6f, y);
         ImVec2 p1(p0.x + ts.x + pad * 2, y + ts.y + pad * 2);
@@ -396,7 +441,7 @@ void drawOsd(App& app, ImVec2 areaPos, ImVec2 areaSize) {
         ImU32 col = o.level >= 3 ? IM_COL32(255, 120, 120, (int)(255 * a))
                   : o.level == 2 ? IM_COL32(255, 210, 110, (int)(255 * a))
                                  : IM_COL32(240, 240, 240, (int)(255 * a));
-        dl->AddText(ImVec2(p0.x + pad, p0.y + pad), col, o.text.c_str());
+        dl->AddText(nullptr, 0.0f, ImVec2(p0.x + pad, p0.y + pad), col, o.text.c_str(), nullptr, wrap);
         y -= pad * 0.5f;
     }
 }
@@ -427,12 +472,19 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
         app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
                        io.DisplayFramebufferScale.x);
     } else if (!app.host.isLoaded()) {
-        const char* l1 = "Virtual Jaguar";
-        const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open or File > Game library";
-        ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2);
-        float cx = areaPos.x + areaSize.x * 0.5f, cy = areaPos.y + areaSize.y * 0.5f;
-        bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), IM_COL32(230, 230, 230, 255), l1);
-        bg->AddText(ImVec2(cx - s2.x * 0.5f, cy + s2.y * 0.2f), IM_COL32(150, 150, 150, 255), l2);
+        if (app.homeLibrary) {
+            drawLibraryHome(app, areaPos.x, areaPos.y, areaSize.x, areaSize.y);   // the game library is the home screen
+        } else {
+            // The plain welcome screen (Settings > Storage turns the home-screen library off).
+            const char* l1 = "Virtual Jaguar";
+            const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open or File > Game library";
+            float wrap = std::max(ImGui::GetFontSize() * 10.0f, areaSize.x - ImGui::GetFontSize() * 4.0f);
+            ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2, nullptr, false, wrap);
+            float cx = areaPos.x + areaSize.x * 0.5f, cy = areaPos.y + areaSize.y * 0.5f;
+            bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), IM_COL32(230, 230, 230, 255), l1);
+            bg->AddText(nullptr, 0.0f, ImVec2(cx - s2.x * 0.5f, cy + s1.y * 0.2f), IM_COL32(150, 150, 150, 255), l2,
+                        nullptr, wrap);
+        }
     }
 
     shaderFrameHook(app);   // file-dialog results and shader notices

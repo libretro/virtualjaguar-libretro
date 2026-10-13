@@ -80,9 +80,44 @@ struct ScanFile {
     bool hashed = false;
 };
 
+// Which part of the library a file belongs to.
+enum class Section { Cart = 0, Disc = 1, Bios = 2 };
+
+// ---- BIOS and system files -------------------------------------------------------------------
+// The core embeds the Series K and Model M boot ROMs and the retail and developer CD BIOS, so
+// none of these is needed; a file is read only in the cases the notes below spell out (all from
+// libretro.c: load_external_cd_bios, load_external_cart_boot_rom, stage_cart_boot_rom).
+enum class BiosRole { None, CartBoot, CdBios, MemoryTrack, Other };
+
+struct BiosInfo {
+    BiosRole role = BiosRole::None;
+    bool recognized = false;   // the checksum is one of the core's known images
+    std::string title;         // "Series K boot ROM", or the file's own name
+};
+
+// Classify a cartridge-type file as BIOS / system data, by CRC32 of the whole file first and
+// then by file name (a "[BIOS]" prefix, the names the core searches for, "bios" or "memory
+// track" in the name).  Names only count for small files (<= 512 KiB): no BIOS is larger.
+BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole);
+const char* biosRoleLabel(BiosRole r);   // "Cart boot ROM", "CD BIOS", ...
+// Will the core read this file where it is, and when?  Decided from what libretro.c does (file
+// NAME, FOLDER and SIZE; the checksum only names the image): the cart boot ROM search
+// (load_external_cart_boot_rom: jagboot.rom, boot.rom, boot0.rom and the "[BIOS] Atari Jaguar..." names, in the
+// system folder or its "Atari - Jaguar" / "jaguar" sub-folders, exactly 128 KiB, and only with
+// Cart BIOS Type = Custom), jagboot_m.rom (system folder itself only, 128 KiB, Cart BIOS Type = Model M),
+// and the CD BIOS search (load_external_cd_bios: its own names and sub-folders, exactly 256 KiB, preferred over
+// the built-in image whenever a real CD BIOS boots).  Series K is always the built-in image.
+struct BiosUse {
+    bool core = false;     // the core reads this file from where it is
+    std::string text;      // when / why not, a sentence or two for the tooltip
+};
+BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const std::string& systemDir);
+
 // A scanned file plus what the dats say about it.
 struct Entry {
     ScanFile file;
+    Section section = Section::Cart;
+    BiosInfo bios;         // when section == Bios
     std::string title;     // dat game name, or the cleaned file stem
     std::string datName;   // dat game name when matched (also the thumbnail key), else ""
     std::string region;
@@ -91,6 +126,9 @@ struct Entry {
 
 struct ScanOptions {
     std::vector<std::string> folders;
+    // The core's system folder: only BIOS / system files found there are kept (anything else is
+    // not part of the library), so the BIOS section shows what the core can actually read.
+    std::string systemFolder;
     int maxDepth = 8;
 };
 

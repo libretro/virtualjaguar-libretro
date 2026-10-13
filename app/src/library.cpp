@@ -237,6 +237,182 @@ uint32_t cartHeaderSize(const uint8_t* b, size_t size) {
     return 0;
 }
 
+// ---- BIOS classification ------------------------------------------------------------------------------
+
+namespace {
+
+struct KnownBios {
+    uint32_t crc;
+    BiosRole role;
+    const char* title;
+};
+
+// CRCs the core itself checks: biosdb.c (cart boot ROMs, issue #469), CD_BIOS_CRC_RETAIL / _DEV and
+// the Memory Track cartridge dump (jaguarMainROMCRC32 test) in libretro.c / jaguar.c.
+const KnownBios kKnownBios[] = {
+    {0xFB731AAAu, BiosRole::CartBoot, "Series K boot ROM"},
+    {0xAE25BDF5u, BiosRole::CartBoot, "Model M boot ROM"},
+    {0xE60277BBu, BiosRole::CartBoot, "Stubulator '93 dev boot ROM"},
+    {0x8D15DBC6u, BiosRole::CartBoot, "Stubulator '94 dev boot ROM"},
+    {0x687068D5u, BiosRole::CdBios, "Jaguar CD BIOS (retail)"},
+    {0x55A0669Cu, BiosRole::CdBios, "Jaguar CD BIOS (developer)"},
+    {0xFDF37F47u, BiosRole::MemoryTrack, "Memory Track cartridge"},
+};
+
+const uint64_t kMaxBiosBytes = 512ull * 1024;
+
+// File names the core searches for (libretro.c), in the sub-folders it searches.
+const char* const kCartBootNames[] = {"jagboot.rom", "boot.rom", "boot0.rom", "jagboot_m.rom",
+                                      "[BIOS] Atari Jaguar (World).j64",
+                                      "[BIOS] Atari Jaguar Stubulator '94 (World).j64",
+                                      "[BIOS] Atari Jaguar Stubulator '93 (World).j64", nullptr};
+const char* const kCdBiosNames[] = {"[BIOS] Atari Jaguar CD (World).j64", "[BIOS] Atari Jaguar CD (World).rom",
+                                    "[BIOS] Atari Jaguar CD (World).bin", "[BIOS] Atari Jaguar Developer CD (World).j64",
+                                    "[BIOS] Atari Jaguar Developer CD (World).rom",
+                                    "[BIOS] Atari Jaguar Developer CD (World).bin", "jaguarcd_bios.bin", "jagcd_bios.bin",
+                                    "jaguarcd.bin", "jagcd.bin", "Jaguar CD BIOS.rom", "Jaguar CD BIOS.bin", nullptr};
+const char* const kCartBootDirs[] = {"", "Atari - Jaguar", "jaguar", nullptr};
+const char* const kCdBiosDirs[] = {"", "Atari - Jaguar", "Atari - Jaguar CD", "jaguar", "jaguarcd", nullptr};
+
+std::string baseName(const std::string& path) {
+    size_t sl = path.find_last_of("/\\");
+    return sl == std::string::npos ? path : path.substr(sl + 1);
+}
+
+std::string dirName(const std::string& path) {
+    size_t sl = path.find_last_of("/\\");
+    return sl == std::string::npos ? std::string() : path.substr(0, sl);
+}
+
+std::string normDir(std::string d) {
+    for (char& c : d)
+        if (c == '\\') c = '/';
+    while (d.size() > 1 && d.back() == '/') d.pop_back();
+    return d;
+}
+
+bool inList(const char* const* list, const std::string& name) {
+    for (; *list; list++)
+        if (name == *list) return true;
+    return false;
+}
+
+bool hasWord(const std::string& lowerName, const char* w) { return lowerName.find(w) != std::string::npos; }
+
+}  // namespace
+
+const char* biosRoleLabel(BiosRole r) {
+    switch (r) {
+    case BiosRole::CartBoot: return "Cart boot ROM";
+    case BiosRole::CdBios: return "CD BIOS";
+    case BiosRole::MemoryTrack: return "Memory Track";
+    case BiosRole::Other: return "System file";
+    default: return "";
+    }
+}
+
+BiosInfo classifyBios(const std::string& path, uint64_t size, uint32_t crcWhole) {
+    BiosInfo b;
+    if (crcWhole) {
+        for (const KnownBios& k : kKnownBios) {
+            if (k.crc != crcWhole) continue;
+            b.role = k.role;
+            b.recognized = true;
+            b.title = k.title;
+            return b;
+        }
+    }
+    if (size > kMaxBiosBytes) return b;
+    const std::string base = baseName(path);
+    const std::string lname = lowerStr(base);
+    const std::string stem = stemOf(path);
+    const bool tagged = lname.rfind("[bios]", 0) == 0;
+    if (inList(kCdBiosNames, base)) {
+        b.role = BiosRole::CdBios;
+    } else if (inList(kCartBootNames, base) || lname == "jagboot.rom" || lname == "jagboot_m.rom" ||
+               lname == "boot.rom" || lname == "boot0.rom") {
+        b.role = BiosRole::CartBoot;
+    } else if (tagged || hasWord(lname, "bios")) {
+        // Named a BIOS but not one the core searches for: say which kind when the name does.
+        if (hasWord(lname, " cd") || hasWord(lname, "jagcd") || hasWord(lname, "jaguarcd")) b.role = BiosRole::CdBios;
+        else if (tagged || hasWord(lname, "jag") || hasWord(lname, "boot")) b.role = BiosRole::CartBoot;
+        else b.role = BiosRole::Other;
+    } else if (hasWord(lname, "memory track") || hasWord(lname, "memtrack") || hasWord(lname, "memorytrack")) {
+        b.role = BiosRole::MemoryTrack;
+    } else {
+        return b;
+    }
+    std::string t = stem;
+    if (lowerStr(t).rfind("[bios]", 0) == 0) t = trimStr(t.substr(6));
+    b.title = titleFromFileStem(t);
+    return b;
+}
+
+BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const std::string& systemDir) {
+    BiosUse u;
+    const std::string base = baseName(path);
+    const std::string dir = normDir(dirName(path));
+    const std::string sys = normDir(systemDir);
+    auto inDirs = [&](const char* const* dirs) {
+        for (; *dirs; dirs++)
+            if (!sys.empty() && dir == (**dirs ? sys + "/" + *dirs : sys)) return true;
+        return false;
+    };
+    auto sizeMsg = [&](uint64_t want) {
+        return std::string("It is ") + std::to_string((unsigned long long)size) + " bytes and the core only accepts exactly " +
+               std::to_string((unsigned long long)want) + ", so it skips this file.";
+    };
+    switch (b.role) {
+    case BiosRole::CdBios:
+        if (!inList(kCdBiosNames, base)) {
+            u.text = "The core only looks for CD BIOS files by a fixed set of names (jagcd.bin, jaguarcd.bin, "
+                     "jagcd_bios.bin, jaguarcd_bios.bin, Jaguar CD BIOS.rom/.bin, or '[BIOS] Atari Jaguar CD (World)' / "
+                     "'Developer CD' with .j64, .rom or .bin): rename it to use it.";
+        } else if (!inDirs(kCdBiosDirs)) {
+            u.text = "Not in the system folder or its Atari - Jaguar, Atari - Jaguar CD, jaguar or jaguarcd sub-folders, "
+                     "so the core does not look at it here.";
+        } else if (size != 0x40000) {
+            u.text = sizeMsg(0x40000);
+        } else {
+            u.core = true;
+            u.text = "Read when a CD boots with CD Boot Mode = Real BIOS or Auto: it is preferred over the built-in CD BIOS. "
+                     "With both a retail and a developer file present, CD BIOS Type picks which one.";
+        }
+        break;
+    case BiosRole::CartBoot:
+        if (base == "jagboot_m.rom") {
+            if (dir != sys || sys.empty()) {
+                u.text = "The core only reads jagboot_m.rom from the system folder itself, not from a sub-folder or anywhere else.";
+            } else if (size != 0x20000) {
+                u.text = sizeMsg(0x20000);
+            } else {
+                u.core = true;
+                u.text = "Read when Cart BIOS Type = Model M (and the boot ROM runs, BIOS (Cartridges) = Real): it replaces "
+                         "the built-in Model M image.";
+            }
+        } else if (!inList(kCartBootNames, base)) {
+            u.text = "The core only looks for a custom boot ROM by name (jagboot.rom, boot.rom, boot0.rom or a '[BIOS] Atari "
+                     "Jaguar...' name): rename it to use it.";
+        } else if (!inDirs(kCartBootDirs)) {
+            u.text = "Not in the system folder or its Atari - Jaguar or jaguar sub-folders, so the core does not look at it here.";
+        } else if (size != 0x20000) {
+            u.text = sizeMsg(0x20000);
+        } else {
+            u.core = true;
+            u.text = "Read only when Cart BIOS Type = Custom (and the boot ROM runs, BIOS (Cartridges) = Real, or a "
+                     "GPU-only cart). Otherwise the built-in Series K / Model M image is used.";
+        }
+        if (b.recognized && b.title.find("Series K") != std::string::npos)
+            u.text += " This is the same image as the built-in Series K, which never reads a file.";
+        break;
+    case BiosRole::MemoryTrack:
+        u.text = "The core emulates the Memory Track itself (its data is the .srm save): this image is not read.";
+        break;
+    default: u.text = "The core does not read this file."; break;
+    }
+    return u;
+}
+
 // ---- scanning ----------------------------------------------------------------------------------------------
 
 bool isCartExt(const std::string& e) {
@@ -306,6 +482,7 @@ struct Candidate {
     uint64_t size = 0;
     int64_t mtime = 0;
     std::string track1;   // disc (.cue): resolved first FILE, or ""
+    bool sysOnly = false; // found in the core's system folder: kept only if it is a BIOS / system file
 };
 
 bool statFile(const std::string& path, uint64_t& size, int64_t& mtime) {
@@ -347,23 +524,30 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
     std::error_code ec;
 
     // 1. enumerate
-    for (const std::string& folder : opt.folders) {
+    std::vector<std::pair<std::string, bool>> roots;
+    for (const std::string& folder : opt.folders) roots.emplace_back(folder, false);
+    if (!opt.systemFolder.empty()) roots.emplace_back(opt.systemFolder, true);
+    for (const auto& rt : roots) {
+        const std::string& folder = rt.first;
+        const bool sysRoot = rt.second;
         fs::path root = toPath(folder);
         if (!fs::is_directory(root, ec)) continue;
         fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
         for (; !ec && it != end; it.increment(ec)) {
             if (cancel && cancel->load()) return out;
-            if (it.depth() >= opt.maxDepth) it.disable_recursion_pending();
+            if (it.depth() >= (sysRoot ? 3 : opt.maxDepth)) it.disable_recursion_pending();
             std::error_code e2;
             if (!it->is_regular_file(e2)) continue;
             std::string p = fromPath(it->path().lexically_normal());
             std::string e = extOf(p);
             bool disc = isDiscExt(e);
+            if (sysRoot && disc) continue;   // the system folder is only read for BIOS files
             if (!disc && !isCartExt(e)) continue;
             if (!seen.insert(p).second) continue;
             Candidate c;
             c.path = p;
             c.kind = disc ? Kind::Disc : Kind::Cart;
+            c.sysOnly = sysRoot;
             if (!statFile(p, c.size, c.mtime)) continue;
             if (e == "cue") {
                 std::vector<std::string> files = cueFiles(p);
@@ -394,6 +578,9 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
         if (c.kind == Kind::Cart) {
             if (claimed.count(c.path)) continue;
             if (extOf(c.path) == "bin" && c.size > kMaxBinCartBytes) continue;
+            // A loose Redump track file ("Game (Track 2).bin") is disc data even without its cue sheet.
+            if (extOf(c.path) == "bin" && lowerStr(stemOf(c.path)).find("(track ") != std::string::npos) continue;
+            if (c.sysOnly && c.size > kMaxBiosBytes) continue;
         }
         keep.push_back(std::move(c));
     }
@@ -448,6 +635,7 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
             done++;
             if (progress) progress(done, total);
         }
+        if (c.sysOnly && classifyBios(f.path, f.size, f.crcWhole).role == BiosRole::None) continue;
         out.push_back(std::move(f));
     }
     std::sort(out.begin(), out.end(), [](const ScanFile& a, const ScanFile& b) { return a.path < b.path; });
@@ -484,6 +672,24 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs) {
         e.region = g->region;
     } else {
         e.title = titleFromFileStem(stemOf(f.path));
+    }
+    e.section = f.kind == Kind::Disc ? Section::Disc : Section::Cart;
+    if (f.kind == Kind::Cart) {
+        // BIOS and system files are not games: by checksum / name, or tagged "[BIOS]" in the dat.
+        BiosInfo b = classifyBios(f.path, f.size, f.crcWhole);
+        if (b.role == BiosRole::None && e.datName.rfind("[BIOS]", 0) == 0) {
+            b = classifyBios("[BIOS] " + e.datName.substr(6), 0, 0);   // the dat's name through the name rules
+            if (b.role == BiosRole::None) {
+                b.role = BiosRole::Other;
+                b.title = trimStr(e.datName.substr(6));
+            }
+        }
+        if (b.role != BiosRole::None) {
+            e.section = Section::Bios;
+            if (!b.recognized && !e.datName.empty() && e.datName.rfind("[BIOS]", 0) == 0) b.title = trimStr(e.datName.substr(6));
+            e.title = b.title;
+            e.bios = b;
+        }
     }
     return e;
 }
