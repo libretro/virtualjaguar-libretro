@@ -175,12 +175,15 @@ static bool runUntil(CoreHost& h, Netplay& np, const std::function<bool()>& pred
     return true;
 }
 
+// The process environment (what the core's getenv() sees) and SDL's own copy of it: SDL_CreateProcess
+// hands the child SDL's copy, which is taken once and would not see a later setenv().
 static void setEnv(const char* k, const std::string& v) {
 #ifdef _WIN32
     _putenv_s(k, v.c_str());
 #else
     setenv(k, v.c_str(), 1);
 #endif
+    SDL_SetEnvironmentVariable(SDL_GetEnvironment(), k, v.c_str(), true);
 }
 
 // ---- pure parsers -----------------------------------------------------------------------------
