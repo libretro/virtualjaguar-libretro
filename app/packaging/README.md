@@ -21,7 +21,7 @@ CI builds every installable package from one reusable workflow,
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | built on Ubuntu 22.04 (glibc 2.35) |
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | installs to `/usr/lib/virtualjaguar`, symlink in `/usr/bin` |
 
-The `.deb`'s internal `Version:` is Debian-legal (`4.0.0`, `4.0.0~rc1`, `4.0.0~nightly.<sha>`); the
+The `.deb`'s internal `Version:` is Debian-legal (`3.8.1`, `3.8.1~rc1`, `3.8.1~nightly.<sha>`; the version is the core's); the
 file name keeps the contract name.
 
 ### The version guard

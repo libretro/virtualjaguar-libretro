@@ -187,13 +187,14 @@ in place with `--clobber`, as before.
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | AppImages |
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | Debian packages |
 
-`X.Y.Z` is the tag without its `v` (`v4.0.0-rc1` gives `4.0.0-rc1`). Nightlies use `nightly`
+`X.Y.Z` is the tag without its `v` (`v3.8.1-rc1` gives `3.8.1-rc1`). Nightlies use `nightly`
 (`VirtualJaguar-nightly-windows-x64.zip`) and the `release/**` lane uses `prerelease`.
 
-- **Version guard.** The app reports the version in `app/CMakeLists.txt` (`project(VERSION ...)`).
-  On a tag whose version (minus any `-suffix`) differs from it, the job logs a warning and builds
-  nothing, so a core-only release (say `v3.9.0`) never ships an app that says `4.0.0`. Bump the
-  app version in the release commit to ship packages with a tag. A commit with no `app/` is skipped too.
+- **Version guard.** The app has no version of its own: `app/CMakeLists.txt` reads the core's
+  `CORE_BASE_VERSION` from the top-level `Makefile`, so bumping the core (the usual three places)
+  bumps the app, and every release tag ships app packages with the same number. The job still
+  checks that the tag's version (minus any `-suffix`) matches and skips with a warning if it does
+  not (a forgotten bump). A commit with no `app/` is skipped too.
 - **Gating.** A tagged release needs the app job to succeed (or be skipped); re-run the failed jobs
   and the release follows. The nightly waits for it but does not require it, like the jagcd tools,
   so an Apple notarization outage cannot withhold the core nightly.

@@ -1,4 +1,4 @@
-# Virtual Jaguar 4.0 (standalone app)
+# Virtual Jaguar app (standalone desktop front end)
 
 A desktop front end for the Virtual Jaguar core: SDL3 for window, audio and
 input, Dear ImGui for the UI, OpenGL 3.3 core for presentation, on macOS, Linux
