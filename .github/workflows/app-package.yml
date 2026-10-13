@@ -294,6 +294,10 @@ jobs:
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
+    # arm64 is new in v3.8.1: a failure there skips its package instead of
+    # holding back every app asset (release.yml attaches app packages only
+    # when this whole workflow succeeds).
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -503,6 +507,8 @@ jobs:
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
     runs-on: ubuntu-24.04
+    # New in v3.8.1: non-blocking, like the arm64 Windows leg above.
+    continue-on-error: true
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
