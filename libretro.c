@@ -5676,6 +5676,24 @@ static bool has_extension(const char *path, const char *ext)
 #define CD_BIOS_CRC_RETAIL 0x687068D5u
 #define CD_BIOS_CRC_DEV    0x55A0669Cu
 
+/* Path of the external BIOS file the last successful try_load_*() accepted,
+ * for the VJ_EVT_BIOS_STAGED event.  Overwritten on every success, read only
+ * straight after one, so it needs no reset. */
+static char last_bios_path[4096];
+
+/* Tell an answering frontend (the standalone app) which BIOS image the core
+ * is about to run, and where it came from.  One never-taken branch under
+ * RetroArch.  src: VJ_BIOS_SRC_*; name: file path or built-in image name. */
+static void bios_staged_event(unsigned role, const uint8_t *img,
+                              unsigned len, unsigned src, const char *name)
+{
+   if (!VJExtActive())
+      return;
+   VJExtEmit(VJ_EVT_BIOS_STAGED, role,
+             (unsigned)crc32_calcCheckSum((unsigned char *)img, len),
+             src, 0, name);
+}
+
 /* Try to load a 256 KB CD BIOS image from the given path.
  * Returns true on success and sets cd_bios_loaded_externally.
  * A file that exists but fails validation bumps *rejected so the
@@ -5712,6 +5730,7 @@ static bool try_load_cd_bios_file(const char *path, int *rejected)
       return false;
    }
    rfclose(f);
+   snprintf(last_bios_path, sizeof(last_bios_path), "%s", path);
 
    /* Known dumps are accepted by checksum, no header check needed. */
    crc = (uint32_t)crc32_calcCheckSum(external_cd_bios, 0x40000);
@@ -5859,31 +5878,60 @@ static bool load_external_cd_bios(void)
    return false;
 }
 
-/* Stage the CD BIOS for the real-BIOS boot path: prefer an external ROM
- * file from the system directory (users may carry a different BIOS
- * revision), else fall back to an embedded CD BIOS so real-BIOS boot
- * works with zero files.  Which embedded image is used follows the
- * 'CD BIOS Type' option: retail (default) or the developer BIOS, which
- * skips some of the retail BIOS's disc checks.
+/* Stage the CD BIOS for the real-BIOS boot path.  Order:
+ *   1. the file an answering frontend names (VJ_ENV_GET_BIOS_PATH) -- the
+ *      standalone app's "use this BIOS"; validated like any external file;
+ *   2. an external ROM file from the system directory (users may carry a
+ *      different BIOS revision);
+ *   3. an embedded CD BIOS, so real-BIOS boot works with zero files.  Which
+ *      embedded image is used follows the 'CD BIOS Type' option: retail
+ *      (default) or the developer BIOS, which skips some of the retail
+ *      BIOS's disc checks.
  *
- * An external file always wins over both — it is the user explicitly
- * supplying a revision, so the type selection does not override it. */
+ * Under RetroArch step 1 does not exist.  An external file always wins over
+ * the embedded images -- it is the user explicitly supplying a revision, so
+ * the type selection does not override it. */
 static void stage_cd_bios(void)
 {
+   char fpath[4096];
+   int  rejected = 0;
+
+   if (VJExtBiosPath(VJ_BIOS_CD, fpath, sizeof(fpath)))
+   {
+      if (try_load_cd_bios_file(fpath, &rejected))
+      {
+         bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                           VJ_BIOS_SRC_FRONTEND, fpath);
+         return;
+      }
+      LOG_WRN("[CD-BIOS] the frontend-selected CD BIOS %s is unusable "
+              "(missing, not exactly 262144 bytes, or not a CD BIOS); "
+              "searching the system directory instead\n", fpath);
+      VJExtEmit(VJ_EVT_BIOS_REJECTED, VJ_BIOS_CD, 0, 0, 0, fpath);
+   }
+
    if (load_external_cd_bios())
+   {
+      bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                        VJ_BIOS_SRC_SYSTEM, last_bios_path);
       return;
+   }
 
    if (vjs.cdBiosType == CDBIOS_DEV)
    {
       memcpy(external_cd_bios, jaguarDevCDBootROM, 0x40000);
       cd_bios_loaded_externally = true;
       LOG_INF("[CD-BIOS] using embedded developer CD BIOS\n");
+      bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                        VJ_BIOS_SRC_BUILTIN, "developer CD BIOS");
       return;
    }
 
    memcpy(external_cd_bios, jaguarCDBootROM, 0x40000);
    cd_bios_loaded_externally = true;
    LOG_INF("[CD-BIOS] using embedded retail CD BIOS\n");
+   bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                     VJ_BIOS_SRC_BUILTIN, "retail CD BIOS");
 }
 
 static void cart_bios_type_from_path(const char *path)
@@ -5992,6 +6040,7 @@ static bool try_load_cart_boot_rom_file(const char *path)
               path, (unsigned)crc);
    LOG_INF("[BOOT] external cart boot ROM %s: %s (crc %08x)\n",
            path, name, (unsigned)crc);
+   snprintf(last_bios_path, sizeof(last_bios_path), "%s", path);
    return true;
 }
 
@@ -6055,15 +6104,40 @@ static void stage_cart_boot_rom(void)
    RFILE *f;
    char path[4096];
 
+   /* A file the frontend named (VJ_ENV_GET_BIOS_PATH) beats everything below,
+    * 'Cart BIOS Type' included: it is an explicit pick of one image.  It only
+    * matters when the boot ROM actually runs (BIOS (Cartridges) = Real, a
+    * GPU-only cart, or a no-content boot), but staging it is harmless when
+    * it does not.  Anything but exactly 128 KB is refused and we carry on. */
+   if (VJExtBiosPath(VJ_BIOS_CART_BOOT, path, sizeof(path)))
+   {
+      if (try_load_cart_boot_rom_file(path))
+      {
+         bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                           VJ_BIOS_SRC_FRONTEND, path);
+         return;
+      }
+      LOG_WRN("[BOOT] the frontend-selected cart boot ROM %s is unusable "
+              "(missing or not exactly 131072 bytes); using the usual "
+              "search instead\n", path);
+      VJExtEmit(VJ_EVT_BIOS_REJECTED, VJ_BIOS_CART_BOOT, 0, 0, 0, path);
+   }
+
    if (vjs.biosType == BT_CUSTOM)
    {
       if (load_external_cart_boot_rom())
+      {
+         bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                           VJ_BIOS_SRC_SYSTEM, last_bios_path);
          return;
+      }
 
       LOG_WRN("[BOOT] Custom cart boot ROM selected but no usable file "
               "found -- falling back to embedded Series K\n");
       memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000);
       LOG_INF("[BOOT] cart boot ROM: Series K (fallback)\n");
+      bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                        VJ_BIOS_SRC_BUILTIN, "Series K boot ROM");
       return;
    }
 
@@ -6083,6 +6157,8 @@ static void stage_cart_boot_rom(void)
          {
             rfclose(f);
             LOG_INF("[BOOT] using external Model-M boot ROM %s\n", path);
+            bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000,
+                              0x20000, VJ_BIOS_SRC_SYSTEM, path);
             return;
          }
          rfclose(f);
@@ -6092,6 +6168,10 @@ static void stage_cart_boot_rom(void)
    memcpy(jagMemSpace + 0xE00000, src, 0x20000);
    LOG_INF("[BOOT] cart boot ROM: %s\n",
          (vjs.biosType == BT_M_SERIES) ? "Model M" : "Series K");
+   bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                     VJ_BIOS_SRC_BUILTIN,
+                     (vjs.biosType == BT_M_SERIES) ? "Model M boot ROM"
+                                                   : "Series K boot ROM");
 }
 
 /* Fill the entire framebuffer allocation with opaque black.
@@ -7065,28 +7145,48 @@ bool retro_load_game(const struct retro_game_info *info)
        * memcpys the staged BIOS, takes the run address from $800404 and
        * resets -- so the BIOS comes up on its own insert-disc screen with
        * zero files present. */
-      stage_cd_bios();
+      if (VJExtBootTarget() == VJ_BOOT_CART_BOOT_ROM)
+      {
+         /* An answering frontend (the standalone app's "Boot" on a cart boot
+          * ROM) asked for the other no-content boot: the cartridge boot ROM
+          * against an empty slot -- cd_boot_strategy_none, the pre-#726
+          * behaviour.  The boot ROM shows its animation and then sits, like a
+          * Jaguar with nothing in the slot.  No CD unit, so no Memory Track
+          * (it plugs into the CD unit) and jaguar_cd_mode stays false.
+          * Nothing here runs under RetroArch: it never answers HELLO. */
+         vjs.useJaguarBIOS          = true;
+         bootConfig.isCDGame        = false;
+         bootConfig.showBootROM     = true;
+         bootConfig.cdBiosAvailable = false;
+         bootConfig.strategy        = &cd_boot_strategy_none;
+         LOG_INF("[BOOT] no-content boot: cartridge boot ROM, empty slot "
+                 "(frontend request)\n");
+      }
+      else
+      {
+         stage_cd_bios();
 
-      /* The CD unit is attached -- that is WHY the BIOS is running -- so
-       * this is CD mode with nothing in the tray, not cartridge mode.
-       * Both flags mirror open_disc_and_resolve_boot(); only the disc is
-       * missing.  Without them a machine sitting in the CD BIOS gets the
-       * options menu inverted against it (update_option_visibility() keys
-       * both gates off jaguar_cd_mode, so CD Boot Mode / CD BIOS Type
-       * would be HIDDEN and the cartridge-BIOS option shown), and the
-       * Memory Track cart -- which plugs into the CD unit and is present
-       * whether or not a disc is -- would stay absent until the first
-       * insert.  Safe with no disc: the three disc-identity accessors
-       * return zero when nothing is mounted (see the savestate chunk),
-       * and the MT save-buffer paths only touch mtMem. */
-      jaguar_cd_mode             = true;
-      jaguarMemTrackInserted     = opt_memory_track;
+         /* The CD unit is attached -- that is WHY the BIOS is running -- so
+          * this is CD mode with nothing in the tray, not cartridge mode.
+          * Both flags mirror open_disc_and_resolve_boot(); only the disc is
+          * missing.  Without them a machine sitting in the CD BIOS gets the
+          * options menu inverted against it (update_option_visibility() keys
+          * both gates off jaguar_cd_mode, so CD Boot Mode / CD BIOS Type
+          * would be HIDDEN and the cartridge-BIOS option shown), and the
+          * Memory Track cart -- which plugs into the CD unit and is present
+          * whether or not a disc is -- would stay absent until the first
+          * insert.  Safe with no disc: the three disc-identity accessors
+          * return zero when nothing is mounted (see the savestate chunk),
+          * and the MT save-buffer paths only touch mtMem. */
+         jaguar_cd_mode             = true;
+         jaguarMemTrackInserted     = opt_memory_track;
 
-      vjs.useJaguarBIOS          = true;
-      bootConfig.isCDGame        = false;
-      bootConfig.showBootROM     = true;
-      bootConfig.cdBiosAvailable = true;
-      bootConfig.strategy        = &cd_boot_strategy_bios;
+         vjs.useJaguarBIOS          = true;
+         bootConfig.isCDGame        = false;
+         bootConfig.showBootROM     = true;
+         bootConfig.cdBiosAvailable = true;
+         bootConfig.strategy        = &cd_boot_strategy_bios;
+      }
    }
    else
    {

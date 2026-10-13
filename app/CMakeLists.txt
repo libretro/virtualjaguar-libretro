@@ -141,7 +141,7 @@ include(VJCore)
 # dependency).  Neither found: the feature degrades to "no downloads".
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/disc_hash.cpp src/http.cpp)
+add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/bios.cpp src/disc_hash.cpp src/http.cpp)
 target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
 target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
@@ -241,6 +241,7 @@ set(VJ_APP_SOURCES
     src/devices_ui.cpp
     src/ui.cpp
     src/library_ui.cpp
+    src/bios_ui.cpp
     src/cheats.cpp
     src/cheats_core.cpp
     src/cheats_ui.cpp
