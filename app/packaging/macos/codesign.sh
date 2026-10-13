@@ -9,6 +9,8 @@
 # Environment (GitHub secrets mapped by the workflow; see app/packaging/README.md):
 #   APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD   Developer ID Application cert
 #   APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64   App Store Connect API key
+# Local use (see local-package.sh): VJ_SIGN_IDENTITY (name or SHA-1), and for notarize either
+#   VJ_NOTARY_PROFILE or APPLE_NOTARY_KEY_ID + APPLE_NOTARY_ISSUER_ID + APPLE_NOTARY_KEY_PATH.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 kc_name=vj-signing.keychain-db
@@ -62,26 +64,41 @@ case "${1:-}" in
     codesign -dv --entitlements - "$app" 2>&1 | sed -n '1,25p'
     ;;
   notarize)
-    : "${APPLE_NOTARY_KEY_ID:?}" "${APPLE_NOTARY_ISSUER_ID:?}" "${APPLE_NOTARY_KEY_P8_BASE64:?}"
-    tmp="${RUNNER_TEMP:-/tmp}"
-    echo "$APPLE_NOTARY_KEY_P8_BASE64" | base64 --decode > "$tmp/notary.p8"
+    # Credentials, first match wins (CI uses the third; local builds the first two):
+    #   VJ_NOTARY_PROFILE                       a `xcrun notarytool store-credentials` profile
+    #   APPLE_NOTARY_KEY_ID/_ISSUER_ID/_KEY_PATH  App Store Connect API key, .p8 on disk
+    #   APPLE_NOTARY_KEY_ID/_ISSUER_ID/_KEY_P8_BASE64  the same key, base64 (GitHub secret)
+    tmp="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+    p8=""; made_p8=""
+    if [ -n "${VJ_NOTARY_PROFILE:-}" ]; then
+      auth=(--keychain-profile "$VJ_NOTARY_PROFILE")
+    else
+      : "${APPLE_NOTARY_KEY_ID:?}" "${APPLE_NOTARY_ISSUER_ID:?}"
+      if [ -n "${APPLE_NOTARY_KEY_PATH:-}" ]; then
+        p8="$APPLE_NOTARY_KEY_PATH"
+        [ -f "$p8" ] || { echo "APPLE_NOTARY_KEY_PATH is not a file" >&2; exit 1; }
+      else
+        : "${APPLE_NOTARY_KEY_P8_BASE64:?}"
+        p8="$tmp/notary.p8"; made_p8=1
+        echo "$APPLE_NOTARY_KEY_P8_BASE64" | base64 --decode > "$p8"
+      fi
+      auth=(--key "$p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID")
+    fi
     log="$tmp/notarytool.json"
     set +e
-    xcrun notarytool submit "$2" --key "$tmp/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" \
-        --issuer "$APPLE_NOTARY_ISSUER_ID" --wait --timeout 45m --output-format json > "$log"
+    xcrun notarytool submit "$2" "${auth[@]}" --wait --timeout 45m --output-format json > "$log"
     rc=$?
     set -e
     cat "$log"
     status="$(sed -n 's/.*"status" *: *"\([^"]*\)".*/\1/p' "$log" | head -1)"
     if [ "$rc" -ne 0 ] || [ "$status" != "Accepted" ]; then
       subid="$(sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' "$log" | head -1)"
-      [ -n "$subid" ] && xcrun notarytool log "$subid" --key "$tmp/notary.p8" \
-          --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" || true
-      rm -f "$tmp/notary.p8"
+      [ -n "$subid" ] && xcrun notarytool log "$subid" "${auth[@]}" || true
+      [ -z "$made_p8" ] || rm -f "$p8"
       echo "::error::notarization of $2 ended '$status'"
       exit 1
     fi
-    rm -f "$tmp/notary.p8"
+    [ -z "$made_p8" ] || rm -f "$p8"
     ;;
   staple)
     xcrun stapler staple "$2"

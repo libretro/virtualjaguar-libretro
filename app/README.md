@@ -10,6 +10,10 @@ Everything lives under `app/`. The core's own `make` build is untouched.
 
 Installable packages (macOS zip, Windows installer and portable zip, Linux AppImage and
 `.deb`) are built by CI and attached to the releases: see [`packaging/README.md`](packaging/README.md).
+To package and sign your own build locally (a Developer ID or Apple Development certificate
+found in your keychain on macOS, a `.pfx` or store certificate on Windows, optionally configured in a
+gitignored `.env`), run `bash app/packaging/local-package.sh --sign [--notarize] [--build-dir DIR]`: see
+"Signing locally" in [`packaging/README.md`](packaging/README.md).
 
 ## Build
 

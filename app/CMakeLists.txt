@@ -281,6 +281,16 @@ if(VJ_DB_HAVE)
     add_custom_command(TARGET virtualjaguar POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${VJ_DB_DIR}" "$<TARGET_FILE_DIR:virtualjaguar>/libretro-db")
 endif()
+# Optional: sign the dev executable after every build (macOS).  A stable signature stops macOS
+# re-asking for network/keychain access after each rebuild.  Uses VJ_SIGN_IDENTITY / .env / the
+# login keychain like app/packaging/local-package.sh, else ad hoc.  Never fails the build.
+option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" OFF)
+if(VJ_APP_SIGN_DEV_BUILD AND APPLE)
+    add_custom_command(TARGET virtualjaguar POST_BUILD
+        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/packaging/local-package.sh"
+                --sign-exe "$<TARGET_FILE:virtualjaguar>"
+        VERBATIM)
+endif()
 # Windows: the executable keeps the console subsystem for now.  A GUI-subsystem
 # build would swallow the headless smoke test's stdout; packaging (#839) decides.
 

@@ -31,6 +31,9 @@ docs/RELEASE_NOTES_v3.8.1.md
 * BIOS files in library folders show in the BIOS tab and can be
   copied to the system folder in one click; Ctrl/Cmd+scroll or pinch
   resizes the library tiles (#899).
+* Local signing: app/packaging/local-package.sh --sign [--notarize]
+  signs your own build with a certificate found on the machine or set
+  in a gitignored .env (macOS Developer ID, Windows pfx/store) (#839).
 * Packages: macOS universal zip, Windows zip and installer, Linux
   AppImage and .deb (#839, #840); nightly builds linked from the
   pinned builds issue.

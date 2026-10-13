@@ -63,6 +63,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   AirCars and Ultra Vortek (over the Voice Modem) on a local network, with LAN discovery
   (https://github.com/libretro/virtualjaguar-libretro/pull/888). While a session is set up, the link settings it controls are shown greyed out in
   Settings (https://github.com/libretro/virtualjaguar-libretro/pull/898).
+- **Local signing.** `app/packaging/local-package.sh --sign` packages your own build and signs it
+  with a Developer ID (or Apple Development) identity found in the macOS keychain, or a `.pfx` /
+  store certificate on Windows, optionally set in a gitignored `.env`; `--notarize` also notarizes
+  on macOS (https://github.com/libretro/virtualjaguar-libretro/issues/839).
 - **Performance.** Release builds compile the core and the app at -O3, and the shader chain
   no longer re-runs every pass when the emulated frame has not changed (paused, or on a
   display faster than the game) (https://github.com/libretro/virtualjaguar-libretro/pull/894).
