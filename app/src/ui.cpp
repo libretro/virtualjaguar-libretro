@@ -160,15 +160,7 @@ void drawAudioTab(App& app) {
 }
 
 void drawInputTab(App& app) {
-    ImGui::TextWrapped(
-        "Keyboard: arrows = D-pad, Z = B, X = A, C = C, Enter = Option, Right Shift or Backspace = Pause. "
-        "The number row and numpad drive the Jaguar keypad. Gamepads: South/East/West = B/A/C, "
-        "Back = Pause, Start = Option, shoulders and triggers = keypad buttons.");
-    if (ImGui::Checkbox("Left stick also drives the D-pad", &app.input.stickAsDpad)) {}
-    ImGui::Separator();
-    auto names = app.input.gamepadNames();
-    if (names.empty()) ImGui::TextDisabled("No gamepad connected.");
-    for (size_t i = 0; i < names.size(); i++) ImGui::Text("Port %zu: %s", i + 1, names[i].c_str());
+    drawControlsTab(app);
     ImGui::Separator();
     const auto& ports = app.host.controllerPorts();
     if (!app.host.isLoaded() || ports.empty()) {
@@ -356,6 +348,7 @@ void drawMenuBar(App& app) {
         ImGui::MenuItem("Integer scaling", nullptr, &app.present.integerScale);
         ImGui::MenuItem("Smooth filter", nullptr, &app.present.linearFilter);
         ImGui::MenuItem("Show frame rate", nullptr, &app.showFps);
+        ImGui::MenuItem("Keypad overlay", "F2", &app.input.overlay.open);
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
@@ -440,6 +433,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showSettings) drawSettings(app);
     if (app.showStates) drawStates(app);
     if (app.showAbout) drawAbout(app);
+    drawKeypadOverlay(app);
     drawOsd(app, areaPos, areaSize);
 
     wantCaptureKeyboard = io.WantCaptureKeyboard;

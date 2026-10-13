@@ -104,6 +104,8 @@ set(VJ_APP_SOURCES
     src/audio.cpp
     src/video.cpp
     src/input.cpp
+    src/remap.cpp
+    src/remap_ui.cpp
     src/ui.cpp)
 
 add_executable(virtualjaguar ${VJ_APP_SOURCES})

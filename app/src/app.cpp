@@ -61,6 +61,7 @@ double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)p
 // ---------------------------------------------------------------------------------
 void App::loadConfig() {
     cfg.load(paths.configFile);
+    input.init(cfg, paths.root);
     present.integerScale = cfg.getBool("video.integer", false);
     present.linearFilter = cfg.getBool("video.linear", false);
     present.stretch = cfg.getBool("video.stretch", false);
@@ -238,6 +239,7 @@ void App::wireHost() {
         if (!fastForward && !mute) audio.push(d, n);
     };
     host.inputPoll = [this]() { input.poll(!inputCaptured_); };
+    input.portRaw = [this](unsigned p) { return inputPortIsRaw(*this, p); };
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
         return input.state(p, d, i, id);
     };
@@ -298,6 +300,7 @@ bool App::openContent(const std::string& pathIn) {
         int dev = cfg.getInt("port." + std::to_string(p), -1);
         if (dev >= 0) host.setControllerDevice(p, (unsigned)dev);
     }
+    input.setContent(contentIdentity(path));   // selects the per-game control overrides
     addRecent(path);
     invalidateThumbs();
     toast("Loaded " + host.contentName());
@@ -319,6 +322,7 @@ bool App::openNoContent() {
     accum_ = 0;
     lastTick_ = now();
     invalidateThumbs();
+    input.setContent("");
     toast("Booted with no cartridge");
     return true;
 }
@@ -337,6 +341,7 @@ void App::closeContent() {
     host.unloadContent();
     audio.clear();
     invalidateThumbs();
+    input.setContent("");
 }
 
 void App::reset() {
