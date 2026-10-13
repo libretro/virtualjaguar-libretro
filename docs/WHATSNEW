@@ -31,9 +31,9 @@ docs/RELEASE_NOTES_v3.8.1.md
 * BIOS files in library folders show in the BIOS tab and can be
   copied to the system folder in one click; Ctrl/Cmd+scroll or pinch
   resizes the library tiles (#899).
-* Packages: macOS universal zip, Windows zip and installer, Linux
-  AppImage and .deb (#839, #840); nightly builds linked from the
-  pinned builds issue.
+* Packages: macOS universal zip, Windows zip and installer (x64 and
+  ARM64), Linux AppImage, .deb and a Flatpak bundle (#839, #840);
+  nightly builds linked from the pinned builds issue.
 
 == Known issues ==
 * Packages are unsigned: right-click > Open on macOS; SmartScreen may

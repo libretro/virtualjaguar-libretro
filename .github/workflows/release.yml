@@ -938,8 +938,10 @@ jobs:
               echo "|---|---|"
               echo "| macOS (Apple Silicon + Intel) | [VirtualJaguar-nightly-macos-universal.zip](${DL}/VirtualJaguar-nightly-macos-universal.zip) |"
               echo "| Windows x64 | [portable .zip](${DL}/VirtualJaguar-nightly-windows-x64.zip) · [installer .exe](${DL}/VirtualJaguar-nightly-windows-x64-setup.exe) |"
+              echo "| Windows ARM64 | [portable .zip](${DL}/VirtualJaguar-nightly-windows-arm64.zip) · [installer .exe](${DL}/VirtualJaguar-nightly-windows-arm64-setup.exe) |"
               echo "| Linux x86_64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-x86_64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_amd64.deb) |"
               echo "| Linux aarch64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-aarch64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_arm64.deb) |"
+              echo "| Linux x86_64 (Flatpak) | [.flatpak](${DL}/VirtualJaguar-nightly-linux-x86_64.flatpak) |"
               echo
               echo "Or install / update it with one line (pass \`--what both\` for the app and the RetroArch core):"
               echo

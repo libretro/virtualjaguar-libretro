@@ -75,7 +75,9 @@ Attached to this release:
 | --- | --- |
 | macOS 11+, Apple Silicon and Intel | `VirtualJaguar-3.8.1-macos-universal.zip` |
 | Windows x64 | `VirtualJaguar-3.8.1-windows-x64.zip` (portable) or `VirtualJaguar-3.8.1-windows-x64-setup.exe` (installer) |
+| Windows ARM64 | `VirtualJaguar-3.8.1-windows-arm64.zip` (portable) or `VirtualJaguar-3.8.1-windows-arm64-setup.exe` (installer) |
 | Linux x86_64, aarch64 | `VirtualJaguar-3.8.1-linux-<arch>.AppImage` or `virtualjaguar_3.8.1_<amd64\|arm64>.deb` |
+| Linux x86_64 (Flatpak) | `VirtualJaguar-3.8.1-linux-x86_64.flatpak` (`flatpak install --user` it; the runtime comes from Flathub) |
 
 Nightly app builds are linked from the pinned builds issue and are rebuilt from `develop`
 on every push (https://github.com/libretro/virtualjaguar-libretro/issues/839, https://github.com/libretro/virtualjaguar-libretro/issues/840, https://github.com/libretro/virtualjaguar-libretro/pull/884, https://github.com/libretro/virtualjaguar-libretro/pull/883, https://github.com/libretro/virtualjaguar-libretro/pull/886).
@@ -89,9 +91,9 @@ on every push (https://github.com/libretro/virtualjaguar-libretro/issues/839, ht
 - **Shaders on Intel Macs.** The macOS universal package bundles an arm64-only librashader,
   so shaders may be unavailable on Intel Macs.
 - **Shaders on Linux** need librashader installed separately (a distribution package, or
-  built from source).
+  built from source). The Flatpak does not include librashader yet, so it has no shaders.
 - **The MSVC Windows build is experimental.** The released Windows packages are built with
-  MinGW.
+  MinGW (the ARM64 ones with MinGW's clang).
 - **RetroAchievements** identifies cartridges and `.cue` discs, but not `.chd` or `.cdi`
   discs yet.
 - **Netplay is link-cable play on a local network only.** It is not rollback netplay, and

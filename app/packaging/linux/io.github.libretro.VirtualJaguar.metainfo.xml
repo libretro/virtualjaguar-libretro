@@ -22,6 +22,24 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <developer_name>Virtual Jaguar contributors</developer_name>
+  <screenshots>
+    <screenshot type="default">
+      <image type="source" width="1280" height="860">https://jaguar.provenance-emu.com/assets/app_library.png</image>
+      <caption>The game library, with box art</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1280" height="860">https://jaguar.provenance-emu.com/assets/app_game_crt.png</image>
+      <caption>A game with a CRT shader preset</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1280" height="860">https://jaguar.provenance-emu.com/assets/app_cheats.png</image>
+      <caption>Cheats</caption>
+    </screenshot>
+    <screenshot>
+      <image type="source" width="1280" height="860">https://jaguar.provenance-emu.com/assets/app_settings_video.png</image>
+      <caption>Video settings</caption>
+    </screenshot>
+  </screenshots>
   <releases>
     <release version="@VJ_PACKAGE_VERSION@" date="@VJ_PACKAGE_DATE@"/>
   </releases>
