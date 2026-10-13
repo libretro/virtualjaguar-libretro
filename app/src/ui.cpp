@@ -42,6 +42,10 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
 
     ImGui::PushID(d.key.c_str());
     // The value box takes a share of the width; the description wraps in what is left.
+    // A session override (the Netplay window's link mode / host / port, or --option) decides what the core
+    // reads, so a pick here would be saved yet never show: the row is read-only until the override ends.
+    const bool pinned = host.optionOverridden(d.key);
+    ImGui::BeginDisabled(pinned);
     ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
     if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
         for (const OptionValue& v : d.values) {
@@ -52,6 +56,7 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
         }
         ImGui::EndCombo();
     }
+    ImGui::EndDisabled();
     ImGui::SameLine();
     // "reset" has a fixed slot so the descriptions stay aligned whether or not it shows.
     if (host.userOptions().count(d.key)) {
@@ -67,6 +72,8 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
         ImGui::TextUnformatted(info.c_str());
         ui::endWrappedTooltip();
     }
+    if (pinned)
+        ui::hint("Set by the Netplay window (or --option) for this session. Disconnect in the Netplay menu to change it here.");
     ImGui::PopID();
 }
 

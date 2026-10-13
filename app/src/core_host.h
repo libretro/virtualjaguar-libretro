@@ -137,6 +137,9 @@ public:
     // Set before the first load; evaluated when the core pushes its definitions.
     std::function<bool(const std::string& key, std::string& value)> optionLock;
     bool optionLocked(const std::string& key) const { return locked_.count(key) != 0; }
+    // A session override (overrideOption(): --option, or the Netplay window) is in force and decides what the
+    // core reads, so a value picked in Settings is saved but does not show until the override ends.
+    bool optionOverridden(const std::string& key) const { return sessionValues_.count(key) != 0; }
     std::string optionValue(const OptionDef& d) const;  // user value if valid, else default
     // Set by the UI.  Marks the variable-update flag and runs the core's
     // update-display callback (as RetroArch does after a menu change).

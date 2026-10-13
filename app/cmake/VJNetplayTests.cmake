@@ -45,3 +45,21 @@ set_tests_properties(netplay_unit netplay_pair netplay_pair_voicemodem netplay_d
 set_tests_properties(netplay_unit netplay_pair netplay_pair_voicemodem netplay_no_partner netplay_discovery
     PROPERTIES RUN_SERIAL TRUE)
 set_tests_properties(netplay_discovery PROPERTIES SKIP_RETURN_CODE 77)
+
+# Settings > Core options > Network: every option in the core's "network" category must show the value
+# picked from its combo, across the frames (and option re-pushes) that follow.
+add_executable(vj_network_options_test
+    tests/network_options_test.cpp src/netplay.cpp src/netplay_addr.cpp src/core_host.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_network_options_test PRIVATE src)
+target_link_libraries(vj_network_options_test PRIVATE vj_core ${VJ_SDL3_TARGET})
+if(WIN32)
+    target_link_libraries(vj_network_options_test PRIVATE ws2_32 iphlpapi)
+endif()
+if(MSVC)
+    target_compile_options(vj_network_options_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_network_options_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_network_options_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME network_options COMMAND vj_network_options_test "${_yarc}")
+set_tests_properties(network_options PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
