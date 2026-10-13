@@ -454,6 +454,101 @@ static void testScanAndIdentify() {
     CHECK(lib::parseCache("garbage\nnot\ttabs").empty());
 }
 
+// A library folder may hold BIOS files in any layout: nested and with upper-case names.  They belong
+// under BIOS & system (never with the games), wherever they sit under the folder, and the app can put them where
+// the core reads them.
+static void testBiosInLibraryFolders() {
+    const size_t K = 1024;
+    std::string root = g_tmp + "biosroot/", lib1 = root + "lib/", sys = root + "system/";
+    std::error_code ec;
+    // images the core knows only by checksum: injected, since a real BIOS cannot be committed
+    std::vector<unsigned char> bootImg = noise(128 * K, 41), cdImg = noise(256 * K, 42), devImg = noise(256 * K, 43),
+                               mImg = noise(128 * K, 51), kImg = noise(128 * K, 52);
+    lib::addKnownBiosForTest(crcOf(bootImg), lib::BiosRole::CartBoot, "Test boot ROM");
+    lib::addKnownBiosForTest(crcOf(cdImg), lib::BiosRole::CdBios, "Test CD BIOS (retail)");
+    lib::addKnownBiosForTest(crcOf(devImg), lib::BiosRole::CdBios, "Test CD BIOS (developer)");
+    lib::addKnownBiosForTest(crcOf(mImg), lib::BiosRole::CartBoot, "Test Model M boot ROM");
+        writeBytes(lib1 + "Atari - Jaguar/BIOS/Boot ROMs/Rev B/dump-4711.bin", bootImg);   // nested, checksum only
+    writeBytes(lib1 + "a/b/c/d/e/f/deep.rom", cdImg);                                    // 6 folders down, checksum only
+    writeBytes(lib1 + "Sets/JAGCD.BIN", noise(256 * K, 44));                             // upper-case names
+    writeBytes(lib1 + "Sets/JAGBOOT.ROM", noise(128 * K, 45));
+    writeBytes(lib1 + "Sets/Jaguar CD BIOS.ROM", noise(256 * K, 46));
+    writeBytes(lib1 + "Sets/some data.bin", noise(128 * K, 47));                          // unknown, not BIOS-named: a game
+    writeBytes(lib1 + "Game (World).j64", noise(1024 * K, 48));
+    writeBytes(lib1 + "Zipped/[BIOS] Atari Jaguar CD (World).zip", noise(100 * K, 49));  // archives are never read
+
+    lib::ScanOptions opt;
+    opt.folders = {lib1, lib1 + "Sets"};   // a folder inside another chosen one: nothing doubles
+    opt.systemFolder = sys;
+    std::vector<lib::ScanFile> files = lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr);
+    std::map<std::string, lib::Entry> by;
+    int total = 0;
+    for (const lib::ScanFile& f : files) {
+        std::string name = fs::path(f.path).filename().string();
+        by[name] = lib::identify(f, nullptr, nullptr);
+        total++;
+    }
+    auto isBios = [&](const char* n, lib::BiosRole role) {
+        auto it = by.find(n);
+        return it != by.end() && it->second.section == lib::Section::Bios && it->second.bios.role == role;
+    };
+    CHECK(isBios("dump-4711.bin", lib::BiosRole::CartBoot));
+    CHECK(by.count("dump-4711.bin") && by["dump-4711.bin"].bios.recognized);
+    CHECK(isBios("deep.rom", lib::BiosRole::CdBios));
+    CHECK(isBios("JAGCD.BIN", lib::BiosRole::CdBios));
+    CHECK(isBios("JAGBOOT.ROM", lib::BiosRole::CartBoot));
+    CHECK(isBios("Jaguar CD BIOS.ROM", lib::BiosRole::CdBios));
+    CHECK(by.count("Game (World).j64") && by["Game (World).j64"].section == lib::Section::Cart);
+    CHECK(by.count("some data.bin") && by["some data.bin"].section == lib::Section::Cart);   // not mistaken for a BIOS
+    CHECK(!by.count("[BIOS] Atari Jaguar CD (World).zip"));
+    CHECK(total == 7);   // 5 BIOS + 2 games; nothing listed twice
+    for (const auto& kv : by)
+        if (kv.second.section == lib::Section::Cart) CHECK(kv.first == "Game (World).j64" || kv.first == "some data.bin");
+
+    // ---- what the app copies into the system folder, and what the core then does with it ----
+    const uint64_t S128 = 128 * K, S256 = 256 * K;
+    struct { std::vector<unsigned char>* img; const char* name; const char* want; } plans[] = {
+        {&bootImg, "dump-4711.bin", "jagboot.rom"},
+        {&mImg, "m.bin", "jagboot_m.rom"},
+        {&cdImg, "r.bin", "[BIOS] Atari Jaguar CD (World).bin"},
+        {&devImg, "d.bin", "[BIOS] Atari Jaguar Developer CD (World).bin"},
+    };
+    for (const auto& pl : plans) {
+        lib::BiosInfo bi = lib::classifyBios("/lib/" + std::string(pl.name), pl.img->size(), crcOf(*pl.img));
+        std::string name = lib::biosInstallName(bi, pl.img->size());
+        CHECK_EQ(name, pl.want);
+        // installed under that name, the core reads it (name, folder and size are all it looks at)
+        lib::BiosInfo inst = lib::classifyBios(sys + name, pl.img->size(), crcOf(*pl.img));
+        CHECK(lib::biosUse(inst, sys + name, pl.img->size(), sys).core);
+    }
+    lib::BiosInfo unk = lib::classifyBios("/lib/My CD BIOS.bin", S256, 1);
+    CHECK_EQ(lib::biosInstallName(unk, S256), "jagcd.bin");   // unrecognized: the generic name
+    CHECK_EQ(lib::biosInstallName(unk, 0x30000), "");          // a size the core rejects: copying would not help
+    lib::BiosInfo mt = lib::classifyBios("/lib/Memory Track.j64", S128, 1);
+    CHECK_EQ(lib::biosInstallName(mt, S128), "");              // data, not read
+    lib::BiosInfo realK;
+    realK.role = lib::BiosRole::CartBoot;
+    realK.recognized = true;
+    realK.title = "Series K boot ROM";
+    CHECK_EQ(lib::biosInstallName(realK, S128), "");           // built into the core, never read from a file
+
+    // the service does the copy: into the system folder, once, never over a file that is there
+    LibraryService svc;
+    fs::create_directories(fs::u8path(sys), ec);
+    svc.systemDir = sys;
+    lib::Entry src = by["dump-4711.bin"];
+    CHECK(svc.installBios(src));
+    std::vector<unsigned char> got;
+    {
+        std::ifstream f(sys + "jagboot.rom", std::ios::binary);
+        got.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    CHECK(got == bootImg);
+    CHECK(!svc.installBios(src));   // second time: already there
+    CHECK(svc.status().find("already") != std::string::npos);
+    CHECK(!svc.installBios(by["Game (World).j64"]));   // not a BIOS
+}
+
 // ---- loopback HTTP server (POSIX) ------------------------------------------------------------------------------
 
 #ifndef _WIN32
@@ -829,6 +924,7 @@ int main(int argc, char** argv) {
     testThumbnailNames();
     testScanAndIdentify();
     testBiosClassification();
+    testBiosInLibraryFolders();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();

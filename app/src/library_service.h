@@ -103,6 +103,9 @@ public:
     void updateDatabase();                       // download newer dat files (user action)
     void launch(const lib::Entry& e);            // asks the app to open it (a drop-style event)
     void setDownloadArt(bool on);
+    // Copies a BIOS found in a library folder into the core's system folder under the name the core
+    // searches for (lib::biosInstallName), never over an existing file.  The result goes to status().
+    bool installBios(const lib::Entry& e);
     void saveSettings();
 
     // Art for an entry: starts loading on first use, returns what is ready now.

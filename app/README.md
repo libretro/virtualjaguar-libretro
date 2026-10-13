@@ -259,7 +259,13 @@ checksums the core itself checks), by the names the core searches for (`jagboot.
 file (512 KiB or less), or by a `[BIOS]` entry in the dat. The core's own system folder is always
 scanned for these too (only BIOS files are kept from it), so the tab shows what the core can read.
 A BIOS tile says what it is and when the core uses it (for example "Series K boot ROM: used when BIOS
-(Cartridges) = Real"), and whether it sits where the core looks; it does not launch. The core has
+(Cartridges) = Real"), and whether it sits where the core looks; it does not launch. BIOS files are
+found anywhere under a library folder (any depth the walk reaches, any upper/lower case in the name).
+The core itself only reads its system folder, under fixed names, so a BIOS found elsewhere shows
+"Not read here"; clicking such a tile offers **Copy** into the system folder under the name the core
+searches for (`jagboot.rom`, `jagboot_m.rom`, `jagcd.bin`, the `[BIOS] Atari Jaguar ... (World)` names
+for the retail and developer CD BIOS), never over a file already there. The Series K image, the
+Memory Track and files whose size the core rejects get no copy offer. The core has
 every standard image built in, so none is required. Loose `(Track N).bin` files are skipped like the
 tracks a `.cue` owns.
 

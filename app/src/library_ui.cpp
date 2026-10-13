@@ -142,16 +142,31 @@ void drawStatus(LibraryService& svc) {
 }
 
 // A BIOS or system file: shows what it is and whether the core will read it where it is.  It is not
-// content, so a click does nothing.
+// content, so a click never launches it; on a file the core would read from its system folder but this
+// is elsewhere, a click offers to copy it there.
 void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImGui::PushID(e.file.path.c_str());
-    ImGui::InvisibleButton("##cell", ImVec2(cellW, artH + textH));
+    bool clicked = ImGui::InvisibleButton("##cell", ImVec2(cellW, artH + textH));
     bool hovered = ImGui::IsItemHovered();
-    ImGui::PopID();
     const lib::BiosInfo& b = e.bios;
     const lib::BiosUse use = lib::biosUse(b, e.file.path, e.file.size, svc.systemDir);
+    const std::string installAs = use.core || svc.systemDir.empty() ? std::string() : lib::biosInstallName(b, e.file.size);
+    if (clicked && !installAs.empty()) ImGui::OpenPopup("##install");
+    if (ImGui::BeginPopup("##install")) {
+        ImGui::Text("Copy to the system folder as");
+        ImGui::TextDisabled("%s", installAs.c_str());
+        if (ImGui::Button("Copy")) {
+            svc.installBios(e);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    const bool popupOpen = ImGui::IsPopupOpen("##install");   // under this tile's ID scope
+    ImGui::PopID();
     const bool found = use.core;
     const bool readable = b.role == lib::BiosRole::CartBoot || b.role == lib::BiosRole::CdBios;
 
@@ -178,7 +193,7 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + textH - lh), sc, st, nullptr,
                 cellW - 4, &clip);
 
-    if (hovered) {
+    if (hovered && !popupOpen) {
         ui::beginWrappedTooltip();
         ImGui::TextWrapped("%s", e.title.c_str());
         ImGui::TextDisabled("%s%s", lib::biosRoleLabel(b.role), b.recognized ? "" : " (checksum not in the core's list)");
@@ -187,6 +202,8 @@ void drawBiosCell(LibraryService& svc, const lib::Entry& e, float cellW, float a
         if (e.file.crcWhole) ImGui::TextDisabled("CRC32 %08X", e.file.crcWhole);
         ImGui::Spacing();
         ImGui::TextWrapped("%s", use.text.c_str());
+        if (!installAs.empty())
+            ImGui::TextWrapped("Click to copy it to the system folder as %s, where the core looks for it.", installAs.c_str());
         if (readable)
             ImGui::TextWrapped("The core has built-in copies of the Series K and Model M boot ROMs and both CD BIOS "
                                "images, so nothing is missing without this file.");

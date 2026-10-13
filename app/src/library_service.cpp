@@ -316,6 +316,33 @@ void LibraryService::addFolderDialog(SDL_Window* parent) {
     SDL_ShowOpenFolderDialog(&LibraryService::folderDone, this, parent, def.empty() ? nullptr : def.c_str(), false);
 }
 
+bool LibraryService::installBios(const lib::Entry& e) {
+    if (systemDir.empty()) {
+        setStatus("No system folder to copy the BIOS into.");
+        return false;
+    }
+    const std::string name = lib::biosInstallName(e.bios, e.file.size);
+    if (name.empty()) {
+        setStatus("The core would not read this file from its system folder either.");
+        return false;
+    }
+    std::string dir = systemDir;
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
+    const std::string dest = dir + name;
+    SDL_PathInfo pi;
+    if (SDL_GetPathInfo(dest.c_str(), &pi)) {   // never replace what the user already has there
+        setStatus(name + " is already in the system folder; remove or rename it first to replace it.");
+        return false;
+    }
+    size_t sz = 0;
+    void* data = SDL_LoadFile(e.file.path.c_str(), &sz);
+    bool ok = data && sz == e.file.size && writeFileAtomic(dest, data, sz);
+    SDL_free(data);
+    setStatus(ok ? "Copied to the system folder as " + name + "." : "Could not copy " + name + " to the system folder.");
+    if (ok) rescan();
+    return ok;
+}
+
 void LibraryService::rescan() {
     if (!started_) return;
     if (folders_.empty() && systemDir.empty()) {
