@@ -73,6 +73,10 @@ public:
     std::function<void(unsigned)> destroyTexture;
     // Where art and database updates come from (tests point these at a loopback server).
     std::string artBaseUrl, dbBaseUrl;
+    // Second source for disc art, tried after artBaseUrl misses: the project site, which hosts the Jaguar CD
+    // set until libretro-thumbnails has one.  Config key library.art_mirror ("" = off); the tests point it
+    // at a loopback server.
+    std::string artMirrorUrl;
 
     // ---- state the UI reads ----
     bool show = false;
@@ -151,6 +155,7 @@ private:
     };
     struct ArtJob {                  // what a decode / fetch job needs to know about its tile
         std::string key, title, datName;
+        lib::Section section = lib::Section::Cart;
         unsigned gen = 0;
     };
     struct Decoded {
@@ -166,7 +171,7 @@ private:
     void saveCache(const std::vector<lib::ScanFile>& files);
     void loadCache();
     void decodeJob(const ArtJob& job);
-    void fetchJob(const ArtJob& job, const std::string& type);
+    void fetchJob(const ArtJob& job, const std::string& type, size_t source);
     bool wanted(const std::string& key);
     void invalidateArt(const std::string& key);   // main thread: forget what the slot holds, load again
     void setStatus(const std::string& s);
@@ -198,7 +203,7 @@ private:
     bool datsChanged_ = false;
     std::string status_;
     uint64_t zoomSaveAt_ = 0;   // SDL ticks (ms) when to write library.size, 0 = nothing pending
-    std::map<std::string, double> netFail_;   // "key|type" -> time of last transient failure
+    std::map<std::string, double> netFail_;   // "key|type|source" -> time of last transient failure
     std::atomic<bool> cancel_{false};
     std::atomic<bool> scanCancel_{false};
     std::atomic<bool> scanning_{false};

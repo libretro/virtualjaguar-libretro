@@ -215,6 +215,29 @@ static void testThumbnailNames() {
     CHECK_EQ(lib::thumbnailMissPath("/data/", "Named_Titles", "Iron Soldier (World)"),
              "/data/thumbnails/Atari - Jaguar/Named_Titles/Iron Soldier (World).png.miss");
     CHECK(std::strcmp(lib::kThumbTypes[0], "Named_Boxarts") == 0);   // boxart is tried first
+
+    // the site mirror serves the same layout under "Atari - Jaguar CD"
+    CHECK_EQ(lib::thumbnailUrl("Named_Boxarts", "Myst (USA)", lib::kMirrorBase, lib::kThumbSystemCd),
+             "https://jaguar.provenance-emu.com/thumbnails/Atari%20-%20Jaguar%20CD/Named_Boxarts/Myst%20%28USA%29.png");
+    CHECK_EQ(lib::thumbnailCachePath("/data/", "Named_Titles", "Myst (USA)", lib::kThumbSystemCd),
+             "/data/thumbnails/Atari - Jaguar CD/Named_Titles/Myst (USA).png");   // the mirror has its own cache folder
+    CHECK_EQ(lib::thumbnailMissPath("/data/", "Named_Titles", "Myst (USA)", lib::kThumbSystemCd),
+             "/data/thumbnails/Atari - Jaguar CD/Named_Titles/Myst (USA).png.miss");
+
+    // sources: libretro-thumbnails always first; the mirror only for discs and only when set
+    std::vector<lib::ArtSource> s = lib::artSources(lib::Section::Cart, "http://up/", lib::kMirrorBase);
+    CHECK(s.size() == 1 && s[0].base == "http://up/" && std::strcmp(s[0].system, "Atari - Jaguar") == 0);
+    CHECK(s[0].missRetrySeconds == lib::kMissRetrySeconds);
+    s = lib::artSources(lib::Section::Disc, "http://up/", "http://mirror/thumbs");   // trailing slash added
+    CHECK(s.size() == 2);
+    if (s.size() == 2) {
+        CHECK(s[0].base == "http://up/" && std::strcmp(s[0].system, "Atari - Jaguar") == 0);
+        CHECK(s[1].base == "http://mirror/thumbs/" && std::strcmp(s[1].system, "Atari - Jaguar CD") == 0);
+        CHECK(std::string(s[0].system) != std::string(s[1].system));   // cache and misses are kept per source
+        CHECK(s[1].missRetrySeconds < s[0].missRetrySeconds);                  // the mirror is looked at again sooner
+    }
+    CHECK(lib::artSources(lib::Section::Disc, "http://up/", "").size() == 1);   // mirror off
+    CHECK(lib::artSources(lib::Section::Bios, "http://up/", lib::kMirrorBase).size() == 1);
 }
 
 static void testBiosClassification() {
@@ -833,6 +856,7 @@ static void testServicePipeline() {
         LibraryService svc;
         bind(svc);
         svc.artBaseUrl = srv.url();
+        svc.artMirrorUrl.clear();
         svc.dbBaseUrl = srv.url();
         svc.start(paths, cfg, true);
         CHECK(svc.show);   // a configured library opens at start when no game is loaded
@@ -899,6 +923,7 @@ static void testServicePipeline() {
         LibraryService svc;
         bind(svc);
         svc.artBaseUrl = "http://127.0.0.1:" + std::to_string(srv.port) + "/";   // closed port
+        svc.artMirrorUrl.clear();
         svc.dbBaseUrl = svc.artBaseUrl;
         svc.start(paths, cfg, false);
         CHECK(!svc.show);
@@ -919,6 +944,7 @@ static void testServicePipeline() {
         LibraryService svc;
         bind(svc);
         svc.artBaseUrl = "http://127.0.0.1:" + std::to_string(srv.port) + "/";
+        svc.artMirrorUrl.clear();
         svc.dbBaseUrl = svc.artBaseUrl;
         svc.start(paths, cfg, false);
         CHECK(waitFor(svc, [&] { return !svc.scanning() && find(svc, name) != nullptr; }));
@@ -936,6 +962,246 @@ static void testServicePipeline() {
         CHECK(!svc.netBusy());
         svc.stop();
     }
+}
+
+
+// Disc art: libretro-thumbnails first, then the site mirror; per-source miss markers; carts never see the mirror.
+static void testCdMirror() {
+    std::string root = g_tmp + "mirror-root/";
+    std::error_code ec;
+    fs::create_directories(root + "library/db", ec);
+    std::vector<unsigned char> png = makePng(300, 400, 70);
+
+    const std::string UP = "up/", MIR = "mirror/";
+    auto pathFor = [&](const std::string& prefix, const char* system, const std::string& type, const std::string& name) {
+        return "/" + prefix + lib::urlEncode(system) + "/" + type + "/" + lib::urlEncode(lib::sanitizeThumbName(name)) + ".png";
+    };
+    auto upPath = [&](const std::string& type, const std::string& n) { return pathFor(UP, "Atari - Jaguar", type, n); };
+    auto mirPath = [&](const std::string& type, const std::string& n) { return pathFor(MIR, "Atari - Jaguar CD", type, n); };
+
+    std::mutex logM;
+    std::vector<std::string> log;                 // request order
+    std::map<std::string, std::vector<unsigned char>> have;   // paths that answer 200, with their body
+    TestServer srv;
+    CHECK(srv.start());
+    srv.handler = [&](const std::string& p) {
+        Reply r;
+        std::lock_guard<std::mutex> g(logM);
+        log.push_back(p);
+        auto it = have.find(p);
+        if (it != have.end()) r.body = it->second;
+        else r.status = 404;
+        return r;
+    };
+    auto logSize = [&] { std::lock_guard<std::mutex> g(logM); return log.size(); };
+    auto logAt = [&](size_t i) { std::lock_guard<std::mutex> g(logM); return i < log.size() ? log[i] : std::string(); };
+    auto setHave = [&](const std::string& p, const std::vector<unsigned char>* body = nullptr) {
+        std::lock_guard<std::mutex> g(logM);
+        have[p] = body ? *body : png;
+    };
+    std::vector<unsigned char> pngUp = makePng(150, 200, 40);   // upstream's copy: a different size from the mirror's
+
+    Paths paths;
+    paths.root = root;
+    struct Fake {
+        int created = 0;
+    } fake;
+    auto runSession = [&](const std::function<void(LibraryService&, Config&)>& body, const std::string& mirrorUrl) {
+        Config cfg;
+        cfg.setPath(root + "config.ini");
+        LibraryService svc;
+        svc.createTexture = [&](const void*, int, int) { return (unsigned)++fake.created; };
+        svc.destroyTexture = [](unsigned) {};
+        svc.artBaseUrl = srv.url(UP);
+        svc.artMirrorUrl = mirrorUrl;
+        svc.dbBaseUrl = srv.url();
+        svc.start(paths, cfg, false);
+        body(svc, cfg);
+        svc.stop();
+    };
+    auto waitState = [&](LibraryService& s, const lib::Entry& e, ArtView::State want) {
+        for (int i = 0; i < 400; i++) {
+            s.pump();
+            if (s.art(e).state == want) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    auto mkEntry = [&](const char* name, lib::Section sec) {
+        lib::Entry e;
+        e.section = sec;
+        e.title = e.datName = name;
+        return e;
+    };
+    auto exists = [&](const std::string& p) { return fs::exists(fs::u8path(p)); };
+    auto miss = [&](const char* type, const std::string& name, const char* system) {
+        return exists(lib::thumbnailMissPath(root, type, name, system));
+    };
+    auto ageFile = [&](const std::string& p, int days) {
+        std::error_code e2;
+        fs::last_write_time(fs::u8path(p), fs::file_time_type::clock::now() - std::chrono::hours(24 * days), e2);
+        CHECK(!e2);
+    };
+
+    const char* kB = "Named_Boxarts";
+    const char* kT = "Named_Titles";
+    const char* kS = "Named_Snaps";
+    lib::Entry onlyMirror = mkEntry("Mirror Only (USA)", lib::Section::Disc);      // upstream has nothing
+    lib::Entry upstreamWins = mkEntry("Upstream Wins (USA)", lib::Section::Disc);  // both have it
+    lib::Entry snapOnly = mkEntry("Snap Only (USA)", lib::Section::Disc);          // mirror has just a snap
+    lib::Entry nothing = mkEntry("Nothing Anywhere (USA)", lib::Section::Disc);
+    lib::Entry cart = mkEntry("Some Cart (World)", lib::Section::Cart);
+    setHave(mirPath(kB, onlyMirror.datName));
+    setHave(upPath(kB, upstreamWins.datName));
+    setHave(mirPath(kB, upstreamWins.datName));
+    setHave(mirPath(kS, snapOnly.datName));
+    setHave(mirPath(kB, cart.datName));   // must never be asked for: carts do not use the mirror
+
+    runSession([&](LibraryService& svc, Config&) {
+        // upstream misses, the mirror answers: asked in that order, cached under the shared name, one marker
+        // for the upstream miss and none for the mirror
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        CHECK(logSize() == 2);
+        CHECK_EQ(logAt(0), upPath(kB, onlyMirror.datName));
+        CHECK_EQ(logAt(1), mirPath(kB, onlyMirror.datName));
+        CHECK(exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName, lib::kThumbSystemCd)));
+        CHECK(!exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName)));   // never in upstream's folder
+        CHECK(miss(kB, onlyMirror.datName, lib::kThumbSystem));
+        CHECK(!miss(kB, onlyMirror.datName, lib::kThumbSystemCd));
+
+        // upstream has it: the mirror is never asked
+        size_t before = logSize();
+        CHECK(waitState(svc, upstreamWins, ArtView::Ready));
+        CHECK(logSize() == before + 1);
+        CHECK_EQ(logAt(before), upPath(kB, upstreamWins.datName));
+
+        // box art first from both sources, then title from both, then snap: the mirror's snap is the last resort
+        before = logSize();
+        CHECK(waitState(svc, snapOnly, ArtView::Ready));
+        CHECK(logSize() == before + 6);
+        CHECK_EQ(logAt(before + 0), upPath(kB, snapOnly.datName));
+        CHECK_EQ(logAt(before + 1), mirPath(kB, snapOnly.datName));
+        CHECK_EQ(logAt(before + 2), upPath(kT, snapOnly.datName));
+        CHECK_EQ(logAt(before + 3), mirPath(kT, snapOnly.datName));
+        CHECK_EQ(logAt(before + 4), upPath(kS, snapOnly.datName));
+        CHECK_EQ(logAt(before + 5), mirPath(kS, snapOnly.datName));
+        CHECK(miss(kB, snapOnly.datName, lib::kThumbSystemCd) && miss(kT, snapOnly.datName, lib::kThumbSystemCd));
+        CHECK(exists(lib::thumbnailCachePath(root, kS, snapOnly.datName, lib::kThumbSystemCd)));
+
+        // a cart: upstream only (3 types), the mirror untouched even though it has a file by that name
+        before = logSize();
+        CHECK(waitState(svc, cart, ArtView::Missing));
+        CHECK(logSize() == before + 3);
+        for (size_t i = before; i < logSize(); i++) CHECK(logAt(i).rfind("/up/", 0) == 0);
+
+        // nothing anywhere: Missing, six markers, and it stays quiet afterwards
+        before = logSize();
+        CHECK(waitState(svc, nothing, ArtView::Missing));
+        CHECK(logSize() == before + 6);
+        for (const char* t : {kB, kT, kS}) CHECK(miss(t, nothing.datName, lib::kThumbSystem) && miss(t, nothing.datName, lib::kThumbSystemCd));
+        size_t quiet = logSize();
+        for (int i = 0; i < 20; i++) {
+            svc.pump();
+            svc.art(nothing);
+            svc.art(onlyMirror);
+            SDL_Delay(10);
+        }
+        CHECK(logSize() == quiet);
+    }, srv.url(MIR));
+
+    // New session, nothing changed: every miss still holds, the cached art needs no request.
+    size_t base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, nothing, ArtView::Missing));
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        CHECK(waitState(svc, cart, ArtView::Missing));
+        CHECK(logSize() == base0);
+    }, srv.url(MIR));
+
+    // The mirror's misses expire after a week and only the mirror is asked again; upstream's 30-day marker holds.
+    for (const char* t : {kB, kT, kS}) ageFile(lib::thumbnailMissPath(root, t, nothing.datName, lib::kThumbSystemCd), 8);
+    setHave(mirPath(kT, nothing.datName));   // the mirror gained the title screen meanwhile
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, nothing, ArtView::Ready));
+        CHECK(logSize() >= base0 + 2);
+        for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/mirror/", 0) == 0);   // upstream untouched
+        CHECK_EQ(logAt(base0), mirPath(kB, nothing.datName));
+    }, srv.url(MIR));
+
+    // libretro-thumbnails gains the art later: its 30-day marker expires and upstream wins over the mirror's file.
+    lib::Entry late = mkEntry("Late Upstream (USA)", lib::Section::Disc);
+    runSession([&](LibraryService& svc, Config&) { CHECK(waitState(svc, late, ArtView::Missing)); }, srv.url(MIR));
+    for (const char* t : {kB, kT, kS}) ageFile(lib::thumbnailMissPath(root, t, late.datName, lib::kThumbSystem), 31);
+    setHave(upPath(kB, late.datName));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, late, ArtView::Ready));
+        CHECK(logSize() == base0 + 1);
+        CHECK_EQ(logAt(base0), upPath(kB, late.datName));
+    }, srv.url(MIR));
+
+    // Mirror art cached, then libretro-thumbnails gains the same picture: once its 30-day marker expires the
+    // upstream copy is fetched, cached in its own folder, and shown from then on instead of the mirror's.
+    ageFile(lib::thumbnailMissPath(root, kB, onlyMirror.datName), 31);
+    setHave(upPath(kB, onlyMirror.datName), &pngUp);
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        ArtView v;
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        v = svc.art(onlyMirror);
+        CHECK(v.w == 150 && v.h == 200);   // upstream's picture, not the mirror's 300x400 (256 px cap: 192x256)
+        CHECK(logSize() == base0 + 1);
+        CHECK_EQ(logAt(base0), upPath(kB, onlyMirror.datName));
+        CHECK(exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName)));
+        CHECK(exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName, lib::kThumbSystemCd)));   // kept, but outranked
+    }, srv.url(MIR));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {   // and it stays that way offline
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        ArtView v = svc.art(onlyMirror);
+        CHECK(v.w == 150 && v.h == 200);
+        CHECK(logSize() == base0);
+    }, srv.url(MIR));
+
+    // Mirror switched off (empty base): upstream only.  Downloads off: nothing asked at all.
+    lib::Entry off = mkEntry("Mirror Off (USA)", lib::Section::Disc);
+    setHave(mirPath(kB, off.datName));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, off, ArtView::Missing));
+        CHECK(logSize() == base0 + 3);
+        for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/up/", 0) == 0);
+    }, "");
+    lib::Entry noNet = mkEntry("Downloads Off (USA)", lib::Section::Disc);
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        svc.setDownloadArt(false);
+        CHECK(waitState(svc, noNet, ArtView::Missing));
+        CHECK(logSize() == base0);
+    }, srv.url(MIR));
+
+    // Config: absent = the site default, present = as written, empty = off.
+    {
+        Config cfg;
+        cfg.setPath(root + "config2.ini");
+        LibraryService a;
+        CHECK_EQ(a.artMirrorUrl, std::string(lib::kMirrorBase));
+        a.start(paths, cfg, false);
+        CHECK_EQ(a.artMirrorUrl, std::string(lib::kMirrorBase));
+        a.stop();
+        cfg.set("library.art_mirror", "http://example.invalid/t/");
+        LibraryService b;
+        b.start(paths, cfg, false);
+        CHECK_EQ(b.artMirrorUrl, std::string("http://example.invalid/t/"));
+        b.stop();
+        cfg.set("library.art_mirror", "");
+        LibraryService c;
+        c.start(paths, cfg, false);
+        CHECK(c.artMirrorUrl.empty());
+        c.stop();
+    }
+    srv.stop();
 }
 
 #endif  // !_WIN32
@@ -1009,6 +1275,15 @@ static void testCoverLookup() {
     have.insert(lib::thumbnailCachePath(root, "Named_Snaps", dat));
     lib::CoverChoice c = lib::chooseCover(root, key, title, dat, exists);
     CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Snaps", dat));
+    // a disc's copy from the site mirror counts too, and libretro-thumbnails' copy of the same type wins over it
+    have.insert(lib::thumbnailCachePath(root, "Named_Boxarts", dat, lib::kThumbSystemCd));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Boxarts", dat, lib::kThumbSystemCd));
+    have.insert(lib::thumbnailCachePath(root, "Named_Boxarts", dat));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Boxarts", dat));
+    have.erase(lib::thumbnailCachePath(root, "Named_Boxarts", dat));
+    have.erase(lib::thumbnailCachePath(root, "Named_Boxarts", dat, lib::kThumbSystemCd));
     have.insert(lib::localCoverPath(root, title));
     c = lib::chooseCover(root, key, title, dat, exists);
     CHECK(c.source == lib::CoverSource::LocalFolder && c.path == lib::localCoverPath(root, title));
@@ -1056,6 +1331,7 @@ static void testCoverService() {
     svc.createTexture = [&](const void*, int w, int h) { fake.created++; fake.lastW = w; fake.lastH = h; return (unsigned)fake.created; };
     svc.destroyTexture = [&](unsigned) { fake.destroyed++; };
     svc.artBaseUrl = "http://127.0.0.1:1/";   // nothing listens: any request would fail loudly
+    svc.artMirrorUrl = svc.artBaseUrl;
     svc.dbBaseUrl = svc.artBaseUrl;
     svc.start(paths, cfg, false);
     svc.setDownloadArt(false);
@@ -1473,6 +1749,7 @@ int main(int argc, char** argv) {
     if (http::available()) {
         testHttp();
         testServicePipeline();
+        testCdMirror();
     } else {
         std::printf("no HTTP backend in this build: loopback HTTP tests skipped\n");
     }

@@ -198,13 +198,31 @@ std::string urlEncode(const std::string& s);   // RFC 3986 unreserved kept, the 
 
 extern const char* const kThumbBase;           // "https://thumbnails.libretro.com/"
 extern const char* const kThumbSystem;         // "Atari - Jaguar"
+extern const char* const kThumbSystemCd;       // "Atari - Jaguar CD" (the site mirror's system folder)
+extern const char* const kMirrorBase;          // "https://jaguar.provenance-emu.com/thumbnails/"
 extern const char* const kThumbTypes[3];       // Named_Boxarts, Named_Titles, Named_Snaps
-std::string thumbnailUrl(const std::string& type, const std::string& title, const std::string& base = kThumbBase);
-// <root>thumbnails/<system>/<type>/<sanitized title>.png ; root ends with a separator.
-std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title);
-// Marker next to it recording "the server said 404" (retried after kMissRetrySeconds).
-std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title);
-constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;
+std::string thumbnailUrl(const std::string& type, const std::string& title, const std::string& base = kThumbBase,
+                         const char* system = kThumbSystem);
+// <root>thumbnails/<system>/<type>/<sanitized title>.png ; root ends with a separator.  Each source has its own
+// folder ("Atari - Jaguar" for libretro-thumbnails, "Atari - Jaguar CD" for the site mirror), so a copy fetched
+// from the mirror can never stand in for upstream art that appears later.
+std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title,
+                               const char* system = kThumbSystem);
+// Marker next to it recording "this source said 404" (retried after the source's missRetrySeconds).
+std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title,
+                              const char* system = kThumbSystem);
+constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;        // libretro-thumbnails
+constexpr int64_t kMirrorMissRetrySeconds = 7LL * 24 * 3600;   // the site mirror: we publish it, so look again sooner
+
+// Where art for one tile is fetched from, in order.  libretro-thumbnails first, always; for a disc the site
+// mirror follows (libretro-thumbnails has no Jaguar CD repository yet, libretro-thumbnails#141), so the
+// moment upstream has a picture it wins.  Carts, and an empty mirror base, have the one source.
+struct ArtSource {
+    std::string base;           // URL prefix, ends with '/'
+    const char* system;         // folder under base, and under <root>thumbnails/ for the cache and miss markers
+    int64_t missRetrySeconds;   // how long a miss marker holds
+};
+std::vector<ArtSource> artSources(Section section, const std::string& upstreamBase, const std::string& mirrorBase);
 
 // ---- covers -------------------------------------------------------------------------------------------------
 // What a tile shows, first match wins:

@@ -942,6 +942,8 @@ ScanCache parseCache(const std::string& text) {
 
 const char* const kThumbBase = "https://thumbnails.libretro.com/";
 const char* const kThumbSystem = "Atari - Jaguar";
+const char* const kThumbSystemCd = "Atari - Jaguar CD";
+const char* const kMirrorBase = "https://jaguar.provenance-emu.com/thumbnails/";
 const char* const kThumbTypes[3] = {"Named_Boxarts", "Named_Titles", "Named_Snaps"};
 
 std::string sanitizeThumbName(const std::string& title) {
@@ -973,17 +975,31 @@ std::string urlEncode(const std::string& s) {
     return out;
 }
 
-std::string thumbnailUrl(const std::string& type, const std::string& title, const std::string& base) {
-    return base + urlEncode(kThumbSystem) + "/" + type + "/" +
+std::string thumbnailUrl(const std::string& type, const std::string& title, const std::string& base,
+                         const char* system) {
+    return base + urlEncode(system) + "/" + type + "/" +
            urlEncode(sanitizeThumbName(title)) + ".png";
 }
 
-std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title) {
-    return root + "thumbnails/" + kThumbSystem + "/" + type + "/" + sanitizeThumbName(title) + ".png";
+std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title,
+                               const char* system) {
+    return root + "thumbnails/" + system + "/" + type + "/" + sanitizeThumbName(title) + ".png";
 }
 
-std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title) {
-    return thumbnailCachePath(root, type, title) + ".miss";
+std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title,
+                              const char* system) {
+    return thumbnailCachePath(root, type, title, system) + ".miss";
+}
+
+std::vector<ArtSource> artSources(Section section, const std::string& upstreamBase, const std::string& mirrorBase) {
+    std::vector<ArtSource> v;
+    v.push_back({upstreamBase, kThumbSystem, kMissRetrySeconds});
+    if (section == Section::Disc && !mirrorBase.empty()) {
+        std::string b = mirrorBase;
+        if (b.back() != '/') b += '/';
+        v.push_back({b, kThumbSystemCd, kMirrorMissRetrySeconds});
+    }
+    return v;
 }
 
 // ---- covers ------------------------------------------------------------------------------------------------------
@@ -1046,11 +1062,14 @@ CoverChoice chooseCover(const std::string& root, const std::string& key, const s
     }
     if (!datName.empty()) {
         for (const char* type : kThumbTypes) {
-            std::string p = thumbnailCachePath(root, type, datName);
-            if (exists(p)) {
-                c.source = CoverSource::Downloaded;
-                c.path = p;
-                return c;
+            // the same order the service fetches in: libretro-thumbnails' copy, then the site mirror's (discs only)
+            for (const char* system : {kThumbSystem, kThumbSystemCd}) {
+                std::string p = thumbnailCachePath(root, type, datName, system);
+                if (exists(p)) {
+                    c.source = CoverSource::Downloaded;
+                    c.path = p;
+                    return c;
+                }
             }
         }
     }

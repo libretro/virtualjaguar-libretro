@@ -145,7 +145,7 @@ void Worker::loop() {
 
 // ---- LibraryService -----------------------------------------------------------------------------------
 
-LibraryService::LibraryService() : artBaseUrl(lib::kThumbBase), dbBaseUrl(kDefaultDbBase) {}
+LibraryService::LibraryService() : artBaseUrl(lib::kThumbBase), dbBaseUrl(kDefaultDbBase), artMirrorUrl(lib::kMirrorBase) {}
 
 LibraryService::~LibraryService() {
     cancel_ = true;
@@ -196,6 +196,7 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
         if (!d.empty()) folders_.push_back(d);
     }
     downloadArt = cfg.getBool("library.art", true);
+    if (cfg.has("library.art_mirror")) artMirrorUrl = cfg.get("library.art_mirror", "");   // "" turns the mirror off
     hideOnLaunch = cfg.getBool("library.hide_on_launch", true);
     cellScale = lib::clampTileScale(cfg.getFloat("library.size", lib::kTileScaleDefault));
     section = std::min(2, std::max(0, cfg.getInt("library.section", 0)));
@@ -496,6 +497,7 @@ ArtView LibraryService::art(const lib::Entry& e) {
     job.key = lib::coverKey(e);
     job.title = e.title;
     job.datName = e.datName;
+    job.section = e.section;
     bool request = false;
     {
         std::lock_guard<std::mutex> g(m_);
@@ -634,39 +636,49 @@ void LibraryService::decodeJob(const ArtJob& job) {
     const std::string& key = job.datName;   // the libretro-thumbnails name; empty = never on the network
     bool transient = false;
     if (!key.empty()) {
+        // Sources in order (libretro-thumbnails, then for a disc the site mirror).  Each has its own cache folder and
+        // its own miss markers, so mirror art never hides upstream art: when upstream's marker expires and it
+        // finally has the picture, that copy is cached first in line and wins from then on.
+        const std::vector<lib::ArtSource> sources = lib::artSources(job.section, artBaseUrl, artMirrorUrl);
         for (const char* type : lib::kThumbTypes) {
-            std::string cache = lib::thumbnailCachePath(root_, type, key);
-            if (pathExists(cache)) {
-                std::vector<unsigned char> bytes;
-                Decoded d;
-                d.key = job.key;
-                d.gen = job.gen;
-                if (readFile(cache, bytes) && decodePng(bytes, d.w, d.h, d.rgba)) {
-                    publish(std::move(d));
-                    return;
+            bool sourceDown = false;   // an earlier source failed transiently: use caches, but let no later source answer in its place
+            for (size_t si = 0; si < sources.size(); si++) {
+                const lib::ArtSource& src = sources[si];
+                std::string cache = lib::thumbnailCachePath(root_, type, key, src.system);
+                if (pathExists(cache)) {
+                    std::vector<unsigned char> bytes;
+                    Decoded d;
+                    d.key = job.key;
+                    d.gen = job.gen;
+                    if (readFile(cache, bytes) && decodePng(bytes, d.w, d.h, d.rgba)) {
+                        publish(std::move(d));
+                        return;
+                    }
+                    SDL_RemovePath(cache.c_str());   // corrupt or partial: fetch it again next time
                 }
-                SDL_RemovePath(cache.c_str());   // corrupt or partial: fetch it again next time
-            }
-            int64_t missTime = 0;
-            std::string miss = lib::thumbnailMissPath(root_, type, key);
-            if (pathExists(miss, &missTime)) {
-                SDL_Time nowNs = 0;
-                SDL_GetCurrentTime(&nowNs);
-                if ((int64_t)(nowNs / 1000000000LL) - missTime < lib::kMissRetrySeconds) continue;
-                SDL_RemovePath(miss.c_str());
-            }
-            if (!downloadArt || !http::available()) continue;
-            {
-                std::lock_guard<std::mutex> g(m_);
-                auto f = netFail_.find(key + "|" + type);
-                if (f != netFail_.end() && nowSec() - f->second < kRetryAfterFailure) {
-                    transient = true;
-                    continue;
+                if (sourceDown) continue;
+                int64_t missTime = 0;
+                std::string miss = lib::thumbnailMissPath(root_, type, key, src.system);
+                if (pathExists(miss, &missTime)) {
+                    SDL_Time nowNs = 0;
+                    SDL_GetCurrentTime(&nowNs);
+                    if ((int64_t)(nowNs / 1000000000LL) - missTime < src.missRetrySeconds) continue;
+                    SDL_RemovePath(miss.c_str());
                 }
+                if (!downloadArt || !http::available()) continue;
+                {
+                    std::lock_guard<std::mutex> g(m_);
+                    auto f = netFail_.find(key + "|" + type + "|" + std::to_string(si));
+                    if (f != netFail_.end() && nowSec() - f->second < kRetryAfterFailure) {
+                        transient = true;
+                        sourceDown = true;
+                        continue;
+                    }
+                }
+                const std::string t = type;
+                netW_.post([this, job, t, si]() { fetchJob(job, t, si); });
+                return;
             }
-            const std::string t = type;
-            netW_.post([this, job, t]() { fetchJob(job, t); });
-            return;
         }
     }
     Decoded none;
@@ -677,7 +689,7 @@ void LibraryService::decodeJob(const ArtJob& job) {
 }
 
 // Net thread: one download.  Always ends by asking the decode thread to look again.
-void LibraryService::fetchJob(const ArtJob& job, const std::string& type) {
+void LibraryService::fetchJob(const ArtJob& job, const std::string& type, size_t source) {
     if (cancel_.load()) return;
     if (!wanted(job.key)) {
         std::lock_guard<std::mutex> g(m_);
@@ -686,21 +698,27 @@ void LibraryService::fetchJob(const ArtJob& job, const std::string& type) {
         return;
     }
     const std::string& key = job.datName;
+    const std::vector<lib::ArtSource> sources = lib::artSources(job.section, artBaseUrl, artMirrorUrl);
+    if (source >= sources.size()) {   // the mirror was switched off since the job was queued
+        if (!cancel_.load()) decodeW_.post([this, job]() { decodeJob(job); });
+        return;
+    }
+    const lib::ArtSource& src = sources[source];
     netJobs_++;
     http::Response r;
-    bool ok = http::get(lib::thumbnailUrl(type, key, artBaseUrl), r, kMaxArtBytes, &cancel_);
-    std::string cache = lib::thumbnailCachePath(root_, type, key);
+    bool ok = http::get(lib::thumbnailUrl(type, key, src.base, src.system), r, kMaxArtBytes, &cancel_);
+    std::string cache = lib::thumbnailCachePath(root_, type, key, src.system);
     std::string dir = cache.substr(0, cache.find_last_of('/') + 1);
     if (ok && r.status == 200 && isPng(r.body)) {
         SDL_CreateDirectory(dir.c_str());
         writeFileAtomic(cache, r.body.data(), r.body.size());
     } else if (ok && r.status == 404) {
         SDL_CreateDirectory(dir.c_str());
-        writeFileAtomic(lib::thumbnailMissPath(root_, type, key), "", 0);
+        writeFileAtomic(lib::thumbnailMissPath(root_, type, key, src.system), "", 0);
     } else {
         {
             std::lock_guard<std::mutex> g(m_);
-            netFail_[key + "|" + type] = nowSec();
+            netFail_[key + "|" + type + "|" + std::to_string(source)] = nowSec();
         }
         if (!cancel_.load())
             setStatus(std::string("Box art download failed: ") +
