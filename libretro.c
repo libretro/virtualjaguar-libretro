@@ -3606,9 +3606,9 @@ static void check_variables(void)
                        || (strcmp(var.value, "m68k") == 0);
    }
 
-   /* GPU pipeline/gateway timing (issue #401/#313).  Transient model
-    * state must not survive a toggle: a stale gateway timestamp from
-    * an earlier enabled period would charge phantom stalls on
+   /* GPU + DSP pipeline/gateway timing (issue #401/#313).  Transient
+    * model state must not survive a toggle: a stale gateway timestamp
+    * from an earlier enabled period would charge phantom stalls on
     * re-enable. */
    var.key = "virtualjaguar_gpu_pipeline_timing";
    var.value = NULL;
@@ -3618,7 +3618,10 @@ static void check_variables(void)
       if (get_variable_pertitle(&var) && var.value)
          vjs.gpuPipelineTiming = (strcmp(var.value, "enabled") == 0);
       if (pipeWas != vjs.gpuPipelineTiming)
+      {
          GPUPipeTimingReset();
+         DSPPipeTimingReset();
+      }
    }
 
    /* GPU/DSP idle-loop fast-forward (issue #569 + GPU port).  Bit-exact by
@@ -3714,6 +3717,7 @@ static void check_variables(void)
    /* Drop the GPU's sub-cycle bus-stall remainder when the RISC scale
     * (possibly) changed — mirrors M68KClockScaleReset() above. */
    GPUClockScaleReset();
+   DSPClockScaleReset();
 
    if (m68kClockScalePct != 100 || riscClockScalePct != 100)
       LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",

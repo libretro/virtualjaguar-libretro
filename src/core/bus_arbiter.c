@@ -184,6 +184,48 @@ uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses,
     return cycles;
 }
 
+/* DSP local bus: JERRY's DSP_MEM.NET decodes $F18000-$F1FFFF as local
+ * space ("Local space is at 00F18000h to 00F1FFFFh" -- control
+ * registers, the 8K RAM and the wave-table ROM all sit inside it; JTRM
+ * v8 p.98).  Everything else, GPU local RAM included, is a transaction
+ * on the main bus through JERRY's 16-bit external interface. */
+#define DSP_LOCAL_LO 0xF18000u
+#define DSP_LOCAL_HI 0xF1FFFFu
+
+/* JMEM.NET split-transfer state machine: after the first word cycle's
+ * dtack the controller sits in state 2 ("pause") until dtack drops,
+ * then re-requests in state 3 with A1 set.  That pause is at least one
+ * system clock.  INFERRED from the netlist state machine, not
+ * simulated: the JERRY<->TOM dreq/dtack handshake latency itself is
+ * not modeled beyond this (no Verilator rig for JERRY exists). */
+#define DSP_SPLIT_PAUSE_CLKS 1
+
+uint32_t bus_arbiter_dsp_access(uint32_t addr, int is_long)
+{
+    uint32_t first, second, cost;
+
+    addr &= 0xFFFFFF;
+    if (addr >= DSP_LOCAL_LO && addr <= DSP_LOCAL_HI)
+        return 0;
+
+    first = bus_arbiter_dram_cost(addr);
+    if (first == 0)
+        first = IO_BUS_CLOCKS_ESTIMATE;   /* GPU local RAM: TOM I/O for JERRY */
+    cost = first;
+    if (is_long)
+    {
+        /* Second word of the split transfer: same DRAM row as the
+         * first (adjacent word; main RAM and its mirrors below
+         * $800000), so a page-mode hit; ROM and I/O
+         * cycles have no page mode and repeat in full. */
+        second = (addr < 0x800000) ? DRAM_PAGE_CYCLE : first;
+        cost += DSP_SPLIT_PAUSE_CLKS + second;
+    }
+    if (busArbiter.contention_scale > 1)
+        cost *= busArbiter.contention_scale;
+    return cost;
+}
+
 void bus_arbiter_update_memcon2(uint16_t memcon2)
 {
     busArbiter.refrate = (memcon2 >> 8) & 0x0F;

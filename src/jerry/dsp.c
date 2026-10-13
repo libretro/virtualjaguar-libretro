@@ -434,6 +434,301 @@ uint32_t dsp_exec_opcode_count = 0;
 #define DSP_FLAGS_RETIRE_DELAY 2
 static uint32_t dspFlagsRetireDelay = 0;
 
+/* ------------------------------------------------------------------ *
+ * DSP pipeline / external-gateway timing model (issue #313 remainder,
+ * timing-campaign S1; core option virtualjaguar_gpu_pipeline_timing,
+ * default off -- the one option now covers both RISC cores).
+ *
+ * The DSP "is a variant of the GPU within Tom" with the same
+ * pipe-lining (JTRM v8 p.97: "Pipe-Lining -- Refer to the 'Pipe-Lining'
+ * section on the GPU description").  The netlists agree at the gate
+ * level: jag_sim netlists/jerry/SBOARD.NET and EXECON.NET are
+ * byte-identical to netlists/tom/SBOARD.NET and EXECON.NET, the local
+ * memory arbitration in jerry/DSP_MEM.NET matches tom/GPU_MEM.NET, and
+ * jerry/DSP_GATE.NET is the GPU gateway state machine minus the
+ * 64-bit/phrase path.  So the scoreboard, write-back and gateway rules
+ * of the GPU model in src/tom/gpu.c -- pinned against the netlists
+ * (docs/gpu-timing-spec.md R2/R3/R5/R9/R15/R16) and by Verilator on the
+ * GPU island (§14: write-back port conflict, L = 7 + D) -- carry over
+ * by netlist identity.  The model below is that code with three DSP
+ * differences, each cited where it is applied:
+ *
+ *   - local space is $F18000-$F1FFFF (DSP_MEM.NET), so GPU RAM is an
+ *     external transaction for the DSP;
+ *   - external memory sits behind JERRY's 16-bit interface (JTRM v8
+ *     p.97), so a long transfer is two word cycles (JMEM.NET), priced
+ *     by bus_arbiter_dsp_access();
+ *   - indexed-store DATA is not score-boarded (TOM/JERRY bug 2, JTRM v8
+ *     p.134; already modeled for its data effect by
+ *     dsp_div_store_fixups), so it never waits on a pending result.
+ *
+ * Constants: everything in CORE time is netlist-identical to the GPU
+ * and inherits its pins.  INFERRED (not simulated -- no JERRY Verilator
+ * rig exists): the JERRY<->TOM bus handshake is taken to cost what the
+ * GPU's idle-bus grant costs (DSP_PIPE_GRANT_CLKS), and the split
+ * transfer's pause state one clock (bus_arbiter.c).
+ *
+ * With the model on, every opcode's base cost is 1 tick (R1) instead of
+ * the legacy dsp_opcode_cycles[] table, whose 2/3/9/4-cycle entries for
+ * loads, indexed loads, DIV and MMULT are the hand-tuned stand-ins for
+ * exactly what R5/R6/R9/R15 now model -- keeping both would double-
+ * count.  MMULT (R17, per-element cost unpinned) is charged 1, the same
+ * as the GPU model.  The table still drives the default path, which is
+ * byte-identical with the option off.
+ *
+ * Cycle domains follow the bus_arbiter.h contract, as in gpu.c:
+ * dsp_bus_stall is WALL time (gateway waits, pending external loads,
+ * DRAM/ROM/I/O access) and is rescaled under risc_clock_scale;
+ * dsp_pipe_core_stall is CORE time and is deducted unscaled.
+ *
+ * All model state is transient (bounded by one external transfer plus
+ * one divide): never serialized, zeroed on DSPReset, interrupt dispatch
+ * (bank switch) and option toggle -- the GPU model's convention. */
+#define DSP_PIPE_GRANT_CLKS   2u   /* GPU idle-bus grant (ARB.NET); INFERRED for JERRY */
+#define DSP_PIPE_EXT_ISSUE    2u   /* gateway issue phase (DSP_GATE.NET == GATEWAY.NET) */
+#define DSP_PIPE_EXT_RETURN   3u   /* load data return + scoreboard write */
+#define DSP_PIPE_LOCAL_LOAD   3u   /* local-RAM load latency (SBOARD.NET) */
+#define DSP_PIPE_LOCAL_REPEAT 2u   /* local load engine: one op per 2 ticks */
+#define DSP_PIPE_DIV_TICKS    16u  /* 32-bit quotient at 2 bits/tick (DIVIDE.NET) */
+#define DSP_PIPE_LOCAL_LO     0xF18000u
+#define DSP_PIPE_LOCAL_HI     0xF1FFFFu
+
+/* Per-instruction stall accumulators (see the domain note above).
+ * dsp_bus_stall also carries the dram_timing self-cost with the model
+ * off; it is only ever nonzero when one of the two options is on. */
+static uint32_t dsp_bus_stall;
+static uint32_t dsp_pipe_core_stall;
+/* Sub-cycle remainder of the wall->scaled conversion of dsp_bus_stall
+ * (sysclk-hundredths, modulo 100); always 0 at stock scale.  Not
+ * serialized -- same precedent as gpu_stall_scale_accum. */
+static uint32_t dsp_stall_scale_accum;
+
+static uint64_t dsp_pipe_clock;        /* cycles executed since reset */
+static uint64_t dsp_ext_done[2];       /* split-transaction load/store slots */
+static uint64_t dsp_gate_issue_free;   /* gateway issue-phase serialization */
+static uint64_t dsp_local_busy_until;  /* local load engine */
+static uint64_t dsp_reg_ready[32];     /* pending load/div result per reg */
+static uint8_t  dsp_reg_ready_ext[32]; /* nonzero = that wait is wall time */
+static uint8_t  dsp_pipe_prev_dest = 0xFF; /* prev instr's ALU dest, 0xFF none */
+static uint8_t  dsp_pipe_prev_flags = 0;   /* prev instr set the flags */
+
+/* Diagnostics (test ABI): stall cycles charged and external transfers
+ * issued by the model.  Monotonic since DSPReset (NOT cleared by
+ * DSPPipeTimingReset, which also runs on every interrupt), not
+ * serialized -- same convention as gpu_pipe_stall_total. */
+uint64_t dsp_pipe_stall_total = 0;
+uint64_t dsp_pipe_ext_total   = 0;
+
+/* Operand classification per DSP opcode.  Bit 0: field 1 names a
+ * register this op reads.  Bit 1: field 2 names a register this op
+ * reads.  Bit 2: this op writes the field-2 register.  Bit 3: the
+ * field-2 read is NOT score-boarded (indexed-store data, TOM/JERRY bug
+ * 2) -- it still occupies a register-file read port for the write-back
+ * rule.  Same encoding as gpu_pipe_flags[]; the DSP-only opcodes
+ * (32 subqmod, 33 sat16s, 42 sat32s, 48 mirror, 62 illegal, 63 addqmod)
+ * differ from the GPU map.  moveta/movefa's alternate-bank operand and
+ * the implicit R14/R15 base of the indexed forms are not tracked, as on
+ * the GPU. */
+static const uint8_t dsp_pipe_flags[64] = {
+   7, 7, 6, 6, 7, 7, 6, 6,     /* add addc addq addqt sub subc subq subqt */
+   6, 7, 7, 7, 6, 2, 6, 6,     /* neg and or xor not btst bset bclr */
+   7, 7, 3, 4, 3, 7, 6, 7,     /* mult imult imultn resmac imacn div abs sh */
+   6, 6, 7, 6, 7, 6, 3, 2,     /* shlq shrq sha sharq ror rorq cmp cmpq */
+   6, 6, 5, 4, 1, 4, 4, 5,     /* subqmod sat16s move moveq moveta movefa movei loadb */
+   5, 5, 6, 4, 4, 3, 3, 3,     /* loadw load sat32s load_r14_ix load_r15_ix storeb storew store */
+   6, 10, 10, 4, 1, 0, 6, 5,   /* mirror store_r14_ix store_r15_ix move_pc jump jr mmult mtoi */
+   5, 0, 5, 5, 11, 11, 0, 6    /* normi nop load_r14_ri load_r15_ri store_r14_ri store_r15_ri illegal addqmod */
+};
+
+/* Flag-setting opcodes: the GPU table for the shared opcodes, plus the
+ * DSP-only ones that set Z/N(/C) in this core (subqmod, sat16s,
+ * sat32s, mirror, addqmod). */
+static const uint8_t dsp_pipe_sets_flags[64] = {
+   1,1,1,0,1,1,1,0, 1,1,1,1,1,1,1,1,       /* add..bclr (addqt/subqt no) */
+   1,1,0,0,0,1,1,1, 1,1,1,1,1,1,1,1,       /* mult..cmpq (imultn/imacn/resmac no) */
+   1,1,0,0,0,0,0,0, 0,0,1,0,0,0,0,0,       /* subqmod,sat16s; sat32s; moves/loads no */
+   1,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,1        /* mirror; addqmod */
+};
+
+void DSPPipeTimingReset(void)
+{
+	unsigned i;
+	dsp_pipe_clock       = 0;
+	dsp_bus_stall        = 0;
+	dsp_pipe_core_stall  = 0;
+	dsp_ext_done[0]      = 0;
+	dsp_ext_done[1]      = 0;
+	dsp_gate_issue_free  = 0;
+	dsp_local_busy_until = 0;
+	dsp_pipe_prev_dest   = 0xFF;
+	dsp_pipe_prev_flags  = 0;
+	for (i = 0; i < 32; i++)
+	{
+		dsp_reg_ready[i]     = 0;
+		dsp_reg_ready_ext[i] = 0;
+	}
+}
+
+void DSPClockScaleReset(void)
+{
+	dsp_stall_scale_accum = 0;
+}
+
+/* Score-board check before dispatch -- GPUPipeCheckUse() with the
+ * bug-2 exemption.  The charge is the MAX of the overlapping wait
+ * sources (pending load/div result R5/R9/R15, one-deep ALU result-use
+ * interlock R2, write-back port conflict §14, flags interlock R3);
+ * fixed issue extras (MOVEI +2 R16, indexed load +2 R6, indexed store
+ * +1 R7) are added on top. */
+static void DSPPipeCheckUse(uint32_t index)
+{
+	uint8_t f = dsp_pipe_flags[index];
+	uint64_t ready = dsp_pipe_clock;
+	uint32_t wait, extra;
+	int wait_is_ext = 0;
+	int sb2 = (f & 2) && !(f & 8);     /* field-2 read is score-boarded */
+
+	if (f & 1)
+	{
+		uint64_t r = dsp_reg_ready[dsp_opcode_first_parameter];
+		if (r > ready)
+		{
+			ready = r;
+			wait_is_ext = dsp_reg_ready_ext[dsp_opcode_first_parameter];
+		}
+	}
+	if (sb2)
+	{
+		uint64_t r = dsp_reg_ready[dsp_opcode_second_parameter];
+		if (r > ready)
+		{
+			ready = r;
+			wait_is_ext = dsp_reg_ready_ext[dsp_opcode_second_parameter];
+		}
+	}
+	wait = (uint32_t)(ready - dsp_pipe_clock);
+	if (wait < 1 && dsp_pipe_prev_dest != 0xFF)
+	{
+		if (((f & 1) && dsp_opcode_first_parameter == dsp_pipe_prev_dest)
+		 || (sb2 && dsp_opcode_second_parameter == dsp_pipe_prev_dest))
+			wait = 1;                       /* ALU RAW interlock (R2) */
+		else if ((f & 1) && (f & 2)
+		      && !((f & 8) && dsp_opcode_second_parameter == dsp_pipe_prev_dest))
+			/* Write-back port conflict (JTRM v8 p.35 "Register
+			 * Write-Back"; Verilator §14): two register reads, neither
+			 * the pending write-back target.  An unscoreboarded read of
+			 * the target still conceals the write-back -- the port rule
+			 * is about addresses, not the scoreboard. */
+			wait = 1;
+	}
+	if (wait < 1 && dsp_pipe_prev_flags)
+	{
+		/* addc(1)/subc(5) always read carry; jump(52)/jr(53) read the
+		 * flags only for a real condition (cc field != 0). */
+		if (index == 1 || index == 5
+		   || ((index == 52 || index == 53) && dsp_opcode_second_parameter != 0))
+			wait = 1;                       /* flags interlock (R3) */
+	}
+	extra = 0;
+	if (index == 38)                          extra = 2;  /* movei: 3 ticks */
+	else if (index == 43 || index == 44
+	      || index == 58 || index == 59)      extra = 2;  /* indexed load */
+	else if (index == 49 || index == 50
+	      || index == 60 || index == 61)      extra = 1;  /* indexed store */
+	if (wait)
+	{
+		if (wait_is_ext)
+			dsp_bus_stall += wait;
+		else
+			dsp_pipe_core_stall += wait;
+		dsp_pipe_stall_total += wait;
+	}
+	if (extra)
+	{
+		dsp_pipe_core_stall += extra;
+		dsp_pipe_stall_total += extra;
+	}
+}
+
+/* A load/store opcode touched `addr` -- GPUPipeMemAccess() with the
+ * DSP's local decode and JERRY's 16-bit external interface.  Local
+ * space never uses the gateway (3-tick non-blocking load, engine takes
+ * one op per 2 ticks); anything else is a split-transaction external
+ * transfer with two pending slots, a store first drains pending loads,
+ * the issue phase serializes back-to-back memops, and only USE of the
+ * result (or slot exhaustion) blocks. */
+static void DSPPipeMemAccess(uint32_t addr, int isLoad, int isLong)
+{
+	uint64_t t, t0, done;
+	uint32_t cost;
+	int slot;
+
+	addr &= 0xFFFFFF;
+	t0 = dsp_pipe_clock + dsp_bus_stall + dsp_pipe_core_stall;
+	t  = t0;
+	if (addr >= DSP_PIPE_LOCAL_LO && addr <= DSP_PIPE_LOCAL_HI)
+	{
+		if (dsp_local_busy_until > t)
+			t = dsp_local_busy_until;
+		dsp_local_busy_until = t + DSP_PIPE_LOCAL_REPEAT;
+		if (isLoad)
+		{
+			dsp_reg_ready[dsp_opcode_second_parameter] = t + DSP_PIPE_LOCAL_LOAD;
+			dsp_reg_ready_ext[dsp_opcode_second_parameter] = 0;
+		}
+		/* Local RAM is clocked at the DSP clock: core time. */
+		if (t > t0)
+		{
+			dsp_pipe_core_stall += (uint32_t)(t - t0);
+			dsp_pipe_stall_total += t - t0;
+		}
+		return;
+	}
+	dsp_pipe_ext_total++;
+	if (!isLoad)
+	{
+		/* Store: wait out every pending load first. */
+		if (dsp_ext_done[0] > t) t = dsp_ext_done[0];
+		if (dsp_ext_done[1] > t) t = dsp_ext_done[1];
+	}
+	else if (dsp_ext_done[0] > t && dsp_ext_done[1] > t)
+	{
+		/* Both slots pending: third load waits for the earlier one. */
+		t = (dsp_ext_done[0] < dsp_ext_done[1]) ? dsp_ext_done[0]
+		                                        : dsp_ext_done[1];
+	}
+	if (dsp_gate_issue_free > t)
+		t = dsp_gate_issue_free;
+	if (t > t0)
+	{
+		dsp_bus_stall += (uint32_t)(t - t0);
+		dsp_pipe_stall_total += t - t0;
+	}
+	cost = bus_arbiter_dsp_access(addr, isLong);
+	done = t + DSP_PIPE_EXT_ISSUE + DSP_PIPE_GRANT_CLKS + cost
+	     + (isLoad ? DSP_PIPE_EXT_RETURN : 0);
+	dsp_gate_issue_free = t + DSP_PIPE_EXT_ISSUE;
+	slot = (dsp_ext_done[0] <= dsp_ext_done[1]) ? 0 : 1;
+	dsp_ext_done[slot] = done;
+	if (isLoad)
+	{
+		dsp_reg_ready[dsp_opcode_second_parameter] = done;
+		dsp_reg_ready_ext[dsp_opcode_second_parameter] = 1;
+	}
+}
+
+/* Hook for the load/store opcode bodies.  Model on: gateway + scoreboard
+ * semantics above (the access runs in the background).  Model off with
+ * dram_timing on: the immediate self-cost the GPU pays in the same
+ * configuration (GPU_EXT_ACCESS).  Both off: nothing, as before. */
+#define DSP_PIPE_MEM(addr, isLoad, isLong) \
+	do { \
+		if (vjs.gpuPipelineTiming) \
+			DSPPipeMemAccess((addr), (isLoad), (isLong)); \
+		else if (busArbiter.enabled) \
+			dsp_bus_stall += bus_arbiter_dsp_access((addr), (isLong)); \
+	} while (0)
+
 
 
 // Private function prototypes
@@ -1075,6 +1370,11 @@ void DSPHandleIRQsNP(void)
 	dspFlagsRetireDelay = 0;
 	DSPUpdateRegisterBanks();
 
+	/* Bank switch: the pipeline model tracks pending results per
+	 * register number in the CURRENT bank, so dispatching into the
+	 * other bank invalidates it (bounded, see the model header). */
+	if (vjs.gpuPipelineTiming)
+		DSPPipeTimingReset();
 
 	dsp_reg[31] -= 4;
 	dsp_reg[30] = dsp_pc - 2; // -2 because we've executed the instruction already
@@ -1220,6 +1520,9 @@ void DSPReset(void)
 	dspgo_poll_count	  = 0;
 	dsp_load_wb_fixups	  = 0;
 	dsp_div_store_fixups  = 0;
+	DSPPipeTimingReset();
+	dsp_pipe_stall_total  = 0;
+	dsp_pipe_ext_total    = 0;
 	dsp_ldx_slot		  = NULL;
 	dsp_acc				  = 0x00000000;
 	dsp_remain			  = 0x00000000;
@@ -2057,6 +2360,10 @@ void DSPExec(int32_t cycles)
 {
 	int idleSkipActive;
 	int gdbArmedSlice;
+	/* Slice-invariant settings cached in locals, as in GPUExec (issue
+	 * #532): written only by check_variables() between retro_run()s. */
+	int pipeTiming;
+	uint32_t riscScale;
 	/* Issue #811 late load write-back, armed for exactly the next
 	 * instruction (see dsp_ldx_slot). */
 	uint32_t *ldxArmed = NULL;
@@ -2086,6 +2393,8 @@ void DSPExec(int32_t cycles)
 	 * slice. */
 	gdbArmedSlice = gdbArmedDSP;
 	dsp_in_exec++;
+	pipeTiming = vjs.gpuPipelineTiming ? 1 : 0;
+	riscScale  = riscClockScalePct;
 
 	/* Idle-loop fast-forward gates (issue #569).  Every one of these adds
 	 * per-instruction state the affine extrapolation does not model, so
@@ -2109,11 +2418,9 @@ void DSPExec(int32_t cycles)
 	 *     touches busArbiter and JaguarReadLong charges it only for
 	 *     `who == OP` -- but a DSP-side arbiter charge added later must
 	 *     not silently invalidate this;
-	 *   - vjs.gpuPipelineTiming: the DSP has no pipeline-timing mode of
-	 *     its own (DSPExecP/DSPExecP2 are declared in dsp.h but never
-	 *     called), and this is the only pipeline-timing switch the
-	 *     frontend exposes -- a user who turns it on has asked for
-	 *     accuracy over speed, so honour it for the DSP too;
+	 *   - vjs.gpuPipelineTiming: drives the DSP pipeline/gateway model
+	 *     below (issue #313), whose per-instruction stall state the
+	 *     affine extrapolation does not model;
 	 *   - DSP_CTRL single-step / single-go: the slice is one instruction;
 	 *   - vjtrace armed or a memory watch installed (VJ_TRACE builds
 	 *     only): VJT_PCHIST_DSP in this loop and VJT_WATCH_RD on the
@@ -2240,6 +2547,14 @@ void DSPExec(int32_t cycles)
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
+		/* Pipeline model: charge score-board / interlock waits BEFORE the
+		 * opcode runs (only time is charged, results are unchanged). */
+		if (pipeTiming)
+		{
+			dsp_bus_stall = 0;
+			dsp_pipe_core_stall = 0;
+			DSPPipeCheckUse(index);
+		}
 		if (divArmed && pcThis == divPc
 		      && &dsp_reg[dsp_opcode_second_parameter] == divArmed)
 		{
@@ -2268,7 +2583,57 @@ void DSPExec(int32_t cycles)
 			dsp_executeOpcode(index);
 			divArmed = NULL;
 		}
-		cycles -= dsp_opcode_cycles[index];
+		if (pipeTiming)
+		{
+			/* Base cost 1 (R1) replaces the legacy table under the model
+			 * -- see the model header.  Core stalls are already in the
+			 * DSP's own cycle domain; bus stalls are wall time and are
+			 * rescaled under risc_clock_scale (bus_arbiter.h contract). */
+			uint32_t bus = dsp_bus_stall;
+
+			dsp_pipe_clock += 1u + (uint64_t)dsp_bus_stall
+			                + dsp_pipe_core_stall;
+			dsp_pipe_prev_dest =
+				(dsp_pipe_flags[index] & 4) ? (uint8_t)dsp_opcode_second_parameter
+				                            : (uint8_t)0xFF;
+			dsp_pipe_prev_flags = dsp_pipe_sets_flags[index];
+			/* DIV runs 16 background ticks; only USE of the quotient
+			 * blocks (R15). */
+			if (index == 21)
+			{
+				dsp_reg_ready[dsp_opcode_second_parameter] =
+					dsp_pipe_clock + DSP_PIPE_DIV_TICKS;
+				dsp_reg_ready_ext[dsp_opcode_second_parameter] = 0;
+			}
+			if (riscScale != 100u && bus != 0)
+			{
+				dsp_stall_scale_accum += bus * riscScale;
+				bus = dsp_stall_scale_accum / 100u;
+				dsp_stall_scale_accum %= 100u;
+			}
+			cycles -= 1 + (int32_t)bus + (int32_t)dsp_pipe_core_stall;
+			dsp_bus_stall = 0;
+			dsp_pipe_core_stall = 0;
+		}
+		else
+		{
+			cycles -= dsp_opcode_cycles[index];
+			/* dram_timing self-cost (DSP_PIPE_MEM), wall time.  Never
+			 * nonzero with dram_timing off. */
+			if (dsp_bus_stall)
+			{
+				uint32_t bus = dsp_bus_stall;
+
+				if (riscScale != 100u)
+				{
+					dsp_stall_scale_accum += bus * riscScale;
+					bus = dsp_stall_scale_accum / 100u;
+					dsp_stall_scale_accum %= 100u;
+				}
+				cycles -= (int32_t)bus;
+				dsp_bus_stall = 0;
+			}
+		}
 
 		/* Issue #811: the previous instruction was an external load and
 		 * this one overwrote its target -- the load data lands last. */
@@ -2539,7 +2904,17 @@ INLINE static void dsp_opcode_jump(void)
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
+		if (vjs.gpuPipelineTiming)
+			DSPPipeCheckUse(ds_index);
 		dsp_executeOpcode(ds_index);
+		if (vjs.gpuPipelineTiming)
+		{
+			/* The inlined delay slot is never charged by DSPExec's loop;
+			 * a taken JUMP adds ~2 dead refill ticks (R12).  Model only,
+			 * so the default path stays byte-identical. */
+			dsp_pipe_core_stall += 1u + 2u;
+			dsp_pipe_stall_total += 1u + 2u;
+		}
 		dsp_pc = delayed_pc;
 		/* Refilling the pipeline from the branch target costs enough
 		 * cycles that a D_FLAGS store the delay slot just issued reaches
@@ -2586,7 +2961,15 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_exec_opcode_count++;
+		if (vjs.gpuPipelineTiming)
+			DSPPipeCheckUse(ds_index);
 		dsp_executeOpcode(ds_index);
+		if (vjs.gpuPipelineTiming)
+		{
+			/* Delay-slot charge + taken-JR refill (~3 dead ticks, R13). */
+			dsp_pipe_core_stall += 1u + 3u;
+			dsp_pipe_stall_total += 1u + 3u;
+		}
 		dsp_pc = delayed_pc;
 		/* Same branch-target pipeline refill as dsp_opcode_jump. */
 		if (dspFlagsRetireDelay)
@@ -2705,6 +3088,7 @@ INLINE static void dsp_opcode_move_pc(void)
 
 INLINE static void dsp_opcode_store_r14_indexed(void)
 {
+	DSP_PIPE_MEM(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2), 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), RN, DSP);
 #else
@@ -2715,6 +3099,7 @@ INLINE static void dsp_opcode_store_r14_indexed(void)
 
 INLINE static void dsp_opcode_store_r15_indexed(void)
 {
+	DSP_PIPE_MEM(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2), 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[15] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), RN, DSP);
 #else
@@ -2725,6 +3110,7 @@ INLINE static void dsp_opcode_store_r15_indexed(void)
 
 INLINE static void dsp_opcode_load_r14_ri(void)
 {
+	DSP_PIPE_MEM(dsp_reg[14] + RM, 1, 1);
 	DSPLoadNoteExternal(dsp_reg[14] + RM);
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[14] + RM) & 0xFFFFFFFC, DSP);
@@ -2736,6 +3122,7 @@ INLINE static void dsp_opcode_load_r14_ri(void)
 
 INLINE static void dsp_opcode_load_r15_ri(void)
 {
+	DSP_PIPE_MEM(dsp_reg[15] + RM, 1, 1);
 	DSPLoadNoteExternal(dsp_reg[15] + RM);
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[15] + RM) & 0xFFFFFFFC, DSP);
@@ -2747,6 +3134,7 @@ INLINE static void dsp_opcode_load_r15_ri(void)
 
 INLINE static void dsp_opcode_store_r14_ri(void)
 {
+	DSP_PIPE_MEM(dsp_reg[14] + RM, 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[14] + RM) & 0xFFFFFFFC, RN, DSP);
 #else
@@ -2757,6 +3145,7 @@ INLINE static void dsp_opcode_store_r14_ri(void)
 
 INLINE static void dsp_opcode_store_r15_ri(void)
 {
+	DSP_PIPE_MEM(dsp_reg[15] + RM, 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[15] + RM) & 0xFFFFFFFC, RN, DSP);
 #else
@@ -2772,6 +3161,7 @@ INLINE static void dsp_opcode_nop(void)
 
 INLINE static void dsp_opcode_storeb(void)
 {
+	DSP_PIPE_MEM(RM, 0, 0);
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		DSPWriteLong(RM, RN & 0xFF, DSP);
 	else
@@ -2781,6 +3171,7 @@ INLINE static void dsp_opcode_storeb(void)
 
 INLINE static void dsp_opcode_storew(void)
 {
+	DSP_PIPE_MEM(RM, 0, 0);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		DSPWriteLong(RM & 0xFFFFFFFE, RN & 0xFFFF, DSP);
@@ -2797,6 +3188,7 @@ INLINE static void dsp_opcode_storew(void)
 
 INLINE static void dsp_opcode_store(void)
 {
+	DSP_PIPE_MEM(RM, 0, 1);
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong(RM & 0xFFFFFFFC, RN, DSP);
 #else
@@ -2807,6 +3199,7 @@ INLINE static void dsp_opcode_store(void)
 
 INLINE static void dsp_opcode_loadb(void)
 {
+	DSP_PIPE_MEM(RM, 1, 0);
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 	{
 		/* JTRM (Technical Reference v8, "Load Byte"): byte extraction
@@ -2826,6 +3219,7 @@ INLINE static void dsp_opcode_loadb(void)
 
 INLINE static void dsp_opcode_loadw(void)
 {
+	DSP_PIPE_MEM(RM, 1, 0);
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 	{
 		/* Same JTRM rule as LOADB: word loads from internal RAM perform
@@ -2850,6 +3244,7 @@ INLINE static void dsp_opcode_loadw(void)
 
 INLINE static void dsp_opcode_load(void)
 {
+	DSP_PIPE_MEM(RM, 1, 1);
 	DSPLoadNoteExternal(RM);
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
@@ -2861,6 +3256,7 @@ INLINE static void dsp_opcode_load(void)
 
 INLINE static void dsp_opcode_load_r14_indexed(void)
 {
+	DSP_PIPE_MEM(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2), 1, 1);
 	DSPLoadNoteExternal(dsp_reg[14] + (dsp_convert_zero[IMM_1] << 2));
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), DSP);
@@ -2872,6 +3268,7 @@ INLINE static void dsp_opcode_load_r14_indexed(void)
 
 INLINE static void dsp_opcode_load_r15_indexed(void)
 {
+	DSP_PIPE_MEM(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2), 1, 1);
 	DSPLoadNoteExternal(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2));
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[15] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), DSP);

@@ -299,7 +299,7 @@ landed afterwards and the option now drives both.
 |---|---|
 | **RISC (GPU/DSP) Clock Scale** | anything other than `1x` |
 | **DRAM Timing** | enabled |
-| **GPU Pipeline Timing** | enabled |
+| **GPU/DSP Pipeline Timing** | enabled |
 | **Blit Memoization** | enabled or verify |
 
 It stays active under **M68K Clock Scale** at any value, and under **Blitter Bus
@@ -436,8 +436,8 @@ completion (Doom's menus and demo, Hover Strike) therefore run too fast.
 
 | Option | Models | Note |
 |---|---|---|
-| `dram_timing` | realistic DRAM access cost for the GPU and 68000 once they leave their local buses | Each processor pays only its own costs, so relative CPU/GPU timing is preserved. **Disables idle-skip.** |
-| `gpu_pipeline_timing` | the GPU's real instruction costs — single external-memory gateway, register scoreboard, ALU interlocks | **Disables idle-skip.** |
+| `dram_timing` | realistic DRAM access cost for the GPU, DSP and 68000 once they leave their local buses | Each processor pays only its own costs, so relative CPU/GPU timing is preserved. **Disables idle-skip.** |
+| `gpu_pipeline_timing` | the GPU's and DSP's real instruction costs — single external-memory gateway (the DSP's behind its 16-bit bus), register scoreboard, ALU interlocks | **Disables idle-skip.** |
 | `blitter_timing` | charges the 68000 the bus time each blit really takes (on hardware the blitter freezes the cacheless 68000 while it runs). `enabled` also makes the GPU wait out its own blits; `68000 only` leaves GPU blit chains at full speed | Does **not** disable idle-skip. |
 
 **These are for accuracy investigation, not for everyday play.** They all cost
