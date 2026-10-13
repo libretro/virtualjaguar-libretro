@@ -41,7 +41,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 # ---------------------------------------------------------------------------
 # Dependencies (pinned; bump deliberately).
-#   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8 (MIT)
+#   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8 (MIT)   rcheevos v12.5.0 (MIT)
 # For offline/dev iteration: -DFETCHCONTENT_SOURCE_DIR_SDL3=<dir>
 #                            -DFETCHCONTENT_SOURCE_DIR_IMGUI=<dir>
 # ---------------------------------------------------------------------------
@@ -197,7 +197,16 @@ set(VJ_APP_SOURCES
     src/remap.cpp
     src/remap_ui.cpp
     src/ui.cpp
-    src/library_ui.cpp)
+    src/library_ui.cpp
+    src/cheats.cpp
+    src/cheats_core.cpp
+    src/cheats_ui.cpp
+    src/achievements.cpp
+    src/achievements_ui.cpp
+    src/ach_http.cpp)
+
+# RetroAchievements (#836): rcheevos + HTTP transport.
+include(VJRcheevos)
 
 include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
@@ -206,7 +215,8 @@ vj_app_shaders(virtualjaguar)
 vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
-target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui ${VJ_SDL3_TARGET})
+target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
+target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}")
 if(MSVC)
@@ -228,10 +238,19 @@ endif()
 # Windows: the executable keeps the console subsystem for now.  A GUI-subsystem
 # build would swallow the headless smoke test's stdout; packaging (#839) decides.
 
+# Install layout: the executable in <prefix>/bin; data that belongs beside it (the
+# bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
+install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
+
+# The libretro Jaguar cheat database (#835): pinned download, bundled by default.
+include(VJCheatData)
+
 # ---------------------------------------------------------------------------
 # Headless smoke tests (SDL dummy drivers, no window, no GL).
 # ---------------------------------------------------------------------------
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
     include(VJSmokeTests)
+    include(VJAchTests)
+    include(VJCheatTests)
 endif()
