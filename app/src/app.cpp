@@ -502,6 +502,9 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_COMMA:
         if (mod) showSettings = !showSettings;
         break;
+    case SDLK_L:
+        if (mod) library.show = !library.show;
+        break;
     default: break;
     }
 }
@@ -661,6 +664,10 @@ int App::runInteractive(const CliArgs& a) {
     std::string firstErr;
     if (a.noContent) openNoContent();
     else if (!a.content.empty()) openContent(a.content[0]);
+    library.createTexture = &VideoOut::createTextureRGBA;
+    library.destroyTexture = &VideoOut::destroyTexture;
+    library.start(paths, cfg, !host.isLoaded());
+    if (a.showWindow == "library") library.show = true;
 
     lastTick_ = now();
     fpsWindowStart_ = now();
@@ -709,6 +716,7 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    library.stop();   // joins its threads and frees its textures while the GL context is still alive
     if (a.verbose) {
         double secs = now() - fpsWindowStart_;
         std::fprintf(stderr, "[app] audio: queued %.1f ms, ratio %.5f, underruns %llu\n", audio.queuedMs(),

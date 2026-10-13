@@ -14,6 +14,7 @@
 #include "config.h"
 #include "core_host.h"
 #include "input.h"
+#include "library_service.h"
 #include "paths.h"
 #include "video.h"
 
@@ -65,6 +66,7 @@ public:
     AudioOut audio;
     VideoOut video;
     InputManager input;
+    LibraryService library;   // optional game library (#838); idle until start()ed
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
