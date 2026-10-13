@@ -178,10 +178,6 @@ int main(int argc, char** argv) {
     host.inputState = [](unsigned, unsigned, unsigned, unsigned) -> int16_t { return 0; };
     std::vector<std::string> log;
     host.onLog = [&log](int, const char* text) { if (text) log.push_back(text); };
-    // Saved values present BEFORE the load, as config.ini would provide them.
-    host.loadUserOptions({{"virtualjaguar_netlink_port", linkPortStr},
-                          {"virtualjaguar_gdb_halt_timeout", "9999"},          // out of range: ignored
-                          {"virtualjaguar_frameskip_max", "7"}});               // list-only: still strict
 #ifdef _WIN32
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -201,6 +197,10 @@ int main(int argc, char** argv) {
 #else
     setenv("VJ_DISC_PORT", std::to_string(discPort).c_str(), 1);
 #endif
+    // Saved values present BEFORE the load, as config.ini would provide them.
+    host.loadUserOptions({{"virtualjaguar_netlink_port", linkPortStr},
+                          {"virtualjaguar_gdb_halt_timeout", "9999"},          // out of range: ignored
+                          {"virtualjaguar_frameskip_max", "7"}});               // list-only: still strict
     std::string err;
     if (!host.loadContent(argv[1], err)) {
         std::fprintf(stderr, "load failed: %s\n", err.c_str());
