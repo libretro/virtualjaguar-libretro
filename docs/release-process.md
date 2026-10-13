@@ -181,8 +181,7 @@ in place with `--clobber`, as before.
 
 | Asset | Contents |
 |---|---|
-| `VirtualJaguar-X.Y.Z-macos-universal.dmg` | `Virtual Jaguar.app` (arm64 + x86_64) |
-| `VirtualJaguar-X.Y.Z-macos-universal.zip` | the same `.app`, zipped (Homebrew cask) |
+| `VirtualJaguar-X.Y.Z-macos-universal.zip` | `Virtual Jaguar.app` (arm64 + x86_64), signed, notarized and stapled; the only macOS package (no DMG) and the Homebrew cask's download |
 | `VirtualJaguar-X.Y.Z-windows-x64.zip` | portable folder (`portable.txt` inside) |
 | `VirtualJaguar-X.Y.Z-windows-x64-setup.exe` | Inno Setup installer |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | AppImages |

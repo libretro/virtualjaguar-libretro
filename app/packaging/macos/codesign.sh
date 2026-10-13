@@ -3,8 +3,7 @@
 #
 #   codesign.sh import-cert        create a temp keychain from the P12 secrets
 #   codesign.sh sign-app <app> [adhoc]   sign inside-out (dylibs, then the bundle)
-#   codesign.sh sign-file <file>   sign a DMG
-#   codesign.sh notarize <file>    submit (zip/dmg/pkg), wait, fail on Invalid
+#   codesign.sh notarize <file>    submit (zip/pkg), wait, fail on Invalid
 #   codesign.sh staple <file>      staple the ticket
 #
 # Environment (GitHub secrets mapped by the workflow; see app/packaging/README.md):
@@ -61,12 +60,6 @@ case "${1:-}" in
         --sign "$id" "$app"
     codesign --verify --deep --strict --verbose=2 "$app"
     codesign -dv --entitlements - "$app" 2>&1 | sed -n '1,25p'
-    ;;
-  sign-file)
-    id="$(identity)"; [ -n "$id" ] || { echo "no identity; run import-cert" >&2; exit 1; }
-    ts=--timestamp; [ "$id" = - ] && ts=--timestamp=none
-    codesign --force "$ts" --sign "$id" "$2"
-    codesign --verify --verbose=2 "$2"
     ;;
   notarize)
     : "${APPLE_NOTARY_KEY_ID:?}" "${APPLE_NOTARY_ISSUER_ID:?}" "${APPLE_NOTARY_KEY_P8_BASE64:?}"

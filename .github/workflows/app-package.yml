@@ -11,7 +11,7 @@ name: App packages
 #   dispatch     manual run   -> artifacts only (set `sign` to exercise the signing path)
 #
 # Asset names (X.Y.Z = the tag without the leading v; `nightly` / `prNNN` otherwise):
-#   VirtualJaguar-X.Y.Z-macos-universal.dmg          VirtualJaguar-X.Y.Z-macos-universal.zip
+#   VirtualJaguar-X.Y.Z-macos-universal.zip
 #   VirtualJaguar-X.Y.Z-windows-x64.zip              VirtualJaguar-X.Y.Z-windows-x64-setup.exe
 #   VirtualJaguar-X.Y.Z-linux-x86_64.AppImage        VirtualJaguar-X.Y.Z-linux-aarch64.AppImage
 #   virtualjaguar_X.Y.Z_amd64.deb                    virtualjaguar_X.Y.Z_arm64.deb
@@ -250,19 +250,24 @@ jobs:
           bash app/packaging/macos/codesign.sh staple "dist/Virtual Jaguar.app"
           spctl -a -t exec -vv "dist/Virtual Jaguar.app"
 
-      - name: Make the zip (Homebrew cask) and the DMG
+      - name: Make the zip (the only macOS package) and check what it unpacks to
         run: |
           set -eu
           mkdir -p out
-          ditto -c -k --sequesterRsrc --keepParent "dist/Virtual Jaguar.app" "out/VirtualJaguar-${LABEL}-macos-universal.zip"
-          bash app/packaging/macos/make-dmg.sh "dist/Virtual Jaguar.app" "out/VirtualJaguar-${LABEL}-macos-universal.dmg"
+          zip="out/VirtualJaguar-${LABEL}-macos-universal.zip"
+          # The app inside is signed, notarized and stapled already; ditto keeps all of it.
+          ditto -c -k --sequesterRsrc --keepParent "dist/Virtual Jaguar.app" "$zip"
+          t="$(mktemp -d)"
+          ditto -x -k "$zip" "$t"
+          find "$t" -mindepth 1 -maxdepth 1
+          test -d "$t/Virtual Jaguar.app"   # the .app is the zip's only top-level entry
+          [ "$(find "$t" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1 ]
+          codesign --verify --deep --strict "$t/Virtual Jaguar.app"
           if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
-            dmg="out/VirtualJaguar-${LABEL}-macos-universal.dmg"
-            bash app/packaging/macos/codesign.sh sign-file "$dmg"
-            bash app/packaging/macos/codesign.sh notarize "$dmg"
-            bash app/packaging/macos/codesign.sh staple "$dmg"
-            spctl -a -t open --context context:primary-signature -vv "$dmg"
+            xcrun stapler validate "$t/Virtual Jaguar.app"
+            spctl -a -t exec -vv "$t/Virtual Jaguar.app"
           fi
+          rm -rf "$t"
           ls -la out
 
       - name: Remove the temporary keychain

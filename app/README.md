@@ -8,7 +8,7 @@ option and save state behaves exactly as it does there.
 
 Everything lives under `app/`. The core's own `make` build is untouched.
 
-Installable packages (macOS DMG, Windows installer and portable zip, Linux AppImage and
+Installable packages (macOS zip, Windows installer and portable zip, Linux AppImage and
 `.deb`) are built by CI and attached to the releases: see [`packaging/README.md`](packaging/README.md).
 
 ## Build

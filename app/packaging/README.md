@@ -15,8 +15,7 @@ CI builds every installable package from one reusable workflow,
 
 | File | Notes |
 |---|---|
-| `VirtualJaguar-X.Y.Z-macos-universal.dmg` | `Virtual Jaguar.app`, arm64 + x86_64, macOS 11+ |
-| `VirtualJaguar-X.Y.Z-macos-universal.zip` | the same `.app`, for the Homebrew cask |
+| `VirtualJaguar-X.Y.Z-macos-universal.zip` | `Virtual Jaguar.app` (the zip's only top-level entry), arm64 + x86_64, macOS 11+; also the Homebrew cask's download. There is no DMG. |
 | `VirtualJaguar-X.Y.Z-windows-x64.zip` | portable folder; `portable.txt` keeps settings in `.\data` |
 | `VirtualJaguar-X.Y.Z-windows-x64-setup.exe` | Inno Setup installer, per-user by default (no admin prompt) |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | built on Ubuntu 22.04 (glibc 2.35) |
@@ -96,8 +95,10 @@ should not get certificate access by default.
   `com.apple.security.cs.disable-library-validation`. That is the only entitlement in
   [`entitlements.plist`](macos/entitlements.plist); no JIT, camera, microphone or sandbox is involved.
   Delete the entitlement to forbid user-supplied shader runtimes.
-* **Order.** sign the dylib then the app, notarize the app and staple, build the zip and DMG from
-  the stapled app, sign + notarize + staple the DMG.
+* **Order.** sign the dylib then the app, notarize the app and staple the `.app`, then zip it with
+  `ditto -c -k --sequesterRsrc --keepParent` (the stapled ticket and signature travel inside the app). CI
+  unpacks the finished zip and re-verifies the signature (and, when signed, the staple and Gatekeeper's
+  verdict) on the unpacked app. The zip itself is never notarized separately; Apple's ticket is on the app.
 * **Unsigned builds** are ad-hoc signed (`codesign -s -`), which Apple Silicon requires; Gatekeeper
   still refuses them until right-click > Open or `xattr -dr com.apple.quarantine`.
 
@@ -156,6 +157,6 @@ PNG, `.ico` and `.icns` files.
 
 ## Clean-machine checks CI cannot do
 
-Gatekeeper first-run on a freshly downloaded signed DMG, SmartScreen on the installer, Intel Mac behavior
+Gatekeeper first-run on a freshly downloaded signed zip, SmartScreen on the installer, Intel Mac behavior
 (CI may not run the x86_64 slice), Wayland/X11/PipeWire sound on real Linux desktops, and the AppImage on
 distributions older than Ubuntu 22.04.

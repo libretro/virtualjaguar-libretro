@@ -135,7 +135,7 @@ jobs:
         retention-days: 7
 
   # ------------------------------------------------------------------------------------------
-  # Installable packages (macOS .dmg/.zip, Windows .zip/-setup.exe, Linux .AppImage/.deb), built
+  # Installable packages (macOS .zip, Windows .zip/-setup.exe, Linux .AppImage/.deb), built
   # by the reusable app-package.yml that release.yml also calls for tags and nightlies.  PR
   # packages are unsigned (no secrets are passed): see the comment below the table.
   # ------------------------------------------------------------------------------------------
@@ -174,7 +174,7 @@ jobs:
             const pkgs = data.artifacts.filter(a => a.name.startsWith('app-package-') && !a.expired)
                                        .sort((a, b) => a.name.localeCompare(b.name));
             const names = {
-              'app-package-macos-universal': 'macOS (universal): .dmg + .zip',
+              'app-package-macos-universal': 'macOS (universal): .zip',
               'app-package-windows-x64': 'Windows x64: portable .zip + -setup.exe',
               'app-package-linux-x86_64': 'Linux x86_64: .AppImage + .deb',
               'app-package-linux-aarch64': 'Linux aarch64: .AppImage + .deb',

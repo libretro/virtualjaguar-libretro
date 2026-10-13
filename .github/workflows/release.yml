@@ -558,7 +558,7 @@ jobs:
     uses: ./.github/workflows/chdman-tools.yml
 
   # ----------------------------------------------------------------
-  # Standalone app packages (#839): macOS dmg/zip, Windows zip/setup,
+  # Standalone app packages (#839): macOS zip, Windows zip/setup,
   # Linux AppImage/deb.  One reusable workflow also used by app.yml for
   # PRs.  It uploads only final, contract-named files as `app-package-*`
   # artifacts, so the release/nightly jobs' flatten-and-checksum steps
