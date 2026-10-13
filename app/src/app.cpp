@@ -72,6 +72,7 @@ void App::loadConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
+    homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     g_lastDir = cfg.get("ui.last_dir", "");
@@ -94,6 +95,7 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
+    cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
@@ -263,6 +265,11 @@ void App::applyVsync() {
 void App::applyAudioSettings() {
     audio.setVolume(volume);
     audio.setTargetMs(audioTargetMs);
+}
+
+void App::toggleLibrary() {
+    if (homeVisible()) library.focusSearch = true;   // already showing: put the cursor in the search box
+    else library.show = !library.show;
 }
 
 void App::setFullscreen(bool fs) {
@@ -536,7 +543,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (mod) showSettings = !showSettings;
         break;
     case SDLK_L:
-        if (mod) library.show = !library.show;
+        if (mod) toggleLibrary();
         break;
     default: break;
     }
@@ -711,7 +718,8 @@ int App::runInteractive(const CliArgs& a) {
     else if (!a.content.empty()) openContent(a.content[0]);
     library.createTexture = &VideoOut::createTextureRGBA;
     library.destroyTexture = &VideoOut::destroyTexture;
-    library.start(paths, cfg, !host.isLoaded());
+    // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
+    library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
     if (a.showWindow == "library") library.show = true;
 
     lastTick_ = now();

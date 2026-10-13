@@ -77,6 +77,7 @@ public:
     // ---- state the UI reads ----
     bool show = false;
     bool hideOnLaunch = true;
+    bool focusSearch = false;   // UI: put the cursor in the search box on the next frame (Ctrl/Cmd+L on the home screen)
     std::atomic<bool> downloadArt{true};   // UI writes, the decode worker reads
     float cellScale = 1.0f;
     const std::vector<lib::Entry>& entries() const { return entries_; }

@@ -106,6 +106,7 @@ public:
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
+    bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
     CheatManager cheats;
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
@@ -128,6 +129,8 @@ public:
     bool reloadContent();
     void closeContent();
     void showOpenDialog();
+    bool homeVisible() const { return homeLibrary && !host.isLoaded(); }   // is the library standing in for the game?
+    void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
     void reset();
     void togglePause();
     void setFullscreen(bool fs);
@@ -222,6 +225,8 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
+void drawLibraryHome(App& app, float x, float y, float w, float h);
 // Controller remapping UI and helpers (remap_ui.cpp).
 void drawControlsTab(App& app);
 void drawKeypadOverlay(App& app);

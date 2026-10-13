@@ -6,6 +6,7 @@
 #include "app.h"
 #include "imgui.h"
 #include "library_service.h"
+#include "ui_util.h"
 
 namespace vj {
 
@@ -35,51 +36,65 @@ bool passes(const lib::Entry& e, int filter, const std::string& needle) {
     return lower(e.title).find(needle) != std::string::npos || lower(e.file.path).find(needle) != std::string::npos;
 }
 
-void drawToolbar(App& app, LibraryService& svc, char* search, int& filter) {
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+// One toolbar for the window and the home screen.  Items flow onto a second row when the
+// window is narrow (ui::Flow), and the search box takes a share of the width.
+void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool home) {
+    ui::Flow flow;
+    if (svc.focusSearch) {
+        ImGui::SetKeyboardFocusHere();
+        svc.focusSearch = false;
+    }
+    ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 10.0f, 22.0f));
     ImGui::InputTextWithHint("##search", "Search", search, 128);
-    ImGui::SameLine();
     static const char* filters[] = {"All", "Cartridges", "CD images", "Not verified"};
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
+    float fw = ui::em(9.5f);
+    flow.next(fw);
+    ImGui::SetNextItemWidth(fw);
     ImGui::Combo("##filter", &filter, filters, 4);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
+    float sw = ui::em(8.0f);
+    flow.next(sw);
+    ImGui::SetNextItemWidth(sw);
     ImGui::SliderFloat("##size", &svc.cellScale, 0.6f, 2.0f, "Size %.1fx");
     if (ImGui::IsItemDeactivatedAfterEdit()) svc.saveSettings();
 
+    flow.next(ui::Flow::buttonW("Add folder..."));
     if (ImGui::Button("Add folder...")) svc.addFolderDialog(app.window());
-    ImGui::SameLine();
+    flow.next(ui::Flow::buttonW("Rescan"));
     if (ImGui::Button("Rescan")) svc.rescan();
-    ImGui::SameLine();
-    bool art = svc.downloadArt;
-    if (ImGui::Checkbox("Download box art", &art)) svc.setDownloadArt(art);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Fetches missing covers from thumbnails.libretro.com, once per title.\n"
-                          "Everything already downloaded keeps working offline.");
-    ImGui::SameLine();
-    bool hide = svc.hideOnLaunch;
-    if (ImGui::Checkbox("Close on launch", &hide)) {
-        svc.hideOnLaunch = hide;
-        svc.saveSettings();
-    }
-    ImGui::SameLine();
+    flow.next(ui::Flow::buttonW("Update database"));
     if (ImGui::Button("Update database")) svc.updateDatabase();
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Downloads the latest game lists from libretro-database.\n"
                           "Cartridges: %s\nCD images: %s",
                           svc.cartDatInfo().c_str(), svc.discDatInfo().c_str());
+    flow.next(ui::Flow::checkW("Download box art"));
+    bool art = svc.downloadArt;
+    if (ImGui::Checkbox("Download box art", &art)) svc.setDownloadArt(art);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Fetches missing covers from thumbnails.libretro.com, once per title.\n"
+                          "Everything already downloaded keeps working offline.");
+    if (!home) {   // the home screen goes away when a game loads: nothing to close
+        flow.next(ui::Flow::checkW("Close on launch"));
+        bool hide = svc.hideOnLaunch;
+        if (ImGui::Checkbox("Close on launch", &hide)) {
+            svc.hideOnLaunch = hide;
+            svc.saveSettings();
+        }
+    }
 }
 
 void drawFolders(LibraryService& svc) {
     const std::vector<std::string>& f = svc.folders();
     if (f.empty()) return;
-    if (!ImGui::TreeNodeEx("Folders", ImGuiTreeNodeFlags_None)) return;
+    char head[32];
+    std::snprintf(head, sizeof head, "Folders (%zu)", f.size());
+    if (!ImGui::TreeNodeEx(head, ImGuiTreeNodeFlags_None)) return;
     int remove = -1;
     for (size_t i = 0; i < f.size(); i++) {
         ImGui::PushID((int)i);
         if (ImGui::SmallButton("Remove")) remove = (int)i;
         ImGui::SameLine();
-        ImGui::TextUnformatted(f[i].c_str());
+        ImGui::TextWrapped("%s", f[i].c_str());
         ImGui::PopID();
     }
     ImGui::TreePop();
@@ -89,19 +104,15 @@ void drawFolders(LibraryService& svc) {
 void drawStatus(LibraryService& svc) {
     if (svc.scanning()) {
         size_t t = svc.scanTotal();
-        if (t > 0) ImGui::Text("Scanning... hashing %zu of %zu", svc.scanDone(), t);
+        if (t > 0) ImGui::TextWrapped("Scanning... hashing %zu of %zu", svc.scanDone(), t);
         else ImGui::TextUnformatted("Scanning...");
     } else {
         std::string s = svc.status();
-        if (!s.empty()) ImGui::TextDisabled("%s", s.c_str());
-        else ImGui::TextDisabled("%zu games", svc.entries().size());
-    }
-    if (svc.netBusy()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("  (downloading)");
+        if (!s.empty()) ui::hint("%s", s.c_str());
+        else ui::hint("%zu games%s", svc.entries().size(), svc.netBusy() ? "  (downloading)" : "");
     }
     if (!svc.haveCartDat() && !svc.haveDiscDat()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
+        ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
                            "No game database found: titles come from file names. Use Update database to download it.");
     }
 }
@@ -157,8 +168,8 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
                 IM_COL32(230, 230, 230, 255), e.title.c_str(), nullptr, cellW - 4, &clip);
 
     if (hovered) {
-        ImGui::BeginTooltip();
-        ImGui::TextUnformatted(e.title.c_str());
+        ui::beginWrappedTooltip();
+        ImGui::TextWrapped("%s", e.title.c_str());
         ImGui::Separator();
         ImGui::TextDisabled("%s", e.file.path.c_str());
         if (e.file.crcWhole) ImGui::TextDisabled("CRC32 %08X", e.file.crcWhole);
@@ -175,7 +186,7 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
                                     : "Not in the database; titled from the file name.");
             break;
         }
-        ImGui::EndTooltip();
+        ui::endWrappedTooltip();
     }
     if (clicked) svc.launch(e);
 }
@@ -225,30 +236,103 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
     clip.End();
 }
 
+// Search and filter are shared by the home screen and the window: one library, one view.
+char g_search[128] = "";
+int g_filter = kAll;
+
+// The first-run home screen: no folders yet.  A friendly block in the middle, wrapped to the window.
+void drawEmptyHome(App& app, LibraryService& svc) {
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const float f = ImGui::GetFontSize();
+    const float bw = std::max(f * 8.0f, std::min(f * 38.0f, avail.x - f * 2.0f));
+    const char* title = "Virtual Jaguar";
+    const char* p1 = "Add a folder of Jaguar cartridge and CD images and your games show up here, with names and "
+                     "box art. Click one to play it.";
+    const char* p2 = "No library needed: open a game with File > Open (Ctrl/Cmd+O), drop a ROM or disc image "
+                     "onto this window, or give one on the command line.";
+    const char* p3 = "Cartridges: .j64 .jag .rom .abs .cof .prg .bin    CD images: .cue .chd .cdi";
+    const float titleH = f * 1.9f * 1.2f;
+    const float btnH = f + f * 1.1f;
+    const float gap = f * 1.0f;
+    const float h1 = ImGui::CalcTextSize(p1, nullptr, false, bw).y;
+    const float h2 = ImGui::CalcTextSize(p2, nullptr, false, bw).y;
+    const float h3 = ImGui::CalcTextSize(p3, nullptr, false, bw).y;
+    const float total = titleH + gap + h1 + gap + btnH + gap * 1.5f + h2 + gap * 0.5f + h3;
+    const float x0 = ImGui::GetCursorPosX() + std::max(0.0f, (avail.x - bw) * 0.5f);
+    float y0 = ImGui::GetCursorPosY() + std::max(f, (avail.y - total) * 0.42f);
+
+    ImGui::SetCursorPos(ImVec2(x0, y0));
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.9f);
+    ImGui::TextUnformatted(title);
+    ImGui::PopFont();
+    ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap));
+    ImGui::PushTextWrapPos(x0 + bw);
+    ImGui::TextUnformatted(p1);
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap + h1 + gap));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(f * 1.6f, f * 0.55f));
+    if (ImGui::Button("Add folder...")) svc.addFolderDialog(app.window());
+    ImGui::PopStyleVar();
+    ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap + h1 + gap + btnH + gap * 1.5f));
+    ImGui::PushTextWrapPos(x0 + bw);
+    ui::hint("%s", p2);
+    ImGui::Dummy(ImVec2(1.0f, gap * 0.5f));
+    ui::hint("%s", p3);
+    ImGui::PopTextWrapPos();
+}
+
 }  // namespace
+
+// The home screen: the library filling the area below the menu bar while no game is loaded.
+// A borderless, immovable window drawn first so Settings and the other windows open over it;
+// loading a game stops drawing it, closing the game brings it back.
+void drawLibraryHome(App& app, float x, float y, float w, float h) {
+    LibraryService& svc = app.library;
+    ImGui::SetNextWindowPos(ImVec2(x, y));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGuiWindowFlags wf = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                          ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                          ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.045f, 0.045f, 0.055f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    if (ImGui::Begin("##home", nullptr, wf)) {
+        if (svc.folders().empty()) {
+            drawEmptyHome(app, svc);
+        } else {
+            drawToolbar(app, svc, g_search, g_filter, true);
+            drawFolders(svc);
+            drawStatus(svc);
+            ImGui::Separator();
+            ImGui::BeginChild("##homegrid", ImVec2(0, 0), ImGuiChildFlags_None);
+            drawGrid(app, svc, lower(g_search), g_filter);
+            ImGui::EndChild();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+}
 
 void drawLibrary(App& app) {
     LibraryService& svc = app.library;
     svc.pump();   // always: finished scans and decoded art must not pile up while the window is closed
-    if (!svc.show) return;
+    if (!svc.show || app.homeVisible()) return;   // the home screen already is the library
 
-    static char search[128] = "";
-    static int filter = kAll;
-
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_FirstUseEver,
-                            ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(vp->Size.x * 0.8f, vp->Size.y * 0.8f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Game library", &svc.show)) {
+    ui::nextWindow(120.0f, 80.0f, 30.0f, 16.0f);
+    bool open = ImGui::Begin("Game library", &svc.show);
+    ui::keepOnScreen();
+    if (!open) {
         ImGui::End();
         return;
     }
-    drawToolbar(app, svc, search, filter);
+    drawToolbar(app, svc, g_search, g_filter, false);
     drawFolders(svc);
     drawStatus(svc);
     ImGui::Separator();
     ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None);
-    drawGrid(app, svc, lower(search), filter);
+    drawGrid(app, svc, lower(g_search), g_filter);
     ImGui::EndChild();
     ImGui::End();
 }
