@@ -521,6 +521,11 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err) {
     retro_get_system_av_info(&avInfo_);
     loaded_ = true;
     contentName_ = label;
+    // A desktop host always has a keyboard.  The core only polls its keypad key fallbacks
+    // (the only route to keypad 7-9, * and #) once it has seen a keyboard event, and
+    // retro_deinit forgets that on every load, so a gamepad-only player would otherwise
+    // never get a keypad.  (libretro.c: kb_event_seen / keyboard_event_cb.)
+    if (announceKeyboard) sendKeyEvent(false, 0, 0, 0);
     loadSaveRam();
     // Re-read AV info after the SRAM write: region (PAL/NTSC) is latched at load.
     retro_get_system_av_info(&avInfo_);

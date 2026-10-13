@@ -119,6 +119,9 @@ public:
     unsigned minAudioLatencyMs() const { return minAudioLatencyMs_; }
 
     // ---- keyboard device presence (libretro SET_KEYBOARD_CALLBACK) --------
+    // After every load the host announces a keyboard (see finishLoad); the input
+    // end-to-end test switches this off to prove the keypad needs the announcement.
+    bool announceKeyboard = true;
     void sendKeyEvent(bool down, unsigned retroKey, uint32_t character, uint16_t mods);
 
     // ---- options ----------------------------------------------------------

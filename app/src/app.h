@@ -15,6 +15,7 @@
 #include "config.h"
 #include "core_host.h"
 #include "input.h"
+#include "library_service.h"
 #include "paths.h"
 #include "video.h"
 
@@ -72,6 +73,7 @@ public:
     AudioOut audio;
     VideoOut video;
     InputManager input;
+    LibraryService library;   // optional game library (#838); idle until start()ed
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -84,6 +86,7 @@ public:
     bool showAbout = false;
     bool showCheats = false;
     CheatManager cheats;
+    bool devSelectVideoTab = false;   // dev: --show-window settings-video opens Settings on the Video tab
     int stateSlot = 0;
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;
@@ -197,5 +200,9 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Controller remapping UI and helpers (remap_ui.cpp).
+void drawControlsTab(App& app);
+void drawKeypadOverlay(App& app);
+bool inputPortIsRaw(const App& app, unsigned port);   // port has a device that reads the physical RetroPad
 
 }  // namespace vj

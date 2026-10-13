@@ -121,7 +121,7 @@ void drawUserCheats(App& app) {
     ImGui::PopStyleColor();
 }
 
-void drawLibrary(App& app) {
+static void drawCheatLibrary(App& app) {
     CheatManager& cm = app.cheats;
     if (!ImGui::CollapsingHeader("Cheat library")) return;
     if (!g_ui.dirInit) {
@@ -162,7 +162,7 @@ void drawCheats(App& app) {
     CheatManager& cm = app.cheats;
     if (!cm.active()) {
         ImGui::TextWrapped("Cheats are kept per game. Load a cartridge or disc to use them.");
-        drawLibrary(app);
+        drawCheatLibrary(app);
         ImGui::End();
         return;
     }
@@ -184,7 +184,7 @@ void drawCheats(App& app) {
     drawSetCheats(app);
     drawUserCheats(app);
     ImGui::Spacing();
-    drawLibrary(app);
+    drawCheatLibrary(app);
     ImGui::EndChild();
     ImGui::End();
 }
