@@ -293,6 +293,7 @@ void Achievements::onContentClosed() {
     challenges.clear();
     progress.clear();
     if (client_) rc_client_unload_game(client_);
+    checkHardcoreTransition();
 }
 
 void Achievements::onReset() {
@@ -302,6 +303,7 @@ void Achievements::onReset() {
 
 void Achievements::afterFrame() {
     if (!client_) return;
+    checkHardcoreTransition();   // never run an emulated frame under the wrong cheat policy
     if (!hardcoreActive()) ranUnrestricted_ = true;   // this game has run (or loaded states) outside hardcore
     if (mockMode() && app_ && app_->window()) headlessFrame(++mockFrames_);   // pokes in a windowed mock session
     if (rc_client_is_game_loaded(client_) && memoryReady_) rc_client_do_frame(client_);
@@ -321,6 +323,7 @@ void Achievements::pump() {
         hardcoreResets_++;
         if (app_ && app_->host.isLoaded()) app_->reset();
     }
+    checkHardcoreTransition();
     if (app_) {
         const double t = app_->now();
         if (t - lastSettingsCheck_ > 0.5) {
@@ -386,6 +389,19 @@ bool Achievements::allowPause(std::string& why) {
     return false;
 }
 
+void Achievements::checkHardcoreTransition() {
+    const bool now = hardcoreActive();
+    if (now == lastHardcore_) return;
+    lastHardcore_ = now;
+    if (now) retro_cheat_reset();   // whatever is in the core goes, whoever put it there
+    if (onHardcoreChanged) onHardcoreChanged(now);
+}
+
+void Achievements::notice(const std::string& title, const std::string& body, int kind, double life) {
+    noticeLog_.push_back(title + ": " + body);
+    toast(title, body, kind, life);
+}
+
 void Achievements::setHardcoreWanted(bool on) {
     hardcoreWanted_ = on;
     if (app_) {
@@ -402,6 +418,7 @@ void Achievements::setHardcoreWanted(bool on) {
     } else {
         toast("Softcore mode", "State loading is available again.", 1, 4);
     }
+    checkHardcoreTransition();
 }
 
 void Achievements::setUnofficialWanted(bool on) {
@@ -423,6 +440,7 @@ void Achievements::setEnabled(bool on) {
         loading_ = false;
         gameKnown_ = false;
         if (client_) rc_client_unload_game(client_);
+        checkHardcoreTransition();
     } else if (app_ && app_->host.isLoaded()) {
         beginLoad();
     }
@@ -466,6 +484,7 @@ void Achievements::logout() {
     }
     setStatus("Signed out.");
     toast("RetroAchievements", "Signed out.", 1, 3);
+    checkHardcoreTransition();
 }
 
 // ---------------------------------------------------------------------------------
@@ -649,6 +668,7 @@ bool Achievements::headlessSetup(const CliArgs& a) {
     hardcoreWanted_ = a.raHardcore;
     rc_client_set_hardcore_enabled(client_, hardcoreWanted_ ? 1 : 0);
     for (const auto& p : a.raPokes) pokes_.push_back(Poke{p.first, p.second, false});
+    for (const auto& s : a.raSteps) steps_.push_back(Step{s.first, s.second, false});
     loginAt_ = a.raLoginAt;
     if (loginAt_ == 0) {
         loginPending_ = true;
@@ -658,7 +678,47 @@ bool Achievements::headlessSetup(const CliArgs& a) {
     return true;
 }
 
+// FRAME:ACTION steps of a headless run.  hardcore:on|off and signout go through the
+// same calls as the menu; poke/expect touch main RAM straight through the core's
+// pointer (poke = a test scribbling over a byte so a cheat has something to
+// restore; expect = the assertion).
+void Achievements::runStep(const Step& s, unsigned frame) {
+    auto fail = [&](const std::string& why) {
+        stepFailures_.push_back("frame " + std::to_string(frame) + " [" + s.action + "]: " + why);
+    };
+    auto parseRam = [&](const std::string& t, unsigned& addr, unsigned& val) {
+        return std::sscanf(t.c_str(), "%x=%x", &addr, &val) == 2;
+    };
+    if (s.action == "hardcore:on") setHardcoreWanted(true);
+    else if (s.action == "hardcore:off") setHardcoreWanted(false);
+    else if (s.action == "signout") logout();
+    else if (s.action.compare(0, 5, "poke:") == 0 || s.action.compare(0, 7, "expect:") == 0) {
+        const bool poke = s.action[0] == 'p';
+        unsigned addr = 0, val = 0;
+        uint8_t* ram = nullptr;
+        size_t size = 0;
+        if (!parseRam(s.action.substr(poke ? 5 : 7), addr, val)) { fail("bad ADDR=VV"); return; }
+        if (!app_->host.memoryRegion(RETRO_MEMORY_SYSTEM_RAM, ram, size) || addr >= size) { fail("RAM not readable"); return; }
+        if (poke) {
+            ram[addr] = (uint8_t)val;
+        } else if (ram[addr] != (uint8_t)val) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "RAM 0x%06X is %02X, expected %02X", addr, (unsigned)ram[addr], val);
+            fail(buf);
+        } else {
+            std::printf("ra-step: frame %u RAM 0x%06X = %02X ok\n", frame, addr, val);
+        }
+    } else {
+        fail("unknown step");
+    }
+}
+
 void Achievements::headlessFrame(unsigned frame) {
+    for (Step& s : steps_) {
+        if (s.done || s.frame > frame) continue;
+        s.done = true;
+        runStep(s, frame);
+    }
     if (loginAt_ && frame >= loginAt_ && !loginPending_ && !signedIn()) {
         // A late sign-in: the game has been running for a while already.
         loginPending_ = true;
@@ -683,7 +743,7 @@ bool Achievements::headlessCheck(const CliArgs& a) {
     if (!mockMode()) {
         if (!a.raExpectUnlock.empty() || !a.raExpectNoUnlock.empty() || !a.raExpectRequests.empty() ||
             !a.raExpectHash.empty() || a.raExpectLoadError || a.raExpectHardcore || a.raExpectSoftcore ||
-            !a.raPokes.empty())
+            !a.raPokes.empty() || !a.raSteps.empty() || !a.raExpectNotice.empty())
             fail("--ra-expect-*/--ra-poke given but the mock session is not running (--ra-mock missing or unreadable)");
         return ok;
     }
@@ -716,6 +776,15 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         if (!app_->saveState(0)) fail("saving a state must still work in hardcore");
         if (app_->loadState(0)) fail("a state load was ALLOWED in hardcore");
         if (allowCheats() || allowRewind() || allowSlowMotion() || allowFrameAdvance()) fail("a restricted feature is allowed in hardcore");
+    }
+    for (const std::string& f : stepFailures_) fail(f);
+    for (const Step& s : steps_)
+        if (!s.done) fail("step at frame " + std::to_string(s.frame) + " [" + s.action + "] never ran (too few --frames?)");
+    for (const std::string& want : a.raExpectNotice) {
+        bool seen = false;
+        for (const std::string& n : noticeLog_)
+            if (n.find(want) != std::string::npos) seen = true;
+        if (!seen) fail("no notice containing \"" + want + "\" was shown");
     }
     if (a.raExpectReset >= 0 && (int)hardcoreResets_ != a.raExpectReset)
         fail("expected " + std::to_string(a.raExpectReset) + " hardcore restart(s), saw " + std::to_string(hardcoreResets_));

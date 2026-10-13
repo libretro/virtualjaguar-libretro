@@ -108,3 +108,81 @@ if(VJ_RA_TEST_CUE AND EXISTS "${VJ_RA_TEST_CUE}")
                 "${VJ_RA_TEST_CUE}")
     set_tests_properties(ra_cd_cue PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "headless: FAIL")
 endif()
+
+# ---- cheats vs hardcore (#835 + #836) ---------------------------------------------------
+# RetroAchievements forbids cheats in hardcore.  Main-RAM byte 1F0000 is unused by
+# yarc; the cheat writes AB there, a test step zeroes it first so "unwritten" is
+# something we KNOW (RAM is randomised at reset).  Every test has a control that
+# must fail for the reason stated, so none can pass by doing nothing.
+#
+#   ra_cheat_softcore            softcore: the cheat applies (the baseline)
+#   ra_cheat_hardcore_blocked    hardcore from the start: the byte stays 00 and the
+#                                player is told why;  _control: the same run in
+#                                softcore must NOT satisfy "stays 00"
+#   ra_cheat_toggle              softcore -> hardcore ON mid-game (restarts the game,
+#                                clears the cheat; nothing re-applies it, not even
+#                                the restart) -> hardcore OFF: it comes back;
+#                                _control: without the hardcore step it never stays 00
+#   ra_cheat_saved_*             a cheat selection SAVED on disk (a database cheat of
+#                                the yarc.cht fixture, per-game state under --data-dir):
+#                                a hardcore run does not apply it and does not touch
+#                                the file; the next softcore run still has it on.
+set(_cx "--ra-mock" "${VJ_RA_FIX}")
+set(_cb "--cheat" "001F0000:AB")
+set(_ra_cheat_fx "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures")
+get_filename_component(_ra_cheat_fx "${_ra_cheat_fx}" ABSOLUTE)
+
+add_test(NAME ra_cheat_softcore
+    COMMAND virtualjaguar --headless --frames 100 ${_cx} ${_cb}
+            --ra-step 20:poke:1F0000=00 --ra-step 80:expect:1F0000=AB "${VJ_ROMS}/yarc.j64")
+
+add_test(NAME ra_cheat_hardcore_blocked
+    COMMAND virtualjaguar --headless --frames 100 ${_cx} --ra-hardcore ${_cb}
+            --ra-step 20:poke:1F0000=00 --ra-step 80:expect:1F0000=00
+            --ra-expect-notice "disabled in hardcore" "${VJ_ROMS}/yarc.j64")
+add_test(NAME ra_cheat_hardcore_blocked_control
+    COMMAND virtualjaguar --headless --frames 100 ${_cx} ${_cb}
+            --ra-step 20:poke:1F0000=00 --ra-step 80:expect:1F0000=00 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(ra_cheat_hardcore_blocked_control PROPERTIES
+    PASS_REGULAR_EXPRESSION "RAM 0x1F0000 is AB, expected 00")
+
+add_test(NAME ra_cheat_toggle
+    COMMAND virtualjaguar --headless --frames 160 ${_cx} ${_cb}
+            --ra-step 30:expect:1F0000=AB
+            --ra-step 31:hardcore:on --ra-step 40:poke:1F0000=00 --ra-step 100:expect:1F0000=00
+            --ra-step 101:hardcore:off --ra-step 150:expect:1F0000=AB
+            --ra-expect-notice "Cheats are off" --ra-expect-notice "Cheats are back"
+            --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
+add_test(NAME ra_cheat_toggle_control
+    COMMAND virtualjaguar --headless --frames 160 ${_cx} ${_cb}
+            --ra-step 40:poke:1F0000=00 --ra-step 100:expect:1F0000=00 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(ra_cheat_toggle_control PROPERTIES
+    PASS_REGULAR_EXPRESSION "RAM 0x1F0000 is AB, expected 00")
+
+set(_rcd "${CMAKE_BINARY_DIR}/ra-cheat-saved-data")
+add_test(NAME ra_cheat_saved_clean COMMAND ${CMAKE_COMMAND} -E remove_directory "${_rcd}")
+add_test(NAME ra_cheat_saved_save
+    COMMAND virtualjaguar --headless --frames 100 ${_cx} --data-dir "${_rcd}" --cheats-dir "${_ra_cheat_fx}"
+            --cheat-on "Lives byte" --ra-step 80:expect:1F0010=05 "${VJ_ROMS}/yarc.j64")
+add_test(NAME ra_cheat_saved_hardcore
+    COMMAND virtualjaguar --headless --frames 100 ${_cx} --ra-hardcore --data-dir "${_rcd}"
+            --cheats-dir "${_ra_cheat_fx}"
+            --ra-step 20:poke:1F0010=00 --ra-step 80:expect:1F0010=00
+            --ra-expect-notice "1 saved cheat" "${VJ_ROMS}/yarc.j64")
+add_test(NAME ra_cheat_saved_softcore_again
+    COMMAND virtualjaguar --headless --frames 100 ${_cx} --data-dir "${_rcd}" --cheats-dir "${_ra_cheat_fx}"
+            --ra-step 20:poke:1F0010=00 --ra-step 80:expect:1F0010=05 "${VJ_ROMS}/yarc.j64")
+add_test(NAME ra_cheat_saved_cleanup COMMAND ${CMAKE_COMMAND} -E remove_directory "${_rcd}")
+set_tests_properties(ra_cheat_saved_clean PROPERTIES FIXTURES_SETUP ra_cheat_fresh)
+set_tests_properties(ra_cheat_saved_save PROPERTIES FIXTURES_REQUIRED ra_cheat_fresh FIXTURES_SETUP ra_cheat_saved)
+set_tests_properties(ra_cheat_saved_hardcore PROPERTIES
+    FIXTURES_REQUIRED "ra_cheat_fresh;ra_cheat_saved" FIXTURES_SETUP ra_cheat_hardcore_done)
+set_tests_properties(ra_cheat_saved_softcore_again PROPERTIES
+    FIXTURES_REQUIRED "ra_cheat_fresh;ra_cheat_saved;ra_cheat_hardcore_done")
+set_tests_properties(ra_cheat_saved_cleanup PROPERTIES
+    FIXTURES_CLEANUP "ra_cheat_fresh;ra_cheat_saved;ra_cheat_hardcore_done")
+
+set_tests_properties(ra_cheat_softcore ra_cheat_hardcore_blocked ra_cheat_toggle ra_cheat_saved_save
+                     ra_cheat_saved_hardcore ra_cheat_saved_softcore_again PROPERTIES
+    TIMEOUT 300
+    FAIL_REGULAR_EXPRESSION "headless: FAIL")

@@ -123,6 +123,32 @@ Inside: `config.ini` (settings, core option overrides, recents), `saves/`
 (`<game>.srm`: EEPROM, SRAM, Memory Track), `states/` (`<game>.slotN.state` plus a
 `.png` thumbnail), `system/` (BIOS files, only if you want real ones), `imgui.ini`.
 
+## Cheats
+
+Emulation > Cheats... lists the cheats of the libretro cheat database for the running
+game, with a toggle each, plus manual codes (hex `ADDRESS:VALUE`, `+` to join
+several). What is on is remembered per game (`<data>/cheats/games/<key>.ini`, keyed
+by the cartridge CRC32; discs by the core's title row or file name) and sent to the
+core again after every load and state restore.
+
+The cheat files are not committed to this repository (the libretro database is
+CC BY-SA 4.0), but they are **bundled with builds**: configure downloads the 41
+`cht/Atari - Jaguar` files of one pinned libretro-database commit (SHA-256 per file)
+to `<build>/cheats/`, next to the program, and `cmake --install` puts them in
+`<prefix>/bin/cheats/` with the database `LICENSE` and a credit README beside them, so
+the attribution travels with the files (a packaging step takes them from the install
+tree). The download is fail-soft: with no network the configure still succeeds, the
+cheats are then simply not bundled (never without their license). For offline or
+distro builds: `-DVJ_APP_FETCH_CHEATS=OFF`. You can always add your own `.cht` files
+to `<data>/cheats/`, or point the window's "Cheat library" box (or `--cheats-dir`) at
+a folder of them. A set is picked by name from the core's own title (or the file
+name); with several matches, or none, you choose. Jaguar cheats are credited to Gent
+of Emucheats.
+
+Database entries are RetroArch memory cheats (decimal address/value, width in
+`memory_search_size`); they become the core's hex codes, value little-endian in
+memory as RetroArch writes it. `cheatN_enable` is ignored: nothing starts on.
+
 ## RetroAchievements
 
 **Achievements > Sign in...** takes your RetroAchievements user name and password
@@ -196,6 +222,9 @@ To regenerate the expected hash after an intentional emulation change:
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
 | `src/input.*` | keyboard and gamepad to libretro input |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
+| `src/cheats.*` | `.cht` parsing, conversion to core codes, per-game cheat state (no SDL, unit tested) |
+| `src/cheats_core.cpp`, `src/cheats_ui.cpp` | core glue (retro_cheat_*, title identity, CLI) and the Cheats window |
+| `cmake/VJCheatData.cmake`, `cmake/VJCheatManifest.cmake`, `cmake/VJCheatTests.cmake` | pinned optional database download, cheat tests |
 | `src/paths.*`, `src/config.*` | data folders (portable mode) and the settings file |
 | `src/achievements.*` | RetroAchievements: rc_client glue, memory, hardcore policy, mock server for tests |
 | `src/achievements_ui.cpp` | ImGui: sign-in, achievement list, toasts, trackers |

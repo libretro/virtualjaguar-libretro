@@ -60,6 +60,15 @@ public:
     void afterFrame();           // once per emulated frame, right after retro_run
     void pump();                 // once per UI-loop iteration, paused or not
 
+    // ---- hardcore transitions -----------------------------------------------------
+    // Called (main thread) whenever hardcoreActive() flips.  The cheat manager uses
+    // it to empty the core's cheat list on the way in and to put the saved
+    // selections back on the way out.
+    std::function<void(bool active)> onHardcoreChanged;
+    void checkHardcoreTransition();
+    // A message for the player that is also kept for the headless tests.
+    void notice(const std::string& title, const std::string& body, int kind = 1, double life = 6);
+
     // ---- policy ----------------------------------------------------------------
     // True while RetroAchievements hardcore rules are in force: signed in,
     // hardcore wanted, no disallowed setting, and a game that is (or is being)
@@ -170,6 +179,12 @@ private:
     struct Poke { unsigned frame; std::string code; bool done; };
     std::vector<Poke> pokes_;
     std::string mockUser_ = "MockUser";
+    bool lastHardcore_ = false;
+    std::vector<std::string> noticeLog_;
+    struct Step { unsigned frame; std::string action; bool done; };
+    std::vector<Step> steps_;
+    std::vector<std::string> stepFailures_;
+    void runStep(const Step& s, unsigned frame);
 };
 
 // ImGui (achievements_ui.cpp).
