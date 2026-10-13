@@ -288,7 +288,14 @@ endif()
 # Optional: sign the dev executable after every build (macOS).  A stable signature stops macOS
 # re-asking for network/keychain access after each rebuild.  Uses VJ_SIGN_IDENTITY / .env / the
 # login keychain like app/packaging/local-package.sh, else ad hoc.  Never fails the build.
-option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" OFF)
+# On by default on macOS: a plain local build is signed with your Developer ID / Apple Development
+# identity when the keychain has one (ad hoc otherwise).  CI and packaging sign separately.
+if(APPLE AND NOT DEFINED ENV{CI})
+    set(_vj_sign_dev_default ON)
+else()
+    set(_vj_sign_dev_default OFF)
+endif()
+option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" ${_vj_sign_dev_default})
 if(VJ_APP_SIGN_DEV_BUILD AND APPLE)
     add_custom_command(TARGET virtualjaguar POST_BUILD
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/packaging/local-package.sh"
