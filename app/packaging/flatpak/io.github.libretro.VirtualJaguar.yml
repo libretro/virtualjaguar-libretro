@@ -1,0 +1,325 @@
+# Flatpak manifest for the Virtual Jaguar desktop app (#839).
+#
+# This is the CI manifest: it builds the checked-out tree (type: dir), so app-package.yml and a
+# local `flatpak-builder` run exercise exactly what is in the working copy.  The Flathub variant
+# (same module, the source tree taken from the release tag instead) is DERIVED from this file by
+# app/packaging/manifests/render.sh -- never edit a second copy.  Nothing here is submitted to
+# Flathub by CI; see app/packaging/README.md.
+#
+# Flatpak builds have NO network, so every input the CMake configure would download is a declared
+# source with a SHA-256 below, placed under third_party/ and handed over through the app's offline
+# knobs.  -DFETCHCONTENT_FULLY_DISCONNECTED=ON makes a missed download fail the build instead of
+# hanging on a sandboxed socket.
+#
+#   local build:  flatpak-builder --user --install-deps-from=flathub --force-clean --install \
+#                   build-dir app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+#
+# NOT shipped yet: librashader (shader presets).  Upstream publishes no Linux binary and building
+# the Rust library here needs cargo vendoring.  The app starts without it and reports the shader
+# runtime as unavailable; the slang-shaders presets are bundled for when it is added.
+app-id: io.github.libretro.VirtualJaguar
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: virtualjaguar
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=all          # gamepads (evdev / hidraw) and the GPU
+  - --share=network       # RetroAchievements, box art and database downloads, netplay
+  # ROM folders: the library scans folders the user chose, and a CD image (.cue) needs its
+  # sibling .bin tracks, which the file-chooser portal does not grant.  Read-only, and only
+  # the home directory (save data lives in the app's own ~/.var/app/<id>/ directory).
+  - --filesystem=home:ro
+modules:
+  - name: virtualjaguar
+    buildsystem: cmake-ninja
+    builddir: true
+    subdir: app
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DVJ_APP_BUILD_TESTS=OFF
+      - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
+      - -DFETCHCONTENT_SOURCE_DIR_SDL3=/run/build/virtualjaguar/third_party/SDL3
+      - -DFETCHCONTENT_SOURCE_DIR_IMGUI=/run/build/virtualjaguar/third_party/imgui
+      - -DFETCHCONTENT_SOURCE_DIR_RCHEEVOS=/run/build/virtualjaguar/third_party/rcheevos
+      - -DVJ_APP_CHEATS_SOURCE_DIR=/run/build/virtualjaguar/third_party/cheats
+      - -DVJ_APP_FETCH_LIBRASHADER=OFF
+      - -DVJ_LIBRASHADER_INCLUDE_DIR=/run/build/virtualjaguar/third_party/librashader-include
+      - -DVJ_SLANG_SHADERS_ARCHIVE=/run/build/virtualjaguar/third_party/slang-shaders.tar.gz
+      - -DVJ_APP_LIBRETRO_DB_DIR=/run/build/virtualjaguar/third_party/libretro-db
+    post-install:
+      # The data the app looks for beside its executable (SDL_GetBasePath() = /app/bin/) must be
+      # in the install tree, and the HTTP backend must have found libcurl: a configure that
+      # quietly degraded (a missed offline knob) fails here instead of shipping a hollow app.
+      - test -f /app/bin/virtualjaguar
+      - test -f "/app/bin/cheats/Doom.cht"
+      - test -f "/app/bin/libretro-db/Atari - Jaguar.dat"
+      - test -d /app/bin/shaders/slang-shaders
+      - test -f /app/share/metainfo/io.github.libretro.VirtualJaguar.metainfo.xml
+      - test -f /app/share/applications/io.github.libretro.VirtualJaguar.desktop
+      - ldd /app/bin/virtualjaguar | grep -q libcurl
+      - "! ldd /app/bin/virtualjaguar | grep -q 'not found'"
+    sources:
+      # BEGIN-LOCAL-SOURCE (render.sh swaps this block for the release tag's git source)
+      - type: dir
+        path: ../../..
+        skip:
+          - .git
+          - .github
+          - .flatpak-builder
+          - flatpak_app
+          - repo
+          - site
+          - docs
+          - test
+      # END-LOCAL-SOURCE
+      - type: archive
+        url: https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+        sha256: 7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
+        dest: third_party/SDL3
+      - type: archive
+        url: https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8.tar.gz
+        sha256: fecb33d33930e12ff53a34064e9d3a06c8f7c3e04408f14cd36c80e3faac863b
+        dest: third_party/imgui
+      - type: archive
+        url: https://github.com/RetroAchievements/rcheevos/archive/refs/tags/v12.5.0.tar.gz
+        sha256: e6df83de4e18f0a19206e711e1e589624dcfcf6bf529c14f6dd2bb2d1ced983f
+        dest: third_party/rcheevos
+      - type: file
+        url: https://raw.githubusercontent.com/SnowflakePowered/librashader/librashader-v0.12.0/include/librashader.h
+        sha256: 5d478897c391af3f60015810b67785ae1a286d262a845485276e36ded9f21e62
+        dest: third_party/librashader-include
+      - type: file
+        url: https://raw.githubusercontent.com/SnowflakePowered/librashader/librashader-v0.12.0/include/librashader_ld.h
+        sha256: bcffcbc854afb287c9f935c1a0e3b569f5e6775ef85914bd7f7025ad1f6bde33
+        dest: third_party/librashader-include
+      - type: file
+        url: https://github.com/libretro/slang-shaders/archive/e1d75632a205c70f14a4cc947c46d5abb7b3f7f1.tar.gz
+        sha256: b8bc2fbb31a754ed41ee4ab309ece63c08123ada8e5e7c5142621461f165bbd9
+        dest: third_party
+        dest-filename: slang-shaders.tar.gz
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/metadat/no-intro/Atari%20-%20Jaguar.dat
+        sha256: 704fdf2f14e14bdae07836f2ff5600c223b38df870d81dbcd3acc0f04c846299
+        dest: third_party/libretro-db
+        dest-filename: "Atari - Jaguar.dat"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/metadat/redump/Atari%20-%20Jaguar%20CD.dat
+        sha256: 6cb715e076d7a3a3e106d33c73207aa8068256533bc2b4e08eb6e1ce19d3cc8f
+        dest: third_party/libretro-db
+        dest-filename: "Atari - Jaguar CD.dat"
+      # Jaguar cheat database (CC BY-SA 4.0), generated from app/cmake/VJCheatManifest.cmake:
+      # the same pinned commit and SHA-256 per file, plus the licence text that must travel with it.
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/LICENSE
+        sha256: 23ee78c8bae49cf08ea2f0c84945c66b987ebe4520881fb51b3dad4fb43d07c2
+        dest: third_party/cheats
+        dest-filename: LICENSE-libretro-database.txt
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Aircars.cht
+        sha256: 7d266156f34af556823e5ae164414e82e159ac4b463adc2d108c688ebf1d6cee
+        dest: third_party/cheats
+        dest-filename: "Aircars.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Alice%27s%20Mom%27s%20Rescue%20(World).cht
+        sha256: c9a6c2c294b0edbb02d047433633ebd28680d7d839818bc09c61bb968d7434d8
+        dest: third_party/cheats
+        dest-filename: "Alice's Mom's Rescue (World).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Alien%20Vs%20Predator.cht
+        sha256: 6ccbe5eff0de4b1672cb6469ae14ff0f032d1a1a6d463b0e90b6fec37ba18df6
+        dest: third_party/cheats
+        dest-filename: "Alien Vs Predator.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Atari%20Karts.cht
+        sha256: c2039b19754fbe3c212b2dd61fc0f5ec221a4a3bf9c9e323598137cda7ce4e5b
+        dest: third_party/cheats
+        dest-filename: "Atari Karts.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Breakout%202000.cht
+        sha256: 99a6ae539cf46bcee374ca1c126093557140765fea13e459c2439133182d737e
+        dest: third_party/cheats
+        dest-filename: "Breakout 2000.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Brutal%20Sports%20Football.cht
+        sha256: 597599c231da822c4a6bd1b2d2958daa923c6cb5638fc80fe5a7eb051aad8c75
+        dest: third_party/cheats
+        dest-filename: "Brutal Sports Football.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Bubsy%20-%20Fractured%20Furry%20Tales.cht
+        sha256: 6a8e420d0ef221428e9f08143ad407f9d7932940010f282c461ee9291999b596
+        dest: third_party/cheats
+        dest-filename: "Bubsy - Fractured Furry Tales.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Cannon%20Fodder.cht
+        sha256: 00164db0cb9e8eb5b48adbeb77f8c57880149484a2996b9dcca0662902be28e1
+        dest: third_party/cheats
+        dest-filename: "Cannon Fodder.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Checkered%20Flag.cht
+        sha256: e0a4d6d0e446179152f760d86555da95ea52a19cb1c218407801f4a00ce2b1fa
+        dest: third_party/cheats
+        dest-filename: "Checkered Flag.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Cybermorph%20(1mb)%20(Rev%20A)%20(1993).cht
+        sha256: 148efc4a04ad104d9222449630f14b7b8c6d7e3d3cda724d6e25771ba8896fb9
+        dest: third_party/cheats
+        dest-filename: "Cybermorph (1mb) (Rev A) (1993).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Cybermorph%20(2mb)%20(Rev%20B)%20(1993).cht
+        sha256: bd3a55d019a60b93834cda884047fdff03047760dde8598e9dad174a1561f1f9
+        dest: third_party/cheats
+        dest-filename: "Cybermorph (2mb) (Rev B) (1993).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Defender%202000.cht
+        sha256: fd05d2f2b1cb4cd97284b726ed86d2f8b06bb69bf2c47d0b871c25527a00d6f8
+        dest: third_party/cheats
+        dest-filename: "Defender 2000.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Doom.cht
+        sha256: 9c9250c6afc323abc77751a358eff9bcfe42627cebf1872da273e655f199aa21
+        dest: third_party/cheats
+        dest-filename: "Doom.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Double%20Dragon%20V%20-%20The%20Shadow%20Falls.cht
+        sha256: 51bd9121b8c99da95c186bbd7cfc3a01df9db6642b7098876845b99856c6d596
+        dest: third_party/cheats
+        dest-filename: "Double Dragon V - The Shadow Falls.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Dragon%20-%20The%20Bruce%20Lee%20Story.cht
+        sha256: 8610d09dc300317361a626ef75bc7deae235ae67d7d6d6bc5ba5a903f7a8ed8c
+        dest: third_party/cheats
+        dest-filename: "Dragon - The Bruce Lee Story.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Evolution%20Dino%20Dudes.cht
+        sha256: ea8a10e3b009c99af8619fc9a9fa797920c0165827545d2596c34cafdef6108c
+        dest: third_party/cheats
+        dest-filename: "Evolution Dino Dudes.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Fever%20Pitch%20Soccer.cht
+        sha256: 1007c1420b7c37d7ba43ed27f6751b6bf817454de6ee78096cacc625f8dc53ff
+        dest: third_party/cheats
+        dest-filename: "Fever Pitch Soccer.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Fight%20For%20Life.cht
+        sha256: 21e2c9f992de9ffbb419bd7e6c2722821c8d8c49a964fecc81251977fc58266b
+        dest: third_party/cheats
+        dest-filename: "Fight For Life.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Flashback.cht
+        sha256: c2b592956b41ddc43b5e6a75a88872bcc8a99e79ac82f7f9668f498fcf1f0a66
+        dest: third_party/cheats
+        dest-filename: "Flashback.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Frog%20Feast%20(World).cht
+        sha256: 9ec025c76a6ffe1cf5d2886e22f898687d4b16bb0bff7f050efebbfcb0b76b9a
+        dest: third_party/cheats
+        dest-filename: "Frog Feast (World).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Hover%20Strike.cht
+        sha256: 3736ded59ec3883ad91e49e7ecb237a78b76cf9449c851604fcddda570f9492d
+        dest: third_party/cheats
+        dest-filename: "Hover Strike.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/I-War.cht
+        sha256: d57bf8b351da6ee67cdf32a51c9e9e49a1287d847b7f9918b4aba24b35a37f5a
+        dest: third_party/cheats
+        dest-filename: "I-War.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Kasumi%20Ninja.cht
+        sha256: 598c38c7c83988f03488611388b603c66489c8ae1d0bdb07f8552ee1803973e3
+        dest: third_party/cheats
+        dest-filename: "Kasumi Ninja.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/NBA%20Jam%20-%20Tournament%20Edition.cht
+        sha256: 746c65bb241aa6a8c175efc104150b2221db6ac7fc674a0a8bba49435f8e46c3
+        dest: third_party/cheats
+        dest-filename: "NBA Jam - Tournament Edition.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Native%20(USA)%20(Proto).cht
+        sha256: f648fdf3e7bb407fdd1bc0c1df9b486962f88810d5e75bee6a4b90dbf141a410
+        dest: third_party/cheats
+        dest-filename: "Native (USA) (Proto).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Pitfall%20-%20The%20Mayan%20Adventure.cht
+        sha256: 54a43d27cd4cb64a7a8c9383a7ec7371736a21a7adc1d70bacd53924a585cdcf
+        dest: third_party/cheats
+        dest-filename: "Pitfall - The Mayan Adventure.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Plucky%20Duck%20in%20Hollywood%20Hijinks%20(USA)%20(Proto)%20(1994-10-28).cht
+        sha256: 8dd7e9cd8d7c1422fad30c991a745f90362ee564fb915001798bd4aae9e9998b
+        dest: third_party/cheats
+        dest-filename: "Plucky Duck in Hollywood Hijinks (USA) (Proto) (1994-10-28).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Power%20Drive%20Rally%20(World).cht
+        sha256: 189458b21967c37643c0eecdb79a3e47888bfcf0b39f05f010350cc118ca25c2
+        dest: third_party/cheats
+        dest-filename: "Power Drive Rally (World).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Protector%20(World).cht
+        sha256: 96d487e30a2965fc0665a580d95d35aead79420160760b7da2a76478f82941b7
+        dest: third_party/cheats
+        dest-filename: "Protector (World).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Raiden%20(World)%20(Rev%20A).cht
+        sha256: 7b2cdccbc393e68deb2f5164bc216e861d62346a3e5e2976caa15d595f6f876c
+        dest: third_party/cheats
+        dest-filename: "Raiden (World) (Rev A).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Rayman.cht
+        sha256: 944f8a9e19a8af96cb8959ae098e7e5e3980b17dde5dea2137621156289af47d
+        dest: third_party/cheats
+        dest-filename: "Rayman.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Soccer%20Kid%20(World).cht
+        sha256: 9501b7d947b04ecffdba23cd215eee44fdb946f53c4223672fad4c3aa78bc274
+        dest: third_party/cheats
+        dest-filename: "Soccer Kid (World).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Tempest%202000.cht
+        sha256: a846736a1239a6e06df601a3df9f25720cf406b31d7b251cd5da0d2f2cd6bc9a
+        dest: third_party/cheats
+        dest-filename: "Tempest 2000.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Tiny%20Toon%20Adventures%20(USA)%20(Proto).cht
+        sha256: 8c6e1aeb0ea68ab3086e0b2d2c39b2fd599c60cddadf96a8496e611f5ca9601d
+        dest: third_party/cheats
+        dest-filename: "Tiny Toon Adventures (USA) (Proto).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Total%20Carnage%20(World).cht
+        sha256: 209fa7740622ddfdd87d543c11c6d6eea259fdb8d4b18e7fea63100ddf94ac1d
+        dest: third_party/cheats
+        dest-filename: "Total Carnage (World).cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Trevor%20McFur%20In%20The%20Crescent%20Galaxy.cht
+        sha256: 2cd4a81632dc648771f49763c9fa5f5a2f43e54745d16cddda238ace886ef254
+        dest: third_party/cheats
+        dest-filename: "Trevor McFur In The Crescent Galaxy.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Troy%20Aikman%20NFL%20Football.cht
+        sha256: be399c8c9eb7e3a94b1ed6b30a16f6336d36c951e728f0707530bc9c4c5080f8
+        dest: third_party/cheats
+        dest-filename: "Troy Aikman NFL Football.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Ultra%20Vortek.cht
+        sha256: 051c89a22542e2bd5a042980a69b413324944d78609f2e562a30cc53c456d5df
+        dest: third_party/cheats
+        dest-filename: "Ultra Vortek.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Val%20D%27Isere%20Skiing%20And%20Snowboarding.cht
+        sha256: a3b5e093ef2417863a0ebad61d90b9d6716632036acc33583b26ac07dd06447b
+        dest: third_party/cheats
+        dest-filename: "Val D'Isere Skiing And Snowboarding.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Wolfenstein%203D.cht
+        sha256: e92fc7b0734897553ac2ab6ea7c1f69df1e94401ec8bad061da4ecb1cb7e5332
+        dest: third_party/cheats
+        dest-filename: "Wolfenstein 3D.cht"
+      - type: file
+        url: https://raw.githubusercontent.com/libretro/libretro-database/12c21cf79f1e20eff6ac68b80875816c717d0a7a/cht/Atari%20-%20Jaguar/Zool%202.cht
+        sha256: 7df0225ed7f41cd876e2614d5fe25f7690a1a7617178ed542397d87951b7122c
+        dest: third_party/cheats
+        dest-filename: "Zool 2.cht"

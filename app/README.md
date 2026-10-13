@@ -10,6 +10,10 @@ Everything lives under `app/`. The core's own `make` build is untouched.
 
 Installable packages (macOS zip, Windows installer and portable zip, Linux AppImage and
 `.deb`) are built by CI and attached to the releases: see [`packaging/README.md`](packaging/README.md).
+To package and sign your own build locally (a Developer ID or Apple Development certificate
+found in your keychain on macOS, a `.pfx` or store certificate on Windows, optionally configured in a
+gitignored `.env`), run `bash app/packaging/local-package.sh --sign [--notarize] [--build-dir DIR]`: see
+"Signing locally" in [`packaging/README.md`](packaging/README.md).
 
 ## Build
 
@@ -286,11 +290,22 @@ tracks a `.cue` owns.
      the file minus a 512-byte copier header (the same rule as the core's
      `DetectPrependedHeaderSize`, so a headered dump of a known game still matches);
    - CD images against the Redump "Atari - Jaguar CD" dat. Redump hashes each track, so a
-     `.cue` is identified by the CRC32 of the first file it references (Track 1). `.chd` and
-     `.cdi` carry no cheap track hash and are matched by file name only.
+     `.cue` is identified by the CRC32 of the first file it references (Track 1). A `.chd` is
+     identified the same way: its Track 1 sectors are read back as the Redump `.bin` has them (the
+     way the core reads them: subcode dropped, audio put back in `.bin` byte order, a virtual
+     pregap left out). A `.chd` with several audio tracks and no session metadata (which the core
+     refuses too) is not hashed. A `.cdi` is hashed best-effort from its Track 1 descriptor;
+     rips whose layout differs from the descriptors (the core repairs these) will not match.
+     This is verified against synthetic images; real Redump CHDs are still to be checked.
+   - when the checksum does not match (a bin/cue or `.cdi` that is not a Redump dump) the disc is
+     matched by name: the file name, then the name of its folder, against the dat's titles with
+     case, punctuation, region and `(Track N)` / `(Disc N)` tags ignored. An exact title wins; a
+     file name that is the start of exactly one longer title also matches (file name only, 4+
+     characters). A name that fits two games (a two-disc set, "Space" for "Space Ace" and "Space
+     Ace Gold") matches neither: it stays unidentified rather than guessing.
    A name-only match is badged `?` (titled and given art from the dat entry), an unidentified
    file `??` (titled from its file name, no art). Hover a tile for the path, CRC32 and how it
-   was matched.
+   was identified (checksum, file name, folder name, or not at all).
 3. **Box art** comes from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar)
    (`thumbnails.libretro.com/Atari - Jaguar/Named_Boxarts/<dat title>.png`; the libretro rule
    replaces `& * / : ` " < > ? \ |` with `_`). It is fetched only for tiles you can see, one title
@@ -301,12 +316,23 @@ tracks a `.cue` owns.
    art under their exact dat name (64 box art); of the 26 Jaguar CD titles, 12 have a snapshot
    and none a box art. (Measured against libretro-thumbnails at the pinned dat's date.)
    **Download box art** turns all downloading off.
+   **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
+   downloaded art. A tile with no art is a drawn card with the game's title and a `CD` / `Cart`
+   badge. Right-click a tile > **Set cover image...** (PNG) to give it one, or drop a PNG onto the
+   tile while the library is showing (a PNG dropped anywhere else is opened as before, and fails
+   as not a game); **Remove cover image** undoes it. The PNG is copied to
+   `<data>/covers/custom/<key>.png` (the dat title when the game is identified, else a checksum
+   of the disc or of its path). For many at once, put PNGs named after the game in
+   `<data>/covers/`, e.g. `<data>/covers/Myst (USA).png` (dat title first, then the title shown
+   on the tile), then press **Rescan**. A cover you set beats the folder, which beats a
+   downloaded image, which beats the card. Only PNG is read: SDL3 has no JPEG decoder and the app
+   adds no dependency for one. Covers larger than 8192 px or 32 MB are refused.
 4. **Launch** is a click on the tile; it posts the same "open this path" event as the file
    dialog. **Close on launch** hides the window afterwards.
 
 Files: `<data>/library/scan.tsv` (the hash cache: a rescan only stats files whose size and
 modification time are unchanged), `<data>/library/db/` (databases fetched by **Update
-database**), `<data>/thumbnails/`. Settings are the `library.*` keys in `config.ini`.
+database**), `<data>/thumbnails/`, `<data>/covers/` (your cover art). Settings are the `library.*` keys in `config.ini`.
 
 The two dat files are fetched at configure time, pinned to a libretro-database commit and
 SHA256 (`VJ_DB_COMMIT` in `CMakeLists.txt`), and copied next to the executable in
@@ -327,6 +353,50 @@ data). They are not committed to this repository, only downloaded and shipped un
 beside the binary, with attribution here. The box art is the property of its owners; the app
 downloads it to the user's own machine on demand, as RetroArch does, and never redistributes
 it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library was added.
+
+## Running several instances
+
+Run as many copies of the app as you like: to test netplay on one machine (host in one window,
+join `127.0.0.1` in the other), or for local multiplayer on a big screen. Nothing is locked to a
+single instance.
+
+- **Any platform:** **File > New window** (Ctrl/Cmd+N) starts another copy. On macOS it runs
+  `open -n` on the app bundle, which is also what you do by hand: a double-click only activates the
+  copy that is already running, so from a shell use `open -n "/Applications/Virtual Jaguar.app"`
+  (or `open -n -a "Virtual Jaguar" --args --data-dir DIR`). On Windows and Linux just start the
+  program again (a Linux AppImage starts itself again from `$APPIMAGE`). A copy started with
+  `--data-dir` hands the same folder to the copies it opens.
+- **Numbering.** The first copy running on a data folder is instance 1 and behaves exactly as it always
+  did. The next ones are 2, 3, ... (the lowest number nobody holds; an OS file lock on
+  `instance-N.lock` in the data folder, released automatically when a copy quits or crashes). The number
+  is in the window title (`[Instance 2]`). Copies with different `--data-dir` folders, or a portable
+  copy, share nothing and are all instance 1.
+- **What each copy writes.** Instance 2+ never rewrites the shared files:
+
+| File | Instance 1 | Instance N (2+) |
+| --- | --- | --- |
+| `config.ini` (settings, bindings, core options, recents, RetroAchievements login) | read and written as before | read at start (so it has your settings); **never written** |
+| `config-N.ini` | not used | its window size and its controller choice only |
+| `imgui.ini` | `imgui.ini` | `imgui-N.ini` |
+| game saves `saves/<game>.srm` (EEPROM, SRAM, Memory Track) and the GameDrive SD folder | `saves/` | `saves/instance-N/`; a game's first run there starts from a copy of instance 1's save (read only) |
+| save states `states/`, cheat selections `cheats/games/` | shared | shared: written only when you press save, each file atomically, last save wins. A state saved in one copy loads in another |
+| library cache, box art, database files | shared | shared, written atomically with a per-process temporary name |
+| netplay address (`system/vj_netlink.txt`) | written when you join, as before | not written (no copy writes it): the address and port go to the core as per-process option overrides, so two copies can join different hosts |
+
+  Why: two copies both writing one `.srm` or one whole-file `config.ini` would silently lose
+  one side's changes. Settings you change in a second window are therefore not remembered, so make
+  them in the first window. Instance numbers are ordinal slots (the window you opened second),
+  not identities, which is why nothing else is persisted under them.
+- **Controllers.** SDL gives every connected controller to every running copy, so two windows would both
+  answer the same pad. **Settings > Input > Devices & players > Controllers used by this window** picks
+  *All controllers* (the default), *Keyboard only*, or *Controller k* for each pad, remembered per
+  instance number. Controller numbers follow the order SDL lists them (connection order). A window pinned
+  to one controller keeps reading it while another window has focus (SDL otherwise ignores controllers in the
+  background), so two players can play side by side; the keyboard goes to whichever window has focus. Which
+  Jaguar port or player a controller drives inside a window is still chosen under **Devices & players**.
+- **Netplay on one machine:** start a game in instance 1 and choose Netplay > Host; in instance 2 start the
+  same game and choose Netplay > Join with address `127.0.0.1` and the same port. Two copies that both
+  host need different ports (the window offers 42171-42174).
 
 ## Where files go
 
@@ -414,7 +484,8 @@ It is built on rcheevos' `rc_client` (v12.5.0, MIT, fetched at configure time li
 ## Netplay
 
 The **Netplay** menu opens a window for the link-cable games (Doom deathmatch, BattleSphere,
-AirCars, and Ultra Vortek over the Voice Modem) between two computers on a local network. It
+AirCars, and Ultra Vortek over the Voice Modem) between two computers on a local network (or two windows on one machine, see
+[Running several instances](#running-several-instances)). It
 configures the core's existing link networking (`docs/netlink-user-guide.md`) through core options
 and takes status from the core's event channel (see Core events below; a core that never answers
 falls back to reading its `[NETLINK]` log lines); it is not rollback netplay, and play over

@@ -34,10 +34,24 @@ bool Config::load(const std::string& path) {
     return true;
 }
 
+void Config::overlay(const std::string& path) {
+    Config o;
+    o.load(path);
+    for (const auto& kv : o.map_) map_[kv.first] = kv.second;
+}
+
 bool Config::save() {
     if (!dirty_ || path_.empty()) return true;
     std::string out = "# Virtual Jaguar settings\n";
-    for (const auto& kv : map_) out += kv.first + "=" + kv.second + "\n";
+    for (const auto& kv : map_) {
+        if (!savePrefixes_.empty()) {
+            bool ok = false;
+            for (const std::string& p : savePrefixes_)
+                if (kv.first.compare(0, p.size(), p) == 0) { ok = true; break; }
+            if (!ok) continue;
+        }
+        out += kv.first + "=" + kv.second + "\n";
+    }
     if (!writeFileAtomic(path_, out.data(), out.size())) return false;
     dirty_ = false;
     return true;

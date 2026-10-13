@@ -18,8 +18,10 @@ CI builds every installable package from one reusable workflow,
 | `VirtualJaguar-X.Y.Z-macos-universal.zip` | `Virtual Jaguar.app` (the zip's only top-level entry), arm64 + x86_64, macOS 11+; also the Homebrew cask's download. There is no DMG. |
 | `VirtualJaguar-X.Y.Z-windows-x64.zip` | portable folder; `portable.txt` keeps settings in `.\data` |
 | `VirtualJaguar-X.Y.Z-windows-x64-setup.exe` | Inno Setup installer, per-user by default (no admin prompt) |
+| `VirtualJaguar-X.Y.Z-windows-arm64.zip`, `...-windows-arm64-setup.exe` | the same two packages, native ARM64 (clang); the arm64 installer refuses to run on x64 Windows |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.AppImage`, `...-linux-aarch64.AppImage` | built on Ubuntu 22.04 (glibc 2.35) |
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | installs to `/usr/lib/virtualjaguar`, symlink in `/usr/bin` |
+| `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` | single-file Flatpak bundle, app id `io.github.libretro.VirtualJaguar`; see Flatpak notes |
 
 The `.deb`'s internal `Version:` is Debian-legal (`3.8.1`, `3.8.1~rc1`, `3.8.1~nightly.<sha>`; the version is the core's); the
 file name keeps the contract name.
@@ -73,6 +75,66 @@ Signing runs only when the caller asks (`release.yml` does, PRs do not) and the 
 are never notarized: a notarization round trip per push is slow and the PRs come from branches that
 should not get certificate access by default.
 
+## Signing locally
+
+`local-package.sh` packages a normal build on your own machine and signs it with a certificate it
+finds there; CI is unaffected. Build first, then:
+
+```sh
+cmake -S app -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4
+bash app/packaging/local-package.sh --sign              # dist/Virtual Jaguar.app (+ a .zip)
+bash app/packaging/local-package.sh --notarize          # also submit to Apple, staple, spctl
+```
+
+Without `--sign` it only assembles (macOS ad-hoc signs, as Apple Silicon requires). The local build is
+host-architecture only; the universal build is CI's.
+
+**Settings** come from the environment, then from a repo-root `.env` (gitignored; copy
+[`env.example`](env.example), which lists every key). Only `VJ_*` and `APPLE_*` keys are read, values
+are literal (nothing is evaluated), and a variable already set in your shell wins. A value written as
+`op://vault/item/field` is resolved with the 1Password CLI when `op` is installed, so a secret need not
+sit in the file (for `APPLE_NOTARY_KEY_PATH` and `VJ_SIGN_PFX` the item is written to a private temp file for
+the run). `VJ_ENV_FILE` points at another file. Values are never printed, only key names.
+
+macOS identity, first match wins:
+
+1. `VJ_SIGN_IDENTITY`: a name, a SHA-1 hash, or `-` for ad hoc
+2. the newest-expiring valid **Developer ID Application** identity in your keychain (chosen and passed
+   by SHA-1, so renewed duplicates with the same name are not ambiguous)
+3. **Apple Development** (runs on this Mac; cannot be notarized, and a warning says so)
+4. ad hoc
+
+It prints the identity name and expiry it picked. List yours with
+`security find-identity -v -p codesigning`. The first signature may raise a keychain prompt for the
+private key: click Always Allow.
+
+Notarization (`--notarize`, needs a Developer ID identity), first match wins:
+
+1. `VJ_NOTARY_PROFILE`: a keychain profile. Recommended, since no secret leaves the keychain. Create it once:
+   `xcrun notarytool store-credentials vj-notary --key AuthKey_XXXX.p8 --key-id KEYID --issuer ISSUER-UUID`
+2. `APPLE_NOTARY_KEY_ID` + `APPLE_NOTARY_ISSUER_ID` + `APPLE_NOTARY_KEY_PATH` (the `.p8` on disk)
+
+Notarizing uploads the app to Apple and waits for the verdict, then staples the ticket and runs
+`spctl -a -t exec -vv`. Hardened runtime and the entitlements are the same as CI's.
+
+Windows (Git Bash / MSYS2; builds the portable zip, plus the installer when Inno Setup's `ISCC.exe` is
+found), certificate, first match wins:
+
+1. `VJ_SIGN_PFX` (+ `VJ_SIGN_PFX_PASSWORD`): a `.pfx` file
+2. `VJ_SIGN_CERT_SHA1`: the thumbprint of a certificate in the CurrentUser\My store
+3. `signtool sign /a`, which picks an installed code-signing certificate; none usable means unsigned,
+   with a message
+
+`signtool.exe` is found on `PATH` or in the newest Windows SDK under
+`C:\Program Files (x86)\Windows Kits\10\bin\*\x64`; `VJ_SIGNTOOL` overrides. It signs `virtualjaguar.exe`,
+the DLLs, and the installer, timestamped with `/tr` `VJ_SIGN_TIMESTAMP_URL` (default
+`http://timestamp.digicert.com`, SHA-256). This path has not been run on Windows yet. Note `signtool /p` shows
+the password in the process list; prefer the store thumbprint on a shared machine.
+
+**Dev executable.** `-DVJ_APP_SIGN_DEV_BUILD=ON` (macOS, default OFF) signs `build/virtualjaguar` after
+every build with the identity chosen above, so macOS stops re-prompting for network and keychain access
+after each rebuild of an unsigned binary. It does not use hardened runtime and never fails the build.
+
 ## macOS notes
 
 * **Layout.** `SDL_GetBasePath()` in a `.app` is `Contents/Resources/` (SDL's default `resource`
@@ -105,7 +167,15 @@ should not get certificate access by default.
 ## Windows notes
 
 * MinGW-w64 (the core's toolchain), statically linked C/C++ runtime; CI fails if the exe imports
-  anything but Windows system DLLs. GUI subsystem (no console window); `console_attach.cpp` re-attaches to
+  anything but Windows system DLLs.
+* **ARM64.** Built natively on GitHub's `windows-11-arm` runner in the MSYS2 `CLANGARM64` environment
+  (clang, libc++, lld), the ARM64 flavour of the same MinGW-w64 setup; MSVC was not used because the
+  MSVC build of the core has never passed. The blitter's SIMD choice is autodetected, so ARM64 gets the
+  NEON implementation; CI checks that exactly one `blitter_simd_ops` is linked, and that the exe is an
+  ARM64 image. The same `package.sh` and `virtualjaguar.iss` serve both architectures (`--arch arm64`,
+  `/DArm64`): the arm64 installer is `ArchitecturesAllowed=arm64`, the x64 one `x64compatible` (so the
+  x64 package also installs, emulated, on ARM64 Windows). librashader's `aarch64-windows` runtime is bundled.
+  `tools/install.ps1` picks the ARM64 package on ARM64 Windows and falls back to x64 for older releases. GUI subsystem (no console window); `console_attach.cpp` re-attaches to
   the parent console so `--help`/`--version` still print.
 * Installer: **Inno Setup 6.7.3** (pinned by SHA-256). Chosen over NSIS for a maintained modern wizard,
   per-user install without a UAC prompt by default (`PrivilegesRequiredOverridesAllowed=dialog`), clean
@@ -121,6 +191,34 @@ should not get certificate access by default.
   `/usr/lib/virtualjaguar` with a `/usr/bin` symlink (`SDL_GetBasePath()` resolves `/proc/self/exe`).
   `Depends` comes from `dpkg-shlibdeps`; the display and audio stacks SDL loads at run time are `Recommends`.
 * Built on Ubuntu 22.04 runners, the oldest available, for the lowest glibc floor.
+
+## Flatpak notes
+
+* **Manifest:** [`flatpak/io.github.libretro.VirtualJaguar.yml`](flatpak/io.github.libretro.VirtualJaguar.yml),
+  runtime `org.freedesktop.Platform` 25.08. It builds the checked-out tree (`type: dir`); `manifests/render.sh`
+  derives the Flathub form (git tag + commit) from the same file, so there is one manifest.
+* **Offline.** Flatpak builds have no network. SDL3, Dear ImGui, rcheevos, the librashader headers, the
+  slang-shaders archive, the two libretro dats and the 41 cheat files + licence are `archive`/`file` sources with
+  SHA-256, wired in through the app's offline knobs (`FETCHCONTENT_SOURCE_DIR_SDL3|IMGUI|RCHEEVOS`,
+  `VJ_LIBRASHADER_INCLUDE_DIR`, `VJ_SLANG_SHADERS_ARCHIVE`, `VJ_APP_LIBRETRO_DB_DIR`, `VJ_APP_CHEATS_SOURCE_DIR`),
+  and `FETCHCONTENT_FULLY_DISCONNECTED=ON` so a missed download fails the build. The cheat sources are generated
+  from `app/cmake/VJCheatManifest.cmake`: when that file's pinned commit changes, regenerate the manifest's cheat
+  entries (same names, URLs and hashes). A `post-install` step fails the build if the data directories or libcurl
+  are missing.
+* **No shaders yet.** Upstream publishes no Linux librashader binary and building it needs a vendored Rust build
+  (`org.freedesktop.Sdk.Extension.rust-stable` + cargo sources). The Flatpak ships the shader presets and the app
+  reports the runtime as unavailable. Adding a `librashader` module is the follow-up.
+* **Permissions:** network (achievements, box art, netplay), Wayland + X11 fallback, PulseAudio, `--device=all` (gamepads),
+  IPC, and `--filesystem=home:ro`. The last is needed because the library scans folders and a `.cue` needs its
+  sibling `.bin` tracks, neither of which the file-chooser portal grants; it is read-only and limited to the home
+  directory. Settings, saves and states live in `~/.var/app/io.github.libretro.VirtualJaguar/data/VirtualJaguar`
+  (SDL's pref path follows `XDG_DATA_HOME`, which Flatpak sets).
+* **CI:** `app-package.yml` job `flatpak` uses `flatpak/flatpak-github-actions/flatpak-builder` v6.8 (pinned by commit) in
+  the Flathub image `freedesktop-25.08`, with the action's own artifact upload disabled (it would not be named
+  `app-package-*`); the bundle is smoke-tested (install, headless frame hash) and uploaded as `app-package-flatpak`.
+  x86_64 only for now; a native aarch64 leg on `ubuntu-24.04-arm` would be a matrix entry.
+* **Install:** `flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`
+  (the runtime comes from Flathub), then `flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`.
 
 ## Package managers (templates; nothing is submitted by CI)
 
@@ -147,7 +245,8 @@ then, by hand (these are outward actions that stay with the maintainer):
 * **Flatpak / Flathub**: new-app PR to `flathub/flathub` with `flatpak/io.github.libretro.VirtualJaguar.yml`.
   The `io.github.libretro.*` app id assumes the libretro GitHub organization owns the app; change it everywhere
   (`app/cmake/VJPackage.cmake`, `app/packaging/linux/*`, `macos/Info.plist.in`) if a different id is wanted.
-  The manifest builds offline and has **not been built yet**; run `flatpak-builder` once before submitting.
+  The manifest is built in CI on every package run (bundle smoke test included). Flathub's own linter and
+  review may ask for changes (for instance a librashader module).
 
 ## Placeholder icon
 

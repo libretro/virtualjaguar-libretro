@@ -16,9 +16,11 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "config.h"
+#include "disc_hash.h"
 #include "http.h"
 #include "library.h"
 #include "library_service.h"
@@ -861,10 +863,14 @@ static void testServicePipeline() {
         }
         CHECK(srv.totalHits() == hitsBefore);
 
-        // an unidentified entry has no art key and never touches the network
+        // an unidentified entry has no thumbnail name: it ends up Missing without ever touching the network
         lib::Entry unknown = *a;
         unknown.datName.clear();
-        CHECK(svc.art(unknown).state == ArtView::Missing);
+        unknown.file.crcWhole = 0x0BADF00Du;   // its own slot (the tile key is the checksum, not the title)
+        int hitsUnknown = srv.totalHits();
+        ArtView vu;
+        CHECK(waitFor(svc, [&] { vu = svc.art(unknown); return vu.state == ArtView::Missing; }));
+        CHECK(srv.totalHits() == hitsUnknown);
 
         // launching posts the same "open this path" event the file dialog does
         SDL_FlushEvents(SDL_EVENT_USER, SDL_EVENT_USER);
@@ -934,6 +940,476 @@ static void testServicePipeline() {
 
 #endif  // !_WIN32
 
+// ---- covers (#838): display names, tile keys, precedence, the service ---------------------------------------------------
+
+static std::vector<unsigned char> makeCoverPng(const std::string& name, int w, int h, unsigned char shade) {
+    SDL_Surface* s = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    SDL_FillSurfaceRect(s, nullptr, SDL_MapSurfaceRGBA(s, shade, 100, 200, 255));
+    std::string path = g_tmp + name;
+    SDL_SavePNG(s, path.c_str());
+    SDL_DestroySurface(s);
+    std::vector<unsigned char> out;
+    readFile(path, out);
+    return out;
+}
+
+static void testDiscTitles() {
+    CHECK_EQ(lib::titleFromDiscStem("Myst (USA) (Track 1)"), "Myst (USA)");
+    CHECK_EQ(lib::titleFromDiscStem("Myst_(USA)_(Track_01)"), "Myst (USA)");
+    CHECK_EQ(lib::titleFromDiscStem("Battlemorph [Track 1]"), "Battlemorph");
+    CHECK_EQ(lib::titleFromDiscStem("Highlander - Track 01"), "Highlander");
+    CHECK_EQ(lib::titleFromDiscStem("Space Ace.bin"), "Space Ace");
+    CHECK_EQ(lib::titleFromDiscStem("Dragons Lair (Track 1).bin"), "Dragons Lair");
+    CHECK_EQ(lib::titleFromDiscStem("Blue   Lightning"), "Blue Lightning");
+    // kept: multi-disc and revision tags tell releases apart, and a title may end in "Track 2"
+    CHECK_EQ(lib::titleFromDiscStem("Primal Rage (Disc 2)"), "Primal Rage (Disc 2)");
+    CHECK_EQ(lib::titleFromDiscStem("Baldies (Rev 1)"), "Baldies (Rev 1)");
+    CHECK_EQ(lib::titleFromDiscStem("Super Track 2"), "Super Track 2");
+    CHECK_EQ(lib::titleFromDiscStem("Track 1"), "Track 1");        // never reduced to nothing
+    CHECK_EQ(lib::titleFromDiscStem("(Track 1)"), "(Track 1)");
+
+    lib::ScanFile f;
+    f.path = "/rips/Unlisted Disc (USA) (Track 1).cue";
+    f.kind = lib::Kind::Disc;
+    lib::Entry e = lib::identify(f, nullptr, nullptr);
+    CHECK_EQ(e.title, "Unlisted Disc (USA)");
+    CHECK(e.datName.empty() && e.section == lib::Section::Disc);
+    f.path = "/carts/Some_Cart_(Track 1).j64";   // carts keep the plain rule: "(Track 1)" is not noise there
+    f.kind = lib::Kind::Cart;
+    CHECK_EQ(lib::identify(f, nullptr, nullptr).title, "Some Cart (Track 1)");
+}
+
+static void testCoverLookup() {
+    lib::Entry e;
+    e.datName = "Pipeline: Test & Co (World)";
+    e.title = e.datName;
+    CHECK_EQ(lib::coverKey(e), e.datName);
+    e.datName.clear();
+    e.file.path = "/rips/a.cue";
+    e.file.crcWhole = 0xABCDEF01u;
+    CHECK_EQ(lib::coverKey(e), "crc-ABCDEF01");   // a content fingerprint: survives moving the folder
+    e.file.path = "/elsewhere/renamed.cue";
+    CHECK_EQ(lib::coverKey(e), "crc-ABCDEF01");
+    e.file.crcWhole = 0;
+    std::string k1 = lib::coverKey(e);
+    CHECK(k1.rfind("path-", 0) == 0 && k1.size() == 5 + 8);
+    e.file.path = "/elsewhere/other.chd";
+    CHECK(lib::coverKey(e) != k1);
+
+    CHECK_EQ(lib::customCoverPath("/d/", "Ecco: The Tides"), "/d/covers/custom/Ecco_ The Tides.png");
+    CHECK_EQ(lib::localCoverPath("/d/", "A/B? (USA)"), "/d/covers/A_B_ (USA).png");
+    CHECK_EQ(lib::localCoverPath("/d/", ".."), "/d/covers/_.png");   // no escaping the folder
+    CHECK_EQ(lib::localCoverPath("/d/", "Game. "), "/d/covers/Game.png");
+
+    // precedence: custom > local folder (dat name, then shown name) > downloaded > nothing
+    std::set<std::string> have;
+    auto exists = [&](const std::string& p) { return have.count(p) != 0; };
+    const std::string root = "/d/", key = "Dat Name (USA)", title = "Shown Name", dat = "Dat Name (USA)";
+    CHECK(lib::chooseCover(root, key, title, dat, exists).source == lib::CoverSource::None);
+    have.insert(lib::thumbnailCachePath(root, "Named_Snaps", dat));
+    lib::CoverChoice c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Snaps", dat));
+    have.insert(lib::localCoverPath(root, title));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::LocalFolder && c.path == lib::localCoverPath(root, title));
+    have.insert(lib::localCoverPath(root, dat));   // the dat name outranks the shown name
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::LocalFolder && c.path == lib::localCoverPath(root, dat));
+    have.insert(lib::customCoverPath(root, key));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Custom && c.path == lib::customCoverPath(root, key));
+    // an unidentified tile never counts a downloaded thumbnail, and has no dat-name local lookup
+    have.clear();
+    have.insert(lib::thumbnailCachePath(root, "Named_Boxarts", title));
+    CHECK(lib::chooseCover(root, "crc-00000001", title, "", exists).source == lib::CoverSource::None);
+    have.insert(lib::localCoverPath(root, title));
+    CHECK(lib::chooseCover(root, "crc-00000001", title, "", exists).source == lib::CoverSource::LocalFolder);
+}
+
+static void testCoverService() {
+    std::string root = g_tmp + "cover-root/";
+    std::string games = g_tmp + "cover-games/";
+    std::error_code ec;
+    fs::create_directories(root + "library/db", ec);
+    std::vector<unsigned char> u1 = noise(2352 * 30, 31), d1 = noise(2352 * 30, 32);
+    writeBytes(games + "Unlisted Disc (USA) (Track 1).bin", u1);
+    writeText(games + "Unlisted Disc (USA).cue",
+              "FILE \"Unlisted Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    writeBytes(games + "Listed Disc (USA) (Track 1).bin", d1);
+    writeText(games + "Listed Disc (USA).cue",
+              "FILE \"Listed Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    writeBytes(games + "Image Only (USA).chd", noise(4096, 33));   // .chd: never hashed, keyed by path
+    writeText(root + "library/db/Atari - Jaguar CD.dat",
+              datText("2099.01.01", datGame("Listed Disc (USA)", "Listed Disc (USA) (Track 1).bin", crcOf(d1)) +
+                                        datGame("F1", "x", 1) + datGame("F2", "x", 2) + datGame("F3", "x", 3) + datGame("F4", "x", 4)));
+    writeText(root + "not-a-png.png", "this is not an image, just text that is long enough to pass for a file");
+
+    Paths paths;
+    paths.root = root;
+    Config cfg;
+    cfg.setPath(root + "config.ini");
+    cfg.set("library.dir.0", games.substr(0, games.size() - 1));
+    struct Fake {
+        int created = 0, destroyed = 0, lastW = 0, lastH = 0;
+    } fake;
+    LibraryService svc;
+    svc.createTexture = [&](const void*, int w, int h) { fake.created++; fake.lastW = w; fake.lastH = h; return (unsigned)fake.created; };
+    svc.destroyTexture = [&](unsigned) { fake.destroyed++; };
+    svc.artBaseUrl = "http://127.0.0.1:1/";   // nothing listens: any request would fail loudly
+    svc.dbBaseUrl = svc.artBaseUrl;
+    svc.start(paths, cfg, false);
+    svc.setDownloadArt(false);
+    auto pumpUntil = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            svc.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    auto find = [&](const std::string& title) {
+        lib::Entry e;
+        for (const lib::Entry& x : svc.entries())
+            if (x.title == title) e = x;
+        return e;   // a copy: a rescan rebuilds the list
+    };
+    CHECK(pumpUntil([&] { return !svc.scanning() && svc.entries().size() == 3; }));
+    lib::Entry un = find("Unlisted Disc (USA)"), listed = find("Listed Disc (USA)"), chd = find("Image Only (USA)");
+    CHECK(!un.file.path.empty() && !listed.file.path.empty() && !chd.file.path.empty());
+    CHECK(un.datName.empty() && listed.match == lib::Match::Crc && chd.datName.empty());
+    CHECK(lib::coverKey(un).rfind("crc-", 0) == 0 && lib::coverKey(chd).rfind("path-", 0) == 0);
+
+    // nothing anywhere: Missing, for the unidentified and for the identified (downloads are off)
+    ArtView v;
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Missing; }));
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Missing; }));
+    CHECK(!svc.netBusy());
+
+    // 1. a PNG named after the game in <data>/covers/ (Rescan makes tiles look again)
+    makeCoverPng("local.png", 40, 80, 10);
+    fs::create_directories(fs::u8path(root + "covers"), ec);
+    fs::copy_file(fs::u8path(g_tmp + "local.png"), fs::u8path(root + "covers/Unlisted Disc (USA).png"), fs::copy_options::overwrite_existing, ec);
+    CHECK(!ec);
+    svc.rescan();
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready; }));
+    CHECK(v.w == 40 && v.h == 80);
+    lib::Entry un2 = find("Unlisted Disc (USA)");   // a rescan rebuilds entries: the key is unchanged
+    CHECK(pumpUntil([&] { return !svc.scanning(); }));
+    un = find("Unlisted Disc (USA)");
+    listed = find("Listed Disc (USA)");
+    chd = find("Image Only (USA)");
+
+    // 2. a cover set on the tile beats the folder; remove goes back to the folder's
+    makeCoverPng("mine.png", 90, 30, 200);
+    CHECK(!svc.hasCustomCover(un));
+    CHECK(svc.setCover(un, g_tmp + "mine.png"));
+    CHECK(svc.hasCustomCover(un));
+    CHECK(fs::exists(fs::u8path(lib::customCoverPath(root, lib::coverKey(un)))));
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready && v.w == 90; }));
+    CHECK(v.h == 30);
+    int destroyedBefore = fake.destroyed;
+    svc.removeCover(un);
+    CHECK(!svc.hasCustomCover(un));
+    CHECK(fake.destroyed > destroyedBefore);   // the old texture went away with the cover
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready && v.w == 40; }));
+    CHECK(v.h == 80);
+    CHECK(fs::exists(fs::u8path(root + "covers/Unlisted Disc (USA).png")));   // the user's own file is never deleted
+
+    // 3. identified: custom > downloaded cache (downloads off, so only what is on disk counts)
+    std::string cached = lib::thumbnailCachePath(root, "Named_Boxarts", listed.datName);
+    makeCoverPng("cached.png", 64, 64, 50);
+    fs::create_directories(fs::u8path(cached).parent_path(), ec);
+    fs::copy_file(fs::u8path(g_tmp + "cached.png"), fs::u8path(cached), fs::copy_options::overwrite_existing, ec);
+    CHECK(!ec);
+    svc.rescan();   // the earlier Missing is forgotten
+    CHECK(pumpUntil([&] { return !svc.scanning(); }));
+    listed = find("Listed Disc (USA)");
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready; }));
+    CHECK(v.w == 64 && v.h == 64);   // downloaded
+    makeCoverPng("tiny.png", 20, 20, 120);
+    CHECK(svc.setCover(listed, g_tmp + "tiny.png"));
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready && v.w == 20; }));
+    CHECK(fs::exists(fs::u8path(lib::customCoverPath(root, "Listed Disc (USA)"))));
+    svc.removeCover(listed);
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready && v.w == 64; }));
+
+    // 4. an image the decoder cannot read is refused and leaves nothing behind
+    chd = find("Image Only (USA)");
+    CHECK(!svc.setCover(chd, root + "not-a-png.png"));
+    CHECK(svc.status().find("PNG") != std::string::npos);
+    CHECK(!svc.hasCustomCover(chd));
+    CHECK(!svc.setCover(chd, root + "does-not-exist.png"));
+    CHECK(svc.setCover(chd, g_tmp + "mine.png"));   // .chd tiles are keyed by their path
+    CHECK(pumpUntil([&] { v = svc.art(chd); return v.state == ArtView::Ready && v.w == 90; }));
+
+    // 5. finding the tile under a dropped file
+    svc.tiles.clear();
+    svc.tilesFrame = 100;
+    LibraryService::CoverTile t;
+    t.x0 = 10; t.y0 = 20; t.x1 = 110; t.y1 = 160; t.key = "k1"; t.title = "T1";
+    svc.tiles.push_back(t);
+    t.x0 = 120; t.x1 = 220; t.key = "k2";
+    svc.tiles.push_back(t);
+    CHECK(svc.tileAt(50, 50, 100) && svc.tileAt(50, 50, 100)->key == "k1");
+    CHECK(svc.tileAt(130, 159, 101) && svc.tileAt(130, 159, 101)->key == "k2");
+    CHECK(!svc.tileAt(115, 50, 100));    // the gap between tiles
+    CHECK(!svc.tileAt(50, 160, 100));    // the far edge is outside
+    CHECK(!svc.tileAt(50, 50, 200));     // the grid has not been drawn for a while: nothing is under the pointer
+    svc.stop();
+}
+
+// ---- disc identification: name matching, .chd and .cdi track-1 checksums --------------------------------------------
+
+static void testLooseNames() {
+    CHECK_EQ(lib::normalizeDiscName("Dragon's Lair (USA) (Track 1)"), "dragons lair");
+    CHECK_EQ(lib::normalizeDiscName("Myst_(USA)_[Disc 1] - Redump"), "myst redump");
+    CHECK_EQ(lib::normalizeDiscName("  Blue  Lightning!! (Europe)  "), "blue lightning");
+    CHECK_EQ(lib::normalizeDiscName("Highlander - The Last of the MacLeods"), "highlander the last of the macleods");
+    CHECK_EQ(lib::normalizeDiscName("(USA)"), "");
+    CHECK_EQ(lib::normalizeDiscName("Unclosed (group"), "unclosed");
+
+    lib::Dat dat;
+    CHECK(dat.parse(datText("1", datGame("Myst (USA)", "a", 1) + datGame("Dragon's Lair (USA)", "b", 2) +
+                                     datGame("Highlander - The Last of the MacLeods (USA)", "c", 3) +
+                                     datGame("Primal Rage (USA) (Disc 1)", "d", 4) + datGame("Primal Rage (USA) (Disc 2)", "e", 5) +
+                                     datGame("Space Ace (USA)", "f", 6) + datGame("Space Ace Gold (USA)", "g", 7) +
+                                     datGame("Blue Lightning (USA)", "h", 8))));
+    auto title = [&](const char* stem, const char* folder = "") {
+        int how = 0;
+        const lib::DatGame* g = dat.byLooseName(stem, folder, &how);
+        return g ? g->name : std::string("-");
+    };
+    CHECK_EQ(title("Myst"), "Myst (USA)");                          // region and track tags do not matter
+    CHECK_EQ(title("myst (europe) (track 01)"), "Myst (USA)");
+    CHECK_EQ(title("Dragons Lair"), "Dragon's Lair (USA)");         // punctuation does not matter
+    CHECK_EQ(title("DRAGON'S_LAIR"), "Dragon's Lair (USA)");
+    CHECK_EQ(title("Space Ace"), "Space Ace (USA)");                // the exact title beats a longer one
+    CHECK_EQ(title("Highlander"), "Highlander - The Last of the MacLeods (USA)");   // a unique start of a title
+    CHECK_EQ(title("Primal Rage"), "-");                            // two discs share the title: no guess
+    CHECK_EQ(title("Primal Rage (Disc 2)"), "-");
+    CHECK_EQ(title("Space"), "-");                                  // starts two titles
+    CHECK_EQ(title("Spa"), "-");                                    // too short for a prefix match
+    CHECK_EQ(title("Myst Masterpiece Edition"), "-");               // longer than the dat title: not a match
+    CHECK_EQ(title("disc", "Myst (USA)"), "Myst (USA)");            // the folder name when the file says nothing
+    CHECK_EQ(title("disc", "Highlander"), "-");                     // a folder name must match exactly
+    CHECK_EQ(title("Space Ace", "Myst"), "Space Ace (USA)");        // the file name wins over the folder
+    int how = 0;
+    dat.byLooseName("disc", "Myst", &how);
+    CHECK(how == 2);
+    dat.byLooseName("Highlander", "", &how);
+    CHECK(how == 3);
+
+    // identify(): a disc whose checksum is not in the dat is matched by name; a cart is not touched by it
+    lib::ScanFile f;
+    f.kind = lib::Kind::Disc;
+    f.path = "/rips/Myst (USA)/disc.cue";
+    f.crcWhole = 0x12345678u;   // not Redump's
+    lib::Entry e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Name && e.datName == "Myst (USA)" && e.how == "folder name");
+    f.path = "/rips/Space.chd";
+    f.crcWhole = 0;
+    e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Unknown && e.how == "not identified" && e.title == "Space");
+    f.path = "/rips/x.cue";
+    f.crcWhole = 6;   // the dat's crc for Space Ace
+    e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Crc && e.datName == "Space Ace (USA)" && e.how.find("track 1") != std::string::npos);
+    f.kind = lib::Kind::Cart;
+    f.path = "/carts/Myst (USA).j64";
+    f.crcWhole = 0;
+    CHECK(lib::identify(f, &dat, nullptr).match == lib::Match::Name);   // the plain name rule
+    f.path = "/carts/Highlander.j64";
+    CHECK(lib::identify(f, &dat, nullptr).match == lib::Match::Unknown);   // carts do not get the loose rule
+}
+
+static void putBE(std::vector<unsigned char>& v, size_t off, uint64_t x, int bytes) {
+    for (int i = 0; i < bytes; i++) v[off + (size_t)i] = (unsigned char)(x >> (8 * (bytes - 1 - i)));
+}
+
+struct SynthTrack {
+    std::string type;                    // AUDIO, MODE1_RAW
+    int frames = 0, pregap = 0;
+    std::string pgtype = "MODE1";        // "VAUDIO" = virtual
+    std::vector<unsigned char> stored;   // frames * 2352 bytes, in the order the CHD keeps them
+};
+
+// A minimal uncompressed CHD v5 for CDs: 4 frames per hunk, 2448-byte frames (the subcode is filled with 0xEE
+// so a read that includes it shows), tracks padded to 4 frames, CHT2 track metadata and optionally CHSE.
+static bool writeSynthChd(const std::string& path, const std::vector<SynthTrack>& tracks, bool chse) {
+    const uint32_t hunkFrames = 4, hunkBytes = 2448 * hunkFrames;
+    std::vector<unsigned char> frames;
+    for (const SynthTrack& t : tracks) {
+        uint32_t padded = ((uint32_t)t.frames + 3) / 4 * 4;
+        for (uint32_t i = 0; i < padded; i++) {
+            std::vector<unsigned char> fr(2448, 0xEE);
+            if (i < (uint32_t)t.frames) std::memcpy(fr.data(), t.stored.data() + (size_t)i * 2352, 2352);
+            else std::fill(fr.begin(), fr.begin() + 2352, 0);
+            frames.insert(frames.end(), fr.begin(), fr.end());
+        }
+    }
+    const uint32_t hunks = (uint32_t)(frames.size() / hunkBytes);
+    std::vector<std::string> md;
+    if (chse) md.push_back("SESSION:1");
+    for (size_t i = 0; i < tracks.size(); i++) {
+        char b[200];
+        std::snprintf(b, sizeof b, "TRACK:%d TYPE:%s SUBTYPE:NONE FRAMES:%d PREGAP:%d PGTYPE:%s PGSUB:NONE POSTGAP:0", (int)i + 1,
+                      tracks[i].type.c_str(), tracks[i].frames, tracks[i].pregap, tracks[i].pgtype.c_str());
+        md.push_back(b);
+    }
+    const uint64_t mapOff = 124, metaOff = mapOff + (uint64_t)hunks * 4;
+    uint64_t metaEnd = metaOff;
+    for (const std::string& m : md) metaEnd += 16 + m.size() + 1;
+    const uint64_t dataStart = (metaEnd + hunkBytes - 1) / hunkBytes * hunkBytes;
+    std::vector<unsigned char> f((size_t)(dataStart + frames.size()), 0);
+    std::memcpy(f.data(), "MComprHD", 8);
+    putBE(f, 8, 124, 4);
+    putBE(f, 12, 5, 4);
+    putBE(f, 32, frames.size(), 8);
+    putBE(f, 40, mapOff, 8);
+    putBE(f, 48, metaOff, 8);
+    putBE(f, 56, hunkBytes, 4);
+    putBE(f, 60, 2448, 4);
+    for (uint32_t h = 0; h < hunks; h++) putBE(f, (size_t)mapOff + h * 4, dataStart / hunkBytes + h, 4);
+    uint64_t at = metaOff;
+    for (size_t i = 0; i < md.size(); i++) {
+        const uint32_t tag = md[i].compare(0, 7, "SESSION") == 0 ? 0x43485345u : 0x43485432u;   // CHSE / CHT2
+        const uint64_t len = md[i].size() + 1, next = i + 1 < md.size() ? at + 16 + len : 0;
+        putBE(f, (size_t)at, tag, 4);
+        putBE(f, (size_t)at + 4, len, 4);   // flags 0, 24-bit length
+        putBE(f, (size_t)at + 8, next, 8);
+        std::memcpy(f.data() + at + 16, md[i].c_str(), len);
+        at += 16 + len;
+    }
+    std::memcpy(f.data() + dataStart, frames.data(), frames.size());
+    writeBytes(path, f);
+    return true;
+}
+
+static std::vector<unsigned char> swapWords(std::vector<unsigned char> v) {
+    for (size_t i = 0; i + 1 < v.size(); i += 2) std::swap(v[i], v[i + 1]);
+    return v;
+}
+
+static void testChdAndCdiChecksums() {
+    std::string dir = g_tmp + "discs/";
+    std::atomic<bool> noCancel{false};
+
+    // the Redump .bin of track 1 (an audio track: bin files hold word-swapped samples), 10 sectors
+    std::vector<unsigned char> bin1 = noise(2352 * 10, 61);
+    std::vector<unsigned char> data2 = noise(2352 * 5, 62);
+    SynthTrack t1;
+    t1.type = "AUDIO";
+    t1.frames = 10;
+    t1.stored = swapWords(bin1);   // the CHD keeps host-order PCM
+    SynthTrack t2;
+    t2.type = "MODE1_RAW";
+    t2.frames = 5;
+    t2.stored = data2;
+    writeSynthChd(dir + "good.chd", {t1, t2}, true);
+    uint32_t crc = 0;
+    CHECK(lib::crcOfChdTrack1(dir + "good.chd", crc, &noCancel));
+    CHECK_EQ(hex8(crc), hex8(crcOf(bin1)));   // exactly the Redump bin's CRC32
+
+    // a virtual pregap is not part of the .bin: 3 silent frames the CHD counts but a bin does not have
+    std::vector<unsigned char> real7 = noise(2352 * 7, 63);
+    SynthTrack v1;
+    v1.type = "AUDIO";
+    v1.frames = 10;
+    v1.pregap = 3;
+    v1.pgtype = "VAUDIO";
+    v1.stored = std::vector<unsigned char>(2352 * 3, 0);
+    std::vector<unsigned char> sw = swapWords(real7);
+    v1.stored.insert(v1.stored.end(), sw.begin(), sw.end());
+    writeSynthChd(dir + "vpregap.chd", {v1, t2}, true);
+    CHECK(lib::crcOfChdTrack1(dir + "vpregap.chd", crc, &noCancel));
+    CHECK_EQ(hex8(crc), hex8(crcOf(real7)));
+
+    // the core refuses several audio tracks with no session metadata, so it is not hashed either
+    SynthTrack a2 = t1;
+    writeSynthChd(dir + "nochse.chd", {t1, a2}, false);
+    crc = 0xDEADBEEF;
+    CHECK(!lib::crcOfChdTrack1(dir + "nochse.chd", crc, &noCancel) && crc == 0xDEADBEEF);
+    writeBytes(dir + "junk.chd", noise(4096, 64));
+    CHECK(!lib::crcOfChdTrack1(dir + "junk.chd", crc, &noCancel));
+    CHECK(!lib::crcOfChdTrack1(dir + "missing.chd", crc, &noCancel));
+    std::atomic<bool> cancelled{true};
+    CHECK(!lib::crcOfChdTrack1(dir + "good.chd", crc, &cancelled));
+
+    // .cdi (V3.5): track 1 data after its 2-sector pregap, then the descriptor and the trailer
+    {
+        std::vector<unsigned char> img = noise(2352 * 2, 65);   // pregap sectors
+        img.insert(img.end(), bin1.begin(), bin1.end());
+        std::vector<unsigned char> hdr;
+        auto u16 = [&](unsigned x) { hdr.push_back((unsigned char)x); hdr.push_back((unsigned char)(x >> 8)); };
+        auto u32 = [&](uint32_t x) { u16(x & 0xFFFF); u16(x >> 16); };
+        u16(1);   // sessions
+        u16(1);   // tracks in session 1
+        u32(0);   // not the extended format
+        const unsigned char marker[20] = {0, 0, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF};
+        hdr.insert(hdr.end(), marker, marker + 20);
+        hdr.insert(hdr.end(), 4, 0);
+        hdr.push_back(0);                // empty file name
+        hdr.insert(hdr.end(), 19, 0);
+        u32(0);
+        hdr.insert(hdr.end(), 2, 0);     // index count
+        std::vector<unsigned char> td(0x57, 0);
+        auto put32 = [&](size_t o, uint32_t x) { for (int i = 0; i < 4; i++) td[o + (size_t)i] = (unsigned char)(x >> (8 * i)); };
+        put32(0x00, 2);    // pregap
+        put32(0x04, 10);   // length
+        put32(0x0e, 0);    // mode: audio
+        put32(0x22, 12);
+        put32(0x36, 2);    // 2352-byte sectors
+        hdr.insert(hdr.end(), td.begin(), td.end());
+        hdr.insert(hdr.end(), 64, 0);    // the rest of the descriptor
+        std::vector<unsigned char> file = img;
+        const size_t hdrAt = file.size();
+        file.insert(file.end(), hdr.begin(), hdr.end());
+        const uint32_t total = (uint32_t)file.size() + 8;
+        for (int i = 0; i < 4; i++) file.push_back((unsigned char)(0x80000006u >> (8 * i)));
+        const uint32_t fromEnd = total - (uint32_t)hdrAt;
+        for (int i = 0; i < 4; i++) file.push_back((unsigned char)(fromEnd >> (8 * i)));
+        writeBytes(dir + "good.cdi", file);
+        crc = 0;
+        CHECK(lib::crcOfCdiTrack1(dir + "good.cdi", crc, &noCancel));
+        CHECK_EQ(hex8(crc), hex8(crcOf(bin1)));
+        writeBytes(dir + "junk.cdi", noise(8192, 66));
+        CHECK(!lib::crcOfCdiTrack1(dir + "junk.cdi", crc, &noCancel));
+    }
+
+    // the scanner hashes both, identify() matches them to the dat by checksum, and the cache keeps the result
+    lib::Dat discs;
+    CHECK(discs.parse(datText("1", datGame("Synth Audio One (USA)", "Synth Audio One (USA) (Track 1).bin", crcOf(bin1)) +
+                                       datGame("Other (USA)", "o", 9))));
+    lib::ScanOptions opt;
+    opt.folders = {dir};
+    std::vector<lib::ScanFile> files = lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr);
+    int hashed = 0;
+    for (const lib::ScanFile& sf : files) {
+        const std::string name = fs::path(sf.path).filename().string();
+        lib::Entry e = lib::identify(sf, nullptr, &discs);
+        if (name == "good.chd" || name == "good.cdi") {
+            CHECK(sf.crcWhole == crcOf(bin1) && e.match == lib::Match::Crc && e.datName == "Synth Audio One (USA)");
+            hashed++;
+        } else {
+            CHECK(sf.crcWhole == 0 || name == "vpregap.chd");
+            CHECK(e.match != lib::Match::Crc);
+        }
+    }
+    CHECK(hashed == 2);
+    lib::ScanCache cache = lib::parseCache(lib::serializeCache(files));
+    CHECK(cache.size() == files.size());
+    for (const lib::ScanFile& sf : files)
+        if (sf.path.size() > 8 && sf.path.substr(sf.path.size() - 8) == "good.chd")
+            CHECK(cache[sf.path].crcWhole == sf.crcWhole && cache[sf.path].hashed);
+
+    // an old (VJLIB1) cache: disc images without a checksum are hashed again, carts and hashed discs are kept
+    std::string old = "VJLIB1\n/x/a.chd\tD\t10\t5\t00000000\t00000000\n/x/b.cue\tD\t10\t5\t0000ABCD\t00000000\n/x/c.j64\tC\t10\t5\t00000000\t00000000\n";
+    lib::ScanCache oc = lib::parseCache(old);
+    CHECK(oc.size() == 3 && !oc["/x/a.chd"].hashed && oc["/x/b.cue"].hashed && oc["/x/c.j64"].hashed);
+    lib::ScanCache nc = lib::parseCache("VJLIB2\n/x/a.chd\tD\t10\t5\t00000000\t00000000\n");
+    CHECK(nc.size() == 1 && nc["/x/a.chd"].hashed);   // an unhashable image is remembered as such
+}
+
 // ---- dev tool -------------------------------------------------------------------------------------------------------
 
 static int scanTool(const std::string& dir, const std::string& dbDir) {
@@ -988,6 +1464,11 @@ int main(int argc, char** argv) {
     testBiosClassification();
     testBiosInLibraryFolders();
     testTileZoom();
+    testDiscTitles();
+    testCoverLookup();
+    testCoverService();
+    testLooseNames();
+    testChdAndCdiChecksums();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();

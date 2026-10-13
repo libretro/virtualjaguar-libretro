@@ -40,12 +40,28 @@
             per-user by default.</td>
       </tr>
       <tr>
+        <td>Windows ARM64</td>
+        <td><code>VirtualJaguar-X.Y.Z-windows-arm64.zip</code>,
+            <code>...-windows-arm64-setup.exe</code></td>
+        <td>Native ARM64 build (Snapdragon X and other ARM64 PCs), same
+            layout as x64. The installer needs ARM64 Windows.</td>
+      </tr>
+      <tr>
         <td>Linux x86_64, aarch64</td>
         <td><code>VirtualJaguar-X.Y.Z-linux-&lt;arch&gt;.AppImage</code>,
             <code>virtualjaguar_X.Y.Z_&lt;amd64|arm64&gt;.deb</code></td>
         <td>Built on Ubuntu 22.04. The <code>.deb</code> installs under
             <code>/usr/lib/virtualjaguar</code> with a link in
             <code>/usr/bin</code>.</td>
+      </tr>
+      <tr>
+        <td>Linux x86_64 (Flatpak)</td>
+        <td><code>VirtualJaguar-X.Y.Z-linux-x86_64.flatpak</code></td>
+        <td>A single-file bundle:
+            <code>flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo</code>,
+            then <code>flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak</code>.
+            It can read your home folder (read-only) to find ROMs. No shaders
+            in the Flatpak yet.</td>
       </tr>
     </table></div>
     <p>Or use the installer, which can install the core, the app, or both:</p>
@@ -98,13 +114,19 @@
         required.</li>
       <li><strong>Identification</strong> is by CRC32 against the libretro
         database: No-Intro for cartridges, Redump for CDs. A name-only match is
-        badged <code>?</code>, an unidentified file <code>??</code>.</li>
+        badged <code>?</code>, an unidentified file <code>??</code>. Discs in
+        <code>.cue</code>, <code>.chd</code> and <code>.cdi</code> form are
+        checksummed from their first track; a rip that is not a Redump dump
+        is matched by its file or folder name when that is unambiguous.</li>
       <li><strong>Box art</strong> comes from
         <a href="https://github.com/libretro-thumbnails/Atari_-_Jaguar">libretro-thumbnails</a>,
         downloaded on demand for the tiles you can see and cached on your
         machine. Upstream does not have art for every title, so some tiles show
         a snapshot or a placeholder. <strong>Download box art</strong> turns
-        downloading off.</li>
+        downloading off. libretro-thumbnails has no Jaguar CD art yet, so
+        right-click any tile (or drop a PNG on it) to set your own cover, or
+        put PNGs named after the game in the <code>covers</code> folder of the
+        app's data directory.</li>
       <li>Click a tile to launch. File &gt; Open, drag and drop, and the
         command line still work, and so does File &gt; Open recent.</li>
     </ul>
@@ -304,6 +326,11 @@
         the same version of the app.</li>
       <li>Games: Doom (Game Mode &gt; Deathmatch), BattleSphere Gold, AirCars,
         and Ultra Vortek over the Voice Modem (type 911 at the title screen).</li>
+      <li><strong>Two windows on one machine</strong> work too: File &gt; New
+        window (or <code>open -n</code> on macOS) starts another copy with its
+        own save folder, so you can host in one and join <code>127.0.0.1</code>
+        in the other, or give each window its own controller for local
+        multiplayer.</li>
       <li>The same setup is on the command line:
         <code>--netplay host|join|join-discovered|browse|loopback</code>.</li>
     </ul>

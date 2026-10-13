@@ -126,6 +126,11 @@ void CoreHost::setDirectories(const std::string& systemDir, const std::string& s
     g_saveDirStr = saveDir;
 }
 
+std::string CoreHost::saveFallbackPath() const {
+    if (saveFallbackDir_.empty() || contentName_.empty()) return "";
+    return saveFallbackDir_ + contentName_ + ".srm";
+}
+
 std::string CoreHost::validExtensions() {
     retro_system_info si;
     std::memset(&si, 0, sizeof si);
@@ -771,7 +776,11 @@ void CoreHost::loadSaveRam() {
     size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
     if (p.empty() || !mem || !size) return;
     std::vector<unsigned char> buf;
-    if (readFile(p, buf) && !buf.empty()) {
+    // A second copy of the app (instance.h) keeps its saves in its own folder; the first time it
+    // plays a game it starts from the first copy's save, which it only ever reads.
+    if (!fileExists(p) && !saveFallbackPath().empty()) readFile(saveFallbackPath(), buf);
+    else readFile(p, buf);
+    if (!buf.empty()) {
         // A shorter/longer file than the current layout is copied as far as it fits.
         std::memcpy(mem, buf.data(), std::min(size, buf.size()));
     }

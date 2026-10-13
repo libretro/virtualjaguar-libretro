@@ -135,6 +135,20 @@ foreach(_t vj_remap_test vj_input_e2e vj_devices_test vj_devices_e2e)
     endif()
 endforeach()
 
+# Several copies of the app at once (instance.h): the number lock, per-instance paths, and the
+# settings-file policy (a secondary copy must never rewrite the shared config.ini).
+add_executable(vj_instance_test tests/instance_test.cpp src/instance.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_instance_test PRIVATE src)
+target_link_libraries(vj_instance_test PRIVATE ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_instance_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_instance_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_instance_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME instance_unit COMMAND vj_instance_test)
+set_tests_properties(instance_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 add_test(NAME remap_unit COMMAND vj_remap_test)
 add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")
 add_test(NAME devices_unit COMMAND vj_devices_test)

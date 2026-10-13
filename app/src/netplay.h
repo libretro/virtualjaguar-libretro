@@ -132,7 +132,9 @@ public:
     void onCoreEvent(const vj_event& e);
     // How a typed address reaches the core.  true (default): the host option takes it.  false: the core's
     // own "From file" route, <system dir>/vj_netlink.txt (the fallback for a core whose host option is a
-    // closed list).
+    // closed list).  That file is ONE file per system directory, shared by every copy of the app on a data
+    // folder (instance.h), so two copies joining different hosts through it would overwrite each other:
+    // the option route, which is per process, is the default for all instances.
     void setAddressViaOption(bool on) { viaOption_ = on; }
 
     // ---- pure helpers (unit tested) ------------------------------------------

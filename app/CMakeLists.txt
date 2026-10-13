@@ -141,10 +141,13 @@ include(VJCore)
 # dependency).  Neither found: the feature degrades to "no downloads".
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/http.cpp)
+add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/disc_hash.cpp src/http.cpp)
 target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
 target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
+# .chd track-1 checksums for disc identification (the same libchdr the core reads CHDs with)
+target_include_directories(vj_library PRIVATE "${VJ_ROOT}/deps/libchdr/include")
+target_link_libraries(vj_library PRIVATE vj_libchdr)
 set(VJ_HTTP_BACKEND "none")
 if(VJ_APP_HTTP)
     if(WIN32)
@@ -220,6 +223,7 @@ set(VJ_APP_SOURCES
     src/main.cpp
     src/app.cpp
     src/paths.cpp
+    src/instance.cpp
     src/config.cpp
     src/core_host.cpp
     src/audio.cpp
@@ -280,6 +284,16 @@ endif()
 if(VJ_DB_HAVE)
     add_custom_command(TARGET virtualjaguar POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${VJ_DB_DIR}" "$<TARGET_FILE_DIR:virtualjaguar>/libretro-db")
+endif()
+# Optional: sign the dev executable after every build (macOS).  A stable signature stops macOS
+# re-asking for network/keychain access after each rebuild.  Uses VJ_SIGN_IDENTITY / .env / the
+# login keychain like app/packaging/local-package.sh, else ad hoc.  Never fails the build.
+option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" OFF)
+if(VJ_APP_SIGN_DEV_BUILD AND APPLE)
+    add_custom_command(TARGET virtualjaguar POST_BUILD
+        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/packaging/local-package.sh"
+                --sign-exe "$<TARGET_FILE:virtualjaguar>"
+        VERBATIM)
 endif()
 # Windows: the executable keeps the console subsystem for now.  A GUI-subsystem
 # build would swallow the headless smoke test's stdout; packaging (#839) decides.
