@@ -489,10 +489,9 @@ static int m68kBusNoCharge = 0;
 
 #define M68K_BUS_CHARGE(addr, naccesses) \
    do { \
-      if (!m68kBusNoCharge) \
-         VJT_BUS_M68K((addr), (naccesses)); \
       if (busArbiter.enabled && !m68kBusNoCharge) \
          regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses), m68kClockScalePct); \
+      VJT_BUS_M68K((addr), (naccesses), m68kBusNoCharge); \
    } while (0)
 
 /* A 68000 READ from GPU local RAM samples the state of a coprocessor that

@@ -63,6 +63,7 @@ int vjtrace_armed = 0;
  * defined further down. */
 static void vjt_bus_blit_cmd(uint32_t cmd);
 static void vjt_bus_dsp_insn(uint32_t pc);
+static void vjt_bus_inject_init(void);
 
 void vjtrace_arm(void)    { vjtrace_armed = 1; }
 void vjtrace_disarm(void) { vjtrace_armed = 0; }
@@ -109,6 +110,7 @@ void vjtrace_init(void)
       ring = (vjtrace_ev *)calloc((size_t)cap, sizeof(vjtrace_ev));
    }
    ring_cap = ring ? cap : 0;
+   vjt_bus_inject_init();
 }
 
 void vjtrace_frame_tick(uint32_t frame) { cur_frame = frame; }
@@ -657,6 +659,92 @@ extern uint32_t gpu_busy_win_hi[];
 extern uint64_t gpu_busy_work_cycles;
 extern uint64_t gpu_busy_total_cycles;
 
+/* ---- S2 cross-check: inject the FIXED latency function (dev only) ----
+ *
+ * VJ_S2_INJECT=1|2|3 (low / central / high constants of the function in
+ * docs/timing-campaign-plan.md S2, the same numbers as
+ * test/tools/contention_model.py) auto-arms the census and charges every
+ * GPU external access the expected arbitration wait computed from the
+ * PREVIOUS video line's measured occupancy:
+ *    OP + refresh burst B          B^2 / (2T)
+ *    blitter (outstanding debt)    U_blit * c / 2
+ *    DSP in flight                 U_dsp * (2 x mean DSP price) / 2
+ *    68K default-owner handoff     P_idle * H
+ * via GPUChargeBusStall (wall-time sysclks).  It exists only to let the
+ * emulator itself map the predicted extra GPU time onto the present rate
+ * (the critical-path question) -- run once per level, never iterated.
+ * Compiled only under VJ_TRACE; absent from every shipped build. */
+extern void GPUChargeBusStall(uint32_t sysclks);
+static int      bus_inject = 0;
+static uint32_t inj_B = 0;          /* last line's OP+refresh burst, sysclks */
+static uint32_t inj_dsp = 0;        /* last line's DSP occupancy, sysclks */
+static uint32_t inj_blit_debt = 0;  /* blitter bus time not yet elapsed */
+static uint32_t inj_line_op = 0, inj_line_dsp = 0, inj_hl = 0;
+static uint32_t inj_frac = 0;       /* 1/256-sysclk remainder */
+static uint32_t inj_blit_c = 0, inj_H = 0, inj_ref = 0;   /* x256 */
+uint64_t vjtrace_bus_inject_sysclks = 0;
+
+static void vjt_bus_inject_init(void)
+{
+   const char *env = getenv("VJ_S2_INJECT");
+   int lvl = env ? atoi(env) : 0;
+   if (lvl < 1 || lvl > 3)
+      return;
+   bus_inject = lvl;
+   /* (low, central, high) -- must match contention_model.py P[] */
+   inj_H      = (lvl == 1 ? 2 : lvl == 2 ? 6 : 12) * 256u;
+   inj_blit_c = (lvl == 1 ? 512u : lvl == 2 ? 896u : 1280u);   /* 2 / 3.5 / 5 */
+   inj_ref    = (lvl == 3 ? 9u : 3u) * 256u;                   /* per refresh */
+   vjtrace_bus_arm(1);
+}
+
+static void vjt_bus_inject_halfline(void)
+{
+   const uint32_t T = 1690;
+   uint32_t room;
+   inj_line_op  += bus_cur.op_clk;
+   inj_line_dsp += bus_cur.dsp_mem;
+   inj_blit_debt += (bus_cur.blit_prd + bus_cur.blit_pwr) * inj_blit_c / 256u;
+   if (++inj_hl < 2)
+      return;
+   /* one video line = two halflines; refresh grouped after the OP */
+   inj_B   = inj_line_op + (uint32_t)((T / 384.0) * inj_ref / 256u);
+   inj_dsp = inj_line_dsp;
+   room = (inj_B < T) ? T - inj_B : 0;
+   inj_blit_debt = (inj_blit_debt > room) ? inj_blit_debt - room : 0;
+   inj_line_op = inj_line_dsp = inj_hl = 0;
+}
+
+static void vjt_bus_inject_charge(void)
+{
+   const uint32_t T = 1690;
+   uint32_t busy, w256, ub256, ud256, pidle256, B;
+   B = inj_B > T ? T : inj_B;
+   busy = B;
+   ub256 = 0;
+   if (inj_blit_debt)
+   {
+      ub256 = (uint32_t)(((T - B) * 256u) / T);
+      busy = T;
+   }
+   ud256 = (uint32_t)((inj_dsp * 256u) / T);
+   if (ud256 > 256u)
+      ud256 = 256u;
+   busy += inj_dsp;
+   pidle256 = (busy >= T) ? 0 : (uint32_t)(((T - busy) * 256u) / T);
+   w256 = (B * B * 256u) / (2u * T)                     /* OP + refresh */
+        + ub256 * inj_blit_c / 512u                      /* blit resid. */
+        + ud256 * 27u / 10u                              /* DSP 2x2.7/2 */
+        + (pidle256 * inj_H) / 256u;                     /* handoff */
+   inj_frac += w256;
+   if (inj_frac >= 256u)
+   {
+      GPUChargeBusStall(inj_frac >> 8);
+      vjtrace_bus_inject_sysclks += inj_frac >> 8;
+      inj_frac &= 0xFFu;
+   }
+}
+
 static uint32_t vjt_bus_price(uint32_t addr, uint32_t *row)
 {
    uint32_t r;
@@ -837,6 +925,8 @@ void vjtrace_bus_gpu(uint32_t addr)
    }
    if (GPUGetFlags() & 0x8000)
       bus_cur.gpu_dmaen++;
+   if (bus_inject)
+      vjt_bus_inject_charge();
    if (vjtrace_bus_gpu_pch && pc >= 0xF03000 && pc < 0xF04000)
       vjtrace_bus_gpu_pch[(pc - 0xF03000) >> 1]++;
 }
@@ -895,6 +985,8 @@ void vjtrace_bus_halfline(uint32_t vc)
       bus_pwr0 = *bus_perf_pwr;
    }
    bus_cur.vc = vc;
+   if (bus_inject)
+      vjt_bus_inject_halfline();
    bus_ring[bus_head % VJT_BUS_RING] = bus_cur;
    bus_head++;
    memset(&bus_cur, 0, sizeof(bus_cur));

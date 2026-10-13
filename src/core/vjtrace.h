@@ -402,7 +402,7 @@ void vjtrace_bus_op(uint32_t sysclks);
 void vjtrace_bus_op_object(int release);
 void vjtrace_bus_halfline(uint32_t vc);
 
-#define VJT_BUS_M68K(a, n)        do { if (vjtrace_bus_armed) vjtrace_bus_m68k((a), (n)); } while (0)
+#define VJT_BUS_M68K(a, n, nc)    do { if (vjtrace_bus_armed && !(nc)) vjtrace_bus_m68k((a), (n)); } while (0)
 #define VJT_BUS_M68K_INSN(pc, r)  do { if (vjtrace_bus_armed) vjtrace_bus_m68k_insn((pc), (r)); } while (0)
 #define VJT_BUS_M68K_END(r)       do { if (vjtrace_bus_armed) vjtrace_bus_m68k_slice_end(r); } while (0)
 #define VJT_BUS_M68K_STALL(c)     do { if (vjtrace_bus_armed) vjtrace_bus_m68k_stall(c); } while (0)
@@ -419,7 +419,7 @@ void vjtrace_bus_halfline(uint32_t vc);
 #define VJT_WATCH_RD(a, v, w)  do { } while (0)
 #define VJT_PCHIST_GPU(pc)     do { } while (0)
 #define VJT_PCHIST_DSP(pc)     do { } while (0)
-#define VJT_BUS_M68K(a, n)        do { } while (0)
+#define VJT_BUS_M68K(a, n, nc)    do { } while (0)
 #define VJT_BUS_M68K_INSN(pc, r)  do { } while (0)
 #define VJT_BUS_M68K_END(r)       do { } while (0)
 #define VJT_BUS_M68K_STALL(c)     do { } while (0)
