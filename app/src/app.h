@@ -75,6 +75,7 @@ public:
     bool showSettings = false;
     bool showStates = false;
     bool showAbout = false;
+    bool devSelectVideoTab = false;   // dev: --show-window settings-video opens Settings on the Video tab
     int stateSlot = 0;
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;

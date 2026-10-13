@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "present_util.h"
+
 // Entry points come from the ImGui GL3 backend's own loader (declarations
 // only; the definitions live in imgui_impl_opengl3.cpp).
 #include "imgui_impl_opengl3_loader.h"
@@ -15,6 +17,12 @@
 #endif
 #ifndef GL_RGBA8
 #define GL_RGBA8 0x8058
+#endif
+#ifndef GL_TEXTURE_SWIZZLE_A
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#endif
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D
 #endif
 
 namespace vj {
@@ -32,6 +40,7 @@ bool VideoOut::init() {
 }
 
 void VideoOut::shutdown() {
+    shader.destroyGL();   // while the GL context is still current
     if (tex_) {
         GLuint t = tex_;
         glDeleteTextures(1, &t);
@@ -44,10 +53,15 @@ void VideoOut::upload(const Frame& f) {
     glBindTexture(GL_TEXTURE_2D, tex_);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);  // Frame is tightly packed
-    // GL_RGB8 internal format: the X byte of XRGB8888 is garbage and must never
-    // reach the blend unit, so the sampler is told alpha is 1.
+    // RGBA8 storage (the format every renderer, librashader's chains included,
+    // can use as a source and copy), with the sampler told alpha is 1: the X byte
+    // of XRGB8888 is garbage and must never reach the blend unit.
     if (f.width != w_ || f.height != h_) {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, (GLsizei)f.width, (GLsizei)f.height, 0,
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
+        // Level 0 only.  librashader samples this texture with mipmapped min filters;
+        // without a mip chain it would be "incomplete" and read as black.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)f.width, (GLsizei)f.height, 0,
                      GL_BGRA, GL_UNSIGNED_BYTE, f.pixels.data());
         w_ = f.width;
         h_ = f.height;
@@ -56,6 +70,7 @@ void VideoOut::upload(const Frame& f) {
                         GL_BGRA, GL_UNSIGNED_BYTE, f.pixels.data());
     }
     serial_ = f.serial;
+    emuFrames_++;
 }
 
 ImVec4 VideoOut::draw(ImDrawList* dl, ImVec2 pos, ImVec2 size, float coreAspect,
@@ -75,41 +90,41 @@ ImVec4 VideoOut::draw(ImDrawList* dl, ImVec2 pos, ImVec2 size, float coreAspect,
         linear_ = wantLinear;
     }
 
-    float aspect = opt.aspectOverride > 0.0f ? opt.aspectOverride
-                 : coreAspect > 0.0f ? coreAspect : (float)w_ / (float)h_;
-    float dw, dh;
-    if (opt.stretch) {
-        dw = size.x;
-        dh = size.y;
-    } else {
-        dh = size.y;
-        dw = dh * aspect;
-        if (dw > size.x) {
-            dw = size.x;
-            dh = dw / aspect;
+    PresentRect r = computePresentRect(pos.x, pos.y, size.x, size.y, w_, h_, coreAspect, opt);
+
+    if (shader.enabled) {
+        // The chain renders into a texture the size of the rectangle (whole pixels),
+        // so integer scaling and aspect apply with or without a shader.
+        float rw = std::floor(r.w + 0.5f), rh = std::floor(r.h + 0.5f);
+        r.x = std::floor(r.x + (r.w - rw) * 0.5f);
+        r.y = std::floor(r.y + (r.h - rh) * 0.5f);
+        r.w = rw;
+        r.h = rh;
+        ShaderFrame sf;
+        sf.srcTex = tex_;
+        sf.srcW = w_;
+        sf.srcH = h_;
+        sf.outW = (unsigned)rw;
+        sf.outH = (unsigned)rh;
+        sf.frameCount = emuFrames_;
+        sf.aspect = rh > 0 ? rw / rh : 0.0f;
+        sf.fps = fps_;
+        unsigned out = shader.render(sf);
+        if (out) {
+            // librashader writes the output texture in the same row order as its
+            // input (row 0 = top of the picture), so the UVs are the plain ones.
+            // (Checked by `vj_shader_tests gl`, which reads the pixels back.)
+            dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)out), ImVec2(r.x / ps, r.y / ps),
+                         ImVec2((r.x + r.w) / ps, (r.y + r.h) / ps), ImVec2(0, 0), ImVec2(1, 1),
+                         IM_COL32_WHITE);
+            return ImVec4(r.x / ps, r.y / ps, r.w / ps, r.h / ps);
         }
-        if (opt.integerScale) {
-            // Largest whole multiple of the source height that fits, never below 1x
-            // unless the window is smaller than the source.
-            float k = std::floor(dh / (float)h_);
-            if (k >= 1.0f) {
-                dh = k * (float)h_;
-                dw = dh * aspect;
-                if (dw > size.x) {
-                    float kw = std::floor(size.x / (aspect * (float)h_));
-                    if (kw >= 1.0f) {
-                        dh = kw * (float)h_;
-                        dw = dh * aspect;
-                    }
-                }
-            }
-        }
+        // fall through: plain picture
     }
-    float x = std::floor(pos.x + (size.x - dw) * 0.5f);
-    float y = std::floor(pos.y + (size.y - dh) * 0.5f);
-    dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)tex_), ImVec2(x / ps, y / ps),
-                 ImVec2((x + dw) / ps, (y + dh) / ps), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
-    return ImVec4(x / ps, y / ps, dw / ps, dh / ps);
+
+    dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)tex_), ImVec2(r.x / ps, r.y / ps),
+                 ImVec2((r.x + r.w) / ps, (r.y + r.h) / ps), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+    return ImVec4(r.x / ps, r.y / ps, r.w / ps, r.h / ps);
 }
 
 unsigned VideoOut::createTextureRGBA(const void* pixels, int w, int h) {

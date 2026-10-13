@@ -111,6 +111,55 @@ Pacing follows the core's reported field rate (60.05445 Hz NTSC, 50.08013 Hz
 PAL). Audio is opened at the core's rate and resampled by SDL, with a small
 playback-ratio correction against the buffered amount so it tracks the video.
 
+## Shaders
+
+**Settings > Video > Shader** (or **View > Shader**) runs the picture through a
+RetroArch `.slangp` preset, on the GL 3.3 presenter, unmodified. Presets come
+from [librashader](https://github.com/SnowflakePowered/librashader) (MPL-2.0),
+which the app loads **at run time**: the build needs no Rust and links nothing
+extra. If the library is missing, the wrong version, or a preset does not
+compile, the picture is drawn plain and a one-line message says why; it is never
+a failure.
+
+- **Library.** At configure time CMake fetches librashader's two MIT-licensed C
+  headers (tag `librashader-v0.12.0`, pinned by SHA256; `-DVJ_LIBRASHADER_INCLUDE_DIR=<dir>`
+  for offline builds, `-DVJ_APP_SHADERS=OFF` to leave it out). At run time the
+  app looks for `librashader.dylib` / `.so` / `.dll` in `$VJ_LIBRASHADER` (a file
+  or folder; a path that does not exist means "missing"), next to the executable
+  (and `../Frameworks` in a macOS bundle), in `<data folder>/librashader/`, and
+  then the system library path (Homebrew's `/opt/homebrew/lib` included).
+  `-DVJ_APP_FETCH_LIBRASHADER=ON` downloads the pinned prebuilt runtime for macOS
+  and Windows (arm64/x86_64) and copies it next to the executable. Upstream
+  publishes no Linux binary: install the distro/OBS package or build it, and it
+  is picked up from the system path.
+- **Presets.** `shaders/` beside the executable holds two small first-party presets
+  (`vj-sharp-bilinear`, `vj-scanlines`, also the offline test fixtures) and, by
+  default, a subset of [libretro/slang-shaders](https://github.com/libretro/slang-shaders)
+  under `shaders/slang-shaders/`: the CRT (CRT-Royale, CRT-Geom, CRT-EasyMode, ...),
+  scanline and interpolation families plus every directory they reference (~23 MB,
+  ~900 files). CMake downloads the tarball for one pinned commit at configure time
+  (SHA256-verified; nothing is committed to this repo), extracts those directories
+  untouched and copies them beside the executable. **Licensing:** slang-shaders has no
+  single licence; each shader states its own (GPL, MIT, public domain, ...) in its
+  header and some directories carry LICENSE/README/THANKS files, all of which travel
+  with the copy together with a `NOTICE-virtualjaguar.txt`. No network, or a hash
+  mismatch, only means no bundled presets (a warning, never a build failure);
+  `-DVJ_APP_BUNDLE_SLANG_SHADERS=OFF` skips it for distro/offline builds and
+  `-DVJ_SLANG_SHADERS_ARCHIVE=<tarball>` supplies a local copy. For the rest of
+  slang-shaders, or a newer copy, set **Preset folder** to a full checkout; the list
+  is searched recursively and filterable, and preset parameters get sliders.
+- **Scaling.** Integer scaling and the aspect modes are independent of shaders
+  (`computePresentRect` in `present_util.cpp`): the chain renders into a texture
+  of exactly the rectangle they pick, so a CRT preset at 3x integer scale looks
+  the same as the plain picture at 3x. Both paths share that one function.
+- **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
+
+`vj_shader_tests` (CTest `shaders_unit`, `shaders_bundled`, `shaders_library`, `shaders_gl`) covers
+the pure logic and the missing-library fallback anywhere; the other two need the
+library (and a display, for the GL one) and report **skipped**, not passed,
+without them. Point `VJ_LIBRASHADER` at the library, and optionally
+`VJ_TEST_PRESETS="a.slangp;b.slangp"` / `VJ_TEST_SLANG_DIR=<checkout>`, to run them.
+
 ## Where files go
 
 | | |
@@ -152,7 +201,11 @@ To regenerate the expected hash after an intentional emulation change:
 | `cmake/VJSmokeTests.cmake` | CTest smoke tests |
 | `src/core_host.*` | libretro host: environment calls, options, SRAM, states, discs |
 | `src/app.*` | window, GL, main loop, pacing, events, save-state slots, headless runner |
-| `src/video.*` | XRGB8888 texture and aspect-correct / integer-scaled presentation |
+| `src/video.*` | XRGB8888 texture and presentation (plain, or through the shader chain) |
+| `src/present_util.*` | GL-free: where the picture goes (aspect / integer / stretch), `.slangp` parsing and folder scan |
+| `src/shaders.*`, `src/shaders_ui.cpp` | librashader loader and GL filter chain; the Shader section of Settings > Video |
+| `shaders/` | first-party presets copied beside the executable |
+| `cmake/VJShaders.cmake` | pinned header fetch, optional prebuilt runtime, shader tests |
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
 | `src/input.*` | keyboard and gamepad to libretro input |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
@@ -160,6 +213,6 @@ To regenerate the expected hash after an intentional emulation change:
 
 ## Not in this first piece
 
-Shaders (#834), cheats (#835), RetroAchievements (#836), input remapping (#837),
+Cheats (#835), RetroAchievements (#836), input remapping (#837),
 the game library (#838), packaging and signing (#839), the installer (#840).
 Microphone and netpacket are reported unsupported.
