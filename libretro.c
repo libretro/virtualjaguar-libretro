@@ -2377,21 +2377,23 @@ static bool titledb_negative_warn_seen(const char *key)
  * largest speed lever the core has (66-87% less DSP interpretation on the
  * titles measured, #569, plus the GPU port), and DSPExec()/GPUExec() gate
  * it off entirely whenever certain other options are active -- see the
- * gate comment at the top of DSPExec() in src/jerry/dsp.c.  So a user who raises the RISC overclock on
- * a borderline-slow title pays the overclock's own cost AND silently
- * forfeits the bigger win: it reads as "overclocking made it much slower"
- * with nothing anywhere to explain why.  Name the suppressor in the log.
+ * gate comment at the top of DSPExec() in src/jerry/dsp.c.  So a user who
+ * enables one of them on a borderline-slow title pays its cost AND silently
+ * forfeits the bigger win: it reads as "this made it much slower" with
+ * nothing anywhere to explain why.  Name the suppressor in the log.  (The
+ * RISC clock scale used to be on this list; it is not any more -- the skip
+ * is exact under any scale, see the gate comment in DSPExec().)
  *
  * Warn, never override.  User-set values always win -- the same hard rule
  * get_variable_pertitle() honours for known-bad titledb entries -- so this
  * only reports the conflict; nothing here changes a setting.
  *
- * The list mirrors the gate EXACTLY, and two plausible-looking options are
- * deliberately absent because they are not in it: the M68K clock scale
- * (m68kClockScalePct appears in the DSP's budget arithmetic but not in the
- * gate) and Blitter Bus Timing (vjs.blitterTiming never reaches
+ * The list mirrors the gate EXACTLY, and three plausible-looking options are
+ * deliberately absent because they are not in it: the RISC clock scale, the
+ * M68K clock scale (m68kClockScalePct appears in the DSP's budget arithmetic
+ * but not in the gate) and Blitter Bus Timing (vjs.blitterTiming never reaches
  * busArbiter.enabled -- only virtualjaguar_dram_timing sets that).  Warning
- * on either would be a false positive on the most likely overclock
+ * on any of them would be a false positive on the most likely overclock
  * combination of all.  The vjtrace/watchpoint suppressor is omitted too: it
  * is dev-facing and can be armed long after check_variables() has run.
  *
@@ -2425,17 +2427,14 @@ static void perf_conflict_append(char *buf, size_t cap, const char *what)
  * at the top of DSPExec() (src/jerry/dsp.c) -- see the comment above for what
  * is deliberately absent.  Shared by the log warning below and the option
  * sublabel (#841), so the two can never name different suppressors. */
-#define IDLE_SUP_CLOCK 1u
-#define IDLE_SUP_DRAM  2u
-#define IDLE_SUP_PIPE  4u
-#define IDLE_SUP_MEMO  8u
+#define IDLE_SUP_DRAM  1u
+#define IDLE_SUP_PIPE  2u
+#define IDLE_SUP_MEMO  4u
 
 static unsigned idle_skip_suppressor_mask(void)
 {
    unsigned mask = 0;
 
-   if (riscClockScalePct != 100)
-      mask |= IDLE_SUP_CLOCK;
    if (busArbiter.enabled)
       mask |= IDLE_SUP_DRAM;
    if (vjs.gpuPipelineTiming)
@@ -2455,8 +2454,6 @@ static void perf_warn_idle_skip_suppressed(void)
 
    who[0] = '\0';
    mask = idle_skip_suppressor_mask();
-   if (mask & IDLE_SUP_CLOCK)
-      perf_conflict_append(who, sizeof(who), "virtualjaguar_risc_clock_scale");
    if (mask & IDLE_SUP_DRAM)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_dram_timing");
    if (mask & IDLE_SUP_PIPE)
@@ -2698,20 +2695,6 @@ static void explain_compute(explain_amend_t *out, int *count)
    if (idx >= 0)
    {
       who[0] = '\0';
-      if (mask & IDLE_SUP_CLOCK)
-      {
-         const char *scale = riscClockScalePct == 50  ? "0.5x"
-                           : riscClockScalePct == 150 ? "1.5x"
-                           : riscClockScalePct == 200 ? "2x" : "non-stock";
-         int c = explain_find_def("virtualjaguar_risc_clock_scale");
-
-         if (c >= 0)
-         {
-            explain_option_name(c, name, sizeof(name));
-            snprintf(note, sizeof(note), "%s %s", name, scale);
-            perf_conflict_append(who, sizeof(who), note);
-         }
-      }
       if (mask & IDLE_SUP_DRAM)
          i = explain_find_def("virtualjaguar_dram_timing");
       else

@@ -28,9 +28,10 @@
  *      the suppression notice with the profile's reason, no notice claiming
  *      Internal Resolution was applied, the internal_resolution info says
  *      the preset is not applied.
- *   3  yarc.j64 (in-tree), idle_skip=enabled + risc_clock_scale=2x: no DB row
+ *   3  yarc.j64 (in-tree), idle_skip=enabled + dram_timing=enabled: no DB row
  *      so no preset notice, but the idle-skip info says it is inactive and
- *      names the clock scale.
+ *      names DRAM Timing.  (The RISC clock scale used to be the suppressor
+ *      here; the fast-forward is exact under any scale now -- case 11.)
  *   4  yarc.j64, defaults: the control.  No preset/suppression notice and
  *      NO re-push at all.
  *   6  Alien vs Predator, defaults, with risc_idle_skip=enabled passed
@@ -39,7 +40,7 @@
  *      "enabled", EQUAL to the default, so it changes nothing visible: the
  *      notice must name only Internal Resolution, and the idle-skip info
  *      must stay untouched.
- *   5  yarc.j64, changing risc_clock_scale 1x -> 2x -> (no change) -> 1x
+ *   5  yarc.j64, changing dram_timing off -> on -> (no change) -> off
  *      mid-session: a re-push exactly when the amendment set changes, the
  *      original info back at the end.
  *
@@ -57,12 +58,16 @@
  *      core's FIRST option push (a static string: no re-push is involved),
  *      options that apply live do not, and the set is checked against the
  *      "(Restart" labels over EVERY registered option so it cannot drift.
- *   9  yarc.j64 (a cartridge) with idle_skip + 2x clock scale, so the load
+ *   9  yarc.j64 (a cartridge) with idle_skip + dram_timing, so the load
  *      ends in a definitions re-push: CD-only options hidden, cartridge-only
  *      options (BIOS, GameDrive, hooks, blit memo) shown, and the hiding
  *      survives the re-push (which makes the frontend show every row again).
  *  10  yarc.j64 with a frontend that refuses SET_CORE_OPTIONS_DISPLAY: the
  *      core asks once, stops asking, and the load still succeeds.
+ *  11  yarc.j64, idle_skip=enabled + risc_clock_scale=2x: NOT a suppressor.
+ *      The idle-skip info stays untouched and no suppression is claimed
+ *      (the skip is exact under any RISC clock scale, so telling the user
+ *      it is "doing nothing" would be false).
  *
  * Exit status: 0 all PASS, 1 any FAIL.
  *
@@ -220,8 +225,8 @@ int main(int argc, char **argv)
     for (i = 1; (int)i < argc; i++)
         if (strcmp(argv[i], "--case") == 0 && (int)i + 1 < argc)
             case_num = atoi(argv[i + 1]);
-    if (case_num < 1 || case_num > 10) {
-        fprintf(stderr, "usage: test_option_explain [core] <rom> --case N[1-10] "
+    if (case_num < 1 || case_num > 11) {
+        fprintf(stderr, "usage: test_option_explain [core] <rom> --case N[1-11] "
                         "[--option KEY=VALUE ...]\n");
         return 1;
     }
@@ -233,7 +238,7 @@ int main(int argc, char **argv)
         /* Mutated in place mid-run; GET_VARIABLE returns the first match. */
         harness_set_option(&cfg, "virtualjaguar_risc_idle_skip", "enabled");
         scale_idx = (int)cfg.num_options;
-        harness_set_option(&cfg, "virtualjaguar_risc_clock_scale", "1x");
+        harness_set_option(&cfg, "virtualjaguar_dram_timing", "disabled");
     }
 
     if (case_num == 7) {
@@ -369,7 +374,7 @@ int main(int argc, char **argv)
 
         inactive = info_has("virtualjaguar_risc_idle_skip",
                             "Inactive: suppressed by");
-        named    = info_has("virtualjaguar_risc_idle_skip", "Clock Scale 2x");
+        named    = info_has("virtualjaguar_risc_idle_skip", "DRAM Timing");
         results[nres++] = mkres(inactive && named, "yarc_idle_skip_inactive_info",
             inactive && named ? "idle-skip info names the suppressing option"
                               : "idle-skip info not amended");
@@ -380,11 +385,23 @@ int main(int argc, char **argv)
         results[nres++] = mkres(after - before == 1, "yarc_one_repush",
             after - before == 1 ? "one re-push at load"
                                 : "re-push count != 1");
-        results[nres++] = mkres(info_pristine("virtualjaguar_risc_clock_scale"),
+        results[nres++] = mkres(info_pristine("virtualjaguar_dram_timing"),
             "yarc_suppressor_info_untouched",
-            info_pristine("virtualjaguar_risc_clock_scale")
+            info_pristine("virtualjaguar_dram_timing")
                 ? "the suppressing option's own info is unchanged"
                 : "suppressing option's info changed");
+        break;
+    }
+    case 11: {
+        int quiet_scale;
+
+        quiet_scale = info_pristine("virtualjaguar_risc_idle_skip")
+                      && osd_matching("not applied", NULL, NULL) == 0;
+        results[nres++] = mkres(quiet_scale, "yarc_clock_scale_not_a_suppressor",
+            quiet_scale ? "idle-skip info untouched at 2x RISC clock scale"
+                        : "idle-skip wrongly reported inactive at 2x");
+        results[nres++] = mkres(after == before, "yarc_clock_scale_no_repush",
+            after == before ? "no re-push" : "unexpected re-push");
         break;
     }
     case 4: {
@@ -435,7 +452,7 @@ int main(int argc, char **argv)
         run_frames(&cfg, 30);
         p0 = harness_options_push_count();
 
-        cfg.options[scale_idx].value = "2x";
+        cfg.options[scale_idx].value = "enabled";
         harness_notify_variable_update();
         run_frames(&cfg, 3);
         p1 = harness_options_push_count();
@@ -446,24 +463,24 @@ int main(int argc, char **argv)
         p2 = harness_options_push_count();
 
         snprintf(detail[3], sizeof(detail[3]),
-                 "pushes: load %u, after 2x %u, after idle+no-change %u",
+                 "pushes: load %u, after dram on %u, after idle+no-change %u",
                  p0 - before, p1 - before, p2 - before);
         results[nres++] = mkres(p0 == before && p1 == before + 1
                                 && p2 == p1, "mid_session_repush_on_change_only",
                                 detail[3]);
         results[nres++] = mkres(
-            info_has("virtualjaguar_risc_idle_skip", "Clock Scale 2x"),
+            info_has("virtualjaguar_risc_idle_skip", "DRAM Timing"),
             "mid_session_info_amended",
-            info_has("virtualjaguar_risc_idle_skip", "Clock Scale 2x")
+            info_has("virtualjaguar_risc_idle_skip", "DRAM Timing")
                 ? "idle-skip info amended after the option change"
                 : "idle-skip info not amended");
 
-        cfg.options[scale_idx].value = "1x";
+        cfg.options[scale_idx].value = "disabled";
         harness_notify_variable_update();
         run_frames(&cfg, 3);
         p3 = harness_options_push_count();
         snprintf(detail[4], sizeof(detail[4]),
-                 "%u push(es) on return to 1x", p3 - p2);
+                 "%u push(es) on return to disabled", p3 - p2);
         results[nres++] = mkres(p3 == p2 + 1 && info_pristine(
                                     "virtualjaguar_risc_idle_skip"),
             "mid_session_restored_on_revert", detail[4]);

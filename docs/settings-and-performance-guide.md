@@ -297,33 +297,37 @@ landed afterwards and the option now drives both.
 
 | Setting | Value that disables idle-skip |
 |---|---|
-| **RISC (GPU/DSP) Clock Scale** | anything other than `1x` |
 | **DRAM Timing** | enabled |
 | **GPU Pipeline Timing** | enabled |
 | **Blit Memoization** | enabled or verify |
 
-It stays active under **M68K Clock Scale** at any value, and under **Blitter Bus
-Timing**. (Verified against `src/jerry/dsp.c`, `DSPExec()`.)
+It stays active under **RISC (GPU/DSP) Clock Scale** and **M68K Clock Scale** at
+any value, and under **Blitter Bus Timing**. (Verified against
+`src/jerry/dsp.c`, `DSPExec()`.) The RISC clock scale used to be on the list
+above; the skip is exact under any scale now (it measures the cost of a loop
+iteration in the same scaled currency the budget is handed out in), so an
+overclock costs only the extra real work, not extra spinning.
 
 Since **v3.5.1** the core says so: enable idle-skip alongside any of the above
 and one `[perf]` line lands in your frontend log naming the exact setting that
 is suppressing it. It warns only — your settings are always honoured, never
 overridden. Before v3.5.1 this happened silently. So:
 
-> **Overclocking the RISC to make a slow game faster can make it slower.**
-> Setting *RISC Clock Scale* to `2x` gives the GPU and DSP twice the cycles —
-> and simultaneously forfeits a 66–87% reduction in DSP work. On a
-> DSP-bound title you have traded away the bigger win to buy the smaller one.
+> **Overclocking no longer costs you idle-skip.** Setting *RISC Clock Scale* to
+> `2x` gives the GPU and DSP twice the cycles per field, and the idle-loop
+> fast-forward keeps running, so the extra cycles a game spends waiting are
+> skipped as before. (Earlier releases switched idle-skip off at any non-`1x`
+> scale, which made a `2x` overclock several times slower on titles whose GPU or
+> DSP spends most of the field in a wait loop.)
 
 **The rule that follows from the profile data:**
 
 - **DSP-bound title** (Iron Soldier is the extreme case: 67% of frame in the
-  DSP, 99.7% of it spinning) → turn idle-skip **on**, leave RISC clock at **1x**.
-  Overclocking here buys cycles the game does not need and costs you the skip.
-- **GPU-bound title** → RISC overclock may genuinely help, and the idle-skip
-  loss may be acceptable. Try each on its own, one at a time, and compare.
-- **Never both.** They are mutually exclusive by construction, not by
-  preference.
+  DSP, 99.7% of it spinning) → turn idle-skip **on**. Overclocking here buys
+  cycles the game does not need; they are skipped, but it is still no gain.
+- **GPU-bound title** → RISC overclock may genuinely help. Keep idle-skip on.
+- **Do not combine idle-skip with** DRAM Timing, GPU Pipeline Timing or Blit
+  Memoization: those do switch it off.
 
 ### 4.4 Overclocking
 
@@ -351,7 +355,7 @@ acted on.
 | Club Drive | `risc_clock_scale = 2x` | crash | **Fixed** in v3.5.0 (#565). |
 
 If an overclocked game misbehaves, the experimental timing models (§5) sometimes
-help — but note that two of them disable idle-skip, so you may be stacking costs.
+help — but note that two of them (DRAM Timing, GPU Pipeline Timing) disable idle-skip, so you may be stacking costs.
 
 ### 4.5 Low-end platforms
 
@@ -388,7 +392,8 @@ What *is* known and actionable:
   every value behaves as disabled.
 - **Fast blitter last**, because it costs correctness.
 - **Do not overclock on a device that is already struggling.** It asks for more
-  work, not less — and it takes idle-skip away.
+  work, not less (idle-skip still removes the extra waiting, but not the extra
+  real work).
 
 ### 4.6 Pacing, fast-forward and VRR
 
@@ -627,7 +632,7 @@ normally.
 | `blit_memo` | off | you are testing it |
 | `crash_detect` | **on** | leave it on |
 | `m68k_clock_scale` | 1x | a 68K-bound game stutters (avoid 3x — see #460) |
-| `risc_clock_scale` | 1x | a GPU-bound game stutters — **and never with idle-skip** |
+| `risc_clock_scale` | 1x | a GPU-bound game stutters (idle-skip stays active) |
 | `risc_idle_skip` | **on** | you are chasing a divergence and want to rule it out |
 | `frameskip` | off | audio crackles on hardware too slow to render every frame |
 | `frameskip_max` | 3 | frameskip is on and you want a different smoothness/audio trade |
