@@ -33,6 +33,8 @@ namespace fs = std::filesystem;
 using namespace vj;
 
 static int g_fail = 0;
+// Progress markers on stderr (unbuffered): a hung CI job then shows where it stopped.
+#define STEP(name) std::fprintf(stderr, "shader_tests: step %s\n", name)
 #define CHECK(cond, ...)                                              \
     do {                                                              \
         if (!(cond)) {                                                \
@@ -71,6 +73,7 @@ static std::string str(const fs::path& p) { return p.generic_string(); }
 // ---------------------------------------------------------------------------------------
 
 static void testRect() {
+    STEP("rect");
     PresentOptions o;
     // 640x480 source in a 1000x800 area, 4:3 core aspect: width-limited, centred.
     PresentRect r = computePresentRect(0, 0, 1000, 800, 640, 480, 4.0f / 3.0f, o);
@@ -103,6 +106,7 @@ static void testRect() {
 }
 
 static void testPresetParsing() {
+    STEP("parse");
     fs::path d = makeTemp("parse");
     write(d / "a.slang", "x");
     write(d / "sub/b.slang", "x");
@@ -165,6 +169,7 @@ static void testPresetParsing() {
     write(d / "badref.slangp", "#reference \"absent.slangp\"\n");
     CHECK(!inspectPreset(str(d / "badref.slangp")).ok, "reference to a missing file");
 
+    STEP("scan");
     // Folder scan: finds presets at depth, skips .git, sorted, relative with '/'.
     write(d / ".git/hooks/x.slangp", "x");
     write(d / "deep/er/crt.slangp", "shaders = 1\n");
@@ -188,6 +193,7 @@ static void testPresetParsing() {
 }
 
 static void testFallback() {
+    STEP("fallback");
     fs::path d = makeTemp("fallback");
     write(d / "p.slang", "x");
     write(d / "p.slangp", "shaders = 1\nshader0 = p.slang\n");
@@ -220,6 +226,7 @@ static void testFallback() {
         sc.destroyGL();   // safe with nothing created
     }
 
+    STEP("fallback-garbage-lib");
     // 2. A file that is not a library at all.
     write(d / "fake" / ShaderChain::libraryFileName(), "this is not a shared library\n");
     setEnv("VJ_LIBRASHADER", str(d / "fake").c_str());
@@ -229,6 +236,7 @@ static void testFallback() {
         CHECK(!sc.libraryError().empty(), "and says why: %s", sc.libraryError().c_str());
     }
 
+    STEP("fallback-settings");
     // 3. settings round trip
     {
         Config cfg;

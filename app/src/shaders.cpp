@@ -230,7 +230,15 @@ bool ShaderChain::probeLibrary(bool retry) {
     for (const std::string& c : cands) {
         bool bare = c.find('/') == std::string::npos && c.find('\\') == std::string::npos;
         if (!bare && !fileExists(c)) continue;
+#if defined(_WIN32)
+        // A file that is not a loadable DLL must fail quietly, not raise a modal
+        // "bad image" dialog that blocks the app (or a headless test) forever.
+        UINT oldMode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+#endif
         SDL_SharedObject* h = SDL_LoadObject(c.c_str());
+#if defined(_WIN32)
+        SetErrorMode(oldMode);
+#endif
         if (!h) {
             loadErr = c + ": " + SDL_GetError();
             continue;
