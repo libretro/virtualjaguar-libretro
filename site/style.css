@@ -729,6 +729,90 @@ table tr:hover th { background: var(--code-bg); }
   .btn:active { transform: none; }
 }
 
+/* ------------------------------------------------------------- gallery */
+
+/* A responsive grid of screenshot cards; each thumbnail is a link to the
+ * full picture, and assets/js/gallery.js upgrades it to a lightbox. */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr));
+  gap: 1rem;
+  margin: 1.1rem 0 1.8rem;
+}
+.gal-card {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 3px 3px 0 var(--shadow);
+}
+.gal-link {
+  display: block;
+  padding: 6px;
+  background: var(--well);
+  line-height: 0;
+}
+.gal-link:hover, .gal-link:focus-visible {
+  outline: 2px solid var(--red-link);
+  outline-offset: -2px;
+}
+.gal-card img { display: block; width: 100%; height: auto; image-rendering: auto; }
+.gal-card figcaption {
+  margin: 0;
+  padding: 0.5rem 0.65rem 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--fg-dim);
+  border-top: 1px solid var(--line);
+}
+.gal-card figcaption strong { display: block; color: var(--fg); font-size: 0.86rem; }
+.win-body > h3 { margin-top: 1.8rem; }
+
+dialog.lightbox {
+  width: min(96vw, 80rem);
+  max-width: 96vw;
+  max-height: 96vh;
+  padding: 0;
+  color: var(--fg);
+  background: var(--panel);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 4px 4px 0 var(--shadow);
+}
+dialog.lightbox::backdrop { background: rgba(0, 0, 0, 0.78); }
+.lb-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--red-bar);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lb-title { margin-right: auto; }
+.lb-btn {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--red-link);
+  background: var(--panel);
+  padding: 0.2rem 0.7rem;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  cursor: pointer;
+}
+.lb-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.lb-well { background: var(--well); padding: 6px; line-height: 0; overflow: auto; max-height: calc(96vh - 7rem); }
+.lb-img { display: block; width: 100%; height: auto; max-height: calc(96vh - 8rem); object-fit: contain; }
+.lb-cap { margin: 0; padding: 0.5rem 0.8rem 0.7rem; font-size: 0.86rem; color: var(--fg-dim); min-height: 1.2em; }
+
 /* --------------------------------------------------------------- print */
 
 @media print {

@@ -41,28 +41,29 @@ The core can also start with no content and take a disc through RetroArch's disk
 
 ## The desktop app
 
-A standalone front end for the same core, in `app/`: SDL3 for window, audio and input, Dear ImGui for the UI, OpenGL 3.3 for presentation. It drives the core through the same `retro_*` API RetroArch uses, so core options and save states behave the same. It carries the core's version number and is released with it. Project page with more screenshots: **[jaguar.provenance-emu.com/app.html](https://jaguar.provenance-emu.com/app.html)**.
+A standalone front end for the same core, in `app/`: SDL3 for window, audio and input, Dear ImGui for the UI, OpenGL 3.3 for presentation. It drives the core through the same `retro_*` API RetroArch uses, so core options and save states behave the same. It carries the core's version number and is released with it (new in v3.9.0). **Screenshot gallery and downloads: [jaguar.provenance-emu.com/app.html](https://jaguar.provenance-emu.com/app.html#gallery)**.
 
 <p>
-  <img src="site/assets/app_library.png" width="49%" alt="The app's game library: a grid of Atari Jaguar box art tiles under Cartridges, Jaguar CD and BIOS and system tabs">
-  <img src="site/assets/app_game_crt.png" width="49%" alt="The Alien vs Predator menu drawn through the CRT-Royale shader preset">
+  <img src="site/assets/app_library.png" width="49%" alt="The app's game library: Favorites and Recently played strips above a grid of Atari Jaguar box art tiles, under Cartridges, Jaguar CD, Save states and BIOS and system tabs">
+  <img src="site/assets/app_game_crt.png" width="49%" alt="The Alien vs Predator menu drawn through the crt-gdv-mini-ultra-trinitron aperture-grille shader preset">
 </p>
 
-- **Game library:** the home screen is a grid of your games, in Cartridges, Jaguar CD and BIOS & system tabs. Files are identified by CRC32 against the libretro database (No-Intro, Redump), and box art is downloaded on demand from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar) and cached; not every title has art upstream. File > Open, drag and drop and the command line still work.
-- **Shaders:** RetroArch `.slangp` presets through [librashader](https://github.com/SnowflakePowered/librashader), with CRT, scanline and sharp-bilinear presets from [slang-shaders](https://github.com/libretro/slang-shaders) bundled, and integer scaling. The macOS and Windows packages bundle librashader; on Linux install a librashader package or build it, and the macOS universal package currently ships an arm64-only copy, so shaders may be unavailable on Intel Macs ([packaging notes](app/packaging/README.md#macos-notes)).
-- **Cheats:** the libretro cheat database for the running game, bundled (CC BY-SA 4.0), plus manual codes.
-- **RetroAchievements:** softcore by default, optional hardcore, which refuses loading save states (saving still works) and blocks cheats. Cartridges and `.cue` discs are identified; `.chd` and `.cdi` discs are not yet.
-- **Controls:** per-device and per-game remapping, all 12 keypad keys on a gamepad, keyboard play with the Pro Controller 6-button layout, an on-screen keypad (F2) and a controls overlay (F3) that appears for keyboard players. Mice, the Tempest 2000 rotary, analog, driving, paddle, 6D, light gun and Team Tap are chosen under Settings > Input > Devices & players.
-- **Save states** with thumbnails (F5 save, F7 load, F6 slot), and a state manager.
-- **Netplay:** a window for the link-cable games (Doom, BattleSphere, AirCars, and Ultra Vortek over the Voice Modem) on a local network, with LAN discovery. It is not rollback netplay, and Internet or VPN play is not supported.
+- **Library:** your games in Cartridges, Jaguar CD, Favorites, Recently played, Save states and BIOS & system tabs; identified by CRC32 (No-Intro, Redump), box art from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar) on demand, title cards or your own cover for discs.
+- **Playing:** save states with thumbnails and "Resume where I left off", per-device and per-game remapping (all 12 keypad keys, rotary, mice, light gun, Team Tap), cheats from the libretro database, several windows at once, and link-cable netplay on a local network (not rollback, not for the Internet).
+- **Look & feel:** dark, light and custom themes with an editor, a choice of interface font, RetroArch `.slangp` shaders through [librashader](https://github.com/SnowflakePowered/librashader) with the [slang-shaders](https://github.com/libretro/slang-shaders) CRT, scanline and interpolation families bundled, aspect fit and integer scaling, and native menus on each OS. The macOS and Windows packages bundle librashader; on Linux install a librashader package, and the macOS universal package currently ships an arm64-only copy, so shaders may be unavailable on Intel Macs ([packaging notes](app/packaging/README.md#macos-notes)).
+- **RetroAchievements and Discord:** softcore by default, optional hardcore (no loading states, no cheats), login token kept in the system keychain; optional Discord Rich Presence for the game you are playing. See the [privacy policy](https://jaguar.provenance-emu.com/privacy.html) and [terms](https://jaguar.provenance-emu.com/terms.html).
+- **Developer tools:** memory and palette editors, cheat scanner, Object Processor list, blitter log, texture browser, audio scope and a CPU debugger (68000, GPU, DSP).
 
 | System | Package (`X.Y.Z` is the version; nightlies use `nightly`) |
 | --- | --- |
 | macOS 11+, Apple Silicon and Intel | `VirtualJaguar-X.Y.Z-macos-universal.zip` |
 | Windows x64 | `VirtualJaguar-X.Y.Z-windows-x64.zip` (portable) or `...-windows-x64-setup.exe` (installer) |
+| Windows ARM64 | `VirtualJaguar-X.Y.Z-windows-arm64.zip` (portable) or `...-windows-arm64-setup.exe` (installer) |
 | Linux x86_64, aarch64 | `VirtualJaguar-X.Y.Z-linux-<arch>.AppImage` or `virtualjaguar_X.Y.Z_<amd64\|arm64>.deb` |
+| Linux x86_64 (Flatpak) | `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` |
 
-Until signing is configured for the release, macOS may need right-click > Open the first time and Windows SmartScreen may warn about the installer. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
+<!-- SIGNING: confirm -->
+The macOS app is signed with a Developer ID and notarized, and the Windows installer is signed; builds you make yourself are unsigned until you sign them. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
 
 ## Features
 
