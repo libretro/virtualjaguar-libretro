@@ -253,6 +253,7 @@ set(VJ_APP_SOURCES
     src/netplay.cpp
     src/netplay_addr.cpp
     src/netplay_ui.cpp
+    # Debug tools (#652 / #833): the session, the Tools menu and one window (+ its pure logic) per tool.
     src/debug/debug_session.cpp
     src/debug/debug_ui.cpp
     src/debug/memory_view.cpp
@@ -260,20 +261,17 @@ set(VJ_APP_SOURCES
     src/debug/clut_ui.cpp
     src/debug/cheat_scan.cpp
     src/debug/scanner_actions.cpp
-    src/debug/scanner_ui.cpp)
-
-# Debug tools (#652 / #833): the WP6/WP7 windows (Textures, Blitter log, Audio scope) and the logic they
-# share with the unit tests.  debug_session.cpp is listed once however many work packages add it.
-list(APPEND VJ_APP_SOURCES
+    src/debug/scanner_ui.cpp
+    src/debug/op_decode.cpp
+    src/debug/op_render.cpp
+    src/debug/op_view.cpp
+    src/debug/op_ui.cpp
     src/debug/texture_pack.cpp
     src/debug/texture_ui.cpp
     src/debug/blitter_log.cpp
     src/debug/blitter_ui.cpp
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp)
-if(NOT "src/debug/debug_session.cpp" IN_LIST VJ_APP_SOURCES)
-    list(APPEND VJ_APP_SOURCES src/debug/debug_session.cpp)
-endif()
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)

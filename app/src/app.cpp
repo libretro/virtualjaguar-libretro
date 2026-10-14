@@ -1,4 +1,5 @@
 #include "app.h"
+#include "debug/op_ui.h"
 #include "debug/blitter_ui.h"
 #include "debug/scope_ui.h"
 #include "debug/texture_ui.h"
@@ -307,6 +308,7 @@ void App::wireHost() {
     host.onDebugIface = [this](const vj_debug_iface* i) { debug.setIface(i); };
     debug.runUiFrame = [this] { haltedFrame(); };         // the core is parked in retro_run(): UI only
     debug.abortHalt = [this] { return quit; };            // closing the window while halted lets the core go
+    registerObjectsTool(*this);                           // Tools > Object list... (debug/op_ui.cpp)
     debug.registerPlaceholderTools();
     debug.onHalt.push_back([this](int target, unsigned pc, int reason) {
         audio.setPaused(true);                            // no stale buffer droning while the game is stopped
@@ -976,6 +978,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "keypad") input.overlay.open = true;
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "controls") input.controls.show = true;
+    else if (a.showWindow == "objects") setObjectsWindowOpen(true);
     unsigned uiFrames = 0;
 
     std::string firstErr;
