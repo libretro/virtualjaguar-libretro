@@ -47,7 +47,11 @@ Role roleOf(const lib::BiosInfo& b, uint64_t size);
 struct Pick {
     std::string path;
     std::string label;
+    std::string id;      // fileIdentity(path): compare this, not the path, to ask "is it the chosen one?"
 };
+// The file's identity on disk (the real path when it exists, else the normalised absolute one).  Cached for a
+// couple of seconds per path, so the per-frame draw code never hits the disk for it.
+std::string fileIdentity(const std::string& path);
 // Every scanned BIOS file the core accepts for `role`, in scan order.  A file reached twice (a library folder
 // that is also, or sits inside, the system folder, or a symlinked folder) is listed once.
 std::vector<Pick> picksFor(const std::vector<lib::Entry>& entries, Role role);

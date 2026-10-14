@@ -40,7 +40,7 @@ Role roleOf(const lib::BiosInfo& b, uint64_t size) {
 namespace {
 
 // The file's identity on disk: the real path when the file exists, else the lexically normal absolute one.
-std::string identityOf(const std::string& path) {
+std::string identityUncached(const std::string& path) {
     std::error_code ec;
     std::filesystem::path p = std::filesystem::canonical(std::filesystem::u8path(path), ec);
     return ec ? absolutePath(path) : p.string();
@@ -58,9 +58,21 @@ std::string nameOf(const std::string& path) {
 
 }  // namespace
 
+std::string fileIdentity(const std::string& path) {
+    // UI thread only.  A path's identity is re-read after kTtl so a link that was re-pointed is noticed.
+    static std::map<std::string, std::pair<uint64_t, std::string>> cache;
+    const uint64_t kTtl = 2000, now = SDL_GetTicks();
+    auto it = cache.find(path);
+    if (it != cache.end() && now - it->second.first < kTtl) return it->second.second;
+    if (cache.size() > 1024) cache.clear();
+    std::string id = identityUncached(path);
+    cache[path] = {now, id};
+    return id;
+}
+
 bool samePath(const std::string& a, const std::string& b) {
     if (a.empty() || b.empty()) return a == b;
-    return a == b || identityOf(a) == identityOf(b);
+    return a == b || fileIdentity(a) == fileIdentity(b);
 }
 
 std::vector<Pick> picksFor(const std::vector<lib::Entry>& entries, Role role) {
@@ -68,11 +80,14 @@ std::vector<Pick> picksFor(const std::vector<lib::Entry>& entries, Role role) {
     std::set<std::string> seen;   // file identities already listed
     for (const lib::Entry& e : entries) {
         if (e.section != lib::Section::Bios || roleOf(e.bios, e.file.size) != role) continue;
-        if (!seen.insert(identityOf(e.file.path)).second) continue;
+        const std::string id = fileIdentity(e.file.path);
+        if (!seen.insert(id).second) continue;
         char crc[16] = "";
         if (e.file.crcWhole) std::snprintf(crc, sizeof crc, "%08X", e.file.crcWhole);
-        out.push_back({e.file.path, nameOf(e.file.path) + (e.bios.recognized ? "  -  " + e.bios.title : std::string()) +
-                                        (crc[0] ? std::string("  (") + crc + ")" : std::string())});
+        out.push_back({e.file.path,
+                       nameOf(e.file.path) + (e.bios.recognized ? "  -  " + e.bios.title : std::string()) +
+                           (crc[0] ? std::string("  (") + crc + ")" : std::string()),
+                       id});
     }
     // The same label more than once (one dump in several folders): say which folder each is in.
     std::map<std::string, int> uses;

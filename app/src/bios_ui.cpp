@@ -22,10 +22,11 @@ std::string baseOf(const std::string& path) {
 }
 
 // What the combo shows for the current choice.
-std::string choiceLabel(const std::string& chosen, const std::vector<bios::Pick>& picks, const std::string& autoText) {
+std::string choiceLabel(const std::string& chosen, const std::string& chosenId, const std::vector<bios::Pick>& picks,
+                        const std::string& autoText) {
     if (chosen.empty()) return "Auto: " + autoText;
     for (const bios::Pick& p : picks)
-        if (bios::samePath(p.path, chosen)) return p.label;
+        if (p.id == chosenId) return p.label;
     return baseOf(chosen) + (fileExists(chosen) ? "" : "  (file is gone: Auto is used)");
 }
 
@@ -62,6 +63,7 @@ void drawRole(App& app, bios::Role role) {
     // ---- which file ----
     const std::vector<bios::Pick> picks = bios::picksFor(app.library.entries(), role);
     const std::string chosen = app.biosChoice.of(role);
+    const std::string chosenId = chosen.empty() ? std::string() : bios::fileIdentity(chosen);   // once per frame, not per row
     std::string autoText;
     if (cart) {
         const std::string t = host.optionValueFor("virtualjaguar_bios_type", "k");
@@ -72,14 +74,14 @@ void drawRole(App& app, bios::Role role) {
                        : "system folder, else built-in retail";
     }
     ImGui::SetNextItemWidth(ui::fitWidth(0.7f, 18.0f, 40.0f));
-    if (ImGui::BeginCombo(cart ? "Boot ROM" : "CD BIOS", choiceLabel(chosen, picks, autoText).c_str())) {
+    if (ImGui::BeginCombo(cart ? "Boot ROM" : "CD BIOS", choiceLabel(chosen, chosenId, picks, autoText).c_str())) {
         // Every row has its own ID scope (#932): the same dump in two folders must not share one.
         ImGui::PushID("auto");
         if (ImGui::Selectable(("Auto: " + autoText).c_str(), chosen.empty())) app.setBiosChoice(role, "");
         ImGui::PopID();
         for (const bios::Pick& p : picks) {
             ImGui::PushID(p.path.c_str());
-            if (ImGui::Selectable(p.label.c_str(), bios::samePath(p.path, chosen))) app.setBiosChoice(role, p.path);
+            if (ImGui::Selectable(p.label.c_str(), p.id == chosenId)) app.setBiosChoice(role, p.path);
             ImGui::PopID();
         }
         if (picks.empty()) ImGui::TextDisabled("No usable files found yet: Import BIOS file... or add a folder.");
@@ -129,7 +131,7 @@ void drawRole(App& app, bios::Role role) {
     if (sb.seen && host.isLoaded())
         ui::hint("Running now: %s", bios::describeStaged(sb.source, sb.where, sb.crc).c_str());
     else
-        ui::hint("In use at the next start: %s", chosen.empty() ? "Auto" : choiceLabel(chosen, picks, autoText).c_str());
+        ui::hint("In use at the next start: %s", chosen.empty() ? "Auto" : choiceLabel(chosen, chosenId, picks, autoText).c_str());
     if (sb.rejected)
         ui::coloredWrapped(ui::vec4(ui::pal().warning),
                            (std::string("The core refused ") + baseOf(sb.rejectedPath) + " (missing, the wrong size or not a " +
