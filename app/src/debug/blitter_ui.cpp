@@ -208,7 +208,7 @@ void blitterToolDraw() {
                  "out before this list is refreshed are counted as missed.",
                  (int)VJ_DBG_BLIT_LOG_SIZE);
         if (!g.session->enabled()) {
-            ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), g.session->disabledReason().c_str());
+            ui::coloredWrapped(ui::vec4(ui::pal().warning), g.session->disabledReason().c_str());
         } else {
             const vj_debug_iface* f = g.session->iface();
             const uint64_t ser = g.session->refreshSerial();

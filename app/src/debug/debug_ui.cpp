@@ -7,6 +7,7 @@
 #include "scanner_ui.h"
 #include "scope_ui.h"
 #include "texture_ui.h"
+#include "ui_util.h"
 #include "imgui.h"
 
 namespace vj {
@@ -73,7 +74,7 @@ void drawDebugOverlay(App& app, float areaX, float areaY) {
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##debug_halt_bar", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "HALTED");
+        ImGui::TextColored(ui::vec4(ui::pal().warning), "HALTED");
         ImGui::SameLine();
         ImGui::Text("%s at $%06X", targetName(d.haltedTarget()), d.haltedPc());
         const char* why = reasonName(d.haltReason());

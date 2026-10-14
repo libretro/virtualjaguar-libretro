@@ -44,7 +44,7 @@ void drawWave(const char* id, const std::vector<int16_t>& s, ImVec2 size, ImU32 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(ImGuiCol_FrameBg));
     const float mid = p.y + size.y * 0.5f;
-    dl->AddLine(ImVec2(p.x, mid), ImVec2(p.x + size.x, mid), IM_COL32(128, 128, 128, 90));
+    dl->AddLine(ImVec2(p.x, mid), ImVec2(p.x + size.x, mid), ui::u32(ui::pal().textMuted, 0.4f));
     if (s.empty()) return;
     const int cols = std::max(1, (int)size.x);
     const float half = size.y * 0.5f - 1.0f;
@@ -72,10 +72,10 @@ void drawMeter(const char* name, const PeakMeter& m, int peak) {
     ImGui::InvisibleButton(name, ImVec2(w, h));
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(ImGuiCol_FrameBg));
-    ImU32 col = m.level > 0.98f ? IM_COL32(220, 60, 60, 255) : m.level > 0.7f ? IM_COL32(220, 190, 60, 255) : IM_COL32(60, 190, 90, 255);
+    ImU32 col = ui::u32(m.level > 0.98f ? ui::pal().error : m.level > 0.7f ? ui::pal().warning : ui::pal().success);
     dl->AddRectFilled(p, ImVec2(p.x + w * m.level, p.y + h), col);
     const float hx = p.x + w * m.hold;
-    dl->AddLine(ImVec2(hx, p.y), ImVec2(hx, p.y + h), IM_COL32(255, 255, 255, 220), 2.0f);
+    dl->AddLine(ImVec2(hx, p.y), ImVec2(hx, p.y + h), ui::u32(ui::pal().text), 2.0f);
     ImGui::SameLine();
     const float db = peakDb(peak);
     if (peak <= 0) ImGui::TextDisabled("-inf dB");
@@ -150,13 +150,13 @@ void scopeToolDraw() {
         const float avail = ImGui::GetContentRegionAvail().y;
         const float h = std::max(ui::em(4.0f), (avail - ui::em(11.0f)) * 0.5f);
         ImGui::TextUnformatted("Left");
-        drawWave("##L", g.l, ImVec2(ImGui::GetContentRegionAvail().x, h), IM_COL32(110, 200, 255, 255));
+        drawWave("##L", g.l, ImVec2(ImGui::GetContentRegionAvail().x, h), theme::isDark() ? IM_COL32(110, 200, 255, 255) : IM_COL32(20, 100, 180, 255));
         ImGui::TextUnformatted("Right");
-        drawWave("##R", g.r, ImVec2(ImGui::GetContentRegionAvail().x, h), IM_COL32(255, 170, 110, 255));
+        drawWave("##R", g.r, ImVec2(ImGui::GetContentRegionAvail().x, h), theme::isDark() ? IM_COL32(255, 170, 110, 255) : IM_COL32(190, 90, 20, 255));
         drawMeter("L", g.meterL, pk.left);
         drawMeter("R", g.meterR, pk.right);
         if (g.meterL.clipped || g.meterR.clipped) {
-            ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Full-scale samples were seen (clipping).");
+            ui::coloredWrapped(ui::vec4(ui::pal().error), "Full-scale samples were seen (clipping).");
             ImGui::SameLine();
         }
         if (ImGui::SmallButton("Reset peaks")) {

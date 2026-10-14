@@ -40,8 +40,8 @@ struct ClutState {
 };
 ClutState g_clut;
 
-const ImVec4 kWarn(1.0f, 0.75f, 0.35f, 1.0f);
-const ImVec4 kErr(1.0f, 0.5f, 0.5f, 1.0f);
+ImVec4 warnCol() { return ui::vec4(ui::pal().warning); }
+ImVec4 errCol() { return ui::vec4(ui::pal().error); }
 
 ImU32 rgbU32(uint32_t rgb) { return IM_COL32((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255); }
 
@@ -85,7 +85,7 @@ void drawClutWindow(DebugSession& s) {
         return;
     }
     if (!s.enabled()) {
-        ui::coloredWrapped(kWarn, s.disabledReason().c_str());
+        ui::coloredWrapped(warnCol(), s.disabledReason().c_str());
         ImGui::End();
         return;
     }
@@ -138,11 +138,14 @@ void drawClutWindow(DebugSession& s) {
         const uint32_t rgb = swatchColor(c.mode, c.a[(size_t)i], c.cry);
         dl->AddRectFilled(ImVec2(x, y), ImVec2(x + sw, y + sw), rgbU32(rgb));
         if (c.haveSel && c.sel == i)
-            dl->AddRect(ImVec2(x - 1, y - 1), ImVec2(x + sw + 1, y + sw + 1), IM_COL32(255, 255, 255, 255), 0.0f, 0, 2.0f);
+            {   // selection: a text-colour frame with a window-colour keyline so it reads on any swatch
+            dl->AddRect(ImVec2(x - 1, y - 1), ImVec2(x + sw + 1, y + sw + 1), ui::u32(ui::pal().text), 0.0f, 0, 2.0f);
+            dl->AddRect(ImVec2(x + 1, y + 1), ImVec2(x + sw - 1, y + sw - 1), ImGui::GetColorU32(ImGuiCol_WindowBg));
+        }
         else if (hover == i)
-            dl->AddRect(ImVec2(x, y), ImVec2(x + sw, y + sw), IM_COL32(255, 255, 255, 200));
+            dl->AddRect(ImVec2(x, y), ImVec2(x + sw, y + sw), ui::u32(ui::pal().text, 0.8f));
         if (c.a[(size_t)i] != c.b[(size_t)i])   // tables A and B differ (cannot happen through the bus; flag it)
-            dl->AddRect(ImVec2(x + 1, y + 1), ImVec2(x + sw - 1, y + sw - 1), IM_COL32(255, 60, 60, 255));
+            dl->AddRect(ImVec2(x + 1, y + 1), ImVec2(x + sw - 1, y + sw - 1), ui::u32(ui::pal().error));
     }
     if (hover >= 0) {
         const unsigned raw = c.a[(size_t)hover];
@@ -172,7 +175,7 @@ void drawClutWindow(DebugSession& s) {
     const uint32_t rgb = swatchColor(c.mode, raw, c.cry);
     ImGui::Text("Entry %u ($%02X)   raw $%04X   RGB #%06X", idx, idx, raw, rgb);
     ui::hint("%s", describe(c.mode, raw).c_str());
-    if (c.a[idx] != c.b[idx]) ui::coloredWrapped(kErr, "Table B holds a different value for this entry.");
+    if (c.a[idx] != c.b[idx]) ui::coloredWrapped(errCol(), "Table B holds a different value for this entry.");
 
     const bool canEdit = s.allowRegisterWrites;
     if (!canEdit) {
@@ -180,7 +183,7 @@ void drawClutWindow(DebugSession& s) {
         ui::hint("Editing the palette writes TOM's registers; tick this to enable it (the same switch as in the Memory window).");
     } else {
         ImGui::Checkbox("Allow register writes", &s.allowRegisterWrites);
-        ui::coloredWrapped(kWarn, "Register writes are on. Each change writes both CLUT tables.");
+        ui::coloredWrapped(warnCol(), "Register writes are on. Each change writes both CLUT tables.");
     }
     ImGui::BeginDisabled(!canEdit);
     // The picker keeps the colour the user chose (the table holds the nearest reproducible one); it resyncs
@@ -240,7 +243,7 @@ void drawClutWindow(DebugSession& s) {
             c.rawFor = -1;
         }
     }
-    if (!c.status.empty()) ui::coloredWrapped(c.statusErr ? kErr : ImGui::GetStyleColorVec4(ImGuiCol_Text), c.status.c_str());
+    if (!c.status.empty()) ui::coloredWrapped(c.statusErr ? errCol() : ImGui::GetStyleColorVec4(ImGuiCol_Text), c.status.c_str());
     if (ImGui::Button("Show in Memory viewer")) showMemoryAt(s, clutAddrA(idx));
     ImGui::End();
 }

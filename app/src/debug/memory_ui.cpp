@@ -118,9 +118,9 @@ void syncCore(DebugSession& s) {
     m.lastHit = false;
 }
 
-const ImVec4 kChanged(1.0f, 0.55f, 0.25f, 1.0f);
-const ImVec4 kWarn(1.0f, 0.75f, 0.35f, 1.0f);
-const ImVec4 kErr(1.0f, 0.5f, 0.5f, 1.0f);
+ImVec4 changedCol() { return ui::vec4(ui::pal().warning); }
+ImVec4 warnCol() { return ui::vec4(ui::pal().warning); }
+ImVec4 errCol() { return ui::vec4(ui::pal().error); }
 
 void beginEdit(DebugSession& s, unsigned addr, unsigned w) {
     MemState& m = g_mem;
@@ -325,10 +325,10 @@ void drawControls(DebugSession& s, const std::vector<vj_debug_region>& regs) {
     ImGui::SameLine();
     ImGui::Checkbox("Highlight changes", &m.showChanges);
     if (s.allowRegisterWrites)
-        ui::coloredWrapped(kWarn,
+        ui::coloredWrapped(warnCol(),
                            "Register writes are on: a wrong value can hang or crash the game. B_CMD, G_CTRL, D_CTRL, OLP, "
                            "LTXD, RTXD and the CD registers stay blocked.");
-    if (!m.status.empty()) ui::coloredWrapped(m.statusErr ? kErr : ImGui::GetStyleColorVec4(ImGuiCol_Text), m.status.c_str());
+    if (!m.status.empty()) ui::coloredWrapped(m.statusErr ? errCol() : ImGui::GetStyleColorVec4(ImGuiCol_Text), m.status.c_str());
 }
 
 void drawGrid(DebugSession& s, const vj_debug_region& r, float footerH) {
@@ -356,9 +356,9 @@ void drawGrid(DebugSession& s, const vj_debug_region& r, float footerH) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 colText = ImGui::GetColorU32(ImGuiCol_Text);
     const ImU32 colDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    const ImU32 colChg = ImGui::GetColorU32(kChanged);
-    const ImU32 colSel = ImGui::GetColorU32(ImVec4(0.25f, 0.45f, 0.85f, 0.55f));
-    const ImU32 colAddr = ImGui::GetColorU32(ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
+    const ImU32 colChg = ImGui::GetColorU32(changedCol());
+    const ImU32 colSel = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+    const ImU32 colAddr = theme::isDark() ? IM_COL32(140, 190, 255, 255) : IM_COL32(25, 75, 170, 255);
     const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     // keyboard navigation (not while typing into a cell or another box)
@@ -569,7 +569,7 @@ void drawMemoryWindow(DebugSession& s, CheatManager* cheats) {
         return;
     }
     if (!s.enabled()) {
-        ui::coloredWrapped(kWarn, s.disabledReason().c_str());
+        ui::coloredWrapped(warnCol(), s.disabledReason().c_str());
         ImGui::End();
         return;
     }

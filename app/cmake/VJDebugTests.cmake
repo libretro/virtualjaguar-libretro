@@ -55,7 +55,8 @@ set_tests_properties(debug_memory_unit PROPERTIES TIMEOUT 60)
 #                          value reaches the interface, ROM / register / B_CMD edits are refused before it.
 add_executable(vj_debug_memory_ui_test
     tests/debug_memory_ui_test.cpp src/debug/memory_ui.cpp src/debug/clut_ui.cpp src/debug/memory_view.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/paths.cpp "${VJ_ROOT}/src/core/cheat.c")
+    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/paths.cpp "${VJ_ROOT}/src/core/cheat.c"
+    src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
 target_include_directories(vj_debug_memory_ui_test PRIVATE src src/debug tests "${VJ_ROOT}/src/debug"
     "${VJ_ROOT}/src/core" "${VJ_ROOT}/libretro-common/include")
 target_link_libraries(vj_debug_memory_ui_test PRIVATE vj_imgui ${VJ_SDL3_TARGET})
@@ -111,7 +112,8 @@ set_tests_properties(debug_scan_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSI
 #                        narrowed, a value edited with Enter, the Add-as-cheat popup, undone, hardcore.
 add_executable(vj_debug_scan_ui_smoke
     tests/debug_scan_ui_smoke.cpp src/debug/scanner_ui.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp)
+    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp
+    src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
 target_include_directories(vj_debug_scan_ui_smoke PRIVATE src src/debug tests "${VJ_ROOT}/src/debug")
 target_link_libraries(vj_debug_scan_ui_smoke PRIVATE vj_core vj_imgui ${VJ_SDL3_TARGET})
 if(MSVC)

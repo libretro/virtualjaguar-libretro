@@ -45,7 +45,7 @@ struct UiState {
 };
 UiState g;
 
-ImVec4 warnColor() { return ImVec4(1.0f, 0.8f, 0.4f, 1.0f); }
+ImVec4 warnColor() { return ui::vec4(ui::pal().warning); }
 
 void freeTexture() {
     if (g.tex && g.destroyTex) g.destroyTex(g.tex);

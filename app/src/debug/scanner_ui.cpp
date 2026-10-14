@@ -269,7 +269,7 @@ void drawControls(DebugSession& session, CoreHost& host) {
     ImGui::Checkbox("Hex", &g.hexView);
 
     if (!g.message.empty())
-        ui::coloredWrapped(g.messageIsError ? ImVec4(1.0f, 0.5f, 0.5f, 1.0f) : ImVec4(0.6f, 0.9f, 0.6f, 1.0f), g.message.c_str());
+        ui::coloredWrapped(g.messageIsError ? ui::vec4(ui::pal().error) : ui::vec4(ui::pal().success), g.message.c_str());
     else if (!active)
         ui::hint("Pick \"Unknown initial value\" (or a value), press Start search, let the game run, then use Next scan "
                  "(Changed, Increased, Equal to ...) until only a few addresses are left.");
@@ -287,7 +287,7 @@ void drawAddPopup(DebugSession& session, CheatManager& cheats) {
     ImGui::SetNextItemWidth(ui::em(10));
     ImGui::InputText("Value to hold", g.addVal, sizeof g.addVal);
     static std::string err;
-    if (!err.empty()) ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), err.c_str());
+    if (!err.empty()) ui::coloredWrapped(ui::vec4(ui::pal().error), err.c_str());
     if (ImGui::Button("Add")) {
         int64_t v = 0;
         if (!parseEdit(g.addVal, v)) {
@@ -318,7 +318,7 @@ void drawResults(DebugSession& session, CheatManager& cheats, CoreHost& host) {
 
     const bool canCheat = !cheats.blockedNow() && cheats.active();
     if (!canCheat)
-        ui::coloredWrapped(ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+        ui::coloredWrapped(ui::vec4(ui::pal().warning),
                            cheats.blockedNow() ? "Cheats are disabled in hardcore mode." : "Load a game to add cheats.");
 
     ImGuiTableFlags tf = ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
@@ -457,7 +457,7 @@ void drawScanner(DebugSession& session, CheatManager& cheats, CoreHost& host) {
     }
     if (!session.enabled()) {
         // Greyed: nothing here may run (hardcore, no game, no core interface).
-        ui::coloredWrapped(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), session.disabledReason().c_str());
+        ui::coloredWrapped(ui::vec4(ui::pal().warning), session.disabledReason().c_str());
         if (g.scan.active()) resetSearch();
         ImGui::End();
         return;

@@ -428,7 +428,7 @@ void drawBody(double now) {
              "replaced.");
     if (!g.session->enabled()) {
         ImGui::Spacing();
-        ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), g.session->disabledReason().c_str());
+        ui::coloredWrapped(ui::vec4(ui::pal().warning), g.session->disabledReason().c_str());
         return;
     }
     tex::OptionIO io = optionIO();
@@ -468,7 +468,7 @@ void drawBody(double now) {
     if (ImGui::Button("Open dump folder")) openFolder(g.index.dir(), false);
 
     if (!g.status.empty()) {
-        if (g.statusIsError) ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), g.status.c_str());
+        if (g.statusIsError) ui::coloredWrapped(ui::vec4(ui::pal().error), g.status.c_str());
         else ImGui::TextWrapped("%s", g.status.c_str());
     }
     const tex::Manifest& m = g.index.manifest();
