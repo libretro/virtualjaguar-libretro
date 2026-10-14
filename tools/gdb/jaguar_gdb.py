@@ -7,17 +7,12 @@ Load it with `source tools/gdb/jaguar_gdb.py` (tools/gdb/connect.sh and
 tools/gdb/jaguar.gdbinit do this for you), or install it permanently with
 tools/gdb/install.sh.
 
-POSSIBLE KNOWN ISSUE: while building this file, a real LLDB `gdb-remote`
-attach to the stub was confirmed (via a proxied, byte-logged connection)
-to hang indefinitely, root-caused to the stub replying with silence
-instead of the RSP-mandated empty packet for a request it doesn't
-implement. That was verified against LLDB specifically, not gdb -- this
-project's own toolchain ships no gdb to test against (see "No shipped
-m68k-elf-gdb" in the user guide) -- but the same stub-side bug plausibly
-affects a real gdb's `target remote` too, since gdb's handshake also
-sends packet types this stub doesn't recognize. If `target remote` never
-completes, see docs/gdb-stub-guide.md, "Known limitations", before
-assuming your gdb build or this plugin is at fault.
+Needs a gdb built with m68k support (Homebrew `gdb` has it; Debian/Ubuntu
+need `gdb-multiarch`) and `set endian big` before `target remote` (the
+`jconnect` command in jaguar.gdbinit does that). Only the 68K is a gdb
+thread; the GPU/DSP are reached through `jag-regs gpu|dsp`,
+`jag-disasm` and `jag-halt` (the stub's `monitor` commands). See
+docs/gdb-stub-guide.md.
 
 Runs under whatever Python 3 your gdb build embeds. No third-party
 dependencies -- only the standard library and the `gdb` module gdb
@@ -215,10 +210,10 @@ GDB's own `watch`/`rwatch`/`awatch` use the same slot."""
 
 class JagInfoRegisters(gdb.Command):
     """jag-info-registers -- pretty-print the currently selected
-thread's Jaguar registers. On the GPU/DSP threads (2/3) this decodes
-FLAGS and lays out R0-R31 in a grid; on the 68K thread (1) it just
-points you at gdb's own `info registers`, which already understands
-that architecture natively.
+thread's Jaguar registers. Stock gdb only sees the 68K (thread 1), for
+which `info registers` is the answer; use `jag-regs gpu` / `jag-regs dsp`
+for the RISC cores. The GPU/DSP branch below only applies to a raw
+client that enumerates threads 2/3 itself.
 
 Reads registers directly (not via `monitor regs`), so it reflects
 exactly what GDB's target description says thread 2/3 register 0-31,
@@ -244,9 +239,9 @@ is fixed forever and never reinvented here."""
         num = thread.num
         if num == 1:
             print(
-                "jaguar: thread 1 is the 68K -- it has no custom target "
-                "description, so gdb's own `info registers` already "
-                "knows it natively."
+                "jaguar: thread 1 is the 68K -- use gdb's own `info "
+                "registers`. The GPU/DSP are not gdb threads: use "
+                "`jag-regs gpu` or `jag-regs dsp`."
             )
             return
         if num not in (2, 3):
