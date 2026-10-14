@@ -1,6 +1,6 @@
 # Colour themes (#833): selection logic, the SDL system-theme event, and the contrast of the palette and of
 # the Dear ImGui style colours the app applies.  No window and no core: pure logic, runs everywhere.
-add_executable(vj_theme_test tests/theme_test.cpp src/theme.cpp src/theme_style.cpp)
+add_executable(vj_theme_test tests/theme_test.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/paths.cpp)
 target_include_directories(vj_theme_test PRIVATE src)
 target_link_libraries(vj_theme_test PRIVATE vj_imgui ${VJ_SDL3_TARGET})
 if(MSVC)

@@ -170,21 +170,6 @@ void drawCoreOptions(App& app) {
 
 // ---- settings window ------------------------------------------------------------------
 
-// Settings > Video > Appearance: the colour theme.  System follows the OS and switches live when it does.
-void drawAppearance(App& app) {
-    ImGui::SeparatorText("Appearance");
-    const theme::Mode cur = theme::state().mode();
-    static const theme::Mode modes[] = {theme::Mode::System, theme::Mode::Dark, theme::Mode::Light};
-    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 12.0f, 18.0f));
-    if (ImGui::BeginCombo("Theme", theme::modeLabel(cur))) {
-        for (theme::Mode m : modes)
-            if (ImGui::Selectable(theme::modeLabel(m), m == cur)) app.setThemeMode((int)m);
-        ImGui::EndCombo();
-    }
-    if (cur == theme::Mode::System)
-        ui::hint("Following the system: currently %s.", theme::isDark() ? "dark" : "light");
-}
-
 void drawVideoTab(App& app) {
     drawAppGroupReset(app, AppGroup::Video);
     PresentOptions& p = app.present;
@@ -203,7 +188,7 @@ void drawVideoTab(App& app) {
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     ImGui::Checkbox("Show frame rate", &app.showFps);
-    drawAppearance(app);
+    drawAppearanceSettings(app);
     drawShaderSettings(app);
 }
 
@@ -633,6 +618,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showCheats) drawCheats(app);
     if (app.showNetplay) drawNetplay(app);
     if (app.showAbout) drawAbout(app);
+    if (app.showThemeEditor) drawThemeEditor(app);
+    themeFrameHook(app);   // theme file-dialog results
     drawResumePrompt(app);
     drawLibrary(app);
     drawKeypadOverlay(app);

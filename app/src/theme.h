@@ -36,13 +36,14 @@ struct Color {
     }
 };
 
-enum class Mode { System, Dark, Light };               // the user's choice (config ui.theme)
+enum class Mode { System, Dark, Light, Custom };       // the user's choice (config ui.theme: system | dark | light | custom:<name>)
 enum class SystemScheme { Unknown, Light, Dark };      // what the OS reports (SDL_GetSystemTheme)
 enum class Scheme { Dark, Light };                     // what is in force
 
-const char* modeKey(Mode m);                           // "system" | "dark" | "light" (the config value)
+const char* modeKey(Mode m);                           // "system" | "dark" | "light" | "custom" (the config value; custom is followed by :<name>)
 const char* modeLabel(Mode m);                         // for the Settings combo
-Mode parseMode(const std::string& s);                  // anything unknown is System
+Mode parseMode(const std::string& s);                  // anything unknown is System; "custom:<name>" is Custom
+std::string customNameOf(const std::string& s);        // the <name> of a "custom:<name>" value, else ""
 
 // The scheme a choice resolves to.  An OS that does not say (Unknown: old Linux desktops, no window yet)
 // gets Dark, the look the app always had.
@@ -53,14 +54,19 @@ class State {
 public:
     Mode mode() const { return mode_; }
     SystemScheme system() const { return system_; }
-    Scheme effective() const { return resolve(mode_, system_); }
-    bool setMode(Mode m);
+    Scheme effective() const { return mode_ == Mode::Custom ? customScheme_ : resolve(mode_, system_); }
+    bool setMode(Mode m);                                  // System / Dark / Light (Custom goes through setCustom)
+    // A custom theme is in force: its name, and whether it reads as a dark or a light theme (decides isDark()).
+    bool setCustom(const std::string& name, Scheme s);
+    const std::string& customName() const { return customName_; }
     bool setSystem(SystemScheme s);
     // An SDL_EVENT_SYSTEM_THEME_CHANGED arrived: the OS now says `s`.  Only a System choice follows it.
     bool onSystemThemeChanged(SystemScheme s) { return setSystem(s); }
 private:
     Mode mode_ = Mode::System;
     SystemScheme system_ = SystemScheme::Unknown;
+    Scheme customScheme_ = Scheme::Dark;
+    std::string customName_;
 };
 
 // ---- palette ---------------------------------------------------------------------------------
@@ -98,18 +104,25 @@ struct Overlay {
 const Palette& palette(Scheme s);
 const Overlay& overlay();
 
+struct Custom;   // theme_custom.h: a user's theme, a few colours and two style values over Dark or Light
+
 // ---- process-wide state ----------------------------------------------------------------------
 State& state();
 inline Scheme effective() { return state().effective(); }
 inline bool isDark() { return state().effective() == Scheme::Dark; }
-inline const Palette& pal() { return palette(effective()); }
+const Palette& pal();                  // the palette in force: the custom theme's when one is active, else the scheme's
 
 using Listener = std::function<void(Scheme)>;
 void addListener(Listener l);          // called after the scheme in force changes (not at registration)
 
 // These update the global state and call the listeners when the scheme in force changed.
-bool setMode(Mode m);
+bool setMode(Mode m);                  // System / Dark / Light; leaves any custom theme
 bool setSystem(SystemScheme s);
+// Makes `c` the theme in force (a saved one chosen, or the editor's live preview).  The listeners are told every
+// time, because the colours change even when the scheme in force does not.
+void setCustom(const Custom& c);
+const Custom* activeCustom();          // the custom theme in force, or nullptr
+std::string choiceKey();               // the config value for what is in force: system | dark | light | custom:<name>
 // Asks the OS (SDL_GetSystemTheme) and calls setSystem.  Call once the video subsystem is up.
 bool refreshSystem();
 // Feeds an SDL event to the state; true when it was a system-theme event (handled, whether or not it changed anything).

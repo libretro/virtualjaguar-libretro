@@ -242,6 +242,8 @@ set(VJ_APP_SOURCES
     src/ui.cpp
     src/theme.cpp
     src/theme_style.cpp
+    src/theme_custom.cpp
+    src/theme_ui.cpp
     src/settings_reset.cpp
     src/settings_reset_ui.cpp
     src/library_ui.cpp

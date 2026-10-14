@@ -106,7 +106,7 @@ void App::applySettingsFromConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
-    if (!themeFromCli_) theme::setMode(theme::parseMode(cfg.get("ui.theme", "system")));
+    if (!themeFromCli_) applyThemeChoice(cfg.get("ui.theme", "system"));
     homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
@@ -124,7 +124,7 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
-    if (!themeFromCli_) cfg.set("ui.theme", theme::modeKey(theme::state().mode()));
+    if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setInt("saves.resume", resumeMode);
@@ -231,7 +231,6 @@ bool App::initImGui() {
     // sizes and rounding set here and scaled below stay as they are.
     theme::addListener([this](theme::Scheme) { applyTheme(); });
     theme::refreshSystem();
-    theme::applyStyleColors(st, theme::effective());
     // The UI scale is the display's CONTENT scale (the 200% of a 4K Windows/Linux display), nothing more.
     // SDL_GetWindowDisplayScale() is relative to the window's PIXEL size, so it also contains the pixel density
     // (2.0 on every Retina Mac); ImGui's SDL3 backend lays out in window points and already renders at the
@@ -245,7 +244,9 @@ bool App::initImGui() {
     }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
-    st.FontScaleDpi = scale;
+    st.FontScaleDpi = scale;   // (the font size follows the display scale, not the theme: themes never set it)
+    uiScale_ = scale;
+    theme::applyStyle(st, uiScale_);   // the theme's colours, rounding and spacing at this scale
 
 #ifdef __APPLE__
     const char* glsl = "#version 150";
@@ -309,12 +310,43 @@ void App::wireHost() {
 }
 
 void App::applyTheme() {
-    if (imguiUp_) theme::applyStyleColors(ImGui::GetStyle(), theme::effective());
+    if (imguiUp_) theme::applyStyle(ImGui::GetStyle(), uiScale_);
 }
 
-void App::setThemeMode(int mode) {
+theme::Store App::themeStore() const { return theme::Store(paths.root + "themes", paths.instance > 1); }
+
+bool App::applyThemeChoice(const std::string& key) {
+    if (theme::parseMode(key) == theme::Mode::Custom) {
+        theme::Custom c;
+        if (themeStore().load(theme::customNameOf(key), c)) {
+            theme::setCustom(c);
+            return true;
+        }
+        theme::setMode(theme::Mode::System);   // the theme file is gone (or never was here): System
+        return false;
+    }
+    theme::setMode(theme::parseMode(key));
+    return true;
+}
+
+void App::setThemeChoice(const std::string& key) {
     themeFromCli_ = false;   // the user chose: from here on the choice is theirs to keep
-    theme::setMode((theme::Mode)mode);
+    themePreviewing_ = false;
+    applyThemeChoice(key);
+}
+
+void App::themePreview(const theme::Custom& c) {
+    if (!themePreviewing_) {
+        themeBeforePreview_ = theme::choiceKey();
+        themePreviewing_ = true;
+    }
+    theme::setCustom(c);
+}
+
+void App::themePreviewEnd(bool keep) {
+    if (!themePreviewing_) return;
+    themePreviewing_ = false;
+    if (!keep) applyThemeChoice(themeBeforePreview_);
 }
 
 void App::applyVsync() {
@@ -943,7 +975,7 @@ int App::run(const CliArgs& a) {
     host.setLogVerbose(a.verbose);
     if (!a.theme.empty()) {
         themeFromCli_ = true;
-        theme::setMode(theme::parseMode(a.theme));
+        applyThemeChoice(a.theme);
     }
     loadConfig();
     if (paths.instance > 1) {
@@ -995,6 +1027,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "achievements") ach.showList = true;
     else if (a.showWindow == "keypad") input.overlay.open = true;
     else if (a.showWindow == "netplay") showNetplay = true;
+    else if (a.showWindow == "theme-editor") showThemeEditor = true;
     else if (a.showWindow == "controls") input.controls.show = true;
     unsigned uiFrames = 0;
 

@@ -1,9 +1,12 @@
 #include "theme.h"
 
+#include "theme_custom.h"
+
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 namespace vj {
@@ -13,6 +16,7 @@ const char* modeKey(Mode m) {
     switch (m) {
     case Mode::Dark: return "dark";
     case Mode::Light: return "light";
+    case Mode::Custom: return "custom";
     case Mode::System: break;
     }
     return "system";
@@ -22,6 +26,7 @@ const char* modeLabel(Mode m) {
     switch (m) {
     case Mode::Dark: return "Dark";
     case Mode::Light: return "Light";
+    case Mode::Custom: return "Custom";
     case Mode::System: break;
     }
     return "System (follow the OS)";
@@ -30,18 +35,34 @@ const char* modeLabel(Mode m) {
 Mode parseMode(const std::string& s) {
     if (s == "dark") return Mode::Dark;
     if (s == "light") return Mode::Light;
+    if (s.compare(0, 7, "custom:") == 0 && s.size() > 7) return Mode::Custom;
     return Mode::System;
+}
+
+std::string customNameOf(const std::string& s) {
+    return s.compare(0, 7, "custom:") == 0 ? s.substr(7) : std::string();
 }
 
 Scheme resolve(Mode m, SystemScheme sys) {
     if (m == Mode::Dark) return Scheme::Dark;
     if (m == Mode::Light) return Scheme::Light;
+    if (m == Mode::Custom) return Scheme::Dark;   // not used: a custom theme brings its own scheme (State::setCustom)
     return sys == SystemScheme::Light ? Scheme::Light : Scheme::Dark;
 }
 
 bool State::setMode(Mode m) {
+    if (m == Mode::Custom) return false;   // needs a name and a scheme: setCustom
     Scheme before = effective();
     mode_ = m;
+    customName_.clear();
+    return effective() != before;
+}
+
+bool State::setCustom(const std::string& name, Scheme s) {
+    Scheme before = effective();
+    mode_ = Mode::Custom;
+    customName_ = name;
+    customScheme_ = s;
     return effective() != before;
 }
 
@@ -154,6 +175,9 @@ const Overlay& overlay() { return kOverlay; }
 static State g_state;
 static std::vector<Listener> g_listeners;
 static SystemScheme (*g_query)() = nullptr;
+static std::unique_ptr<Custom> g_custom;   // allocated by the first setCustom
+static Palette g_customPal = kDark;
+static bool g_customActive = false;
 
 State& state() { return g_state; }
 
@@ -167,8 +191,36 @@ static bool notify(bool changed) {
     return changed;
 }
 
-bool setMode(Mode m) { return notify(g_state.setMode(m)); }
-bool setSystem(SystemScheme s) { return notify(g_state.setSystem(s)); }
+const Palette& pal() { return g_customActive ? g_customPal : palette(g_state.effective()); }
+
+bool setMode(Mode m) {
+    const bool wasCustom = g_customActive;
+    g_customActive = false;
+    return notify(g_state.setMode(m) || wasCustom);   // leaving a custom theme changes the colours even between equal schemes
+}
+
+void setCustom(const Custom& c) {
+    if (!g_custom) g_custom.reset(new Custom(c));
+    else *g_custom = c;
+    g_customPal = paletteFor(c);
+    g_customActive = true;
+    g_state.setCustom(c.name, schemeOf(c));
+    notify(true);
+}
+
+const Custom* activeCustom() { return g_customActive && g_custom ? g_custom.get() : nullptr; }
+
+std::string choiceKey() {
+    if (g_customActive && g_custom) return std::string("custom:") + g_custom->name;
+    return modeKey(g_state.mode());
+}
+bool setSystem(SystemScheme s) {
+    if (g_state.mode() == Mode::Custom) {
+        g_state.setSystem(s);   // remembered for when the user goes back to System; a custom theme does not follow it
+        return false;
+    }
+    return notify(g_state.setSystem(s));
+}
 
 static SystemScheme sdlSystem() {
     switch (SDL_GetSystemTheme()) {
