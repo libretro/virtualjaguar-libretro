@@ -16,6 +16,7 @@
 #include "cheats.h"
 #include "config.h"
 #include "core_host.h"
+#include "fonts.h"
 #include "discord_presence.h"
 #include "input.h"
 #include "instance.h"
@@ -45,6 +46,8 @@ struct CliArgs {
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
+    std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
+    bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
@@ -137,11 +140,13 @@ public:
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
+    fonts::Settings fontSettings;     // Settings > Video > Font (ui.font.*); applied live through fonts_imgui.h
     bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
     bool showNetplay = false;
     CheatManager cheats;
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
+    bool lowDpi_ = false;             // dev: --low-dpi
     int stateSlot = 0;
     int resumeMode = 1;               // lib::ResumeMode: Off / Ask / Always, "Resume where I left off" (saves.resume)
     struct ResumeOffer {              // "Resume from <time>?" asked after a game booted (resumeMode == Ask)

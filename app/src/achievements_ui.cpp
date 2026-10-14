@@ -362,7 +362,7 @@ void drawProfile(App& app) {
         picture(a, url, ui::em(6.0f), ver);
         ImGui::SameLine();
         ImGui::BeginGroup();
-        ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.4f);
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.4f);
         ImGui::TextUnformatted(u->display_name ? u->display_name : "");
         ImGui::PopFont();
         ImGui::Text("Hardcore points: %u", u->score);

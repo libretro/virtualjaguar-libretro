@@ -3,6 +3,7 @@
 // manager, the on-screen messages.
 #include "app.h"
 #include "devices_ui.h"
+#include "fonts_ui.h"
 
 #include "imgui.h"
 #include "platform/platform.h"
@@ -190,6 +191,7 @@ void drawVideoTab(App& app) {
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     ImGui::Checkbox("Show frame rate", &app.showFps);
     drawAppearanceSettings(app);
+    drawFontSettings(app);
     drawShaderSettings(app);
 }
 

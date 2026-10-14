@@ -1,5 +1,6 @@
 #include "app.h"
 #include "devices_ui.h"
+#include "fonts_imgui.h"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -107,6 +108,8 @@ void App::applySettingsFromConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
+    fontSettings = fonts::load(cfg);
+    fonts::request(fontSettings);   // applied before the next frame (fonts_imgui.h); Settings > Reset lands here too
     if (!themeFromCli_) applyThemeChoice(cfg.get("ui.theme", "system"));
     homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
@@ -127,6 +130,7 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
+    fonts::store(cfg, fontSettings);
     if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
@@ -209,8 +213,9 @@ bool App::initWindow() {
     w = std::max(320, w);
     h = std::max(240, h);
     const std::string firstTitle = "Virtual Jaguar" + instanceTitleSuffix(paths.instance);
-    window_ = SDL_CreateWindow(firstTitle.c_str(), w, h,
-                               SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    SDL_WindowFlags wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+    if (!lowDpi_) wflags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;   // --low-dpi: a 1x framebuffer, for screenshots of a standard display
+    window_ = SDL_CreateWindow(firstTitle.c_str(), w, h, wflags);
     if (!window_) {
         std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());
         return false;
@@ -258,6 +263,7 @@ bool App::initImGui() {
     }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
+    fonts::setCustomDir(paths.root + "fonts/");   // the typeface itself is set up before every frame (fonts::applyPending)
     st.FontScaleDpi = scale;   // (the font size follows the display scale, not the theme: themes never set it)
     uiScale_ = scale;
     theme::applyStyle(st, uiScale_);   // the theme's colours, rounding and spacing at this scale
@@ -1040,8 +1046,14 @@ int App::run(const CliArgs& a) {
 
 int App::runInteractive(const CliArgs& a) {
     uiScaleOverride = a.uiScale;
+    lowDpi_ = a.lowDpi;
     if (!initWindow() || !initImGui()) return 1;
     desktopInit();
+    if (!a.font.empty()) {
+        if (!fonts::applySpec(a.font, fontSettings)) std::fprintf(stderr, "--font: cannot read '%s'\n", a.font.c_str());
+        fonts::request(fontSettings);
+    }
+    unsigned fontFrames = 0;
     applyAudioSettings();
     audio.open(48043.6);
     fullscreen = false;
@@ -1121,6 +1133,10 @@ int App::runInteractive(const CliArgs& a) {
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Upload);
 
+        if (!a.fontThen.empty() && ++fontFrames == 60) {
+            if (fonts::applySpec(a.fontThen, fontSettings)) fonts::request(fontSettings);
+        }
+        fonts::applyPending();   // a typeface change made last frame, before anything draws with the old one
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();

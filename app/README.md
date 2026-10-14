@@ -30,6 +30,8 @@ ctest --test-dir app/build -C Release --output-on-failure   # headless smoke tes
 The binary is `app/build/virtualjaguar` (`app/build/Release/virtualjaguar.exe`
 with the Visual Studio generator).
 
+`-DVJ_APP_FREETYPE=ON` fetches FreeType 2.14.1 (pinned, static, no system libraries) for font hinting options.
+
 Use an already installed SDL3 instead of fetching one: `-DVJ_APP_SYSTEM_SDL3=ON`
 (Homebrew `sdl3`, distro `libsdl3-dev`). For offline builds point
 `-DFETCHCONTENT_SOURCE_DIR_SDL3=<dir>` and `-DFETCHCONTENT_SOURCE_DIR_IMGUI=<dir>`
@@ -776,6 +778,22 @@ To regenerate the expected hash after an intentional emulation change:
 The UI scale follows the display's content scale (200% on a 4K Windows/Linux display; 1.0 on a Retina
 Mac, where ImGui renders at the pixel density by itself). `ui.scale` in `config.ini` (default 1.0) multiplies it.
 
+### Fonts
+
+Settings > Video > Font picks the typeface and its size (11-24 pt, default 13): **Retro** (Dear ImGui's embedded
+pixel font, the look the app always had, still the default), **System UI** (San Francisco on macOS, Segoe UI on
+Windows, the desktop's sans-serif on Linux through `fc-match`, with DejaVu / Noto / Liberation as fallbacks),
+**Monospace** (SF Mono / Menlo, Consolas, DejaVu Sans Mono) or **Custom file...** (a `.ttf` / `.otf` / `.ttc`; it
+is checked, then copied to `<data>/fonts/`). Changes apply at once and persist as `ui.font.*` in `config.ini`.
+Text is rasterised at the display's pixel density (Dear ImGui 1.92's dynamic atlas), so it is crisp on Retina and
+at 125-200% Windows scaling; it is grayscale anti-aliased with sub-pixel glyph positioning. LCD (RGB) sub-pixel
+anti-aliasing is not possible: the glyph atlas is a single coverage channel (and macOS dropped LCD smoothing in
+Mojave). A missing or unreadable font falls back to Retro with a note in the Font section. Debug windows use
+`fonts::mono()` / `fonts::pushMono()` (`src/fonts_imgui.h`), a monospace face whatever the UI font is. Glyphs the
+chosen font lacks (arrows, star, check mark) come from a symbols font or the built-in vector face.
+`-DVJ_APP_FREETYPE=ON` rasterises with FreeType (FreeType License, fetched and pinned, built static) and adds the
+**Hinting** (none / light / full) and **Smooth edges** choices; it is off by default and experimental (not yet exercised by CI).
+
 Every window opens at a size in font heights (so it scales with DPI), at most 80% of the main
 window, is constrained to 95% of it each frame (a size saved in `imgui.ini` by a bigger window never
 overflows a smaller one) and is pulled back on screen. Long text wraps, tables stretch, controls take
@@ -786,6 +804,8 @@ a share of the width that is left (`src/ui_util.h`). To check a layout:
 virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-frame 40 \
   --show-window settings-input game.j64
 ```
+
+`--low-dpi` opens a 1x window even on a Retina display (screenshots of a standard-density screen).
 
 `--show-window` takes `settings[-video|-input|-audio|-storage][:FILTER]`, `states`, `about`,
 `cheats`, `library`, `login`, `achievements`, `keypad` and `theme-editor`.
@@ -812,6 +832,8 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/devices_ui.*` | Settings > Input > Devices & players, claiming devices with the core, per-frame mouse capture |
 | `src/cheatsheet.*`, `src/cheatsheet_ui.cpp` | the controls cheat sheet: text, auto-show rule, window |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
+| `src/fonts.*` | UI fonts with no ImGui: `ui.font.*` settings, per-OS system font lookup, custom file validation + import, glyph ranges (unit tested) |
+| `src/fonts_imgui.*`, `src/fonts_ui.cpp` | the live font atlas (typeface, size, FreeType flags, `mono()`), and Settings > Video > Font |
 | `src/platform/` | native-OS integration: menu model + dispatch (`commands.*`, no OS), per-OS files (`platform_macos.mm`, `platform_windows.cpp`, `platform_other.cpp`), tray (`tray.cpp`); `src/desktop.cpp` is the app side |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
 | `src/library_lists.*` | favorites, recently played, display options, tab layout, save-state listing (pure) |
