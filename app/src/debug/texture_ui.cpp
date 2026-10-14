@@ -151,7 +151,7 @@ void closeWindow(const char*) {
 }
 
 // The game and the folders, about once a second.
-void poll(double now) {
+void pollFiles(double now) {
     if (now < g.nextPoll) return;
     g.nextPoll = now + kPollSeconds;
     if (!g.session || !g.paths) return;
@@ -520,7 +520,7 @@ void textureToolDraw() {
     ui::keepOnScreen();
     if (shown) {
         if (g.session->enabled()) {
-            poll(now);
+            pollFiles(now);
             handlePending();
         }
         drawBody(now);

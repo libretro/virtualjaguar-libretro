@@ -206,7 +206,7 @@ void blitterToolDraw() {
     if (shown) {
         ui::hint("The blitter launches the game made, newest first. The core keeps the last %d; launches that scroll "
                  "out before this list is refreshed are counted as missed.",
-                 VJ_DBG_BLIT_LOG_SIZE);
+                 (int)VJ_DBG_BLIT_LOG_SIZE);
         if (!g.session->enabled()) {
             ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), g.session->disabledReason().c_str());
         } else {
