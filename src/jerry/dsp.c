@@ -362,15 +362,32 @@ static uint32_t *DSPLoadOverwritePeek(uint32_t *val, uint32_t *pc)
 	return dsp_ldx_slot;
 }
 
-/* Indexed store of a divide's result (issue #811).  JTRM Rev 8 p.134,
- * TOM/JERRY bug 2 "Scoreboard Failure on Indexed Addressing Mode Stores"
- * ("applies to both Tom & Jerry"): the data of store instructions 49,
- * 50, 60 and 61 is not scoreboarded, so when it is the result of a
- * divide still in flight the store writes the register's OLD contents;
- * the address registers stay fully protected.  Xenowings' DSP joypad
- * reader ends with `div r9,r8 / store r8,(r14+1)` and relies on this:
- * the joypad bits go to $F1C3A8 and the quotient never does.  Writing
- * the quotient instead fed the game garbage and the ship never moved.
+/* Indexed store of a divide's result (issues #811, #895).  JTRM Rev 8
+ * p.134, TOM/JERRY bug 2 "Scoreboard Failure on Indexed Addressing Mode
+ * Stores" ("applies to both Tom & Jerry"): the data of store
+ * instructions 49, 50, 60 and 61 is not scoreboarded, so when it is the
+ * result of a divide still in flight the store writes the register's OLD
+ * contents; the address registers stay fully protected.
+ *
+ * Which registers ARE protected comes from the netlists (jag_sim
+ * netlists/jerry, identical to tom/; docs/jtrm-errata.md bug 2):
+ *   - on the store's first tick the destination port carries the
+ *     implicit base r14/r15 (DSP_EXEC.NET Impdai/Danwsel1/Dstanwi) and
+ *     the source port the raw field-1 bits (Srcanwi := JOIN (srcopin,
+ *     srctopi)); SBOARD.NET:127-130 compares both against pending
+ *     writes, with the source compare enabled by `srcrrd + precomp`, so
+ *     for the immediate forms 49/50 the 5-bit OFFSET is compared as if
+ *     it named a register;
+ *   - a match against the divide target holds the store until the
+ *     quotient is written back (SBOARD.NET:380-384 Divdwait);
+ *   - the data register is read one tick later on the compdld wait
+ *     state (EXECON.NET:173-189), which no scoreboard term checks.
+ * So the store sees the old value unless its base register, or its
+ * field 1 -- index register or immediate offset -- names the divide's
+ * destination.  Xenowings relies on both outcomes: the joypad reader's
+ * `div r9,r8 / store r8,(r14+1)` stores the joypad bits (field 1 = 1),
+ * its sound-effect setup's `div r12,r7 / store r7,(r14+7)` stores the
+ * quotient (field 1 = 7 = r7: interlocked).
  * Modeled for the instruction immediately after the divide only (the
  * documented pattern; an intervening instruction may be the manual's
  * dependent "protection instruction", which this does not decode).
@@ -380,8 +397,9 @@ uint64_t dsp_div_store_fixups = 0;
 
 /* Called right after a divide executed, dsp_pc at the next instruction.
  * Returns the divide's destination slot if that instruction is an
- * indexed store whose data register is that slot and whose address
- * registers are not, else NULL.  Only peeks DSP local RAM. */
+ * indexed store whose data register is that slot and which the
+ * scoreboard does not hold up (base register and field 1 both differ
+ * from it -- see above), else NULL.  Only peeks DSP local RAM. */
 static uint32_t *DSPDivStorePeek(uint32_t *divDst, uint32_t *pc)
 {
 	uint32_t off, n, p1, p2;
@@ -398,9 +416,12 @@ static uint32_t *DSPDivStorePeek(uint32_t *divDst, uint32_t *pc)
 		return NULL;
 	if (&dsp_reg[p2] != divDst)
 		return NULL;
+	/* Base register is the divide target, or field 1 (index register
+	 * or raw immediate offset, compared as a register number) is: the
+	 * store waits for the quotient and stores it. */
 	if (((n == 49 || n == 60) && p2 == 14)
 	      || ((n == 50 || n == 61) && p2 == 15)
-	      || ((n == 60 || n == 61) && p1 == p2))
+	      || p1 == p2)
 		return NULL;
 	*pc = dsp_pc;
 	return divDst;
@@ -460,7 +481,10 @@ static uint32_t dspFlagsRetireDelay = 0;
  *     by bus_arbiter_dsp_access();
  *   - indexed-store DATA is not score-boarded (TOM/JERRY bug 2, JTRM v8
  *     p.134; already modeled for its data effect by
- *     dsp_div_store_fixups), so it never waits on a pending result.
+ *     dsp_div_store_fixups), so it never waits on a pending result --
+ *     but field 1 of every indexed op is (SBOARD.NET:130, see
+ *     dsp_div_store_fixups): an index register, or for 43/44/49/50 the
+ *     immediate offset compared as a register number.
  *
  * Constants: everything in CORE time is netlist-identical to the GPU
  * and inherits its pins.  INFERRED (not simulated -- no JERRY Verilator
@@ -524,7 +548,11 @@ uint64_t dsp_pipe_ext_total   = 0;
  * reads.  Bit 2: this op writes the field-2 register.  Bit 3: the
  * field-2 read is NOT score-boarded (indexed-store data, TOM/JERRY bug
  * 2) -- it still occupies a register-file read port for the write-back
- * rule.  Same encoding as gpu_pipe_flags[]; the DSP-only opcodes
+ * rule.  Bit 4: field 1 is an immediate offset that the score-board
+ * nevertheless compares as a register number (43/44/49/50:
+ * Srca_reg_ena := OR2 (srcrrd, precomp), SBOARD.NET:130) -- it waits on
+ * that register like a read but takes no read port.  Same encoding as
+ * gpu_pipe_flags[] (which has no bit 3/4 terms); the DSP-only opcodes
  * (32 subqmod, 33 sat16s, 42 sat32s, 48 mirror, 62 illegal, 63 addqmod)
  * differ from the GPU map.  moveta/movefa's alternate-bank operand and
  * the implicit R14/R15 base of the indexed forms are not tracked, as on
@@ -535,8 +563,8 @@ static const uint8_t dsp_pipe_flags[64] = {
    7, 7, 3, 4, 3, 7, 6, 7,     /* mult imult imultn resmac imacn div abs sh */
    6, 6, 7, 6, 7, 6, 3, 2,     /* shlq shrq sha sharq ror rorq cmp cmpq */
    6, 6, 5, 4, 1, 4, 4, 5,     /* subqmod sat16s move moveq moveta movefa movei loadb */
-   5, 5, 6, 4, 4, 3, 3, 3,     /* loadw load sat32s load_r14_ix load_r15_ix storeb storew store */
-   6, 10, 10, 4, 1, 0, 6, 5,   /* mirror store_r14_ix store_r15_ix move_pc jump jr mmult mtoi */
+   5, 5, 6, 20, 20, 3, 3, 3,   /* loadw load sat32s load_r14_ix load_r15_ix storeb storew store */
+   6, 26, 26, 4, 1, 0, 6, 5,   /* mirror store_r14_ix store_r15_ix move_pc jump jr mmult mtoi */
    5, 0, 5, 5, 11, 11, 0, 6    /* normi nop load_r14_ri load_r15_ri store_r14_ri store_r15_ri illegal addqmod */
 };
 
@@ -587,8 +615,9 @@ static void DSPPipeCheckUse(uint32_t index)
 	uint32_t wait, extra;
 	int wait_is_ext = 0;
 	int sb2 = (f & 2) && !(f & 8);     /* field-2 read is score-boarded */
+	int sb1 = (f & 1) || (f & 16);     /* field 1 is score-board compared */
 
-	if (f & 1)
+	if (sb1)
 	{
 		uint64_t r = dsp_reg_ready[dsp_opcode_first_parameter];
 		if (r > ready)
@@ -609,7 +638,7 @@ static void DSPPipeCheckUse(uint32_t index)
 	wait = (uint32_t)(ready - dsp_pipe_clock);
 	if (wait < 1 && dsp_pipe_prev_dest != 0xFF)
 	{
-		if (((f & 1) && dsp_opcode_first_parameter == dsp_pipe_prev_dest)
+		if ((sb1 && dsp_opcode_first_parameter == dsp_pipe_prev_dest)
 		 || (sb2 && dsp_opcode_second_parameter == dsp_pipe_prev_dest))
 			wait = 1;                       /* ALU RAW interlock (R2) */
 		else if ((f & 1) && (f & 2)

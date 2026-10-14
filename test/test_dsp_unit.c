@@ -1304,6 +1304,30 @@ static void test_dsp_pipe_model(void)
       pipe_expect("plain store of the quotient waits for the divide", P, 18);
    }
 
+   /* ...but field 1 of an indexed store IS score-board compared as a
+    * register number, the immediate offset included (SBOARD.NET:130,
+    * Srca_reg_ena := OR2 (srcrrd, precomp); issue #895).  `store
+    * r2,(r14+2)` names r2 there, so it waits out the divide and stores
+    * the quotient 300/3 = 100 -- with the model on or off. */
+   {
+      int regs[] = { 1, 3, 2, 300, 14, 0xF1B800 };
+      int model;
+      prog[0] = OP_DIV(1, 2); prog[1] = OP_STORE14N(2, 2);
+      for (model = 1; model >= 0; model--)
+      {
+         write_dsp_ram32(0x808, 0);
+         P = pipe_run(prog, 2, 2, regs, 6, model, B);
+         if (model)
+            pipe_expect("bug 2: div ; store r2,(r14+2) waits (offset field = r2)", P, 19);
+         if (read_dsp_ram32(0x808) == 100)
+            PASS("bug 2: store r2,(r14+2) wrote the quotient (100), model %s",
+                 model ? "on" : "off");
+         else
+            FAIL("bug 2: store r2,(r14+2) wrote %08X, expected 100 (quotient), model %s",
+                 read_dsp_ram32(0x808), model ? "on" : "off");
+      }
+   }
+
    /* R16 MOVEI 3 ticks; R6 indexed load +2. */
    prog[0] = DSP_OP(38, 0, 5); prog[1] = 0x5678; prog[2] = 0x1234;
    P = pipe_run(prog, 3, 1, NULL, 0, 1, B);
