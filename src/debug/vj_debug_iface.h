@@ -199,13 +199,15 @@ struct vj_debug_iface
    int  (*halted_target)(void);
 
    /* Object Processor ----------------------------------------------------------------- */
-   /* Arms a one-shot capture: the next display-list walk records each object's
-    * raw phrases BEFORE the OP rewrites them (HEIGHT/DATA/REMAINDER update per
-    * halfline), up to VJ_DBG_OP_MAX_OBJECTS. */
+   /* Arms a one-shot capture of the WHOLE display list: at the first active
+    * halfline of the next field (before the OP rewrites HEIGHT/DATA/REMAINDER)
+    * the core reads the list from DRAM following links and BOTH arms of every
+    * branch object, each object once, up to VJ_DBG_OP_MAX_OBJECTS. */
    void (*op_snapshot_arm)(void);
-   /* Returns the number of objects captured (0..max), or -1 while armed but no
-    * walk has completed yet (or never armed).  *halfline is the halfline the
-    * captured walk ran on.  Stays readable until the next arm. */
+   /* Returns the number of objects captured (0..max), or -1 while armed but not
+    * yet taken (or never armed).  Objects are in discovery order, the list head
+    * first.  *halfline is the halfline the capture ran on.  Stays readable until
+    * the next arm. */
    int  (*op_snapshot_get)(struct vj_debug_op_obj *o, int max, unsigned *halfline);
 
    /* video -------------------------------------------------------------------------------- */

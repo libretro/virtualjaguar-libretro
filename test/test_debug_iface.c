@@ -24,6 +24,9 @@
  *   F) OP snapshot: an armed capture records at least one object of the real
  *      display list, with the raw phrases; the blitter log sees a blit
  *      launched through a (dangerous) register poke.
+ *   H) texreplace_reload: a pack installed AFTER the game loaded is found by the
+ *      reload (the base path and the option survive it), removing it again is
+ *      seen too, and with the option off the reload never activates anything.
  *   G) zero effect on the machine: 150 frames with everything on -- host
  *      attached, a halt/step/continue, peeks every frame, the OP snapshot
  *      armed, the blit log on -- end in the same frame hash AND the same
@@ -42,6 +45,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static int g_fail = 0, g_checks = 0;
 #define CHECK(cond)                                                            \
@@ -482,6 +487,19 @@ static void partF(int argc, char **argv)
     run_frames(&cfg, 3);
     n = g_if->op_snapshot_get(objs, VJ_DBG_OP_MAX_OBJECTS, &halfline);
     CHECK(n >= 1);
+    {
+        int bitmaps = 0, stops = 0;
+        for (i = 0; i < n; i++) {
+            if (objs[i].type == 0) bitmaps++;
+            if (objs[i].type == 4) stops++;
+        }
+        CHECK(bitmaps >= 1);        /* the whole list, not just the branch + stop of one halfline */
+        CHECK(stops >= 1);
+        for (i = 0; i < n; i++) {   /* each object once */
+            int k;
+            for (k = i + 1; k < n; k++) CHECK(objs[i].address != objs[k].address);
+        }
+    }
     for (i = 0; i < n && i < 8; i++) {
         unsigned type = objs[i].p0_lo & 7u;
         CHECK(objs[i].type == type);
@@ -535,6 +553,148 @@ static void partF(int argc, char **argv)
     CHECK(g_if->cry_to_rgb(0) <= 0xFFFFFFu && g_if->cry_to_rgb(0xFFFF) <= 0xFFFFFFu);
 
     harness_shutdown(&cfg);
+}
+
+
+/* ---- H: texture pack reload ---------------------------------------------------------------------- */
+static uint32_t crc32_of(const unsigned char *p, size_t n, uint32_t crc)
+{
+    size_t i;
+    int k;
+    crc = ~crc;
+    for (i = 0; i < n; i++) {
+        crc ^= p[i];
+        for (k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
+static void be32(unsigned char *p, uint32_t v)
+{
+    p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);  p[3] = (unsigned char)v;
+}
+
+static void png_chunk(FILE *f, const char *tag, const unsigned char *d, uint32_t len)
+{
+    unsigned char hdr[8], tail[4];
+    uint32_t c;
+    be32(hdr, len);
+    memcpy(hdr + 4, tag, 4);
+    fwrite(hdr, 1, 8, f);
+    if (len) fwrite(d, 1, len, f);
+    c = crc32_of((const unsigned char *)tag, 4, 0);
+    c = crc32_of(d, len, c);
+    be32(tail, c);
+    fwrite(tail, 1, 4, f);
+}
+
+/* A w x h RGB PNG, stored (uncompressed) deflate blocks, mid-gray. */
+static int write_gray_png(const char *path, unsigned w, unsigned h)
+{
+    static const unsigned char sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+    size_t raw = (size_t)h * (w * 3 + 1), n = 0;
+    unsigned char *scan = (unsigned char *)calloc(raw, 1), *z = (unsigned char *)calloc(raw + 64, 1);
+    unsigned char ihdr[13], ad[4];
+    uint32_t a = 1, b = 0;
+    size_t i;
+    FILE *f;
+    if (!scan || !z) return 0;
+    for (i = 0; i < raw; i++) if (i % (w * 3 + 1)) scan[i] = 0x80;
+    for (i = 0; i < raw; i++) { a = (a + scan[i]) % 65521u; b = (b + a) % 65521u; }
+    z[n++] = 0x78; z[n++] = 0x01;
+    z[n++] = 1; z[n++] = (unsigned char)(raw & 0xFF); z[n++] = (unsigned char)(raw >> 8);
+    z[n++] = (unsigned char)(~raw & 0xFF); z[n++] = (unsigned char)((~raw >> 8) & 0xFF);
+    memcpy(z + n, scan, raw); n += raw;
+    be32(ad, (b << 16) | a);
+    memcpy(z + n, ad, 4); n += 4;
+    f = fopen(path, "wb");
+    if (!f) return 0;
+    fwrite(sig, 1, 8, f);
+    be32(ihdr, w); be32(ihdr + 4, h);
+    ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;
+    png_chunk(f, "IHDR", ihdr, 13);
+    png_chunk(f, "IDAT", z, (uint32_t)n);
+    png_chunk(f, "IEND", NULL, 0);
+    fclose(f);
+    free(scan); free(z);
+    return 1;
+}
+
+static int start_texreplace(harness_config *cfg, int argc, char **argv, const char *sysdir, const char *replace)
+{
+    harness_config fresh = HARNESS_CONFIG_DEFAULT;
+    *cfg = fresh;
+    cfg->frames = 1;
+    cfg->quiet = 1;
+    g_caps = VJ_CAP_EVENTS | VJ_CAP_DEBUG;
+    g_if = NULL;
+    harness_set_env_hook(env_hook);
+    if (!harness_init_from_args(cfg, argc, argv))
+        return 0;
+    cfg->system_dir = sysdir;
+    harness_set_option(cfg, "virtualjaguar_texture_replace", replace);
+    harness_set_option(cfg, "virtualjaguar_texture_dump", "disabled");
+    return harness_load_rom(cfg) ? 1 : 0;
+}
+
+static void partH(int argc, char **argv)
+{
+    harness_config cfg;
+    char sys[256], dir[400], file[500];
+    unsigned (*crc_get)(void);
+    int *enabled;
+    const char *tmp = getenv("TMPDIR");
+
+    snprintf(sys, sizeof sys, "%s/vjtexrel_%d", (tmp && tmp[0]) ? tmp : "/tmp", (int)getpid());
+    mkdir(sys, 0700);
+
+    /* Option on, but no pack exists yet when the game loads. */
+    CHECK(start_texreplace(&cfg, argc, argv, sys, "enabled"));
+    run_frames(&cfg, 5);
+    crc_get = (unsigned (*)(void))harness_dlsym(&cfg, "TitleDBContentCRC");
+    enabled = (int *)harness_dlsym(&cfg, "texReplaceEnabled");
+    CHECK(crc_get != NULL && enabled != NULL && g_if != NULL);
+    if (crc_get && enabled && g_if) {
+        CHECK(*enabled == 0);
+        CHECK(g_if->texreplace_reload() == 0);               /* nothing installed: nothing active */
+
+        snprintf(dir, sizeof dir, "%s/vj_texpacks", sys);
+        mkdir(dir, 0700);
+        snprintf(dir, sizeof dir, "%s/vj_texpacks/%08x", sys, crc_get());
+        mkdir(dir, 0700);
+        snprintf(file, sizeof file, "%s/0123456789abcdef.png", dir);
+        CHECK(write_gray_png(file, 8, 8));
+
+        CHECK(g_if->texreplace_reload() == 1);               /* found: base path + option survived */
+        CHECK(*enabled == 1);
+        CHECK(g_if->texreplace_reload() == 1);               /* and again (the reload is repeatable) */
+        run_frames(&cfg, 10);                                /* the emulation runs on with a pack loaded */
+
+        unlink(file);
+        CHECK(g_if->texreplace_reload() == 0);               /* removed: seen too */
+        CHECK(*enabled == 0);
+        rmdir(dir);
+    }
+    harness_shutdown(&cfg);
+
+    /* Option off: even with a pack on disk the reload activates nothing. */
+    CHECK(start_texreplace(&cfg, argc, argv, sys, "disabled"));
+    run_frames(&cfg, 5);
+    crc_get = (unsigned (*)(void))harness_dlsym(&cfg, "TitleDBContentCRC");
+    if (crc_get && g_if) {
+        snprintf(dir, sizeof dir, "%s/vj_texpacks/%08x", sys, crc_get());
+        mkdir(dir, 0700);
+        snprintf(file, sizeof file, "%s/0123456789abcdef.png", dir);
+        CHECK(write_gray_png(file, 8, 8));
+        CHECK(g_if->texreplace_reload() == 0);
+        unlink(file);
+        rmdir(dir);
+    }
+    harness_shutdown(&cfg);
+    snprintf(dir, sizeof dir, "%s/vj_texpacks", sys);
+    rmdir(dir);
+    rmdir(sys);
 }
 
 /* ---- G: the debug interface does not change the machine -------------------------------------------- */
@@ -602,6 +762,7 @@ int main(int argc, char **argv)
     partBC(argc, argv);
     partDE(argc, argv);
     partF(argc, argv);
+    partH(argc, argv);
     partG(argc, argv);
     harness_set_env_hook(NULL);
     printf("debug_iface: %d checks, %d failed\n", g_checks, g_fail);

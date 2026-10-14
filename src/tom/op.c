@@ -496,10 +496,16 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 //
 // Object Processor main routine
 //
-/* ---- app debug interface: one-walk display-list snapshot (see op.h) ---- */
-
-#define OPDBG_ARMED     1   /* waiting for the next walk                     */
-#define OPDBG_CAPTURING 2   /* a walk is recording (or just finished)        */
+/* ---- app debug interface: display-list snapshot (see op.h) ---------------
+ *
+ * Armed between frames, taken at the top of the first OPProcessList() call
+ * that finds a list (OLP != 0): the first active halfline of the next field,
+ * before the OP has rewritten HEIGHT/DATA/REMAINDER of any bitmap object.
+ * It does not follow the OP's own walk for that halfline: it reads the WHOLE
+ * list from DRAM with side-effect-free reads, following links and taking
+ * BOTH arms of every branch object (the OP only takes one per halfline), each
+ * object once, up to VJ_DBG_OP_MAX_OBJECTS.  The hot path pays one global
+ * test per OPProcessList() call and nothing per object. */
 
 int opDbgSnapState = 0;
 static struct vj_debug_op_obj *opDbgBuf = NULL;   /* VJ_DBG_OP_MAX_OBJECTS entries */
@@ -518,77 +524,111 @@ void OPDbgSnapArm(void)
    }
    opDbgCount    = 0;
    opDbgReady    = 0;
-   opDbgSnapState = OPDBG_ARMED;
+   opDbgSnapState = 1;
 }
 
-/* Top of OPProcessList, only while opDbgSnapState is nonzero.  Returns 1 if
- * this walk should record.  The first walk that visits at least one object
- * is the snapshot; a walk that found an empty list (OLP == 0, or a halfline
- * the game gates off) is discarded and the next one tried. */
-static int OPDbgSnapBegin(int halfline)
+static uint64_t OPDbgPhrase(uint32_t addr)
 {
-   if (opDbgSnapState == OPDBG_CAPTURING)
-   {
-      if (opDbgCount > 0)
-      {
-         /* The previous walk (which recorded) is over. */
-         opDbgSnapState = 0;
-         opDbgReady     = 1;
-         return 0;
-      }
-      /* It saw nothing: try again on this walk. */
-   }
-   opDbgCount     = 0;
-   opDbgHalfline  = (unsigned)halfline;
-   opDbgSnapState = OPDBG_CAPTURING;
-   return 1;
+   addr &= 0xFFFFF8u;
+   return ((uint64_t)JaguarReadLong(addr, DEBUGGER) << 32)
+        | (uint64_t)JaguarReadLong(addr + 4, DEBUGGER);
 }
 
-/* One visited object: its first phrase is in hand, the rest are read here
- * without side effects. */
-static void OPDbgSnapNote(uint32_t addr, uint64_t p0)
+/* Same link decode the OP uses (including the mirror kludge). */
+static uint32_t OPDbgLink(uint64_t p0)
 {
-   struct vj_debug_op_obj *o;
-   uint64_t p1 = 0, p2 = 0;
-   unsigned type = (unsigned)(p0 & 0x07);
+   uint32_t link = (uint32_t)((p0 & 0x000007FFFF000000LL) >> 21);
 
-   if (!opDbgBuf || opDbgCount >= VJ_DBG_OP_MAX_OBJECTS)
-      return;
-   o = &opDbgBuf[opDbgCount++];
-   o->address = addr;
-   o->type    = type;
-   o->phrases = 1;
-   if (type == 0 || type == 1)
+   if (link > 0x1FFFFF && link < 0x800000)
+      link &= 0xFF1FFFFF;
+   return link;
+}
+
+static int OPDbgSeen(uint32_t addr)
+{
+   int i;
+
+   for (i = 0; i < opDbgCount; i++)
+      if (opDbgBuf[i].address == addr)
+         return 1;
+   return 0;
+}
+
+/* Top of OPProcessList, only while opDbgSnapState is set. */
+static void OPDbgSnapTake(int halfline)
+{
+   uint32_t stack[VJ_DBG_OP_MAX_OBJECTS];
+   int sp = 0;
+   uint32_t olp = OPGetListPointer();
+
+   if (!olp || !opDbgBuf)
+      return;   /* no list yet: try the next halfline */
+
+   opDbgCount    = 0;
+   opDbgHalfline = (unsigned)halfline;
+   stack[sp++]   = olp & 0xFFFFF8u;
+
+   while (sp > 0 && opDbgCount < VJ_DBG_OP_MAX_OBJECTS)
    {
-      p1 = ((uint64_t)JaguarReadLong((addr & ~0x07u) + 8, DEBUGGER) << 32)
-         | (uint64_t)JaguarReadLong((addr & ~0x07u) + 12, DEBUGGER);
-      o->phrases = 2;
-      if (type == 1)
+      uint32_t addr = stack[--sp];
+      uint64_t p0, p1 = 0, p2 = 0;
+      unsigned type;
+      struct vj_debug_op_obj *o;
+
+      if (OPDbgSeen(addr))
+         continue;
+      p0   = OPDbgPhrase(addr);
+      type = (unsigned)(p0 & 0x07);
+      o = &opDbgBuf[opDbgCount++];
+      o->address = addr;
+      o->type    = type;
+      o->phrases = 1;
+      if (type == 0 || type == 1)
       {
-         p2 = ((uint64_t)JaguarReadLong((addr & ~0x07u) + 16, DEBUGGER) << 32)
-            | (uint64_t)JaguarReadLong((addr & ~0x07u) + 20, DEBUGGER);
-         o->phrases = 3;
+         p1 = OPDbgPhrase(addr + 8);
+         o->phrases = 2;
+         if (type == 1)
+         {
+            p2 = OPDbgPhrase(addr + 16);
+            o->phrases = 3;
+         }
       }
+      o->p0_hi = (unsigned)(p0 >> 32);
+      o->p0_lo = (unsigned)(p0 & 0xFFFFFFFFu);
+      o->p1_hi = (unsigned)(p1 >> 32);
+      o->p1_lo = (unsigned)(p1 & 0xFFFFFFFFu);
+      o->p2_hi = (unsigned)(p2 >> 32);
+      o->p2_lo = (unsigned)(p2 & 0xFFFFFFFFu);
+
+      if (type == 0 || type == 1)
+      {
+         if (sp < VJ_DBG_OP_MAX_OBJECTS)
+            stack[sp++] = OPDbgLink(p0) & 0xFFFFF8u;
+      }
+      else if (type == 2)   /* GPU object: the OP resumes at the next phrase */
+      {
+         if (sp < VJ_DBG_OP_MAX_OBJECTS)
+            stack[sp++] = (addr + 8) & 0xFFFFF8u;
+      }
+      else if (type == 3)   /* branch: both arms */
+      {
+         if (sp + 1 < VJ_DBG_OP_MAX_OBJECTS)
+         {
+            stack[sp++] = (addr + 8) & 0xFFFFF8u;
+            stack[sp++] = ((uint32_t)((p0 >> 21) & 0x3FFFF8u)) & 0xFFFFF8u;
+         }
+      }
+      /* stop objects (4) and anything undefined end that arm */
    }
-   o->p0_hi = (unsigned)(p0 >> 32);
-   o->p0_lo = (unsigned)(p0 & 0xFFFFFFFFu);
-   o->p1_hi = (unsigned)(p1 >> 32);
-   o->p1_lo = (unsigned)(p1 & 0xFFFFFFFFu);
-   o->p2_hi = (unsigned)(p2 >> 32);
-   o->p2_lo = (unsigned)(p2 & 0xFFFFFFFFu);
+
+   opDbgSnapState = 0;
+   opDbgReady     = 1;
 }
 
 int OPDbgSnapGet(struct vj_debug_op_obj *o, int max, unsigned *halfline)
 {
    int n, i;
 
-   /* Between retro_run() calls a walk is never in progress, so a capture
-    * that recorded something is finished. */
-   if (opDbgSnapState == OPDBG_CAPTURING && opDbgCount > 0)
-   {
-      opDbgSnapState = 0;
-      opDbgReady     = 1;
-   }
    if (!opDbgReady || !opDbgBuf)
       return -1;
    n = opDbgCount;
@@ -628,7 +668,6 @@ void OPProcessList(int halfline, bool render)
 {
    bool inhibit;
    uint32_t opObjectsToRun = OP_RUNAWAY_GUARD_OBJECTS;
-   int dbgSnap = 0;
 
 //#warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
    // We ignore them, for now; not good D-:
@@ -642,7 +681,7 @@ void OPProcessList(int halfline, bool render)
 
    /* App debug interface: zero unless a snapshot was armed. */
    if (opDbgSnapState)
-      dbgSnap = OPDbgSnapBegin(halfline);
+      OPDbgSnapTake(halfline);
 
    op_pointer = OPGetListPointer();
    VJT_EMIT(VJT_EV_OP_LIST_START, OP, op_pointer, (uint32_t)halfline);
@@ -661,8 +700,6 @@ void OPProcessList(int halfline, bool render)
       op_pointer += 8;
 
       VJT_EMIT(VJT_EV_OP_OBJECT, OP, op_pointer - 8, (uint32_t)((uint8_t)p0 & 0x07));
-      if (dbgSnap)
-         OPDbgSnapNote(op_pointer - 8, p0);
 
       switch ((uint8_t)p0 & 0x07)
       {

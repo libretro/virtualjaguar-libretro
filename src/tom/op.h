@@ -27,14 +27,15 @@ uint32_t OPGetStatusRegister(void);
 void OPSetCurrentObject(uint64_t object);
 void OPNotifyOBFWrite(void);
 
-/* App debug interface (src/debug/vjdebug.c): a one-shot capture of one
- * display-list walk, taken BEFORE the OP rewrites HEIGHT/DATA/REMAINDER
- * (the OP updates those per halfline, so the list in RAM after a frame is
- * not the list the game built).  OPDbgSnapState is the only thing the walk
- * tests: nonzero only between an arm and the end of the captured walk.
+/* App debug interface (src/debug/vjdebug.c): a one-shot capture of the
+ * whole display list, taken at the top of the first OPProcessList() call
+ * after it is armed that finds a list -- before the OP rewrites HEIGHT/DATA/
+ * REMAINDER of any bitmap (it does so per halfline, so the list in RAM after
+ * a frame is not the list the game built).  Both arms of every branch object
+ * are followed, each object recorded once.  OPDbgSnapState is the only thing
+ * the walk tests: nonzero only between an arm and the capture.
  * Host-transient: zero savestate fields, invisible to the emulated machine
- * (the extra phrase reads use who == DEBUGGER, which the bus arbiter does
- * not charge). */
+ * (the reads use who == DEBUGGER, which the bus arbiter does not charge). */
 struct vj_debug_op_obj;
 extern int opDbgSnapState;
 void OPDbgSnapArm(void);
