@@ -292,6 +292,13 @@ namespace {
 void pumpPreviews() {
     ImGuiIO& io = ImGui::GetIO();
     g.frame++;
+    std::vector<State::PreviewReq> reqs;
+    reqs.swap(g.previewReqs);   // rows ask again every frame while they are Pending and visible
+    size_t budget = kPreviewLoadsPerFrame;
+    size_t want = 0;   // faces about to be loaded: make room for them first, or a full cache would starve new rows
+    for (const State::PreviewReq& r : reqs)
+        if (want < budget && !g.previews.count(r.key)) want++;
+    const size_t room = kPreviewMaxFonts > want ? kPreviewMaxFonts - want : 0;
     for (;;) {
         size_t loaded = 0;
         std::map<std::string, State::PreviewEntry>::iterator oldest = g.previews.end();
@@ -301,7 +308,7 @@ void pumpPreviews() {
             if (it->second.lastUsed + 1 < g.frame && (oldest == g.previews.end() || it->second.lastUsed < oldest->second.lastUsed))
                 oldest = it;
         }
-        if ((loaded <= kPreviewMaxFonts && g.previewBytes <= kPreviewMaxBytes) || oldest == g.previews.end()) break;
+        if ((loaded <= room && g.previewBytes <= kPreviewMaxBytes) || oldest == g.previews.end()) break;
         io.Fonts->RemoveFont(oldest->second.p.font);
         g.previewBytes -= oldest->second.bytes;
         g.previews.erase(oldest);
@@ -311,9 +318,6 @@ void pumpPreviews() {
     size_t loadedNow = 0;
     for (const auto& kv : g.previews)
         if (kv.second.p.font) loadedNow++;
-    size_t budget = kPreviewLoadsPerFrame;
-    std::vector<State::PreviewReq> reqs;
-    reqs.swap(g.previewReqs);   // rows ask again every frame while they are Pending and visible
     for (const State::PreviewReq& r : reqs) {
         if (budget == 0) break;
         if (g.previews.count(r.key)) continue;
