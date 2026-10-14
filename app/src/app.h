@@ -23,6 +23,7 @@
 #include "netplay.h"
 #include "paths.h"
 #include "perf.h"
+#include "platform/commands.h"
 #include "theme_custom.h"
 #include "video.h"
 
@@ -55,6 +56,7 @@ struct CliArgs {
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
     std::vector<std::string> cheatCodes;      // add these manual codes
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
+    bool dumpNativeMenu = false;    // dev: print and check the real macOS menu tree, then exit (77 = no native menu here)
     bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
     int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
     bool showHelp = false;
@@ -129,6 +131,8 @@ public:
     bool quit = false;
     bool fullscreen = false;
     bool menuPinned = true;
+    bool showInWindowMenu = false;    // macOS: F1 shows the in-window menu bar too (the native one is the main bar)
+    bool inWindowMenuBar() const;     // is an ImGui menu bar being drawn at all
     bool showSettings = false;
     bool showStates = false;
     bool showAbout = false;
@@ -161,6 +165,8 @@ public:
     bool themePreviewing_ = false;
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
+    bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Storage)
+    bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
@@ -210,6 +216,10 @@ public:
     void applySettingsFromConfig();   // re-read the member settings from cfg (defaults for erased keys); Settings > Reset
     void applyBios();                 // hands the BIOS choice (and a one-off boot's file) to the core host
 
+    // ---- native-OS integration (desktop.cpp; platform/platform.h) -------------------------
+    void runNativeCommand(platform::Cmd cmd, int arg);   // a native menu / tray click, from the event loop
+    bool applyTray();                                    // makes the tray match trayIcon; false = not available here
+
     double now() const;
     SDL_Window* window() const { return window_; }
     float fpsMeasured() const { return fpsShown_; }
@@ -227,6 +237,10 @@ private:
     int runHeadless(const CliArgs& a);
     void saveWindowScreenshot(const std::string& path);
 
+    void desktopInit();       // after the window exists: native menus, tray, dark title bar
+    void desktopFrame();      // every frame: refresh the native menus from the app state
+    void desktopShutdown();
+    platform::MenuState menuState();
     void handleEvent(const SDL_Event& e, bool headless);
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
@@ -249,6 +263,7 @@ private:
     bool imguiUp_ = false;
     float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)
     uint32_t openDialogEvent_ = 0;
+    uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
 
     // pacing
@@ -297,6 +312,8 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Desktop integration settings (desktop.cpp): the tray / menu-bar icon and "keep the display awake".
+void drawDesktopSettings(App& app);
 // Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
 void drawLibraryHome(App& app, float x, float y, float w, float h);
 // Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.

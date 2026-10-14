@@ -28,6 +28,7 @@ const Exact kExact[] = {
     {"audio.target_ms", KeyClass::Audio},
     {"ui.controls.autoshow", KeyClass::Input},
     {"saves.autosave", KeyClass::Storage},    {"ui.home_library", KeyClass::Storage},
+    {"ui.tray", KeyClass::Storage},           {"ui.keep_awake", KeyClass::Storage},   // Settings > Storage > Desktop
     {"library.art", KeyClass::Storage},
     {"library.hide_on_launch", KeyClass::Storage}, {"library.size", KeyClass::Storage},
     {"library.section", KeyClass::Storage},

@@ -27,7 +27,12 @@ if(NOT VJ_CORE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
     message(FATAL_ERROR "could not read CORE_BASE_VERSION from ../Makefile (got '${_vj_core_ver_line}')")
 endif()
 
-project(VirtualJaguar LANGUAGES C CXX
+# macOS also compiles Objective-C++ (src/platform/platform_macos.mm: the native menu bar, Dock menu).
+set(VJ_LANGUAGES C CXX)
+if(APPLE)
+    list(APPEND VJ_LANGUAGES OBJCXX)
+endif()
+project(VirtualJaguar LANGUAGES ${VJ_LANGUAGES}
         VERSION ${VJ_CORE_VERSION}
         DESCRIPTION "Virtual Jaguar - Atari Jaguar emulator")
 
@@ -269,9 +274,25 @@ set(VJ_APP_SOURCES
     src/netplay.cpp
     src/netplay_addr.cpp
     src/netplay_ui.cpp
+    src/desktop.cpp
+    src/platform/commands.cpp
+    src/platform/events.cpp
+    src/platform/platform.cpp
+    src/platform/tray.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
     src/discord_app.cpp)
+
+# Native-OS integration (#833): one source per OS behind src/platform/platform_os.h.
+if(APPLE)
+    list(APPEND VJ_APP_SOURCES src/platform/platform_macos.mm)
+    set_source_files_properties(src/platform/platform_macos.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
+elseif(WIN32)
+    list(APPEND VJ_APP_SOURCES src/platform/platform_windows.cpp)
+else()
+    list(APPEND VJ_APP_SOURCES src/platform/platform_other.cpp)
+endif()
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
@@ -301,6 +322,10 @@ target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
+    target_link_libraries(virtualjaguar PRIVATE shell32)           # platform_windows.cpp: SHAddToRecentDocs, ShellExecuteW
+endif()
+if(APPLE)
+    target_link_libraries(virtualjaguar PRIVATE "-framework Cocoa")
 endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}"
@@ -357,6 +382,7 @@ if(VJ_APP_BUILD_TESTS)
     include(VJAchTests)
     include(VJCheatTests)
     include(VJNetplayTests)
+    include(VJPlatformTests)
     include(VJDiscordTests)
     include(VJThemeTests)
 endif()

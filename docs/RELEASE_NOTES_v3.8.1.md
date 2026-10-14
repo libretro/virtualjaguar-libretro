@@ -120,6 +120,14 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   Reset all settings... (with a confirmation) puts everything back to defaults while keeping your library
   folders, recents, covers, saves, RetroAchievements login, key and button bindings and per-game
   overrides unless you tick them (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+- **Feels native.** macOS gets a real menu bar (Cmd shortcuts, Open Recent, State Slot, Window and Help
+  menus) and a Dock menu with your recent games; Windows gets a dark title bar, recent games in the taskbar
+  Jump List and an optional installer checkbox that opens `.j64` / `.jag` / `.cue` / `.chd` and the rest with
+  Virtual Jaguar; Linux gets a proper MIME type and desktop actions, and the window now matches its
+  `.desktop` file. Double-clicking a game, Open With and dropping a game on the app icon work on all three.
+  The screensaver no longer stays blocked while you are in the library or paused, an optional tray / menu-bar
+  icon offers pause, reset and recent games, and "Show in Finder / Explorer" is in the menu
+  (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Core events for the app.** The core tells the app about link up/down, link statistics, wire
   speed and crash-watchdog hits over a private channel (`docs/app-frontend-extension.md`) instead
   of the app reading log text; a watchdog hit now also shows on screen. RetroArch and other

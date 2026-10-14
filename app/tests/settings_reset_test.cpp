@@ -64,6 +64,7 @@ static void fill(Config& c) {
         "ui.controls.autoshow",
         // Storage + library display
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
+        "ui.tray", "ui.keep_awake",
         "library.favorites.show", "library.recents.show", "saves.resume",
         // Discord
         "discord.enabled", "discord.art", "discord.buttons",
@@ -189,7 +190,8 @@ static void testResetAll() {
         for (const char* k : {"video.integer", "video.vsync", "ui.show_fps", "ui.theme", "shader.enabled", "shader.preset", "audio.volume",
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
                               "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
-                              "library.favorites.show", "library.recents.show", "saves.resume", "discord.enabled", "discord.art",
+                              "library.favorites.show", "library.recents.show", "saves.resume",
+                              "ui.tray", "ui.keep_awake", "discord.enabled", "discord.art",
                               "discord.buttons"})
             CHECK(after.count(k) == 0);
         // Nothing but these three kinds of key is left.

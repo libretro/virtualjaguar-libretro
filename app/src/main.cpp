@@ -6,6 +6,8 @@
 #include <cstring>
 
 #include "app.h"
+#include "platform/commands.h"
+#include "platform/platform.h"
 
 static void usage(const char* argv0) {
     std::printf(
@@ -35,6 +37,7 @@ static void usage(const char* argv0) {
         "\n"
         "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
+        "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X]\n"
         "     [--show-window settings[-video|-input|-audio|-bios|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
         "\n"
@@ -74,6 +77,11 @@ int main(int argc, char** argv) {
     vj::CliArgs a;
     for (int i = 1; i < argc; i++) {
         const char* s = argv[i];
+        // Arguments a launcher adds (macOS "-psn_0_12345") are not ours and not an error.
+        if (int skip = vj::platform::ignorableLauncherArgs(argc, argv, i)) {
+            i += skip - 1;
+            continue;
+        }
         auto need = [&](const char* name) -> const char* {
             if (i + 1 >= argc) {
                 std::fprintf(stderr, "%s needs an argument\n", name);
@@ -114,6 +122,7 @@ int main(int argc, char** argv) {
             a.expectBios.push_back(v);
         }
         else if (!std::strcmp(s, "--verbose")) a.verbose = true;
+        else if (!std::strcmp(s, "--dump-native-menu")) a.dumpNativeMenu = true;
         else if (!std::strcmp(s, "--ra-mock")) a.raMock = need(s);
         else if (!std::strcmp(s, "--ra-hardcore")) a.raHardcore = true;
         else if (!std::strcmp(s, "--ra-poke")) {
@@ -225,6 +234,7 @@ int main(int argc, char** argv) {
         std::printf("Virtual Jaguar %s\n", VJ_APP_VERSION);
         return 0;
     }
+    if (a.dumpNativeMenu) return vj::platform::dumpNativeMenu();
     vj::App app;
     return app.run(a);
 }

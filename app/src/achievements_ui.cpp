@@ -10,6 +10,7 @@
 #include <ctime>
 
 #include "app.h"
+#include "platform/platform.h"
 #include "ra_dash.h"
 #include "ra_images.h"
 #include "secret_store.h"
@@ -578,7 +579,7 @@ void drawAchievementsUi(App& app) {
     if (a.showLogin) drawLogin(app);
     if (a.showList) drawList(app);
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float menuH = ImGui::GetFrameHeight();
+    const float menuH = app.inWindowMenuBar() ? ImGui::GetFrameHeight() : 0.0f;   // no in-window menu bar under a native one
     const ImVec2 pos(vp->Pos.x, vp->Pos.y + menuH), size(vp->Size.x, vp->Size.y - menuH);
     drawToasts(app, pos, size);
     drawIndicators(app, pos, size);

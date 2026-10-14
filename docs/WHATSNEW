@@ -49,6 +49,11 @@ docs/RELEASE_NOTES_v3.8.1.md
   gamepad, 6-button keyboard layout, on-screen keypad (F2), controls
   overlay (F3); mice, rotary, analog, driving, paddle, 6D, light gun
   and Team Tap (#837).
+* Feels native: a real macOS menu bar and Dock menu, Windows dark
+  title bar / Jump List / optional file associations, Linux MIME
+  types and desktop actions, double-click and Open With on all
+  three, screensaver allowed outside a running game, optional tray
+  or menu-bar icon (#833).
 * Save states with thumbnails and a state manager.
 * Light and dark themes: Settings > Video > Appearance, System (the
   default) follows the OS and switches live; Customize... edits your

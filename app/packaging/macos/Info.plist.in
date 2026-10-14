@@ -22,7 +22,10 @@
         <dict>
             <key>CFBundleTypeName</key><string>Atari Jaguar game</string>
             <key>CFBundleTypeRole</key><string>Viewer</string>
-            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSHandlerRank</key><string>Default</string>
+            <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+            <key>LSItemContentTypes</key>
+            <array><string>io.github.libretro.virtualjaguar.rom</string></array>
             <key>CFBundleTypeExtensions</key>
             <array><string>j64</string><string>jag</string><string>rom</string><string>abs</string><string>cof</string></array>
         </dict>
@@ -30,8 +33,26 @@
             <key>CFBundleTypeName</key><string>Atari Jaguar CD image</string>
             <key>CFBundleTypeRole</key><string>Viewer</string>
             <key>LSHandlerRank</key><string>Alternate</string>
+            <key>CFBundleTypeIconFile</key><string>AppIcon</string>
             <key>CFBundleTypeExtensions</key>
             <array><string>cue</string><string>chd</string><string>cdi</string></array>
+        </dict>
+    </array>
+    <!-- Only the Jaguar-specific extensions get a type of their own.  rom / abs / cof / cue / chd / cdi are
+         generic and other programs' (the document types above still make Open With and the Dock menu work for them).
+         KEEP THE EXTENSION LISTS IN SYNC with src/platform/commands.h: the CTest platform_assoc_sync checks. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>io.github.libretro.virtualjaguar.rom</string>
+            <key>UTTypeDescription</key><string>Atari Jaguar ROM</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>j64</string><string>jag</string></array>
+            </dict>
         </dict>
     </array>
 </dict>
