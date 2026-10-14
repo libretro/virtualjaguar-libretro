@@ -52,3 +52,20 @@ else()
 endif()
 add_test(NAME debug_op_unit COMMAND vj_debug_op_test)
 set_tests_properties(debug_op_unit PROPERTIES TIMEOUT 60)
+
+#   debug_op_e2e         the Object list tool against the REAL core on a public ROM (yarc): arm the snapshot,
+#                        run a frame, decode the list the OP walked (a stop object ends it, bitmap objects are
+#                        drawable), render a bitmap from DRAM, export it as a PNG, paint a pixel and see it in RAM.
+add_executable(vj_debug_op_e2e
+    tests/debug_op_e2e.cpp src/debug/op_decode.cpp src/debug/op_render.cpp src/debug/op_view.cpp
+    src/debug/debug_session.cpp src/core_host.cpp src/paths.cpp)
+target_include_directories(vj_debug_op_e2e PRIVATE src)
+target_link_libraries(vj_debug_op_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_debug_op_e2e PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_op_e2e PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_op_e2e PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_op_e2e COMMAND vj_debug_op_e2e "${VJ_ROMS}/yarc.j64")
+set_tests_properties(debug_op_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")

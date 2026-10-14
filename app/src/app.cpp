@@ -954,6 +954,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "keypad") input.overlay.open = true;
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "controls") input.controls.show = true;
+    else if (a.showWindow == "objects") setObjectsWindowOpen(true);
     unsigned uiFrames = 0;
 
     std::string firstErr;
