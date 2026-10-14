@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
+#include "theme_style.h"
 
 #include <algorithm>
 #include <cctype>
@@ -105,6 +106,7 @@ void App::applySettingsFromConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
+    if (!themeFromCli_) theme::setMode(theme::parseMode(cfg.get("ui.theme", "system")));
     homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
@@ -122,6 +124,7 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
+    if (!themeFromCli_) cfg.set("ui.theme", theme::modeKey(theme::state().mode()));
     cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setInt("saves.resume", resumeMode);
@@ -220,13 +223,15 @@ bool App::initImGui() {
     io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
     g_imguiIni = paths.imguiIni;
     io.IniFilename = g_imguiIni.c_str();
-    ImGui::StyleColorsDark();
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
-    // Opaque windows: the dark theme's 0.94 alpha let the home screen's text show through
-    // (About, Settings).  Overlays that want to be see-through set SetNextWindowBgAlpha.
-    st.Colors[ImGuiCol_WindowBg].w = 1.0f;
+    // Colours: the theme in force (Settings > Video > Appearance; System follows the OS, and
+    // SDL_EVENT_SYSTEM_THEME_CHANGED re-applies them live).  Only colours change when the theme does, so the
+    // sizes and rounding set here and scaled below stay as they are.
+    theme::addListener([this](theme::Scheme) { applyTheme(); });
+    theme::refreshSystem();
+    theme::applyStyleColors(st, theme::effective());
     // The UI scale is the display's CONTENT scale (the 200% of a 4K Windows/Linux display), nothing more.
     // SDL_GetWindowDisplayScale() is relative to the window's PIXEL size, so it also contains the pixel density
     // (2.0 on every Retina Mac); ImGui's SDL3 backend lays out in window points and already renders at the
@@ -301,6 +306,15 @@ void App::wireHost() {
         else cfg.set("opt." + k, v);
     };
     host.setLogVerbose(false);
+}
+
+void App::applyTheme() {
+    if (imguiUp_) theme::applyStyleColors(ImGui::GetStyle(), theme::effective());
+}
+
+void App::setThemeMode(int mode) {
+    themeFromCli_ = false;   // the user chose: from here on the choice is theirs to keep
+    theme::setMode((theme::Mode)mode);
 }
 
 void App::applyVsync() {
@@ -797,6 +811,9 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         if (e.key.scancode == SDL_SCANCODE_TAB && !captured) fastForward = (e.type == SDL_EVENT_KEY_DOWN);
         break;
     }
+    case SDL_EVENT_SYSTEM_THEME_CHANGED:   // the OS switched between light and dark: a System choice follows
+        theme::handleEvent(e);
+        break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         fastForward = false;
         break;
@@ -924,6 +941,10 @@ int App::run(const CliArgs& a) {
         return 1;
     }
     host.setLogVerbose(a.verbose);
+    if (!a.theme.empty()) {
+        themeFromCli_ = true;
+        theme::setMode(theme::parseMode(a.theme));
+    }
     loadConfig();
     if (paths.instance > 1) {
         host.setSaveFallbackDir(paths.savesShared);

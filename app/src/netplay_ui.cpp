@@ -34,10 +34,11 @@ struct UiState {
 };
 UiState g_ui;
 
-const ImVec4 kGreen(0.45f, 0.85f, 0.5f, 1.0f);
-const ImVec4 kAmber(1.0f, 0.8f, 0.4f, 1.0f);
-const ImVec4 kRed(1.0f, 0.5f, 0.5f, 1.0f);
-const ImVec4 kGrey(0.6f, 0.6f, 0.6f, 1.0f);
+// Theme colours (theme.h): functions, because the scheme can change while the app runs.
+ImVec4 kGreen() { return ui::vec4(ui::pal().success); }
+ImVec4 kAmber() { return ui::vec4(ui::pal().warning); }
+ImVec4 kRed() { return ui::vec4(ui::pal().error); }
+ImVec4 kGrey() { return ui::vec4(ui::pal().textMuted); }
 
 // Greyed text that wraps (ImGui::TextDisabled does not).
 void hint(const char* fmt, ...) {
@@ -97,22 +98,22 @@ void begin(App& app, const NetSettings& s) {
 void drawStatus(App& app) {
     Netplay& np = app.netplay;
     const bool running = app.host.isLoaded();
-    ImVec4 col = kGrey;
+    ImVec4 col = kGrey();
     std::string head;
     if (!np.configured()) {
         head = "Not connected";
     } else if (np.link() == LinkState::Up) {
         head = "Connected";
-        col = kGreen;
+        col = kGreen();
     } else if (np.link() == LinkState::Lost) {
         head = "Partner disconnected";
-        col = kRed;
+        col = kRed();
     } else if (np.settings().role == NetRole::Join && np.settings().address.empty()) {
         head = "Looking for games";
-        col = kAmber;
+        col = kAmber();
     } else {
         head = "Waiting for partner";
-        col = kAmber;
+        col = kAmber();
     }
     ImGui::TextColored(col, "%s", head.c_str());
     ImGui::SameLine();
@@ -120,11 +121,11 @@ void drawStatus(App& app) {
     ImGui::SameLine();
     ImGui::TextWrapped("%s", np.statusText().c_str());
     if (np.configured() && !running)
-        ImGui::TextColored(kAmber, "No game is running. The link starts as soon as you open one (both players need the same game).");
+        ImGui::TextColored(kAmber(), "No game is running. The link starts as soon as you open one (both players need the same game).");
     else if (np.configured() && app.paused)
-        ImGui::TextColored(kAmber, "The game is paused, so the link is paused too.");
-    for (const std::string& n : np.notices()) ImGui::TextColored(kAmber, "%s", n.c_str());
-    if (!g_ui.error.empty()) ImGui::TextColored(kRed, "%s", g_ui.error.c_str());
+        ImGui::TextColored(kAmber(), "The game is paused, so the link is paused too.");
+    for (const std::string& n : np.notices()) ImGui::TextColored(kAmber(), "%s", n.c_str());
+    if (!g_ui.error.empty()) ImGui::TextColored(kRed(), "%s", g_ui.error.c_str());
 }
 
 const char* qualityWord(double hopMs) {
@@ -205,7 +206,7 @@ void drawHost(App& app) {
     refreshLan(app);
     ImGui::SeparatorText("Your addresses");
     if (g_ui.lan.empty()) {
-        ImGui::TextColored(kAmber, "This computer does not seem to be on a network.");
+        ImGui::TextColored(kAmber(), "This computer does not seem to be on a network.");
     } else {
         hint("Your partner can pick you from their list, or type one of these:");
         for (size_t i = 0; i < g_ui.lan.size(); i++) {
@@ -262,7 +263,7 @@ void drawJoin(App& app) {
             }
             if (!h.device.empty()) {
                 ImGui::SameLine();
-                ImGui::TextColored(kAmber, "uses %s - choose that above", h.device.c_str());
+                ImGui::TextColored(kAmber(), "uses %s - choose that above", h.device.c_str());
             }
             ImGui::SameLine();
             const bool here = dialing && np.settings().address == h.address;

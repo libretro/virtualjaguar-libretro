@@ -21,6 +21,7 @@ const Exact kExact[] = {
     {"video.integer", KeyClass::Video},       {"video.linear", KeyClass::Video},
     {"video.stretch", KeyClass::Video},       {"video.aspect", KeyClass::Video},
     {"video.vsync", KeyClass::Video},         {"ui.show_fps", KeyClass::Video},
+    {"ui.theme", KeyClass::Video},
     // shader.folder is a path the user picked, like a library folder: kept.
     {"shader.enabled", KeyClass::Shader},     {"shader.preset", KeyClass::Shader},
     {"audio.volume", KeyClass::Audio},        {"audio.mute", KeyClass::Audio},

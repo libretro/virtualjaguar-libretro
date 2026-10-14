@@ -119,7 +119,7 @@ void drawControlsTab(App& app) {
         std::snprintf(m, sizeof m, "Press %s for \"%s\"  (Esc cancels)",
                       layer.cls == DeviceClass::Keyboard ? "a key" : "a gamepad button or push a stick/trigger",
                       ctlLabel(in.captureTarget()));
-        ui::coloredWrapped(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), m);
+        ui::coloredWrapped(ui::vec4(ui::pal().success), m);
     }
     if (ImGui::SmallButton("Reset this layer")) {
         st->clearLayer(layer);
@@ -230,7 +230,7 @@ void drawKeypadOverlay(App& app) {
             }
             bool cursor = (r == ov.row && c == ov.col);
             ImGui::PushID(r * 3 + c);
-            if (cursor) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.5f, 0.85f, 1.0f));
+            if (cursor) ImGui::PushStyleColor(ImGuiCol_Button, ui::vec4(ui::pal().cursorButton));
             if (ImGui::Button(label, sz)) {
                 ov.row = r;
                 ov.col = c;

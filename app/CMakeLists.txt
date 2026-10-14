@@ -240,6 +240,8 @@ set(VJ_APP_SOURCES
     src/cheatsheet_ui.cpp
     src/devices_ui.cpp
     src/ui.cpp
+    src/theme.cpp
+    src/theme_style.cpp
     src/settings_reset.cpp
     src/settings_reset_ui.cpp
     src/library_ui.cpp
@@ -327,4 +329,5 @@ if(VJ_APP_BUILD_TESTS)
     include(VJAchTests)
     include(VJCheatTests)
     include(VJNetplayTests)
+    include(VJThemeTests)
 endif()

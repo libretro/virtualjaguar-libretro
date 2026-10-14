@@ -40,6 +40,7 @@ struct CliArgs {
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
@@ -146,6 +147,7 @@ public:
     bool mute = false;
     float audioTargetMs = 64.0f;
     bool showFps = false;
+    bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
 
     // ---- actions ----------------------------------------------------------------
@@ -172,6 +174,8 @@ public:
     void togglePause();
     void setFullscreen(bool fs);
     void applyVsync();
+    void applyTheme();                // the Dear ImGui colours for the theme in force (theme.h); a no-op before the UI exists
+    void setThemeMode(int mode);      // Settings > Video > Appearance (a theme::Mode); remembered
     void applyAudioSettings();
 
     std::string statePath(int slot) const;

@@ -170,6 +170,21 @@ void drawCoreOptions(App& app) {
 
 // ---- settings window ------------------------------------------------------------------
 
+// Settings > Video > Appearance: the colour theme.  System follows the OS and switches live when it does.
+void drawAppearance(App& app) {
+    ImGui::SeparatorText("Appearance");
+    const theme::Mode cur = theme::state().mode();
+    static const theme::Mode modes[] = {theme::Mode::System, theme::Mode::Dark, theme::Mode::Light};
+    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 12.0f, 18.0f));
+    if (ImGui::BeginCombo("Theme", theme::modeLabel(cur))) {
+        for (theme::Mode m : modes)
+            if (ImGui::Selectable(theme::modeLabel(m), m == cur)) app.setThemeMode((int)m);
+        ImGui::EndCombo();
+    }
+    if (cur == theme::Mode::System)
+        ui::hint("Following the system: currently %s.", theme::isDark() ? "dark" : "light");
+}
+
 void drawVideoTab(App& app) {
     drawAppGroupReset(app, AppGroup::Video);
     PresentOptions& p = app.present;
@@ -188,6 +203,7 @@ void drawVideoTab(App& app) {
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     ImGui::Checkbox("Show frame rate", &app.showFps);
+    drawAppearance(app);
     drawShaderSettings(app);
 }
 
@@ -317,11 +333,11 @@ void drawStates(App& app) {
         } else {
             ImGui::Dummy(box);
             ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddRect(a, b, IM_COL32(120, 120, 120, 255));
+            ImGui::GetWindowDrawList()->AddRect(a, b, ui::u32(ui::pal().emptyEdge));
             const char* txt = exists ? "no preview" : "empty";
             ImVec2 ts = ImGui::CalcTextSize(txt);
             ImGui::GetWindowDrawList()->AddText(ImVec2(a.x + (box.x - ts.x) * 0.5f, a.y + (box.y - ts.y) * 0.5f),
-                                                IM_COL32(150, 150, 150, 255), txt);
+                                                ui::u32(ui::pal().textMuted), txt);
         }
         std::string head = "Slot " + std::to_string(s) + (s == app.stateSlot ? "  <" : "");
         ImGui::TextUnformatted(head.c_str());
@@ -542,10 +558,10 @@ void drawOsd(App& app, ImVec2 areaPos, ImVec2 areaSize) {
         y -= ts.y + pad * 2;
         ImVec2 p0(areaPos.x + ImGui::GetFontSize() * 0.6f, y);
         ImVec2 p1(p0.x + ts.x + pad * 2, y + ts.y + pad * 2);
-        dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(170 * a)), 4.0f);
-        ImU32 col = o.level >= 3 ? IM_COL32(255, 120, 120, (int)(255 * a))
-                  : o.level == 2 ? IM_COL32(255, 210, 110, (int)(255 * a))
-                                 : IM_COL32(240, 240, 240, (int)(255 * a));
+        // Over the game picture (or the home screen): the dark-translucent overlay palette in both themes.
+        const theme::Overlay& ov = ui::overlay();
+        dl->AddRectFilled(p0, p1, ui::u32(ov.osdBg, a), 4.0f);
+        ImU32 col = o.level >= 3 ? ui::u32(ov.osdError, a) : o.level == 2 ? ui::u32(ov.osdWarn, a) : ui::u32(ov.osdText, a);
         dl->AddText(nullptr, 0.0f, ImVec2(p0.x + pad, p0.y + pad), col, o.text.c_str(), nullptr, wrap);
         y -= pad * 0.5f;
     }
@@ -562,7 +578,9 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImGuiIO& io = ImGui::GetIO();
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
-    bg->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
+    // Black behind the game (the letterbox bars); the theme's home colour behind the library / welcome screen.
+    bg->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y),
+                      app.host.isLoaded() ? IM_COL32(0, 0, 0, 255) : ui::u32(ui::pal().homeBg));
 
     // The menu bar is always there in a window; in fullscreen it shows while
     // pinned (F1), while the pointer is at the top edge, or while a menu is open.
@@ -592,8 +610,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
             float wrap = std::max(ImGui::GetFontSize() * 10.0f, areaSize.x - ImGui::GetFontSize() * 4.0f);
             ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2, nullptr, false, wrap);
             float cx = areaPos.x + areaSize.x * 0.5f, cy = areaPos.y + areaSize.y * 0.5f;
-            bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), IM_COL32(230, 230, 230, 255), l1);
-            bg->AddText(nullptr, 0.0f, ImVec2(cx - s2.x * 0.5f, cy + s1.y * 0.2f), IM_COL32(150, 150, 150, 255), l2,
+            bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), ui::u32(ui::pal().text), l1);
+            bg->AddText(nullptr, 0.0f, ImVec2(cx - s2.x * 0.5f, cy + s1.y * 0.2f), ui::u32(ui::pal().textMuted), l2,
                         nullptr, wrap);
         }
     }
@@ -603,7 +621,11 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showFps) {
         char buf[64];
         std::snprintf(buf, sizeof buf, "%.1f fps%s", app.fpsMeasured(), app.fastForward ? "  >>" : "");
-        ImGui::GetForegroundDrawList()->AddText(ImVec2(areaPos.x + 8, areaPos.y + 6), IM_COL32(255, 255, 0, 255), buf);
+        // A chip behind the number: it can sit over a white game frame or the light home screen.
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        ImVec2 ts = ImGui::CalcTextSize(buf), at(areaPos.x + 8, areaPos.y + 6);
+        fg->AddRectFilled(ImVec2(at.x - 4, at.y - 2), ImVec2(at.x + ts.x + 4, at.y + ts.y + 2), ui::u32(ui::overlay().fpsBg), 3.0f);
+        fg->AddText(at, ui::u32(ui::overlay().fpsText), buf);
     }
 
     if (app.showSettings) drawSettings(app);
