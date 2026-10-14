@@ -263,7 +263,7 @@ off for the old plain welcome. The separate **Game library** window (File > Game
 stays for in-game use (pick another game without closing this one); on the home screen Ctrl/Cmd+L
 puts the cursor in the search box instead of opening a second copy of the same view.
 
-**Sections.** Tabs split the library into **Cartridges**, **Jaguar CD** and **BIOS & system**
+**Sections.** Tabs split the library into **Cartridges**, **Jaguar CD** and **BIOS & system** (plus Favorites, Recently played and Save states, below)
 (the choice is remembered, `library.section`). BIOS and system files are not games and are never
 in the game grids: files are recognized by CRC32 (the Series K and Model M boot ROMs, the two
 Stubulator developer ROMs, the retail and developer CD BIOS and the Memory Track cartridge: the

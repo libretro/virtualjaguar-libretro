@@ -393,6 +393,9 @@ bool App::openContent(const std::string& pathIn) {
 }
 
 bool App::openNoContent() {
+    pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
+    resumeOffer.active = false;
+    autoSave();
     host.setDirectories(paths.system, paths.saves);
     applyBios();
     std::string err;
