@@ -371,29 +371,19 @@ static int GDBInsertWatch(unsigned int addr, int type)
    if (gdbWatchArmed && gdbWatchAddr != addr)
       return -2;   /* single slot -- see docs/gdb-stub-design.md */
 
+   /* The six GDBMemWatchHit() call sites in src/core/jaguar.c sit inside
+    * #ifdef ALPINE_FUNCTIONS, which jaguar.c itself #defines (line ~80) --
+    * so they are compiled into every build, and bpmActive below is the
+    * only thing that makes them do any work.  (This function used to gate
+    * on ALPINE_FUNCTIONS too, but gdbtarget.c never sees that macro, so it
+    * refused every Z2/Z3/Z4 for nothing; issue #936.) */
    gdbWatchAddr      = addr;
    gdbWatchKindMask  |= mask;
    gdbWatchArmed     = 1;
    bpmAddress1       = addr;
-#ifndef ALPINE_FUNCTIONS
-   /* The six GDBMemWatchHit() call sites in src/core/jaguar.c all sit
-    * inside #ifdef ALPINE_FUNCTIONS, and no build file in this repo
-    * defines it -- so on every shipped target a watchpoint can never
-    * fire.  Returning success here would make GDB report the watchpoint
-    * as set and then silently never stop, which is the worst failure a
-    * debugger can have: the user concludes the address is never touched.
-    *
-    * Refuse instead, so GDB says "not supported" and the user knows.
-    * Found by the Kimi review on PR #724.  Making watchpoints actually
-    * work means moving those call sites out of the ALPINE gate, which
-    * puts six branches in the hottest memory path -- a change that needs
-    * its own perf measurement, not a release-eve edit. */
-   return -1;
-#else
    bpmActive         = true;
 
    return 0;
-#endif
 }
 
 static int GDBRemoveWatch(unsigned int addr, int type)
@@ -682,6 +672,37 @@ static int GDBMonitorDisasm(const char *args, char *out, int outMax)
    return n;
 }
 
+/* Advances an accumulating output offset by a snprintf() result, clamped
+ * so n never exceeds outMax-1.  snprintf returns the length it WANTED to
+ * write (and the legacy-MSVC shim can return -1); letting that run into
+ * `outMax - n` wraps the size_t and writes past the buffer.  That is what
+ * produced the corrupt tail of `monitor regs gpu` before issue #936. */
+static int GDBOutAdv(int n, int r, int outMax)
+{
+   if (r < 0)
+      r = 0;
+   n += r;
+   if (n > outMax - 1)
+      n = outMax - 1;
+   return n;
+}
+
+static int GDBMonitorRegsRISC(const char *label, uint32_t pc, uint32_t flags,
+                              uint32_t ctrl, uint32_t (*getReg)(int),
+                              char *out, int outMax)
+{
+   int i, n = 0;
+
+   n = GDBOutAdv(n, snprintf(out + n, (size_t)(outMax - n),
+                 "%s PC=$%06X FLAGS=$%08X CTRL=$%08X\n", label, pc, flags, ctrl),
+                 outMax);
+   for (i = 0; i < 32; i++)
+      n = GDBOutAdv(n, snprintf(out + n, (size_t)(outMax - n),
+                    "r%-2d=$%08X%s", i, getReg(i), (i % 4 == 3) ? "\n" : "  "),
+                    outMax);
+   return n;
+}
+
 static int GDBMonitorRegs(const char *args, char *out, int outMax)
 {
    char which[8];
@@ -690,28 +711,12 @@ static int GDBMonitorRegs(const char *args, char *out, int outMax)
       which[0] = '\0';
 
    if (strcmp(which, "gpu") == 0)
-   {
-      int i, n = 0;
-
-      n += snprintf(out + n, (size_t)(outMax - n), "GPU PC=$%06X FLAGS=$%08X CTRL=$%08X\n",
-                    GPUGetPC(), GPUGetFlags(), GPUGetControl());
-      for (i = 0; i < 32; i++)
-         n += snprintf(out + n, (size_t)(outMax - n), "r%-2d=$%08X%s", i,
-                       GPUGetReg(i), (i % 4 == 3) ? "\n" : "  ");
-      return n;
-   }
+      return GDBMonitorRegsRISC("GPU", GPUGetPC(), GPUGetFlags(),
+                                GPUGetControl(), GPUGetReg, out, outMax);
 
    if (strcmp(which, "dsp") == 0)
-   {
-      int i, n = 0;
-
-      n += snprintf(out + n, (size_t)(outMax - n), "DSP PC=$%06X FLAGS=$%08X CTRL=$%08X\n",
-                    DSPGetPC(), DSPGetFlags(), DSPGetControl());
-      for (i = 0; i < 32; i++)
-         n += snprintf(out + n, (size_t)(outMax - n), "r%-2d=$%08X%s", i,
-                       DSPGetReg(i), (i % 4 == 3) ? "\n" : "  ");
-      return n;
-   }
+      return GDBMonitorRegsRISC("DSP", DSPGetPC(), DSPGetFlags(),
+                                DSPGetControl(), DSPGetReg, out, outMax);
 
    return snprintf(out, (size_t)outMax,
       "68K PC=$%06X SR=$%04X\n", m68k_get_reg(NULL, M68K_REG_PC),
@@ -744,24 +749,40 @@ static int GDBMonitorHalt(const char *args, char *out, int outMax)
       "%s will halt on its next instruction\n", which);
 }
 
+/* monitor trace [N]: the NEWEST N entries of the #542 68K PC traceback
+ * ring (default 64, at most the ring's 0x400), printed oldest-to-newest
+ * so the last line is the most recent PC.  Previously this walked the ring
+ * oldest-first into a 512-byte buffer, so only the ~70 OLDEST entries
+ * ever showed and the ones you wanted were cut off (issue #936). */
+#define GDB_TRACE_DEFAULT 64
+#define GDB_TRACE_RING    0x400
+
 static int GDBMonitorTrace(const char *args, char *out, int outMax)
 {
    int n = 0;
+   unsigned want = GDB_TRACE_DEFAULT;
    unsigned i;
    unsigned start;
 
-   (void)args;
+   if (sscanf(args, "%u", &want) < 1)
+      want = GDB_TRACE_DEFAULT;
+   if (want < 1)
+      want = 1;
+   if (want > GDB_TRACE_RING)
+      want = GDB_TRACE_RING;
 
-   /* The #542 traceback ring: 0x400 entries, pcQPtr is the NEXT slot to
-    * write, so the oldest live entry is right there and the newest is
-    * one behind it. Dump oldest-to-newest, capped so a 4096-byte reply
-    * buffer never overflows (each line is at most ~9 chars). */
-   start = pcQPtr;
-   for (i = 0; i < 0x400 && n < outMax - 16; i++)
+   n = GDBOutAdv(n, snprintf(out + n, (size_t)(outMax - n),
+                 "last %u of %u 68K PCs, oldest first (newest is the last line)\n",
+                 want, (unsigned)GDB_TRACE_RING), outMax);
+
+   /* pcQPtr is the NEXT slot to write: the newest entry is one behind it. */
+   start = pcQPtr + GDB_TRACE_RING - want;
+   for (i = 0; i < want && n < outMax - 16; i++)
    {
-      unsigned idx = (start + i) & 0x3FF;
+      unsigned idx = (start + i) & (GDB_TRACE_RING - 1);
 
-      n += snprintf(out + n, (size_t)(outMax - n), "$%06X\n", pcQueue[idx]);
+      n = GDBOutAdv(n, snprintf(out + n, (size_t)(outMax - n), "$%06X\n",
+                    pcQueue[idx]), outMax);
    }
 
    return n;
@@ -789,6 +810,9 @@ static int GDBMonitorWatch(const char *args, char *out, int outMax)
       if (rc == -2)
          return snprintf(out, (size_t)outMax,
             "watch slot already in use by a different address\n");
+      if (rc < 0)
+         return snprintf(out, (size_t)outMax,
+            "watchpoint refused at $%06X\n", addr);
 
       return snprintf(out, (size_t)outMax, "watchpoint armed at $%06X\n", addr);
    }
@@ -818,7 +842,7 @@ static int GDBMonitorCmd(void *user, const char *cmd, char *out, int outMax)
    return snprintf(out, (size_t)outMax,
       "unknown monitor command '%s'\n"
       "commands: disasm <gpu|dsp> <addr> [count], regs [gpu|dsp],\n"
-      "          halt <68k|gpu|dsp>, trace, watch [<addr> [r|w]]\n", cmd);
+      "          halt <68k|gpu|dsp>, trace [N], watch [<addr> [r|w]]\n", cmd);
 }
 
 /* ------------------------------------------------------------------ */
@@ -835,7 +859,7 @@ const struct GDBTargetOps *GDBJaguarOps(void)
    ops.writeMemory    = GDBWriteMem68K;
    ops.insertBreak    = GDB68KInsertBreak;
    ops.removeBreak    = GDB68KRemoveBreak;
-   ops.targetXML      = NULL;   /* thread 1: GDB's native m68k description */
+   ops.targetXML      = NULL;   /* thread 1: engine's built-in m68k description (GDBTarget68KXML) */
    ops.monitorCmd     = GDBMonitorCmd;
    return &ops;
 }
@@ -890,6 +914,37 @@ static int  gdbSocketOpen = 0;
 static int  gdbTablesReady = 0;
 static int  gdbHaltReason = -1;
 static const struct vj_debug_host *gdbDbgHost = NULL;
+
+/* Plain text -> hex, for an 'O' console packet.  Returns hex chars. */
+static int GDBHexEncodeNote(const char *text, int len, char *out, int outMax)
+{
+   int i;
+
+   if (len * 2 > outMax)
+      return -1;
+   for (i = 0; i < len; i++)
+   {
+      unsigned char b = (unsigned char)text[i];
+
+      out[i * 2]     = gdbHex[(b >> 4) & 0xF];
+      out[i * 2 + 1] = gdbHex[b & 0xF];
+   }
+   return len * 2;
+}
+
+/* GDBSession.sendPacket: frames and sends one out-of-band packet (the 'O'
+ * console output of a long `monitor` reply). */
+static int GDBSendFramed(void *ctx, const char *payload, int len)
+{
+   static char framed[GDB_MONITOR_CHUNK * 2 + 16];
+   int encLen;
+
+   (void)ctx;
+   encLen = GDBEncodePacket(payload, len, framed, (int)sizeof(framed));
+   if (encLen <= 0)
+      return -1;
+   return GDBSockSend(framed, encLen);
+}
 
 static void GDBSleepMs(int ms)
 {
@@ -1024,9 +1079,27 @@ static int GDBPumpOnce(int *resumeRequested, int *resumeIsStep)
             if (encLen > 0)
                GDBSockSend(encoded, encLen);
          }
-         else if (replyLen == 0 && !myResume)
+         else if (replyLen == 0 && !myResume &&
+                  gdbSession.detachRequested != GDB_END_NOREPLY)
          {
             GDBSockSend("$#00", 4);
+         }
+
+         /* D / vKill / k: the client is done.  Reply (already sent
+          * above, except 'k' which has none), then end the session
+          * WITHOUT touching the emulator: disarm everything, close only
+          * this client (the listener stays, so a reconnect works) and
+          * report "disconnected" so a parked GDBHalt() resumes -- the
+          * same outcome as the client's socket dying, but clean. */
+         if (gdbSession.detachRequested)
+         {
+            gdbSession.detachRequested = 0;
+            GDBSockDropClient();
+            gdbRxLen = 0;
+            gdbClientWasPresent = 0;
+            GDBTargetResetState();
+            LOG_INF("[GDB] client detached\n");
+            return 1;
          }
 
          if (myResume)
@@ -1170,7 +1243,34 @@ void GDBHalt(int target, int reason, unsigned int pc)
 
    if (gdbSocketOpen)
    {
-      sprintf(stopMsg, "T05thread:%x;", target + 1);
+      /* gdb only knows the 68K thread (qfThreadInfo reports thread 1 and
+       * one tdesc covers the whole connection), and a stop reply naming
+       * thread 2/3 would make it fetch the 136-byte RISC register file
+       * with the 68K layout and error out.  So a GPU/DSP halt is reported
+       * as a stop of thread 1 -- the 68K is frozen right there with the
+       * rest of the machine -- plus a console line saying which core it
+       * really was; inspect it with `monitor regs gpu|dsp`. */
+      if (target != GDB_TGT_68K)
+      {
+         char note[96];
+         char hexNote[220];
+         int noteLen, hexLen;
+
+         noteLen = sprintf(note, "%s halted at $%06X -- see monitor regs %s\n",
+                           (target == GDB_TGT_GPU) ? "GPU" : "DSP", pc,
+                           (target == GDB_TGT_GPU) ? "gpu" : "dsp");
+         hexNote[0] = 'O';
+         hexLen = GDBHexEncodeNote(note, noteLen, hexNote + 1, (int)sizeof(hexNote) - 1);
+         if (hexLen > 0)
+         {
+            char enc2[240];
+            int e2 = GDBEncodePacket(hexNote, hexLen + 1, enc2, (int)sizeof(enc2));
+
+            if (e2 > 0)
+               GDBSockSend(enc2, e2);
+         }
+      }
+      sprintf(stopMsg, "T05thread:1;");
       encLen = GDBEncodePacket(stopMsg, (int)strlen(stopMsg), encoded, (int)sizeof(encoded));
       if (encLen > 0)
          GDBSockSend(encoded, encLen);
@@ -1261,6 +1361,7 @@ void GDBTargetResetState(void)
    gdbClientAttachEventPending = 0;
    gdbSession.threadG = 1;
    gdbSession.threadC = 1;
+   gdbSession.detachRequested = 0;
    /* RSP mandates that every connection starts in ack mode: a new
     * client's first reply must carry the leading '+' until IT has
     * negotiated QStartNoAckMode itself. Leaving this latched from a
@@ -1276,6 +1377,7 @@ void GDBTargetOpen(void)
    GDBSessionInit(&gdbSession, GDBJaguarOps(), NULL);
    GDBSessionSetTargetOps(&gdbSession, GDB_TGT_GPU, GDBGpuOps(), NULL);
    GDBSessionSetTargetOps(&gdbSession, GDB_TGT_DSP, GDBDspOps(), NULL);
+   gdbSession.sendPacket = GDBSendFramed;
    GDBTargetResetState();
    gdbTablesReady = 1;
    gdbSocketOpen  = 1;
