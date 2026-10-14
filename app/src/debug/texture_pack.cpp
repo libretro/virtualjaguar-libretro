@@ -489,6 +489,12 @@ bool setDumping(const OptionIO& io, bool on, int instance) {
     return true;
 }
 
+std::vector<std::pair<std::string, std::string>> sessionOverrides(int instance) {
+    std::vector<std::pair<std::string, std::string>> o;
+    if (!dumpingAllowed(instance)) o.emplace_back(kOptDump, "disabled");
+    return o;
+}
+
 ReplaceOutcome replaceTile(const OptionIO& io, const vj_debug_iface* iface, const std::string& systemDir,
                            uint32_t crc, const std::string& hash, unsigned tileW, unsigned tileH, unsigned tileBpp,
                            const std::string& srcPng) {

@@ -5,11 +5,13 @@
 #include "debug_mock.h"
 #include "texture_pack.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -26,11 +28,16 @@ static int g_fail = 0, g_checks = 0;
         }                                                                          \
     } while (0)
 
+// A fresh folder per call, unique per process (several test runs share a machine and a temp dir).
 static std::string tmpRoot() {
     static int n = 0;
-    char b[64];
-    std::snprintf(b, sizeof b, "vj_dbg_tex_%ld_%d", (long)std::rand(), n++);
+    static const unsigned long long salt =
+        (unsigned long long)std::chrono::steady_clock::now().time_since_epoch().count() ^ ((unsigned long long)std::random_device{}() << 20);
+    char b[96];
+    std::snprintf(b, sizeof b, "vj_dbg_tex_%llx_%d", salt, n++);
     fs::path p = fs::temp_directory_path() / b;
+    std::error_code ec;
+    fs::remove_all(p, ec);
     fs::create_directories(p);
     return p.string();
 }
@@ -320,6 +327,10 @@ static void testReplaceFlow() {
     f2.sets.clear();
     CHECK(!tex::setDumping(io2, true, 2) && f2.sets.empty());
     CHECK(tex::setDumping(io2, false, 2));              // turning it off is always fine
+    // Extra copies start with dumping forced off for the session, whatever a shared config says.
+    CHECK(tex::sessionOverrides(1).empty());
+    auto ov = tex::sessionOverrides(3);
+    CHECK(ov.size() == 1 && ov[0].first == tex::kOptDump && ov[0].second == "disabled");
     fs::remove_all(root);
 }
 

@@ -20,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "vj_debug_iface.h"
@@ -143,6 +144,9 @@ bool optionOn(const OptionIO& io, const char* key);
 inline bool dumpingAllowed(int instance) { return instance <= 1; }
 // Returns false (and changes nothing) when dumping is not allowed for this instance.
 bool setDumping(const OptionIO& io, bool on, int instance);
+// Session overrides (not persisted) the app applies at start-up: a saved or shared "dump on" setting must
+// not make an extra copy write into the first copy's folder.
+std::vector<std::pair<std::string, std::string>> sessionOverrides(int instance);
 
 struct ReplaceOutcome {
     bool ok = false;

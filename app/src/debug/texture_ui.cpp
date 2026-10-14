@@ -351,7 +351,7 @@ void drawGrid(double now) {
                     const float inner = cell - 4.0f;
                     float s = std::min(inner / (float)th.w, inner / (float)th.h);
                     if (s >= 1.0f) s = std::floor(s);   // whole-number zoom for small tiles
-                    const float w = th.w * s, h = th.h * s;
+                    const float w = th.w * s, h = std::max(2.0f, th.h * s);   // a 701x1 strip stays visible
                     ImVec2 a(p.x + (cell - w) * 0.5f, p.y + (cell - h) * 0.5f);
                     dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)t), a, ImVec2(a.x + w, a.y + h));
                 } else {
@@ -390,7 +390,7 @@ void drawDetails() {
         const Thumb& th = g.thumbs[e->hash];
         float s = std::min(ui::em(9.0f) / (float)th.w, ui::em(9.0f) / (float)th.h);
         if (s >= 1.0f) s = std::floor(s);
-        ImGui::Image(ImTextureRef((ImTextureID)(intptr_t)t), ImVec2(th.w * s, th.h * s));
+        ImGui::Image(ImTextureRef((ImTextureID)(intptr_t)t), ImVec2(th.w * s, std::max(2.0f, th.h * s)));
         ImGui::SameLine();
     }
     ImGui::BeginGroup();
@@ -495,6 +495,7 @@ void textureToolInit(DebugSession& session, CoreHost& host, const Paths& paths, 
     g.host = &host;
     g.paths = &paths;
     g.window = window;
+    for (const auto& kv : tex::sessionOverrides(paths.instance)) host.overrideOption(kv.first, kv.second);
     if (!g.registered) {
         g.registered = true;
         session.onForcedClose.push_back(closeWindow);
