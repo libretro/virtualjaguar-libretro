@@ -33,7 +33,7 @@ void drawLogin(App& app) {
     ImGui::TextWrapped("Your password is sent once to retroachievements.org to get a login token. Only the token "
                        "is saved (in the app's config file); the password is wiped as soon as you press Sign in.");
     ImGui::Separator();
-    if (!AchHttp::available()) ui::coloredWrapped(ImVec4(1, 0.6f, 0.4f, 1), "This build has no HTTP support.");
+    if (!AchHttp::available()) ui::coloredWrapped(ui::vec4(ui::pal().warning), "This build has no HTTP support.");
     const bool busy = a.loginBusy();
     ImGui::BeginDisabled(busy);
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
@@ -62,9 +62,10 @@ void drawLogin(App& app) {
 
 // ---- pictures ---------------------------------------------------------------------------------
 
-const ImVec4 kGold(0.95f, 0.82f, 0.35f, 1.0f);
-const ImVec4 kGrey(0.85f, 0.85f, 0.85f, 1.0f);
-const ImVec4 kAmber(1.0f, 0.75f, 0.35f, 1.0f);
+// Theme colours (theme.h): functions, because the scheme can change while the app runs.
+ImVec4 kGold() { return ui::vec4(ui::pal().gold); }
+ImVec4 kGrey() { return ui::vec4(ui::pal().textSecondary); }
+ImVec4 kAmber() { return ui::vec4(ui::pal().warning); }
 
 // The picture at `url`, `size` pixels square, or a quiet placeholder while it loads (or when it is
 // not available: offline, never downloaded).  Only pictures that are on screen are requested.
@@ -80,7 +81,7 @@ void picture(Achievements& a, const std::string& url, float size, const std::str
                      dim ? IM_COL32(255, 255, 255, 150) : IM_COL32_WHITE);
         return;
     }
-    dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), IM_COL32(60, 60, 70, v.state == ra::ImageView::Loading ? 90 : 50), 4.0f);
+    dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), ui::u32(ui::pal().pictureBg, v.state == ra::ImageView::Loading ? 90.0f / 255.0f : 50.0f / 255.0f), 4.0f);
 }
 
 std::string clock(long long t) {
@@ -111,13 +112,13 @@ std::string day(long long t) {
 void modeChip(Achievements& a) {
     rc_client_t* c = a.client();
     if (c && rc_client_get_hardcore_enabled(c)) {
-        ui::coloredWrapped(kGold, "Hardcore: unlocks count for the hardcore ranking");
+        ui::coloredWrapped(kGold(), "Hardcore: unlocks count for the hardcore ranking");
     } else if (a.hardcoreWanted() && !a.hardcoreBlocker().empty()) {
         char buf[200];
         std::snprintf(buf, sizeof buf, "Softcore (hardcore is paused: %s)", a.hardcoreBlocker().c_str());
-        ui::coloredWrapped(kAmber, buf);
+        ui::coloredWrapped(kAmber(), buf);
     } else if (a.hardcoreWanted()) {
-        ui::coloredWrapped(kAmber, "Hardcore turns on when a game is running");
+        ui::coloredWrapped(kAmber(), "Hardcore turns on when a game is running");
     } else {
         ImGui::TextDisabled("Softcore");
     }
@@ -212,7 +213,7 @@ void drawThisGame(App& app) {
         {
             char line[320];
             std::snprintf(line, sizeof line, "%s  (%u)", r.title.c_str(), r.points);
-            ui::coloredWrapped(r.unlocked() ? kGold : kGrey, line);
+            ui::coloredWrapped(r.unlocked() ? kGold() : kGrey(), line);
         }
         if (!r.description.empty()) ImGui::TextWrapped("%s", r.description.c_str());
         // The status line: earned how and when, or how far along, plus the tags.
@@ -253,7 +254,7 @@ void drawGames(App& app) {
         ImGui::Text("%zu games have achievements on RetroAchievements; %zu are in your library.", games.size(), owned);
     }
     if (a.gamesFetchedAt()) ImGui::TextDisabled("List updated %s%s", day(a.gamesFetchedAt()).c_str(), a.gamesFromCache() ? " (saved copy)" : "");
-    if (!a.gamesError().empty()) ui::coloredWrapped(ImVec4(1, 0.6f, 0.4f, 1), a.gamesError().c_str());
+    if (!a.gamesError().empty()) ui::coloredWrapped(ui::vec4(ui::pal().error), a.gamesError().c_str());
     if (a.libraryHashing()) ImGui::TextDisabled("Matching your cartridges against RetroAchievements...");
     if (!a.signedIn()) signInPrompt(a, "Sign in to see your own progress in each game.");
     else if (!a.progressKnown() && !a.gamesBusy()) ImGui::TextDisabled("Your progress has not loaded yet.");
@@ -313,9 +314,12 @@ void drawGames(App& app) {
                     char ov[48];
                     std::snprintf(ov, sizeof ov, "%u / %u", got, g.achievements);
                     const bool done = got >= g.achievements;
-                    if (done) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, kGold);
+                    if (done) {
+                        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ui::vec4(ui::pal().goldFill));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::pal().goldFillText));   // the "n / n" drawn on the gold
+                    }
                     ImGui::ProgressBar((float)got / (float)g.achievements, ImVec2(-1, 0), ov);
-                    if (done) ImGui::PopStyleColor();
+                    if (done) ImGui::PopStyleColor(2);
                     if (ImGui::IsItemHovered()) {
                         ImGui::BeginTooltip();
                         ImGui::Text("%u unlocked, %u of them in hardcore", got, g.unlockedHardcore);
@@ -326,7 +330,7 @@ void drawGames(App& app) {
                 }
                 ImGui::TableSetColumnIndex(4);
                 if (g.id == curId) {
-                    ImGui::TextColored(kGold, "Playing");
+                    ImGui::TextColored(kGold(), "Playing");
                 } else if (g.libIndex >= 0) {
                     if (ImGui::Button("Play")) a.playGame(g);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g.matchedByHash ? "In your library (matched by checksum)" : "In your library (matched by title)");
@@ -357,7 +361,7 @@ void drawProfile(App& app) {
         ImGui::PopFont();
         ImGui::Text("Hardcore points: %u", u->score);
         ImGui::Text("Softcore points: %u", u->score_softcore);
-        if (u->num_unread_messages) ImGui::TextColored(kAmber, "%u unread message%s on retroachievements.org", u->num_unread_messages, u->num_unread_messages == 1 ? "" : "s");
+        if (u->num_unread_messages) ImGui::TextColored(kAmber(), "%u unread message%s on retroachievements.org", u->num_unread_messages, u->num_unread_messages == 1 ? "" : "s");
         modeChip(a);
         ImGui::EndGroup();
         ImGui::Spacing();
@@ -380,7 +384,7 @@ void drawProfile(App& app) {
         picture(a, s.badgeUrl, ui::em(2.6f));
         ImGui::SameLine();
         ImGui::BeginGroup();
-        ImGui::TextColored(kGold, "%s  (%u)", s.title.c_str(), s.points);
+        ImGui::TextColored(kGold(), "%s  (%u)", s.title.c_str(), s.points);
         ImGui::TextDisabled("%s  %s", s.hardcore ? "Hardcore" : "Softcore", clock(s.when).c_str());
         ImGui::EndGroup();
         ImGui::PopID();
@@ -447,10 +451,10 @@ void drawToasts(App& app, ImVec2 areaPos, ImVec2 areaSize) {
         const float textH = tt.y + (x.body.empty() ? 0 : tb.y + pad * 0.3f);
         const float h = std::max(textH, hasIcon ? iconPx : 0.0f) + pad * 2;
         const ImVec2 p0(areaPos.x + areaSize.x - w - pad, y), p1(p0.x + w, y + h);
-        ImU32 edge = x.kind == 0 ? IM_COL32(240, 200, 60, (int)(255 * al))
-                   : x.kind == 2 ? IM_COL32(240, 110, 110, (int)(255 * al))
-                                 : IM_COL32(120, 170, 240, (int)(255 * al));
-        dl->AddRectFilled(p0, p1, IM_COL32(18, 18, 24, (int)(225 * al)), 6.0f);
+        // On the game picture: the overlay palette, dark-translucent in both themes.
+        const theme::Overlay& ov = ui::overlay();
+        ImU32 edge = ui::u32(x.kind == 0 ? ov.toastGold : x.kind == 2 ? ov.toastRed : ov.toastBlue, al);
+        dl->AddRectFilled(p0, p1, ui::u32(ov.toastBg, al), 6.0f);
         dl->AddRect(p0, p1, edge, 6.0f, 0, 2.0f);
         if (hasIcon) {
             const ImVec2 i0(p0.x + pad, p0.y + pad), i1(i0.x + iconPx, i0.y + iconPx);
@@ -458,12 +462,12 @@ void drawToasts(App& app, ImVec2 areaPos, ImVec2 areaSize) {
                 dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)iv.tex), i0, i1, ImVec2(0, 0), ImVec2(1, 1),
                              IM_COL32(255, 255, 255, (int)(255 * al)));
             else
-                dl->AddRectFilled(i0, i1, IM_COL32(60, 60, 70, (int)(120 * al)), 4.0f);
+                dl->AddRectFilled(i0, i1, ui::u32(ov.toastIconBg, al), 4.0f);
         }
         dl->AddText(nullptr, 0.0f, ImVec2(p0.x + textX, p0.y + pad), edge, x.title.c_str(), nullptr, textW);
         if (!x.body.empty())
             dl->AddText(nullptr, 0.0f, ImVec2(p0.x + textX, p0.y + pad + tt.y + pad * 0.3f),
-                        IM_COL32(235, 235, 235, (int)(255 * al)), x.body.c_str(), nullptr, textW);
+                        ui::u32(ov.toastBody, al), x.body.c_str(), nullptr, textW);
         y += h + pad * 0.5f;
     }
 }
@@ -472,13 +476,14 @@ void drawIndicators(App& app, ImVec2 areaPos, ImVec2 areaSize) {
     Achievements& a = app.ach;
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     const float fs = ImGui::GetFontSize();
+    const theme::Overlay& ov = ui::overlay();
     float y = areaPos.y + areaSize.y - fs * 2.6f;
     // Leaderboard trackers (bottom right) and active challenges (bottom centre).
     for (const auto& kv : a.trackers) {
         const ImVec2 ts = ImGui::CalcTextSize(kv.second.c_str());
         const ImVec2 p0(areaPos.x + areaSize.x - ts.x - fs * 1.4f, y);
-        dl->AddRectFilled(p0, ImVec2(p0.x + ts.x + fs, y + ts.y + fs * 0.5f), IM_COL32(0, 0, 0, 180), 4.0f);
-        dl->AddText(ImVec2(p0.x + fs * 0.5f, y + fs * 0.25f), IM_COL32(255, 230, 120, 255), kv.second.c_str());
+        dl->AddRectFilled(p0, ImVec2(p0.x + ts.x + fs, y + ts.y + fs * 0.5f), ui::u32(ov.hudBg), 4.0f);
+        dl->AddText(ImVec2(p0.x + fs * 0.5f, y + fs * 0.25f), ui::u32(ov.hudText), kv.second.c_str());
         y -= ts.y + fs * 0.8f;
     }
     float cx = areaPos.x + fs;
@@ -486,8 +491,8 @@ void drawIndicators(App& app, ImVec2 areaPos, ImVec2 areaSize) {
         const std::string label = "! " + kv.second;
         const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
         const float yy = areaPos.y + areaSize.y - fs * 2.6f;
-        dl->AddRectFilled(ImVec2(cx, yy), ImVec2(cx + ts.x + fs, yy + ts.y + fs * 0.5f), IM_COL32(60, 20, 20, 190), 4.0f);
-        dl->AddText(ImVec2(cx + fs * 0.5f, yy + fs * 0.25f), IM_COL32(255, 150, 150, 255), label.c_str());
+        dl->AddRectFilled(ImVec2(cx, yy), ImVec2(cx + ts.x + fs, yy + ts.y + fs * 0.5f), ui::u32(ov.challengeBg), 4.0f);
+        dl->AddText(ImVec2(cx + fs * 0.5f, yy + fs * 0.25f), ui::u32(ov.challengeText), label.c_str());
         cx += ts.x + fs * 1.4f;
         if (cx > areaPos.x + areaSize.x * 0.6f) break;
     }
@@ -498,8 +503,8 @@ void drawIndicators(App& app, ImVec2 areaPos, ImVec2 areaSize) {
             const ImVec2 ts = ImGui::CalcTextSize(a.progress.c_str());
             const ImVec2 p0(areaPos.x + (areaSize.x - ts.x) * 0.5f, areaPos.y + areaSize.y - fs * 4.4f);
             dl->AddRectFilled(ImVec2(p0.x - fs * 0.5f, p0.y), ImVec2(p0.x + ts.x + fs * 0.5f, p0.y + ts.y + fs * 0.5f),
-                              IM_COL32(0, 0, 0, 190), 4.0f);
-            dl->AddText(ImVec2(p0.x, p0.y + fs * 0.25f), IM_COL32(220, 240, 255, 255), a.progress.c_str());
+                              ui::u32(ov.progressBg), 4.0f);
+            dl->AddText(ImVec2(p0.x, p0.y + fs * 0.25f), ui::u32(ov.progressText), a.progress.c_str());
         }
     }
 }

@@ -65,11 +65,14 @@ void drawStar(ImDrawList* dl, ImVec2 c, float r, bool filled, bool hot) {
         float rr = (i & 1) ? r * 0.42f : r;
         v[i] = ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr);
     }
+    // The star sits on its own dark disc over the art, so these are the same in both themes.
+    const theme::Palette& p = ui::pal();
+    const ImU32 fill = ui::u32(hot ? p.starFillHot : p.starFill);
     if (filled) {
-        for (int i = 0; i < 10; i++) dl->AddTriangleFilled(c, v[i], v[(i + 1) % 10], hot ? IM_COL32(255, 220, 90, 255) : IM_COL32(245, 190, 40, 255));
-        dl->AddPolyline(v, 10, IM_COL32(60, 40, 0, 230), ImDrawFlags_Closed, 1.2f);
+        for (int i = 0; i < 10; i++) dl->AddTriangleFilled(c, v[i], v[(i + 1) % 10], fill);
+        dl->AddPolyline(v, 10, ui::u32(p.starEdge), ImDrawFlags_Closed, 1.2f);
     } else {
-        dl->AddPolyline(v, 10, hot ? IM_COL32(255, 220, 90, 255) : IM_COL32(255, 255, 255, 170), ImDrawFlags_Closed, 1.6f);
+        dl->AddPolyline(v, 10, hot ? ui::u32(p.starFillHot) : ui::u32(p.starOutline), ImDrawFlags_Closed, 1.6f);
     }
 }
 
@@ -221,7 +224,7 @@ void drawStatus(LibraryService& svc) {
         else ui::hint("%zu games%s", svc.entries().size(), svc.netBusy() ? "  (downloading)" : "");
     }
     if (!svc.haveCartDat() && !svc.haveDiscDat()) {
-        ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
+        ui::coloredWrapped(ui::vec4(ui::pal().warning),
                            "No game database found: titles come from file names. Use Update database to download it.");
     }
 }
@@ -302,25 +305,25 @@ void drawBiosCell(App& app, LibraryService& svc, const lib::Entry& e, float cell
     const bool readable = b.role == lib::BiosRole::CartBoot || b.role == lib::BiosRole::CdBios;
 
     ImVec2 a0 = p0, a1(p0.x + cellW, p0.y + artH);
-    dl->AddRectFilled(a0, a1, hovered ? IM_COL32(52, 56, 66, 255) : IM_COL32(32, 34, 42, 255), 4.0f);
+    dl->AddRectFilled(a0, a1, ui::u32(hovered ? ui::pal().cardBgHover : ui::pal().cardBg), 4.0f);
     ImColor c = ImColor::HSV(b.role == lib::BiosRole::CdBios ? 0.58f : b.role == lib::BiosRole::CartBoot ? 0.08f : 0.33f,
-                             0.30f, 0.42f);
+                             0.30f, ui::pal().biosArtVal);
     dl->AddRectFilled(ImVec2(a0.x + 6, a0.y + 6), ImVec2(a1.x - 6, a1.y - 6), c, 4.0f);
     const char* label = lib::biosRoleLabel(b.role);
     float fs = ImGui::GetFontSize() * 1.2f;
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, cellW - 20.0f, cellW - 20.0f, label);
     dl->AddText(ImGui::GetFont(), fs, ImVec2(p0.x + (cellW - ts.x) * 0.5f, p0.y + (artH - ts.y) * 0.5f),
-                IM_COL32(255, 255, 255, 215), label, nullptr, cellW - 20.0f);
-    if (hovered) dl->AddRect(a0, a1, IM_COL32(120, 170, 255, 255), 4.0f, 0, 2.0f);
+                ui::u32(ui::pal().placeholderText, 215.0f / 235.0f), label, nullptr, cellW - 20.0f);
+    if (hovered) dl->AddRect(a0, a1, ui::u32(ui::pal().hoverEdge), 4.0f, 0, 2.0f);
 
     float lh = ImGui::GetFontSize() + 2.0f;
     ImVec4 clip(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH);
     // title: at most two lines, clipped above the status line, which is always the tile's last line and short
     ImVec4 clipT(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH - lh);
-    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3), IM_COL32(230, 230, 230, 255),
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3), ui::u32(ui::pal().text),
                 e.title.c_str(), nullptr, cellW - 4, &clipT);
     const char* st = inUse ? "In use" : found ? "Read by the core" : readable ? "Click to use or boot" : "Not read";
-    ImU32 sc = inUse || found ? IM_COL32(120, 210, 130, 255) : readable ? IM_COL32(230, 180, 90, 255) : IM_COL32(150, 150, 150, 255);
+    ImU32 sc = ui::u32(inUse || found ? ui::pal().success : readable ? ui::pal().warning : ui::pal().textMuted);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + textH - lh), sc, st, nullptr,
                 cellW - 4, &clip);
 
@@ -345,13 +348,13 @@ void drawBiosCell(App& app, LibraryService& svc, const lib::Entry& e, float cell
 // A small dark label in a tile's corner ("CD", "Cart").
 void drawBadge(ImDrawList* dl, ImVec2 at, const char* label) {
     dl->AddRectFilled(at, ImVec2(at.x + ImGui::CalcTextSize(label).x + 8, at.y + ImGui::GetFontSize() + 2),
-                      IM_COL32(20, 20, 20, 200), 3.0f);
-    dl->AddText(ImVec2(at.x + 4, at.y + 1), IM_COL32(255, 255, 255, 255), label);
+                      ui::u32(ui::pal().badgeBg), 3.0f);
+    dl->AddText(ImVec2(at.x + 4, at.y + 1), ui::u32(ui::pal().badgeText), label);
 }
 
 // The card shown while a tile has no art: a colour from the title, the title itself, and a CD / Cart badge.
 void drawPlaceholder(ImDrawList* dl, ImVec2 a0, ImVec2 a1, const lib::Entry& e, bool loading) {
-    ImColor c = ImColor::HSV((float)(fnv(e.title) % 360) / 360.0f, 0.35f, 0.45f);
+    ImColor c = ImColor::HSV((float)(fnv(e.title) % 360) / 360.0f, ui::pal().placeholderSat, ui::pal().placeholderVal);
     ImVec2 i0(a0.x + 6, a0.y + 6), i1(a1.x - 6, a1.y - 6);
     dl->AddRectFilled(i0, i1, c, 4.0f);
     const float pad = 5.0f;
@@ -362,17 +365,17 @@ void drawPlaceholder(ImDrawList* dl, ImVec2 a0, ImVec2 a1, const lib::Entry& e, 
     const std::string& t = e.title.empty() ? e.file.path : e.title;
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, 1e9f, ww, t.c_str());
     float y = std::max(top, (top + clip.w - ts.y) * 0.5f);
-    dl->AddText(ImGui::GetFont(), fs, ImVec2(clip.x, y), IM_COL32(255, 255, 255, 235), t.c_str(), nullptr, ww, &clip);
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(clip.x, y), ui::u32(ui::pal().placeholderText), t.c_str(), nullptr, ww, &clip);
     if (loading) {
         ImVec2 ds = ImGui::CalcTextSize("...");
-        dl->AddText(ImVec2((a0.x + a1.x - ds.x) * 0.5f, i1.y - ds.y - 2), IM_COL32(255, 255, 255, 150), "...");
+        dl->AddText(ImVec2((a0.x + a1.x - ds.x) * 0.5f, i1.y - ds.y - 2), ui::u32(ui::pal().placeholderDots), "...");
     }
 }
 
 // A save state as a picture and two lines: its screenshot (letterboxed into a 4:3 box), "Slot N" and when it was
 // saved.  The caller's cursor is where the picture goes; returns the box so the caller can overlay buttons.
 void drawStateShot(ImDrawList* dl, LibraryService& svc, const lib::StateInfo& st, ImVec2 p0, ImVec2 box, bool hot) {
-    dl->AddRectFilled(p0, ImVec2(p0.x + box.x, p0.y + box.y), hot ? IM_COL32(60, 64, 76, 255) : IM_COL32(26, 28, 34, 255), 3.0f);
+    dl->AddRectFilled(p0, ImVec2(p0.x + box.x, p0.y + box.y), ui::u32(hot ? ui::pal().stateBgHover : ui::pal().stateBg), 3.0f);
     ArtView v = svc.stateThumb(st);
     if (v.state == ArtView::Ready && v.tex && v.w > 0 && v.h > 0) {
         float k = std::min(box.x / (float)v.w, box.y / (float)v.h);
@@ -382,9 +385,9 @@ void drawStateShot(ImDrawList* dl, LibraryService& svc, const lib::StateInfo& st
     } else {
         const char* txt = v.state == ArtView::Loading ? "..." : "no screenshot";
         ImVec2 ts = ImGui::CalcTextSize(txt);
-        dl->AddText(ImVec2(p0.x + (box.x - ts.x) * 0.5f, p0.y + (box.y - ts.y) * 0.5f), IM_COL32(150, 150, 150, 255), txt);
+        dl->AddText(ImVec2(p0.x + (box.x - ts.x) * 0.5f, p0.y + (box.y - ts.y) * 0.5f), ui::u32(ui::pal().textMuted), txt);
     }
-    if (hot) dl->AddRect(p0, ImVec2(p0.x + box.x, p0.y + box.y), IM_COL32(120, 170, 255, 255), 3.0f, 0, 2.0f);
+    if (hot) dl->AddRect(p0, ImVec2(p0.x + box.x, p0.y + box.y), ui::u32(ui::pal().hoverEdge), 3.0f, 0, 2.0f);
 }
 
 // One line of the tile menu's Load state list: a small screenshot, "Slot N" and the time.  True when clicked.
@@ -465,7 +468,7 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     }
 
     ImVec2 a0 = p0, a1(p0.x + cellW, p0.y + artH);
-    dl->AddRectFilled(a0, a1, hovered ? IM_COL32(60, 64, 76, 255) : IM_COL32(38, 40, 48, 255), 4.0f);
+    dl->AddRectFilled(a0, a1, ui::u32(hovered ? ui::pal().cardBgHover : ui::pal().cardBg), 4.0f);
 
     ArtView v = svc.art(e);
     bool placeholder = false;
@@ -478,7 +481,7 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
         drawPlaceholder(dl, a0, a1, e, v.state == ArtView::Loading);
         placeholder = true;
     }
-    if (hovered) dl->AddRect(a0, a1, IM_COL32(120, 170, 255, 255), 4.0f, 0, 2.0f);
+    if (hovered) dl->AddRect(a0, a1, ui::u32(ui::pal().hoverEdge), 4.0f, 0, 2.0f);
 
     // badges
     if (e.file.kind == lib::Kind::Disc) drawBadge(dl, ImVec2(a0.x + 4, a0.y + 4), "CD");
@@ -487,8 +490,8 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
         const char* q = e.match == lib::Match::Name ? "?" : "??";
         float w = ImGui::CalcTextSize(q).x + 8;
         dl->AddRectFilled(ImVec2(a1.x - 4 - w, a0.y + 4), ImVec2(a1.x - 4, a0.y + 4 + ImGui::GetFontSize() + 2),
-                          IM_COL32(150, 90, 20, 220), 3.0f);
-        dl->AddText(ImVec2(a1.x - w, a0.y + 5), IM_COL32(255, 255, 255, 255), q);
+                          ui::u32(ui::pal().uncertainBg), 3.0f);
+        dl->AddText(ImVec2(a1.x - w, a0.y + 5), ui::u32(ui::pal().badgeText), q);
     }
 
     // the favorite star, bottom-right of the art: filled when favorited, an outline on a hovered tile, a click toggles it
@@ -498,14 +501,14 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     const ImVec2 mouse = ImGui::GetMousePos();
     const bool overStar = hovered && mouse.x >= sc.x - sr - 2 && mouse.x <= sc.x + sr + 2 && mouse.y >= sc.y - sr - 2 && mouse.y <= sc.y + sr + 2;
     if (fav || hovered) {
-        dl->AddCircleFilled(sc, sr + 2.0f, IM_COL32(15, 15, 20, overStar ? 215 : 150));
+        dl->AddCircleFilled(sc, sr + 2.0f, ui::u32(ui::pal().starDisc, overStar ? 1.2f : 1.0f));
         drawStar(dl, sc, sr, fav, overStar);
     }
 
     // title, clipped to the text box
     ImVec4 clip(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3),
-                IM_COL32(230, 230, 230, 255), e.title.c_str(), nullptr, cellW - 4, &clip);
+                ui::u32(ui::pal().text), e.title.c_str(), nullptr, cellW - 4, &clip);
 
     if (overStar && !popupOpen) {
         ImGui::SetTooltip("%s", fav ? "Remove from Favorites" : "Add to Favorites");
@@ -860,7 +863,7 @@ void drawLibraryHome(App& app, float x, float y, float w, float h) {
                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
                           ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.045f, 0.045f, 0.055f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::vec4(ui::pal().homeBg));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (ImGui::Begin("##home", nullptr, wf)) {
