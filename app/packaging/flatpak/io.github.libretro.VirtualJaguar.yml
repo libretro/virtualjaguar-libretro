@@ -50,6 +50,7 @@ modules:
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_SDL3=/run/build/virtualjaguar/third_party/SDL3
       - -DFETCHCONTENT_SOURCE_DIR_IMGUI=/run/build/virtualjaguar/third_party/imgui
+      - -DFETCHCONTENT_SOURCE_DIR_FREETYPE=/run/build/virtualjaguar/third_party/freetype
       - -DFETCHCONTENT_SOURCE_DIR_RCHEEVOS=/run/build/virtualjaguar/third_party/rcheevos
       - -DVJ_APP_CHEATS_SOURCE_DIR=/run/build/virtualjaguar/third_party/cheats
       - -DVJ_APP_FETCH_LIBRASHADER=OFF
@@ -69,6 +70,7 @@ modules:
       - test -f /app/share/mime/packages/io.github.libretro.VirtualJaguar.xml
       - ldd /app/bin/virtualjaguar | grep -q libcurl
       - "! ldd /app/bin/virtualjaguar | grep -q 'not found'"
+      - "! ldd /app/bin/virtualjaguar | grep -q libfreetype"   # FreeType is linked static
     sources:
       # BEGIN-LOCAL-SOURCE (render.sh swaps this block for the release tag's git source)
       - type: dir
@@ -91,6 +93,13 @@ modules:
         url: https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8.tar.gz
         sha256: fecb33d33930e12ff53a34064e9d3a06c8f7c3e04408f14cd36c80e3faac863b
         dest: third_party/imgui
+      # FreeType (the app's default font rasteriser, VJ_APP_FREETYPE): the same pinned tarball the CMake
+      # fetch uses, built static into the app.  Deliberately NOT the runtime's libfreetype, so the
+      # Flatpak renders identically to every other package and the version never drifts.
+      - type: archive
+        url: https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-1.tar.gz
+        sha256: 44bd69d1f0750603410cfd4f26f1c5523c5a3a087a2dfa8639b757dc7c6677be
+        dest: third_party/freetype
       - type: archive
         url: https://github.com/RetroAchievements/rcheevos/archive/refs/tags/v12.5.0.tar.gz
         sha256: e6df83de4e18f0a19206e711e1e589624dcfcf6bf529c14f6dd2bb2d1ced983f

@@ -64,7 +64,7 @@ if(NOT VJ_DISCORD_APP_ID STREQUAL "" AND NOT VJ_DISCORD_APP_ID MATCHES "^[0-9]+$
 endif()
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
 option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
-option(VJ_APP_FREETYPE "Rasterise UI fonts with FreeType (hinting + anti-aliasing choices; fetched, pinned, built static). Off: Dear ImGui's built-in stb_truetype" OFF)
+option(VJ_APP_FREETYPE "Rasterise UI fonts with FreeType (hinting + anti-aliasing choices; fetched, pinned, built static). Off: Dear ImGui's built-in stb_truetype" ON)
 option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configure time and copy them next to the binary" ON)
 set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH
     "Offline builds: a folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat' to use instead of downloading them")
@@ -76,6 +76,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 #   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8 (MIT)   rcheevos v12.5.0 (MIT)
 # For offline/dev iteration: -DFETCHCONTENT_SOURCE_DIR_SDL3=<dir>
 #                            -DFETCHCONTENT_SOURCE_DIR_IMGUI=<dir>
+#                            -DFETCHCONTENT_SOURCE_DIR_FREETYPE=<dir>   (VJ_APP_FREETYPE, FreeType 2.14.1)
 # ---------------------------------------------------------------------------
 include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
@@ -106,7 +107,8 @@ if(NOT imgui_POPULATED)
     FetchContent_MakeAvailable(imgui)
 endif()
 
-# FreeType (optional, VJ_APP_FREETYPE): better small-size clarity through hinting.  FreeType License (BSD-like
+# FreeType (VJ_APP_FREETYPE, default ON; -DVJ_APP_FREETYPE=OFF falls back to stb_truetype): better small-size
+# clarity through hinting.  FreeType License (BSD-like
 # with a credit clause; FreeType documents it as compatible with GPLv3) -- see packaging/THIRD-PARTY-NOTICES.txt.
 # Built static with every optional library switched off, so it needs nothing from the system.
 if(VJ_APP_FREETYPE)
