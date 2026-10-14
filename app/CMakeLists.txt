@@ -44,6 +44,14 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/VJPackage.cmake")
 option(VJ_APP_SYSTEM_SDL3 "Use an installed SDL3 (find_package) instead of fetching one" OFF)
 option(VJ_APP_BUILD_TESTS "Build the headless smoke tests (CTest)" ON)
 option(VJ_APP_LTO "Link-time optimisation (IPO) for the core, libchdr and the app in Release / RelWithDebInfo builds" OFF)
+# Discord Rich Presence (#833).  The default is the project's "Virtual Jaguar" application in the Discord developer
+# portal (an application ID is public, not a secret).  CI can override it with the DISCORD_APP_ID repository variable,
+# users with config key discord.app_id.  A fork builds with its own ID, or -DVJ_DISCORD_APP_ID= (empty) to switch the
+# feature off (Settings > Discord then says why).
+set(VJ_DISCORD_APP_ID "1559739062682787870" CACHE STRING "Discord application ID (digits) for Rich Presence; empty = none built in")
+if(NOT VJ_DISCORD_APP_ID STREQUAL "" AND NOT VJ_DISCORD_APP_ID MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "VJ_DISCORD_APP_ID must be the numeric application ID from the Discord developer portal (got '${VJ_DISCORD_APP_ID}')")
+endif()
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
 option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
 option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configure time and copy them next to the binary" ON)
@@ -259,7 +267,10 @@ set(VJ_APP_SOURCES
     src/ach_http.cpp
     src/netplay.cpp
     src/netplay_addr.cpp
-    src/netplay_ui.cpp)
+    src/netplay_ui.cpp
+    src/discord_ipc.cpp
+    src/discord_presence.cpp
+    src/discord_app.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
@@ -274,11 +285,13 @@ vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
+message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
 endif()
 target_compile_definitions(virtualjaguar PRIVATE
-    VJ_APP_VERSION="${PROJECT_VERSION}")
+    VJ_APP_VERSION="${PROJECT_VERSION}"
+    VJ_DISCORD_APP_ID="${VJ_DISCORD_APP_ID}")
 if(MSVC)
     target_compile_options(virtualjaguar PRIVATE /W3 /utf-8)
     target_compile_definitions(virtualjaguar PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -331,5 +344,6 @@ if(VJ_APP_BUILD_TESTS)
     include(VJAchTests)
     include(VJCheatTests)
     include(VJNetplayTests)
+    include(VJDiscordTests)
     include(VJThemeTests)
 endif()
