@@ -99,8 +99,10 @@ on the same page draws the arrow to the right. Unresolved; no hardware. Code fol
 
 **A14. DSP DIV_OFFSET bit position (found in the #820 docs pass).**
 - Manual: GPU `G_DIVCTRL` bit 0 (v8 p.61); DSP `D_DIVCTRL` bit **1** (v8 p.111).
-- Code: both test bit 0 (`src/jerry/dsp.c` `dsp_div_control & 0x01`, `src/tom/gpu.c`). Probably a manual typo (same
-  divider). Unresolved -- no hardware/netlist check. Follow-up on #820.
+- Code: both test bit 0 (`src/jerry/dsp.c` `dsp_div_control & 0x01`, `src/tom/gpu.c`).
+- **Resolved by netlist (#895): bit 0 for both; v8 p.111 is a typo.** `jerry/DIVIDE.NET` latches div_offset from
+  `gpu_din{0}` on `divwr` (`Div_offsett := FDSYNCR (div_offsett, gpu_din{0}, divwr, ...)`), and `jerry/DSP.NET:148`
+  wires the DSP's `gpu_din` to it unshifted -- the same cell as TOM's.
 
 **A15. STOP object interrupt condition (found in the #820 docs pass).**
 - Manual: v8 p.20 -- a stop object stops the OP and interrupts the host; bits 3-63 are free data.
@@ -227,6 +229,56 @@ only (v8 has no controller chapter).
 **B24. I2S slave-mode rate.** Fixed ~44.1 kHz callback (22.675737 us) when JERRY is slave (`docs/jtrm-jerry.md`
 gotcha 8, `src/jerry/jerry.c`); no manual figure.
 
+**B25. TOM/JERRY bug 2: which registers an indexed op DOES scoreboard (#895, #811).** v8 p.134 says indexed-store
+data is unprotected while the addressing registers keep full scoreboard protection. The netlists say what
+"addressing registers" means, and it is wider than the base: **field 1 of every indexed op (43, 44, 49,
+50, 58-61) is compared against pending writes as a register number -- for the immediate forms that is the raw
+5-bit offset, which is not a register at all.** Chain (jag_sim `netlists/jerry/`; `tom/SBOARD.NET` and
+`tom/EXECON.NET` are byte-identical, `tom/INS_EXEC.NET` has the same lines, so this holds for the GPU too):
+- `DSP_EXEC.NET` ~374-380: `precomp` decodes exactly 43, 44, 49, 50, 58-61 (`Precompit0/1`).
+- `DSP_EXEC.NET` ~514-525: on the op's first tick (`danwsel = insexei . precompi`) the destination port address is
+  the implicit base `impdai` = r14/r15 (`Impdai := JOIN (impdai, indseli, one, one, one, zero, dsttopi)`), not the
+  data register. `Srcanwi := JOIN (srcanwi, srcopin, srctopi)` -- the source port address is the raw field-1 bits,
+  never muxed for immediates.
+- `SBOARD.NET:127-130`: `Dsta_reg := NIV (dsta_reg, dstanw)`, `Srca_reg := NIV (srca_reg, srcanw)`,
+  `Srca_reg_ena := OR2 (srca_reg_ena, srcrrd, precomp)` -- the source compare is ENABLED by `precomp` even when the
+  op reads no source register. The 30/10/92 comment above it is the designers' own account of bug 2: `STORE
+  (r14+r3),r2` would need three registers protected, "r2 is not read until the next tick", so the data register
+  was dropped from the compare.
+- `SBOARD.NET:380-384`: `Divdmatch`/`Divsmatch` against `div_wbaddr`, `Divdwait := AN2 (divdwait, div_active,
+  diveq)`; the same `srca_reg_ena` term gates `Aludwait` (152-156) and `Xldeq` (330-339). A match holds the op
+  (`sbwait` -> `EXECON.NET:77-83` `exe`) until the divide's write-back (`Dwbset`, 390-396; `DIVIDE.NET:239-261`, 16
+  active ticks).
+- `EXECON.NET:173-189`: a store with `precomp` gets one extra wait state (`compdld`, a plain flop) during which the
+  data register is read on the destination port and latched (`dstdgate`); nothing on that tick consults the
+  scoreboard (`SBOARD.NET:549-551` only keeps write-backs off that port, the 20/8/92 "indexed store data being
+  lost" fix).
+Rule: a store 49/50/60/61 issued while a divide (or external load) into its data register is in flight writes the
+OLD value **unless** its base register or its field 1 names that register; then it waits and writes the new one.
+For a store right behind the divide nothing else in the decode separates the cases (opcode, alignment and the
+following instruction are irrelevant: the divide is 16 ticks, the store reads its data 1 tick after issue). The
+one other way to reach the quotient is a long unrelated stall of the store: it also waits while the gateway is
+busy or an external load is still pending (`SBOARD.NET:345-357` `Mbusywait`), which under bus contention could
+outlast the divide. Not modeled; neither Xenowings site has an external access outstanding there.
+Xenowings needs both outcomes, which is how this was found: DSP joypad reader `div r9,r8 / store r8,(r14+1)`
+(`$F1BC46`, `C428`: field 1 = 1) stores the joypad bits; sound-effect voice setup `div r12,r7 / store r7,(r14+7)`
+(`$F1BAD2`, `C4E7`: field 1 = 7 = r7) interlocks and stores the step quotient -- with the old value every shot
+and explosion voice ran off its sample at once (#895). The manual's own example `store r3,(r14+6)` does not hit
+the rule. Emulator: `src/jerry/dsp.c` `DSPDivStorePeek` / `dsp_div_store_fixups` (data, both DSP paths), and bit 4
+of `dsp_pipe_flags[]` (the wait, timing model only); `test/test_dsp_unit.c` "bug 2" cases;
+`test/tools/xenowings_ingame_video.c`, `test/tools/xenowings_sfx_probe.c`. Side effect, timing only: an indexed
+load/store whose immediate offset equals a pending ALU/divide/external-load target stalls like a read of it.
+
+**B26. DIV is exact for every 32-bit divisor (33-bit working value).** v8 says unsigned 32-bit divide, 16 ticks.
+`DIVIDE.NET` (TOM and JERRY identical): non-restoring, two bits per tick; the working value is `dividend_hi` (32)
+plus the `last_neg` sign flop, and both adders produce a 33rd bit (`Adder1_33` ~100-118, `Adder2_33` ~138-139;
+the netlist header says the 33 bits are needed to get the sign right for 32-bit unsigned arguments). The remainder
+register is `dividend_hi` (`Remrd`), i.e. the remainder or remainder-minus-divisor; a zero divisor is not special
+(quotient `$FFFFFFFF`, remainder = dividend). The core's old 32-bit loop took the sign from bit 31, so every divisor
+above `$80000000` gave garbage (e.g. `$FCC00000 / $FCC00000` = `$F9A9342A`, not 1), and 16.16 divides whose
+quotient overflows 32 bits gave different garbage. Emulator: `src/tom/risc_div.h` `risc_divide()`, used by
+`gpu_opcode_div`, `dsp_opcode_div` and the dead `DSP_div`; `test/test_dsp_unit.c` divide cases.
+
 ---
 
 ## C. Atari's own bug lists (v8 pp.133-141 + HBW + SWR) with a modeled? column
@@ -240,7 +292,7 @@ level 0 with no legend entry. HBW (26 Apr 1995) is a separate, partly overlappin
 | # | Title (short) | v8 pp. | Applies | Lvl | HBW xref | Modeled? |
 |---|---|---|---|---|---|---|
 | 1 | Unscaled 16-bit object fetch every 3 ticks (should be 2) | 133-134 | TOM/OP | 1 | n/a | no: OP cost is an occupancy estimate (`bus_arbiter_op_charge`), not tick-level |
-| 2 | Scoreboard failure on indexed-store data | 134 | TOM+JERRY | 1 | GPU/DSP #1 | **DSP, partial**: `div` immediately followed by store 49/50/60/61 of its quotient register stores the old value (`dsp.c` `dsp_div_store_fixups`, #811: Xenowings' joypad reader relies on it). Not modeled: a later store inside the divide latency, the external-load variant, and the GPU |
+| 2 | Scoreboard failure on indexed-store data | 134 | TOM+JERRY | 1 | GPU/DSP #1 | **DSP, partial**: `div` immediately followed by store 49/50/60/61 of its quotient register stores the old value unless the store's base register or field 1 (index register or immediate offset) names that register, in which case it interlocks and stores the quotient -- netlist rule B25 (`dsp.c` `dsp_div_store_fixups`; Xenowings relies on both: joypad #811, sound effects #895). Not modeled: a later store inside the divide latency, the external-load variant, and the GPU |
 | 3 | Transparency with HILO set | 134 | TOM v1 only | 2 | n/a | n/a (not on production Tom v2) |
 | 4 | Horizontal Period register length | 134 | TOM | 0 | n/a | n/a (`TOMReset` writes HP 844/850) |
 | 5 | Clipping inefficiency (720-px line buffer) | 134-135 | TOM/OP | 1 | n/a | n/a, perf only (720 limit in `op.c`) |
