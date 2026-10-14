@@ -256,6 +256,7 @@ bool App::initImGui() {
 
 void App::shutdown() {
     if (host.isLoaded()) autoSave();   // quitting: keep where the game was
+    discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
     ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
@@ -384,6 +385,7 @@ bool App::openContent(const std::string& pathIn) {
     library.noteLaunched(path);   // the library's recently played (library_lists.h)
     invalidateThumbs();
     ach.onContentLoaded();   // identify the game, look up its achievements
+    discordNoteGameStarted(*this);
     cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
     runSeconds_ = 0;
     toast("Loaded " + host.contentName());
@@ -412,6 +414,7 @@ bool App::openNoContent() {
     lastTick_ = now();
     invalidateThumbs();
     ach.onContentClosed();   // no game, so nothing to look up
+    discordNoteGameStarted(*this);
     cheatsOnClose(*this);
     input.setContent("");
     applyPortDevices(*this);
@@ -963,6 +966,7 @@ int App::runInteractive(const CliArgs& a) {
         else if (a.showWindow.rfind("settings-input", 0) == 0) devSelectTab = "Input";
         else if (a.showWindow.rfind("settings-audio", 0) == 0) devSelectTab = "Audio";
         else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
+        else if (a.showWindow.rfind("settings-discord", 0) == 0) devSelectTab = "Discord";
         else if (a.showWindow.rfind("settings-bios", 0) == 0) devSelectTab = "BIOS";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
@@ -1021,6 +1025,7 @@ int App::runInteractive(const CliArgs& a) {
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
+        discordTick(*this);
         perf.lap(Perf::Events);
         stepEmulation();
         perf.lap(Perf::Step);

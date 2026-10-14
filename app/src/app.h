@@ -16,6 +16,7 @@
 #include "cheats.h"
 #include "config.h"
 #include "core_host.h"
+#include "discord_presence.h"
 #include "input.h"
 #include "instance.h"
 #include "library_service.h"
@@ -112,6 +113,13 @@ public:
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
+    discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
+    struct DiscordState {        // what discordTick() remembers between calls
+        double lastTick = -1;
+        long long appStartUnix = 0, gameStartUnix = 0;
+        std::string artKey, artUrl;
+        double artAt = 0;
+    } discordState;
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -283,6 +291,11 @@ bool netplayInit(App& app, const CliArgs& a);               // log tap + --netpl
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
 void drawNetplayMenu(App& app);
 void drawNetplay(App& app);
+// Discord Rich Presence (discord_app.cpp).
+void discordTick(App& app);                          // UI loop, every iteration: cheap, rate-limits itself
+void discordNoteGameStarted(App& app);               // a game booted: the "elapsed" timer restarts
+void discordShutdown(App& app);                      // clears the status and stops the worker
+std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_id, else the compile-time default ("" = none)
 // BIOS & boot (bios_ui.cpp): the BIOS choice and boot controls, shown in Settings and above the library's BIOS tab.
 void drawBiosPanel(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).
