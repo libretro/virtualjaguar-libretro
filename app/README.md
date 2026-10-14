@@ -182,9 +182,12 @@ open. **Esc** or **F10** releases it (F10 may need Fn on a Mac keyboard); click 
 
 The **controls overlay** (F3, the Touchpad button on a gamepad, or View > Controls overlay)
 shows the bindings in effect for Player 1's device - the keyboard's or the gamepad's,
-whichever you last used - and never takes input. It appears by itself for a few seconds
-when a game starts with no gamepad on Player 1, and once per controller model for
-gamepads; **Settings > Input > Devices & players** turns that off.
+whichever you last used - and never takes input. A click or tap anywhere, Esc or F3 hides it
+(the click is not passed to the game). It is not shown by itself: a game that starts with no
+gamepad on Player 1 gets a short "Press F3 for the controls" hint, once per session.
+**Settings > Input > Devices & players > Show the controls overlay when a game starts** (off by
+default) brings the overlay up at boot instead - for keyboard players every time, for gamepads
+once per controller model - and hides it again after a few seconds.
 
 **Settings > Core options** is generated from the core's options v2 definitions,
 categories and `SET_CORE_OPTIONS_DISPLAY` visibility included, so a new core
@@ -800,8 +803,9 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   event) and WCAG contrast of every palette and style colour in both themes, and of the in-game overlays on
   white and black frames; the custom-theme files (round trip, import validation, the themes folder, read-only
   secondary copies) and the editor's contrast warnings.
-- `controls_overlay_*`: the overlay through the real app: shown for a keyboard player,
-  hidden after "don't show again", text follows a saved rebinding.
+- `controls_overlay_*`: the overlay through the real app: hidden by default (with the F3 hint),
+  shown for a keyboard player when the setting is on, hidden when it is off, text follows a saved rebinding.
+  `devices_unit` covers the show / hide policy (click, tap, Esc, F3, timeout).
 
 - `debug_*`: the debug tools.  `debug_session_unit` and the per-tool unit tests (`debug_memory_unit`, `debug_scan_unit`,
   `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`) run the pure logic against a fake core

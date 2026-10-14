@@ -123,7 +123,7 @@ void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
     }
     ImGui::Separator();
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("Hide: the Controls overlay key. Rebind: Settings > Input.");
+    ImGui::TextWrapped("Hide: click / tap, Esc or the Controls overlay key. Rebind: Settings > Input.");
     ImGui::PopStyleColor();
     ImGui::PopFont();
     ImGui::End();

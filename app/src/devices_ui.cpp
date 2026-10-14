@@ -53,17 +53,17 @@ void inputFrame(App& app) {
     in.syncMouseCapture(app.window(), app.host.isLoaded() && !app.paused && !app.debug.halted(), uiOpen || wantsMouse, wantsMouse);   // a debugger halt frees the mouse
 
     if (in.takeHelpToggle() && app.host.isLoaded()) {
-        in.controls.show = !in.controls.show;
-        in.controls.hideAt = 0;
+        overlayEvent(in.controls, OverlayEvent::Toggle);
     }
-    if (in.controls.show && in.controls.hideAt > 0 && app.now() >= in.controls.hideAt) in.controls.show = false;
+    overlayTick(in.controls, app.now());
 }
 
 void controlsOverlayOnLoad(App& app) {
     InputManager& in = app.input;
     in.updateRoutes();
     AutoShowInput ai;
-    ai.enabled = app.cfg.getBool("ui.controls.autoshow", true);
+    ai.enabled = app.cfg.getBool("ui.controls.autoshow", false);
+    ai.hintShown = in.controls.hintShown;
     ai.contentLoaded = app.host.isLoaded();
     int pad = in.routes().pad[0];
     ai.padOnPlayer1 = pad >= 0;
@@ -77,8 +77,12 @@ void controlsOverlayOnLoad(App& app) {
     AutoShow a = autoShowDecision(ai);
     in.controls.lastInputWasPad = ai.padOnPlayer1;
     if (a == AutoShow::No) return;
-    in.controls.show = true;
-    in.controls.hideAt = app.now() + kAutoShowSeconds;
+    if (a == AutoShow::Hint) {
+        in.controls.hintShown = true;
+        app.toast("Press F3 for the controls", 4.0);
+        return;
+    }
+    overlayAutoShow(in.controls, app.now());
     if (a == AutoShow::Gamepad && !guid.empty()) {
         std::string list = app.cfg.get("ui.controls.seen_pads", "");
         list += (list.empty() ? "" : ",") + guid;
@@ -299,16 +303,14 @@ void drawDevicesPanel(App& app) {
 
     // ---- overlay --------------------------------------------------------------------------------
     ImGui::SeparatorText("Controls overlay");
-    bool as = app.cfg.getBool("ui.controls.autoshow", true);
+    bool as = app.cfg.getBool("ui.controls.autoshow", false);
     if (ImGui::Checkbox("Show the controls overlay when a game starts", &as)) {
         app.cfg.setBool("ui.controls.autoshow", as);
         app.cfg.save();
     }
-    ui::hint("Keyboard players always get it at boot; a gamepad player once per controller model.");
-    if (ImGui::Button(in.controls.show ? "Hide the overlay now" : "Show the overlay now")) {
-        in.controls.show = !in.controls.show;
-        in.controls.hideAt = 0;
-    }
+    ui::hint("Off by default: a keyboard player gets a short \"Press F3 for the controls\" hint instead. On: keyboard players see it at boot, "
+             "gamepad players once per controller model, and it hides itself after a few seconds. A click, tap, Esc or F3 hides it.");
+    if (ImGui::Button(in.controls.show ? "Hide the overlay now" : "Show the overlay now")) overlayEvent(in.controls, OverlayEvent::Toggle);
 }
 
 }  // namespace vj

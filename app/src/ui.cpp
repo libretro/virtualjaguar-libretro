@@ -564,8 +564,7 @@ void drawMenuBar(App& app) {
         ImGui::MenuItem("Show frame rate", nullptr, &app.showFps);
         ImGui::MenuItem("Keypad overlay", "F2", &app.input.overlay.open);
         if (ImGui::MenuItem("Controls overlay", "F3", app.input.controls.show)) {
-            app.input.controls.show = !app.input.controls.show;
-            app.input.controls.hideAt = 0;
+            overlayEvent(app.input.controls, OverlayEvent::Toggle);
         }
         ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();

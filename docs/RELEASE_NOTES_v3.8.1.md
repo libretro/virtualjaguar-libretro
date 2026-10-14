@@ -98,7 +98,8 @@ https://github.com/libretro/virtualjaguar-libretro/pull/896. Screenshots: https:
 
 - **Controls.** Per-device and per-game remapping, all 12 keypad keys on a gamepad, keyboard play
   with the Pro Controller 6-button layout, an on-screen keypad (F2) and a controls overlay (F3)
-  that appears at boot when no player-1 controller is connected. Mice, the Tempest 2000 rotary
+  (a click, tap, Esc or F3 hides it; it is off at boot unless you turn on Settings > Input > "Show
+  the controls overlay when a game starts", and a keyboard player gets a "Press F3 for the controls" hint instead). Mice, the Tempest 2000 rotary
   controller, analog, driving, paddle, 6D, light gun and Team Tap are chosen under Settings >
   Input > Devices & players (https://github.com/libretro/virtualjaguar-libretro/issues/837, https://github.com/libretro/virtualjaguar-libretro/pull/879, https://github.com/libretro/virtualjaguar-libretro/pull/887).
 - **Save states and resume.** Save states with thumbnails (F5 save, F7 load, F6 slot) and a state

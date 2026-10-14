@@ -199,9 +199,38 @@ Sheet buildSheet(const Profile& profile, DevKind kind, SheetSource src, const st
 }
 
 AutoShow autoShowDecision(const AutoShowInput& in) {
-    if (!in.enabled || !in.contentLoaded) return AutoShow::No;
+    if (!in.contentLoaded) return AutoShow::No;
+    if (!in.enabled) return (!in.padOnPlayer1 && !in.hintShown) ? AutoShow::Hint : AutoShow::No;
     if (!in.padOnPlayer1) return AutoShow::Keyboard;
     return in.padSeenBefore ? AutoShow::No : AutoShow::Gamepad;
+}
+
+void overlayAutoShow(ControlsOverlayState& s, double now) {
+    s.show = true;
+    s.autoShown = true;
+    s.hideAt = now + kAutoShowSeconds;
+}
+
+bool overlayEvent(ControlsOverlayState& s, OverlayEvent e) {
+    if (e == OverlayEvent::Toggle) {
+        s.show = !s.show;
+        s.autoShown = false;   // the player's own choice: it stays until they hide it
+        s.hideAt = 0;
+        return false;
+    }
+    if (!s.show) return false;
+    s.show = false;
+    s.autoShown = false;
+    s.hideAt = 0;
+    return true;
+}
+
+bool overlayTick(ControlsOverlayState& s, double now) {
+    if (!s.show || !s.autoShown || s.hideAt <= 0 || now < s.hideAt) return false;
+    s.show = false;
+    s.autoShown = false;
+    s.hideAt = 0;
+    return true;
 }
 
 }  // namespace vj

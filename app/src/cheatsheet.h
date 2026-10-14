@@ -35,22 +35,37 @@ Sheet buildSheet(const Profile& profile, DevKind kind, SheetSource src, const st
 
 // ---- when it shows by itself ---------------------------------------------------------------------------
 struct AutoShowInput {
-    bool enabled = true;         // Settings: "Show the controls overlay when a game starts"
+    bool enabled = false;        // Settings: "Show the controls overlay when a game starts" (default OFF)
     bool contentLoaded = false;
     bool padOnPlayer1 = false;   // a gamepad drives Player 1
     bool padSeenBefore = false;  // that controller model has been used with the app before
+    bool hintShown = false;      // the "Press F3 for the controls" hint was already shown this session
 };
-enum class AutoShow { No, Keyboard, Gamepad };
-// A keyboard player (no gamepad on Player 1) always gets the sheet at boot; a gamepad player gets
-// it once per controller model, the first time it is used.
+enum class AutoShow { No, Keyboard, Gamepad, Hint };
+// Off (the default): a keyboard player (no gamepad on Player 1) gets a one-line toast "Press F3 for the
+// controls", once per session, and nothing else.  On: a keyboard player gets the sheet at boot; a gamepad
+// player gets it once per controller model, the first time it is used.
 AutoShow autoShowDecision(const AutoShowInput& in);
 
 struct ControlsOverlayState {
     bool show = false;
-    double hideAt = 0;                 // app clock; 0 = stays until toggled off
+    double hideAt = 0;                 // app clock; 0 = stays until toggled off (only used while autoShown)
+    bool autoShown = false;            // opened by the app at boot (times out), not by the player (stays)
+    bool hintShown = false;            // the "Press F3" toast was shown this session
     SheetSource source = SheetSource::Keyboard;
     bool lastInputWasPad = false;      // the sheet follows what the player is actually using
 };
-constexpr double kAutoShowSeconds = 9.0;
+constexpr double kAutoShowSeconds = 8.0;
+
+// ---- show / hide policy (pure, tested in devices_unit) -------------------------------------------------
+// The player's way in is the toggle (F3 / pad button / menu).  A click or a tap anywhere, Esc and the
+// toggle all hide it; an overlay the app opened by itself also hides after kAutoShowSeconds.
+enum class OverlayEvent { Toggle, Click, Tap, Escape };
+void overlayAutoShow(ControlsOverlayState& s, double now);              // the app opens it at boot
+// Returns true when the event hid a visible overlay (the caller must then swallow a click / tap so the
+// game does not also receive it).  Toggle flips it and always returns false.
+bool overlayEvent(ControlsOverlayState& s, OverlayEvent e);
+// Per frame: hides an auto-shown overlay once its time is up.  True when it just did.
+bool overlayTick(ControlsOverlayState& s, double now);
 
 }  // namespace vj
