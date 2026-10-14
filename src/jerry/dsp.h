@@ -27,6 +27,12 @@ void DSPSetIRQLine(int irqline, int state);
 void DSPBeginSlice(uint32_t riscCycles);
 int32_t DSPSliceRemaining(void);
 void DSPSyncToM68K(void);
+/* Zero the DSP pipeline/gateway timing model's transient state (option
+ * toggle, reset; mirror of GPUPipeTimingReset). */
+void DSPPipeTimingReset(void);
+/* Drop the sub-cycle wall->scaled bus-stall remainder when the RISC
+ * clock scale changes (mirror of GPUClockScaleReset). */
+void DSPClockScaleReset(void);
 uint8_t DSPReadByte(uint32_t offset, uint32_t who);
 uint16_t DSPReadWord(uint32_t offset, uint32_t who);
 uint32_t DSPReadLong(uint32_t offset, uint32_t who);

@@ -391,6 +391,7 @@ void M68KInstructionHook(void)
 
    pcQPtr++;
    pcQPtr &= 0x3FF;
+   VJT_BUS_M68K_INSN(m68kPC, regs.remainingCycles);
 
 #if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_68K_HOOK)
    /* GDB stub (issue #652): one load of a hot global, one never-taken
@@ -490,6 +491,7 @@ static int m68kBusNoCharge = 0;
    do { \
       if (busArbiter.enabled && !m68kBusNoCharge) \
          regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses), m68kClockScalePct); \
+      VJT_BUS_M68K((addr), (naccesses), m68kBusNoCharge); \
    } while (0)
 
 /* A 68000 READ from GPU local RAM samples the state of a coprocessor that
@@ -1020,6 +1022,7 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
     * after the mask for the same reason. */
    offset &= 0xFFFFFF;
    VJT_WATCH_RD(offset, 0, who);
+   VJT_BUS_DSP(who, offset, 1);
    if (blitMemoRecording)
       BlitMemoNoteRead(offset, 1);
 
@@ -1051,6 +1054,7 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
    /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
    VJT_WATCH_RD(offset, 0, who);
+   VJT_BUS_DSP(who, offset, 1);
    if (blitMemoRecording)
       BlitMemoNoteRead(offset, 2);
 
@@ -1083,6 +1087,7 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
    /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
    VJT_WATCH_WR(offset, data, who);
+   VJT_BUS_DSP(who, offset, 1);
    if (blitMemoMode)
       BlitMemoWriteHook(offset, 1, data);
 
@@ -1137,6 +1142,7 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
    VJT_WATCH_WR(offset, data, who);
+   VJT_BUS_DSP(who, offset, 1);
    if (blitMemoMode)
       BlitMemoWriteHook(offset, 2, data);
 
@@ -1189,8 +1195,10 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
     * Row-change overhead is added per rendered object in op.c. */
    if (busArbiter.enabled && who == OP)
       bus_arbiter_op_charge(1);
+   VJT_BUS_OP(who, 1);
    if (addr < 0x800000)
    {
+      VJT_BUS_DSP(who, addr, 2);
       /* Fast path: bypasses JaguarReadWord, so the watch check there
        * never sees this access -- check it here instead.  Use addr
        * (already masked to 24 bits above), not offset, so a caller
@@ -1214,6 +1222,7 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
     * long. Row-change overhead is added per rendered object in op.c. */
    if (busArbiter.enabled && who == OP)
       bus_arbiter_op_charge(1);
+   VJT_BUS_OP(who, 1);
    /* CDDA-DIAG (Primal Rage): $F1B274 is the game's DSP command mailbox --
     * cmd 1 enables the DSP ISR's CD-audio mix (r20), cmd 2 disables.  The
     * missing "cmd 1" write is the open question in
@@ -1229,6 +1238,7 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
        * never sees this access -- check it here instead.  Use addr
        * (already masked to 24 bits above) -- see JaguarReadLong. */
       VJT_WATCH_WR(addr, data, who);
+      VJT_BUS_DSP(who, addr, 2);
       if (blitMemoMode)
          BlitMemoWriteHook(addr, 4, data);
       SET32(jaguarMainRAM, addr, data);
@@ -1389,6 +1399,7 @@ void HalflineCallback(void)
          charge = halfclks;
       busArbiter.m68k_pending_stall += charge;
    }
+   VJT_BUS_HALFLINE((uint32_t)vc);
 
    /* Blitter bus-time window decays with real time: a blit finishes on
     * its own whether or not anyone is watching (blitter_mmio.c). */
@@ -1738,6 +1749,7 @@ static void M68KExecuteWithStalls(uint32_t cycles)
          stall = cycles - keep;
       busArbiter.m68k_pending_stall -= stall << 1;
       cycles -= stall;
+      VJT_BUS_M68K_STALL(stall);
       /* A slice fully consumed by stall must not fall through to
        * m68k_execute(0): the UAE core's main loop is a do/while, so
        * even a zero-cycle budget executes exactly one instruction --
@@ -1768,9 +1780,11 @@ static void M68KExecuteWithStalls(uint32_t cycles)
       if (scaled == 0)
          return;
       m68k_execute(scaled);
+      VJT_BUS_M68K_END(regs.remainingCycles);
       return;
    }
    m68k_execute(cycles);
+   VJT_BUS_M68K_END(regs.remainingCycles);
 }
 
 

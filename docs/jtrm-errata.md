@@ -124,7 +124,12 @@ JR +3; `g-1` extra clocks for `g` consecutive local loads. Netlists `SBOARD`, `I
 (.NET), pinned by Verilator on the jag_sim GPU island. `src/tom/gpu.c` (~75-160, `GPU_PIPE_*`),
 `docs/gpu-timing-spec.md`, `docs/gpu-timing-verilator-results.md`; commits `c62b97c`, `ba4dc79`, `92a27a8`;
 #401, #313. Ambiguous: local-load latency is 3 ticks per the spec (`GPU_PIPE_LOCAL_LOAD 3u`) but 2 sysclks per the
-Verilator side result. DSP assumed identical to GPU; never Verilated.
+Verilator side result. DSP: never Verilated, but modeled with the same rules under the same option since #313 /
+timing-campaign S1 by netlist identity -- jag_sim `jerry/SBOARD.NET` and `EXECON.NET` are byte-identical to the
+`tom/` files, `DSP_MEM.NET`'s local arbitration matches `GPU_MEM.NET`, `DSP_GATE.NET` is `GATEWAY.NET` minus the
+phrase path. DSP-only terms (`src/jerry/dsp.c` model header, `bus_arbiter_dsp_access()`): local space
+$F18000-$F1FFFF (`DSP_MEM.NET`); JERRY's 16-bit external interface (v8 p.97) splits a long transfer into two word
+cycles (`JMEM.NET`); the JERRY<->TOM handshake (taken as the GPU's grant 2) and split pause (1) are inferred.
 
 **B3. Bus arbitration and DRAM.** Priorities from `ARB.NET:85-95` (GPU normal beats blitter normal; OP beats GPU
 normal; BUSHI beats GPU unless DMAEN) and `MEM.NET`. MiSTer `mem.v` deliberately not used for DRAM counts (FPGA

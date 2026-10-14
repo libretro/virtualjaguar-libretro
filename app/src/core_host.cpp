@@ -1,5 +1,6 @@
 #include "core_host.h"
 
+#include "bios.h"
 #include "paths.h"
 #include "typed_options.h"
 
@@ -35,6 +36,12 @@ size_t retro_get_memory_size(unsigned);
 }
 
 namespace vj {
+
+// bios.h keeps its own copies of the core's ids so that it needs no core headers.
+static_assert(bios::CartBoot == VJ_BIOS_CART_BOOT && bios::Cd == VJ_BIOS_CD, "BIOS role ids drifted from vj_frontend_ext.h");
+static_assert(bios::SrcBuiltin == VJ_BIOS_SRC_BUILTIN && bios::SrcSystem == VJ_BIOS_SRC_SYSTEM &&
+                  bios::SrcFile == VJ_BIOS_SRC_FRONTEND,
+              "BIOS source ids drifted from vj_frontend_ext.h");
 
 namespace {
 
@@ -541,14 +548,39 @@ bool CoreHost::env(unsigned cmd, void* data) {
     case VJ_ENV_HELLO: {
         vj_env_hello* h = (vj_env_hello*)data;
         if (!announceExtensions || !h || h->abi != VJ_FRONTEND_EXT_ABI) return false;
-        h->caps_out = VJ_CAP_EVENTS;
+        h->caps_out = VJ_CAP_EVENTS | (announceBios ? VJ_CAP_BIOS : 0u);
         helloSeen_ = true;
         return true;
     }
+    case VJ_ENV_GET_BIOS_PATH: {
+        vj_env_bios_path* q = (vj_env_bios_path*)data;
+        if (!q || !helloSeen_ || !announceBios || q->role < 1 || q->role > 2) return false;
+        const std::string& p = biosPath_[q->role];
+        // A file that has gone away is "no preference", not an error: the core's own search runs.
+        if (p.empty() || !fileExists(p)) return false;
+        q->path = p.c_str();   // valid until the selection changes; the core copies it during this call
+        return true;
+    }
+    case VJ_ENV_GET_BOOT_TARGET:
+        if (!data || !helloSeen_ || !announceBios) return false;
+        *(unsigned*)data = bootTarget_;
+        return true;
     case VJ_ENV_EVENT: {
         const vj_event* e = (const vj_event*)data;
         if (!e || !helloSeen_) return false;
         eventsSeen_++;
+        if ((e->type == VJ_EVT_BIOS_STAGED || e->type == VJ_EVT_BIOS_REJECTED) && e->a >= 1 && e->a <= 2) {
+            StagedBios& b = staged_[e->a];
+            if (e->type == VJ_EVT_BIOS_STAGED) {
+                b.seen = true;
+                b.crc = e->b;
+                b.source = e->c;
+                b.where = e->s ? e->s : "";
+            } else {
+                b.rejected = true;
+                b.rejectedPath = e->s ? e->s : "";
+            }
+        }
         if (e->type == VJ_EVT_CRASH_WATCHDOG) {
             // The watchdog's own log line is easy to miss; say it on screen too.  The core rate-limits
             // each signature (about every 10 s), so this cannot flood.
@@ -585,6 +617,7 @@ bool CoreHost::startSession(std::string& err) {
     diskRegistered_ = false;
     variableUpdate_ = false;
     helloSeen_ = false;
+    for (StagedBios& b : staged_) b = StagedBios();
     contentOverrideExts_.clear();
     supportsNoGame_ = false;
     minAudioLatencyMs_ = 0;

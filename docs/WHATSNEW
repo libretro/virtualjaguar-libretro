@@ -16,6 +16,11 @@ docs/RELEASE_NOTES_v3.8.1.md
 == Desktop app ==
 * Standalone emulator for macOS, Windows and Linux in app/: SDL3,
   Dear ImGui, OpenGL 3.3, driving the core through the retro_* API.
+* BIOS choice and boot: Settings > BIOS (and the BIOS & system tab) picks
+  the exact boot ROM / CD BIOS file the core runs, switches carts and CD
+  games between HLE and the real BIOS with nothing loaded, imports a
+  dropped BIOS, and boots the CD BIOS (no disc) or the cart boot ROM
+  (empty slot) on its own. RetroArch unchanged (private core call).
 * Game library on the home screen: Cartridges, Jaguar CD and BIOS &
   system tabs, CRC32 identification, box art on demand (#838).
   Jaguar CD has no upstream art: title cards, plus your own PNG covers
