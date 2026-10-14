@@ -561,6 +561,28 @@ through a private libretro environment call that only this app answers
 of scraping log text (the log parser remains the fallback), and a crash-watchdog hit shows as an
 on-screen message naming the signature.
 
+## Debug tools
+
+The **Tools** menu is a set of developer windows over a private debug interface the core hands only to this app
+(`src/debug/vj_debug_iface.h`, `docs/app-frontend-extension.md`); RetroArch never sees it.  Full reference:
+[`docs/app-debug-tools.md`](../docs/app-debug-tools.md).
+
+- **Memory viewer** (hex / ASCII grid over every bus region, go-to, search, change highlighting, edits, "Add as cheat")
+  and **Palette (CLUT)** (256 swatches as CRY or RGB16, with an editor).
+- **Cheat scanner**: find an address by narrowing (changed / increased / equal to ...), then keep it as an ordinary cheat.
+- **Object list**: the whole display list the Object Processor walks, decoded, with a bitmap preview, an outline over the
+  game picture, PNG export and a pixel painter (RAM only).
+- **Blitter log**: the last 256 blits with their decoded command and registers.
+- **Textures**: browse the core's texture dump, export a tile, replace its art with your own PNG.
+- **Audio scope**: waveforms and peak meters of the audio the core produces.
+- **F9** breaks into the game (continue when halted), **F10** steps while halted; a "HALTED" bar shows over the picture.
+  The CPU debugger window is still to come.
+
+Writes go to RAM freely; hardware registers need "Allow register writes"; the CD registers (`$DFFF00-$DFFFFF`) and
+`B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD` are never written from here.  Everything greys out (and closes) while
+RetroAchievements hardcore is on.  Extra app instances keep their own windows but do not dump textures.  Developers can
+open one at start-up: `--show-window memory|palette|scanner|objects|blitter|textures|scope` (with `--screenshot`).
+
 ## Smoke tests
 
 `virtualjaguar --headless` runs with SDL's dummy video and audio drivers: no
@@ -604,6 +626,12 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   Every group has a negative control (no host input reads the rest value).
 - `controls_overlay_*`: the overlay through the real app: shown for a keyboard player,
   hidden after "don't show again", text follows a saved rebinding.
+
+- `debug_*`: the debug tools.  `debug_session_unit` and the per-tool unit tests (`debug_memory_unit`, `debug_scan_unit`,
+  `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`) run the pure logic against a fake core
+  (`tests/debug_mock.h`); `debug_memory_ui_smoke` and `debug_scan_ui_smoke` draw the windows headlessly over it;
+  `debug_e2e`, `debug_scan_e2e` and `debug_op_e2e` drive the real core on `yarc.j64` (halt / step / continue, a found counter
+  kept as a working cheat, the display list captured by the core).
 
 To regenerate the expected hash after an intentional emulation change:
 `virtualjaguar --headless --frames 300 test/roms/yarc.j64` and update

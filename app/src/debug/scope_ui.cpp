@@ -113,7 +113,7 @@ void scopeToolInit(DebugSession& session, CoreHost& host) {
 
 void scopeToolDraw() {
     if (!g.open || !g.session) return;
-    ui::nextWindow(46.0f, 32.0f, 26.0f, 18.0f);
+    ui::nextWindow(46.0f, 40.0f, 26.0f, 24.0f);
     bool shown = ImGui::Begin("Audio scope", &g.open);
     ui::keepOnScreen();
     if (shown) {
@@ -148,7 +148,7 @@ void scopeToolDraw() {
         if (!flowing) ui::hint("No audio is arriving (paused, muted by the game, or nothing loaded). The last block is shown.");
 
         const float avail = ImGui::GetContentRegionAvail().y;
-        const float h = std::max(ui::em(4.0f), (avail - ui::em(5.0f)) * 0.5f);
+        const float h = std::max(ui::em(4.0f), (avail - ui::em(11.0f)) * 0.5f);
         ImGui::TextUnformatted("Left");
         drawWave("##L", g.l, ImVec2(ImGui::GetContentRegionAvail().x, h), IM_COL32(110, 200, 255, 255));
         ImGui::TextUnformatted("Right");

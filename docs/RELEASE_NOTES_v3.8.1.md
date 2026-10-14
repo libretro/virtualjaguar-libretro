@@ -101,6 +101,13 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   is imported, not run as a cartridge; `JAGCD.BIN`-style upper-case names are treated as the core's search sees
   them on macOS and Windows. Needs a small private core call (`docs/app-frontend-extension.md`) that RetroArch
   never answers, so RetroArch is unchanged (#838, #833).
+- **Debug tools (Tools menu).** A memory viewer / editor and a palette (CLUT) editor, a cheat scanner whose finds become
+  ordinary cheats, an Object Processor list (the whole display list decoded, with a bitmap preview, an on-screen outline,
+  PNG export and a pixel painter), a blitter log, a texture browser (export a tile, replace it with your own PNG) and an audio
+  scope; F9 breaks into the game and F10 steps. Writes are limited to RAM unless you tick "Allow register writes", and the CD
+  registers plus `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD` and `RTXD` are never written. Everything is off under
+  RetroAchievements hardcore. A small private core interface that RetroArch never receives; nothing changes for it
+  (`docs/app-debug-tools.md`, https://github.com/libretro/virtualjaguar-libretro/issues/833, https://github.com/libretro/virtualjaguar-libretro/issues/652).
 - **Local signing.** `app/packaging/local-package.sh --sign` packages your own build and signs it
   with a Developer ID (or Apple Development) identity found in the macOS keychain, or a `.pfx` /
   store certificate on Windows, optionally set in a gitignored `.env`; `--notarize` also notarizes

@@ -75,7 +75,7 @@ std::string describe(ColorMode m, unsigned raw) {
 void drawClutWindow(DebugSession& s) {
     ClutState& c = g_clut;
     if (!clutWindowOpen()) return;
-    ui::nextWindow(34.0f, 32.0f, 22.0f, 18.0f);
+    ui::nextWindow(36.0f, 46.0f, 22.0f, 24.0f);
     bool open = true;
     const bool shown = ImGui::Begin("Palette (CLUT)", &open);
     ui::keepOnScreen();
@@ -114,6 +114,11 @@ void drawClutWindow(DebugSession& s) {
     if (ImGui::RadioButton("RGB16", c.mode == ColorMode::Rgb16)) c.mode = ColorMode::Rgb16;
     ui::hint("Indexed (1-8 bpp) objects look their pixels up here; whether an entry is CRY or RGB16 depends on the "
              "video mode (VMODE) the game sets. 256 entries at $F00400.");
+
+    bool allZero = true;
+    for (int i = 0; i < 256 && allZero; i++) allZero = c.a[(size_t)i] == 0;
+    if (allZero)
+        ui::hint("Every entry is 0 (black): this game has not loaded a palette, or only uses 16-bit pixels.");
 
     // ---- the grid of swatches ----------------------------------------------------------------------------
     const float spacing = 2.0f;

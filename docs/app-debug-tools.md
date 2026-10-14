@@ -1,12 +1,14 @@
 # Debug tools in the standalone app
 
-> Skeleton from WP1 (the core interface and the session).  The tool windows land in later work packages and fill in
-> the sections marked *(WP n)*.  Design record: issues #652 (GDB stub) and #833 (app).
+> Design record: issues #652 (GDB stub) and #833 (app).  The CPU debugger window (68000 / GPU / DSP registers,
+> disassembly, breakpoint list) is still to come; the halt machinery under it (F9 / F10, the halted bar, the breakpoint
+> API) is in and the **CPU debugger...** menu entry stays greyed until that window lands.
 
-The app's **Tools** menu is a set of windows over the core's debug interface: memory viewer/editor, CLUT editor, cheat
-scanner, CPU debugger (68000, GPU, DSP), Object Processor list, blitter log, texture browser.  None of it exists under
+The app's **Tools** menu is a set of windows over the core's debug interface: Memory viewer and Palette (CLUT) editor,
+Cheat scanner, Object list (Object Processor), Blitter log, Textures and an Audio scope.  None of it exists under
 RetroArch: the interface is only handed to a frontend that asks for it (`VJ_CAP_DEBUG`, see
-[`app-frontend-extension.md`](app-frontend-extension.md)).
+[`app-frontend-extension.md`](app-frontend-extension.md)).  Every window is a tool for developers and tinkerers; none
+of them changes how the game plays unless you press an edit button.
 
 ## Pieces
 
@@ -15,7 +17,7 @@ RetroArch: the interface is only handed to a frontend that asks for it (`VJ_CAP_
 | the contract (C89, shared verbatim by core and app) | `src/debug/vj_debug_iface.h` |
 | core side | `src/debug/vjdebug.c` (+ the halt pump in `src/debug/gdbtarget.c`, OP snapshot in `src/tom/op.c`, blit log in `src/tom/blitter_mmio.c`, `TexReplaceReload` in `src/tom/texreplace.c`) |
 | app side, no ImGui | `app/src/debug/debug_session.{h,cpp}` |
-| app side, ImGui | `app/src/debug/debug_ui.cpp` (Tools menu, halted bar), one `*_ui.cpp` per tool *(WP 2-7)* |
+| app side, ImGui | `app/src/debug/debug_ui.cpp` (Tools menu, halted bar, `addDebugTools`), one `*_ui.cpp` per tool, each with its pure logic beside it (`memory_view`, `cheat_scan`, `op_decode` / `op_view` / `op_render`, `texture_pack`, `blitter_log`, `audio_ring`) |
 | a fake core for tests | `app/tests/debug_mock.h` |
 
 ## Halt model
@@ -44,11 +46,138 @@ RAM-like regions are free, ROM and `$DFFF00-$DFFFFF` are never written, other re
 and the six side-effecting registers need a second, separate confirmation.  Register space is written as aligned 16-bit
 words.
 
-## Tools
+## How the windows plug in
 
-*(WP 2)* Memory viewer and CLUT editor.  *(WP 3)* Cheat scanner (results become ordinary cheats through `CheatManager`,
-so hardcore blocks them like any other).  *(WP 4)* CPU debugger.  *(WP 5)* Object list.  *(WP 6)* Textures.  *(WP 7)* Blitter log.
+`DebugSession` (`debug_session.h`) is the registry.  Each tool file contributes one `DebugProvider` --
+`registerTools` (runs once: puts its entry in the Tools menu in place of the greyed placeholder and hooks the
+forced-close path) and `draw` (runs every UI frame, also during a halt; the window checks its own open state).
+`addDebugTools(App&)` in `debug_ui.cpp` is the single place that lists them, so adding a tool is one `addProvider`
+call.  Nothing else in the app calls a tool's draw function.
+
+Every window follows the same rules:
+
+- **Greyed with a reason** when `DebugSession::enabled()` is false: the core did not offer the interface, no game is
+  loaded, or RetroAchievements hardcore is on.  The Tools menu shows the reason on its first line.
+- **Live refresh at 10 Hz** while the game runs, and **once per request** while it is paused or halted.  Each window
+  keeps the `refreshSerial()` it last drew and re-reads when it changes; the serial also bumps after a state load, a
+  reset, a content change, a halt and every poke, so a paused game costs nothing and a loaded state shows at once.
+- **Opaque, resizable windows** placed through `ui::nextWindow`, text that wraps rather than clips.
+- All core calls happen on the main thread, between `retro_run` calls or inside the halt pump.
+
+Developers can open a window at start-up with `--show-window memory|palette|scanner|objects|blitter|textures|scope`
+(with `--screenshot PNG` for a picture).
+
+## The tools
+
+### Memory viewer and Palette (CLUT)
+
+Memory viewer: a hex / ASCII grid over every bus region the core lists (DRAM, cartridge, BIOS, TOM and JERRY
+registers, CLUT, line buffers, GPU and DSP RAM).  Values are big-endian bus order, shown as 8-, 16- or 32-bit cells.  It has
+go-to, back, "Follow pointer", an incremental hex / text search, change highlighting between refreshes, an in-place
+editor (click a cell, double-click or Enter, type hex) and **Add as cheat** for the selected cell.
+
+The **Palette** window shows the 256 CLUT entries as swatches (CRY or RGB16, your choice, since indexed objects can be
+either depending on the video mode), the raw word, and an editor with a colour picker.  The CLUT is mirrored in two tables
+(`$F00400` and `$F00600`); an edit writes both.
+
+**Write policy** (enforced by the core's `poke`, so no window can bypass it):
+
+| address | rule |
+| --- | --- |
+| DRAM, GPU RAM, DSP RAM, line buffers, CLUT | writable |
+| cartridge, BIOS | never (read-only) |
+| `$DFFF00-$DFFFFF` (BUTCH, the CD registers) | **always blocked**, reads are fine |
+| other hardware registers (TOM, GPU / blitter, JERRY) | only with **Allow register writes** ticked; written as aligned 16-bit words |
+| `B_CMD` `$F02238`, `G_CTRL` `$F02114`, `D_CTRL` `$F1A114`, `OLP` `$F00020`, `LTXD` `$F1A148`, `RTXD` `$F1A14C` | **always blocked from the app's windows**: writing them starts a blit, starts or stops a processor, moves the object list or pushes serial data.  The core would accept them behind a second `VJ_DBG_POKE_DANGEROUS` flag; no window sets it |
+
+A write is all or nothing: if any byte of the range is refused, no byte is written, and the status line says why.  The
+Palette editor also needs the register switch (the same checkbox), to keep a stray click from recolouring the screen.
+Reads use the side-effect-free byte path (`JaguarReadByte(..., DEBUGGER)`), so looking never acknowledges a CD or DSP interrupt.
+
+### Cheat scanner
+
+Finds the address of a value that changes while you play.  It snapshots the 2 MB of main RAM, searches 8, 16 or 32-bit
+big-endian values (signed or unsigned, aligned or not), and narrows with *Unknown initial value* (first scan only), *Equal*, *Not equal*, *Greater*, *Less*,
+*In range*, *Changed*, *Unchanged*, *Increased*, *Decreased*, *Increased by* and *Decreased by*.  Undo steps back one narrowing.  Double-click a
+candidate's value to poke it, or **Add as cheat**: the result goes into the Cheats window through the same
+`CheatManager` as codes typed by hand, so it can be switched on and off, and hardcore blocks it exactly like any other cheat.
+Only the first 1000 candidates are listed; the rest are kept and shown once the search is narrower.
+
+### Object list
+
+Decodes the display list the Object Processor walked.  The core arms a one-shot capture and, at the top of the next field
+(before the OP rewrites `HEIGHT`, `DATA` and `REMAINDER` while it draws), reads the **whole** list from DRAM: links followed,
+both arms of every branch object, each object once, up to 1024.  The window shows every object (bitmap, scaled bitmap, GPU,
+branch, stop) with its fields decoded per the JTRM, renders bitmap objects (1, 2, 4, 8, 16 and 24 bpp; CRY, RGB16 or
+mixed; the CLUT for indexed ones; TRANS and REFLECT honoured) into a zoomable preview, outlines the selected object over
+the game picture, exports a bitmap to PNG, and has a pixel painter that writes RAM only (never registers, whatever the
+Memory window's switch says).  **Live** re-arms at the refresh cadence; **Arm snapshot** takes one now (a paused game needs a
+frame to complete it, so the window offers *Step a frame*).
+
+Fallback: if the core returns no snapshot (an older core, or no list yet), the window walks the list from `OLP` through DRAM
+instead and dims those rows: they are read after the frame, so `HEIGHT` / `DATA` may already be advanced.
+
+### Blitter log
+
+The last 256 blitter launches the core logged (command, A1 / A2 base, flags, pixel and step, `B_COUNT`, which engine ran it,
+the frame), newest first, with a decode of the selected launch and the live blitter registers.  The core only logs while the
+window is open.  *Freeze* stops the list updating; launches that scroll out of the ring between refreshes are counted as missed.
+
+### Textures
+
+A browser for the core's texture dump (`virtualjaguar_texdump`, `docs/texture-dump.md`).  It turns dumping on, shows the
+tiles the game has copied (thumbnail, size, bpp, first frame, palette sightings), exports a tile's PNG, and **replaces** its art:
+the PNG you choose is copied into `<system>/vj_texpacks/<CRC32>/<hash16>.png`, the replacement option is enabled, and the core
+re-reads the packs (`texreplace_reload`).  Dumps go to `<system>/vj_texdump/<CRC32>/`.
+
+Scope and limits: only what the **blitter copies as 16 bpp source windows** is captured and replaceable (sprites, tiles,
+UI).  Anything the GPU computes (Doom's texture mapper, most 3D) is out of scope, as it is for the dump itself.  Replacement
+art must be an 8-bit PNG of exactly the tile's size (or exactly twice it with Internal Resolution at 2x).  The list is read from the manifest about once a second (and after a state load or
+reset), not on every frame.
+
+### Audio scope
+
+Left and right waveforms and peak meters of the audio block the core produces, tapped in the app before volume and mute.
+App only: nothing is recorded and the core is not involved; while the window is closed the tap is one flag test per audio block.
+
+## Break, continue, step (F9, F10)
+
+**F9** breaks into the game at the next instruction of the 68000 (or continues when already halted); **F10** steps one
+instruction while halted (it does nothing otherwise).  The Tools menu and a "HALTED" bar over the picture show the same
+actions plus **Detach debugger**, which clears every breakpoint and resumes.  While halted the tool windows keep drawing and
+refreshing, so you can read memory, palette and registers of the frozen machine.  Breakpoints are per game (they are dropped when
+a different game loads).
+
+## Hardcore (RetroAchievements)
+
+Hardcore turns the whole Tools menu off: the entries grey out with "RetroAchievements hardcore is on", every open window
+closes, the session detaches and any halt resumes.  Turning hardcore on from inside a halt does the same.  The scanner's
+cheats are ordinary cheats, so the Cheats window's own hardcore block applies to them too.
+
+## Several app instances
+
+Each process has its own session and windows.  The system folder (and with it `vj_texdump` / `vj_texpacks`) is shared between
+copies, so the Textures window **disables dumping in extra copies** (instance 2 and up) to stop two processes writing one
+manifest; browsing and replacing still work there.  Memory, scanner, objects, blitter and scope are per process and need no care.
+
+## With the external GDB stub
+
+The built-in debugger and the GDB TCP stub (`virtualjaguar_gdb`) share one set of halt machinery and one breakpoint table.
+`attach()` initialises the tables **without a socket**, so the app works with the option off; with it on, both can be used:
+either side may resume a halted machine, and a GDB client disconnecting clears the table (the app re-applies its list on the next
+attach).  With no app host and no GDB client attached, a halt returns at once and can never hang the core.
+
+## Cost when you are not looking
+
+Detached, nothing on a per-instruction or per-pixel path looks at the interface: attaching stores a pointer, and the
+instruction hooks stay the shipped GDB `gdbArmed*` gates.  The only new always-present work is one global test per
+`OPProcessList` call and one per blitter launch, both a plain load and branch.  All tool state is host-transient: no savestate
+field, nothing the emulated machine can observe (the core test hashes the frame and all of main RAM with every tool on and off).
 
 ## Testing
 
-`debug_session_unit` (logic against the mock), `debug_e2e` (real core), and the core's `test/test_debug_iface.c`.
+`debug_session_unit` (logic against the mock) and `debug_e2e` (real core); per tool, a unit test over the pure logic
+(`debug_memory_unit`, `debug_scan_unit`, `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`), a headless ImGui smoke test
+of each window over the mock (`debug_memory_ui_smoke`, `debug_scan_ui_smoke`) and end-to-end runs on the public `yarc.j64`
+(`debug_scan_e2e`, `debug_op_e2e`: at least one bitmap object comes from the core's snapshot itself); and the core's
+`test/test_debug_iface.c`.

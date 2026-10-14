@@ -113,6 +113,9 @@ the A/B benchmark in the PR measures it.  Strings and the struct stay valid unti
   a breakpoint re-hit; OP snapshot; blit log; frame and RAM hash identical with everything on.
 - `app/tests/debug_session_test.cpp` (`debug_session_unit`) against `app/tests/debug_mock.h`, and `app/tests/debug_e2e.cpp`
   (`debug_e2e`): the real core through `CoreHost` + `DebugSession`.
+- The tool windows ride on the same interface: `debug_scan_e2e` (a counter found through `peek`, kept as a working cheat) and
+  `debug_op_e2e` (the display list from `op_snapshot_get` on the public `yarc.j64`, at least one bitmap object read from the
+  snapshot itself) run the real core; the unit and ImGui smoke tests run against the mock (`docs/app-debug-tools.md`).
 
 - `test/test_frontend_ext.c` part 3 (core): a refusing frontend and one without `VJ_CAP_BIOS` are never asked;
   a named CD BIOS / boot ROM file is staged (source, checksum, path in `VJ_EVT_BIOS_STAGED`); a wrong-sized or

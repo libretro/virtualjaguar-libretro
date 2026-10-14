@@ -145,10 +145,10 @@ void drawTable() {
     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, ui::em(3.5f));
     ImGui::TableSetupColumn("Frame", ImGuiTableColumnFlags_WidthFixed, ui::em(4.0f));
     ImGui::TableSetupColumn("Command", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-    ImGui::TableSetupColumn("A1", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-    ImGui::TableSetupColumn("A2", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+    ImGui::TableSetupColumn("A1", ImGuiTableColumnFlags_WidthFixed, ui::em(11.5f));
+    ImGui::TableSetupColumn("A2", ImGuiTableColumnFlags_WidthFixed, ui::em(11.5f));
     ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, ui::em(6.0f));
-    ImGui::TableSetupColumn("Eng", ImGuiTableColumnFlags_WidthFixed, ui::em(3.0f));
+    ImGui::TableSetupColumn("Eng", ImGuiTableColumnFlags_WidthFixed, ui::em(3.5f));
     ImGui::TableHeadersRow();
     for (size_t k = rows.size(); k-- > 0;) {   // newest first
         const vj_debug_blit& b = rows[k];
@@ -200,7 +200,7 @@ void blitterToolDraw() {
     setLog(want);
     if (!g.open) return;
 
-    ui::nextWindow(56.0f, 42.0f, 32.0f, 20.0f);
+    ui::nextWindow(84.0f, 42.0f, 40.0f, 20.0f);
     bool shown = ImGui::Begin("Blitter log", &g.open);
     ui::keepOnScreen();
     if (shown) {

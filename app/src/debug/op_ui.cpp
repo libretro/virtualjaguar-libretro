@@ -505,7 +505,7 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
         if (g.tex) freeTexture();
         return;
     }
-    ui::nextWindow(68.0f, 46.0f, 36.0f, 24.0f);
+    ui::nextWindow(84.0f, 54.0f, 36.0f, 24.0f);
     bool vis = ImGui::Begin("Object list", &g.open);
     ui::keepOnScreen();
     if (!vis) {
@@ -553,7 +553,8 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     ImGui::Checkbox("All", &g.highlightAll);
     ImGui::SameLine();
     ImGui::Checkbox("Bitmaps only", &g.onlyBitmaps);
-    if (vm.waiting()) {
+    // While live and running, the next snapshot is always in flight: a line for that would make the layout jump 10x a second.
+    if (vm.waiting() && (!vm.haveSnapshot() || !ctx.emulationRunning)) {
         if (!ctx.emulationRunning)
             ui::hint("Waiting for the next frame: the game is paused%s.", ctx.stepFrame ? "" : " (resume it or advance a frame)");
         else
@@ -583,9 +584,10 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     for (size_t i = 0; i < vm.objects().size(); i++)
         if (!g.onlyBitmaps || vm.objects()[i].isBitmap()) rows.push_back((int)i);
 
-    bool wide = ImGui::GetContentRegionAvail().x > ui::em(46.0f);
+    bool wide = ImGui::GetContentRegionAvail().x > ui::em(60.0f);
     if (wide) {
-        ImGui::BeginChild("##oplistpane", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0), ImGuiChildFlags_None);
+        ImGui::BeginChild("##oplistpane", ImVec2(std::max(ImGui::GetContentRegionAvail().x * 0.5f, ui::em(34.5f)), 0),
+                          ImGuiChildFlags_None);   // wide enough for every column of the list
     } else {
         ImGui::BeginChild("##oplistpane", ImVec2(0, ui::em(11.0f)), ImGuiChildFlags_None);
     }
@@ -596,7 +598,7 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     if (const OpObject* o = vm.selectedObject()) {
         // Fields on top (scrolls when long), the preview gets the rest.
         float avail = ImGui::GetContentRegionAvail().y;
-        float fieldsH = o->isBitmap() ? std::min(avail * 0.38f, ui::em(15.0f)) : 0.0f;
+        float fieldsH = o->isBitmap() ? std::min(avail * 0.42f, ui::em(19.0f)) : 0.0f;
         ImGui::BeginChild("##opfieldspane", ImVec2(0, fieldsH), ImGuiChildFlags_None);
         drawFields(*o);
         ImGui::EndChild();
