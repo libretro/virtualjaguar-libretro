@@ -117,6 +117,12 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   is imported, not run as a cartridge; `JAGCD.BIN`-style upper-case names are treated as the core's search sees
   them on macOS and Windows. Needs a small private core call (`docs/app-frontend-extension.md`) that RetroArch
   never answers, so RetroArch is unchanged (#838, #833).
+- **Discord Rich Presence (Settings > Discord).** Shows the game you are playing, its box art, how long, and
+  RetroAchievements progress / hardcore / netplay mode on your Discord profile, with a **Get Virtual Jaguar**
+  button (and the game's RetroAchievements page) for other people to find the app. On by default, needs Discord
+  running locally; the app speaks Discord's local protocol itself (no SDK), connects in the background and never
+  waits on Discord, and only the first window publishes
+  (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Local signing.** `app/packaging/local-package.sh --sign` packages your own build and signs it
   with a Developer ID (or Apple Development) identity found in the macOS keychain, or a `.pfx` /
   store certificate on Windows, optionally set in a gitignored `.env`; `--notarize` also notarizes

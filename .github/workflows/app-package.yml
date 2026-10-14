@@ -67,6 +67,10 @@ env:
   # The frame hash of the in-tree public ROM after 300 frames (app/cmake/VJSmokeTests.cmake).
   SMOKE_HASH: f4c30ea3
   SMOKE_ROM: test/roms/yarc.j64
+  # Discord Rich Presence (#833): the CMake default is the project's application ID.  The repository variable
+  # DISCORD_APP_ID, when set, overrides it (each configure below passes it only when non-empty, so an unset
+  # variable never turns the feature off).
+  DISCORD_APP_ID: ${{ vars.DISCORD_APP_ID }}
 
 jobs:
   # ------------------------------------------------------------------------------------------
@@ -184,7 +188,8 @@ jobs:
           for arch in arm64 x86_64; do
             cmake -S app -B "build-$arch" -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS" \
-              -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION"
+              -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+              ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
             cmake --build "build-$arch" --config Release -j4
             cmake --install "build-$arch" --prefix "$PWD/stage-$arch"
           done
@@ -343,6 +348,7 @@ jobs:
           set -eu
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+            ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"} \
             ${{ matrix.cmake_extra }}
           grep -E 'librashader|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER:' build/CMakeCache.txt | head
           cmake --build build -j4
@@ -590,7 +596,8 @@ jobs:
       - name: Build
         run: |
           set -eu
-          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_PACKAGE_VERSION="$SHORT_VERSION"
+          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+            ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
           cmake --build build -j"$(nproc)"
           ctest --test-dir build --output-on-failure
 

@@ -606,6 +606,49 @@ the app, and the same device (JagLink / CatBox cable or Voice Modem).
   `--netplay-port`, `--netplay-device jaglink|voicemodem`. **Advanced > Echo test** runs the link
   against itself with no partner.
 
+## Discord
+
+**Settings > Discord** shows what you are playing on your Discord profile (Rich Presence), and the
+activity doubles as app discovery: friends see "Playing Virtual Jaguar", the game's box art, and a
+**Get Virtual Jaguar** button that opens the site's download page (`https://jaguar.provenance-emu.com/app.html`).
+Discord has to be running on the same computer; nothing is sent anywhere else, and nothing is installed (the app
+speaks Discord's local RPC protocol itself, no Discord SDK).
+
+- **While playing:** the title (dat name without region and revision tags) as the headline; the line below says
+  `Atari Jaguar` or `Jaguar CD` plus `| Paused`, `| Netplay: hosting / joined` (never an address),
+  `| Hardcore` and `| 12/30 achievements` when a RetroAchievements game is tracked; the elapsed time counts from
+  boot. The large picture is the game's box art, a public https address (libretro-thumbnails, or the project
+  site's Jaguar CD mirror) that Discord's media proxy fetches. It is used only when the library already
+  downloaded that picture, so Discord never shows a broken image; otherwise the application's `jaguar` (cartridge)
+  or `jaguarcd` (disc) asset is shown. The small picture is the app icon (`app`) with "Virtual Jaguar <version>".
+- **In the library or an empty window:** "Browsing the library" with the `library` picture.
+- **Buttons:** **Get Virtual Jaguar**, and **View on RetroAchievements** (the game's page) while a RetroAchievements
+  game is tracked. Discord shows buttons to other people only, so your own profile never shows them.
+- **Settings:** *Show what I'm playing on Discord* (default on), *Show game artwork*, *Show buttons*, and the
+  connection status ("Connected to Discord", "Discord is not running"). Config keys `discord.enabled`,
+  `discord.art`, `discord.buttons`.
+- **Application ID:** the default is the project's "Virtual Jaguar" Discord application, set by the CMake cache
+  string `VJ_DISCORD_APP_ID` (`-DVJ_DISCORD_APP_ID=` empty turns the feature off; a fork passes its own). The config
+  key `discord.app_id` (Settings > Discord > Application ID) overrides it.
+- **Several windows:** only the first copy (instance 1) publishes, so two windows never fight over one status
+  (see [Running several instances](#running-several-instances)).
+- **Behaviour:** the connection and every write live on a background thread; if Discord is not running the app
+  looks again every 15 seconds and never waits on it, quitting takes the status down within a quarter of a second,
+  and updates are sent only when something changed and at most 4 per 20 seconds (Discord allows 5).
+
+### Maintainer setup (Discord developer portal)
+
+1. Create an application named exactly **Virtual Jaguar** (Rich Presence cannot set the name; this is what people
+   see after "Playing"). Its Application ID is the number in `VJ_DISCORD_APP_ID`.
+2. Upload these art assets under *Rich Presence > Art Assets*, with exactly these lowercase keys (at least 512x512):
+   `jaguar` (cartridge fallback large image), `jaguarcd` (Jaguar CD fallback), `library` (browsing), `app` (the app icon).
+3. CI: the repository variable `DISCORD_APP_ID` (Settings > Secrets and variables > Actions > Variables) overrides the
+   CMake default in `app-package.yml`; leave it unset to use the default. An application ID is public, not a secret.
+4. Test from a second Discord account: buttons are hidden on your own profile.
+
+Tests: `ctest -R discord` (frame encode/decode, JSON escaping, socket paths per OS, the rate limiter, the activity
+built from app state, and a loopback test against a fake Discord server on a Unix socket; skipped on Windows).
+
 ## Typed settings
 
 The core publishes every option as a list, but for a handful it reads any value, so Settings >
