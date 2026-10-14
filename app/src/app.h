@@ -22,6 +22,7 @@
 #include "netplay.h"
 #include "paths.h"
 #include "perf.h"
+#include "theme_custom.h"
 #include "video.h"
 
 namespace vj {
@@ -40,6 +41,7 @@ struct CliArgs {
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
@@ -146,6 +148,10 @@ public:
     bool mute = false;
     float audioTargetMs = 64.0f;
     bool showFps = false;
+    float uiScale_ = 1.0f;            // the scale the style was set up at (the display's content scale times ui.scale)
+    std::string themeBeforePreview_;  // the choice to keep/restore while the theme editor previews an unsaved theme
+    bool themePreviewing_ = false;
+    bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
 
     // ---- actions ----------------------------------------------------------------
@@ -172,6 +178,13 @@ public:
     void togglePause();
     void setFullscreen(bool fs);
     void applyVsync();
+    void applyTheme();                // the Dear ImGui style for the theme in force (theme.h); a no-op before the UI exists
+    void setThemeChoice(const std::string& key);   // Settings > Video > Appearance: system | dark | light | custom:<name>; remembered
+    bool applyThemeChoice(const std::string& key); // the same without remembering; false when a custom theme is missing (System is used)
+    void themePreview(const theme::Custom& c);     // the theme editor's live preview: shown, not remembered until saved
+    void themePreviewEnd(bool keep);               // the editor closed (keep: its theme was saved and chosen); otherwise the previous choice returns
+    theme::Store themeStore() const;               // <data>/themes/, read-only in a secondary copy (#902)
+    bool showThemeEditor = false;
     void applyAudioSettings();
 
     std::string statePath(int slot) const;
@@ -283,6 +296,10 @@ bool netplayInit(App& app, const CliArgs& a);               // log tap + --netpl
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
 void drawNetplayMenu(App& app);
 void drawNetplay(App& app);
+// Themes (theme_ui.cpp): Settings > Video > Appearance, the theme editor window and its file-dialog mailbox.
+void drawAppearanceSettings(App& app);
+void drawThemeEditor(App& app);
+void themeFrameHook(App& app);
 // BIOS & boot (bios_ui.cpp): the BIOS choice and boot controls, shown in Settings and above the library's BIOS tab.
 void drawBiosPanel(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).

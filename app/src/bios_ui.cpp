@@ -144,7 +144,7 @@ void drawRole(App& app, bios::Role role) {
     else
         ui::hint("In use at the next start: %s", chosen.empty() ? "Auto" : choiceLabel(chosen, picks, autoText).c_str());
     if (sb.rejected)
-        ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
+        ui::coloredWrapped(ui::vec4(ui::pal().warning),
                            (std::string("The core refused ") + baseOf(sb.rejectedPath) + " (missing, the wrong size or not a " +
                             (cart ? "boot ROM" : "CD BIOS") + "), so it used its own choice.")
                                .c_str());

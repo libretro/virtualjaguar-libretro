@@ -4,6 +4,7 @@
 // readable in a small window and on a HiDPI display (the font is already scaled by the UI).
 #include "app.h"
 #include "devices_ui.h"
+#include "ui_util.h"
 #include "imgui.h"
 
 #include <algorithm>
@@ -63,20 +64,28 @@ void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
     const float scale = std::max(0.5f, std::min(1.0f, fitScale(sheet.lines.size())));
 
     ImGui::SetNextWindowPos(ImVec2(areaPos.x + areaSize.x * 0.5f, areaPos.y + f * 0.6f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(0.74f);
+    ImGui::SetNextWindowBgAlpha(ui::overlay().windowAlpha);
     // An explicit width (height auto-fits): wrapped text and auto-resize would otherwise chase each other.
     ImGui::SetNextWindowSize(ImVec2(columns == 2 ? maxW : std::min(maxW, f * 34.0f * scale + f), 0), ImGuiCond_Always);
     ImGuiWindowFlags wf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                           ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings |
                           ImGuiWindowFlags_NoBringToFrontOnFocus;
     (void)io;
+    // The sheet sits on the game picture: the overlay palette (dark-translucent, legible on a white or a black
+    // frame) in both themes, so the window's colours are pinned here rather than taken from the theme.
+    const theme::Overlay& ov = ui::overlay();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::vec4(ov.windowBg));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ov.text));
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, ui::vec4(ov.textMuted));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ui::vec4(ov.separator));
+    struct PopColors { ~PopColors() { ImGui::PopStyleColor(4); } } popColors;   // also on the early return
     if (!ImGui::Begin("##controls_overlay", nullptr, wf)) {
         ImGui::End();
         return;
     }
     auto drawLine = [](const SheetLine& l) {
         if (l.heading) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.85f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::overlay().heading));
             ImGui::TextWrapped("%s", l.label.c_str());
             ImGui::PopStyleColor();
         } else {
@@ -84,7 +93,7 @@ void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
         }
     };
     ImGui::PushFont(nullptr, f * scale);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.9f, 0.45f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::overlay().title));
     ImGui::TextWrapped("%s", sheet.title.c_str());
     ImGui::PopStyleColor();
     ImGui::Separator();
