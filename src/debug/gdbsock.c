@@ -213,12 +213,43 @@ int GDBSockRecv(char *buf, int max)
    return -1;
 }
 
+/* Sends the whole buffer.  The socket is non-blocking, so a large reply (a
+ * `monitor trace 1024` is ~18 KB of O packets) can be accepted only in part
+ * by a LAN peer or a slow client; a short write would silently corrupt the
+ * RSP stream.  Bounded: waits at most ~2 s total for a stalled peer, then
+ * gives up (the caller treats <0 as a dead client). */
 int GDBSockSend(const char *buf, int len)
 {
+   int sent = 0;
+   int stalls = 0;
+
    if (!gdb_sock_valid(gdbClient))
       return -1;
 
-   return (int)send(gdbClient, buf, (size_t)len, 0);
+   while (sent < len)
+   {
+      int n = (int)send(gdbClient, buf + sent, (size_t)(len - sent), 0);
+
+      if (n > 0)
+      {
+         sent += n;
+         stalls = 0;
+         continue;
+      }
+      if (n < 0 && gdb_sockerr() == GDB_EWOULDBLOCK && stalls < 2000)
+      {
+         stalls++;
+#ifdef _WIN32
+         Sleep(1);
+#else
+         usleep(1000);
+#endif
+         continue;
+      }
+      return -1;
+   }
+
+   return sent;
 }
 
 int GDBSockHasClient(void)
