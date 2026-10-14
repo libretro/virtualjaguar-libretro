@@ -34,3 +34,21 @@ else()
 endif()
 add_test(NAME debug_e2e COMMAND vj_debug_e2e "${VJ_ROMS}/yarc.j64")
 set_tests_properties(debug_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_op_unit        Object list tool (app/src/debug/op_decode, op_render, op_view): the field decoder
+#                        against JTRM-layout fixtures and op_list_dump.c's formulas, the bitmap renderer
+#                        and pixel editor against the mock's 8 bpp object + CLUT and synthetic 1/2/4/8/16/24
+#                        bpp bitmaps, the snapshot lifecycle, the screen mapping, PNG export.
+add_executable(vj_debug_op_test
+    tests/debug_op_test.cpp src/debug/op_decode.cpp src/debug/op_render.cpp src/debug/op_view.cpp
+    src/debug/debug_session.cpp)
+target_include_directories(vj_debug_op_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_op_test PRIVATE ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_debug_op_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_op_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_op_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_op_unit COMMAND vj_debug_op_test)
+set_tests_properties(debug_op_unit PROPERTIES TIMEOUT 60)
