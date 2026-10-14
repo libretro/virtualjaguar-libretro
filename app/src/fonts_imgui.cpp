@@ -71,13 +71,14 @@ int loadBlob(const FontFile& f, std::string& err) {
     return (int)g.blobs.size() - 1;
 }
 
-ImFont* addFace(const FontFile& f, float size, const Settings& s, bool merge, std::string& err) {
+// `snap`: whole-pixel glyph advances (the Retro pixel font's grid); the vector faces keep sub-pixel advances.
+ImFont* addFace(const FontFile& f, float size, const Settings& s, bool merge, std::string& err, bool snap = false) {
     const int b = loadBlob(f, err);
     if (b < 0) return nullptr;
     ImFontConfig cfg;
     cfg.FontDataOwnedByAtlas = false;
     cfg.FontNo = (ImU32)f.index;
-    cfg.PixelSnapH = false;     // sub-pixel glyph advances: even spacing at fractional sizes and scales
+    cfg.PixelSnapH = snap;      // vector faces: sub-pixel glyph advances, even spacing at fractional sizes and scales
     cfg.MergeMode = merge;
     cfg.Flags |= ImFontFlags_NoLoadError;
     std::snprintf(cfg.Name, sizeof cfg.Name, "%s", displayName(f).c_str());
@@ -98,6 +99,18 @@ FontFile fileFor(Family fam, const Settings& s) {
     FontFile f;
     f.path = customPath(g.dir, s.custom);
     return f;
+}
+
+// Symbols and arrows the main face lacks (the System UI fallback files), merged into the font just added.
+// size 0 = the destination's own (implicit) size, which the built-in Retro font has.  At most two faces.
+void mergeSymbolFallbacks(float size, const Settings& w, const std::string& skipPath, bool snap) {
+    int merged = 0;
+    for (const FontFile& fb : candidates(Role::Fallback, hostOs(), systemProbe())) {
+        if (merged >= 2) break;
+        if (fb.path == skipPath || !fileExists(fb.path)) continue;
+        std::string e2;
+        if (addFace(fb, size, w, true, e2, snap)) merged++;
+    }
 }
 
 void reload(const Settings& w) {
@@ -126,13 +139,7 @@ void reload(const Settings& w) {
     }
     if (g.uiFont) {
         // Symbols and arrows the main face lacks, then the built-in vector face as the last resort.
-        int merged = 0;
-        for (const FontFile& fb : candidates(Role::Fallback, hostOs(), systemProbe())) {
-            if (merged >= 2) break;
-            if (fb.path == g.ui.path || !fileExists(fb.path)) continue;
-            std::string e2;
-            if (addFace(fb, w.size, w, true, e2)) merged++;
-        }
+        mergeSymbolFallbacks(w.size, w, g.ui.path, false);
         ImFontConfig cfg;
         cfg.MergeMode = true;
         cfg.SizePixels = w.size;
@@ -141,6 +148,16 @@ void reload(const Settings& w) {
         act.family = Family::Retro;
         useLoader(false);   // the built-in pixel font always uses stb_truetype
         g.uiFont = io.Fonts->AddFontDefault();
+        // The pixel font has no arrows, stars or check marks: the same symbol faces System UI uses fill in (one
+        // face per glyph, so favourites and check marks draw in every typeface).
+        if (g.uiFont) {
+            mergeSymbolFallbacks(0.0f, w, std::string(), true);
+            // Last resort for what those lack (macOS: Apple Symbols has no check mark and ZapfDingbats has no
+            // Latin, so it cannot be a merged face): the system UI face itself.
+            const FontFile sysUi = resolve(Role::Ui);
+            std::string e4;
+            if (!sysUi.empty()) addFace(sysUi, 0.0f, w, true, e4, true);
+        }
         g.retroVector = st.FontSizeBase * st.FontScaleMain * st.FontScaleDpi >= 15.0f;
     }
 
