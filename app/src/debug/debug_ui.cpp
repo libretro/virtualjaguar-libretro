@@ -2,6 +2,7 @@
 // in DebugSession (debug_session.*), which has no ImGui and is unit-tested against the mock core.
 #include "app.h"
 #include "blitter_ui.h"
+#include "cpu_ui.h"
 #include "memory_ui.h"
 #include "op_ui.h"
 #include "scanner_ui.h"
@@ -111,6 +112,7 @@ void addDebugTools(App& app) {
     // The scope chains onto host.onAudio, so App must have wired that callback before this call.
     d.addProvider({[&app](DebugSession& s) { scopeToolInit(s, app.host); },
                    [](DebugSession&) { scopeToolDraw(); }});
+    d.addProvider({registerCpuTools, drawCpuTools});                    // CPU debugger: 68000 / GPU / DSP
 }
 
 void shutdownDebugTools() {

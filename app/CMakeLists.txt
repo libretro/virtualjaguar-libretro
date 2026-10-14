@@ -331,6 +331,9 @@ endif()
 # bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
 install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
 
+# CPU debugger (debug tools WP4): vendored Musashi disassembler + cpu_view / cpu_ui + their tests.
+include(VJDebugCpu)
+
 # The libretro Jaguar cheat database (#835): pinned download, bundled by default.
 include(VJCheatData)
 
