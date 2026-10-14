@@ -30,6 +30,7 @@ case "$target" in
 esac
 
 mkdir -p "$work" "$out"
+work="$(cd "$work" && pwd)"; out="$(cd "$out" && pwd)"   # absolute: the build runs inside the source tree
 arc="$work/librashader-$LIBRASHADER_COMMIT.tar.gz"
 if [ ! -f "$arc" ]; then
   curl -fsSL --retry 3 -o "$arc" "https://github.com/SnowflakePowered/librashader/archive/$LIBRASHADER_COMMIT.tar.gz"
