@@ -6,6 +6,7 @@
 //   System   the operating system's UI font (San Francisco, Segoe UI, the desktop's sans-serif).
 //   Mono     the system monospace font (SF Mono / Menlo, Consolas, DejaVu Sans Mono) as the UI font.
 //   Custom   a .ttf / .otf / .ttc the user picked; a copy is kept in <data>/fonts/.
+//   Installed  any font the operating system has installed (fonts_system.h lists them); the file is used in place.
 //
 // Independently of the choice, debug windows (hex dumps, disassembly) ask fonts_imgui.h for the
 // monospace face, so they stay monospace whatever the UI font is.
@@ -22,7 +23,7 @@ class Config;
 
 namespace fonts {
 
-enum class Family { Retro, System, Mono, Custom };
+enum class Family { Retro, System, Mono, Custom, Installed };
 enum class Hinting { None, Light, Full };   // honoured by the FreeType rasteriser only
 enum class Role { Ui, Mono, Fallback };     // Fallback: symbols / arrows merged behind the main face
 enum class Os { Mac, Windows, Linux };
@@ -37,10 +38,15 @@ struct Settings {
     Hinting hinting = Hinting::Light;
     bool antialias = true;
     std::string custom;                     // Family::Custom: file name inside <data>/fonts/
+    std::string installed;                  // Family::Installed: "path|index" of the OS font (makeFontId)
+    std::string debugFont;                  // monospace face for debug windows: "" = automatic, "@retro", or a font id
+    std::vector<std::string> favorites;     // choice ids starred in the font list (see choiceId)
+    std::vector<std::string> recents;       // most recently chosen first, at most kMaxRecents
 
     bool operator==(const Settings& o) const {
         return family == o.family && size == o.size && hinting == o.hinting && antialias == o.antialias &&
-               custom == o.custom;
+               custom == o.custom && installed == o.installed && debugFont == o.debugFont &&
+               favorites == o.favorites && recents == o.recents;
     }
     bool operator!=(const Settings& o) const { return !(*this == o); }
 };
@@ -48,7 +54,7 @@ struct Settings {
 // Dev / test spec "FAMILY[:SIZE]" ("system", "mono:16", "custom:My.ttf", "retro:13") applied over `s`.
 bool applySpec(const std::string& spec, Settings& s);
 
-// Config keys: ui.font.family|size|hint|aa|custom.
+// Config keys: ui.font.family|size|hint|aa|custom|os|debug, and ui.font.fav.N / ui.font.recent.N (one id per key).
 Settings load(const Config& c);
 void store(Config& c, const Settings& s);
 void erase(Config& c);                      // back to the defaults
@@ -60,6 +66,26 @@ const char* familyLabel(Family f);
 const char* hintingKey(Hinting h);
 bool parseHinting(const std::string& s, Hinting& out);
 const char* hintingLabel(Hinting h);
+
+// ---- the font list: choices, favorites, recents ----------------------------------------------------------
+//
+// A "choice" is one row of the font list, named by an id string that is also what favorites and recents store:
+//   "@retro" "@system" "@mono"   the three built-in choices
+//   "@custom:NAME"               the custom file NAME in <data>/fonts/
+//   "PATH|INDEX"                 an installed OS font (fonts_system.h makeFontId)
+constexpr size_t kMaxRecents = 8;
+constexpr size_t kMaxFavorites = 200;
+
+// The id of the face Settings selects for the UI ("" never: Retro -> "@retro").
+std::string choiceId(const Settings& s);
+// Makes `s` select the choice `id`.  False for an id that is not a UI choice (the settings are left alone).
+bool applyChoice(Settings& s, const std::string& id);
+bool isFavorite(const Settings& s, const std::string& id);
+void setFavorite(Settings& s, const std::string& id, bool on);   // new favorites go first
+// Moves `id` to the front of the recents (dedupes, caps at kMaxRecents).  The three built-ins are not recorded:
+// they are always on the list.
+void noteRecent(Settings& s, const std::string& id);
+void forgetChoice(Settings& s, const std::string& id);           // out of favorites and recents (font removed)
 
 // ---- finding the system fonts ------------------------------------------------------------------
 
@@ -114,6 +140,9 @@ const std::vector<Range>& requiredRanges();
 bool inRequiredRanges(uint32_t cp);
 // Non-ASCII code points in UTF-8 text (invalid bytes are skipped).
 std::vector<uint32_t> nonAsciiCodepoints(const std::string& utf8);
+// Does the font (already in memory) have a glyph for every visible character of `utf8`?  What the font list uses to
+// decide whether a face can draw its own name.  False for a font stb_truetype cannot open.
+bool dataCoversText(const unsigned char* data, size_t size, int index, const std::string& utf8);
 // Of `cps`, those the font file has no glyph for.
 std::vector<uint32_t> missingGlyphs(const std::string& path, int index, const std::vector<uint32_t>& cps);
 

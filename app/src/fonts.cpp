@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 
 #include "config.h"
+#include "fonts_system.h"
 #include "paths.h"
 
 // Dear ImGui's stb_truetype, as a private (static) copy: used only to look inside font files, so a bad
@@ -40,12 +41,13 @@ const char* familyKey(Family f) {
     case Family::System: return "system";
     case Family::Mono: return "mono";
     case Family::Custom: return "custom";
+    case Family::Installed: return "installed";
     }
     return "retro";
 }
 
 bool parseFamily(const std::string& s, Family& out) {
-    static const Family all[] = {Family::Retro, Family::System, Family::Mono, Family::Custom};
+    static const Family all[] = {Family::Retro, Family::System, Family::Mono, Family::Custom, Family::Installed};
     for (Family f : all)
         if (s == familyKey(f)) {
             out = f;
@@ -60,6 +62,7 @@ const char* familyLabel(Family f) {
     case Family::System: return "System UI";
     case Family::Mono: return "Monospace (system)";
     case Family::Custom: return "Custom file...";
+    case Family::Installed: return "Installed font";
     }
     return "Retro";
 }
@@ -92,10 +95,37 @@ const char* hintingLabel(Hinting h) {
     return "Light";
 }
 
+namespace {
+
+// Drops empties and repeats (keeping the first), then caps the length.
+void tidyList(std::vector<std::string>& v, size_t cap) {
+    std::vector<std::string> out;
+    for (const std::string& e : v) {
+        if (e.empty() || e.find('\n') != std::string::npos || e.find('\r') != std::string::npos) continue;
+        bool dup = false;
+        for (const std::string& o : out)
+            if (o == e) {
+                dup = true;
+                break;
+            }
+        if (!dup) out.push_back(e);
+        if (out.size() >= cap) break;
+    }
+    v.swap(out);
+}
+
+}  // namespace
+
 Settings sanitized(Settings s) {
     if (!std::isfinite(s.size)) s.size = kDefaultSize;
     s.size = std::min(kMaxSize, std::max(kMinSize, s.size));
     if (s.family == Family::Custom && s.custom.empty()) s.family = Family::Retro;
+    FontFile probe;
+    if (s.family == Family::Installed && !parseFontId(s.installed, probe)) s.family = Family::Retro;
+    if (!s.installed.empty() && !parseFontId(s.installed, probe)) s.installed.clear();
+    if (s.debugFont != "@retro" && !s.debugFont.empty() && !parseFontId(s.debugFont, probe)) s.debugFont.clear();
+    tidyList(s.favorites, kMaxFavorites);
+    tidyList(s.recents, kMaxRecents);
     return s;
 }
 
@@ -111,6 +141,9 @@ bool applySpec(const std::string& spec, Settings& s) {
     if (!arg.empty()) {
         if (n.family == Family::Custom && !std::isdigit((unsigned char)arg[0])) {
             n.custom = arg;
+        } else if (n.family == Family::Installed && !std::isdigit((unsigned char)arg[0])) {
+            FontFile ff;   // "installed:/path/Font.ttf" or "installed:/path/Fonts.ttc|1"
+            n.installed = parseFontId(arg, ff) ? arg : makeFontId(arg, 0);
         } else {
             char* end = nullptr;
             const float v = (float)std::strtod(arg.c_str(), &end);
@@ -122,6 +155,27 @@ bool applySpec(const std::string& spec, Settings& s) {
     return true;
 }
 
+namespace {
+
+// One key per entry (ids hold paths, so no separator is safe): <prefix>0, <prefix>1, ...
+std::vector<std::string> loadList(const Config& c, const std::string& prefix) {
+    std::vector<std::string> out;
+    for (int i = 0; i < 4096; i++) {
+        const std::string v = c.get(prefix + std::to_string(i), "");
+        if (v.empty()) break;
+        out.push_back(v);
+    }
+    return out;
+}
+
+void storeList(Config& c, const std::string& prefix, const std::vector<std::string>& v) {
+    if (loadList(c, prefix) == v) return;   // untouched: do not dirty the file
+    for (const auto& kv : c.withPrefix(prefix)) c.erase(prefix + kv.first);
+    for (size_t i = 0; i < v.size(); i++) c.set(prefix + std::to_string(i), v[i]);
+}
+
+}  // namespace
+
 Settings load(const Config& c) {
     Settings s;
     parseFamily(c.get("ui.font.family", "retro"), s.family);
@@ -129,6 +183,10 @@ Settings load(const Config& c) {
     parseHinting(c.get("ui.font.hint", "light"), s.hinting);
     s.antialias = c.getBool("ui.font.aa", true);
     s.custom = c.get("ui.font.custom", "");
+    s.installed = c.get("ui.font.os", "");
+    s.debugFont = c.get("ui.font.debug", "");
+    s.favorites = loadList(c, "ui.font.fav.");
+    s.recents = loadList(c, "ui.font.recent.");
     return sanitized(s);
 }
 
@@ -142,6 +200,12 @@ void store(Config& c, const Settings& in) {
     // "Custom" finds the last file again.
     if (s.custom.empty()) c.erase("ui.font.custom");
     else c.set("ui.font.custom", s.custom);
+    if (s.installed.empty()) c.erase("ui.font.os");
+    else c.set("ui.font.os", s.installed);
+    if (s.debugFont.empty()) c.erase("ui.font.debug");
+    else c.set("ui.font.debug", s.debugFont);
+    storeList(c, "ui.font.fav.", s.favorites);
+    storeList(c, "ui.font.recent.", s.recents);
 }
 
 void erase(Config& c) {
@@ -150,6 +214,68 @@ void erase(Config& c) {
     c.erase("ui.font.hint");
     c.erase("ui.font.aa");
     c.erase("ui.font.custom");
+    c.erase("ui.font.os");
+    c.erase("ui.font.debug");
+    storeList(c, "ui.font.fav.", {});
+    storeList(c, "ui.font.recent.", {});
+}
+
+// ---------------------------------------------------------------------------------------------
+// the font list: choices, favorites, recents
+// ---------------------------------------------------------------------------------------------
+std::string choiceId(const Settings& s) {
+    switch (s.family) {
+    case Family::Retro: return "@retro";
+    case Family::System: return "@system";
+    case Family::Mono: return "@mono";
+    case Family::Custom: return "@custom:" + s.custom;
+    case Family::Installed: return s.installed;
+    }
+    return "@retro";
+}
+
+bool applyChoice(Settings& s, const std::string& id) {
+    if (id == "@retro") s.family = Family::Retro;
+    else if (id == "@system") s.family = Family::System;
+    else if (id == "@mono") s.family = Family::Mono;
+    else if (id.compare(0, 8, "@custom:") == 0 && id.size() > 8) {
+        s.family = Family::Custom;
+        s.custom = id.substr(8);
+    } else {
+        FontFile ff;
+        if (!parseFontId(id, ff)) return false;
+        s.family = Family::Installed;
+        s.installed = id;
+    }
+    return true;
+}
+
+bool isFavorite(const Settings& s, const std::string& id) {
+    return std::find(s.favorites.begin(), s.favorites.end(), id) != s.favorites.end();
+}
+
+void setFavorite(Settings& s, const std::string& id, bool on) {
+    auto it = std::find(s.favorites.begin(), s.favorites.end(), id);
+    if (on) {
+        if (it == s.favorites.end() && !id.empty()) s.favorites.insert(s.favorites.begin(), id);
+        if (s.favorites.size() > kMaxFavorites) s.favorites.resize(kMaxFavorites);
+    } else if (it != s.favorites.end()) {
+        s.favorites.erase(it);
+    }
+}
+
+void noteRecent(Settings& s, const std::string& id) {
+    if (id.empty() || id == "@retro" || id == "@system" || id == "@mono") return;
+    auto it = std::find(s.recents.begin(), s.recents.end(), id);
+    if (it != s.recents.end()) s.recents.erase(it);
+    s.recents.insert(s.recents.begin(), id);
+    if (s.recents.size() > kMaxRecents) s.recents.resize(kMaxRecents);
+}
+
+void forgetChoice(Settings& s, const std::string& id) {
+    setFavorite(s, id, false);
+    auto it = std::find(s.recents.begin(), s.recents.end(), id);
+    if (it != s.recents.end()) s.recents.erase(it);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -529,6 +655,20 @@ std::vector<uint32_t> nonAsciiCodepoints(const std::string& s) {
         i += ok ? (size_t)len : 1;
     }
     return out;
+}
+
+bool dataCoversText(const unsigned char* data, size_t size, int index, const std::string& utf8) {
+    if (!data || size < 256) return false;
+    const int off = stbtt_GetFontOffsetForIndex(data, index);
+    stbtt_fontinfo info;
+    std::memset(&info, 0, sizeof info);
+    // The caller validated the file (validateFontData) before this is asked, so the tables are in bounds.
+    if (off < 0 || !stbtt_InitFont(&info, data, off)) return false;
+    for (unsigned char c : utf8)
+        if (c > 0x20 && c < 0x7F && stbtt_FindGlyphIndex(&info, c) == 0) return false;
+    for (uint32_t cp : nonAsciiCodepoints(utf8))
+        if (stbtt_FindGlyphIndex(&info, (int)cp) == 0) return false;
+    return true;
 }
 
 std::vector<uint32_t> missingGlyphs(const std::string& path, int index, const std::vector<uint32_t>& cps) {
