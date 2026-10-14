@@ -64,6 +64,7 @@ static void fill(Config& c) {
         "ui.controls.autoshow",
         // Storage + library display
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
+        "ui.tray", "ui.keep_awake",
         // Mappings
         "input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port", "input.stick_dpad",
         "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C",
@@ -181,7 +182,8 @@ static void testResetAll() {
         // Every app setting is gone, whatever the boxes say.
         for (const char* k : {"video.integer", "video.vsync", "ui.show_fps", "shader.enabled", "shader.preset", "audio.volume",
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
-                              "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section"})
+                              "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
+                              "ui.tray", "ui.keep_awake"})
             CHECK(after.count(k) == 0);
         // Nothing but these three kinds of key is left.
         for (const std::string& k : after) {

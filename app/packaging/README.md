@@ -248,6 +248,24 @@ then, by hand (these are outward actions that stay with the maintainer):
   The manifest is built in CI on every package run (bundle smoke test included). Flathub's own linter and
   review may ask for changes (for instance a librashader module).
 
+## File associations and native integration (#833)
+
+Which extensions each package registers, and where the list lives. The set is `.j64 .jag .rom .abs .cof`
+(cartridges, executables) and `.cue .chd .cdi` (CD images); `.bin` / `.prg` are deliberately left out (too generic).
+**One source of truth:** `VJ_ASSOC_LIST` in `src/platform/commands.h`. The CTest `platform_assoc_sync` fails if any
+of these drifts, and checks that the application id `io.github.libretro.VirtualJaguar` is the same in all of them:
+
+| OS | Where | What it does |
+| --- | --- | --- |
+| macOS | `macos/Info.plist.in`: `CFBundleDocumentTypes` (+ an exported UTI `io.github.libretro.virtualjaguar.rom` for `.j64` / `.jag`) | Finder shows "Atari Jaguar game", Open With lists the app, a game dropped on the Dock icon or opened from Finder arrives as the drop event. Rank: Default for games, Alternate for CD images (never takes over `.cue` / `.chd`). |
+| Windows | `windows/virtualjaguar.iss`: `[Registry]` | Always: `Applications\virtualjaguar.exe` (`SupportedTypes`: Open With, and what lets Windows show recent games in the Jump List). The **associate** task (unchecked, per user via `HKA`): ProgId `VirtualJaguar.Game`, an `OpenWithProgids` entry per extension, and the default handler for `.j64` / `.jag` only. Shortcuts carry `AppUserModelID` = the id the program sets itself. Windows 10/11 keep the user's own default (UserChoice). |
+| Linux | `linux/io.github.libretro.VirtualJaguar.xml` (shared-mime-info) and `MimeType=` in the `.desktop` file | Installed to `share/mime/packages` by `cmake --install`, so the .deb (dpkg trigger), the Flatpak (export) and the AppImage's AppDir carry it. `rom`, `abs`, `cof`, `cue`, `chd`, `cdi` are generic: they have a lower weight (30) so a type another package already defines keeps winning. |
+
+Other native pieces that live in packaging: the Windows manifest (`windows/virtualjaguar.manifest`, per-monitor-v2 DPI,
+long paths, Windows 10/11; MSVC links it from the source list, MinGW's windres embeds it from the `.rc`), the `.desktop`
+Actions (Open Game Library, Boot Without Cartridge) and `StartupWMClass` (= the application id, which SDL uses as the
+Wayland `app_id` / X11 class), and the Flatpak's `--talk-name=org.kde.StatusNotifierWatcher` for the optional tray icon.
+
 ## Placeholder icon
 
 `icons/virtualjaguar.svg` is a placeholder (original artwork, no Atari marks). Replace it and run

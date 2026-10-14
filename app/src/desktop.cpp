@@ -130,6 +130,7 @@ void App::desktopInit() {
 void App::desktopFrame() {
     // Windows and Linux without a tray have nothing to refresh; the idle/screensaver edge is cheap.
     platform::setGameRunning(host.isLoaded() && !paused, keepAwake);
+    if (trayIcon != platform::trayActive() && !applyTray()) trayIcon = false;   // Settings > Reset can flip it
     if (!platform::nativeMenuActive() && !platform::trayActive()) return;
     const uint64_t t = SDL_GetTicks();
     if (t - menuStateTick_ < 100) return;   // slot files are stat()ed: a few times a second is plenty

@@ -538,6 +538,42 @@ the app, and the same device (JagLink / CatBox cable or Voice Modem).
   `--netplay-port`, `--netplay-device jaglink|voicemodem`. **Advanced > Echo test** runs the link
   against itself with no partner.
 
+## Platform integration
+
+What the app does so it behaves like a program of the OS it runs on (#833). The code is behind one
+interface, `src/platform/platform.h`; every OS-specific file is small and a platform with nothing to
+add compiles a no-op, so adding a platform feature never touches the others.
+
+| | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Menu bar | native, with Cmd shortcuts (the in-window bar is hidden) | in-window | in-window |
+| Dock / taskbar menu | Dock menu: recent games, library, open, pause, reset | Jump List: recent games | desktop Actions: Open Game Library, Boot Without Cartridge |
+| Recent games | `NSDocumentController` (Dock, Open Recent) | Explorer Recent and the Jump List (`SHAddToRecentDocs`) | not written (no GTK; see below) |
+| File types (double-click, Open With, drop on the icon) | `CFBundleDocumentTypes` + an exported type for `.j64` / `.jag` | installer task: per-user `OpenWithProgids` (and the default for `.j64` / `.jag`) | shared-mime-info XML + `MimeType=` |
+| Window | fullscreen follows the green button / Ctrl+Cmd+F; App Nap held while a game runs | dark title bar, per-monitor-v2 DPI, long paths, one taskbar button with the installer shortcut (AppUserModelID) | the application id is the Wayland `app_id` / X11 `WM_CLASS`, so the icon and "pin to dock" match the `.desktop` file |
+| Tray / menu-bar icon | optional (Settings > Storage > Desktop) | optional | optional where the desktop has a StatusNotifier host (KDE and others; stock GNOME needs an extension) |
+| Screensaver / display sleep | allowed in the library and while paused, blocked while a game runs | same | same (through the portal inside Flatpak) |
+| Show in Finder / Explorer | File > Show in Finder | - | opens the folder |
+
+**One model, many surfaces.** `src/platform/commands.cpp` builds the menus (File, Emulation, View,
+Achievements, Netplay, Window, Help, the tray and the Dock menu) from a snapshot of the app state, and
+every click is posted as an SDL user event and run by the main loop (`App::runNativeCommand`), never
+inside Cocoa's menu-tracking loop or SDL's tray callback. The macOS menu bar is built after `SDL_Init`
+over SDL's default one and leaves SDL's app delegate alone (it turns Finder's "open" into the drop event
+the app already handles). Only Cmd-modified shortcuts are bound there; F5 / F7 / F8, Tab and the other hotkeys
+stay with the app. While a native menu is open the macOS event loop is blocked by Cocoa, so emulation and
+audio pause for as long as the menu is held open.
+
+**File types.** The associated extensions are `.j64 .jag .rom .abs .cof` (games) and `.cue .chd .cdi`
+(discs). `.bin` and `.prg` open through File > Open and drag and drop but are too generic to claim. The list lives
+in `src/platform/commands.h` (`VJ_ASSOC_LIST`); the CTest `platform_assoc_sync` fails when the Info.plist,
+installer, `.desktop`, mime XML or the application id drift from it. On Windows and Linux a double-clicked
+game starts a new process, which is a second instance when the app is already running (see "Running several
+instances": its own save folder, settings not kept); on macOS the running copy opens it.
+
+`virtualjaguar --dump-native-menu` (macOS) prints the real menu bar and Dock menu and checks every item;
+exit 77 means no window-server session (ssh) or not macOS.
+
 ## Typed settings
 
 The core publishes every option as a list, but for a handful it reads any value, so Settings >
@@ -650,6 +686,7 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/devices_ui.*` | Settings > Input > Devices & players, claiming devices with the core, per-frame mouse capture |
 | `src/cheatsheet.*`, `src/cheatsheet_ui.cpp` | the controls cheat sheet: text, auto-show rule, window |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
+| `src/platform/` | native-OS integration: menu model + dispatch (`commands.*`, no OS), per-OS files (`platform_macos.mm`, `platform_windows.cpp`, `platform_other.cpp`), tray (`tray.cpp`); `src/desktop.cpp` is the app side |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
 | `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |
 | `src/library_ui.cpp` | the Game library: the home screen and the window |
