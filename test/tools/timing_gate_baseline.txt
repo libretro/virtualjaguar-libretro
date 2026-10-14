@@ -1,0 +1,43 @@
+# Timing-campaign S0 gate baselines (docs/timing-campaign-plan.md S0, #408).
+#
+# These are TRACKING values: what develop measures TODAY, recorded beside the
+# silicon target, so later stages (S1..S5) see movement.  A regression (moving
+# AWAY from the silicon target, or a liveness-floor failure) fails the gate;
+# movement TOWARD the target prints MOVED-TOWARD-TARGET -- when a stage
+# legitimately moves a number, re-baseline here in the same PR and say why.
+#
+# Re-measure:  test_doom_pace_gate ... --measure-only --print-baseline
+#              test_cf_canary      ... --measure-only
+# Measured by: stock options, fast blitter (Doom, = the harness default and the
+# census configuration) / accurate blitter (CF), NTSC.  Doom's titledb row
+# (internal_resolution 2x, risc_idle_skip) applies; neither touches timing.
+# Deterministic: identical numbers on repeat runs and across both blitters.
+
+# ---- Doom attract demo, fields 600..1500 --------------------------------
+# Silicon: 4.0 fields/flip = 15.01 flips/s (#434; camcorder band 3.2-4.9, so
+# the bar is [3.5, 4.5], not a point).  We present ~1.99.
+doom_silicon_fields_per_flip=4.0
+doom_band_lo=3.5
+doom_band_hi=4.5
+# develop @ S0: mean 1.993, gap histogram 1:4 2:446 3:1 (452 flips).
+doom_baseline_mean_fields_per_flip=1.993
+doom_mean_eps=0.05
+doom_baseline_gap1_count=4
+doom_gap1_tolerance=5
+# GPU busy-time per flip, in fields (cycles outside Doom's three spin loops,
+# normalised by cycles/field).  0.540 mean at stock; needs ~4.0 for 4.0
+# fields/flip if it were the only term.
+doom_baseline_busy_fields_per_flip=0.540
+doom_busy_tolerance_rel=0.05
+doom_liveness_floor_flips_per_300=30
+
+# ---- Checkered Flag mid-race fixture (states/Checkered Flag (1994).state.auto)
+# $43B0 reads 2 (20 Hz cap, cap window = 3 fields) and every game frame lands
+# on the cap: mean 3.000 fields/game-frame.  Overcharge pushes frames past the
+# cap (all three timing options: 5.4; gpu_pipeline_timing alone: 4.9).
+cf_baseline_budget=2
+cf_baseline_fields_per_game_frame=3.000
+cf_span_tolerance=0.25
+# 3 of 399 spans are the field-boundary jitter pair (2 then 4), not overruns of
+# real work; WARN only when this count is exceeded.
+cf_baseline_overruns=3

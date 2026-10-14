@@ -118,6 +118,14 @@ static bool environment_cb(unsigned cmd, void *data)
             var->value = (v && *v) ? v : "disabled";
             return true;
          }
+         if (strcmp(var->key, "virtualjaguar_gpu_pipeline_timing") == 0)
+         {
+            /* Same opt-in shape as ACID_DRAM_TIMING: lets the suite be
+             * run with the GPU/DSP pipeline model on (issue #313 gate). */
+            const char *v = getenv("ACID_PIPELINE_TIMING");
+            var->value = (v && *v) ? v : "disabled";
+            return true;
+         }
          if (strcmp(var->key, "virtualjaguar_usefastblitter") == 0)
             { var->value = "disabled"; return true; } /* accurate by default */
          var->value = NULL;

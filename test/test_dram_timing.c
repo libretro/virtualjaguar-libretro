@@ -206,5 +206,33 @@ int main(void)
     busArbiter.contention_scale = 1;
 
     printf("%s: %d failure(s)\n", fails ? "FAIL" : "PASS", fails);
+    /* ---- DSP half (issue #313, timing-campaign S1) ----
+     * JERRY's own local bus is $F18000-$F1FFFF (DSP_MEM.NET); GPU RAM
+     * is a main-bus transaction for it.  JERRY has a 16-bit external
+     * interface (JTRM v8 p.97), so a LONG transfer is two word cycles
+     * (JMEM.NET): first word at full cost, a 1-clock pause, then the
+     * second word -- a DRAM page hit (2) on the same row, a full repeat
+     * for ROM and I/O. */
+    bus_arbiter_update_memcon(0x1861);
+    busArbiter.contention_scale = 1;
+    check(bus_arbiter_dsp_access(0x00F1B000, 1) == 0,
+          "DSP: own local RAM free");
+    check(bus_arbiter_dsp_access(0x00F1A100, 1) == 0,
+          "DSP: own control registers free");
+    check(bus_arbiter_dsp_access(0x00F03000, 0) == 2,
+          "DSP: GPU local RAM is a main-bus I/O transaction (2)");
+    check(bus_arbiter_dsp_access(0x00080000, 0) == 5,
+          "DSP: DRAM word = 2 + row_miss 3");
+    check(bus_arbiter_dsp_access(0x00080000, 1) == 5 + 1 + 2,
+          "DSP: DRAM long = word + pause 1 + page-hit word 2");
+    check(bus_arbiter_dsp_access(0x00800000, 1) == 10 + 1 + 10,
+          "DSP: cart ROM long = two full ROM cycles + pause");
+    check(bus_arbiter_dsp_access(0x00F00050, 1) == 2 + 1 + 2,
+          "DSP: TOM register long = two I/O cycles + pause");
+    busArbiter.contention_scale = 2;
+    check(bus_arbiter_dsp_access(0x00080000, 1) == 8,
+          "DSP: contention_scale (VJ_DRAM_SCALE) does not scale the DSP");
+    busArbiter.contention_scale = 1;
+
     return fails ? 1 : 0;
 }
