@@ -260,6 +260,62 @@ void drawStorageTab(App& app) {
     drawLibraryListOptions(app.library);
 }
 
+void drawDiscordTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Discord);
+    const bool avail = app.discordPresence.available();
+    bool on = app.cfg.getBool("discord.enabled", true);
+    bool art = app.cfg.getBool("discord.art", true);
+    bool buttons = app.cfg.getBool("discord.buttons", true);
+    ImGui::TextWrapped("Show on your Discord profile which game you are playing, how long, and (for RetroAchievements "
+                       "games) your progress. Discord has to be running on this computer.");
+    ImGui::Spacing();
+    ImGui::BeginDisabled(!avail);
+    if (ImGui::Checkbox("Show what I'm playing on Discord", &on)) app.cfg.setBool("discord.enabled", on);
+    ImGui::BeginDisabled(!on);
+    if (ImGui::Checkbox("Show game artwork", &art)) app.cfg.setBool("discord.art", art);
+    ui::hint("The game's box art (the same picture the library shows) is sent to Discord as a public web address. "
+             "Off: a generic Jaguar picture. Only art already downloaded by the library is used.");
+    if (ImGui::Checkbox("Show buttons", &buttons)) app.cfg.setBool("discord.buttons", buttons);
+    ui::hint("\"Get Virtual Jaguar\" (the download page), and for a RetroAchievements game a link to its page. "
+             "Discord shows buttons to other people only, never on your own profile.");
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    ImGui::Separator();
+    {
+        // Green when connected, amber while Discord is not running, red when it refused the ID, plain otherwise.
+        const bool live = app.discordPresence.active();
+        const discord::Status st = live ? app.discordPresence.client()->status() : discord::Status::Stopped;
+        ImGui::TextUnformatted("Status:");
+        ImGui::SameLine();
+        const std::string txt = app.discordPresence.statusText();
+        if (live && st == discord::Status::Connected) ui::coloredWrapped(ui::vec4(ui::pal().success), txt.c_str());
+        else if (live && st == discord::Status::Searching) ui::coloredWrapped(ui::vec4(ui::pal().warning), txt.c_str());
+        else if (live && st == discord::Status::InvalidAppId) ui::coloredWrapped(ui::vec4(ui::pal().error), txt.c_str());
+        else ImGui::TextWrapped("%s", txt.c_str());
+    }
+    if (app.paths.instance > 1)
+        ui::hint("Several copies of the app can run at once; only the first one publishes, so two windows never fight "
+                 "over your status.");
+    ui::hint("Shared with Discord: the game title, the platform, whether it is paused, hardcore / netplay mode "
+             "(never an address), achievement counts, and when you started. Nothing else.");
+    if (ImGui::CollapsingHeader("Application ID (advanced)")) {
+        static char idBuf[64];
+        static bool idInit = false;
+        if (!idInit) {
+            std::snprintf(idBuf, sizeof idBuf, "%s", app.cfg.get("discord.app_id", "").c_str());
+            idInit = true;
+        }
+        ImGui::SetNextItemWidth(ui::em(16.0f));
+        if (ImGui::InputText("##discordid", idBuf, sizeof idBuf, ImGuiInputTextFlags_CharsDecimal)) {
+            if (idBuf[0]) app.cfg.set("discord.app_id", idBuf);
+            else app.cfg.erase("discord.app_id");
+        }
+        ui::hint("The Discord application this status is published under. Builds that ship an ID fill it in; "
+                 "leave this empty to use that one. Forks can use their own application from the Discord developer portal.");
+    }
+    app.cfg.save();
+}
+
 void drawSettings(App& app) {
     ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
     bool open = ImGui::Begin("Settings", &app.showSettings);
@@ -282,6 +338,7 @@ void drawSettings(App& app) {
         if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("BIOS", nullptr, tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
     ImGui::End();

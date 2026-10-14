@@ -446,7 +446,7 @@ single instance.
 
 | File | Instance 1 | Instance N (2+) |
 | --- | --- | --- |
-| `config.ini` (settings, bindings, core options, recents, RetroAchievements login) | read and written as before | read at start (so it has your settings); **never written** |
+| `config.ini` (settings, bindings, core options, recents, RetroAchievements user name) | read and written as before | read at start (so it has your settings); **never written** |
 | `config-N.ini` | not used | its window size and its controller choice only |
 | `imgui.ini` | `imgui.ini` | `imgui-N.ini` |
 | game saves `saves/<game>.srm` (EEPROM, SRAM, Memory Track) and the GameDrive SD folder | `saves/` | `saves/instance-N/`; a game's first run there starts from a copy of instance 1's save (read only) |
@@ -512,10 +512,16 @@ memory as RetroArch writes it. `cheatN_enable` is ignored: nothing starts on.
 ## RetroAchievements
 
 **Achievements > Sign in...** takes your RetroAchievements user name and password
-once, gets a login token from the server and keeps **only the token** (`ra.user` and
-`ra.token` in `config.ini`; the password is wiped from memory as soon as the request
-is built). The token is a credential: treat `config.ini` like a password file. Sign out
-deletes it. The menu also has the hardcore toggle, "include unofficial achievements"
+once, gets a login token from the server and keeps **only the token** (the password is
+wiped from memory as soon as the request is built). The user name is `ra.user` in `config.ini`;
+the login token is kept in the system keychain (macOS Keychain, Windows Credential Manager, or
+the Linux Secret Service through libsecret, loaded at run time) and not in `config.ini`. A token
+that an earlier version left in `config.ini` is moved into the keychain at start-up. Where no
+keyring is available (no libsecret, no running keyring service, a Flatpak without the secret
+portal) the token stays in `config.ini` as `ra.token`, Settings says "Token stored in the settings
+file because no system keyring is available", and that file is then a credential: treat it like a
+password file. Sign out deletes the token from the keychain (and from `config.ini`). A second copy
+of the app (see below) reads the keychain and writes it only when you sign in or out there. The menu also has the hardcore toggle, "include unofficial achievements"
 and the **Achievement list**, a dashboard with your avatar, badges and the Jaguar games that
 have achievements (see below). Unlocks, game completion,
 leaderboard attempts / submissions, progress indicators and server problems show as
@@ -641,6 +647,49 @@ instances": its own save folder, settings not kept); on macOS the running copy o
 
 `virtualjaguar --dump-native-menu` (macOS) prints the real menu bar and Dock menu and checks every item;
 exit 77 means no window-server session (ssh) or not macOS.
+
+## Discord
+
+**Settings > Discord** shows what you are playing on your Discord profile (Rich Presence), and the
+activity doubles as app discovery: friends see "Playing Virtual Jaguar", the game's box art, and a
+**Get Virtual Jaguar** button that opens the site's download page (`https://jaguar.provenance-emu.com/app.html`).
+Discord has to be running on the same computer; nothing is sent anywhere else, and nothing is installed (the app
+speaks Discord's local RPC protocol itself, no Discord SDK).
+
+- **While playing:** the title (dat name without region and revision tags) as the headline; the line below says
+  `Atari Jaguar` or `Jaguar CD` plus `| Paused`, `| Netplay: hosting / joined` (never an address),
+  `| Hardcore` and `| 12/30 achievements` when a RetroAchievements game is tracked; the elapsed time counts from
+  boot. The large picture is the game's box art, a public https address (libretro-thumbnails, or the project
+  site's Jaguar CD mirror) that Discord's media proxy fetches. It is used only when the library already
+  downloaded that picture, so Discord never shows a broken image; otherwise the application's `jaguar` (cartridge)
+  or `jaguarcd` (disc) asset is shown. The small picture is the app icon (`app`) with "Virtual Jaguar <version>".
+- **In the library or an empty window:** "Browsing the library" with the `library` picture.
+- **Buttons:** **Get Virtual Jaguar**, and **View on RetroAchievements** (the game's page) while a RetroAchievements
+  game is tracked. Discord shows buttons to other people only, so your own profile never shows them.
+- **Settings:** *Show what I'm playing on Discord* (default on), *Show game artwork*, *Show buttons*, and the
+  connection status ("Connected to Discord", "Discord is not running"). Config keys `discord.enabled`,
+  `discord.art`, `discord.buttons`.
+- **Application ID:** the default is the project's "Virtual Jaguar" Discord application, set by the CMake cache
+  string `VJ_DISCORD_APP_ID` (`-DVJ_DISCORD_APP_ID=` empty turns the feature off; a fork passes its own). The config
+  key `discord.app_id` (Settings > Discord > Application ID) overrides it.
+- **Several windows:** only the first copy (instance 1) publishes, so two windows never fight over one status
+  (see [Running several instances](#running-several-instances)).
+- **Behaviour:** the connection and every write live on a background thread; if Discord is not running the app
+  looks again every 15 seconds and never waits on it, quitting takes the status down within a quarter of a second,
+  and updates are sent only when something changed and at most 4 per 20 seconds (Discord allows 5).
+
+### Maintainer setup (Discord developer portal)
+
+1. Create an application named exactly **Virtual Jaguar** (Rich Presence cannot set the name; this is what people
+   see after "Playing"). Its Application ID is the number in `VJ_DISCORD_APP_ID`.
+2. Upload these art assets under *Rich Presence > Art Assets*, with exactly these lowercase keys (at least 512x512):
+   `jaguar` (cartridge fallback large image), `jaguarcd` (Jaguar CD fallback), `library` (browsing), `app` (the app icon).
+3. CI: the repository variable `DISCORD_APP_ID` (Settings > Secrets and variables > Actions > Variables) overrides the
+   CMake default in `app-package.yml`; leave it unset to use the default. An application ID is public, not a secret.
+4. Test from a second Discord account: buttons are hidden on your own profile.
+
+Tests: `ctest -R discord` (frame encode/decode, JSON escaping, socket paths per OS, the rate limiter, the activity
+built from app state, and a loopback test against a fake Discord server on a Unix socket; skipped on Windows).
 
 ## Typed settings
 

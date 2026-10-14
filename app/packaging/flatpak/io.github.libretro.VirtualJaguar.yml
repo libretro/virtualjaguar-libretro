@@ -34,6 +34,11 @@ finish-args:
   # sibling .bin tracks, which the file-chooser portal does not grant.  Read-only, and only
   # the home directory (save data lives in the app's own ~/.var/app/<id>/ directory).
   - --filesystem=home:ro
+  # RetroAchievements login token: the app stores it through libsecret (loaded with dlopen), which
+  # inside a sandbox talks to the Secret portal (org.freedesktop.portal.Secret) by itself, so NO
+  # --talk-name=org.freedesktop.secrets is requested: that would expose the whole host keyring.
+  # (libsecret 0.21.x is in the org.freedesktop.Platform 25.08 runtime.)  If the portal is not
+  # reachable the app falls back to config.ini and says so in Settings.
 modules:
   - name: virtualjaguar
     buildsystem: cmake-ninja

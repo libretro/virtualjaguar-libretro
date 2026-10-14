@@ -34,6 +34,8 @@ const Exact kExact[] = {
     {"library.section", KeyClass::Storage},
     {"library.favorites.show", KeyClass::Storage}, {"library.recents.show", KeyClass::Storage},
     {"saves.resume", KeyClass::Storage},
+    // discord.app_id is an ID the user chose, like a path: kept.
+    {"discord.enabled", KeyClass::Discord},   {"discord.art", KeyClass::Discord},   {"discord.buttons", KeyClass::Discord},
     {"input.stick_dpad", KeyClass::Mapping},  {"input.kb.port", KeyClass::Mapping},
 };
 
@@ -66,6 +68,7 @@ std::vector<KeyClass> groupClasses(AppGroup g) {
     case AppGroup::Audio: return {KeyClass::Audio};
     case AppGroup::Input: return {KeyClass::Input};
     case AppGroup::Storage: return {KeyClass::Storage};
+    case AppGroup::Discord: return {KeyClass::Discord};
     }
     return {};
 }
@@ -76,6 +79,7 @@ const char* groupName(AppGroup g) {
     case AppGroup::Audio: return "Audio";
     case AppGroup::Input: return "Input";
     case AppGroup::Storage: return "Storage";
+    case AppGroup::Discord: return "Discord";
     }
     return "";
 }
@@ -96,7 +100,7 @@ size_t resetGroupKeys(Config& cfg, AppGroup g) {
 }
 
 std::vector<KeyClass> classesFor(const ResetAllRequest& r) {
-    std::vector<KeyClass> v = {KeyClass::Video, KeyClass::Shader, KeyClass::Audio, KeyClass::Input, KeyClass::Storage};
+    std::vector<KeyClass> v = {KeyClass::Video, KeyClass::Shader, KeyClass::Audio, KeyClass::Input, KeyClass::Storage, KeyClass::Discord};
     if (r.alsoMappings) v.push_back(KeyClass::Mapping);
     if (r.alsoPerGame) v.push_back(KeyClass::PerGame);
     return v;

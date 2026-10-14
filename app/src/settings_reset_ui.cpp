@@ -97,6 +97,7 @@ const char* groupNote(AppGroup g) {
     case AppGroup::Input:
         return "Controller ports, players, tuning and the controls overlay, for everywhere. Key and button bindings "
                "and per-game choices are not changed; Reset all settings... can include them.";
+    case AppGroup::Discord: return "Show what I'm playing, game artwork and buttons (the application ID override is kept).";
     case AppGroup::Storage:
         return "Flush saves, home-screen library, the tray icon and keep-awake, the library's tile size, art download, hide-on-launch and Favorites / Recently played display, and Resume where I left off. "
                "Library folders are not changed.";

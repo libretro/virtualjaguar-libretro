@@ -66,6 +66,8 @@ static void fill(Config& c) {
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
         "ui.tray", "ui.keep_awake",
         "library.favorites.show", "library.recents.show", "saves.resume",
+        // Discord
+        "discord.enabled", "discord.art", "discord.buttons",
         // Mappings
         "input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port", "input.stick_dpad",
         "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C",
@@ -74,7 +76,7 @@ static void fill(Config& c) {
         // Never reset
         "library.dir.0", "library.dir.1", "library.art_mirror", "recent.0", "recent.1", "ui.last_dir", "ui.scale",
         "window.w", "window.h", "input.pads.1", "input.pads.2", "ui.controls.seen_pads", "ra.user", "ra.token", "ra.enabled",
-        "ra.hardcore", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc",
+        "ra.hardcore", "discord.app_id", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc",
     };
     for (const char* k : keys) c.set(k, "x");
     c.set("opt.virtualjaguar_frameskip_max", "7");
@@ -97,6 +99,8 @@ static void testClassify() {
     CHECK(classifyKey("input.port.1") == KeyClass::Input);
     CHECK(classifyKey("port.1") == KeyClass::Input);          // the legacy spelling
     CHECK(classifyKey("input.dev.deadzone") == KeyClass::Input);
+    CHECK(classifyKey("discord.enabled") == KeyClass::Discord && classifyKey("discord.art") == KeyClass::Discord && classifyKey("discord.buttons") == KeyClass::Discord);
+    CHECK(classifyKey("discord.app_id") == KeyClass::Keep);   // an ID the user chose
     CHECK(classifyKey("saves.autosave") == KeyClass::Storage);
     CHECK(classifyKey("library.size") == KeyClass::Storage);
     CHECK(classifyKey("saves.resume") == KeyClass::Storage && classifyKey("library.favorites.show") == KeyClass::Storage && classifyKey("library.recents.show") == KeyClass::Storage);
@@ -119,7 +123,7 @@ static void testClassify() {
 }
 
 static void testGroupReset() {
-    for (AppGroup g : {AppGroup::Video, AppGroup::Audio, AppGroup::Input, AppGroup::Storage}) {
+    for (AppGroup g : {AppGroup::Video, AppGroup::Audio, AppGroup::Input, AppGroup::Storage, AppGroup::Discord}) {
         Config c;
         fill(c);
         const std::set<std::string> before = keysOf(c);
@@ -164,7 +168,7 @@ static void testResetAll() {
     const std::set<std::string> kept = {
         "library.dir.0", "library.dir.1", "library.art_mirror", "recent.0", "recent.1", "ui.last_dir", "ui.scale", "window.w",
         "window.h", "input.pads.1", "input.pads.2", "ui.controls.seen_pads", "ra.user", "ra.token", "ra.enabled", "ra.hardcore",
-        "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc", "shader.folder",
+        "discord.app_id", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc", "shader.folder",
         "opt.virtualjaguar_frameskip_max"};   // core options go through CoreHost, not Config
     const std::set<std::string> mappings = {"input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port",
         "input.stick_dpad", "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C"};
@@ -187,7 +191,8 @@ static void testResetAll() {
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
                               "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
                               "library.favorites.show", "library.recents.show", "saves.resume",
-                              "ui.tray", "ui.keep_awake"})
+                              "ui.tray", "ui.keep_awake", "discord.enabled", "discord.art",
+                              "discord.buttons"})
             CHECK(after.count(k) == 0);
         // Nothing but these three kinds of key is left.
         for (const std::string& k : after) {

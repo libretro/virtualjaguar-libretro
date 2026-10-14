@@ -97,6 +97,21 @@ target_link_libraries(ach_http_test PRIVATE ${VJ_ACH_LIBS} Threads::Threads)
 add_test(NAME ach_http COMMAND ach_http_test)
 set_tests_properties(ach_http PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+# The login token's storage policy (#836, security): migration out of config.ini, fallback when no
+# system keyring answers, secondary copies, logout.  Mock backends only -- the real OS credential
+# store is touched solely when VJ_TEST_REAL_KEYCHAIN=1 is set (never by default, never on CI).
+add_executable(vj_secret_store_test tests/secret_store_test.cpp src/secret_store.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_secret_store_test PRIVATE src)
+target_link_libraries(vj_secret_store_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads ${VJ_SECRET_LIBS})
+if(MSVC)
+    target_compile_options(vj_secret_store_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_secret_store_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_secret_store_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME secret_store_unit COMMAND vj_secret_store_test)
+set_tests_properties(secret_store_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 # The dashboard's logic and picture cache (no core, no window, no network): games-list parsing against
 # the same fixtures the mock server answers with, library matching, the daily cache file, filter / sort,
 # the image cache (disk, offline mode, LRU).

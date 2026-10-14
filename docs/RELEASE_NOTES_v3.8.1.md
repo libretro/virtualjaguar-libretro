@@ -82,6 +82,13 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   (also in the unlock toasts), filters and sorts the list, and has a Jaguar games tab listing every
   Jaguar and Jaguar CD game with achievements, your progress in each and a Play button for the
   ones in your library.
+- **The RetroAchievements login token is kept in the system keychain.** It used to sit in plain
+  text in `config.ini`. It now lives in the macOS Keychain, the Windows Credential Manager or the
+  Linux Secret Service (libsecret, loaded at run time, so nothing new is required); a token already
+  in `config.ini` is moved there the first time you start this version, and Sign out erases it. Where
+  no keyring is available (no libsecret, no running keyring service) the token stays in `config.ini`
+  as before and Settings says so. Your password was never stored
+  (https://github.com/libretro/virtualjaguar-libretro/issues/836).
 - **Controls.** Per-device and per-game remapping, all 12 keypad keys on a gamepad,
   keyboard play with the Pro Controller 6-button layout, an on-screen keypad (F2) and a
   controls overlay (F3) that appears at boot when no player-1 controller is connected.
@@ -132,6 +139,12 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   is imported, not run as a cartridge; `JAGCD.BIN`-style upper-case names are treated as the core's search sees
   them on macOS and Windows. Needs a small private core call (`docs/app-frontend-extension.md`) that RetroArch
   never answers, so RetroArch is unchanged (#838, #833).
+- **Discord Rich Presence (Settings > Discord).** Shows the game you are playing, its box art, how long, and
+  RetroAchievements progress / hardcore / netplay mode on your Discord profile, with a **Get Virtual Jaguar**
+  button (and the game's RetroAchievements page) for other people to find the app. On by default, needs Discord
+  running locally; the app speaks Discord's local protocol itself (no SDK), connects in the background and never
+  waits on Discord, and only the first window publishes
+  (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Local signing.** `app/packaging/local-package.sh --sign` packages your own build and signs it
   with a Developer ID (or Apple Development) identity found in the macOS keychain, or a `.pfx` /
   store certificate on Windows, optionally set in a gitignored `.env`; `--notarize` also notarizes
