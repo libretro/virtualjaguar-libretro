@@ -260,7 +260,7 @@ bool App::initImGui() {
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
-    // Colours: the theme in force (Settings > Video > Appearance; System follows the OS, and
+    // Colours: the theme in force (Settings > Interface > Appearance; System follows the OS, and
     // SDL_EVENT_SYSTEM_THEME_CHANGED re-applies them live).  Only colours change when the theme does, so the
     // sizes and rounding set here and scaled below stay as they are.
     theme::addListener([this](theme::Scheme) { applyTheme(); });
@@ -1226,6 +1226,7 @@ int App::runInteractive(const CliArgs& a) {
         else if (a.showWindow.rfind("settings-input", 0) == 0) devSelectTab = "Input";
         else if (a.showWindow.rfind("settings-audio", 0) == 0) devSelectTab = "Audio";
         else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
+        else if (a.showWindow.rfind("settings-interface", 0) == 0) devSelectTab = "Interface";
         else if (a.showWindow.rfind("settings-discord", 0) == 0) devSelectTab = "Discord";
         else if (a.showWindow.rfind("settings-bios", 0) == 0) devSelectTab = "BIOS";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box

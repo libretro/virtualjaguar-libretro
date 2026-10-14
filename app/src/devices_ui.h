@@ -30,5 +30,6 @@ std::string controlsOverlayText(App& app);   // the same, as plain text (--print
 void drawDevicesPanel(App& app);
    // Settings > Input > Devices
 void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize);
+void drawControlsOverlaySettings(App& app);   // Settings > Interface > Overlays (auto-show rule, show / hide now)
 
 }  // namespace vj

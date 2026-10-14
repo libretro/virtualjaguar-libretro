@@ -300,9 +300,11 @@ void drawDevicesPanel(App& app) {
     if (in.mouseWanted()) {
         ui::hint("The mouse is captured while the game has focus and no menu is open. Esc or F10 releases it; click the picture or press F10 to capture it again.");
     }
+}
 
-    // ---- overlay --------------------------------------------------------------------------------
-    ImGui::SeparatorText("Controls overlay");
+// Settings > Interface > Overlays: the controls overlay's auto-show rule and a button to toggle it now.
+void drawControlsOverlaySettings(App& app) {
+    InputManager& in = app.input;
     bool as = app.cfg.getBool("ui.controls.autoshow", false);
     if (ImGui::Checkbox("Show the controls overlay when a game starts", &as)) {
         app.cfg.setBool("ui.controls.autoshow", as);

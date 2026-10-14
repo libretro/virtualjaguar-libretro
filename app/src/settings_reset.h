@@ -35,7 +35,8 @@ enum class KeyClass {
     Shader,      // Settings > Video > Shader
     Audio,       // Settings > Audio
     Input,       // Settings > Input > Devices & players, everywhere scope
-    Storage,     // Settings > Storage (+ the library display options)
+    Storage,     // Settings > Storage (flush saves; the paths are not settings)
+    Interface,   // Settings > Interface (frame rate, theme, overlays, desktop, home library, resume, library display)
     Discord,     // Settings > Discord (the three toggles; the application ID override is kept)
     Mapping,     // key / button bindings, stick as D-pad, keyboard port (global and per game)
     PerGame,     // per-game device choices (ports, players, tuning): input.game.<id>.* that are not bindings
@@ -45,7 +46,7 @@ KeyClass classifyKey(const std::string& configKey);
 
 // The app-side groups that have a "Reset group" button: one per Settings tab.  Video also covers
 // the Shader section of that tab.
-enum class AppGroup { Video, Audio, Input, Storage, Discord };
+enum class AppGroup { Video, Audio, Input, Storage, Interface, Discord };
 std::vector<KeyClass> groupClasses(AppGroup g);
 const char* groupName(AppGroup g);
 
