@@ -12,6 +12,7 @@
 
 #include "achievements.h"
 #include "audio.h"
+#include "bios.h"
 #include "cheats.h"
 #include "config.h"
 #include "core_host.h"
@@ -31,7 +32,10 @@ struct CliArgs {
     std::vector<std::pair<std::string, std::string>> options;
     bool headless = false;
     bool fullscreen = false;
-    bool noContent = false;
+    bool noContent = false;         // boot the console with no cartridge: the CD BIOS (or --boot-bios)
+    std::string bootBios;           // --boot-bios cart|cd: which BIOS a no-content boot enters ("" = cd)
+    std::string cartBios, cdBios;   // --cart-bios / --cd-bios FILE: use this BIOS file for this run (not saved)
+    std::vector<std::string> expectBios;   // headless: "cart:builtin|system|file" / "cd:..." must be what the core staged
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
@@ -139,10 +143,18 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
-    bool openNoContent();
+    bool openNoContent();             // boots the console with no cartridge, through the BIOS bootBios() last chose
+    // Boots a BIOS on its own (BIOS & system tab, File > Boot BIOS): a cartridge boot ROM runs against an empty
+    // slot, the CD BIOS comes up with no disc.  `file` is used for this boot only ("" = the saved choice).
+    bool bootBios(bios::Role role, const std::string& file = std::string());
+    // The saved BIOS choice (config.ini bios.cart / bios.cd); "" = Auto.  Takes effect at the next load.
+    bios::Selection biosChoice;
+    void setBiosChoice(bios::Role role, const std::string& path);
+    bool importBios(const std::string& path, bool trustSize = false);   // copy into <system>/bios/, choose it, rescan
     bool reloadContent();
     void closeContent();
     void showOpenDialog();
+    void showImportBiosDialog();      // a file picker that imports the BIOS picked (BIOS & boot)
     bool homeVisible() const { return homeLibrary && !host.isLoaded(); }   // is the library standing in for the game?
     void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
     void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
@@ -165,6 +177,7 @@ public:
     void addRecent(const std::string& path);
     void saveConfig();
     void applySettingsFromConfig();   // re-read the member settings from cfg (defaults for erased keys); Settings > Reset
+    void applyBios();                 // hands the BIOS choice (and a one-off boot's file) to the core host
 
     double now() const;
     SDL_Window* window() const { return window_; }
@@ -219,6 +232,9 @@ private:
     std::string dataDirArg_;          // --data-dir as given (forwarded to a New Window copy)
     std::string headlessTmp_;
     unsigned headlessLoads_ = 0;
+    std::string biosOnce_[3];         // a one-off BIOS boot's file per role (bootBios): beats everything, until the next load
+    std::string biosCli_[3];          // --cart-bios / --cd-bios: beats the saved choice for the whole run
+    unsigned bootTarget_ = 0;         // what a no-content boot enters (VJ_BOOT_*)
 
     // headless results, one per loaded content
     struct HeadlessResult {
@@ -251,6 +267,8 @@ bool netplayInit(App& app, const CliArgs& a);               // log tap + --netpl
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
 void drawNetplayMenu(App& app);
 void drawNetplay(App& app);
+// BIOS & boot (bios_ui.cpp): the BIOS choice and boot controls, shown in Settings and above the library's BIOS tab.
+void drawBiosPanel(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).
 void drawControlsTab(App& app);
 void drawKeypadOverlay(App& app);

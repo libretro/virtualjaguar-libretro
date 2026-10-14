@@ -236,7 +236,7 @@ void drawStorageTab(App& app) {
     ImGui::TextWrapped("System: %s", app.paths.system.c_str());
     ImGui::Separator();
     ImGui::Checkbox("Flush saves every few seconds", &app.autosaveSram);
-    ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed.");
+    ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed (Settings > BIOS).");
     ImGui::SeparatorText("Game library");
     ImGui::Checkbox("Show the game library on the home screen", &app.homeLibrary);
     ui::hint("When no game is loaded the window shows your library (add folders there). Off: a plain "
@@ -263,6 +263,7 @@ void drawSettings(App& app) {
         if (ImGui::BeginTabItem("Video", nullptr, tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Audio", nullptr, tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("BIOS", nullptr, tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
@@ -402,7 +403,16 @@ void drawMenuBar(App& app) {
             if (ImGui::MenuItem("Clear list")) app.recents.clear();
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Boot without cartridge")) app.openNoContent();
+        if (ImGui::BeginMenu("Boot BIOS")) {
+            if (ImGui::MenuItem("CD BIOS (no disc)")) app.bootBios(bios::Cd);
+            if (ImGui::MenuItem("Cartridge boot ROM (empty slot)")) app.bootBios(bios::CartBoot);
+            ImGui::Separator();
+            if (ImGui::MenuItem("BIOS & boot settings...")) {
+                app.showSettings = true;
+                app.devSelectTab = "BIOS";
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded())) app.closeContent();
         ImGui::Separator();

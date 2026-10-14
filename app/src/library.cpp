@@ -347,12 +347,6 @@ std::string normDir(std::string d) {
     return d;
 }
 
-bool inList(const char* const* list, const std::string& name) {
-    for (; *list; list++)
-        if (name == *list) return true;
-    return false;
-}
-
 // The same, ignoring case: a dump named JAGCD.BIN is as much a CD BIOS as jagcd.bin (macOS and Windows
 // volumes are case-insensitive, and archives of dumps are full of upper-case names).
 bool inListCI(const char* const* list, const std::string& name) {
@@ -363,6 +357,21 @@ bool inListCI(const char* const* list, const std::string& name) {
 }
 
 bool hasWord(const std::string& lowerName, const char* w) { return lowerName.find(w) != std::string::npos; }
+
+// Does the core's search find this spelling?  It opens "<system>/<sub-folder>/<name>" with fopen, so on a
+// case-insensitive volume (the default on macOS and Windows) JAGCD.BIN in "ATARI - JAGUAR CD" is found as well as
+// jagcd.bin in "Atari - Jaguar CD"; on Linux the case must match exactly.
+#if defined(__APPLE__) || defined(_WIN32)
+const bool kCaseInsensitiveFs = true;
+#else
+const bool kCaseInsensitiveFs = false;
+#endif
+bool sameName(const std::string& a, const std::string& b) { return kCaseInsensitiveFs ? lowerStr(a) == lowerStr(b) : a == b; }
+bool listHas(const char* const* list, const std::string& name) {
+    for (; *list; list++)
+        if (sameName(name, *list)) return true;
+    return false;
+}
 
 }  // namespace
 
@@ -441,7 +450,7 @@ BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const
     const std::string sys = normDir(systemDir);
     auto inDirs = [&](const char* const* dirs) {
         for (; *dirs; dirs++)
-            if (!sys.empty() && dir == (**dirs ? sys + "/" + *dirs : sys)) return true;
+            if (!sys.empty() && sameName(dir, **dirs ? sys + "/" + *dirs : sys)) return true;
         return false;
     };
     auto sizeMsg = [&](uint64_t want) {
@@ -450,10 +459,10 @@ BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const
     };
     switch (b.role) {
     case BiosRole::CdBios:
-        if (!inList(kCdBiosNames, base)) {
-            u.text = "The core only looks for CD BIOS files by a fixed set of names (jagcd.bin, jaguarcd.bin, "
+        if (!listHas(kCdBiosNames, base)) {
+            u.text = "The core's own search only looks for CD BIOS files by a fixed set of names (jagcd.bin, jaguarcd.bin, "
                      "jagcd_bios.bin, jaguarcd_bios.bin, Jaguar CD BIOS.rom/.bin, or '[BIOS] Atari Jaguar CD (World)' / "
-                     "'Developer CD' with .j64, .rom or .bin): rename it to use it.";
+                     "'Developer CD' with .j64, .rom or .bin). Use this BIOS (below) makes the app hand the core this file under any name.";
         } else if (!inDirs(kCdBiosDirs)) {
             u.text = "Not in the system folder or its Atari - Jaguar, Atari - Jaguar CD, jaguar or jaguarcd sub-folders, "
                      "so the core does not look at it here.";
@@ -466,8 +475,8 @@ BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const
         }
         break;
     case BiosRole::CartBoot:
-        if (base == "jagboot_m.rom") {
-            if (dir != sys || sys.empty()) {
+        if (sameName(base, "jagboot_m.rom")) {
+            if (!sameName(dir, sys) || sys.empty()) {
                 u.text = "The core only reads jagboot_m.rom from the system folder itself, not from a sub-folder or anywhere else.";
             } else if (size != 0x20000) {
                 u.text = sizeMsg(0x20000);
@@ -476,9 +485,9 @@ BiosUse biosUse(const BiosInfo& b, const std::string& path, uint64_t size, const
                 u.text = "Read when Cart BIOS Type = Model M (and the boot ROM runs, BIOS (Cartridges) = Real): it replaces "
                          "the built-in Model M image.";
             }
-        } else if (!inList(kCartBootNames, base)) {
-            u.text = "The core only looks for a custom boot ROM by name (jagboot.rom, boot.rom, boot0.rom or a '[BIOS] Atari "
-                     "Jaguar...' name): rename it to use it.";
+        } else if (!listHas(kCartBootNames, base)) {
+            u.text = "The core's own search only looks for a custom boot ROM by name (jagboot.rom, boot.rom, boot0.rom or a "
+                     "'[BIOS] Atari Jaguar...' name). Use this BIOS (below) makes the app hand the core this file under any name.";
         } else if (!inDirs(kCartBootDirs)) {
             u.text = "Not in the system folder or its Atari - Jaguar or jaguar sub-folders, so the core does not look at it here.";
         } else if (size != 0x20000) {

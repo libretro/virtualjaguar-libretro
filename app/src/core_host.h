@@ -103,6 +103,30 @@ public:
     bool eventsActive() const { return helloSeen_; }
     uint64_t eventCount() const { return eventsSeen_; }
 
+    // ---- BIOS selection (VJ_ENV_GET_BIOS_PATH / VJ_ENV_GET_BOOT_TARGET, vj_frontend_ext.h) ----
+    // Which BIOS FILE the core uses for a role (VJ_BIOS_CART_BOOT / VJ_BIOS_CD), and what a no-content boot
+    // enters.  An empty path is "no preference": the core searches its system folder, then uses its built-in
+    // image.  The core validates the file (size, CD header / checksum) and falls back the same way if it
+    // fails; staged() says what it ended up running.  Takes effect at the next load.
+    void setBiosPath(unsigned role, const std::string& path) {
+        if (role >= 1 && role <= 2) biosPath_[role] = path;
+    }
+    const std::string& biosPath(unsigned role) const { return biosPath_[role >= 1 && role <= 2 ? role : 0]; }
+    void setBootTarget(unsigned target) { bootTarget_ = target; }   // VJ_BOOT_CD_BIOS / VJ_BOOT_CART_BOOT_ROM
+    unsigned bootTarget() const { return bootTarget_; }
+    // Off: the HELLO answer leaves VJ_CAP_BIOS out, as RetroArch would (the core never asks).
+    bool announceBios = true;
+    // What the core reported staging for a role in the current session (VJ_EVT_BIOS_STAGED / _REJECTED).
+    struct StagedBios {
+        bool seen = false;
+        uint32_t crc = 0;
+        unsigned source = 0;       // VJ_BIOS_SRC_*
+        std::string where;         // the file path, or the built-in image's name
+        bool rejected = false;     // a file the app named was refused (VJ_EVT_BIOS_REJECTED)
+        std::string rejectedPath;
+    };
+    const StagedBios& stagedBios(unsigned role) const { return staged_[role >= 1 && role <= 2 ? role : 0]; }
+
     // Audio buffer occupancy for the core's frameskip / auto-enhancement logic.
     std::function<void(bool& active, unsigned& occupancy, bool& underrun)> audioBufferStatus;
     // What the host wants from GET_AUDIO_VIDEO_ENABLE this frame.
@@ -155,6 +179,14 @@ public:
     // core reads, so a value picked in Settings is saved but does not show until the override ends.
     bool optionOverridden(const std::string& key) const { return sessionValues_.count(key) != 0; }
     std::string optionValue(const OptionDef& d) const;  // user value if valid, else default
+    // The value the core will read for `key`, without needing the definitions (so it works before the first load):
+    // a session override, else the saved value, else `fallback`.  Strict lists only: the caller names a value it knows.
+    std::string optionValueFor(const std::string& key, const std::string& fallback) const {
+        auto s = sessionValues_.find(key);
+        if (s != sessionValues_.end()) return s->second;
+        auto u = userValues_.find(key);
+        return u != userValues_.end() ? u->second : fallback;
+    }
     // Set by the UI.  Marks the variable-update flag and runs the core's
     // update-display callback (as RetroArch does after a menu change).
     void setOptionValue(const std::string& key, const std::string& value);
@@ -225,6 +257,9 @@ private:
     std::string saveFallbackPath() const;
     bool logVerbose_ = false;
 
+    std::string biosPath_[3];   // by role (index 0 unused)
+    unsigned bootTarget_ = 0;
+    StagedBios staged_[3];
     bool helloSeen_ = false;    // the core's VJ_ENV_HELLO was answered this session
     uint64_t eventsSeen_ = 0;
     bool initialized_ = false;  // retro_init has run (and retro_deinit has not)

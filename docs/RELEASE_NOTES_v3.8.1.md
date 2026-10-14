@@ -94,6 +94,13 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   speed and crash-watchdog hits over a private channel (`docs/app-frontend-extension.md`) instead
   of the app reading log text; a watchdog hit now also shows on screen. RetroArch and other
   frontends never see it (https://github.com/libretro/virtualjaguar-libretro/issues/888).
+- **BIOS choice and boot (Settings > BIOS, BIOS & system tab).** Pick the exact boot ROM or CD BIOS file the
+  core runs (any name, any folder; Auto stays the default), switch cartridges and CD games between HLE and the
+  real BIOS without loading anything first, and **Boot** a BIOS on its own: the CD BIOS with no disc (its disc
+  screen, Memory Track plugged in) or the cartridge boot ROM with an empty slot. A BIOS dropped on the window
+  is imported, not run as a cartridge; `JAGCD.BIN`-style upper-case names are treated as the core's search sees
+  them on macOS and Windows. Needs a small private core call (`docs/app-frontend-extension.md`) that RetroArch
+  never answers, so RetroArch is unchanged (#838, #833).
 - **Local signing.** `app/packaging/local-package.sh --sign` packages your own build and signs it
   with a Developer ID (or Apple Development) identity found in the macOS keychain, or a `.pfx` /
   store certificate on Windows, optionally set in a gitignored `.env`; `--notarize` also notarizes
