@@ -23,6 +23,7 @@
 
 #include "libretro.h"
 #include "vj_frontend_ext.h"   // the core's private event channel
+#include "vj_debug_iface.h"     // ...and its debug interface (docs/app-debug-tools.md)
 
 namespace vj {
 
@@ -126,6 +127,20 @@ public:
         std::string rejectedPath;
     };
     const StagedBios& stagedBios(unsigned role) const { return staged_[role >= 1 && role <= 2 ? role : 0]; }
+
+    // ---- debug tools (VJ_CAP_DEBUG / VJ_ENV_SET_DEBUG_IFACE, vj_debug_iface.h) ----
+    // The core hands over its debug interface once per session, right after the HELLO.  Off: the HELLO
+    // answer leaves VJ_CAP_DEBUG out, as RetroArch would (the core never sends it).
+    bool announceDebug = true;
+    // The interface of the current session, or null (before the first load, after an unload, or when the
+    // core never sent it).  Valid until the next unload; every call through it is made on this thread.
+    const vj_debug_iface* debugIface() const { return debugIface_; }
+    // Called when the interface arrives (non-null) and just before it goes away on an unload (null).
+    std::function<void(const vj_debug_iface*)> onDebugIface;
+    // True while the core is inside retro_run().  A debugger halt parks the core there and runs the UI,
+    // so anything that would re-enter the core (a state load, a reset, another load, an option change)
+    // is refused while this is set.
+    bool inFrame() const { return inFrame_; }
 
     // Audio buffer occupancy for the core's frameskip / auto-enhancement logic.
     std::function<void(bool& active, unsigned& occupancy, bool& underrun)> audioBufferStatus;
@@ -261,6 +276,8 @@ private:
     unsigned bootTarget_ = 0;
     StagedBios staged_[3];
     bool helloSeen_ = false;    // the core's VJ_ENV_HELLO was answered this session
+    const vj_debug_iface* debugIface_ = nullptr;
+    bool inFrame_ = false;      // inside retro_run()
     uint64_t eventsSeen_ = 0;
     bool initialized_ = false;  // retro_init has run (and retro_deinit has not)
     bool loaded_ = false;

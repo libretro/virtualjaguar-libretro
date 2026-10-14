@@ -263,6 +263,7 @@ void CoreHost::loadUserOptions(const std::vector<std::pair<std::string, std::str
 }
 
 void CoreHost::overrideOption(const std::string& key, const std::string& value) {
+    if (inFrame_) return;   // the debugger has the core halted inside retro_run(): no option changes
     sessionValues_[key] = value;
     variableUpdate_ = true;
 }
@@ -312,6 +313,7 @@ unsigned CoreHost::visibleOptionCount() const {
 }
 
 void CoreHost::setOptionValue(const std::string& key, const std::string& value) {
+    if (inFrame_) return;
     userValues_[key] = value;
     variableUpdate_ = true;
     if (onOptionChanged) onOptionChanged(key, value, false);
@@ -319,10 +321,12 @@ void CoreHost::setOptionValue(const std::string& key, const std::string& value) 
 }
 
 void CoreHost::clearOverride(const std::string& key) {
+    if (inFrame_) return;
     if (sessionValues_.erase(key)) variableUpdate_ = true;
 }
 
 void CoreHost::resetOptionToDefault(const std::string& key) {
+    if (inFrame_) return;
     userValues_.erase(key);
     variableUpdate_ = true;
     if (onOptionChanged) onOptionChanged(key, "", true);
@@ -548,8 +552,19 @@ bool CoreHost::env(unsigned cmd, void* data) {
     case VJ_ENV_HELLO: {
         vj_env_hello* h = (vj_env_hello*)data;
         if (!announceExtensions || !h || h->abi != VJ_FRONTEND_EXT_ABI) return false;
-        h->caps_out = VJ_CAP_EVENTS | (announceBios ? VJ_CAP_BIOS : 0u);
+        h->caps_out = VJ_CAP_EVENTS | (announceBios ? VJ_CAP_BIOS : 0u) | (announceDebug ? VJ_CAP_DEBUG : 0u);
         helloSeen_ = true;
+        return true;
+    }
+    case VJ_ENV_SET_DEBUG_IFACE: {
+        // Only to a frontend that asked for it, and only an interface this build understands: the struct is
+        // append-only, so a larger `size` is fine, a smaller one or another version is not.
+        const vj_debug_iface* i = (const vj_debug_iface*)data;
+        if (!i || !helloSeen_ || !announceDebug) return false;
+        if (i->version != VJ_DEBUG_IFACE_VERSION || i->size < offsetof(vj_debug_iface, frame_number) + sizeof(i->frame_number))
+            return false;
+        debugIface_ = i;
+        if (onDebugIface) onDebugIface(i);
         return true;
     }
     case VJ_ENV_GET_BIOS_PATH: {
@@ -660,6 +675,7 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err) {
 }
 
 bool CoreHost::loadContent(const std::string& path, std::string& err) {
+    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     if (!startSession(err)) return false;
 
     retro_game_info gi;
@@ -707,6 +723,7 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
 }
 
 bool CoreHost::loadNoContent(std::string& err) {
+    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     if (!startSession(err)) return false;
     if (!supportsNoGame_) {
         err = "the core does not support booting without content";
@@ -723,6 +740,11 @@ bool CoreHost::loadNoContent(std::string& err) {
 }
 
 void CoreHost::stopSession() {
+    // The debug interface belongs to the core instance that is about to go away.
+    if (debugIface_) {
+        debugIface_ = nullptr;
+        if (onDebugIface) onDebugIface(nullptr);
+    }
     if (loaded_) {
         flushSaveRam(true);
         retro_unload_game();
@@ -755,22 +777,27 @@ bool CoreHost::memoryRegion(unsigned id, uint8_t*& data, size_t& size) const {
     return data && size;
 }
 
-void CoreHost::unloadContent() { stopSession(); }
+void CoreHost::unloadContent() {
+    if (inFrame_) return;   // never tear the core down from inside its own retro_run()
+    stopSession();
+}
 
 void CoreHost::runFrame() {
-    if (!loaded_) return;
+    if (!loaded_ || inFrame_) return;
     if (g_audioBufferCb && audioBufferStatus) {
         bool active = false, underrun = false;
         unsigned occ = 0;
         audioBufferStatus(active, occ, underrun);
         g_audioBufferCb(active, occ, underrun);
     }
-    retro_run();
+    inFrame_ = true;
+    retro_run();   // a debugger halt parks the core in here and runs the UI (see debug_session.h)
+    inFrame_ = false;
     frameCount_++;
 }
 
 void CoreHost::reset() {
-    if (loaded_) retro_reset();
+    if (loaded_ && !inFrame_) retro_reset();
 }
 
 void CoreHost::sendKeyEvent(bool down, unsigned retroKey, uint32_t character, uint16_t mods) {
@@ -780,6 +807,7 @@ void CoreHost::sendKeyEvent(bool down, unsigned retroKey, uint32_t character, ui
 // ---- save states -----------------------------------------------------------------
 bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
     if (!loaded_) { err = "no game loaded"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     size_t size = retro_serialize_size();
     if (!size) { err = "the core cannot save states"; return false; }
     std::vector<unsigned char> buf(size);
@@ -790,6 +818,7 @@ bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
 
 bool CoreHost::loadStateFromFile(const std::string& path, std::string& err) {
     if (!loaded_) { err = "no game loaded"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     std::vector<unsigned char> buf;
     if (!readFile(path, buf) || buf.empty()) { err = "cannot read " + path; return false; }
     if (!retro_unserialize(buf.data(), buf.size())) { err = "the core rejected the state"; return false; }
@@ -840,7 +869,7 @@ bool CoreHost::flushSaveRam(bool force) {
 
 // ---- controllers / discs -------------------------------------------------------------
 void CoreHost::setControllerDevice(unsigned port, unsigned device) {
-    if (loaded_) retro_set_controller_port_device(port, device);
+    if (loaded_ && !inFrame_) retro_set_controller_port_device(port, device);
 }
 
 DiscInfo CoreHost::discInfo() {
@@ -865,11 +894,11 @@ DiscInfo CoreHost::discInfo() {
 }
 
 void CoreHost::discSetEject(bool eject) {
-    if (loaded_ && diskRegistered_ && disk_.set_eject_state) disk_.set_eject_state(eject);
+    if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_eject_state) disk_.set_eject_state(eject);
 }
 
 void CoreHost::discSetIndex(unsigned idx) {
-    if (loaded_ && diskRegistered_ && disk_.set_image_index) disk_.set_image_index(idx);
+    if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_image_index) disk_.set_image_index(idx);
 }
 
 }  // namespace vj

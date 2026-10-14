@@ -250,7 +250,9 @@ set(VJ_APP_SOURCES
     src/ach_http.cpp
     src/netplay.cpp
     src/netplay_addr.cpp
-    src/netplay_ui.cpp)
+    src/netplay_ui.cpp
+    src/debug/debug_session.cpp
+    src/debug/debug_ui.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)

@@ -50,7 +50,7 @@ void inputFrame(App& app) {
         in.uiWantsKeyboard = io.WantCaptureKeyboard;
     }
     // The controls overlay is informational (NoInputs) and deliberately NOT part of uiOpen.
-    in.syncMouseCapture(app.window(), app.host.isLoaded() && !app.paused, uiOpen || wantsMouse, wantsMouse);
+    in.syncMouseCapture(app.window(), app.host.isLoaded() && !app.paused && !app.debug.halted(), uiOpen || wantsMouse, wantsMouse);   // a debugger halt frees the mouse
 
     if (in.takeHelpToggle() && app.host.isLoaded()) {
         in.controls.show = !in.controls.show;

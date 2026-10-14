@@ -16,6 +16,7 @@
 #include "cheats.h"
 #include "config.h"
 #include "core_host.h"
+#include "debug/debug_session.h"
 #include "input.h"
 #include "instance.h"
 #include "library_service.h"
@@ -112,6 +113,7 @@ public:
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
+    DebugSession debug;      // the core's debug interface: Tools menu, halt pump, breakpoints (debug/debug_session.h)
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -199,6 +201,8 @@ private:
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+    void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
+    void syncDebug();                 // content loaded / hardcore -> the debug session
     void frameUi();
     void updateTitle();
     uint32_t frameHash() const;
@@ -261,6 +265,10 @@ bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and reje
 void drawCheats(App& app);
 // Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
 void drawLibraryHome(App& app, float x, float y, float w, float h);
+// Debug tools (debug/debug_ui.cpp): the Tools menu, the "halted" bar, and every tool window's draw hook.
+void drawToolsMenu(App& app);
+void drawDebugOverlay(App& app, float areaX, float areaY);   // the "halted" bar
+void drawDebugWindows(App& app);                            // every registered tool's draw hook
 // Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.
 bool netplayInit(App& app, const CliArgs& a);               // log tap + --netplay*; false = bad arguments
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)

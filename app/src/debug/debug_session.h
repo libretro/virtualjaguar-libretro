@@ -32,6 +32,7 @@ struct DebugTool {
     std::function<bool()> isOpen;      // checkmark; may be empty
     std::function<void()> toggle;      // open / close the window; empty = not available yet
     bool needsHalt = false;            // greyed unless a processor is halted (the CPU window's step buttons)
+    std::function<void()> draw;        // called every UI frame (also during a halt); the window checks its own open state
 };
 
 class DebugSession {
