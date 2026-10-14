@@ -6,6 +6,7 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
 #include "platform/platform.h"
+#include "platform/viewports.h"
 #include "theme_style.h"
 
 #include <algorithm>
@@ -115,6 +116,8 @@ void App::applySettingsFromConfig() {
     autosaveSram = cfg.getBool("saves.autosave", true);
     trayIcon = cfg.getBool("ui.tray", false);
     keepAwake = cfg.getBool("ui.keep_awake", true);
+    windowsOutside = cfg.getBool("ui.viewports", viewports::defaultEnabled());
+    showInWindowMenu = cfg.getBool("ui.menubar_in_window", false);
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
 }
@@ -136,6 +139,8 @@ void App::saveConfig() {
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("ui.tray", trayIcon);
     cfg.setBool("ui.keep_awake", keepAwake);
+    cfg.setBool("ui.viewports", windowsOutside);
+    cfg.setBool("ui.menubar_in_window", showInWindowMenu);
     cfg.setInt("saves.resume", resumeMode);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
@@ -242,6 +247,13 @@ bool App::initImGui() {
     io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
     g_imguiIni = paths.imguiIni;
     io.IniFilename = g_imguiIni.c_str();
+    // Multi-viewport (docking branch): a window dragged outside the main window becomes an OS window of its own.
+    // Docking itself stays off -- it would put tab bars and drop targets on windows people already arranged.
+    // The ViewportsEnable flag itself follows the setting + the situation every frame (applyViewports()).
+    io.ConfigViewportsNoAutoMerge = false;
+    io.ConfigViewportsNoTaskBarIcon = true;     // a tool window is not a second app in the Dock / taskbar
+    io.ConfigViewportsNoDecoration = false;     // real OS title bars (title = the window's name), native move / close
+    io.ConfigDockingWithShift = true;
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
@@ -378,6 +390,7 @@ void App::haltedFrame() {
     ach.pump();
     syncDebug();
     video.upload(host.frame());
+    applyViewports();
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
@@ -385,9 +398,38 @@ void App::haltedFrame() {
     drawUi(*this, capKb);
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    presentViewports();
     SDL_GL_SwapWindow(window_);
     updateTitle();
     if (!vsync) SDL_DelayNS(8000000);   // no swap-interval pacing: do not spin while stopped
+}
+
+const char* App::viewportsNote() const {
+    if (!windowsOutside) return "";
+    return viewports::explain(viewports::decide(true, SDL_GetCurrentVideoDriver(), fullscreen).why);
+}
+
+// Turns ImGui's multi-viewport mode on or off to match the setting and the situation; cheap, called before every
+// NewFrame().  ImGui hands windows back to the main window (and closes the extra OS windows) when it goes off.
+void App::applyViewports() {
+    if (!imguiUp_ || headless_) return;
+    const bool want = viewports::decide(windowsOutside, SDL_GetCurrentVideoDriver(), fullscreen).active;
+    if (want == viewportsOn_) return;
+    ImGuiIO& io = ImGui::GetIO();
+    if (want) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    else io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+    viewportsOn_ = want;
+}
+
+// After ImGui::Render() + the main window's draw data: draw and present the extra OS windows, then make the main
+// window's GL context current again (the extra windows' backends switch it).  Official example_sdl3_opengl3 pattern.
+void App::presentViewports() {
+    if (!viewportsOn_) return;
+    SDL_Window* backupWindow = SDL_GL_GetCurrentWindow();
+    SDL_GLContext backupContext = SDL_GL_GetCurrentContext();
+    ImGui::UpdatePlatformWindows();
+    ImGui::RenderPlatformWindowsDefault();
+    SDL_GL_MakeCurrent(backupWindow, backupContext);
 }
 
 void App::applyTheme() {
@@ -906,8 +948,24 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     }
 }
 
+// True for a window / pointer event that belongs to one of ImGui's extra OS windows (viewports): Settings dragged
+// out of the main window and the like.  Closing one is ImGui's business (it only closes that window), and its
+// pointer coordinates are relative to it, so the light gun, the mouse capture and the drop handling must not see
+// them.  Keys are still delivered: they go to whichever window has focus and ImGui's WantCaptureKeyboard guards them.
+bool App::fromExtraWindow(const SDL_Event& e) const {
+    if (!viewportsOn_ || !window_) return false;
+    SDL_WindowID id = 0;
+    if (e.type >= SDL_EVENT_WINDOW_FIRST && e.type <= SDL_EVENT_WINDOW_LAST) id = e.window.windowID;
+    else if (e.type == SDL_EVENT_MOUSE_MOTION) id = e.motion.windowID;
+    else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) id = e.button.windowID;
+    else if (e.type == SDL_EVENT_MOUSE_WHEEL) id = e.wheel.windowID;
+    else if (e.type == SDL_EVENT_DROP_FILE || e.type == SDL_EVENT_DROP_POSITION) id = e.drop.windowID;
+    return id != 0 && id != SDL_GetWindowID(window_);
+}
+
 void App::handleEvent(const SDL_Event& e, bool headless) {
     if (!headless && imguiUp_) ImGui_ImplSDL3_ProcessEvent(&e);
+    if (fromExtraWindow(e)) return;   // ImGui has it; the game and the app's own window handling are about the main window
     // F10 steps while a processor is halted (it releases a captured mouse otherwise, which input.cpp owns).
     if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F10 && debug.halted() &&
         !(imguiUp_ && ImGui::GetIO().WantTextInput)) {
@@ -932,7 +990,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             if (imguiUp_ && (homeVisible() || library.show) && pathExt(path) == "png") {
                 const float x = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.x : dropX_;
                 const float y = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.y : dropY_;
-                const LibraryService::CoverTile* t = library.tileAt(x, y, ImGui::GetFrameCount());
+                const LibraryService::CoverTile* t = library.tileAt(x + ImGui::GetMainViewport()->Pos.x, y + ImGui::GetMainViewport()->Pos.y, ImGui::GetFrameCount());
                 if (t) {
                     library.setCoverKey(t->key, path);
                     break;
@@ -1233,6 +1291,7 @@ int App::runInteractive(const CliArgs& a) {
             if (fonts::applySpec(a.fontThen, fontSettings)) fonts::request(fontSettings);
         }
         fonts::applyPending();   // a typeface change made last frame, before anything draws with the old one
+        applyViewports();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
@@ -1246,6 +1305,7 @@ int App::runInteractive(const CliArgs& a) {
             saveWindowScreenshot(a.screenshot);
             quit = true;
         }
+        presentViewports();
         SDL_GL_SwapWindow(window_);
         perf.lap(Perf::Present);
 

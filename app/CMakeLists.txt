@@ -73,7 +73,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 # ---------------------------------------------------------------------------
 # Dependencies (pinned; bump deliberately).
-#   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8 (MIT)   rcheevos v12.5.0 (MIT)
+#   SDL3   release-3.4.16 (zlib)   Dear ImGui v1.92.8-docking (MIT)   rcheevos v12.5.0 (MIT)
 # For offline/dev iteration: -DFETCHCONTENT_SOURCE_DIR_SDL3=<dir>
 #                            -DFETCHCONTENT_SOURCE_DIR_IMGUI=<dir>
 # ---------------------------------------------------------------------------
@@ -98,8 +98,8 @@ else()
 endif()
 
 FetchContent_Declare(imgui
-    URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8.tar.gz
-    URL_HASH SHA256=fecb33d33930e12ff53a34064e9d3a06c8f7c3e04408f14cd36c80e3faac863b
+    URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8-docking.tar.gz
+    URL_HASH SHA256=ca0653454ed371b7a87e9b0bc29a5d15c9be7f7c0fbe778042fc48c71df1d3d8
     DOWNLOAD_EXTRACT_TIMESTAMP ON)
 FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
@@ -338,6 +338,7 @@ set(VJ_APP_SOURCES
     src/platform/events.cpp
     src/platform/platform.cpp
     src/platform/tray.cpp
+    src/platform/viewports.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
     src/discord_app.cpp)

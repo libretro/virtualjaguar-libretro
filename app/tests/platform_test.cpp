@@ -3,6 +3,7 @@
 // launcher-argument filter, and the command event round trip.  No window, no GL, no core.
 #include "platform/commands.h"
 #include "platform/platform.h"
+#include "platform/viewports.h"
 
 #include <SDL3/SDL.h>
 
@@ -411,6 +412,38 @@ static void testEventRoundTrip() {
     SDL_Quit();
 }
 
+// ---- viewports gating (#833) --------------------------------------------------------------------------
+static void testViewports() {
+    namespace vp = vj::viewports;
+    // On a real desktop driver the setting decides.
+    CHECK(vp::decide(true, "cocoa", false).active);
+    CHECK(vp::decide(true, "windows", false).active);
+    CHECK(vp::decide(true, "x11", false).active);          // X11 / XWayland can place windows
+    CHECK(vp::decide(true, "x11", false).why == vp::Why::Active);
+    CHECK(!vp::decide(false, "cocoa", false).active);
+    CHECK(vp::decide(false, "cocoa", false).why == vp::Why::UserOff);
+    // Wayland cannot position secondary windows: forced off with a reason, even when asked for.
+    CHECK(!vp::decide(true, "wayland", false).active);
+    CHECK(vp::decide(true, "wayland", false).why == vp::Why::Wayland);
+    CHECK(vp::explain(vp::Why::Wayland)[0] != 0);
+    CHECK(vp::driverIsWayland("wayland") && !vp::driverIsWayland("x11") && !vp::driverIsWayland(nullptr));
+    // Fullscreen keeps everything inside.
+    CHECK(!vp::decide(true, "cocoa", true).active);
+    CHECK(vp::decide(true, "cocoa", true).why == vp::Why::Fullscreen);
+    // Headless runs (dummy video, or no driver at all) never get viewports.
+    CHECK(!vp::decide(true, "dummy", false).active);
+    CHECK(!vp::decide(true, "offscreen", false).active);
+    CHECK(!vp::decide(true, nullptr, false).active);
+    CHECK(vp::decide(true, "dummy", false).why == vp::Why::NoWindowSystem);
+    // Nothing to say when it is simply on or off.
+    CHECK(vp::explain(vp::Why::Active)[0] == 0 && vp::explain(vp::Why::UserOff)[0] == 0);
+#if defined(__APPLE__) || defined(_WIN32)
+    CHECK(vp::defaultEnabled());
+#else
+    CHECK(!vp::defaultEnabled());
+#endif
+}
+
 int main() {
     testIdleModel();
     testStateReflected();
@@ -422,6 +455,7 @@ int main() {
     testAssociations();
     testLauncherArgs();
     testEventRoundTrip();
+    testViewports();
     std::printf("platform_test: %d checks, %d failures\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

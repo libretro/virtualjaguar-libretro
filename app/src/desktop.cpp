@@ -4,6 +4,7 @@
 
 #include "imgui.h"
 #include "platform/platform.h"
+#include "platform/viewports.h"
 #include "theme.h"
 #include "ui_util.h"
 
@@ -177,6 +178,16 @@ void drawDesktopSettings(App& app) {
         }
     }
     ui::hint("Pause, reset, recent games and quit from the tray, and a way back to the window. Off by default.");
+    if (platform::nativeMenuActive()) {
+        ImGui::Checkbox("Show the menu bar inside the window", &app.showInWindowMenu);
+        ui::hint("Keep the menu bar at the top of the window as well as the one at the top of the screen. Both work "
+                 "the same. Off by default; F1 flips it too.");
+    }
+    ImGui::Checkbox("Let windows move outside the main window", &app.windowsOutside);
+    ui::hint("Settings, Achievements, Cheats and the tools can be dragged out of the main window and become windows of "
+             "their own, for example on a second monitor. Drag one past the edge of the window, or back in to put it back. "
+             "Off: they stay inside. Always inside while the window is fullscreen.");
+    if (const char* why = app.viewportsNote(); *why) ui::coloredWrapped(ui::vec4(ui::pal().warning), why);
     ImGui::Checkbox("Keep the display awake while a game is running", &app.keepAwake);
     ui::hint("No screensaver or display sleep while a game is running and not paused. Controllers do not count as "
              "activity to the OS, so without this a long game with no keyboard use would blank the screen.");

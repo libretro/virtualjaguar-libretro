@@ -136,7 +136,7 @@ public:
     bool quit = false;
     bool fullscreen = false;
     bool menuPinned = true;
-    bool showInWindowMenu = false;    // macOS: F1 shows the in-window menu bar too (the native one is the main bar)
+    bool showInWindowMenu = false;    // macOS: also show the in-window menu bar under the native one (ui.menubar_in_window; F1 toggles)
     bool inWindowMenuBar() const;     // is an ImGui menu bar being drawn at all
     bool showSettings = false;
     bool showStates = false;
@@ -173,6 +173,7 @@ public:
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Storage)
+    bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)
     bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
 
     // ---- actions ----------------------------------------------------------------
@@ -225,6 +226,11 @@ public:
 
     // ---- native-OS integration (desktop.cpp; platform/platform.h) -------------------------
     void runNativeCommand(platform::Cmd cmd, int arg);   // a native menu / tray click, from the event loop
+    void presentViewports();                             // draws + presents the extra OS windows (after the main draw data)
+    bool fromExtraWindow(const SDL_Event& e) const;
+    void applyViewports();                               // ImGui multi-viewport mode to match windowsOutside + the situation (per frame)
+    bool viewportsActive() const { return viewportsOn_; }
+    const char* viewportsNote() const;                   // why windowsOutside is ignored right now ("" = not)
     bool applyTray();                                    // makes the tray match trayIcon; false = not available here
 
     double now() const;
@@ -272,6 +278,7 @@ private:
     bool imguiUp_ = false;
     float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)
     uint32_t openDialogEvent_ = 0;
+    bool viewportsOn_ = false;         // ImGuiConfigFlags_ViewportsEnable is set right now
     uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
 

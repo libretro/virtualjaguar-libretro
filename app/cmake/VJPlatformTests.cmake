@@ -8,7 +8,8 @@
 #   native_menu_dump     macOS only: build the REAL NSMenu / Dock menu from the model and check every item
 #                        (needs a window-server session; reports SKIP (77) over ssh / on a headless worker).
 
-add_executable(vj_platform_test tests/platform_test.cpp src/platform/commands.cpp src/platform/events.cpp)
+add_executable(vj_platform_test tests/platform_test.cpp src/platform/commands.cpp src/platform/events.cpp
+               src/platform/viewports.cpp)
 target_include_directories(vj_platform_test PRIVATE src)
 target_link_libraries(vj_platform_test PRIVATE ${VJ_SDL3_TARGET})
 if(MSVC)

@@ -632,7 +632,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     // The menu bar is always there in a window; in fullscreen it shows while
     // pinned (F1), while the pointer is at the top edge, or while a menu is open.
     static bool menuHot = false;
-    bool nearTop = io.MousePos.y >= 0 && io.MousePos.y < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
+    const float mouseY = io.MousePos.y - vp->Pos.y;   // (with extra OS windows on, ImGui's coordinates are the screen's)
+    bool nearTop = mouseY >= 0 && mouseY < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
     menuHot = nearTop || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     // A native menu bar (macOS) replaces this one; every item here has a twin in platform/commands.cpp.
     bool showMenu = platform::nativeMenuActive() ? app.showInWindowMenu : (!app.fullscreen || app.menuPinned || menuHot);
@@ -647,7 +648,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.host.isLoaded() && app.video.hasFrame()) {
         ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
                                     io.DisplayFramebufferScale.x);
-        app.input.setPicture(pic.x, pic.y, pic.z, pic.w);   // where the picture is, for the light gun
+        app.input.setPicture(pic.x - vp->Pos.x, pic.y - vp->Pos.y, pic.z, pic.w);   // window-relative, like SDL's pointer events   // where the picture is, for the light gun
     } else if (!app.host.isLoaded()) {
         if (app.homeLibrary) {
             drawLibraryHome(app, areaPos.x, areaPos.y, areaSize.x, areaSize.y);   // the game library is the home screen
