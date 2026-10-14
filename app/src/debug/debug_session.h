@@ -139,6 +139,9 @@ public:
     void registerTool(const DebugTool& t);
     const std::vector<DebugTool>& tools() const { return tools_; }
     DebugTool* findTool(const std::string& id);
+    // Whether the menu entry is clickable: the tools are enabled, the window exists, and (CPU stepping) a processor is
+    // halted when the entry needs one.  The in-window Tools menu and the native macOS one both ask this.
+    bool toolAvailable(const DebugTool& t) const { return enabled() && t.toggle && (!t.needsHalt || halted_); }
     // Greyed placeholders for the windows the later work packages add: Memory, CLUT, Cheat scanner, CPU,
     // Objects, Blitter, Textures, Audio scope.
     void registerPlaceholderTools();

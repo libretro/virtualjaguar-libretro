@@ -47,6 +47,17 @@ platform::MenuState App::menuState() {
     s.achHardcore = ach.hardcoreWanted();
     s.achUnofficial = ach.unofficialWanted();
     s.netplayConfigured = netplay.configured();
+    s.toolsOn = debug.enabled();
+    s.halted = debug.halted();
+    s.attached = debug.attached();
+    s.toolsWhy = debug.disabledReason();
+    for (const DebugTool& t : debug.tools()) {
+        platform::ToolEntry e;
+        e.title = t.label;
+        e.enabled = debug.toolAvailable(t);
+        e.checked = t.isOpen && t.isOpen();
+        s.tools.push_back(e);
+    }
     return s;
 }
 
@@ -122,6 +133,22 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void achShowList() override { a.ach.showList = true; }
         void showNetplay() override { a.showNetplay = true; }
         void netplayDisconnect() override { a.netplay.stop(); }
+        void toggleTool(int i) override {
+            const std::vector<DebugTool>& tools = a.debug.tools();
+            if (i < 0 || i >= (int)tools.size()) return;
+            const DebugTool& t = tools[(size_t)i];
+            if (a.debug.toolAvailable(t)) t.toggle();   // greyed (no game / hardcore / not halted) stays a no-op
+        }
+        void debugBreakContinue() override {
+            if (a.debug.halted()) a.debug.resume();
+            else if (a.debug.enabled()) a.debug.breakNow();
+        }
+        void debugStep() override {
+            if (a.debug.halted()) a.debug.step();
+        }
+        void debugDetach() override {
+            if (a.debug.attached()) a.debug.detach();
+        }
         void showWindow() override {
             if (!a.window_) return;
             SDL_ShowWindow(a.window_);
@@ -130,7 +157,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         }
     } run(*this);
     const int discCount = host.isLoaded() ? (int)host.discInfo().count : 0;
-    platform::dispatch(cmd, arg, run, (int)recents.size(), discCount);
+    platform::dispatch(cmd, arg, run, (int)recents.size(), discCount, (int)debug.tools().size());
 }
 
 // ---- lifecycle ------------------------------------------------------------------------------------------------

@@ -94,6 +94,10 @@ NSMenuItem* makeItem(const MenuItem& m) {
         it.submenu = sub;
         return it;
     }
+    if (m.cmd == Cmd::None) {   // a greyed explanation line (Tools: why the debugger is off), not a command
+        it.enabled = NO;
+        return it;
+    }
     it.target = g_target;
     it.tag = (NSInteger)(int)m.cmd;
     it.representedObject = @(m.arg);
@@ -327,11 +331,18 @@ int dumpMenus() {
         s.achAvailable = true;
         s.netplayConfigured = true;
         s.fileManager = "Finder";
+        s.toolsOn = true;   // the Tools menu: two windows open / available, one waiting for a halt
+        s.tools = {{"Memory viewer...", true, true}, {"Palette (CLUT)...", true, false}, {"CPU debugger...", true, false},
+                   {"Audio scope...", false, false}};
         renderMenus(buildMenuBar(s), buildDockMenu(s));
         NSMenu* main = [NSApp mainMenu];
         DumpStats st;
         std::printf("native-menu: main menu\n");
         dumpMenu(main, 1, st);
+        if ([main indexOfItemWithTitle:@"Tools"] < 0) {
+            std::printf("native-menu: FAIL the main menu has no Tools menu\n");
+            st.problems++;
+        }
         std::printf("native-menu: dock menu\n");
         dumpMenu(g_dockMenu, 1, st);
         if (![[NSApp delegate] respondsToSelector:@selector(applicationDockMenu:)]) {

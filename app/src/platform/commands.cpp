@@ -22,7 +22,8 @@ bool MenuState::operator==(const MenuState& o) const {
            libraryOpen == o.libraryOpen && disc == o.disc && recents == o.recents &&
            achAvailable == o.achAvailable && achSignedIn == o.achSignedIn && achBusy == o.achBusy &&
            achEnabled == o.achEnabled && achHardcore == o.achHardcore && achUnofficial == o.achUnofficial &&
-           netplayConfigured == o.netplayConfigured && fileManager == o.fileManager;
+           netplayConfigured == o.netplayConfigured && fileManager == o.fileManager && tools == o.tools &&
+           toolsOn == o.toolsOn && halted == o.halted && attached == o.attached && toolsWhy == o.toolsWhy;
 }
 
 const char* pauseTitle(bool paused) { return paused ? "Resume" : "Pause"; }
@@ -161,6 +162,26 @@ MenuBar buildMenuBar(const MenuState& s) {
         bar.menus.push_back(submenu("View", std::move(v)));
     }
 
+    // ---- Tools: the debug windows, in the order and with the availability of the in-window Tools menu ----
+    {
+        std::vector<MenuItem> t;
+        if (!s.toolsOn && !s.toolsWhy.empty()) {
+            t.push_back(item(Cmd::None, s.toolsWhy, "", false));   // the greyed reason line the ImGui menu shows
+            t.push_back(sep());
+        }
+        for (size_t i = 0; i < s.tools.size(); i++) {
+            std::string title = s.tools[i].title;
+            if (title.size() >= 3 && title.compare(title.size() - 3, 3, "...") == 0) title.replace(title.size() - 3, 3, ELL);
+            t.push_back(item(Cmd::Tool, title, "", s.tools[i].enabled, s.tools[i].checked, (int)i));
+        }
+        if (!s.tools.empty()) t.push_back(sep());
+        // F9 / F10 are handled by the window itself (a native key equivalent cannot be an F-key): shown in the title.
+        t.push_back(item(Cmd::DebugBreak, "Break / Continue (F9)", "", s.halted || s.toolsOn));
+        t.push_back(item(Cmd::DebugStep, "Step (F10)", "", s.halted));
+        t.push_back(item(Cmd::DebugDetach, "Detach Debugger", "", s.attached));
+        bar.menus.push_back(submenu(s.halted ? "Tools - HALTED" : "Tools", std::move(t)));
+    }
+
     // ---- Achievements (only when the build has RetroAchievements) ----
     if (s.achAvailable) {
         std::vector<MenuItem> a;
@@ -236,7 +257,7 @@ void collectCommands(const std::vector<MenuItem>& items, std::vector<Cmd>& out) 
     }
 }
 
-bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount) {
+bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount, int toolCount) {
     switch (cmd) {
     case Cmd::Open: a.open(); return true;
     case Cmd::OpenRecent:
@@ -291,6 +312,13 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount) {
     case Cmd::AchList: a.achShowList(); return true;
     case Cmd::Netplay: a.showNetplay(); return true;
     case Cmd::NetplayDisconnect: a.netplayDisconnect(); return true;
+    case Cmd::Tool:
+        if (arg < 0 || arg >= toolCount) return false;
+        a.toggleTool(arg);
+        return true;
+    case Cmd::DebugBreak: a.debugBreakContinue(); return true;
+    case Cmd::DebugStep: a.debugStep(); return true;
+    case Cmd::DebugDetach: a.debugDetach(); return true;
     case Cmd::ShowWindow: a.showWindow(); return true;
     case Cmd::None:
     case Cmd::Count_: break;

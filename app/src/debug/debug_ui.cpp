@@ -46,7 +46,7 @@ void drawToolsMenu(App& app) {
         ImGui::Separator();
     }
     for (const DebugTool& t : d.tools()) {
-        const bool avail = on && t.toggle && (!t.needsHalt || halted);
+        const bool avail = d.toolAvailable(t);
         const bool open = t.isOpen && t.isOpen();
         if (ImGui::MenuItem(t.label.c_str(), t.shortcut.empty() ? nullptr : t.shortcut.c_str(), open, avail) && t.toggle)
             t.toggle();

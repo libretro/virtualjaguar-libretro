@@ -62,15 +62,17 @@ static MenuState maximal(bool signedIn) {
     s.achAvailable = true;
     s.achSignedIn = signedIn;
     s.netplayConfigured = true;
+    s.toolsOn = true;
+    s.tools = {{"Memory viewer...", true, false}, {"CPU debugger...", true, true}};
     return s;
 }
 
 // ---- the model ----------------------------------------------------------------------------------------------
 static void testIdleModel() {
     MenuBar bar = buildMenuBar(idle());
-    const char* order[] = {"File", "Emulation", "View", "Netplay", "Window", "Help"};   // no Achievements without RA
-    CHECK(bar.menus.size() == 6);
-    for (size_t i = 0; i < bar.menus.size() && i < 6; i++) CHECK(bar.menus[i].title == order[i]);
+    const char* order[] = {"File", "Emulation", "View", "Tools", "Netplay", "Window", "Help"};   // no Achievements without RA
+    CHECK(bar.menus.size() == 7);
+    for (size_t i = 0; i < bar.menus.size() && i < 7; i++) CHECK(bar.menus[i].title == order[i]);
 
     // Nothing to act on without a game.
     for (Cmd c : {Cmd::CloseGame, Cmd::RevealGame, Cmd::Pause, Cmd::Reset, Cmd::FastForward, Cmd::SaveState,
@@ -251,6 +253,111 @@ static void testShortcuts() {
     CHECK(tk.empty());
 }
 
+// The Tools menu: the model of DebugSession's registry (desktop.cpp copies it), same order and enabled state as the
+// in-window menu, so the macOS menu bar (where that bar is hidden) reaches every debug window.
+static void testToolsMenu() {
+    // the registry the app has: memory + palette + scanner + CPU + objects + blitter + textures + scope
+    const char* titles[] = {"Memory viewer...", "Palette (CLUT)...", "Cheat scanner...", "CPU debugger...",
+                            "Object list...",   "Blitter log...",     "Textures...",      "Audio scope..."};
+    auto entries = [&](bool on) {
+        std::vector<ToolEntry> v;
+        for (const char* t : titles) {
+            ToolEntry e;
+            e.title = t;
+            e.enabled = on && std::strcmp(t, "CPU debugger...") != 0;   // the CPU window needs a halt for its steps; the entry itself opens
+            v.push_back(e);
+        }
+        return v;
+    };
+    const MenuItem* tools = nullptr;
+
+    // off (no game): every window greyed, the reason is the first line, and Break is greyed too
+    MenuState off = idle();
+    off.toolsWhy = "No game is running";
+    off.tools = entries(false);
+    MenuBar bar = buildMenuBar(off);
+    tools = findTop(bar, "Tools");
+    CHECK(tools && tools->submenu);
+    if (tools) {
+        CHECK(tools->sub.size() > 3);
+        CHECK(tools->sub[0].cmd == Cmd::None && !tools->sub[0].enabled && tools->sub[0].title == "No game is running");
+        CHECK(tools->sub[1].separator);
+        for (int i = 0; i < 8; i++) {
+            const MenuItem* m = findCmd(tools->sub, Cmd::Tool, i);
+            CHECK(m && !m->enabled);
+        }
+    }
+    CHECK(!findCmd(bar, Cmd::DebugBreak)->enabled && !findCmd(bar, Cmd::DebugStep)->enabled);
+    CHECK(!findCmd(bar, Cmd::DebugDetach)->enabled);
+
+    // on: registry order and titles (real ellipsis), the open window is checked, the rest enabled
+    MenuState on = idle();
+    on.gameLoaded = true;
+    on.toolsOn = true;
+    on.tools = entries(true);
+    on.tools[0].checked = true;
+    bar = buildMenuBar(on);
+    tools = findTop(bar, "Tools");
+    CHECK(tools != nullptr);
+    if (tools) {
+        CHECK(tools->sub[0].cmd == Cmd::Tool);   // no reason line when the tools work
+        int seen = 0;
+        for (const MenuItem& m : tools->sub) {
+            if (m.separator || m.cmd != Cmd::Tool) continue;
+            CHECK(m.arg == seen);
+            CHECK(m.title.find("...") == std::string::npos);                       // "..." -> U+2026
+            CHECK(m.title.size() > 3 && m.title.compare(m.title.size() - 3, 3, "\xE2\x80\xA6") == 0);
+            CHECK(m.checked == (seen == 0));
+            CHECK(m.enabled == (seen != 3));
+            seen++;
+        }
+        CHECK(seen == 8);
+    }
+    CHECK(findCmd(bar, Cmd::Tool, 0)->title == "Memory viewer\xE2\x80\xA6");
+    CHECK(findCmd(bar, Cmd::Tool, 7)->title == "Audio scope\xE2\x80\xA6");
+    CHECK(findCmd(bar, Cmd::DebugBreak)->title == "Break / Continue (F9)" && findCmd(bar, Cmd::DebugBreak)->enabled);
+    CHECK(findCmd(bar, Cmd::DebugStep)->title == "Step (F10)" && !findCmd(bar, Cmd::DebugStep)->enabled);   // only while halted
+    CHECK(!findCmd(bar, Cmd::DebugDetach)->enabled);                                                          // nothing attached
+    CHECK(findCmd(bar, Cmd::DebugBreak)->key.empty() && findCmd(bar, Cmd::DebugStep)->key.empty());           // F-keys are not native key equivalents
+
+    // halted: the title says so, Step and Detach work
+    on.halted = true;
+    on.attached = true;
+    bar = buildMenuBar(on);
+    CHECK(findTop(bar, "Tools") == nullptr && findTop(bar, "Tools - HALTED") != nullptr);
+    CHECK(findCmd(bar, Cmd::DebugStep)->enabled && findCmd(bar, Cmd::DebugDetach)->enabled);
+    // Continue stays reachable even when the tools were switched off under a halt (hardcore turned on)
+    on.toolsOn = false;
+    CHECK(findCmd(buildMenuBar(on), Cmd::DebugBreak)->enabled);
+
+    // the tray and the Dock menu have no debugger entries
+    std::vector<Cmd> tray, dock;
+    collectCommands(buildTrayMenu(on), tray);
+    collectCommands(buildDockMenu(on), dock);
+    for (Cmd c : {Cmd::Tool, Cmd::DebugBreak, Cmd::DebugStep, Cmd::DebugDetach}) {
+        for (Cmd t : tray) CHECK(t != c);
+        for (Cmd d : dock) CHECK(d != c);
+    }
+
+    // a change in any of it rebuilds the native menu
+    MenuState a = on, b = on;
+    CHECK(a == b);
+    b.tools[2].enabled = !b.tools[2].enabled;
+    CHECK(a != b);
+    b = a;
+    b.tools[1].checked = !b.tools[1].checked;
+    CHECK(a != b);
+    b = a;
+    b.halted = !b.halted;
+    CHECK(a != b);
+    b = a;
+    b.toolsWhy = "Disabled while RetroAchievements hardcore mode is on";
+    CHECK(a != b);
+    b = a;
+    b.attached = !b.attached;
+    CHECK(a != b);
+}
+
 static void testStateEquality() {
     MenuState a = maximal(false), b = maximal(false);
     CHECK(a == b);
@@ -314,12 +421,16 @@ struct Recorder : Actions {
     void achShowList() override { rec("achShowList"); }
     void showNetplay() override { rec("showNetplay"); }
     void netplayDisconnect() override { rec("netplayDisconnect"); }
+    void toggleTool(int i) override { rec("toggleTool", i); }
+    void debugBreakContinue() override { rec("debugBreakContinue"); }
+    void debugStep() override { rec("debugStep"); }
+    void debugDetach() override { rec("debugDetach"); }
     void showWindow() override { rec("showWindow"); }
 };
 
-static std::string one(Cmd c, int arg, int recents = 5, int discs = 3) {
+static std::string one(Cmd c, int arg, int recents = 5, int discs = 3, int tools = 8) {
     Recorder r;
-    bool ok = dispatch(c, arg, r, recents, discs);
+    bool ok = dispatch(c, arg, r, recents, discs, tools);
     if (!ok) return r.log.empty() ? "rejected" : "rejected+called";
     return r.log.size() == 1 ? r.log[0] : "calls:" + std::to_string(r.log.size());
 }
@@ -339,6 +450,13 @@ static void testDispatch() {
     CHECK(one(Cmd::Count_, 0) == "rejected");
     CHECK(one(Cmd::Website, 0) == std::string("openUrl:") + kWebsiteUrl);
     CHECK(one(Cmd::ReportIssue, 0) == std::string("openUrl:") + kIssuesUrl);
+    CHECK(one(Cmd::Tool, 7) == "toggleTool:7");
+    CHECK(one(Cmd::Tool, 8) == "rejected");              // the registry shrank
+    CHECK(one(Cmd::Tool, -1) == "rejected");
+    CHECK(one(Cmd::Tool, 0, 5, 3, 0) == "rejected");     // no tools at all
+    CHECK(one(Cmd::DebugBreak, 0) == "debugBreakContinue");
+    CHECK(one(Cmd::DebugStep, 0) == "debugStep");
+    CHECK(one(Cmd::DebugDetach, 0) == "debugDetach");
     CHECK(one(Cmd::Quit, 0) == "quit");
     CHECK(one(Cmd::ShowWindow, 0) == "showWindow");
 
@@ -447,6 +565,7 @@ static void testViewports() {
 int main() {
     testIdleModel();
     testStateReflected();
+    testToolsMenu();
     testRecents();
     testCoverage();
     testShortcuts();

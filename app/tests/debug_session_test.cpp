@@ -288,6 +288,25 @@ static void testTools() {
     s.registerPlaceholderTools();                                   // never clobbers a real one
     CHECK(s.findTool("memory")->toggle);
     CHECK(s.findTool("nope") == nullptr);
+
+    // The availability rule the in-window Tools menu and the native macOS menu share.
+    DebugTool step;
+    step.id = "cpu";
+    step.label = "CPU debugger...";
+    step.toggle = [] {};
+    step.needsHalt = true;
+    DebugTool* placeholder = s.findTool("scanner");   // still a greyed placeholder (no toggle)
+    CHECK(!s.toolAvailable(*s.findTool("memory")));   // no core / no game
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.toolAvailable(*s.findTool("memory")));
+    CHECK(!s.toolAvailable(*placeholder));            // enabled, but the window does not exist yet
+    CHECK(!s.toolAvailable(step));                    // needs a halt
+    s.setHardcore(true);
+    CHECK(!s.toolAvailable(*s.findTool("memory")));   // hardcore switches them all off
+    s.setHardcore(false);
+    CHECK(s.toolAvailable(*s.findTool("memory")));
 }
 
 static void testMockContent() {

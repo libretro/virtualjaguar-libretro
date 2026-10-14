@@ -36,6 +36,8 @@ enum class Cmd : int {
     Settings, Mute, About, ShowDataFolder, Website, ReportIssue,
     // Online
     AchSignIn, AchSignOut, AchEnable, AchHardcore, AchUnofficial, AchList, Netplay, NetplayDisconnect,
+    // Tools (the debug windows: arg = index into MenuState::tools)
+    Tool, DebugBreak /*Break, or Continue while halted*/, DebugStep, DebugDetach,
     // Tray
     ShowWindow,
     Count_  // keep last
@@ -49,6 +51,15 @@ struct DiscState {
     bool operator==(const DiscState& o) const {
         return available == o.available && ejected == o.ejected && count == o.count && index == o.index &&
                labels == o.labels;
+    }
+};
+
+// One Tools-menu entry, copied from DebugSession's tool registry (same order, same availability rule as the in-window menu).
+struct ToolEntry {
+    std::string title;             // "Memory viewer..." (a trailing "..." becomes the real ellipsis)
+    bool enabled = false, checked = false;
+    bool operator==(const ToolEntry& o) const {
+        return title == o.title && enabled == o.enabled && checked == o.checked;
     }
 };
 
@@ -66,6 +77,11 @@ struct MenuState {
     bool achAvailable = false, achSignedIn = false, achBusy = false, achEnabled = false, achHardcore = false,
          achUnofficial = false;
     bool netplayConfigured = false;
+    // Tools (debugger)
+    std::vector<ToolEntry> tools;
+    bool toolsOn = false;          // DebugSession::enabled(): a game runs, the core has the interface, no hardcore
+    bool halted = false, attached = false;
+    std::string toolsWhy;          // why the tools are off ("" when on); shown as a greyed first line
     std::string fileManager = "File Manager";   // "Finder" / "Explorer", for "Show in ..."
     bool operator==(const MenuState& o) const;
     bool operator!=(const MenuState& o) const { return !(*this == o); }
@@ -144,12 +160,16 @@ struct Actions {
     virtual void achShowList() = 0;
     virtual void showNetplay() = 0;
     virtual void netplayDisconnect() = 0;
+    virtual void toggleTool(int index) = 0;
+    virtual void debugBreakContinue() = 0;
+    virtual void debugStep() = 0;
+    virtual void debugDetach() = 0;
     virtual void showWindow() = 0;
 };
 
 // Out-of-range arguments (a stale menu item after the recent list shrank) are dropped here, once.
-// `recentCount` and `discCount` are the app's current sizes.  Returns false for Cmd::None / unknown.
-bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount);
+// `recentCount`, `discCount` and `toolCount` are the app's current sizes.  Returns false for Cmd::None / unknown.
+bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount, int toolCount = 0);
 
 constexpr const char* kWebsiteUrl = "https://jaguar.provenance-emu.com";
 constexpr const char* kIssuesUrl = "https://github.com/libretro/virtualjaguar-libretro/issues";
