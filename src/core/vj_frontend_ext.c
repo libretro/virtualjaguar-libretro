@@ -4,6 +4,7 @@
  */
 
 #include "vj_frontend_ext.h"
+#include "vjdebug.h"
 
 #include <string.h>
 
@@ -32,6 +33,10 @@ void VJExtInit(retro_environment_t env_cb, const char *core_version)
       vj_ext_env  = env_cb;
       vj_ext_on   = 1;
       vj_ext_caps = hello.caps_out;
+      /* Debug tools: handed over exactly once, and only to a frontend that
+       * asked for it.  RetroArch (HELLO refused) never sees this call. */
+      if (hello.caps_out & VJ_CAP_DEBUG)
+         env_cb(VJ_ENV_SET_DEBUG_IFACE, (void *)VJDebugIface());
    }
 }
 

@@ -208,6 +208,27 @@ void GDBTargetResetState(void);
  * and registers all three targets' ops, then resets armed state. */
 void GDBTargetOpen(void);
 
+/*
+ * The app's debug interface (src/debug/vjdebug.c) rides the same halt
+ * machinery without a socket.  All of these are called from vjdebug.c on
+ * the emulation thread.
+ */
+struct vj_debug_host;
+/* The host whose halt_pump GDBHalt() calls while parked; NULL = none. */
+void GDBTargetSetDebugHost(const struct vj_debug_host *h);
+const struct vj_debug_host *GDBTargetGetDebugHost(void);
+/* Initialises the breakpoint tables without opening a socket (idempotent
+ * until GDBTargetClose()). */
+void GDBTargetEnsureTables(void);
+/* Execution breakpoints, one target at a time. 0 = ok, -2 = table full. */
+int  GDBTargetBreakSet(int target, unsigned int addr);
+int  GDBTargetBreakClear(int target, unsigned int addr);
+/* Halt on that target's very next instruction. */
+void GDBTargetHaltNext(int target);
+/* The target parked in GDBHalt() (and why, as GDB_STOP_*), or -1. */
+int  GDBTargetHaltedTarget(void);
+int  GDBTargetHaltReason(void);
+
 /* Called on content unload/deinit (or a bind failure that leaves the
  * stub disabled for this session): resets all Jaguar-side state. Does
  * NOT touch the socket -- callers close that separately with

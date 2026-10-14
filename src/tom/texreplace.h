@@ -65,6 +65,11 @@ int TexReplaceHasEntries(void);
 int  TexReplacePreBlit(void);
 void TexReplacePostBlit(void);
 
+/* Re-reads the pack from disk (the app's texture browser installed or
+ * removed a file): drops the loaded pack and loads again, keeping the
+ * option state and the base path.  A no-op without content. */
+void TexReplaceReload(void);
+
 /* Free the pack, reset every static (iOS never dlcloses).  Safe to
  * call repeatedly. */
 void TexReplaceShutdown(void);

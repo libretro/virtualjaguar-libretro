@@ -25,6 +25,7 @@
 #include "vjag_memory.h"
 #include "tom.h"
 #include "../core/vjtrace.h"
+#include "vj_debug_iface.h"
 #include "op_simd_neon.h"
 #include "op_simd_sse2.h"
 
@@ -495,6 +496,162 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 //
 // Object Processor main routine
 //
+/* ---- app debug interface: display-list snapshot (see op.h) ---------------
+ *
+ * Armed between frames, taken at the top of the first OPProcessList() call
+ * that finds a list (OLP != 0): the first active halfline of the next field,
+ * before the OP has rewritten HEIGHT/DATA/REMAINDER of any bitmap object.
+ * It does not follow the OP's own walk for that halfline: it reads the WHOLE
+ * list from DRAM with side-effect-free reads, following links and taking
+ * BOTH arms of every branch object (the OP only takes one per halfline), each
+ * object once, up to VJ_DBG_OP_MAX_OBJECTS.  The hot path pays one global
+ * test per OPProcessList() call and nothing per object. */
+
+int opDbgSnapState = 0;
+static struct vj_debug_op_obj *opDbgBuf = NULL;   /* VJ_DBG_OP_MAX_OBJECTS entries */
+static int      opDbgCount = 0;
+static unsigned opDbgHalfline = 0;
+static int      opDbgReady = 0;
+
+void OPDbgSnapArm(void)
+{
+   if (!opDbgBuf)
+   {
+      opDbgBuf = (struct vj_debug_op_obj *)calloc(VJ_DBG_OP_MAX_OBJECTS,
+                                                  sizeof(struct vj_debug_op_obj));
+      if (!opDbgBuf)
+         return;
+   }
+   opDbgCount    = 0;
+   opDbgReady    = 0;
+   opDbgSnapState = 1;
+}
+
+static uint64_t OPDbgPhrase(uint32_t addr)
+{
+   addr &= 0xFFFFF8u;
+   return ((uint64_t)JaguarReadLong(addr, DEBUGGER) << 32)
+        | (uint64_t)JaguarReadLong(addr + 4, DEBUGGER);
+}
+
+/* Same link decode the OP uses (including the mirror kludge). */
+static uint32_t OPDbgLink(uint64_t p0)
+{
+   uint32_t link = (uint32_t)((p0 & 0x000007FFFF000000LL) >> 21);
+
+   if (link > 0x1FFFFF && link < 0x800000)
+      link &= 0xFF1FFFFF;
+   return link;
+}
+
+static int OPDbgSeen(uint32_t addr)
+{
+   int i;
+
+   for (i = 0; i < opDbgCount; i++)
+      if (opDbgBuf[i].address == addr)
+         return 1;
+   return 0;
+}
+
+/* Top of OPProcessList, only while opDbgSnapState is set. */
+static void OPDbgSnapTake(int halfline)
+{
+   uint32_t stack[VJ_DBG_OP_MAX_OBJECTS];
+   int sp = 0;
+   uint32_t olp = OPGetListPointer();
+
+   if (!olp || !opDbgBuf)
+      return;   /* no list yet: try the next halfline */
+
+   opDbgCount    = 0;
+   opDbgHalfline = (unsigned)halfline;
+   stack[sp++]   = olp & 0xFFFFF8u;
+
+   while (sp > 0 && opDbgCount < VJ_DBG_OP_MAX_OBJECTS)
+   {
+      uint32_t addr = stack[--sp];
+      uint64_t p0, p1 = 0, p2 = 0;
+      unsigned type;
+      struct vj_debug_op_obj *o;
+
+      if (OPDbgSeen(addr))
+         continue;
+      p0   = OPDbgPhrase(addr);
+      type = (unsigned)(p0 & 0x07);
+      o = &opDbgBuf[opDbgCount++];
+      o->address = addr;
+      o->type    = type;
+      o->phrases = 1;
+      if (type == 0 || type == 1)
+      {
+         p1 = OPDbgPhrase(addr + 8);
+         o->phrases = 2;
+         if (type == 1)
+         {
+            p2 = OPDbgPhrase(addr + 16);
+            o->phrases = 3;
+         }
+      }
+      o->p0_hi = (unsigned)(p0 >> 32);
+      o->p0_lo = (unsigned)(p0 & 0xFFFFFFFFu);
+      o->p1_hi = (unsigned)(p1 >> 32);
+      o->p1_lo = (unsigned)(p1 & 0xFFFFFFFFu);
+      o->p2_hi = (unsigned)(p2 >> 32);
+      o->p2_lo = (unsigned)(p2 & 0xFFFFFFFFu);
+
+      if (type == 0 || type == 1)
+      {
+         if (sp < VJ_DBG_OP_MAX_OBJECTS)
+            stack[sp++] = OPDbgLink(p0) & 0xFFFFF8u;
+      }
+      else if (type == 2)   /* GPU object: the OP resumes at the next phrase */
+      {
+         if (sp < VJ_DBG_OP_MAX_OBJECTS)
+            stack[sp++] = (addr + 8) & 0xFFFFF8u;
+      }
+      else if (type == 3)   /* branch: both arms */
+      {
+         if (sp + 1 < VJ_DBG_OP_MAX_OBJECTS)
+         {
+            stack[sp++] = (addr + 8) & 0xFFFFF8u;
+            stack[sp++] = ((uint32_t)((p0 >> 21) & 0x3FFFF8u)) & 0xFFFFF8u;
+         }
+      }
+      /* stop objects (4) and anything undefined end that arm */
+   }
+
+   opDbgSnapState = 0;
+   opDbgReady     = 1;
+}
+
+int OPDbgSnapGet(struct vj_debug_op_obj *o, int max, unsigned *halfline)
+{
+   int n, i;
+
+   if (!opDbgReady || !opDbgBuf)
+      return -1;
+   n = opDbgCount;
+   if (n > max)
+      n = max;
+   if (o)
+      for (i = 0; i < n; i++)
+         o[i] = opDbgBuf[i];
+   if (halfline)
+      *halfline = opDbgHalfline;
+   return n;
+}
+
+void OPDbgSnapReset(void)
+{
+   opDbgSnapState = 0;
+   opDbgReady     = 0;
+   opDbgCount     = 0;
+   opDbgHalfline  = 0;
+   free(opDbgBuf);
+   opDbgBuf = NULL;
+}
+
 /* Set only around OPProcessListNoBitmaps(): bitmap and scaled objects are
  * skipped (link followed, no pixels, no HEIGHT/DATA write-back) while
  * branch, GPU and stop objects run normally. */
@@ -521,6 +678,10 @@ void OPProcessList(int halfline, bool render)
    //       resolutions than you normally could, as the line buffer is only 720
    //       pixels wide...
    halfline &= 0x7FF;
+
+   /* App debug interface: zero unless a snapshot was armed. */
+   if (opDbgSnapState)
+      OPDbgSnapTake(halfline);
 
    op_pointer = OPGetListPointer();
    VJT_EMIT(VJT_EV_OP_LIST_START, OP, op_pointer, (uint32_t)halfline);

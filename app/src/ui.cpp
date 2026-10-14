@@ -522,13 +522,13 @@ void drawMenuBar(App& app) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded())) app.closeContent();
+        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !host.inFrame())) app.closeContent();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) app.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-        bool loaded = host.isLoaded();
+        bool loaded = host.isLoaded() && !host.inFrame();   // a debugger halt parks the core: nothing that re-enters it
         if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, loaded)) app.togglePause();
         if (ImGui::MenuItem("Reset", "Ctrl+R", false, loaded)) app.reset();
         ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, loaded);
@@ -571,6 +571,7 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
+    drawToolsMenu(app);
     if (ImGui::BeginMenu("Settings")) {
         if (ImGui::MenuItem("Settings...", "Ctrl+,")) app.showSettings = true;
         if (ImGui::MenuItem("Mute", nullptr, &app.mute)) app.applyAudioSettings();
@@ -687,7 +688,9 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     drawKeypadOverlay(app);
     drawControlsOverlay(app, areaPos, areaSize);
     drawAchievementsUi(app);
+    drawDebugWindows(app);
     drawOsd(app, areaPos, areaSize);
+    drawDebugOverlay(app, areaPos.x, areaPos.y);
 
     wantCaptureKeyboard = io.WantCaptureKeyboard;
 }

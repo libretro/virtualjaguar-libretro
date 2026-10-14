@@ -4,6 +4,7 @@
 #include "texdump.h"
 #include "texreplace.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include "bus_arbiter.h"
 #include "gpu.h"
@@ -12,6 +13,7 @@
 #include "settings.h"
 #include "vjag_memory.h"
 #include "../core/state.h"
+#include "vj_debug_iface.h"
 
 #define A1_BASE         ((uint32_t)0x00)
 #define A1_FLAGS        ((uint32_t)0x04)
@@ -468,6 +470,87 @@ void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 }
 
 
+/* ---- app debug interface: blitter launch log (see blitter.h) -------- */
+
+#define BDBG_A1_STEP ((uint32_t)0x10)
+#define BDBG_A2_BASE ((uint32_t)0x24)
+#define BDBG_A2_STEP ((uint32_t)0x34)
+
+int blitDbgLogOn = 0;
+static struct vj_debug_blit *blitDbgRing = NULL;   /* VJ_DBG_BLIT_LOG_SIZE entries */
+static unsigned blitDbgHead = 0;                   /* launches since enable        */
+static const unsigned *blitDbgFramePtr = NULL;
+
+void BlitterDbgLogEnable(int on, const unsigned *frameCounter)
+{
+   if (!on)
+   {
+      blitDbgLogOn = 0;
+      return;
+   }
+   if (!blitDbgRing)
+   {
+      blitDbgRing = (struct vj_debug_blit *)calloc(VJ_DBG_BLIT_LOG_SIZE,
+                                                   sizeof(struct vj_debug_blit));
+      if (!blitDbgRing)
+         return;
+   }
+   if (!blitDbgLogOn)
+      blitDbgHead = 0;   /* a fresh log every time it is switched on */
+   blitDbgFramePtr = frameCounter;
+   blitDbgLogOn = 1;
+}
+
+/* Called at the launch site only while blitDbgLogOn is set. */
+static void BlitterDbgLogNote(uint32_t hbCmd, uint32_t hbCount)
+{
+   struct vj_debug_blit *e;
+
+   if (!blitDbgRing)
+      return;
+   e = &blitDbgRing[blitDbgHead % VJ_DBG_BLIT_LOG_SIZE];
+   e->seq      = blitDbgHead;
+   e->frame    = blitDbgFramePtr ? *blitDbgFramePtr : 0;
+   e->cmd      = hbCmd;
+   e->a1_base  = GET32(blitter_ram, A1_BASE);
+   e->a1_flags = GET32(blitter_ram, A1_FLAGS);
+   e->a1_pixel = GET32(blitter_ram, A1_PIXEL);
+   e->a1_step  = GET32(blitter_ram, BDBG_A1_STEP);
+   e->a2_base  = GET32(blitter_ram, BDBG_A2_BASE);
+   e->a2_flags = GET32(blitter_ram, A2_FLAGS);
+   e->a2_pixel = GET32(blitter_ram, A2_PIXEL);
+   e->a2_step  = GET32(blitter_ram, BDBG_A2_STEP);
+   e->count    = hbCount;
+   e->engine   = vjs.useFastBlitter ? 0u : 1u;
+   blitDbgHead++;
+}
+
+unsigned BlitterDbgLogHead(void)
+{
+   return blitDbgHead;
+}
+
+int BlitterDbgLogGet(unsigned i, struct vj_debug_blit *o)
+{
+   if (!o || !blitDbgRing || i >= blitDbgHead
+         || blitDbgHead - i > VJ_DBG_BLIT_LOG_SIZE)
+      return 0;
+   *o = blitDbgRing[i % VJ_DBG_BLIT_LOG_SIZE];
+   return 1;
+}
+
+/* Content unload / retro_deinit: free the ring, reset every static
+ * (iOS never dlcloses the core). */
+void BlitterDbgLogReset(void)
+{
+   blitDbgLogOn = 0;
+   free(blitDbgRing);
+   blitDbgRing = NULL;
+   blitDbgHead = 0;
+   blitDbgFramePtr = NULL;
+}
+
+
 void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
    BlitterWriteByte(offset + 0, data >> 8, who);
@@ -578,6 +661,11 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * ends, so the per-frame watchdog would never see it. */
       CrashDetectNoteBlit(hbCount, hbCmd, GET32(blitter_ram, A1_BASE),
                           hbFlags, hbX);
+
+      /* App debug interface: record the launch (host-side, invisible to
+       * the emulated machine).  One never-taken branch when detached. */
+      if (blitDbgLogOn)
+         BlitterDbgLogNote(hbCmd, hbCount);
 
       blit_in_progress = 1;
       if (BlitterCompareIsEnabled())

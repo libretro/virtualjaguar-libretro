@@ -41,6 +41,7 @@ static void usage(const char* argv0) {
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi]\n"
         "     [--font retro|system|mono[:SIZE]|custom:FILE] [--font-then SPEC]   (this run only; --font-then switches live after 60 frames)\n"
         "     [--show-window settings[-video|-input|-audio|-bios|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
+        "     [--show-window memory|palette|scanner|objects|blitter|textures|scope]   (Tools windows; needs a game)\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"

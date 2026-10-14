@@ -123,3 +123,7 @@ _vjtrace_*
 # exercised call site, so nothing else would catch a regression.
 _VJPerf*
 _vjPerfActive
+# App debug interface (src/debug/vjdebug.c): test/test_debug_iface.c calls the accessor
+# directly as well as through the private frontend channel.
+_VJDebug*
+_vjDebugFrame

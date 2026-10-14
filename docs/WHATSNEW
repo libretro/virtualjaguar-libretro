@@ -82,6 +82,12 @@ docs/RELEASE_NOTES_v3.8.1.md
 * BIOS files in library folders show in the BIOS tab and can be
   copied to the system folder in one click; Ctrl/Cmd+scroll or pinch
   resizes the library tiles (#899).
+* Debug tools (Tools menu): memory viewer/editor, palette editor,
+  cheat scanner, Object Processor list with bitmap preview, blitter
+  log, texture browser (export/replace tiles), audio scope; F9 break,
+  F10 step. Register writes need a tick, CD registers and B_CMD/G_CTRL/
+  D_CTRL/OLP/LTXD/RTXD are never written; all off under RetroAchievements
+  hardcore; RetroArch unaffected (docs/app-debug-tools.md, #833, #652).
 * Local signing: app/packaging/local-package.sh --sign [--notarize]
   signs your own build with a certificate found on the machine or set
   in a gitignored .env (macOS Developer ID, Windows pfx/store) (#839).

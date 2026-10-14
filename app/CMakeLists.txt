@@ -309,6 +309,25 @@ set(VJ_APP_SOURCES
     src/netplay.cpp
     src/netplay_addr.cpp
     src/netplay_ui.cpp
+    # Debug tools (#652 / #833): the session, the Tools menu and one window (+ its pure logic) per tool.
+    src/debug/debug_session.cpp
+    src/debug/debug_ui.cpp
+    src/debug/memory_view.cpp
+    src/debug/memory_ui.cpp
+    src/debug/clut_ui.cpp
+    src/debug/cheat_scan.cpp
+    src/debug/scanner_actions.cpp
+    src/debug/scanner_ui.cpp
+    src/debug/op_decode.cpp
+    src/debug/op_render.cpp
+    src/debug/op_view.cpp
+    src/debug/op_ui.cpp
+    src/debug/texture_pack.cpp
+    src/debug/texture_ui.cpp
+    src/debug/blitter_log.cpp
+    src/debug/blitter_ui.cpp
+    src/debug/audio_ring.cpp
+    src/debug/scope_ui.cpp
     src/desktop.cpp
     src/platform/commands.cpp
     src/platform/events.cpp
@@ -351,7 +370,7 @@ vj_app_shaders(virtualjaguar)
 vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 vj_optimise(virtualjaguar)
-target_include_directories(virtualjaguar PRIVATE src)
+target_include_directories(virtualjaguar PRIVATE src src/debug "${VJ_ROOT}/src/debug")
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
@@ -405,6 +424,9 @@ endif()
 # bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
 install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
 
+# CPU debugger (debug tools WP4): vendored Musashi disassembler + cpu_view / cpu_ui + their tests.
+include(VJDebugCpu)
+
 # The libretro Jaguar cheat database (#835): pinned download, bundled by default.
 include(VJCheatData)
 
@@ -417,6 +439,7 @@ if(VJ_APP_BUILD_TESTS)
     include(VJAchTests)
     include(VJCheatTests)
     include(VJNetplayTests)
+    include(VJDebugTests)
     include(VJPlatformTests)
     include(VJDiscordTests)
     include(VJThemeTests)

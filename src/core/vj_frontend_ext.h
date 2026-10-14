@@ -35,6 +35,13 @@
  *     was.  The core validates whatever file it is handed (size, header or
  *     checksum) and falls back the same way if it does not pass.
  *
+ *   - Debug tools.  A frontend that sets VJ_CAP_DEBUG is handed, once, right after
+ *     the HELLO, a pointer to the core's debug interface (VJ_ENV_SET_DEBUG_IFACE;
+ *     struct vj_debug_iface in src/debug/vj_debug_iface.h, static lifetime).
+ *     Every later call through it is made by the frontend, on the emulation
+ *     thread, between retro_run() calls or from the halt pump.  Nothing is sent
+ *     to a frontend without the bit.
+ *
  * Adding an event type, a command id, a capability bit or a trailing struct
  * field is compatible; anything else bumps VJ_FRONTEND_EXT_ABI.
  */
@@ -55,10 +62,12 @@ extern "C" {
 #define VJ_ENV_EVENT  (VJ_ENV_BASE + 1)   /* data: const struct vj_event* */
 #define VJ_ENV_GET_BIOS_PATH   (VJ_ENV_BASE + 2)   /* data: struct vj_env_bios_path*; needs VJ_CAP_BIOS */
 #define VJ_ENV_GET_BOOT_TARGET (VJ_ENV_BASE + 3)   /* data: unsigned* (VJ_BOOT_*);    needs VJ_CAP_BIOS */
+#define VJ_ENV_SET_DEBUG_IFACE (VJ_ENV_BASE + 4)   /* data: const struct vj_debug_iface* (static lifetime); needs VJ_CAP_DEBUG */
 
 /* Capability bits the frontend may report in caps_out. */
 #define VJ_CAP_EVENTS 0x1u   /* will accept VJ_ENV_EVENT (always set by an answering frontend) */
 #define VJ_CAP_BIOS   0x2u   /* answers VJ_ENV_GET_BIOS_PATH / VJ_ENV_GET_BOOT_TARGET */
+#define VJ_CAP_DEBUG  0x4u   /* accepts VJ_ENV_SET_DEBUG_IFACE (src/debug/vj_debug_iface.h) */
 
 /* BIOS roles, for VJ_ENV_GET_BIOS_PATH and the VJ_EVT_BIOS_* events. */
 #define VJ_BIOS_CART_BOOT 1u   /* the 128 KB console boot ROM at $E00000 */

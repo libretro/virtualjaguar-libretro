@@ -322,8 +322,10 @@ The name spells the field order: **C**yan, **R**ed, intensit**Y**.
 CRY advantages: smooth Gouraud shading (just interpolate intensity/Y), compact colour space.
 
 ### RGB16
-16-bit per pixel: R[15:11] (5-bit), G[10:5] (6-bit?), B[4:0] (5-bit)
-Standard 5-6-5 or 5-5-5+1 format depending on VMODE settings.
+16-bit per pixel (VMODE MODE=3): R[15:11] (5-bit), B[10:6] (5-bit), G[5:0] (6-bit).
+This is **not** the usual 5-6-5 layout: green is the low six bits and blue sits above it.
+Source: JTRM Rev 8 p.13 (VMODE, MODE 3, "16-bit RGB"): "Bits [0-5] are green, bits [6-10] are blue
+and bits [11-15] are red."  `src/tom/tom.c` `RGB16ToRGB32[]` builds the same split.
 
 ### Indexed (1/2/4/8 bpp)
 Lower bit depths use a CLUT (colour lookup table) in TOM. The INDEX field in BITOBJ adds an offset to the pixel value before CLUT lookup, allowing multiple objects to share the same CLUT with different palettes.

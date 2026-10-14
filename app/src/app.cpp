@@ -286,6 +286,7 @@ void App::shutdown() {
     ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
+    shutdownDebugTools();    // the Textures / Object list windows hold GL textures
     video.shutdown();
     if (imguiUp_) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -328,6 +329,65 @@ void App::wireHost() {
         else cfg.set("opt." + k, v);
     };
     host.setLogVerbose(false);
+
+    // ---- debug tools (debug/debug_session.h) -----------------------------------------------------
+    host.onDebugIface = [this](const vj_debug_iface* i) { debug.setIface(i); };
+    debug.runUiFrame = [this] { haltedFrame(); };         // the core is parked in retro_run(): UI only
+    debug.abortHalt = [this] { return quit; };            // closing the window while halted lets the core go
+    debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
+    debug.onHalt.push_back([this](int target, unsigned pc, int reason) {
+        audio.setPaused(true);                            // no stale buffer droning while the game is stopped
+        if (reason == VJ_DBG_STOP_STEP) return;
+        const char* who = target == VJ_DBG_TARGET_GPU ? "GPU" : target == VJ_DBG_TARGET_DSP ? "DSP" : "68000";
+        char msg[96];
+        std::snprintf(msg, sizeof msg, "Halted: %s at $%06X - F9 continues, F10 steps", who, pc);
+        toast(msg, 4.0);
+    });
+    debug.onResume.push_back([this] {
+        audio.clear();
+        audio.setPaused(paused);
+        accum_ = 0;
+        lastTick_ = now();                                // the halt must not count as elapsed emulation time
+    });
+
+    // Every tool window plugs in through DebugSession::addProvider (addDebugTools, debug/debug_ui.cpp).  After
+    // host.onAudio is set above (the audio scope chains onto it) and paths.instance is settled (Textures).
+    addDebugTools(*this);
+}
+
+void App::syncDebug() {
+    debug.setContentLoaded(host.isLoaded());
+    debug.setHardcore(ach.hardcoreActive());
+    debug.tick(now(), host.isLoaded() && !paused && !debug.halted());
+}
+
+// One UI frame without stepping the emulation: events, ImGui, present.  The debugger's halt pump calls this
+// repeatedly while the core is parked inside retro_run() at a breakpoint (docs/app-debug-tools.md), so
+// nothing here may re-enter the core -- CoreHost refuses state loads, resets, loads and option changes
+// while inFrame().
+void App::haltedFrame() {
+    if (!imguiUp_ || !window_) {
+        debug.detachAndResume();   // no UI to release the core with: never leave it parked
+        return;
+    }
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) handleEvent(e, false);
+    if (quit) return;
+    inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
+    inputFrame(*this);
+    ach.pump();
+    syncDebug();
+    video.upload(host.frame());
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    bool capKb = false;
+    drawUi(*this, capKb);
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    SDL_GL_SwapWindow(window_);
+    updateTitle();
+    if (!vsync) SDL_DelayNS(8000000);   // no swap-interval pacing: do not spin while stopped
 }
 
 void App::applyTheme() {
@@ -413,6 +473,10 @@ void App::applyBios() {
 }
 
 bool App::openContent(const std::string& pathIn) {
+    if (host.inFrame()) {
+        toast("The debugger has the game halted - resume it first", 2.5, 2);
+        return false;
+    }
     const std::string path = absolutePath(pathIn);
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
     resumeOffer.active = false;
@@ -452,6 +516,7 @@ bool App::openContent(const std::string& pathIn) {
     addRecent(path);
     library.noteLaunched(path);   // the library's recently played (library_lists.h)
     invalidateThumbs();
+    debug.requestRefresh();
     ach.onContentLoaded();   // identify the game, look up its achievements
     discordNoteGameStarted(*this);
     cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
@@ -463,6 +528,10 @@ bool App::openContent(const std::string& pathIn) {
 }
 
 bool App::openNoContent() {
+    if (host.inFrame()) {
+        toast("The debugger has the game halted - resume it first", 2.5, 2);
+        return false;
+    }
     pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
     resumeOffer.active = false;
     autoSave();
@@ -494,6 +563,10 @@ bool App::openNoContent() {
 }
 
 bool App::bootBios(bios::Role role, const std::string& file) {
+    if (host.inFrame()) {
+        toast("The debugger has the game halted - resume it first", 2.5, 2);
+        return false;
+    }
     for (std::string& f : biosOnce_) f.clear();
     if (role == bios::CartBoot || role == bios::Cd) biosOnce_[role] = file.empty() ? std::string() : absolutePath(file);
     bootTarget_ = role == bios::CartBoot ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
@@ -534,10 +607,15 @@ bool App::reloadContent() {
 
 void App::closeContent() {
     if (!host.isLoaded()) return;
+    if (host.inFrame()) {
+        toast("The debugger has the game halted - resume it first", 2.5, 2);
+        return;
+    }
     pendingStateSlot_ = kNoPendingSlot;
     resumeOffer.active = false;
     autoSave();
     host.unloadContent();
+    debug.requestRefresh();
     ach.onContentClosed();
     cheatsOnClose(*this);
     audio.clear();
@@ -547,7 +625,12 @@ void App::closeContent() {
 
 void App::reset() {
     if (!host.isLoaded()) return;
+    if (host.inFrame()) {
+        toast("The debugger has the game halted - resume it first", 2.5, 2);
+        return;
+    }
     host.reset();
+    debug.requestRefresh();
     ach.onReset();
     toast("Reset");
 }
@@ -731,6 +814,7 @@ bool App::loadState(int slot) {
     }
     audio.clear();
     cheatsAfterStateLoad(*this);
+    debug.requestRefresh();
     ach.onStateLoaded(statePath(slot));
     toast("State loaded from " + lib::stateLabel(slot));
     return true;
@@ -799,6 +883,10 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         toast("State slot " + std::to_string(stateSlot), 1.2);
         break;
     case SDLK_F8: togglePause(); break;
+    case SDLK_F9:   // debugger: continue when halted, otherwise break at the next instruction
+        if (debug.halted()) debug.resume();
+        else if (debug.enabled()) debug.breakNow();
+        break;
     case SDLK_O:
         if (mod) showOpenDialog();
         break;
@@ -820,6 +908,12 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
 
 void App::handleEvent(const SDL_Event& e, bool headless) {
     if (!headless && imguiUp_) ImGui_ImplSDL3_ProcessEvent(&e);
+    // F10 steps while a processor is halted (it releases a captured mouse otherwise, which input.cpp owns).
+    if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F10 && debug.halted() &&
+        !(imguiUp_ && ImGui::GetIO().WantTextInput)) {
+        debug.step();
+        return;
+    }
     if (input.handleEvent(e)) return;
     switch (e.type) {
     case SDL_EVENT_QUIT:
@@ -910,7 +1004,7 @@ void App::stepEmulation() {
     double t = now();
     double dt = t - lastTick_;
     lastTick_ = t;
-    if (!host.isLoaded() || paused) {
+    if (!host.isLoaded() || paused || debug.halted()) {
         accum_ = 0;
         return;
     }
@@ -1078,6 +1172,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "theme-editor") showThemeEditor = true;
     else if (a.showWindow == "controls") input.controls.show = true;
+    else if (openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
     unsigned uiFrames = 0;
 
     std::string firstErr;
@@ -1124,6 +1219,7 @@ int App::runInteractive(const CliArgs& a) {
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
+        syncDebug();
         discordTick(*this);
         perf.lap(Perf::Events);
         stepEmulation();

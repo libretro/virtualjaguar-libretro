@@ -16,6 +16,7 @@
 #include "cheats.h"
 #include "config.h"
 #include "core_host.h"
+#include "debug/debug_session.h"
 #include "fonts.h"
 #include "discord_presence.h"
 #include "input.h"
@@ -120,6 +121,7 @@ public:
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
+    DebugSession debug;      // the core's debug interface: Tools menu, halt pump, breakpoints (debug/debug_session.h)
     discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
     struct DiscordState {        // what discordTick() remembers between calls
         double lastTick = -1;
@@ -250,6 +252,8 @@ private:
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+    void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
+    void syncDebug();                 // content loaded / hardcore -> the debug session
     void frameUi();
     void updateTitle();
     uint32_t frameHash() const;
@@ -321,6 +325,15 @@ void drawCheats(App& app);
 void drawDesktopSettings(App& app);
 // Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
 void drawLibraryHome(App& app, float x, float y, float w, float h);
+// Debug tools (debug/debug_ui.cpp): the Tools menu, the "halted" bar, and every tool window's draw hook.
+void drawToolsMenu(App& app);
+void drawDebugOverlay(App& app, float areaX, float areaY);   // the "halted" bar
+void drawDebugWindows(App& app);                            // every registered provider's and tool's draw hook
+void addDebugTools(App& app);                               // plug every tool window into app.debug (DebugSession::addProvider)
+void shutdownDebugTools();                                  // before the GL context goes: frees the windows' textures
+// Dev (--show-window): opens a Tools window by name -- memory, palette|clut, scanner, objects, blitter, textures,
+// scope -- once the session can use it (retried each frame until then).  False if the name is not a debug tool.
+bool openDebugWindow(DebugSession& session, const std::string& name);
 // Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.
 bool netplayInit(App& app, const CliArgs& a);               // log tap + --netplay*; false = bad arguments
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
