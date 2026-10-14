@@ -2,7 +2,7 @@
 // producing.  App-only: it listens to the audio callback; the core is not involved.  Logic in audio_ring.*.
 //
 //   scopeToolInit(session, host)   once, AFTER the host's audio callback is wired (it chains onto it)
-//   scopeToolDraw()                every UI frame
+//   scopeToolDraw()                the window; DebugSession::drawTools() calls it every UI frame
 //
 // While the window is closed the tap does nothing (one flag test per audio block).
 #pragma once

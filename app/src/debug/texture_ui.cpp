@@ -23,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -62,7 +63,7 @@ struct State {
     DebugSession* session = nullptr;
     CoreHost* host = nullptr;
     const Paths* paths = nullptr;
-    SDL_Window* window = nullptr;
+    std::function<SDL_Window*()> window;
     bool open = false;
     bool registered = false;
 
@@ -301,13 +302,14 @@ void handlePending() {
 }
 
 void startDialog(const char* kind, const std::string& hash) {
-    if (!g.window) return;
+    SDL_Window* win = g.window ? g.window() : nullptr;
+    if (!win) return;
     DialogReq* req = new DialogReq{kind, hash};
     if (std::strcmp(kind, "export") == 0) {
-        SDL_ShowOpenFolderDialog(dialogDone, req, g.window, nullptr, false);
+        SDL_ShowOpenFolderDialog(dialogDone, req, win, nullptr, false);
     } else {
         static SDL_DialogFileFilter flt[2] = {{"PNG images", "png"}, {"All files", "*"}};
-        SDL_ShowOpenFileDialog(dialogDone, req, g.window, flt, 2, nullptr, false);
+        SDL_ShowOpenFileDialog(dialogDone, req, win, flt, 2, nullptr, false);
     }
 }
 
@@ -490,11 +492,11 @@ void drawBody(double now) {
 
 }  // namespace
 
-void textureToolInit(DebugSession& session, CoreHost& host, const Paths& paths, SDL_Window* window) {
+void textureToolInit(DebugSession& session, CoreHost& host, const Paths& paths, std::function<SDL_Window*()> window) {
     g.session = &session;
     g.host = &host;
     g.paths = &paths;
-    g.window = window;
+    g.window = std::move(window);
     for (const auto& kv : tex::sessionOverrides(paths.instance)) host.overrideOption(kv.first, kv.second);
     if (!g.registered) {
         g.registered = true;
@@ -504,6 +506,7 @@ void textureToolInit(DebugSession& session, CoreHost& host, const Paths& paths, 
     t.id = "textures";
     t.label = "Textures...";
     t.isOpen = [] { return g.open; };
+    t.draw = [] { textureToolDraw(); };
     t.toggle = [] {
         g.open = !g.open;
         if (g.open) g.nextPoll = 0;

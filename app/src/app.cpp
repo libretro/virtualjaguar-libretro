@@ -1,4 +1,7 @@
 #include "app.h"
+#include "debug/blitter_ui.h"
+#include "debug/scope_ui.h"
+#include "debug/texture_ui.h"
 #include "devices_ui.h"
 
 #include "imgui.h"
@@ -256,6 +259,7 @@ void App::shutdown() {
     ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
+    textureToolShutdown();   // the Textures window's thumbnails are GL textures
     video.shutdown();
     if (imguiUp_) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -318,6 +322,13 @@ void App::wireHost() {
         accum_ = 0;
         lastTick_ = now();                                // the halt must not count as elapsed emulation time
     });
+
+    // WP6 / WP7 tool windows: each registers its Tools entry and draw hook (DebugSession::drawTools).  The scope
+    // taps host.onAudio, so it comes after that callback is set above; the Textures window reads paths.instance,
+    // which applyInstance() has already settled.
+    textureToolInit(debug, host, paths, [this] { return window_; });
+    blitterToolInit(debug);
+    scopeToolInit(debug, host);
 }
 
 void App::syncDebug() {

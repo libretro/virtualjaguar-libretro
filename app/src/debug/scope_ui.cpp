@@ -100,6 +100,7 @@ void scopeToolInit(DebugSession& session, CoreHost& host) {
     t.id = "scope";
     t.label = "Audio scope...";
     t.isOpen = [] { return g.open; };
+    t.draw = [] { scopeToolDraw(); };
     t.toggle = [] {
         g.open = !g.open;
         g.ring.clear();

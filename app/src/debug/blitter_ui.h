@@ -1,8 +1,8 @@
 // The Blitter inspector (Tools > Blitter log...): the last launches the core logged, decoded, plus
 // the live blitter registers.  Logic in blitter_log.*.
 //
-//   blitterToolInit(session)   once: registers the Tools entry "blitter"
-//   blitterToolDraw()          every UI frame (cheap when closed)
+//   blitterToolInit(session)   once: registers the Tools entry "blitter" and its draw hook
+//   blitterToolDraw()          the window; DebugSession::drawTools() calls it every UI frame (cheap when closed)
 //
 // The core's launch log is only switched on while the window is open (and the tools are enabled).
 #pragma once
