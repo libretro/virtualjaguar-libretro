@@ -306,7 +306,7 @@ void DebugSession::registerPlaceholderTools() {
     } kTools[] = {
         {"memory", "Memory viewer..."}, {"clut", "Palette (CLUT)..."}, {"scanner", "Cheat scanner..."},
         {"cpu", "CPU debugger..."},     {"objects", "Object list..."}, {"blitter", "Blitter log..."},
-        {"textures", "Textures..."},
+        {"textures", "Textures..."},     {"scope", "Audio scope..."},
     };
     for (const auto& t : kTools) {
         if (findTool(t.id)) continue;   // a real window got there first

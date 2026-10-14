@@ -269,7 +269,12 @@ void drawLibraryHome(App& app, float x, float y, float w, float h);
 // Debug tools (debug/debug_ui.cpp): the Tools menu, the "halted" bar, and every tool window's draw hook.
 void drawToolsMenu(App& app);
 void drawDebugOverlay(App& app, float areaX, float areaY);   // the "halted" bar
-void drawDebugWindows(App& app);                            // every registered tool's draw hook
+void drawDebugWindows(App& app);                            // every registered provider's and tool's draw hook
+void addDebugTools(App& app);                               // plug every tool window into app.debug (DebugSession::addProvider)
+void shutdownDebugTools();                                  // before the GL context goes: frees the windows' textures
+// Dev (--show-window): opens a Tools window by name -- memory, palette|clut, scanner, objects, blitter, textures,
+// scope -- once the session can use it (retried each frame until then).  False if the name is not a debug tool.
+bool openDebugWindow(DebugSession& session, const std::string& name);
 // Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.
 bool netplayInit(App& app, const CliArgs& a);               // log tap + --netplay*; false = bad arguments
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)

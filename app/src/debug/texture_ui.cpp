@@ -73,6 +73,7 @@ struct State {
     tex::DumpIndex index;
     std::unordered_set<std::string> packed;     // hashes with a pack file
     double nextPoll = 0;
+    uint64_t seenSerial = 0;                    // DebugSession::refreshSerial() the folders were last re-read for
     uint64_t revision = 1;                      // bumps when the entry list or the pack set changes
 
     std::unordered_map<std::string, Thumb> thumbs;
@@ -506,7 +507,6 @@ void textureToolInit(DebugSession& session, CoreHost& host, const Paths& paths, 
     t.id = "textures";
     t.label = "Textures...";
     t.isOpen = [] { return g.open; };
-    t.draw = [] { textureToolDraw(); };
     t.toggle = [] {
         g.open = !g.open;
         if (g.open) g.nextPoll = 0;
@@ -524,6 +524,13 @@ void textureToolDraw() {
     ui::keepOnScreen();
     if (shown) {
         if (g.session->enabled()) {
+            // A state load / reset / frame advance (the session's refresh serial) re-reads the folders without waiting
+            // out the 1 s poll -- but at most 4 times a second, since the serial also ticks at 10 Hz while the game runs.
+            const uint64_t ser = g.session->refreshSerial();
+            if (ser != g.seenSerial) {
+                g.seenSerial = ser;
+                if (g.nextPoll <= now + kPollSeconds - 0.25) g.nextPoll = 0;   // the last poll was >= 0.25 s ago
+            }
             pollFiles(now);
             handlePending();
         }

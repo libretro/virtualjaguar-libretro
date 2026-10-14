@@ -1,8 +1,4 @@
 #include "app.h"
-#include "debug/op_ui.h"
-#include "debug/blitter_ui.h"
-#include "debug/scope_ui.h"
-#include "debug/texture_ui.h"
 #include "devices_ui.h"
 
 #include "imgui.h"
@@ -260,7 +256,7 @@ void App::shutdown() {
     ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
-    textureToolShutdown();   // the Textures window's thumbnails are GL textures
+    shutdownDebugTools();    // the Textures / Object list windows hold GL textures
     video.shutdown();
     if (imguiUp_) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -308,8 +304,7 @@ void App::wireHost() {
     host.onDebugIface = [this](const vj_debug_iface* i) { debug.setIface(i); };
     debug.runUiFrame = [this] { haltedFrame(); };         // the core is parked in retro_run(): UI only
     debug.abortHalt = [this] { return quit; };            // closing the window while halted lets the core go
-    registerObjectsTool(*this);                           // Tools > Object list... (debug/op_ui.cpp)
-    debug.registerPlaceholderTools();
+    debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
     debug.onHalt.push_back([this](int target, unsigned pc, int reason) {
         audio.setPaused(true);                            // no stale buffer droning while the game is stopped
         if (reason == VJ_DBG_STOP_STEP) return;
@@ -325,12 +320,9 @@ void App::wireHost() {
         lastTick_ = now();                                // the halt must not count as elapsed emulation time
     });
 
-    // WP6 / WP7 tool windows: each registers its Tools entry and draw hook (DebugSession::drawTools).  The scope
-    // taps host.onAudio, so it comes after that callback is set above; the Textures window reads paths.instance,
-    // which applyInstance() has already settled.
-    textureToolInit(debug, host, paths, [this] { return window_; });
-    blitterToolInit(debug);
-    scopeToolInit(debug, host);
+    // Every tool window plugs in through DebugSession::addProvider (addDebugTools, debug/debug_ui.cpp).  After
+    // host.onAudio is set above (the audio scope chains onto it) and paths.instance is settled (Textures).
+    addDebugTools(*this);
 }
 
 void App::syncDebug() {
@@ -978,7 +970,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "keypad") input.overlay.open = true;
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "controls") input.controls.show = true;
-    else if (a.showWindow == "objects") setObjectsWindowOpen(true);
+    else if (openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
     unsigned uiFrames = 0;
 
     std::string firstErr;

@@ -61,19 +61,18 @@ void OpViewModel::absorb(DebugSession& s) {
     if (n < 0) return;                       // armed, no walk finished yet
     objs_ = opDecodeAll(buf.data(), n);
     snapshotCount_ = (size_t)n;
-    if (followLinks && n > 0) {
-        std::vector<OpObject> walk = opWalkList(&peekReader, const_cast<vj_debug_iface*>(i), objs_[0].address,
-                                                (unsigned)VJ_DBG_OP_MAX_OBJECTS);
-        size_t room = (size_t)VJ_DBG_OP_MAX_OBJECTS > objs_.size() ? (size_t)VJ_DBG_OP_MAX_OBJECTS - objs_.size() : 0;
-        for (OpObject& w : walk) {
-            if (room == 0) break;
-            bool inSnap = false;
-            for (size_t k = 0; k < snapshotCount_; k++)
-                if (objs_[k].address == w.address) { inSnap = true; break; }
-            if (inSnap) continue;
-            if (w.warning.empty() && w.isBitmap()) w.warning = "read from RAM after the frame: HEIGHT / DATA may be advanced";
-            objs_.push_back(std::move(w));
-            room--;
+    // The core's snapshot is the whole display list (both arms of every branch).  Only when it came back
+    // empty -- an older core, or the walk found no list -- fall back to following the links through DRAM from
+    // OLP; those objects are read after the frame (fromRam), so HEIGHT / DATA may already be advanced.
+    if (followLinks && n == 0) {
+        unsigned lo = 0, hi = 0;
+        if (s.readU(0xF00020, 2, lo) && s.readU(0xF00022, 2, hi)) {   // OLP is LO / HI word (op.c OPGetListPointer)
+            std::vector<OpObject> walk = opWalkList(&peekReader, const_cast<vj_debug_iface*>(i), lo | (hi << 16),
+                                                    (unsigned)VJ_DBG_OP_MAX_OBJECTS);
+            for (OpObject& w : walk) {
+                if (w.warning.empty() && w.isBitmap()) w.warning = "read from RAM after the frame: HEIGHT / DATA may be advanced";
+                objs_.push_back(std::move(w));
+            }
         }
     }
     halfline_ = hl;

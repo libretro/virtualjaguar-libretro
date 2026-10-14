@@ -140,7 +140,7 @@ public:
     const std::vector<DebugTool>& tools() const { return tools_; }
     DebugTool* findTool(const std::string& id);
     // Greyed placeholders for the windows the later work packages add: Memory, CLUT, Cheat scanner, CPU,
-    // Objects, Blitter, Textures.
+    // Objects, Blitter, Textures, Audio scope.
     void registerPlaceholderTools();
     // Asks every open tool window to close (hardcore, a content change).
     void closeAllTools(const char* why);

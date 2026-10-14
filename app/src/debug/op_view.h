@@ -17,9 +17,9 @@ class OpViewModel {
 public:
     // ---- settings (the UI edits these) -------------------------------------------------------
     bool live = true;                 // re-arm the snapshot at the session's refresh cadence
-    // The core's snapshot is the first OP walk after arming -- an early half-line, so a list gated by
-    // branch objects shows only the part above the first gate.  With this on, the rest of the list is
-    // found by following the links through DRAM (marked fromRam: those values are read after the frame).
+    // The core's snapshot is the whole display list at the top of the next field (both arms of every branch).
+    // Fallback only: when it comes back empty, walk the list from OLP through DRAM instead (objects marked
+    // fromRam: their HEIGHT / DATA are read after the frame and may be advanced).
     bool followLinks = true;
     OpRenderOptions render;
 
@@ -33,7 +33,7 @@ public:
     bool waiting() const { return waiting_; }
     bool haveSnapshot() const { return have_; }
     unsigned halfline() const { return halfline_; }
-    size_t snapshotCount() const { return snapshotCount_; }   // objects[0..n) are the core's snapshot, the rest fromRam
+    size_t snapshotCount() const { return snapshotCount_; }   // the objects the core's snapshot held (0 when the fromRam fallback is showing)
     unsigned armCount() const { return arms_; }
     const std::vector<OpObject>& objects() const { return objs_; }
     void clear();                     // drops everything (content closed, tools forced shut)

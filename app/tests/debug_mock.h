@@ -121,6 +121,7 @@ public:
     std::vector<int> haltNexts;                          // targets halt_next() was called for
     bool refuseAttach = false;                           // attach() answers 0
     bool opReady = true;                                 // op_snapshot_get() returns -1 while false
+    void clearOpSnapshot() { op_.clear(); }              // op_snapshot_get() then returns 0 (an older core / no list)
 
     // Plays the core's halt loop: calls the attached host's halt_pump (as GDBHalt does every
     // iteration) until it returns something other than VJ_DBG_RESUME_NONE.  `script`, if given,

@@ -1,6 +1,12 @@
 // The Tools menu, the "halted" bar and the hook every debug tool window draws through.  The logic lives
 // in DebugSession (debug_session.*), which has no ImGui and is unit-tested against the mock core.
 #include "app.h"
+#include "blitter_ui.h"
+#include "memory_ui.h"
+#include "op_ui.h"
+#include "scanner_ui.h"
+#include "scope_ui.h"
+#include "texture_ui.h"
 #include "imgui.h"
 
 namespace vj {
@@ -85,5 +91,39 @@ void drawDebugOverlay(App& app, float areaX, float areaY) {
 }
 
 void drawDebugWindows(App& app) { app.debug.drawTools(); }
+
+// One provider per tool file: `registerTools` puts the Tools-menu entry in place of the greyed placeholder (and
+// hooks the forced-close path), `draw` runs once per UI frame -- also during a halt -- and the window checks its
+// own open state.  Nothing else in the app calls a tool's draw function.
+void addDebugTools(App& app) {
+    DebugSession& d = app.debug;
+    d.addProvider({[](DebugSession& s) { registerMemoryTools(s); },     // Memory viewer + Palette (CLUT)
+                   [&app](DebugSession& s) { drawMemoryTools(s, &app.cheats); }});
+    d.addProvider({[](DebugSession& s) { registerScannerTool(s); },
+                   [&app](DebugSession& s) { drawScanner(s, app.cheats, app.host); }});
+    d.addProvider({[](DebugSession& s) { registerObjectsTool(s); },
+                   [&app](DebugSession&) { drawObjectsTool(app); }});
+    d.addProvider({[](DebugSession& s) { blitterToolInit(s); },
+                   [](DebugSession&) { blitterToolDraw(); }});
+    // The Textures window reads paths.instance (settled by now) and opens file dialogs on the main window.
+    d.addProvider({[&app](DebugSession& s) { textureToolInit(s, app.host, app.paths, [&app] { return app.window(); }); },
+                   [](DebugSession&) { textureToolDraw(); }});
+    // The scope chains onto host.onAudio, so App must have wired that callback before this call.
+    d.addProvider({[&app](DebugSession& s) { scopeToolInit(s, app.host); },
+                   [](DebugSession&) { scopeToolDraw(); }});
+}
+
+void shutdownDebugTools() {
+    textureToolShutdown();
+    releaseObjectsTextures();
+}
+
+bool openDebugWindow(DebugSession& session, const std::string& name) {
+    const std::string id = name == "palette" ? "clut" : name;
+    DebugTool* t = session.findTool(id);
+    if (!t || !t->toggle) return false;
+    if (!(t->isOpen && t->isOpen())) t->toggle();
+    return true;
+}
 
 }  // namespace vj

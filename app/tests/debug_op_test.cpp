@@ -844,10 +844,22 @@ static void testViewModelFollowLinks() {
     CHECK(vm.followLinks);
     vm.update(s);
     vm.update(s);
-    // The mock's snapshot has 4 objects (0x1000, 0x1020, 0x1040, 0x1048); the RAM list adds three more.
+    // The core's snapshot is the whole list: the RAM walk is NOT consulted while it has objects, even though
+    // the mock's RAM holds three more (0x1050, 0x1070, 0x1100).
     CHECK_EQ(vm.snapshotCount(), 4);
+    CHECK_EQ(vm.objects().size(), 4);
+    for (const OpObject& o : vm.objects()) CHECK(!o.fromRam);
+    // An empty snapshot (older core): the fallback walks the list from OLP ($F00020, LO / HI word) through RAM.
+    m.clearOpSnapshot();
+    m.regwin()[0x20] = 0x10;   // OLP = $001000: low word $1000 at $F00020, high word 0 at $F00022
+    m.regwin()[0x21] = 0x00;
+    m.regwin()[0x22] = 0x00;
+    m.regwin()[0x23] = 0x00;
+    vm.arm(s);
+    vm.update(s);
+    CHECK_EQ(vm.snapshotCount(), 0);
     CHECK_EQ(vm.objects().size(), 7);
-    for (size_t i = 0; i < vm.objects().size(); i++) CHECK_EQ(vm.objects()[i].fromRam, i >= 4);
+    for (const OpObject& o : vm.objects()) CHECK(o.fromRam);
     CHECK_EQ(vm.objects()[4].address, 0x1050);
     CHECK(!vm.objects()[4].warning.empty());
     // A selected RAM-only object stays selected across the next snapshot (by address).
@@ -857,12 +869,11 @@ static void testViewModelFollowLinks() {
     vm.update(s);
     vm.update(s);
     CHECK_EQ(vm.selected(), 5);
-    // Off: just the snapshot.
+    // Fallback off: just the (empty) snapshot.
     vm.followLinks = false;
     vm.arm(s);
     vm.update(s);
-    CHECK_EQ(vm.objects().size(), 4);
-    CHECK_EQ(vm.snapshotCount(), 4);
+    CHECK_EQ(vm.objects().size(), 0);
 }
 
 static void testViewModelPaint() {

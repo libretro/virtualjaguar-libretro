@@ -156,8 +156,8 @@ void drawList(const ObjectsContext& ctx, const std::vector<int>& rows) {
             if (ImGui::IsItemHovered()) {
                 g.hoverRow = idx;
                 if (o.fromRam)
-                    ImGui::SetTooltip("Found by following the links through RAM after the frame: not part of the captured walk, "
-                                      "and HEIGHT / DATA may already have been advanced by the Object Processor.");
+                    ImGui::SetTooltip("The core returned no snapshot, so this list was read from RAM (from OLP) after the frame: "
+                                      "HEIGHT / DATA may already have been advanced by the Object Processor.");
             }
             ImGui::PopID();
             ImGui::TableNextColumn();
@@ -199,7 +199,7 @@ void drawFields(const OpObject& o) {
     ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
     fieldRow("Object", "%s at $%06X", opTypeName(o.type), o.address);
     fieldRow("Source", "%s", o.fromRam ? "RAM, read after the frame (HEIGHT / DATA may be advanced)"
-                                       : "snapshot of the Object Processor's walk (before write-back)");
+                                       : "core snapshot of the display list (before the Object Processor's write-back)");
     switch (o.type) {
         case OpType::Bitmap:
         case OpType::Scaled:
@@ -454,44 +454,44 @@ void drawOutline(const OpObject& o, const ObjectsContext& ctx, const OpScreenGeo
 }  // namespace
 
 // ---- public -------------------------------------------------------------------------------------------------------------------
-void registerObjectsTool(App& app) {
-    DebugSession& session = app.debug;
+void registerObjectsTool(DebugSession& session) {
     DebugTool t;
     t.id = "objects";
     t.label = "Object list...";
     t.isOpen = [] { return g.open; };
     t.toggle = [] { g.open = !g.open; };
-    t.draw = [&app] {
-        ObjectsContext ctx;
-        const PicRect& pic = app.input.picture();
-        ctx.picX = pic.x;
-        ctx.picY = pic.y;
-        ctx.picW = pic.w;
-        ctx.picH = pic.h;
-        ctx.frameW = app.video.frameWidth();
-        ctx.frameH = app.video.frameHeight();
-        ctx.emulationRunning = !app.paused && !app.debug.halted();
-        // Only when the session is not attached: a frame run from inside this draw hook that then halts would
-        // start a second ImGui frame (App::haltedFrame) inside the current one.
-        if (app.paused && !app.debug.attached() && !app.debug.halted() && !app.host.inFrame() && app.host.isLoaded() &&
-            !app.netplay.configured())
-            ctx.stepFrame = [&app] {
-                app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
-                app.video.upload(app.host.frame());
-            };
-        ctx.createTexture = &VideoOut::createTextureRGBA;
-        ctx.destroyTexture = &VideoOut::destroyTexture;
-        ctx.cheats = &app.cheats;
-        ctx.exportDir = app.paths.root + "debug/";
-        ctx.contentName = app.host.contentName();
-        drawObjectsWindow(app.debug, ctx);
-    };
     session.registerTool(t);
     session.onForcedClose.push_back([](const char*) {
         g.open = false;
         g.vm.clear();
         g.status.clear();
     });
+}
+
+void drawObjectsTool(App& app) {
+    ObjectsContext ctx;
+    const PicRect& pic = app.input.picture();
+    ctx.picX = pic.x;
+    ctx.picY = pic.y;
+    ctx.picW = pic.w;
+    ctx.picH = pic.h;
+    ctx.frameW = app.video.frameWidth();
+    ctx.frameH = app.video.frameHeight();
+    ctx.emulationRunning = !app.paused && !app.debug.halted();
+    // Only when the session is not attached: a frame run from inside this draw hook that then halts would
+    // start a second ImGui frame (App::haltedFrame) inside the current one.
+    if (app.paused && !app.debug.attached() && !app.debug.halted() && !app.host.inFrame() && app.host.isLoaded() &&
+        !app.netplay.configured())
+        ctx.stepFrame = [&app] {
+            app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
+            app.video.upload(app.host.frame());
+        };
+    ctx.createTexture = &VideoOut::createTextureRGBA;
+    ctx.destroyTexture = &VideoOut::destroyTexture;
+    ctx.cheats = &app.cheats;
+    ctx.exportDir = app.paths.root + "debug/";
+    ctx.contentName = app.host.contentName();
+    drawObjectsWindow(app.debug, ctx);
 }
 
 bool objectsWindowOpen() { return g.open; }
@@ -548,14 +548,6 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     ImGui::SameLine();
     ImGui::Checkbox("Live", &vm.live);
     ImGui::SameLine();
-    if (ImGui::Checkbox("Follow links", &vm.followLinks)) vm.arm(session);
-    if (ImGui::IsItemHovered())
-        ui::beginWrappedTooltip(),
-            ImGui::TextUnformatted("The snapshot is the first walk after arming, an early half-line, so a list gated by "
-                                   "branch objects shows only the part above the first gate. Following the links through RAM "
-                                   "lists the rest (read after the frame)."),
-            ui::endWrappedTooltip();
-    ImGui::SameLine();
     ImGui::Checkbox("Highlight on screen", &g.highlight);
     ImGui::SameLine();
     ImGui::Checkbox("All", &g.highlightAll);
@@ -572,14 +564,14 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
         }
     }
     if (vm.haveSnapshot()) {
-        size_t extra = vm.objects().size() - vm.snapshotCount();
-        if (extra)
-            ui::hint("%zu objects captured on half-line %u, %zu more found by following links (dimmed).  "
-                     "X/Y are line-buffer pixels / half-lines; the outline is approximate.",
-                     vm.snapshotCount(), vm.halfline(), extra);
-        else
-            ui::hint("%zu objects, captured on half-line %u.  X/Y are line-buffer pixels / half-lines; the outline is approximate.",
+        if (vm.snapshotCount() > 0 || vm.objects().empty())
+            ui::hint("%zu objects: the whole display list, captured at the top of the field (half-line %u), before the Object "
+                     "Processor rewrites HEIGHT / DATA.  X/Y are line-buffer pixels / half-lines; the outline is approximate.",
                      vm.objects().size(), vm.halfline());
+        else
+            ui::hint("%zu objects read from RAM after the frame (dimmed): the core returned no snapshot, so HEIGHT / DATA "
+                     "may already be advanced.  X/Y are line-buffer pixels / half-lines; the outline is approximate.",
+                     vm.objects().size());
     }
     else if (!vm.waiting())
         ui::hint("No snapshot yet.");

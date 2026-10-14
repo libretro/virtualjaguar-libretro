@@ -272,7 +272,7 @@ static void testRefreshCadence() {
 static void testTools() {
     DebugSession s;
     s.registerPlaceholderTools();
-    CHECK(s.tools().size() == 7);
+    CHECK(s.tools().size() == 8);
     CHECK(s.findTool("memory") && !s.findTool("memory")->toggle);   // greyed until a window registers
     bool opened = false;
     DebugTool t;
@@ -282,7 +282,7 @@ static void testTools() {
     t.toggle = [&] { opened = !opened; };
     t.isOpen = [&] { return opened; };
     s.registerTool(t);
-    CHECK(s.tools().size() == 7);                                   // replaced, not appended
+    CHECK(s.tools().size() == 8);                                   // replaced, not appended
     s.findTool("memory")->toggle();
     CHECK(s.findTool("memory")->isOpen());
     s.registerPlaceholderTools();                                   // never clobbers a real one

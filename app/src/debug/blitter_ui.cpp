@@ -185,7 +185,6 @@ void blitterToolInit(DebugSession& session) {
     t.id = "blitter";
     t.label = "Blitter log...";
     t.isOpen = [] { return g.open; };
-    t.draw = [] { blitterToolDraw(); };
     t.toggle = [] { g.open = !g.open; };
     session.registerTool(t);
     session.onForcedClose.push_back([](const char*) {

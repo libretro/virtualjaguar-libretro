@@ -4,7 +4,7 @@
 //
 // Entry points (no App dependency; App::wireHost / App::shutdown call them):
 //   textureToolInit(...)     once, after paths.applyInstance(): registers the Tools entry "textures"
-//                            (its draw hook is DebugSession::drawTools(), so nothing else is needed per frame)
+//                            (the window itself is drawn by addDebugTools's provider calling textureToolDraw() every UI frame)
 //   textureToolDraw()        the window, called by that hook; cheap when closed
 //   textureToolShutdown()    before the GL context is destroyed: frees the thumbnails
 #pragma once
