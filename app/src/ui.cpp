@@ -5,6 +5,7 @@
 #include "devices_ui.h"
 
 #include "imgui.h"
+#include "settings_reset_ui.h"
 #include "shaders.h"
 #include "typed_ui.h"
 #include "ui_util.h"
@@ -36,6 +37,12 @@ const char* labelFor(const OptionDef& d, const std::string& value) {
     return value.c_str();
 }
 
+// The "Custom..." box state of the typed options, by key.  File scope so a reset can forget it.
+std::map<std::string, ui::TypedState>& typedStateMap() {
+    static std::map<std::string, ui::TypedState> m;
+    return m;
+}
+
 void drawOption(App& app, const OptionDef& d, bool inCategory) {
     CoreHost& host = app.host;
     std::string cur = host.optionValue(d);
@@ -50,8 +57,7 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
     // A key in typed_options.h gets the core's presets plus "Custom..." (a typed value); every other
     // option is a plain list.
     const TypedOption* typed = typedOptionFor(d.key);
-    static std::map<std::string, ui::TypedState> typedState;
-    ui::TypedState* ts = typed ? &typedState[d.key] : nullptr;
+    ui::TypedState* ts = typed ? &typedStateMap()[d.key] : nullptr;
     ImGui::BeginDisabled(pinned);
     if (typed) {
         std::string picked;
@@ -141,6 +147,7 @@ void drawCoreOptions(App& app) {
         if (!open) return;
         ImGui::PushID(catKey.c_str());
         ImGui::Indent();
+        drawCoreGroupReset(app, catKey, !f.empty());
         for (const OptionDef& d : defs)
             if (d.categoryKey == catKey && host.optionVisible(d.key) && matchesFilter(d, f))
                 drawOption(app, d, !catKey.empty());
@@ -164,6 +171,7 @@ void drawCoreOptions(App& app) {
 // ---- settings window ------------------------------------------------------------------
 
 void drawVideoTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Video);
     PresentOptions& p = app.present;
     ImGui::Checkbox("Integer scaling", &p.integerScale);
     ImGui::Checkbox("Smooth (bilinear) filter", &p.linearFilter);
@@ -184,6 +192,7 @@ void drawVideoTab(App& app) {
 }
 
 void drawAudioTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Audio);
     bool changed = false;
     ImGui::PushItemWidth(ui::fitWidth(0.55f, 10.0f, 28.0f));
     changed |= ImGui::SliderFloat("Volume", &app.volume, 0.0f, 1.0f, "%.2f");
@@ -199,6 +208,7 @@ void drawAudioTab(App& app) {
 }
 
 void drawInputTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Input);
     if (!ImGui::BeginTabBar("##inputtabs")) return;
     if (ImGui::BeginTabItem("Devices & players")) {
         drawDevicesPanel(app);
@@ -212,6 +222,7 @@ void drawInputTab(App& app) {
 }
 
 void drawStorageTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Storage);
     ImGui::Text("Data folder%s:", app.paths.portable ? " (portable mode)" : "");
     ImGui::TextWrapped("%s", app.paths.root.c_str());
     if (app.paths.instance > 1)
@@ -240,6 +251,7 @@ void drawSettings(App& app) {
         ImGui::End();
         return;
     }
+    drawResetAllSettings(app);
     if (ImGui::BeginTabBar("##tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
         // dev: --show-window settings-video etc. selects a tab once
         auto tabFlag = [&](const char* name) {
@@ -494,6 +506,11 @@ void drawOsd(App& app, ImVec2 areaPos, ImVec2 areaSize) {
 }
 
 }  // namespace
+
+void forgetTypedOptionState(const std::string* key) {
+    if (key) typedStateMap().erase(*key);
+    else typedStateMap().clear();
+}
 
 void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImGuiIO& io = ImGui::GetIO();
