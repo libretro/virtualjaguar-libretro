@@ -1,8 +1,8 @@
-Virtual Jaguar v3.8.1 libretro
+Virtual Jaguar v3.9.0 libretro
 ------------------------------
 
 RISC overclock fix, experimental DSP timing model + the desktop app.
-Full notes: docs/RELEASE_NOTES_v3.8.1.md
+Full notes: docs/RELEASE_NOTES_v3.9.0.md
 
 Default settings are byte-identical to v3.8.0 in the cart and CD boot
 matrices. No option keys removed; savestate format stays v17.

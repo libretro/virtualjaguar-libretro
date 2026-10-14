@@ -8,7 +8,7 @@ An Atari Jaguar and Jaguar CD emulator packaged as a [libretro](https://www.libr
 
 Website, downloads, compatibility and enhancement write-ups: **[jaguar.provenance-emu.com](https://jaguar.provenance-emu.com)**.
 
-**Two ways to play:** the RetroArch core (everything below), or the [standalone desktop app](#the-desktop-app) for macOS, Windows and Linux, which runs the same core without RetroArch. New in v3.8.1.
+**Two ways to play:** the RetroArch core (everything below), or the [standalone desktop app](#the-desktop-app) for macOS, Windows and Linux, which runs the same core without RetroArch. New in v3.9.0.
 
 ## Install
 

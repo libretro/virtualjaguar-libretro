@@ -16,7 +16,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # The app ships inside the core's releases, so it carries the core's version:
-# CORE_BASE_VERSION in the top-level Makefile (e.g. "v3.8.1").  One source of
+# CORE_BASE_VERSION in the top-level Makefile (e.g. "v3.9.0").  One source of
 # truth means the packaging tag check, the About box, package metadata and the
 # HTTP / RetroAchievements User-Agent can never drift from the core.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../Makefile" _vj_core_ver_line

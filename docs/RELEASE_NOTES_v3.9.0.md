@@ -1,9 +1,9 @@
-# Virtual Jaguar libretro v3.8.1
+# Virtual Jaguar libretro v3.9.0
 
 **RISC overclocking no longer costs more than it should, and the Virtual Jaguar desktop app
 ships: a standalone emulator for macOS, Windows and Linux built on the same core.**
 
-v3.8.1 is a fix release for the core plus the debut of the standalone app (https://github.com/libretro/virtualjaguar-libretro/issues/833). For
+v3.9.0 brings the RISC overclock fix and new timing work to the core, and debuts the standalone desktop app (https://github.com/libretro/virtualjaguar-libretro/issues/833). For
 RetroArch and Provenance users the change is the overclock fix, an experimental DSP timing
 model behind an existing option, and measurement tooling. With default settings the core is
 byte-identical to v3.8.0 in the cartridge and CD boot matrices. No option keys were removed, no
@@ -211,11 +211,11 @@ https://github.com/libretro/virtualjaguar-libretro/pull/896. Screenshots: https:
 
   | System | Package |
   | --- | --- |
-  | macOS 11+, Apple Silicon and Intel | `VirtualJaguar-3.8.1-macos-universal.zip` |
-  | Windows x64 | `VirtualJaguar-3.8.1-windows-x64.zip` (portable) or `VirtualJaguar-3.8.1-windows-x64-setup.exe` (installer) |
-  | Windows ARM64 | `VirtualJaguar-3.8.1-windows-arm64.zip` (portable) or `VirtualJaguar-3.8.1-windows-arm64-setup.exe` (installer) |
-  | Linux x86_64, aarch64 | `VirtualJaguar-3.8.1-linux-<arch>.AppImage` or `virtualjaguar_3.8.1_<amd64\|arm64>.deb` |
-  | Linux x86_64 (Flatpak) | `VirtualJaguar-3.8.1-linux-x86_64.flatpak` (`flatpak install --user` it; the runtime comes from Flathub) |
+  | macOS 11+, Apple Silicon and Intel | `VirtualJaguar-3.9.0-macos-universal.zip` |
+  | Windows x64 | `VirtualJaguar-3.9.0-windows-x64.zip` (portable) or `VirtualJaguar-3.9.0-windows-x64-setup.exe` (installer) |
+  | Windows ARM64 | `VirtualJaguar-3.9.0-windows-arm64.zip` (portable) or `VirtualJaguar-3.9.0-windows-arm64-setup.exe` (installer) |
+  | Linux x86_64, aarch64 | `VirtualJaguar-3.9.0-linux-<arch>.AppImage` or `virtualjaguar_3.9.0_<amd64\|arm64>.deb` |
+  | Linux x86_64 (Flatpak) | `VirtualJaguar-3.9.0-linux-x86_64.flatpak` (`flatpak install --user` it; the runtime comes from Flathub) |
 
   Nightly app builds are linked from the pinned builds issue and are rebuilt from `develop` on
   every push (https://github.com/libretro/virtualjaguar-libretro/issues/839, https://github.com/libretro/virtualjaguar-libretro/issues/840, https://github.com/libretro/virtualjaguar-libretro/pull/884, https://github.com/libretro/virtualjaguar-libretro/pull/883, https://github.com/libretro/virtualjaguar-libretro/pull/886).
@@ -250,7 +250,7 @@ https://github.com/libretro/virtualjaguar-libretro/pull/896. Screenshots: https:
 
 ## Upgrading
 
-- **RetroArch / Provenance:** drop-in. The core reports v3.8.1; options and savestates (v17)
+- **RetroArch / Provenance:** drop-in. The core reports v3.9.0; options and savestates (v17)
   carry over. If you had GPU Pipeline Timing on, it now also applies the DSP model.
 - **App:** unzip or install the package for your system. The app does not include BIOS
   images or games.
