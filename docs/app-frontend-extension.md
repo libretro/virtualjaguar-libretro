@@ -81,14 +81,14 @@ whole feature does not exist.  What it gives the app (details, threading and the
   breakpoints and a halt on the existing GDB halt machinery, **without a socket**.  While a processor is halted the core
   calls the host's `halt_pump` repeatedly from inside `retro_run()` (the host runs one UI frame per call and answers
   continue / step / detach).  The GDB TCP stub keeps working beside it; either side may resume.
-- `op_snapshot_arm` / `op_snapshot_get`: the raw phrases of one display-list walk, captured before the OP rewrites
-  `HEIGHT`/`DATA`/`REMAINDER`.
+- `op_snapshot_arm` / `op_snapshot_get`: the whole display list (links followed, both arms of every branch object), read at the
+  top of the next field before the OP rewrites `HEIGHT`/`DATA`/`REMAINDER`.
 - `blit_log_enable` / `blit_log_head` / `blit_log_get`: a ring of the last 256 blitter launches.
 - `cry_to_rgb`, `texreplace_reload`, `frame_number`.
 
 Everything is host-transient: no savestate field, nothing the emulated machine can observe (the determinism gate in
 `test/test_debug_iface.c` hashes the frame and all of main RAM with everything switched on).  Detached, the cost is one
-global test per `OPProcessList` call (plus a register-local flag test per visited object) and one per blitter launch;
+global test per `OPProcessList` call and one per blitter launch;
 the A/B benchmark in the PR measures it.  Strings and the struct stay valid until
 `retro_deinit()`; the core forgets an attached host on unload.
 
