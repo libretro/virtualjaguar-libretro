@@ -12,6 +12,7 @@ namespace os {
 
 void beforeWindow() {}
 void windowCreated(SDL_Window*) {}
+void setDarkChrome(bool) {}
 bool installMenus() { return false; }
 void renderMenus(const MenuBar&, const std::vector<MenuItem>&) {}
 void noteRecent(const std::string&) {}

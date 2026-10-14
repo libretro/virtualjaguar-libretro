@@ -39,6 +39,8 @@ void windowCreated(SDL_Window* w) {
     if (g_haveState) renderAll();
 }
 
+void setDarkChrome(bool dark) { os::setDarkChrome(dark); }
+
 void shutdown() {
     tray::disable();
     os::shutdown();

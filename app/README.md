@@ -618,7 +618,7 @@ add compiles a no-op, so adding a platform feature never touches the others.
 | Dock / taskbar menu | Dock menu: recent games, library, open, pause, reset | Jump List: recent games | desktop Actions: Open Game Library, Boot Without Cartridge |
 | Recent games | `NSDocumentController` (Dock, Open Recent) | Explorer Recent and the Jump List (`SHAddToRecentDocs`) | not written (no GTK; see below) |
 | File types (double-click, Open With, drop on the icon) | `CFBundleDocumentTypes` + an exported type for `.j64` / `.jag` | installer task: per-user `OpenWithProgids` (and the default for `.j64` / `.jag`) | shared-mime-info XML + `MimeType=` |
-| Window | fullscreen follows the green button / Ctrl+Cmd+F; App Nap held while a game runs | dark title bar, per-monitor-v2 DPI, long paths, one taskbar button with the installer shortcut (AppUserModelID) | the application id is the Wayland `app_id` / X11 `WM_CLASS`, so the icon and "pin to dock" match the `.desktop` file |
+| Window | fullscreen follows the green button / Ctrl+Cmd+F; App Nap held while a game runs | title bar follows the app theme (dark or light), per-monitor-v2 DPI, long paths, one taskbar button with the installer shortcut (AppUserModelID) | the application id is the Wayland `app_id` / X11 `WM_CLASS`, so the icon and "pin to dock" match the `.desktop` file |
 | Tray / menu-bar icon | optional (Settings > Storage > Desktop) | optional | optional where the desktop has a StatusNotifier host (KDE and others; stock GNOME needs an extension) |
 | Screensaver / display sleep | allowed in the library and while paused, blocked while a game runs | same | same (through the portal inside Flatpak) |
 | Show in Finder / Explorer | File > Show in Finder | - | opens the folder |

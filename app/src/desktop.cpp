@@ -4,6 +4,7 @@
 
 #include "imgui.h"
 #include "platform/platform.h"
+#include "theme.h"
 #include "ui_util.h"
 
 namespace vj {
@@ -135,6 +136,8 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
 // ---- lifecycle ------------------------------------------------------------------------------------------------
 void App::desktopInit() {
     platform::windowCreated(window_);
+    platform::setDarkChrome(theme::isDark());   // Windows title bar; light themes get a light one
+    theme::addListener([](theme::Scheme) { platform::setDarkChrome(theme::isDark()); });
     if (trayIcon && !applyTray()) trayIcon = false;
     platform::updateState(menuState());
 }

@@ -173,6 +173,7 @@ void hookDockMenu() {
 
 void beforeWindow() {}
 void windowCreated(SDL_Window*) {}
+void setDarkChrome(bool) {}   // the title bar follows the system appearance
 
 bool installMenus() {
     const char* drv = SDL_GetCurrentVideoDriver();

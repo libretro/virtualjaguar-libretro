@@ -28,6 +28,10 @@ bool decodeCommandEvent(const SDL_Event& e, Cmd& cmd, int& arg);
 // ---- lifecycle ----------------------------------------------------------------------------------
 void beforeWindow();                    // after SDL_Init, before the window: process identity (Windows AppUserModelID)
 void windowCreated(SDL_Window* w);      // dark title bar (Windows), native menu bar + Dock menu (macOS)
+// The window frame follows the app theme (Windows dark title bar).  Call after windowCreated() and whenever the
+// theme changes (theme::addListener).  No-op where the OS draws the frame from its own appearance (macOS, Linux).
+void setDarkChrome(bool dark);
+
 void shutdown();
 
 // True when a native menu bar replaced the in-window one (macOS): the ImGui menu bar is then hidden.

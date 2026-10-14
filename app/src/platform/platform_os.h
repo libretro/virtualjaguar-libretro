@@ -15,6 +15,7 @@ namespace os {
 
 void beforeWindow();
 void windowCreated(SDL_Window* w);
+void setDarkChrome(bool dark);             // Windows: the title bar follows the app theme
 bool installMenus();                       // true: a native menu bar is now in charge
 void renderMenus(const MenuBar& bar, const std::vector<MenuItem>& dock);
 void noteRecent(const std::string& path);

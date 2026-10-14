@@ -44,18 +44,26 @@ void beforeWindow() {
     if (fn) fn(kAppUserModelId);
 }
 
+namespace {
+HWND g_hwnd = nullptr;
+}
+
 void windowCreated(SDL_Window* w) {
     if (!w) return;
-    HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(w), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    g_hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(w), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+}
+
+void setDarkChrome(bool dark) {
+    HWND hwnd = g_hwnd;
     if (!hwnd) return;
     // DWMWA_USE_IMMERSIVE_DARK_MODE is 20 (Windows 10 2004+ and 11); 19 on the first builds that had it.
-    // The UI is always dark (Dear ImGui's dark style), so the title bar is too.
+    // Follows theme::isDark() (the app's theme, which may itself follow the system), not the system alone.
     typedef HRESULT(WINAPI * DwmSetFn)(HWND, DWORD, LPCVOID, DWORD);
     HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
     if (!dwm) return;
     DwmSetFn set = (DwmSetFn)(void*)GetProcAddress(dwm, "DwmSetWindowAttribute");
     if (!set) return;
-    const BOOL on = TRUE;
+    const BOOL on = dark ? TRUE : FALSE;
     if (FAILED(set(hwnd, 20, &on, sizeof on))) set(hwnd, 19, &on, sizeof on);
     // Make the non-client area repaint now rather than on the next resize.
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
