@@ -31,7 +31,7 @@ from pathlib import Path
 from urllib.parse import urldefrag
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_site import PAGES, SITE_BASE, page_url  # noqa: E402
+from build_site import ALL_PAGES, SITE_BASE, page_url  # noqa: E402
 
 # Substrings that must never appear: analytics, tag managers, CDNs, web fonts.
 FORBIDDEN = ("googletagmanager", "google-analytics", "gtag(", "plausible.io",
@@ -255,7 +255,7 @@ def check_sitemap(out):
         lastmod = u.findtext(ns + "lastmod")
         check(lastmod and re.match(r"^\d{4}-\d{2}-\d{2}$", lastmod),
               "sitemap lastmod %r is not YYYY-MM-DD" % lastmod)
-    check(set(locs) == set(page_url(p) for p in PAGES),
+    check(set(locs) == set(page_url(p) for p in ALL_PAGES),
           "sitemap URLs %r do not match the generated pages" % sorted(locs))
 
 
@@ -276,7 +276,7 @@ def main():
         return 2
 
     parsed = {}
-    for name in PAGES:
+    for name in ALL_PAGES:
         pp = check_page(out, name)
         if pp is not None:
             parsed[name] = pp
