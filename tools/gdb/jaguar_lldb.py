@@ -15,16 +15,14 @@ Load it with:
     (lldb) gdb-remote 127.0.0.1:2345
 tools/gdb/install.sh adds the import line to ~/.lldbinit for you.
 
-KNOWN ISSUE, verified while building this file: `gdb-remote` itself can
-hang indefinitely against this stub -- confirmed via a proxied, byte-
-logged LLDB attach, root-caused to the stub replying with silence
-instead of the RSP-mandated empty packet for a request it doesn't
-implement (LLDB's own handshake sends one during attach). This is a
-stub-side protocol bug, not something this plugin can work around --
-see docs/gdb-stub-guide.md, "Known limitations", for the tracked
-symptom. If `gdb-remote` never returns, that is why; it is not this
-plugin failing to load or register commands (both happen before the
-`gdb-remote` call and print a confirmation either way).
+WHAT LLDB CAN DO HERE (verified, issue #936): it attaches (the old
+silent-on-unknown-packet hang is fixed) and `memory read` works, and the
+`jag-*` commands below drive the stub's `monitor` commands (`thread list`
+shows only the 68K thread). It CANNOT
+debug the 68K: LLDB has no m68k target triple ("invalid triple 'm68k'"),
+so there are no registers, no disassembly and no stepping UI. Use gdb
+(`brew install gdb` has m68k) for the 68K; see docs/gdb-stub-guide.md.
+End a session with `process detach`; the emulator keeps running.
 
 Runs under whatever Python 3 your lldb build embeds (Xcode's, or a
 distro's liblldb). No third-party dependencies -- only the standard
@@ -80,7 +78,7 @@ def _monitor(debugger, text):
     interpreter = debugger.GetCommandInterpreter()
     result = lldb.SBCommandReturnObject()
     try:
-        interpreter.HandleCommand("monitor " + text, result)
+        interpreter.HandleCommand("process plugin packet monitor " + text, result)
     except Exception as exc:  # pragma: no cover -- defensive only
         print("jaguar: monitor command raised %s" % exc)
         return None
@@ -210,8 +208,10 @@ what that still doesn't give you -- source-level debugging)."""
     num = thread.GetIndexID()
     if num == 1:
         print(
-            "jaguar: thread 1 is the 68K -- LLDB's own `register read` "
-            "already knows that architecture natively."
+            "jaguar: thread 1 is the 68K, which LLDB has no target for "
+            "(no m68k triple), so there is no register view here -- use "
+            "gdb for the 68K. The GPU/DSP are reachable with "
+            "`jag-regs gpu` / `jag-regs dsp`."
         )
         return
     if num not in (2, 3):

@@ -1,4 +1,4 @@
-// Settings > Video > Font: the typeface, size and rasteriser options, with a live preview.
+// Settings > Interface > Font: the typeface, size and rasteriser options, with a live preview.
 #pragma once
 
 namespace vj {

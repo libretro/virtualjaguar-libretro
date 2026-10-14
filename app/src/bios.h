@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "config.h"
 #include "library.h"
@@ -38,6 +39,24 @@ void storeSelection(Config& cfg, const Selection& s);
 // Which role a scanned BIOS / system file can fill: a console boot ROM or a CD BIOS whose size is exactly what
 // the core accepts.  Memory Track and other system files, and wrong-sized files, are None.
 Role roleOf(const lib::BiosInfo& b, uint64_t size);
+
+// ---- the choosable files ---------------------------------------------------------------------------------
+// One row of the BIOS combo: `path` is what gets stored, `label` is what is shown.  Two rows never share a
+// label (#932): the same BIOS dump in several folders is the normal case, and identical labels are identical
+// ImGui IDs, so a click on the second copy chose the first.  A label that would repeat gets its folder appended.
+struct Pick {
+    std::string path;
+    std::string label;
+    std::string id;      // fileIdentity(path): compare this, not the path, to ask "is it the chosen one?"
+};
+// The file's identity on disk (the real path when it exists, else the normalised absolute one).  Cached for a
+// couple of seconds per path, so the per-frame draw code never hits the disk for it.
+std::string fileIdentity(const std::string& path);
+// Every scanned BIOS file the core accepts for `role`, in scan order.  A file reached twice (a library folder
+// that is also, or sits inside, the system folder, or a symlinked folder) is listed once.
+std::vector<Pick> picksFor(const std::vector<lib::Entry>& entries, Role role);
+// Do the two paths name the same file (same text, or the same file on disk through a link / other spelling)?
+bool samePath(const std::string& a, const std::string& b);
 
 // What "Boot" on a tile does: a cart boot ROM boots the console with an empty cartridge slot, a CD BIOS boots
 // the CD player with no disc, the known Memory Track dump is loaded as a cartridge (it carries the manager).

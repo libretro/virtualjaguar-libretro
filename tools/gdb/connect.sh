@@ -23,11 +23,11 @@
 #
 # THIS PROJECT SHIPS NO GDB. tools/jaguar-toolchain pins exactly five
 # tools -- rmac, rln, lyxass, pc_jagcrypt, new_bjl -- and none of them is
-# a debugger. Bring your own `gdb`. A stock host build talks to the
-# GPU/DSP threads (2/3) just fine; only the 68K thread's (1) native
-# disassembly and register names need a gdb built with m68k support,
-# which most distro/Homebrew gdb builds do NOT include -- see
-# docs/gdb-stub-guide.md, "No shipped m68k-elf-gdb".
+# a debugger. Bring your own `gdb`, and it must be built WITH m68k
+# support: Homebrew's `gdb` is (`brew install gdb`), Debian/Ubuntu need
+# `gdb-multiarch`. The 68K is the only gdb thread; the GPU/DSP are
+# reached through `monitor` -- see docs/gdb-stub-guide.md, "Which
+# debugger".
 #
 set -eu
 
@@ -57,7 +57,7 @@ Usage: tools/gdb/connect.sh [options] [-- extra gdb args]
   -h, --help        this text
 
 This project ships no gdb -- see the comment block at the top of this
-script, or docs/gdb-stub-guide.md, "No shipped m68k-elf-gdb".
+script, or docs/gdb-stub-guide.md, "Which debugger".
 USAGE
   exit 0
 }
@@ -108,10 +108,10 @@ Or point this script at one you already have:
   tools/gdb/connect.sh --gdb /path/to/gdb
   GDB=/path/to/gdb tools/gdb/connect.sh
 
-A stock gdb works fine for the GPU/DSP threads. Only the 68K thread's
-native disassembly needs a gdb built with m68k support, which most of
-the above do NOT include by default -- see docs/gdb-stub-guide.md,
-"No shipped m68k-elf-gdb".
+The gdb must be built with m68k support (the 68K is the thread you
+debug). Homebrew's gdb and Debian's gdb-multiarch are; plain Debian/
+Ubuntu/Fedora gdb are not -- see docs/gdb-stub-guide.md, "Which
+debugger".
 
 On macOS, a Homebrew gdb also needs its own code-signing step before it
 can attach to anything -- see Homebrew's own post-install caveats

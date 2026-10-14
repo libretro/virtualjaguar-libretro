@@ -20,34 +20,38 @@
 # runs when you (or connect.sh) ask for it.
 #
 # Honesty, up front -- see docs/gdb-stub-guide.md for the long version:
+#   - You need a gdb BUILT WITH m68k support. Homebrew's `gdb` has it
+#     (`brew install gdb`); Debian/Ubuntu need `gdb-multiarch`, not `gdb`.
+#     Check: `gdb -nx -batch -ex "set architecture m68k"` must not print
+#     "Undefined item". LLDB cannot debug the 68K at all (no m68k triple).
+#   - Nothing here sets `architecture` or `remote target-features-packet`:
+#     the stub serves an m68k target description, so a plain
+#     `target remote` selects m68k by itself. (Cores older than #936 did
+#     not; for those add `set architecture m68k` and
+#     `set remote target-features-packet off` before jconnect.)
+#   - ONE thing a target description cannot say is byte order. jconnect
+#     runs `set endian big` for you; without it every register and memory
+#     word is byte-swapped. It is deliberately NOT a top-level setting
+#     here: tools/gdb/install.sh sources this file from your global
+#     ~/.gdbinit, and a global `set endian big` would corrupt every
+#     unrelated gdb session. (Loading an m68k ELF/COFF with `file` also
+#     fixes it, since the binary carries its own byte order.)
+#   - Only the 68K is a gdb thread. The GPU/DSP are reached through
+#     `monitor regs|disasm|halt gpu|dsp` (the j* aliases below), because
+#     gdb applies one register description to every thread.
 #   - GDB cannot disassemble the GPU/DSP RISC ISA. Use `jdisasm` (wraps
-#     `monitor disasm`), not `disassemble`, on threads 2/3.
+#     `monitor disasm`), not `disassemble`.
 #   - This is symbol-level debugging (rln -m load-map names), not
 #     source-level -- rln emits classic mc68k COFF, not ELF/DWARF.
 #   - A halt freezes the WHOLE frontend (video, audio, input) until you
 #     `continue`, `stepi`, or disconnect. That is expected, not a hang.
-#   - This project ships no gdb at all (tools/jaguar-toolchain pins
-#     rmac/rln/lyxass/pc_jagcrypt/new_bjl -- no debugger). You bring your
-#     own; see "No shipped m68k-elf-gdb" in the user guide.
-#   - `jconnect` (below) can hang instead of returning. A real LLDB
-#     attach was confirmed, byte-logged through a proxy, to hang exactly
-#     like this -- the stub replies with silence instead of an empty
-#     packet for a request it doesn't implement, and a strict client
-#     just waits forever. See docs/gdb-stub-guide.md, "Known
-#     limitations", before assuming this file or your gdb is at fault.
+#   - End a session with `detach` or `disconnect`; both leave the
+#     emulator running. A watchpoint (`watch *(int*)0xf0210c`) stops with
+#     "Program received signal SIGTRAP" at the access; only one watch
+#     slot exists.
 
 set confirm off
 set pagination off
-
-# GDB defaults to the host's own architecture. The 68K thread (thread 1)
-# is served with no custom target description at all (see the guide's
-# "three targets" table), so nothing else tells GDB what it is talking
-# to. Most host `gdb` builds (Homebrew, apt) are NOT built with m68k
-# support, so the next line commonly prints "Undefined item: \"m68k\"."
-# and changes nothing -- harmless. Threads 2 and 3 (GPU/DSP) work
-# regardless: their register layout comes from the stub's own
-# qXfer:features XML, not from this setting.
-set architecture m68k
 
 # ---------------------------------------------------------------------
 # jconnect [host port] -- connect to the stub.
@@ -58,6 +62,7 @@ set architecture m68k
 # host/port you asked it for.
 # ---------------------------------------------------------------------
 define jconnect
+  set endian big
   if $argc == 2
     target remote $arg0:$arg1
   else
@@ -67,7 +72,8 @@ end
 document jconnect
 jconnect [host port] -- connect to the GDB stub. With no arguments,
 connects to 127.0.0.1:2345, matching the core's virtualjaguar_gdb_port
-default.
+default. Sets `endian big` first (the Jaguar is big-endian and a target
+description cannot say so). Needs a gdb with m68k support.
 end
 
 # ---------------------------------------------------------------------
@@ -120,13 +126,16 @@ jhalt <68k|gpu|dsp> -- halt one processor without a breakpoint
 end
 
 define jtrace
-  monitor trace
+  if $argc == 1
+    monitor trace $arg0
+  else
+    monitor trace
+  end
 end
 document jtrace
-jtrace -- dump the 68K PC traceback ring (monitor trace). Works even
-outside a live debug session in spirit -- see the user guide -- but here
-it needs an attached, halted-or-running stub like everything else in
-this file.
+jtrace [N] -- the newest N (default 64, max 1024) 68K PCs from the
+traceback ring (monitor trace), oldest first, so the last line is the
+most recent. Needs an attached stub like everything else in this file.
 end
 
 define jwatch

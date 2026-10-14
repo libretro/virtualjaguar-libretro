@@ -56,7 +56,7 @@ where "%GDBBIN%" >nul 2>nul
 if errorlevel 1 (
   echo ERROR: no gdb found ^(tried "%GDBBIN%"^). 1>&2
   echo   This project's toolchain ships no debugger -- bring your own. 1>&2
-  echo   See docs\gdb-stub-guide.md, "No shipped m68k-elf-gdb". 1>&2
+  echo   See docs\gdb-stub-guide.md, "Which debugger". 1>&2
   echo   Or: connect.cmd --gdb C:\path\to\gdb.exe 1>&2
   exit /b 1
 )

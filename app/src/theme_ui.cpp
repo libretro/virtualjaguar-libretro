@@ -1,4 +1,4 @@
-// Themes in the UI: Settings > Video > Appearance (the choice) and the theme editor window (custom themes:
+// Themes in the UI: Settings > Interface > Appearance (the choice) and the theme editor window (custom themes:
 // edit with a live preview, save, duplicate, delete, export, import).  The logic and the files are in
 // theme_custom.cpp; this is only the widgets.
 #include <SDL3/SDL.h>
