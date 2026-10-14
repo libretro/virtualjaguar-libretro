@@ -83,7 +83,17 @@ add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank
             "${VJ_ROMS}/synth_jagcd.chd")
 
-set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd PROPERTIES
+# BIOS-only boots (#838, #833).  No BIOS file is needed: the core's built-in images run, so these work on CI.
+# Neither passes --allow-blank: the boot ROM's logo and the CD BIOS's logo and cube must actually draw (the hashes
+# are the final frame at 400 frames; like yarc's they are meant to be the same on every OS and CPU).
+add_test(NAME smoke_boot_cd_bios
+    COMMAND virtualjaguar --headless --frames 400 --boot-bios cd --expect-bios cd:builtin --expect-hash b83cb3ee)
+add_test(NAME smoke_boot_cart_rom
+    COMMAND virtualjaguar --headless --frames 400 --boot-bios cart --expect-bios cart:builtin --expect-hash 3cc9c43e)
+set_tests_properties(smoke_boot_cd_bios PROPERTIES PASS_REGULAR_EXPRESSION "BIOS CD BIOS: built-in retail CD BIOS")
+set_tests_properties(smoke_boot_cart_rom PROPERTIES PASS_REGULAR_EXPRESSION "BIOS Cart boot ROM: built-in Series K boot ROM")
+
+set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd smoke_boot_cd_bios smoke_boot_cart_rom PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
 
@@ -104,6 +114,19 @@ else()
 endif()
 add_test(NAME library_unit COMMAND vj_library_tests)
 set_tests_properties(library_unit PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# BIOS choice, import and classification (#838, #833): no core, no window, synthetic files.
+add_executable(vj_bios_tests tests/bios_test.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_bios_tests PRIVATE src)
+target_link_libraries(vj_bios_tests PRIVATE vj_library ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_bios_tests PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_bios_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_bios_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME bios_unit COMMAND vj_bios_tests)
+set_tests_properties(bios_unit PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
 
 # ---------------------------------------------------------------------------
 # Controller remapping tests (no window; remap_unit does not even load the core).
@@ -126,7 +149,11 @@ add_executable(vj_devices_e2e test/devices_e2e.cpp src/core_host.cpp ${VJ_DEVICE
 target_include_directories(vj_devices_e2e PRIVATE src)
 target_link_libraries(vj_devices_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 
-foreach(_t vj_remap_test vj_input_e2e vj_devices_test vj_devices_e2e)
+add_executable(vj_bios_e2e tests/bios_e2e.cpp src/core_host.cpp src/paths.cpp)
+target_include_directories(vj_bios_e2e PRIVATE src)
+target_link_libraries(vj_bios_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
+
+foreach(_t vj_remap_test vj_input_e2e vj_devices_test vj_devices_e2e vj_bios_e2e)
     if(MSVC)
         target_compile_options(${_t} PRIVATE /W3 /utf-8)
         target_compile_definitions(${_t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -149,11 +176,30 @@ endif()
 add_test(NAME instance_unit COMMAND vj_instance_test)
 set_tests_properties(instance_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# Settings > Reset group / Reset all settings (#833): the key classification and the option plans, plus the
+# real core's options (locked / session-overridden ones are skipped).
+add_executable(vj_settings_reset_test
+    tests/settings_reset_test.cpp src/settings_reset.cpp src/core_host.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_settings_reset_test PRIVATE src)
+target_link_libraries(vj_settings_reset_test PRIVATE vj_core ${VJ_SDL3_TARGET})
+if(WIN32)
+    target_link_libraries(vj_settings_reset_test PRIVATE ws2_32 iphlpapi)
+endif()
+if(MSVC)
+    target_compile_options(vj_settings_reset_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_settings_reset_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_settings_reset_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME settings_reset COMMAND vj_settings_reset_test "${VJ_ROMS}/yarc.j64")
+set_tests_properties(settings_reset PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 add_test(NAME remap_unit COMMAND vj_remap_test)
 add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")
 add_test(NAME devices_unit COMMAND vj_devices_test)
 add_test(NAME devices_e2e COMMAND vj_devices_e2e "${VJ_ROMS}/yarc.j64")
-set_tests_properties(remap_unit input_e2e devices_unit devices_e2e PROPERTIES
+add_test(NAME bios_e2e COMMAND vj_bios_e2e "${VJ_ROMS}/yarc.j64")
+set_tests_properties(remap_unit input_e2e devices_unit devices_e2e bios_e2e PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "FAIL ")
 

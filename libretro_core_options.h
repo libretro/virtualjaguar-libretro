@@ -240,7 +240,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_idle_skip",
       "RISC Idle-Loop Fast-Forward (GPU + DSP)",
       NULL,
-      "Fast-forward the GPU and DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation and 60%+ less GPU interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. On by default: the corpus sweep behind #708 ran 148 cart images plus 6 CD spot-checks off-vs-on and every single one was byte-identical (framebuffer, audio and savestate hash streams). If a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: DRAM Timing, GPU Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The RISC and M68K clock scales and Blitter Bus Timing do not affect it: it stays exact when overclocked.",
+      "Fast-forward the GPU and DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation and 60%+ less GPU interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. On by default: the corpus sweep behind #708 ran 148 cart images plus 6 CD spot-checks off-vs-on and every single one was byte-identical (framebuffer, audio and savestate hash streams). If a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: DRAM Timing, GPU/DSP Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The RISC and M68K clock scales and Blitter Bus Timing do not affect it: it stays exact when overclocked.",
       NULL,
       "speed",
       {
@@ -362,9 +362,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "virtualjaguar_gpu_pipeline_timing",
-      "GPU Pipeline Timing (Experimental)",
+      "GPU/DSP Pipeline Timing (Experimental)",
       NULL,
-      "Model the GPU's real instruction costs: the single external-memory gateway, the register score-board and ALU interlocks. The emulated GPU otherwise finishes renders 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
+      "Model the GPU's and DSP's real instruction costs: the single external-memory gateway (the DSP's behind its 16-bit bus), the register score-board and ALU interlocks. The emulated RISCs otherwise finish work 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
       "accuracy",
       {

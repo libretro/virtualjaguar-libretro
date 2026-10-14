@@ -16,7 +16,10 @@ static void usage(const char* argv0) {
         "usage: %s [options] [game.j64 | disc.cue | disc.chd ...]\n"
         "\n"
         "  --fullscreen          start in fullscreen\n"
-        "  --no-content          boot the console with an empty cartridge slot\n"
+        "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
+        "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
+        "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
+        "  --cd-bios FILE        run the Jaguar CD BIOS from FILE for this run (256 KiB)\n"
         "  --option KEY=VALUE    set a core option for this run (not saved)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
@@ -35,7 +38,7 @@ static void usage(const char* argv0) {
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X]\n"
-        "     [--show-window settings[-video|-input|-audio|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls]\n"
+        "     [--show-window settings[-video|-input|-audio|-bios|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -43,6 +46,7 @@ static void usage(const char* argv0) {
         "  --expect-hash HEX     fail unless the first game's final frame hashes to HEX\n"
         "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
+        "  --expect-bios R:SRC   fail unless the core ran the cart|cd BIOS from builtin, system or file (the --cart-bios/--cd-bios file)\n"
         "  --print-controls      print Player 1's controls cheat sheet (the active bindings) after the load\n"
         "  --expect-controls-overlay shown|hidden   fail unless the controls overlay is (not) showing after the load\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
@@ -89,6 +93,26 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--headless")) a.headless = true;
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
         else if (!std::strcmp(s, "--no-content")) a.noContent = true;
+        else if (!std::strcmp(s, "--boot-bios")) {
+            a.bootBios = need(s);
+            if (a.bootBios != "cart" && a.bootBios != "cd") {
+                std::fprintf(stderr, "--boot-bios wants cart or cd, got '%s'\n", a.bootBios.c_str());
+                return 2;
+            }
+            a.noContent = true;
+        }
+        else if (!std::strcmp(s, "--cart-bios")) a.cartBios = need(s);
+        else if (!std::strcmp(s, "--cd-bios")) a.cdBios = need(s);
+        else if (!std::strcmp(s, "--expect-bios")) {
+            std::string v = need(s);
+            size_t c = v.find(':');
+            std::string role = c == std::string::npos ? "" : v.substr(0, c), src = c == std::string::npos ? "" : v.substr(c + 1);
+            if ((role != "cart" && role != "cd") || (src != "builtin" && src != "system" && src != "file")) {
+                std::fprintf(stderr, "--expect-bios wants cart|cd:builtin|system|file, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.expectBios.push_back(v);
+        }
         else if (!std::strcmp(s, "--verbose")) a.verbose = true;
         else if (!std::strcmp(s, "--dump-native-menu")) a.dumpNativeMenu = true;
         else if (!std::strcmp(s, "--ra-mock")) a.raMock = need(s);

@@ -19,9 +19,11 @@ Core side: `src/core/vj_frontend_ext.c`. App side: `CoreHost::env` (`app/src/cor
 | `0x5600 \| PRIVATE` | `VJ_ENV_BASE` | (base, not a command) |
 | `VJ_ENV_BASE + 0` | `VJ_ENV_HELLO` | `struct vj_env_hello*`: `abi` (in, 1), `core_version` (in), `caps_out` (out) |
 | `VJ_ENV_BASE + 1` | `VJ_ENV_EVENT` | `const struct vj_event*`: `type`, `a`, `b`, `c`, `d`, `s` |
+| `VJ_ENV_BASE + 2` | `VJ_ENV_GET_BIOS_PATH` | `struct vj_env_bios_path*`: `role` (in: `VJ_BIOS_CART_BOOT` 1 / `VJ_BIOS_CD` 2), `path` (out) |
+| `VJ_ENV_BASE + 3` | `VJ_ENV_GET_BOOT_TARGET` | `unsigned*` (out): `VJ_BOOT_CD_BIOS` 0 / `VJ_BOOT_CART_BOOT_ROM` 1 |
 
 Handshake: `retro_init()` calls `VJ_ENV_HELLO` once. The frontend returns true and sets
-`caps_out |= VJ_CAP_EVENTS` to opt in; anything else (false, or true with no caps) keeps the channel
+`caps_out |= VJ_CAP_EVENTS` to opt in (and `VJ_CAP_BIOS` to be asked the BIOS questions below); anything else (false, or true with no caps) keeps the channel
 off for the session. `retro_deinit()` resets the latch (iOS never dlcloses the core).
 
 ## Events
@@ -39,20 +41,49 @@ LINK_UP/DOWN/WIRE_SPEED are emitted next to the `[NETLINK]` log lines, LINK_STAT
 `[CRASH-DETECT]` signature line (already rate-limited by the watchdog). All existing log lines are
 unchanged.
 
+| `VJ_EVT_BIOS_STAGED` | `VJ_BIOS_*` role | CRC32 of the image the core will run | source: `VJ_BIOS_SRC_BUILTIN` 0, `_SYSTEM` 1 (the core's own system-folder search), `_FRONTEND` 2 (the file named below) | | file path, or the built-in image's name |
+| `VJ_EVT_BIOS_REJECTED` | role | | | | the path the frontend named, which the core did not accept |
+
+## Choosing the BIOS (`VJ_CAP_BIOS`)
+
+A frontend that sets `VJ_CAP_BIOS` is asked, while the core stages a BIOS (inside `retro_load_game()` or a
+disk-control insert; the CD BIOS only when the CD BIOS actually runs):
+
+- **`VJ_ENV_GET_BIOS_PATH`** -- "which file for this role?".  Answer true with `path` set (valid for the call only,
+  the core copies it) to name a file; answer false, or an empty path, for no preference.  A named CD BIOS (exactly
+  256 KiB, a known checksum or a plausible run address in its header) is staged ahead of the core's system-folder
+  search; a named cart boot ROM (exactly 128 KiB, any content) is staged ahead of `Cart BIOS Type` and its
+  search.  A file the core cannot accept is reported with `VJ_EVT_BIOS_REJECTED`, logged, and the core carries on
+  exactly as if it had not been asked (system-folder search, then the built-in image).
+- **`VJ_ENV_GET_BOOT_TARGET`** -- asked only for a no-content boot (`retro_load_game(NULL)`).  `VJ_BOOT_CD_BIOS` (the
+  default, and the answer to a refusal) comes up in the CD BIOS with the CD unit and Memory Track attached;
+  `VJ_BOOT_CART_BOOT_ROM` runs the console boot ROM against an empty cartridge slot (`cd_boot_strategy_none`: the
+  logo, then it waits; no CD unit, no Memory Track).
+
+Under RetroArch (HELLO refused) or a frontend without the capability bit, neither question is ever asked and
+nothing changes.  The app's side is `CoreHost` (`setBiosPath`, `setBootTarget`, `stagedBios`) and `app/src/bios.h`.
+
 ## Rules
 
-- **Threading.** Events are emitted only from inside `retro_run()` (the link, stats and watchdog
-  code all runs there), synchronously, on the emulation thread. The frontend's handler runs
-  inline; nothing is queued.
+- **Threading.** Events are emitted from inside `retro_run()` (the link, stats and watchdog
+  code all runs there), except `VJ_EVT_BIOS_*`, which come from inside `retro_load_game()` (or a
+  disk-control insert) while the BIOS is staged; always synchronously, on the emulation thread. The
+  frontend's handler runs inline; nothing is queued.
 - **Lifetime.** `s` and `core_version` are valid for the call only; copy what you keep.
 - **Return value.** The answer to `VJ_ENV_EVENT` is ignored.
-- **Versioning.** `VJ_FRONTEND_EXT_ABI` is 1. New event types and trailing struct fields are
-  compatible; anything else bumps the ABI, and a frontend answers HELLO false for an ABI it does
+- **Versioning.** `VJ_FRONTEND_EXT_ABI` is 1. New event types, command ids, capability bits and trailing
+  struct fields are compatible (the BIOS commands and `VJ_CAP_BIOS` were added this way); anything else bumps the ABI, and a frontend answers HELLO false for an ABI it does
   not know (the app only answers abi == 1).
 - **Fallback.** A frontend that never said HELLO is read the old way, from the log text (Netplay in
   the app does exactly this).
 
 ## Tests
+
+- `test/test_frontend_ext.c` part 3 (core): a refusing frontend and one without `VJ_CAP_BIOS` are never asked;
+  a named CD BIOS / boot ROM file is staged (source, checksum, path in `VJ_EVT_BIOS_STAGED`); a wrong-sized or
+  missing file is `VJ_EVT_BIOS_REJECTED` and the built-in image runs; the cart boot-ROM no-content target stages
+  the boot ROM and no CD BIOS.
+- `app/tests/bios_e2e.cpp` (`bios_e2e`): the same through `CoreHost`.
 
 - `test/test_frontend_ext.c` (core, `make TEST_EXPORTS=1 test`): a refusing frontend gets exactly
   one HELLO and zero events; an answering one gets a LINK_UP in loopback; a caps-less answer is

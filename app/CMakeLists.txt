@@ -146,7 +146,7 @@ include(VJCore)
 # dependency).  Neither found: the feature degrades to "no downloads".
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/disc_hash.cpp src/http.cpp)
+add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/bios.cpp src/disc_hash.cpp src/http.cpp)
 target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
 target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
@@ -245,7 +245,10 @@ set(VJ_APP_SOURCES
     src/cheatsheet_ui.cpp
     src/devices_ui.cpp
     src/ui.cpp
+    src/settings_reset.cpp
+    src/settings_reset_ui.cpp
     src/library_ui.cpp
+    src/bios_ui.cpp
     src/cheats.cpp
     src/cheats_core.cpp
     src/cheats_ui.cpp
@@ -313,7 +316,14 @@ endif()
 # Optional: sign the dev executable after every build (macOS).  A stable signature stops macOS
 # re-asking for network/keychain access after each rebuild.  Uses VJ_SIGN_IDENTITY / .env / the
 # login keychain like app/packaging/local-package.sh, else ad hoc.  Never fails the build.
-option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" OFF)
+# On by default on macOS: a plain local build is signed with your Developer ID / Apple Development
+# identity when the keychain has one (ad hoc otherwise).  CI and packaging sign separately.
+if(APPLE AND NOT DEFINED ENV{CI})
+    set(_vj_sign_dev_default ON)
+else()
+    set(_vj_sign_dev_default OFF)
+endif()
+option(VJ_APP_SIGN_DEV_BUILD "Sign the dev executable after each build (macOS, local use)" ${_vj_sign_dev_default})
 if(VJ_APP_SIGN_DEV_BUILD AND APPLE)
     add_custom_command(TARGET virtualjaguar POST_BUILD
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/packaging/local-package.sh"

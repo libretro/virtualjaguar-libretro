@@ -51,6 +51,16 @@ void SDLCALL dialogDone(void* ud, const char* const* list, int /*filter*/) {
     SDL_PushEvent(&ev);
 }
 
+void SDLCALL importDialogDone(void*, const char* const* list, int /*filter*/) {
+    if (!list || !list[0]) return;
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 0x56424A49;  // 'VBJI': an "import this BIOS" request
+    ev.user.data1 = SDL_strdup(list[0]);
+    SDL_PushEvent(&ev);
+}
+
 }  // namespace
 
 App::App() : host(CoreHost::instance()) {}
@@ -72,6 +82,20 @@ void App::loadConfig() {
     }
     input.init(cfg, paths.root);
     input.setPadFilter(parsePadFilter(cfg.get(instancePadKey(paths.instance), "all")));
+    applySettingsFromConfig();
+    g_lastDir = cfg.get("ui.last_dir", "");
+    recents.clear();
+    for (int i = 0; i < kMaxRecents; i++) {
+        std::string r = cfg.get("recent." + std::to_string(i), "");
+        if (!r.empty()) recents.push_back(r);
+    }
+    host.loadUserOptions(cfg.withPrefix("opt."));
+    biosChoice = bios::loadSelection(cfg);
+}
+
+// The settings that live in plain members, read from the config with their defaults.  Settings > Reset
+// erases keys and calls this again, so it is the one place that knows what "default" means.
+void App::applySettingsFromConfig() {
     present.integerScale = cfg.getBool("video.integer", false);
     present.linearFilter = cfg.getBool("video.linear", false);
     present.stretch = cfg.getBool("video.stretch", false);
@@ -87,13 +111,6 @@ void App::loadConfig() {
     trayIcon = cfg.getBool("ui.tray", false);
     keepAwake = cfg.getBool("ui.keep_awake", true);
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
-    g_lastDir = cfg.get("ui.last_dir", "");
-    recents.clear();
-    for (int i = 0; i < kMaxRecents; i++) {
-        std::string r = cfg.get("recent." + std::to_string(i), "");
-        if (!r.empty()) recents.push_back(r);
-    }
-    host.loadUserOptions(cfg.withPrefix("opt."));
 }
 
 void App::saveConfig() {
@@ -113,6 +130,7 @@ void App::saveConfig() {
     cfg.setBool("ui.keep_awake", keepAwake);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
+    bios::storeSelection(cfg, biosChoice);
     for (int i = 0; i < kMaxRecents; i++) {
         std::string k = "recent." + std::to_string(i);
         if (i < (int)recents.size()) cfg.set(k, recents[(size_t)i]);
@@ -328,9 +346,20 @@ void App::setFullscreen(bool fs) {
 // ---------------------------------------------------------------------------------
 // content
 // ---------------------------------------------------------------------------------
+void App::applyBios() {
+    for (bios::Role r : {bios::CartBoot, bios::Cd}) {
+        const std::string& f = !biosOnce_[r].empty() ? biosOnce_[r] : !biosCli_[r].empty() ? biosCli_[r] : biosChoice.of(r);
+        host.setBiosPath(r, f);
+    }
+    host.setBootTarget(bootTarget_);
+}
+
 bool App::openContent(const std::string& pathIn) {
     const std::string path = absolutePath(pathIn);
     host.setDirectories(paths.system, paths.saves);
+    for (std::string& f : biosOnce_) f.clear();   // a game is not a BIOS boot
+    bootTarget_ = 0;
+    applyBios();
     std::string err;
     if (!host.loadContent(path, err)) {
         ach.onContentClosed();
@@ -369,6 +398,7 @@ bool App::openContent(const std::string& pathIn) {
 
 bool App::openNoContent() {
     host.setDirectories(paths.system, paths.saves);
+    applyBios();
     std::string err;
     if (!host.loadNoContent(err)) {
         ach.onContentClosed();
@@ -386,7 +416,37 @@ bool App::openNoContent() {
     cheatsOnClose(*this);
     input.setContent("");
     applyPortDevices(*this);
-    toast("Booted with no cartridge");
+    const CoreHost::StagedBios& sb = host.stagedBios(bootTarget_ == VJ_BOOT_CART_BOOT_ROM ? bios::CartBoot : bios::Cd);
+    toast(std::string(bootTarget_ == VJ_BOOT_CART_BOOT_ROM ? "Booted the cartridge boot ROM with an empty slot"
+                                                           : "Booted the CD BIOS with no disc") +
+          (sb.seen ? ": " + bios::describeStaged(sb.source, sb.where, sb.crc) : std::string()));
+    return true;
+}
+
+bool App::bootBios(bios::Role role, const std::string& file) {
+    for (std::string& f : biosOnce_) f.clear();
+    if (role == bios::CartBoot || role == bios::Cd) biosOnce_[role] = file.empty() ? std::string() : absolutePath(file);
+    bootTarget_ = role == bios::CartBoot ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
+    if (host.isLoaded()) host.flushSaveRam();
+    return openNoContent();
+}
+
+void App::setBiosChoice(bios::Role role, const std::string& path) {
+    if (role != bios::CartBoot && role != bios::Cd) return;
+    biosChoice.of(role) = path.empty() ? std::string() : absolutePath(path);
+    bios::storeSelection(cfg, biosChoice);
+    cfg.save();
+    applyBios();   // the core reads it at the next load
+}
+
+bool App::importBios(const std::string& path, bool trustSize) {
+    const bios::Imported r = bios::importFile(absolutePath(path), paths.system, trustSize);
+    toast(r.ok ? r.message + " It is now the " + bios::roleLabel(r.role) + " in use; restart the game to apply it."
+               : r.message,
+          5.0, r.ok ? 1 : 2);
+    if (!r.ok) return false;
+    setBiosChoice(r.role, r.path);
+    library.rescan();
     return true;
 }
 
@@ -441,8 +501,20 @@ void App::showOpenDialog() {
                            g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
 }
 
+void App::showImportBiosDialog() {
+    if (!window_) return;
+    static SDL_DialogFileFilter filters[2] = {{"BIOS images", "j64;rom;bin;jag"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(importDialogDone, this, window_, filters, 2, g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
+}
+
 void App::handleDrop(const std::string& path) {
     if (path.empty()) return;
+    // A boot ROM or CD BIOS dropped on the window (or picked with File > Open) is a BIOS to import, not a game:
+    // running it as a cartridge only shows garbage.
+    if (bios::importRole(path) != bios::None) {
+        importBios(path);
+        return;
+    }
     // Save the old game's SRAM first (openContent -> loadContent does too, but
     // an early flush keeps a failed open from losing anything).
     if (host.isLoaded()) host.flushSaveRam();
@@ -644,6 +716,10 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
             handleDrop(p);
+        } else if (e.user.code == 0x56424A49 && e.user.data1) {   // 'VBJI': import this BIOS file
+            std::string p = (const char*)e.user.data1;
+            SDL_free(e.user.data1);
+            importBios(p, true);   // picked in the BIOS import dialog: taken by size when nothing recognises it
         }
         break;
     }
@@ -786,6 +862,9 @@ int App::run(const CliArgs& a) {
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
+    if (!a.cartBios.empty()) biosCli_[bios::CartBoot] = absolutePath(a.cartBios);
+    if (!a.cdBios.empty()) biosCli_[bios::Cd] = absolutePath(a.cdBios);
+    bootTarget_ = a.bootBios == "cart" ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
     if (!netplayInit(*this, a)) return 2;
 
     int rc = a.headless ? runHeadless(a) : runInteractive(a);
@@ -813,6 +892,7 @@ int App::runInteractive(const CliArgs& a) {
         else if (a.showWindow.rfind("settings-input", 0) == 0) devSelectTab = "Input";
         else if (a.showWindow.rfind("settings-audio", 0) == 0) devSelectTab = "Audio";
         else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
+        else if (a.showWindow.rfind("settings-bios", 0) == 0) devSelectTab = "BIOS";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
     }
@@ -948,30 +1028,55 @@ int App::runHeadless(const CliArgs& a) {
     audio.open(48043.6);
     applyAudioSettings();
     std::vector<std::string> list = a.content;
+    // --no-content / --boot-bios: one BIOS-only boot (no cartridge, no disc), reported under the path "(no content)".
+    const bool noContentRun = list.empty() && a.noContent;
+    if (noContentRun) list.push_back("");
     if (list.empty()) {
         std::fprintf(stderr, "headless: no content given\n");
         return 2;
     }
     int rc = 0;
     for (const std::string& path : list) {
+        const std::string label = noContentRun ? std::string("(no content)") : path;
         // A private, empty save directory per load.
         std::string saves = paths.root + "saves" + (paths.instance > 1 ? "-i" + std::to_string(paths.instance) + "-" : "") +
                             std::to_string(headlessLoads_++) + "/";
         SDL_CreateDirectory(saves.c_str());
         paths.saves = saves;
 
-        // Content arrives exactly the way a drag-and-drop does: through the event
-        // queue, into the same handler the window uses.
-        SDL_Event ev;
-        SDL_zero(ev);
-        ev.type = SDL_EVENT_DROP_FILE;
-        ev.drop.data = path.c_str();
-        SDL_PushEvent(&ev);
-        SDL_Event got;
-        while (SDL_PollEvent(&got)) handleEvent(got, true);
-        if (!host.isLoaded() || host.contentPath() != absolutePath(path)) {
-            std::fprintf(stderr, "headless: FAIL could not load %s\n", path.c_str());
-            return 1;
+        if (noContentRun) {
+            if (!bootBios(a.bootBios == "cart" ? bios::CartBoot : bios::Cd) || !host.isLoaded()) {
+                std::fprintf(stderr, "headless: FAIL could not boot the BIOS\n");
+                return 1;
+            }
+        } else {
+            // Content arrives exactly the way a drag-and-drop does: through the event
+            // queue, into the same handler the window uses.
+            SDL_Event ev;
+            SDL_zero(ev);
+            ev.type = SDL_EVENT_DROP_FILE;
+            ev.drop.data = path.c_str();
+            SDL_PushEvent(&ev);
+            SDL_Event got;
+            while (SDL_PollEvent(&got)) handleEvent(got, true);
+            if (!host.isLoaded() || host.contentPath() != absolutePath(path)) {
+                std::fprintf(stderr, "headless: FAIL could not load %s\n", path.c_str());
+                return 1;
+            }
+        }
+        for (const std::string& want : a.expectBios) {
+            const bios::Role role = want.compare(0, 4, "cart") == 0 ? bios::CartBoot : bios::Cd;
+            const std::string src = want.substr(want.find(':') + 1);
+            const CoreHost::StagedBios& sb = host.stagedBios(role);
+            const char* got = !sb.seen ? "nothing" : sb.source == bios::SrcBuiltin ? "builtin" : sb.source == bios::SrcSystem ? "system" : "file";
+            std::fprintf(stderr, "BIOS %s: %s%s\n", bios::roleLabel(role),
+                         sb.seen ? bios::describeStaged(sb.source, sb.where, sb.crc).c_str() : "(not staged)",
+                         sb.rejected ? "  [a named file was refused]" : "");
+            if (src != got) {
+                std::fprintf(stderr, "headless: FAIL expected the %s from '%s', the core ran '%s'\n", bios::roleLabel(role),
+                             src.c_str(), got);
+                return 1;
+            }
         }
 
         if (badOverride_) {
@@ -1006,7 +1111,7 @@ int App::runHeadless(const CliArgs& a) {
             char cpuTxt[48] = "n/a";
             if (hlCpu0 >= 0 && cpu > 0) std::snprintf(cpuTxt, sizeof cpuTxt, "%.3f s (%.1f fps)", cpu, a.frames / cpu);
             std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
-                         a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, path.c_str());
+                         a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, label.c_str());
             int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;
@@ -1015,7 +1120,7 @@ int App::runHeadless(const CliArgs& a) {
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = host.frame();
         HeadlessResult r;
-        r.path = path;
+        r.path = label;
         r.hash = frameHash();
         r.w = f.width;
         r.h = f.height;
@@ -1056,18 +1161,18 @@ int App::runHeadless(const CliArgs& a) {
             }
         }
         std::printf("HASH %08x %ux%u audio_frames=%zu options=%u/%u %s\n", r.hash, r.w, r.h, r.audioFrames,
-                    r.optVisible, r.optTotal, path.c_str());
+                    r.optVisible, r.optTotal, label.c_str());
         std::fflush(stdout);
         if (r.w == 0 || r.h == 0) {
-            std::fprintf(stderr, "headless: FAIL %s produced no video frame\n", path.c_str());
+            std::fprintf(stderr, "headless: FAIL %s produced no video frame\n", label.c_str());
             rc = 1;
         }
         if (r.uniform && !a.allowBlank) {
-            std::fprintf(stderr, "headless: FAIL %s ended on a uniform (blank) frame\n", path.c_str());
+            std::fprintf(stderr, "headless: FAIL %s ended on a uniform (blank) frame\n", label.c_str());
             rc = 1;
         }
         if (r.audioFrames == 0) {
-            std::fprintf(stderr, "headless: FAIL %s produced no audio\n", path.c_str());
+            std::fprintf(stderr, "headless: FAIL %s produced no audio\n", label.c_str());
             rc = 1;
         }
     }

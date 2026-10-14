@@ -131,7 +131,7 @@ the DLLs, and the installer, timestamped with `/tr` `VJ_SIGN_TIMESTAMP_URL` (def
 `http://timestamp.digicert.com`, SHA-256). This path has not been run on Windows yet. Note `signtool /p` shows
 the password in the process list; prefer the store thumbprint on a shared machine.
 
-**Dev executable.** `-DVJ_APP_SIGN_DEV_BUILD=ON` (macOS, default OFF) signs `build/virtualjaguar` after
+**Dev executable.** `-DVJ_APP_SIGN_DEV_BUILD` (macOS; ON by default outside CI, `=OFF` to skip) signs `build/virtualjaguar` after
 every build with the identity chosen above, so macOS stops re-prompting for network and keychain access
 after each rebuild of an unsigned binary. It does not use hardened runtime and never fails the build.
 
