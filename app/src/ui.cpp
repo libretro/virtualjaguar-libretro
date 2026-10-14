@@ -68,10 +68,13 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
     } else {
         ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
         if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
+            int vi = 0;
             for (const OptionValue& v : d.values) {
                 bool sel = (v.value == cur);
+                ImGui::PushID(vi++);   // two values may share a label
                 if (ImGui::Selectable(v.label.empty() ? v.value.c_str() : v.label.c_str(), sel))
                     host.setOptionValue(d.key, v.value);
+                ImGui::PopID();
                 if (sel) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
@@ -558,8 +561,11 @@ void drawMenuBar(App& app) {
             ImGui::Separator();
             if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) host.discSetEject(!disc.ejected);
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
-                for (unsigned i = 0; i < disc.count; i++)
+                for (unsigned i = 0; i < disc.count; i++) {
+                    ImGui::PushID((int)i);   // a multi-disc set can repeat a label
                     if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) host.discSetIndex(i);
+                    ImGui::PopID();
+                }
                 ImGui::EndMenu();
             }
         }
