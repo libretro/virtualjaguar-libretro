@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 
 #include "config.h"
 #include "http.h"
@@ -199,8 +200,13 @@ void LibraryService::start(const Paths& paths, Config& cfg, bool showIfConfigure
     if (cfg.has("library.art_mirror")) artMirrorUrl = cfg.get("library.art_mirror", "");   // "" turns the mirror off
     hideOnLaunch = cfg.getBool("library.hide_on_launch", true);
     cellScale = lib::clampTileScale(cfg.getFloat("library.size", lib::kTileScaleDefault));
-    section = std::min(2, std::max(0, cfg.getInt("library.section", 0)));
+    section = std::min(lib::kTabCount - 1, std::max(0, cfg.getInt("library.section", 0)));
+    favoritesShow = lib::clampShowAs(cfg.getInt("library.favorites.show", lib::kFavoritesDefault), lib::kFavoritesDefault);
+    recentsShow = lib::clampShowAs(cfg.getInt("library.recents.show", lib::kRecentsDefault), lib::kRecentsDefault);
     systemDir = paths.system;
+    statesDir_ = paths.states;
+    instance = paths.instance;
+    user_.open(libDir_ + "user.tsv");
 
     loadDats();
     loadCache();
@@ -229,6 +235,10 @@ void LibraryService::stop() {
     }
     slots_.clear();
     textureCount_ = 0;
+    if (destroyTexture)
+        for (auto& kv : stateThumbs_)
+            if (kv.second.tex) destroyTexture(kv.second.tex);
+    stateThumbs_.clear();
     started_ = false;
 }
 
@@ -243,6 +253,8 @@ void LibraryService::resetDisplaySettings() {
     hideOnLaunch = true;
     cellScale = lib::kTileScaleDefault;
     section = 0;
+    favoritesShow = lib::kFavoritesDefault;
+    recentsShow = lib::kRecentsDefault;
     saveSettings();
 }
 
@@ -258,6 +270,8 @@ void LibraryService::saveSettings() {
     cfg_->setBool("library.hide_on_launch", hideOnLaunch);
     cfg_->setFloat("library.size", cellScale);
     cfg_->setInt("library.section", section);
+    cfg_->setInt("library.favorites.show", favoritesShow);
+    cfg_->setInt("library.recents.show", recentsShow);
     cfg_->save();
 }
 
@@ -283,6 +297,7 @@ void LibraryService::loadDats() {
 }
 
 void LibraryService::reidentify() {
+    entriesGen_++;
     entries_.clear();
     identified_ = 0;
     entries_.reserve(files_.size());
@@ -736,10 +751,158 @@ void LibraryService::fetchJob(const ArtJob& job, const std::string& type, size_t
     if (!cancel_.load()) decodeW_.post([this, job]() { decodeJob(job); });
 }
 
+// ---- favorites and recently played --------------------------------------------------------------------------------
+
+bool LibraryService::isFavorite(const lib::Entry& e) const {
+    return lib::hasFavorite(user_.lists(), lib::userItemFor(e, 0));
+}
+
+void LibraryService::setFavorite(const lib::Entry& e, bool on) {
+    if (e.section == lib::Section::Bios) return;
+    if (!user_.setFavorite(lib::userItemFor(e, (int64_t)std::time(nullptr)), on))
+        setStatus("Could not save the favorites list");
+}
+
+bool LibraryService::isRecent(const lib::Entry& e) const {
+    return lib::hasRecent(user_.lists(), lib::userItemFor(e, 0));
+}
+
+void LibraryService::removeRecent(const lib::Entry& e) { user_.removeRecent(lib::userItemFor(e, 0)); }
+
+void LibraryService::clearRecents() { user_.clearRecents(); }
+
+void LibraryService::noteLaunched(const std::string& absPath) {
+    if (!started_ || absPath.empty()) return;
+    for (const lib::Entry& e : entries_) {
+        if (e.section == lib::Section::Bios || e.file.path != absPath) continue;
+        user_.recordPlay(lib::userItemFor(e, (int64_t)std::time(nullptr)));
+        return;
+    }
+    if (!entries_.empty()) return;   // scanned, and this is not one of the library's games
+    lib::UserItem it;                // not scanned yet: remember the path, the entry is found by it later
+    it.path = absPath;
+    it.title = pathStem(absPath);
+    it.when = (int64_t)std::time(nullptr);
+    user_.recordPlay(it);
+}
+
+void LibraryService::resolveLists() {
+    if (resolvedUserGen_ == user_.generation() && resolvedEntriesGen_ == entriesGen_) return;
+    resolvedUserGen_ = user_.generation();
+    resolvedEntriesGen_ = entriesGen_;
+    favResolved_ = lib::resolveUserItems(user_.lists().favorites, entries_);
+    lib::sortByTitle(favResolved_);
+    recResolved_ = lib::resolveUserItems(user_.lists().recents, entries_);
+}
+
+const std::vector<lib::Resolved>& LibraryService::favoriteEntries() {
+    resolveLists();
+    return favResolved_;
+}
+
+const std::vector<lib::Resolved>& LibraryService::recentEntries() {
+    resolveLists();
+    return recResolved_;
+}
+
+// ---- save states ----------------------------------------------------------------------------------------------------------------
+
+const std::vector<lib::StateGame>& LibraryService::stateGames() {
+    const double t = nowSec();
+    if (t - statesAt_ >= 1.0 && !statesDir_.empty()) {
+        statesAt_ = t;
+        stateGames_ = lib::listStatesFor(statesDir_, instance);
+    }
+    return stateGames_;
+}
+
+const lib::StateGame* LibraryService::statesFor(const lib::Entry& e) {
+    const std::string stem = pathStem(e.file.path);
+    for (const lib::StateGame& g : stateGames())
+        if (g.stem == stem) return &g;
+    return nullptr;
+}
+
+bool LibraryService::deleteState(const lib::StateInfo& s) {
+    auto it = stateThumbs_.find(s.path);
+    if (it != stateThumbs_.end()) {
+        if (it->second.tex && destroyTexture) destroyTexture(it->second.tex);
+        stateThumbs_.erase(it);
+    }
+    const bool ok = lib::deleteState(s);
+    invalidateStates();
+    stateGames_ = lib::listStatesFor(statesDir_, instance);
+    statesAt_ = nowSec();
+    return ok;
+}
+
+ArtView LibraryService::stateThumb(const lib::StateInfo& s) {
+    ArtView v;
+    if (s.thumbPath.empty() || !createTexture) {
+        v.state = ArtView::Missing;
+        return v;
+    }
+    ThumbSlot& t = stateThumbs_[s.path];
+    t.lastWanted = nowSec();
+    if (t.state != ArtView::None && t.mtimeNs == s.mtimeNs) {   // F5 rewrites the file in place: mtime says so
+        v.state = t.state;
+        v.tex = t.tex;
+        v.w = t.w;
+        v.h = t.h;
+        return v;
+    }
+    if (thumbLoads_ >= 2) {   // a screenful of new screenshots arrives over a few frames
+        v.state = ArtView::Loading;
+        return v;
+    }
+    thumbLoads_++;
+    if (t.tex && destroyTexture) destroyTexture(t.tex);
+    t.tex = 0;
+    t.mtimeNs = s.mtimeNs;
+    t.state = ArtView::Missing;
+    SDL_Surface* png = SDL_LoadPNG(s.thumbPath.c_str());
+    if (png && png->w > 0 && png->h > 0 && png->w <= 4096 && png->h <= 4096) {
+        SDL_Surface* rgba = SDL_ConvertSurface(png, SDL_PIXELFORMAT_RGBA32);
+        if (rgba) {
+            std::vector<unsigned char> tight((size_t)rgba->w * (size_t)rgba->h * 4);
+            for (int y = 0; y < rgba->h; y++)
+                std::memcpy(&tight[(size_t)y * (size_t)rgba->w * 4], (const unsigned char*)rgba->pixels + (size_t)y * (size_t)rgba->pitch,
+                            (size_t)rgba->w * 4);
+            t.w = rgba->w;
+            t.h = rgba->h;
+            t.tex = createTexture(tight.data(), t.w, t.h);
+            if (t.tex) t.state = ArtView::Ready;
+            SDL_DestroySurface(rgba);
+        }
+    }
+    if (png) SDL_DestroySurface(png);
+    v.state = t.state;
+    v.tex = t.tex;
+    v.w = t.w;
+    v.h = t.h;
+    return v;
+}
+
+void LibraryService::launchState(const lib::Entry& e, int slot) {
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 0x56414A53;   // 'VAJS': open this path, then load a state slot (App::handleEvent)
+    ev.user.data1 = SDL_strdup(e.file.path.c_str());
+    ev.user.data2 = (void*)(intptr_t)(slot + 1000);
+    SDL_PushEvent(&ev);
+    if (hideOnLaunch) show = false;
+}
+
 // ---- per frame ---------------------------------------------------------------------------------------------------------------
 
 void LibraryService::pump() {
     if (!started_) return;
+    thumbLoads_ = 0;
+    if (nowSec() >= userCheckAt_) {   // another running copy may have starred a game or played one
+        userCheckAt_ = nowSec() + 1.0;
+        user_.refresh();
+    }
     std::vector<std::string> picked;
     std::vector<std::pair<std::string, std::string>> covers;
     std::vector<Decoded> dec;
@@ -805,6 +968,18 @@ void LibraryService::pump() {
         std::lock_guard<std::mutex> g(m_);
         decoded_.insert(decoded_.begin(), std::make_move_iterator(dec.begin() + (long)used),
                         std::make_move_iterator(dec.end()));
+    }
+
+    if (stateThumbs_.size() > 96) {   // screenshots of states nobody is looking at
+        const double now = nowSec();
+        for (auto it = stateThumbs_.begin(); it != stateThumbs_.end();) {
+            if (now - it->second.lastWanted > 3.0) {
+                if (it->second.tex && destroyTexture) destroyTexture(it->second.tex);
+                it = stateThumbs_.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     // Keep VRAM bounded: evict the least recently shown textures (re-decoded from disk on demand).

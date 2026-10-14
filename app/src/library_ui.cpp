@@ -1,6 +1,7 @@
 // The "Game library" window: toolbar, folder list, and the box art grid.
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 
 #include "app.h"
@@ -28,12 +29,83 @@ uint32_t fnv(const std::string& s) {
 
 enum Filter { kAll, kUnverified };
 
-bool passes(const lib::Entry& e, int section, int filter, const std::string& needle) {
-    if ((int)e.section != section) return false;
+// The search box and the "Not verified" filter, on whatever list is being shown.
+bool matches(const lib::Entry& e, int filter, const std::string& needle) {
     if (filter == kUnverified && e.match == lib::Match::Crc) return false;
     if (needle.empty()) return true;
     return lower(e.title).find(needle) != std::string::npos || lower(e.file.path).find(needle) != std::string::npos;
 }
+
+bool passes(const lib::Entry& e, int section, int filter, const std::string& needle) {
+    return (int)e.section == section && matches(e, filter, needle);
+}
+
+// "2026-10-13 19:31" in local time, from seconds since the epoch.
+std::string stamp(int64_t seconds) {
+    SDL_DateTime dt;
+    if (seconds <= 0 || !SDL_TimeToDateTime((SDL_Time)seconds * 1000000000LL, &dt, true)) return std::string();
+    char b[32];
+    std::snprintf(b, sizeof b, "%04d-%02d-%02d %02d:%02d", dt.year, dt.month, dt.day, dt.hour, dt.minute);
+    return b;
+}
+
+#ifdef __APPLE__
+const char* const kRevealLabel = "Show in Finder";
+#elif defined(_WIN32)
+const char* const kRevealLabel = "Show in File Explorer";
+#else
+const char* const kRevealLabel = "Show in file manager";
+#endif
+
+// A five-point star centred in the box, filled (a favorite) or an outline (a hint on a hovered tile).
+void drawStar(ImDrawList* dl, ImVec2 c, float r, bool filled, bool hot) {
+    ImVec2 v[10];
+    for (int i = 0; i < 10; i++) {
+        float a = -1.5707963f + (float)i * 0.62831853f;
+        float rr = (i & 1) ? r * 0.42f : r;
+        v[i] = ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr);
+    }
+    if (filled) {
+        for (int i = 0; i < 10; i++) dl->AddTriangleFilled(c, v[i], v[(i + 1) % 10], hot ? IM_COL32(255, 220, 90, 255) : IM_COL32(245, 190, 40, 255));
+        dl->AddPolyline(v, 10, IM_COL32(60, 40, 0, 230), ImDrawFlags_Closed, 1.2f);
+    } else {
+        dl->AddPolyline(v, 10, hot ? IM_COL32(255, 220, 90, 255) : IM_COL32(255, 255, 255, 170), ImDrawFlags_Closed, 1.6f);
+    }
+}
+
+}  // namespace
+
+// Favorites and recently played: where each one shows.  Used by the toolbar popup and by Settings.
+void drawLibraryListOptions(LibraryService& svc) {
+    bool changed = false;
+    auto row = [&](const char* name, const char* id, int& v) {
+        ImGui::TextUnformatted(name);
+        ImGui::SetNextItemWidth(ui::em(24.0f));
+        if (ImGui::BeginCombo(id, lib::showAsLabel(v))) {
+            for (int m = 0; m < lib::kShowAsCount; m++) {
+                if (ImGui::Selectable(lib::showAsLabel(m), v == m)) {
+                    v = m;
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    };
+    row("Favorites", "##favshow", svc.favoritesShow);
+    row("Recently played", "##recshow", svc.recentsShow);
+    if (changed) svc.saveSettings();
+    ui::hint("A tab lists both cartridges and CDs.  In the Cartridges and Jaguar CD tabs a strip at the top shows "
+             "the games of that media only.  Right-click a game, or click the star on its tile, to favorite it; "
+             "games you boot are added to Recently played (the last %zu).",
+             lib::kMaxRecentGames);
+    if (svc.instance > 1)
+        ui::hint("This is copy %d of the app.  The lists are shared by all copies and every change is saved at once; "
+                 "these display options follow the other settings and are not saved by extra copies.",
+                 svc.instance);
+    if (ImGui::Button("Clear recently played")) svc.clearRecents();
+}
+
+namespace {
 
 // One toolbar for the window and the home screen.  Items flow onto a second row when the
 // window is narrow (ui::Flow), and the search box takes a share of the width.
@@ -72,6 +144,12 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Fetches missing covers from thumbnails.libretro.com, once per title.\n"
                           "Everything already downloaded keeps working offline.");
+    flow.next(ui::Flow::buttonW("Favorites & recents..."));
+    if (ImGui::Button("Favorites & recents...")) ImGui::OpenPopup("##listopts");
+    if (ImGui::BeginPopup("##listopts")) {
+        drawLibraryListOptions(svc);
+        ImGui::EndPopup();
+    }
     if (!home) {   // the home screen goes away when a game loads: nothing to close
         flow.next(ui::Flow::checkW("Close on launch"));
         bool hide = svc.hideOnLaunch;
@@ -82,22 +160,29 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
     }
 }
 
-// Cartridges / Jaguar CD / BIOS & system.  The tabs carry no content of their own: the selected one
-// (remembered across runs) decides what the grid below lists.  `last` is this tab bar's own idea of
-// the section, so the home screen and the window stay in step when the other one changes it.
+// Cartridges / Jaguar CD / [Favorites] / [Recently played] / Save states / BIOS & system.  The tabs carry no
+// content of their own: the selected one (remembered across runs) decides what is listed below.  Favorites and
+// Recently played have a tab only when their display option (View) says so.  `last` is this tab bar's own idea
+// of the tab, so the home screen and the window stay in step when the other one changes it.
 void drawSections(LibraryService& svc, const char* id, int& last) {
-    size_t n[3] = {0, 0, 0};
+    size_t n[lib::kTabCount] = {0, 0, 0, 0, 0, 0};
     for (const lib::Entry& e : svc.entries()) n[(int)e.section]++;
-    static const char* names[3] = {"Cartridges", "Jaguar CD", "BIOS & system"};
-    static const char* ids[3] = {"###sec0", "###sec1", "###sec2"};
+    if (lib::showsTab(svc.favoritesShow)) n[lib::TabFavorites] = svc.favoriteEntries().size();
+    if (lib::showsTab(svc.recentsShow)) n[lib::TabRecents] = svc.recentEntries().size();
+    n[lib::TabStates] = svc.stateGames().size();
+    const int cur = svc.activeTab();
+    if (svc.section != cur) {   // the remembered tab is hidden now (an option changed): Cartridges
+        svc.section = cur;
+        svc.saveSettings();
+    }
     if (!ImGui::BeginTabBar(id, ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) return;
-    for (int i = 0; i < 3; i++) {
-        char label[64];
-        std::snprintf(label, sizeof label, "%s (%zu)%s", names[i], n[i], ids[i]);
-        ImGuiTabItemFlags fl = (last != svc.section && svc.section == i) ? ImGuiTabItemFlags_SetSelected : 0;
+    for (int t : lib::visibleTabs(svc.favoritesShow, svc.recentsShow)) {
+        char label[96];
+        std::snprintf(label, sizeof label, "%s (%zu)###sec%d", lib::tabName(t), n[t], t);
+        ImGuiTabItemFlags fl = (last != svc.section && svc.section == t) ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem(label, nullptr, fl)) {
-            if (svc.section != i && last == svc.section) {   // the user clicked this tab
-                svc.section = i;
+            if (svc.section != t && last == svc.section) {   // the user clicked this tab
+                svc.section = t;
                 svc.saveSettings();
             }
             ImGui::EndTabItem();
@@ -284,25 +369,87 @@ void drawPlaceholder(ImDrawList* dl, ImVec2 a0, ImVec2 a1, const lib::Entry& e, 
     }
 }
 
-void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
+// A save state as a picture and two lines: its screenshot (letterboxed into a 4:3 box), "Slot N" and when it was
+// saved.  The caller's cursor is where the picture goes; returns the box so the caller can overlay buttons.
+void drawStateShot(ImDrawList* dl, LibraryService& svc, const lib::StateInfo& st, ImVec2 p0, ImVec2 box, bool hot) {
+    dl->AddRectFilled(p0, ImVec2(p0.x + box.x, p0.y + box.y), hot ? IM_COL32(60, 64, 76, 255) : IM_COL32(26, 28, 34, 255), 3.0f);
+    ArtView v = svc.stateThumb(st);
+    if (v.state == ArtView::Ready && v.tex && v.w > 0 && v.h > 0) {
+        float k = std::min(box.x / (float)v.w, box.y / (float)v.h);
+        float w = (float)v.w * k, h = (float)v.h * k;
+        ImVec2 i0(p0.x + (box.x - w) * 0.5f, p0.y + (box.y - h) * 0.5f);
+        dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)v.tex), i0, ImVec2(i0.x + w, i0.y + h));
+    } else {
+        const char* txt = v.state == ArtView::Loading ? "..." : "no screenshot";
+        ImVec2 ts = ImGui::CalcTextSize(txt);
+        dl->AddText(ImVec2(p0.x + (box.x - ts.x) * 0.5f, p0.y + (box.y - ts.y) * 0.5f), IM_COL32(150, 150, 150, 255), txt);
+    }
+    if (hot) dl->AddRect(p0, ImVec2(p0.x + box.x, p0.y + box.y), IM_COL32(120, 170, 255, 255), 3.0f, 0, 2.0f);
+}
+
+// One line of the tile menu's Load state list: a small screenshot, "Slot N" and the time.  True when clicked.
+bool stateMenuRow(LibraryService& svc, const lib::StateInfo& st) {
+    const float fs = ImGui::GetFontSize();
+    ImVec2 box(fs * 7.0f, fs * 7.0f * 0.75f);
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float rowH = box.y + 4.0f;
+    bool clicked = ImGui::Selectable("##state", false, ImGuiSelectableFlags_None, ImVec2(fs * 16.5f, rowH));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    drawStateShot(dl, svc, st, ImVec2(p0.x + 2, p0.y + 2), box, false);
+    const std::string l1 = lib::stateLabel(st.slot);
+    dl->AddText(ImVec2(p0.x + box.x + 10, p0.y + rowH * 0.5f - fs - 1), ImGui::GetColorU32(ImGuiCol_Text), l1.c_str());
+    dl->AddText(ImVec2(p0.x + box.x + 10, p0.y + rowH * 0.5f + 1), ImGui::GetColorU32(ImGuiCol_TextDisabled), stamp(st.mtime).c_str());
+    return clicked;
+}
+
+// The tile's right-click menu.  Built only while open, so none of this runs for every tile every frame.
+void drawTileMenu(App& app, LibraryService& svc, const lib::Entry& e) {
+    if (ImGui::MenuItem("Play")) svc.launch(e);
+    const lib::StateGame* sg = svc.statesFor(e);
+    if (ImGui::BeginMenu("Load state", sg && !sg->states.empty())) {
+        int shown = 0;
+        for (const lib::StateInfo& st : sg->states) {   // newest first
+            if (++shown > 10) break;
+            ImGui::PushID(st.slot + 1);
+            if (stateMenuRow(svc, st)) svc.launchState(e, st.slot);
+            ImGui::PopID();
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    const bool fav = svc.isFavorite(e);
+    if (ImGui::MenuItem(fav ? "Remove from Favorites" : "Add to Favorites")) svc.setFavorite(e, !fav);
+    if (svc.isRecent(e) && ImGui::MenuItem("Remove from Recently Played")) svc.removeRecent(e);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Set cover image...")) svc.setCoverDialog(app.window(), e);
+    if (ImGui::MenuItem("Remove cover image", nullptr, false, svc.hasCustomCover(e))) svc.removeCover(e);
+    ImGui::Separator();
+    if (ImGui::MenuItem(kRevealLabel)) {
+        const std::string url = lib::folderUrlOf(e.file.path);
+        if (!url.empty()) SDL_OpenURL(url.c_str());
+    }
+    if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(e.file.path.c_str());
+    ImGui::Separator();
+    ImGui::TextDisabled("Cover: PNG only.  You can also drop a PNG on this tile.");
+}
+
+// A game tile.  `strip` = the smaller tiles of a Favorites / Recently played strip (they take no cover drops: the
+// same game is in the grid below).  `when` (recents) is when it was played.
+void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH, bool strip = false,
+              int64_t when = 0) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImVec2 total(cellW, artH + textH);
     ImGui::PushID(e.file.path.c_str());
     bool clicked = ImGui::InvisibleButton("##cell", total);
     bool hovered = ImGui::IsItemHovered();
-    // Right-click: set or remove this tile's cover.  The menu is built only while it is open, so the
-    // "has a cover" check is not run for every tile every frame.
     if (ImGui::BeginPopupContextItem("##cellmenu")) {
-        if (ImGui::MenuItem("Set cover image...")) svc.setCoverDialog(app.window(), e);
-        if (ImGui::MenuItem("Remove cover image", nullptr, false, svc.hasCustomCover(e))) svc.removeCover(e);
-        ImGui::Separator();
-        ImGui::TextDisabled("PNG only.  You can also drop a PNG on this tile.");
+        drawTileMenu(app, svc, e);
         ImGui::EndPopup();
     }
     const bool popupOpen = ImGui::IsPopupOpen("##cellmenu");   // under this tile's ID scope
     ImGui::PopID();
-    {   // for a file dropped on the window: which tile is under the pointer (clipped to the visible grid)
+    if (!strip) {   // for a file dropped on the window: which tile is under the pointer (clipped to the visible grid)
         ImVec2 cmin = dl->GetClipRectMin(), cmax = dl->GetClipRectMax();
         LibraryService::CoverTile t;
         t.x0 = std::max(p0.x, cmin.x);
@@ -344,12 +491,25 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
         dl->AddText(ImVec2(a1.x - w, a0.y + 5), IM_COL32(255, 255, 255, 255), q);
     }
 
+    // the favorite star, bottom-right of the art: filled when favorited, an outline on a hovered tile, a click toggles it
+    const bool fav = svc.isFavorite(e);
+    const float sr = std::max(ImGui::GetFontSize() * 0.75f, 8.0f);   // star radius
+    const ImVec2 sc(a1.x - sr - 4.0f, a1.y - sr - 4.0f);
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const bool overStar = hovered && mouse.x >= sc.x - sr - 2 && mouse.x <= sc.x + sr + 2 && mouse.y >= sc.y - sr - 2 && mouse.y <= sc.y + sr + 2;
+    if (fav || hovered) {
+        dl->AddCircleFilled(sc, sr + 2.0f, IM_COL32(15, 15, 20, overStar ? 215 : 150));
+        drawStar(dl, sc, sr, fav, overStar);
+    }
+
     // title, clipped to the text box
     ImVec4 clip(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p0.x + 2, p0.y + artH + 3),
                 IM_COL32(230, 230, 230, 255), e.title.c_str(), nullptr, cellW - 4, &clip);
 
-    if (hovered && !popupOpen) {
+    if (overStar && !popupOpen) {
+        ImGui::SetTooltip("%s", fav ? "Remove from Favorites" : "Add to Favorites");
+    } else if (hovered && !popupOpen) {
         ui::beginWrappedTooltip();
         ImGui::TextWrapped("%s", e.title.c_str());
         ImGui::Separator();
@@ -370,11 +530,15 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
                                     : "Not in the database; titled from the file name.");
             break;
         }
+        if (when > 0) ImGui::TextDisabled("Last played: %s", stamp(when).c_str());
         if (placeholder && v.state != ArtView::Loading)
             ImGui::TextDisabled("No cover: right-click to set one, or drop a PNG on this tile.");
         ui::endWrappedTooltip();
     }
-    if (clicked) svc.launch(e);
+    if (clicked) {
+        if (overStar) svc.setFavorite(e, !fav);
+        else svc.launch(e);
+    }
 }
 
 // ---- zoom ------------------------------------------------------------------------------------------------------
@@ -396,7 +560,7 @@ ImGuiWindowFlags gridWindowFlags() { return zoomModHeld() ? ImGuiWindowFlags_NoS
 void handleZoomInput(LibraryService& svc) {
     svc.flushZoom();
     const ImGuiIO& io = ImGui::GetIO();
-    const bool hovered = ImGui::IsWindowHovered();
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);   // the strips are children of the grid
     if (hovered) svc.gridHoverFrame = ImGui::GetFrameCount();
     if (io.WantTextInput) return;
     float steps = 0.0f;
@@ -419,17 +583,155 @@ void handleZoomInput(LibraryService& svc) {
     }
 }
 
+// ---- Favorites / Recently played strips (top of the Cartridges and Jaguar CD tabs) -------------------------------
+// One scrolling row of smaller tiles with that media's favorites / recents.  Part of the grid's scroll area, drawn
+// before the grid itself.  The strip's items are in its own ID scope: the same game is also a tile below.
+void drawStrip(App& app, LibraryService& svc, const char* id, const char* title, const std::vector<lib::Resolved>& items,
+               bool withWhen, bool clearable) {
+    if (items.empty()) return;
+    const float fs = ImGui::GetFontSize();
+    const float cellW = fs * 9.0f * svc.cellScale * 0.62f;
+    const float artH = cellW * 1.2f;
+    const float textH = fs * 3.0f + 6.0f;
+    ImGui::PushID(id);
+    ImGui::TextDisabled("%s", title);
+    if (clearable) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear")) svc.clearRecents();
+    }
+    const float h = artH + textH + ImGui::GetStyle().ScrollbarSize + 4.0f;
+    ImGui::BeginChild("##row", ImVec2(0, h), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);   // wheel scrolls the page
+    for (size_t i = 0; i < items.size(); i++) {
+        if (i > 0) ImGui::SameLine();
+        drawCell(app, svc, *items[i].entry, cellW, artH, textH, true, withWhen ? items[i].when : 0);
+    }
+    ImGui::EndChild();
+    ImGui::PopID();
+}
+
+// The two strips of a media tab, from the lists filtered like the grid below them (search, "Not verified").
+void drawStrips(App& app, LibraryService& svc, const std::string& needle, int filter) {
+    const int tab = svc.activeTab();
+    const lib::Section sec = tab == lib::TabDisc ? lib::Section::Disc : lib::Section::Cart;
+    auto pick = [&](const std::vector<lib::Resolved>& all) {
+        std::vector<lib::Resolved> out;
+        for (const lib::Resolved& r : lib::filterBySection(all, sec))
+            if (matches(*r.entry, filter, needle)) out.push_back(r);
+        return out;
+    };
+    if (lib::stripOnTab(tab, svc.favoritesShow)) drawStrip(app, svc, "stripfav", "Favorites", pick(svc.favoriteEntries()), false, false);
+    if (lib::stripOnTab(tab, svc.recentsShow)) drawStrip(app, svc, "striprec", "Recently played", pick(svc.recentEntries()), true, true);
+}
+
+// ---- the Save states tab ----------------------------------------------------------------------------------------------------
+struct PendingDelete {
+    bool ask = false;
+    lib::StateInfo state;
+    std::string title;
+} g_del;
+
+void drawStatesTab(LibraryService& svc, const std::string& needle) {
+    const std::vector<lib::StateGame>& games = svc.stateGames();
+    if (games.empty()) {
+        ImGui::TextWrapped("No save states yet.  Press F5 while playing (or use Save states in the Emulation menu) and the "
+                           "state is listed here with the screenshot taken when you saved it.  Click one to start the game "
+                           "from that moment.");
+        return;
+    }
+    const float fs = ImGui::GetFontSize();
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const ImVec2 box(fs * 9.0f * std::max(0.8f, svc.cellScale) * 1.25f, fs * 9.0f * std::max(0.8f, svc.cellScale) * 1.25f * 0.75f);
+    const float avail = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
+    size_t listed = 0;
+    for (const lib::StateGame& g : games) {
+        const lib::Entry* owner = svc.entryForState(g);
+        const std::string title = owner ? owner->title : g.stem;
+        if (!needle.empty() && lower(title).find(needle) == std::string::npos && lower(g.stem).find(needle) == std::string::npos) continue;
+        listed++;
+        ImGui::PushID(g.stem.c_str());
+        ImGui::SeparatorText(title.c_str());
+        if (!owner) {
+            ImGui::TextDisabled("This game is not in the library (its folder is not added, or the file moved): "
+                                "its states cannot be started from here.");
+        }
+        float x = 0.0f;
+        for (const lib::StateInfo& st : g.states) {
+            if (x > 0.0f && x + box.x > avail) x = 0.0f;
+            else if (x > 0.0f) ImGui::SameLine();
+            x += box.x + gap;
+            ImGui::PushID(st.slot + 1);
+            ImGui::BeginGroup();
+            ImVec2 p0 = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::InvisibleButton("##shot", box);
+            const bool hot = ImGui::IsItemHovered();
+            drawStateShot(ImGui::GetWindowDrawList(), svc, st, p0, box, hot && owner);
+            if (hot) {
+                if (owner) ImGui::SetTooltip("Start %s from this state", title.c_str());
+                else ImGui::SetTooltip("%s is not in the library", title.c_str());
+            }
+            if (clicked && owner) svc.launchState(*owner, st.slot);
+            ImGui::TextUnformatted(lib::stateLabel(st.slot).c_str());
+            ImGui::TextDisabled("%s", stamp(st.mtime).c_str());
+            if (ImGui::SmallButton("Delete")) {
+                g_del.ask = true;
+                g_del.state = st;
+                g_del.title = title;
+            }
+            ImGui::EndGroup();
+            ImGui::PopID();
+        }
+        ImGui::PopID();
+    }
+    if (listed == 0) ImGui::TextDisabled("Nothing matches.");
+    // The confirmation lives outside the loops: deleting re-lists the states, and `games` with it.
+    if (g_del.ask) {
+        ImGui::OpenPopup("Delete save state?");
+        g_del.ask = false;
+    }
+    if (ImGui::BeginPopupModal("Delete save state?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Delete the %s of %s?", g_del.state.slot == lib::kAutoSlot ? "auto-save" : ("slot " + std::to_string(g_del.state.slot)).c_str(),
+                    g_del.title.c_str());
+        ImGui::TextDisabled("Saved %s.  This cannot be undone.", stamp(g_del.state.mtime).c_str());
+        if (ImGui::Button("Delete")) {
+            svc.deleteState(g_del.state);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
 void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filter) {
     handleZoomInput(svc);
     svc.tiles.clear();
     svc.tilesFrame = ImGui::GetFrameCount();
+    const int tab = svc.activeTab();
+    if (tab == lib::TabStates) {
+        drawStatesTab(svc, needle);
+        return;
+    }
+    const bool listTab = tab == lib::TabFavorites || tab == lib::TabRecents;
     const std::vector<lib::Entry>& all = svc.entries();
-    std::vector<const lib::Entry*> shown;
+    std::vector<lib::Resolved> shown;
     shown.reserve(all.size());
     size_t inSection = 0;
-    for (const lib::Entry& e : all) {
-        if ((int)e.section == svc.section) inSection++;
-        if (passes(e, svc.section, filter, needle)) shown.push_back(&e);
+    if (listTab) {   // both media, in the list's order: favorites by title, recents newest first
+        const std::vector<lib::Resolved>& l = tab == lib::TabFavorites ? svc.favoriteEntries() : svc.recentEntries();
+        inSection = l.size();
+        for (const lib::Resolved& r : l)
+            if (matches(*r.entry, filter, needle)) shown.push_back(r);
+    } else {
+        for (const lib::Entry& e : all) {
+            if ((int)e.section == tab) inSection++;
+            if (passes(e, tab, filter, needle)) {
+                lib::Resolved r;
+                r.entry = &e;
+                shown.push_back(r);
+            }
+        }
+        if (tab == lib::TabCart || tab == lib::TabDisc) drawStrips(app, svc, needle, filter);
     }
 
     if (svc.section == (int)lib::Section::Bios) {
@@ -438,7 +740,12 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
     }
     if (inSection == 0) {
         if (svc.scanning()) return;
-        if (svc.section == (int)lib::Section::Bios)
+        if (tab == lib::TabFavorites)
+            ImGui::TextWrapped("No favorites yet.  Click the star on a game's tile, or right-click it and choose Add to "
+                               "Favorites.");
+        else if (tab == lib::TabRecents)
+            ImGui::TextWrapped("Nothing played yet.  The games you boot from the library appear here, newest first.");
+        else if (tab == (int)lib::Section::Bios)
             ImGui::TextWrapped("No BIOS or system files found in your folders or in the core's system folder (%s). "
                                "None are needed: the core has the Series K and Model M boot ROMs and both CD BIOS images "
                                "built in. Put real ones in the system folder to use them.",
@@ -450,14 +757,17 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
         else if (all.empty())
             ImGui::TextWrapped("No Jaguar images were found in the chosen folders.");
         else
-            ImGui::TextWrapped(svc.section == (int)lib::Section::Cart ? "No cartridge images in the chosen folders."
-                                                                       : "No CD images (.cue, .chd, .cdi) in the chosen folders.");
+            ImGui::TextWrapped(tab == (int)lib::Section::Cart ? "No cartridge images in the chosen folders."
+                                                              : "No CD images (.cue, .chd, .cdi) in the chosen folders.");
         return;
     }
     if (shown.empty()) {
         ImGui::TextDisabled("Nothing matches.");
         return;
     }
+    if (!listTab && (tab == lib::TabCart || tab == lib::TabDisc) &&
+        (lib::stripOnTab(tab, svc.favoritesShow) || lib::stripOnTab(tab, svc.recentsShow)))
+        ImGui::SeparatorText(tab == lib::TabCart ? "All cartridges" : "All CDs");
 
     float fs = ImGui::GetFontSize();
     float cellW = fs * 9.0f * svc.cellScale;
@@ -476,8 +786,8 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
                 size_t i = (size_t)r * (size_t)cols + (size_t)c;
                 if (i >= shown.size()) break;
                 if (c > 0) ImGui::SameLine();
-                if (shown[i]->section == lib::Section::Bios) drawBiosCell(app, svc, *shown[i], cellW, artH, textH);
-                else drawCell(app, svc, *shown[i], cellW, artH, textH);
+                if (shown[i].entry->section == lib::Section::Bios) drawBiosCell(app, svc, *shown[i].entry, cellW, artH, textH);
+                else drawCell(app, svc, *shown[i].entry, cellW, artH, textH, false, tab == lib::TabRecents ? shown[i].when : 0);
             }
         }
     }

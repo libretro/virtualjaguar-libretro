@@ -30,6 +30,8 @@ const Exact kExact[] = {
     {"library.art", KeyClass::Storage},
     {"library.hide_on_launch", KeyClass::Storage}, {"library.size", KeyClass::Storage},
     {"library.section", KeyClass::Storage},
+    {"library.favorites.show", KeyClass::Storage}, {"library.recents.show", KeyClass::Storage},
+    {"saves.resume", KeyClass::Storage},
     {"input.stick_dpad", KeyClass::Mapping},  {"input.kb.port", KeyClass::Mapping},
 };
 
