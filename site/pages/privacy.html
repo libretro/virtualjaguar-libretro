@@ -9,7 +9,7 @@
   app, in the core or on this website. This page lists the few network
   connections the software can make, so you can decide which to allow.
 </p>
-<p class="footnote">Effective 2026-10-14. Applies to the Virtual Jaguar libretro core and the Virtual Jaguar desktop app, as of app version 3.8.1.</p>
+<p class="footnote">Effective 2026-10-14. Applies to the Virtual Jaguar libretro core and the Virtual Jaguar desktop app, as of app version 3.9.0.</p>
 
 <section class="win" id="who">
   <h2>Who we are</h2>
@@ -83,7 +83,7 @@
       </tr>
       <tr>
         <td>Discord<br>(your own Discord app, on this computer)</td>
-        <td>From version 3.8.1, only while the Discord app is running, and only if &ldquo;Show what I&rsquo;m playing on Discord&rdquo; is on.</td>
+        <td>From version 3.9.0, only while the Discord app is running, and only if &ldquo;Show what I&rsquo;m playing on Discord&rdquo; is on.</td>
         <td>The app talks to the Discord program on your computer over a local connection and never contacts Discord&rsquo;s servers itself. It hands that program the game&rsquo;s title, platform, paused or netplay state, elapsed time, a box-art web address, and for achievement games the progress count and a link to the game&rsquo;s RetroAchievements page. Discord then shows this on your profile under Discord&rsquo;s own rules. Turn it off in Settings.</td>
         <td><a href="https://discord.com/privacy">Discord privacy policy</a></td>
       </tr>
@@ -144,18 +144,26 @@
     <ul>
       <li><code>config.ini</code>: your settings, the list of game folders you
           added, and, if you signed in to RetroAchievements, your user name
-          and login token. The token is stored as plain text in this file,
-          not in the system keychain. Treat the file like a password.
-          Signing out removes the token.</li>
+          (the login token itself is not kept here; see below).</li>
       <li><code>saves/</code> and <code>states/</code>: game saves and save states.</li>
       <li><code>library/</code>: the list of games found in your folders, and your favorites and recents.</li>
       <li><code>thumbnails/</code>, <code>covers/</code> and <code>ra-cache/</code>: downloaded and custom pictures.</li>
       <li><code>system/</code>: BIOS files you put there.</li>
     </ul>
     <p>
-      To delete everything, quit the app and delete that folder; uninstalling
-      the app does not remove it. To forget only your RetroAchievements
-      sign-in, choose Sign out in the app. The app writes no log file; its
+      The RetroAchievements login token is kept in your operating
+      system&rsquo;s credential store: the Keychain on macOS, Credential
+      Manager on Windows, and the Secret Service keyring (libsecret) on
+      Linux. If no credential store can be used (for example, no keyring is
+      running, or access is denied), the app falls back to keeping the token
+      as plain text in <code>config.ini</code> and says so in Settings; in
+      that case, treat the file like a password.
+    </p>
+    <p>
+      To delete everything, choose Sign out in the app (this removes the token
+      from the credential store), then quit the app and delete that folder;
+      uninstalling the app does not remove it. To forget only your
+      RetroAchievements sign-in, choose Sign out in the app. The app writes no log file; its
       diagnostics go to the terminal if you start it from one. Inside
       RetroArch, the core keeps nothing of its own: your saves, states and
       logs are in RetroArch&rsquo;s folders.

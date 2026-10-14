@@ -810,6 +810,11 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
       uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
       uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       startPos_disp = (uint16_t)startPos * pwidth_scale;
+      /* The border fill is part of the row, never longer than it: a left
+       * edge (HDB1) past the row width would otherwise wrap `width -= ...`
+       * below to ~65k and run the pixel loop off the end of the row. */
+      if (startPos_disp > width)
+         startPos_disp = width;
 
       for(i = 0; i < startPos_disp; i++)
          *backbuffer++ = pixel;
@@ -852,6 +857,11 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
       uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
       uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       startPos_disp = (uint16_t)startPos * pwidth_scale;
+      /* The border fill is part of the row, never longer than it: a left
+       * edge (HDB1) past the row width would otherwise wrap `width -= ...`
+       * below to ~65k and run the pixel loop off the end of the row. */
+      if (startPos_disp > width)
+         startPos_disp = width;
 
       for(i = 0; i < startPos_disp; i++)
          *backbuffer++ = pixel;
@@ -950,6 +960,11 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
       uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
       uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       startPos_disp = (uint16_t)startPos * pwidth_scale;
+      /* The border fill is part of the row, never longer than it: a left
+       * edge (HDB1) past the row width would otherwise wrap `width -= ...`
+       * below to ~65k and run the pixel loop off the end of the row. */
+      if (startPos_disp > width)
+         startPos_disp = width;
 
       for (sub = 0; sub < n; sub++)
          for (i = 0; i < (unsigned)startPos_disp * (unsigned)n; i++)
@@ -1112,6 +1127,11 @@ static void tom_render_16bpp_rgb_scanline_hires(uint32_t * backbuffer)
       uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
       uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       startPos_disp = (uint16_t)startPos * pwidth_scale;
+      /* The border fill is part of the row, never longer than it: a left
+       * edge (HDB1) past the row width would otherwise wrap `width -= ...`
+       * below to ~65k and run the pixel loop off the end of the row. */
+      if (startPos_disp > width)
+         startPos_disp = width;
 
       for (sub = 0; sub < n; sub++)
          for (i = 0; i < (unsigned)startPos_disp * (unsigned)n; i++)
@@ -1295,6 +1315,11 @@ void tom_render_24bpp_scanline(uint32_t * VJ_RESTRICT backbuffer)
       uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
       uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       startPos_disp = (uint16_t)startPos * pwidth_scale;
+      /* The border fill is part of the row, never longer than it: a left
+       * edge (HDB1) past the row width would otherwise wrap `width -= ...`
+       * below to ~65k and run the pixel loop off the end of the row. */
+      if (startPos_disp > width)
+         startPos_disp = width;
 
       for(i = 0; i < startPos_disp; i++)
          *backbuffer++ = pixel;
@@ -1417,6 +1442,11 @@ void tom_render_16bpp_rgb_scanline(uint32_t * VJ_RESTRICT backbuffer)
       uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
       uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       startPos_disp = (uint16_t)startPos * pwidth_scale;
+      /* The border fill is part of the row, never longer than it: a left
+       * edge (HDB1) past the row width would otherwise wrap `width -= ...`
+       * below to ~65k and run the pixel loop off the end of the row. */
+      if (startPos_disp > width)
+         startPos_disp = width;
 
       for(i = 0; i < startPos_disp; i++)
          *backbuffer++ = pixel;
@@ -1762,6 +1792,19 @@ void TOMExecHalfline(uint16_t halfline, bool render)
          writtenRow = (halfline - topVisible) / 2;//non-interlace
       else
          writtenRow = (((halfline - topVisible) / 2) * 2) + (field2 ? 0 : 1);//interlace
+
+      /* The host framebuffer is MAX_VISIBLE_HEIGHT stock rows tall (libretro.c
+       * VIDEO_BUFFER_HEIGHT).  The window clamp in TOMGetBottomVisible bounds
+       * halflines/2, which is the row count only when non-interlaced; an
+       * interlaced field spreads its rows across twice that range, so a wild
+       * VP/VDB/VDE (an even VP is interlace) made writtenRow reach ~1023 and
+       * every renderer below stored past the end of the buffer.  A row the
+       * buffer cannot hold is not presented, and is not counted as written. */
+      if (writtenRow >= MAX_VISIBLE_HEIGHT)
+      {
+         VJP_LEAVE(VJP_OP);
+         return;
+      }
 
       TOMCurrentLine = &(screenBuffer[writtenRow * hiresRowScale * screenPitch]);
 

@@ -5,6 +5,8 @@
     "test/tools/build/.*",
     "build/.*",
     "src/m68000/.*",
+    "app/third_party/.*",
+    "site/thumbnails/.*\\.tsv$",
     "src/bios/jag.*\\.c$",
     "src/core/version.h",
     "libretro-common/.*",
