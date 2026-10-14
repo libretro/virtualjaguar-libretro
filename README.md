@@ -47,6 +47,10 @@ A standalone front end for the same core, in `app/`: SDL3 for window, audio and 
   <img src="site/assets/app_library.png" width="49%" alt="The app's game library: Favorites and Recently played strips above a grid of Atari Jaguar box art tiles, under Cartridges, Jaguar CD, Save states and BIOS and system tabs">
   <img src="site/assets/app_game_crt.png" width="49%" alt="The Alien vs Predator menu drawn through the crt-gdv-mini-ultra-trinitron aperture-grille shader preset">
 </p>
+<p>
+  <img src="site/assets/app_theme_jaguar_red.png" width="49%" alt="The library in a custom dark theme named Jaguar Red, with a red accent">
+  <img src="site/assets/app_ra_achievements.png" width="49%" alt="The Achievements window listing a sample game's achievements with points, rarity and unlock dates (a mock RetroAchievements account)">
+</p>
 
 - **Library:** your games in Cartridges, Jaguar CD, Favorites, Recently played, Save states and BIOS & system tabs; identified by CRC32 (No-Intro, Redump), box art from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar) on demand, title cards or your own cover for discs.
 - **Playing:** save states with thumbnails and "Resume where I left off", per-device and per-game remapping (all 12 keypad keys, rotary, mice, light gun, Team Tap), cheats from the libretro database, several windows at once, and link-cable netplay on a local network (not rollback, not for the Internet).

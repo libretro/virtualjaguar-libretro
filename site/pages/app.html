@@ -211,7 +211,8 @@
 
     <h3 id="look">Look &amp; feel</h3>
     <ul>
-      <li>Dark, light or custom themes (a theme editor with a contrast check), and your choice of interface font at 11 to 24 pt.</li>
+      <li>Dark, light or your own themes: the Theme picker in Settings &gt; Interface follows the OS or takes a fixed choice, and the theme editor changes eleven colours, the rounding and the spacing live, with a contrast check, and exports and imports theme files.</li>
+      <li>Any font installed on your computer for the interface, at 11 to 24 pt: every name in the list is drawn in its own typeface, starred fonts stay at the top, and the debug windows have a monospace font of their own.</li>
       <li>RetroArch <code>.slangp</code> shader presets through librashader, with the slang-shaders CRT, scanline and interpolation families bundled; aspect fit, integer scaling or stretch.</li>
       <li>Native menus: the macOS menu bar and Dock menu, the Windows dark title bar and Jump List, Linux desktop actions; windows can be dragged out of the main window.</li>
     </ul>
@@ -240,9 +241,45 @@
     <div class="gallery">
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_settings_video.png" aria-label="Enlarge: Video settings">
-          <img src="assets/app_settings_video.png" width="1280" height="860" loading="lazy" alt="Settings, Video tab: integer scaling, smooth filter, stretch, aspect ratio, VSync and fullscreen options, an Appearance section with a Dark theme choice and Customize button, a Font section with a preview, and a Shader section with crt-gdv-mini-ultra-trinitron selected.">
+          <img src="assets/app_settings_video.png" width="1280" height="860" loading="lazy" alt="Settings, Video tab: integer scaling, smooth filter, stretch, aspect ratio, VSync and fullscreen options, and a Shader section with the crt-gdv-mini-ultra-trinitron preset selected above a list of 500 built-in presets.">
         </a>
-        <figcaption><strong>Video settings</strong> <span class="gal-cap">Theme, interface font and the shader list, in one tab.</span></figcaption>
+        <figcaption><strong>Video settings</strong> <span class="gal-cap">Integer scaling, filter, aspect ratio and the shader list with its CRT presets.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_interface.png" aria-label="Enlarge: Interface settings">
+          <img src="assets/app_settings_interface.png" width="1280" height="860" loading="lazy" alt="Settings, Interface tab: Show frame rate and controls overlay options, an Appearance section with a Dark theme choice and a Customize button, and a Font section with a searchable typeface list and a size slider.">
+        </a>
+        <figcaption><strong>Interface settings</strong> <span class="gal-cap">Overlays, Theme and Font in one tab: frame rate, controls overlay, typeface and size.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_fonts.png" aria-label="Enlarge: Font picker">
+          <img src="assets/app_settings_fonts.png" width="1280" height="860" loading="lazy" alt="The Font section of Settings, Interface, set to Inter: a searchable list with Built-in, Favorites and Recent groups and every name drawn in its own typeface, a preview of mixed text, and a Debugger font list with a hex and disassembly sample beside each monospace font.">
+        </a>
+        <figcaption><strong>Font picker</strong> <span class="gal-cap">Installed fonts drawn in their own typeface, favorites and recents, and a debugger font with samples.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_light.png" aria-label="Enlarge: Light theme">
+          <img src="assets/app_theme_light.png" width="1280" height="860" loading="lazy" alt="The home screen library with the built-in Light theme: a pale grey background, light buttons and tabs, and the same Favorites, Recently played and box art grid.">
+        </a>
+        <figcaption><strong>Light theme</strong> <span class="gal-cap">The same library in the built-in Light theme.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_jaguar_red.png" aria-label="Enlarge: Custom theme: Jaguar Red">
+          <img src="assets/app_theme_jaguar_red.png" width="1280" height="860" loading="lazy" alt="The home screen library in a custom dark theme named Jaguar Red: near-black red background, dark red tiles and tabs, and red buttons and highlights.">
+        </a>
+        <figcaption><strong>Custom theme</strong> <span class="gal-cap">Jaguar Red, a dark custom theme with a red accent and rounder corners.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_paper.png" aria-label="Enlarge: Custom theme: Paper">
+          <img src="assets/app_theme_paper.png" width="1280" height="860" loading="lazy" alt="The home screen library in a custom light theme named Paper: cream background, sand coloured tiles, green tabs and buttons and larger rounding.">
+        </a>
+        <figcaption><strong>Another theme</strong> <span class="gal-cap">Paper, a warm light theme with a green accent and extra spacing.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_editor.png" aria-label="Enlarge: Theme editor">
+          <img src="assets/app_theme_editor.png" width="1280" height="860" loading="lazy" alt="The Theme editor window over the library in the Jaguar Red theme: a name field, hex colour boxes with swatches for home background, window, input fields, text, accent and the status colours, rounding and spacing sliders, a contrast check message and Save, Duplicate, Delete, Export and Import buttons.">
+        </a>
+        <figcaption><strong>Theme editor</strong> <span class="gal-cap">Eleven colours, rounding and spacing change the whole app live; contrast is checked.</span></figcaption>
       </figure>
     </div>
     <p class="footnote">
@@ -265,6 +302,44 @@
       <li><strong>Discord Rich Presence</strong> (Settings &gt; Discord): shows the game you are playing, its box art, how long and your achievement progress, with a Get Virtual Jaguar button for other people. On by default, needs Discord running, and you can turn it off.</li>
       <li>See the <a href="privacy.html">privacy policy</a> and <a href="terms.html">terms</a> for what the app sends where (box art and database downloads, RetroAchievements, Discord).</li>
     </ul>
+
+    <div class="gallery">
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_ra_login.png" aria-label="Enlarge: RetroAchievements sign in">
+          <img src="assets/app_ra_login.png" width="1280" height="860" loading="lazy" alt="The Sign in to RetroAchievements window over a running game: a note that the password is sent once and wiped, User name and Password fields, and Sign in and Cancel buttons.">
+        </a>
+        <figcaption><strong>Sign in</strong> <span class="gal-cap">The password goes to retroachievements.org once; only the login token is kept, in the system keychain.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_ra_achievements.png" aria-label="Enlarge: Achievements, this game">
+          <img src="assets/app_ra_achievements.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the This game tab: a progress bar at 38 percent, 3 of 8 achievements and 30 of 90 points, then a list of achievements with titles, descriptions, points, how many players earned them and whether each is locked or unlocked in hardcore or softcore.">
+        </a>
+        <figcaption><strong>This game</strong> <span class="gal-cap">Badges, points, rarity and unlock dates, with filters, sorting and search.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_ra_games.png" aria-label="Enlarge: Achievements, Jaguar games">
+          <img src="assets/app_ra_games.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the Jaguar games tab filtered to In my library: three games with achievement counts, points, progress bars and Play buttons.">
+        </a>
+        <figcaption><strong>Jaguar games</strong> <span class="gal-cap">Every Jaguar and Jaguar CD game with achievements, your progress, and Play for those in your library.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_ra_profile.png" aria-label="Enlarge: Achievements, profile">
+          <img src="assets/app_ra_profile.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the Profile tab: a user name with hardcore and softcore points, a Sign out button, the Download pictures option and an Unlocked this session list.">
+        </a>
+        <figcaption><strong>Profile</strong> <span class="gal-cap">Your points, the softcore or hardcore rule in force, and what you unlocked this session.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_discord.png" aria-label="Enlarge: Discord settings">
+          <img src="assets/app_settings_discord.png" width="1280" height="860" loading="lazy" alt="Settings, Discord tab: Show what I'm playing on Discord, Show game artwork and Show buttons options, a status line and a note listing exactly what is shared, and a collapsed Application ID section.">
+        </a>
+        <figcaption><strong>Discord</strong> <span class="gal-cap">What is shared with Discord, and switches for artwork and buttons. Off here.</span></figcaption>
+      </figure>
+    </div>
+    <p class="footnote">
+      The RetroAchievements pictures come from the app&rsquo;s built-in mock
+      server (a sample account and sample games), so no real account or
+      network was involved, and Discord was off for its picture.
+    </p>
 
     <h3 id="devtools">Developer tools</h3>
     <ul>
@@ -296,6 +371,30 @@
           <img src="assets/app_dbg_scanner.png" width="1280" height="860" loading="lazy" alt="The Cheat scanner window: a value size picker, Signed and Aligned options, an initial value mode and Start search, Undo and New search buttons.">
         </a>
         <figcaption><strong>Cheat scanner</strong> <span class="gal-cap">Search RAM for a changing value; finds become ordinary cheats.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_palette.png" aria-label="Enlarge: Palette editor">
+          <img src="assets/app_dbg_palette.png" width="1280" height="860" loading="lazy" alt="The Palette (CLUT) window over Alien vs Predator: a CRY or RGB16 choice and a 16 by 16 grid of colour swatches spanning the hue and brightness range.">
+        </a>
+        <figcaption><strong>Palette (CLUT)</strong> <span class="gal-cap">The 256-entry colour lookup table as CRY or RGB16; click a swatch to edit it.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_blitter.png" aria-label="Enlarge: Blitter log">
+          <img src="assets/app_dbg_blitter.png" width="1280" height="860" loading="lazy" alt="The Blitter log window: counters for shown, seen and missed launches and a table of blits with frame, command flags, A1 and A2 addresses, size and engine.">
+        </a>
+        <figcaption><strong>Blitter log</strong> <span class="gal-cap">Every blit the game launches, newest first, with a filter and a full decode of each.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_textures.png" aria-label="Enlarge: Texture browser">
+          <img src="assets/app_dbg_textures.png" width="1280" height="860" loading="lazy" alt="The Textures window with Dump textures while playing ticked: a count of 856 captured tiles for Alien vs Predator, filter and size controls, and a grid of tile thumbnails.">
+        </a>
+        <figcaption><strong>Texture browser</strong> <span class="gal-cap">Dump the tiles a game blits, then export them or swap in your own art.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_scope.png" aria-label="Enlarge: Audio scope">
+          <img src="assets/app_dbg_scope.png" width="1280" height="860" loading="lazy" alt="The Audio scope window: left and right waveform plots over 1024 samples and level meters with peak markers near minus 13 decibels.">
+        </a>
+        <figcaption><strong>Audio scope</strong> <span class="gal-cap">What the core sends to the audio device: left and right waveforms and peak meters.</span></figcaption>
       </figure>
     </div>
   </div>
