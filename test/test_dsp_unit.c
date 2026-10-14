@@ -1082,6 +1082,253 @@ static void test_flags_window_savestate(void)
    p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
 }
 
+/* ================================================================
+ * DSP pipeline / gateway timing model (issue #313, timing-campaign S1;
+ * option virtualjaguar_gpu_pipeline_timing, which now covers the DSP).
+ *
+ * Every check is BEHAVIOURAL: a short program is followed by a NOP sled
+ * and run for a fixed budget B.  The sled costs 1 cycle per NOP in
+ * every configuration, so the cycles the program prefix consumed are
+ *
+ *     P = k + B - N
+ *
+ * where k is the number of instructions the prefix retires and N is the
+ * dsp_exec_opcode_count delta.  On a core without the DSP model the
+ * option leaves the DSP untouched and P is the legacy
+ * dsp_opcode_cycles[] cost, so each "model on" assertion fails there.
+ * Expected values are derived in the comments from the rules in
+ * docs/gpu-timing-spec.md (R-numbers) and the constants in dsp.c.
+ * ================================================================ */
+
+/* Leading fields of struct VJSettings (src/core/settings.h).  Only the
+ * first five are touched; their order is pinned by the comment there. */
+struct vjs_head { bool ntsc, bios, fastblit, blittiming, pipetiming; };
+
+static struct vjs_head *p_vjs;
+static uint32_t *p_dsp_exec_opcode_count;
+static uint32_t *p_riscClockScalePct;
+static uint8_t  *p_busArbiter;          /* struct BusArbiter, byte view */
+static void (*p_DSPPipeTimingReset)(void);
+static void (*p_DSPClockScaleReset)(void);
+
+#define BA_ROW_MISS 0   /* offsetof(struct BusArbiter, dram_row_miss) */
+#define BA_ENABLED  4   /* offsetof(struct BusArbiter, enabled) */
+#define BA_SCALE    5   /* offsetof(struct BusArbiter, contention_scale) */
+
+#define OP_ADDQ(n, rd)    DSP_OP(2, (n), (rd))
+#define OP_CMP(rs, rd)    DSP_OP(30, (rs), (rd))
+#define OP_DIV(rs, rd)    DSP_OP(21, (rs), (rd))
+#define OP_LOADW(rs, rd)  DSP_OP(40, (rs), (rd))
+#define OP_LOAD14N(n, rd) DSP_OP(43, (n), (rd))
+#define OP_STORE14N(n, rs) DSP_OP(49, (n), (rs))
+
+/* Load prog[] at $F1B000 behind a fresh reset, NOP-sled the rest of
+ * RAM, apply regs, run budget B with the model on/off, return P. */
+static int pipe_run(const uint16_t *prog, int nwords, int k,
+                    const int *regs, int nregs,
+                    int model, int budget)
+{
+   uint32_t off, before;
+   int i;
+
+   p_DSPReset();
+   for (off = 0; off < 0x2000; off += 2)
+      write_dsp_ram16(off, OP_NOP);
+   for (i = 0; i < nwords; i++)
+      write_dsp_ram16((uint16_t)(i * 2), prog[i]);
+   for (i = 0; i + 1 < nregs; i += 2)
+      p_dsp_reg_bank_0[regs[i]] = (uint32_t)regs[i + 1];
+   p_vjs->pipetiming = model ? true : false;
+   if (p_DSPPipeTimingReset) p_DSPPipeTimingReset();
+   if (p_DSPClockScaleReset) p_DSPClockScaleReset();
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   before = *p_dsp_exec_opcode_count;
+   p_DSPExec(budget);
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+   p_vjs->pipetiming = false;
+   return k + budget - (int)(*p_dsp_exec_opcode_count - before);
+}
+
+static void pipe_expect(const char *what, int got, int want)
+{
+   if (got == want)
+      PASS("%s: prefix cost %d", what, got);
+   else
+      FAIL("%s: prefix cost %d, expected %d", what, got, want);
+}
+
+static void test_dsp_pipe_model(void)
+{
+   const int B = 200;
+   int rowmiss, ext_long, ext_word, P;
+   uint16_t prog[8];
+
+   printf("\n=== Test: DSP pipeline timing model (#313) ===\n");
+   if (!p_vjs || !p_dsp_exec_opcode_count || !p_busArbiter) {
+      FAIL("missing test-ABI symbols (vjs/dsp_exec_opcode_count/busArbiter)");
+      return;
+   }
+   p_busArbiter[BA_ENABLED] = 0;
+   p_busArbiter[BA_SCALE]   = 1;
+   if (p_riscClockScalePct)
+      *p_riscClockScalePct = 100;
+   rowmiss = p_busArbiter[BA_ROW_MISS];
+   /* bus_arbiter_dsp_access(): DRAM long = (2 + rowmiss) first word +
+    * 1 split pause + 2 page-hit second word; word = 2 + rowmiss. */
+   ext_long = (2 + rowmiss) + 1 + 2;
+   ext_word = (2 + rowmiss);
+
+   /* R2 ALU result-use interlock: add r1,r2 ; addq #1,r2 -> +1. */
+   prog[0] = OP_ADD(1, 2); prog[1] = OP_ADDQ(1, 2);
+   P = pipe_run(prog, 2, 2, NULL, 0, 1, B);
+   pipe_expect("R2 RAW interlock (model on)", P, 3);
+   P = pipe_run(prog, 2, 2, NULL, 0, 0, B);
+   pipe_expect("R2 RAW interlock (model off = legacy)", P, 2);
+   /* Control: one-read consumer of a different register -> no wait. */
+   prog[1] = OP_ADDQ(1, 3);
+   P = pipe_run(prog, 2, 2, NULL, 0, 1, B);
+   pipe_expect("R2 control, independent one-read op", P, 2);
+
+   /* §14 write-back port conflict: two reads, neither the target -> +1. */
+   prog[0] = OP_ADD(1, 2); prog[1] = OP_ADD(4, 3);
+   P = pipe_run(prog, 2, 2, NULL, 0, 1, B);
+   pipe_expect("write-back port conflict (model on)", P, 3);
+
+   /* R3 flags interlock: cmp ; jr NE (not taken: r1==r2 -> Z) -> +1. */
+   {
+      int regs[] = { 1, 5, 2, 5 };
+      prog[0] = OP_CMP(1, 2); prog[1] = OP_JR(1, 4);
+      P = pipe_run(prog, 2, 2, regs, 4, 1, B);
+      pipe_expect("R3 flags interlock, cmp;jr cc (model on)", P, 3);
+      prog[0] = OP_CMP(1, 2); prog[1] = OP_NOP; prog[2] = OP_JR(1, 4);
+      P = pipe_run(prog, 3, 3, regs, 4, 1, B);
+      pipe_expect("R3 control, cmp;nop;jr cc", P, 3);
+   }
+
+   /* R5 local load: 3-tick latency, use right behind it waits 2. */
+   {
+      int regs[] = { 1, 0xF1B800 };
+      prog[0] = OP_LOAD(1, 2); prog[1] = OP_ADD(2, 3);
+      P = pipe_run(prog, 2, 2, regs, 2, 1, B);
+      pipe_expect("R5 local load-use (model on)", P, 4);
+      P = pipe_run(prog, 2, 2, regs, 2, 0, B);
+      pipe_expect("R5 local load-use (model off = legacy load 2)", P, 3);
+   }
+
+   /* R9 external load through JERRY's 16-bit bus: ready at
+    * issue 2 + grant 2 + D + return 3 after the load's start; the
+    * consumer one tick later waits D + 6.  Long vs word differ by the
+    * split transfer (pause 1 + page-hit word 2). */
+   {
+      int regs[] = { 1, 0x00100000 };
+      prog[0] = OP_LOAD(1, 2); prog[1] = OP_ADD(2, 3);
+      P = pipe_run(prog, 2, 2, regs, 2, 1, B);
+      pipe_expect("R9 external LONG load-use (model on)", P, 2 + ext_long + 6);
+      prog[0] = OP_LOADW(1, 2);
+      P = pipe_run(prog, 2, 2, regs, 2, 1, B);
+      pipe_expect("R9 external WORD load-use (model on)", P, 2 + ext_word + 6);
+      prog[0] = OP_LOAD(1, 2);
+      P = pipe_run(prog, 2, 2, regs, 2, 0, B);
+      pipe_expect("R9 external load (model off = legacy, no bus cost)", P, 3);
+
+      /* Same pair at risc_clock_scale 2x: the wall-time wait doubles in
+       * DSP cycles; a core-time wait (R5, below) does not. */
+      if (p_riscClockScalePct)
+      {
+         *p_riscClockScalePct = 200;
+         P = pipe_run(prog, 2, 2, regs, 2, 1, B);
+         *p_riscClockScalePct = 100;
+         pipe_expect("R9 external load-use at 2x (wall time scales)", P, 2 + 2 * (ext_long + 6));
+      }
+      else
+         FAIL("riscClockScalePct not exported: 2x wall-time check not run");
+
+      /* dram_timing with the model off: immediate self-cost, the GPU's
+       * GPU_EXT_ACCESS equivalent. */
+      p_busArbiter[BA_ENABLED] = 1;
+      P = pipe_run(prog, 2, 2, regs, 2, 0, B);
+      p_busArbiter[BA_ENABLED] = 0;
+      pipe_expect("dram_timing self-cost, model off", P, 3 + ext_long);
+   }
+   {
+      int regs[] = { 1, 0xF1B800 };
+      prog[0] = OP_LOAD(1, 2); prog[1] = OP_ADD(2, 3);
+      if (p_riscClockScalePct)
+      {
+         *p_riscClockScalePct = 200;
+         P = pipe_run(prog, 2, 2, regs, 2, 1, B);
+         *p_riscClockScalePct = 100;
+         pipe_expect("R5 local load-use at 2x (core time does not scale)", P, 4);
+      }
+      else
+         FAIL("riscClockScalePct not exported: 2x core-time check not run");
+   }
+
+   /* A store waits out a pending external load (EXECON / R9).  The
+    * store also takes the write-back port conflict (+1 core) first,
+    * which is absorbed into the same wait. */
+   {
+      int regs[] = { 1, 0x00100000, 4, 0x00100100, 5, 7 };
+      prog[0] = OP_LOAD(1, 2); prog[1] = OP_STORE(4, 5);
+      P = pipe_run(prog, 2, 2, regs, 6, 1, B);
+      pipe_expect("store drains pending external load", P, 1 + (ext_long + 7));
+   }
+
+   /* R15 DIV: 16 background ticks; using the quotient next waits 16. */
+   {
+      int regs[] = { 1, 3, 2, 300 };
+      prog[0] = OP_DIV(1, 2); prog[1] = OP_ADD(2, 3);
+      P = pipe_run(prog, 2, 2, regs, 4, 1, B);
+      pipe_expect("R15 divide-use (model on)", P, 18);
+      P = pipe_run(prog, 2, 2, regs, 4, 0, B);
+      pipe_expect("R15 divide-use (model off = legacy div 9)", P, 10);
+   }
+
+   /* TOM/JERRY bug 2: indexed-store DATA is not score-boarded, so a
+    * store of the in-flight quotient does not wait (it stores the old
+    * value -- dsp_div_store_fixups).  Indexed store issue extra +1 only.
+    * A plain store of the same register IS score-boarded and waits. */
+   {
+      int regs[] = { 1, 3, 2, 300, 14, 0xF1B800, 5, 0xF1B810 };
+      prog[0] = OP_DIV(1, 2); prog[1] = OP_STORE14N(1, 2);
+      write_dsp_ram32(0x804, 0);
+      P = pipe_run(prog, 2, 2, regs, 8, 1, B);
+      pipe_expect("bug 2: div ; store r2,(r14+1) does not stall", P, 3);
+      if (read_dsp_ram32(0x804) == 300)
+         PASS("bug 2: indexed store wrote the pre-divide value (300)");
+      else
+         FAIL("bug 2: indexed store wrote %08X, expected 300 (old r2)",
+              read_dsp_ram32(0x804));
+      prog[1] = OP_STORE(5, 2);
+      P = pipe_run(prog, 2, 2, regs, 8, 1, B);
+      pipe_expect("plain store of the quotient waits for the divide", P, 18);
+   }
+
+   /* R16 MOVEI 3 ticks; R6 indexed load +2. */
+   prog[0] = DSP_OP(38, 0, 5); prog[1] = 0x5678; prog[2] = 0x1234;
+   P = pipe_run(prog, 3, 1, NULL, 0, 1, B);
+   pipe_expect("R16 movei (model on)", P, 3);
+   {
+      int regs[] = { 14, 0xF1B800 };
+      prog[0] = OP_LOAD14N(1, 5);
+      P = pipe_run(prog, 1, 1, regs, 2, 1, B);
+      pipe_expect("R6 indexed load issue (model on)", P, 3);
+   }
+
+   /* R12/R13 taken jumps: delay slot (1) + refill (JUMP 2, JR 3). */
+   prog[0] = OP_JR(0, 1);
+   P = pipe_run(prog, 1, 2, NULL, 0, 1, B);
+   pipe_expect("R13 taken jr + delay slot (model on)", P, 5);
+   P = pipe_run(prog, 1, 2, NULL, 0, 0, B);
+   pipe_expect("taken jr (model off = legacy, delay slot free)", P, 1);
+   {
+      int regs[] = { 1, 0xF1B008 };
+      prog[0] = OP_JUMP(0, 1);
+      P = pipe_run(prog, 1, 2, regs, 2, 1, B);
+      pipe_expect("R12 taken jump + delay slot (model on)", P, 4);
+   }
+}
+
 
 /* ================================================================
  * Main
@@ -1136,6 +1383,12 @@ int main(int argc, char *argv[])
    LOAD_OPT(dsp_pc);
    LOAD_OPT(dsp_reg_bank_0);
    LOAD_OPT(dsp_reg_bank_1);
+   LOAD_OPT(dsp_exec_opcode_count);
+   LOAD_OPT(DSPPipeTimingReset);
+   LOAD_OPT(DSPClockScaleReset);
+   p_vjs = (struct vjs_head *)dlsym(handle, "vjs");
+   p_riscClockScalePct = (uint32_t *)dlsym(handle, "riscClockScalePct");
+   p_busArbiter = (uint8_t *)dlsym(handle, "busArbiter");
 
    if (!p_dsp_control || !p_dsp_pc || !p_dsp_reg_bank_0) {
       fprintf(stderr, "Missing DSP internal symbols\n");
@@ -1201,6 +1454,7 @@ int main(int argc, char *argv[])
    test_flags_store_then_jump();
    test_jump_with_flags_store_in_slot();
    test_flags_window_savestate();
+   test_dsp_pipe_model();
 
    printf("\n=== Results: %d passed, %d failed ===\n", passes, fails);
 
