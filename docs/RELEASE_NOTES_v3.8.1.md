@@ -227,7 +227,7 @@ https://github.com/libretro/virtualjaguar-libretro/pull/896. Screenshots: https:
 ## Known issues
 
 - **Signing.** macOS packages are signed with a Developer ID and notarized; Windows packages are
-  not signed yet (SmartScreen may warn). <!-- SIGNING: verify macOS notarization in the release CI before tagging -->
+  not signed yet (SmartScreen may warn).
 - **Shaders on Intel Macs.** The macOS universal package bundles an arm64-only librashader, so
   shaders may be unavailable on Intel Macs.
 - **Shaders on Linux** need librashader installed separately (a distribution package, or built

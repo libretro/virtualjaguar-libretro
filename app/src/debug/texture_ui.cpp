@@ -15,6 +15,7 @@
 #include <SDL3/SDL_dialog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <cstddef>
 #include <cstdio>
