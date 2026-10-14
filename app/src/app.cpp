@@ -1,6 +1,7 @@
 #include "app.h"
 #include "devices_ui.h"
 #include "fonts_imgui.h"
+#include "ui_scale.h"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -220,6 +221,7 @@ bool App::initWindow() {
     const std::string firstTitle = "Virtual Jaguar" + instanceTitleSuffix(paths.instance);
     SDL_WindowFlags wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
     if (!lowDpi_) wflags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;   // --low-dpi: a 1x framebuffer, for screenshots of a standard display
+    if (simDensity_) { w *= (int)simDensity_; h *= (int)simDensity_; }   // --pixel-density: the window holds N pixels per point
     window_ = SDL_CreateWindow(firstTitle.c_str(), w, h, wflags);
     if (!window_) {
         std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());
@@ -237,6 +239,7 @@ bool App::initWindow() {
 }
 
 static std::string g_imguiIni;
+static float g_simDensity = 1.0f;   // --pixel-density, for the platform handler (a plain function pointer)
 
 bool App::initImGui() {
     IMGUI_CHECKVERSION();
@@ -269,9 +272,8 @@ bool App::initImGui() {
     // every window came out twice as wide as intended.  (Dear ImGui's own SDL3 example uses the content scale.)
     float scale = uiScaleOverride;
     if (scale <= 0.0f) {
-        float density = SDL_GetWindowPixelDensity(window_);
-        scale = SDL_GetWindowDisplayScale(window_) / (density > 0.0f ? density : 1.0f);
-        scale *= std::min(4.0f, std::max(0.5f, cfg.getFloat("ui.scale", 1.0f)));   // user preference on top
+        scale = uiscale::contentScale(SDL_GetWindowDisplayScale(window_), SDL_GetWindowPixelDensity(window_),
+                                      cfg.getFloat("ui.scale", 1.0f));   // user preference on top
     }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
@@ -286,6 +288,11 @@ bool App::initImGui() {
     const char* glsl = "#version 330 core";
 #endif
     if (!ImGui_ImplSDL3_InitForOpenGL(window_, gl_)) return false;
+    if (simDensity_) {   // --pixel-density: the multi-viewport path asks the platform handler too
+        ImGui::GetPlatformIO().Platform_GetWindowFramebufferScale = [](ImGuiViewport*) {
+            return ImVec2(g_simDensity, g_simDensity);
+        };
+    }
     if (!ImGui_ImplOpenGL3_Init(glsl)) return false;
     imguiUp_ = true;
     if (!video.init()) return false;
@@ -393,6 +400,7 @@ void App::haltedFrame() {
     applyViewports();
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    simulateDensity();
     ImGui::NewFrame();
     bool capKb = false;
     drawUi(*this, capKb);
@@ -1198,7 +1206,9 @@ int App::run(const CliArgs& a) {
 
 int App::runInteractive(const CliArgs& a) {
     uiScaleOverride = a.uiScale;
-    lowDpi_ = a.lowDpi;
+    lowDpi_ = a.lowDpi || a.pixelDensity > 1;   // --pixel-density builds its own density on a 1x window
+    simDensity_ = a.pixelDensity > 1 ? std::min(4u, a.pixelDensity) : 0;
+    g_simDensity = simDensity_ ? (float)simDensity_ : 1.0f;
     if (!initWindow() || !initImGui()) return 1;
     desktopInit();
     if (!a.font.empty()) {
@@ -1294,7 +1304,9 @@ int App::runInteractive(const CliArgs& a) {
         applyViewports();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        simulateDensity();
         ImGui::NewFrame();
+        if (a.verbose && !densityLogged_ && ++densityFrames_ >= 5) logDensity();
         bool capKb = false;
         drawUi(*this, capKb);
         ImGui::Render();
@@ -1342,6 +1354,33 @@ int App::runInteractive(const CliArgs& a) {
         (void)secs;
     }
     return 0;
+}
+
+// --verbose, once, inside a frame: the numbers that decide how crisp the text is.  The glyph atlas bakes at
+// "baked density"; on a Retina display it must equal the pixel density (2), or glyphs are rasterised at 1x and the GPU
+// stretches them.
+void App::logDensity() {
+    densityLogged_ = true;
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImFont* f = ImGui::GetFont();
+    ImFontBaked* b = f ? f->GetFontBaked(ImGui::GetFontSize()) : nullptr;
+    std::fprintf(stderr,
+                 "[ui] pixel density %.2f, SDL display scale %.2f, io framebuffer scale %.2f, main viewport framebuffer "
+                 "scale %.2f, UI scale %.2f (FontScaleDpi %.2f), font %.1f px baked at density %.2f, viewports %s\n",
+                 SDL_GetWindowPixelDensity(window_), SDL_GetWindowDisplayScale(window_), io.DisplayFramebufferScale.x,
+                 vp ? vp->FramebufferScale.x : 0.0f, uiScale_, ImGui::GetStyle().FontScaleDpi, ImGui::GetFontSize(),
+                 b ? b->RasterizerDensity : 0.0f, viewportsOn_ ? "on" : "off");
+}
+
+// --pixel-density N (dev): the backend reports a window of N*W x N*H pixels at 1 pixel per point; what a Retina Mac
+// reports is W x H points at N pixels per point.  Rewrites the two numbers the backend just set so the UI lays out
+// in points and rasterises at N, and the screenshot shows what the display would.
+void App::simulateDensity() {
+    if (!simDensity_) return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(io.DisplaySize.x / (float)simDensity_, io.DisplaySize.y / (float)simDensity_);
+    io.DisplayFramebufferScale = ImVec2((float)simDensity_, (float)simDensity_);
 }
 
 void App::saveWindowScreenshot(const std::string& path) {

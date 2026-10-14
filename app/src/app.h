@@ -48,6 +48,7 @@ struct CliArgs {
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
+    unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
     bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
@@ -148,6 +149,11 @@ public:
     CheatManager cheats;
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
+    unsigned simDensity_ = 0;         // dev: --pixel-density (0 / 1 = off)
+    void simulateDensity();
+    void logDensity();
+    bool densityLogged_ = false;
+    unsigned densityFrames_ = 0;
     bool lowDpi_ = false;             // dev: --low-dpi
     int stateSlot = 0;
     int resumeMode = 1;               // lib::ResumeMode: Off / Ask / Always, "Resume where I left off" (saves.resume)

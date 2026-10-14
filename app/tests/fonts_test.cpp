@@ -10,6 +10,7 @@
 #include "config.h"
 #include "fonts.h"
 #include "paths.h"
+#include "ui_scale.h"
 
 #include <SDL3/SDL.h>
 
@@ -410,6 +411,23 @@ static void testThisMachine() {
     }
 }
 
+// UI scale vs pixel density: SDL's display scale already contains the density, so the UI scale divides it out
+// (a Retina Mac is 2.0 / 2.0 = 1: the layout stays in points, the atlas rasterises at the density).
+static void testUiScale() {
+    using vj::uiscale::contentScale;
+    auto near = [](float a, float b) { return std::fabs(a - b) < 1e-5f; };
+    CHECK(near(contentScale(2.0f, 2.0f, 1.0f), 1.0f));     // Retina Mac
+    CHECK(near(contentScale(1.0f, 1.0f, 1.0f), 1.0f));     // standard display
+    CHECK(near(contentScale(2.0f, 1.0f, 1.0f), 2.0f));     // 4K Windows / Linux at 200%
+    CHECK(near(contentScale(3.0f, 2.0f, 1.0f), 1.5f));     // Retina with a 150% content scale
+    CHECK(near(contentScale(2.0f, 2.0f, 1.25f), 1.25f));   // the user's preference multiplies
+    CHECK(near(contentScale(2.0f, 2.0f, 100.0f), 4.0f));   // preference clamped to 4
+    CHECK(near(contentScale(2.0f, 2.0f, 0.01f), 0.5f));    // preference clamped to 0.5 (0.5 itself is allowed)
+    CHECK(near(contentScale(0.8f, 2.0f, 1.0f), 1.0f));     // below 0.5 is nonsense: 1
+    CHECK(near(contentScale(2.0f, 0.0f, 1.0f), 2.0f));     // no density reported: treated as 1
+    CHECK(near(contentScale(2.0f, -1.0f, 1.0f), 2.0f));
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr, "usage: %s SRC_DIR IMGUI_DIR\n", argv[0]);
@@ -427,6 +445,7 @@ int main(int argc, char** argv) {
     testSafeNames();
     testCustomFiles(tmp, imguiDir);
     testGlyphCoverage(srcDir);
+    testUiScale();
     testThisMachine();
 
     std::error_code ec;
