@@ -30,6 +30,7 @@ void DebugSession::setIface(const vj_debug_iface* i) {
     attached_ = false;
     dropHalt();
     regions_.clear();
+    bps_.clear();   // a breakpoint never lingers into the next core instance / game
     iface_ = i;
     serial_++;
     if (hadCore && !i) closeAllTools("no core");
@@ -314,6 +315,22 @@ void DebugSession::registerPlaceholderTools() {
         d.label = t.label;
         tools_.push_back(d);
     }
+}
+
+void DebugSession::addProvider(const DebugProvider& p) {
+    providers_.push_back(p);
+    if (p.registerTools) p.registerTools(*this);
+}
+
+void DebugSession::drawTools() {
+    // A draw hook may register or open things: walk copies of the callables.
+    std::vector<DebugProvider> ps = providers_;
+    for (const DebugProvider& p : ps)
+        if (p.draw) p.draw(*this);
+    std::vector<std::function<void()>> draws;
+    for (const DebugTool& t : tools_)
+        if (t.draw) draws.push_back(t.draw);
+    for (auto& f : draws) f();
 }
 
 void DebugSession::closeAllTools(const char* why) {

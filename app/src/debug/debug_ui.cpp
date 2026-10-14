@@ -84,12 +84,6 @@ void drawDebugOverlay(App& app, float areaX, float areaY) {
     ImGui::End();
 }
 
-void drawDebugWindows(App& app) {
-    // A tool's draw hook may register or open things; walk a copy of the callables.
-    std::vector<std::function<void()>> draws;
-    for (const DebugTool& t : app.debug.tools())
-        if (t.draw) draws.push_back(t.draw);
-    for (auto& f : draws) f();
-}
+void drawDebugWindows(App& app) { app.debug.drawTools(); }
 
 }  // namespace vj

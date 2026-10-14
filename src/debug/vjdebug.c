@@ -198,6 +198,10 @@ static int VJDbgPoke(unsigned int addr, const unsigned char *src,
       }
       else
       {
+         /* Same self-modifying-code rule as the 68K's own write path (#811):
+          * a write next to the PC must reach the prefetch queue. */
+         if (a < 0x200000u && M68K_PF_NEAR(a, 1))
+            M68KPrefetchSnoop(a, 1);
          JaguarWriteByte(a, src[i], DEBUGGER);
          i += 1;
       }

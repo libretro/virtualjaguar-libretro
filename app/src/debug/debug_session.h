@@ -35,6 +35,16 @@ struct DebugTool {
     std::function<void()> draw;        // called every UI frame (also during a halt); the window checks its own open state
 };
 
+class DebugSession;
+
+// How a tool window plugs in (one provider per tool file, e.g. registerMemoryTools / drawMemoryTools):
+// `registerTools` runs once, when the provider is added, and registers the Tools-menu entries; `draw` runs
+// every UI frame (also during a halt) and the window checks its own open state.
+struct DebugProvider {
+    std::function<void(DebugSession&)> registerTools;
+    std::function<void(DebugSession&)> draw;
+};
+
 class DebugSession {
 public:
     static constexpr double kRefreshHz = 10.0;       // live views while the emulation runs
@@ -134,6 +144,10 @@ public:
     void registerPlaceholderTools();
     // Asks every open tool window to close (hardcore, a content change).
     void closeAllTools(const char* why);
+    // The generic plug-in point: App adds one provider per tool file at start-up; the UI calls drawTools() once
+    // per frame (providers first, then every DebugTool::draw).
+    void addProvider(const DebugProvider& p);
+    void drawTools();
 
 private:
     static int haltPumpThunk(void* user, int target, unsigned pc);
@@ -153,6 +167,7 @@ private:
     int queued_ = VJ_DBG_RESUME_NONE;
     std::vector<DebugBreakpoint> bps_;
     std::vector<DebugTool> tools_;
+    std::vector<DebugProvider> providers_;
     std::vector<vj_debug_region> regions_;
     uint64_t serial_ = 1;
     double lastRefresh_ = -1;

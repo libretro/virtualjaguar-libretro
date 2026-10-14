@@ -331,7 +331,10 @@ void App::syncDebug() {
 // nothing here may re-enter the core -- CoreHost refuses state loads, resets, loads and option changes
 // while inFrame().
 void App::haltedFrame() {
-    if (!imguiUp_ || !window_) return;
+    if (!imguiUp_ || !window_) {
+        debug.detachAndResume();   // no UI to release the core with: never leave it parked
+        return;
+    }
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, false);
     if (quit) return;
@@ -431,6 +434,7 @@ bool App::openContent(const std::string& pathIn) {
     controlsOverlayOnLoad(*this);
     addRecent(path);
     invalidateThumbs();
+    debug.requestRefresh();
     ach.onContentLoaded();   // identify the game, look up its achievements
     cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
     toast("Loaded " + host.contentName());
@@ -516,6 +520,7 @@ void App::closeContent() {
         return;
     }
     host.unloadContent();
+    debug.requestRefresh();
     ach.onContentClosed();
     cheatsOnClose(*this);
     audio.clear();
@@ -530,6 +535,7 @@ void App::reset() {
         return;
     }
     host.reset();
+    debug.requestRefresh();
     ach.onReset();
     toast("Reset");
 }
@@ -646,6 +652,7 @@ bool App::loadState(int slot) {
     }
     audio.clear();
     cheatsAfterStateLoad(*this);
+    debug.requestRefresh();
     ach.onStateLoaded(statePath(slot));
     toast("State loaded from slot " + std::to_string(slot));
     return true;

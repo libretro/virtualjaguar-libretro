@@ -347,6 +347,27 @@ static void testMockContent() {
     CHECK(m.iface()->frame_number() == 1234);
 }
 
+static void testProviders() {
+    DebugSession s;
+    int regs = 0, draws = 0, toolDraws = 0;
+    DebugProvider p;
+    p.registerTools = [&](DebugSession& d) {
+        regs++;
+        DebugTool t;
+        t.id = "memory";
+        t.label = "Memory viewer...";
+        t.toggle = [] {};
+        t.draw = [&] { toolDraws++; };
+        d.registerTool(t);
+    };
+    p.draw = [&](DebugSession&) { draws++; };
+    s.addProvider(p);
+    CHECK(regs == 1 && s.findTool("memory") && s.findTool("memory")->toggle);
+    s.drawTools();
+    s.drawTools();
+    CHECK(draws == 2 && toolDraws == 2 && regs == 1);
+}
+
 static void testIfaceSwap() {
     // A new core (content reload) replaces the interface: the old attachment is forgotten, not called.
     DebugSession s;
@@ -355,12 +376,14 @@ static void testIfaceSwap() {
         s.setIface(m1.iface());
         s.setContentLoaded(true);
         CHECK(s.attach());
+        CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
         s.setIface(nullptr);                  // core torn down
         CHECK(!s.attached() && !s.enabled());
     }
     MockDebugIface m2;
     s.setIface(m2.iface());
     CHECK(s.enabled());
+    CHECK(s.breakpoints().empty());   // a breakpoint never lingers into the next core instance
     CHECK(s.attach() && m2.attached());
 }
 
@@ -372,6 +395,7 @@ int main() {
     testPokePolicy();
     testRefreshCadence();
     testTools();
+    testProviders();
     testMockContent();
     testIfaceSwap();
     std::printf("debug_session_test: %d checks, %d failed\n", g_checks, g_fail);

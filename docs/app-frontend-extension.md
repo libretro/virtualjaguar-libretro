@@ -88,7 +88,8 @@ whole feature does not exist.  What it gives the app (details, threading and the
 
 Everything is host-transient: no savestate field, nothing the emulated machine can observe (the determinism gate in
 `test/test_debug_iface.c` hashes the frame and all of main RAM with everything switched on).  Detached, the cost is one
-global test per `OPProcessList` call and one per blitter launch.  Strings and the struct stay valid until
+global test per `OPProcessList` call (plus a register-local flag test per visited object) and one per blitter launch;
+the A/B benchmark in the PR measures it.  Strings and the struct stay valid until
 `retro_deinit()`; the core forgets an attached host on unload.
 
 ## Rules
