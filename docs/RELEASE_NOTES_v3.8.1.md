@@ -98,6 +98,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   clock scales) show the core's presets plus a "Custom..." entry that opens a validated box; an
   invalid entry says why and changes nothing. The Netplay window takes any port 1-65535 and a typed
   host name or IPv4 address directly (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+- **Reset buttons.** Each Settings tab and each core option category has a Reset group button, and
+  Reset all settings... (with a confirmation) puts everything back to defaults while keeping your library
+  folders, recents, covers, saves, RetroAchievements login, key and button bindings and per-game
+  overrides unless you tick them (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Core events for the app.** The core tells the app about link up/down, link statistics, wire
   speed and crash-watchdog hits over a private channel (`docs/app-frontend-extension.md`) instead
   of the app reading log text; a watchdog hit now also shows on screen. RetroArch and other

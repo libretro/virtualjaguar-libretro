@@ -90,6 +90,7 @@ public:
     int gridHoverFrame = -1000;
     void zoomChanged();         // a zoom step happened: schedule the config write
     void flushZoom();           // UI, every frame: writes the config once the zoom has settled
+    void resetDisplaySettings();   // Settings > Reset: tile size, art download, hide-on-launch, section (never the folders)
     int section = 0;            // lib::Section shown (Cartridges, Jaguar CD, BIOS); remembered in config
     std::string systemDir;      // the core's system folder, for BIOS files and the notes on them
     const std::vector<lib::Entry>& entries() const { return entries_; }

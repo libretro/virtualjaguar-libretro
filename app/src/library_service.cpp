@@ -248,6 +248,14 @@ void LibraryService::flushZoom() {
     if (zoomSaveAt_ && SDL_GetTicks() >= zoomSaveAt_) saveSettings();
 }
 
+void LibraryService::resetDisplaySettings() {
+    downloadArt = true;
+    hideOnLaunch = true;
+    cellScale = lib::kTileScaleDefault;
+    section = 0;
+    saveSettings();
+}
+
 void LibraryService::saveSettings() {
     zoomSaveAt_ = 0;
     if (!cfg_) return;

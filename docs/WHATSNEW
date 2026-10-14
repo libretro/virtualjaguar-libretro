@@ -54,6 +54,10 @@ docs/RELEASE_NOTES_v3.8.1.md
   port and host, GDB port, sensitivities, tuning, clock scales) offer
   the core's presets plus "Custom..."; the Netplay window takes any
   port and a typed host name (#833).
+* Settings: a Reset group button on every tab and core option
+  category, and Reset all settings... with a confirmation; bindings,
+  per-game overrides, library folders and logins are kept unless
+  ticked (#833).
 * The core reports link up/down, link stats, wire speed and crash
   watchdog hits to the app through a private channel instead of log
   text (no-op under RetroArch); a watchdog hit shows on screen (#888).
