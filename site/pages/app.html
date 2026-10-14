@@ -1,0 +1,386 @@
+<!-- title: The Virtual Jaguar App | Virtual Jaguar libretro -->
+<!-- nav: App -->
+<!-- description: The standalone Virtual Jaguar app for macOS, Windows and Linux: game library with box art, RetroArch shaders, cheats, RetroAchievements, controller remapping, save states and LAN link play. -->
+
+<h1>The Virtual Jaguar app</h1>
+<p class="lede">
+  A standalone desktop front end for the same core. It runs on macOS,
+  Windows and Linux with no RetroArch installed, and it drives the core
+  through the same <code>retro_*</code> API RetroArch uses, so every core
+  option and save state behaves the same in both. New in v3.9.0; it carries
+  the core&rsquo;s version number.
+</p>
+<p>
+  Two ways to play: the <a href="./">RetroArch core</a>, or this app. The core
+  is not going away, and nothing here changes how it works.
+</p>
+
+<section class="win" id="get">
+  <h2>Get it</h2>
+  <div class="win-body">
+    <p>
+      The packages are attached to each
+      <a href="{{REPO}}/releases">GitHub release</a> next to the core builds,
+      and listed in that release&rsquo;s <code>SHA256SUMS.txt</code>.
+    </p>
+    <div class="table-wrap"><table>
+      <tr><th>System</th><th>Package</th><th>Notes</th></tr>
+      <tr>
+        <td>macOS</td>
+        <td><code>VirtualJaguar-X.Y.Z-macos-universal.zip</code></td>
+        <td><code>Virtual Jaguar.app</code>, Apple Silicon and Intel, macOS 11
+            or later. Zip only, no disk image.</td>
+      </tr>
+      <tr>
+        <td>Windows x64</td>
+        <td><code>VirtualJaguar-X.Y.Z-windows-x64.zip</code>,
+            <code>...-windows-x64-setup.exe</code></td>
+        <td>The zip is portable: <code>portable.txt</code> keeps settings in a
+            <code>data</code> folder beside the program. The installer is
+            per-user by default.</td>
+      </tr>
+      <tr>
+        <td>Windows ARM64</td>
+        <td><code>VirtualJaguar-X.Y.Z-windows-arm64.zip</code>,
+            <code>...-windows-arm64-setup.exe</code></td>
+        <td>Native ARM64 build (Snapdragon X and other ARM64 PCs), same
+            layout as x64. The installer needs ARM64 Windows.</td>
+      </tr>
+      <tr>
+        <td>Linux x86_64, aarch64</td>
+        <td><code>VirtualJaguar-X.Y.Z-linux-&lt;arch&gt;.AppImage</code>,
+            <code>virtualjaguar_X.Y.Z_&lt;amd64|arm64&gt;.deb</code></td>
+        <td>Built on Ubuntu 22.04. The <code>.deb</code> installs under
+            <code>/usr/lib/virtualjaguar</code> with a link in
+            <code>/usr/bin</code>.</td>
+      </tr>
+      <tr>
+        <td>Linux x86_64 (Flatpak)</td>
+        <td><code>VirtualJaguar-X.Y.Z-linux-x86_64.flatpak</code></td>
+        <td>A single-file bundle:
+            <code>flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo</code>,
+            then <code>flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak</code>.
+            It can read your home folder (read-only) to find ROMs. No shaders
+            in the Flatpak yet.</td>
+      </tr>
+    </table></div>
+    <p>Or use the installer, which can install the core, the app, or both:</p>
+    <p><strong>macOS, Linux</strong></p>
+    <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh -s -- --what app</code></pre>
+    <p><strong>Windows</strong> (PowerShell)</p>
+    <pre><code>$env:VJ_WHAT = 'app'; irm {{RAW_URL}}/tools/install.ps1 | iex</code></pre>
+    <p class="footnote">
+      <code>--what</code> takes <code>core</code>, <code>app</code> or
+      <code>both</code>; the installer verifies each download against
+      <code>SHA256SUMS.txt</code>. More options, and the PowerShell
+      alternatives, are on the <a href="./#get">home page</a>.
+    </p>
+    <p>
+      <strong>Nightlies carry the app too.</strong> The rolling
+      <a href="{{REPO}}/releases/tag/nightly"><code>nightly</code></a>
+      prerelease holds <code>VirtualJaguar-nightly-*</code> packages built from
+      the same <code>develop</code> commit as the nightly core. Add
+      <code>--channel nightly</code> to the installer to get them. They are
+      gated on compiling, not on the test suite.
+    </p>
+    <p class="footnote">
+      <strong>Unsigned builds.</strong> Until signing is configured for the
+      release, macOS may refuse the app at first launch (right-click the app
+      and choose Open, once) and Windows SmartScreen may warn about the
+      installer. Packaging, signing and the package-manager templates are in
+      <a href="{{REPO}}/blob/develop/app/packaging/README.md">app/packaging/README.md</a>.
+    </p>
+  </div>
+</section>
+
+<section class="win" id="library">
+  <h2>Game library</h2>
+  <div class="win-body">
+    <figure class="shot smooth">
+      <div class="win-bar">Home screen <span class="badge">Cartridges</span></div>
+      <div class="well">
+        <img src="assets/app_library.png" width="1280" height="860"
+             alt="The Virtual Jaguar app home screen: a search box, filter and size controls above Cartridges, Jaguar CD and BIOS and system tabs, then a grid of 22 Atari Jaguar box art tiles with game titles beneath.">
+      </div>
+      <figcaption>
+        With no game loaded, the main window is the library. Add a folder and
+        it scans it for cartridge and disc images.
+      </figcaption>
+    </figure>
+    <ul>
+      <li><strong>Three tabs:</strong> Cartridges, Jaguar CD, and BIOS &amp;
+        system. BIOS files are recognised by checksum and name, shown with what
+        the core uses them for, and never launched as games. None is
+        required.</li>
+      <li><strong>Favorites, recently played and save states:</strong> star a
+        game, and the games you boot are remembered; each list shows as its
+        own tab, as a strip on the Cartridges and Jaguar CD tabs, both, or not
+        at all. A Save states tab lists every state with the screenshot saved
+        with it, and a game's right-click menu can load one.</li>
+      <li><strong>Identification</strong> is by CRC32 against the libretro
+        database: No-Intro for cartridges, Redump for CDs. A name-only match is
+        badged <code>?</code>, an unidentified file <code>??</code>. Discs in
+        <code>.cue</code>, <code>.chd</code> and <code>.cdi</code> form are
+        checksummed from their first track; a rip that is not a Redump dump
+        is matched by its file or folder name when that is unambiguous.</li>
+      <li><strong>Box art</strong> comes from
+        <a href="https://github.com/libretro-thumbnails/Atari_-_Jaguar">libretro-thumbnails</a>,
+        downloaded on demand for the tiles you can see and cached on your
+        machine. Upstream does not have art for every title, so some tiles show
+        a snapshot or a placeholder. <strong>Download box art</strong> turns
+        downloading off. libretro-thumbnails has no Jaguar CD art yet, so
+        discs fall back to
+        <a href="thumbnails/">artwork hosted on this site</a>
+        until it does; right-click any tile (or drop a PNG on it) to set your
+        own cover, or
+        put PNGs named after the game in the <code>covers</code> folder of the
+        app's data directory.</li>
+      <li>Click a tile to launch. File &gt; Open, drag and drop, and the
+        command line still work, and so does File &gt; Open recent.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="win" id="video">
+  <h2>Shaders and scaling</h2>
+  <div class="win-body">
+    <p>
+      The app runs RetroArch <code>.slangp</code> presets, unmodified, through
+      <a href="https://github.com/SnowflakePowered/librashader">librashader</a>.
+      Presets from
+      <a href="https://github.com/libretro/slang-shaders">libretro/slang-shaders</a>
+      are bundled: the CRT family (CRT-Royale, CRT-Geom, CRT-EasyMode and
+      others), scanlines and interpolation, plus two small first-party presets
+      (<code>vj-scanlines</code>, <code>vj-sharp-bilinear</code>). Point
+      <strong>Preset folder</strong> at a full slang-shaders checkout for the
+      rest, and preset parameters get sliders. Integer scaling and the aspect
+      modes are separate from shaders and apply to both.
+    </p>
+    <div class="ab-pair">
+      <figure class="shot smooth">
+        <div class="win-bar">Plain <span class="badge">integer scale</span></div>
+        <div class="well">
+          <img src="assets/app_game.png" width="1280" height="860"
+               alt="The Alien vs Predator main menu (Select Character, Restore Game, High Scores, Credits) drawn sharp on a black window, centred with integer scaling.">
+        </div>
+      </figure>
+      <figure class="shot smooth">
+        <div class="win-bar">CRT-Royale <span class="badge">same frame</span></div>
+        <div class="well">
+          <img src="assets/app_game_crt.png" width="1280" height="860"
+               alt="The same Alien vs Predator menu through the CRT-Royale shader preset, with visible scanlines, phosphor mask and glow.">
+        </div>
+      </figure>
+    </div>
+    <p class="footnote">
+      Shaders are optional: if a preset does not compile or librashader is
+      missing, the app draws the plain picture and says why.
+      <strong>Platform notes:</strong> the macOS and Windows packages bundle
+      the librashader runtime; upstream publishes no Linux build, so on Linux
+      install a librashader package and the app finds it. The macOS universal
+      package currently ships an arm64-only librashader, so shaders may be
+      unavailable on Intel Macs (see the
+      <a href="{{REPO}}/blob/develop/app/packaging/README.md#macos-notes">packaging notes</a>).
+    </p>
+    <figure class="shot smooth">
+      <div class="win-bar">Settings &gt; Video <span class="badge">Shader</span></div>
+      <div class="well">
+        <img src="assets/app_settings_video.png" width="1280" height="860"
+             alt="The Settings window on the Video tab: integer scaling, smooth filter, stretch, aspect ratio, VSync and fullscreen options, then a Shader section with a Use shader checkbox, the selected CRT-Royale preset path and a scrollable list of 500 built-in presets.">
+      </div>
+      <figcaption>
+        Settings &gt; Video &gt; Shader: pick a preset from the built-in list
+        or load a file. View &gt; Shader switches it on and off.
+      </figcaption>
+    </figure>
+    <figure class="shot smooth">
+      <div class="win-bar">Skyhammer <span class="badge">running</span></div>
+      <div class="well">
+        <img src="assets/app_gameplay.png" width="1280" height="860"
+             alt="Skyhammer's cockpit view inside a rusty industrial structure, with green heads-up displays for fire, fuel, shield damage and altitude, a minimap and a Gatling gun gauge.">
+      </div>
+      <figcaption>
+        The picture is drawn at the largest whole-number scale that fits when
+        integer scaling is on. Pacing follows the core&rsquo;s reported field
+        rate, 60.05445&nbsp;Hz NTSC and 50.08013&nbsp;Hz PAL.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="win" id="input">
+  <h2>Controllers and keyboard</h2>
+  <div class="win-body">
+    <ul>
+      <li><strong>Remapping.</strong> Settings &gt; Input edits bindings per
+        device (the keyboard, every gamepad, or one controller model), either
+        everywhere or for one game. Unknown controllers can be added with a
+        <code>gamecontrollerdb.txt</code> in the data folder.</li>
+      <li><strong>All 12 keypad keys.</strong> The default gamepad layout
+        reaches 0&ndash;9, <code>*</code> and <code>#</code> without the
+        overlay (face button, shoulders, triggers and the right stick).
+        <strong>F2</strong> opens an on-screen keypad as well.</li>
+      <li><strong>Keyboard play</strong> uses the Jaguar Pro Controller
+        6-button layout: arrows, Z X C, Enter and Right Shift, A S D for X Y Z,
+        Q and E for the shoulders, the number row for the keypad.</li>
+      <li><strong>Controls overlay (F3)</strong> is a cheat sheet of the
+        bindings in effect. It appears by itself for a few seconds when a game
+        starts with a keyboard on Player 1, and once per gamepad model, and can
+        be turned off in Settings &gt; Input.</li>
+      <li><strong>Unusual devices.</strong> Settings &gt; Input &gt; Devices
+        &amp; players picks what is plugged into each Jaguar port: the ST and
+        Amiga mouse, the Tempest 2000 rotary, analog, driving and paddle
+        controllers, the 6D stick, the light gun, or a Team Tap, and which
+        controller plays which player.</li>
+    </ul>
+    <figure class="shot smooth">
+      <div class="win-bar">Settings &gt; Input <span class="badge">Devices &amp; players</span></div>
+      <div class="well">
+        <img src="assets/app_settings_input.png" width="1280" height="860"
+             alt="The Settings window on the Input tab, Devices and players sub-tab: Jaguar port 1 set to Rotary (Tempest) and port 2 set to Team Tap, five player slots below, and tuning sliders for mouse speed, rotary speed and stick dead zone.">
+      </div>
+      <figcaption>
+        Port 1 set to the Tempest rotary, port 2 to a Team Tap. The Players
+        list grows by three sockets for each Team Tap.
+      </figcaption>
+    </figure>
+    <figure class="shot smooth">
+      <div class="win-bar">Controls overlay <span class="badge">F3</span></div>
+      <div class="well">
+        <img src="assets/app_controls.png" width="1280" height="860"
+             alt="A translucent panel over the Tempest 2000 credits listing the keyboard bindings for Player 1: the D-pad on the arrow keys, buttons A B C on X Z C, Option on Return, and the keypad on the number row with Pro Controller letters.">
+      </div>
+      <figcaption>
+        The overlay never takes input. It reads the bindings you actually have,
+        including per-game changes.
+      </figcaption>
+    </figure>
+    <p class="footnote">
+      The mouse is captured only while a mouse or rotary is plugged in and a
+      game has focus; Esc or F10 releases it. Controller details:
+      <a href="{{REPO}}/blob/develop/docs/input-devices-user-guide.md">input devices guide</a>
+      and the
+      <a href="{{REPO}}/blob/develop/app/README.md#controls-and-the-keypad">app README</a>.
+    </p>
+  </div>
+</section>
+
+<section class="win" id="extras">
+  <h2>Cheats, achievements and save states</h2>
+  <div class="win-body">
+    <h3>Cheats</h3>
+    <p>
+      Emulation &gt; Cheats lists the cheats the
+      <a href="https://github.com/libretro/libretro-database/tree/master/cht/Atari%20-%20Jaguar">libretro cheat database</a>
+      has for the running game, with a toggle each, plus manual
+      <code>ADDRESS:VALUE</code> codes. What is on is remembered per game. The
+      database files are bundled with the app, with their licence
+      (CC&nbsp;BY-SA&nbsp;4.0); you can add your own <code>.cht</code> files.
+    </p>
+    <figure class="shot smooth">
+      <div class="win-bar">Emulation &gt; Cheats <span class="badge">Tempest 2000</span></div>
+      <div class="well">
+        <img src="assets/app_cheats.png" width="1280" height="860"
+             alt="The Cheats window for Tempest 2000: the cheat set picker, database cheats Infinite Lives (ticked) and Start with 999999 Score, a manual code entry row and a collapsed Cheat library section.">
+      </div>
+    </figure>
+    <h3>RetroAchievements</h3>
+    <ul>
+      <li>Sign in from the Achievements menu. The app keeps only the login
+        token, not your password, and keeps it in your system keychain. Unlocks, leaderboard events and progress show
+        as toasts, and the menu has the achievement list and rich
+        presence. The achievements window shows your avatar, the game icon and
+        every badge, filters the list, and lists the Jaguar and Jaguar CD
+        games that have achievements with your progress and a Play button for
+        the ones in your library.</li>
+      <li>Softcore is the default. <strong>Hardcore</strong> is a toggle:
+        while it is on, <strong>loading save states is refused</strong> (saving
+        still works) and <strong>no cheat reaches the core</strong>. Turning it
+        on mid-game restarts the game for a clean run.</li>
+      <li>Cartridges and <code>.cue</code> discs are identified. <code>.chd</code>
+        and <code>.cdi</code> discs are not identified yet: the game runs
+        without achievements and the app says why.</li>
+    </ul>
+    <h3>Save states</h3>
+    <p>
+      F5 saves, F7 loads, F6 cycles the slot; Emulation &gt; State manager
+      shows every slot with a thumbnail. States use the core&rsquo;s own
+      format, so they behave as they do in RetroArch.
+    </p>
+    <figure class="shot smooth">
+      <div class="win-bar">State manager <span class="badge">thumbnails</span></div>
+      <div class="well">
+        <img src="assets/app_states.png" width="1280" height="860"
+             alt="The Save states window for Tempest 2000: ten numbered slots, four with a thumbnail of the saved frame and a timestamp, the rest marked empty, each with Save and Load buttons.">
+      </div>
+    </figure>
+  </div>
+</section>
+
+<section class="win" id="netplay">
+  <h2>Netplay</h2>
+  <div class="win-body">
+    <p>
+      The Netplay window sets up Jaguar <strong>link-cable play</strong> over a
+      local network: it joins the two emulated link ports. It is not rollback
+      netplay and not general online play, and play over the Internet or a VPN
+      is not supported. The link swaps many small messages every frame, so it
+      is limited by network delay: a wired connection is best.
+    </p>
+    <ul>
+      <li><strong>Host</strong> shows your LAN addresses and starts listening;
+        <strong>Join</strong> finds hosts on the LAN by discovery, or takes a
+        typed address.</li>
+      <li>Choose the device plugged into the link port: the
+        <strong>JagLink / CatBox cable</strong> or the <strong>Voice
+        Modem</strong>. Both players choose the same, run the same game and
+        the same version of the app.</li>
+      <li>Games: Doom (Game Mode &gt; Deathmatch), BattleSphere Gold, AirCars,
+        and Ultra Vortek over the Voice Modem (type 911 at the title screen).</li>
+      <li><strong>Two windows on one machine</strong> work too: File &gt; New
+        window (or <code>open -n</code> on macOS) starts another copy with its
+        own save folder, so you can host in one and join <code>127.0.0.1</code>
+        in the other, or give each window its own controller for local
+        multiplayer.</li>
+      <li>The same setup is on the command line:
+        <code>--netplay host|join|join-discovered|browse|loopback</code>.</li>
+    </ul>
+    <figure class="shot smooth">
+      <div class="win-bar">Netplay window <span class="badge">Host a game</span></div>
+      <div class="well">
+        <img src="assets/app_netplay.png" width="1280" height="860"
+             alt="The Netplay window over Doom: the link device choice between JagLink and Voice Modem, Host a game and Join a game tabs with a port picker, a Start hosting button, a note about delay, and a table of the games that use the link.">
+      </div>
+      <figcaption>
+        The machine&rsquo;s own LAN address is blanked in this image.
+      </figcaption>
+    </figure>
+    <p class="footnote">
+      Background and the details of the link itself:
+      <a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">netlink user guide</a>
+      and <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a>.
+    </p>
+  </div>
+</section>
+
+<section class="win" id="more">
+  <h2>More</h2>
+  <div class="win-body">
+    <ul>
+      <li>It behaves like a program of your OS: a native menu bar and Dock menu on macOS, a dark title bar and
+        taskbar recent games on Windows, MIME types and desktop actions on Linux, double-click or Open With
+        for <code>.j64 .jag .cue .chd</code> and the other game formats (an installer checkbox on Windows),
+        and an optional tray or menu-bar icon.</li>
+      <li>The app keeps its settings, saves and states in the per-user data
+        folder (or beside the program in portable mode). Everything is listed
+        in the <a href="{{REPO}}/blob/develop/app/README.md#where-files-go">app README</a>.</li>
+      <li>To build it yourself, see
+        <a href="{{REPO}}/blob/develop/app/README.md">app/README.md</a>: SDL3,
+        Dear ImGui and OpenGL 3.3, CMake 3.20 or later.</li>
+      <li>Questions and reports go in
+        <a href="{{REPO}}/discussions">Discussions</a> and
+        <a href="{{REPO}}/issues">Issues</a>; mention that it is the app and
+        the version shown in Help &gt; About.</li>
+    </ul>
+  </div>
+</section>

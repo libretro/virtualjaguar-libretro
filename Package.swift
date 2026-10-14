@@ -58,9 +58,11 @@ let coreSources: [String] = [
     "src/core/universalhdr.c",
     "src/core/vjag_memory.c",
     "src/core/vjtrace.c",
+    "src/core/vj_frontend_ext.c",
     "src/debug/gdbsock.c",
     "src/debug/gdbstub.c",
     "src/debug/gdbtarget.c",
+    "src/debug/vjdebug.c",
     "src/jerry/axistune.c",
     "src/jerry/dac.c",
     "src/jerry/dsp.c",
@@ -158,7 +160,12 @@ let package = Package(
             // the manifest with "defaultLocalization not set" -- so `swift
             // build` breaks for anyone who has fetched the Jaguar toolchain,
             // and only for them.
-            exclude: ["libretro-common", "deps", "tools"],
+            //
+            // app/ is the same hazard: the standalone app's CMake build
+            // (app/build*/_deps) unpacks SDL3 and Dear ImGui there, and both
+            // ship .metal shaders, .storyboard files and an .lproj.  It holds
+            // no core sources, so excluding it changes nothing else.
+            exclude: ["libretro-common", "deps", "tools", "app"],
             sources: coreSources,
             publicHeadersPath: "src/core",
             cSettings: coreDefines + [

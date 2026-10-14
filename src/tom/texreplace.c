@@ -826,6 +826,20 @@ void TexReplaceContentLoaded(void)
    tr_update_gate();
 }
 
+void TexReplaceReload(void)
+{
+   char base[sizeof(tr_base)];
+   int want = tr_want;
+
+   memcpy(base, tr_base, sizeof(base));
+   TexReplaceShutdown();            /* frees the pack and resets every static */
+   memcpy(tr_base, base, sizeof(tr_base));
+   tr_want = want;
+   TexReplaceContentLoaded();       /* probe the directory, load if wanted */
+   if (texReplaceEnabled)
+      ShadowFBSetEnabled(1);        /* a loaded pack presents through the shadow framebuffer */
+}
+
 int TexReplacePackAvailable(void)
 {
    return tr_pack_avail;

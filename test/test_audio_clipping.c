@@ -132,6 +132,14 @@ static int16_t input_state(unsigned p, unsigned d, unsigned i, unsigned id)
 static int use_bios = 0;
 static int log_quiet = 0;
 
+/* --option K=V pairs served through RETRO_ENVIRONMENT_GET_VARIABLE --
+ * same contract as test_audio_presence (lets the clipping half of the
+ * audio pair run with a timing model on, issue #313). */
+#define MAX_OPTS 8
+static const char *opt_keys[MAX_OPTS];
+static const char *opt_vals[MAX_OPTS];
+static int opt_count = 0;
+
 static void log_printf(enum retro_log_level level, const char *fmt, ...)
 {
    va_list ap;
@@ -168,10 +176,19 @@ static bool environment(unsigned cmd, void *data)
    case RETRO_ENVIRONMENT_GET_VARIABLE:
    {
       struct retro_variable *var = (struct retro_variable *)data;
+      int oi;
       if (var->key && strcmp(var->key, "virtualjaguar_bios") == 0)
       {
          var->value = use_bios ? "enabled" : "disabled";
          return true;
+      }
+      for (oi = 0; oi < opt_count; oi++)
+      {
+         if (var->key && strcmp(var->key, opt_keys[oi]) == 0)
+         {
+            var->value = opt_vals[oi];
+            return true;
+         }
       }
       var->value = NULL;
       return false;
@@ -430,7 +447,7 @@ static int self_test(const char *core_path)
 static void usage(const char *prog)
 {
    fprintf(stderr,
-      "Usage: %s <core> <rom> [--bios] [--frames N] [--quiet]\n"
+      "Usage: %s <core> <rom> [--bios] [--frames N] [--quiet] [--option K=V]\n"
       "                       [--expect-clipping] [--label TAG]\n"
       "       %s <core> --self-test\n"
       "\n"
@@ -462,6 +479,20 @@ int main(int argc, char **argv)
          total_frames = (unsigned)atoi(argv[++i]);
       else if (strcmp(argv[i], "--label") == 0 && i + 1 < argc)
          label = argv[++i];
+      else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc)
+      {
+         char *kv = argv[++i];
+         char *eq = strchr(kv, '=');
+         if (!eq || opt_count >= MAX_OPTS)
+         {
+            fprintf(stderr, "Bad or excess --option (want K=V): %s\n", kv);
+            return 2;
+         }
+         *eq = '\0';
+         opt_keys[opt_count] = kv;
+         opt_vals[opt_count] = eq + 1;
+         opt_count++;
+      }
       else if (argv[i][0] != '-' && !rom_path)
          rom_path = argv[i];
       else { usage(argv[0]); return 2; }

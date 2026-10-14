@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "vj_frontend_ext.h"
 #include "perf_iface.h"
 #include "vjtrace.h"
 #include "crc32.h"
@@ -61,6 +62,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jaggd_fs.h"
 #include "titlehook.h"
 #include "gdbstub.h"
+#include "vjdebug.h"
 #include "log.h"
 /* CORE_VERSION.  scripts/gen-version-h.sh writes src/core/version.h with
  * the short git rev in it; the Makefile and jni/Android.mk both run it at
@@ -2122,6 +2124,7 @@ static void netlink_rebuild_host_options(void)
    int cur_host_known;
    int cur_host_is_preset;
    int cur_host_found;
+   int cur_host_was_listed;
    bool options_pushed;
 
    idx = netlink_host_option_index();
@@ -2137,6 +2140,7 @@ static void netlink_rebuild_host_options(void)
    cur_host_known     = 0;
    cur_host_is_preset = 0;
    cur_host_found     = 0;
+   cur_host_was_listed = 0;
    {
       struct retro_variable cur;
 
@@ -2150,6 +2154,17 @@ static void netlink_rebuild_host_options(void)
          cur_host_is_preset = !strcmp(cur_host, "127.0.0.1")
                                || !strcmp(cur_host, "jaghub.local")
                                || !strcmp(cur_host, "vj_netlink.txt");
+         /* Was it in the list the frontend was offering?  A frontend with
+          * free-form option entry (the standalone app) can hold a typed
+          * address that was never a picker row: nothing "dropped off the
+          * LAN" for that, so it must not draw the fallback warning below.
+          * A list-only frontend never holds a value outside its list. */
+         for (i = 0; option_defs_us[idx].values[i].value; i++)
+            if (!strcmp(option_defs_us[idx].values[i].value, cur_host))
+            {
+               cur_host_was_listed = 1;
+               break;
+            }
       }
    }
 
@@ -2257,7 +2272,8 @@ static void netlink_rebuild_host_options(void)
               "discovered peer%s not shown\n",
               peer_count, peer_count == 1 ? "" : "s");
 
-   if (cur_host_known && !cur_host_is_preset && !cur_host_found)
+   if (cur_host_known && !cur_host_is_preset && !cur_host_found
+       && cur_host_was_listed)
    {
       LOG_WRN("[NETLINK] selected host %s dropped off the LAN -- falling "
               "back to 127.0.0.1\n", cur_host);
@@ -2377,21 +2393,23 @@ static bool titledb_negative_warn_seen(const char *key)
  * largest speed lever the core has (66-87% less DSP interpretation on the
  * titles measured, #569, plus the GPU port), and DSPExec()/GPUExec() gate
  * it off entirely whenever certain other options are active -- see the
- * gate comment at the top of DSPExec() in src/jerry/dsp.c.  So a user who raises the RISC overclock on
- * a borderline-slow title pays the overclock's own cost AND silently
- * forfeits the bigger win: it reads as "overclocking made it much slower"
- * with nothing anywhere to explain why.  Name the suppressor in the log.
+ * gate comment at the top of DSPExec() in src/jerry/dsp.c.  So a user who
+ * enables one of them on a borderline-slow title pays its cost AND silently
+ * forfeits the bigger win: it reads as "this made it much slower" with
+ * nothing anywhere to explain why.  Name the suppressor in the log.  (The
+ * RISC clock scale used to be on this list; it is not any more -- the skip
+ * is exact under any scale, see the gate comment in DSPExec().)
  *
  * Warn, never override.  User-set values always win -- the same hard rule
  * get_variable_pertitle() honours for known-bad titledb entries -- so this
  * only reports the conflict; nothing here changes a setting.
  *
- * The list mirrors the gate EXACTLY, and two plausible-looking options are
- * deliberately absent because they are not in it: the M68K clock scale
- * (m68kClockScalePct appears in the DSP's budget arithmetic but not in the
- * gate) and Blitter Bus Timing (vjs.blitterTiming never reaches
+ * The list mirrors the gate EXACTLY, and three plausible-looking options are
+ * deliberately absent because they are not in it: the RISC clock scale, the
+ * M68K clock scale (m68kClockScalePct appears in the DSP's budget arithmetic
+ * but not in the gate) and Blitter Bus Timing (vjs.blitterTiming never reaches
  * busArbiter.enabled -- only virtualjaguar_dram_timing sets that).  Warning
- * on either would be a false positive on the most likely overclock
+ * on any of them would be a false positive on the most likely overclock
  * combination of all.  The vjtrace/watchpoint suppressor is omitted too: it
  * is dev-facing and can be armed long after check_variables() has run.
  *
@@ -2425,17 +2443,14 @@ static void perf_conflict_append(char *buf, size_t cap, const char *what)
  * at the top of DSPExec() (src/jerry/dsp.c) -- see the comment above for what
  * is deliberately absent.  Shared by the log warning below and the option
  * sublabel (#841), so the two can never name different suppressors. */
-#define IDLE_SUP_CLOCK 1u
-#define IDLE_SUP_DRAM  2u
-#define IDLE_SUP_PIPE  4u
-#define IDLE_SUP_MEMO  8u
+#define IDLE_SUP_DRAM  1u
+#define IDLE_SUP_PIPE  2u
+#define IDLE_SUP_MEMO  4u
 
 static unsigned idle_skip_suppressor_mask(void)
 {
    unsigned mask = 0;
 
-   if (riscClockScalePct != 100)
-      mask |= IDLE_SUP_CLOCK;
    if (busArbiter.enabled)
       mask |= IDLE_SUP_DRAM;
    if (vjs.gpuPipelineTiming)
@@ -2455,8 +2470,6 @@ static void perf_warn_idle_skip_suppressed(void)
 
    who[0] = '\0';
    mask = idle_skip_suppressor_mask();
-   if (mask & IDLE_SUP_CLOCK)
-      perf_conflict_append(who, sizeof(who), "virtualjaguar_risc_clock_scale");
    if (mask & IDLE_SUP_DRAM)
       perf_conflict_append(who, sizeof(who), "virtualjaguar_dram_timing");
    if (mask & IDLE_SUP_PIPE)
@@ -2698,20 +2711,6 @@ static void explain_compute(explain_amend_t *out, int *count)
    if (idx >= 0)
    {
       who[0] = '\0';
-      if (mask & IDLE_SUP_CLOCK)
-      {
-         const char *scale = riscClockScalePct == 50  ? "0.5x"
-                           : riscClockScalePct == 150 ? "1.5x"
-                           : riscClockScalePct == 200 ? "2x" : "non-stock";
-         int c = explain_find_def("virtualjaguar_risc_clock_scale");
-
-         if (c >= 0)
-         {
-            explain_option_name(c, name, sizeof(name));
-            snprintf(note, sizeof(note), "%s %s", name, scale);
-            perf_conflict_append(who, sizeof(who), note);
-         }
-      }
       if (mask & IDLE_SUP_DRAM)
          i = explain_find_def("virtualjaguar_dram_timing");
       else
@@ -3344,6 +3343,41 @@ static int32_t read_tune_exponent(const char *key)
    return (int32_t)((pct * 256) / 100);
 }
 
+/* Free-form clock-scale value ("175" or "175%") -> percent, clamped to
+ * 25..400.  An EXTRA accepted form: the listed values ("0.5x".."3x") are
+ * matched by strcmp before this is ever consulted, and every string the old
+ * ladder did not recognise ("1x", "3x" on the RISC option, garbage, "") has
+ * a non-digit, so it is rejected here and still falls through to 100 -- the
+ * stock behaviour is untouched.  Returns 0 when v is not 1-4 digits with an
+ * optional trailing '%'. */
+static int clock_scale_parse_percent(const char *v, uint32_t *out)
+{
+   uint32_t n = 0;
+   unsigned digits = 0;
+
+   if (!v)
+      return 0;
+   while (*v >= '0' && *v <= '9')
+   {
+      if (++digits > 4)
+         return 0;
+      n = n * 10u + (uint32_t)(*v - '0');
+      v++;
+   }
+   if (digits == 0)
+      return 0;
+   if (*v == '%')
+      v++;
+   if (*v != '\0')
+      return 0;
+   if (n < 25u)
+      n = 25u;
+   if (n > 400u)
+      n = 400u;
+   *out = n;
+   return 1;
+}
+
 static void check_variables(void)
 {
    unsigned i;
@@ -3606,9 +3640,9 @@ static void check_variables(void)
                        || (strcmp(var.value, "m68k") == 0);
    }
 
-   /* GPU pipeline/gateway timing (issue #401/#313).  Transient model
-    * state must not survive a toggle: a stale gateway timestamp from
-    * an earlier enabled period would charge phantom stalls on
+   /* GPU + DSP pipeline/gateway timing (issue #401/#313).  Transient
+    * model state must not survive a toggle: a stale gateway timestamp
+    * from an earlier enabled period would charge phantom stalls on
     * re-enable. */
    var.key = "virtualjaguar_gpu_pipeline_timing";
    var.value = NULL;
@@ -3618,7 +3652,10 @@ static void check_variables(void)
       if (get_variable_pertitle(&var) && var.value)
          vjs.gpuPipelineTiming = (strcmp(var.value, "enabled") == 0);
       if (pipeWas != vjs.gpuPipelineTiming)
+      {
          GPUPipeTimingReset();
+         DSPPipeTimingReset();
+      }
    }
 
    /* GPU/DSP idle-loop fast-forward (issue #569 + GPU port).  Bit-exact by
@@ -3686,6 +3723,8 @@ static void check_variables(void)
    m68kClockScalePct = 100;
    if (get_variable_pertitle(&var) && var.value)
    {
+      uint32_t typed_pct;
+
       if (strcmp(var.value, "0.5x") == 0)
          m68kClockScalePct = 50;
       else if (strcmp(var.value, "1.5x") == 0)
@@ -3694,6 +3733,8 @@ static void check_variables(void)
          m68kClockScalePct = 200;
       else if (strcmp(var.value, "3x") == 0)
          m68kClockScalePct = 300;
+      else if (clock_scale_parse_percent(var.value, &typed_pct))
+         m68kClockScalePct = typed_pct;   /* free-form "175" / "175%" */
    }
    /* Drop any carried sub-cycle remainder when the scale (possibly)
     * changed, so a new scale starts from a clean accumulator. */
@@ -3704,16 +3745,21 @@ static void check_variables(void)
    riscClockScalePct = 100;
    if (get_variable_pertitle(&var) && var.value)
    {
+      uint32_t typed_pct;
+
       if (strcmp(var.value, "0.5x") == 0)
          riscClockScalePct = 50;
       else if (strcmp(var.value, "1.5x") == 0)
          riscClockScalePct = 150;
       else if (strcmp(var.value, "2x") == 0)
          riscClockScalePct = 200;
+      else if (clock_scale_parse_percent(var.value, &typed_pct))
+         riscClockScalePct = typed_pct;   /* free-form "175" / "175%" */
    }
    /* Drop the GPU's sub-cycle bus-stall remainder when the RISC scale
     * (possibly) changed — mirrors M68KClockScaleReset() above. */
    GPUClockScaleReset();
+   DSPClockScaleReset();
 
    if (m68kClockScalePct != 100 || riscClockScalePct != 100)
       LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",
@@ -5635,6 +5681,24 @@ static bool has_extension(const char *path, const char *ext)
 #define CD_BIOS_CRC_RETAIL 0x687068D5u
 #define CD_BIOS_CRC_DEV    0x55A0669Cu
 
+/* Path of the external BIOS file the last successful try_load_*() accepted,
+ * for the VJ_EVT_BIOS_STAGED event.  Overwritten on every success, read only
+ * straight after one, so it needs no reset. */
+static char last_bios_path[4096];
+
+/* Tell an answering frontend (the standalone app) which BIOS image the core
+ * is about to run, and where it came from.  One never-taken branch under
+ * RetroArch.  src: VJ_BIOS_SRC_*; name: file path or built-in image name. */
+static void bios_staged_event(unsigned role, const uint8_t *img,
+                              unsigned len, unsigned src, const char *name)
+{
+   if (!VJExtActive())
+      return;
+   VJExtEmit(VJ_EVT_BIOS_STAGED, role,
+             (unsigned)crc32_calcCheckSum((unsigned char *)img, len),
+             src, 0, name);
+}
+
 /* Try to load a 256 KB CD BIOS image from the given path.
  * Returns true on success and sets cd_bios_loaded_externally.
  * A file that exists but fails validation bumps *rejected so the
@@ -5671,6 +5735,7 @@ static bool try_load_cd_bios_file(const char *path, int *rejected)
       return false;
    }
    rfclose(f);
+   snprintf(last_bios_path, sizeof(last_bios_path), "%s", path);
 
    /* Known dumps are accepted by checksum, no header check needed. */
    crc = (uint32_t)crc32_calcCheckSum(external_cd_bios, 0x40000);
@@ -5818,31 +5883,60 @@ static bool load_external_cd_bios(void)
    return false;
 }
 
-/* Stage the CD BIOS for the real-BIOS boot path: prefer an external ROM
- * file from the system directory (users may carry a different BIOS
- * revision), else fall back to an embedded CD BIOS so real-BIOS boot
- * works with zero files.  Which embedded image is used follows the
- * 'CD BIOS Type' option: retail (default) or the developer BIOS, which
- * skips some of the retail BIOS's disc checks.
+/* Stage the CD BIOS for the real-BIOS boot path.  Order:
+ *   1. the file an answering frontend names (VJ_ENV_GET_BIOS_PATH) -- the
+ *      standalone app's "use this BIOS"; validated like any external file;
+ *   2. an external ROM file from the system directory (users may carry a
+ *      different BIOS revision);
+ *   3. an embedded CD BIOS, so real-BIOS boot works with zero files.  Which
+ *      embedded image is used follows the 'CD BIOS Type' option: retail
+ *      (default) or the developer BIOS, which skips some of the retail
+ *      BIOS's disc checks.
  *
- * An external file always wins over both — it is the user explicitly
- * supplying a revision, so the type selection does not override it. */
+ * Under RetroArch step 1 does not exist.  An external file always wins over
+ * the embedded images -- it is the user explicitly supplying a revision, so
+ * the type selection does not override it. */
 static void stage_cd_bios(void)
 {
+   char fpath[4096];
+   int  rejected = 0;
+
+   if (VJExtBiosPath(VJ_BIOS_CD, fpath, sizeof(fpath)))
+   {
+      if (try_load_cd_bios_file(fpath, &rejected))
+      {
+         bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                           VJ_BIOS_SRC_FRONTEND, fpath);
+         return;
+      }
+      LOG_WRN("[CD-BIOS] the frontend-selected CD BIOS %s is unusable "
+              "(missing, not exactly 262144 bytes, or not a CD BIOS); "
+              "searching the system directory instead\n", fpath);
+      VJExtEmit(VJ_EVT_BIOS_REJECTED, VJ_BIOS_CD, 0, 0, 0, fpath);
+   }
+
    if (load_external_cd_bios())
+   {
+      bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                        VJ_BIOS_SRC_SYSTEM, last_bios_path);
       return;
+   }
 
    if (vjs.cdBiosType == CDBIOS_DEV)
    {
       memcpy(external_cd_bios, jaguarDevCDBootROM, 0x40000);
       cd_bios_loaded_externally = true;
       LOG_INF("[CD-BIOS] using embedded developer CD BIOS\n");
+      bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                        VJ_BIOS_SRC_BUILTIN, "developer CD BIOS");
       return;
    }
 
    memcpy(external_cd_bios, jaguarCDBootROM, 0x40000);
    cd_bios_loaded_externally = true;
    LOG_INF("[CD-BIOS] using embedded retail CD BIOS\n");
+   bios_staged_event(VJ_BIOS_CD, external_cd_bios, 0x40000,
+                     VJ_BIOS_SRC_BUILTIN, "retail CD BIOS");
 }
 
 static void cart_bios_type_from_path(const char *path)
@@ -5951,6 +6045,7 @@ static bool try_load_cart_boot_rom_file(const char *path)
               path, (unsigned)crc);
    LOG_INF("[BOOT] external cart boot ROM %s: %s (crc %08x)\n",
            path, name, (unsigned)crc);
+   snprintf(last_bios_path, sizeof(last_bios_path), "%s", path);
    return true;
 }
 
@@ -6014,15 +6109,40 @@ static void stage_cart_boot_rom(void)
    RFILE *f;
    char path[4096];
 
+   /* A file the frontend named (VJ_ENV_GET_BIOS_PATH) beats everything below,
+    * 'Cart BIOS Type' included: it is an explicit pick of one image.  It only
+    * matters when the boot ROM actually runs (BIOS (Cartridges) = Real, a
+    * GPU-only cart, or a no-content boot), but staging it is harmless when
+    * it does not.  Anything but exactly 128 KB is refused and we carry on. */
+   if (VJExtBiosPath(VJ_BIOS_CART_BOOT, path, sizeof(path)))
+   {
+      if (try_load_cart_boot_rom_file(path))
+      {
+         bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                           VJ_BIOS_SRC_FRONTEND, path);
+         return;
+      }
+      LOG_WRN("[BOOT] the frontend-selected cart boot ROM %s is unusable "
+              "(missing or not exactly 131072 bytes); using the usual "
+              "search instead\n", path);
+      VJExtEmit(VJ_EVT_BIOS_REJECTED, VJ_BIOS_CART_BOOT, 0, 0, 0, path);
+   }
+
    if (vjs.biosType == BT_CUSTOM)
    {
       if (load_external_cart_boot_rom())
+      {
+         bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                           VJ_BIOS_SRC_SYSTEM, last_bios_path);
          return;
+      }
 
       LOG_WRN("[BOOT] Custom cart boot ROM selected but no usable file "
               "found -- falling back to embedded Series K\n");
       memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000);
       LOG_INF("[BOOT] cart boot ROM: Series K (fallback)\n");
+      bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                        VJ_BIOS_SRC_BUILTIN, "Series K boot ROM");
       return;
    }
 
@@ -6042,6 +6162,8 @@ static void stage_cart_boot_rom(void)
          {
             rfclose(f);
             LOG_INF("[BOOT] using external Model-M boot ROM %s\n", path);
+            bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000,
+                              0x20000, VJ_BIOS_SRC_SYSTEM, path);
             return;
          }
          rfclose(f);
@@ -6051,6 +6173,10 @@ static void stage_cart_boot_rom(void)
    memcpy(jagMemSpace + 0xE00000, src, 0x20000);
    LOG_INF("[BOOT] cart boot ROM: %s\n",
          (vjs.biosType == BT_M_SERIES) ? "Model M" : "Series K");
+   bios_staged_event(VJ_BIOS_CART_BOOT, jagMemSpace + 0xE00000, 0x20000,
+                     VJ_BIOS_SRC_BUILTIN,
+                     (vjs.biosType == BT_M_SERIES) ? "Model M boot ROM"
+                                                   : "Series K boot ROM");
 }
 
 /* Fill the entire framebuffer allocation with opaque black.
@@ -6808,6 +6934,8 @@ bool retro_load_game(const struct retro_game_info *info)
             && strcmp(timeout_var.value, "off") != 0)
       {
          int parsed_timeout = atoi(timeout_var.value);
+         if (parsed_timeout > 3600)
+            parsed_timeout = 3600;   /* free-form value: one hour is plenty */
          if (parsed_timeout > 0)
             halt_timeout_seconds = parsed_timeout;
       }
@@ -7022,28 +7150,48 @@ bool retro_load_game(const struct retro_game_info *info)
        * memcpys the staged BIOS, takes the run address from $800404 and
        * resets -- so the BIOS comes up on its own insert-disc screen with
        * zero files present. */
-      stage_cd_bios();
+      if (VJExtBootTarget() == VJ_BOOT_CART_BOOT_ROM)
+      {
+         /* An answering frontend (the standalone app's "Boot" on a cart boot
+          * ROM) asked for the other no-content boot: the cartridge boot ROM
+          * against an empty slot -- cd_boot_strategy_none, the pre-#726
+          * behaviour.  The boot ROM shows its animation and then sits, like a
+          * Jaguar with nothing in the slot.  No CD unit, so no Memory Track
+          * (it plugs into the CD unit) and jaguar_cd_mode stays false.
+          * Nothing here runs under RetroArch: it never answers HELLO. */
+         vjs.useJaguarBIOS          = true;
+         bootConfig.isCDGame        = false;
+         bootConfig.showBootROM     = true;
+         bootConfig.cdBiosAvailable = false;
+         bootConfig.strategy        = &cd_boot_strategy_none;
+         LOG_INF("[BOOT] no-content boot: cartridge boot ROM, empty slot "
+                 "(frontend request)\n");
+      }
+      else
+      {
+         stage_cd_bios();
 
-      /* The CD unit is attached -- that is WHY the BIOS is running -- so
-       * this is CD mode with nothing in the tray, not cartridge mode.
-       * Both flags mirror open_disc_and_resolve_boot(); only the disc is
-       * missing.  Without them a machine sitting in the CD BIOS gets the
-       * options menu inverted against it (update_option_visibility() keys
-       * both gates off jaguar_cd_mode, so CD Boot Mode / CD BIOS Type
-       * would be HIDDEN and the cartridge-BIOS option shown), and the
-       * Memory Track cart -- which plugs into the CD unit and is present
-       * whether or not a disc is -- would stay absent until the first
-       * insert.  Safe with no disc: the three disc-identity accessors
-       * return zero when nothing is mounted (see the savestate chunk),
-       * and the MT save-buffer paths only touch mtMem. */
-      jaguar_cd_mode             = true;
-      jaguarMemTrackInserted     = opt_memory_track;
+         /* The CD unit is attached -- that is WHY the BIOS is running -- so
+          * this is CD mode with nothing in the tray, not cartridge mode.
+          * Both flags mirror open_disc_and_resolve_boot(); only the disc is
+          * missing.  Without them a machine sitting in the CD BIOS gets the
+          * options menu inverted against it (update_option_visibility() keys
+          * both gates off jaguar_cd_mode, so CD Boot Mode / CD BIOS Type
+          * would be HIDDEN and the cartridge-BIOS option shown), and the
+          * Memory Track cart -- which plugs into the CD unit and is present
+          * whether or not a disc is -- would stay absent until the first
+          * insert.  Safe with no disc: the three disc-identity accessors
+          * return zero when nothing is mounted (see the savestate chunk),
+          * and the MT save-buffer paths only touch mtMem. */
+         jaguar_cd_mode             = true;
+         jaguarMemTrackInserted     = opt_memory_track;
 
-      vjs.useJaguarBIOS          = true;
-      bootConfig.isCDGame        = false;
-      bootConfig.showBootROM     = true;
-      bootConfig.cdBiosAvailable = true;
-      bootConfig.strategy        = &cd_boot_strategy_bios;
+         vjs.useJaguarBIOS          = true;
+         bootConfig.isCDGame        = false;
+         bootConfig.showBootROM     = true;
+         bootConfig.cdBiosAvailable = true;
+         bootConfig.strategy        = &cd_boot_strategy_bios;
+      }
    }
    else
    {
@@ -7177,6 +7325,8 @@ bool retro_load_game(const struct retro_game_info *info)
    content_loaded = true;
    no_game_active = (info == NULL);
    update_option_visibility();
+   /* The app's debug interface may peek/poke from here on. */
+   VJDebugSetLoaded(1);
 
    /* Every option is resolved (and blit-memo can finally tell cart from
     * CD): tell the player which settings the core chose for them (#841). */
@@ -7278,6 +7428,7 @@ void retro_unload_game(void)
     * an address that means nothing in the next title -- never lingers
     * into the next load. Re-latch the gate from the next load's option
     * instead of carrying this session's state forward. */
+   VJDebugReset();   /* drop an attached app host, the OP snapshot and the blit log */
    GDBSockClose();
    GDBTargetClose();
    gdb_stub_reset();
@@ -7473,6 +7624,12 @@ void retro_init(void)
     * docs/profiling.md is host-side.  Inert when the frontend declines. */
    VJPerfInit(environ_cb);
 
+   /* Private core -> frontend event channel (src/core/vj_frontend_ext.h).
+    * One HELLO per init; any frontend that does not know it (RetroArch,
+    * everything else) answers false and the channel stays off for the
+    * session, so VJExtEmit() is a single never-taken branch there. */
+   VJExtInit(environ_cb, CORE_VERSION);
+
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
@@ -7578,6 +7735,10 @@ void retro_deinit(void)
     * the same numbers in its UI, but a log line is what can actually be
     * retrieved from a locked-down tvOS box. */
    VJPerfDeinit();
+
+   /* iOS never dlcloses the core: drop the frontend-extension latch so the
+    * next session re-negotiates instead of inheriting this one's answer. */
+   VJExtDeinit();
 
    /* Belt-and-suspenders: shut down emulator subsystems if the frontend
     * calls deinit without unload first (videoBuffer != NULL means a game
@@ -7754,6 +7915,7 @@ void retro_deinit(void)
    /* GDB stub (#652): belt-and-suspenders, matching retro_unload_game() --
     * a frontend that calls deinit without unload first must not leave a
     * listener bound, or a breakpoint armed, past process teardown. */
+   VJDebugReset();   /* drop an attached app host, the OP snapshot and the blit log */
    GDBSockClose();
    GDBTargetClose();
    gdb_stub_reset();
@@ -8049,7 +8211,16 @@ void retro_run(void)
        * (the only way to read these numbers on iOS, which has no env). */
       char link_stats[256];
       if (JLinkStatsPoll(link_stats, sizeof(link_stats)))
+      {
          LOG_INF("[NETLINK] %s\n", link_stats);
+         if (VJExtActive())
+         {
+            unsigned st_hops, st_hop_x100, st_slipped, st_timeouts;
+            JLinkStatsLast(&st_hops, &st_hop_x100, &st_slipped, &st_timeouts);
+            VJExtEmit(VJ_EVT_LINK_STATS, st_hops, st_hop_x100, st_slipped,
+                      st_timeouts, NULL);
+         }
+      }
    }
 
    /* Host-side voice chat (#485): capture/gate/send. Never touches the
@@ -8121,12 +8292,27 @@ void retro_run(void)
                                                              : "jaglink");
             netlink_osd("Jaguar link connected (%s)",
                         netlink_device_label(JLinkDevice()));
+            if (VJExtActive())
+            {
+               char peer_desc[160];
+               if (JLinkMode() == JLINK_MODE_TCP_CLIENT)
+                  snprintf(peer_desc, sizeof(peer_desc), "%s %s",
+                           netlink_mode_name(JLinkMode()), JLinkGetTCPHost());
+               else
+                  snprintf(peer_desc, sizeof(peer_desc), "%s",
+                           netlink_mode_name(JLinkMode()));
+               VJExtEmit(VJ_EVT_LINK_UP,
+                         JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? 1u : 0u,
+                         0, 0, 0, peer_desc);
+            }
          }
          else if (netlink_was_up == 1)
          {
             LOG_WRN("[NETLINK] link DOWN (%s) -- peer disconnected\n",
                     netlink_mode_name(JLinkMode()));
             netlink_osd("Jaguar link lost");
+            VJExtEmit(VJ_EVT_LINK_DOWN, 0, 0, 0, 0,
+                      netlink_mode_name(JLinkMode()));
          }
          else
             LOG_INF("[NETLINK] %s open, waiting for peer...\n",
@@ -8152,10 +8338,14 @@ void retro_run(void)
                     "(link timing bug reports are only valid at Off)\n",
                     curSpeedup);
             netlink_osd("Link speed: auto (%ux)", curSpeedup);
+            VJExtEmit(VJ_EVT_WIRE_SPEED, curSpeedup, 1, 0, 0, NULL);
          }
          else if (netlink_was_speedup > 1)
+         {
             LOG_INF("[NETLINK] wire speed back to stock (link dropped, "
                     "option changed, or peer no longer confirmed)\n");
+            VJExtEmit(VJ_EVT_WIRE_SPEED, 1, 0, 0, 0, NULL);
+         }
          netlink_was_speedup = curSpeedup;
       }
    }
@@ -8316,6 +8506,10 @@ void retro_run(void)
     * run unconditionally. */
    CrashDetectFrameTick(tomSkipVideoPresent ? NULL : videoBuffer,
                          (unsigned)game_width, (unsigned)game_height);
+
+   /* Frames since content load, for the app's debug interface
+    * (src/debug/vjdebug.c): a plain increment, read only by it. */
+   vjDebugFrame++;
 
    /* Memory Track SRAM: one 128 KB pack per dirty frame, after emulation
     * so frontends that cache the SAVE_RAM pointer see this frame's writes.

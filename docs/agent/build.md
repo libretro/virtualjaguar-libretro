@@ -194,3 +194,14 @@ because `make` can skip a rebuild when mtimes are second-identical. Manual fallb
 
 **Stale .o hazard:** `git stash` cycles can build chimera binaries `VJ_EXPECT_BUILD` cannot
 catch (git rev identical). Baseline measurements from a pristine worktree.
+
+## Standalone app (`app/`, issue #833)
+
+SDL3 + Dear ImGui + GL 3.3 desktop app; C++17 lives ONLY under `app/`, the core stays C89.
+Separate CMake build (`cmake -S app -B app/build`, see `app/README.md`); the Makefile is
+unaffected. `app/cmake/VJCore.cmake` PARSES the source list from `Makefile.common` (no second
+list to keep in sync) and compiles all three `blitter_simd_<arch>.c` with
+`-DBLITTER_SIMD_AUTODETECT` (as `Package.swift` does). Smoke tests are headless (SDL dummy
+drivers, no GL): `ctest --test-dir app/build -C Release`; if an intentional emulation change
+moves the yarc frame hash, regenerate `VJ_SMOKE_YARC_HASH` in `app/cmake/VJSmokeTests.cmake`.
+CI: `.github/workflows/app.yml`. Full-core MSVC is unproven (#679), so that row is non-gating.

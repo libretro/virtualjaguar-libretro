@@ -240,7 +240,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_idle_skip",
       "RISC Idle-Loop Fast-Forward (GPU + DSP)",
       NULL,
-      "Fast-forward the GPU and DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation and 60%+ less GPU interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. On by default: the corpus sweep behind #708 ran 148 cart images plus 6 CD spot-checks off-vs-on and every single one was byte-identical (framebuffer, audio and savestate hash streams). If a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: a non-stock RISC Clock Scale, DRAM Timing, GPU Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The M68K clock scale and Blitter Bus Timing do not affect it.",
+      "Fast-forward the GPU and DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation and 60%+ less GPU interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. On by default: the corpus sweep behind #708 ran 148 cart images plus 6 CD spot-checks off-vs-on and every single one was byte-identical (framebuffer, audio and savestate hash streams). If a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: DRAM Timing, GPU/DSP Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The RISC and M68K clock scales and Blitter Bus Timing do not affect it: it stays exact when overclocked.",
       NULL,
       "speed",
       {
@@ -317,7 +317,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_m68k_clock_scale",
       "M68K Clock Scale (Overclock)",
       NULL,
-      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix, and it helps less often than you would think: AvP and Checkered Flag were both measured and neither gained anything (AvP is locked to one frame per 5 fields; Checkered Flag caps itself in software), because most Jaguar games are paced by a field lock or their own frame cap rather than by CPU speed. It may also break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. Overclocking the 68000 is the safer of the two scales: it does NOT cost you DSP Idle-Loop Fast-Forward. If an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x.",
+      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix, and it helps less often than you would think: AvP and Checkered Flag were both measured and neither gained anything (AvP is locked to one frame per 5 fields; Checkered Flag caps itself in software), because most Jaguar games are paced by a field lock or their own frame cap rather than by CPU speed. It may also break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. If an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x.",
       NULL,
       "speed",
       {
@@ -334,7 +334,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_clock_scale",
       "RISC (GPU/DSP) Clock Scale (Overclock)",
       NULL,
-      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing; if an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x. READ THIS FIRST: anything other than 1x switches OFF DSP Idle-Loop Fast-Forward, which is the larger speed-up on most titles -- so on a DSP-bound game this option makes you SLOWER overall, not faster. Try idle-skip on its own before reaching for this. The M68K scale does not have that side effect.",
+      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing; if an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x. RISC Idle-Loop Fast-Forward keeps working at any scale, so an overclock costs only the extra real work, not extra spinning in wait loops.",
       NULL,
       "speed",
       {
@@ -362,9 +362,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "virtualjaguar_gpu_pipeline_timing",
-      "GPU Pipeline Timing (Experimental)",
+      "GPU/DSP Pipeline Timing (Experimental)",
       NULL,
-      "Model the GPU's real instruction costs: the single external-memory gateway, the register score-board and ALU interlocks. The emulated GPU otherwise finishes renders 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
+      "Model the GPU's and DSP's real instruction costs: the single external-memory gateway (the DSP's behind its 16-bit bus), the register score-board and ALU interlocks. The emulated RISCs otherwise finish work 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
       "accuracy",
       {

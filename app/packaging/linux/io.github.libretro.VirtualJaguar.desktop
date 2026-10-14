@@ -1,0 +1,28 @@
+[Desktop Entry]
+Type=Application
+Name=Virtual Jaguar
+GenericName=Atari Jaguar Emulator
+Comment=Play Atari Jaguar and Jaguar CD games
+Exec=virtualjaguar %f
+Icon=io.github.libretro.VirtualJaguar
+Terminal=false
+Categories=Game;Emulator;
+Keywords=Atari;Jaguar;emulator;retro;
+# The window class SDL sets (SDL_SetAppMetadata in app/src/app.cpp) is the application id, so the
+# desktop can tie the window to this file: icon, grouping, "pin to dock".
+StartupWMClass=io.github.libretro.VirtualJaguar
+StartupNotify=true
+# File types: ../linux/io.github.libretro.VirtualJaguar.xml defines them.  KEEP IN SYNC with
+# app/src/platform/commands.h (VJ_ASSOC_LIST); the CTest platform_assoc_sync checks.
+# The last three are types shared-mime-info already defines for .cue / .cdi / .chd (checked against 2.5.1):
+# those files resolve to them, so they must be listed for the file manager to offer this app.
+MimeType=application/x-atari-jaguar-rom;application/x-atari-jaguar-cd-image;application/x-cue;application/x-discjuggler-cd-image;application/x-mame-chd;
+Actions=Library;NoCartridge;
+
+[Desktop Action Library]
+Name=Open Game Library
+Exec=virtualjaguar
+
+[Desktop Action NoCartridge]
+Name=Boot Without Cartridge
+Exec=virtualjaguar --no-content

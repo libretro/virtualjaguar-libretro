@@ -78,3 +78,12 @@ The filename only decides what is tried first. The contents decide what is accep
 
 If real-BIOS boots misbehave, remove or rename any BIOS files in `system/` to fall back
 to the known-good embedded images.
+
+## Standalone app: choosing a file
+
+The desktop app (`app/`) can hand the core an exact BIOS file by path instead of relying on the names above:
+Settings > BIOS, or a tile's menu in the library's BIOS & system tab (**Use as the Cart boot ROM / CD BIOS**), and
+**Import BIOS file...** / dropping a BIOS on the window. It uses a private call that RetroArch never answers
+(`docs/app-frontend-extension.md`); the core validates the file the same way (exactly 128 KiB boot ROM or 256 KiB
+CD BIOS) and falls back to the search above if it refuses. **Boot the CD BIOS (no disc)** and **Boot this ROM
+(empty slot)** start the console with nothing inserted. See `app/README.md`.

@@ -73,7 +73,6 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Setting</th><th>Value that disables idle-skip</th></tr></thead>
       <tbody>
-        <tr><td>RISC (GPU/DSP) Clock Scale</td><td>anything other than <code>1x</code></td></tr>
         <tr><td>DRAM Timing</td><td>enabled</td></tr>
         <tr><td>GPU Pipeline Timing</td><td>enabled</td></tr>
         <tr><td>Blit Memoization</td><td>enabled or verify</td></tr>
@@ -81,15 +80,16 @@
     </table></div>
 
     <p>
-      M68K Clock Scale at any value, and Blitter Bus Timing, do not affect it.
+      RISC Clock Scale and M68K Clock Scale at any value, and Blitter Bus
+      Timing, do not affect it.
     </p>
 
     <div class="note">
       <p>
-        <strong>Overclocking the RISC to speed up a slow game can make it
-        slower.</strong> RISC Clock Scale <code>2x</code> doubles GPU and DSP
-        cycles and also forfeits a 66-87% cut in DSP work. On a DSP-bound
-        title you trade the bigger win for the smaller one.
+        <strong>Overclocking the RISC keeps idle-skip.</strong> RISC Clock
+        Scale <code>2x</code> doubles GPU and DSP cycles and the wait-loop
+        fast-forward still removes the extra spinning, so an overclock costs
+        only the extra real work.
       </p>
     </div>
 

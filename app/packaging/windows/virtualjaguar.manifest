@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Application manifest (#833).  Embedded by cmake/VJPackage.cmake: MSVC links it in from the source list,
+     MinGW's windres embeds it through virtualjaguar.rc.
+       * PerMonitorV2 DPI awareness from the first instruction (SDL3 also asks at run time, but a manifest is
+         honoured before any DLL can create a window, and survives a hosting launcher).
+       * longPathAware: ROM libraries nested deeper than 260 characters (also needs the LongPathsEnabled policy).
+       * supportedOS: Windows 10 / 11 and 8.1, so Windows does not apply the compatibility shims. -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="io.github.libretro.VirtualJaguar" version="1.0.0.0" processorArchitecture="*"/>
+  <description>Virtual Jaguar - Atari Jaguar emulator</description>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+    </application>
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2,PerMonitor</dpiAwareness>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

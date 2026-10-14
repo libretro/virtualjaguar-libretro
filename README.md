@@ -8,13 +8,23 @@ An Atari Jaguar and Jaguar CD emulator packaged as a [libretro](https://www.libr
 
 Website, downloads, compatibility and enhancement write-ups: **[jaguar.provenance-emu.com](https://jaguar.provenance-emu.com)**.
 
+**Two ways to play:** the RetroArch core (everything below), or the [standalone desktop app](#the-desktop-app) for macOS, Windows and Linux, which runs the same core without RetroArch. New in v3.9.0.
+
 ## Install
 
 - **RetroArch:** *Online Updater > Core Downloader > Atari - Jaguar (Virtual Jaguar)*.
 - **Releases:** tagged builds are on [GitHub Releases](https://github.com/libretro/virtualjaguar-libretro/releases). Put the file in RetroArch's `cores` folder.
 - **Nightly:** the rolling [`nightly` prerelease](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly) is rebuilt on every push to `develop`. It is gated on compiling, not on the test suite.
+- **The desktop app:** packages for macOS, Windows and Linux are on the same releases and nightlies; see [The desktop app](#the-desktop-app).
+- **Installer:** one command installs or updates the core, the app, or both, and checks each download against `SHA256SUMS.txt` (read [`tools/install.sh`](tools/install.sh) and [`tools/install.ps1`](tools/install.ps1) first; both take `--dry-run` / `-DryRun` and `--channel nightly` / `-Channel nightly`):
 
-Release builds cover Linux (x86_64, aarch64, i686, and Raspberry Pi 1, 2, 3, 4 and 5, each with its own CPU-tuned build, plus 64-bit builds for the Pi 3, 4 and 5), macOS (Apple Silicon, Intel), Windows (x64, x86), Android (arm64-v8a, armeabi-v7a, x86_64, x86), iOS (arm64), tvOS (arm64), WebAssembly (Emscripten), PS Vita and Nintendo Switch. The matrix is in [`release.yml`](.github/workflows/release.yml). Other platforms get the core through the libretro buildbot.
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.sh | sh -s -- --what both   # or: --what core | --what app
+  ```
+
+  Windows (PowerShell): `$env:VJ_WHAT = 'both'; irm https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.ps1 | iex`
+
+Core release builds cover Linux (x86_64, aarch64, i686, and Raspberry Pi 1, 2, 3, 4 and 5, each with its own CPU-tuned build, plus 64-bit builds for the Pi 3, 4 and 5), macOS (Apple Silicon, Intel), Windows (x64, x86), Android (arm64-v8a, armeabi-v7a, x86_64, x86), iOS (arm64), tvOS (arm64), WebAssembly (Emscripten), PS Vita and Nintendo Switch. The matrix is in [`release.yml`](.github/workflows/release.yml). Other platforms get the core through the libretro buildbot.
 
 ### BIOS
 
@@ -28,6 +38,33 @@ None required. The Jaguar boot ROMs and CD BIOSes are embedded, and cartridges b
 | Jaguar CD | `cue` (with `bin`), `cdi`, `chd` | `.iso` is not supported. CHD needs session metadata from a recent `chdman`; see [`docs/jagcd-chd.md`](docs/jagcd-chd.md). Each release attaches a suitable `chdman` as `jagcd-tools-*.zip`. |
 
 The core can also start with no content and take a disc through RetroArch's disk control. Cartridge EEPROM/SRAM and the CD Memory Track are saved as `<game>.srm` in RetroArch's `saves` folder; save states go in `states`. Exception: a no-content session exposes the Memory Track as save RAM from the start ([#810](https://github.com/libretro/virtualjaguar-libretro/issues/810)), but with no content the frontend has nothing to name the `.srm` after, so it is not per-game and is not named after the disc you insert. Load the disc as content for per-game saves.
+
+## The desktop app
+
+A standalone front end for the same core, in `app/`: SDL3 for window, audio and input, Dear ImGui for the UI, OpenGL 3.3 for presentation. It drives the core through the same `retro_*` API RetroArch uses, so core options and save states behave the same. It carries the core's version number and is released with it. Project page with more screenshots: **[jaguar.provenance-emu.com/app.html](https://jaguar.provenance-emu.com/app.html)**.
+
+<p>
+  <img src="site/assets/app_library.png" width="49%" alt="The app's game library: a grid of Atari Jaguar box art tiles under Cartridges, Jaguar CD and BIOS and system tabs">
+  <img src="site/assets/app_game_crt.png" width="49%" alt="The Alien vs Predator menu drawn through the CRT-Royale shader preset">
+</p>
+
+- **Game library:** the home screen is a grid of your games, in Cartridges, Jaguar CD and BIOS & system tabs. Files are identified by CRC32 against the libretro database (No-Intro, Redump), and box art is downloaded on demand from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar) and cached; not every title has art upstream. File > Open, drag and drop and the command line still work.
+- **Shaders:** RetroArch `.slangp` presets through [librashader](https://github.com/SnowflakePowered/librashader), with CRT, scanline and sharp-bilinear presets from [slang-shaders](https://github.com/libretro/slang-shaders) bundled, and integer scaling. The macOS and Windows packages bundle librashader; on Linux install a librashader package or build it, and the macOS universal package currently ships an arm64-only copy, so shaders may be unavailable on Intel Macs ([packaging notes](app/packaging/README.md#macos-notes)).
+- **Cheats:** the libretro cheat database for the running game, bundled (CC BY-SA 4.0), plus manual codes.
+- **RetroAchievements:** softcore by default, optional hardcore, which refuses loading save states (saving still works) and blocks cheats. Cartridges and `.cue` discs are identified; `.chd` and `.cdi` discs are not yet.
+- **Controls:** per-device and per-game remapping, all 12 keypad keys on a gamepad, keyboard play with the Pro Controller 6-button layout, an on-screen keypad (F2) and a controls overlay (F3) that appears for keyboard players. Mice, the Tempest 2000 rotary, analog, driving, paddle, 6D, light gun and Team Tap are chosen under Settings > Input > Devices & players.
+- **Save states** with thumbnails (F5 save, F7 load, F6 slot), and a state manager.
+- **Netplay:** a window for the link-cable games (Doom, BattleSphere, AirCars, and Ultra Vortek over the Voice Modem) on a local network, with LAN discovery. It is not rollback netplay, and Internet or VPN play is not supported.
+
+| System | Package (`X.Y.Z` is the version; nightlies use `nightly`) |
+| --- | --- |
+| macOS 11+, Apple Silicon and Intel | `VirtualJaguar-X.Y.Z-macos-universal.zip` |
+| Windows x64 | `VirtualJaguar-X.Y.Z-windows-x64.zip` (portable) or `...-windows-x64-setup.exe` (installer) |
+| Windows ARM64 | `VirtualJaguar-X.Y.Z-windows-arm64.zip` (portable) or `...-windows-arm64-setup.exe` (installer) |
+| Linux x86_64, aarch64 | `VirtualJaguar-X.Y.Z-linux-<arch>.AppImage` or `virtualjaguar_X.Y.Z_<amd64\|arm64>.deb` |
+| Linux x86_64 (Flatpak) | `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak`: `flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`, then `flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` (no shaders yet) |
+
+Until signing is configured for the release, macOS may need right-click > Open the first time and Windows SmartScreen may warn about the installer. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
 
 ## Features
 
@@ -59,7 +96,7 @@ make platform=ios-arm64                      # cross-compile
 make test                                    # test suite (builds with TEST_EXPORTS=1)
 ```
 
-The result is `virtualjaguar_libretro.{so,dylib,dll}` in the repository root. The source is strict C89/GNU89 because the libretro buildbot uses MSVC; run `bash scripts/c89-lint.sh` before pushing. Platforms, cross-compiles and test details are in [`docs/agent/build.md`](docs/agent/build.md) and [`docs/agent/testing.md`](docs/agent/testing.md). Other docs: [source layout](docs/source-layout.md), [profiling](docs/profiling.md), [release process](docs/release-process.md).
+The result is `virtualjaguar_libretro.{so,dylib,dll}` in the repository root. The desktop app is a separate CMake build (`cmake -S app -B app/build`); see [`app/README.md`](app/README.md). The source is strict C89/GNU89 because the libretro buildbot uses MSVC; run `bash scripts/c89-lint.sh` before pushing. Platforms, cross-compiles and test details are in [`docs/agent/build.md`](docs/agent/build.md) and [`docs/agent/testing.md`](docs/agent/testing.md). Other docs: [source layout](docs/source-layout.md), [profiling](docs/profiling.md), [release process](docs/release-process.md).
 
 ## Contributing and support
 

@@ -59,6 +59,11 @@ void JLinkAwaitIdle(void);
 /* Once per frame: returns 1 and a one-line link health summary in buf about
    every 5 s while a link carries traffic (see jlink.c). */
 int JLinkStatsPoll(char *buf, size_t len);
+/* Numbers behind the line JLinkStatsPoll() last produced (all four may be
+   NULL): link exchanges per second, mean hop time in ms x100, hops that
+   slipped, waits that timed out.  Zero before the first window. */
+void JLinkStatsLast(unsigned *hopsPerSec, unsigned *hopMsX100,
+                    unsigned *slipped, unsigned *timeouts);
 
 int  JLinkOpen(int mode);
 void JLinkClose(void);

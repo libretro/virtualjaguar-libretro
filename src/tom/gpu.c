@@ -437,12 +437,14 @@ static void GPUPipeMemAccess(uint32_t addr, int isLoad)
  * dram_timing immediate self-cost, exactly as before. */
 #define GPU_PIPE_LOAD(addr) \
    do { \
+      VJT_BUS_GPU(addr); \
       GPULoadNoteExternal(addr); \
       if (vjs.gpuPipelineTiming) GPUPipeMemAccess((addr), 1); \
       else GPU_EXT_ACCESS(addr); \
    } while (0)
 #define GPU_PIPE_STORE(addr) \
    do { \
+      VJT_BUS_GPU(addr); \
       if (vjs.gpuPipelineTiming) GPUPipeMemAccess((addr), 0); \
       else GPU_EXT_ACCESS(addr); \
    } while (0)
@@ -767,6 +769,85 @@ static uint32_t gpu_releaseTimeSlice_flag = 0;
  * under deterministic slice budgets (the Super Burnout false positive,
  * issue #378 pilot).  Wraparound is fine: consumers compare deltas. */
 uint32_t gpu_exec_opcode_count = 0;
+
+#ifdef VJ_TRACE
+/* GPU busy-time census (timing campaign S0, docs/timing-campaign-plan.md).
+ *
+ * Test ABI only: compiled under VJ_TRACE, which the Makefile defines
+ * exactly when TEST_EXPORTS=1, so shipped objects contain none of this
+ * (no symbols, no branch in GPUExec).  Never serialised.
+ *
+ * The GPU is budget-saturated in every configuration -- it never idles,
+ * it spins -- so opcode counts cannot say how much of a field the GPU was
+ * actually WORKING.  This splits the cycles deducted from the slice budget
+ * (opcode cycles + bus stall + pipeline stall, after the RISC-clock-scale
+ * conversion, i.e. exactly what `cycles -=` consumes) into:
+ *   - spin cycles: instruction start PC inside one of up to
+ *     GPU_BUSY_MAX_WINDOWS caller-supplied [lo,hi) windows (the probe
+ *     fills the table via dlsym; no game address lives in src/);
+ *   - work cycles: everything else.
+ * Cycles consumed in bulk by the idle-loop fast-forward are credited to
+ * the window that holds the loop head (a skipped loop is a spin loop by
+ * construction), so the totals are identical with the fast-forward on
+ * or off.
+ *
+ * Disarmed cost: GPUExec caches gpu_busy_armed in a local at slice entry
+ * (same shape as gdbArmedSlice) -- one never-taken branch per instruction.
+ * Arm with gpu_busy_arm(1); windows are set with gpu_busy_set_window(). */
+#define GPU_BUSY_MAX_WINDOWS 8
+int      gpu_busy_armed = 0;
+uint32_t gpu_busy_nwin = 0;
+uint32_t gpu_busy_win_lo[GPU_BUSY_MAX_WINDOWS];
+uint32_t gpu_busy_win_hi[GPU_BUSY_MAX_WINDOWS];
+uint64_t gpu_busy_win_cycles[GPU_BUSY_MAX_WINDOWS];
+uint64_t gpu_busy_work_cycles = 0;
+uint64_t gpu_busy_work_ops = 0;
+uint64_t gpu_busy_total_cycles = 0;
+
+void gpu_busy_set_window(uint32_t i, uint32_t lo, uint32_t hi)
+{
+	if (i >= GPU_BUSY_MAX_WINDOWS)
+		return;
+	gpu_busy_win_lo[i] = lo;
+	gpu_busy_win_hi[i] = hi;
+	gpu_busy_win_cycles[i] = 0;
+	if (i + 1 > gpu_busy_nwin)
+		gpu_busy_nwin = i + 1;
+}
+
+void gpu_busy_arm(int on)
+{
+	gpu_busy_armed = on ? 1 : 0;
+}
+
+void gpu_busy_reset(void)
+{
+	uint32_t i;
+	for (i = 0; i < GPU_BUSY_MAX_WINDOWS; i++)
+		gpu_busy_win_cycles[i] = 0;
+	gpu_busy_work_cycles = 0;
+	gpu_busy_work_ops = 0;
+	gpu_busy_total_cycles = 0;
+}
+
+/* `ops` is the instruction count the cycles stand for (1 per executed
+ * instruction; n*opcost for a fast-forwarded stretch). */
+static void gpu_busy_account(uint32_t pc, uint32_t cyc, uint32_t ops)
+{
+	uint32_t i;
+	gpu_busy_total_cycles += cyc;
+	for (i = 0; i < gpu_busy_nwin; i++)
+	{
+		if (pc >= gpu_busy_win_lo[i] && pc < gpu_busy_win_hi[i])
+		{
+			gpu_busy_win_cycles[i] += cyc;
+			return;
+		}
+	}
+	gpu_busy_work_cycles += cyc;
+	gpu_busy_work_ops += ops;
+}
+#endif /* VJ_TRACE */
 
 /* Timeslice bookkeeping for GPU-raised 68K interrupts (CPUINT).
  *
@@ -2339,6 +2420,10 @@ static int32_t GPUIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 	}
 	cycles -= n * cost;
 	gpu_exec_opcode_count += (uint32_t)n * opcost;
+#ifdef VJ_TRACE
+	if (gpu_busy_armed)	/* cold path: once per fast-forward */
+		gpu_busy_account(head, (uint32_t)(n * cost), (uint32_t)n * opcost);
+#endif
 
 	gpu_idle_skip_fires++;
 	gpu_idle_skip_iters   += (uint32_t)n;
@@ -2368,6 +2453,9 @@ void GPUExec(int32_t cycles)
    uint32_t riscScale;
    int      idleSkipActive;
    int      gdbArmedSlice;
+#ifdef VJ_TRACE
+   int      busyArmedSlice;   /* gpu_busy_* census, cached like gdbArmedSlice */
+#endif
    /* Issue #811 late load write-back, armed for exactly the next
     * instruction (see gpu_ldx_slot). */
    uint32_t *ldxArmed = NULL;
@@ -2411,10 +2499,20 @@ void GPUExec(int32_t cycles)
     * The vjtrace/gdb checks are RUNTIME checks for the same reason as
     * the DSP's: the test ABI is built with -DVJ_TRACE, and a compile-
     * time gate would make every headless harness silently measure a
-    * disabled feature. */
+    * disabled feature.
+    *
+    * riscClockScalePct is deliberately NOT a gate (#378): the scaled
+    * budget is handed out by JaguarExecuteNew, and the probe measures
+    * cost/opcost from live `cycles` deltas, so everything it skips is
+    * already in the scaled domain.  The one scale-dependent term in the
+    * loop below is gpu_stall_scale_accum, which only moves when
+    * gpu_bus_stall != 0, and that is structurally 0 in an admitted body:
+    * GPU_EXT_ACCESS charges only under busArbiter.enabled, pipeline
+    * stalls only under pipeTiming (both gated here), and
+    * GPUChargeBusStall is reached only by a blitter-register access,
+    * which GPU_IDLE_EA_OK (RAM / local SRAM only) never admits. */
    idleSkipActive = vjs.riscIdleSkip
                  && !blitMemoMode && !blitMemoRecording
-                 && riscClockScalePct == 100
                  && !busArbiter.enabled
                  && !vjs.gpuPipelineTiming
                  && !(gpu_control & 0x18);
@@ -2444,6 +2542,9 @@ void GPUExec(int32_t cycles)
     * sufficient. */
    gdbArmedSlice = gdbArmedGPU;
    gpu_ldx_slot  = NULL;
+#ifdef VJ_TRACE
+   busyArmedSlice = gpu_busy_armed;
+#endif
 
    /* An armed late write-back runs one instruction past the budget so a
     * load/overwrite pair never straddles a slice (see gpu_ldx_slot). */
@@ -2452,6 +2553,9 @@ void GPUExec(int32_t cycles)
       uint16_t opcode;
       uint32_t index;
       uint32_t pcThis;
+#ifdef VJ_TRACE
+      int32_t  busyCyc0 = cycles;
+#endif
       gpuExecSliceRemaining = cycles;
 #ifdef VJ_TRACE
       VJT_PCHIST_GPU(gpu_pc);
@@ -2553,6 +2657,11 @@ void GPUExec(int32_t cycles)
       else
          cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall
                  + (int32_t)gpu_pipe_core_stall;
+
+#ifdef VJ_TRACE
+      if (busyArmedSlice)
+         gpu_busy_account(pcThis, (uint32_t)(busyCyc0 - cycles), 1);
+#endif
 
       /* Age out a G_FLAGS store once the instruction that was already
        * behind it in the pipeline has run (see GPUWriteLong, G_FLAGS

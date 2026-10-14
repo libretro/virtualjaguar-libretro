@@ -19,9 +19,12 @@
       jaguar*;
       Halfline*;
       jaguarMainRAM;
+      m68kClockScalePct;
+      riscClockScalePct;
       jaguarMainROM;
       jagMemSpace;
       busArbiter;
+      riscClockScalePct;
       gpuPCSample;
       m68kPCSample;
       m68kPCSampleIdx;
@@ -119,5 +122,7 @@
       vjtrace_*;
     VJPerf*;
     vjPerfActive;
+    VJDebug*;
+    vjDebugFrame;
    local: *;
 };

@@ -1,5 +1,11 @@
 # Local E2E test build (downloads rcheevos tarball)
 /build/
+/build-app/
+
+# Local signing settings (app/packaging/env.example) and local package output (dist/ also holds tracked files)
+/.env
+/dist/Virtual Jaguar.app/
+/dist/VirtualJaguar-*-local.zip
 
 # Legacy local path (older CI recipe); keep ignored if present
 /test_memory_map
@@ -56,6 +62,7 @@ tools/jagcd/*.exe
 test/tools/blit_memo_verify
 test/tools/dsp_halt_backtrace
 test/tools/dsp_idle_ab
+test/tools/idle_skip_scale_ab
 test/tools/dsp_idle_probe_falsify
 test/tools/gpu_idle_ab
 test/tools/gpu_idle_probe_falsify
@@ -198,3 +205,6 @@ test/tools/voicechat_pair
 /test/tools/netlink_discover_probe
 /test/tools/netlink_rebuild_witness
 test/roms/tier1/
+
+# Standalone app (app/): CMake build trees
+/app/build*/

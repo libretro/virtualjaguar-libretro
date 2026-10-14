@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- shared-mime-info types for Virtual Jaguar (installed to share/mime/packages).
+     KEEP IN SYNC with app/src/platform/commands.h (VJ_ASSOC_LIST), the .desktop file's MimeType=, Info.plist.in and the
+     Windows installer: the CTest platform_assoc_sync checks.
+     j64 / jag are Jaguar-specific and get the default weight.  rom, abs, cof, cue, chd and cdi are generic: they are
+     given a LOWER weight (30) so a type some other package already defines for them keeps winning, and these only
+     claim files nothing else does. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-atari-jaguar-rom">
+    <comment>Atari Jaguar ROM</comment>
+    <sub-class-of type="application/octet-stream"/>
+    <glob pattern="*.j64"/>
+    <glob pattern="*.jag"/>
+    <glob pattern="*.rom" weight="30"/>
+    <glob pattern="*.abs" weight="30"/>
+    <glob pattern="*.cof" weight="30"/>
+  </mime-type>
+  <mime-type type="application/x-atari-jaguar-cd-image">
+    <comment>Atari Jaguar CD image</comment>
+    <sub-class-of type="application/octet-stream"/>
+    <glob pattern="*.cue" weight="30"/>
+    <glob pattern="*.chd" weight="30"/>
+    <glob pattern="*.cdi" weight="30"/>
+  </mime-type>
+</mime-info>

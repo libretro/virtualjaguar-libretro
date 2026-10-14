@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>virtualjaguar</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIdentifier</key><string>io.github.libretro.VirtualJaguar</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>Virtual Jaguar</string>
+    <key>CFBundleDisplayName</key><string>Virtual Jaguar</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>@SHORT_VERSION@</string>
+    <key>CFBundleVersion</key><string>@BUILD_VERSION@</string>
+    <key>LSMinimumSystemVersion</key><string>@MIN_MACOS@</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+    <key>NSHumanReadableCopyright</key><string>GPL-3.0. Virtual Jaguar contributors.</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Atari Jaguar game</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Default</string>
+            <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+            <key>LSItemContentTypes</key>
+            <array><string>io.github.libretro.virtualjaguar.rom</string></array>
+            <key>CFBundleTypeExtensions</key>
+            <array><string>j64</string><string>jag</string><string>rom</string><string>abs</string><string>cof</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Atari Jaguar CD image</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+            <key>CFBundleTypeExtensions</key>
+            <array><string>cue</string><string>chd</string><string>cdi</string></array>
+        </dict>
+    </array>
+    <!-- Only the Jaguar-specific extensions get a type of their own.  rom / abs / cof / cue / chd / cdi are
+         generic and other programs' (the document types above still make Open With and the Dock menu work for them).
+         KEEP THE EXTENSION LISTS IN SYNC with src/platform/commands.h: the CTest platform_assoc_sync checks. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>io.github.libretro.virtualjaguar.rom</string>
+            <key>UTTypeDescription</key><string>Atari Jaguar ROM</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>j64</string><string>jag</string></array>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

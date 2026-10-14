@@ -558,18 +558,48 @@ jobs:
     uses: ./.github/workflows/chdman-tools.yml
 
   # ----------------------------------------------------------------
+  # Standalone app packages (#839): macOS zip, Windows zip/setup,
+  # Linux AppImage/deb.  One reusable workflow also used by app.yml for
+  # PRs.  It uploads only final, contract-named files as `app-package-*`
+  # artifacts, so the release/nightly jobs' flatten-and-checksum steps
+  # attach them next to the cores with no further logic.  On a tag whose
+  # version is not the app's (a core-only release) it builds nothing.
+  # ----------------------------------------------------------------
+  app-packages:
+    name: App packages
+    needs: [guard]
+    uses: ./.github/workflows/app-package.yml
+    with:
+      release_tag: ${{ github.ref_type == 'tag' && github.ref_name || (github.ref == 'refs/heads/develop' && 'nightly' || 'prerelease') }}
+      sign: true
+    secrets: inherit
+
+  # ----------------------------------------------------------------
   # Release: collect all artifacts, generate SHA256SUMS, build the
   # release body from docs/RELEASE_NOTES_v<TAG>.md (artifact list
   # and embedded SHA256 checksums always appended), then create the
   # tagged release.  See SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
-    needs: [build, vita-build, switch-build, jagcd-tools]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
     # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
     # tag (release-notes lookup, release title, `gh release create <TAG>`), so
     # this guard is what keeps a develop push from creating a release literally
     # named "develop".  The nightly job handles that case instead.
-    if: startsWith(github.ref, 'refs/tags/v')
+    #
+    # The status checks spell out what the implicit success() gate meant before
+    # app-packages existed (every need succeeded), with one addition: the app
+    # job may be `skipped`, which is what a tag without an app to package
+    # produces.  A FAILED app job still blocks the release, like a failed
+    # tools build: re-run the failed jobs and the release follows.
+    if: |
+      startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
+      && needs.build.result == 'success'
+      && needs.vita-build.result == 'success'
+      && needs.switch-build.result == 'success'
+      && needs.jagcd-tools.result == 'success'
+      && (needs.app-packages.result == 'success' || needs.app-packages.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -679,7 +709,9 @@ jobs:
   # ----------------------------------------------------------------
   nightly:
     name: Update rolling prerelease
-    needs: [build, vita-build, switch-build, jagcd-tools]
+    needs: [build, vita-build, switch-build, jagcd-tools, app-packages]
+    # The app packages (app-packages) are waited for and not required either:
+    # a macOS notarization outage must not withhold the core nightly.
     # Wait for the tools build, but do not REQUIRE it.  chdman is an
     # auxiliary desktop helper; the nightly's product is the 24 core
     # binaries.  Gating the publish on it meant a missing pkg-config
@@ -873,6 +905,11 @@ jobs:
         if: github.ref == 'refs/heads/develop'
         # Never fail the publish over the issue: the binaries are already out.
         continue-on-error: true
+        env:
+          # The app section is listed only when this nightly actually carries
+          # app packages (the job skips commits without app/, and a failed
+          # package build does not block the core nightly).
+          APP_BUILT: ${{ needs.app-packages.result == 'success' }}
         run: |
           set -e
           SHORT_SHA="${{ steps.prep_body.outputs.short_sha }}"
@@ -886,7 +923,44 @@ jobs:
             echo "| **Built** | $(date -u '+%Y-%m-%d %H:%M UTC') |"
             echo "| **Download** | [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly) |"
             echo "| **CI run** | [build log](${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}) |"
+            if [ "$APP_BUILT" = "true" ]; then
+              echo "| **App** | [Virtual Jaguar desktop app](#the-virtual-jaguar-app-nightly) (macOS, Windows, Linux) |"
+            fi
             echo
+            if [ "$APP_BUILT" = "true" ]; then
+              DL="${GITHUB_SERVER_URL}/${REPO}/releases/download/nightly"
+              RAW="https://raw.githubusercontent.com/${REPO}/develop/tools"
+              echo "### The Virtual Jaguar app (nightly)"
+              echo
+              echo "The standalone desktop app, built from this same commit. These links always point at the newest nightly."
+              echo
+              echo "| System | Download |"
+              echo "|---|---|"
+              echo "| macOS (Apple Silicon + Intel) | [VirtualJaguar-nightly-macos-universal.zip](${DL}/VirtualJaguar-nightly-macos-universal.zip) |"
+              echo "| Windows x64 | [portable .zip](${DL}/VirtualJaguar-nightly-windows-x64.zip) · [installer .exe](${DL}/VirtualJaguar-nightly-windows-x64-setup.exe) |"
+              echo "| Windows ARM64 | [portable .zip](${DL}/VirtualJaguar-nightly-windows-arm64.zip) · [installer .exe](${DL}/VirtualJaguar-nightly-windows-arm64-setup.exe) |"
+              echo "| Linux x86_64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-x86_64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_amd64.deb) |"
+              echo "| Linux aarch64 | [AppImage](${DL}/VirtualJaguar-nightly-linux-aarch64.AppImage) · [.deb](${DL}/virtualjaguar_nightly_arm64.deb) |"
+              echo "| Linux x86_64 (Flatpak) | [.flatpak](${DL}/VirtualJaguar-nightly-linux-x86_64.flatpak) |"
+              echo
+              echo "Or install / update it with one line (pass \`--what both\` for the app and the RetroArch core):"
+              echo
+              echo '```sh'
+              echo "curl -fsSL ${RAW}/install.sh | sh -s -- --what app --channel nightly"
+              echo '```'
+              echo
+              echo '```powershell'
+              echo "\$env:VJ_WHAT='app'; \$env:VJ_CHANNEL='nightly'; irm ${RAW}/install.ps1 | iex"
+              echo '```'
+              echo
+              P="Nightly app builds are signed and notarized only once the release signing"
+              P="$P secrets are configured; until then macOS needs right-click > Open the first"
+              P="$P time and Windows SmartScreen may warn."
+              echo "$P"
+              echo
+              echo "---"
+              echo
+            fi
             echo "---"
             echo
             echo "### What these are"

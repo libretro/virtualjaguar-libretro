@@ -46,6 +46,19 @@ size_t BlitterHungStateSave(uint8_t *buf);
 size_t BlitterHungStateLoad(const uint8_t *buf);
 void BlitterHungStateReset(void);
 
+/* App debug interface (src/debug/vjdebug.c): a ring of the last
+ * VJ_DBG_BLIT_LOG_SIZE blitter launches, recorded at the launch site in
+ * blitter_mmio.c.  Off by default: blitDbgLogOn is the one global the launch
+ * site tests, so a detached core pays one never-taken branch per blit.
+ * Host-transient: nothing here is savestated or readable by the emulated
+ * machine.  `frameCounter` (may be NULL) is read at each launch to stamp it. */
+struct vj_debug_blit;
+extern int blitDbgLogOn;
+void BlitterDbgLogEnable(int on, const unsigned *frameCounter);
+unsigned BlitterDbgLogHead(void);
+int BlitterDbgLogGet(unsigned i, struct vj_debug_blit *o);
+void BlitterDbgLogReset(void);
+
 uint8_t BlitterReadByte(uint32_t, uint32_t who);
 uint16_t BlitterReadWord(uint32_t, uint32_t who);
 uint32_t BlitterReadLong(uint32_t, uint32_t who);
