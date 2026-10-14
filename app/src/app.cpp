@@ -881,6 +881,8 @@ int App::runInteractive(const CliArgs& a) {
     else if (!a.content.empty()) openContent(a.content[0]);
     library.createTexture = &VideoOut::createTextureRGBA;
     library.destroyTexture = &VideoOut::destroyTexture;
+    ach.images.createTexture = &VideoOut::createTextureRGBA;   // RetroAchievements avatar / icons / badges
+    ach.images.destroyTexture = &VideoOut::destroyTexture;
     // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
     library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
     if (a.showWindow == "library") library.show = true;

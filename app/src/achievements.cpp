@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <ctime>
 #include <sstream>
 
 #include "app.h"
@@ -113,6 +114,7 @@ struct AchCallbacks {
             a->toast("RetroAchievements", std::string("Signed in as ") + (u ? u->display_name : "?"), 1, 4);
             a->setStatus(std::string("Signed in as ") + (u ? u->display_name : "?"));
             a->showLogin = false;
+            a->progressAutoTried_ = false;   // the signed-in user's progress can be fetched now
             a->applyHardcore();
             // Content was opened while signed out: identify it now.
             if (a->app_ && a->app_->host.isLoaded() && !a->loading_ && !rc_client_is_game_loaded(c)) a->beginLoad();
@@ -146,7 +148,7 @@ struct AchCallbacks {
                 std::snprintf(body, sizeof body, "%u of %u achievements unlocked, %u of %u points%s", s.num_unlocked_achievements,
                               s.num_core_achievements, s.points_unlocked, s.points_core,
                               rc_client_get_hardcore_enabled(c) ? "  (hardcore)" : "");
-            a->toast(a->gameTitle_.empty() ? "RetroAchievements" : a->gameTitle_, body, 1, 6);
+            a->toast(a->gameTitle_.empty() ? "RetroAchievements" : a->gameTitle_, body, 1, 6, a->gameIconUrl());
             a->setStatus(a->gameTitle_ + ": " + body);
         } else {
             a->gameKnown_ = false;
@@ -178,11 +180,13 @@ void Achievements::init(App& app, const CliArgs& args) {
     enabled_ = app.cfg.getBool("ra.enabled", true);
     hardcoreWanted_ = app.cfg.getBool("ra.hardcore", false);   // softcore until asked for
     unofficial_ = app.cfg.getBool("ra.unofficial", false);
+    imagesWanted_ = app.cfg.getBool("ra.images", true);
     userCfgName_ = app.cfg.get("ra.user", "");
     std::snprintf(userBuf, sizeof userBuf, "%s", userCfgName_.c_str());
 
     client_ = rc_client_create(&AchCallbacks::readMemory, &AchCallbacks::serverCall);
     if (!client_) return;
+    if (!args.headless) images.start(app.paths.root);   // headless: no GL, no pictures
     rc_client_set_userdata(client_, this);
     rc_client_set_event_handler(client_, &AchCallbacks::event);
     rc_client_enable_logging(client_, args.verbose ? RC_CLIENT_LOG_LEVEL_INFO : RC_CLIENT_LOG_LEVEL_WARN,
@@ -196,10 +200,13 @@ void Achievements::init(App& app, const CliArgs& args) {
         // (--ra-mock also works with a window, for screenshots of the UI.)
         if (!headlessSetup(args)) enabled_ = false;
         if (args.showWindow == "ra-list") showList = true;
+        if (args.showWindow == "ra-games") { showList = true; dashTab = 1; }
+        if (args.showWindow == "ra-profile") { showList = true; dashTab = 2; }
         if (args.showWindow == "ra-login") showLogin = true;
         return;
     }
     if (args.showWindow == "ra-login") showLogin = true;
+    if (args.showWindow == "ra-games") { showList = true; dashTab = 1; }
     if (!AchHttp::available()) setStatus("This build has no HTTP support, so RetroAchievements is unavailable.");
     const std::string token = app.cfg.get("ra.token", "");
     if (enabled_ && !userCfgName_.empty() && !token.empty() && AchHttp::available()) {
@@ -210,6 +217,8 @@ void Achievements::init(App& app, const CliArgs& args) {
 }
 
 void Achievements::shutdown() {
+    hashStop_ = true;
+    if (hashThread_.joinable()) hashThread_.join();
     http_.shutdown();
     if (client_) {
         rc_client_destroy(client_);
@@ -219,6 +228,7 @@ void Achievements::shutdown() {
     memoryReady_ = false;
     loading_ = false;
     gameKnown_ = false;
+    images.stop();   // while the GL context is still current: it destroys the textures
 }
 
 uint32_t Achievements::consoleId(const std::string& path) const {
@@ -314,6 +324,9 @@ void Achievements::pump() {
     if (!client_) return;
     http_.pump();
     mockDeliver();
+    updateImageNetwork();
+    images.pump();
+    if (showList && dashTab == 1) gamesTabShown();
     rc_client_idle(client_);
     if (resetPending_) {
         resetPending_ = false;
@@ -421,6 +434,15 @@ void Achievements::setHardcoreWanted(bool on) {
     checkHardcoreTransition();
 }
 
+void Achievements::setImagesWanted(bool on) {
+    imagesWanted_ = on;
+    if (app_) {
+        app_->cfg.setBool("ra.images", on);
+        app_->saveConfig();
+    }
+    updateImageNetwork();
+}
+
 void Achievements::setUnofficialWanted(bool on) {
     unofficial_ = on;
     if (client_) rc_client_set_unofficial_enabled(client_, on ? 1 : 0);
@@ -478,6 +500,7 @@ void Achievements::logout() {
     loginPending_ = false;
     trackers.clear();
     challenges.clear();
+    dashSignedOut();
     if (app_ && !mockMode()) {   // a mock session never owns the real token
         app_->cfg.erase("ra.token");
         app_->saveConfig();
@@ -522,8 +545,10 @@ void Achievements::onStateLoaded(const std::string& statePath) {
 // ---------------------------------------------------------------------------------
 // events
 // ---------------------------------------------------------------------------------
-void Achievements::toast(const std::string& title, const std::string& body, int kind, double life) {
+void Achievements::toast(const std::string& title, const std::string& body, int kind, double life,
+                         const std::string& icon) {
     AchToast t;
+    t.iconUrl = icon;
     t.title = title;
     t.body = body;
     t.kind = kind;
@@ -542,7 +567,20 @@ void Achievements::handleEvent(const rc_client_event_t* e) {
         char body[320];
         std::snprintf(body, sizeof body, "%s  (%u pt%s)", a->description ? a->description : "", a->points,
                       a->points == 1 ? "" : "s");
-        toast(std::string("Achievement unlocked: ") + (a->title ? a->title : ""), body, 0, 7);
+        char badge[256] = "";
+        if (a->badge_url) std::snprintf(badge, sizeof badge, "%s", a->badge_url);
+        toast(std::string("Achievement unlocked: ") + (a->title ? a->title : ""), body, 0, 7, badge);
+        {
+            SessionUnlock u;
+            u.title = a->title ? a->title : "";
+            u.description = a->description ? a->description : "";
+            u.badgeUrl = badge;
+            u.points = a->points;
+            u.hardcore = rc_client_get_hardcore_enabled(client_) != 0;
+            u.when = (long long)std::time(nullptr);
+            sessionUnlocks.insert(sessionUnlocks.begin(), std::move(u));
+            if (sessionUnlocks.size() > 50) sessionUnlocks.pop_back();
+        }
         std::fprintf(stderr, "[ra] unlocked id=%u \"%s\" %u points%s\n", a->id, a->title ? a->title : "", a->points,
                      rc_client_get_hardcore_enabled(client_) ? " (hardcore)" : "");
         challenges.erase(a->id);
@@ -628,7 +666,15 @@ void Achievements::mockRespond(const std::string& post, rc_client_server_callbac
         const std::string h = formValue(post, "m");
         if (!h.empty()) mockHashes_.push_back(h);
     }
-    std::ifstream f(mockDir_ + "/" + name + ".json", std::ios::binary);
+    // <r>_<s|c>.json first (systemgames_17.json / allprogress_77.json: one list per console), then <r>.json.
+    std::string fixture = mockDir_ + "/" + name + ".json";
+    for (const char* key : {"s", "c"}) {
+        const std::string v = formValue(post, key);
+        if (v.empty() || (name != "systemgames" && name != "allprogress")) continue;
+        std::ifstream probe(mockDir_ + "/" + name + "_" + v + ".json", std::ios::binary);
+        if (probe) fixture = mockDir_ + "/" + name + "_" + v + ".json";
+    }
+    std::ifstream f(fixture, std::ios::binary);
     std::string body;
     int status = 200;
     if (f) {
@@ -692,6 +738,7 @@ void Achievements::runStep(const Step& s, unsigned frame) {
     if (s.action == "hardcore:on") setHardcoreWanted(true);
     else if (s.action == "hardcore:off") setHardcoreWanted(false);
     else if (s.action == "signout") logout();
+    else if (s.action.compare(0, 6, "games:") == 0) headlessGamesStep(s.action.substr(6), frame);
     else if (s.action.compare(0, 5, "poke:") == 0 || s.action.compare(0, 7, "expect:") == 0) {
         const bool poke = s.action[0] == 'p';
         unsigned addr = 0, val = 0;
