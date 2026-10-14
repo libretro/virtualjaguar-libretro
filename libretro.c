@@ -62,6 +62,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jaggd_fs.h"
 #include "titlehook.h"
 #include "gdbstub.h"
+#include "vjdebug.h"
 #include "log.h"
 /* CORE_VERSION.  scripts/gen-version-h.sh writes src/core/version.h with
  * the short git rev in it; the Makefile and jni/Android.mk both run it at
@@ -7320,6 +7321,8 @@ bool retro_load_game(const struct retro_game_info *info)
    content_loaded = true;
    no_game_active = (info == NULL);
    update_option_visibility();
+   /* The app's debug interface may peek/poke from here on. */
+   VJDebugSetLoaded(1);
 
    /* Every option is resolved (and blit-memo can finally tell cart from
     * CD): tell the player which settings the core chose for them (#841). */
@@ -7421,6 +7424,7 @@ void retro_unload_game(void)
     * an address that means nothing in the next title -- never lingers
     * into the next load. Re-latch the gate from the next load's option
     * instead of carrying this session's state forward. */
+   VJDebugReset();   /* drop an attached app host, the OP snapshot and the blit log */
    GDBSockClose();
    GDBTargetClose();
    gdb_stub_reset();
@@ -7907,6 +7911,7 @@ void retro_deinit(void)
    /* GDB stub (#652): belt-and-suspenders, matching retro_unload_game() --
     * a frontend that calls deinit without unload first must not leave a
     * listener bound, or a breakpoint armed, past process teardown. */
+   VJDebugReset();   /* drop an attached app host, the OP snapshot and the blit log */
    GDBSockClose();
    GDBTargetClose();
    gdb_stub_reset();
@@ -8497,6 +8502,10 @@ void retro_run(void)
     * run unconditionally. */
    CrashDetectFrameTick(tomSkipVideoPresent ? NULL : videoBuffer,
                          (unsigned)game_width, (unsigned)game_height);
+
+   /* Frames since content load, for the app's debug interface
+    * (src/debug/vjdebug.c): a plain increment, read only by it. */
+   vjDebugFrame++;
 
    /* Memory Track SRAM: one 128 KB pack per dirty frame, after emulation
     * so frontends that cache the SAVE_RAM pointer see this frame's writes.

@@ -25,6 +25,7 @@
 #include "vjag_memory.h"
 #include "tom.h"
 #include "../core/vjtrace.h"
+#include "vj_debug_iface.h"
 #include "op_simd_neon.h"
 #include "op_simd_sse2.h"
 
@@ -495,6 +496,122 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 //
 // Object Processor main routine
 //
+/* ---- app debug interface: one-walk display-list snapshot (see op.h) ---- */
+
+#define OPDBG_ARMED     1   /* waiting for the next walk                     */
+#define OPDBG_CAPTURING 2   /* a walk is recording (or just finished)        */
+
+int opDbgSnapState = 0;
+static struct vj_debug_op_obj *opDbgBuf = NULL;   /* VJ_DBG_OP_MAX_OBJECTS entries */
+static int      opDbgCount = 0;
+static unsigned opDbgHalfline = 0;
+static int      opDbgReady = 0;
+
+void OPDbgSnapArm(void)
+{
+   if (!opDbgBuf)
+   {
+      opDbgBuf = (struct vj_debug_op_obj *)calloc(VJ_DBG_OP_MAX_OBJECTS,
+                                                  sizeof(struct vj_debug_op_obj));
+      if (!opDbgBuf)
+         return;
+   }
+   opDbgCount    = 0;
+   opDbgReady    = 0;
+   opDbgSnapState = OPDBG_ARMED;
+}
+
+/* Top of OPProcessList, only while opDbgSnapState is nonzero.  Returns 1 if
+ * this walk should record.  The first walk that visits at least one object
+ * is the snapshot; a walk that found an empty list (OLP == 0, or a halfline
+ * the game gates off) is discarded and the next one tried. */
+static int OPDbgSnapBegin(int halfline)
+{
+   if (opDbgSnapState == OPDBG_CAPTURING)
+   {
+      if (opDbgCount > 0)
+      {
+         /* The previous walk (which recorded) is over. */
+         opDbgSnapState = 0;
+         opDbgReady     = 1;
+         return 0;
+      }
+      /* It saw nothing: try again on this walk. */
+   }
+   opDbgCount     = 0;
+   opDbgHalfline  = (unsigned)halfline;
+   opDbgSnapState = OPDBG_CAPTURING;
+   return 1;
+}
+
+/* One visited object: its first phrase is in hand, the rest are read here
+ * without side effects. */
+static void OPDbgSnapNote(uint32_t addr, uint64_t p0)
+{
+   struct vj_debug_op_obj *o;
+   uint64_t p1 = 0, p2 = 0;
+   unsigned type = (unsigned)(p0 & 0x07);
+
+   if (!opDbgBuf || opDbgCount >= VJ_DBG_OP_MAX_OBJECTS)
+      return;
+   o = &opDbgBuf[opDbgCount++];
+   o->address = addr;
+   o->type    = type;
+   o->phrases = 1;
+   if (type == 0 || type == 1)
+   {
+      p1 = ((uint64_t)JaguarReadLong((addr & ~0x07u) + 8, DEBUGGER) << 32)
+         | (uint64_t)JaguarReadLong((addr & ~0x07u) + 12, DEBUGGER);
+      o->phrases = 2;
+      if (type == 1)
+      {
+         p2 = ((uint64_t)JaguarReadLong((addr & ~0x07u) + 16, DEBUGGER) << 32)
+            | (uint64_t)JaguarReadLong((addr & ~0x07u) + 20, DEBUGGER);
+         o->phrases = 3;
+      }
+   }
+   o->p0_hi = (unsigned)(p0 >> 32);
+   o->p0_lo = (unsigned)(p0 & 0xFFFFFFFFu);
+   o->p1_hi = (unsigned)(p1 >> 32);
+   o->p1_lo = (unsigned)(p1 & 0xFFFFFFFFu);
+   o->p2_hi = (unsigned)(p2 >> 32);
+   o->p2_lo = (unsigned)(p2 & 0xFFFFFFFFu);
+}
+
+int OPDbgSnapGet(struct vj_debug_op_obj *o, int max, unsigned *halfline)
+{
+   int n, i;
+
+   /* Between retro_run() calls a walk is never in progress, so a capture
+    * that recorded something is finished. */
+   if (opDbgSnapState == OPDBG_CAPTURING && opDbgCount > 0)
+   {
+      opDbgSnapState = 0;
+      opDbgReady     = 1;
+   }
+   if (!opDbgReady || !opDbgBuf)
+      return -1;
+   n = opDbgCount;
+   if (n > max)
+      n = max;
+   if (o)
+      for (i = 0; i < n; i++)
+         o[i] = opDbgBuf[i];
+   if (halfline)
+      *halfline = opDbgHalfline;
+   return n;
+}
+
+void OPDbgSnapReset(void)
+{
+   opDbgSnapState = 0;
+   opDbgReady     = 0;
+   opDbgCount     = 0;
+   opDbgHalfline  = 0;
+   free(opDbgBuf);
+   opDbgBuf = NULL;
+}
+
 /* Set only around OPProcessListNoBitmaps(): bitmap and scaled objects are
  * skipped (link followed, no pixels, no HEIGHT/DATA write-back) while
  * branch, GPU and stop objects run normally. */
@@ -511,6 +628,7 @@ void OPProcessList(int halfline, bool render)
 {
    bool inhibit;
    uint32_t opObjectsToRun = OP_RUNAWAY_GUARD_OBJECTS;
+   int dbgSnap = 0;
 
 //#warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
    // We ignore them, for now; not good D-:
@@ -521,6 +639,10 @@ void OPProcessList(int halfline, bool render)
    //       resolutions than you normally could, as the line buffer is only 720
    //       pixels wide...
    halfline &= 0x7FF;
+
+   /* App debug interface: zero unless a snapshot was armed. */
+   if (opDbgSnapState)
+      dbgSnap = OPDbgSnapBegin(halfline);
 
    op_pointer = OPGetListPointer();
    VJT_EMIT(VJT_EV_OP_LIST_START, OP, op_pointer, (uint32_t)halfline);
@@ -539,6 +661,8 @@ void OPProcessList(int halfline, bool render)
       op_pointer += 8;
 
       VJT_EMIT(VJT_EV_OP_OBJECT, OP, op_pointer - 8, (uint32_t)((uint8_t)p0 & 0x07));
+      if (dbgSnap)
+         OPDbgSnapNote(op_pointer - 8, p0);
 
       switch ((uint8_t)p0 & 0x07)
       {

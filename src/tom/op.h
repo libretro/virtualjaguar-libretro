@@ -27,6 +27,20 @@ uint32_t OPGetStatusRegister(void);
 void OPSetCurrentObject(uint64_t object);
 void OPNotifyOBFWrite(void);
 
+/* App debug interface (src/debug/vjdebug.c): a one-shot capture of one
+ * display-list walk, taken BEFORE the OP rewrites HEIGHT/DATA/REMAINDER
+ * (the OP updates those per halfline, so the list in RAM after a frame is
+ * not the list the game built).  OPDbgSnapState is the only thing the walk
+ * tests: nonzero only between an arm and the end of the captured walk.
+ * Host-transient: zero savestate fields, invisible to the emulated machine
+ * (the extra phrase reads use who == DEBUGGER, which the bus arbiter does
+ * not charge). */
+struct vj_debug_op_obj;
+extern int opDbgSnapState;
+void OPDbgSnapArm(void);
+int  OPDbgSnapGet(struct vj_debug_op_obj *o, int max, unsigned *halfline);
+void OPDbgSnapReset(void);
+
 #define OPFLAG_RELEASE		8					// Bus release bit
 #define OPFLAG_TRANS		4					// Transparency bit
 #define OPFLAG_RMW			2					// Read-Modify-Write bit

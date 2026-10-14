@@ -121,5 +121,7 @@
       vjtrace_*;
     VJPerf*;
     vjPerfActive;
+    VJDebug*;
+    vjDebugFrame;
    local: *;
 };

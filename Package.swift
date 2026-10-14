@@ -62,6 +62,7 @@ let coreSources: [String] = [
     "src/debug/gdbsock.c",
     "src/debug/gdbstub.c",
     "src/debug/gdbtarget.c",
+    "src/debug/vjdebug.c",
     "src/jerry/axistune.c",
     "src/jerry/dac.c",
     "src/jerry/dsp.c",
