@@ -119,6 +119,10 @@ SHARE_IMAGE_ALT = (
 # Page order defines nav order.
 PAGES = ["index.html", "app.html", "compatibility.html", "enhancements.html",
          "performance.html", "why-this-core.html"]
+# Legal pages: built, in the sitemap and checked like any other page, but kept
+# out of the primary nav -- they are linked from the footer instead.
+LEGAL_PAGES = ["privacy.html", "terms.html"]
+ALL_PAGES = PAGES + LEGAL_PAGES
 
 EXPECTED_HEADER = ["Title", "Mode", "Score", "Stage", "Watchdog", "PC evidence"]
 CART_EXPECTED_HEADER = ["Title", "HLE", "HLE notes", "Real BIOS", "BIOS notes"]
@@ -683,7 +687,9 @@ def layout(page_name, meta, body, nav_items, ctx):
     <a href="%(repo)s/releases">releases</a> &middot;
     <a href="%(repo)s/releases/tag/nightly">nightly build</a> &middot;
     <a href="%(repo)s/discussions">Discussions</a> &middot;
-    <a href="%(repo)s/issues">Issues</a>.
+    <a href="%(repo)s/issues">Issues</a> &middot;
+    <a href="privacy.html">Privacy</a> &middot;
+    <a href="terms.html">Terms</a>.
   </p>
   <p>
     Core options, controls and file extensions are documented in the
@@ -757,7 +763,7 @@ def main():
     if not ISO_DATE_RE.match(build_date):
         die("--build-date must be YYYY-MM-DD, got %r" % build_date)
 
-    for p in PAGES:
+    for p in ALL_PAGES:
         if not (SITE_SRC / "pages" / p).is_file():
             die("missing page fragment site/pages/%s" % p)
 
@@ -839,9 +845,10 @@ def main():
 
     nav_items = []
     frags = {}
-    for p in PAGES:
+    for p in ALL_PAGES:
         meta, body = read_fragment(SITE_SRC / "pages" / p)
-        nav_items.append((p, meta["nav"]))
+        if p in PAGES:
+            nav_items.append((p, meta["nav"]))
         frags[p] = (meta, body)
 
     # Every page's rendered output depends on the generator's template too,
@@ -849,7 +856,7 @@ def main():
     common_deps = [Path(__file__).resolve(), SITE_SRC / "style.css"]
     sitemap_entries = []
 
-    for p in PAGES:
+    for p in ALL_PAGES:
         meta, body = frags[p]
         for k, v in subs.items():
             body = body.replace(k, v)
