@@ -71,6 +71,19 @@ void App::loadConfig() {
     }
     input.init(cfg, paths.root);
     input.setPadFilter(parsePadFilter(cfg.get(instancePadKey(paths.instance), "all")));
+    applySettingsFromConfig();
+    g_lastDir = cfg.get("ui.last_dir", "");
+    recents.clear();
+    for (int i = 0; i < kMaxRecents; i++) {
+        std::string r = cfg.get("recent." + std::to_string(i), "");
+        if (!r.empty()) recents.push_back(r);
+    }
+    host.loadUserOptions(cfg.withPrefix("opt."));
+}
+
+// The settings that live in plain members, read from the config with their defaults.  Settings > Reset
+// erases keys and calls this again, so it is the one place that knows what "default" means.
+void App::applySettingsFromConfig() {
     present.integerScale = cfg.getBool("video.integer", false);
     present.linearFilter = cfg.getBool("video.linear", false);
     present.stretch = cfg.getBool("video.stretch", false);
@@ -84,13 +97,6 @@ void App::loadConfig() {
     homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
-    g_lastDir = cfg.get("ui.last_dir", "");
-    recents.clear();
-    for (int i = 0; i < kMaxRecents; i++) {
-        std::string r = cfg.get("recent." + std::to_string(i), "");
-        if (!r.empty()) recents.push_back(r);
-    }
-    host.loadUserOptions(cfg.withPrefix("opt."));
 }
 
 void App::saveConfig() {

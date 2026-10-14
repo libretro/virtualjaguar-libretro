@@ -164,6 +164,7 @@ public:
     void toast(const std::string& text, double seconds = 3.0, int level = 1);
     void addRecent(const std::string& path);
     void saveConfig();
+    void applySettingsFromConfig();   // re-read the member settings from cfg (defaults for erased keys); Settings > Reset
 
     double now() const;
     SDL_Window* window() const { return window_; }

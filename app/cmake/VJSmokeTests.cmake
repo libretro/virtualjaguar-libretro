@@ -149,6 +149,24 @@ endif()
 add_test(NAME instance_unit COMMAND vj_instance_test)
 set_tests_properties(instance_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# Settings > Reset group / Reset all settings (#833): the key classification and the option plans, plus the
+# real core's options (locked / session-overridden ones are skipped).
+add_executable(vj_settings_reset_test
+    tests/settings_reset_test.cpp src/settings_reset.cpp src/core_host.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_settings_reset_test PRIVATE src)
+target_link_libraries(vj_settings_reset_test PRIVATE vj_core ${VJ_SDL3_TARGET})
+if(WIN32)
+    target_link_libraries(vj_settings_reset_test PRIVATE ws2_32 iphlpapi)
+endif()
+if(MSVC)
+    target_compile_options(vj_settings_reset_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_settings_reset_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_settings_reset_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME settings_reset COMMAND vj_settings_reset_test "${VJ_ROMS}/yarc.j64")
+set_tests_properties(settings_reset PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 add_test(NAME remap_unit COMMAND vj_remap_test)
 add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")
 add_test(NAME devices_unit COMMAND vj_devices_test)

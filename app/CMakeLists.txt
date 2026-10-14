@@ -240,6 +240,8 @@ set(VJ_APP_SOURCES
     src/cheatsheet_ui.cpp
     src/devices_ui.cpp
     src/ui.cpp
+    src/settings_reset.cpp
+    src/settings_reset_ui.cpp
     src/library_ui.cpp
     src/cheats.cpp
     src/cheats_core.cpp
