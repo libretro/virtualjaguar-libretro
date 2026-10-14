@@ -55,7 +55,7 @@ static std::string slurp(const fs::path& p) {
 static void fill(Config& c) {
     const char* keys[] = {
         // Video (+ Shader)
-        "video.integer", "video.linear", "video.stretch", "video.aspect", "video.vsync", "ui.show_fps",
+        "video.integer", "video.linear", "video.stretch", "video.aspect", "video.vsync", "ui.show_fps", "ui.theme",
         "shader.enabled", "shader.preset", "shader.folder",
         // Audio
         "audio.volume", "audio.mute", "audio.target_ms",
@@ -65,6 +65,8 @@ static void fill(Config& c) {
         // Storage + library display
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
         "library.favorites.show", "library.recents.show", "saves.resume",
+        // Discord
+        "discord.enabled", "discord.art", "discord.buttons",
         // Mappings
         "input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port", "input.stick_dpad",
         "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C",
@@ -73,7 +75,7 @@ static void fill(Config& c) {
         // Never reset
         "library.dir.0", "library.dir.1", "library.art_mirror", "recent.0", "recent.1", "ui.last_dir", "ui.scale",
         "window.w", "window.h", "input.pads.1", "input.pads.2", "ui.controls.seen_pads", "ra.user", "ra.token", "ra.enabled",
-        "ra.hardcore", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc",
+        "ra.hardcore", "discord.app_id", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc",
     };
     for (const char* k : keys) c.set(k, "x");
     c.set("opt.virtualjaguar_frameskip_max", "7");
@@ -89,12 +91,15 @@ static std::set<std::string> klass(const Config& c, KeyClass k) {
 static void testClassify() {
     CHECK(classifyKey("video.vsync") == KeyClass::Video);
     CHECK(classifyKey("ui.show_fps") == KeyClass::Video);
+    CHECK(classifyKey("ui.theme") == KeyClass::Video);   // Appearance is on the Video tab: Reset there returns to System
     CHECK(classifyKey("shader.preset") == KeyClass::Shader);
     CHECK(classifyKey("shader.folder") == KeyClass::Keep);   // a path the user picked
     CHECK(classifyKey("audio.target_ms") == KeyClass::Audio);
     CHECK(classifyKey("input.port.1") == KeyClass::Input);
     CHECK(classifyKey("port.1") == KeyClass::Input);          // the legacy spelling
     CHECK(classifyKey("input.dev.deadzone") == KeyClass::Input);
+    CHECK(classifyKey("discord.enabled") == KeyClass::Discord && classifyKey("discord.art") == KeyClass::Discord && classifyKey("discord.buttons") == KeyClass::Discord);
+    CHECK(classifyKey("discord.app_id") == KeyClass::Keep);   // an ID the user chose
     CHECK(classifyKey("saves.autosave") == KeyClass::Storage);
     CHECK(classifyKey("library.size") == KeyClass::Storage);
     CHECK(classifyKey("saves.resume") == KeyClass::Storage && classifyKey("library.favorites.show") == KeyClass::Storage && classifyKey("library.recents.show") == KeyClass::Storage);
@@ -117,7 +122,7 @@ static void testClassify() {
 }
 
 static void testGroupReset() {
-    for (AppGroup g : {AppGroup::Video, AppGroup::Audio, AppGroup::Input, AppGroup::Storage}) {
+    for (AppGroup g : {AppGroup::Video, AppGroup::Audio, AppGroup::Input, AppGroup::Storage, AppGroup::Discord}) {
         Config c;
         fill(c);
         const std::set<std::string> before = keysOf(c);
@@ -141,7 +146,7 @@ static void testGroupReset() {
     resetGroupKeys(c, AppGroup::Audio);
     CHECK(!c.has("audio.volume") && c.has("video.vsync") && c.has("input.port.0") && c.has("opt.virtualjaguar_frameskip_max"));
     resetGroupKeys(c, AppGroup::Video);
-    CHECK(!c.has("shader.enabled") && !c.has("shader.preset") && c.has("shader.folder") && !c.has("ui.show_fps"));
+    CHECK(!c.has("shader.enabled") && !c.has("shader.preset") && c.has("shader.folder") && !c.has("ui.show_fps") && !c.has("ui.theme"));
     resetGroupKeys(c, AppGroup::Input);
     CHECK(!c.has("input.port.0") && !c.has("port.0") && !c.has("ui.controls.autoshow"));
     CHECK(c.has("input.pad.A") && c.has("input.game.cart-1234.port.0") && c.has("input.pads.1"));   // mappings / per game / window pad kept
@@ -162,7 +167,7 @@ static void testResetAll() {
     const std::set<std::string> kept = {
         "library.dir.0", "library.dir.1", "library.art_mirror", "recent.0", "recent.1", "ui.last_dir", "ui.scale", "window.w",
         "window.h", "input.pads.1", "input.pads.2", "ui.controls.seen_pads", "ra.user", "ra.token", "ra.enabled", "ra.hardcore",
-        "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc", "shader.folder",
+        "discord.app_id", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc", "shader.folder",
         "opt.virtualjaguar_frameskip_max"};   // core options go through CoreHost, not Config
     const std::set<std::string> mappings = {"input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port",
         "input.stick_dpad", "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C"};
@@ -181,10 +186,11 @@ static void testResetAll() {
         for (const std::string& k : mappings) CHECK((after.count(k) == 1) == !r.alsoMappings);
         for (const std::string& k : perGame) CHECK((after.count(k) == 1) == !r.alsoPerGame);
         // Every app setting is gone, whatever the boxes say.
-        for (const char* k : {"video.integer", "video.vsync", "ui.show_fps", "shader.enabled", "shader.preset", "audio.volume",
+        for (const char* k : {"video.integer", "video.vsync", "ui.show_fps", "ui.theme", "shader.enabled", "shader.preset", "audio.volume",
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
                               "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
-                              "library.favorites.show", "library.recents.show", "saves.resume"})
+                              "library.favorites.show", "library.recents.show", "saves.resume", "discord.enabled", "discord.art",
+                              "discord.buttons"})
             CHECK(after.count(k) == 0);
         // Nothing but these three kinds of key is left.
         for (const std::string& k : after) {

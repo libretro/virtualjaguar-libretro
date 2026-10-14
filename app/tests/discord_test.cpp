@@ -571,6 +571,7 @@ static int runLoopback() {
         const size_t before = d.activities().size();   // 1
         for (int i = 1; i <= 6; i++) c.setActivity("{\"type\":0,\"details\":\"burst " + std::to_string(i) + "\"}");
         CHECK(waitFor([&] { return has(c.lastSentJson(), "burst 6"); }, 4.0));
+        CHECK(waitFor([&] { const auto v = d.activities(); return !v.empty() && has(v.back(), "burst 6"); }, 4.0));   // the fake server may lag on a loaded machine
         acts = d.activities();
         CHECK(acts.size() - before <= 3);                       // never above the window's allowance
         CHECK(has(acts.back(), "burst 6"));                     // and it ends on the latest
