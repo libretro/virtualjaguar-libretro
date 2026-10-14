@@ -142,13 +142,10 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   goes in `Contents/Frameworks/`, one of the places the shader code probes. The dev target is
   deliberately not a `MACOSX_BUNDLE`: its POST_BUILD copies would land in `Contents/MacOS`.
 * **Universal.** Two single-architecture builds merged with `lipo` (`make-universal.sh`), because
-  `VJShaders.cmake` fetches the prebuilt librashader for one architecture per configure. A gate
-  (`check-universal.sh`) fails the build if any Mach-O lacks a slice, and checks every binary's
-  `minos` against the deployment target (11.0).
-  **Known gap:** the `x86_64-macos` archive of librashader v0.12.0 contains an arm64 dylib (verified with
-  `lipo`). `librashader.dylib` therefore ships arm64-only, with a warning; on an Intel Mac the app
-  reports the shader runtime as unavailable and runs without shaders. Fix: build librashader for
-  `x86_64-apple-darwin` in CI (Rust) and merge.
+  each configure is handed one single-architecture librashader (`-DVJ_LIBRASHADER_LIB`). A gate
+  (`check-universal.sh`) fails the build if any Mach-O, `librashader.dylib` included, lacks a slice, and checks every
+  binary's `minos` against the deployment target (11.0). Both dylibs are built from source in CI from the same pinned
+  tag, see [Shader runtime](#shader-runtime-librashader).
 * **Hardened runtime and entitlements.** Signed with `--options runtime`. Library validation (on with
   the hardened runtime) refuses any dylib not signed by Apple or by our team. The bundled
   `librashader.dylib` is re-signed with our identity, so it needs no exception. The shader code also
@@ -163,6 +160,52 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   verdict) on the unpacked app. The zip itself is never notarized separately; Apple's ticket is on the app.
 * **Unsigned builds** are ad-hoc signed (`codesign -s -`), which Apple Silicon requires; Gatekeeper
   still refuses them until right-click > Open or `xattr -dr com.apple.quarantine`.
+
+## Shader runtime (librashader)
+
+The app loads [librashader](https://github.com/SnowflakePowered/librashader) with `dlopen` (#834); every
+package ships it beside the executable (`Contents/Frameworks/librashader.dylib`, `usr/bin/librashader.so` in the
+AppImage, `/usr/lib/virtualjaguar/librashader.so` in the `.deb`, `librashader.dll` next to the exe), and
+`THIRD-PARTY-NOTICES.txt` carries its licence (MPL-2.0 OR GPL-3.0-only).
+
+| Package | Where the library comes from |
+|---|---|
+| macOS universal (arm64 + x86_64) | **built from source in CI**, both slices, then `lipo`-merged |
+| AppImage / `.deb`, x86_64 and aarch64 | **built from source in CI** on the packaging runner (Ubuntu 22.04) |
+| Windows x64 / ARM64 | upstream's prebuilt `librashader-v0.12.0` zip (SHA-256-pinned in `app/cmake/VJShaders.cmake`) |
+| Flatpak | see Flatpak notes |
+
+Why source: upstream's `x86_64-macos` v0.12.0 zip holds an **arm64** dylib (`lipo`-verified), so Intel Macs had no
+shader runtime, and upstream publishes no Linux binary. Building both macOS slices ourselves (instead of mixing
+upstream's arm64 with a self-built x86_64) keeps one version, one deployment target and one install name in the
+universal file.
+
+* **The recipe** is [`.github/workflows/librashader.yml`](../../.github/workflows/librashader.yml), called by
+  `app-package.yml` (job `librashader`, which the macOS and Linux jobs `need`). The pin is
+  [`librashader/pin.env`](librashader/pin.env): tag `librashader-v0.12.1`, its commit and the SHA-256 of the GitHub
+  archive for that commit, a pinned stable Rust, and the macOS deployment target. The build is
+  [`librashader/build-from-source.sh`](librashader/build-from-source.sh): fetch, verify the digest, then
+  `cargo xtask build --profile optimized --target <triple> -- --locked`. `VJShaders.cmake` reads the same tag for
+  the C headers, whose digests are pinned there (the 0.12.1 headers are byte-identical to 0.12.0's, ABI 2).
+* **Targets:** `x86_64-apple-darwin` (cross-built on the Apple-silicon runner), `aarch64-apple-darwin`,
+  `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (native, `ubuntu-22.04` / `ubuntu-22.04-arm`,
+  glibc 2.35 like the packages). macOS uses `MACOSX_DEPLOYMENT_TARGET=11.0` and the install name
+  `@rpath/librashader.dylib` (cargo's default would bake the runner's absolute path in).
+* **Cache and artifacts.** Each target is cached under `librashader-<commit>-<triple>-rust<ver>-mac<min>-v1`
+  (a cold build is ~10 minutes with LTO, a hit is seconds; bump `-v1` in the workflow to force a rebuild after a
+  recipe change) and uploaded as the artifact `librashader-<triple>` (library + `BUILD-INFO.txt`). These are
+  intermediates: `release.yml` leaves `librashader-*` out of the release assets.
+* **Checks.** In `librashader.yml`: the architecture (`lipo -archs` / ELF machine), `minos`, install name, the
+  highest `GLIBC` symbol version (must be <= 2.35), only C/C++-runtime `NEEDED` entries, and (same-architecture
+  runners) a load that reads the ABI version. In `app-package.yml`: `vj_shader_tests library` with
+  `VJ_REQUIRE_LIBRASHADER=1` (a missing runtime fails instead of skipping); the macOS bundle's universal dylib
+  is loaded by an arm64 process and, under Rosetta, an x86_64 one; for the AppImage and the `.deb`,
+  `linux/check-librashader.sh` checks the file, its CPU and dependencies, and runs `vj_shader_tests probe` from the
+  package's own folder, i.e. the app's real lookup (beside the executable, `VJ_LIBRASHADER` unset).
+* **Bumping:** change `LIBRASHADER_TAG`, `LIBRASHADER_COMMIT` and `LIBRASHADER_SHA256` together (and re-pin the header
+  digests in `VJShaders.cmake` if `include/` changed; its comment says how), update `THIRD-PARTY-NOTICES.txt`.
+* **Without the bundled file** the Shader section of the app says why (not bundled / failed to load: reason) and
+  links to the "Getting the shader runtime" section of [`app/README.md`](../README.md#getting-the-shader-runtime).
 
 ## Windows notes
 
@@ -191,6 +234,9 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   `/usr/lib/virtualjaguar` with a `/usr/bin` symlink (`SDL_GetBasePath()` resolves `/proc/self/exe`).
   `Depends` comes from `dpkg-shlibdeps`; the display and audio stacks SDL loads at run time are `Recommends`.
 * Built on Ubuntu 22.04 runners, the oldest available, for the lowest glibc floor.
+* `librashader.so` is built from source on the same runners (see Shader runtime above) and installed beside the
+  executable by `cmake --install`; it is not a linked dependency (no rpath needed, the app `dlopen`s it by
+  absolute path from `SDL_GetBasePath()`), so linuxdeploy and `dpkg-shlibdeps` leave it alone.
 
 ## Flatpak notes
 

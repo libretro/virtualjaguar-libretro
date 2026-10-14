@@ -614,8 +614,10 @@ jobs:
           set -e
           mkdir -p release
           # Flatten one level: each artifact directory contains the
-          # binary + matching -debug.tar.gz; copy them all into release/
-          find artifacts/ -mindepth 2 -type f -exec cp {} release/ \;
+          # binary + matching -debug.tar.gz; copy them all into release/.
+          # librashader-<triple> are intermediates of the app packages (the shader runtime built
+          # from source, librashader.yml): already inside the packages, not release assets.
+          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -exec cp {} release/ \;
           # Include the RetroArch core .info file so frontend maintainers
           # / users can drop it into RetroArch's info/ dir.  The same file
           # is what gets PR'd to libretro/libretro-super after the release.
@@ -760,7 +762,8 @@ jobs:
         run: |
           set -e
           mkdir -p release
-          find artifacts/ -mindepth 2 -type f -exec cp {} release/ \;
+          # (librashader-<triple> are intermediates of the app packages, not release assets.)
+          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -exec cp {} release/ \;
           # The .info file's display_version names the last TAGGED release, so
           # shipping it verbatim would label a nightly "v2.3.2".  Rewrite it to
           # the build's actual identity — this also makes it obvious that a
