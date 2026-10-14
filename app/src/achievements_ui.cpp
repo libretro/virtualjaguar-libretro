@@ -10,6 +10,8 @@
 #include <ctime>
 
 #include "app.h"
+#include "ra_dash.h"
+#include "ra_images.h"
 #include "ui_util.h"
 #include "rc_client.h"
 
@@ -58,35 +60,128 @@ void drawLogin(App& app) {
     }
 }
 
-const char* stateLabel(uint8_t unlocked) {
-    if (unlocked & RC_CLIENT_ACHIEVEMENT_UNLOCKED_HARDCORE) return "Unlocked (hardcore)";
-    if (unlocked & RC_CLIENT_ACHIEVEMENT_UNLOCKED_SOFTCORE) return "Unlocked";
-    return "Locked";
-}
+// ---- pictures ---------------------------------------------------------------------------------
 
-void drawList(App& app) {
-    Achievements& a = app.ach;
-    rc_client_t* c = a.client();
-    ui::nextWindow(34.0f, 30.0f, 22.0f, 14.0f);
-    bool shown = ImGui::Begin("Achievements", &a.showList);
-    ui::keepOnScreen();
-    if (!shown) {
-        ImGui::End();
+const ImVec4 kGold(0.95f, 0.82f, 0.35f, 1.0f);
+const ImVec4 kGrey(0.85f, 0.85f, 0.85f, 1.0f);
+const ImVec4 kAmber(1.0f, 0.75f, 0.35f, 1.0f);
+
+// The picture at `url`, `size` pixels square, or a quiet placeholder while it loads (or when it is
+// not available: offline, never downloaded).  Only pictures that are on screen are requested.
+void picture(Achievements& a, const std::string& url, float size, const std::string& version = "", bool dim = false) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImVec2 sz(size, size);
+    ImGui::Dummy(sz);
+    if (url.empty() || !ImGui::IsRectVisible(p, ImVec2(p.x + size, p.y + size))) return;
+    const ra::ImageView v = a.images.get(url, version);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (v.state == ra::ImageView::Ready) {
+        dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)v.tex), p, ImVec2(p.x + size, p.y + size), ImVec2(0, 0), ImVec2(1, 1),
+                     dim ? IM_COL32(255, 255, 255, 150) : IM_COL32_WHITE);
         return;
     }
+    dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), IM_COL32(60, 60, 70, v.state == ra::ImageView::Loading ? 90 : 50), 4.0f);
+}
+
+std::string clock(long long t) {
+    char when[48] = "";
+    std::tm tmv;
+    std::time_t tt = (std::time_t)t;
+#ifdef _WIN32
+    if (localtime_s(&tmv, &tt) == 0) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
+#else
+    if (localtime_r(&tt, &tmv)) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
+#endif
+    return when;
+}
+
+std::string day(long long t) {
+    char when[48] = "";
+    std::tm tmv;
+    std::time_t tt = (std::time_t)t;
+#ifdef _WIN32
+    if (localtime_s(&tmv, &tt) == 0) std::strftime(when, sizeof when, "%Y-%m-%d", &tmv);
+#else
+    if (localtime_r(&tt, &tmv)) std::strftime(when, sizeof when, "%Y-%m-%d", &tmv);
+#endif
+    return when;
+}
+
+// One line saying which rule set is in force.  Hardcore is gold; wanted-but-blocked says what blocks it.
+void modeChip(Achievements& a) {
+    rc_client_t* c = a.client();
+    if (c && rc_client_get_hardcore_enabled(c)) {
+        ui::coloredWrapped(kGold, "Hardcore: unlocks count for the hardcore ranking");
+    } else if (a.hardcoreWanted() && !a.hardcoreBlocker().empty()) {
+        char buf[200];
+        std::snprintf(buf, sizeof buf, "Softcore (hardcore is paused: %s)", a.hardcoreBlocker().c_str());
+        ui::coloredWrapped(kAmber, buf);
+    } else if (a.hardcoreWanted()) {
+        ui::coloredWrapped(kAmber, "Hardcore turns on when a game is running");
+    } else {
+        ImGui::TextDisabled("Softcore");
+    }
+}
+
+template <class T, size_t N>
+bool labelCombo(const char* id, float width, T& value, const T (&all)[N], const char* (*label)(T)) {
+    bool changed = false;
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo(id, label(value))) {
+        for (size_t i = 0; i < N; i++) {
+            const bool sel = all[i] == value;
+            if (ImGui::Selectable(label(all[i]), sel)) {
+                value = all[i];
+                changed = true;
+            }
+            if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+const ra::AchFilter kAchFilters[] = {ra::AchFilter::All, ra::AchFilter::Unlocked, ra::AchFilter::Locked, ra::AchFilter::Hardcore,
+                                     ra::AchFilter::Missable};
+const ra::AchSort kAchSorts[] = {ra::AchSort::Default, ra::AchSort::Title, ra::AchSort::Points,
+                                 ra::AchSort::Rarity,  ra::AchSort::Recent, ra::AchSort::Type};
+const ra::GameFilter kGameFilters[] = {ra::GameFilter::All, ra::GameFilter::Owned, ra::GameFilter::InProgress,
+                                       ra::GameFilter::Completed, ra::GameFilter::NotStarted};
+const ra::GameSort kGameSorts[] = {ra::GameSort::Title, ra::GameSort::Points, ra::GameSort::Achievements,
+                                   ra::GameSort::Progress, ra::GameSort::OwnedFirst};
+
+void signInPrompt(Achievements& a, const char* why) {
+    ui::hint("%s", why);
+    if (a.loginBusy()) ImGui::TextDisabled("Signing in...");
+    else if (ImGui::Button("Sign in...")) a.showLogin = true;
+}
+
+// ---- This game ------------------------------------------------------------------------------------
+
+void drawThisGame(App& app) {
+    Achievements& a = app.ach;
+    rc_client_t* c = a.client();
     const rc_client_game_t* g = c ? rc_client_get_game_info(c) : nullptr;
     if (!c || !rc_client_is_game_loaded(c) || !g || g->id == 0) {
         ImGui::TextWrapped("%s", a.statusLine().empty() ? "No tracked game is loaded." : a.statusLine().c_str());
-        ImGui::End();
+        if (!a.signedIn()) signInPrompt(a, "Sign in to track achievements while you play.");
+        ImGui::Spacing();
+        ui::hint("The Jaguar games tab lists every game that has achievements, with your progress.");
         return;
     }
-    ImGui::TextWrapped("%s", g->title ? g->title : "");
     rc_client_user_game_summary_t s;
     rc_client_get_user_game_summary(c, &s);
-    ui::hint("%u of %u achievements, %u of %u points   %s", s.num_unlocked_achievements, s.num_core_achievements,
-             s.points_unlocked, s.points_core, rc_client_get_hardcore_enabled(c) ? "Hardcore" : "Softcore");
+    const float icon = ui::em(4.0f);
+    picture(a, a.gameIconUrl(), icon);
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::TextWrapped("%s", g->title ? g->title : "");
+    modeChip(a);
+    ImGui::Text("%u of %u achievements   %u of %u points", s.num_unlocked_achievements, s.num_core_achievements, s.points_unlocked,
+                s.points_core);
     if (s.num_core_achievements)
         ImGui::ProgressBar((float)s.num_unlocked_achievements / (float)s.num_core_achievements, ImVec2(-1, 0));
+    ImGui::EndGroup();
     if (rc_client_has_rich_presence(c)) {
         char rp[256];
         rc_client_get_rich_presence_message(c, rp, sizeof rp);
@@ -94,48 +189,236 @@ void drawList(App& app) {
     }
     ImGui::Separator();
 
-    rc_client_achievement_list_t* list = rc_client_create_achievement_list(
-        c, RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE_AND_UNOFFICIAL, RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE);
-    if (list) {
-        ImGui::BeginChild("##ach", ImVec2(0, 0));
-        for (uint32_t b = 0; b < list->num_buckets; b++) {
-            const rc_client_achievement_bucket_t& bk = list->buckets[b];
-            if (bk.num_achievements == 0) continue;
-            char head[96];
-            std::snprintf(head, sizeof head, "%s (%u)###b%u", bk.label ? bk.label : "", bk.num_achievements, b);
-            if (!ImGui::CollapsingHeader(head, ImGuiTreeNodeFlags_DefaultOpen)) continue;
-            for (uint32_t i = 0; i < bk.num_achievements; i++) {
-                const rc_client_achievement_t* ac = bk.achievements[i];
-                ImGui::PushID((int)ac->id);
-                const bool done = ac->unlocked != 0;
-                {
-                    char line[320];
-                    std::snprintf(line, sizeof line, "%s  (%u)", ac->title ? ac->title : "", ac->points);
-                    ui::coloredWrapped(done ? ImVec4(0.95f, 0.82f, 0.35f, 1) : ImVec4(0.85f, 0.85f, 0.85f, 1), line);
+    const float w = ImGui::GetContentRegionAvail().x;
+    labelCombo("##af", std::min(ui::em(11), w * 0.3f), a.achFilter, kAchFilters, &ra::achFilterLabel);
+    ImGui::SameLine();
+    labelCombo("##as", std::min(ui::em(11), w * 0.3f), a.achSort, kAchSorts, &ra::achSortLabel);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(std::max(ui::em(6), ImGui::GetContentRegionAvail().x));
+    ImGui::InputTextWithHint("##at", "Search achievements", a.achText, sizeof a.achText);
+
+    std::vector<ra::AchRow> rows;
+    a.achievementRows(rows);
+    const std::vector<size_t> view = ra::viewAchievements(rows, a.achFilter, a.achSort, a.achText);
+    ImGui::BeginChild("##ach", ImVec2(0, 0));
+    if (view.empty()) ImGui::TextDisabled("%s", rows.empty() ? "This game has no achievements yet." : "Nothing matches the filter.");
+    const float badge = ui::em(3.2f);
+    for (size_t vi : view) {
+        const ra::AchRow& r = rows[vi];
+        ImGui::PushID((int)r.id);
+        picture(a, r.unlocked() ? r.badgeUrl : r.badgeLockedUrl, badge);
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        {
+            char line[320];
+            std::snprintf(line, sizeof line, "%s  (%u)", r.title.c_str(), r.points);
+            ui::coloredWrapped(r.unlocked() ? kGold : kGrey, line);
+        }
+        if (!r.description.empty()) ImGui::TextWrapped("%s", r.description.c_str());
+        // The status line: earned how and when, or how far along, plus the tags.
+        std::string st;
+        if (r.unlockedHard) st = "Unlocked in hardcore";
+        else if (r.unlockedSoft) st = "Unlocked (softcore)";
+        else st = "Locked";
+        if (r.unlocked() && r.unlockTime) st += "  " + clock(r.unlockTime);
+        if (!r.unlocked() && !r.progress.empty()) st += "  Progress: " + r.progress;
+        if (r.rarity > 0) {
+            char pct[48];
+            std::snprintf(pct, sizeof pct, "  %.1f%% of players", r.rarity);
+            st += pct;
+        }
+        if (const char* t = ra::achTypeLabel(r.type); *t) st += std::string("  [") + t + "]";
+        if (r.unofficial) st += "  [unofficial]";
+        if (r.unsupported) st += "  [not supported by this version]";
+        ImGui::TextDisabled("%s", st.c_str());
+        ImGui::EndGroup();
+        ImGui::Spacing();
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+}
+
+// ---- Jaguar games -----------------------------------------------------------------------------------
+
+void drawGames(App& app) {
+    Achievements& a = app.ach;
+    const std::vector<ra::GameEntry>& games = a.games();
+    size_t owned = 0;
+    for (const ra::GameEntry& g : games)
+        if (g.libIndex >= 0) owned++;
+    if (games.empty()) {
+        ImGui::TextWrapped("%s", a.gamesBusy() ? "Loading the list of Atari Jaguar and Jaguar CD games on RetroAchievements..."
+                                              : "No games list yet.");
+    } else {
+        ImGui::Text("%zu games have achievements on RetroAchievements; %zu are in your library.", games.size(), owned);
+    }
+    if (a.gamesFetchedAt()) ImGui::TextDisabled("List updated %s%s", day(a.gamesFetchedAt()).c_str(), a.gamesFromCache() ? " (saved copy)" : "");
+    if (!a.gamesError().empty()) ui::coloredWrapped(ImVec4(1, 0.6f, 0.4f, 1), a.gamesError().c_str());
+    if (a.libraryHashing()) ImGui::TextDisabled("Matching your cartridges against RetroAchievements...");
+    if (!a.signedIn()) signInPrompt(a, "Sign in to see your own progress in each game.");
+    else if (!a.progressKnown() && !a.gamesBusy()) ImGui::TextDisabled("Your progress has not loaded yet.");
+
+    ImGui::BeginDisabled(a.gamesBusy());
+    if (ImGui::Button(a.gamesBusy() ? "Refreshing..." : "Refresh")) a.refreshGames(true);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    const float w = ImGui::GetContentRegionAvail().x;
+    labelCombo("##gf", std::min(ui::em(11), w * 0.3f), a.gameFilter, kGameFilters, &ra::gameFilterLabel);
+    ImGui::SameLine();
+    labelCombo("##gs", std::min(ui::em(13), w * 0.34f), a.gameSort, kGameSorts, &ra::gameSortLabel);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(std::max(ui::em(6), ImGui::GetContentRegionAvail().x));
+    ImGui::InputTextWithHint("##gt", "Search games", a.gameText, sizeof a.gameText);
+
+    const std::vector<size_t> view = ra::viewGames(games, a.gameFilter, a.gameSort, a.gameText);
+    rc_client_t* c = a.client();
+    const rc_client_game_t* cur = c ? rc_client_get_game_info(c) : nullptr;
+    const uint32_t curId = cur && c && rc_client_is_game_loaded(c) ? cur->id : 0;
+
+    const float icon = ui::em(2.6f);
+    const float rowH = icon + ImGui::GetStyle().CellPadding.y * 2;
+    if (ImGui::BeginTable("##games", 5,
+                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                              ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Game", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("Achievements", ImGuiTableColumnFlags_WidthFixed, ui::em(6.5f));
+        ImGui::TableSetupColumn("Points", ImGuiTableColumnFlags_WidthFixed, ui::em(4.0f));
+        ImGui::TableSetupColumn("My progress", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("##play", ImGuiTableColumnFlags_WidthFixed, ui::em(5.0f));
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clip;
+        clip.Begin((int)view.size(), rowH);
+        while (clip.Step()) {
+            for (int row = clip.DisplayStart; row < clip.DisplayEnd; row++) {
+                const ra::GameEntry& g = games[view[(size_t)row]];
+                ImGui::PushID((int)g.id);
+                ImGui::TableNextRow(0, rowH);
+                ImGui::TableSetColumnIndex(0);
+                picture(a, g.imageUrl, icon);
+                ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (icon - ImGui::GetTextLineHeight() * 2) * 0.5f);
+                ImGui::BeginGroup();
+                ImGui::TextUnformatted(g.title.c_str());
+                ImGui::TextDisabled("%s", g.console == ra::kConsoleJaguarCD ? "Jaguar CD" : "Cartridge");
+                ImGui::EndGroup();
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%u", g.achievements);
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%u", g.points);
+                ImGui::TableSetColumnIndex(3);
+                if (g.haveProgress && g.achievements) {
+                    const unsigned got = std::max(g.unlocked, g.unlockedHardcore);
+                    char ov[48];
+                    std::snprintf(ov, sizeof ov, "%u / %u", got, g.achievements);
+                    const bool done = got >= g.achievements;
+                    if (done) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, kGold);
+                    ImGui::ProgressBar((float)got / (float)g.achievements, ImVec2(-1, 0), ov);
+                    if (done) ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::Text("%u unlocked, %u of them in hardcore", got, g.unlockedHardcore);
+                        ImGui::EndTooltip();
+                    }
+                } else {
+                    ImGui::TextDisabled("-");
                 }
-                ImGui::Indent();
-                if (ac->description && ac->description[0]) ImGui::TextWrapped("%s", ac->description);
-                if (done && ac->unlock_time) {
-                    char when[48] = "";
-                    std::tm tmv;
-                    std::time_t tt = ac->unlock_time;
-#ifdef _WIN32
-                    if (localtime_s(&tmv, &tt) == 0) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
-#else
-                    if (localtime_r(&tt, &tmv)) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
-#endif
-                    ImGui::TextDisabled("%s  %s", stateLabel(ac->unlocked), when);
-                } else if (!done && ac->measured_progress[0]) {
-                    ImGui::TextDisabled("Progress: %s", ac->measured_progress);
+                ImGui::TableSetColumnIndex(4);
+                if (g.id == curId) {
+                    ImGui::TextColored(kGold, "Playing");
+                } else if (g.libIndex >= 0) {
+                    if (ImGui::Button("Play")) a.playGame(g);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g.matchedByHash ? "In your library (matched by checksum)" : "In your library (matched by title)");
                 }
-                ImGui::Unindent();
-                ImGui::Spacing();
                 ImGui::PopID();
             }
         }
-        ImGui::EndChild();
-        rc_client_destroy_achievement_list(list);
+        ImGui::EndTable();
     }
+}
+
+// ---- Profile ----------------------------------------------------------------------------------------
+
+void drawProfile(App& app) {
+    Achievements& a = app.ach;
+    rc_client_t* c = a.client();
+    const rc_client_user_t* u = c ? rc_client_get_user_info(c) : nullptr;
+    if (!u) {
+        signInPrompt(a, "Sign in to see your RetroAchievements profile.");
+    } else {
+        std::string ver;
+        const std::string url = a.avatarUrl(ver);
+        picture(a, url, ui::em(6.0f), ver);
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.4f);
+        ImGui::TextUnformatted(u->display_name ? u->display_name : "");
+        ImGui::PopFont();
+        ImGui::Text("Hardcore points: %u", u->score);
+        ImGui::Text("Softcore points: %u", u->score_softcore);
+        if (u->num_unread_messages) ImGui::TextColored(kAmber, "%u unread message%s on retroachievements.org", u->num_unread_messages, u->num_unread_messages == 1 ? "" : "s");
+        modeChip(a);
+        ImGui::EndGroup();
+        ImGui::Spacing();
+        if (ImGui::Button("Sign out")) a.logout();
+    }
+    ImGui::Separator();
+    bool img = a.imagesWanted();
+    if (ImGui::Checkbox("Download pictures (avatar, game icons, achievement badges)", &img)) a.setImagesWanted(img);
+    ui::hint("Pictures are saved in the app's data folder (ra-cache) and kept between runs. They follow the Library's "
+             "\"download art\" switch: with it off, only pictures already saved are shown.");
+    ImGui::Separator();
+    ImGui::Text("Unlocked this session");
+    if (a.sessionUnlocks.empty()) {
+        ui::hint("Nothing yet. The profile page on retroachievements.org has your full history.");
+        return;
+    }
+    ImGui::BeginChild("##sess", ImVec2(0, 0));
+    for (const SessionUnlock& s : a.sessionUnlocks) {
+        ImGui::PushID(&s);
+        picture(a, s.badgeUrl, ui::em(2.6f));
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::TextColored(kGold, "%s  (%u)", s.title.c_str(), s.points);
+        ImGui::TextDisabled("%s  %s", s.hardcore ? "Hardcore" : "Softcore", clock(s.when).c_str());
+        ImGui::EndGroup();
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+}
+
+// ---- the window ----------------------------------------------------------------------------------------
+
+void drawList(App& app) {
+    Achievements& a = app.ach;
+    ui::nextWindow(42.0f, 36.0f, 26.0f, 18.0f);
+    bool shown = ImGui::Begin("Achievements", &a.showList);
+    ui::keepOnScreen();
+    if (!shown) {
+        ImGui::End();
+        return;
+    }
+    static int applied = -1;   // the tab last forced open (a menu item picks a tab)
+    const int want = a.dashTab;
+    const bool pending = applied != want;
+    if (ImGui::BeginTabBar("##racheck")) {
+        const char* names[3] = {"This game", "Jaguar games", "Profile"};
+        for (int i = 0; i < 3; i++) {
+            ImGuiTabItemFlags fl = (pending && want == i) ? ImGuiTabItemFlags_SetSelected : 0;
+            if (ImGui::BeginTabItem(names[i], nullptr, fl)) {
+                if (!pending) a.dashTab = i;   // follow the user's clicks; a pending request is applied first
+                ImGui::BeginChild("##tabbody", ImVec2(0, 0));
+                if (i == 0) drawThisGame(app);
+                else if (i == 1) drawGames(app);
+                else drawProfile(app);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+        }
+        ImGui::EndTabBar();
+    }
+    applied = want;
     ImGui::End();
 }
 
@@ -148,23 +431,39 @@ void drawToasts(App& app, ImVec2 areaPos, ImVec2 areaSize) {
     const float fs = ImGui::GetFontSize();
     const float pad = fs * 0.6f;
     const float w = std::min(areaSize.x - pad * 2, fs * 26.0f);
+    const float iconPx = fs * 3.0f;
     float y = areaPos.y + pad;
     for (const AchToast& x : a.toasts) {
         const float age = (float)(t - x.born), left = (float)x.life - age;
         const float al = std::min(1.0f, std::min(left / 0.5f, age / 0.15f + 0.2f));
-        const ImVec2 tt = ImGui::CalcTextSize(x.title.c_str(), nullptr, false, w - pad * 2);
-        const ImVec2 tb = ImGui::CalcTextSize(x.body.c_str(), nullptr, false, w - pad * 2);
-        const float h = tt.y + (x.body.empty() ? 0 : tb.y + pad * 0.3f) + pad * 2;
+        // A picture takes its place from the start (while loading) unless it cannot arrive at all.
+        ra::ImageView iv;
+        if (!x.iconUrl.empty()) iv = a.images.get(x.iconUrl);
+        const bool hasIcon = iv.state == ra::ImageView::Ready || iv.state == ra::ImageView::Loading;
+        const float textX = hasIcon ? pad * 2 + iconPx : pad;
+        const float textW = w - textX - pad;
+        const ImVec2 tt = ImGui::CalcTextSize(x.title.c_str(), nullptr, false, textW);
+        const ImVec2 tb = ImGui::CalcTextSize(x.body.c_str(), nullptr, false, textW);
+        const float textH = tt.y + (x.body.empty() ? 0 : tb.y + pad * 0.3f);
+        const float h = std::max(textH, hasIcon ? iconPx : 0.0f) + pad * 2;
         const ImVec2 p0(areaPos.x + areaSize.x - w - pad, y), p1(p0.x + w, y + h);
         ImU32 edge = x.kind == 0 ? IM_COL32(240, 200, 60, (int)(255 * al))
                    : x.kind == 2 ? IM_COL32(240, 110, 110, (int)(255 * al))
                                  : IM_COL32(120, 170, 240, (int)(255 * al));
         dl->AddRectFilled(p0, p1, IM_COL32(18, 18, 24, (int)(225 * al)), 6.0f);
         dl->AddRect(p0, p1, edge, 6.0f, 0, 2.0f);
-        dl->AddText(nullptr, 0.0f, ImVec2(p0.x + pad, p0.y + pad), edge, x.title.c_str(), nullptr, w - pad * 2);
+        if (hasIcon) {
+            const ImVec2 i0(p0.x + pad, p0.y + pad), i1(i0.x + iconPx, i0.y + iconPx);
+            if (iv.state == ra::ImageView::Ready)
+                dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)iv.tex), i0, i1, ImVec2(0, 0), ImVec2(1, 1),
+                             IM_COL32(255, 255, 255, (int)(255 * al)));
+            else
+                dl->AddRectFilled(i0, i1, IM_COL32(60, 60, 70, (int)(120 * al)), 4.0f);
+        }
+        dl->AddText(nullptr, 0.0f, ImVec2(p0.x + textX, p0.y + pad), edge, x.title.c_str(), nullptr, textW);
         if (!x.body.empty())
-            dl->AddText(nullptr, 0.0f, ImVec2(p0.x + pad, p0.y + pad + tt.y + pad * 0.3f),
-                        IM_COL32(235, 235, 235, (int)(255 * al)), x.body.c_str(), nullptr, w - pad * 2);
+            dl->AddText(nullptr, 0.0f, ImVec2(p0.x + textX, p0.y + pad + tt.y + pad * 0.3f),
+                        IM_COL32(235, 235, 235, (int)(255 * al)), x.body.c_str(), nullptr, textW);
         y += h + pad * 0.5f;
     }
 }
@@ -212,6 +511,14 @@ void drawAchievementsMenu(App& app) {
     if (!a.available()) return;
     if (!ImGui::BeginMenu("Achievements")) return;
     if (a.signedIn()) {
+        std::string ver;
+        const std::string url = a.avatarUrl(ver);
+        const float px = ImGui::GetFontSize() * 1.6f;
+        if (!url.empty()) {
+            picture(a, url, px, ver);
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+        }
         ImGui::TextDisabled("Signed in as %s", a.userName().c_str());
         if (ImGui::MenuItem("Sign out")) a.logout();
     } else if (a.loginBusy()) {
@@ -230,8 +537,21 @@ void drawAchievementsMenu(App& app) {
         ImGui::TextDisabled("  active: no save-state loads, cheats, rewind or slow motion");
     bool un = a.unofficialWanted();
     if (ImGui::MenuItem("Include unofficial achievements", nullptr, &un)) a.setUnofficialWanted(un);
+    bool img = a.imagesWanted();
+    if (ImGui::MenuItem("Download pictures", nullptr, &img)) a.setImagesWanted(img);
     ImGui::Separator();
-    if (ImGui::MenuItem("Achievement list...", nullptr, false, app.host.isLoaded())) a.showList = true;
+    if (ImGui::MenuItem("Achievement list...", nullptr, false, app.host.isLoaded())) {
+        a.showList = true;
+        a.dashTab = 0;
+    }
+    if (ImGui::MenuItem("Jaguar games on RetroAchievements...")) {
+        a.showList = true;
+        a.dashTab = 1;
+    }
+    if (ImGui::MenuItem("Profile...", nullptr, false, a.signedIn())) {
+        a.showList = true;
+        a.dashTab = 2;
+    }
     if (!a.statusLine().empty()) {
         ImGui::Separator();
         ImGui::PushTextWrapPos(std::min(ImGui::GetFontSize() * 24.0f, ui::workSize().x * 0.6f));

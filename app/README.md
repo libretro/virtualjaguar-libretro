@@ -516,7 +516,8 @@ once, gets a login token from the server and keeps **only the token** (`ra.user`
 `ra.token` in `config.ini`; the password is wiped from memory as soon as the request
 is built). The token is a credential: treat `config.ini` like a password file. Sign out
 deletes it. The menu also has the hardcore toggle, "include unofficial achievements"
-and the **Achievement list** (progress, rich presence). Unlocks, game completion,
+and the **Achievement list**, a dashboard with your avatar, badges and the Jaguar games that
+have achievements (see below). Unlocks, game completion,
 leaderboard attempts / submissions, progress indicators and server problems show as
 toasts.
 
@@ -551,8 +552,38 @@ It is built on rcheevos' `rc_client` (v12.5.0, MIT, fetched at configure time li
   slow network never delays a frame. Without libcurl the app still builds and the
   Achievements menu says it is unavailable. Unlocks are retried by rc_client when the
   network drops.
+- **Pictures.** Your avatar (`rc_client_user_get_image_url`), the game icon
+  (`rc_client_game_get_image_url`) and every achievement's badge, earned or greyed
+  (`badge_url` / `badge_locked_url`), show in the Achievements window, the menu and the unlock
+  toasts. They download on a worker thread of their own (so they never queue behind rc_client's
+  requests) and are kept in `ra-cache/` in the data folder: a badge never changes, so a saved
+  file is reused forever; the avatar is saved per `avatar_last_updated`. The folder is kept under
+  48 MB (oldest pictures go first) and at most 256 are held as textures at once (least recently
+  drawn goes first; it comes back from disk when asked for again). They follow the Library's
+  **download art** switch: with it off, or with **Achievements > Download pictures** unticked,
+  only pictures already saved are shown and nothing is fetched. Headless runs and `--ra-mock`
+  sessions never fetch.
+- **Dashboard.** **Achievements > Achievement list...** is a window with three tabs.
+  *This game*: icon, title, hardcore / softcore rule in force, progress bar, and the achievement
+  list with badges, points, rarity, earned date and a Hardcore / Softcore marker, with a filter
+  (all, unlocked, locked, unlocked in hardcore, missable), a sort (default, title, points, rarest,
+  recently unlocked, type) and a search box. *Jaguar games*: every Atari Jaguar (console 17) and
+  Jaguar CD (console 77) game that has achievements (`rc_client_begin_fetch_game_list`), with icon,
+  achievement count, points and your progress in each (`rc_client_begin_fetch_all_user_progress`,
+  signed in only); filter by all / in my library / in progress / completed / not started. Games in
+  your library get a **Play** button: cartridges are matched by the MD5 RetroAchievements lists
+  for the game (hashed on a background thread), everything else by title against the library's
+  names. The list is saved in `ra-cache/games-<console>.tsv` and refreshed when it is a day old
+  (and only while downloads are on); **Refresh** fetches it again on request. *Profile*: avatar,
+  name, hardcore and softcore points, and what you unlocked in this session. rc_client has no
+  call for the account's older unlock history (that needs the web API and its key), so it
+  is not shown. Neither list needs a web API key: both use the login token like the rest.
 - **Tests** never touch the network or an account: `--ra-mock DIR` answers rc_client's
-  requests from `app/tests/ra/<api>.json`. See `cmake/VJAchTests.cmake`.
+  requests from `app/tests/ra/<api>.json` (`<api>_<console>.json` first for `systemgames` and
+  `allprogress`, one list per console). `vj_ra_dash_test` covers the picture cache (paths, disk,
+  offline mode, LRU), the games-list parsing and library matching, the cache file, and the
+  filters and sorts; `ra_dashboard_mock` fetches the lists through the mock server. See
+  `cmake/VJAchTests.cmake`.
 
 ## Netplay
 
@@ -701,7 +732,10 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `cmake/VJCheatData.cmake`, `cmake/VJCheatManifest.cmake`, `cmake/VJCheatTests.cmake` | pinned optional database download, cheat tests |
 | `src/paths.*`, `src/config.*` | data folders (portable mode) and the settings file |
 | `src/achievements.*` | RetroAchievements: rc_client glue, memory, hardcore policy, mock server for tests |
-| `src/achievements_ui.cpp` | ImGui: sign-in, achievement list, toasts, trackers |
+| `src/achievements_ui.cpp` | ImGui: sign-in, the dashboard window (this game / Jaguar games / profile), toasts, trackers |
+| `src/achievements_games.cpp` | dashboard data: picture URLs, achievement rows, the games list and progress, library matching |
+| `src/ra_dash.*` | dashboard logic with no ImGui or network: games parsing and matching, cache file, filters and sorts |
+| `src/ra_images.*` | the avatar / icon / badge cache: disk files, bounded textures, offline mode |
 | `src/ach_http.*` | libcurl / WinHTTP worker for rc_client's requests |
 | `cmake/VJRcheevos.cmake`, `cmake/VJAchTests.cmake` | rcheevos fetch + static lib; headless achievement tests |
 

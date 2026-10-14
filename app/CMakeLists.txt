@@ -249,6 +249,9 @@ set(VJ_APP_SOURCES
     src/cheats_ui.cpp
     src/achievements.cpp
     src/achievements_ui.cpp
+    src/achievements_games.cpp
+    src/ra_dash.cpp
+    src/ra_images.cpp
     src/ach_http.cpp
     src/netplay.cpp
     src/netplay_addr.cpp
