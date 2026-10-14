@@ -376,8 +376,11 @@ void drawFontSettings(App& app) {
     // A typeface that was chosen but could not be loaded (uninstalled, damaged): stop offering it as a favorite.
     if (s.family != Family::Retro && active().family == Family::Retro && !warning().empty() &&
         (s.family == Family::Installed || s.family == Family::Custom)) {
+        // Only a real change may set `changed`: a request every frame would make applyPending() retry the
+        // (still missing) font, i.e. rebuild the whole atlas, every frame.
+        const Settings before = s;
         forgetChoice(s, choiceId(s));
-        changed = true;
+        if (s != before) changed = true;
     }
 
     // ---- the typeface list -------------------------------------------------------------------------------------
