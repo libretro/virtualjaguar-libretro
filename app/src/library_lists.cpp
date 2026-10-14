@@ -385,6 +385,8 @@ std::vector<StateGame> listStates(const std::string& dir) {
 }
 
 bool deleteState(const StateInfo& s) {
+    int64_t mt = 0, sz = 0;
+    if (!fileInfo(s.path, mt, sz)) return false;   // already gone (SDL_RemovePath calls that success)
     if (!SDL_RemovePath(s.path.c_str())) return false;
     if (!s.thumbPath.empty()) SDL_RemovePath(s.thumbPath.c_str());
     SDL_RemovePath((s.path + ".rcp").c_str());   // the RetroAchievements progress saved with the state (a missing one is fine)

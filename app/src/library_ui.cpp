@@ -554,7 +554,7 @@ void drawStrip(App& app, LibraryService& svc, const char* id, const char* title,
     const float fs = ImGui::GetFontSize();
     const float cellW = fs * 9.0f * svc.cellScale * 0.62f;
     const float artH = cellW * 1.2f;
-    const float textH = fs * 2.0f + 6.0f;
+    const float textH = fs * 3.0f + 6.0f;
     ImGui::PushID(id);
     ImGui::TextDisabled("%s", title);
     if (clearable) {

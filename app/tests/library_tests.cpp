@@ -2095,6 +2095,7 @@ static void testPersonalListsService() {
     p2.instance = 2;   // a second copy on the same data folder
     Config cfg2;
     cfg2.setPath(root + "config-2.ini");
+    cfg2.setSavePrefixes({"window.", "input.pads."});   // what App::loadConfig sets for instance 2+ (the #902 rule)
     cfg2.set("library.dir.0", games.substr(0, games.size() - 1));
     svc2.start(p2, cfg2, false);
     svc2.setDownloadArt(false);
@@ -2118,7 +2119,6 @@ static void testPersonalListsService() {
     lib::UserStore reader;
     reader.open(svc2.userFile());
     CHECK(reader.lists().favorites.size() == 2);
-    CHECK(cfg2.get("library.favorites.show", "").empty());   // the options are settings: a second copy does not write them (Config rule)
 
     // display options persist (clamped on the way in)
     svc2.favoritesShow = lib::ShowSections;
@@ -2127,6 +2127,12 @@ static void testPersonalListsService() {
     svc2.saveSettings();
     CHECK_EQ(cfg2.get("library.favorites.show", ""), "2");
     CHECK_EQ(cfg2.get("library.recents.show", ""), "0");
+    {   // ...but the display options are ordinary settings: copy 2 reads them and its config-2.ini never gets them
+        std::vector<unsigned char> raw;
+        std::string written;
+        if (readFile(root + "config-2.ini", raw)) written.assign(raw.begin(), raw.end());
+        CHECK(written.find("library.") == std::string::npos);
+    }
     CHECK(svc2.activeTab() == lib::TabCart);
     svc2.stop();
     Config cfg3;
