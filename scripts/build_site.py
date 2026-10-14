@@ -514,7 +514,7 @@ def render_cart_table(rows):
 # still builds, with links to the release pages instead of to the files.
 
 APP_ASSET_RE = re.compile(
-    r"^(?:VirtualJaguar-[^/]+\.(?:zip|exe|AppImage)|virtualjaguar_[^/]+\.deb)$")
+    r"^(?:VirtualJaguar-[^/]+\.(?:zip|exe|AppImage|flatpak)|virtualjaguar_[^/]+\.deb)$")
 CORE_ASSET_RE = re.compile(
     r"^virtualjaguar_libretro-(.+)\.(so|dll|dylib|bc|a)$")
 TOOL_ASSET_RE = re.compile(
@@ -538,8 +538,11 @@ APP_KINDS = [
     (r"-macos-universal\.zip$", "macOS", "Virtual Jaguar.app (universal zip)"),
     (r"-windows-x64-setup\.exe$", "Windows x64", "Installer"),
     (r"-windows-x64\.zip$", "Windows x64", "Portable zip"),
+    (r"-windows-arm64-setup\.exe$", "Windows arm64", "Installer"),
+    (r"-windows-arm64\.zip$", "Windows arm64", "Portable zip"),
     (r"-linux-x86_64\.AppImage$", "Linux x86_64", "AppImage"),
     (r"_amd64\.deb$", "Linux x86_64", ".deb"),
+    (r"-linux-x86_64\.flatpak$", "Linux x86_64", "Flatpak bundle"),
     (r"-linux-aarch64\.AppImage$", "Linux aarch64", "AppImage"),
     (r"_arm64\.deb$", "Linux aarch64", ".deb"),
 ]
