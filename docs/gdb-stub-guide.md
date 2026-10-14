@@ -55,7 +55,8 @@ End the session with `detach` (or `disconnect`, or just quitting gdb). All three
 running and the stub listening, so you can reconnect with another `target remote`. A halted machine
 resumes and every breakpoint/watchpoint is disarmed.
 
-A complete, verified session (yarc.j64 with **GDB Stub: Halt At Boot** on, stock gdb 18.1):
+A complete, verified session (yarc.j64 with **GDB Stub: Halt At Boot** on, stock gdb 18.1; output
+trimmed to the interesting lines):
 
 ```
 (gdb) set endian big
@@ -72,13 +73,25 @@ pc             0x802000            0x802000
 (gdb) continue
 Breakpoint 1, 0x00802008 in ?? ()
 (gdb) stepi
+0x0080200e in ?? ()
 (gdb) watch *(int*)0xf0210c
+Hardware watchpoint 2: *(int*)0xf0210c
 (gdb) continue
 Program received signal SIGTRAP, Trace/breakpoint trap.
+0x00802018 in ?? ()
+(gdb) continue
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x00802018 in ?? ()
 (gdb) monitor regs gpu
+GPU PC=$F03000 FLAGS=$00000000 CTRL=$00002800
+...
 (gdb) detach
 [Inferior 1 (Remote target) detached]
 ```
+
+Note the watchpoint stops **twice** at the same `pc`: the 68K performs this 32-bit store as two
+16-bit bus writes and both match the watched address, so the second `continue` is needed to get
+past the same instruction. (Accesses inside main RAM are single bus accesses and stop once.)
 
 ### Faster: `tools/gdb/`
 
@@ -130,6 +143,9 @@ stock gdb simply isn't offered them.
   (verified with stock gdb: `watch *(int*)0xf0210c` stops at the access). The match is on the exact
   access address, the stop is reported as `Program received signal SIGTRAP` (the stub's stop reply
   carries no `watch:` field), and it is taken as the 68K issues the access, before the store lands.
+  A 32-bit access outside main RAM is two 16-bit bus accesses and stops twice at the same `pc`
+  (`continue` once more). The stub does not de-duplicate: guessing "same instruction" could hide a
+  real hit, and the dedupe would live in the memory hot path.
   **Only one memory watchpoint can be armed at a time** — this rides a single-slot mechanism
   that predates the GDB stub (an old, previously-unused breakpoint-on-memory-access hook in the
   core). Setting a second watchpoint while one is already armed at a different address is
@@ -239,7 +255,7 @@ against real debuggers (issue #936, 2026-10-14):
 | **gdb 18.1, Homebrew** (`brew install gdb`, macOS arm64) | **Yes** | Built `--enable-targets=all`, so it has m68k; no `m68k-elf-gdb` formula is needed (none exists). Registers, memory, `x/i`, breakpoints, `stepi`, watchpoints, `monitor`, `detach` all verified, against the headless harness and the desktop app (`--headless`). Needs `set endian big` (see Quick start). The "codesign gdb" notice from Homebrew applies only to debugging native processes, not remote targets. |
 | gdb, Debian/Ubuntu | Only `gdb-multiarch` | Plain `gdb` is not built with m68k. Check: `gdb -nx -batch -ex 'set architecture m68k'` must not print `Undefined item`. |
 | a gdb built for `m68k-elf` | Yes | Sets the architecture natively. |
-| **LLDB** (Apple, swiftly) | **Memory only** | Attaches without hanging and `memory read` works, but LLDB has no m68k triple (`invalid triple 'm68k'`): no registers, no disassembly, no stepping UI. Raw packets work via `process plugin packet send` (`Z0`, `vCont`, `qRcmd`). End with `process detach`. |
+| **LLDB** (Apple, swiftly) | **Memory only** | Re-checked against the stub that serves the m68k description: it still attaches without hanging, `memory read` works, `thread list` shows the one 68K thread, and `process detach` leaves the emulator running. But LLDB has no m68k triple (`invalid triple 'm68k'`): `register read` fails ("Command requires a process, which is currently stopped"), no disassembly, no stepping UI. Raw packets work via `process plugin packet send` (`Z0`, `vCont`; `qRcmd` text comes back as `O` console packets). |
 | a scripted RSP client | Yes | `test/tools/gdb_*_probe.py`, the ground truth for the wire protocol. |
 
 If you are on a **core older than issue #936** (v3.9.0 and earlier), the 68K had no target

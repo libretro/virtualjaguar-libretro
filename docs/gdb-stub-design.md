@@ -99,15 +99,17 @@ GDB threads map to processors:
 | 2 | GPU RISC (TOM) | R0-R31, PC, FLAGS, plus the memory-mapped control registers |
 | 3 | DSP RISC (JERRY) | R0-R31, PC, FLAGS, plus its control registers |
 
-`Hg` / `Hc` select one; stop replies (`T05thread:N;`) name the thread that halted.
-**`qfThreadInfo` enumerates only thread 1** (issue #936): gdb reads exactly one
+`Hg` / `Hc` select one. **`qfThreadInfo` enumerates only thread 1** (issue #936): gdb reads exactly one
 target description per connection and applies it to every thread, so offering
 the GPU/DSP (a 34-register layout) next to the 68K (18 registers) made
 `info threads` fail with "Remote 'g' packet reply is too long". Hg2/Hg3 and the
 RISC descriptions remain for raw RSP clients; stock gdb reaches the RISCs
-through `monitor regs|disasm|halt gpu|dsp`. A GPU/DSP halt is reported to the
-socket as a stop of thread 1 (the 68K is frozen with the rest of the machine)
-preceded by an `O` console line naming the core that really halted.
+through `monitor regs|disasm|halt gpu|dsp`. Stop replies are therefore always `T05thread:1;`: a GPU/DSP halt is
+reported as a stop of thread 1 (the 68K is frozen with the rest of the
+machine), preceded by an `O` console line ("GPU halted at $F03010 -- see
+monitor regs gpu"). A raw client that used `Hg2` + `Z0` and relied on
+`thread:2` in the stop reply now learns which core halted only from that `O`
+line (behaviour change; no in-tree client depended on it).
 
 Thread 1 is served the engine's built-in m68k description (`GDBTarget68KXML`
 in `gdbstub.c`): `<architecture>m68k</architecture>` and the

@@ -17,7 +17,8 @@ tools/gdb/install.sh adds the import line to ~/.lldbinit for you.
 
 WHAT LLDB CAN DO HERE (verified, issue #936): it attaches (the old
 silent-on-unknown-packet hang is fixed) and `memory read` works, and the
-`jag-*` commands below drive the stub's `monitor` commands. It CANNOT
+`jag-*` commands below drive the stub's `monitor` commands (`thread list`
+shows only the 68K thread). It CANNOT
 debug the 68K: LLDB has no m68k target triple ("invalid triple 'm68k'"),
 so there are no registers, no disassembly and no stepping UI. Use gdb
 (`brew install gdb` has m68k) for the 68K; see docs/gdb-stub-guide.md.
@@ -77,7 +78,7 @@ def _monitor(debugger, text):
     interpreter = debugger.GetCommandInterpreter()
     result = lldb.SBCommandReturnObject()
     try:
-        interpreter.HandleCommand("monitor " + text, result)
+        interpreter.HandleCommand("process plugin packet monitor " + text, result)
     except Exception as exc:  # pragma: no cover -- defensive only
         print("jaguar: monitor command raised %s" % exc)
         return None
