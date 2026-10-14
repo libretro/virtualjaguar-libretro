@@ -21,9 +21,10 @@ Core side: `src/core/vj_frontend_ext.c`. App side: `CoreHost::env` (`app/src/cor
 | `VJ_ENV_BASE + 1` | `VJ_ENV_EVENT` | `const struct vj_event*`: `type`, `a`, `b`, `c`, `d`, `s` |
 | `VJ_ENV_BASE + 2` | `VJ_ENV_GET_BIOS_PATH` | `struct vj_env_bios_path*`: `role` (in: `VJ_BIOS_CART_BOOT` 1 / `VJ_BIOS_CD` 2), `path` (out) |
 | `VJ_ENV_BASE + 3` | `VJ_ENV_GET_BOOT_TARGET` | `unsigned*` (out): `VJ_BOOT_CD_BIOS` 0 / `VJ_BOOT_CART_BOOT_ROM` 1 |
+| `VJ_ENV_BASE + 4` | `VJ_ENV_SET_DEBUG_IFACE` | `const struct vj_debug_iface*` (static lifetime): the core's debug interface, sent once per session, only to a frontend that set `VJ_CAP_DEBUG` |
 
 Handshake: `retro_init()` calls `VJ_ENV_HELLO` once. The frontend returns true and sets
-`caps_out |= VJ_CAP_EVENTS` to opt in (and `VJ_CAP_BIOS` to be asked the BIOS questions below); anything else (false, or true with no caps) keeps the channel
+`caps_out |= VJ_CAP_EVENTS` to opt in (and `VJ_CAP_BIOS` to be asked the BIOS questions below, `VJ_CAP_DEBUG` (0x4) to be handed the debug interface described last); anything else (false, or true with no caps) keeps the channel
 off for the session. `retro_deinit()` resets the latch (iOS never dlcloses the core).
 
 ## Events
@@ -63,6 +64,33 @@ disk-control insert; the CD BIOS only when the CD BIOS actually runs):
 Under RetroArch (HELLO refused) or a frontend without the capability bit, neither question is ever asked and
 nothing changes.  The app's side is `CoreHost` (`setBiosPath`, `setBootTarget`, `stagedBios`) and `app/src/bios.h`.
 
+## Debug tools (`VJ_CAP_DEBUG`)
+
+A frontend that sets `VJ_CAP_DEBUG` is handed, once per session right after the HELLO and before any content is
+loaded, a pointer to `struct vj_debug_iface` (`VJ_ENV_SET_DEBUG_IFACE`; header `src/debug/vj_debug_iface.h`, shared
+verbatim with the app, interface version 1).  Nothing is sent to a frontend without the bit, so under RetroArch the
+whole feature does not exist.  What it gives the app (details, threading and the halt model in
+[`app-debug-tools.md`](app-debug-tools.md)):
+
+- `region` / `peek` / `poke`: the Jaguar bus as the 68000 sees it.  `peek` is the side-effect-free byte path the GDB stub
+  uses.  `poke` writes DRAM, the CLUT, line buffers, GPU RAM and DSP RAM freely, refuses ROM and the CD registers
+  (`$DFFF00-$DFFFFF`) always, needs `VJ_DBG_POKE_REGS` for any other register, and `VJ_DBG_POKE_DANGEROUS` as well for the six
+  that start or stop something (`B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD`).  All or nothing.
+- `get_regs` / `set_reg` / `disasm_risc`: 68000 registers, both GPU and DSP register banks, one RISC instruction as text.
+- `attach` / `detach` / `break_set` / `break_clear` / `halt_next` / `halted_target` / `halt_reason`: execution
+  breakpoints and a halt on the existing GDB halt machinery, **without a socket**.  While a processor is halted the core
+  calls the host's `halt_pump` repeatedly from inside `retro_run()` (the host runs one UI frame per call and answers
+  continue / step / detach).  The GDB TCP stub keeps working beside it; either side may resume.
+- `op_snapshot_arm` / `op_snapshot_get`: the raw phrases of one display-list walk, captured before the OP rewrites
+  `HEIGHT`/`DATA`/`REMAINDER`.
+- `blit_log_enable` / `blit_log_head` / `blit_log_get`: a ring of the last 256 blitter launches.
+- `cry_to_rgb`, `texreplace_reload`, `frame_number`.
+
+Everything is host-transient: no savestate field, nothing the emulated machine can observe (the determinism gate in
+`test/test_debug_iface.c` hashes the frame and all of main RAM with everything switched on).  Detached, the cost is one
+global test per `OPProcessList` call and one per blitter launch.  Strings and the struct stay valid until
+`retro_deinit()`; the core forgets an attached host on unload.
+
 ## Rules
 
 - **Threading.** Events are emitted from inside `retro_run()` (the link, stats and watchdog
@@ -78,6 +106,12 @@ nothing changes.  The app's side is `CoreHost` (`setBiosPath`, `setBootTarget`, 
   the app does exactly this).
 
 ## Tests
+
+- `test/test_debug_iface.c` (core): only a frontend that sets `VJ_CAP_DEBUG` is handed the interface (once); `peek` equals
+  `jaguarMainRAM` and the cartridge image; the poke policy; halt / step / continue / detach through a scripted host;
+  a breakpoint re-hit; OP snapshot; blit log; frame and RAM hash identical with everything on.
+- `app/tests/debug_session_test.cpp` (`debug_session_unit`) against `app/tests/debug_mock.h`, and `app/tests/debug_e2e.cpp`
+  (`debug_e2e`): the real core through `CoreHost` + `DebugSession`.
 
 - `test/test_frontend_ext.c` part 3 (core): a refusing frontend and one without `VJ_CAP_BIOS` are never asked;
   a named CD BIOS / boot ROM file is staged (source, checksum, path in `VJ_EVT_BIOS_STAGED`); a wrong-sized or

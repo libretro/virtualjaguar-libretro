@@ -431,7 +431,7 @@ static int VJDbgAttach(const struct vj_debug_host *h)
 
    if (!vjdbg_loaded || !h || vjdbg_have_host)
       return 0;
-   if (h->size < sizeof(unsigned) + sizeof(void *) + sizeof(void *) || !h->halt_pump)
+   if (h->size < offsetof(struct vj_debug_host, halt_pump) + sizeof(h->halt_pump) || !h->halt_pump)
       return 0;
 
    memset(&vjdbg_host, 0, sizeof(vjdbg_host));
