@@ -371,7 +371,7 @@ void drawProfile(App& app) {
     ImGui::Separator();
     ImGui::Text("Unlocked this session");
     if (a.sessionUnlocks.empty()) {
-        ImGui::TextDisabled("Nothing yet. The profile page on retroachievements.org has your full history.");
+        ui::hint("Nothing yet. The profile page on retroachievements.org has your full history.");
         return;
     }
     ImGui::BeginChild("##sess", ImVec2(0, 0));
@@ -400,13 +400,14 @@ void drawList(App& app) {
         return;
     }
     static int applied = -1;   // the tab last forced open (a menu item picks a tab)
+    const int want = a.dashTab;
+    const bool pending = applied != want;
     if (ImGui::BeginTabBar("##racheck")) {
         const char* names[3] = {"This game", "Jaguar games", "Profile"};
         for (int i = 0; i < 3; i++) {
-            ImGuiTabItemFlags fl = (applied != a.dashTab && a.dashTab == i) ? ImGuiTabItemFlags_SetSelected : 0;
+            ImGuiTabItemFlags fl = (pending && want == i) ? ImGuiTabItemFlags_SetSelected : 0;
             if (ImGui::BeginTabItem(names[i], nullptr, fl)) {
-                a.dashTab = i;
-                applied = i;
+                if (!pending) a.dashTab = i;   // follow the user's clicks; a pending request is applied first
                 ImGui::BeginChild("##tabbody", ImVec2(0, 0));
                 if (i == 0) drawThisGame(app);
                 else if (i == 1) drawGames(app);
@@ -417,6 +418,7 @@ void drawList(App& app) {
         }
         ImGui::EndTabBar();
     }
+    applied = want;
     ImGui::End();
 }
 

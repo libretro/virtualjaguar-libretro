@@ -201,6 +201,7 @@ void Achievements::init(App& app, const CliArgs& args) {
         if (!headlessSetup(args)) enabled_ = false;
         if (args.showWindow == "ra-list") showList = true;
         if (args.showWindow == "ra-games") { showList = true; dashTab = 1; }
+        if (args.showWindow == "ra-games-owned") { showList = true; dashTab = 1; gameFilter = ra::GameFilter::Owned; }   // dev: screenshots
         if (args.showWindow == "ra-profile") { showList = true; dashTab = 2; }
         if (args.showWindow == "ra-login") showLogin = true;
         return;
