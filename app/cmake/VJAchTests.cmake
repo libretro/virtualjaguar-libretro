@@ -100,7 +100,7 @@ set_tests_properties(ach_http PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 # The dashboard's logic and picture cache (no core, no window, no network): games-list parsing against
 # the same fixtures the mock server answers with, library matching, the daily cache file, filter / sort,
 # the image cache (disk, offline mode, LRU).
-add_executable(vj_ra_dash_test tests/ra_dash_test.cpp src/ra_dash.cpp src/ra_images.cpp src/paths.cpp)
+add_executable(vj_ra_dash_test tests/ra_dash_test.cpp src/ra_dash.cpp src/ra_images.cpp src/paths.cpp src/config.cpp)
 target_include_directories(vj_ra_dash_test PRIVATE src)
 target_compile_definitions(vj_ra_dash_test PRIVATE VJ_RA_FIX="${VJ_RA_FIX}")
 target_link_libraries(vj_ra_dash_test PRIVATE vj_library vj_rcheevos ${VJ_SDL3_TARGET} Threads::Threads)
