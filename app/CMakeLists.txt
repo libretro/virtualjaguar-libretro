@@ -262,6 +262,19 @@ set(VJ_APP_SOURCES
     src/debug/scanner_actions.cpp
     src/debug/scanner_ui.cpp)
 
+# Debug tools (#652 / #833): the WP6/WP7 windows (Textures, Blitter log, Audio scope) and the logic they
+# share with the unit tests.  debug_session.cpp is listed once however many work packages add it.
+list(APPEND VJ_APP_SOURCES
+    src/debug/texture_pack.cpp
+    src/debug/texture_ui.cpp
+    src/debug/blitter_log.cpp
+    src/debug/blitter_ui.cpp
+    src/debug/audio_ring.cpp
+    src/debug/scope_ui.cpp)
+if(NOT "src/debug/debug_session.cpp" IN_LIST VJ_APP_SOURCES)
+    list(APPEND VJ_APP_SOURCES src/debug/debug_session.cpp)
+endif()
+
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
 
