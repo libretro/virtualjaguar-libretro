@@ -1,6 +1,7 @@
 # platform_assoc_sync: run with  cmake -DVJ_APP_DIR=<app> -DVJ_ROOT=<repo> -P VJPlatformSyncCheck.cmake
 # Fails (prints "FAIL ...") when the file-type lists or the application id drift between the places that
 # must agree.  See app/src/platform/commands.h (VJ_ASSOC_LIST) and app/packaging/README.md.
+cmake_minimum_required(VERSION 3.20)   # script mode starts at policy defaults: IN_LIST needs CMP0057
 set(_fail 0)
 function(_vj_fail msg)
     message("FAIL ${msg}")
