@@ -837,6 +837,17 @@ anti-aliasing is not possible: the glyph atlas is a single coverage channel (and
 Mojave). A missing or unreadable font falls back to Retro with a note in the Font section. Debug windows use
 `fonts::mono()` / `fonts::pushMono()` (`src/fonts_imgui.h`), a monospace face whatever the UI font is. Glyphs the
 chosen font lacks (arrows, star, check mark) come from a symbols font or the built-in vector face.
+The typeface list shows every choice in its own typeface: the built-in ones, then **any font installed on the computer**
+(the standard font folders are scanned on a worker thread the first time the list is shown, reading only each file's
+name / OS/2 / post tables: `/System/Library/Fonts`, `/Library/Fonts`, `~/Library/Fonts` on macOS, `%WINDIR%\Fonts` and
+`%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows, `/usr/share/fonts`, `~/.local/share/fonts` and `$XDG_DATA_DIRS` on
+Linux; `src/fonts_system.*`). A search box filters it, the star keeps a font in **Favorites**, and the last eight picks
+are listed under **Recent**; they persist as `ui.font.fav.N` / `ui.font.recent.N`, the chosen OS font as `ui.font.os`
+(`path|face`). The previews load lazily: only rows on screen ask for their face, a few per frame, at most 48 faces / 48 MB
+stay loaded (least recently used go first), and a face that cannot draw its own name (no Latin letters, damaged, over 8 MB)
+is shown in the UI font with the reason. **Debugger font** picks the monospace face of the debug windows from the
+fixed-pitch fonts, each sample drawn in its own face (`ui.font.debug`; Automatic = the system monospace font).
+`--font installed:/path/Font.ttf[|FACE]` selects an installed font for one run.
 FreeType is the default renderer (FreeType License, fetched and pinned, built static) and provides the
 **Hinting** (none / light / full) and **Smooth edges** choices. `-DVJ_APP_FREETYPE=OFF` builds with Dear ImGui's
 stb_truetype instead, which hides those two choices; the Retro pixel font always uses stb_truetype.
@@ -879,8 +890,8 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/devices_ui.*` | Settings > Input > Devices & players, claiming devices with the core, per-frame mouse capture |
 | `src/cheatsheet.*`, `src/cheatsheet_ui.cpp` | the controls cheat sheet: text, auto-show rule, window |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
-| `src/fonts.*` | UI fonts with no ImGui: `ui.font.*` settings, per-OS system font lookup, custom file validation + import, glyph ranges (unit tested) |
-| `src/fonts_imgui.*`, `src/fonts_ui.cpp` | the live font atlas (typeface, size, FreeType flags, `mono()`), and Settings > Video > Font |
+| `src/fonts.*`, `src/fonts_system.*` | UI fonts with no ImGui: `ui.font.*` settings, favorites / recents, per-OS system font lookup, installed-font enumeration, custom file validation + import, glyph ranges (unit tested) |
+| `src/fonts_imgui.*`, `src/fonts_ui.cpp` | the live font atlas (typeface, size, FreeType flags, `mono()`, the lazy preview cache), and Settings > Video > Font (font list, debugger font) |
 | `src/platform/` | native-OS integration: menu model + dispatch (`commands.*`, no OS), per-OS files (`platform_macos.mm`, `platform_windows.cpp`, `platform_other.cpp`), tray (`tray.cpp`); `src/desktop.cpp` is the app side |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
 | `src/library_lists.*` | favorites, recently played, display options, tab layout, save-state listing (pure) |

@@ -297,6 +297,7 @@ set(VJ_APP_SOURCES
     src/theme_custom.cpp
     src/theme_ui.cpp
     src/fonts.cpp
+    src/fonts_system.cpp
     src/fonts_imgui.cpp
     src/fonts_ui.cpp
     src/settings_reset.cpp
