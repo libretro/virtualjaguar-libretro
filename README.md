@@ -45,7 +45,7 @@ A standalone front end for the same core, in `app/`: SDL3 for window, audio and 
 
 <p>
   <img src="site/assets/app_library.png" width="49%" alt="The app's game library: a grid of Atari Jaguar box art tiles under Cartridges, Jaguar CD and BIOS and system tabs">
-  <img src="site/assets/app_game_crt.png" width="49%" alt="The Alien vs Predator menu drawn through the CRT-Royale shader preset">
+  <img src="site/assets/app_game_crt.png" width="49%" alt="The Alien vs Predator menu drawn through an aperture-grille Trinitron-style CRT shader preset">
 </p>
 
 - **Game library:** the home screen is a grid of your games, in Cartridges, Jaguar CD and BIOS & system tabs. Files are identified by CRC32 against the libretro database (No-Intro, Redump), and box art is downloaded on demand from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar) and cached; not every title has art upstream. File > Open, drag and drop and the command line still work.

@@ -128,20 +128,28 @@
     </p>
     <div class="ab-pair">
       <figure class="shot smooth">
-        <div class="win-bar">Plain <span class="badge">integer scale</span></div>
+        <div class="win-bar">Plain <span class="badge">aspect fit</span></div>
         <div class="well">
           <img src="assets/app_game.png" width="1280" height="860"
-               alt="The Alien vs Predator main menu (Select Character, Restore Game, High Scores, Credits) drawn sharp on a black window, centred with integer scaling.">
+               alt="The Alien vs Predator main menu (Select Character, Restore Game, High Scores, Credits) drawn sharp at its 4:3 shape inside the app window, with black bars at the sides.">
         </div>
       </figure>
       <figure class="shot smooth">
-        <div class="win-bar">CRT-Royale <span class="badge">same frame</span></div>
+        <div class="win-bar">CRT-GDV-Mini Ultra Trinitron <span class="badge">same frame</span></div>
         <div class="well">
           <img src="assets/app_game_crt.png" width="1280" height="860"
-               alt="The same Alien vs Predator menu through the CRT-Royale shader preset, with visible scanlines, phosphor mask and glow.">
+               alt="The same Alien vs Predator menu through the crt-gdv-mini-ultra-trinitron shader preset, in the same 4:3 frame, with vertical aperture-grille phosphor stripes, faint scanlines and a soft glow like a Sony Trinitron tube.">
         </div>
       </figure>
     </div>
+    <p class="footnote">
+      Both pictures are the same saved moment in the same window, drawn with
+      aspect fit (the picture keeps its 4:3 shape and is letterboxed, never
+      stretched); only the shader differs. The right-hand one is the bundled
+      <code>crt-gdv-mini-ultra-trinitron</code> preset, an aperture-grille
+      (Sony Trinitron style) look; the other CRT presets use shadow or slot
+      masks.
+    </p>
     <p class="footnote">
       Shaders are optional: if a preset does not compile or librashader is
       missing, the app draws the plain picture and says why.
