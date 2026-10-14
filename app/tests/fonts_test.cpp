@@ -311,17 +311,18 @@ static void testCustomFiles(const fs::path& tmp, const std::string& imguiDir) {
     (void)validateFontFile((tmp / "mangled.ttf").string(), 0, err);
 
     // importing keeps a copy under a safe name; a refusal leaves the folder alone
+    // ("#", not "?": a question mark is not a legal file name character on Windows, so the copy would fail there)
     const std::string dir = (tmp / "fonts").string() + "/";
     std::string stored;
     CHECK(!importCustomFont((tmp / "text.ttf").string(), dir, stored, err));
     CHECK(!fs::exists(dir) || fs::is_empty(dir));
-    fs::copy_file(good, tmp / "Pro ggy?.ttf", fs::copy_options::overwrite_existing);
-    CHECK(importCustomFont((tmp / "Pro ggy?.ttf").string(), dir, stored, err));
+    fs::copy_file(good, tmp / "Pro ggy#.ttf", fs::copy_options::overwrite_existing);
+    CHECK(importCustomFont((tmp / "Pro ggy#.ttf").string(), dir, stored, err));
     CHECK(stored == "Pro ggy_.ttf");
     CHECK(slurp(dir + stored) == whole);
     CHECK(validateFontFile(customPath(dir, stored), 0, err));
     // importing again over the same name is fine
-    CHECK(importCustomFont((tmp / "Pro ggy?.ttf").string(), dir, stored, err));
+    CHECK(importCustomFont((tmp / "Pro ggy#.ttf").string(), dir, stored, err));
 }
 
 static std::string readAll(const fs::path& p) { return slurp(p); }
