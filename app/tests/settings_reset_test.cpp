@@ -64,6 +64,7 @@ static void fill(Config& c) {
         "ui.controls.autoshow",
         // Storage + library display
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
+        "library.favorites.show", "library.recents.show", "saves.resume",
         // Mappings
         "input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port", "input.stick_dpad",
         "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C",
@@ -96,6 +97,7 @@ static void testClassify() {
     CHECK(classifyKey("input.dev.deadzone") == KeyClass::Input);
     CHECK(classifyKey("saves.autosave") == KeyClass::Storage);
     CHECK(classifyKey("library.size") == KeyClass::Storage);
+    CHECK(classifyKey("saves.resume") == KeyClass::Storage && classifyKey("library.favorites.show") == KeyClass::Storage && classifyKey("library.recents.show") == KeyClass::Storage);
     CHECK(classifyKey("library.dir.0") == KeyClass::Keep);
     CHECK(classifyKey("opt.virtualjaguar_x") == KeyClass::CoreOption);
     // The trailing dot is what separates a binding layer from a window's own pad choice.
@@ -181,7 +183,8 @@ static void testResetAll() {
         // Every app setting is gone, whatever the boxes say.
         for (const char* k : {"video.integer", "video.vsync", "ui.show_fps", "shader.enabled", "shader.preset", "audio.volume",
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
-                              "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section"})
+                              "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
+                              "library.favorites.show", "library.recents.show", "saves.resume"})
             CHECK(after.count(k) == 0);
         // Nothing but these three kinds of key is left.
         for (const std::string& k : after) {

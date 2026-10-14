@@ -253,6 +253,8 @@ void LibraryService::resetDisplaySettings() {
     hideOnLaunch = true;
     cellScale = lib::kTileScaleDefault;
     section = 0;
+    favoritesShow = lib::kFavoritesDefault;
+    recentsShow = lib::kRecentsDefault;
     saveSettings();
 }
 
