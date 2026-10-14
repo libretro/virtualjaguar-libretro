@@ -40,9 +40,8 @@
   <h2>Signing and verification</h2>
   <div class="win-body">
     <p>
-      The macOS app is signed with a Developer ID and notarized in CI; a build
-      made before the certificate was added (older nightlies) needs
-      right-click > Open the first time. The Windows installer is not yet
+      The macOS app is signed with a Developer ID and notarized in CI, so it
+      opens without a Gatekeeper prompt. The Windows installer is not yet
       code-signed, so SmartScreen may warn. The core files are plain
       libraries and are not signed on any platform. To check a download,
       compare its SHA-256 with the line for it in the release's

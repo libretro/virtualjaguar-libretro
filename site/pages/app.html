@@ -88,11 +88,10 @@
       the test suite.
     </p>
     <p class="footnote">
-      <!-- SIGNING: confirm -->
       <strong>Signing.</strong> The macOS app is signed with a Developer ID and
-      notarized by Apple, and the Windows installer and program are signed, so
-      neither should warn at first launch. Builds you make yourself, and builds
-      from forks, are unsigned until you sign them. Packaging, signing and the
+      notarized by Apple, so it opens without a Gatekeeper prompt. The Windows
+      installer is not code-signed yet, so SmartScreen may warn. Builds you
+      make yourself, and builds from forks, are unsigned until you sign them. Packaging, signing and the
       package-manager templates are in
       <a href="{{REPO}}/blob/develop/app/packaging/README.md">app/packaging/README.md</a>.
     </p>
