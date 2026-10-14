@@ -105,6 +105,20 @@ static void testManifestParse() {
     CHECK(g.entries.empty() && g.badLines == 2);
 }
 
+static void testRealCoreOutput() {
+    // Verbatim manifest.tsv written by the core for yarc.j64 (600 frames, texture dump on, 16bpp 'both'):
+    // 32bpp tiles, "title=unknown" (no database name), src= in hex.
+    const std::string real =
+        "# texdump v1\tcrc=714716b2\ttitle=unknown\n"
+        "c2f123c336896a6c\t18x1\t32\tframe=1\tsrc=803460\tclut=-\tflags=-\n"
+        "2bde3a05ce2964bc\t701x1\t32\tframe=1\tsrc=8027b8\tclut=-\tflags=-\n";
+    tex::Manifest m;
+    CHECK(tex::parseManifest(m, real) == real.size());
+    CHECK(m.crc == "714716b2" && m.title == "unknown" && m.version == 1 && m.entries.size() == 2);
+    const tex::Entry* e = m.find("2bde3a05ce2964bc");
+    CHECK(e && e->w == 701 && e->h == 1 && e->bpp == 32 && e->src == 0x8027b8 && e->clut.empty());
+}
+
 static void testManifestPartialLines() {
     // The core writes through a buffer: a read can end mid-line.  Only complete lines are consumed.
     std::string t = manifestText();
@@ -329,6 +343,7 @@ static void testLru() {
 int main() {
     testNamesAndPaths();
     testManifestParse();
+    testRealCoreOutput();
     testManifestPartialLines();
     testDumpIndexIncremental();
     testPackDirListing();
