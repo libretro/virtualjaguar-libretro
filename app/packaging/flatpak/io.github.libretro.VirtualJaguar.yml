@@ -29,6 +29,7 @@ finish-args:
   - --socket=pulseaudio
   - --device=all          # gamepads (evdev / hidraw) and the GPU
   - --share=network       # RetroAchievements, box art and database downloads, netplay
+  - --talk-name=org.kde.StatusNotifierWatcher   # the optional tray icon (Settings > Storage > Desktop)
   # ROM folders: the library scans folders the user chose, and a CD image (.cue) needs its
   # sibling .bin tracks, which the file-chooser portal does not grant.  Read-only, and only
   # the home directory (save data lives in the app's own ~/.var/app/<id>/ directory).
@@ -60,6 +61,7 @@ modules:
       - test -d /app/bin/shaders/slang-shaders
       - test -f /app/share/metainfo/io.github.libretro.VirtualJaguar.metainfo.xml
       - test -f /app/share/applications/io.github.libretro.VirtualJaguar.desktop
+      - test -f /app/share/mime/packages/io.github.libretro.VirtualJaguar.xml
       - ldd /app/bin/virtualjaguar | grep -q libcurl
       - "! ldd /app/bin/virtualjaguar | grep -q 'not found'"
     sources:

@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
+#include "platform/platform.h"
 
 #include <algorithm>
 #include <cctype>
@@ -83,6 +84,8 @@ void App::loadConfig() {
     showFps = cfg.getBool("ui.show_fps", false);
     homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
+    trayIcon = cfg.getBool("ui.tray", false);
+    keepAwake = cfg.getBool("ui.keep_awake", true);
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     g_lastDir = cfg.get("ui.last_dir", "");
     recents.clear();
@@ -106,6 +109,8 @@ void App::saveConfig() {
     cfg.setBool("ui.show_fps", showFps);
     cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
+    cfg.setBool("ui.tray", trayIcon);
+    cfg.setBool("ui.keep_awake", keepAwake);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
     for (int i = 0; i < kMaxRecents; i++) {
@@ -121,6 +126,7 @@ void App::addRecent(const std::string& path) {
     recents.insert(recents.begin(), path);
     if ((int)recents.size() > kMaxRecents) recents.resize(kMaxRecents);
     g_lastDir = pathDir(path);
+    if (!headless_) platform::noteRecent(path);   // the OS recent-documents list (Dock / Jump List / Explorer)
 }
 
 void App::toast(const std::string& text, double seconds, int level) {
@@ -145,7 +151,14 @@ bool App::initSdl(const CliArgs& a) {
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
         SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     }
-    SDL_SetAppMetadata("Virtual Jaguar", VJ_APP_VERSION, "com.provenance-emu.virtualjaguar");
+    // The identifier is the freedesktop / bundle / AppUserModel id: SDL turns it into the Wayland app_id and
+    // the X11 WM_CLASS, which is how a desktop matches the window to io.github.libretro.VirtualJaguar.desktop
+    // (icon, grouping, "pin to dock").  It must equal the id in app/packaging.
+    SDL_SetAppMetadata("Virtual Jaguar", VJ_APP_VERSION, "io.github.libretro.VirtualJaguar");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, "Virtual Jaguar contributors");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, "GPL-3.0-or-later");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, platform::kWebsiteUrl);
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "game");
     SDL_InitFlags flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS;
     if (!headless_) flags |= SDL_INIT_GAMEPAD;
     if (!SDL_Init(flags)) {
@@ -153,6 +166,7 @@ bool App::initSdl(const CliArgs& a) {
         return false;
     }
     sdlUp_ = true;
+    if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID) before any window exists
     perfFreq_ = SDL_GetPerformanceFrequency();
     openDialogEvent_ = SDL_EVENT_USER;
     return true;
@@ -546,7 +560,9 @@ void App::invalidateThumbs() {
 // events / hotkeys
 // ---------------------------------------------------------------------------------
 void App::handleHotkey(const SDL_KeyboardEvent& k) {
-    bool mod = (k.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) != 0;
+    // With a native menu bar the Cmd shortcuts belong to it (it consumes them before SDL sees a key), so the
+    // in-window Ctrl/Cmd hotkeys must not fire a second time.
+    bool mod = (k.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) != 0 && !platform::nativeMenuActive();
     bool alt = (k.mod & SDL_KMOD_ALT) != 0;
     bool shift = (k.mod & SDL_KMOD_SHIFT) != 0;
     switch (k.key) {
@@ -613,13 +629,24 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             handleDrop(path);
         }
         break;
-    case SDL_EVENT_USER:
-        if (e.user.code == 0x56414A47 && e.user.data1) {
+    case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+        fullscreen = true;    // also the green button / Ctrl+Cmd+F on macOS, which never go through setFullscreen()
+        break;
+    case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+        fullscreen = false;
+        break;
+    case SDL_EVENT_USER: {
+        platform::Cmd ncmd = platform::Cmd::None;
+        int narg = 0;
+        if (platform::decodeCommandEvent(e, ncmd, narg)) {   // a native menu / tray click (platform.h)
+            runNativeCommand(ncmd, narg);
+        } else if (e.user.code == 0x56414A47 && e.user.data1) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
             handleDrop(p);
         }
         break;
+    }
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
         bool captured = imguiUp_ && ImGui::GetIO().WantCaptureKeyboard;
@@ -775,6 +802,7 @@ int App::run(const CliArgs& a) {
 int App::runInteractive(const CliArgs& a) {
     uiScaleOverride = a.uiScale;
     if (!initWindow() || !initImGui()) return 1;
+    desktopInit();
     applyAudioSettings();
     audio.open(48043.6);
     fullscreen = false;
@@ -865,6 +893,7 @@ int App::runInteractive(const CliArgs& a) {
         perf.lap(Perf::Present);
 
         updateTitle();
+        desktopFrame();
         double t = now();
         if (autosaveSram && host.isLoaded() && t - lastSramFlush_ > 5.0) {
             host.flushSaveRam();
@@ -887,6 +916,7 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    desktopShutdown();
     library.stop();   // joins its threads and frees its textures while the GL context is still alive
     if (a.verbose) {
         double secs = now() - fpsWindowStart_;

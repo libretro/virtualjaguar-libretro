@@ -10,6 +10,7 @@
 #include <ctime>
 
 #include "app.h"
+#include "platform/platform.h"
 #include "ui_util.h"
 #include "rc_client.h"
 
@@ -247,7 +248,7 @@ void drawAchievementsUi(App& app) {
     if (a.showLogin) drawLogin(app);
     if (a.showList) drawList(app);
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float menuH = ImGui::GetFrameHeight();
+    const float menuH = platform::nativeMenuActive() ? 0.0f : ImGui::GetFrameHeight();   // no in-window menu bar on macOS
     const ImVec2 pos(vp->Pos.x, vp->Pos.y + menuH), size(vp->Size.x, vp->Size.y - menuH);
     drawToasts(app, pos, size);
     drawIndicators(app, pos, size);

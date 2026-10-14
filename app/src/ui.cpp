@@ -5,6 +5,7 @@
 #include "devices_ui.h"
 
 #include "imgui.h"
+#include "platform/platform.h"
 #include "shaders.h"
 #include "typed_ui.h"
 #include "ui_util.h"
@@ -230,6 +231,7 @@ void drawStorageTab(App& app) {
     ImGui::Checkbox("Show the game library on the home screen", &app.homeLibrary);
     ui::hint("When no game is loaded the window shows your library (add folders there). Off: a plain "
              "welcome message instead; File > Game library (Ctrl/Cmd+L) still opens the library in its own window.");
+    drawDesktopSettings(app);
 }
 
 void drawSettings(App& app) {
@@ -496,7 +498,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     static bool menuHot = false;
     bool nearTop = io.MousePos.y >= 0 && io.MousePos.y < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
     menuHot = nearTop || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
-    bool showMenu = !app.fullscreen || app.menuPinned || menuHot;
+    // A native menu bar (macOS) replaces this one; every item here has a twin in platform/commands.cpp.
+    bool showMenu = !platform::nativeMenuActive() && (!app.fullscreen || app.menuPinned || menuHot);
     float menuH = 0;
     if (showMenu) {
         drawMenuBar(app);
