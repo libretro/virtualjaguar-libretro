@@ -50,10 +50,15 @@ unsigned backStart(const vj_debug_iface* iface, int target, unsigned pc, int lin
 // The instruction before `addr` (backStart with one line); `addr` itself when nothing fits.
 unsigned prevAddr(const vj_debug_iface* iface, int target, unsigned addr);
 
-// ---- step over -------------------------------------------------------------------------------------------------
-// 68000: JSR, BSR and TRAP return to the next instruction, so "step over" runs to pc + length.  Anything else
-// (and every GPU/DSP instruction: the RISCs have no call instruction, a call is MOVE PC,Rn + JUMP, and JR/JUMP
-// execute the following instruction as a delay slot) is a plain step.
+// ---- step over ----------------------------------------------------------------------------------------------------
+// 68000: JSR, BSR and TRAP return to the next instruction, so "step over" runs to pc + length.  Anything else is a
+// plain step.
+//
+// GPU/DSP: always a plain step.  The RISCs have no call instruction (a call is MOVE PC,Rn + JUMP), and JUMP/JR have
+// ONE delay slot.  Measured on the real core (debug_cpu_e2e, section 7b): the delay slot of a TAKEN jump/jr is run
+// inline with it, so it is never a stop of its own -- Step goes from the jump straight to the target, and a
+// breakpoint or Run-to-cursor on a delay-slot address does not trigger while the jump is taken.  A conditional jr that
+// is NOT taken just falls into the next instruction, which is then an ordinary, visible stop.
 struct StepOver {
     bool overCall = false;     // true: run to `next` (temporary breakpoint)
     unsigned next = 0;         // the address after the instruction, when overCall

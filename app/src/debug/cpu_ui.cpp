@@ -371,6 +371,12 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
             }
             ImGui::EndPopup();
         }
+        if (ImGui::IsItemHovered() && xText + ImGui::CalcTextSize(L.text.c_str()).x > width) {
+            ui::beginWrappedTooltip();
+            ImGui::Text("$%06X  %s", L.addr, L.bytes.c_str());
+            ImGui::TextUnformatted(L.text.c_str());
+            ui::endWrappedTooltip();
+        }
         ImGui::PopID();
 
         const float cy = p.y + (pitch - ImGui::GetStyle().ItemSpacing.y) * 0.5f;
@@ -479,24 +485,29 @@ void drawToolbar(DebugSession& s) {
     const int tab = g.tab;
     const bool halted = s.halted();
     const bool other = halted && s.haltedTarget() != tab;
+    const bool risc = isRisc(tab);
     ui::Flow flow;
     if (button("Break  F9", !halted, "Stop the machine at the next instruction of the processor on this tab.")) g.ctl->breakIn(tab);
     flow.next(ui::Flow::buttonW("Continue  F9"));
     if (button("Continue  F9", halted, "Resume everything.")) g.ctl->cont();
-    flow.next(ui::Flow::buttonW("Step  F10"));
-    const std::string stepTip = other ? std::string("The ") + targetName(s.haltedTarget()) + " is the one that is halted.  This resumes the machine and halts again at the " +
-                                            targetName(tab) + "'s next instruction."
-                                      : std::string("Execute one instruction.");
-    if (button("Step  F10", halted, stepTip.c_str())) g.ctl->stepIn(tab);
+    // F10 steps the processor that is halted; on another tab the button does something different, so it says so.
+    const std::string stepLabel = other ? std::string("Step ") + targetName(tab) : std::string("Step  F10");
+    flow.next(ui::Flow::buttonW(stepLabel.c_str()));
+    std::string stepTip = other ? std::string("The ") + targetName(s.haltedTarget()) + " is the one that is halted.  This resumes the machine and halts again at the " +
+                                      targetName(tab) + "'s next instruction (F10 steps the " + targetName(s.haltedTarget()) + ")."
+                                : std::string("Execute one instruction.");
+    if (risc) stepTip += "  A taken JUMP/JR runs its delay slot as part of the same step: the slot is never a stop of its own.";
+    if (button(stepLabel.c_str(), halted, stepTip.c_str())) g.ctl->stepIn(tab);
     flow.next(ui::Flow::buttonW("Step over"));
     const char* overTip = tab == VJ_DBG_TARGET_M68K
                               ? "Like Step, but a JSR, BSR or TRAP runs to the instruction after it (a temporary breakpoint; a breakpoint inside the call still stops)."
-                              : "The GPU and DSP have no call instruction (a call is MOVE PC,Rn + JUMP, and JUMP/JR run the next instruction as a delay slot), so this is the same as Step.";
+                              : "The GPU and DSP have no call instruction (a call is MOVE PC,Rn + JUMP), and a taken JUMP/JR runs its delay slot as part of the jump, so this is the same as Step.";
     if (button("Step over", halted, overTip)) g.ctl->stepOver(tab);
     flow.next(ui::Flow::buttonW("Run to cursor"));
     const TabState& t = g.t[tab];
-    if (button("Run to cursor", halted && t.haveCursor, "Resume until the selected line is reached (click a line first).") && t.haveCursor)
-        g.ctl->runTo(tab, t.cursor);
+    std::string runTip = "Resume until the selected line is reached (click a line first).";
+    if (risc) runTip += "  The delay slot of a taken JUMP/JR is never reached as a stop, so a cursor there will not trigger.";
+    if (button("Run to cursor", halted && t.haveCursor, runTip.c_str()) && t.haveCursor) g.ctl->runTo(tab, t.cursor);
 }
 
 void drawNav(DebugSession& s) {
@@ -544,6 +555,7 @@ void drawWindow(DebugSession& s) {
         return;
     }
     if (!g.ctl) g.ctl = std::make_unique<CpuControl>(s);
+    if (!s.attached()) g.ctl->forget();   // a Detach (or hardcore) cleared the core: no temporary breakpoint, nothing pending
 
     drawBanner(s);
     drawToolbar(s);

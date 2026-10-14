@@ -19,12 +19,14 @@
 #include "debug/debug_session.h"
 #include "paths.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -377,6 +379,35 @@ int main(int argc, char** argv) {
         CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_M68K));
         rig.host.runFrame();
         CHECK(who.size() == 2 && who[0] == VJ_DBG_TARGET_M68K && who[1] == VJ_DBG_TARGET_GPU);
+        rig.onUi = nullptr;
+    }
+
+    // ---- 7b: delay slots ------------------------------------------------------------------------------------------------
+    // The GPU's OP-interrupt routine has a `jump T,(r0)` at $F0303C (delay slot $F0303E) and a copy loop ending in
+    // `jr NZ,-5` at $F03062 (delay slot $F03064, loop exit continues at $F03066).  The core runs the delay slot of a
+    // TAKEN jump/jr inline with it, so the slot is never a stop of its own: no step, breakpoint or run-to-cursor sees
+    // it.  A jr that is NOT taken falls into the next instruction like any other, which is then visible.  The window
+    // documents this; if the core ever reports delay slots, this test fails and the docs need revisiting.
+    {
+        CHECK(rig.load());
+        for (int f = 0; f < 30; f++) rig.host.runFrame();
+        const unsigned jumpAddr = 0xF0303C, jumpSlot = 0xF0303E, jrAddr = 0xF03062, jrSlot = 0xF03064, vec = 0xF03030;
+        CHECK(disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, jumpAddr).text.compare(0, 4, "jump") == 0);
+        CHECK(disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, jrAddr).text.compare(0, 2, "jr") == 0);
+        const unsigned addrs[] = {vec, jumpAddr, jumpSlot, jrAddr, jrSlot};
+        for (unsigned a : addrs) CHECK(rig.dbg.addBreakpoint(VJ_DBG_TARGET_GPU, a));
+        std::map<unsigned, int> hits;
+        rig.onUi = [&] {
+            hits[rig.dbg.haltedPc()]++;
+            rig.ctl.cont();
+        };
+        for (int f = 0; f < 6; f++) rig.host.runFrame();
+        for (unsigned a : addrs) VLOG("delay-slot probe: $%06X hit %d times\n", a, hits[a]);
+        CHECK(hits[vec] >= 5 && hits[jumpAddr] >= 5);
+        CHECK(hits[jumpSlot] == 0);                       // the slot of a taken jump: never a stop
+        CHECK(hits[jrAddr] > hits[vec]);                  // the loop runs several times per interrupt
+        CHECK(hits[jrSlot] >= 1 && hits[jrSlot] < hits[jrAddr]);   // seen only when the jr falls through, not on the taken passes
+        rig.dbg.clearBreakpoints();
         rig.onUi = nullptr;
     }
 
