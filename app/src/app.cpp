@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
+#include "theme_style.h"
 
 #include <algorithm>
 #include <cctype>
@@ -105,8 +106,10 @@ void App::applySettingsFromConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
+    if (!themeFromCli_) applyThemeChoice(cfg.get("ui.theme", "system"));
     homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
+    resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
 }
 
@@ -121,8 +124,10 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
+    if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
+    cfg.setInt("saves.resume", resumeMode);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
     bios::storeSelection(cfg, biosChoice);
@@ -218,13 +223,14 @@ bool App::initImGui() {
     io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
     g_imguiIni = paths.imguiIni;
     io.IniFilename = g_imguiIni.c_str();
-    ImGui::StyleColorsDark();
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 4.0f;
     st.FrameRounding = 3.0f;
-    // Opaque windows: the dark theme's 0.94 alpha let the home screen's text show through
-    // (About, Settings).  Overlays that want to be see-through set SetNextWindowBgAlpha.
-    st.Colors[ImGuiCol_WindowBg].w = 1.0f;
+    // Colours: the theme in force (Settings > Video > Appearance; System follows the OS, and
+    // SDL_EVENT_SYSTEM_THEME_CHANGED re-applies them live).  Only colours change when the theme does, so the
+    // sizes and rounding set here and scaled below stay as they are.
+    theme::addListener([this](theme::Scheme) { applyTheme(); });
+    theme::refreshSystem();
     // The UI scale is the display's CONTENT scale (the 200% of a 4K Windows/Linux display), nothing more.
     // SDL_GetWindowDisplayScale() is relative to the window's PIXEL size, so it also contains the pixel density
     // (2.0 on every Retina Mac); ImGui's SDL3 backend lays out in window points and already renders at the
@@ -238,7 +244,9 @@ bool App::initImGui() {
     }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
-    st.FontScaleDpi = scale;
+    st.FontScaleDpi = scale;   // (the font size follows the display scale, not the theme: themes never set it)
+    uiScale_ = scale;
+    theme::applyStyle(st, uiScale_);   // the theme's colours, rounding and spacing at this scale
 
 #ifdef __APPLE__
     const char* glsl = "#version 150";
@@ -253,6 +261,7 @@ bool App::initImGui() {
 }
 
 void App::shutdown() {
+    if (host.isLoaded()) autoSave();   // quitting: keep where the game was
     ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
@@ -360,6 +369,46 @@ void App::haltedFrame() {
     if (!vsync) SDL_DelayNS(8000000);   // no swap-interval pacing: do not spin while stopped
 }
 
+void App::applyTheme() {
+    if (imguiUp_) theme::applyStyle(ImGui::GetStyle(), uiScale_);
+}
+
+theme::Store App::themeStore() const { return theme::Store(paths.root + "themes", paths.instance > 1); }
+
+bool App::applyThemeChoice(const std::string& key) {
+    if (theme::parseMode(key) == theme::Mode::Custom) {
+        theme::Custom c;
+        if (themeStore().load(theme::customNameOf(key), c)) {
+            theme::setCustom(c);
+            return true;
+        }
+        theme::setMode(theme::Mode::System);   // the theme file is gone (or never was here): System
+        return false;
+    }
+    theme::setMode(theme::parseMode(key));
+    return true;
+}
+
+void App::setThemeChoice(const std::string& key) {
+    themeFromCli_ = false;   // the user chose: from here on the choice is theirs to keep
+    themePreviewing_ = false;
+    applyThemeChoice(key);
+}
+
+void App::themePreview(const theme::Custom& c) {
+    if (!themePreviewing_) {
+        themeBeforePreview_ = theme::choiceKey();
+        themePreviewing_ = true;
+    }
+    theme::setCustom(c);
+}
+
+void App::themePreviewEnd(bool keep) {
+    if (!themePreviewing_) return;
+    themePreviewing_ = false;
+    if (!keep) applyThemeChoice(themeBeforePreview_);
+}
+
 void App::applyVsync() {
     if (gl_) SDL_GL_SetSwapInterval(vsync ? 1 : 0);
 }
@@ -406,6 +455,10 @@ bool App::openContent(const std::string& pathIn) {
         return false;
     }
     const std::string path = absolutePath(pathIn);
+    pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
+    resumeOffer.active = false;
+    const bool noResume = suppressResume_ || reloading_;
+    if (!reloading_) autoSave();          // leaving a running game for another: keep where it was
     host.setDirectories(paths.system, paths.saves);
     for (std::string& f : biosOnce_) f.clear();   // a game is not a BIOS boot
     bootTarget_ = 0;
@@ -438,11 +491,14 @@ bool App::openContent(const std::string& pathIn) {
     applyPortDevices(*this);                   // the controller types chosen in Settings, per game or global
     controlsOverlayOnLoad(*this);
     addRecent(path);
+    library.noteLaunched(path);   // the library's recently played (library_lists.h)
     invalidateThumbs();
     debug.requestRefresh();
     ach.onContentLoaded();   // identify the game, look up its achievements
     cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
+    runSeconds_ = 0;
     toast("Loaded " + host.contentName());
+    if (!noResume) offerResume();
     saveConfig();
     return true;
 }
@@ -452,6 +508,9 @@ bool App::openNoContent() {
         toast("The debugger has the game halted - resume it first", 2.5, 2);
         return false;
     }
+    pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
+    resumeOffer.active = false;
+    autoSave();
     host.setDirectories(paths.system, paths.saves);
     applyBios();
     std::string err;
@@ -515,7 +574,10 @@ bool App::reloadContent() {
         if (host.isLoaded()) return openNoContent();
         return false;
     }
-    return openContent(p);
+    reloading_ = true;   // a deliberate restart: neither keeps nor resumes an auto-save
+    bool ok = openContent(p);
+    reloading_ = false;
+    return ok;
 }
 
 void App::closeContent() {
@@ -524,6 +586,9 @@ void App::closeContent() {
         toast("The debugger has the game halted - resume it first", 2.5, 2);
         return;
     }
+    pendingStateSlot_ = kNoPendingSlot;
+    resumeOffer.active = false;
+    autoSave();
     host.unloadContent();
     debug.requestRefresh();
     ach.onContentClosed();
@@ -570,6 +635,66 @@ void App::showOpenDialog() {
                            g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
 }
 
+// ---- resume where I left off ------------------------------------------------------------------------------------
+// Policy in library_lists.h (shouldAutoSave / resumeAction), tested in vj_library_tests.  The auto-save is its own
+// slot (lib::kAutoSlot): one file pair per game, always the latest, written like any state (temp file + rename).
+bool App::autoSave() {
+    if (headless_ || !host.isLoaded() || host.contentPath().empty()) return false;   // headless runs and BIOS-only boots never
+    if (!lib::shouldAutoSave(resumeMode, !ach.allowStateLoad(), netplay.configured(), runSeconds_, host.crashEvents() > 0))
+        return false;
+    return saveState(lib::kAutoSlot, true);
+}
+
+void App::offerResume() {
+    if (headless_ || host.contentPath().empty()) return;
+    const bool exists = fileExists(statePath(lib::kAutoSlot));
+    switch (lib::resumeAction(resumeMode, !ach.allowStateLoad(), netplay.configured(), exists)) {
+    case lib::ResumeAction::Load:
+        pendingStateSlot_ = lib::kAutoSlot;   // after the first frames, like a state picked in the library
+        pendingStateFrames_ = 2;
+        break;
+    case lib::ResumeAction::Ask:
+        resumeOffer.active = true;
+        resumeOffer.savedAt = slotTime(lib::kAutoSlot);
+        resumeOffer.game = host.contentName();
+        break;
+    case lib::ResumeAction::None: break;
+    }
+}
+
+void App::answerResume(bool resume, bool always) {
+    if (!resumeOffer.active) return;
+    resumeOffer.active = false;
+    if (resume) {
+        if (always) {
+            resumeMode = lib::ResumeAlways;
+            saveConfig();
+        }
+        loadState(lib::kAutoSlot);
+    }
+}
+
+// The library's save-state tab and tile menu: the game running already (same file) just loads the state;
+// anything else is opened first and the state loaded once it has run a couple of frames.
+void App::openAndLoadState(const std::string& pathIn, int slot) {
+    if (pathIn.empty() || slot < lib::kAutoSlot) return;
+    const std::string path = absolutePath(pathIn);
+    if (!ach.allowStateLoad()) {   // before leaving the running game for one whose state would be refused
+        toast("Hardcore mode: loading save states is disabled", 3.5, 2);
+        return;
+    }
+    if (slot >= 0) stateSlot = slot;
+    if (host.isLoaded() && host.contentPath() == path) {
+        loadState(slot);
+        return;
+    }
+    suppressResume_ = true;   // the state asked for replaces the auto-save offer
+    handleDrop(path);
+    suppressResume_ = false;
+    if (host.isLoaded() && host.contentPath() == path) pendingStateSlot_ = slot;   // cleared if the open failed
+    pendingStateFrames_ = 2;
+}
+
 void App::showImportBiosDialog() {
     if (!window_) return;
     static SDL_DialogFileFilter filters[2] = {{"BIOS images", "j64;rom;bin;jag"}, {"All files", "*"}};
@@ -594,10 +719,12 @@ void App::handleDrop(const std::string& path) {
 // save states
 // ---------------------------------------------------------------------------------
 std::string App::statePath(int slot) const {
-    return paths.states + host.contentName() + ".slot" + std::to_string(slot) + ".state";
+    if (slot == lib::kAutoSlot) return lib::autoStatesDir(paths.states, paths.instance) + lib::stateFileName(host.contentName(), slot);
+    return paths.states + lib::stateFileName(host.contentName(), slot);
 }
 std::string App::thumbPath(int slot) const {
-    return paths.states + host.contentName() + ".slot" + std::to_string(slot) + ".png";
+    if (slot == lib::kAutoSlot) return lib::autoStatesDir(paths.states, paths.instance) + lib::thumbFileName(host.contentName(), slot);
+    return paths.states + lib::thumbFileName(host.contentName(), slot);
 }
 bool App::slotExists(int slot) const {
     return host.isLoaded() && fileExists(statePath(slot));
@@ -608,14 +735,15 @@ SDL_Time App::slotTime(int slot) const {
     return 0;
 }
 
-bool App::saveState(int slot) {
+bool App::saveState(int slot, bool quiet) {
     if (!host.isLoaded()) {
-        toast("No game loaded");
+        if (!quiet) toast("No game loaded");
         return false;
     }
+    if (slot == lib::kAutoSlot) SDL_CreateDirectory(lib::autoStatesDir(paths.states, paths.instance).c_str());
     std::string err;
-    if (!host.saveStateToFile(statePath(slot), err)) {
-        toast("Save state failed: " + err, 4.0, 3);
+    if (!host.saveStateToFile(statePath(slot), err)) {   // written atomically (temp file + rename)
+        if (!quiet) toast("Save state failed: " + err, 4.0, 3);
         return false;
     }
     const Frame& f = host.frame();
@@ -623,7 +751,11 @@ bool App::saveState(int slot) {
         SDL_Surface* s = SDL_CreateSurfaceFrom((int)f.width, (int)f.height, SDL_PIXELFORMAT_XRGB8888,
                                                (void*)f.pixels.data(), (int)f.width * 4);
         if (s) {
-            SDL_SavePNG(s, thumbPath(slot).c_str());
+            // the screenshot is replaced atomically too: the library tab may be reading it
+            const std::string dst = thumbPath(slot), tmp = dst + "." + std::to_string(processId()) + ".tmp";
+            if (SDL_SavePNG(s, tmp.c_str())) {
+                if (!SDL_RenamePath(tmp.c_str(), dst.c_str())) SDL_RemovePath(tmp.c_str());
+            }
             SDL_DestroySurface(s);
         }
     }
@@ -633,7 +765,7 @@ bool App::saveState(int slot) {
         thumbs_.erase(it);
     }
     ach.onStateSaved(statePath(slot));
-    toast("State saved to slot " + std::to_string(slot));
+    if (!quiet) toast("State saved to " + lib::stateLabel(slot));
     return true;
 }
 
@@ -647,7 +779,7 @@ bool App::loadState(int slot) {
         return false;
     }
     if (!slotExists(slot)) {
-        toast("Slot " + std::to_string(slot) + " is empty");
+        toast(lib::stateLabel(slot) + " is empty");
         return false;
     }
     std::string err;
@@ -659,7 +791,7 @@ bool App::loadState(int slot) {
     cheatsAfterStateLoad(*this);
     debug.requestRefresh();
     ach.onStateLoaded(statePath(slot));
-    toast("State loaded from slot " + std::to_string(slot));
+    toast("State loaded from " + lib::stateLabel(slot));
     return true;
 }
 
@@ -784,6 +916,10 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
             handleDrop(p);
+        } else if (e.user.code == 0x56414A53 && e.user.data1) {   // 'VAJS': the library's "load this state"
+            std::string p = (const char*)e.user.data1;
+            SDL_free(e.user.data1);
+            openAndLoadState(p, (int)(intptr_t)e.user.data2 - 1000);
         } else if (e.user.code == 0x56424A49 && e.user.data1) {   // 'VBJI': import this BIOS file
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
@@ -801,6 +937,9 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         if (e.key.scancode == SDL_SCANCODE_TAB && !captured) fastForward = (e.type == SDL_EVENT_KEY_DOWN);
         break;
     }
+    case SDL_EVENT_SYSTEM_THEME_CHANGED:   // the OS switched between light and dark: a System choice follows
+        theme::handleEvent(e);
+        break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         fastForward = false;
         break;
@@ -851,8 +990,17 @@ void App::stepEmulation() {
         ach.afterFrame();
         netplay.afterFrame();
         fpsWindowFrames_++;
+        runSeconds_ += 1.0 / std::max(1.0, host.fps());   // emulated time of this game (paused time does not count)
     }
     host.wantVideo = true;
+    if (pendingStateSlot_ != kNoPendingSlot && frames > 0) {
+        pendingStateFrames_ -= frames;
+        if (pendingStateFrames_ <= 0) {
+            const int slot = pendingStateSlot_;
+            pendingStateSlot_ = kNoPendingSlot;
+            loadState(slot);
+        }
+    }
     for (const OsdMessage& m : host.takeMessages())
         toast(m.text, m.durationMs / 1000.0, m.level);
 }
@@ -919,6 +1067,10 @@ int App::run(const CliArgs& a) {
         return 1;
     }
     host.setLogVerbose(a.verbose);
+    if (!a.theme.empty()) {
+        themeFromCli_ = true;
+        applyThemeChoice(a.theme);
+    }
     loadConfig();
     if (paths.instance > 1) {
         host.setSaveFallbackDir(paths.savesShared);
@@ -969,6 +1121,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "achievements") ach.showList = true;
     else if (a.showWindow == "keypad") input.overlay.open = true;
     else if (a.showWindow == "netplay") showNetplay = true;
+    else if (a.showWindow == "theme-editor") showThemeEditor = true;
     else if (a.showWindow == "controls") input.controls.show = true;
     else if (openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
     unsigned uiFrames = 0;
@@ -982,6 +1135,8 @@ int App::runInteractive(const CliArgs& a) {
     else if (!a.content.empty()) openContent(a.content[0]);
     library.createTexture = &VideoOut::createTextureRGBA;
     library.destroyTexture = &VideoOut::destroyTexture;
+    ach.images.createTexture = &VideoOut::createTextureRGBA;   // RetroAchievements avatar / icons / badges
+    ach.images.destroyTexture = &VideoOut::destroyTexture;
     // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
     library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
     if (a.showWindow == "library") library.show = true;

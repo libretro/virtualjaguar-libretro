@@ -98,6 +98,7 @@ public:
     // makes it behave like RetroArch: no events are ever sent and consumers fall back to log scraping).
     // Events arrive synchronously inside runFrame(), on the emulation thread.
     bool announceExtensions = true;
+    unsigned crashEvents() const { return crashEvents_; }   // crash-watchdog events since the content loaded
     std::function<void(const vj_event&)> onEvent;   // string pointers are valid for the call only
     // True once the core's HELLO was answered in the current session: the events are then authoritative
     // and the matching log lines need no parsing.
@@ -304,6 +305,7 @@ private:
 
     // misc env state
     std::vector<OsdMessage> messages_;
+    unsigned crashEvents_ = 0;
     std::string contentOverrideExts_;  // "cue|cdi|chd" (need_fullpath override)
     bool supportsNoGame_ = false;
     unsigned minAudioLatencyMs_ = 0;

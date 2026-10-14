@@ -48,6 +48,18 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   (https://github.com/libretro/virtualjaguar-libretro/issues/838, https://github.com/libretro/virtualjaguar-libretro/pull/881, https://github.com/libretro/virtualjaguar-libretro/pull/889). BIOS files anywhere under a library folder show in the BIOS tab,
   and one click copies a BIOS into the system folder under the name the core reads; Ctrl/Cmd
   + scroll (or a trackpad pinch on macOS) resizes the tiles (https://github.com/libretro/virtualjaguar-libretro/pull/899).
+- **Favorites, recently played and save states in the library.** Star a game (on its tile or
+  right-click > Add to Favorites); the games you boot are kept under Recently played. Each shows as
+  its own tab, as a strip at the top of the Cartridges and Jaguar CD tabs, both, or not at all
+  (your choice under Favorites & recents...). A new Save states tab lists every game with
+  states and the screenshot saved with each; click one to start the game from it. Right-click a
+  game for Play, Load state, favorites, Show in Finder / File Explorer and Copy path
+  (https://github.com/libretro/virtualjaguar-libretro/issues/838).
+- **Resume where I left off.** Settings > Storage > Resume where I left off (Off / Ask / Always, default
+  Ask): closing a game, switching games or quitting keeps an Auto-save of it (shown in the Save
+  states tab and the tile menu), and the next boot offers to resume from it or does so at once.
+  Not in RetroAchievements hardcore or netplay, and not for a game that ran under 5 seconds or
+  crashed (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Covers for Jaguar CD.** libretro-thumbnails has no Jaguar CD art, so discs now get a
   readable title card, and you can set your own cover: right-click a tile > Set cover image
   (PNG), drop a PNG on a tile, or put `<Title>.png` files in the app's `covers` folder.
@@ -66,6 +78,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   enter codes by hand (https://github.com/libretro/virtualjaguar-libretro/issues/835, https://github.com/libretro/virtualjaguar-libretro/pull/878).
 - **RetroAchievements.** Softcore by default. Hardcore is optional; it refuses loading save
   states and disables cheats (https://github.com/libretro/virtualjaguar-libretro/issues/836, https://github.com/libretro/virtualjaguar-libretro/pull/882).
+  The Achievements window now shows your avatar, the game icon and every achievement's badge
+  (also in the unlock toasts), filters and sorts the list, and has a Jaguar games tab listing every
+  Jaguar and Jaguar CD game with achievements, your progress in each and a Play button for the
+  ones in your library.
 - **Controls.** Per-device and per-game remapping, all 12 keypad keys on a gamepad,
   keyboard play with the Pro Controller 6-button layout, an on-screen keypad (F2) and a
   controls overlay (F3) that appears at boot when no player-1 controller is connected.
@@ -77,6 +93,13 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   game saves in their own folder and never rewrite the shared settings, and each can be pinned to
   one controller (Settings > Input) (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Save states** with thumbnails (F5 save, F7 load, F6 slot) and a state manager.
+- **Light and dark themes.** Settings > Video > Appearance picks System (the default), Dark or Light; System
+  follows the operating system and switches live when it does. The in-game overlays (controls sheet, on-screen
+  messages, achievement toasts, frame rate) stay dark and translucent in both themes so they read on any game
+  picture. **Customize...** opens a theme editor: start from Dark or Light, change the main colours, the
+  rounding and the spacing with a live preview and a warning when text drops below 4.5:1 contrast, then save
+  it as a named theme (a small `.ini` in the app's `themes` folder), duplicate, delete, export or import it
+  (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Netplay for the link-cable games.** A Netplay window hosts or joins Doom, BattleSphere,
   AirCars and Ultra Vortek (over the Voice Modem) on a local network, with LAN discovery
   (https://github.com/libretro/virtualjaguar-libretro/pull/888). While a session is set up, the link settings it controls are shown greyed out in

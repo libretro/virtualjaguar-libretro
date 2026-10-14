@@ -23,6 +23,7 @@
 #include "netplay.h"
 #include "paths.h"
 #include "perf.h"
+#include "theme_custom.h"
 #include "video.h"
 
 namespace vj {
@@ -41,6 +42,7 @@ struct CliArgs {
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
@@ -131,6 +133,13 @@ public:
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
     int stateSlot = 0;
+    int resumeMode = 1;               // lib::ResumeMode: Off / Ask / Always, "Resume where I left off" (saves.resume)
+    struct ResumeOffer {              // "Resume from <time>?" asked after a game booted (resumeMode == Ask)
+        bool active = false;
+        SDL_Time savedAt = 0;
+        std::string game;
+    } resumeOffer;
+    void answerResume(bool resume, bool always);   // the prompt's buttons
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;
 
@@ -141,10 +150,17 @@ public:
     bool mute = false;
     float audioTargetMs = 64.0f;
     bool showFps = false;
+    float uiScale_ = 1.0f;            // the scale the style was set up at (the display's content scale times ui.scale)
+    std::string themeBeforePreview_;  // the choice to keep/restore while the theme editor previews an unsaved theme
+    bool themePreviewing_ = false;
+    bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
+    bool autoSave();                  // write this game's auto-save when the policy allows (lib::shouldAutoSave)
+    void offerResume();               // a game booted: load / ask / nothing, by the policy and the option
+    void openAndLoadState(const std::string& path, int slot);   // the library: open `path`, then load its state `slot`
     bool openNoContent();             // boots the console with no cartridge, through the BIOS bootBios() last chose
     // Boots a BIOS on its own (BIOS & system tab, File > Boot BIOS): a cartridge boot ROM runs against an empty
     // slot, the CD BIOS comes up with no disc.  `file` is used for this boot only ("" = the saved choice).
@@ -164,11 +180,18 @@ public:
     void togglePause();
     void setFullscreen(bool fs);
     void applyVsync();
+    void applyTheme();                // the Dear ImGui style for the theme in force (theme.h); a no-op before the UI exists
+    void setThemeChoice(const std::string& key);   // Settings > Video > Appearance: system | dark | light | custom:<name>; remembered
+    bool applyThemeChoice(const std::string& key); // the same without remembering; false when a custom theme is missing (System is used)
+    void themePreview(const theme::Custom& c);     // the theme editor's live preview: shown, not remembered until saved
+    void themePreviewEnd(bool keep);               // the editor closed (keep: its theme was saved and chosen); otherwise the previous choice returns
+    theme::Store themeStore() const;               // <data>/themes/, read-only in a secondary copy (#902)
+    bool showThemeEditor = false;
     void applyAudioSettings();
 
     std::string statePath(int slot) const;
     std::string thumbPath(int slot) const;
-    bool saveState(int slot);
+    bool saveState(int slot, bool quiet = false);   // slot lib::kAutoSlot = the auto-save
     bool loadState(int slot);
     bool slotExists(int slot) const;
     SDL_Time slotTime(int slot) const;
@@ -208,6 +231,12 @@ private:
     void updateTitle();
     uint32_t frameHash() const;
 
+    static constexpr int kNoPendingSlot = -1000;
+    int pendingStateSlot_ = kNoPendingSlot;       // openAndLoadState: load this slot after the new game has run a few frames
+    int pendingStateFrames_ = 0;
+    double runSeconds_ = 0;           // emulated seconds of the loaded game (auto-save needs a few)
+    bool reloading_ = false;          // reloadContent: a restart, not a new game
+    bool suppressResume_ = false;     // the library opened a game to load a chosen state: no auto-save offer
     bool headless_ = false;
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;
@@ -280,6 +309,10 @@ bool netplayInit(App& app, const CliArgs& a);               // log tap + --netpl
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
 void drawNetplayMenu(App& app);
 void drawNetplay(App& app);
+// Themes (theme_ui.cpp): Settings > Video > Appearance, the theme editor window and its file-dialog mailbox.
+void drawAppearanceSettings(App& app);
+void drawThemeEditor(App& app);
+void themeFrameHook(App& app);
 // BIOS & boot (bios_ui.cpp): the BIOS choice and boot controls, shown in Settings and above the library's BIOS tab.
 void drawBiosPanel(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).

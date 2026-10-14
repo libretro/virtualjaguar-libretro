@@ -97,6 +97,42 @@ target_link_libraries(ach_http_test PRIVATE ${VJ_ACH_LIBS} Threads::Threads)
 add_test(NAME ach_http COMMAND ach_http_test)
 set_tests_properties(ach_http PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+# The dashboard's logic and picture cache (no core, no window, no network): games-list parsing against
+# the same fixtures the mock server answers with, library matching, the daily cache file, filter / sort,
+# the image cache (disk, offline mode, LRU).
+add_executable(vj_ra_dash_test tests/ra_dash_test.cpp src/ra_dash.cpp src/ra_images.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_ra_dash_test PRIVATE src)
+target_compile_definitions(vj_ra_dash_test PRIVATE VJ_RA_FIX="${VJ_RA_FIX}")
+target_link_libraries(vj_ra_dash_test PRIVATE vj_library vj_rcheevos ${VJ_SDL3_TARGET} Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_ra_dash_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_ra_dash_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_ra_dash_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME ra_dash_unit COMMAND vj_ra_dash_test)
+set_tests_properties(ra_dash_unit PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The dashboard's requests through the mock server: the Jaguar games list (one fixture per console,
+# systemgames_17 / _77) and the user's progress (allprogress_17 / _77) are fetched, parsed by rc_client and
+# applied: 6 games, 3 of them with unlocks.  Nothing is requested before the step asks (the tests above
+# fail on any request without a fixture, so a stray automatic fetch would show up there).
+add_test(NAME ra_dashboard_mock
+    COMMAND virtualjaguar --headless --frames 90
+            --ra-mock "${VJ_RA_FIX}"
+            --ra-step 20:games:refresh --ra-step 70:games:expect:6:3
+            --ra-expect-request systemgames --ra-expect-request allprogress
+            "${VJ_ROMS}/yarc.j64")
+# Control: a wrong expectation must fail the step (the test cannot pass by doing nothing).
+add_test(NAME ra_dashboard_mock_control
+    COMMAND virtualjaguar --headless --frames 90
+            --ra-mock "${VJ_RA_FIX}"
+            --ra-step 20:games:refresh --ra-step 70:games:expect:7:3
+            "${VJ_ROMS}/yarc.j64")
+set_tests_properties(ra_dashboard_mock ra_dashboard_mock_control PROPERTIES TIMEOUT 300)
+set_tests_properties(ra_dashboard_mock PROPERTIES FAIL_REGULAR_EXPRESSION "headless: FAIL")
+set_tests_properties(ra_dashboard_mock_control PROPERTIES PASS_REGULAR_EXPRESSION "expected 7 games, have 6")
+
 # Optional, ROM-gated: point VJ_RA_TEST_CUE at any Jaguar CD .cue to prove rcheevos
 # identifies a real disc (the second-session boot executable is hashed).  Skipped
 # (not registered) when unset or missing, so CI -- which has no discs -- never sees it.

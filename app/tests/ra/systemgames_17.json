@@ -1,0 +1,6 @@
+{"Success":true,"Response":[
+{"ID":9001,"Title":"Mock Game (yarc)","ImageIcon":"/Images/000001.png","ImageUrl":"https://media.retroachievements.org/Images/000001.png","NumAchievements":4,"NumLeaderboards":0,"Points":17,"SupportedHashes":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],"UnsupportedHashes":[]},
+{"ID":5001,"Title":"Alien vs Predator","ImageIcon":"/Images/000010.png","ImageUrl":"https://media.retroachievements.org/Images/000010.png","NumAchievements":40,"NumLeaderboards":2,"Points":600,"SupportedHashes":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"],"UnsupportedHashes":["dddddddddddddddddddddddddddddddd"]},
+{"ID":5002,"Title":"~Homebrew~ Tower Toppler","ImageIcon":"/Images/000011.png","ImageUrl":"https://media.retroachievements.org/Images/000011.png","NumAchievements":12,"NumLeaderboards":0,"Points":150,"SupportedHashes":["cccccccccccccccccccccccccccccccc"],"UnsupportedHashes":[]},
+{"ID":5003,"Title":"Doom","ImageIcon":"/Images/000012.png","ImageUrl":"https://media.retroachievements.org/Images/000012.png","NumAchievements":30,"NumLeaderboards":1,"Points":400,"SupportedHashes":["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],"UnsupportedHashes":[]}
+]}

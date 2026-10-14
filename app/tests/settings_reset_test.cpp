@@ -55,7 +55,7 @@ static std::string slurp(const fs::path& p) {
 static void fill(Config& c) {
     const char* keys[] = {
         // Video (+ Shader)
-        "video.integer", "video.linear", "video.stretch", "video.aspect", "video.vsync", "ui.show_fps",
+        "video.integer", "video.linear", "video.stretch", "video.aspect", "video.vsync", "ui.show_fps", "ui.theme",
         "shader.enabled", "shader.preset", "shader.folder",
         // Audio
         "audio.volume", "audio.mute", "audio.target_ms",
@@ -64,6 +64,7 @@ static void fill(Config& c) {
         "ui.controls.autoshow",
         // Storage + library display
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
+        "library.favorites.show", "library.recents.show", "saves.resume",
         // Mappings
         "input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port", "input.stick_dpad",
         "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C",
@@ -88,6 +89,7 @@ static std::set<std::string> klass(const Config& c, KeyClass k) {
 static void testClassify() {
     CHECK(classifyKey("video.vsync") == KeyClass::Video);
     CHECK(classifyKey("ui.show_fps") == KeyClass::Video);
+    CHECK(classifyKey("ui.theme") == KeyClass::Video);   // Appearance is on the Video tab: Reset there returns to System
     CHECK(classifyKey("shader.preset") == KeyClass::Shader);
     CHECK(classifyKey("shader.folder") == KeyClass::Keep);   // a path the user picked
     CHECK(classifyKey("audio.target_ms") == KeyClass::Audio);
@@ -96,6 +98,7 @@ static void testClassify() {
     CHECK(classifyKey("input.dev.deadzone") == KeyClass::Input);
     CHECK(classifyKey("saves.autosave") == KeyClass::Storage);
     CHECK(classifyKey("library.size") == KeyClass::Storage);
+    CHECK(classifyKey("saves.resume") == KeyClass::Storage && classifyKey("library.favorites.show") == KeyClass::Storage && classifyKey("library.recents.show") == KeyClass::Storage);
     CHECK(classifyKey("library.dir.0") == KeyClass::Keep);
     CHECK(classifyKey("opt.virtualjaguar_x") == KeyClass::CoreOption);
     // The trailing dot is what separates a binding layer from a window's own pad choice.
@@ -139,7 +142,7 @@ static void testGroupReset() {
     resetGroupKeys(c, AppGroup::Audio);
     CHECK(!c.has("audio.volume") && c.has("video.vsync") && c.has("input.port.0") && c.has("opt.virtualjaguar_frameskip_max"));
     resetGroupKeys(c, AppGroup::Video);
-    CHECK(!c.has("shader.enabled") && !c.has("shader.preset") && c.has("shader.folder") && !c.has("ui.show_fps"));
+    CHECK(!c.has("shader.enabled") && !c.has("shader.preset") && c.has("shader.folder") && !c.has("ui.show_fps") && !c.has("ui.theme"));
     resetGroupKeys(c, AppGroup::Input);
     CHECK(!c.has("input.port.0") && !c.has("port.0") && !c.has("ui.controls.autoshow"));
     CHECK(c.has("input.pad.A") && c.has("input.game.cart-1234.port.0") && c.has("input.pads.1"));   // mappings / per game / window pad kept
@@ -179,9 +182,10 @@ static void testResetAll() {
         for (const std::string& k : mappings) CHECK((after.count(k) == 1) == !r.alsoMappings);
         for (const std::string& k : perGame) CHECK((after.count(k) == 1) == !r.alsoPerGame);
         // Every app setting is gone, whatever the boxes say.
-        for (const char* k : {"video.integer", "video.vsync", "ui.show_fps", "shader.enabled", "shader.preset", "audio.volume",
+        for (const char* k : {"video.integer", "video.vsync", "ui.show_fps", "ui.theme", "shader.enabled", "shader.preset", "audio.volume",
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
-                              "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section"})
+                              "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
+                              "library.favorites.show", "library.recents.show", "saves.resume"})
             CHECK(after.count(k) == 0);
         // Nothing but these three kinds of key is left.
         for (const std::string& k : after) {

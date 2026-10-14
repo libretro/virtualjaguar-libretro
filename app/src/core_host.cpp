@@ -597,6 +597,7 @@ bool CoreHost::env(unsigned cmd, void* data) {
             }
         }
         if (e->type == VJ_EVT_CRASH_WATCHDOG) {
+            crashEvents_++;
             // The watchdog's own log line is easy to miss; say it on screen too.  The core rate-limits
             // each signature (about every 10 s), so this cannot flood.
             pushMessage(std::string("Core watchdog: ") + (e->s ? e->s : "?") +
@@ -661,6 +662,7 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err) {
     std::memset(&avInfo_, 0, sizeof avInfo_);
     retro_get_system_av_info(&avInfo_);
     loaded_ = true;
+    crashEvents_ = 0;
     contentName_ = label;
     // A desktop host always has a keyboard.  The core only polls its keypad key fallbacks
     // (the only route to keypad 7-9, * and #) once it has seen a keyboard event, and
