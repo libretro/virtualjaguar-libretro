@@ -121,6 +121,8 @@ public:
     bool quit = false;
     bool fullscreen = false;
     bool menuPinned = true;
+    bool showInWindowMenu = false;    // macOS: F1 shows the in-window menu bar too (the native one is the main bar)
+    bool inWindowMenuBar() const;     // is an ImGui menu bar being drawn at all
     bool showSettings = false;
     bool showStates = false;
     bool showAbout = false;

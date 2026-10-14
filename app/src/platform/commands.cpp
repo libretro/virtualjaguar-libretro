@@ -17,7 +17,8 @@ bool MenuState::operator==(const MenuState& o) const {
            fullscreen == o.fullscreen && canLoadState == o.canLoadState && stateSlot == o.stateSlot &&
            usedSlots == o.usedSlots && mute == o.mute && integerScale == o.integerScale &&
            smoothFilter == o.smoothFilter && shader == o.shader && showFps == o.showFps &&
-           keypadOverlay == o.keypadOverlay && controlsOverlay == o.controlsOverlay &&
+           keypadOverlay == o.keypadOverlay && controlsOverlay == o.controlsOverlay && vsync == o.vsync &&
+           homeLibrary == o.homeLibrary &&
            libraryOpen == o.libraryOpen && disc == o.disc && recents == o.recents &&
            achAvailable == o.achAvailable && achSignedIn == o.achSignedIn && achBusy == o.achBusy &&
            achEnabled == o.achEnabled && achHardcore == o.achHardcore && achUnofficial == o.achUnofficial &&
@@ -93,7 +94,12 @@ MenuBar buildMenuBar(const MenuState& s) {
         std::vector<MenuItem> f;
         f.push_back(item(Cmd::Open, "Open" ELL, "cmd+o"));
         f.push_back(submenu("Open Recent", std::move(recent), haveRecent));
-        f.push_back(item(Cmd::BootNoCart, "Boot Without Cartridge"));
+        std::vector<MenuItem> boot;   // mirrors the in-window File > Boot BIOS
+        boot.push_back(item(Cmd::BootBiosCd, "CD BIOS (no disc)"));
+        boot.push_back(item(Cmd::BootBiosCart, "Cartridge Boot ROM (empty slot)"));
+        boot.push_back(sep());
+        boot.push_back(item(Cmd::BiosSettings, "BIOS & Boot Settings" ELL));
+        f.push_back(submenu("Boot BIOS", std::move(boot)));
         f.push_back(sep());
         f.push_back(item(Cmd::NewWindow, "New Window", "cmd+n"));
         f.push_back(item(Cmd::Library, "Game Library", "cmd+l", true, s.libraryOpen));
@@ -149,6 +155,9 @@ MenuBar buildMenuBar(const MenuState& s) {
         v.push_back(item(Cmd::ShowFps, "Show Frame Rate", "", true, s.showFps));
         v.push_back(item(Cmd::KeypadOverlay, "Keypad Overlay", "", true, s.keypadOverlay));
         v.push_back(item(Cmd::ControlsOverlay, "Controls Overlay", "", true, s.controlsOverlay));
+        v.push_back(sep());
+        v.push_back(item(Cmd::HomeLibrary, "Library on Home Screen", "", true, s.homeLibrary));
+        v.push_back(item(Cmd::VSync, "VSync", "", true, s.vsync));
         bar.menus.push_back(submenu("View", std::move(v)));
     }
 
@@ -235,7 +244,9 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount) {
         a.openRecent(arg);
         return true;
     case Cmd::ClearRecents: a.clearRecents(); return true;
-    case Cmd::BootNoCart: a.bootNoCart(); return true;
+    case Cmd::BootBiosCd: a.bootBiosCd(); return true;
+    case Cmd::BootBiosCart: a.bootBiosCart(); return true;
+    case Cmd::BiosSettings: a.showBiosSettings(); return true;
     case Cmd::NewWindow: a.newWindow(); return true;
     case Cmd::Library: a.toggleLibrary(); return true;
     case Cmd::CloseGame: a.closeGame(); return true;
@@ -264,6 +275,8 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount) {
     case Cmd::ShowFps: a.toggleFps(); return true;
     case Cmd::KeypadOverlay: a.toggleKeypadOverlay(); return true;
     case Cmd::ControlsOverlay: a.toggleControlsOverlay(); return true;
+    case Cmd::VSync: a.toggleVsync(); return true;
+    case Cmd::HomeLibrary: a.toggleHomeLibrary(); return true;
     case Cmd::Settings: a.showSettings(); return true;
     case Cmd::Mute: a.toggleMute(); return true;
     case Cmd::About: a.showAbout(); return true;

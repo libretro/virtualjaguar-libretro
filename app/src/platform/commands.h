@@ -24,13 +24,14 @@ namespace platform {
 enum class Cmd : int {
     None = 0,
     // File
-    Open, OpenRecent /*arg = index into the recent list*/, ClearRecents, BootNoCart, NewWindow, Library,
+    Open, OpenRecent /*arg = index into the recent list*/, ClearRecents, BootBiosCd, BootBiosCart, BiosSettings,
+    NewWindow, Library,
     CloseGame, RevealGame, Quit,
     // Emulation
     Pause, Reset, FastForward, SaveState, LoadState, SetSlot /*arg = 0..9*/, StateManager, Cheats,
     DiscTray, DiscSelect /*arg = disc index*/,
     // View
-    Fullscreen, IntegerScale, SmoothFilter, Shader, ShowFps, KeypadOverlay, ControlsOverlay,
+    Fullscreen, IntegerScale, SmoothFilter, Shader, ShowFps, KeypadOverlay, ControlsOverlay, VSync, HomeLibrary,
     // Settings / help
     Settings, Mute, About, ShowDataFolder, Website, ReportIssue,
     // Online
@@ -57,7 +58,7 @@ struct MenuState {
     int stateSlot = 0;
     unsigned usedSlots = 0;        // bit n: slot n has a state
     bool mute = false, integerScale = false, smoothFilter = false, shader = false, showFps = false;
-    bool keypadOverlay = false, controlsOverlay = false;
+    bool keypadOverlay = false, controlsOverlay = false, vsync = false, homeLibrary = false;
     bool libraryOpen = false;      // the library window (or the home screen) is what is showing
     DiscState disc;
     std::vector<std::string> recents;   // full paths, newest first
@@ -103,7 +104,9 @@ struct Actions {
     virtual void open() = 0;
     virtual void openRecent(int index) = 0;
     virtual void clearRecents() = 0;
-    virtual void bootNoCart() = 0;
+    virtual void bootBiosCd() = 0;
+    virtual void bootBiosCart() = 0;
+    virtual void showBiosSettings() = 0;
     virtual void newWindow() = 0;
     virtual void toggleLibrary() = 0;
     virtual void closeGame() = 0;
@@ -126,6 +129,8 @@ struct Actions {
     virtual void toggleFps() = 0;
     virtual void toggleKeypadOverlay() = 0;
     virtual void toggleControlsOverlay() = 0;
+    virtual void toggleVsync() = 0;
+    virtual void toggleHomeLibrary() = 0;
     virtual void showSettings() = 0;
     virtual void toggleMute() = 0;
     virtual void showAbout() = 0;

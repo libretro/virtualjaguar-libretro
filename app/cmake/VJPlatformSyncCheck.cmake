@@ -143,7 +143,9 @@ foreach(_t IN LISTS _mt)
         list(APPEND _desk_types ${_t})
     endif()
 endforeach()
-_vj_same_set(".desktop MimeType= vs the XML's types" "${_desk_types}" "${_xml_types}")
+# ... plus the types shared-mime-info already defines for our generic disc extensions (they win by weight)
+set(_existing application/x-cue application/x-discjuggler-cd-image application/x-mame-chd)
+_vj_same_set(".desktop MimeType= vs the XML's types + the existing disc types" "${_desk_types}" "${_xml_types};${_existing}")
 
 # ---- 5. the core's own list: ours is a subset; the rest is the documented generic pair ----
 _vj_read(_lr "${VJ_ROOT}/libretro.c")

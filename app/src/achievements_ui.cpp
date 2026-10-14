@@ -248,7 +248,7 @@ void drawAchievementsUi(App& app) {
     if (a.showLogin) drawLogin(app);
     if (a.showList) drawList(app);
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float menuH = platform::nativeMenuActive() ? 0.0f : ImGui::GetFrameHeight();   // no in-window menu bar on macOS
+    const float menuH = app.inWindowMenuBar() ? ImGui::GetFrameHeight() : 0.0f;   // no in-window menu bar under a native one
     const ImVec2 pos(vp->Pos.x, vp->Pos.y + menuH), size(vp->Size.x, vp->Size.y - menuH);
     drawToasts(app, pos, size);
     drawIndicators(app, pos, size);

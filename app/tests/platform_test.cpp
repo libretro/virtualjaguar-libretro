@@ -78,7 +78,7 @@ static void testIdleModel() {
         CHECK(m && !m->enabled);
     }
     // ... but opening things works.
-    for (Cmd c : {Cmd::Open, Cmd::BootNoCart, Cmd::NewWindow, Cmd::Library, Cmd::Settings, Cmd::Quit, Cmd::About,
+    for (Cmd c : {Cmd::Open, Cmd::BootBiosCd, Cmd::BootBiosCart, Cmd::BiosSettings, Cmd::NewWindow, Cmd::Library, Cmd::Settings, Cmd::Quit, Cmd::About,
                   Cmd::Fullscreen, Cmd::Mute, Cmd::Netplay}) {
         const MenuItem* m = findCmd(bar, c);
         CHECK(m && m->enabled);
@@ -237,6 +237,7 @@ static void testShortcuts() {
         }
     }
     // The ones users expect.
+    CHECK(findCmd(bar, Cmd::VSync) && findCmd(bar, Cmd::HomeLibrary));   // the in-window View menu's two extra items
     CHECK(findCmd(bar, Cmd::Open)->key == "cmd+o");
     CHECK(findCmd(bar, Cmd::Settings)->key == "cmd+,");
     CHECK(findCmd(bar, Cmd::Quit)->key == "cmd+q");
@@ -272,7 +273,9 @@ struct Recorder : Actions {
     void open() override { rec("open"); }
     void openRecent(int i) override { rec("openRecent", i); }
     void clearRecents() override { rec("clearRecents"); }
-    void bootNoCart() override { rec("bootNoCart"); }
+    void bootBiosCd() override { rec("bootBiosCd"); }
+    void bootBiosCart() override { rec("bootBiosCart"); }
+    void showBiosSettings() override { rec("showBiosSettings"); }
     void newWindow() override { rec("newWindow"); }
     void toggleLibrary() override { rec("toggleLibrary"); }
     void closeGame() override { rec("closeGame"); }
@@ -295,6 +298,8 @@ struct Recorder : Actions {
     void toggleFps() override { rec("toggleFps"); }
     void toggleKeypadOverlay() override { rec("toggleKeypadOverlay"); }
     void toggleControlsOverlay() override { rec("toggleControlsOverlay"); }
+    void toggleVsync() override { rec("toggleVsync"); }
+    void toggleHomeLibrary() override { rec("toggleHomeLibrary"); }
     void showSettings() override { rec("showSettings"); }
     void toggleMute() override { rec("toggleMute"); }
     void showAbout() override { rec("showAbout"); }

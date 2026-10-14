@@ -357,8 +357,8 @@ void drawAbout(App& app) {
     ImGui::Text("SDL:     %d.%d.%d", SDL_VERSIONNUM_MAJOR(sdl), SDL_VERSIONNUM_MINOR(sdl), SDL_VERSIONNUM_MICRO(sdl));
     ImGui::Text("Dear ImGui: %s", ImGui::GetVersion());
     ImGui::Separator();
-    static const char* const keys[][2] = {
-        {"F1", "show or pin the menu bar (fullscreen)"},
+    const char* const keys[][2] = {
+        {"F1", platform::nativeMenuActive() ? "show the in-window menu bar as well" : "show or pin the menu bar (fullscreen)"},
         {"F5 / F7", "save / load state"},
         {"F6", "next state slot (Shift: previous)"},
         {"F8", "pause"},
@@ -526,7 +526,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     bool nearTop = io.MousePos.y >= 0 && io.MousePos.y < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
     menuHot = nearTop || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     // A native menu bar (macOS) replaces this one; every item here has a twin in platform/commands.cpp.
-    bool showMenu = !platform::nativeMenuActive() && (!app.fullscreen || app.menuPinned || menuHot);
+    bool showMenu = platform::nativeMenuActive() ? app.showInWindowMenu : (!app.fullscreen || app.menuPinned || menuHot);
     float menuH = 0;
     if (showMenu) {
         drawMenuBar(app);

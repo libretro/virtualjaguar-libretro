@@ -72,8 +72,8 @@ void noteRecent(const std::string& path) {
 }
 
 void clearRecents() {
-    // SHARD_PIDL with a null pointer clears this program's list.
-    SHAddToRecentDocs(SHARD_PIDL, nullptr);
+    // Deliberately nothing: SHAddToRecentDocs(SHARD_PIDL, NULL) clears the user's whole Recent items list, not just
+    // this program's, and the in-window "Clear list" only clears the app's own list.
 }
 
 void setActivity(bool) {}

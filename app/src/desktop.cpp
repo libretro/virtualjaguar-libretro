@@ -26,6 +26,8 @@ platform::MenuState App::menuState() {
     s.showFps = showFps;
     s.keypadOverlay = input.overlay.open;
     s.controlsOverlay = input.controls.show;
+    s.vsync = vsync;
+    s.homeLibrary = homeLibrary;
     s.libraryOpen = homeVisible() || library.show;
     if (s.gameLoaded) {
         DiscInfo d = host.discInfo();
@@ -61,7 +63,12 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             a.recents.clear();
             platform::clearRecents();
         }
-        void bootNoCart() override { a.openNoContent(); }
+        void bootBiosCd() override { a.bootBios(bios::Cd); }
+        void bootBiosCart() override { a.bootBios(bios::CartBoot); }
+        void showBiosSettings() override {
+            a.showSettings = true;
+            a.devSelectTab = "BIOS";
+        }
         void newWindow() override { a.newWindow(); }
         void toggleLibrary() override { a.toggleLibrary(); }
         void closeGame() override { a.closeContent(); }
@@ -93,6 +100,11 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             a.input.controls.show = !a.input.controls.show;
             a.input.controls.hideAt = 0;
         }
+        void toggleVsync() override {
+            a.vsync = !a.vsync;
+            a.applyVsync();
+        }
+        void toggleHomeLibrary() override { a.homeLibrary = !a.homeLibrary; }
         void showSettings() override { a.showSettings = true; }
         void toggleMute() override {
             a.mute = !a.mute;

@@ -333,6 +333,8 @@ void App::newWindow() {
     toast("Opening another window...", 2.0);
 }
 
+bool App::inWindowMenuBar() const { return platform::nativeMenuActive() ? showInWindowMenu : true; }
+
 void App::toggleLibrary() {
     if (homeVisible()) library.focusSearch = true;   // already showing: put the cursor in the search box
     else library.show = !library.show;
@@ -645,7 +647,10 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_ESCAPE:
         if (fullscreen) setFullscreen(false);
         break;
-    case SDLK_F1: menuPinned = !menuPinned; break;
+    case SDLK_F1:
+        if (platform::nativeMenuActive()) showInWindowMenu = !showInWindowMenu;   // reach anything the native menu lacks
+        else menuPinned = !menuPinned;
+        break;
     case SDLK_F5: saveState(stateSlot); break;
     case SDLK_F7: loadState(stateSlot); break;
     case SDLK_F6:
