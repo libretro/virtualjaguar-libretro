@@ -715,6 +715,59 @@ static void testPixelPatch() {
     CHECK_EQ(p.bytes[2], 0x66);
 }
 
+// ---- list walking -----------------------------------------------------------------------------------------------------------------
+static bool mockReader(void* ctx, unsigned addr, uint8_t* dst, unsigned n) {
+    const vj_debug_iface* i = static_cast<const vj_debug_iface*>(ctx);
+    return i->peek(addr, dst, n) == (int)n;
+}
+static void putPhrase(MockDebugIface& m, unsigned at, uint64_t v) {
+    for (int i = 0; i < 8; i++) m.dram()[at + (unsigned)i] = (uint8_t)(v >> (56 - 8 * i));
+}
+// A list in DRAM:  1000 bitmap -> 1020 scaled -> 1040 branch (link 1100, falls to 1048)
+//                  1048 gpu -> 1050 bitmap -> 1070 stop        1100 bitmap -> 1070
+static void buildRamList(MockDebugIface& m) {
+    Bm a;   a.link = 0x1020;  a.height = 2;
+    Bm s;   s.type = 1; s.link = 0x1040; s.height = 2;
+    putPhrase(m, 0x1000, a.p0());  putPhrase(m, 0x1008, a.p1());
+    putPhrase(m, 0x1020, s.p0());  putPhrase(m, 0x1028, s.p1());  putPhrase(m, 0x1030, s.p2());
+    putPhrase(m, 0x1040, 3ull | (1ull << 14) | ((uint64_t)(0x1100u >> 3) << 24));
+    putPhrase(m, 0x1048, 2ull);
+    Bm c;   c.link = 0x1070;  c.height = 3;
+    putPhrase(m, 0x1050, c.p0());  putPhrase(m, 0x1058, c.p1());
+    putPhrase(m, 0x1070, 4ull);
+    Bm d;   d.link = 0x1070;  d.height = 4;
+    putPhrase(m, 0x1100, d.p0());  putPhrase(m, 0x1108, d.p1());
+}
+
+static void testWalkList() {
+    MockDebugIface m;
+    buildRamList(m);
+    std::vector<OpObject> w = opWalkList(&mockReader, const_cast<vj_debug_iface*>(m.iface()), 0x1000, 100);
+    // Depth first, a branch's fall-through before its link, every address once.
+    unsigned want[] = {0x1000, 0x1020, 0x1040, 0x1048, 0x1050, 0x1070, 0x1100};
+    CHECK_EQ(w.size(), 7);
+    for (size_t i = 0; i < w.size() && i < 7; i++) CHECK_EQ(w[i].address, want[i]);
+    for (const OpObject& o : w) CHECK(o.fromRam);
+    CHECK(w.size() == 7 && w[3].type == OpType::Gpu && w[5].type == OpType::Stop && w[6].height == 4);
+    // The cap, a bad head, an unreadable head.
+    CHECK_EQ(opWalkList(&mockReader, const_cast<vj_debug_iface*>(m.iface()), 0x1000, 3).size(), 3);
+    CHECK(opWalkList(&mockReader, const_cast<vj_debug_iface*>(m.iface()), 0, 10).empty());
+    CHECK(opWalkList(nullptr, nullptr, 0x1000, 10).empty());
+    // A loop (link back to the head) terminates.
+    Bm loop;
+    loop.link = 0x2000;
+    putPhrase(m, 0x2000, loop.p0());
+    putPhrase(m, 0x2008, loop.p1());
+    CHECK_EQ(opWalkList(&mockReader, const_cast<vj_debug_iface*>(m.iface()), 0x2000, 100).size(), 1);
+    // The 4 MB mirror folds back like op.c: a link of 0x201000 is 0x001000.
+    Bm mir;
+    mir.link = 0x201000;
+    putPhrase(m, 0x2100, mir.p0());
+    putPhrase(m, 0x2108, mir.p1());
+    std::vector<OpObject> mw = opWalkList(&mockReader, const_cast<vj_debug_iface*>(m.iface()), 0x2100, 100);
+    CHECK(mw.size() > 1 && mw[1].address == 0x1000);
+}
+
 // ---- view model ---------------------------------------------------------------------------------------------------------------
 static void testViewModelLifecycle() {
     DebugSession s;
@@ -779,6 +832,30 @@ static void testViewModelLifecycle() {
     CHECK_EQ(m.opArms, arms);
     vm.clear();
     CHECK(!vm.haveSnapshot() && vm.selected() == -1 && vm.image() == nullptr);
+}
+
+static void testViewModelFollowLinks() {
+    DebugSession s;
+    MockDebugIface m;
+    buildRamList(m);
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    OpViewModel vm;
+    CHECK(vm.followLinks);
+    vm.update(s);
+    vm.update(s);
+    // The mock's snapshot has 4 objects (0x1000, 0x1020, 0x1040, 0x1048); the RAM list adds three more.
+    CHECK_EQ(vm.snapshotCount(), 4);
+    CHECK_EQ(vm.objects().size(), 7);
+    for (size_t i = 0; i < vm.objects().size(); i++) CHECK_EQ(vm.objects()[i].fromRam, i >= 4);
+    CHECK_EQ(vm.objects()[4].address, 0x1050);
+    CHECK(!vm.objects()[4].warning.empty());
+    // Off: just the snapshot.
+    vm.followLinks = false;
+    vm.arm(s);
+    vm.update(s);
+    CHECK_EQ(vm.objects().size(), 4);
+    CHECK_EQ(vm.snapshotCount(), 4);
 }
 
 static void testViewModelPaint() {
@@ -905,7 +982,9 @@ int main() {
     testRenderLimitsAndErrors();
     testPixelPatch();
     testViewModelLifecycle();
+    testViewModelFollowLinks();
     testViewModelPaint();
+    testWalkList();
     testViewModelGeom();
     testPngExport();
     std::printf("debug_op_test: %d checks, %d failed\n", g_checks, g_fail);

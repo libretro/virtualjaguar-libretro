@@ -4,6 +4,13 @@
 
 namespace vj {
 
+namespace {
+bool peekReader(void* ctx, unsigned addr, uint8_t* dst, unsigned n) {
+    const vj_debug_iface* i = static_cast<const vj_debug_iface*>(ctx);
+    return i && i->peek && i->peek(addr, dst, n) == (int)n;
+}
+}  // namespace
+
 void OpViewModel::clear() {
     objs_.clear();
     waiting_ = have_ = false;
@@ -42,6 +49,22 @@ void OpViewModel::absorb(DebugSession& s) {
     int n = i->op_snapshot_get(buf.data(), VJ_DBG_OP_MAX_OBJECTS, &hl);
     if (n < 0) return;                       // armed, no walk finished yet
     objs_ = opDecodeAll(buf.data(), n);
+    snapshotCount_ = (size_t)n;
+    if (followLinks && n > 0) {
+        std::vector<OpObject> walk = opWalkList(&peekReader, const_cast<vj_debug_iface*>(i), objs_[0].address,
+                                                (unsigned)VJ_DBG_OP_MAX_OBJECTS);
+        size_t room = (size_t)VJ_DBG_OP_MAX_OBJECTS > objs_.size() ? (size_t)VJ_DBG_OP_MAX_OBJECTS - objs_.size() : 0;
+        for (OpObject& w : walk) {
+            if (room == 0) break;
+            bool inSnap = false;
+            for (size_t k = 0; k < snapshotCount_; k++)
+                if (objs_[k].address == w.address) { inSnap = true; break; }
+            if (inSnap) continue;
+            if (w.warning.empty() && w.isBitmap()) w.warning = "read from RAM after the frame: HEIGHT / DATA may be advanced";
+            objs_.push_back(std::move(w));
+            room--;
+        }
+    }
     halfline_ = hl;
     waiting_ = false;
     have_ = true;

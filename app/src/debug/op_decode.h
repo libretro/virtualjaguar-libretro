@@ -71,12 +71,25 @@ struct OpObject {
     bool drawable() const { return isBitmap() && havePhrase1 && bpp != 0 && height > 0; }
     bool terminatesList() const { return type == OpType::Stop; }
     std::string warning;        // "" or why the object looks wrong / cannot be drawn (one line)
+    bool fromRam = false;       // read from DRAM after the frame, not from the core's mid-walk snapshot:
+                                // HEIGHT / DATA / REMAINDER may already be advanced by the OP
 };
 
 // Decodes one phrase set.  `phrases` is how many of p0/p1/p2 are valid.
 OpObject opDecode(unsigned address, unsigned phrases, uint64_t p0, uint64_t p1, uint64_t p2);
 OpObject opDecode(const vj_debug_op_obj& o);
 std::vector<OpObject> opDecodeAll(const vj_debug_op_obj* objs, int n);
+
+// Reads one object at `addr` with the given memory reader (side-effect free peek): the first phrase, plus
+// the second (bitmap / scaled) and third (scaled).  False if memory cannot be read.
+typedef bool (*OpMemReader)(void* ctx, unsigned addr, uint8_t* dst, unsigned n);
+bool opReadObject(OpMemReader rd, void* ctx, unsigned addr, OpObject& out);
+// Follows the list the way op.c does, from `head`: bitmap / scaled objects continue at LINK (22-bit field,
+// with the 4 MB RAM mirror folded back), a GPU object at the next phrase, a branch BOTH ways (it may or may
+// not be taken at the line the OP walks), a stop object ends that path.  Each address once, depth first,
+// at most `maxObjects`.  Used for the part of the list a one-line snapshot walk did not reach; the values
+// are whatever DRAM holds now (fromRam = true).
+std::vector<OpObject> opWalkList(OpMemReader rd, void* ctx, unsigned head, unsigned maxObjects);
 
 // Names for the table / tooltips.
 const char* opTypeName(OpType t);        // "Bitmap", "Scaled bitmap", "GPU", "Branch", "Stop"

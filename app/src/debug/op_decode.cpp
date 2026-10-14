@@ -135,6 +135,69 @@ OpObject opDecode(unsigned address, unsigned phrases, uint64_t p0, uint64_t p1, 
     return o;
 }
 
+bool opReadObject(OpMemReader rd, void* ctx, unsigned addr, OpObject& out) {
+    addr &= 0xFFFFF8u;
+    uint8_t b[8];
+    auto phrase = [&](unsigned a, uint64_t& v) {
+        if (!rd(ctx, a & 0xFFFFFFu, b, 8)) return false;
+        v = 0;
+        for (int i = 0; i < 8; i++) v = (v << 8) | b[i];
+        return true;
+    };
+    uint64_t p0 = 0, p1 = 0, p2 = 0;
+    if (!phrase(addr, p0)) return false;
+    unsigned type = (unsigned)(p0 & 7), phrases = 1;
+    if (type == 0 || type == 1) {
+        if (!phrase(addr + 8, p1)) return false;
+        phrases = 2;
+        if (type == 1) {
+            if (!phrase(addr + 16, p2)) return false;
+            phrases = 3;
+        }
+    }
+    out = opDecode(addr, phrases, p0, p1, p2);
+    return true;
+}
+
+std::vector<OpObject> opWalkList(OpMemReader rd, void* ctx, unsigned head, unsigned maxObjects) {
+    std::vector<OpObject> out;
+    std::vector<unsigned> todo;
+    std::vector<unsigned> seen;
+    if (!rd || head == 0) return out;
+    todo.push_back(head & 0xFFFFF8u);
+    auto fold = [](unsigned link) {   // op.c: "memory access is mirrored in the first 8MB"
+        if (link > 0x1FFFFF && link < 0x800000) link &= 0xFF1FFFFFu;
+        return link;
+    };
+    while (!todo.empty() && out.size() < maxObjects) {
+        unsigned a = todo.back();
+        todo.pop_back();
+        bool dup = false;
+        for (unsigned s : seen)
+            if (s == a) { dup = true; break; }
+        if (dup) continue;
+        seen.push_back(a);
+        OpObject o;
+        if (!opReadObject(rd, ctx, a, o)) continue;
+        o.fromRam = true;
+        out.push_back(o);
+        switch (o.type) {
+            case OpType::Bitmap:
+            case OpType::Scaled:
+                if (o.link) todo.push_back(fold(o.link));
+                break;
+            case OpType::Gpu: todo.push_back(a + 8); break;
+            case OpType::Branch:
+                // Depth first with the fall-through visited first: push it last.
+                if (o.link) todo.push_back(fold(o.link));
+                todo.push_back(a + 8);
+                break;
+            default: break;   // stop (and undefined types) end the path
+        }
+    }
+    return out;
+}
+
 OpObject opDecode(const vj_debug_op_obj& s) {
     uint64_t p0 = ((uint64_t)s.p0_hi << 32) | s.p0_lo;
     uint64_t p1 = ((uint64_t)s.p1_hi << 32) | s.p1_lo;

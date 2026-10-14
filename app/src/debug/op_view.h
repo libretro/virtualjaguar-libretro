@@ -17,6 +17,10 @@ class OpViewModel {
 public:
     // ---- settings (the UI edits these) -------------------------------------------------------
     bool live = true;                 // re-arm the snapshot at the session's refresh cadence
+    // The core's snapshot is the first OP walk after arming -- an early half-line, so a list gated by
+    // branch objects shows only the part above the first gate.  With this on, the rest of the list is
+    // found by following the links through DRAM (marked fromRam: those values are read after the frame).
+    bool followLinks = true;
     OpRenderOptions render;
 
     // ---- snapshot lifecycle ----------------------------------------------------------------
@@ -29,6 +33,7 @@ public:
     bool waiting() const { return waiting_; }
     bool haveSnapshot() const { return have_; }
     unsigned halfline() const { return halfline_; }
+    size_t snapshotCount() const { return snapshotCount_; }   // objects[0..n) are the core's snapshot, the rest fromRam
     unsigned armCount() const { return arms_; }
     const std::vector<OpObject>& objects() const { return objs_; }
     void clear();                     // drops everything (content closed, tools forced shut)
@@ -67,6 +72,7 @@ private:
     std::vector<OpObject> objs_;
     bool waiting_ = false, have_ = false;
     unsigned halfline_ = 0, arms_ = 0;
+    size_t snapshotCount_ = 0;
     int sel_ = -1;
     unsigned selAddr_ = 0;
     uint64_t lastSerial_ = 0;

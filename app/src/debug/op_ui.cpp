@@ -151,8 +151,14 @@ void drawList(const ObjectsContext& ctx, const std::vector<int>& rows) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::PushID(idx);
+            if (o.fromRam) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
             if (ImGui::Selectable(num, vm.selected() == idx, ImGuiSelectableFlags_SpanAllColumns)) vm.select(idx);
-            if (ImGui::IsItemHovered()) g.hoverRow = idx;
+            if (ImGui::IsItemHovered()) {
+                g.hoverRow = idx;
+                if (o.fromRam)
+                    ImGui::SetTooltip("Found by following the links through RAM after the frame: not part of the captured walk, "
+                                      "and HEIGHT / DATA may already have been advanced by the Object Processor.");
+            }
             ImGui::PopID();
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(opTypeShort(o.type));
@@ -166,6 +172,7 @@ void drawList(const ObjectsContext& ctx, const std::vector<int>& rows) {
             ImGui::TextUnformatted(size);
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(depth);
+            if (o.fromRam) ImGui::PopStyleColor();
         }
     }
     ImGui::EndTable();
@@ -191,7 +198,8 @@ void drawFields(const OpObject& o) {
     ImGui::TableSetupColumn("f", ImGuiTableColumnFlags_WidthFixed, ui::em(8.0f));
     ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
     fieldRow("Object", "%s at $%06X", opTypeName(o.type), o.address);
-    fieldRow("Captured", "%u phrase%s", o.phrases, o.phrases == 1 ? "" : "s");
+    fieldRow("Source", "%s", o.fromRam ? "RAM, read after the frame (HEIGHT / DATA may be advanced)"
+                                       : "snapshot of the Object Processor's walk (before write-back)");
     switch (o.type) {
         case OpType::Bitmap:
         case OpType::Scaled:
@@ -537,6 +545,14 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     ImGui::SameLine();
     ImGui::Checkbox("Live", &vm.live);
     ImGui::SameLine();
+    if (ImGui::Checkbox("Follow links", &vm.followLinks)) vm.arm(session);
+    if (ImGui::IsItemHovered())
+        ui::beginWrappedTooltip(),
+            ImGui::TextUnformatted("The snapshot is the first walk after arming, an early half-line, so a list gated by "
+                                   "branch objects shows only the part above the first gate. Following the links through RAM "
+                                   "lists the rest (read after the frame)."),
+            ui::endWrappedTooltip();
+    ImGui::SameLine();
     ImGui::Checkbox("Highlight on screen", &g.highlight);
     ImGui::SameLine();
     ImGui::Checkbox("All", &g.highlightAll);
@@ -552,9 +568,16 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
             if (ImGui::SmallButton("Step a frame")) ctx.stepFrame();
         }
     }
-    if (vm.haveSnapshot())
-        ui::hint("%zu objects, captured on half-line %u.  X/Y are line-buffer pixels / half-lines; the outline is approximate.",
-                 vm.objects().size(), vm.halfline());
+    if (vm.haveSnapshot()) {
+        size_t extra = vm.objects().size() - vm.snapshotCount();
+        if (extra)
+            ui::hint("%zu objects captured on half-line %u, %zu more found by following links (dimmed).  "
+                     "X/Y are line-buffer pixels / half-lines; the outline is approximate.",
+                     vm.snapshotCount(), vm.halfline(), extra);
+        else
+            ui::hint("%zu objects, captured on half-line %u.  X/Y are line-buffer pixels / half-lines; the outline is approximate.",
+                     vm.objects().size(), vm.halfline());
+    }
     else if (!vm.waiting())
         ui::hint("No snapshot yet.");
     ImGui::Separator();
