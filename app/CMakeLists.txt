@@ -254,7 +254,10 @@ set(VJ_APP_SOURCES
     src/netplay_addr.cpp
     src/netplay_ui.cpp
     src/debug/debug_session.cpp
-    src/debug/debug_ui.cpp)
+    src/debug/debug_ui.cpp
+    src/debug/memory_view.cpp
+    src/debug/memory_ui.cpp
+    src/debug/clut_ui.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
@@ -266,7 +269,7 @@ vj_app_shaders(virtualjaguar)
 vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 vj_optimise(virtualjaguar)
-target_include_directories(virtualjaguar PRIVATE src)
+target_include_directories(virtualjaguar PRIVATE src src/debug "${VJ_ROOT}/src/debug")
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 if(WIN32)
