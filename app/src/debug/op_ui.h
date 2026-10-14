@@ -2,9 +2,10 @@
 // object decoded, a preview of bitmap objects with a pixel painter, PNG export and an outline over the
 // game picture.  See op_view.h for the model and op_decode.h / op_render.h for the hardware side.
 //
-// Wiring (App): call registerObjectsTool(session) once the session exists, and drawObjectsWindow()
-// once per UI frame after the game picture is drawn (the outline goes on the background draw list, on
-// top of the picture and under every window).
+// Wiring (App::wireHost, before registerPlaceholderTools): registerObjectsTool(app).  The tool's draw hook
+// (DebugTool::draw, called by drawDebugWindows every UI frame, also while halted) builds an
+// ObjectsContext from the App and calls drawObjectsWindow(); the outline goes on the background draw
+// list, on top of the game picture and under every window.
 #pragma once
 
 #include <functional>
@@ -14,6 +15,7 @@
 
 namespace vj {
 
+class App;
 class CheatManager;
 
 struct ObjectsContext {
@@ -30,13 +32,13 @@ struct ObjectsContext {
     std::string contentName;                // file-name prefix for exports
 };
 
-// Registers (or replaces) the "objects" entry of the Tools menu and the forced-close hook.
-void registerObjectsTool(DebugSession& session);
+// Registers (or replaces) the "objects" entry of the Tools menu, its draw hook and the forced-close hook.
+void registerObjectsTool(App& app);
 bool objectsWindowOpen();
 void setObjectsWindowOpen(bool open);
 // Draws the window (when open) and the on-screen outline.  Safe to call every frame.
 void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx);
-// Frees the preview texture; call before the GL context goes away (or when the core is torn down).
-void releaseObjectsTextures(const ObjectsContext& ctx);
+// Frees the preview texture (the window frees it itself when closed or disabled).
+void releaseObjectsTextures();
 
 }  // namespace vj

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "debug/op_ui.h"
 #include "devices_ui.h"
 
 #include "imgui.h"
@@ -297,6 +298,7 @@ void App::wireHost() {
     host.onDebugIface = [this](const vj_debug_iface* i) { debug.setIface(i); };
     debug.runUiFrame = [this] { haltedFrame(); };         // the core is parked in retro_run(): UI only
     debug.abortHalt = [this] { return quit; };            // closing the window while halted lets the core go
+    registerObjectsTool(*this);                           // Tools > Object list... (debug/op_ui.cpp)
     debug.registerPlaceholderTools();
     debug.onHalt.push_back([this](int target, unsigned pc, int reason) {
         audio.setPaused(true);                            // no stale buffer droning while the game is stopped

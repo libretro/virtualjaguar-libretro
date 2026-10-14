@@ -1,6 +1,7 @@
 // Tools > Object list...: see op_ui.h.
 #include "op_ui.h"
 
+#include "app.h"
 #include "cheats.h"
 #include "op_view.h"
 #include "ui_util.h"
@@ -32,6 +33,7 @@ struct UiState {
     int hoverRow = -1;
     int lastSel = -2;
     unsigned tex = 0;
+    void (*destroyTex)(unsigned) = nullptr;
     int texW = 0, texH = 0;
     uint64_t texSerial = ~0ull;
     int texZoom = -1;
@@ -45,8 +47,8 @@ UiState g;
 
 ImVec4 warnColor() { return ImVec4(1.0f, 0.8f, 0.4f, 1.0f); }
 
-void freeTexture(const ObjectsContext& ctx) {
-    if (g.tex && ctx.destroyTexture) ctx.destroyTexture(g.tex);
+void freeTexture() {
+    if (g.tex && g.destroyTex) g.destroyTex(g.tex);
     g.tex = 0;
     g.texSerial = ~0ull;
     g.texZoom = -1;
@@ -57,7 +59,7 @@ void freeTexture(const ObjectsContext& ctx) {
 void syncTexture(const ObjectsContext& ctx) {
     const OpImage* img = g.vm.image();
     if (!img || !ctx.createTexture) {
-        if (g.tex) freeTexture(ctx);
+        if (g.tex) freeTexture();
         return;
     }
     int z = std::max(1, g.zoom);
@@ -81,8 +83,9 @@ void syncTexture(const ObjectsContext& ctx) {
         }
         src = big.data();
     }
-    if (g.tex && ctx.destroyTexture) ctx.destroyTexture(g.tex);
+    if (g.tex && g.destroyTex) g.destroyTex(g.tex);
     g.tex = ctx.createTexture(src, tw, th);
+    g.destroyTex = ctx.destroyTexture;
     g.texW = tw;
     g.texH = th;
     g.texSerial = g.vm.imageSerial();
@@ -443,12 +446,35 @@ void drawOutline(const OpObject& o, const ObjectsContext& ctx, const OpScreenGeo
 }  // namespace
 
 // ---- public -------------------------------------------------------------------------------------------------------------------
-void registerObjectsTool(DebugSession& session) {
+void registerObjectsTool(App& app) {
+    DebugSession& session = app.debug;
     DebugTool t;
     t.id = "objects";
     t.label = "Object list...";
     t.isOpen = [] { return g.open; };
     t.toggle = [] { g.open = !g.open; };
+    t.draw = [&app] {
+        ObjectsContext ctx;
+        const PicRect& pic = app.input.picture();
+        ctx.picX = pic.x;
+        ctx.picY = pic.y;
+        ctx.picW = pic.w;
+        ctx.picH = pic.h;
+        ctx.frameW = app.video.frameWidth();
+        ctx.frameH = app.video.frameHeight();
+        ctx.emulationRunning = !app.paused && !app.debug.halted();
+        if (app.paused && !app.debug.halted() && app.host.isLoaded() && !app.netplay.configured())
+            ctx.stepFrame = [&app] {
+                app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
+                app.video.upload(app.host.frame());
+            };
+        ctx.createTexture = &VideoOut::createTextureRGBA;
+        ctx.destroyTexture = &VideoOut::destroyTexture;
+        ctx.cheats = &app.cheats;
+        ctx.exportDir = app.paths.root + "debug/";
+        ctx.contentName = app.host.contentName();
+        drawObjectsWindow(app.debug, ctx);
+    };
     session.registerTool(t);
     session.onForcedClose.push_back([](const char*) {
         g.open = false;
@@ -460,12 +486,12 @@ void registerObjectsTool(DebugSession& session) {
 bool objectsWindowOpen() { return g.open; }
 void setObjectsWindowOpen(bool open) { g.open = open; }
 
-void releaseObjectsTextures(const ObjectsContext& ctx) { freeTexture(ctx); }
+void releaseObjectsTextures() { freeTexture(); }
 
 void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     OpViewModel& vm = g.vm;
     if (!g.open) {
-        if (g.tex) freeTexture(ctx);
+        if (g.tex) freeTexture();
         return;
     }
     ui::nextWindow(62.0f, 40.0f, 36.0f, 22.0f);
@@ -478,7 +504,7 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     if (!session.enabled()) {
         ImGui::TextWrapped("%s", session.disabledReason().c_str());
         ImGui::End();
-        if (g.tex) freeTexture(ctx);
+        if (g.tex) freeTexture();
         return;
     }
 
