@@ -147,7 +147,9 @@ https://github.com/libretro/virtualjaguar-libretro/pull/896. Screenshots: https:
 - **Choose the interface font.** Settings > Video > Font: Retro (the pixel font, still the
   default), System UI (San Francisco, Segoe UI, the desktop's sans-serif), a system monospace
   face, or a font file of your own, at 11-24 pt, applied live. Text is drawn at the display's
-  full pixel density, so it is crisp on Retina and 125-200% Windows scaling (https://github.com/libretro/virtualjaguar-libretro/pull/925).
+  full pixel density, so it is crisp on Retina and 125-200% Windows scaling, and rendered with FreeType
+  (statically linked, nothing to install) which adds Hinting (none / light / full) and Smooth edges choices
+  (https://github.com/libretro/virtualjaguar-libretro/pull/925).
 - **Feels native** (https://github.com/libretro/virtualjaguar-libretro/pull/912):
   - macOS: a real menu bar (Cmd shortcuts, Open Recent, State Slot, Window and Help menus) and a
     Dock menu with your recent games.

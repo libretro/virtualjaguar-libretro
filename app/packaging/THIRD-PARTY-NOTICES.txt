@@ -11,7 +11,7 @@ Linked into the program (all compatible with the GPLv3):
   libchdr              BSD-3-Clause        https://github.com/rtissera/libchdr
     with LZMA SDK (public domain), miniz (MIT), Zstandard (BSD-3-Clause)
 
-Linked in only when the build was made with -DVJ_APP_FREETYPE=ON:
+Linked in unless the build was made with -DVJ_APP_FREETYPE=OFF (the default is ON):
 
   FreeType             FreeType License (FTL), used under its terms; compatible with the GPLv3
                        (the GPLv2 option is not used).  https://freetype.org

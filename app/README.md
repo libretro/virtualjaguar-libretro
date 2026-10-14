@@ -30,7 +30,9 @@ ctest --test-dir app/build -C Release --output-on-failure   # headless smoke tes
 The binary is `app/build/virtualjaguar` (`app/build/Release/virtualjaguar.exe`
 with the Visual Studio generator).
 
-`-DVJ_APP_FREETYPE=ON` fetches FreeType 2.14.1 (pinned, static, no system libraries) for font hinting options.
+FreeType 2.14.1 is the default font rasteriser: it is fetched (pinned, SHA-256 checked), built static with every
+optional library off, so it needs no system libraries. `-DVJ_APP_FREETYPE=OFF` uses Dear ImGui's built-in
+stb_truetype instead (no hinting or anti-aliasing choices); offline builds use `-DFETCHCONTENT_SOURCE_DIR_FREETYPE=<dir>`.
 
 Use an already installed SDL3 instead of fetching one: `-DVJ_APP_SYSTEM_SDL3=ON`
 (Homebrew `sdl3`, distro `libsdl3-dev`). For offline builds point
@@ -831,8 +833,9 @@ anti-aliasing is not possible: the glyph atlas is a single coverage channel (and
 Mojave). A missing or unreadable font falls back to Retro with a note in the Font section. Debug windows use
 `fonts::mono()` / `fonts::pushMono()` (`src/fonts_imgui.h`), a monospace face whatever the UI font is. Glyphs the
 chosen font lacks (arrows, star, check mark) come from a symbols font or the built-in vector face.
-`-DVJ_APP_FREETYPE=ON` rasterises with FreeType (FreeType License, fetched and pinned, built static) and adds the
-**Hinting** (none / light / full) and **Smooth edges** choices; it is off by default and experimental (not yet exercised by CI).
+FreeType is the default renderer (FreeType License, fetched and pinned, built static) and provides the
+**Hinting** (none / light / full) and **Smooth edges** choices. `-DVJ_APP_FREETYPE=OFF` builds with Dear ImGui's
+stb_truetype instead, which hides those two choices; the Retro pixel font always uses stb_truetype.
 
 Every window opens at a size in font heights (so it scales with DPI), at most 80% of the main
 window, is constrained to 95% of it each frame (a size saved in `imgui.ini` by a bigger window never

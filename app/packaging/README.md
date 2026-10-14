@@ -197,9 +197,9 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
 * **Manifest:** [`flatpak/io.github.libretro.VirtualJaguar.yml`](flatpak/io.github.libretro.VirtualJaguar.yml),
   runtime `org.freedesktop.Platform` 25.08. It builds the checked-out tree (`type: dir`); `manifests/render.sh`
   derives the Flathub form (git tag + commit) from the same file, so there is one manifest.
-* **Offline.** Flatpak builds have no network. SDL3, Dear ImGui, rcheevos, the librashader headers, the
+* **Offline.** Flatpak builds have no network. SDL3, Dear ImGui, FreeType, rcheevos, the librashader headers, the
   slang-shaders archive, the two libretro dats and the 41 cheat files + licence are `archive`/`file` sources with
-  SHA-256, wired in through the app's offline knobs (`FETCHCONTENT_SOURCE_DIR_SDL3|IMGUI|RCHEEVOS`,
+  SHA-256, wired in through the app's offline knobs (`FETCHCONTENT_SOURCE_DIR_SDL3|IMGUI|FREETYPE|RCHEEVOS`,
   `VJ_LIBRASHADER_INCLUDE_DIR`, `VJ_SLANG_SHADERS_ARCHIVE`, `VJ_APP_LIBRETRO_DB_DIR`, `VJ_APP_CHEATS_SOURCE_DIR`),
   and `FETCHCONTENT_FULLY_DISCONNECTED=ON` so a missed download fails the build. The cheat sources are generated
   from `app/cmake/VJCheatManifest.cmake`: when that file's pinned commit changes, regenerate the manifest's cheat
