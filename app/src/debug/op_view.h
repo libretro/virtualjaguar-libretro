@@ -37,6 +37,8 @@ public:
     unsigned armCount() const { return arms_; }
     const std::vector<OpObject>& objects() const { return objs_; }
     void clear();                     // drops everything (content closed, tools forced shut)
+    // Shows a hand-built list instead of a captured one (tests; the next absorbed snapshot replaces it).
+    void setObjects(std::vector<OpObject> objs);
 
     // ---- selection / preview -----------------------------------------------------------------------
     int selected() const { return sel_; }

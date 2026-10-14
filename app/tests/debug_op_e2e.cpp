@@ -82,6 +82,9 @@ int main(int argc, char** argv) {
     bool hasStop = false;
     for (const OpObject& o : objs) hasStop |= o.type == OpType::Stop;
     CHECK(hasStop);                                   // a well-formed list ends in a stop object
+    // NOTE: yarc's first non-empty walk after arming is half-line 26 -- a branch and a stop -- so every drawable
+    // bitmap here comes from OpViewModel's follow-the-links pass over RAM (fromRam), not from the core's
+    // pre-write-back snapshot.  If the core's capture ever walks the whole list, this still holds.
     CHECK(bitmaps >= 1 && drawable >= 1);
 
     if (pick >= 0) {

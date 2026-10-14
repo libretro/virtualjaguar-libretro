@@ -471,7 +471,10 @@ void registerObjectsTool(App& app) {
         ctx.frameW = app.video.frameWidth();
         ctx.frameH = app.video.frameHeight();
         ctx.emulationRunning = !app.paused && !app.debug.halted();
-        if (app.paused && !app.debug.halted() && app.host.isLoaded() && !app.netplay.configured())
+        // Only when the session is not attached: a frame run from inside this draw hook that then halts would
+        // start a second ImGui frame (App::haltedFrame) inside the current one.
+        if (app.paused && !app.debug.attached() && !app.debug.halted() && !app.host.inFrame() && app.host.isLoaded() &&
+            !app.netplay.configured())
             ctx.stepFrame = [&app] {
                 app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
                 app.video.upload(app.host.frame());

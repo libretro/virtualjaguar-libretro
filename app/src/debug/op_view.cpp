@@ -24,6 +24,16 @@ void OpViewModel::clear() {
     imgSerial_++;
 }
 
+void OpViewModel::setObjects(std::vector<OpObject> objs) {
+    objs_ = std::move(objs);
+    snapshotCount_ = objs_.size();
+    have_ = true;
+    waiting_ = false;
+    sel_ = -1;
+    haveEdit_ = false;
+    imageDirty_ = true;
+}
+
 void OpViewModel::arm(DebugSession& s) {
     const vj_debug_iface* i = s.iface();
     if (!s.enabled() || !i || !i->op_snapshot_arm) return;
@@ -136,6 +146,19 @@ bool OpViewModel::paint(DebugSession& s, int x, int y, uint32_t value, std::stri
     if (!o || !haveImage_) { status = "select a drawable bitmap first"; return false; }
     OpPixelPatch p;
     if (!opPixelPatch(s.iface(), *o, img_, x, y, value, p)) { status = "that pixel cannot be read"; return false; }
+    // The painter writes RAM only, whatever the memory viewer's register-write switches say.
+    {
+        bool ram = false;
+        for (const vj_debug_region& r : s.regions())
+            if (p.addr >= r.start && p.addr + p.n <= r.start + r.len) {
+                ram = (r.flags & VJ_DBG_REGION_RAM) && !(r.flags & (VJ_DBG_REGION_REG | VJ_DBG_REGION_ROM | VJ_DBG_REGION_BLOCKED));
+                break;
+            }
+        if (!ram) {
+            status = "not written: the painter only writes RAM";
+            return false;
+        }
+    }
     int rc = s.poke(p.addr, p.bytes, p.n);
     if (rc < 0) {
         status = std::string("not written: ") + DebugSession::errorText(rc);

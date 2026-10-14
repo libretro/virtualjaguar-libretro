@@ -906,6 +906,40 @@ static void testViewModelPaint() {
     CHECK_EQ(rc, VJ_DBG_ERR_READONLY);
     CHECK(std::string(DebugSession::errorText(rc)).find("read-only") != std::string::npos);
 
+    // The painter is RAM-only even with the memory viewer's register switches on: an object whose data sits in
+    // TOM register space is refused, not poked.  (Control: the same object in DRAM paints.)
+    {
+        s.allowRegisterWrites = true;
+        s.allowDangerousWrites = true;
+        OpViewModel v2;
+        v2.live = false;
+        Bm rg;
+        rg.depth = 3;
+        rg.data = 0xF00200;
+        rg.height = 1;
+        rg.iwidth = 1;
+        rg.dwidth = 1;
+        v2.setObjects({rg.decode(0x4000)});
+        v2.select(0);
+        v2.update(s);
+        CHECK(v2.image() != nullptr);
+        unsigned before = m.pokesAccepted + m.pokesRefused;
+        uint8_t was = m.regwin()[0x200];
+        std::string st2;
+        CHECK(!v2.paint(s, 0, 0, 0x5A, st2));
+        CHECK(st2.find("only writes RAM") != std::string::npos);
+        CHECK_EQ(m.pokesAccepted + m.pokesRefused, before);     // never even reached the core
+        CHECK_EQ(m.regwin()[0x200], was);
+        rg.data = 0x40000;
+        v2.setObjects({rg.decode(0x4000)});
+        v2.select(0);
+        v2.update(s);
+        CHECK(v2.paint(s, 0, 0, 0x5A, st2));
+        CHECK_EQ(m.dram()[0x40000], 0x5A);
+        s.allowRegisterWrites = false;
+        s.allowDangerousWrites = false;
+    }
+
     // Painting with the tools off is refused.
     s.setHardcore(true);
     CHECK(!vm.paint(s, 0, 0, 1, st));
