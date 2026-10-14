@@ -91,7 +91,8 @@ jobs:
           ls -la "$f"
           case "$TARGET" in
             *-apple-darwin)
-              want="${TARGET%%-*}"; got="$(lipo -archs "$f")"
+              want="${TARGET%%-*}"; [ "$want" != aarch64 ] || want=arm64   # Mach-O says arm64
+              got="$(lipo -archs "$f")"
               echo "archs: $got (want $want)"
               [ "$got" = "$want" ] || { echo "::error::$f is '$got', expected '$want' only"; exit 1; }
               id="$(otool -D "$f" | tail -1)"; echo "install name: $id"
