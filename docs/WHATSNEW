@@ -1,3 +1,126 @@
+Virtual Jaguar v3.9.0 libretro
+------------------------------
+
+RISC overclock fix, experimental DSP timing model + the desktop app.
+Full notes: docs/RELEASE_NOTES_v3.9.0.md
+
+Default settings are byte-identical to v3.8.0 in the cart and CD boot
+matrices. No option keys removed; savestate format stays v17.
+
+== Core ==
+* RISC clock 0.5x/1.5x/2x no longer turns the GPU/DSP idle-loop
+  fast-forward off (#891). The skip is exact at any scale (video,
+  audio and savestates byte-identical on/off). Core fps at 2x: Doom
+  52 -> 82, AvP 71 -> 204, Tempest 2000 77 -> 209. 1x unchanged.
+* Timing work (#908): S0 (Doom pace gate, GPU busy counter, Checkered
+  Flag canary) and S2 (bus census) are measurement tooling, no
+  behaviour change. S1, a DSP pipeline model, rides on the "GPU/DSP
+  Pipeline Timing (Experimental)" option (formerly "GPU Pipeline
+  Timing"), OFF by default; if you had it on you now get the DSP
+  model too. It does not improve pacing yet (Checkered Flag: 4.9
+  fields per game frame vs its 3.0 cap).
+* Clock scale options also accept a percentage (25-400, e.g. 175%);
+  listed values unchanged. GDB halt timeout clamped to 1 h (#906).
+* A private frontend channel and debug interface (#906, #910, #919)
+  that only the desktop app answers; RetroArch never sees them.
+
+== Desktop app (#867, #833) ==
+* Standalone emulator for macOS, Windows and Linux in app/: SDL3,
+  Dear ImGui, OpenGL 3.3, driving the core through the retro_* API.
+
+Library and artwork
+* Home-screen library: Cartridges, Jaguar CD and BIOS & system tabs,
+  CRC32 identification, box art on demand, Ctrl/Cmd+scroll or pinch
+  to resize tiles (#838, #881, #889, #899).
+* Favorites, Recently played and a Save states tab with each state's
+  screenshot (click to start from it); right-click: Play, Load
+  state, favorite, Show in Finder (#915).
+* Jaguar CD covers: title cards, your own PNG (right-click, drop, or
+  covers folder) (#901), then a set hosted on the project site (#907).
+* .chd discs checksummed, .cdi best-effort, non-Redump rips matched by
+  file/folder name when unambiguous (#901). CHD verified on synthetic
+  images only.
+
+BIOS
+* Settings > BIOS (and the BIOS & system tab): pick the exact boot ROM
+  / CD BIOS file, switch carts and CD games between HLE and the real
+  BIOS with nothing loaded, import a dropped BIOS, boot the CD BIOS
+  (no disc) or the cart boot ROM (empty slot) on its own (#910, #899).
+
+Playing
+* Controls: per-device and per-game remapping, 12-key keypad on a
+  gamepad, 6-button keyboard layout, on-screen keypad (F2), controls
+  overlay (F3; click, tap or Esc hides it; off at boot by default); mice, rotary, analog, driving, paddle, 6D, light gun,
+  Team Tap (#837, #879, #887).
+* Save states with thumbnails and a manager. Resume where I left off
+  (Off/Ask/Always, default Ask): an Auto-save on close, switch or
+  quit. Not in hardcore or netplay (#915).
+* Cheats: libretro database bundled plus manual codes (#835, #878).
+* Shaders: .slangp presets via librashader, CRT/scanline/sharp-
+  bilinear presets bundled, integer scaling (#834, #880, #897).
+* Several windows: File > New window (Ctrl/Cmd+N); extra copies get
+  their own save folder, leave shared settings alone, can be pinned
+  to one controller (#902).
+* Netplay window for the link-cable games on a LAN (not rollback,
+  #864); Settings greys out the link options it controls (#888, #898).
+* Typed settings: presets plus "Custom..." for ports, hosts, GDB
+  timeout, sensitivities, tuning, clock scales (#906).
+* Reset group buttons and Reset all settings...; bindings, overrides,
+  library folders and logins kept unless ticked (#911).
+* Release builds at -O3; shader chain skips unchanged frames (#894).
+
+Look and feel
+* Light and dark themes (System follows the OS live); Customize...
+  edits colours, rounding and spacing with a contrast warning;
+  export/import (#920). Windows are opaque (#904).
+* Interface font: Retro (default), system UI, monospace or your own
+  .ttf/.otf, 11-24 pt, sharp at Retina / 125-200% scaling (#925).
+* Native OS integration (#912): macOS menu bar and Dock menu;
+  Windows dark title bar, Jump List, optional file associations;
+  Linux MIME types and desktop actions; double-click, Open With and
+  drop on the icon everywhere; screensaver allowed outside a running
+  game; optional tray / menu-bar icon.
+* Settings, Achievements, Cheats and the tools can be dragged out of
+  the main window into OS windows of their own (default on macOS and
+  Windows; not on Wayland); macOS can keep the in-window menu bar
+  next to the native one (#833).
+
+RetroAchievements and Discord
+* RetroAchievements: softcore default, optional hardcore (#836,
+  #882). Avatar, game icon and badges; a dashboard of Jaguar games
+  with your progress and Play for owned ones (#917).
+* The login token is kept in the system keychain (macOS, Windows,
+  Linux Secret Service), not config.ini (#923).
+* Discord Rich Presence: game, box art, play time and achievement
+  progress, with a Get Virtual Jaguar button (#922).
+
+Debug tools (Tools menu; off under hardcore; RetroArch unaffected)
+* Memory viewer/editor, palette editor (#913), cheat scanner (#914),
+  Object Processor list (#918), blitter log, texture browser, audio
+  scope (#916), CPU debugger for 68000/GPU/DSP (#924); F9 break, F10
+  step (#919). Register writes need a tick; CD registers and B_CMD/
+  G_CTRL/D_CTRL/OLP/LTXD/RTXD are never written (docs/app-debug-
+  tools.md).
+
+Packaging and signing
+* macOS universal zip; Windows x64 and ARM64 zip + installer; Linux
+  AppImage, .deb, and a Flatpak bundle (x86_64) (#903, #839, #840);
+  nightly builds linked from the pinned builds issue.
+* Local signing: app/packaging/local-package.sh --sign [--notarize]
+  with a certificate found on the machine or set in a gitignored .env
+  (macOS Developer ID, Windows pfx/store) (#905, #909).
+
+== Known issues ==
+* macOS packages are signed with a Developer ID and notarized;
+  Windows packages are not signed yet (SmartScreen may warn).
+* Shaders may be unavailable on Intel Macs (arm64-only librashader in
+  the universal package); Linux needs librashader installed; the
+  Flatpak has no shaders.
+* The MSVC Windows build is experimental.
+* RetroAchievements does not identify .chd or .cdi discs yet.
+* Netplay is LAN link-cable play only.
+* Double-click opens a second instance on Windows and Linux.
+
 Virtual Jaguar v3.8.0 libretro
 ------------------------------
 

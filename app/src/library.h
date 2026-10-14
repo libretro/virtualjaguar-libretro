@@ -48,11 +48,18 @@ public:
     // A game whose name matches `fileStem` once case, punctuation and trailing
     // "(Track N)" are ignored, or nullptr.
     const DatGame* byName(const std::string& fileStem) const;
+    // The looser match for disc rips whose checksum is not Redump's: both names go through
+    // normalizeDiscName.  Pass 1, an exact normalized title (the file name first, then the folder name);
+    // pass 2, a title that starts with the file name at a word boundary (file name only, 4+ characters).
+    // Anything that fits two games is no match.  `how` (optional): 1 file name, 2 folder name, 3 file name
+    // as the start of a longer title.
+    const DatGame* byLooseName(const std::string& fileStem, const std::string& folderName, int* how = nullptr) const;
 
 private:
     std::vector<DatGame> games_;
     std::multimap<uint32_t, size_t> crc_;
     std::map<std::string, size_t> names_;
+    std::map<std::string, std::vector<size_t>> loose_;   // normalizeDiscName(game name) -> games
     std::map<std::string, std::string> header_;
 };
 
@@ -131,6 +138,7 @@ struct Entry {
     std::string datName;   // dat game name when matched (also the thumbnail key), else ""
     std::string region;
     Match match = Match::Unknown;
+    std::string how;       // how it was identified, for the tooltip ("CRC32 of track 1 (Redump)", "folder name", ...)
 };
 
 struct ScanOptions {
@@ -157,6 +165,14 @@ Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs);
 
 // "Iron_Soldier.v1.04.j64" is not a title, but "Iron Soldier (World).j64" nearly is.
 std::string titleFromFileStem(const std::string& stem);
+// The same for a disc image that no dat identified: also drops a trailing "(Track N)" / "[Track N]" /
+// " - Track N" and a doubled ".bin" / ".img" / ".iso" before the extension, and collapses runs of spaces.
+// "(Disc N)" and revision tags are kept: they tell multi-disc sets and releases apart.
+std::string titleFromDiscStem(const std::string& stem);
+
+// Lower case, "(...)" and "[...]" groups dropped (region, "Track 1", "Disc 1", revisions), apostrophes dropped,
+// every other non-alphanumeric a space, spaces collapsed: "Dragon's Lair (USA) (Track 1)" -> "dragons lair".
+std::string normalizeDiscName(const std::string& name);
 
 // ---- tile zoom ----------------------------------------------------------------------------
 // The library grid's tile size is one multiplier (the toolbar slider, the config key library.size, pinch,
@@ -182,13 +198,58 @@ std::string urlEncode(const std::string& s);   // RFC 3986 unreserved kept, the 
 
 extern const char* const kThumbBase;           // "https://thumbnails.libretro.com/"
 extern const char* const kThumbSystem;         // "Atari - Jaguar"
+extern const char* const kThumbSystemCd;       // "Atari - Jaguar CD" (the site mirror's system folder)
+extern const char* const kMirrorBase;          // "https://jaguar.provenance-emu.com/thumbnails/"
 extern const char* const kThumbTypes[3];       // Named_Boxarts, Named_Titles, Named_Snaps
-std::string thumbnailUrl(const std::string& type, const std::string& title, const std::string& base = kThumbBase);
-// <root>thumbnails/<system>/<type>/<sanitized title>.png ; root ends with a separator.
-std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title);
-// Marker next to it recording "the server said 404" (retried after kMissRetrySeconds).
-std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title);
-constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;
+std::string thumbnailUrl(const std::string& type, const std::string& title, const std::string& base = kThumbBase,
+                         const char* system = kThumbSystem);
+// <root>thumbnails/<system>/<type>/<sanitized title>.png ; root ends with a separator.  Each source has its own
+// folder ("Atari - Jaguar" for libretro-thumbnails, "Atari - Jaguar CD" for the site mirror), so a copy fetched
+// from the mirror can never stand in for upstream art that appears later.
+std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title,
+                               const char* system = kThumbSystem);
+// Marker next to it recording "this source said 404" (retried after the source's missRetrySeconds).
+std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title,
+                              const char* system = kThumbSystem);
+constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;        // libretro-thumbnails
+constexpr int64_t kMirrorMissRetrySeconds = 7LL * 24 * 3600;   // the site mirror: we publish it, so look again sooner
+
+// Where art for one tile is fetched from, in order.  libretro-thumbnails first, always; for a disc the site
+// mirror follows (libretro-thumbnails has no Jaguar CD repository yet, libretro-thumbnails#141), so the
+// moment upstream has a picture it wins.  Carts, and an empty mirror base, have the one source.
+struct ArtSource {
+    std::string base;           // URL prefix, ends with '/'
+    const char* system;         // folder under base, and under <root>thumbnails/ for the cache and miss markers
+    int64_t missRetrySeconds;   // how long a miss marker holds
+};
+std::vector<ArtSource> artSources(Section section, const std::string& upstreamBase, const std::string& mirrorBase);
+
+// ---- covers -------------------------------------------------------------------------------------------------
+// What a tile shows, first match wins:
+//   1. a cover set on that tile      <root>covers/custom/<key>.png   (Set cover image..., drop a PNG on the tile)
+//   2. the local art folder          <root>covers/<sanitized title>.png   by dat name, then by the displayed name
+//   3. a downloaded libretro-thumbnails image (only for titles a dat identified)
+//   4. a drawn placeholder card
+// Covers are PNG: the app decodes with SDL, which reads PNG and BMP and no JPEG, and a new decoder is not
+// worth a dependency for this.
+
+// Stable identity of a tile for covers and the art slot: the dat name when identified, else the checksum the
+// scanner computed (survives moving the folder), else a checksum of the path (.chd / .cdi are not hashed).
+std::string coverKey(const Entry& e);
+std::string customCoverPath(const std::string& root, const std::string& key);   // <root>covers/custom/<key>.png
+std::string localCoverPath(const std::string& root, const std::string& name);   // <root>covers/<name>.png
+// The covers a user put on disk for this tile, in precedence order (1 then 2 above); duplicates removed.
+std::vector<std::string> localCoverPaths(const std::string& root, const std::string& key,
+                                         const std::string& title, const std::string& datName);
+enum class CoverSource { None, Custom, LocalFolder, Downloaded };
+struct CoverChoice {
+    CoverSource source = CoverSource::None;
+    std::string path;
+};
+// Which file a tile would show right now, given a file-exists predicate (a downloaded thumbnail counts only
+// for an identified title).  The service decodes in exactly this order; this is the testable statement of it.
+CoverChoice chooseCover(const std::string& root, const std::string& key, const std::string& title,
+                        const std::string& datName, const std::function<bool(const std::string&)>& exists);
 
 }  // namespace lib
 }  // namespace vj

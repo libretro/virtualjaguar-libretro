@@ -21,13 +21,49 @@
 #include <string>
 
 #include "imgui.h"
+#include "theme_style.h"
 
 namespace vj {
 namespace ui {
 
+// The theme palette (theme.h) as ImGui colours: every colour the UI draws with comes from here, so it
+// reads in both the dark and the light theme.
+inline const theme::Palette& pal() { return theme::pal(); }
+inline const theme::Overlay& overlay() { return theme::overlay(); }
+inline ImVec4 vec4(theme::Color c) { return theme::toVec4(c); }
+inline ImU32 u32(theme::Color c, float alphaMul = 1.0f) { return (ImU32)c.u32(alphaMul); }
+
 inline float em(float n) { return ImGui::GetFontSize() * n; }
 
 inline ImVec2 workSize() { return ImGui::GetMainViewport()->WorkSize; }
+
+// Extra OS windows (Settings > Storage > Desktop > "Let windows move outside the main window"): on, ImGui coordinates
+// are the screen's and a window may live anywhere on any monitor, so the main window is not the limit any more.
+inline bool outsideWindowsOn() { return (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0; }
+
+// The monitor the main window is on (work area, screen coordinates); false when ImGui knows no monitors.
+inline bool mainMonitorWork(ImVec2* pos, ImVec2* size) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    const ImVec2 c = vp->GetCenter();
+    for (const ImGuiPlatformMonitor& m : ImGui::GetPlatformIO().Monitors) {
+        if (c.x >= m.MainPos.x && c.x < m.MainPos.x + m.MainSize.x && c.y >= m.MainPos.y && c.y < m.MainPos.y + m.MainSize.y) {
+            *pos = m.WorkPos;
+            *size = m.WorkSize;
+            return m.WorkSize.x > 0 && m.WorkSize.y > 0;
+        }
+    }
+    return false;
+}
+
+// How big a window may get: 95% of the main window, or of its monitor's work area when windows may leave the main one.
+inline ImVec2 maxWindowSize() {
+    ImVec2 ws = ImGui::GetMainViewport()->WorkSize;
+    if (outsideWindowsOn()) {
+        ImVec2 p, s;
+        if (mainMonitorWork(&p, &s)) ws = ImVec2(std::max(ws.x, s.x), std::max(ws.y, s.y));
+    }
+    return ImVec2(ws.x * 0.95f, ws.y * 0.95f);
+}
 
 // Width for the next control: `frac` of the space left in the window, at least `minEm`,
 // at most `maxEm`, and never more than the space left.
@@ -46,11 +82,22 @@ enum class WinFit {
 inline void nextWindow(float prefWEm, float prefHEm, float minWEm, float minHEm, WinFit fit = WinFit::Resizable) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImVec2 ws = vp->WorkSize;
-    float maxW = ws.x * 0.95f, maxH = ws.y * 0.95f;
+    const ImVec2 mx = maxWindowSize();
+    float maxW = mx.x, maxH = mx.y;
     float prefW = std::min(em(prefWEm), ws.x * 0.8f), prefH = std::min(em(prefHEm), ws.y * 0.85f);
     float minW = std::min(em(minWEm), maxW), minH = std::min(em(minHEm), maxH);
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + ws.x * 0.5f, vp->WorkPos.y + ws.y * 0.5f), ImGuiCond_FirstUseEver,
-                            ImVec2(0.5f, 0.5f));
+    ImVec2 centre(vp->WorkPos.x + ws.x * 0.5f, vp->WorkPos.y + ws.y * 0.5f);
+    if (outsideWindowsOn() && fit == WinFit::Resizable && (em(prefWEm) > ws.x * 0.8f || em(prefHEm) > ws.y * 0.85f)) {
+        // The main window is too small for this one: open it at its full size in the middle of the monitor, which
+        // is bigger than the main window, so ImGui makes it an OS window of its own.
+        ImVec2 mp, ms;
+        if (mainMonitorWork(&mp, &ms)) {
+            prefW = std::min(em(prefWEm), ms.x * 0.8f);
+            prefH = std::min(em(prefHEm), ms.y * 0.85f);
+            centre = ImVec2(mp.x + ms.x * 0.5f, mp.y + ms.y * 0.5f);
+        }
+    }
+    ImGui::SetNextWindowPos(centre, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     if (fit == WinFit::FixedWidth) {
         float w = std::min(em(prefWEm), maxW);
         ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0.0f), ImVec2(w, maxH));
@@ -65,6 +112,19 @@ inline void nextWindow(float prefWEm, float prefHEm, float minWEm, float minHEm,
 inline void keepOnScreen() {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImVec2 p = ImGui::GetWindowPos(), s = ImGui::GetWindowSize();
+    if (outsideWindowsOn()) {
+        // An extra OS window is the OS's to place (it keeps it on a monitor).  A window still in the main one is only
+        // rescued when a saved position left it on no monitor at all (a display that is gone).
+        if (ImGui::GetWindowViewport() != vp) return;
+        const ImVec2 c(p.x + s.x * 0.5f, p.y + s.y * 0.5f);
+        bool seen = false, onAny = false;
+        for (const ImGuiPlatformMonitor& m : ImGui::GetPlatformIO().Monitors) {
+            seen = true;
+            if (c.x >= m.WorkPos.x && c.x < m.WorkPos.x + m.WorkSize.x && c.y >= m.WorkPos.y && c.y < m.WorkPos.y + m.WorkSize.y)
+                onAny = true;
+        }
+        if (!seen || onAny) return;
+    }
     ImVec2 lo = vp->WorkPos, hi(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y);
     ImVec2 n(std::min(std::max(p.x, lo.x), std::max(lo.x, hi.x - s.x)),
              std::min(std::max(p.y, lo.y), std::max(lo.y, hi.y - s.y)));

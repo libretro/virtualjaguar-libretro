@@ -63,7 +63,20 @@ fill "$here/winget/Libretro.VirtualJaguar.yaml.in"        "$out/winget/Libretro.
 fill "$here/winget/Libretro.VirtualJaguar.installer.yaml.in" "$out/winget/Libretro.VirtualJaguar.installer.yaml"
 fill "$here/winget/Libretro.VirtualJaguar.locale.en-US.yaml.in" "$out/winget/Libretro.VirtualJaguar.locale.en-US.yaml"
 fill "$here/scoop/virtualjaguar.json.in"                  "$out/scoop/virtualjaguar.json"
-fill "$here/flatpak/io.github.libretro.VirtualJaguar.yml.in" "$out/flatpak/io.github.libretro.VirtualJaguar.yml"
+# Flatpak: the CI manifest (app/packaging/flatpak, a `dir` source) with its source block swapped
+# for the release tag's git source -- one manifest, two source forms, no drift.
+mkdir -p "$out/flatpak"
+awk -v ver="$version" -v commit="$commit" '
+  /# BEGIN-LOCAL-SOURCE/ { skipping = 1
+    print "      - type: git"
+    print "        url: https://github.com/libretro/virtualjaguar-libretro.git"
+    print "        tag: v" ver
+    print "        commit: " commit
+    next }
+  /# END-LOCAL-SOURCE/ { skipping = 0; next }
+  !skipping { print }' "$here/../flatpak/io.github.libretro.VirtualJaguar.yml" > "$out/flatpak/io.github.libretro.VirtualJaguar.yml"
+grep -q 'type: git' "$out/flatpak/io.github.libretro.VirtualJaguar.yml" || { echo "render.sh: flatpak source block not replaced" >&2; exit 1; }
+if grep -q '^      - type: dir' "$out/flatpak/io.github.libretro.VirtualJaguar.yml"; then echo "render.sh: flatpak manifest still has a dir source" >&2; exit 1; fi
 if grep -rn '@[A-Z_]*@' "$out" >/dev/null; then
   echo "render.sh: unfilled placeholders:" >&2; grep -rn '@[A-Z_]*@' "$out" >&2; exit 1
 fi

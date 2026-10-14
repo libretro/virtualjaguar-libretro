@@ -16,9 +16,11 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "config.h"
+#include "disc_hash.h"
 #include "http.h"
 #include "library.h"
 #include "library_service.h"
@@ -213,6 +215,29 @@ static void testThumbnailNames() {
     CHECK_EQ(lib::thumbnailMissPath("/data/", "Named_Titles", "Iron Soldier (World)"),
              "/data/thumbnails/Atari - Jaguar/Named_Titles/Iron Soldier (World).png.miss");
     CHECK(std::strcmp(lib::kThumbTypes[0], "Named_Boxarts") == 0);   // boxart is tried first
+
+    // the site mirror serves the same layout under "Atari - Jaguar CD"
+    CHECK_EQ(lib::thumbnailUrl("Named_Boxarts", "Myst (USA)", lib::kMirrorBase, lib::kThumbSystemCd),
+             "https://jaguar.provenance-emu.com/thumbnails/Atari%20-%20Jaguar%20CD/Named_Boxarts/Myst%20%28USA%29.png");
+    CHECK_EQ(lib::thumbnailCachePath("/data/", "Named_Titles", "Myst (USA)", lib::kThumbSystemCd),
+             "/data/thumbnails/Atari - Jaguar CD/Named_Titles/Myst (USA).png");   // the mirror has its own cache folder
+    CHECK_EQ(lib::thumbnailMissPath("/data/", "Named_Titles", "Myst (USA)", lib::kThumbSystemCd),
+             "/data/thumbnails/Atari - Jaguar CD/Named_Titles/Myst (USA).png.miss");
+
+    // sources: libretro-thumbnails always first; the mirror only for discs and only when set
+    std::vector<lib::ArtSource> s = lib::artSources(lib::Section::Cart, "http://up/", lib::kMirrorBase);
+    CHECK(s.size() == 1 && s[0].base == "http://up/" && std::strcmp(s[0].system, "Atari - Jaguar") == 0);
+    CHECK(s[0].missRetrySeconds == lib::kMissRetrySeconds);
+    s = lib::artSources(lib::Section::Disc, "http://up/", "http://mirror/thumbs");   // trailing slash added
+    CHECK(s.size() == 2);
+    if (s.size() == 2) {
+        CHECK(s[0].base == "http://up/" && std::strcmp(s[0].system, "Atari - Jaguar") == 0);
+        CHECK(s[1].base == "http://mirror/thumbs/" && std::strcmp(s[1].system, "Atari - Jaguar CD") == 0);
+        CHECK(std::string(s[0].system) != std::string(s[1].system));   // cache and misses are kept per source
+        CHECK(s[1].missRetrySeconds < s[0].missRetrySeconds);                  // the mirror is looked at again sooner
+    }
+    CHECK(lib::artSources(lib::Section::Disc, "http://up/", "").size() == 1);   // mirror off
+    CHECK(lib::artSources(lib::Section::Bios, "http://up/", lib::kMirrorBase).size() == 1);
 }
 
 static void testBiosClassification() {
@@ -831,6 +856,7 @@ static void testServicePipeline() {
         LibraryService svc;
         bind(svc);
         svc.artBaseUrl = srv.url();
+        svc.artMirrorUrl.clear();
         svc.dbBaseUrl = srv.url();
         svc.start(paths, cfg, true);
         CHECK(svc.show);   // a configured library opens at start when no game is loaded
@@ -861,10 +887,14 @@ static void testServicePipeline() {
         }
         CHECK(srv.totalHits() == hitsBefore);
 
-        // an unidentified entry has no art key and never touches the network
+        // an unidentified entry has no thumbnail name: it ends up Missing without ever touching the network
         lib::Entry unknown = *a;
         unknown.datName.clear();
-        CHECK(svc.art(unknown).state == ArtView::Missing);
+        unknown.file.crcWhole = 0x0BADF00Du;   // its own slot (the tile key is the checksum, not the title)
+        int hitsUnknown = srv.totalHits();
+        ArtView vu;
+        CHECK(waitFor(svc, [&] { vu = svc.art(unknown); return vu.state == ArtView::Missing; }));
+        CHECK(srv.totalHits() == hitsUnknown);
 
         // launching posts the same "open this path" event the file dialog does
         SDL_FlushEvents(SDL_EVENT_USER, SDL_EVENT_USER);
@@ -893,6 +923,7 @@ static void testServicePipeline() {
         LibraryService svc;
         bind(svc);
         svc.artBaseUrl = "http://127.0.0.1:" + std::to_string(srv.port) + "/";   // closed port
+        svc.artMirrorUrl.clear();
         svc.dbBaseUrl = svc.artBaseUrl;
         svc.start(paths, cfg, false);
         CHECK(!svc.show);
@@ -913,6 +944,7 @@ static void testServicePipeline() {
         LibraryService svc;
         bind(svc);
         svc.artBaseUrl = "http://127.0.0.1:" + std::to_string(srv.port) + "/";
+        svc.artMirrorUrl.clear();
         svc.dbBaseUrl = svc.artBaseUrl;
         svc.start(paths, cfg, false);
         CHECK(waitFor(svc, [&] { return !svc.scanning() && find(svc, name) != nullptr; }));
@@ -932,7 +964,727 @@ static void testServicePipeline() {
     }
 }
 
+
+// Disc art: libretro-thumbnails first, then the site mirror; per-source miss markers; carts never see the mirror.
+static void testCdMirror() {
+    std::string root = g_tmp + "mirror-root/";
+    std::error_code ec;
+    fs::create_directories(root + "library/db", ec);
+    std::vector<unsigned char> png = makePng(300, 400, 70);
+
+    const std::string UP = "up/", MIR = "mirror/";
+    auto pathFor = [&](const std::string& prefix, const char* system, const std::string& type, const std::string& name) {
+        return "/" + prefix + lib::urlEncode(system) + "/" + type + "/" + lib::urlEncode(lib::sanitizeThumbName(name)) + ".png";
+    };
+    auto upPath = [&](const std::string& type, const std::string& n) { return pathFor(UP, "Atari - Jaguar", type, n); };
+    auto mirPath = [&](const std::string& type, const std::string& n) { return pathFor(MIR, "Atari - Jaguar CD", type, n); };
+
+    std::mutex logM;
+    std::vector<std::string> log;                 // request order
+    std::map<std::string, std::vector<unsigned char>> have;   // paths that answer 200, with their body
+    TestServer srv;
+    CHECK(srv.start());
+    srv.handler = [&](const std::string& p) {
+        Reply r;
+        std::lock_guard<std::mutex> g(logM);
+        log.push_back(p);
+        auto it = have.find(p);
+        if (it != have.end()) r.body = it->second;
+        else r.status = 404;
+        return r;
+    };
+    auto logSize = [&] { std::lock_guard<std::mutex> g(logM); return log.size(); };
+    auto logAt = [&](size_t i) { std::lock_guard<std::mutex> g(logM); return i < log.size() ? log[i] : std::string(); };
+    auto setHave = [&](const std::string& p, const std::vector<unsigned char>* body = nullptr) {
+        std::lock_guard<std::mutex> g(logM);
+        have[p] = body ? *body : png;
+    };
+    std::vector<unsigned char> pngUp = makePng(150, 200, 40);   // upstream's copy: a different size from the mirror's
+
+    Paths paths;
+    paths.root = root;
+    struct Fake {
+        int created = 0;
+    } fake;
+    auto runSession = [&](const std::function<void(LibraryService&, Config&)>& body, const std::string& mirrorUrl) {
+        Config cfg;
+        cfg.setPath(root + "config.ini");
+        LibraryService svc;
+        svc.createTexture = [&](const void*, int, int) { return (unsigned)++fake.created; };
+        svc.destroyTexture = [](unsigned) {};
+        svc.artBaseUrl = srv.url(UP);
+        svc.artMirrorUrl = mirrorUrl;
+        svc.dbBaseUrl = srv.url();
+        svc.start(paths, cfg, false);
+        body(svc, cfg);
+        svc.stop();
+    };
+    auto waitState = [&](LibraryService& s, const lib::Entry& e, ArtView::State want) {
+        for (int i = 0; i < 400; i++) {
+            s.pump();
+            if (s.art(e).state == want) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    auto mkEntry = [&](const char* name, lib::Section sec) {
+        lib::Entry e;
+        e.section = sec;
+        e.title = e.datName = name;
+        return e;
+    };
+    auto exists = [&](const std::string& p) { return fs::exists(fs::u8path(p)); };
+    auto miss = [&](const char* type, const std::string& name, const char* system) {
+        return exists(lib::thumbnailMissPath(root, type, name, system));
+    };
+    auto ageFile = [&](const std::string& p, int days) {
+        std::error_code e2;
+        fs::last_write_time(fs::u8path(p), fs::file_time_type::clock::now() - std::chrono::hours(24 * days), e2);
+        CHECK(!e2);
+    };
+
+    const char* kB = "Named_Boxarts";
+    const char* kT = "Named_Titles";
+    const char* kS = "Named_Snaps";
+    lib::Entry onlyMirror = mkEntry("Mirror Only (USA)", lib::Section::Disc);      // upstream has nothing
+    lib::Entry upstreamWins = mkEntry("Upstream Wins (USA)", lib::Section::Disc);  // both have it
+    lib::Entry snapOnly = mkEntry("Snap Only (USA)", lib::Section::Disc);          // mirror has just a snap
+    lib::Entry nothing = mkEntry("Nothing Anywhere (USA)", lib::Section::Disc);
+    lib::Entry cart = mkEntry("Some Cart (World)", lib::Section::Cart);
+    setHave(mirPath(kB, onlyMirror.datName));
+    setHave(upPath(kB, upstreamWins.datName));
+    setHave(mirPath(kB, upstreamWins.datName));
+    setHave(mirPath(kS, snapOnly.datName));
+    setHave(mirPath(kB, cart.datName));   // must never be asked for: carts do not use the mirror
+
+    runSession([&](LibraryService& svc, Config&) {
+        // upstream misses, the mirror answers: asked in that order, cached under the shared name, one marker
+        // for the upstream miss and none for the mirror
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        CHECK(logSize() == 2);
+        CHECK_EQ(logAt(0), upPath(kB, onlyMirror.datName));
+        CHECK_EQ(logAt(1), mirPath(kB, onlyMirror.datName));
+        CHECK(exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName, lib::kThumbSystemCd)));
+        CHECK(!exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName)));   // never in upstream's folder
+        CHECK(miss(kB, onlyMirror.datName, lib::kThumbSystem));
+        CHECK(!miss(kB, onlyMirror.datName, lib::kThumbSystemCd));
+
+        // upstream has it: the mirror is never asked
+        size_t before = logSize();
+        CHECK(waitState(svc, upstreamWins, ArtView::Ready));
+        CHECK(logSize() == before + 1);
+        CHECK_EQ(logAt(before), upPath(kB, upstreamWins.datName));
+
+        // box art first from both sources, then title from both, then snap: the mirror's snap is the last resort
+        before = logSize();
+        CHECK(waitState(svc, snapOnly, ArtView::Ready));
+        CHECK(logSize() == before + 6);
+        CHECK_EQ(logAt(before + 0), upPath(kB, snapOnly.datName));
+        CHECK_EQ(logAt(before + 1), mirPath(kB, snapOnly.datName));
+        CHECK_EQ(logAt(before + 2), upPath(kT, snapOnly.datName));
+        CHECK_EQ(logAt(before + 3), mirPath(kT, snapOnly.datName));
+        CHECK_EQ(logAt(before + 4), upPath(kS, snapOnly.datName));
+        CHECK_EQ(logAt(before + 5), mirPath(kS, snapOnly.datName));
+        CHECK(miss(kB, snapOnly.datName, lib::kThumbSystemCd) && miss(kT, snapOnly.datName, lib::kThumbSystemCd));
+        CHECK(exists(lib::thumbnailCachePath(root, kS, snapOnly.datName, lib::kThumbSystemCd)));
+
+        // a cart: upstream only (3 types), the mirror untouched even though it has a file by that name
+        before = logSize();
+        CHECK(waitState(svc, cart, ArtView::Missing));
+        CHECK(logSize() == before + 3);
+        for (size_t i = before; i < logSize(); i++) CHECK(logAt(i).rfind("/up/", 0) == 0);
+
+        // nothing anywhere: Missing, six markers, and it stays quiet afterwards
+        before = logSize();
+        CHECK(waitState(svc, nothing, ArtView::Missing));
+        CHECK(logSize() == before + 6);
+        for (const char* t : {kB, kT, kS}) CHECK(miss(t, nothing.datName, lib::kThumbSystem) && miss(t, nothing.datName, lib::kThumbSystemCd));
+        size_t quiet = logSize();
+        for (int i = 0; i < 20; i++) {
+            svc.pump();
+            svc.art(nothing);
+            svc.art(onlyMirror);
+            SDL_Delay(10);
+        }
+        CHECK(logSize() == quiet);
+    }, srv.url(MIR));
+
+    // New session, nothing changed: every miss still holds, the cached art needs no request.
+    size_t base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, nothing, ArtView::Missing));
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        CHECK(waitState(svc, cart, ArtView::Missing));
+        CHECK(logSize() == base0);
+    }, srv.url(MIR));
+
+    // The mirror's misses expire after a week and only the mirror is asked again; upstream's 30-day marker holds.
+    for (const char* t : {kB, kT, kS}) ageFile(lib::thumbnailMissPath(root, t, nothing.datName, lib::kThumbSystemCd), 8);
+    setHave(mirPath(kT, nothing.datName));   // the mirror gained the title screen meanwhile
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, nothing, ArtView::Ready));
+        CHECK(logSize() >= base0 + 2);
+        for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/mirror/", 0) == 0);   // upstream untouched
+        CHECK_EQ(logAt(base0), mirPath(kB, nothing.datName));
+    }, srv.url(MIR));
+
+    // libretro-thumbnails gains the art later: its 30-day marker expires and upstream wins over the mirror's file.
+    lib::Entry late = mkEntry("Late Upstream (USA)", lib::Section::Disc);
+    runSession([&](LibraryService& svc, Config&) { CHECK(waitState(svc, late, ArtView::Missing)); }, srv.url(MIR));
+    for (const char* t : {kB, kT, kS}) ageFile(lib::thumbnailMissPath(root, t, late.datName, lib::kThumbSystem), 31);
+    setHave(upPath(kB, late.datName));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, late, ArtView::Ready));
+        CHECK(logSize() == base0 + 1);
+        CHECK_EQ(logAt(base0), upPath(kB, late.datName));
+    }, srv.url(MIR));
+
+    // Mirror art cached, then libretro-thumbnails gains the same picture: once its 30-day marker expires the
+    // upstream copy is fetched, cached in its own folder, and shown from then on instead of the mirror's.
+    ageFile(lib::thumbnailMissPath(root, kB, onlyMirror.datName), 31);
+    setHave(upPath(kB, onlyMirror.datName), &pngUp);
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        ArtView v;
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        v = svc.art(onlyMirror);
+        CHECK(v.w == 150 && v.h == 200);   // upstream's picture, not the mirror's 300x400 (256 px cap: 192x256)
+        CHECK(logSize() == base0 + 1);
+        CHECK_EQ(logAt(base0), upPath(kB, onlyMirror.datName));
+        CHECK(exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName)));
+        CHECK(exists(lib::thumbnailCachePath(root, kB, onlyMirror.datName, lib::kThumbSystemCd)));   // kept, but outranked
+    }, srv.url(MIR));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {   // and it stays that way offline
+        CHECK(waitState(svc, onlyMirror, ArtView::Ready));
+        ArtView v = svc.art(onlyMirror);
+        CHECK(v.w == 150 && v.h == 200);
+        CHECK(logSize() == base0);
+    }, srv.url(MIR));
+
+    // Mirror switched off (empty base): upstream only.  Downloads off: nothing asked at all.
+    lib::Entry off = mkEntry("Mirror Off (USA)", lib::Section::Disc);
+    setHave(mirPath(kB, off.datName));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, off, ArtView::Missing));
+        CHECK(logSize() == base0 + 3);
+        for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/up/", 0) == 0);
+    }, "");
+    lib::Entry noNet = mkEntry("Downloads Off (USA)", lib::Section::Disc);
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        svc.setDownloadArt(false);
+        CHECK(waitState(svc, noNet, ArtView::Missing));
+        CHECK(logSize() == base0);
+    }, srv.url(MIR));
+
+    // Config: absent = the site default, present = as written, empty = off.
+    {
+        Config cfg;
+        cfg.setPath(root + "config2.ini");
+        LibraryService a;
+        CHECK_EQ(a.artMirrorUrl, std::string(lib::kMirrorBase));
+        a.start(paths, cfg, false);
+        CHECK_EQ(a.artMirrorUrl, std::string(lib::kMirrorBase));
+        a.stop();
+        cfg.set("library.art_mirror", "http://example.invalid/t/");
+        LibraryService b;
+        b.start(paths, cfg, false);
+        CHECK_EQ(b.artMirrorUrl, std::string("http://example.invalid/t/"));
+        b.stop();
+        cfg.set("library.art_mirror", "");
+        LibraryService c;
+        c.start(paths, cfg, false);
+        CHECK(c.artMirrorUrl.empty());
+        c.stop();
+    }
+    srv.stop();
+}
+
 #endif  // !_WIN32
+
+// ---- covers (#838): display names, tile keys, precedence, the service ---------------------------------------------------
+
+static std::vector<unsigned char> makeCoverPng(const std::string& name, int w, int h, unsigned char shade) {
+    SDL_Surface* s = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    SDL_FillSurfaceRect(s, nullptr, SDL_MapSurfaceRGBA(s, shade, 100, 200, 255));
+    std::string path = g_tmp + name;
+    SDL_SavePNG(s, path.c_str());
+    SDL_DestroySurface(s);
+    std::vector<unsigned char> out;
+    readFile(path, out);
+    return out;
+}
+
+static void testDiscTitles() {
+    CHECK_EQ(lib::titleFromDiscStem("Myst (USA) (Track 1)"), "Myst (USA)");
+    CHECK_EQ(lib::titleFromDiscStem("Myst_(USA)_(Track_01)"), "Myst (USA)");
+    CHECK_EQ(lib::titleFromDiscStem("Battlemorph [Track 1]"), "Battlemorph");
+    CHECK_EQ(lib::titleFromDiscStem("Highlander - Track 01"), "Highlander");
+    CHECK_EQ(lib::titleFromDiscStem("Space Ace.bin"), "Space Ace");
+    CHECK_EQ(lib::titleFromDiscStem("Dragons Lair (Track 1).bin"), "Dragons Lair");
+    CHECK_EQ(lib::titleFromDiscStem("Blue   Lightning"), "Blue Lightning");
+    // kept: multi-disc and revision tags tell releases apart, and a title may end in "Track 2"
+    CHECK_EQ(lib::titleFromDiscStem("Primal Rage (Disc 2)"), "Primal Rage (Disc 2)");
+    CHECK_EQ(lib::titleFromDiscStem("Baldies (Rev 1)"), "Baldies (Rev 1)");
+    CHECK_EQ(lib::titleFromDiscStem("Super Track 2"), "Super Track 2");
+    CHECK_EQ(lib::titleFromDiscStem("Track 1"), "Track 1");        // never reduced to nothing
+    CHECK_EQ(lib::titleFromDiscStem("(Track 1)"), "(Track 1)");
+
+    lib::ScanFile f;
+    f.path = "/rips/Unlisted Disc (USA) (Track 1).cue";
+    f.kind = lib::Kind::Disc;
+    lib::Entry e = lib::identify(f, nullptr, nullptr);
+    CHECK_EQ(e.title, "Unlisted Disc (USA)");
+    CHECK(e.datName.empty() && e.section == lib::Section::Disc);
+    f.path = "/carts/Some_Cart_(Track 1).j64";   // carts keep the plain rule: "(Track 1)" is not noise there
+    f.kind = lib::Kind::Cart;
+    CHECK_EQ(lib::identify(f, nullptr, nullptr).title, "Some Cart (Track 1)");
+}
+
+static void testCoverLookup() {
+    lib::Entry e;
+    e.datName = "Pipeline: Test & Co (World)";
+    e.title = e.datName;
+    CHECK_EQ(lib::coverKey(e), e.datName);
+    e.datName.clear();
+    e.file.path = "/rips/a.cue";
+    e.file.crcWhole = 0xABCDEF01u;
+    CHECK_EQ(lib::coverKey(e), "crc-ABCDEF01");   // a content fingerprint: survives moving the folder
+    e.file.path = "/elsewhere/renamed.cue";
+    CHECK_EQ(lib::coverKey(e), "crc-ABCDEF01");
+    e.file.crcWhole = 0;
+    std::string k1 = lib::coverKey(e);
+    CHECK(k1.rfind("path-", 0) == 0 && k1.size() == 5 + 8);
+    e.file.path = "/elsewhere/other.chd";
+    CHECK(lib::coverKey(e) != k1);
+
+    CHECK_EQ(lib::customCoverPath("/d/", "Ecco: The Tides"), "/d/covers/custom/Ecco_ The Tides.png");
+    CHECK_EQ(lib::localCoverPath("/d/", "A/B? (USA)"), "/d/covers/A_B_ (USA).png");
+    CHECK_EQ(lib::localCoverPath("/d/", ".."), "/d/covers/_.png");   // no escaping the folder
+    CHECK_EQ(lib::localCoverPath("/d/", "Game. "), "/d/covers/Game.png");
+
+    // precedence: custom > local folder (dat name, then shown name) > downloaded > nothing
+    std::set<std::string> have;
+    auto exists = [&](const std::string& p) { return have.count(p) != 0; };
+    const std::string root = "/d/", key = "Dat Name (USA)", title = "Shown Name", dat = "Dat Name (USA)";
+    CHECK(lib::chooseCover(root, key, title, dat, exists).source == lib::CoverSource::None);
+    have.insert(lib::thumbnailCachePath(root, "Named_Snaps", dat));
+    lib::CoverChoice c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Snaps", dat));
+    // a disc's copy from the site mirror counts too, and libretro-thumbnails' copy of the same type wins over it
+    have.insert(lib::thumbnailCachePath(root, "Named_Boxarts", dat, lib::kThumbSystemCd));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Boxarts", dat, lib::kThumbSystemCd));
+    have.insert(lib::thumbnailCachePath(root, "Named_Boxarts", dat));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Downloaded && c.path == lib::thumbnailCachePath(root, "Named_Boxarts", dat));
+    have.erase(lib::thumbnailCachePath(root, "Named_Boxarts", dat));
+    have.erase(lib::thumbnailCachePath(root, "Named_Boxarts", dat, lib::kThumbSystemCd));
+    have.insert(lib::localCoverPath(root, title));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::LocalFolder && c.path == lib::localCoverPath(root, title));
+    have.insert(lib::localCoverPath(root, dat));   // the dat name outranks the shown name
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::LocalFolder && c.path == lib::localCoverPath(root, dat));
+    have.insert(lib::customCoverPath(root, key));
+    c = lib::chooseCover(root, key, title, dat, exists);
+    CHECK(c.source == lib::CoverSource::Custom && c.path == lib::customCoverPath(root, key));
+    // an unidentified tile never counts a downloaded thumbnail, and has no dat-name local lookup
+    have.clear();
+    have.insert(lib::thumbnailCachePath(root, "Named_Boxarts", title));
+    CHECK(lib::chooseCover(root, "crc-00000001", title, "", exists).source == lib::CoverSource::None);
+    have.insert(lib::localCoverPath(root, title));
+    CHECK(lib::chooseCover(root, "crc-00000001", title, "", exists).source == lib::CoverSource::LocalFolder);
+}
+
+static void testCoverService() {
+    std::string root = g_tmp + "cover-root/";
+    std::string games = g_tmp + "cover-games/";
+    std::error_code ec;
+    fs::create_directories(root + "library/db", ec);
+    std::vector<unsigned char> u1 = noise(2352 * 30, 31), d1 = noise(2352 * 30, 32);
+    writeBytes(games + "Unlisted Disc (USA) (Track 1).bin", u1);
+    writeText(games + "Unlisted Disc (USA).cue",
+              "FILE \"Unlisted Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    writeBytes(games + "Listed Disc (USA) (Track 1).bin", d1);
+    writeText(games + "Listed Disc (USA).cue",
+              "FILE \"Listed Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    writeBytes(games + "Image Only (USA).chd", noise(4096, 33));   // .chd: never hashed, keyed by path
+    writeText(root + "library/db/Atari - Jaguar CD.dat",
+              datText("2099.01.01", datGame("Listed Disc (USA)", "Listed Disc (USA) (Track 1).bin", crcOf(d1)) +
+                                        datGame("F1", "x", 1) + datGame("F2", "x", 2) + datGame("F3", "x", 3) + datGame("F4", "x", 4)));
+    writeText(root + "not-a-png.png", "this is not an image, just text that is long enough to pass for a file");
+
+    Paths paths;
+    paths.root = root;
+    Config cfg;
+    cfg.setPath(root + "config.ini");
+    cfg.set("library.dir.0", games.substr(0, games.size() - 1));
+    struct Fake {
+        int created = 0, destroyed = 0, lastW = 0, lastH = 0;
+    } fake;
+    LibraryService svc;
+    svc.createTexture = [&](const void*, int w, int h) { fake.created++; fake.lastW = w; fake.lastH = h; return (unsigned)fake.created; };
+    svc.destroyTexture = [&](unsigned) { fake.destroyed++; };
+    svc.artBaseUrl = "http://127.0.0.1:1/";   // nothing listens: any request would fail loudly
+    svc.artMirrorUrl = svc.artBaseUrl;
+    svc.dbBaseUrl = svc.artBaseUrl;
+    svc.start(paths, cfg, false);
+    svc.setDownloadArt(false);
+    auto pumpUntil = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            svc.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    auto find = [&](const std::string& title) {
+        lib::Entry e;
+        for (const lib::Entry& x : svc.entries())
+            if (x.title == title) e = x;
+        return e;   // a copy: a rescan rebuilds the list
+    };
+    CHECK(pumpUntil([&] { return !svc.scanning() && svc.entries().size() == 3; }));
+    lib::Entry un = find("Unlisted Disc (USA)"), listed = find("Listed Disc (USA)"), chd = find("Image Only (USA)");
+    CHECK(!un.file.path.empty() && !listed.file.path.empty() && !chd.file.path.empty());
+    CHECK(un.datName.empty() && listed.match == lib::Match::Crc && chd.datName.empty());
+    CHECK(lib::coverKey(un).rfind("crc-", 0) == 0 && lib::coverKey(chd).rfind("path-", 0) == 0);
+
+    // nothing anywhere: Missing, for the unidentified and for the identified (downloads are off)
+    ArtView v;
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Missing; }));
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Missing; }));
+    CHECK(!svc.netBusy());
+
+    // 1. a PNG named after the game in <data>/covers/ (Rescan makes tiles look again)
+    makeCoverPng("local.png", 40, 80, 10);
+    fs::create_directories(fs::u8path(root + "covers"), ec);
+    fs::copy_file(fs::u8path(g_tmp + "local.png"), fs::u8path(root + "covers/Unlisted Disc (USA).png"), fs::copy_options::overwrite_existing, ec);
+    CHECK(!ec);
+    svc.rescan();
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready; }));
+    CHECK(v.w == 40 && v.h == 80);
+    lib::Entry un2 = find("Unlisted Disc (USA)");   // a rescan rebuilds entries: the key is unchanged
+    CHECK(pumpUntil([&] { return !svc.scanning(); }));
+    un = find("Unlisted Disc (USA)");
+    listed = find("Listed Disc (USA)");
+    chd = find("Image Only (USA)");
+
+    // 2. a cover set on the tile beats the folder; remove goes back to the folder's
+    makeCoverPng("mine.png", 90, 30, 200);
+    CHECK(!svc.hasCustomCover(un));
+    CHECK(svc.setCover(un, g_tmp + "mine.png"));
+    CHECK(svc.hasCustomCover(un));
+    CHECK(fs::exists(fs::u8path(lib::customCoverPath(root, lib::coverKey(un)))));
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready && v.w == 90; }));
+    CHECK(v.h == 30);
+    int destroyedBefore = fake.destroyed;
+    svc.removeCover(un);
+    CHECK(!svc.hasCustomCover(un));
+    CHECK(fake.destroyed > destroyedBefore);   // the old texture went away with the cover
+    CHECK(pumpUntil([&] { v = svc.art(un); return v.state == ArtView::Ready && v.w == 40; }));
+    CHECK(v.h == 80);
+    CHECK(fs::exists(fs::u8path(root + "covers/Unlisted Disc (USA).png")));   // the user's own file is never deleted
+
+    // 3. identified: custom > downloaded cache (downloads off, so only what is on disk counts)
+    std::string cached = lib::thumbnailCachePath(root, "Named_Boxarts", listed.datName);
+    makeCoverPng("cached.png", 64, 64, 50);
+    fs::create_directories(fs::u8path(cached).parent_path(), ec);
+    fs::copy_file(fs::u8path(g_tmp + "cached.png"), fs::u8path(cached), fs::copy_options::overwrite_existing, ec);
+    CHECK(!ec);
+    svc.rescan();   // the earlier Missing is forgotten
+    CHECK(pumpUntil([&] { return !svc.scanning(); }));
+    listed = find("Listed Disc (USA)");
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready; }));
+    CHECK(v.w == 64 && v.h == 64);   // downloaded
+    makeCoverPng("tiny.png", 20, 20, 120);
+    CHECK(svc.setCover(listed, g_tmp + "tiny.png"));
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready && v.w == 20; }));
+    CHECK(fs::exists(fs::u8path(lib::customCoverPath(root, "Listed Disc (USA)"))));
+    svc.removeCover(listed);
+    CHECK(pumpUntil([&] { v = svc.art(listed); return v.state == ArtView::Ready && v.w == 64; }));
+
+    // 4. an image the decoder cannot read is refused and leaves nothing behind
+    chd = find("Image Only (USA)");
+    CHECK(!svc.setCover(chd, root + "not-a-png.png"));
+    CHECK(svc.status().find("PNG") != std::string::npos);
+    CHECK(!svc.hasCustomCover(chd));
+    CHECK(!svc.setCover(chd, root + "does-not-exist.png"));
+    CHECK(svc.setCover(chd, g_tmp + "mine.png"));   // .chd tiles are keyed by their path
+    CHECK(pumpUntil([&] { v = svc.art(chd); return v.state == ArtView::Ready && v.w == 90; }));
+
+    // 5. finding the tile under a dropped file
+    svc.tiles.clear();
+    svc.tilesFrame = 100;
+    LibraryService::CoverTile t;
+    t.x0 = 10; t.y0 = 20; t.x1 = 110; t.y1 = 160; t.key = "k1"; t.title = "T1";
+    svc.tiles.push_back(t);
+    t.x0 = 120; t.x1 = 220; t.key = "k2";
+    svc.tiles.push_back(t);
+    CHECK(svc.tileAt(50, 50, 100) && svc.tileAt(50, 50, 100)->key == "k1");
+    CHECK(svc.tileAt(130, 159, 101) && svc.tileAt(130, 159, 101)->key == "k2");
+    CHECK(!svc.tileAt(115, 50, 100));    // the gap between tiles
+    CHECK(!svc.tileAt(50, 160, 100));    // the far edge is outside
+    CHECK(!svc.tileAt(50, 50, 200));     // the grid has not been drawn for a while: nothing is under the pointer
+    svc.stop();
+}
+
+// ---- disc identification: name matching, .chd and .cdi track-1 checksums --------------------------------------------
+
+static void testLooseNames() {
+    CHECK_EQ(lib::normalizeDiscName("Dragon's Lair (USA) (Track 1)"), "dragons lair");
+    CHECK_EQ(lib::normalizeDiscName("Myst_(USA)_[Disc 1] - Redump"), "myst redump");
+    CHECK_EQ(lib::normalizeDiscName("  Blue  Lightning!! (Europe)  "), "blue lightning");
+    CHECK_EQ(lib::normalizeDiscName("Highlander - The Last of the MacLeods"), "highlander the last of the macleods");
+    CHECK_EQ(lib::normalizeDiscName("(USA)"), "");
+    CHECK_EQ(lib::normalizeDiscName("Unclosed (group"), "unclosed");
+
+    lib::Dat dat;
+    CHECK(dat.parse(datText("1", datGame("Myst (USA)", "a", 1) + datGame("Dragon's Lair (USA)", "b", 2) +
+                                     datGame("Highlander - The Last of the MacLeods (USA)", "c", 3) +
+                                     datGame("Primal Rage (USA) (Disc 1)", "d", 4) + datGame("Primal Rage (USA) (Disc 2)", "e", 5) +
+                                     datGame("Space Ace (USA)", "f", 6) + datGame("Space Ace Gold (USA)", "g", 7) +
+                                     datGame("Blue Lightning (USA)", "h", 8))));
+    auto title = [&](const char* stem, const char* folder = "") {
+        int how = 0;
+        const lib::DatGame* g = dat.byLooseName(stem, folder, &how);
+        return g ? g->name : std::string("-");
+    };
+    CHECK_EQ(title("Myst"), "Myst (USA)");                          // region and track tags do not matter
+    CHECK_EQ(title("myst (europe) (track 01)"), "Myst (USA)");
+    CHECK_EQ(title("Dragons Lair"), "Dragon's Lair (USA)");         // punctuation does not matter
+    CHECK_EQ(title("DRAGON'S_LAIR"), "Dragon's Lair (USA)");
+    CHECK_EQ(title("Space Ace"), "Space Ace (USA)");                // the exact title beats a longer one
+    CHECK_EQ(title("Highlander"), "Highlander - The Last of the MacLeods (USA)");   // a unique start of a title
+    CHECK_EQ(title("Primal Rage"), "-");                            // two discs share the title: no guess
+    CHECK_EQ(title("Primal Rage (Disc 2)"), "-");
+    CHECK_EQ(title("Space"), "-");                                  // starts two titles
+    CHECK_EQ(title("Spa"), "-");                                    // too short for a prefix match
+    CHECK_EQ(title("Myst Masterpiece Edition"), "-");               // longer than the dat title: not a match
+    CHECK_EQ(title("disc", "Myst (USA)"), "Myst (USA)");            // the folder name when the file says nothing
+    CHECK_EQ(title("disc", "Highlander"), "-");                     // a folder name must match exactly
+    CHECK_EQ(title("Space Ace", "Myst"), "Space Ace (USA)");        // the file name wins over the folder
+    int how = 0;
+    dat.byLooseName("disc", "Myst", &how);
+    CHECK(how == 2);
+    dat.byLooseName("Highlander", "", &how);
+    CHECK(how == 3);
+
+    // identify(): a disc whose checksum is not in the dat is matched by name; a cart is not touched by it
+    lib::ScanFile f;
+    f.kind = lib::Kind::Disc;
+    f.path = "/rips/Myst (USA)/disc.cue";
+    f.crcWhole = 0x12345678u;   // not Redump's
+    lib::Entry e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Name && e.datName == "Myst (USA)" && e.how == "folder name");
+    f.path = "/rips/Space.chd";
+    f.crcWhole = 0;
+    e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Unknown && e.how == "not identified" && e.title == "Space");
+    f.path = "/rips/x.cue";
+    f.crcWhole = 6;   // the dat's crc for Space Ace
+    e = lib::identify(f, nullptr, &dat);
+    CHECK(e.match == lib::Match::Crc && e.datName == "Space Ace (USA)" && e.how.find("track 1") != std::string::npos);
+    f.kind = lib::Kind::Cart;
+    f.path = "/carts/Myst (USA).j64";
+    f.crcWhole = 0;
+    CHECK(lib::identify(f, &dat, nullptr).match == lib::Match::Name);   // the plain name rule
+    f.path = "/carts/Highlander.j64";
+    CHECK(lib::identify(f, &dat, nullptr).match == lib::Match::Unknown);   // carts do not get the loose rule
+}
+
+static void putBE(std::vector<unsigned char>& v, size_t off, uint64_t x, int bytes) {
+    for (int i = 0; i < bytes; i++) v[off + (size_t)i] = (unsigned char)(x >> (8 * (bytes - 1 - i)));
+}
+
+struct SynthTrack {
+    std::string type;                    // AUDIO, MODE1_RAW
+    int frames = 0, pregap = 0;
+    std::string pgtype = "MODE1";        // "VAUDIO" = virtual
+    std::vector<unsigned char> stored;   // frames * 2352 bytes, in the order the CHD keeps them
+};
+
+// A minimal uncompressed CHD v5 for CDs: 4 frames per hunk, 2448-byte frames (the subcode is filled with 0xEE
+// so a read that includes it shows), tracks padded to 4 frames, CHT2 track metadata and optionally CHSE.
+static bool writeSynthChd(const std::string& path, const std::vector<SynthTrack>& tracks, bool chse) {
+    const uint32_t hunkFrames = 4, hunkBytes = 2448 * hunkFrames;
+    std::vector<unsigned char> frames;
+    for (const SynthTrack& t : tracks) {
+        uint32_t padded = ((uint32_t)t.frames + 3) / 4 * 4;
+        for (uint32_t i = 0; i < padded; i++) {
+            std::vector<unsigned char> fr(2448, 0xEE);
+            if (i < (uint32_t)t.frames) std::memcpy(fr.data(), t.stored.data() + (size_t)i * 2352, 2352);
+            else std::fill(fr.begin(), fr.begin() + 2352, 0);
+            frames.insert(frames.end(), fr.begin(), fr.end());
+        }
+    }
+    const uint32_t hunks = (uint32_t)(frames.size() / hunkBytes);
+    std::vector<std::string> md;
+    if (chse) md.push_back("SESSION:1");
+    for (size_t i = 0; i < tracks.size(); i++) {
+        char b[200];
+        std::snprintf(b, sizeof b, "TRACK:%d TYPE:%s SUBTYPE:NONE FRAMES:%d PREGAP:%d PGTYPE:%s PGSUB:NONE POSTGAP:0", (int)i + 1,
+                      tracks[i].type.c_str(), tracks[i].frames, tracks[i].pregap, tracks[i].pgtype.c_str());
+        md.push_back(b);
+    }
+    const uint64_t mapOff = 124, metaOff = mapOff + (uint64_t)hunks * 4;
+    uint64_t metaEnd = metaOff;
+    for (const std::string& m : md) metaEnd += 16 + m.size() + 1;
+    const uint64_t dataStart = (metaEnd + hunkBytes - 1) / hunkBytes * hunkBytes;
+    std::vector<unsigned char> f((size_t)(dataStart + frames.size()), 0);
+    std::memcpy(f.data(), "MComprHD", 8);
+    putBE(f, 8, 124, 4);
+    putBE(f, 12, 5, 4);
+    putBE(f, 32, frames.size(), 8);
+    putBE(f, 40, mapOff, 8);
+    putBE(f, 48, metaOff, 8);
+    putBE(f, 56, hunkBytes, 4);
+    putBE(f, 60, 2448, 4);
+    for (uint32_t h = 0; h < hunks; h++) putBE(f, (size_t)mapOff + h * 4, dataStart / hunkBytes + h, 4);
+    uint64_t at = metaOff;
+    for (size_t i = 0; i < md.size(); i++) {
+        const uint32_t tag = md[i].compare(0, 7, "SESSION") == 0 ? 0x43485345u : 0x43485432u;   // CHSE / CHT2
+        const uint64_t len = md[i].size() + 1, next = i + 1 < md.size() ? at + 16 + len : 0;
+        putBE(f, (size_t)at, tag, 4);
+        putBE(f, (size_t)at + 4, len, 4);   // flags 0, 24-bit length
+        putBE(f, (size_t)at + 8, next, 8);
+        std::memcpy(f.data() + at + 16, md[i].c_str(), len);
+        at += 16 + len;
+    }
+    std::memcpy(f.data() + dataStart, frames.data(), frames.size());
+    writeBytes(path, f);
+    return true;
+}
+
+static std::vector<unsigned char> swapWords(std::vector<unsigned char> v) {
+    for (size_t i = 0; i + 1 < v.size(); i += 2) std::swap(v[i], v[i + 1]);
+    return v;
+}
+
+static void testChdAndCdiChecksums() {
+    std::string dir = g_tmp + "discs/";
+    std::atomic<bool> noCancel{false};
+
+    // the Redump .bin of track 1 (an audio track: bin files hold word-swapped samples), 10 sectors
+    std::vector<unsigned char> bin1 = noise(2352 * 10, 61);
+    std::vector<unsigned char> data2 = noise(2352 * 5, 62);
+    SynthTrack t1;
+    t1.type = "AUDIO";
+    t1.frames = 10;
+    t1.stored = swapWords(bin1);   // the CHD keeps host-order PCM
+    SynthTrack t2;
+    t2.type = "MODE1_RAW";
+    t2.frames = 5;
+    t2.stored = data2;
+    writeSynthChd(dir + "good.chd", {t1, t2}, true);
+    uint32_t crc = 0;
+    CHECK(lib::crcOfChdTrack1(dir + "good.chd", crc, &noCancel));
+    CHECK_EQ(hex8(crc), hex8(crcOf(bin1)));   // exactly the Redump bin's CRC32
+
+    // a virtual pregap is not part of the .bin: 3 silent frames the CHD counts but a bin does not have
+    std::vector<unsigned char> real7 = noise(2352 * 7, 63);
+    SynthTrack v1;
+    v1.type = "AUDIO";
+    v1.frames = 10;
+    v1.pregap = 3;
+    v1.pgtype = "VAUDIO";
+    v1.stored = std::vector<unsigned char>(2352 * 3, 0);
+    std::vector<unsigned char> sw = swapWords(real7);
+    v1.stored.insert(v1.stored.end(), sw.begin(), sw.end());
+    writeSynthChd(dir + "vpregap.chd", {v1, t2}, true);
+    CHECK(lib::crcOfChdTrack1(dir + "vpregap.chd", crc, &noCancel));
+    CHECK_EQ(hex8(crc), hex8(crcOf(real7)));
+
+    // the core refuses several audio tracks with no session metadata, so it is not hashed either
+    SynthTrack a2 = t1;
+    writeSynthChd(dir + "nochse.chd", {t1, a2}, false);
+    crc = 0xDEADBEEF;
+    CHECK(!lib::crcOfChdTrack1(dir + "nochse.chd", crc, &noCancel) && crc == 0xDEADBEEF);
+    writeBytes(dir + "junk.chd", noise(4096, 64));
+    CHECK(!lib::crcOfChdTrack1(dir + "junk.chd", crc, &noCancel));
+    CHECK(!lib::crcOfChdTrack1(dir + "missing.chd", crc, &noCancel));
+    std::atomic<bool> cancelled{true};
+    CHECK(!lib::crcOfChdTrack1(dir + "good.chd", crc, &cancelled));
+
+    // .cdi (V3.5): track 1 data after its 2-sector pregap, then the descriptor and the trailer
+    {
+        std::vector<unsigned char> img = noise(2352 * 2, 65);   // pregap sectors
+        img.insert(img.end(), bin1.begin(), bin1.end());
+        std::vector<unsigned char> hdr;
+        auto u16 = [&](unsigned x) { hdr.push_back((unsigned char)x); hdr.push_back((unsigned char)(x >> 8)); };
+        auto u32 = [&](uint32_t x) { u16(x & 0xFFFF); u16(x >> 16); };
+        u16(1);   // sessions
+        u16(1);   // tracks in session 1
+        u32(0);   // not the extended format
+        const unsigned char marker[20] = {0, 0, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF};
+        hdr.insert(hdr.end(), marker, marker + 20);
+        hdr.insert(hdr.end(), 4, 0);
+        hdr.push_back(0);                // empty file name
+        hdr.insert(hdr.end(), 19, 0);
+        u32(0);
+        hdr.insert(hdr.end(), 2, 0);     // index count
+        std::vector<unsigned char> td(0x57, 0);
+        auto put32 = [&](size_t o, uint32_t x) { for (int i = 0; i < 4; i++) td[o + (size_t)i] = (unsigned char)(x >> (8 * i)); };
+        put32(0x00, 2);    // pregap
+        put32(0x04, 10);   // length
+        put32(0x0e, 0);    // mode: audio
+        put32(0x22, 12);
+        put32(0x36, 2);    // 2352-byte sectors
+        hdr.insert(hdr.end(), td.begin(), td.end());
+        hdr.insert(hdr.end(), 64, 0);    // the rest of the descriptor
+        std::vector<unsigned char> file = img;
+        const size_t hdrAt = file.size();
+        file.insert(file.end(), hdr.begin(), hdr.end());
+        const uint32_t total = (uint32_t)file.size() + 8;
+        for (int i = 0; i < 4; i++) file.push_back((unsigned char)(0x80000006u >> (8 * i)));
+        const uint32_t fromEnd = total - (uint32_t)hdrAt;
+        for (int i = 0; i < 4; i++) file.push_back((unsigned char)(fromEnd >> (8 * i)));
+        writeBytes(dir + "good.cdi", file);
+        crc = 0;
+        CHECK(lib::crcOfCdiTrack1(dir + "good.cdi", crc, &noCancel));
+        CHECK_EQ(hex8(crc), hex8(crcOf(bin1)));
+        writeBytes(dir + "junk.cdi", noise(8192, 66));
+        CHECK(!lib::crcOfCdiTrack1(dir + "junk.cdi", crc, &noCancel));
+    }
+
+    // the scanner hashes both, identify() matches them to the dat by checksum, and the cache keeps the result
+    lib::Dat discs;
+    CHECK(discs.parse(datText("1", datGame("Synth Audio One (USA)", "Synth Audio One (USA) (Track 1).bin", crcOf(bin1)) +
+                                       datGame("Other (USA)", "o", 9))));
+    lib::ScanOptions opt;
+    opt.folders = {dir};
+    std::vector<lib::ScanFile> files = lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr);
+    int hashed = 0;
+    for (const lib::ScanFile& sf : files) {
+        const std::string name = fs::path(sf.path).filename().string();
+        lib::Entry e = lib::identify(sf, nullptr, &discs);
+        if (name == "good.chd" || name == "good.cdi") {
+            CHECK(sf.crcWhole == crcOf(bin1) && e.match == lib::Match::Crc && e.datName == "Synth Audio One (USA)");
+            hashed++;
+        } else {
+            CHECK(sf.crcWhole == 0 || name == "vpregap.chd");
+            CHECK(e.match != lib::Match::Crc);
+        }
+    }
+    CHECK(hashed == 2);
+    lib::ScanCache cache = lib::parseCache(lib::serializeCache(files));
+    CHECK(cache.size() == files.size());
+    for (const lib::ScanFile& sf : files)
+        if (sf.path.size() > 8 && sf.path.substr(sf.path.size() - 8) == "good.chd")
+            CHECK(cache[sf.path].crcWhole == sf.crcWhole && cache[sf.path].hashed);
+
+    // an old (VJLIB1) cache: disc images without a checksum are hashed again, carts and hashed discs are kept
+    std::string old = "VJLIB1\n/x/a.chd\tD\t10\t5\t00000000\t00000000\n/x/b.cue\tD\t10\t5\t0000ABCD\t00000000\n/x/c.j64\tC\t10\t5\t00000000\t00000000\n";
+    lib::ScanCache oc = lib::parseCache(old);
+    CHECK(oc.size() == 3 && !oc["/x/a.chd"].hashed && oc["/x/b.cue"].hashed && oc["/x/c.j64"].hashed);
+    lib::ScanCache nc = lib::parseCache("VJLIB2\n/x/a.chd\tD\t10\t5\t00000000\t00000000\n");
+    CHECK(nc.size() == 1 && nc["/x/a.chd"].hashed);   // an unhashable image is remembered as such
+}
 
 // ---- dev tool -------------------------------------------------------------------------------------------------------
 
@@ -967,6 +1719,577 @@ static int scanTool(const std::string& dir, const std::string& dbDir) {
     return 0;
 }
 
+
+// ---- favorites, recently played, display options, tabs, save states (the library's personal lists) -----------
+
+static lib::Entry fakeEntry(const std::string& path, const std::string& title, uint32_t crc, const std::string& datName = "",
+                            lib::Kind kind = lib::Kind::Cart) {
+    lib::Entry e;
+    e.file.path = path;
+    e.file.kind = kind;
+    e.file.crcWhole = crc;
+    e.title = title;
+    e.datName = datName;
+    e.section = kind == lib::Kind::Disc ? lib::Section::Disc : lib::Section::Cart;
+    return e;
+}
+
+static void testDisplayOptionsAndTabs() {
+    using namespace lib;
+    CHECK(!showsTab(ShowHidden) && !showsStrip(ShowHidden));
+    CHECK(showsTab(ShowTab) && !showsStrip(ShowTab));
+    CHECK(!showsTab(ShowSections) && showsStrip(ShowSections));
+    CHECK(showsTab(ShowBoth) && showsStrip(ShowBoth));
+    CHECK(clampShowAs(7, ShowBoth) == ShowBoth && clampShowAs(-1, ShowTab) == ShowTab && clampShowAs(0, ShowBoth) == ShowHidden);
+    CHECK(kFavoritesDefault == ShowBoth && kRecentsDefault == ShowBoth);
+    for (int m = 0; m < kShowAsCount; m++) CHECK(std::strlen(showAsLabel(m)) > 0);
+
+    // tab order: Cartridges, Jaguar CD, [Favorites], [Recently played], Save states, BIOS & system
+    std::vector<int> v = visibleTabs(ShowBoth, ShowBoth);
+    CHECK(v == std::vector<int>({TabCart, TabDisc, TabFavorites, TabRecents, TabStates, TabBios}));
+    v = visibleTabs(ShowSections, ShowHidden);   // strips only: no tab for either
+    CHECK(v == std::vector<int>({TabCart, TabDisc, TabStates, TabBios}));
+    v = visibleTabs(ShowHidden, ShowTab);
+    CHECK(v == std::vector<int>({TabCart, TabDisc, TabRecents, TabStates, TabBios}));
+    // the remembered tab that is no longer shown falls back to Cartridges; the others stay
+    CHECK(effectiveTab(TabFavorites, ShowHidden, ShowBoth) == TabCart);
+    CHECK(effectiveTab(TabFavorites, ShowSections, ShowBoth) == TabCart);
+    CHECK(effectiveTab(TabFavorites, ShowTab, ShowHidden) == TabFavorites);
+    CHECK(effectiveTab(TabRecents, ShowBoth, ShowTab) == TabRecents);
+    CHECK(effectiveTab(TabBios, ShowHidden, ShowHidden) == TabBios && effectiveTab(TabStates, ShowHidden, ShowHidden) == TabStates);
+    CHECK(effectiveTab(99, ShowBoth, ShowBoth) == TabCart && effectiveTab(-3, ShowBoth, ShowBoth) == TabCart);
+    CHECK_EQ(tabName(TabRecents), "Recently played");
+    // the strips sit on the two media tabs only, and only when the option asks for them
+    CHECK(stripOnTab(TabCart, ShowBoth) && stripOnTab(TabDisc, ShowSections));
+    CHECK(!stripOnTab(TabCart, ShowTab) && !stripOnTab(TabDisc, ShowHidden));
+    CHECK(!stripOnTab(TabFavorites, ShowBoth) && !stripOnTab(TabBios, ShowBoth) && !stripOnTab(TabStates, ShowBoth));
+}
+
+static void testPersonalListsLogic() {
+    using namespace lib;
+    std::vector<Entry> entries;
+    entries.push_back(fakeEntry("/g/Alpha.j64", "Alpha", 0xA1A1A1A1u));
+    entries.push_back(fakeEntry("/g/Beta.j64", "beta", 0xB2B2B2B2u, "Beta (World)"));
+    entries.push_back(fakeEntry("/g/Gamma.cue", "Gamma", 0xC3C3C3C3u, "", Kind::Disc));
+    entries.push_back(fakeEntry("/g/Delta.chd", "Delta", 0, "", Kind::Disc));
+    Entry bios = fakeEntry("/sys/jagboot.rom", "Series K boot ROM", 0xD4D4D4D4u);
+    bios.section = Section::Bios;
+    entries.push_back(bios);
+
+    UserLists l;
+    UserItem a = userItemFor(entries[0], 100), b = userItemFor(entries[1], 101), g = userItemFor(entries[2], 102);
+    CHECK_EQ(a.key, "crc-A1A1A1A1");
+    CHECK_EQ(b.key, "Beta (World)");
+    CHECK(userItemFor(entries[3], 0).key.rfind("path-", 0) == 0);
+
+    // favorites: add, no duplicates, remove
+    setFavoriteIn(l, b, true);
+    setFavoriteIn(l, a, true);
+    setFavoriteIn(l, b, true);
+    CHECK(l.favorites.size() == 2 && l.favorites[0].path == "/g/Beta.j64" && l.favorites[1].path == "/g/Alpha.j64");
+    CHECK(hasFavorite(l, a) && hasFavorite(l, b) && !hasFavorite(l, g));
+    CHECK(l.favorites[0].when == 101);   // re-adding keeps the original date and place
+    setFavoriteIn(l, a, false);
+    CHECK(l.favorites.size() == 1 && !hasFavorite(l, a));
+    setFavoriteIn(l, a, false);   // removing what is not there is fine
+    CHECK(l.favorites.size() == 1);
+
+    // recents: newest first, deduplicated, capped
+    recordPlayIn(l, a);
+    recordPlayIn(l, b);
+    recordPlayIn(l, g);
+    CHECK(l.recents.size() == 3 && l.recents[0].path == "/g/Gamma.cue" && l.recents[2].path == "/g/Alpha.j64");
+    recordPlayIn(l, a);   // played again: moves to the front, not listed twice
+    CHECK(l.recents.size() == 3 && l.recents[0].path == "/g/Alpha.j64" && l.recents[1].path == "/g/Gamma.cue");
+    removeRecentIn(l, g);
+    CHECK(l.recents.size() == 2 && !hasRecent(l, g) && hasRecent(l, a));
+    UserLists many;
+    for (int i = 0; i < 30; i++) {
+        UserItem it;
+        it.path = "/x/" + std::to_string(i);
+        it.when = i;
+        recordPlayIn(many, it);
+    }
+    CHECK(many.recents.size() == kMaxRecentGames && many.recents.front().path == "/x/29" && many.recents.back().path == "/x/10");
+    CHECK(kMaxRecentGames == 20);
+
+    // the file round-trips, tabs and newlines in names cannot break the format, junk lines are skipped
+    UserItem odd = a;
+    odd.title = "Tab\there\nand a line";
+    odd.path = "/g/odd\tname.j64";
+    UserLists rt = l;
+    rt.favorites.push_back(odd);
+    UserLists back = parseUserLists(serializeUserLists(rt));
+    CHECK(back.favorites.size() == 2 && back.recents.size() == 2);
+    CHECK(back.favorites[0].path == "/g/Beta.j64" && back.favorites[0].crc == 0xB2B2B2B2u && back.favorites[0].key == "Beta (World)");
+    CHECK(back.favorites[1].title == "Tab here and a line" && back.favorites[1].path == "/g/odd name.j64");
+    CHECK(back.recents[0].when == rt.recents[0].when);
+    UserLists junk = parseUserLists("garbage\nfav\tnot enough\n\n# comment\nfav\t5\t0000000A\tk\t/p\tt\r\nrec\t6\tzz\t\t\t\nwho\t1\t1\tk\tp\tt\n");
+    CHECK(junk.favorites.size() == 1 && junk.favorites[0].crc == 0xA && junk.favorites[0].title == "t" && junk.recents.empty());
+
+    // resolving against the library: by path, by checksum when the folder moved, by key when the file changed
+    UserLists r;
+    setFavoriteIn(r, userItemFor(entries[1], 1), true);   // Beta
+    setFavoriteIn(r, userItemFor(entries[0], 2), true);   // Alpha
+    UserItem moved = userItemFor(entries[2], 3);          // Gamma, now somewhere else
+    moved.path = "/old-folder/Gamma.cue";
+    setFavoriteIn(r, moved, true);
+    UserItem gone;
+    gone.path = "/unplugged/Epsilon.j64";
+    gone.crc = 0xE5E5E5E5u;
+    gone.key = "crc-E5E5E5E5";
+    setFavoriteIn(r, gone, true);
+    std::vector<Resolved> res = resolveUserItems(r.favorites, entries);
+    CHECK(res.size() == 3);   // Epsilon's drive is away: skipped, not forgotten
+    CHECK(r.favorites.size() == 4);
+    sortByTitle(res);
+    CHECK(res.size() == 3 && res[0].entry->title == "Alpha" && res[1].entry->title == "beta" && res[2].entry->title == "Gamma");
+    // a game whose handles all changed is a different game
+    UserItem stranger;
+    stranger.path = "/else/X.j64";
+    stranger.crc = 0x99999999u;
+    stranger.key = "X";
+    CHECK(!sameGame(stranger, a) && sameGame(moved, userItemFor(entries[2], 0)));
+    // BIOS files never resolve, even when listed
+    std::vector<UserItem> biosItem;
+    biosItem.push_back(userItemFor(bios, 1));
+    CHECK(resolveUserItems(biosItem, entries).empty());
+    // the same game twice in the list (an old and a new handle) shows once
+    std::vector<UserItem> twice;
+    twice.push_back(userItemFor(entries[0], 1));
+    UserItem again = userItemFor(entries[0], 2);
+    again.path = "/elsewhere/Alpha.j64";
+    twice.push_back(again);
+    CHECK(resolveUserItems(twice, entries).size() == 1);
+    // strips: only the entries of that media
+    res = resolveUserItems(r.favorites, entries);
+    CHECK(filterBySection(res, Section::Cart).size() == 2 && filterBySection(res, Section::Disc).size() == 1);
+    CHECK(filterBySection(res, Section::Bios).empty());
+
+    // a favorite made while the game was unidentified (key crc-XXXX) is still a favorite once the database names it
+    Entry unid = fakeEntry("/g/Zeta.j64", "Zeta", 0x2E7A2E7Au);
+    UserLists dr;
+    setFavoriteIn(dr, userItemFor(unid, 1), true);
+    CHECK_EQ(userItemFor(unid, 0).key, "crc-2E7A2E7A");
+    Entry ident = unid;
+    ident.datName = "Zeta (USA)";
+    ident.title = "Zeta (USA)";
+    CHECK(hasFavorite(dr, userItemFor(ident, 0)));      // the checksum and the path still match
+    UserItem renamedFile = userItemFor(ident, 0);
+    renamedFile.path = "/moved/Zeta.j64";
+    CHECK(hasFavorite(dr, renamedFile));                  // checksum alone
+    renamedFile.crc = 0;                                  // an entry with no usable checksum: the key was the only handle
+    UserLists kr;
+    UserItem keyed = userItemFor(fakeEntry("/g/Img.chd", "Img", 0, "Img (USA)", Kind::Disc), 1);
+    setFavoriteIn(kr, keyed, true);
+    UserItem keyed2 = keyed;
+    keyed2.path = "/moved/Img.chd";
+    CHECK(hasFavorite(kr, keyed2));                       // dat name alone
+    setFavoriteIn(dr, userItemFor(ident, 5), true);       // starring it again after the update changes nothing
+    CHECK(dr.favorites.size() == 1 && dr.favorites[0].key == "Zeta (USA)");
+}
+
+static void testUserStoreAndInstances() {
+    using namespace lib;
+    const std::string dir = g_tmp + "userstore/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir), ec);
+    const std::string file = dir + "user.tsv";
+    UserItem a, b, c;
+    a.path = "/g/A.j64"; a.crc = 0xA; a.key = "crc-0000000A"; a.title = "A";
+    b.path = "/g/B.j64"; b.crc = 0xB; b.key = "crc-0000000B"; b.title = "B";
+    c.path = "/g/C.j64"; c.crc = 0xC; c.key = "crc-0000000C"; c.title = "C";
+
+    UserStore one, two;   // two running copies on one data folder
+    one.open(file);
+    two.open(file);
+    CHECK(one.lists().favorites.empty() && !fs::exists(fs::u8path(file)));   // reading creates nothing
+    CHECK(one.setFavorite(a, true));
+    CHECK(fs::exists(fs::u8path(file)));
+    // the second copy has not looked yet; it acts anyway, on top of what the file holds, not on its own snapshot
+    CHECK(two.lists().favorites.empty());
+    CHECK(two.setFavorite(b, true));
+    CHECK(two.lists().favorites.size() == 2);   // it took copy one's favorite first
+    CHECK(two.recordPlay(c));
+    // copy one sees all of it after its next refresh, and refresh reports a change exactly once
+    CHECK(one.lists().favorites.size() == 1);
+    unsigned g0 = one.generation();
+    CHECK(one.refresh());
+    CHECK(one.generation() != g0);
+    CHECK(one.lists().favorites.size() == 2 && one.lists().recents.size() == 1 && one.lists().recents[0].path == "/g/C.j64");
+    CHECK(!one.refresh());
+    // removing in one copy is not undone by the other copy's next unrelated action
+    CHECK(one.setFavorite(a, false));
+    CHECK(two.recordPlay(a));   // two still believes A is a favorite; it only records a play
+    CHECK(two.lists().favorites.size() == 1 && two.lists().favorites[0].path == "/g/B.j64");
+    CHECK(two.lists().recents.size() == 2 && two.lists().recents[0].path == "/g/A.j64");
+    // a copy that restarts sees the same lists
+    UserStore three;
+    three.open(file);
+    CHECK(three.lists().favorites.size() == 1 && three.lists().recents.size() == 2);
+    CHECK(three.removeRecent(c));
+    CHECK(three.lists().recents.size() == 1);
+    CHECK(three.clearRecents());
+    CHECK(three.lists().recents.empty() && three.lists().favorites.size() == 1);   // clearing recents leaves favorites
+    CHECK(one.refresh() && one.lists().recents.empty());
+
+    // a file that cannot be read is never overwritten: simulate by a directory standing where the file is
+    const std::string bad = dir + "dir-as-file.tsv";
+    fs::create_directories(fs::u8path(bad), ec);
+    UserStore broken;
+    broken.open(bad);
+    CHECK(!broken.setFavorite(a, true));
+    CHECK(fs::is_directory(fs::u8path(bad)));
+    // not opened at all (no data folder): every operation is a harmless no
+    UserStore none;
+    CHECK(!none.isOpen() && !none.setFavorite(a, true) && !none.refresh() && !none.recordPlay(a));
+    // a hand-edited file with a blank / missing list is fine
+    writeText(dir + "empty.tsv", "");
+    UserStore e;
+    e.open(dir + "empty.tsv");
+    CHECK(e.lists().favorites.empty() && e.setFavorite(a, true) && e.lists().favorites.size() == 1);
+}
+
+static void testStateNamesAndListing() {
+    using namespace lib;
+    std::string stem;
+    int slot = -1;
+    CHECK_EQ(stateFileName("Iron Soldier (World)", 3), "Iron Soldier (World).slot3.state");
+    CHECK_EQ(thumbFileName("Iron Soldier (World)", 3), "Iron Soldier (World).slot3.png");
+    CHECK(parseStateFileName("Iron Soldier (World).slot3.state", stem, slot) && stem == "Iron Soldier (World)" && slot == 3);
+    CHECK(parseStateFileName("a.b.slot12.state", stem, slot) && stem == "a.b" && slot == 12);
+    CHECK(!parseStateFileName("x.slot3.png", stem, slot));            // the screenshot
+    CHECK(!parseStateFileName("x.slot3.state.rcp", stem, slot));      // the achievements sidecar
+    CHECK(!parseStateFileName(".slot3.state", stem, slot));           // no game name
+    CHECK(!parseStateFileName("x.slotA.state", stem, slot) && !parseStateFileName("x.slot.state", stem, slot));
+    CHECK(!parseStateFileName("x.state", stem, slot) && !parseStateFileName("notes.txt", stem, slot));
+
+    const std::string dir = g_tmp + "states/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir), ec);
+    CHECK(listStates(dir).empty());
+    CHECK(listStates(g_tmp + "no-such-states-dir/").empty());
+    makeCoverPng("shot.png", 32, 24, 5);
+    auto put = [&](const std::string& st, int sl, int ageMin, bool thumb) {
+        writeText(dir + stateFileName(st, sl), "STATE" + st + std::to_string(sl));
+        fs::last_write_time(fs::u8path(dir + stateFileName(st, sl)),
+                            fs::file_time_type::clock::now() - std::chrono::minutes(ageMin), ec);
+        if (thumb) fs::copy_file(fs::u8path(g_tmp + "shot.png"), fs::u8path(dir + thumbFileName(st, sl)), fs::copy_options::overwrite_existing, ec);
+    };
+    put("Cybermorph (USA)", 0, 600, true);
+    put("Cybermorph (USA)", 4, 30, true);
+    put("Cybermorph (USA)", 7, 90, false);       // a state with no screenshot
+    put("Tempest 2000 (World)", 1, 5, true);
+    put("Old Game", 2, 5000, false);
+    writeText(dir + "Cybermorph (USA).slot4.state.rcp", "side");   // sidecar: not a state of its own
+    writeText(dir + "readme.txt", "x");
+    writeText(dir + "Stray.slot1.png", "x");                       // a screenshot with no state: not listed
+    std::vector<StateGame> g = listStates(dir);
+    CHECK(g.size() == 3);
+    CHECK(g.size() == 3 && g[0].stem == "Tempest 2000 (World)" && g[1].stem == "Cybermorph (USA)" && g[2].stem == "Old Game");   // newest first
+    CHECK(g.size() == 3 && g[1].states.size() == 3);
+    if (g.size() == 3 && g[1].states.size() == 3) {
+        CHECK(g[1].states[0].slot == 4 && g[1].states[1].slot == 7 && g[1].states[2].slot == 0);   // newest first within a game
+        CHECK(!g[1].states[0].thumbPath.empty() && g[1].states[1].thumbPath.empty());
+        CHECK(g[1].states[0].path == dir + "Cybermorph (USA).slot4.state" && g[1].states[0].size > 0 && g[1].states[0].mtime > 0);
+        CHECK(g[1].newest == g[1].states[0].mtime);
+    }
+
+    // which library entry owns a stem: the file stem, BIOS files excluded
+    std::vector<Entry> entries;
+    entries.push_back(fakeEntry("/g/Tempest 2000 (World).j64", "Tempest 2000", 1));
+    entries.push_back(fakeEntry("/g/Cybermorph (USA).cue", "Cybermorph", 2, "", Kind::Disc));
+    Entry bios = fakeEntry("/sys/Old Game.rom", "Old Game", 3);
+    bios.section = Section::Bios;
+    entries.push_back(bios);
+    CHECK(entryForStem(entries, "Cybermorph (USA)") == &entries[1] && entryForStem(entries, "Tempest 2000 (World)") == &entries[0]);
+    CHECK(entryForStem(entries, "Old Game") == nullptr && entryForStem(entries, "Nope") == nullptr);
+
+    // delete: the state, its screenshot and the achievements sidecar go; the others stay
+    StateInfo victim = g[1].states[0];
+    CHECK(deleteState(victim));
+    CHECK(!fs::exists(fs::u8path(victim.path)) && !fs::exists(fs::u8path(victim.thumbPath)));
+    CHECK(!fs::exists(fs::u8path(dir + "Cybermorph (USA).slot4.state.rcp")));
+    CHECK(fs::exists(fs::u8path(dir + "Cybermorph (USA).slot7.state")) && fs::exists(fs::u8path(dir + "readme.txt")));
+    CHECK(!deleteState(victim));   // already gone
+    g = listStates(dir);
+    CHECK(g.size() == 3 && g[1].stem == "Cybermorph (USA)" && g[1].states.size() == 2);
+
+    // Show in Finder / Explorer: the folder's file:// URL
+    CHECK_EQ(folderUrlOf("/Users/me/Jaguar Games/Iron Soldier.j64"), "file:///Users/me/Jaguar%20Games/");
+    CHECK_EQ(folderUrlOf("/g/Dragon's Lair (USA).cue"), "file:///g/");
+    CHECK_EQ(folderUrlOf("C:\\Games\\Jag #1\\x.j64"), "file:///C:/Games/Jag%20%231/");
+    CHECK_EQ(folderUrlOf("/g/caf\xC3\xA9/x.j64"), "file:///g/caf%C3%A9/");
+    CHECK_EQ(folderUrlOf("x.j64"), "");
+}
+
+
+// ---- resume where I left off: the policy, the auto-save slot's names and where each running copy keeps it --------
+
+static void testResumePolicy() {
+    using namespace lib;
+    CHECK(kResumeDefault == ResumeAsk && kResumeModeCount == 3 && kAutoSaveMinSeconds >= 3.0 && kAutoSaveMinSeconds <= 10.0);
+    CHECK(clampResumeMode(0) == ResumeOff && clampResumeMode(2) == ResumeAlways && clampResumeMode(3) == ResumeAsk && clampResumeMode(-1) == ResumeAsk);
+    CHECK_EQ(resumeModeLabel(ResumeAlways), "Always");
+
+    // writing: only with the option on, past the minimum runtime, and not in hardcore / netplay / after a crash
+    const double ok = kAutoSaveMinSeconds + 1.0;
+    CHECK(shouldAutoSave(ResumeAsk, false, false, ok, false));
+    CHECK(shouldAutoSave(ResumeAlways, false, false, ok, false));
+    CHECK(!shouldAutoSave(ResumeOff, false, false, ok, false));                       // Off writes nothing
+    CHECK(!shouldAutoSave(ResumeAsk, true, false, ok, false));                        // hardcore refuses state loads: skip
+    CHECK(!shouldAutoSave(ResumeAlways, true, false, 9999.0, false));
+    CHECK(!shouldAutoSave(ResumeAsk, false, true, ok, false));                        // netplay: a state would desync the link
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, kAutoSaveMinSeconds - 0.01, false));   // ran too briefly
+    CHECK(shouldAutoSave(ResumeAsk, false, false, kAutoSaveMinSeconds, false));       // exactly the minimum counts
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, 0.0, false));
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, ok, true));                        // the crash watchdog flagged the run
+
+    // booting: Always loads, Ask asks, Off and anything blocked does nothing; no auto-save means nothing to do
+    CHECK(resumeAction(ResumeAlways, false, false, true) == ResumeAction::Load);
+    CHECK(resumeAction(ResumeAsk, false, false, true) == ResumeAction::Ask);
+    CHECK(resumeAction(ResumeOff, false, false, true) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAlways, true, false, true) == ResumeAction::None);       // hardcore: skip, and do not prompt
+    CHECK(resumeAction(ResumeAsk, true, false, true) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAlways, false, true, true) == ResumeAction::None);       // netplay
+    CHECK(resumeAction(ResumeAlways, false, false, false) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAsk, false, false, false) == ResumeAction::None);
+
+    // the slot: its own file pair per game, beside (never colliding with) the numbered ones
+    std::string stem;
+    int slot = 0;
+    CHECK_EQ(stateFileName("Iron Soldier (World)", kAutoSlot), "Iron Soldier (World).auto.state");
+    CHECK_EQ(thumbFileName("Iron Soldier (World)", kAutoSlot), "Iron Soldier (World).auto.png");
+    CHECK_EQ(stateFileName("Iron Soldier (World)", 0), "Iron Soldier (World).slot0.state");   // unchanged
+    CHECK(parseStateFileName("Iron Soldier (World).auto.state", stem, slot) && stem == "Iron Soldier (World)" && slot == kAutoSlot);
+    CHECK(parseStateFileName("a.auto.auto.state", stem, slot) && stem == "a.auto" && slot == kAutoSlot);   // a game called "a.auto"
+    CHECK(parseStateFileName("a.auto.slot2.state", stem, slot) && stem == "a.auto" && slot == 2);
+    CHECK(!parseStateFileName(".auto.state", stem, slot) && !parseStateFileName("x.auto.png", stem, slot) && !parseStateFileName("x.auto.state.rcp", stem, slot));
+    CHECK_EQ(stateLabel(kAutoSlot), "Auto-save");
+    CHECK_EQ(stateLabel(4), "Slot 4");
+
+    // where each running copy keeps it
+    CHECK_EQ(autoStatesDir("/d/states/", 1), "/d/states/");
+    CHECK_EQ(autoStatesDir("/d/states/", 0), "/d/states/");
+    CHECK_EQ(autoStatesDir("/d/states/", 2), "/d/states/instance-2/");
+    CHECK_EQ(autoStatesDir("/d/states/", 3), "/d/states/instance-3/");
+
+    const std::string dir = g_tmp + "autostates/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir + "instance-2"), ec);
+    auto put = [&](const std::string& d, const std::string& name, int ageMin) {
+        writeText(d + name, "S");
+        fs::last_write_time(fs::u8path(d + name), fs::file_time_type::clock::now() - std::chrono::minutes(ageMin), ec);
+    };
+    put(dir, "Alpha.slot1.state", 50);
+    put(dir, "Alpha.auto.state", 10);                  // the first copy's auto-save
+    put(dir, "Beta.auto.state", 20);                   // a game only the first copy auto-saved
+    put(dir + "instance-2/", "Alpha.auto.state", 5);   // copy 2's own
+    // copy 1: numbered states and its auto-saves in the states folder; copy 2's folder is not looked at
+    std::vector<StateGame> one = listStatesFor(dir, 1);
+    CHECK(one.size() == 2 && one[0].stem == "Alpha" && one[0].states.size() == 2 && one[0].states[0].slot == kAutoSlot);
+    CHECK(one.size() == 2 && one[0].states[0].path == dir + "Alpha.auto.state");
+    // copy 2: the shared numbered states, ITS auto-save, not copy 1's
+    std::vector<StateGame> two = listStatesFor(dir, 2);
+    CHECK(two.size() == 1 && two[0].stem == "Alpha" && two[0].states.size() == 2);
+    if (two.size() == 1 && two[0].states.size() == 2) {
+        CHECK(two[0].states[0].slot == kAutoSlot && two[0].states[0].path == dir + "instance-2/Alpha.auto.state");
+        CHECK(two[0].states[1].slot == 1);
+        CHECK(two[0].newest == two[0].states[0].mtime);
+    }
+    // an auto-save is deleted like any state (and its screenshot)
+    writeText(dir + "Alpha.auto.png", "P");
+    StateInfo a = one[0].states[0];
+    a.thumbPath = dir + "Alpha.auto.png";
+    CHECK(deleteState(a) && !fs::exists(fs::u8path(a.path)) && !fs::exists(fs::u8path(a.thumbPath)));
+    CHECK(listStatesFor(dir, 1)[0].states.size() == 1 || listStatesFor(dir, 1).size() == 2);
+}
+
+// The service wiring: scan a folder, star and play games, see them resolve, share the file with a second copy,
+// list and delete states, and the settings round-trip.
+static void testPersonalListsService() {
+    std::string root = g_tmp + "lists-root/", games = g_tmp + "lists-games/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(root + "library/db"), ec);
+    fs::create_directories(fs::u8path(root + "states"), ec);
+    writeBytes(games + "Alpha (World).j64", noise(1048576, 71));
+    writeBytes(games + "Beta (World).j64", noise(1048576, 72));
+    std::vector<unsigned char> d1 = noise(2352 * 30, 73);
+    writeBytes(games + "Gamma Disc (USA) (Track 1).bin", d1);
+    writeText(games + "Gamma Disc (USA).cue",
+              "FILE \"Gamma Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+
+    Paths paths;
+    paths.root = root;
+    paths.states = root + "states/";
+    Config cfg;
+    cfg.setPath(root + "config.ini");
+    cfg.set("library.dir.0", games.substr(0, games.size() - 1));
+    LibraryService svc;
+    svc.createTexture = [](const void*, int, int) { return 1u; };
+    svc.destroyTexture = [](unsigned) {};
+    svc.artBaseUrl = "http://127.0.0.1:1/";
+    svc.artMirrorUrl = svc.artBaseUrl;
+    svc.dbBaseUrl = svc.artBaseUrl;
+    svc.start(paths, cfg, false);
+    svc.setDownloadArt(false);
+    auto pumpUntil = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            svc.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    CHECK(pumpUntil([&] { return !svc.scanning() && svc.entries().size() == 3; }));
+    auto find = [&](const std::string& title) {
+        lib::Entry e;
+        for (const lib::Entry& x : svc.entries())
+            if (x.title == title) e = x;
+        return e;
+    };
+    lib::Entry alpha = find("Alpha (World)"), beta = find("Beta (World)"), gamma = find("Gamma Disc (USA)");
+    CHECK(!alpha.file.path.empty() && !beta.file.path.empty() && !gamma.file.path.empty());
+
+    // defaults: both lists shown as a tab and in the sections
+    CHECK(svc.favoritesShow == lib::ShowBoth && svc.recentsShow == lib::ShowBoth && svc.activeTab() == lib::TabCart);
+    CHECK(svc.favoriteEntries().empty() && svc.recentEntries().empty());
+    svc.setFavorite(beta, true);
+    svc.setFavorite(gamma, true);
+    CHECK(svc.isFavorite(beta) && svc.isFavorite(gamma) && !svc.isFavorite(alpha));
+    CHECK(svc.favoriteEntries().size() == 2 && svc.favoriteEntries()[0].entry->title == "Beta (World)");   // by title
+    svc.noteLaunched(alpha.file.path);
+    svc.noteLaunched(beta.file.path);
+    svc.noteLaunched("/not/in/the/library.j64");   // scanned, not one of ours: not listed
+    CHECK(svc.recentEntries().size() == 2 && svc.recentEntries()[0].entry->title == "Beta (World)" && svc.recentEntries()[1].entry->title == "Alpha (World)");
+    CHECK(svc.recentEntries()[0].when > 1700000000);
+    CHECK(svc.isRecent(alpha) && !svc.isRecent(gamma));
+    svc.removeRecent(beta);
+    CHECK(svc.recentEntries().size() == 1 && svc.isFavorite(beta));   // not the same thing
+    // the lists survive a restart of the service
+    svc.setFavorite(gamma, false);
+    svc.stop();
+    LibraryService svc2;
+    svc2.createTexture = svc.createTexture;
+    svc2.destroyTexture = svc.destroyTexture;
+    svc2.artBaseUrl = svc2.artMirrorUrl = svc2.dbBaseUrl = "http://127.0.0.1:1/";
+    Paths p2 = paths;
+    p2.instance = 2;   // a second copy on the same data folder
+    Config cfg2;
+    cfg2.setPath(root + "config-2.ini");
+    cfg2.setSavePrefixes({"window.", "input.pads."});   // what App::loadConfig sets for instance 2+ (the #902 rule)
+    cfg2.set("library.dir.0", games.substr(0, games.size() - 1));
+    svc2.start(p2, cfg2, false);
+    svc2.setDownloadArt(false);
+    auto pump2 = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            svc2.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    CHECK(pump2([&] { return !svc2.scanning() && svc2.entries().size() == 3; }));
+    CHECK(svc2.instance == 2);
+    CHECK(svc2.favoriteEntries().size() == 1 && svc2.favoriteEntries()[0].entry->title == "Beta (World)");
+    CHECK(svc2.recentEntries().size() == 1 && svc2.recentEntries()[0].entry->title == "Alpha (World)");
+    // ...and what the second copy does is in the shared file, for the first copy to read
+    lib::Entry alpha2;
+    for (const lib::Entry& x : svc2.entries())
+        if (x.title == "Alpha (World)") alpha2 = x;
+    svc2.setFavorite(alpha2, true);
+    lib::UserStore reader;
+    reader.open(svc2.userFile());
+    CHECK(reader.lists().favorites.size() == 2);
+
+    // display options persist (clamped on the way in)
+    svc2.favoritesShow = lib::ShowSections;
+    svc2.recentsShow = lib::ShowHidden;
+    svc2.section = lib::TabRecents;   // remembered tab, now hidden
+    svc2.saveSettings();
+    CHECK_EQ(cfg2.get("library.favorites.show", ""), "2");
+    CHECK_EQ(cfg2.get("library.recents.show", ""), "0");
+    {   // ...but the display options are ordinary settings: copy 2 reads them and its config-2.ini never gets them
+        std::vector<unsigned char> raw;
+        std::string written;
+        if (readFile(root + "config-2.ini", raw)) written.assign(raw.begin(), raw.end());
+        CHECK(written.find("library.") == std::string::npos);
+    }
+    CHECK(svc2.activeTab() == lib::TabCart);
+    svc2.stop();
+    Config cfg3;
+    cfg3.set("library.dir.0", games.substr(0, games.size() - 1));
+    cfg3.set("library.favorites.show", "9");   // junk: back to the default
+    cfg3.set("library.recents.show", "1");
+    cfg3.setInt("library.section", 4);
+    LibraryService svc3;
+    svc3.artBaseUrl = svc3.artMirrorUrl = svc3.dbBaseUrl = "http://127.0.0.1:1/";
+    svc3.start(paths, cfg3, false);
+    CHECK(svc3.favoritesShow == lib::ShowBoth && svc3.recentsShow == lib::ShowTab && svc3.section == lib::TabRecents && svc3.activeTab() == lib::TabRecents);
+    svc3.stop();
+    LibraryService svc4;
+    Config cfg4;
+    cfg4.setInt("library.section", 77);
+    svc4.artBaseUrl = svc4.artMirrorUrl = svc4.dbBaseUrl = "http://127.0.0.1:1/";
+    svc4.start(paths, cfg4, false);
+    CHECK(svc4.section == lib::kTabCount - 1);   // an out-of-range remembered tab is clamped, then falls back at draw time
+    svc4.stop();
+
+    // save states: listing, per-game lookup, screenshots, delete
+    LibraryService s5;
+    int created = 0, destroyed = 0;
+    s5.createTexture = [&](const void*, int, int) { return (unsigned)++created; };
+    s5.destroyTexture = [&](unsigned) { destroyed++; };
+    s5.artBaseUrl = s5.artMirrorUrl = s5.dbBaseUrl = "http://127.0.0.1:1/";
+    Config cfg5;
+    cfg5.set("library.dir.0", games.substr(0, games.size() - 1));
+    s5.start(paths, cfg5, false);
+    s5.setDownloadArt(false);
+    CHECK(s5.stateGames().empty());
+    makeCoverPng("st.png", 48, 36, 9);
+    writeText(paths.states + "Alpha (World).slot0.state", "S0");
+    writeText(paths.states + "Alpha (World).slot2.state", "S2");
+    fs::copy_file(fs::u8path(g_tmp + "st.png"), fs::u8path(paths.states + "Alpha (World).slot2.png"), fs::copy_options::overwrite_existing, ec);
+    writeText(paths.states + "Removed Game.slot1.state", "S");
+    s5.invalidateStates();
+    CHECK(s5.stateGames().size() == 2);
+    auto pump5 = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            s5.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    CHECK(pump5([&] { return !s5.scanning() && s5.entries().size() == 3; }));
+    lib::Entry a5;
+    for (const lib::Entry& x : s5.entries())
+        if (x.title == "Alpha (World)") a5 = x;
+    const lib::StateGame* sg = s5.statesFor(a5);
+    CHECK(sg != nullptr && sg->states.size() == 2);
+    if (sg && sg->states.size() == 2) {
+        lib::StateInfo withShot = sg->states[0].thumbPath.empty() ? sg->states[1] : sg->states[0];
+        lib::StateInfo noShot = sg->states[0].thumbPath.empty() ? sg->states[0] : sg->states[1];
+        CHECK(withShot.slot == 2 && noShot.slot == 0);
+        ArtView t = s5.stateThumb(withShot);
+        CHECK(t.state == ArtView::Ready && t.w == 48 && t.h == 36 && t.tex != 0);
+        ArtView t2 = s5.stateThumb(withShot);
+        CHECK(t2.state == ArtView::Ready && t2.tex == t.tex && created == 1);   // cached
+        CHECK(s5.stateThumb(noShot).state == ArtView::Missing);
+        const lib::Entry* owner = s5.entryForState(*sg);
+        CHECK(owner && owner->title == "Alpha (World)");
+        CHECK(s5.deleteState(withShot));
+        CHECK(destroyed == 1);
+        const lib::StateGame* again = s5.statesFor(a5);
+        CHECK(again && again->states.size() == 1 && again->states[0].slot == 0);
+    }
+    const lib::StateGame* orphan = nullptr;
+    for (const lib::StateGame& g : s5.stateGames())
+        if (g.stem == "Removed Game") orphan = &g;
+    CHECK(orphan != nullptr && s5.entryForState(*orphan) == nullptr);   // a game that left the library: listed, cannot be played from here
+    s5.stop();
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--scan")) {
         std::string db = ".";
@@ -988,10 +2311,22 @@ int main(int argc, char** argv) {
     testBiosClassification();
     testBiosInLibraryFolders();
     testTileZoom();
+    testDiscTitles();
+    testCoverLookup();
+    testCoverService();
+    testLooseNames();
+    testChdAndCdiChecksums();
+    testDisplayOptionsAndTabs();
+    testPersonalListsLogic();
+    testUserStoreAndInstances();
+    testStateNamesAndListing();
+    testResumePolicy();
+    testPersonalListsService();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();
         testServicePipeline();
+        testCdMirror();
     } else {
         std::printf("no HTTP backend in this build: loopback HTTP tests skipped\n");
     }

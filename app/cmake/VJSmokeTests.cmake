@@ -83,7 +83,17 @@ add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank
             "${VJ_ROMS}/synth_jagcd.chd")
 
-set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd PROPERTIES
+# BIOS-only boots (#838, #833).  No BIOS file is needed: the core's built-in images run, so these work on CI.
+# Neither passes --allow-blank: the boot ROM's logo and the CD BIOS's logo and cube must actually draw (the hashes
+# are the final frame at 400 frames; like yarc's they are meant to be the same on every OS and CPU).
+add_test(NAME smoke_boot_cd_bios
+    COMMAND virtualjaguar --headless --frames 400 --boot-bios cd --expect-bios cd:builtin --expect-hash b83cb3ee)
+add_test(NAME smoke_boot_cart_rom
+    COMMAND virtualjaguar --headless --frames 400 --boot-bios cart --expect-bios cart:builtin --expect-hash 3cc9c43e)
+set_tests_properties(smoke_boot_cd_bios PROPERTIES PASS_REGULAR_EXPRESSION "BIOS CD BIOS: built-in retail CD BIOS")
+set_tests_properties(smoke_boot_cart_rom PROPERTIES PASS_REGULAR_EXPRESSION "BIOS Cart boot ROM: built-in Series K boot ROM")
+
+set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd smoke_boot_cd_bios smoke_boot_cart_rom PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
 
@@ -104,6 +114,19 @@ else()
 endif()
 add_test(NAME library_unit COMMAND vj_library_tests)
 set_tests_properties(library_unit PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# BIOS choice, import and classification (#838, #833): no core, no window, synthetic files.
+add_executable(vj_bios_tests tests/bios_test.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_bios_tests PRIVATE src)
+target_link_libraries(vj_bios_tests PRIVATE vj_library ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_bios_tests PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_bios_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_bios_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME bios_unit COMMAND vj_bios_tests)
+set_tests_properties(bios_unit PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
 
 # ---------------------------------------------------------------------------
 # Controller remapping tests (no window; remap_unit does not even load the core).
@@ -126,7 +149,11 @@ add_executable(vj_devices_e2e test/devices_e2e.cpp src/core_host.cpp ${VJ_DEVICE
 target_include_directories(vj_devices_e2e PRIVATE src)
 target_link_libraries(vj_devices_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 
-foreach(_t vj_remap_test vj_input_e2e vj_devices_test vj_devices_e2e)
+add_executable(vj_bios_e2e tests/bios_e2e.cpp src/core_host.cpp src/paths.cpp)
+target_include_directories(vj_bios_e2e PRIVATE src)
+target_link_libraries(vj_bios_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
+
+foreach(_t vj_remap_test vj_input_e2e vj_devices_test vj_devices_e2e vj_bios_e2e)
     if(MSVC)
         target_compile_options(${_t} PRIVATE /W3 /utf-8)
         target_compile_definitions(${_t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -135,32 +162,104 @@ foreach(_t vj_remap_test vj_input_e2e vj_devices_test vj_devices_e2e)
     endif()
 endforeach()
 
+# Several copies of the app at once (instance.h): the number lock, per-instance paths, and the
+# settings-file policy (a secondary copy must never rewrite the shared config.ini).
+add_executable(vj_instance_test tests/instance_test.cpp src/instance.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_instance_test PRIVATE src)
+target_link_libraries(vj_instance_test PRIVATE ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_instance_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_instance_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_instance_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME instance_unit COMMAND vj_instance_test)
+set_tests_properties(instance_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# Settings > Reset group / Reset all settings (#833): the key classification and the option plans, plus the
+# real core's options (locked / session-overridden ones are skipped).
+add_executable(vj_settings_reset_test
+    tests/settings_reset_test.cpp src/settings_reset.cpp src/core_host.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_settings_reset_test PRIVATE src)
+target_link_libraries(vj_settings_reset_test PRIVATE vj_core ${VJ_SDL3_TARGET})
+if(WIN32)
+    target_link_libraries(vj_settings_reset_test PRIVATE ws2_32 iphlpapi)
+endif()
+if(MSVC)
+    target_compile_options(vj_settings_reset_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_settings_reset_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_settings_reset_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME settings_reset COMMAND vj_settings_reset_test "${VJ_ROMS}/yarc.j64")
+set_tests_properties(settings_reset PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# UI fonts (#833): settings round trip, the per-OS font lookup against fake machines, custom-file validation,
+# glyph coverage of the app's own text.  No ImGui context.
+add_executable(vj_fonts_test tests/fonts_test.cpp src/fonts.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_fonts_test PRIVATE src ${imgui_SOURCE_DIR})
+target_link_libraries(vj_fonts_test PRIVATE ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_fonts_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_fonts_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_fonts_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME fonts_unit COMMAND vj_fonts_test "${CMAKE_CURRENT_SOURCE_DIR}/src" "${imgui_SOURCE_DIR}")
+set_tests_properties(fonts_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The Dear ImGui half of the fonts (fonts_imgui.cpp): the symbol fallback in every typeface incl. the Retro pixel font.
+add_executable(vj_fonts_imgui_test tests/fonts_imgui_test.cpp src/fonts.cpp src/fonts_imgui.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_fonts_imgui_test PRIVATE src)
+target_link_libraries(vj_fonts_imgui_test PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_fonts_imgui_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_fonts_imgui_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_fonts_imgui_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME fonts_imgui_unit COMMAND vj_fonts_imgui_test)
+set_tests_properties(fonts_imgui_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 add_test(NAME remap_unit COMMAND vj_remap_test)
 add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")
 add_test(NAME devices_unit COMMAND vj_devices_test)
 add_test(NAME devices_e2e COMMAND vj_devices_e2e "${VJ_ROMS}/yarc.j64")
-set_tests_properties(remap_unit input_e2e devices_unit devices_e2e PROPERTIES
+add_test(NAME bios_e2e COMMAND vj_bios_e2e "${VJ_ROMS}/yarc.j64")
+set_tests_properties(remap_unit input_e2e devices_unit devices_e2e bios_e2e PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "FAIL ")
 
 # ---------------------------------------------------------------------------
 # Controls cheat-sheet overlay, through the real App (headless, no window).
 #
-#   controls_overlay_keyboard   no gamepad on Player 1 (headless has none): the overlay is
-#                               showing after the load, and its text is the keyboard
-#                               profile's bindings (B = Z, the Pro Controller's X = A ...).
-#   controls_overlay_dismissed  "don't show again" (ui.controls.autoshow=0): hidden.
+#   controls_overlay_default    the setting is OFF by default: no overlay after the load (the hint
+#                               toast "Press F3 for the controls" is all a keyboard player gets).
+#   controls_overlay_keyboard   the setting on (ui.controls.autoshow=1), no gamepad on Player 1
+#                               (headless has none): the overlay is showing after the load, and its
+#                               text is the keyboard profile's bindings (B = Z, the Pro Controller's
+#                               X = A ...).
+#   controls_overlay_dismissed  setting explicitly off (ui.controls.autoshow=0): hidden.
 #   controls_overlay_rebound    a saved global rebinding (B = M, scancode 16) changes the text;
 #                               the per-game layer is covered by devices_unit.
 # ---------------------------------------------------------------------------
 set(VJ_CTL_DISMISSED "${CMAKE_BINARY_DIR}/ctl_dismissed")
 set(VJ_CTL_REBOUND "${CMAKE_BINARY_DIR}/ctl_rebound")
-file(MAKE_DIRECTORY "${VJ_CTL_DISMISSED}" "${VJ_CTL_REBOUND}")
+set(VJ_CTL_DEFAULT "${CMAKE_BINARY_DIR}/ctl_default")
+file(MAKE_DIRECTORY "${VJ_CTL_DISMISSED}" "${VJ_CTL_REBOUND}" "${VJ_CTL_DEFAULT}")
+set(VJ_CTL_ON "${CMAKE_BINARY_DIR}/ctl_on")
+file(MAKE_DIRECTORY "${VJ_CTL_ON}")
+file(WRITE "${VJ_CTL_ON}/config.ini" "ui.controls.autoshow=1\n")
 file(WRITE "${VJ_CTL_DISMISSED}/config.ini" "ui.controls.autoshow=0\n")
-file(WRITE "${VJ_CTL_REBOUND}/config.ini" "input.kb.b=k16\n")
+file(WRITE "${VJ_CTL_REBOUND}/config.ini" "input.kb.b=k16\nui.controls.autoshow=1\n")
+
+add_test(NAME controls_overlay_default
+    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_DEFAULT}" --expect-controls-overlay hidden "${VJ_ROMS}/yarc.j64")
+set_tests_properties(controls_overlay_default PROPERTIES
+    PASS_REGULAR_EXPRESSION "\\[osd\\] Press F3 for the controls")
 
 add_test(NAME controls_overlay_keyboard
-    COMMAND virtualjaguar --headless --frames 5 --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
+    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_ON}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
 set_tests_properties(controls_overlay_keyboard PROPERTIES
     PASS_REGULAR_EXPRESSION "Player 1: Standard Joypad - keyboard.*B: Z.*Keypad 9 \\(Pro: X\\): [^\n]*, A\n")
 
@@ -171,6 +270,6 @@ add_test(NAME controls_overlay_rebound
     COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_REBOUND}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
 set_tests_properties(controls_overlay_rebound PROPERTIES
     PASS_REGULAR_EXPRESSION "  B: M\n")
-set_tests_properties(controls_overlay_keyboard controls_overlay_dismissed controls_overlay_rebound PROPERTIES
+set_tests_properties(controls_overlay_default controls_overlay_keyboard controls_overlay_dismissed controls_overlay_rebound PROPERTIES
     TIMEOUT 120
     FAIL_REGULAR_EXPRESSION "headless: FAIL")

@@ -6,6 +6,8 @@
 #include <cstring>
 
 #include "app.h"
+#include "platform/commands.h"
+#include "platform/platform.h"
 
 static void usage(const char* argv0) {
     std::printf(
@@ -14,7 +16,11 @@ static void usage(const char* argv0) {
         "usage: %s [options] [game.j64 | disc.cue | disc.chd ...]\n"
         "\n"
         "  --fullscreen          start in fullscreen\n"
-        "  --no-content          boot the console with an empty cartridge slot\n"
+        "  --theme system|dark|light|custom:NAME   colour theme for this run (not saved; Settings > Video > Appearance sets it)\n"
+        "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
+        "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
+        "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
+        "  --cd-bios FILE        run the Jaguar CD BIOS from FILE for this run (256 KiB)\n"
         "  --option KEY=VALUE    set a core option for this run (not saved)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
@@ -24,15 +30,18 @@ static void usage(const char* argv0) {
         "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
         "  --netplay ROLE        host | join | join-discovered | browse | loopback\n"
         "  --netplay-addr ADDR   join: the host's address (no port)\n"
-        "  --netplay-port N      link port (default 42171; the window offers 42171-42174)\n"
+        "  --netplay-port N      link port, 1-65535 (default 42171; the window offers 42171-42174 and a custom box)\n"
         "  --netplay-device D    jaglink (default) | voicemodem\n"
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
         "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X]\n"
-        "     [--show-window settings[-video|-input|-audio|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls]\n"
+        "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
+        "     [--font retro|system|mono[:SIZE]|custom:FILE] [--font-then SPEC]   (this run only; --font-then switches live after 60 frames)\n"
+        "     [--show-window settings[-video|-input|-audio|-bios|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
+        "     [--show-window memory|palette|scanner|objects|blitter|textures|scope]   (Tools windows; needs a game)\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -40,6 +49,7 @@ static void usage(const char* argv0) {
         "  --expect-hash HEX     fail unless the first game's final frame hashes to HEX\n"
         "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
+        "  --expect-bios R:SRC   fail unless the core ran the cart|cd BIOS from builtin, system or file (the --cart-bios/--cd-bios file)\n"
         "  --print-controls      print Player 1's controls cheat sheet (the active bindings) after the load\n"
         "  --expect-controls-overlay shown|hidden   fail unless the controls overlay is (not) showing after the load\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
@@ -69,6 +79,11 @@ int main(int argc, char** argv) {
     vj::CliArgs a;
     for (int i = 1; i < argc; i++) {
         const char* s = argv[i];
+        // Arguments a launcher adds (macOS "-psn_0_12345") are not ours and not an error.
+        if (int skip = vj::platform::ignorableLauncherArgs(argc, argv, i)) {
+            i += skip - 1;
+            continue;
+        }
         auto need = [&](const char* name) -> const char* {
             if (i + 1 >= argc) {
                 std::fprintf(stderr, "%s needs an argument\n", name);
@@ -80,8 +95,36 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--version")) a.showVersion = true;
         else if (!std::strcmp(s, "--headless")) a.headless = true;
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
+        else if (!std::strcmp(s, "--theme")) {
+            a.theme = need(s);
+            if (a.theme != "system" && a.theme != "dark" && a.theme != "light" && a.theme.compare(0, 7, "custom:") != 0) {
+                std::fprintf(stderr, "--theme wants system, dark, light or custom:NAME, got '%s'\n", a.theme.c_str());
+                return 2;
+            }
+        }
         else if (!std::strcmp(s, "--no-content")) a.noContent = true;
+        else if (!std::strcmp(s, "--boot-bios")) {
+            a.bootBios = need(s);
+            if (a.bootBios != "cart" && a.bootBios != "cd") {
+                std::fprintf(stderr, "--boot-bios wants cart or cd, got '%s'\n", a.bootBios.c_str());
+                return 2;
+            }
+            a.noContent = true;
+        }
+        else if (!std::strcmp(s, "--cart-bios")) a.cartBios = need(s);
+        else if (!std::strcmp(s, "--cd-bios")) a.cdBios = need(s);
+        else if (!std::strcmp(s, "--expect-bios")) {
+            std::string v = need(s);
+            size_t c = v.find(':');
+            std::string role = c == std::string::npos ? "" : v.substr(0, c), src = c == std::string::npos ? "" : v.substr(c + 1);
+            if ((role != "cart" && role != "cd") || (src != "builtin" && src != "system" && src != "file")) {
+                std::fprintf(stderr, "--expect-bios wants cart|cd:builtin|system|file, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.expectBios.push_back(v);
+        }
         else if (!std::strcmp(s, "--verbose")) a.verbose = true;
+        else if (!std::strcmp(s, "--dump-native-menu")) a.dumpNativeMenu = true;
         else if (!std::strcmp(s, "--ra-mock")) a.raMock = need(s);
         else if (!std::strcmp(s, "--ra-hardcore")) a.raHardcore = true;
         else if (!std::strcmp(s, "--ra-poke")) {
@@ -147,6 +190,10 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
         else if (!std::strcmp(s, "--ui-scale")) a.uiScale = (float)std::strtod(need(s), nullptr);
+        else if (!std::strcmp(s, "--low-dpi")) a.lowDpi = true;
+        else if (!std::strcmp(s, "--pixel-density")) a.pixelDensity = (unsigned)std::strtoul(need(s), nullptr, 10);
+        else if (!std::strcmp(s, "--font")) a.font = need(s);
+        else if (!std::strcmp(s, "--font-then")) a.fontThen = need(s);
         else if (!std::strcmp(s, "--state-roundtrip")) a.stateRoundtrip = true;
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);
@@ -193,6 +240,7 @@ int main(int argc, char** argv) {
         std::printf("Virtual Jaguar %s\n", VJ_APP_VERSION);
         return 0;
     }
+    if (a.dumpNativeMenu) return vj::platform::dumpNativeMenu();
     vj::App app;
     return app.run(a);
 }

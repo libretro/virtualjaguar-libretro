@@ -12,14 +12,21 @@
 
 #include "achievements.h"
 #include "audio.h"
+#include "bios.h"
 #include "cheats.h"
 #include "config.h"
 #include "core_host.h"
+#include "debug/debug_session.h"
+#include "fonts.h"
+#include "discord_presence.h"
 #include "input.h"
+#include "instance.h"
 #include "library_service.h"
 #include "netplay.h"
 #include "paths.h"
 #include "perf.h"
+#include "platform/commands.h"
+#include "theme_custom.h"
 #include "video.h"
 
 namespace vj {
@@ -30,12 +37,19 @@ struct CliArgs {
     std::vector<std::pair<std::string, std::string>> options;
     bool headless = false;
     bool fullscreen = false;
-    bool noContent = false;
+    bool noContent = false;         // boot the console with no cartridge: the CD BIOS (or --boot-bios)
+    std::string bootBios;           // --boot-bios cart|cd: which BIOS a no-content boot enters ("" = cd)
+    std::string cartBios, cdBios;   // --cart-bios / --cd-bios FILE: use this BIOS file for this run (not saved)
+    std::vector<std::string> expectBios;   // headless: "cart:builtin|system|file" / "cd:..." must be what the core staged
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
+    std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
+    unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
+    bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
@@ -47,6 +61,7 @@ struct CliArgs {
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
     std::vector<std::string> cheatCodes;      // add these manual codes
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
+    bool dumpNativeMenu = false;    // dev: print and check the real macOS menu tree, then exit (77 = no native menu here)
     bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
     int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
     bool showHelp = false;
@@ -107,6 +122,14 @@ public:
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
+    DebugSession debug;      // the core's debug interface: Tools menu, halt pump, breakpoints (debug/debug_session.h)
+    discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
+    struct DiscordState {        // what discordTick() remembers between calls
+        double lastTick = -1;
+        long long appStartUnix = 0, gameStartUnix = 0;
+        std::string artKey, artUrl;
+        double artAt = 0;
+    } discordState;
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -114,16 +137,32 @@ public:
     bool quit = false;
     bool fullscreen = false;
     bool menuPinned = true;
+    bool showInWindowMenu = false;    // macOS: also show the in-window menu bar under the native one (ui.menubar_in_window; F1 toggles)
+    bool inWindowMenuBar() const;     // is an ImGui menu bar being drawn at all
     bool showSettings = false;
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
+    fonts::Settings fontSettings;     // Settings > Video > Font (ui.font.*); applied live through fonts_imgui.h
     bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
     bool showNetplay = false;
     CheatManager cheats;
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
+    unsigned simDensity_ = 0;         // dev: --pixel-density (0 / 1 = off)
+    void simulateDensity();
+    void logDensity();
+    bool densityLogged_ = false;
+    unsigned densityFrames_ = 0;
+    bool lowDpi_ = false;             // dev: --low-dpi
     int stateSlot = 0;
+    int resumeMode = 1;               // lib::ResumeMode: Off / Ask / Always, "Resume where I left off" (saves.resume)
+    struct ResumeOffer {              // "Resume from <time>?" asked after a game booted (resumeMode == Ask)
+        bool active = false;
+        SDL_Time savedAt = 0;
+        std::string game;
+    } resumeOffer;
+    void answerResume(bool resume, bool always);   // the prompt's buttons
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;
 
@@ -134,25 +173,51 @@ public:
     bool mute = false;
     float audioTargetMs = 64.0f;
     bool showFps = false;
+    float uiScale_ = 1.0f;            // the scale the style was set up at (the display's content scale times ui.scale)
+    std::string themeBeforePreview_;  // the choice to keep/restore while the theme editor previews an unsaved theme
+    bool themePreviewing_ = false;
+    bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
+    bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Storage)
+    bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)
+    bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
-    bool openNoContent();
+    bool autoSave();                  // write this game's auto-save when the policy allows (lib::shouldAutoSave)
+    void offerResume();               // a game booted: load / ask / nothing, by the policy and the option
+    void openAndLoadState(const std::string& path, int slot);   // the library: open `path`, then load its state `slot`
+    bool openNoContent();             // boots the console with no cartridge, through the BIOS bootBios() last chose
+    // Boots a BIOS on its own (BIOS & system tab, File > Boot BIOS): a cartridge boot ROM runs against an empty
+    // slot, the CD BIOS comes up with no disc.  `file` is used for this boot only ("" = the saved choice).
+    bool bootBios(bios::Role role, const std::string& file = std::string());
+    // The saved BIOS choice (config.ini bios.cart / bios.cd); "" = Auto.  Takes effect at the next load.
+    bios::Selection biosChoice;
+    void setBiosChoice(bios::Role role, const std::string& path);
+    bool importBios(const std::string& path, bool trustSize = false);   // copy into <system>/bios/, choose it, rescan
     bool reloadContent();
     void closeContent();
     void showOpenDialog();
+    void showImportBiosDialog();      // a file picker that imports the BIOS picked (BIOS & boot)
     bool homeVisible() const { return homeLibrary && !host.isLoaded(); }   // is the library standing in for the game?
+    void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
     void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
     void reset();
     void togglePause();
     void setFullscreen(bool fs);
     void applyVsync();
+    void applyTheme();                // the Dear ImGui style for the theme in force (theme.h); a no-op before the UI exists
+    void setThemeChoice(const std::string& key);   // Settings > Video > Appearance: system | dark | light | custom:<name>; remembered
+    bool applyThemeChoice(const std::string& key); // the same without remembering; false when a custom theme is missing (System is used)
+    void themePreview(const theme::Custom& c);     // the theme editor's live preview: shown, not remembered until saved
+    void themePreviewEnd(bool keep);               // the editor closed (keep: its theme was saved and chosen); otherwise the previous choice returns
+    theme::Store themeStore() const;               // <data>/themes/, read-only in a secondary copy (#902)
+    bool showThemeEditor = false;
     void applyAudioSettings();
 
     std::string statePath(int slot) const;
     std::string thumbPath(int slot) const;
-    bool saveState(int slot);
+    bool saveState(int slot, bool quiet = false);   // slot lib::kAutoSlot = the auto-save
     bool loadState(int slot);
     bool slotExists(int slot) const;
     SDL_Time slotTime(int slot) const;
@@ -162,6 +227,17 @@ public:
     void toast(const std::string& text, double seconds = 3.0, int level = 1);
     void addRecent(const std::string& path);
     void saveConfig();
+    void applySettingsFromConfig();   // re-read the member settings from cfg (defaults for erased keys); Settings > Reset
+    void applyBios();                 // hands the BIOS choice (and a one-off boot's file) to the core host
+
+    // ---- native-OS integration (desktop.cpp; platform/platform.h) -------------------------
+    void runNativeCommand(platform::Cmd cmd, int arg);   // a native menu / tray click, from the event loop
+    void presentViewports();                             // draws + presents the extra OS windows (after the main draw data)
+    bool fromExtraWindow(const SDL_Event& e) const;
+    void applyViewports();                               // ImGui multi-viewport mode to match windowsOutside + the situation (per frame)
+    bool viewportsActive() const { return viewportsOn_; }
+    const char* viewportsNote() const;                   // why windowsOutside is ignored right now ("" = not)
+    bool applyTray();                                    // makes the tray match trayIcon; false = not available here
 
     double now() const;
     SDL_Window* window() const { return window_; }
@@ -180,21 +256,36 @@ private:
     int runHeadless(const CliArgs& a);
     void saveWindowScreenshot(const std::string& path);
 
+    void desktopInit();       // after the window exists: native menus, tray, dark title bar
+    void desktopFrame();      // every frame: refresh the native menus from the app state
+    void desktopShutdown();
+    platform::MenuState menuState();
     void handleEvent(const SDL_Event& e, bool headless);
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+    void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
+    void syncDebug();                 // content loaded / hardcore -> the debug session
     void frameUi();
     void updateTitle();
     uint32_t frameHash() const;
 
+    static constexpr int kNoPendingSlot = -1000;
+    int pendingStateSlot_ = kNoPendingSlot;       // openAndLoadState: load this slot after the new game has run a few frames
+    int pendingStateFrames_ = 0;
+    double runSeconds_ = 0;           // emulated seconds of the loaded game (auto-save needs a few)
+    bool reloading_ = false;          // reloadContent: a restart, not a new game
+    bool suppressResume_ = false;     // the library opened a game to load a chosen state: no auto-save offer
     bool headless_ = false;
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;
     SDL_Window* window_ = nullptr;
     SDL_GLContext gl_ = nullptr;
     bool imguiUp_ = false;
+    float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)
     uint32_t openDialogEvent_ = 0;
+    bool viewportsOn_ = false;         // ImGuiConfigFlags_ViewportsEnable is set right now
+    uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
 
     // pacing
@@ -211,8 +302,13 @@ private:
 
     std::vector<Osd> osd_;
     std::map<int, SlotThumb> thumbs_;
+    InstanceLock instanceLock_;       // held for the whole run; the number lives in paths.instance
+    std::string dataDirArg_;          // --data-dir as given (forwarded to a New Window copy)
     std::string headlessTmp_;
     unsigned headlessLoads_ = 0;
+    std::string biosOnce_[3];         // a one-off BIOS boot's file per role (bootBios): beats everything, until the next load
+    std::string biosCli_[3];          // --cart-bios / --cd-bios: beats the saved choice for the whole run
+    unsigned bootTarget_ = 0;         // what a no-content boot enters (VJ_BOOT_*)
 
     // headless results, one per loaded content
     struct HeadlessResult {
@@ -238,13 +334,35 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Desktop integration settings (desktop.cpp): the tray / menu-bar icon and "keep the display awake".
+void drawDesktopSettings(App& app);
 // Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
 void drawLibraryHome(App& app, float x, float y, float w, float h);
+// Debug tools (debug/debug_ui.cpp): the Tools menu, the "halted" bar, and every tool window's draw hook.
+void drawToolsMenu(App& app);
+void drawDebugOverlay(App& app, float areaX, float areaY);   // the "halted" bar
+void drawDebugWindows(App& app);                            // every registered provider's and tool's draw hook
+void addDebugTools(App& app);                               // plug every tool window into app.debug (DebugSession::addProvider)
+void shutdownDebugTools();                                  // before the GL context goes: frees the windows' textures
+// Dev (--show-window): opens a Tools window by name -- memory, palette|clut, scanner, objects, blitter, textures,
+// scope -- once the session can use it (retried each frame until then).  False if the name is not a debug tool.
+bool openDebugWindow(DebugSession& session, const std::string& name);
 // Netplay (netplay_ui.cpp): the window, the menu, and the headless/CLI glue.
 bool netplayInit(App& app, const CliArgs& a);               // log tap + --netplay*; false = bad arguments
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
 void drawNetplayMenu(App& app);
 void drawNetplay(App& app);
+// Discord Rich Presence (discord_app.cpp).
+void discordTick(App& app);                          // UI loop, every iteration: cheap, rate-limits itself
+void discordNoteGameStarted(App& app);               // a game booted: the "elapsed" timer restarts
+void discordShutdown(App& app);                      // clears the status and stops the worker
+std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_id, else the compile-time default ("" = none)
+// Themes (theme_ui.cpp): Settings > Video > Appearance, the theme editor window and its file-dialog mailbox.
+void drawAppearanceSettings(App& app);
+void drawThemeEditor(App& app);
+void themeFrameHook(App& app);
+// BIOS & boot (bios_ui.cpp): the BIOS choice and boot controls, shown in Settings and above the library's BIOS tab.
+void drawBiosPanel(App& app);
 // Controller remapping UI and helpers (remap_ui.cpp).
 void drawControlsTab(App& app);
 void drawKeypadOverlay(App& app);

@@ -16,9 +16,12 @@ _Jaguar*
 _jaguar*
 _Halfline*
 _jaguarMainRAM
+_m68kClockScalePct
+_riscClockScalePct
 _jaguarMainROM
 _jagMemSpace
 _busArbiter
+_riscClockScalePct
 _gpuPCSample
 _m68kPCSample
 _m68kPCSampleIdx
@@ -120,3 +123,7 @@ _vjtrace_*
 # exercised call site, so nothing else would catch a regression.
 _VJPerf*
 _vjPerfActive
+# App debug interface (src/debug/vjdebug.c): test/test_debug_iface.c calls the accessor
+# directly as well as through the private frontend channel.
+_VJDebug*
+_vjDebugFrame

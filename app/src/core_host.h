@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "libretro.h"
+#include "vj_frontend_ext.h"   // the core's private event channel
+#include "vj_debug_iface.h"     // ...and its debug interface (docs/app-debug-tools.md)
 
 namespace vj {
 
@@ -80,6 +82,8 @@ public:
 
     // ---- configuration (set before the first load) -----------------------
     void setDirectories(const std::string& systemDir, const std::string& saveDir);
+    // Where a game's .srm is read from when saveDir has none yet (read-only; instance.h).
+    void setSaveFallbackDir(const std::string& dir) { saveFallbackDir_ = dir; }
     void setLogVerbose(bool v) { logVerbose_ = v; }
     // Every line the core logs, at any level (even those --verbose would hide), already
     // formatted and without the trailing newline.  Called on the emulation thread.
@@ -89,6 +93,56 @@ public:
     // Per-frame input.  Port/device/index/id exactly as retro_input_state_t.
     std::function<int16_t(unsigned, unsigned, unsigned, unsigned)> inputState;
     std::function<void()> inputPoll;
+    // ---- the core's private event channel (src/core/vj_frontend_ext.h, docs/app-frontend-extension.md) ----
+    // The core says HELLO once per retro_init; this host answers (unless announceExtensions is off, which
+    // makes it behave like RetroArch: no events are ever sent and consumers fall back to log scraping).
+    // Events arrive synchronously inside runFrame(), on the emulation thread.
+    bool announceExtensions = true;
+    unsigned crashEvents() const { return crashEvents_; }   // crash-watchdog events since the content loaded
+    std::function<void(const vj_event&)> onEvent;   // string pointers are valid for the call only
+    // True once the core's HELLO was answered in the current session: the events are then authoritative
+    // and the matching log lines need no parsing.
+    bool eventsActive() const { return helloSeen_; }
+    uint64_t eventCount() const { return eventsSeen_; }
+
+    // ---- BIOS selection (VJ_ENV_GET_BIOS_PATH / VJ_ENV_GET_BOOT_TARGET, vj_frontend_ext.h) ----
+    // Which BIOS FILE the core uses for a role (VJ_BIOS_CART_BOOT / VJ_BIOS_CD), and what a no-content boot
+    // enters.  An empty path is "no preference": the core searches its system folder, then uses its built-in
+    // image.  The core validates the file (size, CD header / checksum) and falls back the same way if it
+    // fails; staged() says what it ended up running.  Takes effect at the next load.
+    void setBiosPath(unsigned role, const std::string& path) {
+        if (role >= 1 && role <= 2) biosPath_[role] = path;
+    }
+    const std::string& biosPath(unsigned role) const { return biosPath_[role >= 1 && role <= 2 ? role : 0]; }
+    void setBootTarget(unsigned target) { bootTarget_ = target; }   // VJ_BOOT_CD_BIOS / VJ_BOOT_CART_BOOT_ROM
+    unsigned bootTarget() const { return bootTarget_; }
+    // Off: the HELLO answer leaves VJ_CAP_BIOS out, as RetroArch would (the core never asks).
+    bool announceBios = true;
+    // What the core reported staging for a role in the current session (VJ_EVT_BIOS_STAGED / _REJECTED).
+    struct StagedBios {
+        bool seen = false;
+        uint32_t crc = 0;
+        unsigned source = 0;       // VJ_BIOS_SRC_*
+        std::string where;         // the file path, or the built-in image's name
+        bool rejected = false;     // a file the app named was refused (VJ_EVT_BIOS_REJECTED)
+        std::string rejectedPath;
+    };
+    const StagedBios& stagedBios(unsigned role) const { return staged_[role >= 1 && role <= 2 ? role : 0]; }
+
+    // ---- debug tools (VJ_CAP_DEBUG / VJ_ENV_SET_DEBUG_IFACE, vj_debug_iface.h) ----
+    // The core hands over its debug interface once per session, right after the HELLO.  Off: the HELLO
+    // answer leaves VJ_CAP_DEBUG out, as RetroArch would (the core never sends it).
+    bool announceDebug = true;
+    // The interface of the current session, or null (before the first load, after an unload, or when the
+    // core never sent it).  Valid until the next unload; every call through it is made on this thread.
+    const vj_debug_iface* debugIface() const { return debugIface_; }
+    // Called when the interface arrives (non-null) and just before it goes away on an unload (null).
+    std::function<void(const vj_debug_iface*)> onDebugIface;
+    // True while the core is inside retro_run().  A debugger halt parks the core there and runs the UI,
+    // so anything that would re-enter the core (a state load, a reset, another load, an option change)
+    // is refused while this is set.
+    bool inFrame() const { return inFrame_; }
+
     // Audio buffer occupancy for the core's frameskip / auto-enhancement logic.
     std::function<void(bool& active, unsigned& occupancy, bool& underrun)> audioBufferStatus;
     // What the host wants from GET_AUDIO_VIDEO_ENABLE this frame.
@@ -141,6 +195,14 @@ public:
     // core reads, so a value picked in Settings is saved but does not show until the override ends.
     bool optionOverridden(const std::string& key) const { return sessionValues_.count(key) != 0; }
     std::string optionValue(const OptionDef& d) const;  // user value if valid, else default
+    // The value the core will read for `key`, without needing the definitions (so it works before the first load):
+    // a session override, else the saved value, else `fallback`.  Strict lists only: the caller names a value it knows.
+    std::string optionValueFor(const std::string& key, const std::string& fallback) const {
+        auto s = sessionValues_.find(key);
+        if (s != sessionValues_.end()) return s->second;
+        auto u = userValues_.find(key);
+        return u != userValues_.end() ? u->second : fallback;
+    }
     // Set by the UI.  Marks the variable-update flag and runs the core's
     // update-display callback (as RetroArch does after a menu change).
     void setOptionValue(const std::string& key, const std::string& value);
@@ -207,9 +269,17 @@ private:
     void stopSession();
     void loadSaveRam();
 
-    std::string systemDir_, saveDir_;
+    std::string systemDir_, saveDir_, saveFallbackDir_;
+    std::string saveFallbackPath() const;
     bool logVerbose_ = false;
 
+    std::string biosPath_[3];   // by role (index 0 unused)
+    unsigned bootTarget_ = 0;
+    StagedBios staged_[3];
+    bool helloSeen_ = false;    // the core's VJ_ENV_HELLO was answered this session
+    const vj_debug_iface* debugIface_ = nullptr;
+    bool inFrame_ = false;      // inside retro_run()
+    uint64_t eventsSeen_ = 0;
     bool initialized_ = false;  // retro_init has run (and retro_deinit has not)
     bool loaded_ = false;
     std::string contentPath_, contentName_;
@@ -235,6 +305,7 @@ private:
 
     // misc env state
     std::vector<OsdMessage> messages_;
+    unsigned crashEvents_ = 0;
     std::string contentOverrideExts_;  // "cue|cdi|chd" (need_fullpath override)
     bool supportsNoGame_ = false;
     unsigned minAudioLatencyMs_ = 0;

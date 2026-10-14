@@ -489,7 +489,11 @@ function Install-App([string]$Work) {
     Write-NoAppBuild 'The app is 64-bit only and this is a 32-bit Windows.'
     return 3
   }
-  if ($arch -eq 'ARM64') { Write-Note 'ARM64 Windows: using the x64 build (it runs under emulation).' }
+  # An x64 PowerShell on ARM64 Windows reports AMD64 in the environment, so ask the OS itself.
+  try {
+    $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    if ($osArch -eq 'Arm64') { $arch = 'ARM64' }
+  } catch { }
 
   $installed = Find-InstalledApp
   $format = $AppFormat
@@ -500,9 +504,16 @@ function Install-App([string]$Work) {
 
   $sums = Get-Sums $Work
   if (-not $sums) { Write-NoAppBuild "Could not read $(Get-ReleaseUrl $Channel 'SHA256SUMS.txt') -- that release does not exist (yet), or you are offline."; return 3 }
-  $pat = if ($format -eq 'setup') { '^VirtualJaguar-(.+)-windows-x64-setup\.exe$' } else { '^VirtualJaguar-(.+)-windows-x64\.zip$' }
-  $asset = $null; $ver = ''
-  foreach ($k in ($sums.Keys | Sort-Object)) { if ($k -match $pat) { $asset = $k; $ver = $Matches[1]; break } }
+  # ARM64 Windows prefers the native build and falls back to x64 (which runs under emulation)
+  # for releases that predate it.
+  $wanted = @('x64'); if ($arch -eq 'ARM64') { $wanted = @('arm64', 'x64') }
+  $asset = $null; $ver = ''; $got = ''
+  foreach ($w in $wanted) {
+    $pat = if ($format -eq 'setup') { "^VirtualJaguar-(.+)-windows-$w-setup\.exe$" } else { "^VirtualJaguar-(.+)-windows-$w\.zip$" }
+    foreach ($k in ($sums.Keys | Sort-Object)) { if ($k -match $pat) { $asset = $k; $ver = $Matches[1]; $got = $w; break } }
+    if ($asset) { break }
+  }
+  if ($arch -eq 'ARM64' -and $got -eq 'x64') { Write-Note 'ARM64 Windows: this release has no native ARM64 build; using the x64 build (it runs under emulation).' }
   if (-not $asset) { Write-NoAppBuild "The '$Channel' release has no Windows $format app file."; return 3 }
   $hash = $sums[$asset]
   Write-Ok "channel $Channel ships $asset (version $ver)"

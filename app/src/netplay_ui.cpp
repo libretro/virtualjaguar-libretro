@@ -4,22 +4,25 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "app.h"
 #include "ui_util.h"
 #include "imgui.h"
 #include "netplay.h"
+#include "typed_ui.h"
 
 namespace vj {
 
 namespace {
 
-const int kPorts[4] = {42171, 42172, 42173, 42174};
+const int kPorts[4] = {42171, 42172, 42173, 42174};   // the presets; any port 1-65535 can be typed
 
 struct UiState {
     bool init = false;
-    int portIdx = 0;
+    int port = kPorts[0];
+    ui::TypedState portBox;
     char address[128] = "";
     std::string error;
     bool restartAsk = false;
@@ -31,10 +34,11 @@ struct UiState {
 };
 UiState g_ui;
 
-const ImVec4 kGreen(0.45f, 0.85f, 0.5f, 1.0f);
-const ImVec4 kAmber(1.0f, 0.8f, 0.4f, 1.0f);
-const ImVec4 kRed(1.0f, 0.5f, 0.5f, 1.0f);
-const ImVec4 kGrey(0.6f, 0.6f, 0.6f, 1.0f);
+// Theme colours (theme.h): functions, because the scheme can change while the app runs.
+ImVec4 kGreen() { return ui::vec4(ui::pal().success); }
+ImVec4 kAmber() { return ui::vec4(ui::pal().warning); }
+ImVec4 kRed() { return ui::vec4(ui::pal().error); }
+ImVec4 kGrey() { return ui::vec4(ui::pal().textMuted); }
 
 // Greyed text that wraps (ImGui::TextDisabled does not).
 void hint(const char* fmt, ...) {
@@ -50,8 +54,7 @@ void initUi(App& app) {
     if (g_ui.init) return;
     g_ui.init = true;
     int port = app.cfg.getInt("netplay.port", kPorts[0]);
-    for (int i = 0; i < 4; i++)
-        if (kPorts[i] == port) g_ui.portIdx = i;
+    g_ui.port = (port >= 1 && port <= 65535) ? port : kPorts[0];
     std::snprintf(g_ui.address, sizeof g_ui.address, "%s", app.cfg.get("netplay.join_addr", "").c_str());
     // The device is an ordinary saved core option; show what it currently is.
     for (const OptionDef& d : app.host.optionDefs())
@@ -74,7 +77,7 @@ NetSettings current(NetRole role, const std::string& address) {
     NetSettings s;
     s.role = role;
     s.device = g_ui.device;
-    s.port = kPorts[g_ui.portIdx];
+    s.port = g_ui.port;
     s.address = address;
     return s;
 }
@@ -95,22 +98,22 @@ void begin(App& app, const NetSettings& s) {
 void drawStatus(App& app) {
     Netplay& np = app.netplay;
     const bool running = app.host.isLoaded();
-    ImVec4 col = kGrey;
+    ImVec4 col = kGrey();
     std::string head;
     if (!np.configured()) {
         head = "Not connected";
     } else if (np.link() == LinkState::Up) {
         head = "Connected";
-        col = kGreen;
+        col = kGreen();
     } else if (np.link() == LinkState::Lost) {
         head = "Partner disconnected";
-        col = kRed;
+        col = kRed();
     } else if (np.settings().role == NetRole::Join && np.settings().address.empty()) {
         head = "Looking for games";
-        col = kAmber;
+        col = kAmber();
     } else {
         head = "Waiting for partner";
-        col = kAmber;
+        col = kAmber();
     }
     ImGui::TextColored(col, "%s", head.c_str());
     ImGui::SameLine();
@@ -118,11 +121,11 @@ void drawStatus(App& app) {
     ImGui::SameLine();
     ImGui::TextWrapped("%s", np.statusText().c_str());
     if (np.configured() && !running)
-        ImGui::TextColored(kAmber, "No game is running. The link starts as soon as you open one (both players need the same game).");
+        ImGui::TextColored(kAmber(), "No game is running. The link starts as soon as you open one (both players need the same game).");
     else if (np.configured() && app.paused)
-        ImGui::TextColored(kAmber, "The game is paused, so the link is paused too.");
-    for (const std::string& n : np.notices()) ImGui::TextColored(kAmber, "%s", n.c_str());
-    if (!g_ui.error.empty()) ImGui::TextColored(kRed, "%s", g_ui.error.c_str());
+        ImGui::TextColored(kAmber(), "The game is paused, so the link is paused too.");
+    for (const std::string& n : np.notices()) ImGui::TextColored(kAmber(), "%s", n.c_str());
+    if (!g_ui.error.empty()) ImGui::TextColored(kRed(), "%s", g_ui.error.c_str());
 }
 
 const char* qualityWord(double hopMs) {
@@ -173,23 +176,29 @@ void deviceChoice(App& app) {
     }
 }
 
-void portCombo(int live) {   // live > 0: what the running link uses (the box is locked then)
-    char lab[16];
-    std::snprintf(lab, sizeof lab, "%d", live > 0 ? live : kPorts[g_ui.portIdx]);
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
-    if (ImGui::BeginCombo("Port", lab)) {
-        for (int i = 0; i < 4; i++) {
-            std::snprintf(lab, sizeof lab, "%d", kPorts[i]);
-            if (ImGui::Selectable(lab, i == g_ui.portIdx)) g_ui.portIdx = i;
-        }
-        ImGui::EndCombo();
+// The link port: the four presets the core offers, or any port 1-65535 typed.  live > 0: what the
+// running link uses (the box is shown locked then).
+void portCombo(int live) {
+    static const TypedOption* t = typedOptionFor("virtualjaguar_netlink_port");
+    static std::vector<OptionValue> presets;
+    if (presets.empty())
+        for (int p : kPorts) presets.push_back({std::to_string(p), ""});
+    const std::string cur = std::to_string(live > 0 ? live : g_ui.port);
+    std::string picked;
+    if (ui::typedCombo("Port", ImGui::GetFontSize() * 7.0f, *t, presets, cur, g_ui.portBox, picked))
+        g_ui.port = std::atoi(picked.c_str());
+    if (g_ui.portBox.custom) {
+        ImGui::Indent();
+        if (ui::typedInput(*t, cur, g_ui.portBox, picked)) g_ui.port = std::atoi(picked.c_str());
+        ImGui::Unindent();
     }
 }
 
 void drawHost(App& app) {
     Netplay& np = app.netplay;
     const bool hosting = np.settings().role == NetRole::Host;
-    ImGui::TextWrapped("Start a game, then have your partner join it from their Netplay window. "
+    ImGui::TextWrapped("Start a game, then have your partner join it from their Netplay window "
+                       "(or from File > New window on this computer, using 127.0.0.1). "
                        "Make sure you both picked the same device above.");
     ImGui::BeginDisabled(hosting);
     portCombo(hosting ? np.settings().port : 0);
@@ -197,7 +206,7 @@ void drawHost(App& app) {
     refreshLan(app);
     ImGui::SeparatorText("Your addresses");
     if (g_ui.lan.empty()) {
-        ImGui::TextColored(kAmber, "This computer does not seem to be on a network.");
+        ImGui::TextColored(kAmber(), "This computer does not seem to be on a network.");
     } else {
         hint("Your partner can pick you from their list, or type one of these:");
         for (size_t i = 0; i < g_ui.lan.size(); i++) {
@@ -254,7 +263,7 @@ void drawJoin(App& app) {
             }
             if (!h.device.empty()) {
                 ImGui::SameLine();
-                ImGui::TextColored(kAmber, "uses %s - choose that above", h.device.c_str());
+                ImGui::TextColored(kAmber(), "uses %s - choose that above", h.device.c_str());
             }
             ImGui::SameLine();
             const bool here = dialing && np.settings().address == h.address;
@@ -401,6 +410,7 @@ void drawNetplay(App& app) {
 // ---------------------------------------------------------------------------------
 bool netplayInit(App& app, const CliArgs& a) {
     app.host.onLog = [&app](int level, const char* text) { app.netplay.onCoreLog(level, text); };
+    app.host.onEvent = [&app](const vj_event& e) { app.netplay.onCoreEvent(e); };
     app.netplay.setSystemDir(app.paths.system);
     const NetplayCli& c = a.netplay;
     if (c.role.empty()) return true;
@@ -499,6 +509,11 @@ int netplayHeadlessCheck(App& app, const CliArgs& a) {
         std::fprintf(stderr, "netplay: FAIL no link within %.0fs (state: %s)\n", total, np.statusText().c_str());
         return 1;
     }
+    // With the core's event channel answered, the link must have come up through it, not by a log line.
+    if (app.host.eventsActive() && np.linkUpEvents() == 0) {
+        std::fprintf(stderr, "netplay: FAIL the link is up but the core sent no LINK_UP event\n");
+        return 1;
+    }
     const std::string want = Netplay::deviceValue(np.settings().device);
     if (np.linkDevice() != want) {
         std::fprintf(stderr, "netplay: FAIL link came up as device '%s', expected '%s'\n", np.linkDevice().c_str(),
@@ -508,8 +523,8 @@ int netplayHeadlessCheck(App& app, const CliArgs& a) {
     // The partner needs to see the link too before this process (and so its socket) goes away.
     const auto up = Clock::now();
     while (std::chrono::duration<double>(Clock::now() - up).count() < 1.5) step();
-    std::printf("NETPLAY link=UP role=%s device=%s port=%d discovered=%zu\n", c.role.c_str(), np.linkDevice().c_str(),
-                np.settings().port, found);
+    std::printf("NETPLAY link=UP role=%s device=%s port=%d discovered=%zu via=%s\n", c.role.c_str(),
+                np.linkDevice().c_str(), np.settings().port, found, app.host.eventsActive() ? "events" : "log");
     std::fflush(stdout);
     return 0;
 }

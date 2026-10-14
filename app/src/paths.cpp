@@ -1,12 +1,31 @@
 #include "paths.h"
 
+#include "instance.h"
+
 #include <SDL3/SDL.h>
 
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
 
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#else
+#  include <unistd.h>
+#endif
+
 namespace vj {
+
+unsigned long processId() {
+#ifdef _WIN32
+    return (unsigned long)GetCurrentProcessId();
+#else
+    return (unsigned long)getpid();
+#endif
+}
 
 static std::string withSep(std::string s) {
     if (!s.empty() && s.back() != '/' && s.back() != '\\') s += '/';
@@ -47,6 +66,20 @@ bool Paths::resolve(const std::string& overrideDir, std::string& err) {
             err = "cannot create " + *d + ": " + SDL_GetError();
             return false;
         }
+    }
+    return true;
+}
+
+bool Paths::applyInstance(int n, std::string& err) {
+    instance = n < 1 ? 1 : n;
+    if (instance == 1) return true;
+    savesShared = saves;
+    saves = instanceSavesDir(saves, instance);
+    imguiIni = root + instanceImguiName(instance);
+    instanceConfig = root + instanceConfigName(instance);
+    if (!SDL_CreateDirectory(saves.c_str())) {
+        err = "cannot create " + saves + ": " + SDL_GetError();
+        return false;
     }
     return true;
 }
@@ -94,7 +127,9 @@ bool readFile(const std::string& path, std::vector<unsigned char>& out) {
 }
 
 bool writeFileAtomic(const std::string& path, const void* data, size_t size) {
-    std::string tmp = path + ".tmp";
+    // The temp name is per process: two running copies writing the same file (the library cache, a
+    // thumbnail) must not share one temp file, or one could rename the other's half-written bytes.
+    std::string tmp = path + "." + std::to_string(processId()) + ".tmp";
     if (!SDL_SaveFile(tmp.c_str(), data, size)) return false;
     // SDL_RenamePath replaces an existing destination on every platform SDL
     // supports (MoveFileEx with REPLACE_EXISTING on Windows).

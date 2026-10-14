@@ -37,6 +37,7 @@
 #include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (buildbot msvc05/10) */
 
 #include "gdbstub.h"
+#include "vj_debug_iface.h"
 #include "gdbdisasm.h"
 #include "m68kinterface.h"
 #include "jaguar.h"
@@ -737,9 +738,7 @@ static int GDBMonitorHalt(const char *args, char *out, int outMax)
    /* Arms unconditionally for the very next instruction on that
     * processor -- takes effect next time it actually runs, same one-shot
     * primitive `s`/vCont;s and the gdb_wait boot halt use. */
-   gdbBp[target].oneShot       = 1;
-   gdbBp[target].oneShotReason = GDB_STOP_USER;
-   GDBRecomputeArmed(target);
+   GDBTargetHaltNext(target);
 
    return snprintf(out, (size_t)outMax,
       "%s will halt on its next instruction\n", which);
@@ -884,6 +883,13 @@ static int  gdbHaltedTarget = -1;
 static int  gdbHaltTimeoutSeconds = 0;
 static int  gdbClientWasPresent = 0;
 static int  gdbClientAttachEventPending = 0;
+/* Set between GDBTargetOpen() and GDBTargetClose(): the TCP stub owns a
+ * socket.  The app's debug interface (src/debug/vjdebug.c) can attach
+ * WITHOUT one, in which case the halt loop pumps the host instead. */
+static int  gdbSocketOpen = 0;
+static int  gdbTablesReady = 0;
+static int  gdbHaltReason = -1;
+static const struct vj_debug_host *gdbDbgHost = NULL;
 
 static void GDBSleepMs(int ms)
 {
@@ -1074,6 +1080,66 @@ void GDBTargetArmWaitAtBoot(void)
    GDBRecomputeArmed(GDB_TGT_68K);
 }
 
+void GDBTargetSetDebugHost(const struct vj_debug_host *h)
+{
+   gdbDbgHost = h;
+}
+
+const struct vj_debug_host *GDBTargetGetDebugHost(void)
+{
+   return gdbDbgHost;
+}
+
+/* Socket-less initialisation of the per-target tables (the part of
+ * GDBTargetOpen() that does not need a listener): without it the PC
+ * cache holds zeros, which would read as "breakpoint at $000000". Run
+ * once per content load; GDBTargetClose() re-arms the latch. */
+void GDBTargetEnsureTables(void)
+{
+   if (gdbTablesReady)
+      return;
+   GDBTargetResetState();
+   gdbTablesReady = 1;
+}
+
+int GDBTargetBreakSet(int target, unsigned int addr)
+{
+   if (target < 0 || target >= GDB_NUM_TARGETS)
+      return -1;
+   GDBTargetEnsureTables();
+   return GDBInsertExecBp(target, addr);
+}
+
+int GDBTargetBreakClear(int target, unsigned int addr)
+{
+   if (target < 0 || target >= GDB_NUM_TARGETS)
+      return -1;
+   GDBTargetEnsureTables();
+   return GDBRemoveExecBp(target, addr);
+}
+
+/* Arms a halt on the target's very next instruction (monitor halt, the
+ * gdb_wait boot halt and the app's "break now" share this one-shot). */
+void GDBTargetHaltNext(int target)
+{
+   if (target < 0 || target >= GDB_NUM_TARGETS)
+      return;
+   GDBTargetEnsureTables();
+   gdbBp[target].oneShot       = 1;
+   gdbBp[target].oneShotReason = GDB_STOP_USER;
+   GDBRecomputeArmed(target);
+}
+
+int GDBTargetHaltedTarget(void)
+{
+   return gdbHaltedTarget;
+}
+
+int GDBTargetHaltReason(void)
+{
+   return gdbHaltReason;
+}
+
 void GDBHalt(int target, int reason, unsigned int pc)
 {
    time_t startTime;
@@ -1081,26 +1147,40 @@ void GDBHalt(int target, int reason, unsigned int pc)
    char encoded[48];
    int encLen;
    int effectiveReason;
+   int hostVerdict = VJ_DBG_RESUME_NONE;
 
    if (target < 0 || target >= GDB_NUM_TARGETS)
       return;
 
+   /* Nobody to resume us (no TCP client socket and no app attached): never
+    * block.  Reachable only through a stale one-shot; drop it. */
+   if (!gdbSocketOpen && !gdbDbgHost)
+   {
+      gdbBp[target].oneShot = 0;
+      GDBRecomputeArmed(target);
+      return;
+   }
+
    effectiveReason = (reason == GDB_STOP_BREAKPOINT) ? gdbLastReason[target] : reason;
    gdbHaltedTarget = target;
+   gdbHaltReason   = effectiveReason;
    startTime = time(NULL);
 
    LOG_INF("[GDB] halt: target=%d reason=%d pc=$%06X\n", target, effectiveReason, pc);
 
-   sprintf(stopMsg, "T05thread:%x;", target + 1);
-   encLen = GDBEncodePacket(stopMsg, (int)strlen(stopMsg), encoded, (int)sizeof(encoded));
-   if (encLen > 0)
-      GDBSockSend(encoded, encLen);
+   if (gdbSocketOpen)
+   {
+      sprintf(stopMsg, "T05thread:%x;", target + 1);
+      encLen = GDBEncodePacket(stopMsg, (int)strlen(stopMsg), encoded, (int)sizeof(encoded));
+      if (encLen > 0)
+         GDBSockSend(encoded, encLen);
+   }
 
    for (;;)
    {
       int resumeRequested = 0, resumeIsStep = 0;
 
-      if (GDBPumpOnce(&resumeRequested, &resumeIsStep))
+      if (gdbSocketOpen && GDBPumpOnce(&resumeRequested, &resumeIsStep))
          break;   /* client disconnected -- GDBTargetResetState() already ran */
 
       if (resumeRequested)
@@ -1113,6 +1193,25 @@ void GDBHalt(int target, int reason, unsigned int pc)
          }
          break;
       }
+
+      /* The app's debug interface: one nested UI frame per call.  Either
+       * side (socket or host) may resume the machine; whoever answers
+       * first wins. */
+      if (gdbDbgHost && gdbDbgHost->halt_pump)
+      {
+         hostVerdict = gdbDbgHost->halt_pump(gdbDbgHost->user, target, pc);
+         if (hostVerdict == VJ_DBG_RESUME_STEP)
+         {
+            gdbBp[target].oneShot       = 1;
+            gdbBp[target].oneShotReason = GDB_STOP_STEP;
+            GDBRecomputeArmed(target);
+            break;
+         }
+         if (hostVerdict == VJ_DBG_RESUME_CONTINUE || hostVerdict == VJ_DBG_RESUME_DETACH)
+            break;
+      }
+      else if (!gdbSocketOpen)
+         break;   /* the host went away mid-halt (detached from inside the pump) */
 
       if (gdbHaltTimeoutSeconds > 0 &&
           (int)difftime(time(NULL), startTime) >= gdbHaltTimeoutSeconds)
@@ -1127,6 +1226,7 @@ void GDBHalt(int target, int reason, unsigned int pc)
    }
 
    gdbHaltedTarget = -1;
+   gdbHaltReason   = -1;
 }
 
 void GDBTargetResetState(void)
@@ -1177,10 +1277,16 @@ void GDBTargetOpen(void)
    GDBSessionSetTargetOps(&gdbSession, GDB_TGT_GPU, GDBGpuOps(), NULL);
    GDBSessionSetTargetOps(&gdbSession, GDB_TGT_DSP, GDBDspOps(), NULL);
    GDBTargetResetState();
+   gdbTablesReady = 1;
+   gdbSocketOpen  = 1;
 }
 
 void GDBTargetClose(void)
 {
    GDBTargetResetState();
    gdbHaltTimeoutSeconds = 0;
+   gdbSocketOpen  = 0;
+   gdbTablesReady = 0;
+   gdbHaltReason  = -1;
+   gdbDbgHost     = NULL;
 }

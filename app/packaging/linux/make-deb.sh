@@ -7,7 +7,7 @@
 # live together and /usr/bin gets a symlink; SDL_GetBasePath() resolves /proc/self/exe):
 #   /usr/lib/virtualjaguar/{virtualjaguar,cheats/,libretro-db/,shaders/,...}
 #   /usr/bin/virtualjaguar -> ../lib/virtualjaguar/virtualjaguar
-#   /usr/share/{applications,icons,metainfo,doc}
+#   /usr/share/{applications,icons,metainfo,mime,doc}   (mime/packages: dpkg's shared-mime-info trigger runs update-mime-database)
 # Depends comes from dpkg-shlibdeps (libc, libcurl, ...).  SDL dlopen()s the display and
 # audio stacks, which shlibdeps cannot see, so those are Recommends.
 set -euo pipefail
@@ -20,7 +20,7 @@ cmake --install "$build" --prefix "$inst"
 mkdir -p "$pkg/usr/lib/virtualjaguar" "$pkg/usr/bin" "$pkg/usr/share" "$pkg/DEBIAN"
 cp -a "$inst/bin/." "$pkg/usr/lib/virtualjaguar/"
 ln -s ../lib/virtualjaguar/virtualjaguar "$pkg/usr/bin/virtualjaguar"
-for d in applications icons metainfo; do cp -a "$inst/share/$d" "$pkg/usr/share/"; done
+for d in applications icons metainfo mime; do cp -a "$inst/share/$d" "$pkg/usr/share/"; done
 docdir="$pkg/usr/share/doc/virtualjaguar"
 mkdir -p "$docdir"
 cp -a "$inst/share/doc/virtualjaguar/." "$docdir/"

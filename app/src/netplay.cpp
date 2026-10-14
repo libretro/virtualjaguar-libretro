@@ -1,11 +1,13 @@
 #include "netplay.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "paths.h"
+#include "typed_options.h"
 
 namespace vj {
 
@@ -48,15 +50,6 @@ bool peerLabel(const OptionValue& v) {
 }
 
 bool contains(const std::string& s, const char* sub) { return s.find(sub) != std::string::npos; }
-
-void putEnv(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value ? value : "");
-#else
-    if (value && *value) setenv(name, value, 1);
-    else unsetenv(name);
-#endif
-}
 
 }  // namespace
 
@@ -175,16 +168,6 @@ void Netplay::setOverride(const char* key, const std::string& value, std::vector
         if (d.key == key && optionNeedsRestart(d)) restartKeys->push_back(key);
 }
 
-void Netplay::setPortEnv(int port, bool on) {
-    if (on) {
-        putEnv("VJ_NETLINK_PORT", std::to_string(port).c_str());
-        portEnvSet_ = true;
-    } else if (portEnvSet_) {
-        putEnv("VJ_NETLINK_PORT", "");
-        portEnvSet_ = false;
-    }
-}
-
 bool Netplay::writeAddressFile(const std::string& addr, std::string& err) {
     if (systemDir_.empty()) {
         err = "no system directory to keep the address in";
@@ -200,7 +183,9 @@ bool Netplay::writeAddressFile(const std::string& addr, std::string& err) {
 }
 
 bool Netplay::applyNow(const NetSettings& s, std::string& err, std::vector<std::string>* restartKeys) {
-    if (s.role == NetRole::Join && !s.address.empty()) {
+    // The core's host option takes the typed address itself.  The vj_netlink.txt route is the fallback
+    // (viaOption_ = false) for a build whose host option is still a closed list.
+    if (s.role == NetRole::Join && !s.address.empty() && !viaOption_) {
         if (!writeAddressFile(s.address, err)) return false;
     }
     setOverride(kModeKey, modeValue(s.role), restartKeys);
@@ -213,22 +198,17 @@ bool Netplay::applyNow(const NetSettings& s, std::string& err, std::vector<std::
 
     if (s.role == NetRole::Join) {
         // Looking around (no address) must not dial anything meaningful: stay on the preset.
-        setOverride(kHostKey, s.address.empty() ? "127.0.0.1" : kAddressFile, restartKeys);
+        setOverride(kHostKey, s.address.empty() ? "127.0.0.1" : (viaOption_ ? s.address : std::string(kAddressFile)),
+                    restartKeys);
     } else {
         host_.clearOverride(kHostKey);
     }
-    if (s.role == NetRole::Host || s.role == NetRole::Join) {
-        if (portIsOptionValue(s.port)) {
-            setOverride(kPortKey, std::to_string(s.port), restartKeys);
-            setPortEnv(s.port, false);
-        } else {
-            host_.clearOverride(kPortKey);
-            setPortEnv(s.port, true);
-        }
-    } else {
+    // Any port from 1 to 65535: the core's port option takes the typed value (the VJ_NETLINK_PORT
+    // environment route this used for ports outside the four presets is gone).
+    if (s.role == NetRole::Host || s.role == NetRole::Join)
+        setOverride(kPortKey, std::to_string(s.port), restartKeys);
+    else
         host_.clearOverride(kPortKey);
-        setPortEnv(0, false);
-    }
 
     want_ = s;
     applied_ = s;
@@ -253,8 +233,9 @@ bool Netplay::start(const NetSettings& s, std::string& err, std::vector<std::str
         return false;
     }
     if (s.role == NetRole::Join && !s.address.empty()) {
-        if (s.address.size() > 120 || s.address.find_first_of(" \t\r\n/\\:") != std::string::npos) {
-            err = "that does not look like an address (use a name or an IPv4 address, no port)";
+        std::string why;
+        if (!validTypedHost(s.address, &why)) {
+            err = "that does not look like an address (use a name or an IPv4 address, no port): " + why;
             return false;
         }
     }
@@ -286,7 +267,6 @@ void Netplay::clearAll() {
     host_.clearOverride(kModeKey);
     host_.clearOverride(kHostKey);
     host_.clearOverride(kPortKey);
-    setPortEnv(0, false);
     bouncing_ = false;
     want_ = NetSettings();
     applied_ = NetSettings();
@@ -325,7 +305,12 @@ void Netplay::onCoreLog(int /*level*/, const char* text) {
     std::string l = tag + std::strlen("[NETLINK] ");
     if (want_.role == NetRole::Off || bouncing_) return;
 
+    // With the core's event channel answered (CoreHost::eventsActive) link UP / DOWN, wire speed and the
+    // stats arrive as events (onCoreEvent) and these lines are skipped; without it (a core that never
+    // said HELLO, or announceExtensions off) the log text is all there is.
+    const bool viaEvents = host_.eventsActive();
     if (l.rfind("link UP", 0) == 0) {
+        if (viaEvents) return;
         state_ = LinkState::Up;
         size_t p = l.find("device=");
         if (p != std::string::npos) {
@@ -334,6 +319,7 @@ void Netplay::onCoreLog(int /*level*/, const char* text) {
         }
         openError_.clear();
     } else if (l.rfind("link DOWN", 0) == 0) {
+        if (viaEvents) return;
         state_ = state_ == LinkState::Up ? LinkState::Lost : LinkState::Waiting;
         stats_ = LinkStats();
         haveStats_ = false;
@@ -352,18 +338,70 @@ void Netplay::onCoreLog(int /*level*/, const char* text) {
         discoveryError_ = "Finding games on the network is not working (the network permission may have been "
                           "refused). You can still type the host's address.";
     } else if (l.rfind("wire speed auto CONFIRMED", 0) == 0) {
+        if (viaEvents) return;
         size_t p = l.find("now ");
         speedup_ = p == std::string::npos ? 2u : (unsigned)std::strtoul(l.c_str() + p + 4, nullptr, 10);
         if (speedup_ < 1) speedup_ = 1;
     } else if (l.rfind("wire speed back to stock", 0) == 0) {
+        if (viaEvents) return;
         speedup_ = 1;
     } else if (l.rfind("link stats", 0) == 0) {
+        if (viaEvents) return;
         LinkStats s;
         if (parseStatsLine(l, s)) {
             stats_ = s;
             haveStats_ = true;
             statsAt_ = std::chrono::steady_clock::now();
         }
+    }
+}
+
+// The core's private event channel (src/core/vj_frontend_ext.h): the same facts the "[NETLINK] ..."
+// log lines carry, as numbers.  Runs inside CoreHost::runFrame on the emulation thread.
+void Netplay::onCoreEvent(const vj_event& e) {
+    if (want_.role == NetRole::Off || bouncing_) return;
+    switch (e.type) {
+    case VJ_EVT_LINK_UP:
+        upEvents_++;
+        state_ = LinkState::Up;
+        upDevice_ = e.a ? "voicemodem" : "jaglink";
+        if (e.s) {
+            const char* sp = std::strchr(e.s, ' ');   // "tcp_client <host>"
+            if (sp) peerText_ = sp + 1;
+        }
+        openError_.clear();
+        break;
+    case VJ_EVT_LINK_DOWN:
+        state_ = state_ == LinkState::Up ? LinkState::Lost : LinkState::Waiting;
+        stats_ = LinkStats();
+        haveStats_ = false;
+        speedup_ = 1;
+        break;
+    case VJ_EVT_LINK_STATS: {
+        LinkStats s;
+        s.windowSec = 5;   // the core reports about every 5 seconds
+        s.hopsPerSec = e.a;
+        s.hopMs = e.b / 100.0;
+        s.slipped = e.c;
+        s.timeouts = e.d;
+        const unsigned hops = e.a * s.windowSec;
+        s.hops = hops;
+        s.slippedPct = hops ? std::min(100u, e.c * 100u / hops) : 0;
+        char raw[160];
+        std::snprintf(raw, sizeof raw, "link stats ~%us: hops/s=%u hop=%.2fms slipped=%u timeouts=%u", s.windowSec,
+                      s.hopsPerSec, s.hopMs, s.slipped, s.timeouts);
+        s.raw = raw;
+        s.valid = true;
+        stats_ = s;
+        haveStats_ = true;
+        statsAt_ = std::chrono::steady_clock::now();
+        break;
+    }
+    case VJ_EVT_WIRE_SPEED:
+        speedup_ = e.b && e.a > 1 ? e.a : 1u;
+        break;
+    default:   // CRASH_WATCHDOG is the host's business (an on-screen message); future types are ignored
+        break;
     }
 }
 
@@ -403,7 +441,7 @@ std::vector<std::string> Netplay::notices() const {
     if (!discoveryError_.empty() && (want_.role == NetRole::Host || want_.role == NetRole::Join))
         n.push_back(discoveryError_);
     std::string env = envOverride();
-    if (!env.empty() && configured() && !(portEnvSet_ && env == "VJ_NETLINK_PORT"))
+    if (!env.empty() && configured())
         n.push_back("The environment variable " + env + " is set and overrides what is chosen here.");
     return n;
 }

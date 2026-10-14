@@ -20,7 +20,7 @@
 # Layout produced:   <prefix>/bin/virtualjaguar[.exe]
 #                    <prefix>/bin/{cheats,libretro-db,shaders}/ , librashader.*
 #                    <prefix>/share/doc/virtualjaguar/{LICENSE.txt,THIRD-PARTY-NOTICES.txt,README.md}
-#                    Linux also: share/applications, share/icons/hicolor, share/metainfo
+#                    Linux also: share/applications, share/icons/hicolor, share/metainfo, share/mime/packages
 # The platform packagers (app/packaging/{macos,linux,windows}) relocate bin/ as the
 # platform wants (Resources/ in a .app, /usr/lib/virtualjaguar in a .deb, ...).
 #
@@ -55,10 +55,20 @@ function(vj_package_setup)
         set(VJ_ICO "${_VJP_DIR}/../packaging/icons/virtualjaguar.ico")
         get_filename_component(VJ_ICO "${VJ_ICO}" ABSOLUTE)
         set(VJ_RC_VERSION_COMMA "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0")
+        # Application manifest (#833): per-monitor-v2 DPI awareness, long paths, Windows 10/11 compatibility.
+        # MSVC embeds a manifest at link time from a .manifest source (it would clash with one in the .rc);
+        # MinGW's windres embeds it from the .rc.
+        get_filename_component(VJ_MANIFEST "${_VJP_DIR}/../packaging/windows/virtualjaguar.manifest" ABSOLUTE)
+        if(MSVC)
+            set(VJ_RC_MANIFEST_LINE "")
+            target_sources(virtualjaguar PRIVATE "${VJ_MANIFEST}")
+        else()
+            set(VJ_RC_MANIFEST_LINE "1 24 \"${VJ_MANIFEST}\"")
+        endif()
         configure_file("${_VJP_DIR}/../packaging/windows/virtualjaguar.rc.in"
                        "${CMAKE_BINARY_DIR}/virtualjaguar.rc" @ONLY)
         set_source_files_properties("${CMAKE_BINARY_DIR}/virtualjaguar.rc" PROPERTIES
-            OBJECT_DEPENDS "${VJ_ICO}")
+            OBJECT_DEPENDS "${VJ_ICO};${VJ_MANIFEST}")
         target_sources(virtualjaguar PRIVATE "${CMAKE_BINARY_DIR}/virtualjaguar.rc")
         if(VJ_APP_WIN32_GUI)
             target_sources(virtualjaguar PRIVATE
@@ -111,6 +121,10 @@ function(vj_package_setup)
         set(VJ_APP_ID "io.github.libretro.VirtualJaguar")
         install(FILES "${_VJP_DIR}/../packaging/linux/${VJ_APP_ID}.desktop"
                 DESTINATION share/applications)
+        # File types (#833): shared-mime-info reads share/mime/packages; the .deb's dpkg trigger, Flatpak's
+        # export and a distro package's post-install run update-mime-database.
+        install(FILES "${_VJP_DIR}/../packaging/linux/${VJ_APP_ID}.xml"
+                DESTINATION share/mime/packages)
         string(TIMESTAMP VJ_PACKAGE_DATE "%Y-%m-%d" UTC)
         configure_file("${_VJP_DIR}/../packaging/linux/${VJ_APP_ID}.metainfo.xml"
                        "${CMAKE_BINARY_DIR}/${VJ_APP_ID}.metainfo.xml" @ONLY)

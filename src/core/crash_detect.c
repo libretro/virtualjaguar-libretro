@@ -2,6 +2,7 @@
 
 #include "crash_detect.h"
 #include "log.h"
+#include "vj_frontend_ext.h"
 #include "../jerry/dsp.h"   /* DSPIsRunning() returns bool -- match the canonical decl */
 #include "../tom/gpu.h"     /* GPUIsRunning() */
 #include "../tom/blitter.h" /* BlitterNeverEnds() -- shared never-ending-blit predicate */
@@ -477,6 +478,7 @@ void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
               b_cmd, a1_base, pc_canonical(gpu_pc), (int)GPUIsRunning(),
               pc_canonical(dsp_pc), (int)DSPIsRunning(),
               (unsigned)(m68k_get_reg(NULL, M68K_REG_PC) & PC_ALIAS_MASK));
+      VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no + 1, b_count, 0, 0, "inframe_hang");
       return;
    }
    LOG_ERR("[CRASH-DETECT] inframe_hang frame=%u where=blitter b_count=$%08X "
@@ -489,6 +491,7 @@ void CrashDetectNoteBlit(uint32_t b_count, uint32_t b_cmd, uint32_t a1_base,
            b_cmd, a1_base, pc_canonical(gpu_pc), (int)GPUIsRunning(),
            pc_canonical(dsp_pc), (int)DSPIsRunning(),
            (unsigned)(m68k_get_reg(NULL, M68K_REG_PC) & PC_ALIAS_MASK));
+   VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no + 1, b_count, 0, 0, "inframe_hang");
 }
 
 void CrashDetectSetMode(int mode)
@@ -551,8 +554,11 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    if (gpu_running && !gpu_pc_valid(cur_gpu_pc))
    {
       if (may_log(&last_log_gpu_escape))
+      {
          LOG_ERR("[CRASH-DETECT] gpu_pc_escape frame=%u pc=$%08X (valid: $0-$E3FFFF or $F03000-$F03FFF)\n",
                  frame_no, cur_gpu_pc);
+         VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no, cur_gpu_pc, 0, 0, "gpu_pc_escape");
+      }
    }
 
    /* ---- GPU runaway: executing outside local RAM and outside any
@@ -563,16 +569,22 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
        && !gpu_pc_in_start_page(cur_gpu_pc))
    {
       if (may_log(&last_log_gpu_runaway))
+      {
          LOG_ERR("[CRASH-DETECT] gpu_runaway frame=%u pc=$%08X (not local RAM, not a GPU-GO page)\n",
                  frame_no, cur_gpu_pc);
+         VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no, cur_gpu_pc, 0, 0, "gpu_runaway");
+      }
    }
 
    /* ---- DSP PC escape ---- */
    if (dsp_running && !dsp_pc_valid(dsp_pc))
    {
       if (may_log(&last_log_dsp_escape))
+      {
          LOG_ERR("[CRASH-DETECT] dsp_pc_escape frame=%u pc=$%08X (valid: $0-$E3FFFF or $F1B000-$F1CFFF)\n",
                  frame_no, dsp_pc);
+         VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no, dsp_pc, 0, 0, "dsp_pc_escape");
+      }
    }
 
    /* ---- GPU wedge: still running, executing NOTHING ----
@@ -586,8 +598,11 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
       gpu_zero_opcode_frames++;
       if (gpu_zero_opcode_frames == WEDGE_FRAMES_GPU
           && may_log(&last_log_gpu_wedge))
+      {
          LOG_WRN("[CRASH-DETECT] gpu_wedge frame=%u pc=$%08X running but 0 opcodes for %u frames\n",
                  frame_no, cur_gpu_pc, WEDGE_FRAMES_GPU);
+         VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no, cur_gpu_pc, 0, 0, "gpu_wedge");
+      }
    }
    else
    {
@@ -604,8 +619,11 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
       dsp_zero_opcode_frames++;
       if (dsp_zero_opcode_frames == WEDGE_FRAMES_DSP
           && may_log(&last_log_dsp_wedge))
+      {
          LOG_WRN("[CRASH-DETECT] dsp_wedge frame=%u pc=$%08X running but 0 opcodes for %u frames\n",
                  frame_no, cur_dsp_pc, WEDGE_FRAMES_DSP);
+         VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no, cur_dsp_pc, 0, 0, "dsp_wedge");
+      }
    }
    else
    {
@@ -635,10 +653,13 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
          fb_same_hash_frames++;
          if (fb_same_hash_frames == STALL_FRAMES_FB
              && may_log(&last_log_fb_stall))
+         {
             LOG_WRN("[CRASH-DETECT] video_stall frame=%u fb_hash=$%08X unchanged for %u frames "
                     "gpu_pc=$%08X gpu_run=%d dsp_pc=$%08X dsp_run=%d\n",
                     frame_no, cur_fb_hash, STALL_FRAMES_FB,
                     cur_gpu_pc, gpu_running, cur_dsp_pc, dsp_running);
+            VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no, cur_fb_hash, 0, 0, "video_stall");
+         }
       }
       else
       {
@@ -683,6 +704,7 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
                     WEDGE_FRAMES_CD_SEEK, (unsigned)cd_butch_int,
                     (unsigned)cd_i2s_ctrl, cur_gpu_pc,
                     gpu_running, cur_dsp_pc, dsp_running);
+            VJExtEmit(VJ_EVT_CRASH_WATCHDOG, frame_no, cd_seek_starts, cd_seek_dones, 0, "cd_seek_wedge");
             CDTraceDump();
          }
       }

@@ -3,15 +3,20 @@
 // manager, the on-screen messages.
 #include "app.h"
 #include "devices_ui.h"
+#include "fonts_ui.h"
 
 #include "imgui.h"
+#include "platform/platform.h"
+#include "settings_reset_ui.h"
 #include "shaders.h"
+#include "typed_ui.h"
 #include "ui_util.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <map>
 
 namespace vj {
 
@@ -34,6 +39,12 @@ const char* labelFor(const OptionDef& d, const std::string& value) {
     return value.c_str();
 }
 
+// The "Custom..." box state of the typed options, by key.  File scope so a reset can forget it.
+std::map<std::string, ui::TypedState>& typedStateMap() {
+    static std::map<std::string, ui::TypedState> m;
+    return m;
+}
+
 void drawOption(App& app, const OptionDef& d, bool inCategory) {
     CoreHost& host = app.host;
     std::string cur = host.optionValue(d);
@@ -45,22 +56,35 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
     // A session override (the Netplay window's link mode / host / port, or --option) decides what the core
     // reads, so a pick here would be saved yet never show: the row is read-only until the override ends.
     const bool pinned = host.optionOverridden(d.key);
+    // A key in typed_options.h gets the core's presets plus "Custom..." (a typed value); every other
+    // option is a plain list.
+    const TypedOption* typed = typedOptionFor(d.key);
+    ui::TypedState* ts = typed ? &typedStateMap()[d.key] : nullptr;
     ImGui::BeginDisabled(pinned);
-    ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
-    if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
-        for (const OptionValue& v : d.values) {
-            bool sel = (v.value == cur);
-            if (ImGui::Selectable(v.label.empty() ? v.value.c_str() : v.label.c_str(), sel))
-                host.setOptionValue(d.key, v.value);
-            if (sel) ImGui::SetItemDefaultFocus();
+    if (typed) {
+        std::string picked;
+        if (ui::typedCombo("##v", ui::fitWidth(0.34f, 8.0f, 14.0f), *typed, d.values, cur, *ts, picked))
+            host.setOptionValue(d.key, picked);
+    } else {
+        ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
+        if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
+            for (const OptionValue& v : d.values) {
+                bool sel = (v.value == cur);
+                if (ImGui::Selectable(v.label.empty() ? v.value.c_str() : v.label.c_str(), sel))
+                    host.setOptionValue(d.key, v.value);
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
         }
-        ImGui::EndCombo();
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
     // "reset" has a fixed slot so the descriptions stay aligned whether or not it shows.
     if (host.userOptions().count(d.key)) {
-        if (ImGui::SmallButton("reset")) host.resetOptionToDefault(d.key);
+        if (ImGui::SmallButton("reset")) {
+            host.resetOptionToDefault(d.key);
+            if (ts) ts->custom = false;
+        }
     } else {
         ImGui::Dummy(ImVec2(ui::Flow::buttonW("reset"), 1.0f));
     }
@@ -71,6 +95,15 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
         ui::beginWrappedTooltip();
         ImGui::TextUnformatted(info.c_str());
         ui::endWrappedTooltip();
+    }
+    if (typed && ts->custom) {
+        // The typed value, under the row.
+        ImGui::BeginDisabled(pinned);
+        ImGui::Indent();
+        std::string picked;
+        if (ui::typedInput(*typed, cur, *ts, picked)) host.setOptionValue(d.key, picked);
+        ImGui::Unindent();
+        ImGui::EndDisabled();
     }
     if (pinned)
         ui::hint("Set by the Netplay window (or --option) for this session. Disconnect in the Netplay menu to change it here.");
@@ -116,6 +149,7 @@ void drawCoreOptions(App& app) {
         if (!open) return;
         ImGui::PushID(catKey.c_str());
         ImGui::Indent();
+        drawCoreGroupReset(app, catKey, !f.empty());
         for (const OptionDef& d : defs)
             if (d.categoryKey == catKey && host.optionVisible(d.key) && matchesFilter(d, f))
                 drawOption(app, d, !catKey.empty());
@@ -139,6 +173,7 @@ void drawCoreOptions(App& app) {
 // ---- settings window ------------------------------------------------------------------
 
 void drawVideoTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Video);
     PresentOptions& p = app.present;
     ImGui::Checkbox("Integer scaling", &p.integerScale);
     ImGui::Checkbox("Smooth (bilinear) filter", &p.linearFilter);
@@ -155,10 +190,13 @@ void drawVideoTab(App& app) {
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     ImGui::Checkbox("Show frame rate", &app.showFps);
+    drawAppearanceSettings(app);
+    drawFontSettings(app);
     drawShaderSettings(app);
 }
 
 void drawAudioTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Audio);
     bool changed = false;
     ImGui::PushItemWidth(ui::fitWidth(0.55f, 10.0f, 28.0f));
     changed |= ImGui::SliderFloat("Volume", &app.volume, 0.0f, 1.0f, "%.2f");
@@ -174,6 +212,7 @@ void drawAudioTab(App& app) {
 }
 
 void drawInputTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Input);
     if (!ImGui::BeginTabBar("##inputtabs")) return;
     if (ImGui::BeginTabItem("Devices & players")) {
         drawDevicesPanel(app);
@@ -187,8 +226,13 @@ void drawInputTab(App& app) {
 }
 
 void drawStorageTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Storage);
     ImGui::Text("Data folder%s:", app.paths.portable ? " (portable mode)" : "");
     ImGui::TextWrapped("%s", app.paths.root.c_str());
+    if (app.paths.instance > 1)
+        ui::hint("This is window %d of several on this data folder: its game saves live in their own folder, and "
+                 "changes here are not saved (only the window size and the controller choice are). Change settings "
+                 "in the first window to keep them.", app.paths.instance);
     ImGui::Separator();
     // Paths are long and have no spaces to break at: ImGui wraps them at the window edge.
     ImGui::TextWrapped("Saves: %s", app.paths.saves.c_str());
@@ -196,11 +240,82 @@ void drawStorageTab(App& app) {
     ImGui::TextWrapped("System: %s", app.paths.system.c_str());
     ImGui::Separator();
     ImGui::Checkbox("Flush saves every few seconds", &app.autosaveSram);
-    ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed.");
+    ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed (Settings > BIOS).");
+    ImGui::SeparatorText("Save states");
+    ImGui::TextUnformatted("Resume where I left off");
+    ImGui::SetNextItemWidth(ui::em(10.0f));
+    if (ImGui::BeginCombo("##resume", lib::resumeModeLabel(app.resumeMode))) {
+        for (int m = 0; m < lib::kResumeModeCount; m++)
+            if (ImGui::Selectable(lib::resumeModeLabel(m), app.resumeMode == m)) app.resumeMode = m;
+        ImGui::EndCombo();
+    }
+    ui::hint("When a game is closed, left for another game, or the app quits, its state is kept as an \"Auto-save\" "
+             "(one per game, the latest; listed in the library's Save states tab). Next time the game boots: Always "
+             "resumes it, Ask offers to, Off does nothing and writes none. Never in RetroAchievements hardcore or during "
+             "netplay, not for a game that ran under %d seconds or that the crash watchdog flagged. Another window "
+             "(copy 2, 3...) keeps its own.", (int)lib::kAutoSaveMinSeconds);
     ImGui::SeparatorText("Game library");
     ImGui::Checkbox("Show the game library on the home screen", &app.homeLibrary);
     ui::hint("When no game is loaded the window shows your library (add folders there). Off: a plain "
              "welcome message instead; File > Game library (Ctrl/Cmd+L) still opens the library in its own window.");
+    drawDesktopSettings(app);
+    drawLibraryListOptions(app.library);
+}
+
+void drawDiscordTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Discord);
+    const bool avail = app.discordPresence.available();
+    bool on = app.cfg.getBool("discord.enabled", true);
+    bool art = app.cfg.getBool("discord.art", true);
+    bool buttons = app.cfg.getBool("discord.buttons", true);
+    ImGui::TextWrapped("Show on your Discord profile which game you are playing, how long, and (for RetroAchievements "
+                       "games) your progress. Discord has to be running on this computer.");
+    ImGui::Spacing();
+    ImGui::BeginDisabled(!avail);
+    if (ImGui::Checkbox("Show what I'm playing on Discord", &on)) app.cfg.setBool("discord.enabled", on);
+    ImGui::BeginDisabled(!on);
+    if (ImGui::Checkbox("Show game artwork", &art)) app.cfg.setBool("discord.art", art);
+    ui::hint("The game's box art (the same picture the library shows) is sent to Discord as a public web address. "
+             "Off: a generic Jaguar picture. Only art already downloaded by the library is used.");
+    if (ImGui::Checkbox("Show buttons", &buttons)) app.cfg.setBool("discord.buttons", buttons);
+    ui::hint("\"Get Virtual Jaguar\" (the download page), and for a RetroAchievements game a link to its page. "
+             "Discord shows buttons to other people only, never on your own profile.");
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    ImGui::Separator();
+    {
+        // Green when connected, amber while Discord is not running, red when it refused the ID, plain otherwise.
+        const bool live = app.discordPresence.active();
+        const discord::Status st = live ? app.discordPresence.client()->status() : discord::Status::Stopped;
+        ImGui::TextUnformatted("Status:");
+        ImGui::SameLine();
+        const std::string txt = app.discordPresence.statusText();
+        if (live && st == discord::Status::Connected) ui::coloredWrapped(ui::vec4(ui::pal().success), txt.c_str());
+        else if (live && st == discord::Status::Searching) ui::coloredWrapped(ui::vec4(ui::pal().warning), txt.c_str());
+        else if (live && st == discord::Status::InvalidAppId) ui::coloredWrapped(ui::vec4(ui::pal().error), txt.c_str());
+        else ImGui::TextWrapped("%s", txt.c_str());
+    }
+    if (app.paths.instance > 1)
+        ui::hint("Several copies of the app can run at once; only the first one publishes, so two windows never fight "
+                 "over your status.");
+    ui::hint("Shared with Discord: the game title, the platform, whether it is paused, hardcore / netplay mode "
+             "(never an address), achievement counts, and when you started. Nothing else.");
+    if (ImGui::CollapsingHeader("Application ID (advanced)")) {
+        static char idBuf[64];
+        static bool idInit = false;
+        if (!idInit) {
+            std::snprintf(idBuf, sizeof idBuf, "%s", app.cfg.get("discord.app_id", "").c_str());
+            idInit = true;
+        }
+        ImGui::SetNextItemWidth(ui::em(16.0f));
+        if (ImGui::InputText("##discordid", idBuf, sizeof idBuf, ImGuiInputTextFlags_CharsDecimal)) {
+            if (idBuf[0]) app.cfg.set("discord.app_id", idBuf);
+            else app.cfg.erase("discord.app_id");
+        }
+        ui::hint("The Discord application this status is published under. Builds that ship an ID fill it in; "
+                 "leave this empty to use that one. Forks can use their own application from the Discord developer portal.");
+    }
+    app.cfg.save();
 }
 
 void drawSettings(App& app) {
@@ -211,6 +326,7 @@ void drawSettings(App& app) {
         ImGui::End();
         return;
     }
+    drawResetAllSettings(app);
     if (ImGui::BeginTabBar("##tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
         // dev: --show-window settings-video etc. selects a tab once
         auto tabFlag = [&](const char* name) {
@@ -222,7 +338,9 @@ void drawSettings(App& app) {
         if (ImGui::BeginTabItem("Video", nullptr, tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Audio", nullptr, tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("BIOS", nullptr, tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
     ImGui::End();
@@ -261,11 +379,11 @@ void drawStates(App& app) {
         } else {
             ImGui::Dummy(box);
             ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddRect(a, b, IM_COL32(120, 120, 120, 255));
+            ImGui::GetWindowDrawList()->AddRect(a, b, ui::u32(ui::pal().emptyEdge));
             const char* txt = exists ? "no preview" : "empty";
             ImVec2 ts = ImGui::CalcTextSize(txt);
             ImGui::GetWindowDrawList()->AddText(ImVec2(a.x + (box.x - ts.x) * 0.5f, a.y + (box.y - ts.y) * 0.5f),
-                                                IM_COL32(150, 150, 150, 255), txt);
+                                                ui::u32(ui::pal().textMuted), txt);
         }
         std::string head = "Slot " + std::to_string(s) + (s == app.stateSlot ? "  <" : "");
         ImGui::TextUnformatted(head.c_str());
@@ -285,6 +403,38 @@ void drawStates(App& app) {
         ImGui::EndGroup();
     }
     ImGui::End();
+}
+
+// "Resume from <time>?", after a game with an auto-save booted (Settings > Storage > Resume where I left off = Ask).
+void drawResumePrompt(App& app) {
+    static bool always = false;
+    if (!app.resumeOffer.active) return;
+    if (!ImGui::IsPopupOpen("Resume where you left off?")) {
+        always = false;
+        ImGui::OpenPopup("Resume where you left off?");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Resume where you left off?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        std::string when;
+        SDL_DateTime dt;
+        if (SDL_TimeToDateTime(app.resumeOffer.savedAt, &dt, true)) {
+            char b[40];
+            std::snprintf(b, sizeof b, "%04d-%02d-%02d %02d:%02d", dt.year, dt.month, dt.day, dt.hour, dt.minute);
+            when = b;
+        }
+        ImGui::Text("Resume %s from %s?", app.resumeOffer.game.c_str(), when.c_str());
+        ImGui::Checkbox("Always resume without asking", &always);
+        if (ImGui::Button("Resume")) {
+            app.answerResume(true, always);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Start fresh")) {
+            app.answerResume(false, false);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void drawAbout(App& app) {
@@ -313,8 +463,8 @@ void drawAbout(App& app) {
     ImGui::Text("SDL:     %d.%d.%d", SDL_VERSIONNUM_MAJOR(sdl), SDL_VERSIONNUM_MINOR(sdl), SDL_VERSIONNUM_MICRO(sdl));
     ImGui::Text("Dear ImGui: %s", ImGui::GetVersion());
     ImGui::Separator();
-    static const char* const keys[][2] = {
-        {"F1", "show or pin the menu bar (fullscreen)"},
+    const char* const keys[][2] = {
+        {"F1", platform::nativeMenuActive() ? "show the in-window menu bar as well" : "show or pin the menu bar (fullscreen)"},
         {"F5 / F7", "save / load state"},
         {"F6", "next state slot (Shift: previous)"},
         {"F8", "pause"},
@@ -322,6 +472,7 @@ void drawAbout(App& app) {
         {"Tab (hold)", "fast-forward"},
         {"Ctrl/Cmd+O", "open a game"},
         {"Ctrl/Cmd+L", "game library"},
+        {"Ctrl/Cmd+N", "open another window (a second copy of the app)"},
         {"Ctrl/Cmd+wheel, +/-/0", "library tile size (trackpad: pinch)"},
         {"Ctrl/Cmd+R", "reset"},
     };
@@ -347,6 +498,7 @@ void drawMenuBar(App& app) {
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
+        if (ImGui::MenuItem("New window", "Ctrl+N")) app.newWindow();
         if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show && !app.homeVisible())) app.toggleLibrary();
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list
@@ -359,15 +511,24 @@ void drawMenuBar(App& app) {
             if (ImGui::MenuItem("Clear list")) app.recents.clear();
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Boot without cartridge")) app.openNoContent();
+        if (ImGui::BeginMenu("Boot BIOS")) {
+            if (ImGui::MenuItem("CD BIOS (no disc)")) app.bootBios(bios::Cd);
+            if (ImGui::MenuItem("Cartridge boot ROM (empty slot)")) app.bootBios(bios::CartBoot);
+            ImGui::Separator();
+            if (ImGui::MenuItem("BIOS & boot settings...")) {
+                app.showSettings = true;
+                app.devSelectTab = "BIOS";
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
-        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded())) app.closeContent();
+        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !host.inFrame())) app.closeContent();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) app.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-        bool loaded = host.isLoaded();
+        bool loaded = host.isLoaded() && !host.inFrame();   // a debugger halt parks the core: nothing that re-enters it
         if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, loaded)) app.togglePause();
         if (ImGui::MenuItem("Reset", "Ctrl+R", false, loaded)) app.reset();
         ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, loaded);
@@ -403,13 +564,13 @@ void drawMenuBar(App& app) {
         ImGui::MenuItem("Show frame rate", nullptr, &app.showFps);
         ImGui::MenuItem("Keypad overlay", "F2", &app.input.overlay.open);
         if (ImGui::MenuItem("Controls overlay", "F3", app.input.controls.show)) {
-            app.input.controls.show = !app.input.controls.show;
-            app.input.controls.hideAt = 0;
+            overlayEvent(app.input.controls, OverlayEvent::Toggle);
         }
         ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
+    drawToolsMenu(app);
     if (ImGui::BeginMenu("Settings")) {
         if (ImGui::MenuItem("Settings...", "Ctrl+,")) app.showSettings = true;
         if (ImGui::MenuItem("Mute", nullptr, &app.mute)) app.applyAudioSettings();
@@ -443,10 +604,10 @@ void drawOsd(App& app, ImVec2 areaPos, ImVec2 areaSize) {
         y -= ts.y + pad * 2;
         ImVec2 p0(areaPos.x + ImGui::GetFontSize() * 0.6f, y);
         ImVec2 p1(p0.x + ts.x + pad * 2, y + ts.y + pad * 2);
-        dl->AddRectFilled(p0, p1, IM_COL32(0, 0, 0, (int)(170 * a)), 4.0f);
-        ImU32 col = o.level >= 3 ? IM_COL32(255, 120, 120, (int)(255 * a))
-                  : o.level == 2 ? IM_COL32(255, 210, 110, (int)(255 * a))
-                                 : IM_COL32(240, 240, 240, (int)(255 * a));
+        // Over the game picture (or the home screen): the dark-translucent overlay palette in both themes.
+        const theme::Overlay& ov = ui::overlay();
+        dl->AddRectFilled(p0, p1, ui::u32(ov.osdBg, a), 4.0f);
+        ImU32 col = o.level >= 3 ? ui::u32(ov.osdError, a) : o.level == 2 ? ui::u32(ov.osdWarn, a) : ui::u32(ov.osdText, a);
         dl->AddText(nullptr, 0.0f, ImVec2(p0.x + pad, p0.y + pad), col, o.text.c_str(), nullptr, wrap);
         y -= pad * 0.5f;
     }
@@ -454,18 +615,27 @@ void drawOsd(App& app, ImVec2 areaPos, ImVec2 areaSize) {
 
 }  // namespace
 
+void forgetTypedOptionState(const std::string* key) {
+    if (key) typedStateMap().erase(*key);
+    else typedStateMap().clear();
+}
+
 void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImGuiIO& io = ImGui::GetIO();
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
-    bg->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
+    // Black behind the game (the letterbox bars); the theme's home colour behind the library / welcome screen.
+    bg->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y),
+                      app.host.isLoaded() ? IM_COL32(0, 0, 0, 255) : ui::u32(ui::pal().homeBg));
 
     // The menu bar is always there in a window; in fullscreen it shows while
     // pinned (F1), while the pointer is at the top edge, or while a menu is open.
     static bool menuHot = false;
-    bool nearTop = io.MousePos.y >= 0 && io.MousePos.y < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
+    const float mouseY = io.MousePos.y - vp->Pos.y;   // (with extra OS windows on, ImGui's coordinates are the screen's)
+    bool nearTop = mouseY >= 0 && mouseY < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
     menuHot = nearTop || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
-    bool showMenu = !app.fullscreen || app.menuPinned || menuHot;
+    // A native menu bar (macOS) replaces this one; every item here has a twin in platform/commands.cpp.
+    bool showMenu = platform::nativeMenuActive() ? app.showInWindowMenu : (!app.fullscreen || app.menuPinned || menuHot);
     float menuH = 0;
     if (showMenu) {
         drawMenuBar(app);
@@ -477,7 +647,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.host.isLoaded() && app.video.hasFrame()) {
         ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
                                     io.DisplayFramebufferScale.x);
-        app.input.setPicture(pic.x, pic.y, pic.z, pic.w);   // where the picture is, for the light gun
+        app.input.setPicture(pic.x - vp->Pos.x, pic.y - vp->Pos.y, pic.z, pic.w);   // window-relative, like SDL's pointer events   // where the picture is, for the light gun
     } else if (!app.host.isLoaded()) {
         if (app.homeLibrary) {
             drawLibraryHome(app, areaPos.x, areaPos.y, areaSize.x, areaSize.y);   // the game library is the home screen
@@ -488,8 +658,8 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
             float wrap = std::max(ImGui::GetFontSize() * 10.0f, areaSize.x - ImGui::GetFontSize() * 4.0f);
             ImVec2 s1 = ImGui::CalcTextSize(l1), s2 = ImGui::CalcTextSize(l2, nullptr, false, wrap);
             float cx = areaPos.x + areaSize.x * 0.5f, cy = areaPos.y + areaSize.y * 0.5f;
-            bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), IM_COL32(230, 230, 230, 255), l1);
-            bg->AddText(nullptr, 0.0f, ImVec2(cx - s2.x * 0.5f, cy + s1.y * 0.2f), IM_COL32(150, 150, 150, 255), l2,
+            bg->AddText(ImVec2(cx - s1.x * 0.5f, cy - s1.y * 1.5f), ui::u32(ui::pal().text), l1);
+            bg->AddText(nullptr, 0.0f, ImVec2(cx - s2.x * 0.5f, cy + s1.y * 0.2f), ui::u32(ui::pal().textMuted), l2,
                         nullptr, wrap);
         }
     }
@@ -499,7 +669,11 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showFps) {
         char buf[64];
         std::snprintf(buf, sizeof buf, "%.1f fps%s", app.fpsMeasured(), app.fastForward ? "  >>" : "");
-        ImGui::GetForegroundDrawList()->AddText(ImVec2(areaPos.x + 8, areaPos.y + 6), IM_COL32(255, 255, 0, 255), buf);
+        // A chip behind the number: it can sit over a white game frame or the light home screen.
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        ImVec2 ts = ImGui::CalcTextSize(buf), at(areaPos.x + 8, areaPos.y + 6);
+        fg->AddRectFilled(ImVec2(at.x - 4, at.y - 2), ImVec2(at.x + ts.x + 4, at.y + ts.y + 2), ui::u32(ui::overlay().fpsBg), 3.0f);
+        fg->AddText(at, ui::u32(ui::overlay().fpsText), buf);
     }
 
     if (app.showSettings) drawSettings(app);
@@ -507,11 +681,16 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showCheats) drawCheats(app);
     if (app.showNetplay) drawNetplay(app);
     if (app.showAbout) drawAbout(app);
+    if (app.showThemeEditor) drawThemeEditor(app);
+    themeFrameHook(app);   // theme file-dialog results
+    drawResumePrompt(app);
     drawLibrary(app);
     drawKeypadOverlay(app);
     drawControlsOverlay(app, areaPos, areaSize);
     drawAchievementsUi(app);
+    drawDebugWindows(app);
     drawOsd(app, areaPos, areaSize);
+    drawDebugOverlay(app, areaPos.x, areaPos.y);
 
     wantCaptureKeyboard = io.WantCaptureKeyboard;
 }

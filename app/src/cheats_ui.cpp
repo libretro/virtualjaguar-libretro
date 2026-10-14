@@ -56,7 +56,7 @@ void drawSetPicker(App& app) {
         ImGui::EndCombo();
     }
     std::string st = cm.setStatus();
-    if (!st.empty()) ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), st.c_str());
+    if (!st.empty()) ui::coloredWrapped(ui::vec4(ui::pal().warning), st.c_str());
 }
 
 void drawSetCheats(App& app) {
@@ -128,7 +128,7 @@ void drawUserCheats(App& app) {
             g_ui.error = err;
         }
     }
-    if (!g_ui.error.empty()) ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), g_ui.error.c_str());
+    if (!g_ui.error.empty()) ui::coloredWrapped(ui::vec4(ui::pal().error), g_ui.error.c_str());
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Hex ADDRESS:VALUE; 2, 4 or 8 value digits write a byte, word or long. "
                        "Join several with '+'. Addresses are Jaguar bus addresses (RAM is 000000-1FFFFF).");
@@ -197,12 +197,12 @@ void drawCheats(App& app) {
     if (ImGui::SmallButton("Turn all off")) cm.disableAll();
     ImGui::EndDisabled();
     if (hardcore)
-        ui::coloredWrapped(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Disabled in hardcore mode (saved cheats are kept).");
+        ui::coloredWrapped(ui::vec4(ui::pal().warning), "Disabled in hardcore mode (saved cheats are kept).");
     if (cm.appliedSegments() > CheatManager::kCoreLimit) {
         char m[96];
         std::snprintf(m, sizeof m, "%u writes: the core keeps only the first %u.", cm.appliedSegments(),
                       CheatManager::kCoreLimit);
-        ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), m);
+        ui::coloredWrapped(ui::vec4(ui::pal().error), m);
     }
     ImGui::Separator();
 

@@ -119,7 +119,7 @@ void drawControlsTab(App& app) {
         std::snprintf(m, sizeof m, "Press %s for \"%s\"  (Esc cancels)",
                       layer.cls == DeviceClass::Keyboard ? "a key" : "a gamepad button or push a stick/trigger",
                       ctlLabel(in.captureTarget()));
-        ui::coloredWrapped(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), m);
+        ui::coloredWrapped(ui::vec4(ui::pal().success), m);
     }
     if (ImGui::SmallButton("Reset this layer")) {
         st->clearLayer(layer);
@@ -185,8 +185,7 @@ void drawControlsTab(App& app) {
     if (ImGui::Button("Keypad overlay")) in.overlay.open = !in.overlay.open;
     ui::hint("Opens the on-screen keypad (F2 or the 'Keypad overlay' control).");
     if (ImGui::Button("Controls overlay")) {
-        app.input.controls.show = !app.input.controls.show;
-        app.input.controls.hideAt = 0;
+        overlayEvent(app.input.controls, OverlayEvent::Toggle);
     }
     ui::hint("A cheat sheet of Player 1's bindings (F3, or the 'Controls overlay' control).");
 }
@@ -230,7 +229,7 @@ void drawKeypadOverlay(App& app) {
             }
             bool cursor = (r == ov.row && c == ov.col);
             ImGui::PushID(r * 3 + c);
-            if (cursor) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.5f, 0.85f, 1.0f));
+            if (cursor) ImGui::PushStyleColor(ImGuiCol_Button, ui::vec4(ui::pal().cursorButton));
             if (ImGui::Button(label, sz)) {
                 ov.row = r;
                 ov.col = c;

@@ -119,7 +119,7 @@ void drawShaderSettings(App& app) {
     if (sc.libraryLoaded()) {
         ui::hint("librashader API %u: %s", sc.libraryApiVersion(), sc.libraryPath().c_str());
     } else {
-        ui::coloredWrapped(ImVec4(1.0f, 0.8f, 0.4f, 1.0f),
+        ui::coloredWrapped(ui::vec4(ui::pal().warning),
                            ("librashader not available: " + sc.libraryError()).c_str());
         ImGui::TextWrapped(
             "Shaders need the librashader library (MPL-2.0). Put %s next to the app, or in the "
@@ -153,8 +153,8 @@ void drawShaderSettings(App& app) {
         sc.clearPreset();
         g_presetError.clear();
     }
-    if (!g_presetError.empty()) ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), g_presetError.c_str());
-    else if (!sc.lastError().empty()) ui::coloredWrapped(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), sc.lastError().c_str());
+    if (!g_presetError.empty()) ui::coloredWrapped(ui::vec4(ui::pal().error), g_presetError.c_str());
+    else if (!sc.lastError().empty()) ui::coloredWrapped(ui::vec4(ui::pal().error), sc.lastError().c_str());
 
     // Built-in presets that ship with the app (shaders/ beside the executable: ours plus
     // the bundled libretro/slang-shaders subset).

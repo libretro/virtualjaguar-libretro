@@ -8,6 +8,7 @@ Inputs (committed in this repo):
                            leading comments)
   site/style.css           the one stylesheet
   site/assets/*            images, copied verbatim
+  site/thumbnails/*        Jaguar CD artwork mirror, copied verbatim
   docs/cd-boot-matrix.md   parsed for the CD compatibility table
   Makefile                 CORE_BASE_VERSION -> JSON-LD softwareVersion
 
@@ -1152,6 +1153,11 @@ def main():
     assets_src = SITE_SRC / "assets"
     if assets_src.is_dir():
         shutil.copytree(assets_src, out / "assets")
+    # Jaguar CD artwork mirror (libretro-thumbnails layout), served at
+    # /thumbnails/<System>/<Type>/<Name>.png; the desktop app falls back to it.
+    thumbs_src = SITE_SRC / "thumbnails"
+    if thumbs_src.is_dir():
+        shutil.copytree(thumbs_src, out / "thumbnails")
     (out / ".nojekyll").write_text("")
 
     nav_items = []
