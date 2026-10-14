@@ -96,7 +96,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
 - **Light and dark themes.** Settings > Video > Appearance picks System (the default), Dark or Light; System
   follows the operating system and switches live when it does. The in-game overlays (controls sheet, on-screen
   messages, achievement toasts, frame rate) stay dark and translucent in both themes so they read on any game
-  picture (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+  picture. **Customize...** opens a theme editor: start from Dark or Light, change the main colours, the
+  rounding and the spacing with a live preview and a warning when text drops below 4.5:1 contrast, then save
+  it as a named theme (a small `.ini` in the app's `themes` folder), duplicate, delete, export or import it
+  (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Netplay for the link-cable games.** A Netplay window hosts or joins Doom, BattleSphere,
   AirCars and Ultra Vortek (over the Voice Modem) on a local network, with LAN discovery
   (https://github.com/libretro/virtualjaguar-libretro/pull/888). While a session is set up, the link settings it controls are shown greyed out in

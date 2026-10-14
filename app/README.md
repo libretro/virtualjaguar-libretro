@@ -675,7 +675,8 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   Every group has a negative control (no host input reads the rest value).
 - `theme_unit` (`vj_theme_test`): the theme choice (System / Dark / Light, the OS's answer, the theme-changed
   event) and WCAG contrast of every palette and style colour in both themes, and of the in-game overlays on
-  white and black frames.
+  white and black frames; the custom-theme files (round trip, import validation, the themes folder, read-only
+  secondary copies) and the editor's contrast warnings.
 - `controls_overlay_*`: the overlay through the real app: shown for a keyboard player,
   hidden after "don't show again", text follows a saved rebinding.
 
@@ -685,7 +686,7 @@ To regenerate the expected hash after an intentional emulation change:
 
 ## Window sizing and UI screenshots
 
-**Settings > Video > Appearance** picks the colour theme: System (the default) follows the OS and switches live when it does, or Dark / Light (`--theme system|dark|light` sets it for one run); the palettes are in `src/theme.cpp`.
+**Settings > Video > Appearance** picks the colour theme: System (the default) follows the OS and switches live when it does, or Dark / Light / a custom theme made in **Customize...** and kept as `<data>/themes/<name>.ini` (`--theme system|dark|light|custom:NAME` sets it for one run); the palettes are in `src/theme.cpp`.
 
 The UI scale follows the display's content scale (200% on a 4K Windows/Linux display; 1.0 on a Retina
 Mac, where ImGui renders at the pixel density by itself). `ui.scale` in `config.ini` (default 1.0) multiplies it.
@@ -702,7 +703,7 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 ```
 
 `--show-window` takes `settings[-video|-input|-audio|-storage][:FILTER]`, `states`, `about`,
-`cheats`, `library`, `login`, `achievements` and `keypad`.
+`cheats`, `library`, `login`, `achievements`, `keypad` and `theme-editor`.
 
 ## Layout
 
