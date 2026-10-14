@@ -41,10 +41,12 @@ void drawSetPicker(App& app) {
         auto emit = [&](const char* header, const std::vector<size_t>& idx) {
             if (idx.empty()) return;
             ImGui::SeparatorText(header);
+            ImGui::PushID(header);   // a set can be both a match and a similar name: one ID scope per list (#932)
             for (size_t i : idx) {
                 if (!f.empty() && lowerCopy(lib[i].stem).find(f) == std::string::npos) continue;
                 if (ImGui::Selectable(lib[i].stem.c_str(), lib[i].stem == cm.selectedStem())) cm.selectSet(lib[i].stem);
             }
+            ImGui::PopID();
         };
         emit("Matches this game", cm.matches());
         emit("Similar names", cm.suggestions());
