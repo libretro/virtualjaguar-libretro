@@ -256,7 +256,7 @@ static int VJDbgGetRegs(int target, struct vj_debug_regs *o)
       o->risc_pc   = GPUGetPC();
       o->flags     = GPUGetFlags();
       o->ctrl      = GPUGetControl();
-      o->cur_bank  = (o->flags & 0x4000u) ? 1u : 0u;   /* REGPAGE */
+      o->cur_bank  = ((o->flags & 0x4000u) && !(o->flags & 0x0008u)) ? 1u : 0u;   /* REGPAGE, forced to 0 by IMASK (GPUUpdateRegisterBanks) */
       return 1;
    }
 
@@ -270,7 +270,7 @@ static int VJDbgGetRegs(int target, struct vj_debug_regs *o)
       o->risc_pc   = DSPGetPC();
       o->flags     = DSPGetFlags();
       o->ctrl      = DSPGetControl();
-      o->cur_bank  = (o->flags & 0x4000u) ? 1u : 0u;   /* REGPAGE */
+      o->cur_bank  = ((o->flags & 0x4000u) && !(o->flags & 0x0008u)) ? 1u : 0u;   /* REGPAGE, forced to 0 by IMASK (DSPUpdateRegisterBanks) */
       return 1;
    }
 
