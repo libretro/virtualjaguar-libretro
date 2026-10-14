@@ -21,6 +21,7 @@ _riscClockScalePct
 _jaguarMainROM
 _jagMemSpace
 _busArbiter
+_riscClockScalePct
 _gpuPCSample
 _m68kPCSample
 _m68kPCSampleIdx

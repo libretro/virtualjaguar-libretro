@@ -178,6 +178,7 @@ public:
     void toast(const std::string& text, double seconds = 3.0, int level = 1);
     void addRecent(const std::string& path);
     void saveConfig();
+    void applySettingsFromConfig();   // re-read the member settings from cfg (defaults for erased keys); Settings > Reset
     void applyBios();                 // hands the BIOS choice (and a one-off boot's file) to the core host
 
     double now() const;

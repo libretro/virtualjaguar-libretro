@@ -24,6 +24,7 @@
       jaguarMainROM;
       jagMemSpace;
       busArbiter;
+      riscClockScalePct;
       gpuPCSample;
       m68kPCSample;
       m68kPCSampleIdx;

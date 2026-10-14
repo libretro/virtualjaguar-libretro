@@ -39,10 +39,12 @@
  *   OP fetch / row-change / DRAM refresh  charged to the 68K as
  *     m68k_pending_stall and drained by M68KExecuteWithStalls() BEFORE
  *     the 68K clock scale is applied — already wall time.
- *   DSP external accesses       currently pay NOTHING (no charge hook
- *     in dsp.c).  Known asymmetry; the pipeline-hazard work (#313) is
- *     expected to add the DSP-side hook and must place its charges in
- *     this same wall-time domain.
+ *   DSP per-access self-cost    returned in sysclks by
+ *     bus_arbiter_dsp_access() (issue #313, timing-campaign S1); dsp.c
+ *     converts to the DSP's scaled cycle domain at the point it deducts
+ *     from the slice budget, exactly as gpu.c does.  Charged under the
+ *     same two options as the GPU: dram_timing (immediate self-cost) or
+ *     gpu_pipeline_timing (gateway/scoreboard model in dsp.c).
  *
  * One deliberate simplification: the 68K wait-state THRESHOLD
  * (M68K_BUS_CYCLE_SYSCLKS, the stock 8-sysclk bus cycle an access must
@@ -113,7 +115,9 @@ struct BusArbiter {
     /* Calibration multiplier applied to charged cycles.  NOT a user
      * option: settable only via the VJ_DRAM_SCALE env var while the
      * correct physical cost (OP occupancy, load latency, master
-     * handoff) is being pinned down against measured game pace. */
+     * handoff) is being pinned down against measured game pace.
+     * Applies to the GPU, 68K, OP and refresh charges only -- the DSP's
+     * bus_arbiter_dsp_access() always returns the 1x cost (#892). */
     uint8_t contention_scale;
 
     /* 68K self-cost carry: sub-cycle remainder from converting wall
@@ -178,6 +182,15 @@ uint32_t bus_arbiter_charge_access(int master, uint32_t addr);
  * half. */
 uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses,
                                  uint32_t scale_pct);
+
+/* DSP self-cost (system clocks, NOT scaled by contention_scale) for one
+ * external LOAD/STORE at `addr`; 0 for the DSP's own local bus.  JERRY
+ * has a 16-bit interface to external memory (JTRM v8 p.97; XD pin
+ * note p.124), so a long transfer (`is_long` != 0) is split by JERRY's
+ * bus interface into two word cycles (jag_sim netlists/jerry/JMEM.NET,
+ * "if the DSP is 16 bits long transfers are split").  Does not check
+ * busArbiter.enabled -- call sites gate, same as the GPU half. */
+uint32_t bus_arbiter_dsp_access(uint32_t addr, int is_long);
 
 #ifdef __cplusplus
 }

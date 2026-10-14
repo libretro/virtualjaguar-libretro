@@ -1355,7 +1355,7 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db test/tools/test_option_explain \
 		test/tools/test_disk_control test/tools/cd_wedge_probe \
 		test/test_biosdb test/test_cart_bios_loader \
-		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 test/tools/test_doom_pace_gate test/tools/test_cf_canary test/tools/bus_census_probe \
 		test/tools/test_wedge_spin test/tools/test_music_demo_dsp_bank test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab test/tools/idle_skip_scale_ab \
@@ -1430,7 +1430,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_option_explain test/tools/test_disk_control \
-		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 \
+		test/tools/test_hook_gate test/tools/test_upload_illegal_park test/tools/test_flipout_851 test/tools/test_ffyl_856 test/tools/test_ruiner_866 test/tools/test_raw_binary_boot test/tools/test_blitter_hung test/tools/test_club_drive_611 test/tools/test_doom_pace_gate test/tools/test_cf_canary \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1992,6 +1992,32 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		rc=$$?; rm -f "$$raw"; [ $$rc -eq 0 ]; \
 	else \
 		bash scripts/test-skip.sh record "Club Drive GPU stays local (#611)" "no 'Club Drive*' ROM or states/Club Drive (1994).state3 in the private corpus"; \
+	fi
+	@# Timing-campaign S0 gates (docs/timing-campaign-plan.md, #408/#401).
+	@# TRACKING gates: the expected values in test/tools/timing_gate_baseline.txt
+	@# are today's numbers, recorded beside the silicon target (Doom 4.0
+	@# fields/flip, #434).  A regression -- moving AWAY from the target, or a
+	@# liveness-floor breach -- fails; the tools exit 77 when the ROM/state is
+	@# absent, which is recorded as a SKIP (never a pass).
+	@rom=$$(bash scripts/find-rom.sh 'Doom - Evil Unleashed (1994).jag' 'Doom (World)*.j64' 'Doom.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_doom_pace_gate ./$(TARGET) "$$rom"; \
+		rc=$$?; \
+		if [ $$rc -eq 77 ]; then \
+			bash scripts/test-skip.sh record "Doom pace gate (S0, #408)" "ROM not loadable"; \
+		elif [ $$rc -ne 0 ]; then exit $$rc; fi; \
+	else \
+		bash scripts/test-skip.sh record "Doom pace gate (S0, #408)" "no ROM matching 'Doom*' in the private corpus"; \
+	fi
+	@rom=$$(bash scripts/find-rom.sh 'Checkered Flag (1994).jag' 'Checkered Flag*.jag' 'Checkered Flag*.j64'); \
+	state="test/roms/private/states/Checkered Flag (1994).state.auto"; \
+	if [ -n "$$rom" ] && [ -f "$$state" ]; then \
+		raw=$$(mktemp /tmp/vj_cf_canary.XXXXXX) && \
+		python3 scripts/rzip_extract.py "$$state" "$$raw" >/dev/null && \
+		./test/tools/test_cf_canary ./$(TARGET) "$$rom" --load-state "$$raw"; \
+		rc=$$?; rm -f "$$raw"; [ $$rc -eq 0 ]; \
+	else \
+		bash scripts/test-skip.sh record "Checkered Flag overcharge canary (S0, #408)" "no 'Checkered Flag*' ROM or states/Checkered Flag (1994).state.auto in the private corpus"; \
 	fi
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
@@ -3220,6 +3246,33 @@ test/tools/test_club_drive_611: test/tools/test_club_drive_611.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_club_drive_611.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Timing-campaign S0 gates (docs/timing-campaign-plan.md): Doom pace gate
+# (fields/flip + GPU busy-time) and the Checkered Flag overcharge canary.
+# Both need the wide test ABI (gpu_busy_*, jaguarMainRAM).
+test/tools/test_doom_pace_gate: test/tools/test_doom_pace_gate.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_doom_pace_gate.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Timing-campaign S2 bus-traffic census probe (not in `make test`: a
+# measurement tool, run by hand; needs TEST_EXPORTS=1, blitter phrase
+# counts additionally BENCH_PROFILE=1).
+test/tools/bus_census_probe: test/tools/bus_census_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/bus_census_probe.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_cf_canary: test/tools/test_cf_canary.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_cf_canary.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

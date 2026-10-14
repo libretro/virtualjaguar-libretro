@@ -699,6 +699,8 @@ void OPProcessList(int halfline, bool render)
                       * JaguarReadLong/JaguarWriteLong. */
                      if (busArbiter.enabled)
                         bus_arbiter_op_charge(2u * busArbiter.dram_row_miss);
+                     VJT_BUS_OP(OP, 2u * busArbiter.dram_row_miss);
+                     VJT_BUS_OP_OBJ((int)((p1 >> 48) & 1));
                      OPProcessFixedBitmap(p0, p1, render);
 
                      // OP write-backs
@@ -751,6 +753,8 @@ void OPProcessList(int halfline, bool render)
                       * JaguarReadLong/JaguarWriteLong. */
                      if (busArbiter.enabled)
                         bus_arbiter_op_charge(2u * busArbiter.dram_row_miss);
+                     VJT_BUS_OP(OP, 2u * busArbiter.dram_row_miss);
+                     VJT_BUS_OP_OBJ((int)((p1 >> 48) & 1));
                      OPProcessScaledBitmap(p0, p1, p2, render);
 
                      // OP write-backs
