@@ -1719,6 +1719,577 @@ static int scanTool(const std::string& dir, const std::string& dbDir) {
     return 0;
 }
 
+
+// ---- favorites, recently played, display options, tabs, save states (the library's personal lists) -----------
+
+static lib::Entry fakeEntry(const std::string& path, const std::string& title, uint32_t crc, const std::string& datName = "",
+                            lib::Kind kind = lib::Kind::Cart) {
+    lib::Entry e;
+    e.file.path = path;
+    e.file.kind = kind;
+    e.file.crcWhole = crc;
+    e.title = title;
+    e.datName = datName;
+    e.section = kind == lib::Kind::Disc ? lib::Section::Disc : lib::Section::Cart;
+    return e;
+}
+
+static void testDisplayOptionsAndTabs() {
+    using namespace lib;
+    CHECK(!showsTab(ShowHidden) && !showsStrip(ShowHidden));
+    CHECK(showsTab(ShowTab) && !showsStrip(ShowTab));
+    CHECK(!showsTab(ShowSections) && showsStrip(ShowSections));
+    CHECK(showsTab(ShowBoth) && showsStrip(ShowBoth));
+    CHECK(clampShowAs(7, ShowBoth) == ShowBoth && clampShowAs(-1, ShowTab) == ShowTab && clampShowAs(0, ShowBoth) == ShowHidden);
+    CHECK(kFavoritesDefault == ShowBoth && kRecentsDefault == ShowBoth);
+    for (int m = 0; m < kShowAsCount; m++) CHECK(std::strlen(showAsLabel(m)) > 0);
+
+    // tab order: Cartridges, Jaguar CD, [Favorites], [Recently played], Save states, BIOS & system
+    std::vector<int> v = visibleTabs(ShowBoth, ShowBoth);
+    CHECK(v == std::vector<int>({TabCart, TabDisc, TabFavorites, TabRecents, TabStates, TabBios}));
+    v = visibleTabs(ShowSections, ShowHidden);   // strips only: no tab for either
+    CHECK(v == std::vector<int>({TabCart, TabDisc, TabStates, TabBios}));
+    v = visibleTabs(ShowHidden, ShowTab);
+    CHECK(v == std::vector<int>({TabCart, TabDisc, TabRecents, TabStates, TabBios}));
+    // the remembered tab that is no longer shown falls back to Cartridges; the others stay
+    CHECK(effectiveTab(TabFavorites, ShowHidden, ShowBoth) == TabCart);
+    CHECK(effectiveTab(TabFavorites, ShowSections, ShowBoth) == TabCart);
+    CHECK(effectiveTab(TabFavorites, ShowTab, ShowHidden) == TabFavorites);
+    CHECK(effectiveTab(TabRecents, ShowBoth, ShowTab) == TabRecents);
+    CHECK(effectiveTab(TabBios, ShowHidden, ShowHidden) == TabBios && effectiveTab(TabStates, ShowHidden, ShowHidden) == TabStates);
+    CHECK(effectiveTab(99, ShowBoth, ShowBoth) == TabCart && effectiveTab(-3, ShowBoth, ShowBoth) == TabCart);
+    CHECK_EQ(tabName(TabRecents), "Recently played");
+    // the strips sit on the two media tabs only, and only when the option asks for them
+    CHECK(stripOnTab(TabCart, ShowBoth) && stripOnTab(TabDisc, ShowSections));
+    CHECK(!stripOnTab(TabCart, ShowTab) && !stripOnTab(TabDisc, ShowHidden));
+    CHECK(!stripOnTab(TabFavorites, ShowBoth) && !stripOnTab(TabBios, ShowBoth) && !stripOnTab(TabStates, ShowBoth));
+}
+
+static void testPersonalListsLogic() {
+    using namespace lib;
+    std::vector<Entry> entries;
+    entries.push_back(fakeEntry("/g/Alpha.j64", "Alpha", 0xA1A1A1A1u));
+    entries.push_back(fakeEntry("/g/Beta.j64", "beta", 0xB2B2B2B2u, "Beta (World)"));
+    entries.push_back(fakeEntry("/g/Gamma.cue", "Gamma", 0xC3C3C3C3u, "", Kind::Disc));
+    entries.push_back(fakeEntry("/g/Delta.chd", "Delta", 0, "", Kind::Disc));
+    Entry bios = fakeEntry("/sys/jagboot.rom", "Series K boot ROM", 0xD4D4D4D4u);
+    bios.section = Section::Bios;
+    entries.push_back(bios);
+
+    UserLists l;
+    UserItem a = userItemFor(entries[0], 100), b = userItemFor(entries[1], 101), g = userItemFor(entries[2], 102);
+    CHECK_EQ(a.key, "crc-A1A1A1A1");
+    CHECK_EQ(b.key, "Beta (World)");
+    CHECK(userItemFor(entries[3], 0).key.rfind("path-", 0) == 0);
+
+    // favorites: add, no duplicates, remove
+    setFavoriteIn(l, b, true);
+    setFavoriteIn(l, a, true);
+    setFavoriteIn(l, b, true);
+    CHECK(l.favorites.size() == 2 && l.favorites[0].path == "/g/Beta.j64" && l.favorites[1].path == "/g/Alpha.j64");
+    CHECK(hasFavorite(l, a) && hasFavorite(l, b) && !hasFavorite(l, g));
+    CHECK(l.favorites[0].when == 101);   // re-adding keeps the original date and place
+    setFavoriteIn(l, a, false);
+    CHECK(l.favorites.size() == 1 && !hasFavorite(l, a));
+    setFavoriteIn(l, a, false);   // removing what is not there is fine
+    CHECK(l.favorites.size() == 1);
+
+    // recents: newest first, deduplicated, capped
+    recordPlayIn(l, a);
+    recordPlayIn(l, b);
+    recordPlayIn(l, g);
+    CHECK(l.recents.size() == 3 && l.recents[0].path == "/g/Gamma.cue" && l.recents[2].path == "/g/Alpha.j64");
+    recordPlayIn(l, a);   // played again: moves to the front, not listed twice
+    CHECK(l.recents.size() == 3 && l.recents[0].path == "/g/Alpha.j64" && l.recents[1].path == "/g/Gamma.cue");
+    removeRecentIn(l, g);
+    CHECK(l.recents.size() == 2 && !hasRecent(l, g) && hasRecent(l, a));
+    UserLists many;
+    for (int i = 0; i < 30; i++) {
+        UserItem it;
+        it.path = "/x/" + std::to_string(i);
+        it.when = i;
+        recordPlayIn(many, it);
+    }
+    CHECK(many.recents.size() == kMaxRecentGames && many.recents.front().path == "/x/29" && many.recents.back().path == "/x/10");
+    CHECK(kMaxRecentGames == 20);
+
+    // the file round-trips, tabs and newlines in names cannot break the format, junk lines are skipped
+    UserItem odd = a;
+    odd.title = "Tab\there\nand a line";
+    odd.path = "/g/odd\tname.j64";
+    UserLists rt = l;
+    rt.favorites.push_back(odd);
+    UserLists back = parseUserLists(serializeUserLists(rt));
+    CHECK(back.favorites.size() == 2 && back.recents.size() == 2);
+    CHECK(back.favorites[0].path == "/g/Beta.j64" && back.favorites[0].crc == 0xB2B2B2B2u && back.favorites[0].key == "Beta (World)");
+    CHECK(back.favorites[1].title == "Tab here and a line" && back.favorites[1].path == "/g/odd name.j64");
+    CHECK(back.recents[0].when == rt.recents[0].when);
+    UserLists junk = parseUserLists("garbage\nfav\tnot enough\n\n# comment\nfav\t5\t0000000A\tk\t/p\tt\r\nrec\t6\tzz\t\t\t\nwho\t1\t1\tk\tp\tt\n");
+    CHECK(junk.favorites.size() == 1 && junk.favorites[0].crc == 0xA && junk.favorites[0].title == "t" && junk.recents.empty());
+
+    // resolving against the library: by path, by checksum when the folder moved, by key when the file changed
+    UserLists r;
+    setFavoriteIn(r, userItemFor(entries[1], 1), true);   // Beta
+    setFavoriteIn(r, userItemFor(entries[0], 2), true);   // Alpha
+    UserItem moved = userItemFor(entries[2], 3);          // Gamma, now somewhere else
+    moved.path = "/old-folder/Gamma.cue";
+    setFavoriteIn(r, moved, true);
+    UserItem gone;
+    gone.path = "/unplugged/Epsilon.j64";
+    gone.crc = 0xE5E5E5E5u;
+    gone.key = "crc-E5E5E5E5";
+    setFavoriteIn(r, gone, true);
+    std::vector<Resolved> res = resolveUserItems(r.favorites, entries);
+    CHECK(res.size() == 3);   // Epsilon's drive is away: skipped, not forgotten
+    CHECK(r.favorites.size() == 4);
+    sortByTitle(res);
+    CHECK(res.size() == 3 && res[0].entry->title == "Alpha" && res[1].entry->title == "beta" && res[2].entry->title == "Gamma");
+    // a game whose handles all changed is a different game
+    UserItem stranger;
+    stranger.path = "/else/X.j64";
+    stranger.crc = 0x99999999u;
+    stranger.key = "X";
+    CHECK(!sameGame(stranger, a) && sameGame(moved, userItemFor(entries[2], 0)));
+    // BIOS files never resolve, even when listed
+    std::vector<UserItem> biosItem;
+    biosItem.push_back(userItemFor(bios, 1));
+    CHECK(resolveUserItems(biosItem, entries).empty());
+    // the same game twice in the list (an old and a new handle) shows once
+    std::vector<UserItem> twice;
+    twice.push_back(userItemFor(entries[0], 1));
+    UserItem again = userItemFor(entries[0], 2);
+    again.path = "/elsewhere/Alpha.j64";
+    twice.push_back(again);
+    CHECK(resolveUserItems(twice, entries).size() == 1);
+    // strips: only the entries of that media
+    res = resolveUserItems(r.favorites, entries);
+    CHECK(filterBySection(res, Section::Cart).size() == 2 && filterBySection(res, Section::Disc).size() == 1);
+    CHECK(filterBySection(res, Section::Bios).empty());
+
+    // a favorite made while the game was unidentified (key crc-XXXX) is still a favorite once the database names it
+    Entry unid = fakeEntry("/g/Zeta.j64", "Zeta", 0x2E7A2E7Au);
+    UserLists dr;
+    setFavoriteIn(dr, userItemFor(unid, 1), true);
+    CHECK_EQ(userItemFor(unid, 0).key, "crc-2E7A2E7A");
+    Entry ident = unid;
+    ident.datName = "Zeta (USA)";
+    ident.title = "Zeta (USA)";
+    CHECK(hasFavorite(dr, userItemFor(ident, 0)));      // the checksum and the path still match
+    UserItem renamedFile = userItemFor(ident, 0);
+    renamedFile.path = "/moved/Zeta.j64";
+    CHECK(hasFavorite(dr, renamedFile));                  // checksum alone
+    renamedFile.crc = 0;                                  // an entry with no usable checksum: the key was the only handle
+    UserLists kr;
+    UserItem keyed = userItemFor(fakeEntry("/g/Img.chd", "Img", 0, "Img (USA)", Kind::Disc), 1);
+    setFavoriteIn(kr, keyed, true);
+    UserItem keyed2 = keyed;
+    keyed2.path = "/moved/Img.chd";
+    CHECK(hasFavorite(kr, keyed2));                       // dat name alone
+    setFavoriteIn(dr, userItemFor(ident, 5), true);       // starring it again after the update changes nothing
+    CHECK(dr.favorites.size() == 1 && dr.favorites[0].key == "Zeta (USA)");
+}
+
+static void testUserStoreAndInstances() {
+    using namespace lib;
+    const std::string dir = g_tmp + "userstore/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir), ec);
+    const std::string file = dir + "user.tsv";
+    UserItem a, b, c;
+    a.path = "/g/A.j64"; a.crc = 0xA; a.key = "crc-0000000A"; a.title = "A";
+    b.path = "/g/B.j64"; b.crc = 0xB; b.key = "crc-0000000B"; b.title = "B";
+    c.path = "/g/C.j64"; c.crc = 0xC; c.key = "crc-0000000C"; c.title = "C";
+
+    UserStore one, two;   // two running copies on one data folder
+    one.open(file);
+    two.open(file);
+    CHECK(one.lists().favorites.empty() && !fs::exists(fs::u8path(file)));   // reading creates nothing
+    CHECK(one.setFavorite(a, true));
+    CHECK(fs::exists(fs::u8path(file)));
+    // the second copy has not looked yet; it acts anyway, on top of what the file holds, not on its own snapshot
+    CHECK(two.lists().favorites.empty());
+    CHECK(two.setFavorite(b, true));
+    CHECK(two.lists().favorites.size() == 2);   // it took copy one's favorite first
+    CHECK(two.recordPlay(c));
+    // copy one sees all of it after its next refresh, and refresh reports a change exactly once
+    CHECK(one.lists().favorites.size() == 1);
+    unsigned g0 = one.generation();
+    CHECK(one.refresh());
+    CHECK(one.generation() != g0);
+    CHECK(one.lists().favorites.size() == 2 && one.lists().recents.size() == 1 && one.lists().recents[0].path == "/g/C.j64");
+    CHECK(!one.refresh());
+    // removing in one copy is not undone by the other copy's next unrelated action
+    CHECK(one.setFavorite(a, false));
+    CHECK(two.recordPlay(a));   // two still believes A is a favorite; it only records a play
+    CHECK(two.lists().favorites.size() == 1 && two.lists().favorites[0].path == "/g/B.j64");
+    CHECK(two.lists().recents.size() == 2 && two.lists().recents[0].path == "/g/A.j64");
+    // a copy that restarts sees the same lists
+    UserStore three;
+    three.open(file);
+    CHECK(three.lists().favorites.size() == 1 && three.lists().recents.size() == 2);
+    CHECK(three.removeRecent(c));
+    CHECK(three.lists().recents.size() == 1);
+    CHECK(three.clearRecents());
+    CHECK(three.lists().recents.empty() && three.lists().favorites.size() == 1);   // clearing recents leaves favorites
+    CHECK(one.refresh() && one.lists().recents.empty());
+
+    // a file that cannot be read is never overwritten: simulate by a directory standing where the file is
+    const std::string bad = dir + "dir-as-file.tsv";
+    fs::create_directories(fs::u8path(bad), ec);
+    UserStore broken;
+    broken.open(bad);
+    CHECK(!broken.setFavorite(a, true));
+    CHECK(fs::is_directory(fs::u8path(bad)));
+    // not opened at all (no data folder): every operation is a harmless no
+    UserStore none;
+    CHECK(!none.isOpen() && !none.setFavorite(a, true) && !none.refresh() && !none.recordPlay(a));
+    // a hand-edited file with a blank / missing list is fine
+    writeText(dir + "empty.tsv", "");
+    UserStore e;
+    e.open(dir + "empty.tsv");
+    CHECK(e.lists().favorites.empty() && e.setFavorite(a, true) && e.lists().favorites.size() == 1);
+}
+
+static void testStateNamesAndListing() {
+    using namespace lib;
+    std::string stem;
+    int slot = -1;
+    CHECK_EQ(stateFileName("Iron Soldier (World)", 3), "Iron Soldier (World).slot3.state");
+    CHECK_EQ(thumbFileName("Iron Soldier (World)", 3), "Iron Soldier (World).slot3.png");
+    CHECK(parseStateFileName("Iron Soldier (World).slot3.state", stem, slot) && stem == "Iron Soldier (World)" && slot == 3);
+    CHECK(parseStateFileName("a.b.slot12.state", stem, slot) && stem == "a.b" && slot == 12);
+    CHECK(!parseStateFileName("x.slot3.png", stem, slot));            // the screenshot
+    CHECK(!parseStateFileName("x.slot3.state.rcp", stem, slot));      // the achievements sidecar
+    CHECK(!parseStateFileName(".slot3.state", stem, slot));           // no game name
+    CHECK(!parseStateFileName("x.slotA.state", stem, slot) && !parseStateFileName("x.slot.state", stem, slot));
+    CHECK(!parseStateFileName("x.state", stem, slot) && !parseStateFileName("notes.txt", stem, slot));
+
+    const std::string dir = g_tmp + "states/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir), ec);
+    CHECK(listStates(dir).empty());
+    CHECK(listStates(g_tmp + "no-such-states-dir/").empty());
+    makeCoverPng("shot.png", 32, 24, 5);
+    auto put = [&](const std::string& st, int sl, int ageMin, bool thumb) {
+        writeText(dir + stateFileName(st, sl), "STATE" + st + std::to_string(sl));
+        fs::last_write_time(fs::u8path(dir + stateFileName(st, sl)),
+                            fs::file_time_type::clock::now() - std::chrono::minutes(ageMin), ec);
+        if (thumb) fs::copy_file(fs::u8path(g_tmp + "shot.png"), fs::u8path(dir + thumbFileName(st, sl)), fs::copy_options::overwrite_existing, ec);
+    };
+    put("Cybermorph (USA)", 0, 600, true);
+    put("Cybermorph (USA)", 4, 30, true);
+    put("Cybermorph (USA)", 7, 90, false);       // a state with no screenshot
+    put("Tempest 2000 (World)", 1, 5, true);
+    put("Old Game", 2, 5000, false);
+    writeText(dir + "Cybermorph (USA).slot4.state.rcp", "side");   // sidecar: not a state of its own
+    writeText(dir + "readme.txt", "x");
+    writeText(dir + "Stray.slot1.png", "x");                       // a screenshot with no state: not listed
+    std::vector<StateGame> g = listStates(dir);
+    CHECK(g.size() == 3);
+    CHECK(g.size() == 3 && g[0].stem == "Tempest 2000 (World)" && g[1].stem == "Cybermorph (USA)" && g[2].stem == "Old Game");   // newest first
+    CHECK(g.size() == 3 && g[1].states.size() == 3);
+    if (g.size() == 3 && g[1].states.size() == 3) {
+        CHECK(g[1].states[0].slot == 4 && g[1].states[1].slot == 7 && g[1].states[2].slot == 0);   // newest first within a game
+        CHECK(!g[1].states[0].thumbPath.empty() && g[1].states[1].thumbPath.empty());
+        CHECK(g[1].states[0].path == dir + "Cybermorph (USA).slot4.state" && g[1].states[0].size > 0 && g[1].states[0].mtime > 0);
+        CHECK(g[1].newest == g[1].states[0].mtime);
+    }
+
+    // which library entry owns a stem: the file stem, BIOS files excluded
+    std::vector<Entry> entries;
+    entries.push_back(fakeEntry("/g/Tempest 2000 (World).j64", "Tempest 2000", 1));
+    entries.push_back(fakeEntry("/g/Cybermorph (USA).cue", "Cybermorph", 2, "", Kind::Disc));
+    Entry bios = fakeEntry("/sys/Old Game.rom", "Old Game", 3);
+    bios.section = Section::Bios;
+    entries.push_back(bios);
+    CHECK(entryForStem(entries, "Cybermorph (USA)") == &entries[1] && entryForStem(entries, "Tempest 2000 (World)") == &entries[0]);
+    CHECK(entryForStem(entries, "Old Game") == nullptr && entryForStem(entries, "Nope") == nullptr);
+
+    // delete: the state, its screenshot and the achievements sidecar go; the others stay
+    StateInfo victim = g[1].states[0];
+    CHECK(deleteState(victim));
+    CHECK(!fs::exists(fs::u8path(victim.path)) && !fs::exists(fs::u8path(victim.thumbPath)));
+    CHECK(!fs::exists(fs::u8path(dir + "Cybermorph (USA).slot4.state.rcp")));
+    CHECK(fs::exists(fs::u8path(dir + "Cybermorph (USA).slot7.state")) && fs::exists(fs::u8path(dir + "readme.txt")));
+    CHECK(!deleteState(victim));   // already gone
+    g = listStates(dir);
+    CHECK(g.size() == 3 && g[1].stem == "Cybermorph (USA)" && g[1].states.size() == 2);
+
+    // Show in Finder / Explorer: the folder's file:// URL
+    CHECK_EQ(folderUrlOf("/Users/me/Jaguar Games/Iron Soldier.j64"), "file:///Users/me/Jaguar%20Games/");
+    CHECK_EQ(folderUrlOf("/g/Dragon's Lair (USA).cue"), "file:///g/");
+    CHECK_EQ(folderUrlOf("C:\\Games\\Jag #1\\x.j64"), "file:///C:/Games/Jag%20%231/");
+    CHECK_EQ(folderUrlOf("/g/caf\xC3\xA9/x.j64"), "file:///g/caf%C3%A9/");
+    CHECK_EQ(folderUrlOf("x.j64"), "");
+}
+
+
+// ---- resume where I left off: the policy, the auto-save slot's names and where each running copy keeps it --------
+
+static void testResumePolicy() {
+    using namespace lib;
+    CHECK(kResumeDefault == ResumeAsk && kResumeModeCount == 3 && kAutoSaveMinSeconds >= 3.0 && kAutoSaveMinSeconds <= 10.0);
+    CHECK(clampResumeMode(0) == ResumeOff && clampResumeMode(2) == ResumeAlways && clampResumeMode(3) == ResumeAsk && clampResumeMode(-1) == ResumeAsk);
+    CHECK_EQ(resumeModeLabel(ResumeAlways), "Always");
+
+    // writing: only with the option on, past the minimum runtime, and not in hardcore / netplay / after a crash
+    const double ok = kAutoSaveMinSeconds + 1.0;
+    CHECK(shouldAutoSave(ResumeAsk, false, false, ok, false));
+    CHECK(shouldAutoSave(ResumeAlways, false, false, ok, false));
+    CHECK(!shouldAutoSave(ResumeOff, false, false, ok, false));                       // Off writes nothing
+    CHECK(!shouldAutoSave(ResumeAsk, true, false, ok, false));                        // hardcore refuses state loads: skip
+    CHECK(!shouldAutoSave(ResumeAlways, true, false, 9999.0, false));
+    CHECK(!shouldAutoSave(ResumeAsk, false, true, ok, false));                        // netplay: a state would desync the link
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, kAutoSaveMinSeconds - 0.01, false));   // ran too briefly
+    CHECK(shouldAutoSave(ResumeAsk, false, false, kAutoSaveMinSeconds, false));       // exactly the minimum counts
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, 0.0, false));
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, ok, true));                        // the crash watchdog flagged the run
+
+    // booting: Always loads, Ask asks, Off and anything blocked does nothing; no auto-save means nothing to do
+    CHECK(resumeAction(ResumeAlways, false, false, true) == ResumeAction::Load);
+    CHECK(resumeAction(ResumeAsk, false, false, true) == ResumeAction::Ask);
+    CHECK(resumeAction(ResumeOff, false, false, true) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAlways, true, false, true) == ResumeAction::None);       // hardcore: skip, and do not prompt
+    CHECK(resumeAction(ResumeAsk, true, false, true) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAlways, false, true, true) == ResumeAction::None);       // netplay
+    CHECK(resumeAction(ResumeAlways, false, false, false) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAsk, false, false, false) == ResumeAction::None);
+
+    // the slot: its own file pair per game, beside (never colliding with) the numbered ones
+    std::string stem;
+    int slot = 0;
+    CHECK_EQ(stateFileName("Iron Soldier (World)", kAutoSlot), "Iron Soldier (World).auto.state");
+    CHECK_EQ(thumbFileName("Iron Soldier (World)", kAutoSlot), "Iron Soldier (World).auto.png");
+    CHECK_EQ(stateFileName("Iron Soldier (World)", 0), "Iron Soldier (World).slot0.state");   // unchanged
+    CHECK(parseStateFileName("Iron Soldier (World).auto.state", stem, slot) && stem == "Iron Soldier (World)" && slot == kAutoSlot);
+    CHECK(parseStateFileName("a.auto.auto.state", stem, slot) && stem == "a.auto" && slot == kAutoSlot);   // a game called "a.auto"
+    CHECK(parseStateFileName("a.auto.slot2.state", stem, slot) && stem == "a.auto" && slot == 2);
+    CHECK(!parseStateFileName(".auto.state", stem, slot) && !parseStateFileName("x.auto.png", stem, slot) && !parseStateFileName("x.auto.state.rcp", stem, slot));
+    CHECK_EQ(stateLabel(kAutoSlot), "Auto-save");
+    CHECK_EQ(stateLabel(4), "Slot 4");
+
+    // where each running copy keeps it
+    CHECK_EQ(autoStatesDir("/d/states/", 1), "/d/states/");
+    CHECK_EQ(autoStatesDir("/d/states/", 0), "/d/states/");
+    CHECK_EQ(autoStatesDir("/d/states/", 2), "/d/states/instance-2/");
+    CHECK_EQ(autoStatesDir("/d/states/", 3), "/d/states/instance-3/");
+
+    const std::string dir = g_tmp + "autostates/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir + "instance-2"), ec);
+    auto put = [&](const std::string& d, const std::string& name, int ageMin) {
+        writeText(d + name, "S");
+        fs::last_write_time(fs::u8path(d + name), fs::file_time_type::clock::now() - std::chrono::minutes(ageMin), ec);
+    };
+    put(dir, "Alpha.slot1.state", 50);
+    put(dir, "Alpha.auto.state", 10);                  // the first copy's auto-save
+    put(dir, "Beta.auto.state", 20);                   // a game only the first copy auto-saved
+    put(dir + "instance-2/", "Alpha.auto.state", 5);   // copy 2's own
+    // copy 1: numbered states and its auto-saves in the states folder; copy 2's folder is not looked at
+    std::vector<StateGame> one = listStatesFor(dir, 1);
+    CHECK(one.size() == 2 && one[0].stem == "Alpha" && one[0].states.size() == 2 && one[0].states[0].slot == kAutoSlot);
+    CHECK(one.size() == 2 && one[0].states[0].path == dir + "Alpha.auto.state");
+    // copy 2: the shared numbered states, ITS auto-save, not copy 1's
+    std::vector<StateGame> two = listStatesFor(dir, 2);
+    CHECK(two.size() == 1 && two[0].stem == "Alpha" && two[0].states.size() == 2);
+    if (two.size() == 1 && two[0].states.size() == 2) {
+        CHECK(two[0].states[0].slot == kAutoSlot && two[0].states[0].path == dir + "instance-2/Alpha.auto.state");
+        CHECK(two[0].states[1].slot == 1);
+        CHECK(two[0].newest == two[0].states[0].mtime);
+    }
+    // an auto-save is deleted like any state (and its screenshot)
+    writeText(dir + "Alpha.auto.png", "P");
+    StateInfo a = one[0].states[0];
+    a.thumbPath = dir + "Alpha.auto.png";
+    CHECK(deleteState(a) && !fs::exists(fs::u8path(a.path)) && !fs::exists(fs::u8path(a.thumbPath)));
+    CHECK(listStatesFor(dir, 1)[0].states.size() == 1 || listStatesFor(dir, 1).size() == 2);
+}
+
+// The service wiring: scan a folder, star and play games, see them resolve, share the file with a second copy,
+// list and delete states, and the settings round-trip.
+static void testPersonalListsService() {
+    std::string root = g_tmp + "lists-root/", games = g_tmp + "lists-games/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(root + "library/db"), ec);
+    fs::create_directories(fs::u8path(root + "states"), ec);
+    writeBytes(games + "Alpha (World).j64", noise(1048576, 71));
+    writeBytes(games + "Beta (World).j64", noise(1048576, 72));
+    std::vector<unsigned char> d1 = noise(2352 * 30, 73);
+    writeBytes(games + "Gamma Disc (USA) (Track 1).bin", d1);
+    writeText(games + "Gamma Disc (USA).cue",
+              "FILE \"Gamma Disc (USA) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+
+    Paths paths;
+    paths.root = root;
+    paths.states = root + "states/";
+    Config cfg;
+    cfg.setPath(root + "config.ini");
+    cfg.set("library.dir.0", games.substr(0, games.size() - 1));
+    LibraryService svc;
+    svc.createTexture = [](const void*, int, int) { return 1u; };
+    svc.destroyTexture = [](unsigned) {};
+    svc.artBaseUrl = "http://127.0.0.1:1/";
+    svc.artMirrorUrl = svc.artBaseUrl;
+    svc.dbBaseUrl = svc.artBaseUrl;
+    svc.start(paths, cfg, false);
+    svc.setDownloadArt(false);
+    auto pumpUntil = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            svc.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    CHECK(pumpUntil([&] { return !svc.scanning() && svc.entries().size() == 3; }));
+    auto find = [&](const std::string& title) {
+        lib::Entry e;
+        for (const lib::Entry& x : svc.entries())
+            if (x.title == title) e = x;
+        return e;
+    };
+    lib::Entry alpha = find("Alpha (World)"), beta = find("Beta (World)"), gamma = find("Gamma Disc (USA)");
+    CHECK(!alpha.file.path.empty() && !beta.file.path.empty() && !gamma.file.path.empty());
+
+    // defaults: both lists shown as a tab and in the sections
+    CHECK(svc.favoritesShow == lib::ShowBoth && svc.recentsShow == lib::ShowBoth && svc.activeTab() == lib::TabCart);
+    CHECK(svc.favoriteEntries().empty() && svc.recentEntries().empty());
+    svc.setFavorite(beta, true);
+    svc.setFavorite(gamma, true);
+    CHECK(svc.isFavorite(beta) && svc.isFavorite(gamma) && !svc.isFavorite(alpha));
+    CHECK(svc.favoriteEntries().size() == 2 && svc.favoriteEntries()[0].entry->title == "Beta (World)");   // by title
+    svc.noteLaunched(alpha.file.path);
+    svc.noteLaunched(beta.file.path);
+    svc.noteLaunched("/not/in/the/library.j64");   // scanned, not one of ours: not listed
+    CHECK(svc.recentEntries().size() == 2 && svc.recentEntries()[0].entry->title == "Beta (World)" && svc.recentEntries()[1].entry->title == "Alpha (World)");
+    CHECK(svc.recentEntries()[0].when > 1700000000);
+    CHECK(svc.isRecent(alpha) && !svc.isRecent(gamma));
+    svc.removeRecent(beta);
+    CHECK(svc.recentEntries().size() == 1 && svc.isFavorite(beta));   // not the same thing
+    // the lists survive a restart of the service
+    svc.setFavorite(gamma, false);
+    svc.stop();
+    LibraryService svc2;
+    svc2.createTexture = svc.createTexture;
+    svc2.destroyTexture = svc.destroyTexture;
+    svc2.artBaseUrl = svc2.artMirrorUrl = svc2.dbBaseUrl = "http://127.0.0.1:1/";
+    Paths p2 = paths;
+    p2.instance = 2;   // a second copy on the same data folder
+    Config cfg2;
+    cfg2.setPath(root + "config-2.ini");
+    cfg2.setSavePrefixes({"window.", "input.pads."});   // what App::loadConfig sets for instance 2+ (the #902 rule)
+    cfg2.set("library.dir.0", games.substr(0, games.size() - 1));
+    svc2.start(p2, cfg2, false);
+    svc2.setDownloadArt(false);
+    auto pump2 = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            svc2.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    CHECK(pump2([&] { return !svc2.scanning() && svc2.entries().size() == 3; }));
+    CHECK(svc2.instance == 2);
+    CHECK(svc2.favoriteEntries().size() == 1 && svc2.favoriteEntries()[0].entry->title == "Beta (World)");
+    CHECK(svc2.recentEntries().size() == 1 && svc2.recentEntries()[0].entry->title == "Alpha (World)");
+    // ...and what the second copy does is in the shared file, for the first copy to read
+    lib::Entry alpha2;
+    for (const lib::Entry& x : svc2.entries())
+        if (x.title == "Alpha (World)") alpha2 = x;
+    svc2.setFavorite(alpha2, true);
+    lib::UserStore reader;
+    reader.open(svc2.userFile());
+    CHECK(reader.lists().favorites.size() == 2);
+
+    // display options persist (clamped on the way in)
+    svc2.favoritesShow = lib::ShowSections;
+    svc2.recentsShow = lib::ShowHidden;
+    svc2.section = lib::TabRecents;   // remembered tab, now hidden
+    svc2.saveSettings();
+    CHECK_EQ(cfg2.get("library.favorites.show", ""), "2");
+    CHECK_EQ(cfg2.get("library.recents.show", ""), "0");
+    {   // ...but the display options are ordinary settings: copy 2 reads them and its config-2.ini never gets them
+        std::vector<unsigned char> raw;
+        std::string written;
+        if (readFile(root + "config-2.ini", raw)) written.assign(raw.begin(), raw.end());
+        CHECK(written.find("library.") == std::string::npos);
+    }
+    CHECK(svc2.activeTab() == lib::TabCart);
+    svc2.stop();
+    Config cfg3;
+    cfg3.set("library.dir.0", games.substr(0, games.size() - 1));
+    cfg3.set("library.favorites.show", "9");   // junk: back to the default
+    cfg3.set("library.recents.show", "1");
+    cfg3.setInt("library.section", 4);
+    LibraryService svc3;
+    svc3.artBaseUrl = svc3.artMirrorUrl = svc3.dbBaseUrl = "http://127.0.0.1:1/";
+    svc3.start(paths, cfg3, false);
+    CHECK(svc3.favoritesShow == lib::ShowBoth && svc3.recentsShow == lib::ShowTab && svc3.section == lib::TabRecents && svc3.activeTab() == lib::TabRecents);
+    svc3.stop();
+    LibraryService svc4;
+    Config cfg4;
+    cfg4.setInt("library.section", 77);
+    svc4.artBaseUrl = svc4.artMirrorUrl = svc4.dbBaseUrl = "http://127.0.0.1:1/";
+    svc4.start(paths, cfg4, false);
+    CHECK(svc4.section == lib::kTabCount - 1);   // an out-of-range remembered tab is clamped, then falls back at draw time
+    svc4.stop();
+
+    // save states: listing, per-game lookup, screenshots, delete
+    LibraryService s5;
+    int created = 0, destroyed = 0;
+    s5.createTexture = [&](const void*, int, int) { return (unsigned)++created; };
+    s5.destroyTexture = [&](unsigned) { destroyed++; };
+    s5.artBaseUrl = s5.artMirrorUrl = s5.dbBaseUrl = "http://127.0.0.1:1/";
+    Config cfg5;
+    cfg5.set("library.dir.0", games.substr(0, games.size() - 1));
+    s5.start(paths, cfg5, false);
+    s5.setDownloadArt(false);
+    CHECK(s5.stateGames().empty());
+    makeCoverPng("st.png", 48, 36, 9);
+    writeText(paths.states + "Alpha (World).slot0.state", "S0");
+    writeText(paths.states + "Alpha (World).slot2.state", "S2");
+    fs::copy_file(fs::u8path(g_tmp + "st.png"), fs::u8path(paths.states + "Alpha (World).slot2.png"), fs::copy_options::overwrite_existing, ec);
+    writeText(paths.states + "Removed Game.slot1.state", "S");
+    s5.invalidateStates();
+    CHECK(s5.stateGames().size() == 2);
+    auto pump5 = [&](const std::function<bool()>& cond) {
+        for (int i = 0; i < 400; i++) {
+            s5.pump();
+            if (cond()) return true;
+            SDL_Delay(25);
+        }
+        return false;
+    };
+    CHECK(pump5([&] { return !s5.scanning() && s5.entries().size() == 3; }));
+    lib::Entry a5;
+    for (const lib::Entry& x : s5.entries())
+        if (x.title == "Alpha (World)") a5 = x;
+    const lib::StateGame* sg = s5.statesFor(a5);
+    CHECK(sg != nullptr && sg->states.size() == 2);
+    if (sg && sg->states.size() == 2) {
+        lib::StateInfo withShot = sg->states[0].thumbPath.empty() ? sg->states[1] : sg->states[0];
+        lib::StateInfo noShot = sg->states[0].thumbPath.empty() ? sg->states[0] : sg->states[1];
+        CHECK(withShot.slot == 2 && noShot.slot == 0);
+        ArtView t = s5.stateThumb(withShot);
+        CHECK(t.state == ArtView::Ready && t.w == 48 && t.h == 36 && t.tex != 0);
+        ArtView t2 = s5.stateThumb(withShot);
+        CHECK(t2.state == ArtView::Ready && t2.tex == t.tex && created == 1);   // cached
+        CHECK(s5.stateThumb(noShot).state == ArtView::Missing);
+        const lib::Entry* owner = s5.entryForState(*sg);
+        CHECK(owner && owner->title == "Alpha (World)");
+        CHECK(s5.deleteState(withShot));
+        CHECK(destroyed == 1);
+        const lib::StateGame* again = s5.statesFor(a5);
+        CHECK(again && again->states.size() == 1 && again->states[0].slot == 0);
+    }
+    const lib::StateGame* orphan = nullptr;
+    for (const lib::StateGame& g : s5.stateGames())
+        if (g.stem == "Removed Game") orphan = &g;
+    CHECK(orphan != nullptr && s5.entryForState(*orphan) == nullptr);   // a game that left the library: listed, cannot be played from here
+    s5.stop();
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--scan")) {
         std::string db = ".";
@@ -1745,6 +2316,12 @@ int main(int argc, char** argv) {
     testCoverService();
     testLooseNames();
     testChdAndCdiChecksums();
+    testDisplayOptionsAndTabs();
+    testPersonalListsLogic();
+    testUserStoreAndInstances();
+    testStateNamesAndListing();
+    testResumePolicy();
+    testPersonalListsService();
 #ifndef _WIN32
     if (http::available()) {
         testHttp();
