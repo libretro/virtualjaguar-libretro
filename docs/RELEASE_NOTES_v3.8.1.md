@@ -66,6 +66,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   enter codes by hand (https://github.com/libretro/virtualjaguar-libretro/issues/835, https://github.com/libretro/virtualjaguar-libretro/pull/878).
 - **RetroAchievements.** Softcore by default. Hardcore is optional; it refuses loading save
   states and disables cheats (https://github.com/libretro/virtualjaguar-libretro/issues/836, https://github.com/libretro/virtualjaguar-libretro/pull/882).
+  The Achievements window now shows your avatar, the game icon and every achievement's badge
+  (also in the unlock toasts), filters and sorts the list, and has a Jaguar games tab listing every
+  Jaguar and Jaguar CD game with achievements, your progress in each and a Play button for the
+  ones in your library.
 - **Controls.** Per-device and per-game remapping, all 12 keypad keys on a gamepad,
   keyboard play with the Pro Controller 6-button layout, an on-screen keypad (F2) and a
   controls overlay (F3) that appears at boot when no player-1 controller is connected.

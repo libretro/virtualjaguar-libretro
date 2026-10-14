@@ -48,6 +48,21 @@ unsigned toUnsigned(const std::string& s) { return (unsigned)std::strtoul(s.c_st
 
 unsigned shownUnlocked(const GameEntry& g) { return std::max(g.unlocked, g.unlockedHardcore); }
 
+// The server's own "Error":"..." text (rcheevos overwrites it with "Response not found" when the
+// failure reply has no payload).
+std::string serverError(const std::string& json) {
+    const size_t k = json.find("\"Error\"");
+    if (k == std::string::npos) return "";
+    size_t q = json.find('"', json.find(':', k) == std::string::npos ? k : json.find(':', k));
+    if (q == std::string::npos) return "";
+    std::string out;
+    for (size_t i = q + 1; i < json.size() && json[i] != '"'; i++) {
+        if (json[i] == '\\' && i + 1 < json.size()) i++;
+        out += json[i];
+    }
+    return out;
+}
+
 }  // namespace
 
 bool containsNoCase(const std::string& hay, const std::string& needle) {
@@ -67,7 +82,8 @@ bool parseGamesJson(const std::string& json, uint32_t console, std::vector<GameE
     rc_api_fetch_games_list_response_t resp;
     int rc = rc_api_process_fetch_games_list_server_response(&resp, &sr);
     if (rc != RC_OK || !resp.response.succeeded) {
-        err = resp.response.error_message ? resp.response.error_message : "the games list could not be read";
+        err = serverError(json);
+        if (err.empty()) err = resp.response.error_message ? resp.response.error_message : "the games list could not be read";
         rc_api_destroy_fetch_games_list_response(&resp);
         return false;
     }
@@ -88,7 +104,8 @@ bool parseProgressJson(const std::string& json, std::map<uint32_t, Progress>& ou
     rc_api_fetch_all_user_progress_response_t resp;
     int rc = rc_api_process_fetch_all_user_progress_server_response(&resp, &sr);
     if (rc != RC_OK || !resp.response.succeeded) {
-        err = resp.response.error_message ? resp.response.error_message : "the progress list could not be read";
+        err = serverError(json);
+        if (err.empty()) err = resp.response.error_message ? resp.response.error_message : "the progress list could not be read";
         rc_api_destroy_fetch_all_user_progress_response(&resp);
         return false;
     }

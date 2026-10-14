@@ -99,7 +99,9 @@ static void testGamesParsing() {
     CHECK(g77[0].console == 77 && g77[0].title == "Myst");
     // a failure reply and garbage
     std::vector<ra::GameEntry> bad;
-    CHECK(!ra::parseGamesJson("{\"Success\":false,\"Error\":\"nope\"}", 17, bad, err) && err == "nope" && bad.empty());
+    const bool failed = !ra::parseGamesJson("{\"Success\":false,\"Error\":\"nope\"}", 17, bad, err);
+    if (!(failed && err == "nope" && bad.empty())) std::fprintf(stderr, "games failure reply: failed=%d err='%s'\n", failed, err.c_str());
+    CHECK(failed && err == "nope" && bad.empty());
     CHECK(!ra::parseGamesJson("not json", 17, bad, err));
     CHECK(ra::parseGamesJson("{\"Success\":true,\"Response\":[]}", 17, bad, err) && bad.empty());
 
@@ -108,7 +110,8 @@ static void testGamesParsing() {
     CHECK(ra::parseProgressJson(readFile(std::string(VJ_RA_FIX) + "/allprogress_77.json"), p77, err));
     CHECK(p17.size() == 3 && p17[9001].unlocked == 2 && p17[9001].unlockedHardcore == 1 && p17[5001].achievements == 40);
     CHECK(p77.size() == 1 && p77[6001].unlocked == 5);
-    CHECK(!ra::parseProgressJson("{\"Success\":false,\"Error\":\"Credentials invalid\"}", p17, err) && err == "Credentials invalid");
+    std::map<uint32_t, ra::Progress> none;
+    CHECK(!ra::parseProgressJson("{\"Success\":false,\"Error\":\"Credentials invalid\"}", none, err) && err == "Credentials invalid");
 
     std::vector<ra::GameEntry> all = g17;
     all.insert(all.end(), g77.begin(), g77.end());
@@ -194,7 +197,7 @@ static void testCacheFile() {
     CHECK(!ra::deserializeGames("", back, at));
     CHECK(!ra::deserializeGames("hello\n", back, at));
     CHECK(!ra::deserializeGames("VJRA2\t5\n", back, at));
-    CHECK(!ra::deserializeGames(text.substr(0, text.size() - 10), back, at) && back.empty());
+    CHECK(!ra::deserializeGames(text.substr(0, text.find('\n') + 12), back, at) && back.empty());   // cut inside the first row
     CHECK(ra::deserializeGames("VJRA1\t5\n", back, at) && back.empty() && at == 5);   // a valid empty list
     // daily refresh
     CHECK(ra::gamesStale(0, 1000));
@@ -315,9 +318,22 @@ static ra::ImageView ask(ra::ImageCache& c, const std::string& url) {
     return c.get(url);
 }
 
+// SDL_RemovePath only removes empty directories: empty `dir` of files first.
+static void wipe(const std::string& dir) {
+    SDL_EnumerateDirectory(
+        dir.c_str(),
+        [](void* ud, const char* d, const char* name) -> SDL_EnumerationResult {
+            SDL_RemovePath((std::string(d) + name).c_str());
+            return SDL_ENUM_CONTINUE;
+        },
+        nullptr);
+    SDL_RemovePath(dir.c_str());
+}
+
 static void testImageCache() {
     const std::string root = std::string(SDL_GetBasePath() ? SDL_GetBasePath() : "") + "ra_dash_test_data/";
-    SDL_RemovePath((root + "ra-cache").c_str());
+    wipe(root + "ra-cache");
+    wipe(root + "prune");
     SDL_CreateDirectory(root.c_str());
     const std::string png = makePng(64, 64, 0xff8000ff);
     CHECK(ra::looksLikePng(png.data(), png.size()));
@@ -473,7 +489,7 @@ static void testImageCache() {
     }
     {   // the disk cap removes the oldest pictures and leaves other files alone
         const std::string dir = root + "prune/";
-        SDL_RemovePath(dir.c_str());
+        wipe(dir);
         SDL_CreateDirectory(dir.c_str());
         for (int i = 0; i < 4; i++) {
             writeFileAtomic(dir + "p" + std::to_string(i) + ".png", png.data(), png.size());
@@ -486,8 +502,8 @@ static void testImageCache() {
         CHECK(fileExists(dir + "games-17.tsv"));
         CHECK(ra::pruneImageDir(dir, cap) == 0);
     }
-    SDL_RemovePath((root + "ra-cache").c_str());
-    SDL_RemovePath((root + "prune").c_str());
+    wipe(root + "ra-cache");
+    wipe(root + "prune");
     SDL_RemovePath(root.c_str());
 }
 

@@ -32,6 +32,8 @@ docs/RELEASE_NOTES_v3.8.1.md
   CRT/scanline/sharp-bilinear presets bundled, integer scaling (#834).
 * Cheats: libretro cheat database bundled, plus manual codes (#835).
 * RetroAchievements: softcore default, optional hardcore (#836).
+  Avatar, game icon and achievement badges; a dashboard of the Jaguar
+  games with achievements, your progress and Play for owned ones.
 * Controls: per-device and per-game remapping, 12-key keypad on a
   gamepad, 6-button keyboard layout, on-screen keypad (F2), controls
   overlay (F3); mice, rotary, analog, driving, paddle, 6D, light gun
