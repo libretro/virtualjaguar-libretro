@@ -60,6 +60,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   states tab and the tile menu), and the next boot offers to resume from it or does so at once.
   Not in RetroAchievements hardcore or netplay, and not for a game that ran under 5 seconds or
   crashed (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+- **Choose the interface font.** Settings > Video > Font: Retro (the pixel font, still the default), System UI
+  (San Francisco, Segoe UI, the desktop's sans-serif), a system monospace face, or a font file of your own,
+  at 11-24 pt, applied live. Text is drawn at the display's full pixel density, so it is crisp on Retina and
+  125-200% Windows scaling (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Covers for Jaguar CD.** libretro-thumbnails has no Jaguar CD art, so discs now get a
   readable title card, and you can set your own cover: right-click a tile > Set cover image
   (PNG), drop a PNG on a tile, or put `<Title>.png` files in the app's `covers` folder.

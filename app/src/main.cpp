@@ -34,7 +34,8 @@ static void usage(const char* argv0) {
         "\n"
         "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
-        "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X]\n"
+        "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi]\n"
+        "     [--font retro|system|mono|custom:FILE[:SIZE]] [--font-then SPEC]   (this run only; --font-then switches live after 60 frames)\n"
         "     [--show-window settings[-video|-input|-audio|-bios|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
@@ -171,6 +172,9 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--screenshot-frame")) a.screenshotFrame = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--show-window")) a.showWindow = need(s);
         else if (!std::strcmp(s, "--ui-scale")) a.uiScale = (float)std::strtod(need(s), nullptr);
+        else if (!std::strcmp(s, "--low-dpi")) a.lowDpi = true;
+        else if (!std::strcmp(s, "--font")) a.font = need(s);
+        else if (!std::strcmp(s, "--font-then")) a.fontThen = need(s);
         else if (!std::strcmp(s, "--state-roundtrip")) a.stateRoundtrip = true;
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);

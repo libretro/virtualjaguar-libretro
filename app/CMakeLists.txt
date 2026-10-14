@@ -46,6 +46,7 @@ option(VJ_APP_BUILD_TESTS "Build the headless smoke tests (CTest)" ON)
 option(VJ_APP_LTO "Link-time optimisation (IPO) for the core, libchdr and the app in Release / RelWithDebInfo builds" OFF)
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
 option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
+option(VJ_APP_FREETYPE "Rasterise UI fonts with FreeType (hinting + anti-aliasing choices; fetched, pinned, built static). Off: Dear ImGui's built-in stb_truetype" OFF)
 option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configure time and copy them next to the binary" ON)
 set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH
     "Offline builds: a folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat' to use instead of downloading them")
@@ -87,6 +88,28 @@ if(NOT imgui_POPULATED)
     FetchContent_MakeAvailable(imgui)
 endif()
 
+# FreeType (optional, VJ_APP_FREETYPE): better small-size clarity through hinting.  FreeType License (BSD-like
+# with a credit clause; FreeType documents it as compatible with GPLv3) -- see packaging/THIRD-PARTY-NOTICES.txt.
+# Built static with every optional library switched off, so it needs nothing from the system.
+if(VJ_APP_FREETYPE)
+    set(FT_DISABLE_ZLIB   ON  CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BZIP2  ON  CACHE BOOL "" FORCE)
+    set(FT_DISABLE_PNG    ON  CACHE BOOL "" FORCE)
+    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BROTLI ON  CACHE BOOL "" FORCE)
+    set(FT_ENABLE_ERROR_STRINGS OFF CACHE BOOL "" FORCE)
+    set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+    set(_vj_saved_shared ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF)
+    FetchContent_Declare(freetype
+        URL      https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-1.tar.gz
+        URL_HASH SHA256=44bd69d1f0750603410cfd4f26f1c5523c5a3a087a2dfa8639b757dc7c6677be
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(freetype)
+    set(BUILD_SHARED_LIBS ${_vj_saved_shared})
+endif()
+
 if(TARGET SDL3::SDL3)
     set(VJ_SDL3_TARGET SDL3::SDL3)
 elseif(TARGET SDL3::SDL3-static)
@@ -104,6 +127,14 @@ add_library(vj_imgui STATIC
     ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
 target_include_directories(vj_imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(vj_imgui PUBLIC ${VJ_SDL3_TARGET})
+if(VJ_APP_FREETYPE)
+    # Compiled as a separate source, NOT via IMGUI_ENABLE_FREETYPE: stb_truetype stays the atlas default,
+    # so the Retro font renders exactly as before and FreeType is chosen per font (fonts_imgui.cpp).
+    target_sources(vj_imgui PRIVATE ${imgui_SOURCE_DIR}/misc/freetype/imgui_freetype.cpp)
+    target_include_directories(vj_imgui PUBLIC ${imgui_SOURCE_DIR}/misc/freetype)
+    target_link_libraries(vj_imgui PUBLIC freetype)
+    target_compile_definitions(vj_imgui PUBLIC VJ_HAVE_FREETYPE=1)
+endif()
 if(APPLE)
     target_compile_definitions(vj_imgui PUBLIC GL_SILENCE_DEPRECATION)
 endif()
@@ -164,6 +195,7 @@ if(VJ_APP_HTTP)
     endif()
 endif()
 message(STATUS "App HTTP backend: ${VJ_HTTP_BACKEND}")
+message(STATUS "App fonts via FreeType: ${VJ_APP_FREETYPE}  (OFF = stb_truetype)")
 if(MSVC)
     target_compile_options(vj_library PRIVATE /W3 /utf-8)
     target_compile_definitions(vj_library PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -240,6 +272,9 @@ set(VJ_APP_SOURCES
     src/cheatsheet_ui.cpp
     src/devices_ui.cpp
     src/ui.cpp
+    src/fonts.cpp
+    src/fonts_imgui.cpp
+    src/fonts_ui.cpp
     src/settings_reset.cpp
     src/settings_reset_ui.cpp
     src/library_ui.cpp
