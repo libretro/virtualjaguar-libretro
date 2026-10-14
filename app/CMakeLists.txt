@@ -257,7 +257,10 @@ set(VJ_APP_SOURCES
     src/debug/debug_ui.cpp
     src/debug/memory_view.cpp
     src/debug/memory_ui.cpp
-    src/debug/clut_ui.cpp)
+    src/debug/clut_ui.cpp
+    src/debug/cheat_scan.cpp
+    src/debug/scanner_actions.cpp
+    src/debug/scanner_ui.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
