@@ -12,6 +12,7 @@
 #include <sstream>
 
 #include "app.h"
+#include "secret_store.h"
 #include "rc_client.h"
 #include "rc_consoles.h"
 #include "rc_error.h"
@@ -109,7 +110,9 @@ struct AchCallbacks {
         if (!a) return;
         a->loginPending_ = false;
         if (result == RC_OK) {
-            a->persistLogin();
+            // Only an explicit password sign-in writes anything; the start-up token sign-in (ud != null)
+            // must not put the token back into config.ini nor touch the store (#902: secondary copies).
+            if (!ud) a->persistLogin();
             const rc_client_user_t* u = rc_client_get_user_info(c);
             a->toast("RetroAchievements", std::string("Signed in as ") + (u ? u->display_name : "?"), 1, 4);
             a->setStatus(std::string("Signed in as ") + (u ? u->display_name : "?"));
@@ -122,9 +125,13 @@ struct AchCallbacks {
             std::string msg = error ? error : "login failed";
             a->setStatus("Sign-in failed: " + msg);
             if (ud && result == RC_INVALID_CREDENTIALS && !a->mockMode()) {
-                // A stale token: forget it so the next start does not retry forever.
-                a->app_->cfg.erase("ra.token");
-                a->app_->saveConfig();
+                // A stale token: forget it so the next start does not retry forever.  A secondary copy
+                // (#902) never writes the shared credential; the primary does.
+                if (a->app_->paths.instance <= 1) {
+                    secret::clearToken(a->app_->cfg, secret::active(), a->app_->cfg.get("ra.user", ""));
+                    a->app_->saveConfig();
+                }
+                a->tokenInSettings_ = false;
             }
             a->toast("RetroAchievements", "Sign-in failed: " + msg, 2, 7);
         }
@@ -177,6 +184,9 @@ Achievements::~Achievements() { shutdown(); }
 
 void Achievements::init(App& app, const CliArgs& args) {
     app_ = &app;
+    // Headless runs and mock sessions must never reach the real credential store: swap in the
+    // in-memory one before anything else can ask for a secret.
+    if (args.headless || !args.raMock.empty()) secret::useMemoryBackend();
     enabled_ = app.cfg.getBool("ra.enabled", true);
     hardcoreWanted_ = app.cfg.getBool("ra.hardcore", false);   // softcore until asked for
     unofficial_ = app.cfg.getBool("ra.unofficial", false);
@@ -209,7 +219,11 @@ void Achievements::init(App& app, const CliArgs& args) {
     if (args.showWindow == "ra-login") showLogin = true;
     if (args.showWindow == "ra-games") { showList = true; dashTab = 1; }
     if (!AchHttp::available()) setStatus("This build has no HTTP support, so RetroAchievements is unavailable.");
-    const std::string token = app.cfg.get("ra.token", "");
+    // The saved token lives in the system credential store (a plain-text one in config.ini is moved
+    // there now).  Done even with RetroAchievements switched off, so no token lingers in the file.
+    const secret::TokenLoad saved = secret::loadToken(app.cfg, secret::active(), userCfgName_, app.paths.instance <= 1);
+    tokenInSettings_ = saved.inSettingsFile;
+    const std::string& token = saved.token;
     if (enabled_ && !userCfgName_.empty() && !token.empty() && AchHttp::available()) {
         loginPending_ = true;
         rc_client_begin_login_with_token(client_, userCfgName_.c_str(), token.c_str(), &AchCallbacks::loginDone,
@@ -486,10 +500,13 @@ void Achievements::login(const std::string& user, const std::string& password) {
 void Achievements::persistLogin() {
     const rc_client_user_t* u = client_ ? rc_client_get_user_info(client_) : nullptr;
     if (!u || !app_) return;
-    if (mockMode()) return;   // a canned token must never reach the real config
-    // The TOKEN only: the password is not kept anywhere past the request.
+    if (mockMode()) return;   // a canned token must never reach the real store or config
+    // The TOKEN only: the password is not kept anywhere past the request.  It goes to the system
+    // credential store; only when that refuses does it stay in config.ini (with a hint in the UI).
+    const std::string prevUser = app_->cfg.get("ra.user", "");
+    tokenInSettings_ = !secret::saveToken(app_->cfg, secret::active(), u->username, prevUser, u->token);
     app_->cfg.set("ra.user", u->username);
-    app_->cfg.set("ra.token", u->token);
+    userCfgName_ = u->username;
     app_->saveConfig();
 }
 
@@ -503,9 +520,10 @@ void Achievements::logout() {
     challenges.clear();
     dashSignedOut();
     if (app_ && !mockMode()) {   // a mock session never owns the real token
-        app_->cfg.erase("ra.token");
+        secret::clearToken(app_->cfg, secret::active(), app_->cfg.get("ra.user", ""));
         app_->saveConfig();
     }
+    tokenInSettings_ = false;
     setStatus("Signed out.");
     toast("RetroAchievements", "Signed out.", 1, 3);
     checkHardcoreTransition();

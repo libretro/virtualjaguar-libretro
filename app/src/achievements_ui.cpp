@@ -12,12 +12,15 @@
 #include "app.h"
 #include "ra_dash.h"
 #include "ra_images.h"
+#include "secret_store.h"
 #include "ui_util.h"
 #include "rc_client.h"
 
 namespace vj {
 
 namespace {
+
+const char* const kTokenInFileHint = "Token stored in the settings file because no system keyring is available";
 
 void drawLogin(App& app) {
     Achievements& a = app.ach;
@@ -31,7 +34,9 @@ void drawLogin(App& app) {
         return;
     }
     ImGui::TextWrapped("Your password is sent once to retroachievements.org to get a login token. Only the token "
-                       "is saved (in the app's config file); the password is wiped as soon as you press Sign in.");
+                       "is saved (in your system keychain where there is one); the password is wiped as soon as you "
+                       "press Sign in.");
+    if (a.tokenInSettingsFile() || !secret::active().available()) ui::hint("%s", kTokenInFileHint);
     ImGui::Separator();
     if (!AchHttp::available()) ui::coloredWrapped(ui::vec4(ui::pal().warning), "This build has no HTTP support.");
     const bool busy = a.loginBusy();
@@ -366,6 +371,7 @@ void drawProfile(App& app) {
         ImGui::EndGroup();
         ImGui::Spacing();
         if (ImGui::Button("Sign out")) a.logout();
+        if (a.tokenInSettingsFile()) ui::hint("%s", kTokenInFileHint);
     }
     ImGui::Separator();
     bool img = a.imagesWanted();

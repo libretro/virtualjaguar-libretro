@@ -19,7 +19,8 @@
 //              consult it.
 //   * Secrets  only the user name and the login TOKEN are ever stored; the
 //              password lives in a text box until the request is built and is then
-//              wiped.
+//              wiped.  The token goes to the OS credential store (secret_store.h);
+//              config.ini keeps it only where no store is available.
 #pragma once
 
 #include <cstdint>
@@ -170,6 +171,8 @@ public:
     void headlessFrame(unsigned frame);             // before each frame
     bool headlessCheck(const CliArgs& args);        // after the frames ran
     bool mockMode() const { return !mockDir_.empty(); }
+    // True when the login token had to stay in config.ini because no system keyring answered.
+    bool tokenInSettingsFile() const { return tokenInSettings_; }
 
 private:
     friend struct AchCallbacks;
@@ -193,6 +196,7 @@ private:
     bool hardcoreWanted_ = false;
     bool unofficial_ = false;
     bool loginPending_ = false;
+    bool tokenInSettings_ = false;   // the token is in config.ini (no system keyring), not in the credential store
     bool loading_ = false;           // an identify/load request is in flight
     bool gameKnown_ = false;         // the current content has an achievement set
     bool resetPending_ = false;      // rc_client asked for a reset (hardcore just turned on)
