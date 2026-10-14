@@ -185,8 +185,7 @@ void drawControlsTab(App& app) {
     if (ImGui::Button("Keypad overlay")) in.overlay.open = !in.overlay.open;
     ui::hint("Opens the on-screen keypad (F2 or the 'Keypad overlay' control).");
     if (ImGui::Button("Controls overlay")) {
-        app.input.controls.show = !app.input.controls.show;
-        app.input.controls.hideAt = 0;
+        overlayEvent(app.input.controls, OverlayEvent::Toggle);
     }
     ui::hint("A cheat sheet of Player 1's bindings (F3, or the 'Controls overlay' control).");
 }

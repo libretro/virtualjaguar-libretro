@@ -50,7 +50,7 @@ BIOS
 Playing
 * Controls: per-device and per-game remapping, 12-key keypad on a
   gamepad, 6-button keyboard layout, on-screen keypad (F2), controls
-  overlay (F3); mice, rotary, analog, driving, paddle, 6D, light gun,
+  overlay (F3; click, tap or Esc hides it; off at boot by default); mice, rotary, analog, driving, paddle, 6D, light gun,
   Team Tap (#837, #879, #887).
 * Save states with thumbnails and a manager. Resume where I left off
   (Off/Ask/Always, default Ask): an Auto-save on close, switch or

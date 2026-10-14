@@ -161,8 +161,24 @@ bool InputManager::handleEvent(const SDL_Event& e) {
             for (const Binding& b : kbProfile_.binds[C_HELP])
                 if (b.kind == Binding::Key && b.code == (int)e.key.scancode) helpToggle_ = true;
     }
+    // ---- hiding the controls overlay: a click / tap on it or the picture, or Esc -----------------
+    // (a click on ImGui itself - a menu, a window - is the UI's, not ours).  The press that hides it must
+    // not also reach the game (light gun / mouse), so the pointer buttons are masked until it is released.
+    bool dismissedByPointer = false;
+    if (controls.show) {
+        if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_ESCAPE && !uiWantsKeyboard) {
+            overlayEvent(controls, OverlayEvent::Escape);
+        } else if (e.type == SDL_EVENT_FINGER_DOWN) {
+            dismissedByPointer = overlayEvent(controls, OverlayEvent::Tap);
+        } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !uiWantsMouse_) {
+            dismissedByPointer = overlayEvent(controls, OverlayEvent::Click);
+        }
+        if (dismissedByPointer) swallowPointer_ = true;
+    }
     // ---- the pointer (devices.h): never consumed, the UI needs the same events ------------------
-    if (e.type == SDL_EVENT_MOUSE_MOTION) {
+    if (dismissedByPointer) {
+        // nothing else: the dismissing click does not also take a released mouse back
+    } else if (e.type == SDL_EVENT_MOUSE_MOTION) {
         mouseX_ = e.motion.x;
         mouseY_ = e.motion.y;
         mouseInWindow_ = true;
@@ -370,6 +386,10 @@ void InputManager::poll(bool captureKeyboard) {
         if (mb & SDL_BUTTON_LMASK) pi.buttons |= 1u;
         if (mb & SDL_BUTTON_RMASK) pi.buttons |= 2u;
         if (mb & SDL_BUTTON_MMASK) pi.buttons |= 4u;
+    }
+    if (swallowPointer_) {   // the press that hid the controls overlay stays out of the game until it is let go
+        if (mb & (SDL_BUTTON_LMASK | SDL_BUTTON_RMASK | SDL_BUTTON_MMASK)) pi.buttons = 0;
+        else swallowPointer_ = false;
     }
     if (relative_) {
         pi.dx = accDx_;

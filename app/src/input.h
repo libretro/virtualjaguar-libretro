@@ -149,6 +149,7 @@ private:
     Routes routes_;
     PicRect pic_;
     bool helpToggle_ = false;
+    bool swallowPointer_ = false;  // the click / tap that hid the controls overlay: not the game's until released
 
     // pointer
     bool relative_ = false;        // SDL relative mouse mode is on

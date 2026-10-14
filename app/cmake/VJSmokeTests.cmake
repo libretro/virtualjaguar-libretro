@@ -220,21 +220,33 @@ set_tests_properties(remap_unit input_e2e devices_unit devices_e2e bios_e2e PROP
 # ---------------------------------------------------------------------------
 # Controls cheat-sheet overlay, through the real App (headless, no window).
 #
-#   controls_overlay_keyboard   no gamepad on Player 1 (headless has none): the overlay is
-#                               showing after the load, and its text is the keyboard
-#                               profile's bindings (B = Z, the Pro Controller's X = A ...).
-#   controls_overlay_dismissed  "don't show again" (ui.controls.autoshow=0): hidden.
+#   controls_overlay_default    the setting is OFF by default: no overlay after the load (the hint
+#                               toast "Press F3 for the controls" is all a keyboard player gets).
+#   controls_overlay_keyboard   the setting on (ui.controls.autoshow=1), no gamepad on Player 1
+#                               (headless has none): the overlay is showing after the load, and its
+#                               text is the keyboard profile's bindings (B = Z, the Pro Controller's
+#                               X = A ...).
+#   controls_overlay_dismissed  setting explicitly off (ui.controls.autoshow=0): hidden.
 #   controls_overlay_rebound    a saved global rebinding (B = M, scancode 16) changes the text;
 #                               the per-game layer is covered by devices_unit.
 # ---------------------------------------------------------------------------
 set(VJ_CTL_DISMISSED "${CMAKE_BINARY_DIR}/ctl_dismissed")
 set(VJ_CTL_REBOUND "${CMAKE_BINARY_DIR}/ctl_rebound")
-file(MAKE_DIRECTORY "${VJ_CTL_DISMISSED}" "${VJ_CTL_REBOUND}")
+set(VJ_CTL_DEFAULT "${CMAKE_BINARY_DIR}/ctl_default")
+file(MAKE_DIRECTORY "${VJ_CTL_DISMISSED}" "${VJ_CTL_REBOUND}" "${VJ_CTL_DEFAULT}")
+set(VJ_CTL_ON "${CMAKE_BINARY_DIR}/ctl_on")
+file(MAKE_DIRECTORY "${VJ_CTL_ON}")
+file(WRITE "${VJ_CTL_ON}/config.ini" "ui.controls.autoshow=1\n")
 file(WRITE "${VJ_CTL_DISMISSED}/config.ini" "ui.controls.autoshow=0\n")
-file(WRITE "${VJ_CTL_REBOUND}/config.ini" "input.kb.b=k16\n")
+file(WRITE "${VJ_CTL_REBOUND}/config.ini" "input.kb.b=k16\nui.controls.autoshow=1\n")
+
+add_test(NAME controls_overlay_default
+    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_DEFAULT}" --expect-controls-overlay hidden "${VJ_ROMS}/yarc.j64")
+set_tests_properties(controls_overlay_default PROPERTIES
+    PASS_REGULAR_EXPRESSION "\\[osd\\] Press F3 for the controls")
 
 add_test(NAME controls_overlay_keyboard
-    COMMAND virtualjaguar --headless --frames 5 --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
+    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_ON}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
 set_tests_properties(controls_overlay_keyboard PROPERTIES
     PASS_REGULAR_EXPRESSION "Player 1: Standard Joypad - keyboard.*B: Z.*Keypad 9 \\(Pro: X\\): [^\n]*, A\n")
 
@@ -245,6 +257,6 @@ add_test(NAME controls_overlay_rebound
     COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_REBOUND}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
 set_tests_properties(controls_overlay_rebound PROPERTIES
     PASS_REGULAR_EXPRESSION "  B: M\n")
-set_tests_properties(controls_overlay_keyboard controls_overlay_dismissed controls_overlay_rebound PROPERTIES
+set_tests_properties(controls_overlay_default controls_overlay_keyboard controls_overlay_dismissed controls_overlay_rebound PROPERTIES
     TIMEOUT 120
     FAIL_REGULAR_EXPRESSION "headless: FAIL")

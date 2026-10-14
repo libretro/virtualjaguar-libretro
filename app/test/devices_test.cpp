@@ -559,17 +559,67 @@ static void testCheatSheet() {
     // ---- auto-show ---------------------------------------------------------------------------------------------------
     AutoShowInput in;
     in.contentLoaded = true;
+    CHECK(!in.enabled);                                                 // the setting is OFF by default
+    CHECK(autoShowDecision(in) == AutoShow::Hint);                      // keyboard player: a toast, not the sheet
+    in.hintShown = true;
+    CHECK(autoShowDecision(in) == AutoShow::No);                        // ... once per session
+    in.hintShown = false;
+    in.padOnPlayer1 = true;
+    CHECK(autoShowDecision(in) == AutoShow::No);                        // a gamepad player is not nagged either
+    in.padOnPlayer1 = false;
+    in.contentLoaded = false;
+    CHECK(autoShowDecision(in) == AutoShow::No);                        // nothing running -> nothing
+    in.contentLoaded = true;
+    // The player turned the setting on: the old behaviour.
+    in.enabled = true;
     CHECK(autoShowDecision(in) == AutoShow::Keyboard);                  // no gamepad on Player 1 -> shown
+    in.hintShown = true;
+    CHECK(autoShowDecision(in) == AutoShow::Keyboard);                  // (the hint flag is irrelevant then)
     in.padOnPlayer1 = true;
     CHECK(autoShowDecision(in) == AutoShow::Gamepad);                   // first use of this controller
     in.padSeenBefore = true;
     CHECK(autoShowDecision(in) == AutoShow::No);                        // a known controller -> not shown
     in.padOnPlayer1 = false;
-    in.enabled = false;
-    CHECK(autoShowDecision(in) == AutoShow::No);                        // "don't show again"
-    in.enabled = true;
     in.contentLoaded = false;
     CHECK(autoShowDecision(in) == AutoShow::No);
+}
+
+static void testOverlayPolicy() {
+    // Auto-shown: hides on a click, a tap, Esc, the toggle, or its timeout.
+    const OverlayEvent hiders[] = {OverlayEvent::Click, OverlayEvent::Tap, OverlayEvent::Escape};
+    for (OverlayEvent ev : hiders) {
+        ControlsOverlayState s;
+        CHECK(!s.show && !s.autoShown);
+        CHECK(!overlayEvent(s, ev));                                    // hidden: nothing to dismiss, nothing swallowed
+        overlayAutoShow(s, 100.0);
+        CHECK(s.show && s.autoShown && s.hideAt == 100.0 + kAutoShowSeconds);
+        CHECK(overlayEvent(s, ev) && !s.show);                          // dismissed, and the caller swallows the click
+        CHECK(!overlayTick(s, 1000.0) && !s.show);
+    }
+    {
+        ControlsOverlayState s;
+        overlayAutoShow(s, 10.0);
+        CHECK(!overlayTick(s, 10.0 + kAutoShowSeconds - 0.1) && s.show);
+        CHECK(overlayTick(s, 10.0 + kAutoShowSeconds) && !s.show);      // timeout
+        overlayAutoShow(s, 20.0);
+        CHECK(!overlayEvent(s, OverlayEvent::Toggle) && !s.show);       // F3 hides it
+    }
+    // Opened by the player (F3): stays until hidden - no timeout - and the same events hide it.
+    for (OverlayEvent ev : hiders) {
+        ControlsOverlayState s;
+        CHECK(!overlayEvent(s, OverlayEvent::Toggle) && s.show && !s.autoShown);
+        CHECK(!overlayTick(s, 1e9) && s.show);                          // no timeout for a manual open
+        CHECK(overlayEvent(s, ev) && !s.show);
+    }
+    {
+        // F3 over an auto-shown overlay hides it; F3 again opens it for good.
+        ControlsOverlayState s;
+        overlayAutoShow(s, 0.0);
+        overlayEvent(s, OverlayEvent::Toggle);
+        CHECK(!s.show);
+        overlayEvent(s, OverlayEvent::Toggle);
+        CHECK(s.show && !s.autoShown && !overlayTick(s, 1e9));
+    }
 }
 
 int main() {
@@ -582,6 +632,7 @@ int main() {
     testStickDpad();
     testProKeyboard();
     testCheatSheet();
+    testOverlayPolicy();
     std::printf("devices_unit: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

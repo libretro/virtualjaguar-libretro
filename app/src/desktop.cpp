@@ -99,8 +99,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void toggleFps() override { a.showFps = !a.showFps; }
         void toggleKeypadOverlay() override { a.input.overlay.open = !a.input.overlay.open; }
         void toggleControlsOverlay() override {
-            a.input.controls.show = !a.input.controls.show;
-            a.input.controls.hideAt = 0;
+            overlayEvent(a.input.controls, OverlayEvent::Toggle);
         }
         void toggleVsync() override {
             a.vsync = !a.vsync;
