@@ -17,6 +17,7 @@
 #include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (buildbot msvc05/10) */
 #include "dsp.h"
 #include "dsp_acc40.h"
+#include "risc_div.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -3489,38 +3490,10 @@ INLINE static void dsp_opcode_abs(void)
 
 INLINE static void dsp_opcode_div(void)
 {
-	unsigned i;
-	uint32_t q;
-	uint32_t r;
-
-	/* Guard against divide-by-zero: JTRM says result is undefined but no
-	 * trap occurs.  Match the pipelined version's behavior. */
-	if (RM == 0)
-	{
-		RN = 0xFFFFFFFF;
-		dsp_remain = 0;
-		return;
-	}
-
-	/* Real algorithm, courtesy of SCPCD: NYAN! */
-	q = RN;
-	r = 0;
-
-	/* If 16.16 division, stuff top 16 bits of RN into remainder and put the
-	 * bottom 16 of RN in top 16 of quotient */
-	if (dsp_div_control & 0x01)
-		q <<= 16, r = RN >> 16;
-
-	for(i=0; i<32; i++)
-	{
-		uint32_t sign = r & 0x80000000;
-		r = (r << 1) | ((q >> 31) & 0x01);
-		r += (sign ? RM : -RM);
-		q = (q << 1) | (((~r) >> 31) & 0x01);
-	}
-
-	RN = q;
-	dsp_remain = r;
+	/* 33-bit non-restoring divide, netlist-exact (risc_div.h): correct
+	 * for divisors above $80000000; a zero divisor gives $FFFFFFFF with
+	 * the dividend in D_REMAIN, as the hardware does. */
+	RN = risc_divide(RN, RM, dsp_div_control & 0x01, &dsp_remain);
 }
 
 
@@ -3934,30 +3907,7 @@ INLINE static void DSP_cmpq(void)
 
 INLINE static void DSP_div(void)
 {
-	uint32_t _Rm = PRM, _Rn = PRN;
-
-	if (_Rm)
-	{
-		if (dsp_div_control & 1)
-		{
-			dsp_remain = (((uint64_t)_Rn) << 16) % _Rm;
-			if (dsp_remain & 0x80000000)
-				dsp_remain -= _Rm;
-			PRES = (((uint64_t)_Rn) << 16) / _Rm;
-		}
-		else
-		{
-			dsp_remain = _Rn % _Rm;
-			if (dsp_remain & 0x80000000)
-				dsp_remain -= _Rm;
-			PRES = PRN / _Rm;
-		}
-	}
-	else
-	{
-		PRES = 0xFFFFFFFF;
-		dsp_remain = 0;
-	}
+	PRES = risc_divide(PRN, PRM, dsp_div_control & 0x01, &dsp_remain);
 }
 
 INLINE static void DSP_imacn(void)

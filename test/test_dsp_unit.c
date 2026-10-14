@@ -721,6 +721,49 @@ static void test_moveq(void)
    p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
 }
 
+/* DIV is a 33-bit non-restoring divider (jag_sim DIVIDE.NET, issue #895;
+ * docs/jtrm-errata.md B26): exact for divisors above $80000000, where the
+ * old 32-bit loop took the sign from the wrong bit.  D_REMAIN reads the
+ * working value; a zero divisor yields $FFFFFFFF, remainder = dividend. */
+static void div_case(uint32_t dividend, uint32_t divisor, uint32_t ctrl,
+                     uint32_t want_q, uint32_t want_r)
+{
+   uint32_t off, q, r;
+
+   p_DSPReset();
+   for (off = 0; off < 0x2000; off += 2)
+      write_dsp_ram16(off, OP_NOP);
+   write_dsp_ram16(0x100, DSP_OP(21, 1, 2));        /* div r1,r2 */
+   p_dsp_reg_bank_0[1] = divisor;
+   p_dsp_reg_bank_0[2] = dividend;
+   p_DSPWriteLong(DSP_DIVCTRL_ADDR, ctrl, 6);
+   p_DSPWriteLong(DSP_PC_ADDR, 0xF1B100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPExec(40);
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+   q = p_dsp_reg_bank_0[2];
+   r = p_DSPReadLong(DSP_DIVCTRL_ADDR, 6);
+   p_DSPWriteLong(DSP_DIVCTRL_ADDR, 0, 6);
+   if (q == want_q && r == want_r)
+      PASS("div %08X/%08X (offset %u) = %08X rem %08X", dividend, divisor,
+           ctrl & 1, q, r);
+   else
+      FAIL("div %08X/%08X (offset %u) = %08X rem %08X, expected %08X rem %08X",
+           dividend, divisor, ctrl & 1, q, r, want_q, want_r);
+}
+
+static void test_div_33bit(void)
+{
+   printf("\n=== Test: DIV 33-bit working value (#895) ===\n");
+   /* An even quotient ends on a negative step: remainder - divisor. */
+   div_case(300, 3, 0, 100, 0xFFFFFFFDu);
+   div_case(0xFCC00000u, 0xFCC00000u, 0, 1, 0);          /* old: $F9A9342A */
+   div_case(0xFFFFFFFFu, 0x80000001u, 0, 1, 0x7FFFFFFEu);
+   div_case(0x7FFFFFFFu, 0x80000000u, 0, 0, 0x7FFFFFFFu - 0x80000000u);
+   div_case(0x00030000u, 0x00018000u, 1, 0x00020000u, 0xFFFE8000u); /* 3.0/1.5 (16.16) */
+   div_case(1234, 0, 0, 0xFFFFFFFFu, 1234);
+}
+
 /* ================================================================
  * Test 12: STORE/LOAD Round Trip
  * Write a value to DSP RAM via STORE, read it back via LOAD
@@ -1468,6 +1511,7 @@ int main(int argc, char *argv[])
    test_interrupt_return_address();
    test_dsp_execution();
    test_moveq();
+   test_div_33bit();
    test_store_load();
    test_dsp_self_stop();
    test_version_readonly();
