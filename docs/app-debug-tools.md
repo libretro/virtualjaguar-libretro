@@ -1,8 +1,8 @@
 # Debug tools in the standalone app
 
-> Design record: issues #652 (GDB stub) and #833 (app).  The CPU debugger window (68000 / GPU / DSP registers,
-> disassembly, breakpoint list) is still to come; the halt machinery under it (F9 / F10, the halted bar, the breakpoint
-> API) is in and the **CPU debugger...** menu entry stays greyed until that window lands.
+> Design record: issues #652 (GDB stub) and #833 (app).  The CPU debugger window (68000 / GPU / DSP registers with both
+> RISC banks, disassembly, breakpoints, Break / Continue / Step / Step over / Run to cursor) is under **Tools > CPU
+> debugger...**; F9 breaks or continues and F10 steps while halted (PR #924).
 
 The app's **Tools** menu is a set of windows over the core's debug interface: Memory viewer and Palette (CLUT) editor,
 Cheat scanner, Object list (Object Processor), Blitter log, Textures and an Audio scope.  None of it exists under
