@@ -7,6 +7,7 @@
 #include "paths.h"
 
 #ifdef VJ_HAVE_FREETYPE
+#  include "imgui_internal.h"   // ImFontAtlasGetFontLoaderForStbTruetype()
 #  include "misc/freetype/imgui_freetype.h"
 #endif
 
@@ -45,6 +46,19 @@ unsigned loaderFlags(const Settings& s) {
 }
 #endif
 
+// Picks the rasteriser for the whole atlas: FreeType for the typefaces from files, stb_truetype for the built-in
+// Retro pixel font (it renders exactly as before).  A per-font ImFontConfig::FontLoader would be neater, but Dear
+// ImGui does not support a custom loader that needs LoaderInit (FreeType's) on a single source -- it crashes --
+// so the atlas default is switched instead.  Only legal with no fonts loaded (right after ClearFonts()).
+void useLoader(bool freetype) {
+#ifdef VJ_HAVE_FREETYPE
+    ImGui::GetIO().Fonts->SetFontLoader(freetype ? ImGuiFreeType::GetFontLoader()
+                                                 : ImFontAtlasGetFontLoaderForStbTruetype());
+#else
+    (void)freetype;
+#endif
+}
+
 // Reads + validates a font file into g.blobs.  Returns the blob index or -1 (with `err`).
 int loadBlob(const FontFile& f, std::string& err) {
     std::vector<unsigned char> data;
@@ -68,8 +82,7 @@ ImFont* addFace(const FontFile& f, float size, const Settings& s, bool merge, st
     cfg.Flags |= ImFontFlags_NoLoadError;
     std::snprintf(cfg.Name, sizeof cfg.Name, "%s", displayName(f).c_str());
 #ifdef VJ_HAVE_FREETYPE
-    cfg.FontLoader = ImGuiFreeType::GetFontLoader();   // the atlas default stays stb_truetype, for Retro
-    cfg.FontLoaderFlags = loaderFlags(s);
+    cfg.FontLoaderFlags = loaderFlags(s);   // per source; the atlas-wide loader is picked in reload()
 #else
     (void)s;
 #endif
@@ -96,6 +109,7 @@ void reload(const Settings& w) {
     g.uiFont = g.monoFont = nullptr;
     g.ui = g.monoFile = FontFile();
     g.warn.clear();
+    useLoader(w.family != Family::Retro);
 
     Settings act = w;
     std::string err;
@@ -125,6 +139,7 @@ void reload(const Settings& w) {
         io.Fonts->AddFontDefaultVector(&cfg);
     } else {
         act.family = Family::Retro;
+        useLoader(false);   // the built-in pixel font always uses stb_truetype
         g.uiFont = io.Fonts->AddFontDefault();
         g.retroVector = st.FontSizeBase * st.FontScaleMain * st.FontScaleDpi >= 15.0f;
     }
