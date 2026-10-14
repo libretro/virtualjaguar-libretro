@@ -80,6 +80,10 @@ Look and feel
   Linux MIME types and desktop actions; double-click, Open With and
   drop on the icon everywhere; screensaver allowed outside a running
   game; optional tray / menu-bar icon.
+* Settings, Achievements, Cheats and the tools can be dragged out of
+  the main window into OS windows of their own (default on macOS and
+  Windows; not on Wayland); macOS can keep the in-window menu bar
+  next to the native one (#833).
 
 RetroAchievements and Discord
 * RetroAchievements: softcore default, optional hardcore (#836,

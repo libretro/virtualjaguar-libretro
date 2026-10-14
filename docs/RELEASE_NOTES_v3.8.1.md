@@ -157,6 +157,13 @@ https://github.com/libretro/virtualjaguar-libretro/pull/896. Screenshots: https:
   - All three: double-clicking a game, Open With and dropping a game on the app icon work; the
     screensaver no longer stays blocked while you are in the library or paused; an optional tray /
     menu-bar icon offers pause, reset and recent games; "Show in Finder / Explorer" is in the menu.
+- **Windows outside the window.** Settings, Achievements, Cheats, Netplay and the debug tools can be
+  dragged past the edge of the main window and become windows of their own, with a normal title bar,
+  for example on a second monitor (Settings > Storage > Desktop > "Let windows move outside the main
+  window"; on by default on macOS and Windows). They stay inside while fullscreen. Wayland cannot
+  position a program's own extra windows, so it is off there (`SDL_VIDEODRIVER=x11` turns it on under
+  XWayland). On macOS "Show the menu bar inside the window" keeps the in-window menu bar next to the
+  native one (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 
 ### RetroAchievements
 
