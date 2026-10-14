@@ -446,7 +446,7 @@ single instance.
 
 | File | Instance 1 | Instance N (2+) |
 | --- | --- | --- |
-| `config.ini` (settings, bindings, core options, recents, RetroAchievements login) | read and written as before | read at start (so it has your settings); **never written** |
+| `config.ini` (settings, bindings, core options, recents, RetroAchievements user name) | read and written as before | read at start (so it has your settings); **never written** |
 | `config-N.ini` | not used | its window size and its controller choice only |
 | `imgui.ini` | `imgui.ini` | `imgui-N.ini` |
 | game saves `saves/<game>.srm` (EEPROM, SRAM, Memory Track) and the GameDrive SD folder | `saves/` | `saves/instance-N/`; a game's first run there starts from a copy of instance 1's save (read only) |
@@ -512,10 +512,16 @@ memory as RetroArch writes it. `cheatN_enable` is ignored: nothing starts on.
 ## RetroAchievements
 
 **Achievements > Sign in...** takes your RetroAchievements user name and password
-once, gets a login token from the server and keeps **only the token** (`ra.user` and
-`ra.token` in `config.ini`; the password is wiped from memory as soon as the request
-is built). The token is a credential: treat `config.ini` like a password file. Sign out
-deletes it. The menu also has the hardcore toggle, "include unofficial achievements"
+once, gets a login token from the server and keeps **only the token** (the password is
+wiped from memory as soon as the request is built). The user name is `ra.user` in `config.ini`;
+the login token is kept in the system keychain (macOS Keychain, Windows Credential Manager, or
+the Linux Secret Service through libsecret, loaded at run time) and not in `config.ini`. A token
+that an earlier version left in `config.ini` is moved into the keychain at start-up. Where no
+keyring is available (no libsecret, no running keyring service, a Flatpak without the secret
+portal) the token stays in `config.ini` as `ra.token`, Settings says "Token stored in the settings
+file because no system keyring is available", and that file is then a credential: treat it like a
+password file. Sign out deletes the token from the keychain (and from `config.ini`). A second copy
+of the app (see below) reads the keychain and writes it only when you sign in or out there. The menu also has the hardcore toggle, "include unofficial achievements"
 and the **Achievement list**, a dashboard with your avatar, badges and the Jaguar games that
 have achievements (see below). Unlocks, game completion,
 leaderboard attempts / submissions, progress indicators and server problems show as

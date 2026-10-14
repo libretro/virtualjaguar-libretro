@@ -257,12 +257,25 @@ set(VJ_APP_SOURCES
     src/ra_dash.cpp
     src/ra_images.cpp
     src/ach_http.cpp
+    src/secret_store.cpp
     src/netplay.cpp
     src/netplay_addr.cpp
     src/netplay_ui.cpp)
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
+
+# The login token's home (secret_store.cpp): macOS Keychain (Security.framework), Windows Credential
+# Manager (advapi32), Linux libsecret loaded with dlopen at run time (no build dependency).
+if(APPLE)
+    find_library(VJ_SECURITY_FRAMEWORK Security REQUIRED)
+    find_library(VJ_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    set(VJ_SECRET_LIBS ${VJ_SECURITY_FRAMEWORK} ${VJ_COREFOUNDATION_FRAMEWORK})
+elseif(WIN32)
+    set(VJ_SECRET_LIBS advapi32)
+else()
+    set(VJ_SECRET_LIBS ${CMAKE_DL_LIBS})
+endif()
 
 include(VJShaders)   # librashader headers (pinned), vj_app_shaders(), shader tests
 
@@ -272,7 +285,7 @@ vj_app_shader_assets(virtualjaguar)
 set_target_properties(virtualjaguar PROPERTIES OUTPUT_NAME virtualjaguar)
 vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src)
-target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS})
+target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses

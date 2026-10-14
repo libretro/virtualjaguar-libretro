@@ -82,6 +82,13 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   (also in the unlock toasts), filters and sorts the list, and has a Jaguar games tab listing every
   Jaguar and Jaguar CD game with achievements, your progress in each and a Play button for the
   ones in your library.
+- **The RetroAchievements login token is kept in the system keychain.** It used to sit in plain
+  text in `config.ini`. It now lives in the macOS Keychain, the Windows Credential Manager or the
+  Linux Secret Service (libsecret, loaded at run time, so nothing new is required); a token already
+  in `config.ini` is moved there the first time you start this version, and Sign out erases it. Where
+  no keyring is available (no libsecret, no running keyring service) the token stays in `config.ini`
+  as before and Settings says so. Your password was never stored
+  (https://github.com/libretro/virtualjaguar-libretro/issues/836).
 - **Controls.** Per-device and per-game remapping, all 12 keypad keys on a gamepad,
   keyboard play with the Pro Controller 6-button layout, an on-screen keypad (F2) and a
   controls overlay (F3) that appears at boot when no player-1 controller is connected.
