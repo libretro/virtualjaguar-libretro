@@ -185,7 +185,11 @@ gamepads; **Settings > Input > Devices & players** turns that off.
 **Settings > Core options** is generated from the core's options v2 definitions,
 categories and `SET_CORE_OPTIONS_DISPLAY` visibility included, so a new core
 option shows up with no change to the app. Changes are saved; options that say
-"Restart required" apply on **Restart game to apply**.
+"Restart required" apply on **Restart game to apply**. Every core option category and
+every other Settings tab has a **Reset group** button (it skips options the app locks and
+options a Netplay session or `--option` pins), and **Reset all settings...** asks first and
+leaves library folders, recents, covers, saves, the RetroAchievements login, key and button
+bindings and per-game overrides alone unless you tick the matching boxes.
 
 Pacing follows the core's reported field rate (60.05445 Hz NTSC, 50.08013 Hz
 PAL). Audio is opened at the core's rate and resampled by SDL, with a small
