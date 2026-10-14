@@ -129,6 +129,13 @@ public:
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
     int stateSlot = 0;
+    int resumeMode = 1;               // lib::ResumeMode: Off / Ask / Always, "Resume where I left off" (saves.resume)
+    struct ResumeOffer {              // "Resume from <time>?" asked after a game booted (resumeMode == Ask)
+        bool active = false;
+        SDL_Time savedAt = 0;
+        std::string game;
+    } resumeOffer;
+    void answerResume(bool resume, bool always);   // the prompt's buttons
     char optionFilter[64] = "";   // core-options search box
     std::vector<std::string> recents;
 
@@ -143,6 +150,8 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
+    bool autoSave();                  // write this game's auto-save when the policy allows (lib::shouldAutoSave)
+    void offerResume();               // a game booted: load / ask / nothing, by the policy and the option
     void openAndLoadState(const std::string& path, int slot);   // the library: open `path`, then load its state `slot`
     bool openNoContent();             // boots the console with no cartridge, through the BIOS bootBios() last chose
     // Boots a BIOS on its own (BIOS & system tab, File > Boot BIOS): a cartridge boot ROM runs against an empty
@@ -167,7 +176,7 @@ public:
 
     std::string statePath(int slot) const;
     std::string thumbPath(int slot) const;
-    bool saveState(int slot);
+    bool saveState(int slot, bool quiet = false);   // slot lib::kAutoSlot = the auto-save
     bool loadState(int slot);
     bool slotExists(int slot) const;
     SDL_Time slotTime(int slot) const;
@@ -204,8 +213,12 @@ private:
     void updateTitle();
     uint32_t frameHash() const;
 
-    int pendingStateSlot_ = -1;       // openAndLoadState: load this slot after the new game has run a few frames
+    static constexpr int kNoPendingSlot = -1000;
+    int pendingStateSlot_ = kNoPendingSlot;       // openAndLoadState: load this slot after the new game has run a few frames
     int pendingStateFrames_ = 0;
+    double runSeconds_ = 0;           // emulated seconds of the loaded game (auto-save needs a few)
+    bool reloading_ = false;          // reloadContent: a restart, not a new game
+    bool suppressResume_ = false;     // the library opened a game to load a chosen state: no auto-save offer
     bool headless_ = false;
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;

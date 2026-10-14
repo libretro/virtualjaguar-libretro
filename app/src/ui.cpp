@@ -226,6 +226,19 @@ void drawStorageTab(App& app) {
     ImGui::Separator();
     ImGui::Checkbox("Flush saves every few seconds", &app.autosaveSram);
     ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed (Settings > BIOS).");
+    ImGui::SeparatorText("Save states");
+    ImGui::TextUnformatted("Resume where I left off");
+    ImGui::SetNextItemWidth(ui::em(10.0f));
+    if (ImGui::BeginCombo("##resume", lib::resumeModeLabel(app.resumeMode))) {
+        for (int m = 0; m < lib::kResumeModeCount; m++)
+            if (ImGui::Selectable(lib::resumeModeLabel(m), app.resumeMode == m)) app.resumeMode = m;
+        ImGui::EndCombo();
+    }
+    ui::hint("When a game is closed, left for another game, or the app quits, its state is kept as an \"Auto-save\" "
+             "(one per game, the latest; listed in the library's Save states tab). Next time the game boots: Always "
+             "resumes it, Ask offers to, Off does nothing and writes none. Never in RetroAchievements hardcore or during "
+             "netplay, not for a game that ran under %d seconds or that the crash watchdog flagged. Another window "
+             "(copy 2, 3...) keeps its own.", (int)lib::kAutoSaveMinSeconds);
     ImGui::SeparatorText("Game library");
     ImGui::Checkbox("Show the game library on the home screen", &app.homeLibrary);
     ui::hint("When no game is loaded the window shows your library (add folders there). Off: a plain "
@@ -316,6 +329,38 @@ void drawStates(App& app) {
         ImGui::EndGroup();
     }
     ImGui::End();
+}
+
+// "Resume from <time>?", after a game with an auto-save booted (Settings > Storage > Resume where I left off = Ask).
+void drawResumePrompt(App& app) {
+    static bool always = false;
+    if (!app.resumeOffer.active) return;
+    if (!ImGui::IsPopupOpen("Resume where you left off?")) {
+        always = false;
+        ImGui::OpenPopup("Resume where you left off?");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Resume where you left off?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        std::string when;
+        SDL_DateTime dt;
+        if (SDL_TimeToDateTime(app.resumeOffer.savedAt, &dt, true)) {
+            char b[40];
+            std::snprintf(b, sizeof b, "%04d-%02d-%02d %02d:%02d", dt.year, dt.month, dt.day, dt.hour, dt.minute);
+            when = b;
+        }
+        ImGui::Text("Resume %s from %s?", app.resumeOffer.game.c_str(), when.c_str());
+        ImGui::Checkbox("Always resume without asking", &always);
+        if (ImGui::Button("Resume")) {
+            app.answerResume(true, always);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Start fresh")) {
+            app.answerResume(false, false);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void drawAbout(App& app) {
@@ -549,6 +594,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showCheats) drawCheats(app);
     if (app.showNetplay) drawNetplay(app);
     if (app.showAbout) drawAbout(app);
+    drawResumePrompt(app);
     drawLibrary(app);
     drawKeypadOverlay(app);
     drawControlsOverlay(app, areaPos, areaSize);

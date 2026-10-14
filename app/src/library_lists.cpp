@@ -324,14 +324,46 @@ bool UserStore::clearFavorites() {
 
 // ---- save states ------------------------------------------------------------------------------------------------------------
 
-std::string stateFileName(const std::string& stem, int slot) { return stem + ".slot" + std::to_string(slot) + ".state"; }
-std::string thumbFileName(const std::string& stem, int slot) { return stem + ".slot" + std::to_string(slot) + ".png"; }
+std::string stateFileName(const std::string& stem, int slot) {
+    return slot == kAutoSlot ? stem + ".auto.state" : stem + ".slot" + std::to_string(slot) + ".state";
+}
+std::string thumbFileName(const std::string& stem, int slot) {
+    return slot == kAutoSlot ? stem + ".auto.png" : stem + ".slot" + std::to_string(slot) + ".png";
+}
+std::string stateLabel(int slot) { return slot == kAutoSlot ? std::string("Auto-save") : "Slot " + std::to_string(slot); }
+
+int clampResumeMode(int v) { return v >= 0 && v < kResumeModeCount ? v : kResumeDefault; }
+const char* resumeModeLabel(int mode) {
+    switch (mode) {
+    case ResumeOff: return "Off";
+    case ResumeAsk: return "Ask";
+    case ResumeAlways: return "Always";
+    }
+    return "";
+}
+bool shouldAutoSave(int mode, bool hardcore, bool netplay, double ranSeconds, bool crashed) {
+    return mode != ResumeOff && !hardcore && !netplay && !crashed && ranSeconds >= kAutoSaveMinSeconds;
+}
+ResumeAction resumeAction(int mode, bool hardcore, bool netplay, bool autoSaveExists) {
+    if (mode == ResumeOff || hardcore || netplay || !autoSaveExists) return ResumeAction::None;
+    return mode == ResumeAlways ? ResumeAction::Load : ResumeAction::Ask;
+}
+std::string autoStatesDir(const std::string& statesDir, int instance) {
+    return instance <= 1 ? statesDir : statesDir + "instance-" + std::to_string(instance) + "/";
+}
 
 bool parseStateFileName(const std::string& name, std::string& stem, int& slot) {
     static const char ext[] = ".state";
     const size_t el = sizeof ext - 1;
     if (name.size() <= el || name.compare(name.size() - el, el, ext) != 0) return false;
     const std::string base = name.substr(0, name.size() - el);
+    static const char autoExt[] = ".auto";
+    const size_t al = sizeof autoExt - 1;
+    if (base.size() > al && base.compare(base.size() - al, al, autoExt) == 0) {
+        stem = base.substr(0, base.size() - al);
+        slot = kAutoSlot;
+        return true;
+    }
     const size_t at = base.rfind(".slot");
     if (at == std::string::npos || at == 0) return false;
     const std::string num = base.substr(at + 5);
@@ -371,6 +403,39 @@ std::vector<StateGame> listStates(const std::string& dir) {
     }
     std::vector<StateGame> out;
     for (auto& kv : games) {
+        StateGame& g = kv.second;
+        std::sort(g.states.begin(), g.states.end(), [](const StateInfo& a, const StateInfo& b) {
+            return a.mtime != b.mtime ? a.mtime > b.mtime : a.slot < b.slot;
+        });
+        g.newest = g.states.front().mtime;
+        out.push_back(std::move(g));
+    }
+    std::sort(out.begin(), out.end(), [](const StateGame& a, const StateGame& b) {
+        return a.newest != b.newest ? a.newest > b.newest : a.stem < b.stem;
+    });
+    return out;
+}
+
+std::vector<StateGame> listStatesFor(const std::string& statesDir, int instance) {
+    std::vector<StateGame> root = listStates(statesDir);
+    const std::string autoDir = autoStatesDir(statesDir, instance);
+    if (autoDir == statesDir) return root;
+    // copy N: not the first copy's auto-saves, its own
+    std::map<std::string, StateGame> by;
+    for (StateGame& g : root) {
+        g.states.erase(std::remove_if(g.states.begin(), g.states.end(), [](const StateInfo& s) { return s.slot == kAutoSlot; }),
+                       g.states.end());
+        if (!g.states.empty()) by[g.stem] = g;
+    }
+    for (StateGame& g : listStates(autoDir)) {
+        StateGame& d = by[g.stem];
+        d.stem = g.stem;
+        for (const StateInfo& s : g.states)
+            if (s.slot == kAutoSlot) d.states.push_back(s);
+        if (d.states.empty()) by.erase(g.stem);
+    }
+    std::vector<StateGame> out;
+    for (auto& kv : by) {
         StateGame& g = kv.second;
         std::sort(g.states.begin(), g.states.end(), [](const StateInfo& a, const StateInfo& b) {
             return a.mtime != b.mtime ? a.mtime > b.mtime : a.slot < b.slot;

@@ -55,6 +55,11 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   states and the screenshot saved with each; click one to start the game from it. Right-click a
   game for Play, Load state, favorites, Show in Finder / File Explorer and Copy path
   (https://github.com/libretro/virtualjaguar-libretro/issues/838).
+- **Resume where I left off.** Settings > Storage > Resume where I left off (Off / Ask / Always, default
+  Ask): closing a game, switching games or quitting keeps an Auto-save of it (shown in the Save
+  states tab and the tile menu), and the next boot offers to resume from it or does so at once.
+  Not in RetroAchievements hardcore or netplay, and not for a game that ran under 5 seconds or
+  crashed (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Covers for Jaguar CD.** libretro-thumbnails has no Jaguar CD art, so discs now get a
   readable title card, and you can set your own cover: right-click a tile > Set cover image
   (PNG), drop a PNG on a tile, or put `<Title>.png` files in the app's `covers` folder.

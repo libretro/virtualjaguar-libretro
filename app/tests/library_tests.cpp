@@ -2023,6 +2023,88 @@ static void testStateNamesAndListing() {
     CHECK_EQ(folderUrlOf("x.j64"), "");
 }
 
+
+// ---- resume where I left off: the policy, the auto-save slot's names and where each running copy keeps it --------
+
+static void testResumePolicy() {
+    using namespace lib;
+    CHECK(kResumeDefault == ResumeAsk && kResumeModeCount == 3 && kAutoSaveMinSeconds >= 3.0 && kAutoSaveMinSeconds <= 10.0);
+    CHECK(clampResumeMode(0) == ResumeOff && clampResumeMode(2) == ResumeAlways && clampResumeMode(3) == ResumeAsk && clampResumeMode(-1) == ResumeAsk);
+    CHECK_EQ(resumeModeLabel(ResumeAlways), "Always");
+
+    // writing: only with the option on, past the minimum runtime, and not in hardcore / netplay / after a crash
+    const double ok = kAutoSaveMinSeconds + 1.0;
+    CHECK(shouldAutoSave(ResumeAsk, false, false, ok, false));
+    CHECK(shouldAutoSave(ResumeAlways, false, false, ok, false));
+    CHECK(!shouldAutoSave(ResumeOff, false, false, ok, false));                       // Off writes nothing
+    CHECK(!shouldAutoSave(ResumeAsk, true, false, ok, false));                        // hardcore refuses state loads: skip
+    CHECK(!shouldAutoSave(ResumeAlways, true, false, 9999.0, false));
+    CHECK(!shouldAutoSave(ResumeAsk, false, true, ok, false));                        // netplay: a state would desync the link
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, kAutoSaveMinSeconds - 0.01, false));   // ran too briefly
+    CHECK(shouldAutoSave(ResumeAsk, false, false, kAutoSaveMinSeconds, false));       // exactly the minimum counts
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, 0.0, false));
+    CHECK(!shouldAutoSave(ResumeAsk, false, false, ok, true));                        // the crash watchdog flagged the run
+
+    // booting: Always loads, Ask asks, Off and anything blocked does nothing; no auto-save means nothing to do
+    CHECK(resumeAction(ResumeAlways, false, false, true) == ResumeAction::Load);
+    CHECK(resumeAction(ResumeAsk, false, false, true) == ResumeAction::Ask);
+    CHECK(resumeAction(ResumeOff, false, false, true) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAlways, true, false, true) == ResumeAction::None);       // hardcore: skip, and do not prompt
+    CHECK(resumeAction(ResumeAsk, true, false, true) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAlways, false, true, true) == ResumeAction::None);       // netplay
+    CHECK(resumeAction(ResumeAlways, false, false, false) == ResumeAction::None);
+    CHECK(resumeAction(ResumeAsk, false, false, false) == ResumeAction::None);
+
+    // the slot: its own file pair per game, beside (never colliding with) the numbered ones
+    std::string stem;
+    int slot = 0;
+    CHECK_EQ(stateFileName("Iron Soldier (World)", kAutoSlot), "Iron Soldier (World).auto.state");
+    CHECK_EQ(thumbFileName("Iron Soldier (World)", kAutoSlot), "Iron Soldier (World).auto.png");
+    CHECK_EQ(stateFileName("Iron Soldier (World)", 0), "Iron Soldier (World).slot0.state");   // unchanged
+    CHECK(parseStateFileName("Iron Soldier (World).auto.state", stem, slot) && stem == "Iron Soldier (World)" && slot == kAutoSlot);
+    CHECK(parseStateFileName("a.auto.auto.state", stem, slot) && stem == "a.auto" && slot == kAutoSlot);   // a game called "a.auto"
+    CHECK(parseStateFileName("a.auto.slot2.state", stem, slot) && stem == "a.auto" && slot == 2);
+    CHECK(!parseStateFileName(".auto.state", stem, slot) && !parseStateFileName("x.auto.png", stem, slot) && !parseStateFileName("x.auto.state.rcp", stem, slot));
+    CHECK_EQ(stateLabel(kAutoSlot), "Auto-save");
+    CHECK_EQ(stateLabel(4), "Slot 4");
+
+    // where each running copy keeps it
+    CHECK_EQ(autoStatesDir("/d/states/", 1), "/d/states/");
+    CHECK_EQ(autoStatesDir("/d/states/", 0), "/d/states/");
+    CHECK_EQ(autoStatesDir("/d/states/", 2), "/d/states/instance-2/");
+    CHECK_EQ(autoStatesDir("/d/states/", 3), "/d/states/instance-3/");
+
+    const std::string dir = g_tmp + "autostates/";
+    std::error_code ec;
+    fs::create_directories(fs::u8path(dir + "instance-2"), ec);
+    auto put = [&](const std::string& d, const std::string& name, int ageMin) {
+        writeText(d + name, "S");
+        fs::last_write_time(fs::u8path(d + name), fs::file_time_type::clock::now() - std::chrono::minutes(ageMin), ec);
+    };
+    put(dir, "Alpha.slot1.state", 50);
+    put(dir, "Alpha.auto.state", 10);                  // the first copy's auto-save
+    put(dir, "Beta.auto.state", 20);                   // a game only the first copy auto-saved
+    put(dir + "instance-2/", "Alpha.auto.state", 5);   // copy 2's own
+    // copy 1: numbered states and its auto-saves in the states folder; copy 2's folder is not looked at
+    std::vector<StateGame> one = listStatesFor(dir, 1);
+    CHECK(one.size() == 2 && one[0].stem == "Alpha" && one[0].states.size() == 2 && one[0].states[0].slot == kAutoSlot);
+    CHECK(one.size() == 2 && one[0].states[0].path == dir + "Alpha.auto.state");
+    // copy 2: the shared numbered states, ITS auto-save, not copy 1's
+    std::vector<StateGame> two = listStatesFor(dir, 2);
+    CHECK(two.size() == 1 && two[0].stem == "Alpha" && two[0].states.size() == 2);
+    if (two.size() == 1 && two[0].states.size() == 2) {
+        CHECK(two[0].states[0].slot == kAutoSlot && two[0].states[0].path == dir + "instance-2/Alpha.auto.state");
+        CHECK(two[0].states[1].slot == 1);
+        CHECK(two[0].newest == two[0].states[0].mtime);
+    }
+    // an auto-save is deleted like any state (and its screenshot)
+    writeText(dir + "Alpha.auto.png", "P");
+    StateInfo a = one[0].states[0];
+    a.thumbPath = dir + "Alpha.auto.png";
+    CHECK(deleteState(a) && !fs::exists(fs::u8path(a.path)) && !fs::exists(fs::u8path(a.thumbPath)));
+    CHECK(listStatesFor(dir, 1)[0].states.size() == 1 || listStatesFor(dir, 1).size() == 2);
+}
+
 // The service wiring: scan a folder, star and play games, see them resolve, share the file with a second copy,
 // list and delete states, and the settings round-trip.
 static void testPersonalListsService() {
@@ -2238,6 +2320,7 @@ int main(int argc, char** argv) {
     testPersonalListsLogic();
     testUserStoreAndInstances();
     testStateNamesAndListing();
+    testResumePolicy();
     testPersonalListsService();
 #ifndef _WIN32
     if (http::available()) {

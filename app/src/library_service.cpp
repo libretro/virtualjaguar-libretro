@@ -801,7 +801,7 @@ const std::vector<lib::StateGame>& LibraryService::stateGames() {
     const double t = nowSec();
     if (t - statesAt_ >= 1.0 && !statesDir_.empty()) {
         statesAt_ = t;
-        stateGames_ = lib::listStates(statesDir_);
+        stateGames_ = lib::listStatesFor(statesDir_, instance);
     }
     return stateGames_;
 }
@@ -821,7 +821,7 @@ bool LibraryService::deleteState(const lib::StateInfo& s) {
     }
     const bool ok = lib::deleteState(s);
     invalidateStates();
-    stateGames_ = lib::listStates(statesDir_);
+    stateGames_ = lib::listStatesFor(statesDir_, instance);
     statesAt_ = nowSec();
     return ok;
 }
@@ -879,7 +879,7 @@ void LibraryService::launchState(const lib::Entry& e, int slot) {
     ev.type = SDL_EVENT_USER;
     ev.user.code = 0x56414A53;   // 'VAJS': open this path, then load a state slot (App::handleEvent)
     ev.user.data1 = SDL_strdup(e.file.path.c_str());
-    ev.user.data2 = (void*)(intptr_t)(slot + 1);
+    ev.user.data2 = (void*)(intptr_t)(slot + 1000);
     SDL_PushEvent(&ev);
     if (hideOnLaunch) show = false;
 }

@@ -294,6 +294,20 @@ containing folder) and **Copy path**. Lists remember a game by path, checksum an
 a folder or an update that identifies a game does not lose it; a game whose file is away (an unplugged drive)
 is skipped but not forgotten. A game booted from outside the library folders is not listed. Hardcore
 RetroAchievements mode refuses a state load before leaving the running game.
+**Resume where I left off.** Settings > Storage > Save states: **Off / Ask / Always** (`saves.resume`, default
+Ask). When a game is closed (File > Close game), left for another game, or the app quits, its state is written
+as an **Auto-save**: its own slot beside the numbered ones (`<file name>.auto.state` + `.auto.png`, one per game,
+only the latest, written atomically). The next time that game boots, Always loads it right after boot, Ask shows
+"Resume from <time>?" with **Resume**, **Start fresh** and an "Always resume without asking" box, Off does
+nothing (and writes nothing). The Save states tab and the tile's Load state list show it as **Auto-save**, and
+**Delete** works on it. Rules: never in RetroAchievements hardcore (state loads are refused, so there is no
+prompt either) and never during netplay (a state would desynchronise the link); no auto-save for a game that
+ran under 5 emulated seconds (still the boot logo; a quick open-and-close must not replace a real auto-save with
+a title screen) or that the crash watchdog flagged (resuming would land in the hang); File > Reload game and
+headless runs neither keep nor resume one; picking a state in the library skips the offer. Another running copy
+(instance 2+) keeps its own auto-saves in `states/instance-N/` so two windows on one game cannot overwrite each
+other's; the numbered states stay shared.
+
 The lists live in `<data>/library/user.tsv`, not in `config.ini` (rules for several copies in
 [Running several instances](#running-several-instances)). Save states are named `<file name>.slotN.state` in
 `<data>/states/`, as always, so two games whose files share a name share states.

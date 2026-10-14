@@ -396,9 +396,8 @@ bool stateMenuRow(LibraryService& svc, const lib::StateInfo& st) {
     bool clicked = ImGui::Selectable("##state", false, ImGuiSelectableFlags_None, ImVec2(fs * 16.5f, rowH));
     ImDrawList* dl = ImGui::GetWindowDrawList();
     drawStateShot(dl, svc, st, ImVec2(p0.x + 2, p0.y + 2), box, false);
-    char l1[32];
-    std::snprintf(l1, sizeof l1, "Slot %d", st.slot);
-    dl->AddText(ImVec2(p0.x + box.x + 10, p0.y + rowH * 0.5f - fs - 1), ImGui::GetColorU32(ImGuiCol_Text), l1);
+    const std::string l1 = lib::stateLabel(st.slot);
+    dl->AddText(ImVec2(p0.x + box.x + 10, p0.y + rowH * 0.5f - fs - 1), ImGui::GetColorU32(ImGuiCol_Text), l1.c_str());
     dl->AddText(ImVec2(p0.x + box.x + 10, p0.y + rowH * 0.5f + 1), ImGui::GetColorU32(ImGuiCol_TextDisabled), stamp(st.mtime).c_str());
     return clicked;
 }
@@ -411,7 +410,7 @@ void drawTileMenu(App& app, LibraryService& svc, const lib::Entry& e) {
         int shown = 0;
         for (const lib::StateInfo& st : sg->states) {   // newest first
             if (++shown > 10) break;
-            ImGui::PushID(st.slot);
+            ImGui::PushID(st.slot + 1);
             if (stateMenuRow(svc, st)) svc.launchState(e, st.slot);
             ImGui::PopID();
         }
@@ -661,7 +660,7 @@ void drawStatesTab(LibraryService& svc, const std::string& needle) {
             if (x > 0.0f && x + box.x > avail) x = 0.0f;
             else if (x > 0.0f) ImGui::SameLine();
             x += box.x + gap;
-            ImGui::PushID(st.slot);
+            ImGui::PushID(st.slot + 1);
             ImGui::BeginGroup();
             ImVec2 p0 = ImGui::GetCursorScreenPos();
             const bool clicked = ImGui::InvisibleButton("##shot", box);
@@ -672,7 +671,7 @@ void drawStatesTab(LibraryService& svc, const std::string& needle) {
                 else ImGui::SetTooltip("%s is not in the library", title.c_str());
             }
             if (clicked && owner) svc.launchState(*owner, st.slot);
-            ImGui::Text("Slot %d", st.slot);
+            ImGui::TextUnformatted(lib::stateLabel(st.slot).c_str());
             ImGui::TextDisabled("%s", stamp(st.mtime).c_str());
             if (ImGui::SmallButton("Delete")) {
                 g_del.ask = true;
@@ -691,7 +690,8 @@ void drawStatesTab(LibraryService& svc, const std::string& needle) {
         g_del.ask = false;
     }
     if (ImGui::BeginPopupModal("Delete save state?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Delete slot %d of %s?", g_del.state.slot, g_del.title.c_str());
+        ImGui::Text("Delete the %s of %s?", g_del.state.slot == lib::kAutoSlot ? "auto-save" : ("slot " + std::to_string(g_del.state.slot)).c_str(),
+                    g_del.title.c_str());
         ImGui::TextDisabled("Saved %s.  This cannot be undone.", stamp(g_del.state.mtime).c_str());
         if (ImGui::Button("Delete")) {
             svc.deleteState(g_del.state);

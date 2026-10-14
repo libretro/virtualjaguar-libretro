@@ -119,10 +119,36 @@ private:
 
 // ---- save states on disk -----------------------------------------------------------------------------------------
 // App::statePath / thumbPath build their names here, so the app and the library tab cannot disagree.
-std::string stateFileName(const std::string& stem, int slot);   // "<stem>.slot<N>.state"
-std::string thumbFileName(const std::string& stem, int slot);   // "<stem>.slot<N>.png"
-// "Iron Soldier.slot3.state" -> stem "Iron Soldier", slot 3.  False for anything else (thumbnails, sidecars).
+// Slots 0..N are the numbered ones (F5 / F7); kAutoSlot is the auto-save ("Resume where I left off"): its own
+// file pair per game, "<stem>.auto.state" / "<stem>.auto.png", only the latest kept.
+const int kAutoSlot = -1;
+std::string stateFileName(const std::string& stem, int slot);   // "<stem>.slot<N>.state", or "<stem>.auto.state"
+std::string thumbFileName(const std::string& stem, int slot);   // "<stem>.slot<N>.png", or "<stem>.auto.png"
+std::string stateLabel(int slot);                                // "Slot 3" / "Auto-save"
+// "Iron Soldier.slot3.state" -> stem "Iron Soldier", slot 3; "Iron Soldier.auto.state" -> slot kAutoSlot.  False
+// for anything else (thumbnails, sidecars).
 bool parseStateFileName(const std::string& name, std::string& stem, int& slot);
+
+// ---- resume where I left off: the policy (pure, so the tests state it) ------------------------------------------
+enum ResumeMode { ResumeOff = 0, ResumeAsk = 1, ResumeAlways = 2 };
+const int kResumeModeCount = 3;
+const int kResumeDefault = ResumeAsk;
+// An auto-save is written only when the game ran at least this long: under it the machine is still on the boot
+// logo / BIOS screen, and a quick open-and-close would replace a real auto-save with a title screen.
+const double kAutoSaveMinSeconds = 5.0;
+int clampResumeMode(int v);
+const char* resumeModeLabel(int mode);   // "Off", "Ask", "Always"
+// Write one when a game is closed, left for another game, or the app quits?  Never with the option off, in
+// RetroAchievements hardcore (it refuses state loads), during netplay (a state would desynchronise the link),
+// for a game that ran under kAutoSaveMinSeconds, or one the crash watchdog flagged (resuming would land in the hang).
+bool shouldAutoSave(int mode, bool hardcore, bool netplay, double ranSeconds, bool crashed);
+// What to do when a game boots and has (or has not) an auto-save.
+enum class ResumeAction { None, Load, Ask };
+ResumeAction resumeAction(int mode, bool hardcore, bool netplay, bool autoSaveExists);
+// Where this running copy keeps auto-saves: the states folder for the first copy, states/instance-N/ for copy N
+// (instance.h: copies do not share them, so two windows on one game cannot overwrite each other's).  Ends with a
+// separator.  The numbered states stay shared, as before.
+std::string autoStatesDir(const std::string& statesDir, int instance);
 
 struct StateInfo {
     int slot = 0;
@@ -139,6 +165,8 @@ struct StateGame {
 };
 // Every game with at least one state in `dir` (ends with a separator), most recently saved first.
 std::vector<StateGame> listStates(const std::string& dir);
+// What copy `instance` shows: the shared numbered states, and its OWN auto-saves (autoStatesDir), not another copy's.
+std::vector<StateGame> listStatesFor(const std::string& statesDir, int instance);
 // Removes the state, its screenshot and the RetroAchievements sidecar (<state>.rcp).  False when the state
 // file could not be removed.
 bool deleteState(const StateInfo& s);
