@@ -91,8 +91,12 @@ static std::set<std::string> klass(const Config& c, KeyClass k) {
 
 static void testClassify() {
     CHECK(classifyKey("video.vsync") == KeyClass::Video);
-    CHECK(classifyKey("ui.show_fps") == KeyClass::Video);
-    CHECK(classifyKey("ui.theme") == KeyClass::Video);   // Appearance is on the Video tab: Reset there returns to System
+    CHECK(classifyKey("ui.show_fps") == KeyClass::Interface);   // #933: the Interface tab owns the app's own look and behaviour
+    CHECK(classifyKey("ui.theme") == KeyClass::Interface);      // Reset on that tab returns the theme to System
+    CHECK(classifyKey("ui.controls.autoshow") == KeyClass::Interface);
+    CHECK(classifyKey("ui.home_library") == KeyClass::Interface && classifyKey("saves.resume") == KeyClass::Interface);
+    CHECK(classifyKey("ui.tray") == KeyClass::Interface && classifyKey("ui.keep_awake") == KeyClass::Interface);
+    CHECK(classifyKey("ui.font.family") == KeyClass::Keep && classifyKey("ui.scale") == KeyClass::Keep);
     CHECK(classifyKey("shader.preset") == KeyClass::Shader);
     CHECK(classifyKey("shader.folder") == KeyClass::Keep);   // a path the user picked
     CHECK(classifyKey("audio.target_ms") == KeyClass::Audio);
@@ -102,8 +106,8 @@ static void testClassify() {
     CHECK(classifyKey("discord.enabled") == KeyClass::Discord && classifyKey("discord.art") == KeyClass::Discord && classifyKey("discord.buttons") == KeyClass::Discord);
     CHECK(classifyKey("discord.app_id") == KeyClass::Keep);   // an ID the user chose
     CHECK(classifyKey("saves.autosave") == KeyClass::Storage);
-    CHECK(classifyKey("library.size") == KeyClass::Storage);
-    CHECK(classifyKey("saves.resume") == KeyClass::Storage && classifyKey("library.favorites.show") == KeyClass::Storage && classifyKey("library.recents.show") == KeyClass::Storage);
+    CHECK(classifyKey("library.size") == KeyClass::Interface);
+    CHECK(classifyKey("library.favorites.show") == KeyClass::Interface && classifyKey("library.recents.show") == KeyClass::Interface);
     CHECK(classifyKey("library.dir.0") == KeyClass::Keep);
     CHECK(classifyKey("opt.virtualjaguar_x") == KeyClass::CoreOption);
     // The trailing dot is what separates a binding layer from a window's own pad choice.
@@ -123,7 +127,7 @@ static void testClassify() {
 }
 
 static void testGroupReset() {
-    for (AppGroup g : {AppGroup::Video, AppGroup::Audio, AppGroup::Input, AppGroup::Storage, AppGroup::Discord}) {
+    for (AppGroup g : {AppGroup::Video, AppGroup::Audio, AppGroup::Input, AppGroup::Storage, AppGroup::Interface, AppGroup::Discord}) {
         Config c;
         fill(c);
         const std::set<std::string> before = keysOf(c);
@@ -147,9 +151,14 @@ static void testGroupReset() {
     resetGroupKeys(c, AppGroup::Audio);
     CHECK(!c.has("audio.volume") && c.has("video.vsync") && c.has("input.port.0") && c.has("opt.virtualjaguar_frameskip_max"));
     resetGroupKeys(c, AppGroup::Video);
-    CHECK(!c.has("shader.enabled") && !c.has("shader.preset") && c.has("shader.folder") && !c.has("ui.show_fps") && !c.has("ui.theme"));
+    CHECK(!c.has("shader.enabled") && !c.has("shader.preset") && c.has("shader.folder") && c.has("ui.show_fps") && c.has("ui.theme"));   // the Interface keys are not Video's any more
     resetGroupKeys(c, AppGroup::Input);
-    CHECK(!c.has("input.port.0") && !c.has("port.0") && !c.has("ui.controls.autoshow"));
+    CHECK(!c.has("input.port.0") && !c.has("port.0") && c.has("ui.controls.autoshow"));
+    resetGroupKeys(c, AppGroup::Storage);
+    CHECK(!c.has("saves.autosave") && c.has("saves.resume") && c.has("library.size") && c.has("ui.home_library"));
+    resetGroupKeys(c, AppGroup::Interface);
+    CHECK(!c.has("ui.show_fps") && !c.has("ui.theme") && !c.has("ui.controls.autoshow") && !c.has("saves.resume") &&
+          !c.has("library.size") && !c.has("ui.tray") && c.has("ui.scale") && c.has("library.dir.0"));
     CHECK(c.has("input.pad.A") && c.has("input.game.cart-1234.port.0") && c.has("input.pads.1"));   // mappings / per game / window pad kept
 }
 

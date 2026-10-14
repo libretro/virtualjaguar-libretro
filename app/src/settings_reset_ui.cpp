@@ -27,7 +27,7 @@ void syncToConfig(App& app) { app.saveConfig(); }
 
 void applyAfterErase(App& app, const std::vector<KeyClass>& touched) {
     app.applySettingsFromConfig();
-    if (has(touched, KeyClass::Storage)) app.library.resetDisplaySettings();
+    if (has(touched, KeyClass::Interface)) app.library.resetDisplaySettings();
     if (has(touched, KeyClass::Shader)) {
         app.video.shader.clearPreset();   // the shader switch and preset came back from the config; drop the loaded chain
         app.video.shader.retry();
@@ -95,12 +95,14 @@ const char* groupNote(AppGroup g) {
     case AppGroup::Video: return "Picture options and the shader switch and preset (the shader folder is kept).";
     case AppGroup::Audio: return "Volume, mute and buffer target.";
     case AppGroup::Input:
-        return "Controller ports, players, tuning and the controls overlay, for everywhere. Key and button bindings "
+        return "Controller ports, players and tuning, for everywhere. Key and button bindings "
                "and per-game choices are not changed; Reset all settings... can include them.";
     case AppGroup::Discord: return "Show what I'm playing, game artwork and buttons (the application ID override is kept).";
-    case AppGroup::Storage:
-        return "Flush saves, home-screen library, the tray icon and keep-awake, the library's tile size, art download, hide-on-launch and Favorites / Recently played display, and Resume where I left off. "
-               "Library folders are not changed.";
+    case AppGroup::Storage: return "Flush saves. The data and save folders are not changed.";
+    case AppGroup::Interface:
+        return "Frame rate, theme, the controls overlay, the tray icon, keep-awake and extra windows, the home-screen library and "
+               "its tile size, art download, hide-on-launch and Favorites / Recently played display, and Resume where I left off. "
+               "The font and library folders are not changed.";
     }
     return "";
 }

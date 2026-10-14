@@ -185,7 +185,7 @@ shows the bindings in effect for Player 1's device - the keyboard's or the gamep
 whichever you last used - and never takes input. A click or tap anywhere, Esc or F3 hides it
 (the click is not passed to the game). It is not shown by itself: a game that starts with no
 gamepad on Player 1 gets a short "Press F3 for the controls" hint, once per session.
-**Settings > Input > Devices & players > Show the controls overlay when a game starts** (off by
+**Settings > Interface > Overlays > Show the controls overlay when a game starts** (off by
 default) brings the overlay up at boot instead - for keyboard players every time, for gamepads
 once per controller model - and hides it again after a few seconds.
 
@@ -264,7 +264,7 @@ a short welcome with an **Add folder...** button and the open / drag-and-drop hi
 reports one: macOS), Ctrl/Cmd+mouse wheel and Ctrl/Cmd + `+` / `-` / `0` (reset) while the pointer is
 over the grid or the library has the keyboard focus; never during gameplay or while typing in a
 field. Loading a game
-replaces it with the game; **File > Close game** brings it back. **Settings > Storage > Show the
+replaces it with the game; **File > Close game** brings it back. **Settings > Interface > Show the
 game library on the home screen** (`ui.home_library`, also View > Library on home screen) turns it
 off for the old plain welcome. The separate **Game library** window (File > Game library, Ctrl/Cmd+L)
 stays for in-game use (pick another game without closing this one); on the home screen Ctrl/Cmd+L
@@ -292,7 +292,7 @@ tracks a `.cue` owns.
 Favorites**) and the game is a favorite; every game that boots, from the library, a drop, File > Open or the
 command line, goes to the front of **Recently played** (the last 20; right-click > **Remove from Recently
 Played**, or **Clear**). Where each list shows is up to you, separately, under **Favorites & recents...** in the
-library toolbar and in Settings > Storage (`library.favorites.show`, `library.recents.show`: 0 hidden, 1 its
+library toolbar and in Settings > Interface (`library.favorites.show`, `library.recents.show`: 0 hidden, 1 its
 own tab, 2 a strip at the top of the Cartridges and Jaguar CD tabs, 3 both, the default). A tab lists both
 media (favorites by title, recents newest first); a strip is one scrolling row at the top of each media tab with
 that media's games only, under the same search and filter. The **Save states** tab lists every game that has
@@ -305,7 +305,7 @@ containing folder) and **Copy path**. Lists remember a game by path, checksum an
 a folder or an update that identifies a game does not lose it; a game whose file is away (an unplugged drive)
 is skipped but not forgotten. A game booted from outside the library folders is not listed. Hardcore
 RetroAchievements mode refuses a state load before leaving the running game.
-**Resume where I left off.** Settings > Storage > Save states: **Off / Ask / Always** (`saves.resume`, default
+**Resume where I left off.** Settings > Interface > Save states: **Off / Ask / Always** (`saves.resume`, default
 Ask). When a game is closed (File > Close game), left for another game, or the app quits, its state is written
 as an **Auto-save**: its own slot beside the numbered ones (`<file name>.auto.state` + `.auto.png`, one per game,
 only the latest, written atomically). The next time that game boots, Always loads it right after boot, Ask shows
@@ -632,7 +632,7 @@ add compiles a no-op, so adding a platform feature never touches the others.
 | Recent games | `NSDocumentController` (Dock, Open Recent) | Explorer Recent and the Jump List (`SHAddToRecentDocs`) | not written (no GTK; see below) |
 | File types (double-click, Open With, drop on the icon) | `CFBundleDocumentTypes` + an exported type for `.j64` / `.jag` | installer task: per-user `OpenWithProgids` (and the default for `.j64` / `.jag`) | shared-mime-info XML + `MimeType=` |
 | Window | fullscreen follows the green button / Ctrl+Cmd+F; App Nap held while a game runs | title bar follows the app theme (dark or light), per-monitor-v2 DPI, long paths, one taskbar button with the installer shortcut (AppUserModelID) | the application id is the Wayland `app_id` / X11 `WM_CLASS`, so the icon and "pin to dock" match the `.desktop` file |
-| Tray / menu-bar icon | optional (Settings > Storage > Desktop) | optional | optional where the desktop has a StatusNotifier host (KDE and others; stock GNOME needs an extension) |
+| Tray / menu-bar icon | optional (Settings > Interface > Desktop) | optional | optional where the desktop has a StatusNotifier host (KDE and others; stock GNOME needs an extension) |
 | Screensaver / display sleep | allowed in the library and while paused, blocked while a game runs | same | same (through the portal inside Flatpak) |
 | Show in Finder / Explorer | File > Show in Finder | - | opens the folder |
 
@@ -657,7 +657,7 @@ exit 77 means no window-server session (ssh) or not macOS.
 
 **Windows outside the main window, and the in-window menu bar.** Dear ImGui is the `-docking` build of the same
 version (`v1.92.8-docking`; pinned in `CMakeLists.txt` and the Flatpak manifest), used only for its multi-viewport
-mode: Settings > Storage > Desktop > "Let windows move outside the main window" lets a Settings / Achievements /
+mode: Settings > Interface > Desktop > "Let windows move outside the main window" lets a Settings / Achievements /
 Cheats / Netplay / debug-tool window dragged past the edge of the main window become an OS window of its own
 (real title bar, no Dock / taskbar entry, positions kept in `imgui.ini`). Default on for macOS and Windows, off on
 Linux; it is forced off on Wayland (a client cannot position its own extra windows there; X11 and XWayland are
@@ -819,14 +819,14 @@ To regenerate the expected hash after an intentional emulation change:
 
 ## Window sizing and UI screenshots
 
-**Settings > Video > Appearance** picks the colour theme: System (the default) follows the OS and switches live when it does, or Dark / Light / a custom theme made in **Customize...** and kept as `<data>/themes/<name>.ini` (`--theme system|dark|light|custom:NAME` sets it for one run); the palettes are in `src/theme.cpp`.
+**Settings > Interface > Appearance** picks the colour theme: System (the default) follows the OS and switches live when it does, or Dark / Light / a custom theme made in **Customize...** and kept as `<data>/themes/<name>.ini` (`--theme system|dark|light|custom:NAME` sets it for one run); the palettes are in `src/theme.cpp`.
 
 The UI scale follows the display's content scale (200% on a 4K Windows/Linux display; 1.0 on a Retina
 Mac, where ImGui renders at the pixel density by itself). `ui.scale` in `config.ini` (default 1.0) multiplies it.
 
 ### Fonts
 
-Settings > Video > Font picks the typeface and its size (11-24 pt, default 13): **Retro** (Dear ImGui's embedded
+Settings > Interface > Font picks the typeface and its size (11-24 pt, default 13): **Retro** (Dear ImGui's embedded
 pixel font, the look the app always had, still the default), **System UI** (San Francisco on macOS, Segoe UI on
 Windows, the desktop's sans-serif on Linux through `fc-match`, with DejaVu / Noto / Liberation as fallbacks),
 **Monospace** (SF Mono / Menlo, Consolas, DejaVu Sans Mono) or **Custom file...** (a `.ttf` / `.otf` / `.ttc`; it
@@ -854,7 +854,7 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 
 `--low-dpi` opens a 1x window even on a Retina display (screenshots of a standard-density screen).
 
-`--show-window` takes `settings[-video|-input|-audio|-storage][:FILTER]`, `states`, `about`,
+`--show-window` takes `settings[-video|-input|-audio|-storage|-interface][:FILTER]`, `states`, `about`,
 `cheats`, `library`, `login`, `achievements`, `keypad` and `theme-editor`.
 
 ## Layout
@@ -880,7 +880,7 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/cheatsheet.*`, `src/cheatsheet_ui.cpp` | the controls cheat sheet: text, auto-show rule, window |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
 | `src/fonts.*` | UI fonts with no ImGui: `ui.font.*` settings, per-OS system font lookup, custom file validation + import, glyph ranges (unit tested) |
-| `src/fonts_imgui.*`, `src/fonts_ui.cpp` | the live font atlas (typeface, size, FreeType flags, `mono()`), and Settings > Video > Font |
+| `src/fonts_imgui.*`, `src/fonts_ui.cpp` | the live font atlas (typeface, size, FreeType flags, `mono()`), and Settings > Interface > Font |
 | `src/platform/` | native-OS integration: menu model + dispatch (`commands.*`, no OS), per-OS files (`platform_macos.mm`, `platform_windows.cpp`, `platform_other.cpp`), tray (`tray.cpp`); `src/desktop.cpp` is the app side |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
 | `src/library_lists.*` | favorites, recently played, display options, tab layout, save-state listing (pure) |

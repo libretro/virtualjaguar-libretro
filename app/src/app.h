@@ -44,7 +44,7 @@ struct CliArgs {
     bool verbose = false;
     std::string screenshot;         // dev: save the window's pixels to this PNG after --screenshot-frame frames, then exit
     unsigned screenshotFrame = 120;
-    std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
+    std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage|-interface][:FILTER], states, about, cheats, library, login, achievements, keypad
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
     std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
@@ -143,7 +143,7 @@ public:
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
-    fonts::Settings fontSettings;     // Settings > Video > Font (ui.font.*); applied live through fonts_imgui.h
+    fonts::Settings fontSettings;     // Settings > Interface > Font (ui.font.*); applied live through fonts_imgui.h
     bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
     bool showNetplay = false;
     CheatManager cheats;
@@ -178,7 +178,7 @@ public:
     bool themePreviewing_ = false;
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
-    bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Storage)
+    bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
     bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)
     bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
 
@@ -207,7 +207,7 @@ public:
     void setFullscreen(bool fs);
     void applyVsync();
     void applyTheme();                // the Dear ImGui style for the theme in force (theme.h); a no-op before the UI exists
-    void setThemeChoice(const std::string& key);   // Settings > Video > Appearance: system | dark | light | custom:<name>; remembered
+    void setThemeChoice(const std::string& key);   // Settings > Interface > Appearance: system | dark | light | custom:<name>; remembered
     bool applyThemeChoice(const std::string& key); // the same without remembering; false when a custom theme is missing (System is used)
     void themePreview(const theme::Custom& c);     // the theme editor's live preview: shown, not remembered until saved
     void themePreviewEnd(bool keep);               // the editor closed (keep: its theme was saved and chosen); otherwise the previous choice returns
@@ -357,7 +357,7 @@ void discordTick(App& app);                          // UI loop, every iteration
 void discordNoteGameStarted(App& app);               // a game booted: the "elapsed" timer restarts
 void discordShutdown(App& app);                      // clears the status and stops the worker
 std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_id, else the compile-time default ("" = none)
-// Themes (theme_ui.cpp): Settings > Video > Appearance, the theme editor window and its file-dialog mailbox.
+// Themes (theme_ui.cpp): Settings > Interface > Appearance, the theme editor window and its file-dialog mailbox.
 void drawAppearanceSettings(App& app);
 void drawThemeEditor(App& app);
 void themeFrameHook(App& app);
