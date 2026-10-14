@@ -1,6 +1,9 @@
 #include "bios.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <map>
+#include <set>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -32,6 +35,64 @@ Role roleOf(const lib::BiosInfo& b, uint64_t size) {
     if (b.role == lib::BiosRole::CartBoot && size == roleBytes(CartBoot)) return CartBoot;
     if (b.role == lib::BiosRole::CdBios && size == roleBytes(Cd)) return Cd;
     return None;
+}
+
+namespace {
+
+// The file's identity on disk: the real path when the file exists, else the lexically normal absolute one.
+std::string identityOf(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::canonical(std::filesystem::u8path(path), ec);
+    return ec ? absolutePath(path) : p.string();
+}
+
+std::string dirOf(const std::string& path) {
+    size_t sl = path.find_last_of("/\\");
+    return sl == std::string::npos ? std::string() : path.substr(0, sl);
+}
+
+std::string nameOf(const std::string& path) {
+    size_t sl = path.find_last_of("/\\");
+    return sl == std::string::npos ? path : path.substr(sl + 1);
+}
+
+}  // namespace
+
+bool samePath(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return a == b;
+    return a == b || identityOf(a) == identityOf(b);
+}
+
+std::vector<Pick> picksFor(const std::vector<lib::Entry>& entries, Role role) {
+    std::vector<Pick> out;
+    std::set<std::string> seen;   // file identities already listed
+    for (const lib::Entry& e : entries) {
+        if (e.section != lib::Section::Bios || roleOf(e.bios, e.file.size) != role) continue;
+        if (!seen.insert(identityOf(e.file.path)).second) continue;
+        char crc[16] = "";
+        if (e.file.crcWhole) std::snprintf(crc, sizeof crc, "%08X", e.file.crcWhole);
+        out.push_back({e.file.path, nameOf(e.file.path) + (e.bios.recognized ? "  -  " + e.bios.title : std::string()) +
+                                        (crc[0] ? std::string("  (") + crc + ")" : std::string())});
+    }
+    // The same label more than once (one dump in several folders): say which folder each is in.
+    std::map<std::string, int> uses;
+    for (const Pick& p : out) uses[p.label]++;
+    for (Pick& p : out)
+        if (uses[p.label] > 1) p.label += "  [" + dirOf(p.path) + "]";
+    // A folder that differs only by case / a path that still repeats: number the rest, so a label is never shared.
+    std::map<std::string, int> next;
+    std::set<std::string> taken;
+    for (const Pick& p : out) taken.insert(p.label);
+    std::set<std::string> used;
+    for (Pick& p : out) {
+        if (used.insert(p.label).second) continue;
+        std::string cand;
+        do cand = p.label + " #" + std::to_string(++next[p.label] + 1);
+        while (taken.count(cand) || used.count(cand));
+        p.label = cand;
+        used.insert(cand);
+    }
+    return out;
 }
 
 BootInfo bootInfo(const lib::BiosInfo& b, uint64_t size) {

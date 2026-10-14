@@ -21,30 +21,11 @@ std::string baseOf(const std::string& path) {
     return sl == std::string::npos ? path : path.substr(sl + 1);
 }
 
-// A BIOS the user can pick for `role`, from what the library found (library folders and the system folder).
-struct Pick {
-    std::string path;
-    std::string label;
-};
-
-std::vector<Pick> picksFor(App& app, bios::Role role) {
-    std::vector<Pick> out;
-    for (const lib::Entry& e : app.library.entries()) {
-        if (e.section != lib::Section::Bios || bios::roleOf(e.bios, e.file.size) != role) continue;
-        char crc[16] = "";
-        if (e.file.crcWhole) std::snprintf(crc, sizeof crc, "%08X", e.file.crcWhole);
-        std::string label = baseOf(e.file.path) + (e.bios.recognized ? "  -  " + e.bios.title : std::string()) +
-                            (crc[0] ? std::string("  (") + crc + ")" : std::string());
-        out.push_back({e.file.path, label});
-    }
-    return out;
-}
-
 // What the combo shows for the current choice.
-std::string choiceLabel(const std::string& chosen, const std::vector<Pick>& picks, const std::string& autoText) {
+std::string choiceLabel(const std::string& chosen, const std::vector<bios::Pick>& picks, const std::string& autoText) {
     if (chosen.empty()) return "Auto: " + autoText;
-    for (const Pick& p : picks)
-        if (p.path == chosen) return p.label;
+    for (const bios::Pick& p : picks)
+        if (bios::samePath(p.path, chosen)) return p.label;
     return baseOf(chosen) + (fileExists(chosen) ? "" : "  (file is gone: Auto is used)");
 }
 
@@ -79,7 +60,7 @@ void drawRole(App& app, bios::Role role) {
     ImGui::SeparatorText(cart ? "Console boot ROM (cartridges)" : "Jaguar CD BIOS");
 
     // ---- which file ----
-    const std::vector<Pick> picks = picksFor(app, role);
+    const std::vector<bios::Pick> picks = bios::picksFor(app.library.entries(), role);
     const std::string chosen = app.biosChoice.of(role);
     std::string autoText;
     if (cart) {
@@ -92,9 +73,15 @@ void drawRole(App& app, bios::Role role) {
     }
     ImGui::SetNextItemWidth(ui::fitWidth(0.7f, 18.0f, 40.0f));
     if (ImGui::BeginCombo(cart ? "Boot ROM" : "CD BIOS", choiceLabel(chosen, picks, autoText).c_str())) {
+        // Every row has its own ID scope (#932): the same dump in two folders must not share one.
+        ImGui::PushID("auto");
         if (ImGui::Selectable(("Auto: " + autoText).c_str(), chosen.empty())) app.setBiosChoice(role, "");
-        for (const Pick& p : picks)
-            if (ImGui::Selectable(p.label.c_str(), p.path == chosen)) app.setBiosChoice(role, p.path);
+        ImGui::PopID();
+        for (const bios::Pick& p : picks) {
+            ImGui::PushID(p.path.c_str());
+            if (ImGui::Selectable(p.label.c_str(), bios::samePath(p.path, chosen))) app.setBiosChoice(role, p.path);
+            ImGui::PopID();
+        }
         if (picks.empty()) ImGui::TextDisabled("No usable files found yet: Import BIOS file... or add a folder.");
         ImGui::EndCombo();
     }

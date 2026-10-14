@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -233,6 +234,57 @@ static void testDescribe() {
     CHECK(s.find("system-folder file jagcd.bin") == 0 && s.find("Jaguar CD BIOS (retail)") != std::string::npos);
 }
 
+// #932: one BIOS dump in several folders, or two folders holding same-named files, gave several combo rows with
+// the same text, which is the same ImGui ID, so clicking a later copy picked the first.  The rows the combo is
+// built from must have distinct labels, one per file on disk, and a stored choice must find its row.
+static void testPicksAreDistinct() {
+    const std::string a = g_tmp + "picks/a/", b = g_tmp + "picks/b/", sys = g_tmp + "picks/system/";
+    const std::vector<unsigned char> boot = noise(K128, 21), cd = noise(K256, 22);
+    writeBytes(a + "jagboot.rom", boot);
+    writeBytes(b + "jagboot.rom", boot);              // the same dump in another folder
+    writeBytes(sys + "jagboot.rom", boot);            // ... and in the system folder
+    writeBytes(a + "jagcd.bin", cd);
+    writeBytes(b + "JaguarCD_BIOS.bin", cd);          // a differently named copy keeps its own name
+    // the system folder is also a library folder: every file there is reached twice
+    lib::ScanOptions opt;
+    opt.folders = {a, b, sys};
+    opt.systemFolder = sys;
+    std::vector<lib::Entry> entries;
+    for (const lib::ScanFile& f : lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr)) entries.push_back(lib::identify(f, nullptr, nullptr));
+
+    const std::vector<bios::Pick> carts = bios::picksFor(entries, bios::CartBoot);
+    CHECK(carts.size() == 3);                          // one row per file, none for the double scan of the system folder
+    std::set<std::string> labels, paths;
+    for (const bios::Pick& p : carts) {
+        labels.insert(p.label);
+        paths.insert(p.path);
+        CHECK(p.label.find("jagboot.rom") == 0);
+    }
+    CHECK(labels.size() == carts.size() && paths.size() == carts.size());   // no two rows share a label (= an ImGui ID)
+    for (const bios::Pick& p : carts) CHECK(p.label.find(fs::path(p.path).parent_path().string()) != std::string::npos);   // each says its folder
+    const std::vector<bios::Pick> cds = bios::picksFor(entries, bios::Cd);
+    CHECK(cds.size() == 2);
+    CHECK(cds[0].label != cds[1].label);
+    // a role takes only what it can run
+    for (const bios::Pick& p : cds) CHECK(fs::file_size(p.path) == K256);
+
+    // the stored choice finds its own row, and only that one
+    int hit = 0;
+    for (const bios::Pick& p : carts)
+        if (bios::samePath(p.path, absolutePath(b + "jagboot.rom"))) hit++;
+    CHECK(hit == 1);
+    CHECK(bios::samePath("/x/y.rom", "/x/y.rom") && !bios::samePath("/x/y.rom", "") && bios::samePath("", ""));
+    // one file reached through a second spelling of its folder (a symlink, or "a/../a") is listed once
+    std::vector<lib::Entry> twice = entries;
+    for (lib::Entry e : entries)
+        if (e.file.path == a + "jagboot.rom" || fs::path(e.file.path) == fs::path(a) / "jagboot.rom") {
+            e.file.path = a + "../a/jagboot.rom";
+            twice.push_back(e);
+        }
+    CHECK(bios::picksFor(twice, bios::CartBoot).size() == 3);
+    CHECK(bios::samePath(a + "../a/jagboot.rom", a + "jagboot.rom"));
+}
+
 int main() {
     SDL_Init(SDL_INIT_EVENTS);
     std::error_code ec;
@@ -247,6 +299,7 @@ int main() {
     testSelectionPersistence();
     testImport();
     testDescribe();
+    testPicksAreDistinct();
     fs::remove_all(p, ec);   // our own temp dir only
     std::printf("bios tests: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
