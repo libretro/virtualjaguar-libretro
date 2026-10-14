@@ -21,6 +21,12 @@
  * comparison is uninterpretable -- this matters from a loaded CD state,
  * where DSA delay, FIFO drain pacing and I2S timing are all live.
  *
+ * --audio-hash appends an `ahash` column: FNV-1a over the int16 stereo
+ * samples the core delivered during that frame (an empty frame hashes to
+ * the FNV offset basis).  It replaces the harness's audio callbacks, so
+ * the AUDIO summary line then reads zero; corpus_ab_sweep.sh AUDIO=1
+ * uses it to A/B the audio stream alongside the video.
+ *
  * Duped frames (core passed a NULL framebuffer) repeat the previous hash,
  * which is correct for state-arrival timing; the `duped` column is there so
  * a drop in distinct-state count can be attributed to lost renders rather
@@ -56,7 +62,30 @@ typedef struct {
     unsigned nonblack;
     unsigned w, h;
     int      duped;
+    int      audio_hash;   /* --audio-hash given */
+    uint64_t ahash;        /* FNV-1a of this frame's audio so far */
 } ab_state;
+
+static ab_state *g_ab;     /* audio callbacks carry no user data */
+
+static size_t ab_audio_batch(const int16_t *data, size_t frames)
+{
+    const uint8_t *b = (const uint8_t *)data;
+    size_t i, n = frames * 4;
+
+    for (i = 0; i < n; i++) {
+        g_ab->ahash ^= (uint64_t)b[i];
+        g_ab->ahash *= 1099511628211ULL;
+    }
+    return frames;
+}
+
+static void ab_audio_sample(int16_t l, int16_t r)
+{
+    int16_t p[2];
+    p[0] = l; p[1] = r;
+    ab_audio_batch(p, 1);
+}
 
 /* FNV-1a over the visible framebuffer, row by row (pitch may exceed w*4). */
 static void ab_video(void *ud, const void *data, unsigned width,
@@ -96,9 +125,14 @@ static void ab_video(void *ud, const void *data, unsigned width,
 static bool ab_frame(void *ud, unsigned frame)
 {
     ab_state *st = (ab_state *)ud;
-    fprintf(st->csv, "%u,%u,%u,%d,%u,%016llx\n",
+    fprintf(st->csv, "%u,%u,%u,%d,%u,%016llx",
             frame, st->w, st->h, st->duped, st->nonblack,
             (unsigned long long)st->hash);
+    if (st->audio_hash) {
+        fprintf(st->csv, ",%016llx", (unsigned long long)st->ahash);
+        st->ahash = 1469598103934665603ULL;
+    }
+    fputc('\n', st->csv);
     return true;
 }
 
@@ -118,13 +152,16 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--csv") == 0 && i + 1 < argc) {
             csv_path = argv[i + 1];
             argv[i] = argv[i + 1] = (char *)"--quiet";
+        } else if (strcmp(argv[i], "--audio-hash") == 0) {
+            st.audio_hash = 1;
+            argv[i] = (char *)"--quiet";
         }
     }
 
     if (!csv_path) {
         fprintf(stderr, "usage: frame_hash_ab [core] <rom> --csv OUT "
                         "[--load-state S] [--frames N] [--option K=V] "
-                        "[--bios] [--system-dir DIR]\n");
+                        "[--bios] [--system-dir DIR] [--audio-hash]\n");
         return 1;
     }
 
@@ -140,7 +177,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "frame_hash_ab: cannot write '%s'\n", csv_path);
         return 1;
     }
-    fprintf(st.csv, "frame,w,h,duped,nonblack,hash\n");
+    fprintf(st.csv, "frame,w,h,duped,nonblack,hash%s\n",
+            st.audio_hash ? ",ahash" : "");
+    st.ahash = 1469598103934665603ULL;
+    g_ab = &st;
 
     cfg.video_callback      = ab_video;
     cfg.video_callback_data = &st;
@@ -151,6 +191,22 @@ int main(int argc, char **argv)
     if (!harness_load_rom(&cfg)) {
         fclose(st.csv);
         return 1;
+    }
+    if (st.audio_hash) {
+        void (*set_batch)(size_t (*)(const int16_t *, size_t)) =
+            (void (*)(size_t (*)(const int16_t *, size_t)))
+            harness_dlsym(&cfg, "retro_set_audio_sample_batch");
+        void (*set_sample)(void (*)(int16_t, int16_t)) =
+            (void (*)(void (*)(int16_t, int16_t)))
+            harness_dlsym(&cfg, "retro_set_audio_sample");
+        if (!set_batch) {
+            fprintf(stderr, "frame_hash_ab: no retro_set_audio_sample_batch\n");
+            fclose(st.csv);
+            return 1;
+        }
+        set_batch(ab_audio_batch);
+        if (set_sample)
+            set_sample(ab_audio_sample);
     }
 
     harness_run(&cfg);
