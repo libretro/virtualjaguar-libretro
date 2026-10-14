@@ -146,7 +146,7 @@ include(VJCore)
 # dependency).  Neither found: the feature degrades to "no downloads".
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-add_library(vj_library STATIC src/library.cpp src/library_service.cpp src/bios.cpp src/disc_hash.cpp src/http.cpp)
+add_library(vj_library STATIC src/library.cpp src/library_lists.cpp src/library_service.cpp src/bios.cpp src/disc_hash.cpp src/http.cpp)
 target_compile_definitions(vj_library PRIVATE VJ_APP_VERSION="${PROJECT_VERSION}")   # http.cpp User-Agent
 target_include_directories(vj_library PUBLIC src)
 target_link_libraries(vj_library PUBLIC ${VJ_SDL3_TARGET} Threads::Threads)
@@ -245,6 +245,10 @@ set(VJ_APP_SOURCES
     src/cheatsheet_ui.cpp
     src/devices_ui.cpp
     src/ui.cpp
+    src/theme.cpp
+    src/theme_style.cpp
+    src/theme_custom.cpp
+    src/theme_ui.cpp
     src/settings_reset.cpp
     src/settings_reset_ui.cpp
     src/library_ui.cpp
@@ -254,6 +258,9 @@ set(VJ_APP_SOURCES
     src/cheats_ui.cpp
     src/achievements.cpp
     src/achievements_ui.cpp
+    src/achievements_games.cpp
+    src/ra_dash.cpp
+    src/ra_images.cpp
     src/ach_http.cpp
     src/netplay.cpp
     src/netplay_addr.cpp
@@ -350,4 +357,5 @@ if(VJ_APP_BUILD_TESTS)
     include(VJCheatTests)
     include(VJNetplayTests)
     include(VJPlatformTests)
+    include(VJThemeTests)
 endif()

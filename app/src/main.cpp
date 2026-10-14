@@ -16,6 +16,7 @@ static void usage(const char* argv0) {
         "usage: %s [options] [game.j64 | disc.cue | disc.chd ...]\n"
         "\n"
         "  --fullscreen          start in fullscreen\n"
+        "  --theme system|dark|light|custom:NAME   colour theme for this run (not saved; Settings > Video > Appearance sets it)\n"
         "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
         "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
         "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
@@ -38,7 +39,7 @@ static void usage(const char* argv0) {
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X]\n"
-        "     [--show-window settings[-video|-input|-audio|-bios|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls]\n"
+        "     [--show-window settings[-video|-input|-audio|-bios|-storage]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -92,6 +93,13 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--version")) a.showVersion = true;
         else if (!std::strcmp(s, "--headless")) a.headless = true;
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
+        else if (!std::strcmp(s, "--theme")) {
+            a.theme = need(s);
+            if (a.theme != "system" && a.theme != "dark" && a.theme != "light" && a.theme.compare(0, 7, "custom:") != 0) {
+                std::fprintf(stderr, "--theme wants system, dark, light or custom:NAME, got '%s'\n", a.theme.c_str());
+                return 2;
+            }
+        }
         else if (!std::strcmp(s, "--no-content")) a.noContent = true;
         else if (!std::strcmp(s, "--boot-bios")) {
             a.bootBios = need(s);

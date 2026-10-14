@@ -23,13 +23,18 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "ach_http.h"
+#include "ra_dash.h"
+#include "ra_images.h"
 #include "rc_client.h"
 #include "rc_libretro.h"
 
@@ -44,6 +49,15 @@ struct AchToast {
     double born = 0;
     double life = 5;
     int kind = 0;   // 0 = unlock, 1 = information, 2 = problem
+    std::string iconUrl;   // badge / game icon shown beside the text ("" = none); copied, never a pointer into rc_client
+};
+
+// What unlocked while this app was running, for the Profile tab.
+struct SessionUnlock {
+    std::string title, description, badgeUrl;
+    unsigned points = 0;
+    bool hardcore = false;
+    long long when = 0;
 };
 
 class Achievements {
@@ -119,6 +133,37 @@ public:
     rc_client_t* client() const { return client_; }
     App* app() const { return app_; }
 
+    // ---- pictures and the dashboard (achievements_games.cpp, achievements_ui.cpp) ----------
+    ra::ImageCache images;                  // avatar, game icon, badges: disk cache + bounded textures
+    bool imagesWanted() const { return imagesWanted_; }
+    void setImagesWanted(bool on);          // download pictures (ra.images); off = what is on disk, nothing new
+    // URLs rc_client derives for the loaded game / the signed-in user / one achievement.  "" when there is none.
+    std::string gameIconUrl() const;
+    std::string avatarUrl(std::string& version) const;
+    // The loaded game's achievements as plain rows (see ra::AchRow); false when no game is tracked.
+    bool achievementRows(std::vector<ra::AchRow>& rows) const;
+    std::vector<SessionUnlock> sessionUnlocks;
+    // The Jaguar games tab: called every frame the tab is visible.  Loads the cached list, refreshes it
+    // when it is more than a day old (or empty), and fetches the signed-in user's progress.
+    void gamesTabShown();
+    void refreshGames(bool manual);         // the Refresh button: games list + progress
+    bool gamesBusy() const { return gamesPending_ > 0 || progressPending_ > 0; }
+    const std::vector<ra::GameEntry>& games() const { return games_; }
+    int64_t gamesFetchedAt() const { return gamesFetchedAt_; }
+    const std::string& gamesError() const { return gamesError_; }
+    bool gamesFromCache() const { return gamesFromCache_; }
+    bool progressKnown() const { return progressKnown_; }
+    void playGame(const ra::GameEntry& g);  // launches the library file that runs this game
+    bool libraryHashing() const { return hashing_; }
+    // ra:: view state the window keeps between frames.
+    ra::GameFilter gameFilter = ra::GameFilter::All;
+    ra::GameSort gameSort = ra::GameSort::Title;
+    char gameText[64] = "";
+    ra::AchFilter achFilter = ra::AchFilter::All;
+    ra::AchSort achSort = ra::AchSort::Default;
+    char achText[64] = "";
+    int dashTab = 0;                        // 0 this game, 1 Jaguar games, 2 profile
+
     // ---- headless testing ----------------------------------------------------------
     // Called by the headless runner; prints the verdict and returns false on failure.
     bool headlessSetup(const CliArgs& args);        // --ra-mock etc., before content loads
@@ -128,12 +173,13 @@ public:
 
 private:
     friend struct AchCallbacks;
+    friend struct AchGamesCallbacks;
 
     void beginLoad();
     void rebuildMemory();
     void applyHardcore();                // push the effective hardcore flag into rc_client
     void checkSettings();                // disallowed core options
-    void toast(const std::string& title, const std::string& body, int kind, double life = 5);
+    void toast(const std::string& title, const std::string& body, int kind, double life = 5, const std::string& icon = "");
     void handleEvent(const rc_client_event_t* e);
     void persistLogin();
     uint32_t consoleId(const std::string& path) const;
@@ -185,6 +231,41 @@ private:
     std::vector<Step> steps_;
     std::vector<std::string> stepFailures_;
     void runStep(const Step& s, unsigned frame);
+
+    // pictures + dashboard
+    bool imagesWanted_ = true;
+    std::vector<ra::GameEntry> games_;
+    int64_t gamesFetchedAt_ = 0;
+    std::string gamesError_;
+    bool gamesInit_ = false;           // the cache file was read
+    bool gamesFromCache_ = false;
+    bool gamesAutoTried_ = false;      // one automatic refresh per session; after that only the button
+    bool progressAutoTried_ = false;
+    bool progressKnown_ = false;
+    int gamesPending_ = 0;
+    int progressPending_ = 0;
+    bool gamesAborted_ = false;
+    std::map<uint32_t, std::vector<ra::GameEntry>> gamesIncoming_;   // console -> fetched list
+    std::map<uint32_t, bool> gamesIncomingOk_;
+    std::map<uint32_t, ra::Progress> progress_;
+    bool progressOk_ = false;
+    size_t libraryMatched_ = (size_t)-1;   // library size at the last match
+    unsigned hashGenMatched_ = 0;
+    // MD5 of the library's cartridges (RA lists the hashes it accepts), computed on one worker thread.
+    std::thread hashThread_;
+    std::mutex hashMu_;
+    std::map<std::string, std::string> cartMd5_;   // path -> md5 ("" = not hashable)
+    std::atomic<unsigned> hashGen_{0};
+    std::atomic<bool> hashStop_{false};
+    std::atomic<bool> hashing_{false};
+    void loadGamesCache();
+    void finishGames();
+    void finishProgress();
+    void rematchLibrary();
+    void startHashing();
+    void updateImageNetwork();
+    void dashSignedOut();
+    void headlessGamesStep(const std::string& action, unsigned frame);
 };
 
 // ImGui (achievements_ui.cpp).

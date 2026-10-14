@@ -28,10 +28,19 @@ docs/RELEASE_NOTES_v3.8.1.md
   Disc art falls back to a set hosted on the project site.
   .chd discs are checksummed, .cdi best-effort, and non-Redump rips
   match by file/folder name when unambiguous.
+* Library favorites (star a tile), Recently played and a Save states
+  tab with each state's screenshot (click to start from it); each list
+  shows as a tab, a strip on the Cartridges/CD tabs, both or hidden.
+  Right-click a game: Play, Load state, favorite, Show in Finder (#838).
+* Resume where I left off (Off/Ask/Always, default Ask): closing,
+  switching games or quitting keeps an Auto-save; the next boot offers
+  it or loads it. Not in hardcore or netplay (#833).
 * Shaders: RetroArch .slangp presets via librashader, slang-shaders
   CRT/scanline/sharp-bilinear presets bundled, integer scaling (#834).
 * Cheats: libretro cheat database bundled, plus manual codes (#835).
 * RetroAchievements: softcore default, optional hardcore (#836).
+  Avatar, game icon and achievement badges; a dashboard of the Jaguar
+  games with achievements, your progress and Play for owned ones.
 * Controls: per-device and per-game remapping, 12-key keypad on a
   gamepad, 6-button keyboard layout, on-screen keypad (F2), controls
   overlay (F3); mice, rotary, analog, driving, paddle, 6D, light gun
@@ -42,6 +51,10 @@ docs/RELEASE_NOTES_v3.8.1.md
   three, screensaver allowed outside a running game, optional tray
   or menu-bar icon (#833).
 * Save states with thumbnails and a state manager.
+* Light and dark themes: Settings > Video > Appearance, System (the
+  default) follows the OS and switches live; Customize... edits your
+  own colours, rounding and spacing with a live preview and a contrast
+  warning, and themes can be exported and imported (#833).
 * Several windows at once: File > New window (Ctrl/Cmd+N). Extra
   copies get their own save folder, leave the shared settings alone and
   can be pinned to one controller; netplay on one machine works (#833).

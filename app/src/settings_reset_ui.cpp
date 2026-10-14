@@ -98,8 +98,8 @@ const char* groupNote(AppGroup g) {
         return "Controller ports, players, tuning and the controls overlay, for everywhere. Key and button bindings "
                "and per-game choices are not changed; Reset all settings... can include them.";
     case AppGroup::Storage:
-        return "Flush saves, home-screen library, the tray icon and keep-awake, and the library's tile size, art download "
-               "and hide-on-launch. Library folders are not changed.";
+        return "Flush saves, home-screen library, the tray icon and keep-awake, the library's tile size, art download, hide-on-launch and Favorites / Recently played display, and Resume where I left off. "
+               "Library folders are not changed.";
     }
     return "";
 }
@@ -169,9 +169,9 @@ void drawResetAllSettings(App& app) {
                       plan.skippedOverridden.empty() ? "" : " (those set for this session by Netplay or --option are kept)");
     ImGui::BulletText("Video and shader, Audio");
     ImGui::BulletText("Input devices: controller ports, players, tuning, controls overlay");
-    ImGui::BulletText("Storage: flush saves, home-screen library, tray icon, keep-awake, library tile size and art options");
+    ImGui::BulletText("Storage: flush saves, home-screen library, tray icon, keep-awake, library tile size, art and Favorites / Recently played options, resume setting");
     ImGui::Spacing();
-    ImGui::TextWrapped("Not touched: library folders, recent games, covers, save states and game saves, "
+    ImGui::TextWrapped("Not touched: library folders, favorites and recent games, covers, save states and game saves, "
                        "RetroAchievements login and settings, netplay settings, cheats, window size.");
     ImGui::Spacing();
     ImGui::Checkbox("Also reset controller mappings", &alsoMappings);

@@ -21,9 +21,17 @@
 #include <string>
 
 #include "imgui.h"
+#include "theme_style.h"
 
 namespace vj {
 namespace ui {
+
+// The theme palette (theme.h) as ImGui colours: every colour the UI draws with comes from here, so it
+// reads in both the dark and the light theme.
+inline const theme::Palette& pal() { return theme::pal(); }
+inline const theme::Overlay& overlay() { return theme::overlay(); }
+inline ImVec4 vec4(theme::Color c) { return theme::toVec4(c); }
+inline ImU32 u32(theme::Color c, float alphaMul = 1.0f) { return (ImU32)c.u32(alphaMul); }
 
 inline float em(float n) { return ImGui::GetFontSize() * n; }
 

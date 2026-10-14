@@ -263,7 +263,7 @@ off for the old plain welcome. The separate **Game library** window (File > Game
 stays for in-game use (pick another game without closing this one); on the home screen Ctrl/Cmd+L
 puts the cursor in the search box instead of opening a second copy of the same view.
 
-**Sections.** Tabs split the library into **Cartridges**, **Jaguar CD** and **BIOS & system**
+**Sections.** Tabs split the library into **Cartridges**, **Jaguar CD** and **BIOS & system** (plus Favorites, Recently played and Save states, below)
 (the choice is remembered, `library.section`). BIOS and system files are not games and are never
 in the game grids: files are recognized by CRC32 (the Series K and Model M boot ROMs, the two
 Stubulator developer ROMs, the retail and developer CD BIOS and the Memory Track cartridge: the
@@ -280,6 +280,41 @@ upper/lower case in the name). The Series K image, the Memory Track and files wh
 copy offer. The core has
 every standard image built in, so none is required. Loose `(Track N).bin` files are skipped like the
 tracks a `.cue` owns.
+
+**Favorites, recently played and save states.** Click the star on a tile (or right-click > **Add to
+Favorites**) and the game is a favorite; every game that boots, from the library, a drop, File > Open or the
+command line, goes to the front of **Recently played** (the last 20; right-click > **Remove from Recently
+Played**, or **Clear**). Where each list shows is up to you, separately, under **Favorites & recents...** in the
+library toolbar and in Settings > Storage (`library.favorites.show`, `library.recents.show`: 0 hidden, 1 its
+own tab, 2 a strip at the top of the Cartridges and Jaguar CD tabs, 3 both, the default). A tab lists both
+media (favorites by title, recents newest first); a strip is one scrolling row at the top of each media tab with
+that media's games only, under the same search and filter. The **Save states** tab lists every game that has
+states, newest first, with the screenshot saved with each state, its slot and when it was saved: click one to
+start the game from that moment (a state of the game already running just loads into it), **Delete** asks first
+and removes the state, its screenshot and its RetroAchievements sidecar. Right-clicking any game tile gives
+**Play**, **Load state** (the game's states with screenshots, newest first), **Add/Remove Favorite**,
+**Remove from Recently Played**, the cover items, **Show in Finder / File Explorer / file manager** (the
+containing folder) and **Copy path**. Lists remember a game by path, checksum and dat name together, so moving
+a folder or an update that identifies a game does not lose it; a game whose file is away (an unplugged drive)
+is skipped but not forgotten. A game booted from outside the library folders is not listed. Hardcore
+RetroAchievements mode refuses a state load before leaving the running game.
+**Resume where I left off.** Settings > Storage > Save states: **Off / Ask / Always** (`saves.resume`, default
+Ask). When a game is closed (File > Close game), left for another game, or the app quits, its state is written
+as an **Auto-save**: its own slot beside the numbered ones (`<file name>.auto.state` + `.auto.png`, one per game,
+only the latest, written atomically). The next time that game boots, Always loads it right after boot, Ask shows
+"Resume from <time>?" with **Resume**, **Start fresh** and an "Always resume without asking" box, Off does
+nothing (and writes nothing). The Save states tab and the tile's Load state list show it as **Auto-save**, and
+**Delete** works on it. Rules: never in RetroAchievements hardcore (state loads are refused, so there is no
+prompt either) and never during netplay (a state would desynchronise the link); no auto-save for a game that
+ran under 5 emulated seconds (still the boot logo; a quick open-and-close must not replace a real auto-save with
+a title screen) or that the crash watchdog flagged (resuming would land in the hang); File > Reload game and
+headless runs neither keep nor resume one; picking a state in the library skips the offer. Another running copy
+(instance 2+) keeps its own auto-saves in `states/instance-N/` so two windows on one game cannot overwrite each
+other's; the numbered states stay shared.
+
+The lists live in `<data>/library/user.tsv`, not in `config.ini` (rules for several copies in
+[Running several instances](#running-several-instances)). Save states are named `<file name>.slotN.state` in
+`<data>/states/`, as always, so two games whose files share a name share states.
 
 **BIOS & boot.** The BIOS & system tab starts with the same panel as **Settings > BIOS** (also File > Boot BIOS >
 BIOS & boot settings...; the home screen's "BIOS & boot..." button reaches it with no folder added), so a BIOS
@@ -417,6 +452,8 @@ single instance.
 | game saves `saves/<game>.srm` (EEPROM, SRAM, Memory Track) and the GameDrive SD folder | `saves/` | `saves/instance-N/`; a game's first run there starts from a copy of instance 1's save (read only) |
 | save states `states/`, cheat selections `cheats/games/` | shared | shared: written only when you press save, each file atomically, last save wins. A state saved in one copy loads in another |
 | library cache, box art, database files | shared | shared, written atomically with a per-process temporary name |
+| favorites and recently played `library/user.tsv` | shared | shared and written by every copy, but as **operations**: each change re-reads the file, applies that one change (star, play, remove, clear) and writes it atomically, so a copy never replays a stale snapshot over another's list; two changes in the same few milliseconds can lose one. Other copies pick a change up within a second |
+| library display options (`library.*` in `config.ini`) | saved with the other settings | read, not saved (like every setting) |
 | netplay address (`system/vj_netlink.txt`) | written when you join, as before | not written (no copy writes it): the address and port go to the core as per-process option overrides, so two copies can join different hosts |
 
   Why: two copies both writing one `.srm` or one whole-file `config.ini` would silently lose
@@ -479,7 +516,8 @@ once, gets a login token from the server and keeps **only the token** (`ra.user`
 `ra.token` in `config.ini`; the password is wiped from memory as soon as the request
 is built). The token is a credential: treat `config.ini` like a password file. Sign out
 deletes it. The menu also has the hardcore toggle, "include unofficial achievements"
-and the **Achievement list** (progress, rich presence). Unlocks, game completion,
+and the **Achievement list**, a dashboard with your avatar, badges and the Jaguar games that
+have achievements (see below). Unlocks, game completion,
 leaderboard attempts / submissions, progress indicators and server problems show as
 toasts.
 
@@ -514,8 +552,38 @@ It is built on rcheevos' `rc_client` (v12.5.0, MIT, fetched at configure time li
   slow network never delays a frame. Without libcurl the app still builds and the
   Achievements menu says it is unavailable. Unlocks are retried by rc_client when the
   network drops.
+- **Pictures.** Your avatar (`rc_client_user_get_image_url`), the game icon
+  (`rc_client_game_get_image_url`) and every achievement's badge, earned or greyed
+  (`badge_url` / `badge_locked_url`), show in the Achievements window, the menu and the unlock
+  toasts. They download on a worker thread of their own (so they never queue behind rc_client's
+  requests) and are kept in `ra-cache/` in the data folder: a badge never changes, so a saved
+  file is reused forever; the avatar is saved per `avatar_last_updated`. The folder is kept under
+  48 MB (oldest pictures go first) and at most 256 are held as textures at once (least recently
+  drawn goes first; it comes back from disk when asked for again). They follow the Library's
+  **download art** switch: with it off, or with **Achievements > Download pictures** unticked,
+  only pictures already saved are shown and nothing is fetched. Headless runs and `--ra-mock`
+  sessions never fetch.
+- **Dashboard.** **Achievements > Achievement list...** is a window with three tabs.
+  *This game*: icon, title, hardcore / softcore rule in force, progress bar, and the achievement
+  list with badges, points, rarity, earned date and a Hardcore / Softcore marker, with a filter
+  (all, unlocked, locked, unlocked in hardcore, missable), a sort (default, title, points, rarest,
+  recently unlocked, type) and a search box. *Jaguar games*: every Atari Jaguar (console 17) and
+  Jaguar CD (console 77) game that has achievements (`rc_client_begin_fetch_game_list`), with icon,
+  achievement count, points and your progress in each (`rc_client_begin_fetch_all_user_progress`,
+  signed in only); filter by all / in my library / in progress / completed / not started. Games in
+  your library get a **Play** button: cartridges are matched by the MD5 RetroAchievements lists
+  for the game (hashed on a background thread), everything else by title against the library's
+  names. The list is saved in `ra-cache/games-<console>.tsv` and refreshed when it is a day old
+  (and only while downloads are on); **Refresh** fetches it again on request. *Profile*: avatar,
+  name, hardcore and softcore points, and what you unlocked in this session. rc_client has no
+  call for the account's older unlock history (that needs the web API and its key), so it
+  is not shown. Neither list needs a web API key: both use the login token like the rest.
 - **Tests** never touch the network or an account: `--ra-mock DIR` answers rc_client's
-  requests from `app/tests/ra/<api>.json`. See `cmake/VJAchTests.cmake`.
+  requests from `app/tests/ra/<api>.json` (`<api>_<console>.json` first for `systemgames` and
+  `allprogress`, one list per console). `vj_ra_dash_test` covers the picture cache (paths, disk,
+  offline mode, LRU), the games-list parsing and library matching, the cache file, and the
+  filters and sorts; `ra_dashboard_mock` fetches the lists through the mock server. See
+  `cmake/VJAchTests.cmake`.
 
 ## Netplay
 
@@ -625,7 +693,10 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   (copier-headered and plain carts, a `.cue` set), thumbnail naming against known libretro
   examples, cache paths, a scan of a temp folder with the hash cache, and on POSIX the whole
   art pipeline (scan, identify, download, cache, decode, texture; database update; then
-  offline) against a loopback HTTP server. No internet, no GL.
+  offline) against a loopback HTTP server; favorites / recents (persistence, ordering, matching by
+  path, checksum and name, the shared file under two simulated copies), the favorites / recents display
+  options and tab layout, and save-state naming, listing and deletion over synthetic state files. No
+  internet, no GL.
   `vj_library_tests --scan DIR --db DIR` prints identification counts for a folder (dev tool).
 - `remap_unit`: the remapping logic with no core (bindings, precedence, config
   round trip, keypad translation, overlay, bind capture, content identity).
@@ -638,6 +709,10 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   quadrature state, analog / driving / 6D values decoded off `$F14000` as a game does,
   the paddle ADC at `$F17C00`, the light gun's aim point and the Team Tap socket slots.
   Every group has a negative control (no host input reads the rest value).
+- `theme_unit` (`vj_theme_test`): the theme choice (System / Dark / Light, the OS's answer, the theme-changed
+  event) and WCAG contrast of every palette and style colour in both themes, and of the in-game overlays on
+  white and black frames; the custom-theme files (round trip, import validation, the themes folder, read-only
+  secondary copies) and the editor's contrast warnings.
 - `controls_overlay_*`: the overlay through the real app: shown for a keyboard player,
   hidden after "don't show again", text follows a saved rebinding.
 
@@ -646,6 +721,8 @@ To regenerate the expected hash after an intentional emulation change:
 `VJ_SMOKE_YARC_HASH` in `app/cmake/VJSmokeTests.cmake`.
 
 ## Window sizing and UI screenshots
+
+**Settings > Video > Appearance** picks the colour theme: System (the default) follows the OS and switches live when it does, or Dark / Light / a custom theme made in **Customize...** and kept as `<data>/themes/<name>.ini` (`--theme system|dark|light|custom:NAME` sets it for one run); the palettes are in `src/theme.cpp`.
 
 The UI scale follows the display's content scale (200% on a 4K Windows/Linux display; 1.0 on a Retina
 Mac, where ImGui renders at the pixel density by itself). `ui.scale` in `config.ini` (default 1.0) multiplies it.
@@ -662,7 +739,7 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 ```
 
 `--show-window` takes `settings[-video|-input|-audio|-storage][:FILTER]`, `states`, `about`,
-`cheats`, `library`, `login`, `achievements` and `keypad`.
+`cheats`, `library`, `login`, `achievements`, `keypad` and `theme-editor`.
 
 ## Layout
 
@@ -688,6 +765,7 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
 | `src/platform/` | native-OS integration: menu model + dispatch (`commands.*`, no OS), per-OS files (`platform_macos.mm`, `platform_windows.cpp`, `platform_other.cpp`), tray (`tray.cpp`); `src/desktop.cpp` is the app side |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
+| `src/library_lists.*` | favorites, recently played, display options, tab layout, save-state listing (pure) |
 | `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |
 | `src/library_ui.cpp` | the Game library: the home screen and the window |
 | `src/ui_util.h` | layout helpers every window uses: sizes in em clamped to the main window, width fractions, wrapped rows |
@@ -697,7 +775,10 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `cmake/VJCheatData.cmake`, `cmake/VJCheatManifest.cmake`, `cmake/VJCheatTests.cmake` | pinned optional database download, cheat tests |
 | `src/paths.*`, `src/config.*` | data folders (portable mode) and the settings file |
 | `src/achievements.*` | RetroAchievements: rc_client glue, memory, hardcore policy, mock server for tests |
-| `src/achievements_ui.cpp` | ImGui: sign-in, achievement list, toasts, trackers |
+| `src/achievements_ui.cpp` | ImGui: sign-in, the dashboard window (this game / Jaguar games / profile), toasts, trackers |
+| `src/achievements_games.cpp` | dashboard data: picture URLs, achievement rows, the games list and progress, library matching |
+| `src/ra_dash.*` | dashboard logic with no ImGui or network: games parsing and matching, cache file, filters and sorts |
+| `src/ra_images.*` | the avatar / icon / badge cache: disk files, bounded textures, offline mode |
 | `src/ach_http.*` | libcurl / WinHTTP worker for rc_client's requests |
 | `cmake/VJRcheevos.cmake`, `cmake/VJAchTests.cmake` | rcheevos fetch + static lib; headless achievement tests |
 
