@@ -30,6 +30,8 @@ ctest --test-dir app/build -C Release --output-on-failure   # headless smoke tes
 The binary is `app/build/virtualjaguar` (`app/build/Release/virtualjaguar.exe`
 with the Visual Studio generator).
 
+`-DVJ_APP_FREETYPE=ON` fetches FreeType 2.14.1 (pinned, static, no system libraries) for font hinting options.
+
 Use an already installed SDL3 instead of fetching one: `-DVJ_APP_SYSTEM_SDL3=ON`
 (Homebrew `sdl3`, distro `libsdl3-dev`). For offline builds point
 `-DFETCHCONTENT_SOURCE_DIR_SDL3=<dir>` and `-DFETCHCONTENT_SOURCE_DIR_IMGUI=<dir>`
@@ -446,7 +448,7 @@ single instance.
 
 | File | Instance 1 | Instance N (2+) |
 | --- | --- | --- |
-| `config.ini` (settings, bindings, core options, recents, RetroAchievements login) | read and written as before | read at start (so it has your settings); **never written** |
+| `config.ini` (settings, bindings, core options, recents, RetroAchievements user name) | read and written as before | read at start (so it has your settings); **never written** |
 | `config-N.ini` | not used | its window size and its controller choice only |
 | `imgui.ini` | `imgui.ini` | `imgui-N.ini` |
 | game saves `saves/<game>.srm` (EEPROM, SRAM, Memory Track) and the GameDrive SD folder | `saves/` | `saves/instance-N/`; a game's first run there starts from a copy of instance 1's save (read only) |
@@ -512,10 +514,16 @@ memory as RetroArch writes it. `cheatN_enable` is ignored: nothing starts on.
 ## RetroAchievements
 
 **Achievements > Sign in...** takes your RetroAchievements user name and password
-once, gets a login token from the server and keeps **only the token** (`ra.user` and
-`ra.token` in `config.ini`; the password is wiped from memory as soon as the request
-is built). The token is a credential: treat `config.ini` like a password file. Sign out
-deletes it. The menu also has the hardcore toggle, "include unofficial achievements"
+once, gets a login token from the server and keeps **only the token** (the password is
+wiped from memory as soon as the request is built). The user name is `ra.user` in `config.ini`;
+the login token is kept in the system keychain (macOS Keychain, Windows Credential Manager, or
+the Linux Secret Service through libsecret, loaded at run time) and not in `config.ini`. A token
+that an earlier version left in `config.ini` is moved into the keychain at start-up. Where no
+keyring is available (no libsecret, no running keyring service, a Flatpak without the secret
+portal) the token stays in `config.ini` as `ra.token`, Settings says "Token stored in the settings
+file because no system keyring is available", and that file is then a credential: treat it like a
+password file. Sign out deletes the token from the keychain (and from `config.ini`). A second copy
+of the app (see below) reads the keychain and writes it only when you sign in or out there. The menu also has the hardcore toggle, "include unofficial achievements"
 and the **Achievement list**, a dashboard with your avatar, badges and the Jaguar games that
 have achievements (see below). Unlocks, game completion,
 leaderboard attempts / submissions, progress indicators and server problems show as
@@ -605,6 +613,85 @@ the app, and the same device (JagLink / CatBox cable or Voice Modem).
 - Command line twin: `--netplay host|join|join-discovered|browse|loopback`, `--netplay-addr`,
   `--netplay-port`, `--netplay-device jaglink|voicemodem`. **Advanced > Echo test** runs the link
   against itself with no partner.
+
+## Platform integration
+
+What the app does so it behaves like a program of the OS it runs on (#833). The code is behind one
+interface, `src/platform/platform.h`; every OS-specific file is small and a platform with nothing to
+add compiles a no-op, so adding a platform feature never touches the others.
+
+| | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Menu bar | native, with Cmd shortcuts (the in-window bar is hidden) | in-window | in-window |
+| Dock / taskbar menu | Dock menu: recent games, library, open, pause, reset | Jump List: recent games | desktop Actions: Open Game Library, Boot Without Cartridge |
+| Recent games | `NSDocumentController` (Dock, Open Recent) | Explorer Recent and the Jump List (`SHAddToRecentDocs`) | not written (no GTK; see below) |
+| File types (double-click, Open With, drop on the icon) | `CFBundleDocumentTypes` + an exported type for `.j64` / `.jag` | installer task: per-user `OpenWithProgids` (and the default for `.j64` / `.jag`) | shared-mime-info XML + `MimeType=` |
+| Window | fullscreen follows the green button / Ctrl+Cmd+F; App Nap held while a game runs | title bar follows the app theme (dark or light), per-monitor-v2 DPI, long paths, one taskbar button with the installer shortcut (AppUserModelID) | the application id is the Wayland `app_id` / X11 `WM_CLASS`, so the icon and "pin to dock" match the `.desktop` file |
+| Tray / menu-bar icon | optional (Settings > Storage > Desktop) | optional | optional where the desktop has a StatusNotifier host (KDE and others; stock GNOME needs an extension) |
+| Screensaver / display sleep | allowed in the library and while paused, blocked while a game runs | same | same (through the portal inside Flatpak) |
+| Show in Finder / Explorer | File > Show in Finder | - | opens the folder |
+
+**One model, many surfaces.** `src/platform/commands.cpp` builds the menus (File, Emulation, View,
+Achievements, Netplay, Window, Help, the tray and the Dock menu) from a snapshot of the app state, and
+every click is posted as an SDL user event and run by the main loop (`App::runNativeCommand`), never
+inside Cocoa's menu-tracking loop or SDL's tray callback. The macOS menu bar is built after `SDL_Init`
+over SDL's default one and leaves SDL's app delegate alone (it turns Finder's "open" into the drop event
+the app already handles). Only Cmd-modified shortcuts are bound there; F5 / F7 / F8, Tab and the other hotkeys
+stay with the app. While a native menu is open the macOS event loop is blocked by Cocoa, so emulation and
+audio pause for as long as the menu is held open.
+
+**File types.** The associated extensions are `.j64 .jag .rom .abs .cof` (games) and `.cue .chd .cdi`
+(discs). `.bin` and `.prg` open through File > Open and drag and drop but are too generic to claim. The list lives
+in `src/platform/commands.h` (`VJ_ASSOC_LIST`); the CTest `platform_assoc_sync` fails when the Info.plist,
+installer, `.desktop`, mime XML or the application id drift from it. On Windows and Linux a double-clicked
+game starts a new process, which is a second instance when the app is already running (see "Running several
+instances": its own save folder, settings not kept); on macOS the running copy opens it.
+
+`virtualjaguar --dump-native-menu` (macOS) prints the real menu bar and Dock menu and checks every item;
+exit 77 means no window-server session (ssh) or not macOS.
+
+## Discord
+
+**Settings > Discord** shows what you are playing on your Discord profile (Rich Presence), and the
+activity doubles as app discovery: friends see "Playing Virtual Jaguar", the game's box art, and a
+**Get Virtual Jaguar** button that opens the site's download page (`https://jaguar.provenance-emu.com/app.html`).
+Discord has to be running on the same computer; nothing is sent anywhere else, and nothing is installed (the app
+speaks Discord's local RPC protocol itself, no Discord SDK).
+
+- **While playing:** the title (dat name without region and revision tags) as the headline; the line below says
+  `Atari Jaguar` or `Jaguar CD` plus `| Paused`, `| Netplay: hosting / joined` (never an address),
+  `| Hardcore` and `| 12/30 achievements` when a RetroAchievements game is tracked; the elapsed time counts from
+  boot. The large picture is the game's box art, a public https address (libretro-thumbnails, or the project
+  site's Jaguar CD mirror) that Discord's media proxy fetches. It is used only when the library already
+  downloaded that picture, so Discord never shows a broken image; otherwise the application's `jaguar` (cartridge)
+  or `jaguarcd` (disc) asset is shown. The small picture is the app icon (`app`) with "Virtual Jaguar <version>".
+- **In the library or an empty window:** "Browsing the library" with the `library` picture.
+- **Buttons:** **Get Virtual Jaguar**, and **View on RetroAchievements** (the game's page) while a RetroAchievements
+  game is tracked. Discord shows buttons to other people only, so your own profile never shows them.
+- **Settings:** *Show what I'm playing on Discord* (default on), *Show game artwork*, *Show buttons*, and the
+  connection status ("Connected to Discord", "Discord is not running"). Config keys `discord.enabled`,
+  `discord.art`, `discord.buttons`.
+- **Application ID:** the default is the project's "Virtual Jaguar" Discord application, set by the CMake cache
+  string `VJ_DISCORD_APP_ID` (`-DVJ_DISCORD_APP_ID=` empty turns the feature off; a fork passes its own). The config
+  key `discord.app_id` (Settings > Discord > Application ID) overrides it.
+- **Several windows:** only the first copy (instance 1) publishes, so two windows never fight over one status
+  (see [Running several instances](#running-several-instances)).
+- **Behaviour:** the connection and every write live on a background thread; if Discord is not running the app
+  looks again every 15 seconds and never waits on it, quitting takes the status down within a quarter of a second,
+  and updates are sent only when something changed and at most 4 per 20 seconds (Discord allows 5).
+
+### Maintainer setup (Discord developer portal)
+
+1. Create an application named exactly **Virtual Jaguar** (Rich Presence cannot set the name; this is what people
+   see after "Playing"). Its Application ID is the number in `VJ_DISCORD_APP_ID`.
+2. Upload these art assets under *Rich Presence > Art Assets*, with exactly these lowercase keys (at least 512x512):
+   `jaguar` (cartridge fallback large image), `jaguarcd` (Jaguar CD fallback), `library` (browsing), `app` (the app icon).
+3. CI: the repository variable `DISCORD_APP_ID` (Settings > Secrets and variables > Actions > Variables) overrides the
+   CMake default in `app-package.yml`; leave it unset to use the default. An application ID is public, not a secret.
+4. Test from a second Discord account: buttons are hidden on your own profile.
+
+Tests: `ctest -R discord` (frame encode/decode, JSON escaping, socket paths per OS, the rate limiter, the activity
+built from app state, and a loopback test against a fake Discord server on a Unix socket; skipped on Windows).
 
 ## Typed settings
 
@@ -719,6 +806,22 @@ To regenerate the expected hash after an intentional emulation change:
 The UI scale follows the display's content scale (200% on a 4K Windows/Linux display; 1.0 on a Retina
 Mac, where ImGui renders at the pixel density by itself). `ui.scale` in `config.ini` (default 1.0) multiplies it.
 
+### Fonts
+
+Settings > Video > Font picks the typeface and its size (11-24 pt, default 13): **Retro** (Dear ImGui's embedded
+pixel font, the look the app always had, still the default), **System UI** (San Francisco on macOS, Segoe UI on
+Windows, the desktop's sans-serif on Linux through `fc-match`, with DejaVu / Noto / Liberation as fallbacks),
+**Monospace** (SF Mono / Menlo, Consolas, DejaVu Sans Mono) or **Custom file...** (a `.ttf` / `.otf` / `.ttc`; it
+is checked, then copied to `<data>/fonts/`). Changes apply at once and persist as `ui.font.*` in `config.ini`.
+Text is rasterised at the display's pixel density (Dear ImGui 1.92's dynamic atlas), so it is crisp on Retina and
+at 125-200% Windows scaling; it is grayscale anti-aliased with sub-pixel glyph positioning. LCD (RGB) sub-pixel
+anti-aliasing is not possible: the glyph atlas is a single coverage channel (and macOS dropped LCD smoothing in
+Mojave). A missing or unreadable font falls back to Retro with a note in the Font section. Debug windows use
+`fonts::mono()` / `fonts::pushMono()` (`src/fonts_imgui.h`), a monospace face whatever the UI font is. Glyphs the
+chosen font lacks (arrows, star, check mark) come from a symbols font or the built-in vector face.
+`-DVJ_APP_FREETYPE=ON` rasterises with FreeType (FreeType License, fetched and pinned, built static) and adds the
+**Hinting** (none / light / full) and **Smooth edges** choices; it is off by default and experimental (not yet exercised by CI).
+
 Every window opens at a size in font heights (so it scales with DPI), at most 80% of the main
 window, is constrained to 95% of it each frame (a size saved in `imgui.ini` by a bigger window never
 overflows a smaller one) and is pulled back on screen. Long text wraps, tables stretch, controls take
@@ -729,6 +832,8 @@ a share of the width that is left (`src/ui_util.h`). To check a layout:
 virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-frame 40 \
   --show-window settings-input game.j64
 ```
+
+`--low-dpi` opens a 1x window even on a Retina display (screenshots of a standard-density screen).
 
 `--show-window` takes `settings[-video|-input|-audio|-storage][:FILTER]`, `states`, `about`,
 `cheats`, `library`, `login`, `achievements`, `keypad` and `theme-editor`.
@@ -755,6 +860,9 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `src/devices_ui.*` | Settings > Input > Devices & players, claiming devices with the core, per-frame mouse capture |
 | `src/cheatsheet.*`, `src/cheatsheet_ui.cpp` | the controls cheat sheet: text, auto-show rule, window |
 | `src/ui.*` | ImGui: menu bar, settings, options menu, state manager, OSD |
+| `src/fonts.*` | UI fonts with no ImGui: `ui.font.*` settings, per-OS system font lookup, custom file validation + import, glyph ranges (unit tested) |
+| `src/fonts_imgui.*`, `src/fonts_ui.cpp` | the live font atlas (typeface, size, FreeType flags, `mono()`), and Settings > Video > Font |
+| `src/platform/` | native-OS integration: menu model + dispatch (`commands.*`, no OS), per-OS files (`platform_macos.mm`, `platform_windows.cpp`, `platform_other.cpp`), tray (`tray.cpp`); `src/desktop.cpp` is the app side |
 | `src/library.*` | game library logic: dat parser, CRC identification, folder scan + hash cache, libretro-thumbnails names |
 | `src/library_lists.*` | favorites, recently played, display options, tab layout, save-state listing (pure) |
 | `src/library_service.*` | scan / decode / download worker threads, art cache and texture handover |

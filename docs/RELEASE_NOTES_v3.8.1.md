@@ -60,6 +60,10 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   states tab and the tile menu), and the next boot offers to resume from it or does so at once.
   Not in RetroAchievements hardcore or netplay, and not for a game that ran under 5 seconds or
   crashed (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+- **Choose the interface font.** Settings > Video > Font: Retro (the pixel font, still the default), System UI
+  (San Francisco, Segoe UI, the desktop's sans-serif), a system monospace face, or a font file of your own,
+  at 11-24 pt, applied live. Text is drawn at the display's full pixel density, so it is crisp on Retina and
+  125-200% Windows scaling (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Covers for Jaguar CD.** libretro-thumbnails has no Jaguar CD art, so discs now get a
   readable title card, and you can set your own cover: right-click a tile > Set cover image
   (PNG), drop a PNG on a tile, or put `<Title>.png` files in the app's `covers` folder.
@@ -82,6 +86,13 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   (also in the unlock toasts), filters and sorts the list, and has a Jaguar games tab listing every
   Jaguar and Jaguar CD game with achievements, your progress in each and a Play button for the
   ones in your library.
+- **The RetroAchievements login token is kept in the system keychain.** It used to sit in plain
+  text in `config.ini`. It now lives in the macOS Keychain, the Windows Credential Manager or the
+  Linux Secret Service (libsecret, loaded at run time, so nothing new is required); a token already
+  in `config.ini` is moved there the first time you start this version, and Sign out erases it. Where
+  no keyring is available (no libsecret, no running keyring service) the token stays in `config.ini`
+  as before and Settings says so. Your password was never stored
+  (https://github.com/libretro/virtualjaguar-libretro/issues/836).
 - **Controls.** Per-device and per-game remapping, all 12 keypad keys on a gamepad,
   keyboard play with the Pro Controller 6-button layout, an on-screen keypad (F2) and a
   controls overlay (F3) that appears at boot when no player-1 controller is connected.
@@ -113,6 +124,14 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   Reset all settings... (with a confirmation) puts everything back to defaults while keeping your library
   folders, recents, covers, saves, RetroAchievements login, key and button bindings and per-game
   overrides unless you tick them (https://github.com/libretro/virtualjaguar-libretro/issues/833).
+- **Feels native.** macOS gets a real menu bar (Cmd shortcuts, Open Recent, State Slot, Window and Help
+  menus) and a Dock menu with your recent games; Windows gets a dark title bar, recent games in the taskbar
+  Jump List and an optional installer checkbox that opens `.j64` / `.jag` / `.cue` / `.chd` and the rest with
+  Virtual Jaguar; Linux gets a proper MIME type and desktop actions, and the window now matches its
+  `.desktop` file. Double-clicking a game, Open With and dropping a game on the app icon work on all three.
+  The screensaver no longer stays blocked while you are in the library or paused, an optional tray / menu-bar
+  icon offers pause, reset and recent games, and "Show in Finder / Explorer" is in the menu
+  (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Core events for the app.** The core tells the app about link up/down, link statistics, wire
   speed and crash-watchdog hits over a private channel (`docs/app-frontend-extension.md`) instead
   of the app reading log text; a watchdog hit now also shows on screen. RetroArch and other
@@ -131,6 +150,12 @@ Screenshots: https://jaguar.provenance-emu.com/app.html
   registers plus `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD` and `RTXD` are never written. Everything is off under
   RetroAchievements hardcore. A small private core interface that RetroArch never receives; nothing changes for it
   (`docs/app-debug-tools.md`, https://github.com/libretro/virtualjaguar-libretro/issues/833, https://github.com/libretro/virtualjaguar-libretro/issues/652).
+- **Discord Rich Presence (Settings > Discord).** Shows the game you are playing, its box art, how long, and
+  RetroAchievements progress / hardcore / netplay mode on your Discord profile, with a **Get Virtual Jaguar**
+  button (and the game's RetroAchievements page) for other people to find the app. On by default, needs Discord
+  running locally; the app speaks Discord's local protocol itself (no SDK), connects in the background and never
+  waits on Discord, and only the first window publishes
+  (https://github.com/libretro/virtualjaguar-libretro/issues/833).
 - **Local signing.** `app/packaging/local-package.sh --sign` packages your own build and signs it
   with a Developer ID (or Apple Development) identity found in the macOS keychain, or a `.pfx` /
   store certificate on Windows, optionally set in a gitignored `.env`; `--notarize` also notarizes

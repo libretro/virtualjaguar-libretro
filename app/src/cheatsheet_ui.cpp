@@ -92,7 +92,7 @@ void drawControlsOverlay(App& app, ImVec2 areaPos, ImVec2 areaSize) {
             ImGui::TextWrapped("%s: %s", l.label.c_str(), l.keys.c_str());
         }
     };
-    ImGui::PushFont(nullptr, f * scale);
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * scale);   // the UNSCALED size: PushFont applies the DPI scale itself
     ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::overlay().title));
     ImGui::TextWrapped("%s", sheet.title.c_str());
     ImGui::PopStyleColor();

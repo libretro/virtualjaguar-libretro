@@ -17,12 +17,15 @@
 #include "config.h"
 #include "core_host.h"
 #include "debug/debug_session.h"
+#include "fonts.h"
+#include "discord_presence.h"
 #include "input.h"
 #include "instance.h"
 #include "library_service.h"
 #include "netplay.h"
 #include "paths.h"
 #include "perf.h"
+#include "platform/commands.h"
 #include "theme_custom.h"
 #include "video.h"
 
@@ -44,6 +47,8 @@ struct CliArgs {
     std::string showWindow;         // dev: open a window at start: settings[-video|-input|-audio|-storage][:FILTER], states, about, cheats, library, login, achievements, keypad
     std::string theme;              // --theme system|dark|light: the colour theme for this run (not saved); "" = the saved choice
     float uiScale = 0;              // dev: force the UI scale (0 = the display's); stands in for a HiDPI display
+    std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
+    bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
@@ -55,6 +60,7 @@ struct CliArgs {
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
     std::vector<std::string> cheatCodes;      // add these manual codes
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
+    bool dumpNativeMenu = false;    // dev: print and check the real macOS menu tree, then exit (77 = no native menu here)
     bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
     int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
     bool showHelp = false;
@@ -116,6 +122,13 @@ public:
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
     DebugSession debug;      // the core's debug interface: Tools menu, halt pump, breakpoints (debug/debug_session.h)
+    discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
+    struct DiscordState {        // what discordTick() remembers between calls
+        double lastTick = -1;
+        long long appStartUnix = 0, gameStartUnix = 0;
+        std::string artKey, artUrl;
+        double artAt = 0;
+    } discordState;
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -123,15 +136,19 @@ public:
     bool quit = false;
     bool fullscreen = false;
     bool menuPinned = true;
+    bool showInWindowMenu = false;    // macOS: F1 shows the in-window menu bar too (the native one is the main bar)
+    bool inWindowMenuBar() const;     // is an ImGui menu bar being drawn at all
     bool showSettings = false;
     bool showStates = false;
     bool showAbout = false;
     bool showCheats = false;
+    fonts::Settings fontSettings;     // Settings > Video > Font (ui.font.*); applied live through fonts_imgui.h
     bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
     bool showNetplay = false;
     CheatManager cheats;
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
+    bool lowDpi_ = false;             // dev: --low-dpi
     int stateSlot = 0;
     int resumeMode = 1;               // lib::ResumeMode: Off / Ask / Always, "Resume where I left off" (saves.resume)
     struct ResumeOffer {              // "Resume from <time>?" asked after a game booted (resumeMode == Ask)
@@ -155,6 +172,8 @@ public:
     bool themePreviewing_ = false;
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
+    bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Storage)
+    bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
@@ -204,6 +223,10 @@ public:
     void applySettingsFromConfig();   // re-read the member settings from cfg (defaults for erased keys); Settings > Reset
     void applyBios();                 // hands the BIOS choice (and a one-off boot's file) to the core host
 
+    // ---- native-OS integration (desktop.cpp; platform/platform.h) -------------------------
+    void runNativeCommand(platform::Cmd cmd, int arg);   // a native menu / tray click, from the event loop
+    bool applyTray();                                    // makes the tray match trayIcon; false = not available here
+
     double now() const;
     SDL_Window* window() const { return window_; }
     float fpsMeasured() const { return fpsShown_; }
@@ -221,6 +244,10 @@ private:
     int runHeadless(const CliArgs& a);
     void saveWindowScreenshot(const std::string& path);
 
+    void desktopInit();       // after the window exists: native menus, tray, dark title bar
+    void desktopFrame();      // every frame: refresh the native menus from the app state
+    void desktopShutdown();
+    platform::MenuState menuState();
     void handleEvent(const SDL_Event& e, bool headless);
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
@@ -245,6 +272,7 @@ private:
     bool imguiUp_ = false;
     float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)
     uint32_t openDialogEvent_ = 0;
+    uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
 
     // pacing
@@ -293,6 +321,8 @@ void cheatsOnClose(App& app);                       // no game any more
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);
+// Desktop integration settings (desktop.cpp): the tray / menu-bar icon and "keep the display awake".
+void drawDesktopSettings(App& app);
 // Game library home screen (library_ui.cpp): drawn into the area below the menu bar while no game is loaded.
 void drawLibraryHome(App& app, float x, float y, float w, float h);
 // Debug tools (debug/debug_ui.cpp): the Tools menu, the "halted" bar, and every tool window's draw hook.
@@ -309,6 +339,11 @@ bool netplayInit(App& app, const CliArgs& a);               // log tap + --netpl
 int netplayHeadlessCheck(App& app, const CliArgs& a);       // 0 ok, 1 fail, 77 skip (nobody discovered)
 void drawNetplayMenu(App& app);
 void drawNetplay(App& app);
+// Discord Rich Presence (discord_app.cpp).
+void discordTick(App& app);                          // UI loop, every iteration: cheap, rate-limits itself
+void discordNoteGameStarted(App& app);               // a game booted: the "elapsed" timer restarts
+void discordShutdown(App& app);                      // clears the status and stops the worker
+std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_id, else the compile-time default ("" = none)
 // Themes (theme_ui.cpp): Settings > Video > Appearance, the theme editor window and its file-dialog mailbox.
 void drawAppearanceSettings(App& app);
 void drawThemeEditor(App& app);

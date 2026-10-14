@@ -1,9 +1,11 @@
 #include "app.h"
 #include "devices_ui.h"
+#include "fonts_imgui.h"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
+#include "platform/platform.h"
 #include "theme_style.h"
 
 #include <algorithm>
@@ -106,9 +108,13 @@ void App::applySettingsFromConfig() {
     mute = cfg.getBool("audio.mute", false);
     audioTargetMs = cfg.getFloat("audio.target_ms", 64.0f);
     showFps = cfg.getBool("ui.show_fps", false);
+    fontSettings = fonts::load(cfg);
+    fonts::request(fontSettings);   // applied before the next frame (fonts_imgui.h); Settings > Reset lands here too
     if (!themeFromCli_) applyThemeChoice(cfg.get("ui.theme", "system"));
     homeLibrary = cfg.getBool("ui.home_library", true);
     autosaveSram = cfg.getBool("saves.autosave", true);
+    trayIcon = cfg.getBool("ui.tray", false);
+    keepAwake = cfg.getBool("ui.keep_awake", true);
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
 }
@@ -124,9 +130,12 @@ void App::saveConfig() {
     cfg.setBool("audio.mute", mute);
     cfg.setFloat("audio.target_ms", audioTargetMs);
     cfg.setBool("ui.show_fps", showFps);
+    fonts::store(cfg, fontSettings);
     if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
     cfg.setBool("saves.autosave", autosaveSram);
+    cfg.setBool("ui.tray", trayIcon);
+    cfg.setBool("ui.keep_awake", keepAwake);
     cfg.setInt("saves.resume", resumeMode);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
@@ -144,6 +153,7 @@ void App::addRecent(const std::string& path) {
     recents.insert(recents.begin(), path);
     if ((int)recents.size() > kMaxRecents) recents.resize(kMaxRecents);
     g_lastDir = pathDir(path);
+    if (!headless_) platform::noteRecent(path);   // the OS recent-documents list (Dock / Jump List / Explorer)
 }
 
 void App::toast(const std::string& text, double seconds, int level) {
@@ -168,7 +178,14 @@ bool App::initSdl(const CliArgs& a) {
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
         SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     }
-    SDL_SetAppMetadata("Virtual Jaguar", VJ_APP_VERSION, "com.provenance-emu.virtualjaguar");
+    // The identifier is the freedesktop / bundle / AppUserModel id: SDL turns it into the Wayland app_id and
+    // the X11 WM_CLASS, which is how a desktop matches the window to io.github.libretro.VirtualJaguar.desktop
+    // (icon, grouping, "pin to dock").  It must equal the id in app/packaging.
+    SDL_SetAppMetadata("Virtual Jaguar", VJ_APP_VERSION, "io.github.libretro.VirtualJaguar");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, "Virtual Jaguar contributors");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, "GPL-3.0-or-later");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, platform::kWebsiteUrl);
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "game");
     SDL_InitFlags flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS;
     if (!headless_) flags |= SDL_INIT_GAMEPAD;
     if (!SDL_Init(flags)) {
@@ -176,6 +193,7 @@ bool App::initSdl(const CliArgs& a) {
         return false;
     }
     sdlUp_ = true;
+    if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID) before any window exists
     perfFreq_ = SDL_GetPerformanceFrequency();
     openDialogEvent_ = SDL_EVENT_USER;
     return true;
@@ -195,8 +213,9 @@ bool App::initWindow() {
     w = std::max(320, w);
     h = std::max(240, h);
     const std::string firstTitle = "Virtual Jaguar" + instanceTitleSuffix(paths.instance);
-    window_ = SDL_CreateWindow(firstTitle.c_str(), w, h,
-                               SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    SDL_WindowFlags wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+    if (!lowDpi_) wflags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;   // --low-dpi: a 1x framebuffer, for screenshots of a standard display
+    window_ = SDL_CreateWindow(firstTitle.c_str(), w, h, wflags);
     if (!window_) {
         std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());
         return false;
@@ -244,6 +263,7 @@ bool App::initImGui() {
     }
     if (scale < 0.5f) scale = 1.0f;
     st.ScaleAllSizes(scale);
+    fonts::setCustomDir(paths.root + "fonts/");   // the typeface itself is set up before every frame (fonts::applyPending)
     st.FontScaleDpi = scale;   // (the font size follows the display scale, not the theme: themes never set it)
     uiScale_ = scale;
     theme::applyStyle(st, uiScale_);   // the theme's colours, rounding and spacing at this scale
@@ -262,6 +282,7 @@ bool App::initImGui() {
 
 void App::shutdown() {
     if (host.isLoaded()) autoSave();   // quitting: keep where the game was
+    discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
     ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
@@ -428,6 +449,8 @@ void App::newWindow() {
     toast("Opening another window...", 2.0);
 }
 
+bool App::inWindowMenuBar() const { return platform::nativeMenuActive() ? showInWindowMenu : true; }
+
 void App::toggleLibrary() {
     if (homeVisible()) library.focusSearch = true;   // already showing: put the cursor in the search box
     else library.show = !library.show;
@@ -495,6 +518,7 @@ bool App::openContent(const std::string& pathIn) {
     invalidateThumbs();
     debug.requestRefresh();
     ach.onContentLoaded();   // identify the game, look up its achievements
+    discordNoteGameStarted(*this);
     cheatsAfterLoad(*this);   // the core drops its cheat list on every unload
     runSeconds_ = 0;
     toast("Loaded " + host.contentName());
@@ -527,6 +551,7 @@ bool App::openNoContent() {
     lastTick_ = now();
     invalidateThumbs();
     ach.onContentClosed();   // no game, so nothing to look up
+    discordNoteGameStarted(*this);
     cheatsOnClose(*this);
     input.setContent("");
     applyPortDevices(*this);
@@ -834,7 +859,9 @@ void App::invalidateThumbs() {
 // events / hotkeys
 // ---------------------------------------------------------------------------------
 void App::handleHotkey(const SDL_KeyboardEvent& k) {
-    bool mod = (k.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) != 0;
+    // With a native menu bar the Cmd shortcuts belong to it (it consumes them before SDL sees a key), so the
+    // in-window Ctrl/Cmd hotkeys must not fire a second time.
+    bool mod = (k.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) != 0 && !platform::nativeMenuActive();
     bool alt = (k.mod & SDL_KMOD_ALT) != 0;
     bool shift = (k.mod & SDL_KMOD_SHIFT) != 0;
     switch (k.key) {
@@ -845,7 +872,10 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_ESCAPE:
         if (fullscreen) setFullscreen(false);
         break;
-    case SDLK_F1: menuPinned = !menuPinned; break;
+    case SDLK_F1:
+        if (platform::nativeMenuActive()) showInWindowMenu = !showInWindowMenu;   // reach anything the native menu lacks
+        else menuPinned = !menuPinned;
+        break;
     case SDLK_F5: saveState(stateSlot); break;
     case SDLK_F7: loadState(stateSlot); break;
     case SDLK_F6:
@@ -911,8 +941,18 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             handleDrop(path);
         }
         break;
-    case SDL_EVENT_USER:
-        if (e.user.code == 0x56414A47 && e.user.data1) {
+    case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+        fullscreen = true;    // also the green button / Ctrl+Cmd+F on macOS, which never go through setFullscreen()
+        break;
+    case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+        fullscreen = false;
+        break;
+    case SDL_EVENT_USER: {
+        platform::Cmd ncmd = platform::Cmd::None;
+        int narg = 0;
+        if (platform::decodeCommandEvent(e, ncmd, narg)) {   // a native menu / tray click (platform.h)
+            runNativeCommand(ncmd, narg);
+        } else if (e.user.code == 0x56414A47 && e.user.data1) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
             handleDrop(p);
@@ -926,6 +966,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             importBios(p, true);   // picked in the BIOS import dialog: taken by size when nothing recognises it
         }
         break;
+    }
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
         bool captured = imguiUp_ && ImGui::GetIO().WantCaptureKeyboard;
@@ -1099,7 +1140,14 @@ int App::run(const CliArgs& a) {
 
 int App::runInteractive(const CliArgs& a) {
     uiScaleOverride = a.uiScale;
+    lowDpi_ = a.lowDpi;
     if (!initWindow() || !initImGui()) return 1;
+    desktopInit();
+    if (!a.font.empty()) {
+        if (!fonts::applySpec(a.font, fontSettings)) std::fprintf(stderr, "--font: cannot read '%s'\n", a.font.c_str());
+        fonts::request(fontSettings);
+    }
+    unsigned fontFrames = 0;
     applyAudioSettings();
     audio.open(48043.6);
     fullscreen = false;
@@ -1110,6 +1158,7 @@ int App::runInteractive(const CliArgs& a) {
         else if (a.showWindow.rfind("settings-input", 0) == 0) devSelectTab = "Input";
         else if (a.showWindow.rfind("settings-audio", 0) == 0) devSelectTab = "Audio";
         else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
+        else if (a.showWindow.rfind("settings-discord", 0) == 0) devSelectTab = "Discord";
         else if (a.showWindow.rfind("settings-bios", 0) == 0) devSelectTab = "BIOS";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
@@ -1171,6 +1220,7 @@ int App::runInteractive(const CliArgs& a) {
         inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
         syncDebug();
+        discordTick(*this);
         perf.lap(Perf::Events);
         stepEmulation();
         perf.lap(Perf::Step);
@@ -1179,6 +1229,10 @@ int App::runInteractive(const CliArgs& a) {
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Upload);
 
+        if (!a.fontThen.empty() && ++fontFrames == 60) {
+            if (fonts::applySpec(a.fontThen, fontSettings)) fonts::request(fontSettings);
+        }
+        fonts::applyPending();   // a typeface change made last frame, before anything draws with the old one
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
@@ -1196,6 +1250,7 @@ int App::runInteractive(const CliArgs& a) {
         perf.lap(Perf::Present);
 
         updateTitle();
+        desktopFrame();
         double t = now();
         if (autosaveSram && host.isLoaded() && t - lastSramFlush_ > 5.0) {
             host.flushSaveRam();
@@ -1218,6 +1273,7 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    desktopShutdown();
     library.stop();   // joins its threads and frees its textures while the GL context is still alive
     if (a.verbose) {
         double secs = now() - fpsWindowStart_;

@@ -10,14 +10,18 @@
 #include <ctime>
 
 #include "app.h"
+#include "platform/platform.h"
 #include "ra_dash.h"
 #include "ra_images.h"
+#include "secret_store.h"
 #include "ui_util.h"
 #include "rc_client.h"
 
 namespace vj {
 
 namespace {
+
+const char* const kTokenInFileHint = "Token stored in the settings file because no system keyring is available";
 
 void drawLogin(App& app) {
     Achievements& a = app.ach;
@@ -31,7 +35,9 @@ void drawLogin(App& app) {
         return;
     }
     ImGui::TextWrapped("Your password is sent once to retroachievements.org to get a login token. Only the token "
-                       "is saved (in the app's config file); the password is wiped as soon as you press Sign in.");
+                       "is saved (in your system keychain where there is one); the password is wiped as soon as you "
+                       "press Sign in.");
+    if (a.tokenInSettingsFile() || !secret::active().available()) ui::hint("%s", kTokenInFileHint);
     ImGui::Separator();
     if (!AchHttp::available()) ui::coloredWrapped(ui::vec4(ui::pal().warning), "This build has no HTTP support.");
     const bool busy = a.loginBusy();
@@ -356,7 +362,7 @@ void drawProfile(App& app) {
         picture(a, url, ui::em(6.0f), ver);
         ImGui::SameLine();
         ImGui::BeginGroup();
-        ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.4f);
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.4f);
         ImGui::TextUnformatted(u->display_name ? u->display_name : "");
         ImGui::PopFont();
         ImGui::Text("Hardcore points: %u", u->score);
@@ -366,6 +372,7 @@ void drawProfile(App& app) {
         ImGui::EndGroup();
         ImGui::Spacing();
         if (ImGui::Button("Sign out")) a.logout();
+        if (a.tokenInSettingsFile()) ui::hint("%s", kTokenInFileHint);
     }
     ImGui::Separator();
     bool img = a.imagesWanted();
@@ -572,7 +579,7 @@ void drawAchievementsUi(App& app) {
     if (a.showLogin) drawLogin(app);
     if (a.showList) drawList(app);
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float menuH = ImGui::GetFrameHeight();
+    const float menuH = app.inWindowMenuBar() ? ImGui::GetFrameHeight() : 0.0f;   // no in-window menu bar under a native one
     const ImVec2 pos(vp->Pos.x, vp->Pos.y + menuH), size(vp->Size.x, vp->Size.y - menuH);
     drawToasts(app, pos, size);
     drawIndicators(app, pos, size);
