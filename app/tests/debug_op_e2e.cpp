@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -102,6 +103,14 @@ int main(int argc, char** argv) {
             SDL_Surface* s = SDL_LoadPNG(png.string().c_str());
             CHECK(s != nullptr && s->w == img->w && s->h == img->h);
             if (s) SDL_DestroySurface(s);
+            if (const char* keep = std::getenv("VJ_OP_E2E_PNG")) {   // look at it: VJ_OP_E2E_PNG=/path/prefix
+                for (size_t i = 0; i < objs.size(); i++) {
+                    OpImage im;
+                    std::string e2;
+                    if (objs[i].drawable() && opRender(dbg.iface(), objs[i], OpRenderOptions(), im, e2))
+                        opSavePng(im, std::string(keep) + std::to_string(i) + ".png", e2);
+                }
+            }
             // Paint one pixel back into main RAM and see it land.
             uint32_t cur = img->rawAt(0, 0);
             uint32_t want = (cur + 1) & opPixelMax(o);

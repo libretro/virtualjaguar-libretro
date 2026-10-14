@@ -783,8 +783,8 @@ static void testViewModelLifecycle() {
     CHECK(vm.haveSnapshot() && !vm.waiting());
     CHECK_EQ(vm.objects().size(), 4);
     CHECK_EQ(vm.halfline(), 41);
-    CHECK_EQ(vm.selected(), -1);
-    CHECK(vm.image() == nullptr);
+    CHECK_EQ(vm.selected(), 0);                      // the first drawable bitmap is selected for you
+    CHECK(vm.image() != nullptr && vm.image()->w == 16);
 
     // Selecting a bitmap renders it; selecting a branch does not.
     vm.select(0);
@@ -850,6 +850,13 @@ static void testViewModelFollowLinks() {
     for (size_t i = 0; i < vm.objects().size(); i++) CHECK_EQ(vm.objects()[i].fromRam, i >= 4);
     CHECK_EQ(vm.objects()[4].address, 0x1050);
     CHECK(!vm.objects()[4].warning.empty());
+    // A selected RAM-only object stays selected across the next snapshot (by address).
+    vm.select(5);
+    CHECK_EQ(vm.objects()[5].address, 0x1070);
+    s.requestRefresh();
+    vm.update(s);
+    vm.update(s);
+    CHECK_EQ(vm.selected(), 5);
     // Off: just the snapshot.
     vm.followLinks = false;
     vm.arm(s);

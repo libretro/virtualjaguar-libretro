@@ -74,6 +74,7 @@ private:
     unsigned halfline_ = 0, arms_ = 0;
     size_t snapshotCount_ = 0;
     int sel_ = -1;
+    bool autoSelected_ = false;
     unsigned selAddr_ = 0;
     uint64_t lastSerial_ = 0;
     bool seenSerial_ = false;

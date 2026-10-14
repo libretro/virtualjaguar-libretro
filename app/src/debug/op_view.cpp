@@ -15,6 +15,7 @@ void OpViewModel::clear() {
     objs_.clear();
     waiting_ = have_ = false;
     sel_ = -1;
+    autoSelected_ = false;
     seenSerial_ = false;
     haveImage_ = false;
     imgErr_.clear();
@@ -70,11 +71,22 @@ void OpViewModel::absorb(DebugSession& s) {
     have_ = true;
     // Keep the selection on the same object when it is still there.
     if (sel_ >= 0) {
+        const int total = (int)objs_.size();
         int found = -1;
-        if (sel_ < n && objs_[(size_t)sel_].address == selAddr_) found = sel_;
-        for (int k = 0; found < 0 && k < n; k++)
+        if (sel_ < total && objs_[(size_t)sel_].address == selAddr_) found = sel_;
+        for (int k = 0; found < 0 && k < total; k++)
             if (objs_[(size_t)k].address == selAddr_) found = k;
         sel_ = found;
+    }
+    // Opening the window shows something: the first bitmap the snapshot walked (or any drawable one).
+    if (sel_ < 0 && !autoSelected_) {
+        int pick = -1;
+        for (size_t k = 0; k < objs_.size() && pick < 0; k++)
+            if (objs_[k].drawable()) pick = (int)k;
+        if (pick >= 0) {
+            autoSelected_ = true;
+            select(pick);
+        }
     }
     imageDirty_ = true;
 }

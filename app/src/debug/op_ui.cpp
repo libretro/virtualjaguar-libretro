@@ -128,15 +128,15 @@ void drawList(const ObjectsContext& ctx, const std::vector<int>& rows) {
     OpViewModel& vm = g.vm;
     g.hoverRow = -1;
     ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY |
-                         ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit;
+                         ImGuiTableFlags_ScrollX | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit;
     if (!ImGui::BeginTable("##oplist", 7, tf)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
-    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, ui::em(3.0f));
-    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, ui::em(3.5f));
-    ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, ui::em(5.5f));
-    ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthFixed, ui::em(3.5f));
-    ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthFixed, ui::em(3.5f));
-    ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, ui::em(2.5f));
+    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, ui::em(3.2f));
+    ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, ui::em(5.0f));
+    ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthFixed, ui::em(3.2f));
+    ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthFixed, ui::em(3.2f));
+    ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, ui::em(7.5f));
     ImGui::TableSetupColumn("Depth", ImGuiTableColumnFlags_WidthFixed, ui::em(4.5f));
     ImGui::TableHeadersRow();
     ImGuiListClipper clip;
@@ -502,7 +502,7 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
         if (g.tex) freeTexture();
         return;
     }
-    ui::nextWindow(62.0f, 40.0f, 36.0f, 22.0f);
+    ui::nextWindow(68.0f, 46.0f, 36.0f, 24.0f);
     bool vis = ImGui::Begin("Object list", &g.open);
     ui::keepOnScreen();
     if (!vis) {
@@ -590,7 +590,7 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
 
     bool wide = ImGui::GetContentRegionAvail().x > ui::em(46.0f);
     if (wide) {
-        ImGui::BeginChild("##oplistpane", ImVec2(ImGui::GetContentRegionAvail().x * 0.42f, 0), ImGuiChildFlags_None);
+        ImGui::BeginChild("##oplistpane", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0), ImGuiChildFlags_None);
     } else {
         ImGui::BeginChild("##oplistpane", ImVec2(0, ui::em(11.0f)), ImGuiChildFlags_None);
     }
@@ -599,7 +599,12 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     if (wide) ImGui::SameLine();
     ImGui::BeginChild("##opdetail", ImVec2(0, 0), ImGuiChildFlags_Borders);
     if (const OpObject* o = vm.selectedObject()) {
+        // Fields on top (scrolls when long), the preview gets the rest.
+        float avail = ImGui::GetContentRegionAvail().y;
+        float fieldsH = o->isBitmap() ? std::min(avail * 0.38f, ui::em(15.0f)) : 0.0f;
+        ImGui::BeginChild("##opfieldspane", ImVec2(0, fieldsH), ImGuiChildFlags_None);
         drawFields(*o);
+        ImGui::EndChild();
         if (o->isBitmap()) {
             ImGui::Spacing();
             drawPreview(session, ctx, *o);
