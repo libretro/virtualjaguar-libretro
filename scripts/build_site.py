@@ -117,8 +117,8 @@ SHARE_IMAGE_ALT = (
     "64x-amplified difference map.")
 
 # Page order defines nav order.
-PAGES = ["index.html", "app.html", "compatibility.html", "enhancements.html",
-         "performance.html", "why-this-core.html"]
+PAGES = ["index.html", "download.html", "app.html", "compatibility.html",
+         "enhancements.html", "performance.html", "why-this-core.html"]
 # Legal pages: built, in the sitemap and checked like any other page, but kept
 # out of the primary nav -- they are linked from the footer instead.
 LEGAL_PAGES = ["privacy.html", "terms.html"]
@@ -504,6 +504,295 @@ def render_cart_table(rows):
     return "\n".join(out), len(rows), n_good
 
 
+# ------------------------------------------------------------- downloads
+
+# Release data is fetched by the Pages workflow (GitHub API, releases/latest
+# and releases/tags/nightly) and passed in with --releases.  It is never
+# committed: the asset list changes with every release and the file names of
+# the app packages carry the version.  Without the file the Download page
+# still builds, with links to the release pages instead of to the files.
+
+APP_ASSET_RE = re.compile(
+    r"^(?:VirtualJaguar-[^/]+\.(?:zip|exe|AppImage)|virtualjaguar_[^/]+\.deb)$")
+CORE_ASSET_RE = re.compile(
+    r"^virtualjaguar_libretro-(.+)\.(so|dll|dylib|bc|a)$")
+TOOL_ASSET_RE = re.compile(
+    r"^(?:jagcd-tools-.+\.zip|cue2cdi-.+|SHA256SUMS\.txt|virtualjaguar_libretro\.info)$")
+
+# (platform id prefix regex, group label) in display order.
+CORE_GROUPS = [
+    (r"windows-", "Windows"),
+    (r"macos-", "macOS"),
+    (r"linux-rpi", "Raspberry Pi"),
+    (r"linux-", "Linux"),
+    (r"(ios|tvos)-", "iOS and tvOS"),
+    (r"android-", "Android"),
+    (r"emscripten-", "Web (Emscripten)"),
+    (r"(switch|vita)$", "Switch and Vita"),
+]
+
+# How an app package reads on the page, keyed by the part of the file name
+# after the version.  Order is display order.
+APP_KINDS = [
+    (r"-macos-universal\.zip$", "macOS", "Virtual Jaguar.app (universal zip)"),
+    (r"-windows-x64-setup\.exe$", "Windows x64", "Installer"),
+    (r"-windows-x64\.zip$", "Windows x64", "Portable zip"),
+    (r"-linux-x86_64\.AppImage$", "Linux x86_64", "AppImage"),
+    (r"_amd64\.deb$", "Linux x86_64", ".deb"),
+    (r"-linux-aarch64\.AppImage$", "Linux aarch64", "AppImage"),
+    (r"_arm64\.deb$", "Linux aarch64", ".deb"),
+]
+
+
+def load_releases(path):
+    """{"latest": <release>, "nightly": <release>} in the GitHub API shape.
+    Either key may be absent; a present one must look like a release."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        die("--releases %s: %s" % (path, e))
+    if not isinstance(data, dict):
+        die("--releases %s: expected an object with latest/nightly" % path)
+    for key in ("latest", "nightly"):
+        rel = data.get(key)
+        if rel is None:
+            continue
+        if not (isinstance(rel, dict) and rel.get("tag_name")
+                and isinstance(rel.get("assets"), list)):
+            die("--releases %s: %r is not a GitHub release object" % (path, key))
+        for a in rel["assets"]:
+            if not (a.get("name") and a.get("browser_download_url")):
+                die("--releases %s: %r has an asset without name/url"
+                    % (path, key))
+    return data
+
+
+GITHUB_API = "https://api.github.com/repos/" + REPO_URL[len("https://github.com/"):]
+
+
+def fetch_releases():
+    """The same {"latest", "nightly"} shape as --releases, straight from the
+    GitHub API.  Unauthenticated is fine (two requests); GH_TOKEN or
+    GITHUB_TOKEN is sent when set, which CI should do.  Any failure is
+    fatal: a publisher that cannot fetch must keep the previous deployment
+    rather than publish a Download page without the links."""
+    import urllib.request
+    import urllib.error
+    token = _os.environ.get("GH_TOKEN") or _os.environ.get("GITHUB_TOKEN")
+    out = {}
+    for key, path in (("latest", "releases/latest"),
+                      ("nightly", "releases/tags/nightly")):
+        req = urllib.request.Request(
+            "%s/%s" % (GITHUB_API, path),
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": "virtualjaguar-build_site",
+                     **({"Authorization": "Bearer " + token} if token else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                out[key] = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, ValueError, OSError) as e:
+            die("--releases-from-github: GET %s failed: %s" % (path, e))
+    for key, rel in out.items():
+        if not (rel.get("tag_name") and isinstance(rel.get("assets"), list)):
+            die("--releases-from-github: %s is not a release object" % key)
+    return out
+
+
+def _mb(n):
+    try:
+        return "%.1f MB" % (int(n) / 1048576.0)
+    except (TypeError, ValueError):
+        return ""
+
+
+def _link(asset, text=None):
+    return '<a href="%s">%s</a>' % (
+        html.escape(asset["browser_download_url"], quote=True),
+        html.escape(text or asset["name"]))
+
+
+def _app_rows(assets):
+    """[(system, label, asset)] for the app packages in a release, in
+    APP_KINDS order; packages with an unknown name are listed last as-is."""
+    rows, seen = [], set()
+    for pat, system, label in APP_KINDS:
+        for a in assets:
+            if APP_ASSET_RE.match(a["name"]) and re.search(pat, a["name"]):
+                rows.append((system, label, a))
+                seen.add(a["name"])
+    for a in assets:
+        if APP_ASSET_RE.match(a["name"]) and a["name"] not in seen:
+            rows.append(("Other", a["name"], a))
+    return rows
+
+
+def _app_table(assets):
+    rows = _app_rows(assets)
+    if not rows:
+        return ""
+    out = ['<div class="table-wrap"><table>',
+           "<tr><th>System</th><th>Download</th><th>Size</th></tr>"]
+    for system, label, a in rows:
+        out.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>"
+                   % (html.escape(system), _link(a, label), _mb(a.get("size"))))
+    out.append("</table></div>")
+    return "\n".join(out)
+
+
+def _core_table(assets):
+    groups, seen = [], set()
+    for pat, label in CORE_GROUPS:
+        cells = []
+        for a in assets:
+            m = CORE_ASSET_RE.match(a["name"])
+            # First group wins: "Raspberry Pi" precedes "Linux" so the rpi
+            # builds are not listed twice.
+            if m and a["name"] not in seen and re.match(pat, m.group(1)):
+                seen.add(a["name"])
+                cells.append(_link(a, "<code>%s</code>" % html.escape(m.group(1))))
+        if cells:
+            groups.append((label, cells))
+    if not groups:
+        return ""
+    out = ['<div class="table-wrap"><table>',
+           "<tr><th>Platform</th><th>Core builds</th></tr>"]
+    for label, cells in groups:
+        out.append("<tr><td>%s</td><td>%s</td></tr>"
+                   % (html.escape(label), " &middot; ".join(cells)))
+    out.append("</table></div>")
+    # _link escapes its text; the <code> wrapper above must survive.
+    return "\n".join(out).replace("&lt;code&gt;", "<code>").replace(
+        "&lt;/code&gt;", "</code>")
+
+
+def _tool_list(assets):
+    items = [_link(a) for a in assets if TOOL_ASSET_RE.match(a["name"])]
+    return ("<p>%s.</p>" % " &middot; ".join(items)) if items else ""
+
+
+def render_downloads(releases):
+    """The body of the Download page between the lede and the installer:
+    one section each for the app, the core, the tools and the nightly."""
+    latest = (releases or {}).get("latest")
+    nightly = (releases or {}).get("nightly")
+    if not latest:
+        return """<section class="win" id="app">
+  <h2>Releases</h2>
+  <div class="win-body">
+    <p>
+      This copy of the site was built without release data, so here are the
+      release pages: the <a href="%(repo)s/releases/latest">latest release</a>
+      (the desktop app packages and the RetroArch core for every platform)
+      and the <a href="%(repo)s/releases/tag/nightly">nightly build</a>.
+    </p>
+  </div>
+</section>""" % {"repo": REPO_URL}
+
+    tag = latest["tag_name"]
+    tag_url = latest.get("html_url") or "%s/releases/tag/%s" % (REPO_URL, tag)
+    date = (latest.get("published_at") or "")[:10]
+    assets = latest["assets"]
+    n_assets = len(assets)
+    out = []
+
+    app_table = _app_table(assets)
+    if app_table:
+        out.append("""<section class="win" id="app">
+  <h2>The desktop app, %(tag)s</h2>
+  <div class="win-body">
+    <p>
+      From the <a href="%(url)s">%(tag)s release</a>%(date)s. macOS 11 or
+      later, Windows 10 or later, Linux built on Ubuntu 22.04. What the app
+      does is on the <a href="app.html">App</a> page.
+    </p>
+%(table)s
+  </div>
+</section>""" % {"tag": html.escape(tag), "url": html.escape(tag_url),
+                 "date": (" (%s)" % date) if date else "", "table": app_table})
+    else:
+        night_table = _app_table(nightly["assets"]) if nightly else ""
+        out.append("""<section class="win" id="app">
+  <h2>The desktop app</h2>
+  <div class="win-body">
+    <p>
+      The <a href="%(url)s">%(tag)s release</a> shipped before the app, so
+      until the next tagged release the app comes from the
+      <a href="%(repo)s/releases/tag/nightly">nightly build</a>, rebuilt from
+      <code>develop</code> on every push that compiles. These links always
+      point at the newest one.
+    </p>
+%(table)s
+  </div>
+</section>""" % {"tag": html.escape(tag), "url": html.escape(tag_url),
+                 "repo": REPO_URL,
+                 "table": night_table or
+                 '<p>No app packages are attached to the nightly right now; '
+                 'see the <a href="%s/releases/tag/nightly">nightly release</a>.</p>'
+                 % REPO_URL})
+
+    out.append("""<section class="win" id="core">
+  <h2>The RetroArch core, %(tag)s</h2>
+  <div class="win-body">
+    <p>
+      One file per platform; put it in RetroArch's cores folder, or let the
+      <a href="#installer">installer</a> find the right one. %(n)d files are
+      attached to the <a href="%(url)s">%(tag)s release</a>; the
+      <code>-debug.tar.gz</code> symbol bundles are listed there.
+    </p>
+%(table)s
+  </div>
+</section>""" % {"tag": html.escape(tag), "url": html.escape(tag_url),
+                 "n": n_assets, "table": _core_table(assets)})
+
+    tools = _tool_list(assets)
+    if tools:
+        out.append("""<section class="win" id="tools">
+  <h2>Tools and checksums</h2>
+  <div class="win-body">
+    <p>
+      <code>jagcd-tools</code> is a session-aware <code>chdman</code> for
+      Jaguar CD images, <code>cue2cdi</code> converts CUE/BIN to CDI,
+      <code>SHA256SUMS.txt</code> covers every file above and
+      <code>virtualjaguar_libretro.info</code> is the core's libretro info
+      file.
+    </p>
+%(tools)s
+  </div>
+</section>""" % {"tools": tools})
+
+    if nightly:
+        n_url = nightly.get("html_url") or REPO_URL + "/releases/tag/nightly"
+        night_app = _app_table(nightly["assets"])
+        out.append("""<section class="win" id="nightly">
+  <h2>Nightly</h2>
+  <div class="win-body">
+    <p>
+      The <a href="%(url)s">nightly</a> is rebuilt from <code>develop</code>
+      on every push that compiles; it is gated on compiling, not on the test
+      suite. File names never change, so these links always fetch the newest
+      build. The core files use the same names as a release, under
+      <code>releases/download/nightly/</code>.
+    </p>
+%(table)s
+  </div>
+</section>""" % {"url": html.escape(n_url),
+                 "table": night_app or
+                 "<p>The nightly currently carries only the core.</p>"})
+
+    return "\n\n".join(out)
+
+
+def latest_link_html(releases):
+    """For the home page: 'v3.8.0' linked to its release, or the releases list."""
+    latest = (releases or {}).get("latest")
+    if latest:
+        url = latest.get("html_url") or "%s/releases/tag/%s" % (
+            REPO_URL, latest["tag_name"])
+        return 'latest: <a href="%s"><strong>%s</strong></a>' % (
+            html.escape(url), html.escape(latest["tag_name"]))
+    return '<a href="%s/releases">Releases</a>' % REPO_URL
+
+
 # ---------------------------------------------------------------- pages
 
 META_RE = re.compile(r"<!--\s*(title|nav|description):\s*(.*?)\s*-->")
@@ -751,6 +1040,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(ROOT / "_site"),
                     help="output directory (default: _site/)")
+    ap.add_argument("--releases", default=None, metavar="JSON",
+                    help="GitHub release data ({\"latest\": ..., \"nightly\": "
+                         "...}) for direct download links; without it the "
+                         "Download page links the release pages instead")
+    ap.add_argument("--releases-from-github", action="store_true",
+                    help="fetch that data from the GitHub API instead "
+                         "(GH_TOKEN/GITHUB_TOKEN used when set); a failed "
+                         "fetch fails the build")
     ap.add_argument("--build-date", default=None, metavar="YYYY-MM-DD",
                     help="sitemap lastmod fallback when git history is "
                          "unavailable (default: today, UTC)")
@@ -779,6 +1076,18 @@ def main():
           % (cart_n_titles, ", ".join(cart_build_ids) or "(none)"))
 
     version = read_core_version(MAKEFILE)
+    if args.releases and args.releases_from_github:
+        die("--releases and --releases-from-github are exclusive")
+    releases = (load_releases(args.releases) if args.releases
+                else fetch_releases() if args.releases_from_github else None)
+    if releases:
+        print("releases: latest %s (%d assets), nightly %s"
+              % (releases.get("latest", {}).get("tag_name", "-"),
+                 len(releases.get("latest", {}).get("assets", [])),
+                 "present" if releases.get("nightly") else "absent"))
+    else:
+        print("releases: none (no --releases/--releases-from-github); the "
+              "Download page links the release pages, not the files")
     share_path = SITE_SRC / SHARE_IMAGE
     share_w, share_h = png_size(share_path)
     shallow = repo_is_shallow()
@@ -799,6 +1108,8 @@ def main():
         "{{DOCS_CONTROLS_URL}}": LIBRETRO_DOCS_CONTROLS,
         "{{DOCS_COMPAT_URL}}": LIBRETRO_DOCS_COMPAT,
         "{{DOCS_SRC_URL}}": LIBRETRO_DOCS_SRC,
+        "{{DOWNLOADS}}": render_downloads(releases),
+        "{{LATEST_LINK}}": latest_link_html(releases),
         "{{COMPAT_TABLE}}": table_html,
         "{{COMPAT_BUILD_IDS}}":
             ", ".join("<code>%s</code>" % html.escape(b) for b in build_ids)
