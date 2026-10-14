@@ -550,13 +550,16 @@ TEST(qrcmd_without_monitor_op_is_unsupported) {
     ASSERT_EQ(TF_Handle(&g_sess, "qRcmd,6869", 10, reply, sizeof(reply)), 0);
 }
 
-TEST(thread_roster_is_fixed_at_three) {
+TEST(thread_roster_is_68k_only) {
+    /* #936: gdb applies ONE tdesc (the 68K's) to every thread it knows, so
+     * enumerating the GPU/DSP made `info threads` fail on a 72 vs 136
+     * byte 'g'.  Hg2/Hg3 still work for raw clients (next test). */
     char reply[64]; int n;
     setup_session();
     n = TF_Handle(&g_sess, "qfThreadInfo", 12, reply, sizeof(reply));
     ASSERT(n > 0);
     reply[n] = '\0';
-    ASSERT_STR(reply, "m1,2,3");
+    ASSERT_STR(reply, "m1");
     n = TF_Handle(&g_sess, "qsThreadInfo", 12, reply, sizeof(reply));
     reply[n] = '\0';
     ASSERT_STR(reply, "l");
@@ -571,6 +574,200 @@ TEST(hg_selects_thread_and_qc_reports_it) {
     n = TF_Handle(&g_sess, "qC", 2, reply, sizeof(reply));
     reply[n] = '\0';
     ASSERT_STR(reply, "QC2");
+}
+
+/* ------------------------------------------------------------------ */
+/* Issue #936: stock-gdb compatibility                                  */
+/* ------------------------------------------------------------------ */
+
+/* Reads the whole qXfer document the way gdb does: repeated
+ * qXfer:features:read:target.xml:<off>,<len> until an 'l' reply. */
+static int read_target_xml(char *xml, int xmlMax, int chunk) {
+    char pay[64], reply[GDB_PACKET_MAX];
+    int off = 0, n;
+    for (;;) {
+        int pl = sprintf(pay, "qXfer:features:read:target.xml:%x,%x", off, chunk);
+        n = TF_Handle(&g_sess, pay, pl, reply, sizeof(reply));
+        if (n <= 0) return -1;
+        if (off + n - 1 >= xmlMax) return -2;
+        memcpy(xml + off, reply + 1, (size_t)(n - 1));
+        off += n - 1;
+        if (reply[0] == 'l') break;
+        if (reply[0] != 'm') return -3;
+    }
+    xml[off] = '\0';
+    return off;
+}
+
+TEST(m68k_target_xml_is_served_without_target_op) {
+    /* The advertised qXfer:features:read used to answer the 68K with an
+     * empty packet, which made stock gdb abort with "conflicting enabled
+     * responses".  The 68K ops carry no targetXML and must still get the
+     * engine's description. */
+    static char xml[4096];
+    int n;
+    setup_session();
+    n = read_target_xml(xml, (int)sizeof(xml), 0x100);
+    ASSERT(n > 0);
+    ASSERT(strstr(xml, "<architecture>m68k</architecture>") != NULL);
+    ASSERT(strstr(xml, "org.gnu.gdb.m68k.core") != NULL);
+    /* No FP feature: the 'g' reply is 18 registers. */
+    ASSERT(strstr(xml, "fp0") == NULL);
+    /* One-shot read in a single large request too. */
+    n = read_target_xml(xml, (int)sizeof(xml), 0xffb);
+    ASSERT(n > 0);
+}
+
+TEST(m68k_target_xml_matches_g_layout_order) {
+    /* d0-d7, a0-a5, fp, sp, ps, pc in that order == readRegisters'
+     * D0-D7, A0-A7, SR, PC; 18 registers, all 32-bit. */
+    static const char *want[] = { "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
+        "a0", "a1", "a2", "a3", "a4", "a5", "fp", "sp", "ps", "pc" };
+    static char xml[4096];
+    const char *p;
+    char needle[48];
+    int i, n;
+    setup_session();
+    n = read_target_xml(xml, (int)sizeof(xml), 0xffb);
+    ASSERT(n > 0);
+    p = xml;
+    for (i = 0; i < 18; i++) {
+        sprintf(needle, "<reg name=\"%s\" bitsize=\"32\"", want[i]);
+        p = strstr(p, needle);
+        if (!p) FAIL("register %s missing or out of order", want[i]);
+        p += strlen(needle);
+    }
+    ASSERT(strstr(p, "<reg name=") == NULL);   /* nothing after pc */
+}
+
+TEST(m68k_target_xml_has_no_rsp_special_characters) {
+    /* qXfer data is binary-escaped on the wire; keeping $ # } * out of
+     * the document means it needs no escaping at all. */
+    static char xml[4096];
+    int n;
+    setup_session();
+    n = read_target_xml(xml, (int)sizeof(xml), 0xffb);
+    ASSERT(n > 0);
+    ASSERT(strpbrk(xml, "$#}*") == NULL);
+}
+
+TEST(detach_replies_ok_and_requests_session_end) {
+    char reply[64]; int n;
+    setup_session();
+    ASSERT_EQ(g_sess.detachRequested, 0);
+    n = TF_Handle(&g_sess, "D", 1, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(g_sess.detachRequested, GDB_END_REPLY);
+}
+
+TEST(detach_with_pid_form_is_accepted) {
+    char reply[64]; int n;
+    setup_session();
+    n = TF_Handle(&g_sess, "D;1", 3, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(g_sess.detachRequested, GDB_END_REPLY);
+}
+
+TEST(vkill_replies_ok_and_requests_session_end) {
+    char reply[64]; int n;
+    setup_session();
+    n = TF_Handle(&g_sess, "vKill;a410", 10, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(g_sess.detachRequested, GDB_END_REPLY);
+}
+
+TEST(kill_requests_session_end_with_no_reply) {
+    char reply[64];
+    setup_session();
+    ASSERT_EQ(TF_Handle(&g_sess, "k", 1, reply, sizeof(reply)), 0);
+    ASSERT_EQ(g_sess.detachRequested, GDB_END_NOREPLY);
+}
+
+TEST(other_d_or_v_packets_do_not_detach) {
+    char reply[64];
+    setup_session();
+    TF_Handle(&g_sess, "vMustReplyEmpty", 15, reply, sizeof(reply));
+    TF_Handle(&g_sess, "vKillX", 6, reply, sizeof(reply));
+    TF_Handle(&g_sess, "Dx", 2, reply, sizeof(reply));
+    ASSERT_EQ(g_sess.detachRequested, 0);
+}
+
+/* Long monitor output: the engine used to give the target a 512-byte
+ * buffer and one hex reply.  It now hands the target GDB_MONITOR_MAX and
+ * streams the text as 'O' packets of GDB_MONITOR_CHUNK bytes, then OK. */
+static int fake_long_monitor(void *user, const char *cmd, char *out, int outMax) {
+    int i, n = 0;
+    (void)user; (void)cmd;
+    for (i = 0; i < 700; i++)            /* ~7 KB of "line NNN\n" */
+        n += snprintf(out + n, (size_t)(outMax - n), "line %03d\n", i);
+    return n;
+}
+
+static int fake_oversized_monitor(void *user, const char *cmd, char *out, int outMax) {
+    (void)user; (void)cmd;
+    memset(out, 'x', (size_t)outMax);
+    return outMax + 5000;                /* snprintf-style "would have written" */
+}
+
+static char o_text[GDB_MONITOR_MAX + 64];
+static int  o_text_len, o_packets, o_max_payload;
+
+static int collect_o_packet(void *ctx, const char *payload, int len) {
+    int i;
+    (void)ctx;
+    if (payload[0] != 'O') return -1;
+    if (len > o_max_payload) o_max_payload = len;
+    for (i = 1; i + 1 < len + 1 && o_text_len < (int)sizeof(o_text) - 1; i += 2) {
+        unsigned int v;
+        if (GDBParseHexU32(payload + i, 2, &v) < 0) return -1;
+        o_text[o_text_len++] = (char)v;
+    }
+    o_packets++;
+    return len;
+}
+
+static void setup_long_monitor(int (*fn)(void *, const char *, char *, int)) {
+    static struct GDBTargetOps ops;
+    memset(&ops, 0, sizeof(ops));
+    ops.monitorCmd = fn;
+    GDBSessionInit(&g_sess, &ops, NULL);
+    g_sess.sendPacket = collect_o_packet;
+    o_text_len = o_packets = o_max_payload = 0;
+}
+
+TEST(long_monitor_output_streams_as_o_packets) {
+    char reply[64]; int n;
+    setup_long_monitor(fake_long_monitor);
+    n = TF_Handle(&g_sess, "qRcmd,6869", 10, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT(o_packets > 1);
+    ASSERT_EQ(o_text_len, 700 * 9);                /* nothing lost */
+    o_text[o_text_len] = '\0';
+    ASSERT(strncmp(o_text, "line 000\n", 9) == 0);
+    ASSERT(strstr(o_text, "line 699\n") != NULL);   /* the TAIL survives */
+    ASSERT(o_max_payload <= GDB_MONITOR_CHUNK * 2 + 1);
+}
+
+TEST(oversized_monitor_return_is_clamped_not_overrun) {
+    char reply[64]; int n;
+    setup_long_monitor(fake_oversized_monitor);
+    n = TF_Handle(&g_sess, "qRcmd,6869", 10, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(o_text_len, GDB_MONITOR_MAX - 1);
+}
+
+TEST(monitor_without_sender_truncates_to_one_reply) {
+    char reply[256]; int n;
+    setup_long_monitor(fake_long_monitor);
+    g_sess.sendPacket = NULL;
+    n = TF_Handle(&g_sess, "qRcmd,6869", 10, reply, sizeof(reply));
+    ASSERT(n > 0 && n <= (int)sizeof(reply));
+    ASSERT(strncmp(reply, "6c696e652030303", 15) == 0);   /* "line 00" */
 }
 
 
@@ -654,8 +851,19 @@ int main(void) {
     RUN(vcont_continue_action_sets_resume_not_step);
     RUN(qrcmd_decodes_hex_and_encodes_reply);
     RUN(qrcmd_without_monitor_op_is_unsupported);
-    RUN(thread_roster_is_fixed_at_three);
+    RUN(thread_roster_is_68k_only);
     RUN(hg_selects_thread_and_qc_reports_it);
+    RUN(m68k_target_xml_is_served_without_target_op);
+    RUN(m68k_target_xml_matches_g_layout_order);
+    RUN(m68k_target_xml_has_no_rsp_special_characters);
+    RUN(detach_replies_ok_and_requests_session_end);
+    RUN(detach_with_pid_form_is_accepted);
+    RUN(vkill_replies_ok_and_requests_session_end);
+    RUN(kill_requests_session_end_with_no_reply);
+    RUN(other_d_or_v_packets_do_not_detach);
+    RUN(long_monitor_output_streams_as_o_packets);
+    RUN(oversized_monitor_return_is_clamped_not_overrun);
+    RUN(monitor_without_sender_truncates_to_one_reply);
     RUN(bind_mode_defaults_to_loopback);
     RUN(bind_mode_lan_is_settable);
     RUN(bind_mode_unknown_value_fails_closed);

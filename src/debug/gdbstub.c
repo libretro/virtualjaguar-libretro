@@ -160,8 +160,86 @@ void GDBSessionInit(struct GDBSession *s, const struct GDBTargetOps *ops68k,
    s->ops[GDB_TGT_68K]  = ops68k;
    s->user[GDB_TGT_68K] = user68k;
    s->noAckMode = 0;
+   s->detachRequested = 0;
+   s->sendPacket = NULL;
+   s->sendCtx    = NULL;
    s->threadG   = 1;
    s->threadC   = 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* 68K target description                                              */
+/* ------------------------------------------------------------------ */
+
+/* Mirrors gdb's own m68k-core.xml, inlined (the qXfer handler ignores the
+ * annex, so an xi:include could never resolve). Register order and width
+ * match readRegisters in gdbtarget.c exactly: d0-d7, a0-a7 (a6/a7 are
+ * gdb's fp/sp), sr (gdb's ps, widened to 32 bits on the wire), pc. No FP
+ * feature: the 'g' reply carries no FPU registers, and declaring none
+ * also stops gdb listing fpcontrol/fpstatus/fpiaddr as <unavailable>.
+ *
+ * <architecture>m68k</architecture> is what lets stock gdb connect with no
+ * `set architecture` and no `set remote target-features-packet off`.
+ * A description cannot declare byte order, so a gdb with no ELF loaded
+ * still needs `set endian big` -- see docs/gdb-stub-guide.md.
+ *
+ * Built at runtime (not one literal) to stay under legacy-MSVC string
+ * literal limits; no character here is one of $ # } * so the text is
+ * safe as RSP binary data. */
+static char gdbXml68K[2048];
+static int  gdbXml68KLen = -1;
+
+static void GDBXmlAppend(int *n, const char *text)
+{
+   int len = (int)strlen(text);
+
+   if (*n + len >= (int)sizeof(gdbXml68K))
+      return;
+   memcpy(gdbXml68K + *n, text, (size_t)len);
+   *n += len;
+   gdbXml68K[*n] = '\0';
+}
+
+const char *GDBTarget68KXML(int *xmlLen)
+{
+   if (gdbXml68KLen < 0)
+   {
+      static const char *const dataPtrs[] = { "a0", "a1", "a2", "a3", "a4", "a5", "fp", "sp" };
+      char line[96];
+      int n = 0;
+      int i;
+
+      gdbXml68K[0] = '\0';
+      GDBXmlAppend(&n,
+         "<?xml version=\"1.0\"?>\n"
+         "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n"
+         "<target version=\"1.0\">\n"
+         "  <architecture>m68k</architecture>\n"
+         "  <feature name=\"org.gnu.gdb.m68k.core\">\n");
+
+      for (i = 0; i < 8; i++)
+      {
+         sprintf(line, "    <reg name=\"d%d\" bitsize=\"32\" type=\"int\"/>\n", i);
+         GDBXmlAppend(&n, line);
+      }
+      for (i = 0; i < 8; i++)
+      {
+         sprintf(line, "    <reg name=\"%s\" bitsize=\"32\" type=\"data_ptr\"/>\n",
+                 dataPtrs[i]);
+         GDBXmlAppend(&n, line);
+      }
+
+      GDBXmlAppend(&n,
+         "    <reg name=\"ps\" bitsize=\"32\" type=\"int\"/>\n"
+         "    <reg name=\"pc\" bitsize=\"32\" type=\"code_ptr\"/>\n"
+         "  </feature>\n"
+         "</target>\n");
+
+      gdbXml68KLen = n;
+   }
+
+   *xmlLen = gdbXml68KLen;
+   return gdbXml68K;
 }
 
 void GDBSessionSetTargetOps(struct GDBSession *s, int target,
@@ -306,13 +384,17 @@ int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
       return GDBCopyReply(buf, reply, replyMax);
    }
 
-   /* qfThreadInfo/qsThreadInfo -- the roster is fixed and small enough to
-    * report in one shot: 1=68K, 2=GPU, 3=DSP, always, whether or not GPU/
-    * DSP ops are registered (an unregistered target just answers "g"/"m"
-    * etc. as unsupported for its own thread, same as any other missing
-    * ops function). */
+   /* qfThreadInfo/qsThreadInfo -- ONLY the 68K is enumerated.
+    *
+    * gdb reads exactly one target description per connection (the 68K's)
+    * and applies it to every thread it knows about, so advertising the
+    * GPU/DSP as threads 2/3 made `info threads` / `thread 2` fail with
+    * "Remote 'g' packet reply is too long (expected 72 bytes, got 136)".
+    * The RISC cores are reached through `monitor regs|disasm|halt
+    * gpu|dsp`. Hg2/Hg3 and their GPU/DSP tdesc still work for a raw RSP
+    * client that wants them; they are just not offered to stock gdb. */
    if (payLen == 12 && memcmp(pay, "qfThreadInfo", 12) == 0)
-      return GDBCopyReply("m1,2,3", reply, replyMax);
+      return GDBCopyReply("m1", reply, replyMax);
    if (payLen == 12 && memcmp(pay, "qsThreadInfo", 12) == 0)
       return GDBCopyReply("l", reply, replyMax);
 
@@ -353,6 +435,26 @@ int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
        (pay[1] == '-' || (pay[1] >= '0' && pay[1] <= '9') ||
         (pay[1] >= 'a' && pay[1] <= 'f') || (pay[1] >= 'A' && pay[1] <= 'F')))
       return GDBCopyReply("OK", reply, replyMax);
+
+   /* D / vKill / k -- end the session. The emulator keeps running: the
+    * transport (gdbtarget.c) acts on detachRequested after the reply is
+    * out, by disarming every breakpoint/watchpoint, dropping the client
+    * and letting a halted target resume. "D" and "D;pid" both match. */
+   if (pay[0] == 'D' && (payLen == 1 || pay[1] == ';'))
+   {
+      s->detachRequested = GDB_END_REPLY;
+      return GDBCopyReply("OK", reply, replyMax);
+   }
+   if (payLen >= 5 && memcmp(pay, "vKill", 5) == 0 && (payLen == 5 || pay[5] == ';'))
+   {
+      s->detachRequested = GDB_END_REPLY;
+      return GDBCopyReply("OK", reply, replyMax);
+   }
+   if (payLen == 1 && pay[0] == 'k')
+   {
+      s->detachRequested = GDB_END_NOREPLY;
+      return 0;
+   }
 
    if (pay[0] == 'm')
    {
@@ -551,8 +653,8 @@ int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
 
    if (payLen > 6 && memcmp(pay, "qRcmd,", 6) == 0)
    {
+      static char text[GDB_MONITOR_MAX];
       char cmd[256];
-      char text[512];
       int cmdLen, textLen, hexLen;
 
       cmdLen = GDBHexDecodeToText(pay + 6, payLen - 6, cmd, (int)sizeof(cmd) - 1);
@@ -564,9 +666,38 @@ int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
 
       textLen = s->ops[GDB_TGT_68K]->monitorCmd(s->user[GDB_TGT_68K], cmd,
                                                 text, (int)sizeof(text));
+      /* snprintf-style callbacks return the length they WANTED to write. */
+      if (textLen > (int)sizeof(text) - 1)
+         textLen = (int)sizeof(text) - 1;
       if (textLen <= 0)
          return GDBCopyReply("OK", reply, replyMax);
 
+      if (s->sendPacket)
+      {
+         /* Standard qRcmd: 'O' + hex text, as many packets as it takes,
+          * then the final OK. gdb acks and prints each one as it comes. */
+         static char opkt[GDB_MONITOR_CHUNK * 2 + 2];
+         int sent = 0;
+
+         while (sent < textLen)
+         {
+            int chunk = textLen - sent;
+
+            if (chunk > GDB_MONITOR_CHUNK)
+               chunk = GDB_MONITOR_CHUNK;
+            opkt[0] = 'O';
+            hexLen = GDBHexEncodeText(text + sent, chunk, opkt + 1,
+                                      (int)sizeof(opkt) - 1);
+            if (hexLen < 0 || s->sendPacket(s->sendCtx, opkt, hexLen + 1) < 0)
+               break;
+            sent += chunk;
+         }
+         return GDBCopyReply("OK", reply, replyMax);
+      }
+
+      /* No out-of-band sender: one hex reply, truncated to what fits. */
+      if (textLen > replyMax / 2)
+         textLen = replyMax / 2;
       hexLen = GDBHexEncodeText(text, textLen, reply, replyMax);
       if (hexLen < 0)
          return 0;
@@ -615,10 +746,12 @@ int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
       if (GDBParseHexU32(rest + commaAt + 1, restLen - commaAt - 1, &len) < 0)
          return GDBCopyReply("E00", reply, replyMax);
 
-      if (!ops || !ops->targetXML)
+      if (!ops)
          return 0;
 
-      xml = ops->targetXML(s->user[targetG], &xmlLen);
+      xml = ops->targetXML ? ops->targetXML(s->user[targetG], &xmlLen) : NULL;
+      if ((!xml || xmlLen <= 0) && targetG == GDB_TGT_68K)
+         xml = GDBTarget68KXML(&xmlLen);
       if (!xml || xmlLen <= 0)
          return 0;
 
