@@ -27,14 +27,19 @@ if(NOT VJ_CORE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
     message(FATAL_ERROR "could not read CORE_BASE_VERSION from ../Makefile (got '${_vj_core_ver_line}')")
 endif()
 
-# macOS also compiles Objective-C++ (src/platform/platform_macos.mm: the native menu bar, Dock menu).
-set(VJ_LANGUAGES C CXX)
-if(APPLE)
-    list(APPEND VJ_LANGUAGES OBJCXX)
-endif()
-project(VirtualJaguar LANGUAGES ${VJ_LANGUAGES}
+project(VirtualJaguar LANGUAGES C CXX
         VERSION ${VJ_CORE_VERSION}
         DESCRIPTION "Virtual Jaguar - Atari Jaguar emulator")
+
+# macOS also compiles Objective-C++ (src/platform/platform_macos.mm: the native menu bar, Dock menu).
+# Use the C++ compiler for it: CMake otherwise searches PATH on its own and can pick a different
+# clang (e.g. an old Swift toolchain's) that cannot parse the current SDK headers.
+if(APPLE)
+    if(NOT DEFINED CACHE{CMAKE_OBJCXX_COMPILER})
+        set(CMAKE_OBJCXX_COMPILER "${CMAKE_CXX_COMPILER}")
+    endif()
+    enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
