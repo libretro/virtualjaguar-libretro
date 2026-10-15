@@ -127,6 +127,7 @@ private:
     uint64_t runs_ = 0, reuses_ = 0;
     int glAoA_ = -1;            // arrays of arrays: -1 not probed yet, 0 no, 1 yes
     std::string glVer_;
+    unsigned glsl_ = 330;       // GLSL version librashader generates (the context's once probed)
 
     void setNotice(const std::string& s);
 };

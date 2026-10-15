@@ -432,6 +432,11 @@ void ShaderChain::probeGlCaps() {
     glGetIntegerv(GL_MINOR_VERSION, &minor);
     if (major <= 0) return;   // no context current: try again later
     glVer_ = std::to_string(major) + "." + std::to_string(minor);
+    // GLSL to generate: the context's own (4.1 on macOS, usually 4.6 elsewhere), capped at
+    // librashader's highest.  330 everywhere threw away GLSL 4.00 (textureGather with a
+    // component, packUnorm4x8, bitCount/findLSB) on contexts that have it.
+    int glsl = major * 100 + minor * 10;
+    glsl_ = (unsigned)(glsl < 330 ? 330 : glsl > 460 ? 460 : glsl);
     bool aoa = major > 4 || (major == 4 && minor >= 3);
     glGetIntegerv(GL_NUM_EXTENSIONS, &n);
     for (GLint i = 0; !aoa && i < n; i++) {
@@ -505,7 +510,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
         filter_chain_gl_opt_t co;
         std::memset(&co, 0, sizeof co);
         co.version = apiVersion_ < (unsigned)LIBRASHADER_CURRENT_VERSION ? apiVersion_ : (unsigned)LIBRASHADER_CURRENT_VERSION;
-        co.glsl_version = 330;
+        co.glsl_version = (uint16_t)glsl_;   // the context's, from probeGlCaps()
         co.use_dsa = false;   // GL 3.3 core; DSA (and with it librashader's shader cache) needs 4.5
         co.force_no_mipmaps = false;
         co.disable_cache = false;

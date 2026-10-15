@@ -160,6 +160,12 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   (`present_util.cpp`), pinned to the bundled slang-shaders commit; `shaders_bundled` and `shaders_gl`
   check it. Real fix: librashader setting `flatten_multidimensional_arrays` when it generates GLSL below
   4.30.
+  The chain asks librashader for the context's own GLSL version (4.10 here). It used to ask for 3.30, which
+  cost 11 presets GLSL 4.00 features the context has (lottesRVM, nnedi3 x5, mmpx-ADV, vectorscale x4).
+  Rendering all 498 bundled presets on an M4 Max (GL 4.1 Metal) at 4.10, 473 work. Besides the 15 above,
+  fsr and smaa+fsr need `packHalf2x16` (GLSL 4.20), and 8 fail for reasons that do not look macOS-specific
+  (not checked elsewhere): the six nedi bilateral-variant presets (unknown semantic `play`),
+  crt-black_crush-koko (preset parse error) and ntsc-blastem (varying type mismatch at link).
 * **Hardened runtime and entitlements.** Signed with `--options runtime`. Library validation (on with
   the hardened runtime) refuses any dylib not signed by Apple or by our team. The bundled
   `librashader.dylib` is re-signed with our identity, so it needs no exception. The shader code also
