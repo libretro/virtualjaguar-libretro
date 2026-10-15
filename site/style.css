@@ -1009,3 +1009,27 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, 0.78); }
   a { color: #000; text-decoration: underline; }
   main { max-width: none; }
 }
+
+/* app page */
+/* The screenshot galleries (only app.html uses .gallery): always 4 columns, 2 on
+ * narrower screens, never 3 -- every gallery holds an even number of cards, so
+ * the last row is never ragged.  Tighter gaps and captions mean less scrolling. */
+.gallery {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin: 0.8rem 0 1.2rem;
+}
+.gal-link { padding: 4px; }
+.gal-card figcaption { padding: 0.35rem 0.5rem 0.45rem; font-size: 0.78rem; line-height: 1.35; }
+.gal-card figcaption strong { font-size: 0.82rem; }
+#gallery > .win-body > h3 { margin-top: 1.3rem; }
+/* The short bullet intros above each gallery run in two columns on wide screens. */
+#gallery .win-body > ul { max-width: none; columns: 2; column-gap: 2rem; margin-bottom: 0.7rem; }
+#gallery .win-body > ul > li { break-inside: avoid; }
+@media (max-width: 60rem) {
+  .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #gallery .win-body > ul { columns: 1; max-width: 46rem; }
+}
+@media (max-width: 34rem) {
+  .gallery { grid-template-columns: minmax(0, 1fr); }
+}
