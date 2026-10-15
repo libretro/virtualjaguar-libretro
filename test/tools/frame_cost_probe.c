@@ -45,7 +45,7 @@
 
 /* One numeric field per column so the median/top report can iterate. */
 typedef enum { F_GPU, F_DSP, F_SKIP, F_IRQA, F_IRQD, F_GGO, F_OPL, F_OPO,
-               F_OPB, F_BLT, F__N } field_id;
+               F_OPB, F_BLT, F_GSKIP, F_GFIRE, F__N } field_id;
 
 typedef struct
 {
@@ -55,7 +55,7 @@ typedef struct
 
 static const char *csv_header =
     "frame,ms,gpu_ops,dsp_ops,dsp_skip_ops,irq_assert,irq_dispatch,"
-    "gpu_go,op_list,op_obj,op_branch,blit_cmd";
+    "gpu_go,op_list,op_obj,op_branch,blit_cmd,gpu_skip_ops,gpu_skip_fires";
 
 static int cmp_double(const void *a, const void *b)
 {
@@ -84,11 +84,12 @@ int main(int argc, char **argv)
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     void (*arm)(void);
     vjtrace_counters_t *ctr;
-    uint32_t *gpu_cnt, *dsp_cnt, *skip_cnt;
+    uint32_t *gpu_cnt, *dsp_cnt, *skip_cnt, *gskip_cnt, *gfire_cnt;
     frame_row *rows;
     FILE *csv = stdout;
     const char *csv_path = NULL;
     unsigned warmup = 0, top_n = 10, i;
+    int no_arm = 0;
     int a;
 
     cfg.frames = 2000;
@@ -98,6 +99,8 @@ int main(int argc, char **argv)
             warmup = (unsigned)strtoul(argv[++a], NULL, 10);
         else if (!strcmp(argv[a], "--csv") && a + 1 < argc)
             csv_path = argv[++a];
+        else if (!strcmp(argv[a], "--no-arm"))
+            no_arm = 1;
         else if (!strcmp(argv[a], "--top") && a + 1 < argc)
             top_n = (unsigned)strtoul(argv[++a], NULL, 10);
     }
@@ -111,13 +114,26 @@ int main(int argc, char **argv)
     gpu_cnt  = (uint32_t *)harness_dlsym(&cfg, "gpu_exec_opcode_count");
     dsp_cnt  = (uint32_t *)harness_dlsym(&cfg, "dsp_exec_opcode_count");
     skip_cnt = (uint32_t *)harness_dlsym(&cfg, "dsp_idle_skip_opcodes");
+    gskip_cnt = (uint32_t *)harness_dlsym(&cfg, "gpu_idle_skip_opcodes");
+    gfire_cnt = (uint32_t *)harness_dlsym(&cfg, "gpu_idle_skip_fires");
     if (!arm || !ctr || !gpu_cnt || !dsp_cnt)
     {
         fprintf(stderr, "frame_cost_probe: required symbols not exported -- "
                         "build the core with TEST_EXPORTS=1\n");
         return 2;
     }
-    arm();   /* vjtrace counters only advance while armed */
+    /* vjtrace counters only advance while armed, BUT an armed trace gates
+     * the GPU/DSP idle-skip OFF (gpu.c/dsp.c idleSkipActive: "armed or a
+     * memory watch installed").  So a default run measures idle skip OFF
+     * whatever risc_idle_skip says.  --no-arm keeps idle skip live: the
+     * event columns (irq, gpu_go, op_list/obj/branch, blit) then read 0, the gpu/dsp/skip
+     * columns and the ms column stay valid.  Pair an armed and an unarmed
+     * run (same config, deterministic) to join the event columns on. */
+    if (!no_arm)
+        arm();
+    else
+        fprintf(stderr, "frame_cost_probe: --no-arm: vjtrace event columns "
+                        "are 0, idle skip is live\n");
 
     if (csv_path)
     {
@@ -143,6 +159,8 @@ int main(int argc, char **argv)
     {
         uint32_t g0 = *gpu_cnt, d0 = *dsp_cnt;
         uint32_t s0 = skip_cnt ? *skip_cnt : 0;
+        uint32_t gs0 = gskip_cnt ? *gskip_cnt : 0;
+        uint32_t gf0 = gfire_cnt ? *gfire_cnt : 0;
         vjtrace_counters_t c0 = *ctr;
         for (i = 0; i < cfg.frames; i++)
         {
@@ -156,6 +174,10 @@ int main(int argc, char **argv)
             r->v[F_DSP]  = *dsp_cnt - d0;               d0 = *dsp_cnt;
             r->v[F_SKIP] = skip_cnt ? (uint32_t)(*skip_cnt - s0) : 0;
             if (skip_cnt) s0 = *skip_cnt;
+            r->v[F_GSKIP] = gskip_cnt ? (uint32_t)(*gskip_cnt - gs0) : 0;
+            if (gskip_cnt) gs0 = *gskip_cnt;
+            r->v[F_GFIRE] = gfire_cnt ? (uint32_t)(*gfire_cnt - gf0) : 0;
+            if (gfire_cnt) gf0 = *gfire_cnt;
             r->v[F_IRQA] = ctr->ev[VJT_EV_IRQ_ASSERT]    - c0.ev[VJT_EV_IRQ_ASSERT];
             r->v[F_IRQD] = ctr->ev[VJT_EV_IRQ_DISPATCH]  - c0.ev[VJT_EV_IRQ_DISPATCH];
             r->v[F_GGO]  = ctr->ev[VJT_EV_GPU_GO]        - c0.ev[VJT_EV_GPU_GO];
@@ -182,22 +204,28 @@ int main(int argc, char **argv)
         if (n && ms_sorted && order && scratch)
         {
             uint64_t med_v[F__N];
-            double p50, p99, max_ms;
-            unsigned over = 0, j, k;
+            double p50, p95, p99, max_ms;
+            unsigned over = 0, over2 = 0, j, k;
             int f;
             for (i = 0; i < n; i++)
                 ms_sorted[i] = rows[i].ms;
             qsort(ms_sorted, n, sizeof(double), cmp_double);
             p50    = ms_sorted[n / 2];
+            p95    = ms_sorted[(unsigned)((double)n * 0.95)];
             p99    = ms_sorted[(unsigned)((double)n * 0.99)];
             max_ms = ms_sorted[n - 1];
             for (i = 0; i < n; i++)
+            {
                 if (rows[i].ms > 1000.0 / 60.0)
                     over++;
+                if (rows[i].ms > 2000.0 / 60.0)
+                    over2++;
+            }
             fprintf(stderr, "frame_cost_probe: %u frames (warmup %u)  "
-                            "p50=%.2fms p99=%.2fms max=%.2fms  "
-                            "over-budget=%u (%.2f%%)\n",
-                    n, warmup, p50, p99, max_ms, over, 100.0 * over / n);
+                            "p50=%.2fms p95=%.2fms p99=%.2fms max=%.2fms  "
+                            "over-budget=%u (%.2f%%)  over-2x-budget=%u\n",
+                    n, warmup, p50, p95, p99, max_ms, over, 100.0 * over / n,
+                    over2);
 
             for (f = 0; f < F__N; f++)
             {
@@ -223,9 +251,10 @@ int main(int argc, char **argv)
 
             fprintf(stderr, "\n--- top %u most expensive frames vs median ---\n",
                     top_n);
-            fprintf(stderr, "%8s %9s %9s %9s %9s %9s %9s %9s %9s %9s %9s %9s\n",
+            fprintf(stderr, "%8s %9s %9s %9s %9s %9s %9s %9s %9s %9s %9s %9s %9s %9s\n",
                     "frame", "ms", "gpu_ops", "dsp_ops", "skip_ops", "irq_a",
-                    "irq_d", "gpu_go", "op_list", "op_obj", "op_br", "blit");
+                    "irq_d", "gpu_go", "op_list", "op_obj", "op_br", "blit",
+                    "gskip", "gfire");
             print_row(stderr, "median", p50, med_v);
             for (j = 0; j < top_n; j++)
             {

@@ -50,4 +50,16 @@ PresetInfo inspectPreset(const std::string& path);
 std::vector<std::string> scanPresets(const std::string& root, size_t maxResults = 5000,
                                      int maxDepth = 10, bool* truncated = nullptr);
 
+// Presets whose shaders declare arrays of arrays (crt-geom's `vec3 slotmask[3][4]`).
+// librashader 0.12 has SPIRV-Cross emit GLSL 330 for them with
+// `#extension GL_ARB_arrays_of_arrays : require`, so they compile only on OpenGL 4.3+
+// or where that extension exists; macOS stops at OpenGL 4.1 without it.  The list is
+// every bundled preset that failed that way when all of them were rendered on macOS,
+// at the slang-shaders commit pinned in VJShaders.cmake (VJ_SLANG_COMMIT): redo that
+// sweep when the pin moves.  Entries are paths relative to the slang-shaders root.
+const std::vector<const char*>& presetsNeedingArraysOfArrays();
+// True when `path` ends in one of those entries ("crt/crt-geom.slangp" matches the
+// bundled copy and a slang-shaders clone alike).  '\\' counts as '/'.
+bool presetNeedsArraysOfArrays(const std::string& path);
+
 }  // namespace vj

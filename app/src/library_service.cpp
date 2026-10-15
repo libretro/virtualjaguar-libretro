@@ -542,6 +542,17 @@ ArtView LibraryService::art(const lib::Entry& e) {
     return v;
 }
 
+size_t LibraryService::missingArt(lib::Section section) {
+    size_t n = 0;
+    std::lock_guard<std::mutex> g(m_);
+    for (const lib::Entry& e : entries_) {
+        if (e.section != section) continue;
+        auto it = slots_.find(lib::coverKey(e));
+        if (it != slots_.end() && (it->second.state == ArtView::Missing || it->second.retryAt > 0)) n++;
+    }
+    return n;
+}
+
 void LibraryService::invalidateArt(const std::string& key) {
     std::lock_guard<std::mutex> g(m_);
     auto it = slots_.find(key);
