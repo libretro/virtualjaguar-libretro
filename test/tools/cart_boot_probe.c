@@ -12,7 +12,8 @@
  *       audio_nonsilent=<samples> audio_onset=<frame|-1> \
  *       bios_ran=<0|1> handoff=<frame|-1> final_op=$<WORD> halt_frames=<n> \
  *       scored_from=<frame> scored_frames=<n> scored_lit_frames=<n> \
- *       scored_motion=<n> scored_audio_nonsilent=<samples>
+ *       scored_motion=<n> scored_audio_nonsilent=<samples> \
+ *       trap_frames=<n> trap_pc=$<PC> trap_handler=$<PC>
  *
  * The first block of fields covers the whole run.  The second block is the
  * BOOT-ROM-RELATIVE view (issue #852): under --bios the Jaguar boot ROM plays
@@ -35,6 +36,18 @@
  *   halt_frames  consecutive frames the 68K has been parked on a $60FE loop.
  *   scored_*     the counters restarted at the handoff (== whole-run values
  *                whenever there is no boot phase or no handoff was seen).
+ *   trap_frames  consecutive frames, up to the last one, that ended with the
+ *                68K stuck in an exception loop (issue #975): every PC in the
+ *                pcQueue ring is either inside an exception handler that is
+ *                an RTE or a BRA.S * and that one of vectors 2-11 points at,
+ *                or one single other PC (the instruction that keeps
+ *                faulting).  Two shapes: parked in the loader's ILLEGAL guard
+ *                ($1000: BRA.S *, vector 4), and an RTE ping-pong between a
+ *                faulting PC and the HLE RTE stub.  The final PC alone is
+ *                in RAM or cart space for both, so it scored GAME_CODE.
+ *   trap_pc      the faulting PC.  For a parked guard it is the PC saved in
+ *                the exception frame at SP+2 (the guard never pops it).
+ *   trap_handler the handler the ring sits in.
  *
  * With --post-handoff N the run stops N frames after the handoff, with
  * --frames as the hard cap, and stops early once the boot ROM has sat in its
@@ -64,6 +77,7 @@
  * the UAE core's stable interface; 16 is M68K_REG_PC.  (Same pattern as
  * test/tools/cd_wedge_probe.c.) */
 #define PROBE_M68K_REG_PC 16
+#define PROBE_M68K_REG_A7 15
 
 /* 68K address windows.  The boot ROM lives at $E00000 (the core maps the
  * embedded image there); cartridge space is $800000-$DFFFFF. */
@@ -78,6 +92,12 @@
 #define PROBE_PARK_FRAMES 30u
 /* pcQueue (src/core/jaguar.c) is a 1024-entry ring of the last 68K PCs. */
 #define PROBE_PCQ_LEN 0x400u
+/* RTE: the HLE exception stub returns to the faulting instruction. */
+#define PROBE_OP_RTE  0x4E73u
+/* Vectors 2-11: bus error, address error, illegal instruction, zero divide,
+ * CHK, TRAPV, privilege violation, trace, line A, line F. */
+#define PROBE_VEC_FIRST 2u
+#define PROBE_VEC_LAST  11u
 
 typedef struct {
     unsigned last_nonblack;      /* non-black pixels in most recent frame */
@@ -164,6 +184,9 @@ typedef struct {
     unsigned final_op;
     unsigned halt_frames;
     unsigned long halt_pc;
+    unsigned trap_frames;        /* consecutive frames ending in a trap loop */
+    unsigned long trap_pc;
+    unsigned long trap_handler;
 } probe_boot_state;
 
 static int probe_in_cart(unsigned long pc)
@@ -180,6 +203,82 @@ static void probe_mark_handoff(probe_boot_state *b, unsigned frame, int fresh)
         memset(&b->video->scored, 0, sizeof(b->video->scored));
         b->audio_base = b->cfg->audio.total_nonsilent;
     }
+}
+
+static unsigned probe_op_at(const uint8_t *mem, unsigned long addr)
+{
+    return (unsigned)((mem[addr] << 8) | mem[addr + 1]);
+}
+
+/* 1 when the pcQueue ring shows the 68K stuck in an exception loop (see
+ * trap_frames above).  *fault gets the faulting PC (the handler itself when
+ * the ring holds nothing else), *handler the handler. */
+static int probe_trap_loop(const probe_boot_state *b, unsigned long *fault,
+                           unsigned long *handler)
+{
+    unsigned long uniq[4];
+    unsigned nuniq = 0, i, j, v, others;
+    unsigned long other = 0;
+
+    if (!b->memspace || !b->pc_queue)
+        return 0;
+    for (i = 0; i < PROBE_PCQ_LEN; i++) {
+        unsigned long pc = b->pc_queue[i] & 0xFFFFFFu;
+
+        for (j = 0; j < nuniq && uniq[j] != pc; j++)
+            ;
+        if (j == nuniq) {
+            if (nuniq == 4)
+                return 0;           /* a real loop, not a trap */
+            uniq[nuniq++] = pc;
+        }
+    }
+    for (v = PROBE_VEC_FIRST; v <= PROBE_VEC_LAST; v++) {
+        const uint8_t *p = b->memspace + v * 4u;
+        unsigned long h = (((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16)
+                           | ((unsigned long)p[2] << 8) | p[3]) & 0xFFFFFFu;
+        unsigned long end;
+
+        if ((h & 1u) || h + 4u > 0xFFFFFFu)
+            continue;
+        /* The handler is an RTE or a BRA.S *, or the HLE long-frame stub
+         * (ADDQ #8,SP then RTE): every handler PC lies in [h, h+4). */
+        if (probe_op_at(b->memspace, h) != PROBE_OP_HALT
+            && probe_op_at(b->memspace, h) != PROBE_OP_RTE
+            && probe_op_at(b->memspace, h + 2) != PROBE_OP_RTE)
+            continue;
+        end = h + 4u;
+        for (j = 0; j < nuniq && (uniq[j] < h || uniq[j] >= end); j++)
+            ;
+        if (j == nuniq)
+            continue;               /* the ring never entered this handler */
+        others = 0;
+        for (j = 0; j < nuniq; j++)
+            if (uniq[j] < h || uniq[j] >= end) {
+                others++;
+                other = uniq[j];
+            }
+        if (others > 1)
+            continue;
+        /* A lone RTE with nothing faulting is not a loop. */
+        if (others == 0 && probe_op_at(b->memspace, h) != PROBE_OP_HALT)
+            continue;
+        *fault = others ? other : h;
+        if (!others && b->get_reg) {
+            /* Parked: the group-1/2 exception frame (SR, then PC) is still
+             * on the stack. */
+            unsigned long sp = b->get_reg(NULL, PROBE_M68K_REG_A7) & 0xFFFFFFu;
+
+            if (sp + 6u <= 0x200000u)
+                *fault = (((unsigned long)b->memspace[sp + 2] << 24)
+                          | ((unsigned long)b->memspace[sp + 3] << 16)
+                          | ((unsigned long)b->memspace[sp + 4] << 8)
+                          | b->memspace[sp + 5]) & 0xFFFFFFu;
+        }
+        *handler = h;
+        return 1;
+    }
+    return 0;
 }
 
 static bool probe_frame_cb(void *userdata, unsigned frame)
@@ -220,6 +319,20 @@ static bool probe_frame_cb(void *userdata, unsigned frame)
                 return false;   /* rejected: the boot ROM halted itself */
         } else {
             b->halt_frames = 0;
+        }
+    }
+
+    {
+        unsigned long fault = 0, handler = 0;
+
+        if (probe_trap_loop(b, &fault, &handler)) {
+            if (!b->trap_frames || fault != b->trap_pc)
+                b->trap_frames = 0;
+            b->trap_frames++;
+            b->trap_pc = fault;
+            b->trap_handler = handler;
+        } else {
+            b->trap_frames = 0;
         }
     }
 
@@ -295,7 +408,8 @@ int main(int argc, char **argv)
            "audio_nonsilent=%u audio_onset=%d "
            "bios_ran=%d handoff=%d final_op=$%04X halt_frames=%u "
            "scored_from=%u scored_frames=%u scored_lit_frames=%u "
-           "scored_motion=%u scored_audio_nonsilent=%u\n",
+           "scored_motion=%u scored_audio_nonsilent=%u "
+           "trap_frames=%u trap_pc=$%06lX trap_handler=$%06lX\n",
            cfg.rom_path, cfg.video.total_frames_rendered,
            vstate->last_w, vstate->last_h, pc_valid, final_pc,
            nonblack_pct, vstate->lit_frames, vstate->distinct_hashes,
@@ -303,7 +417,8 @@ int main(int argc, char **argv)
            boot.bios_ran, boot.handoff, boot.final_op, boot.halt_frames,
            boot.scored_from, sstate->frames, sstate->lit_frames,
            sstate->distinct_hashes,
-           cfg.audio.total_nonsilent - boot.audio_base);
+           cfg.audio.total_nonsilent - boot.audio_base,
+           boot.trap_frames, boot.trap_pc, boot.trap_handler);
 
     res.status = "INFO";
     res.name = "cart_boot_probe";
