@@ -365,7 +365,7 @@ void App::wireHost() {
     debug.onResume.push_back([this] {
         audio.clear();
         audio.setPaused(paused);
-        accum_ = 0;
+        pacer_.reset();
         lastTick_ = now();                                // the halt must not count as elapsed emulation time
     });
 
@@ -481,7 +481,16 @@ void App::themePreviewEnd(bool keep) {
 }
 
 void App::applyVsync() {
+    pacer_.resetSwap(vsync);
     if (gl_) SDL_GL_SetSwapInterval(vsync ? 1 : 0);
+}
+
+// Vsync is a pacing tool for a core that has time to spare (pacing.h).  While the core is behind, SDL_GL_SwapWindow
+// would block until the next vblank -- on average half a refresh interval, every UI frame -- on the very thread that
+// runs the emulation, so the swap interval is released and restored once the core keeps up again.
+void App::syncSwapInterval() {
+    if (!gl_) return;
+    if (pacer_.updateSwap(vsync)) SDL_GL_SetSwapInterval(pacer_.swapSync ? 1 : 0);
 }
 
 void App::applyAudioSettings() {
@@ -558,7 +567,7 @@ bool App::openContent(const std::string& pathIn) {
     audio.clear();
     audio.setPaused(false);
     paused = false;
-    accum_ = 0;
+    pacer_.reset();
     lastTick_ = now();
     input.setContent(contentIdentity(path));   // selects the per-game control overrides
     applyPortDevices(*this);                   // the controller types chosen in Settings, per game or global
@@ -597,7 +606,7 @@ bool App::openNoContent() {
     applyAudioSettings();
     audio.clear();
     paused = false;
-    accum_ = 0;
+    pacer_.reset();
     lastTick_ = now();
     invalidateThumbs();
     ach.onContentClosed();   // no game, so nothing to look up
@@ -1071,22 +1080,16 @@ void App::stepEmulation() {
     double dt = t - lastTick_;
     lastTick_ = t;
     if (!host.isLoaded() || paused || debug.halted()) {
-        accum_ = 0;
+        pacer_.reset();
         return;
     }
     double period = 1.0 / std::max(1.0, host.fps());
     int frames = 0;
     if (fastForward) {
         frames = 4;
-        accum_ = 0;
+        pacer_.reset();
     } else {
-        accum_ += dt;
-        if (accum_ > 0.25) accum_ = period;  // stalled (window drag, debugger): resync
-        while (accum_ >= period && frames < 3) {
-            frames++;
-            accum_ -= period;
-        }
-        if (accum_ > period * 2) accum_ = 0;
+        frames = pacer_.plan(dt, period);
     }
     for (int i = 0; i < frames; i++) {
         host.wantVideo = (i == frames - 1);
@@ -1094,12 +1097,22 @@ void App::stepEmulation() {
         uint64_t r0 = perf.on ? perf.tick() : 0;
         host.runFrame();
         if (r0) perf.add(Perf::Retro, 1000.0 * (double)(perf.tick() - r0) / (double)perf.freq);
+        perf.emulated();
         ach.afterFrame();
         netplay.afterFrame();
         fpsWindowFrames_++;
         runSeconds_ += 1.0 / std::max(1.0, host.fps());   // emulated time of this game (paused time does not count)
     }
     host.wantVideo = true;
+    if (!fastForward && frames > 0) {
+        // The frames just run took real time that the next step would otherwise only see as dt: charge it now, so
+        // "is a frame already due again?" is answered from the true backlog (Pacer::behind, pacing.h).
+        double t2 = now();
+        pacer_.charge(t2 - lastTick_, period);
+        lastTick_ = t2;
+    } else {
+        pacer_.behind = false;
+    }
     if (pendingStateSlot_ != kNoPendingSlot && frames > 0) {
         pendingStateFrames_ -= frames;
         if (pendingStateFrames_ <= 0) {
@@ -1329,11 +1342,12 @@ int App::runInteractive(const CliArgs& a) {
             host.flushSaveRam();
             lastSramFlush_ = t;
         }
-        if (!vsync) {
-            // No swap-interval pacing: sleep until the next emulated frame is due.
+        syncSwapInterval();
+        if (!pacer_.swapSync) {
+            // No swap-interval pacing: sleep until the next emulated frame is due -- never when the core is behind.
             double period = 1.0 / std::max(1.0, host.fps());
-            double wait = (host.isLoaded() && !paused) ? period - accum_ - 0.001 : 0.008;
-            if (wait > 0.0005) SDL_DelayNS((Uint64)(std::min(wait, 0.016) * 1e9));
+            double wait = (host.isLoaded() && !paused) ? pacer_.sleepFor(t - lastTick_, period) : 0.008;
+            if (wait > 0) SDL_DelayNS((Uint64)(wait * 1e9));
         }
         perf.lap(Perf::Sleep);
         perf.frameEnd();

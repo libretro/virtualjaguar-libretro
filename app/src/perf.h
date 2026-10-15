@@ -41,6 +41,7 @@ struct Perf {
     double mx[kPhases] = {};
     std::vector<double> frameMs;
     double cpuStart = 0;
+    uint64_t emuFrames = 0;      // emulated frames run inside the measured window (retro_run calls)
     std::string note;            // one line describing the setup (window size, GL, shader), printed first
 
     static double cpuSeconds() {
@@ -94,6 +95,10 @@ struct Perf {
         sum[p] += ms;
         mx[p] = std::max(mx[p], ms);
     }
+    // One emulated frame (a retro_run call) ran.  A UI frame may run several (catching up) or none.
+    void emulated() {
+        if (on && seen >= warmup) emuFrames++;
+    }
     void frameEnd() {
         if (on) seen++;
     }
@@ -109,6 +114,8 @@ struct Perf {
         for (double v : s) tot += v;
         if (!note.empty()) std::printf("PERF %s\n", note.c_str());
         std::printf("PERF %s: %zu frames in %.2f s (loop %.1f fps)\n", what, n, wall, (double)n / wall);
+        std::printf("PERF   emulated %llu frames in the window = %.1f emulated fps (real time is the core's own rate, ~60)\n",
+                    (unsigned long long)emuFrames, (double)emuFrames / wall);
         for (int p = 0; p < kPhases; p++) {
             if (sum[p] == 0 && p >= Retro) continue;
             std::printf("PERF   %-28s avg %7.3f ms  max %7.3f ms\n", name(p), sum[p] / (double)n, mx[p]);
