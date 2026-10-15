@@ -261,6 +261,77 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    return true;
 }
 
+/* GEMDOS / DRI executable header (Atari ST "PRG" layout, issue #971):
+ *   $00 $601A  $02 text size  $06 data size  $0A bss size  $0E symbol size
+ *   $12-$19 reserved  $1A absflag (0 = a relocation table follows the
+ *   symbols)  $1C text, then data, then symbols, then relocations.
+ * Mandelbrot Demo (PD) is one: 601A with no "JAG" at $1C, text $EBE,
+ * symbols $2CD8, and a zero relocation long.  The older reading of that
+ * shape (JST_WTFOMGBBQ: load address little-endian at $1C) took the first
+ * instruction, $46FC2700, as $0027FC46 and copied the program outside main
+ * RAM.  Only claim the layout when the sizes add up to the file. */
+#define DRI_HEADER_SIZE 0x1C
+
+static bool DriHeaderIsConsistent(const uint8_t *buffer, uint32_t size)
+{
+   uint32_t text, data, bss, syms;
+
+   if (size < DRI_HEADER_SIZE + 2)
+      return false;
+
+   text = GET32(buffer, 0x02);
+   data = GET32(buffer, 0x06);
+   bss  = GET32(buffer, 0x0A);
+   syms = GET32(buffer, 0x0E);
+
+   /* Each field bounded on its own so the sums below cannot wrap. */
+   if (text == 0 || text > size || data > size || syms > size
+         || bss > 0x200000)
+      return false;
+
+   return DRI_HEADER_SIZE + text + data + syms <= size;
+}
+
+/* Apply a GEMDOS relocation table to a program already copied to `base`.
+ * Table: a long offset of the first fixup (0 = none), then one byte per
+ * further fixup: 1 = advance 254 without fixing, 0 = end, else advance that
+ * many bytes and fix.  Each fixup adds `base` to the long at that text
+ * offset.  Returns false on a table that runs off the image. */
+static bool DriRelocate(const uint8_t *buffer, uint32_t size, uint32_t base,
+      uint32_t imageSize)
+{
+   uint32_t pos = DRI_HEADER_SIZE + GET32(buffer, 0x02) + GET32(buffer, 0x06)
+      + GET32(buffer, 0x0E);
+   uint32_t fix;
+
+   if (GET16(buffer, 0x1A) != 0 || pos + 4 > size)
+      return true;                  /* absolute image, or no table at all */
+
+   fix = GET32(buffer, pos);
+   pos += 4;
+   if (fix == 0)
+      return true;
+
+   for (;;)
+   {
+      uint8_t step;
+
+      if (fix + 4 > imageSize)
+         return false;
+      SET32(jagMemSpace, base + fix, GET32(jagMemSpace, base + fix) + base);
+
+      do
+      {
+         if (pos >= size)
+            return false;
+         step = buffer[pos++];
+         if (step == 0)
+            return true;
+         fix += (step == 1) ? 254 : step;
+      } while (step == 1);
+   }
+}
+
 /* Parse the file type based upon file size and/or headers. */
 static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 {
@@ -281,6 +352,8 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    {
       if (buffer[0x1C] == 'J' && buffer[0x1D] == 'A' && buffer[0x1E] == 'G')
          return JST_JAGSERVER;
+      if (DriHeaderIsConsistent(buffer, size))
+         return JST_DRI;
       return JST_WTFOMGBBQ;
    }
 
@@ -518,12 +591,30 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
    }
    else if (fileType == JST_JAGSERVER)
    {
-      /* Detection already verified the JAG header. This load path still assumes
-       * JAGSERVER type 3 and long command sizes; type 2/JAGR needs hardware docs
-       * or a repro before changing behavior. */
+      /* Detection already verified the JAG header.  Type 3 ($0003 at $20):
+       * load $22, length $26, run $2A, code at $2E.  Type 2 (issue #971:
+       * Jaguar Server INTRO / INTROMOD) has no run field: load $22, length
+       * $26, code at $2A, entered at the load address.  Reading a type-2
+       * file as type 3 took the first code long ($23FC03D0) as the run
+       * address and dropped four code bytes.  Other variants (KEYB's $000A)
+       * keep the type-3 reading. */
       uint32_t loadAddress = GET32(buffer, 0x22), runAddress = GET32(buffer, 0x2A);
       uint32_t codeSize = jaguarROMSize - 0x2E;
-      memcpy(jagMemSpace + loadAddress, buffer + 0x2E, codeSize);
+      uint32_t codeOffset = 0x2E;
+
+      if (GET16(buffer, 0x20) == 0x0002)
+      {
+         uint32_t length = GET32(buffer, 0x26);
+
+         codeOffset = 0x2A;
+         codeSize = jaguarROMSize - 0x2A;
+         if (length != 0 && length < codeSize)
+            codeSize = length;
+         runAddress = loadAddress;
+         if (loadAddress >= 0x200000 || codeSize > 0x200000 - loadAddress)
+            return false;
+      }
+      memcpy(jagMemSpace + loadAddress, buffer + codeOffset, codeSize);
       jaguarRunAddress = runAddress;
       jaguarLoadedRAMStart = loadAddress;
       jaguarLoadedRAMEnd = loadAddress + codeSize;
@@ -542,6 +633,31 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
       jaguarRunAddress = loadAddress;
       jaguarLoadedRAMStart = loadAddress;
       jaguarLoadedRAMEnd = loadAddress + codeSize;
+      return true;
+   }
+   else if (fileType == JST_DRI)
+   {
+      /* The header carries no load address: GEMDOS chose one at run time
+       * and relocated.  Place the text+data where its own absolute
+       * references say it belongs, else at the BJL upload address $4000
+       * (Mandelbrot runs at $4000, $5000, $20000 and $40000 alike), then
+       * apply the relocation table, if any, against that base. */
+      uint32_t imageSize = GET32(buffer, 0x02) + GET32(buffer, 0x06);
+      uint32_t bssSize = GET32(buffer, 0x0A);
+      uint32_t loadAddress;
+
+      if (!InferRawBinaryLoadAddress(buffer + DRI_HEADER_SIZE, imageSize, &loadAddress)
+            || loadAddress >= 0x200000)
+         loadAddress = 0x4000;
+      if (imageSize + bssSize > 0x200000 - loadAddress)
+         return false;
+
+      memcpy(jagMemSpace + loadAddress, buffer + DRI_HEADER_SIZE, imageSize);
+      if (!DriRelocate(buffer, jaguarROMSize, loadAddress, imageSize))
+         return false;
+      jaguarRunAddress = loadAddress;
+      jaguarLoadedRAMStart = loadAddress;
+      jaguarLoadedRAMEnd = loadAddress + imageSize;
       return true;
    }
    else if (fileType == JST_RAW_BINARY)

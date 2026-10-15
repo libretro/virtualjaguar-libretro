@@ -516,6 +516,110 @@ TEST(raw_binary_tie_without_io_descriptor_stays_4000)
    p_retro_unload_game();
 }
 
+/* Issue #971 helpers: big-endian stores into a synthetic file. */
+static void put16(uint8_t *img, unsigned off, unsigned v)
+{
+   img[off + 0] = (uint8_t)(v >> 8);
+   img[off + 1] = (uint8_t)v;
+}
+
+static void put32(uint8_t *img, unsigned off, uint32_t v)
+{
+   put16(img, off, (unsigned)(v >> 16));
+   put16(img, off + 2, (unsigned)(v & 0xFFFF));
+}
+
+static uint32_t ram32(const uint8_t *ram, uint32_t addr)
+{
+   return ((uint32_t)ram[addr] << 24) | ((uint32_t)ram[addr + 1] << 16)
+      | ((uint32_t)ram[addr + 2] << 8) | ram[addr + 3];
+}
+
+/* Issue #971: Mandelbrot Demo is a plain GEMDOS/DRI executable (601A, no
+ * "JAG" at $1C).  It used to be read as JST_WTFOMGBBQ, whose load address
+ * is the little-endian long at $1C -- here the first instruction -- so the
+ * program was copied outside main RAM.  The 28-byte header gives sizes,
+ * not an address: text+data go to the inferred base, else $4000. */
+TEST(dri_601a_loads_text_at_4000)
+{
+   static uint8_t img[0x1C + 0x100 + 0x40 + 4];
+   uint8_t *ram;
+   unsigned i;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x601A);
+   put32(img, 0x02, 0x100);                         /* text */
+   put32(img, 0x0E, 0x40);                          /* symbols */
+   put32(img, 0x1C, 0x46FC2700);                    /* move #$2700,sr */
+   for (i = 0x20; i < 0x1C + 0x100; i++)
+      img[i] = (uint8_t)(0x4E + (i & 1) * 0x23);    /* NOP filler */
+
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4000, img + 0x1C, 0x100) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   p_retro_unload_game();
+}
+
+/* A DRI file with a relocation table: each fixup adds the load base to the
+ * long at that text offset (first offset as a long, then byte deltas, 1 =
+ * skip 254, 0 = end). */
+TEST(dri_601a_applies_relocations)
+{
+   static uint8_t img[0x1C + 0x200 + 4 + 4];
+   uint8_t *ram;
+   unsigned reloc = 0x1C + 0x200;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x601A);
+   put32(img, 0x02, 0x200);                         /* text, no symbols */
+   put32(img, 0x1C, 0x46FC2700);
+   put32(img, 0x1C + 0x010, 0x00000100);            /* fixed up */
+   put32(img, 0x1C + 0x014, 0x00000123);            /* left alone */
+   put32(img, 0x1C + 0x116, 0x00000040);            /* $10 + 254 + 8 */
+   put32(img, reloc, 0x10);                         /* first fixup */
+   img[reloc + 4] = 1;                              /* +254, no fix */
+   img[reloc + 5] = 8;                              /* -> $116 */
+   img[reloc + 6] = 0;                              /* end */
+
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   ASSERT_EQ_U(ram32(ram, 0x4010), 0x4100);
+   ASSERT_EQ_U(ram32(ram, 0x4014), 0x0123);
+   ASSERT_EQ_U(ram32(ram, 0x4116), 0x4040);
+   p_retro_unload_game();
+}
+
+/* Issue #971: JAGR type 2 (Jaguar Server INTRO / INTROMOD) is load $22,
+ * length $26, code at $2A, entered at the load address.  Read as type 3 it
+ * jumped to the first code long and lost four code bytes. */
+TEST(jagr_type2_loads_at_load_address)
+{
+   static uint8_t img[0x2A + 0x80];
+   uint8_t *ram;
+   unsigned i;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x601A);
+   img[0x1C] = 'J'; img[0x1D] = 'A'; img[0x1E] = 'G'; img[0x1F] = 'R';
+   put16(img, 0x20, 0x0002);
+   put32(img, 0x22, 0x4FF6);                        /* load = run */
+   put32(img, 0x26, 0x80);                          /* length */
+   put32(img, 0x2A, 0x23FC03D0);                    /* move.l #...,abs */
+   for (i = 0x2E; i < sizeof(img); i++)
+      img[i] = (uint8_t)i;
+
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4FF6, img + 0x2A, 0x80) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4FF6);
+   p_retro_unload_game();
+}
+
 /* ------------------------------------------------------------------ */
 /* Cart mirroring (issue #851)                                         */
 /* ------------------------------------------------------------------ */
@@ -746,6 +850,9 @@ int main(int argc, char **argv)
    RUN(raw_binary_bss_refs_do_not_pull_4000_image_to_5000);
    RUN(raw_binary_io_descriptor_tie_goes_to_5000);
    RUN(raw_binary_tie_without_io_descriptor_stays_4000);
+   RUN(dri_601a_loads_text_at_4000);
+   RUN(dri_601a_applies_relocations);
+   RUN(jagr_type2_loads_at_load_address);
    RUN(mirror_2mb_repeats_in_window);
    RUN(mirror_1mb_repeats_in_window);
    RUN(mirror_4mb_repeats_once);
