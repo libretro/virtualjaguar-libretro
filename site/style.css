@@ -564,10 +564,6 @@ figcaption {
     repeating-linear-gradient(0deg,
       rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
 }
-/* Hero mosaic: four real frames, so no scanline/vignette overlay and a
- * smooth (not pixelated) downscale. */
-.crt-frame.mosaic { max-width: 46rem; }
-.crt-frame.mosaic .crt-screen::after { display: none; }
 
 .crt-frame figcaption {
   font-family: var(--font-mono);
@@ -1053,6 +1049,7 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, 0.78); }
   grid-auto-flow: column;
   grid-auto-columns: calc((100% - (var(--strip-cols) - 1) * var(--strip-gap)) / var(--strip-cols));
   gap: var(--strip-gap);
+  max-width: none;
   margin: 0;
   padding: 0 0 0.6rem;
   list-style: none;
@@ -1063,11 +1060,18 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, 0.78); }
   scrollbar-color: var(--red-fill) var(--code-bg);
 }
 .strip > li { margin: 0; scroll-snap-align: start; min-width: 0; }
-.strip .gal-card { height: 100%; }
+.strip .gal-card { position: relative; height: 100%; }
 .strip .gal-link { padding: 3px; }
 .strip .gal-card img { aspect-ratio: 4 / 3; object-fit: cover; }
 .strip .gal-card figcaption { padding: 0.3rem 0.45rem 0.4rem; font-size: 0.74rem; line-height: 1.3; }
 .strip .gal-card figcaption strong { font-size: 0.78rem; }
+/* In the strip a card shows the title (and the shader, when there is one);
+ * the full caption stays in the markup for the lightbox and screen readers. */
+.strip .gal-cap {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.strip .gal-card figcaption .badge { margin-top: 0.2rem; font-size: 0.62rem; }
 .strip::-webkit-scrollbar { height: 14px; -webkit-appearance: none; appearance: none; }
 .strip::-webkit-scrollbar-track {
   background: var(--code-bg);
