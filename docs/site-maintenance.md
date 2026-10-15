@@ -63,6 +63,7 @@ robots -- derives from that single string, so they cannot drift apart.
 | `{{DOCS_COMPAT_URL}}` | libretro's community Jaguar compatibility list |
 | `{{COMPAT_TABLE}}`, `{{COMPAT_BUILD_IDS}}`, `{{COMPAT_N_TITLES}}`, `{{COMPAT_N_HLE_GOOD}}`, `{{COMPAT_N_BIOS_GOOD}}` | parsed from `docs/cd-boot-matrix.md` |
 | `{{CART_TABLE}}`, `{{CART_BUILD_IDS}}`, `{{CART_N_TITLES}}`, `{{CART_N_HLE_GOOD}}`, `{{CART_N_BIOS_GOOD}}` | parsed from `docs/cart-boot-matrix.md` |
+| `{{RELEASE_LOG}}` | the home page's release log, generated from every `docs/RELEASE_NOTES_v*.md` (v3 and later): newest first, five rows visible, the rest folded. A row's summary is the notes file's opening paragraph (the bold tagline under the H1), so write that paragraph for readers and a new release shows up on the site with no page edit. |
 | `{{CART_N_HLE_RUN}}`, `{{CART_N_BIOS_RUN}}` | "N of M" cart rows whose stage is `GAME_CODE`, regardless of the headless video verdict |
 
 The home-page hero is `assets/hero_mosaic.webp`: four frames rendered by the
