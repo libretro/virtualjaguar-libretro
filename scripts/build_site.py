@@ -1086,6 +1086,113 @@ def latest_link_html(releases):
     return '<a href="%s/releases">Releases</a>' % REPO_URL
 
 
+# ------------------------------------------------------------ release log
+#
+# The home page's release log is generated from docs/RELEASE_NOTES_v*.md, so a
+# new release appears on the site as soon as its notes are committed.  Each
+# row's summary is the notes file's own opening paragraph (the bold tagline
+# under the "# Virtual Jaguar libretro vX.Y.Z" heading), trimmed to whole
+# sentences.  Nothing is typed into the page by hand.
+
+NOTES_DIR = ROOT / "docs"
+NOTES_RE = re.compile(r"^RELEASE_NOTES_v(\d+)\.(\d+)\.(\d+)\.md$")
+RELEASE_LOG_MIN_MAJOR = 3      # v2.x predates the libretro rework; GitHub has it
+RELEASE_LOG_SHOWN = 5          # newest rows visible; the rest sit in a <details>
+RELEASE_LOG_SUMMARY_MAX = 240  # characters, cut at a sentence boundary
+RELEASE_LOG_SUMMARY_MIN = 80   # a shorter opener takes the next sentence too
+SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+
+def release_summary(text):
+    """Opening paragraph of a notes file as one plain-text summary.
+
+    Skips the H1, takes the first paragraph, drops markdown emphasis, code
+    ticks, links and "Closes ..." bookkeeping sentences, then keeps whole
+    sentences up to RELEASE_LOG_SUMMARY_MAX characters (at least
+    RELEASE_LOG_SUMMARY_MIN, so a one-line opener is not the whole row).
+    """
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or lines[i].startswith("#")):
+        i += 1
+    para = []
+    while i < len(lines) and lines[i].strip() and not lines[i].startswith(
+            ("#", "---", "- ", "* ")):
+        para.append(lines[i].strip())
+        i += 1
+    flat = " ".join(para)
+    flat = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", flat)
+    flat = re.sub(r"https?://\S+", "", flat)
+    flat = flat.replace("**", "").replace("`", "")
+    flat = re.sub(r"\s*\(#\d+[^)]*\)", "", flat)
+    flat = re.sub(r"\s+", " ", flat).strip()
+    sentences = [x for x in SENTENCE_RE.split(flat)
+                 if x and not x.startswith("Closes")
+                 and not re.search(r"\d+ commits", x)]
+    out = ""
+    for sent in sentences:
+        if (len(out) >= RELEASE_LOG_SUMMARY_MIN
+                and len(out) + 1 + len(sent) > RELEASE_LOG_SUMMARY_MAX):
+            break
+        out = (out + " " + sent).strip()
+    return normalize_dashes(out)
+
+
+def load_release_notes(notes_dir=NOTES_DIR):
+    """[(version tuple, 'vX.Y.Z', summary)] newest first, v3+ only."""
+    found = []
+    for path in notes_dir.glob("RELEASE_NOTES_v*.md"):
+        m = NOTES_RE.match(path.name)
+        if not m:
+            continue
+        ver = tuple(int(x) for x in m.groups())
+        if ver[0] < RELEASE_LOG_MIN_MAJOR:
+            continue
+        summary = release_summary(path.read_text(encoding="utf-8"))
+        if not summary:
+            die("%s: no opening paragraph to use as the release summary"
+                % path.name)
+        found.append((ver, "v%d.%d.%d" % ver, summary))
+    if not found:
+        die("no docs/RELEASE_NOTES_v*.md files found for the release log")
+    found.sort(reverse=True)
+    return found
+
+
+def render_release_log(entries):
+    """The home page's release table, newest first; older rows folded."""
+    def row(tag, summary):
+        return (
+            "      <tr>\n"
+            "        <td><strong>%(tag)s</strong></td>\n"
+            "        <td>%(summary)s</td>\n"
+            "        <td><a href=\"%(repo)s/releases/tag/%(tag)s\">release</a>"
+            " &middot;\n"
+            "            <a href=\"%(repo)s/blob/develop/docs/"
+            "RELEASE_NOTES_%(tag)s.md\">notes</a></td>\n"
+            "      </tr>\n" % {"tag": tag, "repo": REPO_URL,
+                              "summary": html.escape(summary)})
+
+    def table(rows):
+        return ("    <div class=\"table-wrap\"><table class=\"release-log\">\n"
+                "      <tr><th>Version</th><th>What landed</th>"
+                "<th>Links</th></tr>\n" + "".join(rows) +
+                "    </table></div>")
+
+    rows = [row(tag, summary) for _, tag, summary in entries]
+    out = table(rows[:RELEASE_LOG_SHOWN])
+    if rows[RELEASE_LOG_SHOWN:]:
+        out += (
+            "\n    <details class=\"fold\">\n"
+            "      <summary>Older releases (%s to %s)</summary>\n%s\n"
+            "    </details>"
+            % (entries[RELEASE_LOG_SHOWN][1], entries[-1][1],
+               table(rows[RELEASE_LOG_SHOWN:])))
+    out += ("\n    <p class=\"footnote\">Every release, with its binaries, is "
+            "on the <a href=\"%s/releases\">releases page</a>.</p>" % REPO_URL)
+    return out
+
+
 # ---------------------------------------------------------------- pages
 
 META_RE = re.compile(r"<!--\s*(title|nav|description):\s*(.*?)\s*-->")
@@ -1404,6 +1511,7 @@ def main():
         "{{DOCS_SRC_URL}}": LIBRETRO_DOCS_SRC,
         "{{DOWNLOADS}}": render_downloads(releases),
         "{{LATEST_LINK}}": latest_link_html(releases),
+        "{{RELEASE_LOG}}": render_release_log(load_release_notes()),
         "{{COMPAT_TABLE}}": table_html,
         "{{COMPAT_BUILD_IDS}}":
             ", ".join("<code>%s</code>" % html.escape(b) for b in build_ids)
@@ -1484,6 +1592,8 @@ def main():
         deps = [SITE_SRC / "pages" / p] + common_deps
         if p == "compatibility.html":
             deps.append(MATRIX_MD)
+        if p == "index.html":
+            deps.extend(sorted(NOTES_DIR.glob("RELEASE_NOTES_v*.md")))
         sitemap_entries.append(
             (page_url(p), last_modified(deps, build_date, shallow)))
         print("wrote %s" % (out / p))
