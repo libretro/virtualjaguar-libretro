@@ -6,10 +6,12 @@ picker.**
 
 v3.9.1 is a polish release on top of v3.9.0. For RetroArch and Provenance users it brings two
 DSP/GPU accuracy fixes derived from the original chip netlists, a faster GPU idle-loop
-fast-forward, a GDB stub that works with stock gdb, and a framebuffer bounds fix. With default
+fast-forward, a GDB stub that works with stock gdb, a framebuffer bounds fix, loader fixes for
+eleven homebrew and demo files, and working legacy MSVC Windows builds again. With default
 settings the cartridge corpus is byte-identical to v3.9.0 except Xenowings (sound effects now
-play) and a frame or two of Skyhammer (a GPU divide by zero now returns the hardware's value). No
-option keys were removed, no listed option values changed, and the savestate format stays v17.
+play), a frame or two of Skyhammer (a GPU divide by zero now returns the hardware's value), and
+the eleven files the loader now places where they were linked. No option keys were removed, no
+listed option values changed, and the savestate format stays v17.
 
 ---
 
@@ -48,6 +50,23 @@ option keys were removed, no listed option values changed, and the savestate for
   `set endian big`. `detach` and `kill` leave the emulator running, watchpoints work (one slot),
   and long `monitor` output is no longer cut at 512 bytes; `monitor trace` shows the newest
   entries. LLDB can read memory but has no 68K target. Recipe: `docs/gdb-stub-guide.md`.
+- **Eleven homebrew and demo files load where they were linked**
+  (https://github.com/libretro/virtualjaguar-libretro/issues/971,
+  https://github.com/libretro/virtualjaguar-libretro/issues/972,
+  https://github.com/libretro/virtualjaguar-libretro/issues/973,
+  https://github.com/libretro/virtualjaguar-libretro/pull/978). The loader now reads plain
+  GEMDOS/DRI `601A` executables (Mandelbrot Demo) and Jaguar Server `JAGR` type 2 images (INTRO,
+  INTROMOD) with their own layouts. Headerless BJL programs that used to be mapped as cartridges
+  now load as RAM programs at `$4000` (Hubble Fade, Hubble Nebula, Drumpad2), and Painter (bin) is
+  placed at `$10000`. Images linked at `$802000` are mapped there (Rayman Demo `.jag`/`.rom`,
+  BadCode4 (Metal)/(Modified) `(rom)`). In a full corpus sweep 15 matrix cells improved and
+  none regressed; no other file loads differently.
+- **Legacy MSVC builds link again**
+  (https://github.com/libretro/virtualjaguar-libretro/issues/981,
+  https://github.com/libretro/virtualjaguar-libretro/pull/982). The libretro buildbot's MSVC
+  2005 and 2010 Windows builds have failed since v3.9.0 on an unresolved `snprintf` in the debug
+  interface. The RISC disassembler header now includes the pre-2015 shim itself. MinGW Windows
+  builds were not affected.
 
 ## The desktop app
 
@@ -79,6 +98,13 @@ option keys were removed, no listed option values changed, and the savestate for
   gdb recipe (https://github.com/libretro/virtualjaguar-libretro/pull/959).
 - The release log is generated from these notes, and the pages are current to v3.9
   (https://github.com/libretro/virtualjaguar-libretro/pull/964).
+- The app page uses the same release picker as the Download page, every screenshot opens in the
+  lightbox, and the home page has a strip of 16 game screenshots
+  (https://github.com/libretro/virtualjaguar-libretro/pull/970).
+- The compatibility matrix no longer says a game runs when its 68K crashed in the first second
+  and the screen stayed black. Those rows are now marked unverified, `? (trap_loop)`
+  (https://github.com/libretro/virtualjaguar-libretro/issues/975,
+  https://github.com/libretro/virtualjaguar-libretro/pull/980).
 
 ---
 

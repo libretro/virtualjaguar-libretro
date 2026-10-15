@@ -4,9 +4,9 @@ Virtual Jaguar v3.9.1 libretro
 Xenowings SFX, faster GPU idle skip, shaders on every app package.
 Full notes: docs/RELEASE_NOTES_v3.9.1.md
 
-Cart corpus byte-identical to v3.9.0 except Xenowings (SFX play) and
-a frame or two of Skyhammer (GPU divide by zero). No option keys removed;
-savestate format stays v17.
+Cart corpus byte-identical to v3.9.0 except Xenowings (SFX play),
+a frame or two of Skyhammer (GPU divide by zero) and the eleven loader
+fixes below. No option keys removed; savestate format stays v17.
 
 == Core ==
 * Xenowings shot/explosion sounds restored (#895, #954): an indexed
@@ -20,6 +20,11 @@ savestate format stays v17.
 * Framebuffer overrun on wild video registers fixed (#944, #946).
 * GDB stub works with stock gdb: real 68K target description,
   detach/kill, watchpoints, full monitor output (#936, #948).
+* Loader: DRI 601A executables, JAGR type 2, headerless BJL programs
+  at $4000, Painter (bin) at $10000, $802000-linked images (Rayman
+  Demo, BadCode4 (rom)) -- eleven files (#971-#973, #978).
+* Legacy MSVC 2005/2010 buildbot builds link again: snprintf shim
+  for the debug interface's disassembler (#981, #982).
 
 == Desktop app ==
 * Shaders on Intel Macs, AppImage, .deb (librashader built from
