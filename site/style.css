@@ -1036,4 +1036,3 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, 0.78); }
 
 /* release log */
 table.release-log td:first-child, table.release-log td:last-child { white-space: nowrap; }
-table.release-log td:nth-child(2) { min-width: 16rem; }

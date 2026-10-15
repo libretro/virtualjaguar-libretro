@@ -1159,6 +1159,21 @@ def load_release_notes(notes_dir=NOTES_DIR):
     return found
 
 
+def drop_unreleased(entries, releases):
+    """With release data in hand, hide notes newer than the latest release.
+
+    Notes are committed before the tag exists (docs/release-process.md), and a
+    row whose release link 404s would announce a release that has not
+    shipped.  Without release data (offline build) every notes file shows.
+    """
+    tag = ((releases or {}).get("latest") or {}).get("tag_name", "")
+    m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", tag)
+    if not m:
+        return entries
+    newest = tuple(int(x) for x in m.groups())
+    return [e for e in entries if e[0] <= newest]
+
+
 def render_release_log(entries):
     """The home page's release table, newest first; older rows folded."""
     def row(tag, summary):
@@ -1511,7 +1526,8 @@ def main():
         "{{DOCS_SRC_URL}}": LIBRETRO_DOCS_SRC,
         "{{DOWNLOADS}}": render_downloads(releases),
         "{{LATEST_LINK}}": latest_link_html(releases),
-        "{{RELEASE_LOG}}": render_release_log(load_release_notes()),
+        "{{RELEASE_LOG}}": render_release_log(
+            drop_unreleased(load_release_notes(), releases)),
         "{{COMPAT_TABLE}}": table_html,
         "{{COMPAT_BUILD_IDS}}":
             ", ".join("<code>%s</code>" % html.escape(b) for b in build_ids)

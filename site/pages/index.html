@@ -41,11 +41,13 @@
     <ul>
       <li>Game library with box art, favorites, recents and save-state thumbnails</li>
       <li>RetroArch <code>.slangp</code> shader presets (librashader), cheats,
-          controller remapping, LAN link play</li>
-      <li>RetroAchievements (softcore or hardcore) and Discord Rich Presence</li>
+          controller remapping, a Netplay window for LAN link play</li>
+      <li>RetroAchievements (softcore or hardcore, login kept in the system
+          keychain) and Discord Rich Presence</li>
       <li>Light and dark themes, a theme editor and a choice of interface font</li>
       <li>Debug tools: memory viewer, cheat scanner, Object Processor list,
-          blitter log, and a 68000, GPU and DSP debugger</li>
+          blitter log, texture browser, audio scope, and a 68000, GPU and DSP
+          debugger with breakpoints</li>
     </ul>
     <p class="actions">
       <a class="btn" href="app.html">See the app</a>
@@ -60,11 +62,11 @@
       Direct links for every platform are on the
       <a href="download.html">Download</a> page ({{LATEST_LINK}}), or let the
       installer do it. It installs the <strong>RetroArch core</strong>, the
-      standalone <strong>app</strong> (new in v3.9.0), or <strong>both</strong>,
-      checks every download against the release's <code>SHA256SUMS.txt</code>,
-      and the same command updates whichever you already have. For the core it
-      finds your RetroArch, picks the matching build, backs up the core it
-      replaces and checks that the new one loads.
+      standalone <strong>app</strong>, or <strong>both</strong>, checks every
+      download against the release's <code>SHA256SUMS.txt</code>, and the same
+      command updates whichever you already have. For the core it finds your
+      RetroArch, backs up the core it replaces and checks that the new one
+      loads.
     </p>
     <p><strong>macOS, Linux, Raspberry Pi</strong></p>
     <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh</code></pre>
@@ -144,8 +146,7 @@
         a RetroArch netplay session with nothing to type. Direct TCP finds LAN
         hosts by UDP beacon. Doom deathmatch is validated, and since v3.8.0 it
         no longer drops to 30 fps. Ultra Vortek dials the emulated Voice Modem (press 911
-        at the title screen), and voice chat carries speech over it. The app
-        has a Netplay window for the link-cable games.</p>
+        at the title screen), and voice chat carries speech over it.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">user guide</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a></p>
       </dd>
@@ -162,9 +163,7 @@
       <dt>RetroAchievements</dt>
       <dd>
         <p>Memory maps and achievement support, asserted in CI against the
-        rcheevos mapping. The app adds an Achievements window (softcore by
-        default, hardcore optional, a tab for every Jaguar game with
-        achievements) and keeps your login token in the system keychain.</p>
+        rcheevos mapping.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/test/tools/test_memory_map.c">test_memory_map.c</a> &middot;
           <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.0.md">v3.9.0 notes</a></p>
@@ -204,10 +203,7 @@
         <p>A GDB remote stub exposes the 68K, GPU and DSP as threads. A crash
         watchdog writes the failing subsystem into your frontend log. Series K
         and Model M boot ROMs are embedded, and a custom image is identified
-        by checksum. The app&rsquo;s Tools menu adds a memory viewer, palette
-        and Object Processor editors, a cheat scanner, a blitter log, a
-        texture browser, an audio scope and a CPU debugger with breakpoints
-        and stepping.</p>
+        by checksum.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/gdb-stub-design.md">GDB stub</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/app-debug-tools.md">app debug tools</a> &middot;
           <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash_detect.c</a></p>
