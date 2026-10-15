@@ -47,6 +47,26 @@
  *      genuine idle loop and MUST still fire, so the guard is shown to
  *      key on the fix-up and not on external loads in general.
  *
+ *   E-M. admission of local-RAM long stores (issue #952).  Each program
+ *      is a wait loop whose body contains a store.  The fire/no-fire
+ *      verdict is checked, and every program that fires is also run
+ *      with the skip switched off and the two end states (both register
+ *      banks, all 4K of GPU local RAM, PC, flags-visible opcode count)
+ *      compared bit for bit -- the skip is only worth having if it is
+ *      invisible.
+ *        E. Doom's frame-wait loop verbatim            -> fires, exact
+ *        F. same, value register preloaded and the loop's own load
+ *           rewrites it (stored value changes 1 -> 0)   -> fires, exact
+ *        G. store_r14_indexed / store_r15_ri forms     -> fire, exact
+ *        H. the store hits the long the loop polls     -> must NOT fire
+ *        I. the store lands inside the loop's own code -> must NOT fire
+ *           (also with the bytes written back unchanged, which is a
+ *           fixed point only the code-overlap rule rules out)
+ *        J. store to a hardware register (G_FLAGS)     -> must NOT fire
+ *        K. store to main DRAM                         -> must NOT fire
+ *        L. a counter feeds the stored value           -> must NOT fire
+ *        M. unaligned local-RAM address                -> must NOT fire
+ *
  * Unlike the DSP test, gpu_control is static, so the GPU is started
  * through the G_CTRL MMIO write path (GPUWriteLong), and yarc's GPU
  * program actively uses interrupts -- GPUSetFlags(0) masks INT_ENA0-4
@@ -65,6 +85,7 @@
 #include <stdint.h>
 
 #include "../harness/harness.h"
+#include "src/core/settings.h"       /* struct VJSettings: riscIdleSkip */
 
 /* RISC opcode indices (src/tom/gpu.c gpu_dispatch[]) */
 #define OP_ADDQT   3
@@ -76,6 +97,10 @@
 #define OP_MOVEI  38
 #define OP_MOVEQ  35
 #define OP_LOAD   41
+#define OP_OR     10
+#define OP_STORE_R14_INDEXED 49
+#define OP_STORE_R15_RI      61
+#define CC_Z       2
 
 /* Branch condition codes: 0 = always, 1 = NE (fails when Z is set). */
 #define CC_ALWAYS  0
@@ -177,6 +202,177 @@ static void build_prog_c(uint32_t load_dst)
     (*p_mainram_slot)[MAINRAM_PTR + 3] = (uint8_t)(G_CTRL_ADDR);
 }
 
+static uint32_t run_prog(uint32_t off, int32_t cycles,
+                         uint32_t *rejects_out, uint32_t *opcodes_out);
+
+/* ---- store-admission programs (E-M) ------------------------------- */
+
+#define PROG_S_OFF   0x0C00          /* $F03C00: stays clear of vectors   */
+#define FLAG_OFF     0x0F90          /* $F03F90: the long the loop stores */
+#define POLL_OFF     0x0F94          /* $F03F94: the long the loop polls  */
+
+#define JR_Z_BACK(words) enc(OP_JR, (uint32_t)(32 - (words)) & 0x1F, CC_Z)
+
+/* movei #imm,rN  (3 words) */
+static uint32_t emit_movei(uint32_t at, uint32_t rn, uint32_t imm)
+{
+    put16(at,     enc(OP_MOVEI, 0, rn));
+    put16(at + 2, (uint16_t)(imm & 0xFFFF));
+    put16(at + 4, (uint16_t)(imm >> 16));
+    return at + 6;
+}
+
+/* Which variant of the store loop to assemble. */
+typedef enum {
+    ST_DOOM,        /* Doom's loop verbatim                              */
+    ST_VALUE_LOADED,/* r1 preloaded to 1, rewritten by the loop's load   */
+    ST_R14_INDEXED, /* store_r14_indexed form                            */
+    ST_R15_RI,      /* store_r15_ri form                                 */
+    ST_ALIAS_POLL,  /* store aimed at the polled long                    */
+    ST_IN_CODE,     /* store aimed at the loop's own code                */
+    ST_CODE_SAME,   /* same, writing back the bytes already there        */
+    ST_REGISTER,    /* store aimed at G_FLAGS                            */
+    ST_DRAM,        /* store aimed at main DRAM                          */
+    ST_COUNTER,     /* stored value is a running counter                 */
+    ST_UNALIGNED    /* store aimed at flag+1                             */
+} st_kind;
+
+/* Assemble the loop and its registers.  Common shape:
+ *     [movei #addr,r7 ; moveq #1,r1]   <- Doom/variants set these in-loop
+ *     store r1,(r7)
+ *     movei #POLL,r2 ; load (r2),r1 ; or r1,r1
+ *     jr Z,head ; nop
+ * The poll long holds 0, so Z stays set and the loop never exits. */
+static void build_prog_store(st_kind k)
+{
+    uint32_t at = PROG_S_OFF, head = PROG_S_OFF, jr, words;
+    uint32_t code_same_off = 0;
+    uint32_t addr = GPU_RAM_BASE + FLAG_OFF;
+
+    if (k == ST_ALIAS_POLL)  addr = GPU_RAM_BASE + POLL_OFF;
+    if (k == ST_IN_CODE)     addr = GPU_RAM_BASE + PROG_S_OFF + 4;
+    if (k == ST_REGISTER)    addr = 0x00F02100u;
+    if (k == ST_DRAM)        addr = 0x00100100u;
+    if (k == ST_UNALIGNED)   addr = GPU_RAM_BASE + FLAG_OFF + 1;
+
+    setreg(2, 0);
+    setreg(1, 1);
+    gpu_ram[POLL_OFF + 0] = gpu_ram[POLL_OFF + 1] = 0;
+    gpu_ram[POLL_OFF + 2] = gpu_ram[POLL_OFF + 3] = 0;
+    gpu_ram[FLAG_OFF + 0] = gpu_ram[FLAG_OFF + 1] = 0xAA;
+    gpu_ram[FLAG_OFF + 2] = gpu_ram[FLAG_OFF + 3] = 0xAA;
+
+    switch (k) {
+    case ST_VALUE_LOADED:
+        setreg(7, addr);                          /* r1 = 1 preloaded     */
+        put16(at, enc(OP_STORE, 7, 1));  at += 2;
+        break;
+    case ST_R14_INDEXED:
+        setreg(14, addr - 8);                     /* + (2 << 2) = addr    */
+        put16(at, enc(OP_STORE_R14_INDEXED, 2, 1)); at += 2;
+        break;
+    case ST_R15_RI:
+        setreg(15, addr - 16);
+        setreg(8, 16);
+        put16(at, enc(OP_STORE_R15_RI, 8, 1)); at += 2;
+        break;
+    case ST_COUNTER:
+        setreg(3, 0);
+        put16(at, enc(OP_ADDQT, 1, 3)); at += 2;  /* addqt #1,r3          */
+        setreg(7, addr);
+        put16(at, enc(OP_STORE, 7, 3));  at += 2; /* store r3,(r7)        */
+        break;
+    default:
+        at = emit_movei(at, 7, addr);
+        /* The aliasing case stores 0 into a poll long that already holds
+         * 0, so the loop keeps spinning (a 1 would end the wait and the
+         * program would run off into empty RAM) and only the alias rule
+         * stands between it and the skip. */
+        put16(at, enc(OP_MOVEQ, k == ST_ALIAS_POLL ? 0 : 1, 1));  at += 2;
+        if (k == ST_CODE_SAME) {
+            /* store r5,(r6): r6 = this very long (the store opcode and
+             * the movei opcode behind it), r5 = the bytes already there,
+             * so the write changes nothing and only the code-overlap rule
+             * keeps the loop out. */
+            code_same_off = at;
+            put16(at, enc(OP_STORE, 6, 5));
+        } else
+            put16(at, enc(OP_STORE, 7, 1));
+        at += 2;
+        break;
+    }
+    at = emit_movei(at, 2, GPU_RAM_BASE + POLL_OFF);
+    put16(at, enc(OP_LOAD, 2, 1));       at += 2;
+    put16(at, enc(OP_OR, 1, 1));         at += 2;
+    jr = at;
+    words = (jr + 2 - head) / 2;                 /* back to head, in words */
+    put16(jr,     JR_Z_BACK(words));
+    put16(jr + 2, enc(OP_NOP, 0, 0));
+    if (k == ST_CODE_SAME) {
+        setreg(6, GPU_RAM_BASE + code_same_off);
+        setreg(5, ((uint32_t)gpu_ram[code_same_off] << 24)
+                | ((uint32_t)gpu_ram[code_same_off + 1] << 16)
+                | ((uint32_t)gpu_ram[code_same_off + 2] << 8)
+                |  (uint32_t)gpu_ram[code_same_off + 3]);
+    }
+}
+
+typedef struct {
+    uint32_t bank0[32], bank1[32];
+    uint8_t  ram[0x1000];
+    uint32_t pc, opcount, fires, rejects;
+} gpu_snap;
+
+static uint32_t (*p_getpc)(void);
+
+static void take_snap(gpu_snap *g, uint32_t fires, uint32_t rejects,
+                      uint32_t ops)
+{
+    memcpy(g->bank0, p_bank0, sizeof g->bank0);
+    memcpy(g->bank1, p_bank1, sizeof g->bank1);
+    memcpy(g->ram, gpu_ram, sizeof g->ram);
+    g->pc      = p_getpc();
+    g->opcount = ops;
+    g->fires   = fires;
+    g->rejects = rejects;
+}
+
+/* Run program `k` with the skip on and (if it fired) again with it off.
+ * Returns the number of fires; *exact is set to 1 when the two end
+ * states are bit-identical (or when there was nothing to compare). */
+static uint32_t run_store_prog(st_kind k, struct VJSettings *vjs_p,
+                               int *exact, uint32_t *rej_out, int *fired_mem)
+{
+    gpu_snap on, off;
+    uint32_t fires, rej, ops;
+
+    build_prog_store(k);
+    fires = run_prog(PROG_S_OFF, 20000, &rej, &ops);
+    take_snap(&on, fires, rej, ops);
+    *rej_out = rej;
+    *exact = 1;
+    if (fired_mem)
+        *fired_mem = ((uint32_t)gpu_ram[FLAG_OFF] << 24
+                      | (uint32_t)gpu_ram[FLAG_OFF + 1] << 16
+                      | (uint32_t)gpu_ram[FLAG_OFF + 2] << 8
+                      | (uint32_t)gpu_ram[FLAG_OFF + 3]);
+
+    if (fires > 0) {
+        vjs_p->riscIdleSkip = false;
+        build_prog_store(k);
+        run_prog(PROG_S_OFF, 20000, NULL, &ops);
+        vjs_p->riscIdleSkip = true;
+        take_snap(&off, 0, 0, ops);
+        /* Opcode counts are compared too: the skip advances
+         * gpu_exec_opcode_count by exactly what the interpreter would. */
+        *exact = (memcmp(on.bank0, off.bank0, sizeof on.bank0) == 0
+                  && memcmp(on.bank1, off.bank1, sizeof on.bank1) == 0
+                  && memcmp(on.ram, off.ram, sizeof on.ram) == 0
+                  && on.pc == off.pc && on.opcount == off.opcount);
+    }
+    return fires;
+}
+
 /* Run one hand-assembled program from `off` for `cycles`, returning how
  * many times the fast-forward fired. */
 static uint32_t run_prog(uint32_t off, int32_t cycles,
@@ -201,7 +397,7 @@ static uint32_t run_prog(uint32_t off, int32_t cycles,
 int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
-    harness_result res[5];
+    harness_result res[16];
     unsigned nres = 0;
     uint32_t fires_a, fires_b, rej_a, rej_b, ops_a, ops_b;
     uint32_t fires_c, fires_d, rej_c, rej_d;
@@ -209,6 +405,24 @@ int main(int argc, char **argv)
     static char detail_a[192], detail_b[192], detail_c[192];
     static char detail_e[256], detail_f[256];
     int ok_a, ok_b, ok_c, ok_d;
+    struct VJSettings *vjs_p;
+    static const struct {
+        st_kind k; const char *name; int must_fire;
+    } store_cases[] = {
+        { ST_DOOM,         "gpu_idle_store_doom_loop_fires_exact",       1 },
+        { ST_VALUE_LOADED, "gpu_idle_store_value_rewritten_fires_exact", 1 },
+        { ST_R14_INDEXED,  "gpu_idle_store_r14_indexed_fires_exact",     1 },
+        { ST_R15_RI,       "gpu_idle_store_r15_ri_fires_exact",          1 },
+        { ST_ALIAS_POLL,   "gpu_idle_store_aliasing_poll_rejected",      0 },
+        { ST_IN_CODE,      "gpu_idle_store_into_own_code_rejected",      0 },
+        { ST_CODE_SAME,    "gpu_idle_store_same_bytes_into_code_rejected", 0 },
+        { ST_DRAM,         "gpu_idle_store_to_dram_rejected",            0 },
+        { ST_COUNTER,      "gpu_idle_store_of_counter_rejected",         0 },
+        { ST_UNALIGNED,    "gpu_idle_store_unaligned_rejected",          0 },
+        { ST_REGISTER,     "gpu_idle_store_to_register_rejected",        0 }
+    };
+    static char store_detail[11][256];
+    int sc, all_store_ok = 1;
 
     cfg.frames = 2;
     cfg.quiet  = 1;
@@ -236,11 +450,13 @@ int main(int argc, char **argv)
     p_setflags  = (void (*)(uint32_t))harness_dlsym(&cfg, "GPUSetFlags");
     p_writelong = (void (*)(uint32_t, uint32_t, uint32_t))
                   harness_dlsym(&cfg, "GPUWriteLong");
+    p_getpc     = (uint32_t (*)(void))harness_dlsym(&cfg, "GPUGetPC");
+    vjs_p       = (struct VJSettings *)harness_dlsym(&cfg, "vjs");
 
     if (!gpu_ram || !p_bank0 || !p_bank1 || !p_fires || !p_rejects
         || !p_opcount || !p_gpuexec || !p_setpc || !p_setflags
         || !p_writelong || !p_wbfix || !p_mainram_slot || !*p_mainram_slot
-        || !p_readlong) {
+        || !p_readlong || !p_getpc || !vjs_p) {
         fprintf(stderr, "gpu_idle_probe_falsify: missing test ABI symbols "
                         "(build with TEST_EXPORTS=1)\n");
         return 1;
@@ -323,7 +539,31 @@ int main(int argc, char **argv)
     res[nres].detail = detail_f;
     nres++;
 
+    /* E-M: local-RAM long stores in wait loops (issue #952). */
+    for (sc = 0; sc < (int)(sizeof store_cases / sizeof store_cases[0]); sc++) {
+        int exact = 1, memval = 0, ok;
+        uint32_t rej = 0, fires;
+
+        fires = run_store_prog(store_cases[sc].k, vjs_p, &exact, &rej, &memval);
+        ok = store_cases[sc].must_fire ? (fires > 0 && exact) : (fires == 0);
+        /* The flag long must hold what the interpreter leaves there: the
+         * stored 0 or 1, never the 0xAAAAAAAA the test seeded it with. */
+        if (store_cases[sc].must_fire && (uint32_t)memval > 1u)
+            ok = 0;
+        snprintf(store_detail[sc], sizeof store_detail[sc],
+                 "fired %u time(s) (%s), %u reject(s), skip-on vs skip-off "
+                 "end state %s, flag long = %08X",
+                 fires, store_cases[sc].must_fire ? "must be > 0" : "must be 0",
+                 rej, exact ? "bit-identical" : "DIFFERS", (unsigned)memval);
+        res[nres].status = ok ? "PASS" : "FAIL";
+        res[nres].name   = store_cases[sc].name;
+        res[nres].detail = store_detail[sc];
+        nres++;
+        if (!ok)
+            all_store_ok = 0;
+    }
+
     harness_report(&cfg, res, nres);
     harness_shutdown(&cfg);
-    return (ok_a && ok_b && ok_c && ok_d) ? 0 : 1;
+    return (ok_a && ok_b && ok_c && ok_d && all_store_ok) ? 0 : 1;
 }
