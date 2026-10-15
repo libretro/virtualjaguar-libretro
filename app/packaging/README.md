@@ -197,7 +197,7 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
 * **Manifest:** [`flatpak/io.github.libretro.VirtualJaguar.yml`](flatpak/io.github.libretro.VirtualJaguar.yml),
   runtime `org.freedesktop.Platform` 25.08. It builds the checked-out tree (`type: dir`); `manifests/render.sh`
   derives the Flathub form (git tag + commit) from the same file, so there is one manifest.
-* **Offline.** Flatpak builds have no network. SDL3, Dear ImGui, FreeType, rcheevos, the librashader headers, the
+* **Offline.** Flatpak builds have no network. SDL3, Dear ImGui, FreeType, rcheevos, the librashader headers and source archive (+ vendored crates), the
   slang-shaders archive, the two libretro dats and the 41 cheat files + licence are `archive`/`file` sources with
   SHA-256, wired in through the app's offline knobs (`FETCHCONTENT_SOURCE_DIR_SDL3|IMGUI|FREETYPE|RCHEEVOS`,
   `VJ_LIBRASHADER_INCLUDE_DIR`, `VJ_SLANG_SHADERS_ARCHIVE`, `VJ_APP_LIBRETRO_DB_DIR`, `VJ_APP_CHEATS_SOURCE_DIR`),
@@ -205,9 +205,30 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   from `app/cmake/VJCheatManifest.cmake`: when that file's pinned commit changes, regenerate the manifest's cheat
   entries (same names, URLs and hashes). A `post-install` step fails the build if the data directories or libcurl
   are missing.
-* **No shaders yet.** Upstream publishes no Linux librashader binary and building it needs a vendored Rust build
-  (`org.freedesktop.Sdk.Extension.rust-stable` + cargo sources). The Flatpak ships the shader presets and the app
-  reports the runtime as unavailable. Adding a `librashader` module is the follow-up.
+* **Shaders (librashader, #951).** Upstream publishes no Linux binary and the sandbox cannot load a host library,
+  so the manifest's `librashader` module builds the C API from the pinned release tag
+  (`librashader-v0.12.1` archive, SHA-256) with `org.freedesktop.Sdk.Extension.rust-stable` (Rust 1.98 on the 25.08
+  branch; librashader needs >= 1.88), offline: `build-options` puts `/usr/lib/sdk/rust-stable/bin` on `PATH`, sets
+  `CARGO_HOME=/run/build/librashader/cargo` and `CARGO_NET_OFFLINE=true`, and every crate is a hash-pinned source
+  in [`flatpak/cargo-sources.json`](flatpak/cargo-sources.json) (which also carries the `cargo/config` that points
+  cargo at the vendored sources). Only the OpenGL runtime is built
+  (`--no-default-features --features runtime-opengl`, the one backend the app uses). The result is installed as
+  `/app/lib/librashader.so`, which the app finds through the sandbox's `LD_LIBRARY_PATH`, with the MPL-2.0 text in
+  `/app/share/licenses/io.github.libretro.VirtualJaguar/`. The slang presets ship beside the executable as before.
+  **Bumping librashader** (also keep the header pins and `VJ_LIBRASHADER_TAG` in `cmake/VJShaders.cmake` in step
+  when the C ABI changes):
+  1. change the tag in the module's archive `url`, and its `sha256` (`curl -L <url> | shasum -a 256`);
+  2. regenerate the crate list from that tag's lock file with
+     [flatpak-cargo-generator](https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo)
+     (`pip install aiohttp tomlkit PyYAML`; last run with `cargo/flatpak-cargo-generator.py` at
+     flatpak-builder-tools `41c20aa`):
+     ```
+     curl -L https://github.com/SnowflakePowered/librashader/archive/refs/tags/librashader-vX.Y.Z.tar.gz | tar xz
+     python3 flatpak-cargo-generator.py librashader-librashader-vX.Y.Z/Cargo.lock -o app/packaging/flatpak/cargo-sources.json
+     ```
+  3. commit both together. The file lists every crate in the workspace lock (a vendored build must be able to
+     resolve all of them, including the Windows/Metal/Vulkan backends it does not compile); that is why it is
+     large. `manifests/render.sh` copies it next to the rendered Flathub manifest.
 * **Permissions:** network (achievements, box art, netplay), Wayland + X11 fallback, PulseAudio, `--device=all` (gamepads),
   IPC, and `--filesystem=home:ro`. The last is needed because the library scans folders and a `.cue` needs its
   sibling `.bin` tracks, neither of which the file-chooser portal grants; it is read-only and limited to the home
