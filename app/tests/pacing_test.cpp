@@ -295,11 +295,11 @@ int main() {
             CHECK(n.syncEnd, "heavy phase then %.1f ms, %.0f Hz: vsync never came back", after * 1000, 1.0 / v);
         }
     }
-    // a single stall (OS hitch, a state load) on a core with time to spare: no change of swap interval
+    // a stall (OS hitch, a state load) on a core with time to spare: no change of swap interval
     for (double v : {V60, V120}) {
-        Scenario s{P, 0.008, 0.0015, v, true, 0.0003, [](long i) { return (i >= 300 && i < 306) ? 0.060 : 0.008; }};
+        Scenario s{P, 0.008, 0.0015, v, true, 0.0003, [](long i) { return i == 300 ? 0.250 : (i >= 600 && i < 603) ? 0.040 : 0.008; }};
         Result n = simulateNew(s, kLong);
-        CHECK(n.toggles == 0, "a 6-frame 60 ms hitch, %.0f Hz: %d toggles", 1.0 / v, n.toggles);
+        CHECK(n.toggles == 0, "a 250 ms stall and a 3-frame 40 ms hitch, %.0f Hz: %d toggles", 1.0 / v, n.toggles);
     }
 
     // ---- the pieces ---------------------------------------------------------------------------------------

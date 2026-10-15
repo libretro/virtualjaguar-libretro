@@ -25,7 +25,7 @@ namespace vj {
 struct Pacer {
     static constexpr int kMaxFrames = 3;          // per UI frame: keeps the UI responsive while catching up
     static constexpr double kEmaAlpha = 1.0 / 16; // smoothing of the two signals below, per step that ran frames
-    static constexpr double kReleasePressure = 0.25;   // share of recent steps that trimmed the backlog -> release
+    static constexpr double kReleasePressure = 0.15;   // share of recent steps that trimmed the backlog -> release
     static constexpr double kBatchPressure = 0.03;     // above this, batching is what keeps the core at speed
     static constexpr double kRestorePressure = 0.05;   // ...and below this, with a cheap core, vsync may return
     static constexpr double kRestoreCost = 0.8;   // work per frame as a share of the period: room left for UI + jitter
