@@ -385,6 +385,16 @@ static void test_div(void)
    run(40);
    if (REG(1) == 14) PASS("100/7=14");
    else FAIL("100/7=%u (expected 14)", REG(1));
+
+   /* Divisor above $80000000: the 33-bit working value of DIVIDE.NET
+    * (#895).  The old 32-bit loop gave $F9A9342A here. */
+   prep();
+   gwmovei(0x100, 0xFCC00000u, 1);
+   gwmovei(0x106, 0xFCC00000u, 0);
+   gw16(0x10C, OP_DIV(0, 1));
+   run(40);
+   if (REG(1) == 1) PASS("$FCC00000/$FCC00000=1");
+   else FAIL("$FCC00000/$FCC00000=%08X (expected 1)", REG(1));
 }
 
 static void test_abs(void)

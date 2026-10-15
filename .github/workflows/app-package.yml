@@ -571,7 +571,7 @@ jobs:
           bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
           manifest-path: app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
           arch: x86_64
-          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/CMakeLists.txt', 'app/cmake/**') }}
+          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}
           upload-artifact: false
 
       - name: Smoke-test the bundle (install, run headless against the public ROM)
@@ -587,6 +587,13 @@ jobs:
           # The bundled data must be beside the executable inside the sandbox.
           flatpak run --user --command=sh "$APP_ID" -c \
             'ls /app/bin/cheats | head -3 && ls "/app/bin/libretro-db" && test -d /app/bin/shaders/slang-shaders && ls /app/share/metainfo'
+          # The shader runtime (#951): librashader.so must be in /app/lib, resolve all its libraries and
+          # speak the ABI the app was built against (LIBRASHADER_CURRENT_ABI 2).  The app finds it through
+          # LD_LIBRARY_PATH=/app/lib, so load it by bare name exactly as src/shaders.cpp does.
+          flatpak run --user --command=sh "$APP_ID" -c \
+            'ls -l /app/lib/librashader.so && ls /app/share/licenses/io.github.libretro.VirtualJaguar && ! ldd /app/lib/librashader.so | grep "not found"'
+          flatpak run --user --command=python3 "$APP_ID" -c \
+            'import ctypes; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2'
 
       - uses: actions/upload-artifact@v7
         with:

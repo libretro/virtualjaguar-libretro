@@ -20,17 +20,18 @@ Linked in unless the build was made with -DVJ_APP_FREETYPE=OFF (the default is O
 
 Shipped as separate files beside the program (not linked into it):
 
-  librashader runtime  (librashader.dll / .dylib / .so, in the macOS, Windows, AppImage
-                       and .deb packages)
+  librashader runtime  (librashader.dll / .dylib / .so, in the macOS, Windows, AppImage,
+                       .deb and Flatpak packages)
                        Dual-licensed: MPL-2.0 OR GPL-3.0-only (librashader-capi's declared
                        licence; upstream ships both texts, LICENSE.md and LICENSE-GPL.md).
                        Loaded at run time when you turn shaders on.  The macOS (Intel and
-                       Apple silicon) and Linux libraries in these packages were built,
+                       Apple silicon), AppImage, .deb and Flatpak libraries were built,
                        unmodified, from the upstream source at tag librashader-v0.12.1
-                       (commit 07ac790cdb9826f37cf8e1daf5011f03e3c4daa7) with
-                       `cargo xtask build --profile optimized`; the recipe is
-                       .github/workflows/librashader.yml and
-                       app/packaging/librashader/ in the Virtual Jaguar repository.  The
+                       (commit 07ac790cdb9826f37cf8e1daf5011f03e3c4daa7): the macOS and
+                       Linux packages with `cargo xtask build --profile optimized` (recipe:
+                       .github/workflows/librashader.yml and app/packaging/librashader/),
+                       the Flatpak with its own offline module (OpenGL runtime only; recipe:
+                       app/packaging/flatpak/ in the Virtual Jaguar repository).  The
                        Windows library is the unmodified upstream release binary of tag
                        librashader-v0.12.0.  Source: https://github.com/SnowflakePowered/librashader
                        (https://www.mozilla.org/MPL/2.0/ for the MPL-2.0 text).  You can

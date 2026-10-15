@@ -75,6 +75,8 @@ awk -v ver="$version" -v commit="$commit" '
     next }
   /# END-LOCAL-SOURCE/ { skipping = 0; next }
   !skipping { print }' "$here/../flatpak/io.github.libretro.VirtualJaguar.yml" > "$out/flatpak/io.github.libretro.VirtualJaguar.yml"
+# The manifest's librashader module lists ./cargo-sources.json (relative), so it travels with it.
+cp "$here/../flatpak/cargo-sources.json" "$out/flatpak/cargo-sources.json"
 grep -q 'type: git' "$out/flatpak/io.github.libretro.VirtualJaguar.yml" || { echo "render.sh: flatpak source block not replaced" >&2; exit 1; }
 if grep -q '^      - type: dir' "$out/flatpak/io.github.libretro.VirtualJaguar.yml"; then echo "render.sh: flatpak manifest still has a dir source" >&2; exit 1; fi
 if grep -rn '@[A-Z_]*@' "$out" >/dev/null; then
