@@ -89,6 +89,7 @@ int main(int argc, char **argv)
     FILE *csv = stdout;
     const char *csv_path = NULL;
     unsigned warmup = 0, top_n = 10, i;
+    int no_arm = 0;
     int a;
 
     cfg.frames = 2000;
@@ -98,6 +99,8 @@ int main(int argc, char **argv)
             warmup = (unsigned)strtoul(argv[++a], NULL, 10);
         else if (!strcmp(argv[a], "--csv") && a + 1 < argc)
             csv_path = argv[++a];
+        else if (!strcmp(argv[a], "--no-arm"))
+            no_arm = 1;
         else if (!strcmp(argv[a], "--top") && a + 1 < argc)
             top_n = (unsigned)strtoul(argv[++a], NULL, 10);
     }
@@ -119,7 +122,18 @@ int main(int argc, char **argv)
                         "build the core with TEST_EXPORTS=1\n");
         return 2;
     }
-    arm();   /* vjtrace counters only advance while armed */
+    /* vjtrace counters only advance while armed, BUT an armed trace gates
+     * the GPU/DSP idle-skip OFF (gpu.c/dsp.c idleSkipActive: "armed or a
+     * memory watch installed").  So a default run measures idle skip OFF
+     * whatever risc_idle_skip says.  --no-arm keeps idle skip live: the
+     * event columns (irq, gpu_go, op_list/obj/branch, blit) then read 0, the gpu/dsp/skip
+     * columns and the ms column stay valid.  Pair an armed and an unarmed
+     * run (same config, deterministic) to join the event columns on. */
+    if (!no_arm)
+        arm();
+    else
+        fprintf(stderr, "frame_cost_probe: --no-arm: vjtrace event columns "
+                        "are 0, idle skip is live\n");
 
     if (csv_path)
     {
