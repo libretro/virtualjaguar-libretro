@@ -8,7 +8,7 @@ v3.9.1 is a polish release on top of v3.9.0. For RetroArch and Provenance users 
 DSP/GPU accuracy fixes derived from the original chip netlists, a faster GPU idle-loop
 fast-forward, a GDB stub that works with stock gdb, and a framebuffer bounds fix. With default
 settings the cartridge corpus is byte-identical to v3.9.0 except Xenowings (sound effects now
-play) and one frame of Skyhammer (a GPU divide by zero now returns the hardware's value). No
+play) and a frame or two of Skyhammer (a GPU divide by zero now returns the hardware's value). No
 option keys were removed, no listed option values changed, and the savestate format stays v17.
 
 ---
@@ -26,7 +26,7 @@ option keys were removed, no listed option values changed, and the savestate for
   citations: `docs/jtrm-errata.md` B25.
 - **RISC divide keeps 33 bits** (same PR). Divisors of `$80000000` and above, 16.16 divides
   that overflow, and divide by zero now give the netlist's result (B26). The only corpus change
-  is one Skyhammer frame (HLE, Fast blitter).
+  is Skyhammer: frames 1488 and 2072 in a 3000-frame HLE / Fast-blitter run, audio identical.
 - **GPU idle-loop fast-forward covers more loops**
   (https://github.com/libretro/virtualjaguar-libretro/pull/957). A wait loop may now contain a
   long store when its address and value never change, the target is GPU local RAM, and the loop

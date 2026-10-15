@@ -5,7 +5,7 @@ Xenowings SFX, faster GPU idle skip, shaders on every app package.
 Full notes: docs/RELEASE_NOTES_v3.9.1.md
 
 Cart corpus byte-identical to v3.9.0 except Xenowings (SFX play) and
-one Skyhammer frame (GPU divide by zero). No option keys removed;
+a frame or two of Skyhammer (GPU divide by zero). No option keys removed;
 savestate format stays v17.
 
 == Core ==
