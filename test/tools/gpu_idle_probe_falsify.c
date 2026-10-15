@@ -352,8 +352,10 @@ static uint32_t run_store_prog(st_kind k, struct VJSettings *vjs_p,
     *rej_out = rej;
     *exact = 1;
     if (fired_mem)
-        *fired_mem = (gpu_ram[FLAG_OFF] << 24 | gpu_ram[FLAG_OFF + 1] << 16
-                      | gpu_ram[FLAG_OFF + 2] << 8 | gpu_ram[FLAG_OFF + 3]);
+        *fired_mem = ((uint32_t)gpu_ram[FLAG_OFF] << 24
+                      | (uint32_t)gpu_ram[FLAG_OFF + 1] << 16
+                      | (uint32_t)gpu_ram[FLAG_OFF + 2] << 8
+                      | (uint32_t)gpu_ram[FLAG_OFF + 3]);
 
     if (fires > 0) {
         vjs_p->riscIdleSkip = false;
