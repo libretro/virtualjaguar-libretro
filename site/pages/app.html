@@ -54,9 +54,8 @@
     <ul>
       <li>macOS 11 or later (Apple Silicon or Intel), 64-bit Windows (x64 or
         ARM64), or a 64-bit Linux desktop (x86_64 or aarch64).</li>
-      <li>A GPU and driver with OpenGL 3.3. The shaders need the librashader
-        runtime, which the macOS and Windows packages bundle; on Linux install
-        a librashader package (see the notes under the shader pictures).</li>
+      <li>A GPU and driver with OpenGL 3.3. Every package bundles the
+        librashader runtime the shaders need.</li>
       <li>No BIOS file is needed: the core has the boot ROM and the CD BIOS
         built in. A game controller is optional; the keyboard plays.</li>
     </ul>
@@ -249,12 +248,10 @@
       missing, the app draws the plain picture and says why. Point
       <strong>Preset folder</strong> at a full slang-shaders checkout for the
       rest, and preset parameters get sliders.
-      <strong>Platform notes:</strong> the macOS and Windows packages bundle
-      the librashader runtime; upstream publishes no Linux build, so on Linux
-      install a librashader package and the app finds it. The macOS universal
-      package currently ships an arm64-only librashader, so shaders may be
-      unavailable on Intel Macs (see the
-      <a href="{{REPO}}/blob/develop/app/packaging/README.md#macos-notes">packaging notes</a>).
+      <strong>Platform notes:</strong> every package bundles the librashader
+      runtime: macOS (Apple Silicon and Intel), Windows, the AppImage, the
+      <code>.deb</code> and the Flatpak (details in the
+      <a href="{{REPO}}/blob/develop/app/packaging/README.md#shader-runtime-librashader">packaging notes</a>).
     </p>
 
     <h3 id="ra">RetroAchievements &amp; Discord</h3>
