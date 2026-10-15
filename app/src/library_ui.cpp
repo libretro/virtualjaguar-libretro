@@ -229,11 +229,20 @@ void drawStatus(LibraryService& svc) {
     }
 }
 
-// The Jaguar CD tab: libretro-thumbnails has no repository for the system at all, so say why tiles are plain.
-void drawSectionHint(const LibraryService& svc) {
-    if (svc.section == (int)lib::Section::Disc)
-        ui::hint("libretro-thumbnails has no Jaguar CD art yet -- right-click a disc to set a cover "
-                 "(or drop a PNG on it).");
+// The Jaguar CD tab: libretro-thumbnails has no repository for the system, so disc art comes from the project
+// mirror alone.  Only said while some disc on the tab came up empty, with how to give it a cover.
+void drawSectionHint(LibraryService& svc) {
+    if (svc.section != (int)lib::Section::Disc) return;
+    size_t n = svc.missingArt(lib::Section::Disc);
+    if (n == 0) return;
+    if (!svc.artMirrorUrl.empty() && svc.downloadArt.load())
+        ui::hint("%zu disc%s without art: libretro-thumbnails has no Jaguar CD art; the project mirror covers most "
+                 "discs -- right-click a disc to set a cover (or drop a PNG on it).",
+                 n, n == 1 ? "" : "s");
+    else
+        ui::hint("%zu disc%s without art: libretro-thumbnails has no Jaguar CD art -- right-click a disc to set a "
+                 "cover (or drop a PNG on it).",
+                 n, n == 1 ? "" : "s");
 }
 
 // A BIOS or system file: shows what it is, whether the core finds it where it is, and whether it is the one in

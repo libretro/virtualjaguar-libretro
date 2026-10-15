@@ -886,6 +886,9 @@ static void testServicePipeline() {
             SDL_Delay(10);
         }
         CHECK(srv.totalHits() == hitsBefore);
+        // the library hint's count: B only (A has art, C was never drawn), and no discs in this library
+        CHECK(svc.missingArt(lib::Section::Cart) == 1);
+        CHECK(svc.missingArt(lib::Section::Disc) == 0);
 
         // an unidentified entry has no thumbnail name: it ends up Missing without ever touching the network
         lib::Entry unknown = *a;
