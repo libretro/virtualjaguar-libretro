@@ -101,6 +101,9 @@ listed option values changed, and the savestate format stays v17.
 - The app page uses the same release picker as the Download page, every screenshot opens in the
   lightbox, and the home page has a strip of 16 game screenshots
   (https://github.com/libretro/virtualjaguar-libretro/pull/970).
+- Links shared on social media show a screenshot collage for the home page and a card of app
+  screenshots for the app page, and the favicon is the app icon
+  (https://github.com/libretro/virtualjaguar-libretro/pull/985).
 - The compatibility matrix no longer says a game runs when its 68K crashed in the first second
   and the screen stayed black. Those rows are now marked unverified, `? (trap_loop)`
   (https://github.com/libretro/virtualjaguar-libretro/issues/975,
