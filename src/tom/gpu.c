@@ -33,6 +33,7 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
+#include "risc_div.h"
 #include "event.h"
 #include "settings.h"
 #include "blit_memo.h"
@@ -3730,27 +3731,9 @@ INLINE static void gpu_opcode_abs(void)
 
 INLINE static void gpu_opcode_div(void)	// RN / RM
 {
-   unsigned i;
-   // Real algorithm, courtesy of SCPCD: NYAN!
-   uint32_t q = RN;
-   uint32_t r = 0;
-
-   // If 16.16 division, stuff top 16 bits of RN into remainder and put the
-   // bottom 16 of RN in top 16 of quotient
-   if (gpu_div_control & 0x01)
-      q <<= 16, r = RN >> 16;
-
-   for(i=0; i<32; i++)
-   {
-      uint32_t sign = r & 0x80000000;
-      r = (r << 1) | ((q >> 31) & 0x01);
-      r += (sign ? RM : -RM);
-      q = (q << 1) | (((~r) >> 31) & 0x01);
-   }
-
-   RN = q;
-   gpu_remain = r;
-
+   /* 33-bit non-restoring divide, netlist-exact (risc_div.h): correct
+    * for divisors above $80000000. */
+   RN = risc_divide(RN, RM, gpu_div_control & 0x01, &gpu_remain);
 }
 
 

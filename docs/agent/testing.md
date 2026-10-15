@@ -107,7 +107,10 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   regression reached develop), and it compares the hash stream rather than the transition **count**
   (Super Burnout reads 143 transitions on both sides of #632 while rendering different pixels, so a
   count comparison calls a real change "no change"). Exit 1 on any SKIP: an unchecked ROM must not
-  look like a clean sweep.
+  look like a clean sweep. `AUDIO=1` also hashes each frame's audio (`frame_hash_ab --audio-hash`)
+  and reports video/audio differing-frame counts -- use it for any DSP/audio change; `ARGS="--bios
+  --option ..."` passes extra args to both arms. Only top-level ROMs in the dir are swept: for a
+  parallel run, symlink chunks of the corpus into scratch dirs (never into the ROM tree).
 - `test/sram_test.sh` — SRAM round-trip.
 - `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS) vs
   `docs/cd-boot-matrix.md`. Env: `CD_MATRIX_FRAMES CD_MATRIX_TIMEOUT CD_MATRIX_MAX_RUNS

@@ -6,6 +6,11 @@
 #
 # Env: FRAMES (default 300)   frames per run
 #      TMO    (default 60)    per-run timeout, seconds
+#      AUDIO  (unset)         AUDIO=1 also hashes each frame's audio
+#                             (frame_hash_ab --audio-hash); a title then
+#                             differs if its video OR audio stream does
+#      ARGS   (unset)         extra frame_hash_ab args, e.g. --bios or
+#                             "--option virtualjaguar_usefastblitter=disabled"
 #
 # WHY THE TIMEOUT IS NOT OPTIONAL
 #
@@ -40,6 +45,8 @@ HASH_AB=./test/tools/frame_hash_ab
 
 FRAMES=${FRAMES:-300}
 TMO=${TMO:-60}
+EXTRA=${ARGS:-}
+[ -n "${AUDIO:-}" ] && EXTRA="$EXTRA --audio-hash"
 TO=$(command -v gtimeout || command -v timeout) || die "need timeout(1) or gtimeout(1)"
 
 # md5 on macOS, md5sum elsewhere.
@@ -59,20 +66,22 @@ find_roms() {
 
 total=$(find_roms | wc -l | tr -d ' ')
 [ "$total" -gt 0 ] || die "no ROMs found under $ROMDIR"
-echo "corpus_ab_sweep: $total ROMs, $FRAMES frames, ${TMO}s timeout"
+echo "corpus_ab_sweep: $total ROMs, $FRAMES frames, ${TMO}s timeout${EXTRA:+, args:$EXTRA}"
 echo "  base: $BASE"
 echo "  new:  $NEW"
 
 n_same=0; n_diff=0; n_skip=0; i=0
 while IFS= read -r rom; do
    i=$((i + 1)); b=$(basename "$rom")
+   # shellcheck disable=SC2086  # EXTRA is a word list on purpose
    if ! $TO "$TMO" "$HASH_AB" "$BASE" "$rom" --csv "$OUT/b.csv" \
-           --frames "$FRAMES" >/dev/null 2>&1; then
+           --frames "$FRAMES" $EXTRA >/dev/null 2>&1; then
       printf 'SKIP  [%3d/%3d] %-58s (base timeout/fail)\n' "$i" "$total" "${b:0:58}"
       n_skip=$((n_skip + 1)); continue
    fi
+   # shellcheck disable=SC2086
    if ! $TO "$TMO" "$HASH_AB" "$NEW" "$rom" --csv "$OUT/f.csv" \
-           --frames "$FRAMES" >/dev/null 2>&1; then
+           --frames "$FRAMES" $EXTRA >/dev/null 2>&1; then
       printf 'SKIP  [%3d/%3d] %-58s (new timeout/fail)\n' "$i" "$total" "${b:0:58}"
       n_skip=$((n_skip + 1)); continue
    fi
@@ -85,6 +94,12 @@ while IFS= read -r rom; do
       nd=$(paste -d'|' <(awk -F, 'NR>1{print $6}' "$OUT/b.csv") \
                        <(awk -F, 'NR>1{print $6}' "$OUT/f.csv") \
            | awk -F'|' '$1!=$2{n++}END{print n+0}')
+      if [ -n "${AUDIO:-}" ]; then
+         na=$(paste -d'|' <(awk -F, 'NR>1{print $7}' "$OUT/b.csv") \
+                          <(awk -F, 'NR>1{print $7}' "$OUT/f.csv") \
+              | awk -F'|' '$1!=$2{n++}END{print n+0}')
+         nd="$nd video / $na audio"
+      fi
       printf 'DIFF  [%3d/%3d] %-58s transitions %s->%s, %s frames differ\n' \
              "$i" "$total" "${b:0:58}" "$tb" "$tf" "$nd"
       n_diff=$((n_diff + 1))
