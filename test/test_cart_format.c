@@ -303,7 +303,8 @@ TEST(small_headered_with_copier_header_loads)
 
 /* Headerless homebrew below 1 MiB still loads as a cart so real-BIOS
  * mode can boot it from $800000.  Floor is $408 so a 512-byte copier
- * header by itself is still refused. */
+ * header by itself is still refused.  Byte 0 is an encrypted boot block's
+ * block count ($FC): a BootIntro, not a RAM program (issue #972). */
 TEST(small_headerless_bootintro_loads)
 {
    uint8_t tiny[2048];
@@ -311,6 +312,7 @@ TEST(small_headerless_bootintro_loads)
 
    for (i = 0; i < 2048; i++)
       tiny[i] = (uint8_t)(0x60 + (i & 0x1F));
+   tiny[0] = 0xFC;
    /* No universal header at $400. */
    tiny[0x400] = 0x11;
    tiny[0x401] = 0x22;
@@ -318,6 +320,7 @@ TEST(small_headerless_bootintro_loads)
    tiny[0x403] = 0x44;
    ASSERT(load_image(tiny, 2048u));
    ASSERT_EQ_U(*p_romsize, 2048u);
+   ASSERT(memcmp(p_memspace + 0x800000, tiny, sizeof(tiny)) == 0);
    p_retro_unload_game();
 }
 
@@ -620,6 +623,104 @@ TEST(jagr_type2_loads_at_load_address)
    p_retro_unload_game();
 }
 
+/* Issue #972: Hubble Fade / Hubble Nebula (BSR first) and Drumpad2 (LEA
+ * abs.L,A7 first) carry one absolute reference or none, so the raw scorer
+ * cannot place them, and they fell through to the cart fallback.  A
+ * headerless sub-1 MiB image that opens with a 68K instruction and has no
+ * boot block is a BJL RAM program: $4000. */
+TEST(raw_binary_68k_start_without_evidence_loads_at_4000)
+{
+   static uint8_t img[0x3000];
+   uint8_t *ram;
+
+   memset(img, 0, sizeof(img));
+   put32(img, 0x00, 0x610002D6);                    /* BSR.W */
+   put32(img, 0x04, 0x610004C2);
+   put16(img, 0x400, 0x1122);                       /* no universal header */
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   p_retro_unload_game();
+}
+
+/* Issue #972: Painter (bin) is linked at $10000.  One LEA $4000,A0 (a RAM
+ * buffer below the image) gives $4000 the containment edge; what places it
+ * is a JMP abs.L that lands on an abs.L instruction the scorer decoded,
+ * which happens under $10000 alone. */
+TEST(raw_binary_jmp_onto_decoded_instruction_picks_10000)
+{
+   /* Large enough that a $4000 window holds every target too: containment
+    * alone is 14 ($4000) against 13 ($10000). */
+   static uint8_t img[0x14000];
+   uint8_t *ram;
+   unsigned k;
+
+   memset(img, 0, sizeof(img));
+   for (k = 0; k < 3; k++)                          /* LEA abs.L,A0 */
+      put_abs(img, 6 * k, 0x41F9, 0x13000 + 0x100 * k);
+   put_abs(img, 0x12, 0x4FF9, 0x001FFFFC);          /* LEA $1FFFFC,A7 */
+   for (k = 0; k < 9; k++)
+      put_abs(img, 0x40 + 6 * k, 0x41F9, 0x14000 + 0x10 * k);
+   put_abs(img, 0x9A, 0x4EF9, 0x10012);             /* JMP -> offset $12 */
+   put_abs(img, 0x200, 0x41F9, 0x4000);             /* the RAM buffer */
+   put16(img, 0x400, 0x1122);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x10000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x10000);
+   p_retro_unload_game();
+}
+
+/* Issue #973: BadCode4 "(rom)" images open with a stub that reads its own
+ * header through cart addresses (movea.l $802054,a0 / $802048,a1 / move.l
+ * $80204C,d0) and copies the program to RAM.  Offset 0 is $802000. */
+TEST(alpine_header_stub_maps_at_802000)
+{
+   static uint8_t img[0x6000];
+   uint8_t *ram;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x7200);                        /* moveq #0,d1 */
+   put_abs(img, 0x02, 0x2079, 0x802054);
+   put_abs(img, 0x08, 0x2279, 0x802048);
+   put_abs(img, 0x0E, 0x2039, 0x80204C);
+   put16(img, 0x400, 0x1122);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(p_memspace + 0x802000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(p_memspace[0x801FFF], 0xFF);
+   ASSERT_EQ_U(initial_pc(ram), 0x802000);
+   p_retro_unload_game();
+}
+
+/* Issue #973: Rayman Demo is exactly 2 MiB with no universal header; its
+ * startup calls subroutines at $802xxx.  Mapped at $800000 every call
+ * landed $2000 low.  No $400 marker plus a raw-scorer verdict of $802000
+ * loads it like an Alpine image. */
+TEST(exact_mib_without_marker_linked_at_802000)
+{
+   uint8_t *img = (uint8_t *)calloc(2 * MIB, 1);
+   uint8_t *ram;
+
+   ASSERT(img != NULL);
+   build_linked_image(img, 0x2000, 0x802000);
+   ASSERT(load_image(img, 2 * MIB));
+   ram = *p_mainram;
+   if (!ram || memcmp(p_memspace + 0x802000, img, 2 * MIB) != 0
+         || initial_pc(ram) != 0x802000)
+   {
+      free(img);
+      FAIL("not mapped with offset 0 at $802000 (pc $%06X)",
+            ram ? initial_pc(ram) : 0);
+   }
+   free(img);
+   p_retro_unload_game();
+}
+
 /* ------------------------------------------------------------------ */
 /* Cart mirroring (issue #851)                                         */
 /* ------------------------------------------------------------------ */
@@ -853,6 +954,10 @@ int main(int argc, char **argv)
    RUN(dri_601a_loads_text_at_4000);
    RUN(dri_601a_applies_relocations);
    RUN(jagr_type2_loads_at_load_address);
+   RUN(raw_binary_68k_start_without_evidence_loads_at_4000);
+   RUN(raw_binary_jmp_onto_decoded_instruction_picks_10000);
+   RUN(alpine_header_stub_maps_at_802000);
+   RUN(exact_mib_without_marker_linked_at_802000);
    RUN(mirror_2mb_repeats_in_window);
    RUN(mirror_1mb_repeats_in_window);
    RUN(mirror_4mb_repeats_once);

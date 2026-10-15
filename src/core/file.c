@@ -137,12 +137,66 @@ static void ReportKnownBadDumpLoaded(uint32_t crc)
             (unsigned)verified->crc32);
 }
 
+static int cart_entry_looks_like_68k(uint16_t op);
+
+/* Alpine / dev-board ROM images put offset 0 at cart address $802000 and
+ * often open with a stub that reads its own header through cart addresses
+ * before copying the program to RAM (issue #973).  BadCode4 (Metal) and
+ * (Modified) "(rom)": moveq #0,d1; movea.l $802054,a0 (source); movea.l
+ * $802048,a1 (dest $4000); move.l $80204C,d0 (count); copy; movea.l
+ * $802050,a0; jmp (a0) -- the (bin) build follows at offset $60.  Their
+ * sizes are not "N MiB - 8 KiB", so the Alpine size test missed them, and
+ * the raw scorer loaded them at $4000 (the copied payload's base), where the
+ * stub ran off into the ILLEGAL guard.  Two or more MOVE.L/MOVEA.L abs.L
+ * loads from the image's own first $100 bytes, as seen from $802000, in its
+ * first $40 bytes: nothing else in the corpus does that. */
+static bool LooksLikeAlpineHeaderStub(const uint8_t *buffer, uint32_t size)
+{
+   uint32_t window = size < 0x100 ? size : 0x100;
+   uint32_t offset;
+   unsigned hits = 0;
+
+   for (offset = 0; offset + 6 <= size && offset < 0x40; offset += 2)
+   {
+      uint16_t op = GET16(buffer, offset);
+      uint32_t target;
+
+      if ((op & 0xF1FF) != 0x2039 && (op & 0xF1FF) != 0x2079)
+         continue;
+      target = GET32(buffer, offset + 2);
+      if (target >= 0x802000 && target < 0x802000 + window)
+         hits++;
+   }
+   return hits >= 2;
+}
+
+/* Headerless BJL upload images that the raw scorer cannot place (issue
+ * #972: Hubble Fade and Hubble Nebula open with BSR, Drumpad2 with LEA
+ * abs.L,A7 -- one absolute reference or none in their first 2 KiB, so they
+ * score 0-1 against the bar of 8).  They used to fall through to the
+ * sub-1 MiB cartridge fallback and run from cart+$404 / $800000, which is
+ * not where they were linked.  An image that starts with a 68K instruction
+ * and has no encrypted boot block (byte 0 $F6-$FE, the real BootIntro
+ * carts and the CD BIOS) is a RAM program: load it at the BJL default,
+ * $4000. */
+static bool LooksLikeBjlRamImage(const uint8_t *buffer, uint32_t size)
+{
+   if (size < (CART_UNIVERSAL_MARKER_OFFSET + 8) || size >= 1048576)
+      return false;
+   if (buffer[0] >= 0xF6 && buffer[0] <= 0xFE)
+      return false;
+   return cart_entry_looks_like_68k(GET16(buffer, 0)) != 0;
+}
+
 static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *loadAddress)
 {
    /* $5000 is listed after $4000 so a pure containment tie still resolves
     * to $4000 exactly as before; only entry-point evidence (below) can pick
-    * it. */
-   static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000, 0x00005000 };
+    * it.  $10000 is last for the same reason (issue #972: Painter (bin) is
+    * byte-identical to the payload of the JAGR Painter, whose header puts
+    * it at $10000). */
+   static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000, 0x00005000,
+      0x00010000 };
    unsigned bestCandidate = 0;
    unsigned bestScore = 0;
    unsigned bestHw = 0;
@@ -153,9 +207,22 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    bool knownStartup;
    unsigned i;
    uint32_t offset;
+   /* One bit per even offset of the scanned 2 KiB: an abs.L instruction
+    * of the kind scored below starts there. */
+   uint8_t decoded[2048 / 16];
 
    if (size < 16 || !loadAddress)
       return false;
+
+   memset(decoded, 0, sizeof(decoded));
+   for (offset = 0; offset + 6 <= size && offset < 2048; offset += 2)
+   {
+      uint16_t op = GET16(buffer, offset);
+
+      if (op == 0x4EB9 || op == 0x4EF9 || (op & 0xF1FF) == 0x41F9
+            || op == 0x2039 || op == 0x2079 || op == 0x2279)
+         decoded[offset >> 4] |= (uint8_t)(1u << ((offset >> 1) & 7));
+   }
 
    /* One known homebrew startup idiom writes big-endian mode before
     * touching TOM.  It used to be a hard REQUIREMENT, which rejected any
@@ -179,8 +246,14 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
     * won and every call landed $1000 low -- JSR $5804 ran Chroma's font
     * data.  The decider is entry-point consistency: under the right base a
     * JSR/JMP abs.L target is the start of the image or the instruction
-    * right after an RTS/RTE/RTR, i.e. the start of a subroutine.  Under a
-    * wrong base that is a coincidence.  Among the bases that clear the
+    * right after an RTS/RTE/RTR, i.e. the start of a subroutine; a JMP
+    * abs.L target may also be any instruction, and the abs.L instructions
+    * this scan decodes are ones we know.  Under a wrong base that is a
+    * coincidence.  Painter (bin) (issue #972) has only the JMP kind: its
+    * JMP $10012 lands on the LEA $1FFFFC,A7 at image offset $12 under base
+    * $10000 alone, while one LEA $4000,A0 (a RAM buffer below the image)
+    * tips containment to $4000.  (A JSR onto a decoded instruction is not
+    * counted: over the corpus that only ever happened by coincidence.)  Among the bases that clear the
     * containment bar, the one with the most such hits wins; with no hit for
     * any base the containment winner stands, so images without the signal
     * load where they always did. */
@@ -229,7 +302,9 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
             if ((op == 0x4EB9 || op == 0x4EF9) && !(rel & 1)
                   && (rel == 0 || GET16(buffer, rel - 2) == 0x4E75
                      || GET16(buffer, rel - 2) == 0x4E73
-                     || GET16(buffer, rel - 2) == 0x4E77))
+                     || GET16(buffer, rel - 2) == 0x4E77
+                     || (op == 0x4EF9 && rel < 2048 && rel != offset
+                        && (decoded[rel >> 4] & (1u << ((rel >> 1) & 7))))))
                entry++;
          }
       }
@@ -363,7 +438,20 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    // We can also check our CRC32 against the internal ROM database to be sure.
    // (We also check for the Memory Track cartridge size here as well...)
    if ((size % 1048576) == 0 || size == 131072)
+   {
+      /* Rayman Demo (1995) (UBI Soft) (issue #973) is exactly 2 MiB but has
+       * no universal header at $400: offset 0 is $802000 (its startup does
+       * JSR $802BE6, JSR $80271C, ...).  Mapped at $800000 every call
+       * landed $2000 low, mid-instruction.  Every commercial cart carries
+       * the $400 marker; without it, let the raw scorer's $802000 verdict
+       * stand and load it like an Alpine image. */
+      if ((size % 1048576) == 0
+            && GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) != CART_UNIVERSAL_MARKER
+            && InferRawBinaryLoadAddress(buffer, size, &rawLoadAddress)
+            && rawLoadAddress == 0x00802000)
+         return JST_ALPINE;
       return JST_ROM;
+   }
 
    /* Homebrew / bootintro carts are rarely a whole megabyte and are often
     * well under the Memory Track size of 128K.  The universal header at
@@ -375,7 +463,7 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 
    // If the file size + 8192 bytes is divisible by 1M, we probably have an
    // Alpine format ROM.
-   if (((size + 8192) % 1048576) == 0)
+   if (((size + 8192) % 1048576) == 0 || LooksLikeAlpineHeaderStub(buffer, size))
       return JST_ALPINE;
 
    if (InferRawBinaryLoadAddress(buffer, size, &rawLoadAddress))
@@ -386,9 +474,13 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
     * be at least large enough to hold the $400 universal-header slot
     * (otherwise DetectPrependedHeaderSize's 512-byte floor is a cart).
     * RAM-load BJL binaries with recognizable absolute refs already
-    * returned JST_RAW_BINARY above.  Files >= 1 MiB that are not an
+    * returned JST_RAW_BINARY above, and ones that open with a 68K
+    * instruction and carry no boot block do so here (issue #972).  Files
+    * >= 1 MiB that are not an
     * exact megabyte multiple stay unrecognized (the bad-dump /
     * leftover-header class ReportUnrecognizedContent names). */
+   if (LooksLikeBjlRamImage(buffer, size))
+      return JST_RAW_BINARY;
    if (size >= (CART_UNIVERSAL_MARKER_OFFSET + 8) && size < 1048576)
       return JST_ROM;
 
@@ -665,7 +757,11 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
       uint32_t loadAddress;
 
       if (!InferRawBinaryLoadAddress(buffer, jaguarROMSize, &loadAddress))
-         return false;
+      {
+         if (!LooksLikeBjlRamImage(buffer, jaguarROMSize))
+            return false;
+         loadAddress = 0x4000;
+      }
 
       memcpy(jagMemSpace + loadAddress, buffer, jaguarROMSize);
       jaguarRunAddress = loadAddress;
