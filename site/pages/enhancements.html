@@ -22,9 +22,14 @@
           <td>Alien vs Predator, Doom and the JagDoomEX hacks, Hover Strike, Missile Command 3D, Skyhammer</td></tr>
       <tr><td>True colour</td>
           <td>Cybermorph, Air Cars, Kasumi Ninja, Tempest 2000, I-War, Skyhammer</td></tr>
+      <tr><td>Blitter Bus Timing, 68000 only <span class="badge">compatibility</span></td>
+          <td>White Men Can&rsquo;t Jump</td></tr>
     </table></div>
     <p>
-      Any option you set yourself always wins.
+      A <em>compatibility</em> row (the last one) is never withheld by the
+      profile and cites the ticket for the real fix, so it can be retired.
+      Since v3.8.0 RetroArch also shows an on-screen notice naming the presets
+      applied when a game loads. Any option you set yourself always wins.
       <code>virtualjaguar_pertitle_defaults</code> turns the database off for
       stock behaviour. <code>virtualjaguar_enhancement_profile</code> (Auto,
       Quality, Performance) decides whether the expensive ones may apply: Auto
@@ -226,10 +231,14 @@
       <dd>
         <p><code>virtualjaguar_m68k_clock_scale</code> runs 0.5x to 3x and
         <code>virtualjaguar_risc_clock_scale</code> 0.5x to 2x. Bus latencies
-        stay in wall time, so pacing and pitch do not drift. Idle-skip stays
-        active at any scale; see
+        stay in wall time, so pacing and pitch do not drift. Both also take
+        a percentage such as <code>175%</code> (25 to 400). Since v3.9.0
+        idle-skip stays active at any RISC scale, so a 2x overclock no longer
+        emulates twice the spinning (Doom at 2x: 52 to 82 fps in the
+        project&rsquo;s headless harness); see
         <a href="performance.html">Settings &amp; performance</a>.</p>
-        <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a></p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.0.md">v3.9.0 notes</a></p>
       </dd>
       <dt>CD read speed</dt>
       <dd>
@@ -259,7 +268,8 @@
         <p><code>virtualjaguar_crash_detect</code>, on by default, matches
         known failure signatures and names the broken subsystem in your
         frontend log. Since v3.7.0 it also logs <code>inframe_hang</code> for
-        a blit too large to ever finish, which per-frame checks cannot see.</p>
+        a blit too large to ever finish, which per-frame checks cannot see,
+        and since v3.8.0 it sees DSP runaways in HLE boot too.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash_detect.c</a></p>
       </dd>
     </dl>
