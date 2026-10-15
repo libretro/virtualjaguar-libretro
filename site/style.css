@@ -672,6 +672,191 @@ tr:last-child td { border-bottom: none; }
 tbody tr:hover td, table tr:hover td { background: var(--red-wash); }
 table tr:hover th { background: var(--code-bg); }
 
+/* download page */
+
+/* Generic platform and architecture glyphs (inline <symbol> sprite on the
+ * page).  Stroke-only, currentColor: they follow the text colour in both
+ * themes.  Always printed next to the platform name, so aria-hidden. */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+svg.ico {
+  width: 1.05em; height: 1.05em;
+  flex: none;
+  vertical-align: -0.17em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.dl .win-body { padding-top: 0.8rem; }
+.dl-nojs { margin: 0 0 0.8rem; font-size: 0.9rem; }
+
+/* Release picker: two quick buttons and a select for older tags. */
+.dl-picker {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 0.5rem 0.7rem;
+  margin: 0 0 0.9rem;
+}
+.dl-picker[hidden] { display: none; }
+.dl-label {
+  font-family: var(--font-mono); font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--fg-dim);
+}
+.dl-seg { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; }
+.dl-btn, .dl-older select {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--fg);
+  background: var(--code-bg);
+  padding: 0.32rem 0.8rem;
+  min-height: 2.2rem;
+  cursor: pointer;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 0;
+}
+.dl-btn code { background: none; padding: 0; font-size: inherit; }
+.dl-btn:hover, .dl-older select:hover { color: var(--red-link); }
+.dl-btn[aria-pressed="true"], .dl-older select.on {
+  color: #fff;
+  background: var(--red-fill);
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.dl-btn[aria-pressed="true"]:hover { color: #fff; }
+.dl-btn:focus-visible, .dl-older select:focus-visible,
+.inst-tabs [role="tab"]:focus-visible, details.plat > summary:focus-visible {
+  outline: 2px solid var(--red-link);
+  outline-offset: 2px;
+}
+.dl-older select { max-width: 100%; padding-right: 0.4rem; }
+
+/* One release. */
+.dl-meta {
+  margin: 0 0 0.6rem; max-width: none;
+  font-family: var(--font-mono); font-size: 0.8rem; color: var(--fg-dim);
+}
+.dl-meta strong { color: var(--fg); }
+.dl-note { margin: 0 0 0.6rem; font-size: 0.86rem; color: var(--fg-dim); max-width: none; }
+.dl-h {
+  display: flex; align-items: baseline; gap: 0.6rem;
+  margin: 1.1rem 0 0.45rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 2px solid var(--red-rule);
+  font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
+.dl-h small { font-weight: 400; letter-spacing: 0.04em; color: var(--fg-dim); text-transform: none; }
+.dl-empty { margin: 0.4rem 0; font-size: 0.9rem; color: var(--fg-dim); max-width: none; }
+.dl-hint { margin: 0.1rem 0 0.5rem; font-size: 0.84rem; color: var(--fg-dim); max-width: none; }
+
+.plat-name { display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+.arch { display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.82rem; white-space: nowrap; }
+
+table.dl-table { font-size: 0.86rem; }
+.dl-table th, .dl-table td { padding: 0.38rem 0.7rem; vertical-align: middle; }
+.dl-table tbody th[scope="rowgroup"] {
+  position: static; background: none; border-bottom: 1px solid var(--line);
+  text-transform: none; letter-spacing: 0; font-size: 0.86rem;
+  vertical-align: middle;
+}
+.dl-table tbody:not(:last-child) tr:last-child > * { border-bottom: 1px solid var(--line); }
+.dl-table td.files { white-space: normal; }
+.file { display: inline-block; margin: 0.1rem 1rem 0.1rem 0; white-space: nowrap; }
+.file small, .chip small { margin-left: 0.4rem; color: var(--fg-dim); font-family: var(--font-mono); font-size: 0.72rem; }
+
+/* Platform groups: the long core list collapses to one line per platform. */
+details.plat { border-bottom: 1px solid var(--line); }
+details.plat > summary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.8rem;
+  padding: 0.4rem 0.2rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.9rem; font-weight: 600;
+}
+details.plat > summary::-webkit-details-marker { display: none; }
+details.plat > summary::before {
+  content: "+"; flex: none; width: 1.1rem; text-align: center;
+  font-family: var(--font-mono); font-weight: 700; color: var(--red-link);
+}
+details.plat[open] > summary::before { content: "-"; }
+details.plat > summary:hover { background: var(--red-wash); }
+.count { font-family: var(--font-mono); font-size: 0.74rem; font-weight: 400; color: var(--fg-dim); }
+ul.chips {
+  list-style: none; margin: 0.1rem 0 0.7rem; padding: 0;
+  display: grid; gap: 0.35rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14.5rem), 1fr));
+}
+ul.chips li { margin: 0; }
+a.chip {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.1rem;
+  height: 100%;
+  padding: 0.3rem 0.55rem;
+  background: var(--well);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+a.chip svg.ico { align-self: center; margin-right: 0.4rem; color: var(--fg-dim); }
+a.chip .t { font-family: var(--font-mono); font-size: 0.82rem; }
+a.chip:hover, a.chip:focus-visible { background: var(--red-wash); color: var(--red-link); text-decoration: none; }
+a.chip:focus-visible { outline: 2px solid var(--red-link); outline-offset: 1px; }
+details.tools > .table-wrap { margin-top: 0.3rem; }
+.dl .footnote#verify { margin-top: 0.9rem; }
+
+/* Installer: a compact widget, tabs when scripts run. */
+details.inst { margin: 0 0 0.6rem; border: 1px solid var(--line); background: var(--well); }
+details.inst > summary { padding: 0.45rem 0.7rem; }
+details.inst[open] > summary { border-bottom: 1px solid var(--line); }
+details.inst > :not(summary) { margin-left: 0.7rem; margin-right: 0.7rem; }
+details.inst .inst-label { margin: 0.6rem 0 0.2rem; max-width: none; font-size: 0.86rem; }
+details.inst pre { margin: 0 0 0.5rem; }
+details.inst .footnote { margin: 0.4rem 0.7rem 0.6rem; max-width: none; }
+.inst-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.6rem; margin-bottom: 0.5rem; }
+.inst-tabs[hidden] { display: none; }
+.inst-tabs [role="tab"] {
+  font: inherit; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700;
+  color: var(--fg); background: var(--code-bg);
+  padding: 0.28rem 0.7rem; min-height: 2rem; cursor: pointer;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 0;
+}
+.inst-tabs [role="tab"][aria-selected="true"] {
+  color: #fff; background: var(--red-fill);
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.inst-tabs:not([hidden]) ~ .inst-panel .inst-label { display: none; }
+.inst-panel[hidden] { display: none; }
+
+@media (max-width: 34rem) {
+  .dl .win-body { padding-left: 0.7rem; padding-right: 0.7rem; }
+  .dl-picker { gap: 0.4rem; }
+  .dl-label { flex-basis: 100%; }
+  .dl-older { flex: 1 1 100%; }
+  .dl-older select { width: 100%; }
+  .dl-seg { flex: 1 1 100%; }
+  .dl-seg .dl-btn { flex: 1 1 0; }
+  .dl-table th, .dl-table td { padding: 0.35rem 0.5rem; }
+  /* The app table becomes platform headers over arch + files lines. */
+  .dl-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .dl-table tbody { display: block; }
+  .dl-table tbody tr { display: grid; grid-template-columns: 6.6rem 1fr; align-items: baseline; }
+  .dl-table tbody tr th[rowspan] { grid-column: 1 / -1; padding-bottom: 0.1rem; border-bottom: 0; }
+  .dl-table tbody tr td { border-bottom: 0; padding-top: 0.1rem; padding-bottom: 0.1rem; }
+  .dl-table tbody tr:last-child td { padding-bottom: 0.4rem; }
+  .dl-table tbody:not(:last-child) { border-bottom: 1px solid var(--line); }
+  .dl-table tbody:not(:last-child) tr:last-child > * { border-bottom: 0; }
+  .file { margin-right: 0.8rem; }
+}
+
 /* ---------------------------------------------------- notes / evidence */
 
 /* Two callouts, one shape: a thick coloured spine on an inset field.  The

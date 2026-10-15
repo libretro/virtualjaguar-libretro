@@ -1,0 +1,1459 @@
+{
+ "latest": {
+  "assets": [
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/cue2cdi-linux-x86_64",
+    "name": "cue2cdi-linux-x86_64",
+    "size": 30856
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/cue2cdi-macos-universal",
+    "name": "cue2cdi-macos-universal",
+    "size": 84664
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/cue2cdi-windows-x86_64.exe",
+    "name": "cue2cdi-windows-x86_64.exe",
+    "size": 102912
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/jagcd-tools-linux-x64.zip",
+    "name": "jagcd-tools-linux-x64.zip",
+    "size": 2424336
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/jagcd-tools-macos.zip",
+    "name": "jagcd-tools-macos.zip",
+    "size": 885599
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/jagcd-tools-windows-x64.zip",
+    "name": "jagcd-tools-windows-x64.zip",
+    "size": 3176131
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/SHA256SUMS.txt",
+    "name": "SHA256SUMS.txt",
+    "size": 7120
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-linux-aarch64.AppImage",
+    "name": "VirtualJaguar-3.9.0-linux-aarch64.AppImage",
+    "size": 23681544
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-linux-x86_64.AppImage",
+    "name": "VirtualJaguar-3.9.0-linux-x86_64.AppImage",
+    "size": 24099320
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-linux-x86_64.flatpak",
+    "name": "VirtualJaguar-3.9.0-linux-x86_64.flatpak",
+    "size": 16496984
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-macos-universal.zip",
+    "name": "VirtualJaguar-3.9.0-macos-universal.zip",
+    "size": 27706480
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-windows-arm64-setup.exe",
+    "name": "VirtualJaguar-3.9.0-windows-arm64-setup.exe",
+    "size": 20976965
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-windows-arm64.zip",
+    "name": "VirtualJaguar-3.9.0-windows-arm64.zip",
+    "size": 23712946
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-windows-x64-setup.exe",
+    "name": "VirtualJaguar-3.9.0-windows-x64-setup.exe",
+    "size": 22466831
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/VirtualJaguar-3.9.0-windows-x64.zip",
+    "name": "VirtualJaguar-3.9.0-windows-x64.zip",
+    "size": 25748130
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_3.9.0_amd64.deb",
+    "name": "virtualjaguar_3.9.0_amd64.deb",
+    "size": 16139856
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_3.9.0_arm64.deb",
+    "name": "virtualjaguar_3.9.0_arm64.deb",
+    "size": 15753224
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+    "size": 1083
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-arm64-v8a.so",
+    "name": "virtualjaguar_libretro-android-arm64-v8a.so",
+    "size": 2429520
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+    "size": 1092
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-armeabi-v7a.so",
+    "name": "virtualjaguar_libretro-android-armeabi-v7a.so",
+    "size": 1829308
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-x86-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-x86-debug.tar.gz",
+    "size": 1001
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-x86.so",
+    "name": "virtualjaguar_libretro-android-x86.so",
+    "size": 2318900
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+    "size": 1048
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-android-x86_64.so",
+    "name": "virtualjaguar_libretro-android-x86_64.so",
+    "size": 2501192
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+    "name": "virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+    "size": 3245782
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-emscripten-wasm.bc",
+    "name": "virtualjaguar_libretro-emscripten-wasm.bc",
+    "size": 30607658
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+    "size": 1042420
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-ios-arm64.dylib",
+    "name": "virtualjaguar_libretro-ios-arm64.dylib",
+    "size": 2307488
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+    "size": 2273527
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-aarch64.so",
+    "name": "virtualjaguar_libretro-linux-aarch64.so",
+    "size": 2696512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-i686-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-i686-debug.tar.gz",
+    "size": 2316752
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-i686.so",
+    "name": "virtualjaguar_libretro-linux-i686.so",
+    "size": 2668524
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+    "size": 2201730
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi1-armv6.so",
+    "name": "virtualjaguar_libretro-linux-rpi1-armv6.so",
+    "size": 2451324
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+    "size": 2332322
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+    "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+    "size": 2095008
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+    "size": 2322181
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+    "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+    "size": 2095008
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+    "size": 2277537
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+    "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+    "size": 2696512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+    "size": 2332970
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+    "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+    "size": 2193312
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+    "size": 2287729
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+    "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+    "size": 2696512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+    "size": 2333031
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+    "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+    "size": 2193312
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+    "size": 2289282
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+    "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+    "size": 2696512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+    "size": 2357944
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-linux-x86_64.so",
+    "name": "virtualjaguar_libretro-linux-x86_64.so",
+    "size": 2778704
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+    "size": 1062873
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-macos-arm64.dylib",
+    "name": "virtualjaguar_libretro-macos-arm64.dylib",
+    "size": 2324280
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+    "size": 1234536
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-macos-x86_64.dylib",
+    "name": "virtualjaguar_libretro-macos-x86_64.dylib",
+    "size": 2274512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-switch-debug.tar.gz",
+    "name": "virtualjaguar_libretro-switch-debug.tar.gz",
+    "size": 3058174
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-switch.a",
+    "name": "virtualjaguar_libretro-switch.a",
+    "size": 6016816
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+    "size": 1156084
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-tvos-arm64.dylib",
+    "name": "virtualjaguar_libretro-tvos-arm64.dylib",
+    "size": 2307488
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-vita-debug.tar.gz",
+    "name": "virtualjaguar_libretro-vita-debug.tar.gz",
+    "size": 2835557
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-vita.a",
+    "name": "virtualjaguar_libretro-vita.a",
+    "size": 2878830
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-windows-i686-debug.tar.gz",
+    "name": "virtualjaguar_libretro-windows-i686-debug.tar.gz",
+    "size": 2610535
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-windows-i686.dll",
+    "name": "virtualjaguar_libretro-windows-i686.dll",
+    "size": 25006265
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+    "size": 2755330
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro-windows-x86_64.dll",
+    "name": "virtualjaguar_libretro-windows-x86_64.dll",
+    "size": 25267079
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.9.0/virtualjaguar_libretro.info",
+    "name": "virtualjaguar_libretro.info",
+    "size": 3647
+   }
+  ],
+  "draft": false,
+  "html_url": "https://github.com/libretro/virtualjaguar-libretro/releases/tag/v3.9.0",
+  "prerelease": false,
+  "published_at": "2026-10-14T06:34:51Z",
+  "tag_name": "v3.9.0"
+ },
+ "nightly": {
+  "assets": [
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/cue2cdi-linux-x86_64",
+    "name": "cue2cdi-linux-x86_64",
+    "size": 30856
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/cue2cdi-macos-universal",
+    "name": "cue2cdi-macos-universal",
+    "size": 84664
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/cue2cdi-windows-x86_64.exe",
+    "name": "cue2cdi-windows-x86_64.exe",
+    "size": 102912
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/jagcd-tools-linux-x64.zip",
+    "name": "jagcd-tools-linux-x64.zip",
+    "size": 2424336
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/jagcd-tools-macos.zip",
+    "name": "jagcd-tools-macos.zip",
+    "size": 885599
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/jagcd-tools-windows-x64.zip",
+    "name": "jagcd-tools-windows-x64.zip",
+    "size": 3176132
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/SHA256SUMS.txt",
+    "name": "SHA256SUMS.txt",
+    "size": 7140
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-linux-aarch64.AppImage",
+    "name": "VirtualJaguar-nightly-linux-aarch64.AppImage",
+    "size": 23738888
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-linux-x86_64.AppImage",
+    "name": "VirtualJaguar-nightly-linux-x86_64.AppImage",
+    "size": 24185336
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-linux-x86_64.flatpak",
+    "name": "VirtualJaguar-nightly-linux-x86_64.flatpak",
+    "size": 16597168
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-macos-universal.zip",
+    "name": "VirtualJaguar-nightly-macos-universal.zip",
+    "size": 27793468
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-windows-arm64-setup.exe",
+    "name": "VirtualJaguar-nightly-windows-arm64-setup.exe",
+    "size": 21005004
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-windows-arm64.zip",
+    "name": "VirtualJaguar-nightly-windows-arm64.zip",
+    "size": 23756424
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-windows-x64-setup.exe",
+    "name": "VirtualJaguar-nightly-windows-x64-setup.exe",
+    "size": 22535223
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/VirtualJaguar-nightly-windows-x64.zip",
+    "name": "VirtualJaguar-nightly-windows-x64.zip",
+    "size": 25856247
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+    "size": 1050
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-arm64-v8a.so",
+    "name": "virtualjaguar_libretro-android-arm64-v8a.so",
+    "size": 2433400
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+    "size": 1089
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-armeabi-v7a.so",
+    "name": "virtualjaguar_libretro-android-armeabi-v7a.so",
+    "size": 1831936
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-x86-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-x86-debug.tar.gz",
+    "size": 1010
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-x86.so",
+    "name": "virtualjaguar_libretro-android-x86.so",
+    "size": 2322872
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+    "size": 1051
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-android-x86_64.so",
+    "name": "virtualjaguar_libretro-android-x86_64.so",
+    "size": 2505160
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+    "name": "virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+    "size": 3253164
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-emscripten-wasm.bc",
+    "name": "virtualjaguar_libretro-emscripten-wasm.bc",
+    "size": 30646642
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+    "size": 1045462
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-ios-arm64.dylib",
+    "name": "virtualjaguar_libretro-ios-arm64.dylib",
+    "size": 2307496
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+    "size": 2280060
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-aarch64.so",
+    "name": "virtualjaguar_libretro-linux-aarch64.so",
+    "size": 2696520
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-i686-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-i686-debug.tar.gz",
+    "size": 2323542
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-i686.so",
+    "name": "virtualjaguar_libretro-linux-i686.so",
+    "size": 2676720
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+    "size": 2208790
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi1-armv6.so",
+    "name": "virtualjaguar_libretro-linux-rpi1-armv6.so",
+    "size": 2455424
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+    "size": 2339272
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+    "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+    "size": 2103204
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+    "size": 2331285
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+    "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+    "size": 2099108
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+    "size": 2284369
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+    "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+    "size": 2696512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+    "size": 2340000
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+    "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+    "size": 2197412
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+    "size": 2295224
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+    "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+    "size": 2696512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+    "size": 2340091
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+    "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+    "size": 2197412
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+    "size": 2295188
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+    "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+    "size": 2696512
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+    "size": 2365625
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-linux-x86_64.so",
+    "name": "virtualjaguar_libretro-linux-x86_64.so",
+    "size": 2786904
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+    "size": 1065821
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-macos-arm64.dylib",
+    "name": "virtualjaguar_libretro-macos-arm64.dylib",
+    "size": 2340808
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+    "size": 1238157
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-macos-x86_64.dylib",
+    "name": "virtualjaguar_libretro-macos-x86_64.dylib",
+    "size": 2278616
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-switch-debug.tar.gz",
+    "name": "virtualjaguar_libretro-switch-debug.tar.gz",
+    "size": 3061294
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-switch.a",
+    "name": "virtualjaguar_libretro-switch.a",
+    "size": 6023882
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+    "size": 1159281
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-tvos-arm64.dylib",
+    "name": "virtualjaguar_libretro-tvos-arm64.dylib",
+    "size": 2307496
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-vita-debug.tar.gz",
+    "name": "virtualjaguar_libretro-vita-debug.tar.gz",
+    "size": 2839019
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-vita.a",
+    "name": "virtualjaguar_libretro-vita.a",
+    "size": 2882608
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-windows-i686-debug.tar.gz",
+    "name": "virtualjaguar_libretro-windows-i686-debug.tar.gz",
+    "size": 2617594
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-windows-i686.dll",
+    "name": "virtualjaguar_libretro-windows-i686.dll",
+    "size": 25032889
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+    "name": "virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+    "size": 2759343
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro-windows-x86_64.dll",
+    "name": "virtualjaguar_libretro-windows-x86_64.dll",
+    "size": 25293703
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_libretro.info",
+    "name": "virtualjaguar_libretro.info",
+    "size": 3663
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_nightly_amd64.deb",
+    "name": "virtualjaguar_nightly_amd64.deb",
+    "size": 16194924
+   },
+   {
+    "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/nightly/virtualjaguar_nightly_arm64.deb",
+    "name": "virtualjaguar_nightly_arm64.deb",
+    "size": 15802672
+   }
+  ],
+  "draft": false,
+  "html_url": "https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly",
+  "prerelease": true,
+  "published_at": "2026-10-14T21:32:50Z",
+  "tag_name": "nightly"
+ },
+ "older": [
+  {
+   "assets": [
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/cue2cdi-linux-x86_64",
+     "name": "cue2cdi-linux-x86_64",
+     "size": 30856
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/cue2cdi-macos-universal",
+     "name": "cue2cdi-macos-universal",
+     "size": 84664
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/cue2cdi-windows-x86_64.exe",
+     "name": "cue2cdi-windows-x86_64.exe",
+     "size": 102912
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/jagcd-tools-linux-x64.zip",
+     "name": "jagcd-tools-linux-x64.zip",
+     "size": 2424336
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/jagcd-tools-macos.zip",
+     "name": "jagcd-tools-macos.zip",
+     "size": 885599
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/jagcd-tools-windows-x64.zip",
+     "name": "jagcd-tools-windows-x64.zip",
+     "size": 3176128
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/SHA256SUMS.txt",
+     "name": "SHA256SUMS.txt",
+     "size": 6074
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+     "size": 1047
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-arm64-v8a.so",
+     "name": "virtualjaguar_libretro-android-arm64-v8a.so",
+     "size": 2404096
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+     "size": 1091
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-armeabi-v7a.so",
+     "name": "virtualjaguar_libretro-android-armeabi-v7a.so",
+     "size": 1812716
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-x86-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-x86-debug.tar.gz",
+     "size": 1002
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-x86.so",
+     "name": "virtualjaguar_libretro-android-x86.so",
+     "size": 2293236
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+     "size": 1053
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-android-x86_64.so",
+     "name": "virtualjaguar_libretro-android-x86_64.so",
+     "size": 2473976
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+     "name": "virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+     "size": 3195423
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-emscripten-wasm.bc",
+     "name": "virtualjaguar_libretro-emscripten-wasm.bc",
+     "size": 30500924
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+     "size": 1021622
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-ios-arm64.dylib",
+     "name": "virtualjaguar_libretro-ios-arm64.dylib",
+     "size": 2291016
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+     "size": 2260655
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-aarch64.so",
+     "name": "virtualjaguar_libretro-linux-aarch64.so",
+     "size": 2696496
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-i686-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-i686-debug.tar.gz",
+     "size": 2304731
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-i686.so",
+     "name": "virtualjaguar_libretro-linux-i686.so",
+     "size": 2689036
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+     "size": 2188254
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi1-armv6.so",
+     "name": "virtualjaguar_libretro-linux-rpi1-armv6.so",
+     "size": 2471800
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+     "size": 2307610
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+     "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+     "size": 2107280
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+     "size": 2300787
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+     "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+     "size": 2103184
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+     "size": 2261415
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+     "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+     "size": 2696480
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+     "size": 2309380
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+     "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+     "size": 2205584
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+     "size": 2271730
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+     "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+     "size": 2696480
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+     "size": 2309319
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+     "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+     "size": 2205584
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+     "size": 2271558
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+     "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+     "size": 2696480
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+     "size": 2347354
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-linux-x86_64.so",
+     "name": "virtualjaguar_libretro-linux-x86_64.so",
+     "size": 2799216
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+     "size": 1044187
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-macos-arm64.dylib",
+     "name": "virtualjaguar_libretro-macos-arm64.dylib",
+     "size": 2307656
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+     "size": 1210707
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-macos-x86_64.dylib",
+     "name": "virtualjaguar_libretro-macos-x86_64.dylib",
+     "size": 2253928
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-switch-debug.tar.gz",
+     "name": "virtualjaguar_libretro-switch-debug.tar.gz",
+     "size": 3002863
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-switch.a",
+     "name": "virtualjaguar_libretro-switch.a",
+     "size": 5927702
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+     "size": 1132710
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-tvos-arm64.dylib",
+     "name": "virtualjaguar_libretro-tvos-arm64.dylib",
+     "size": 2291016
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-vita-debug.tar.gz",
+     "name": "virtualjaguar_libretro-vita-debug.tar.gz",
+     "size": 2792962
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-vita.a",
+     "name": "virtualjaguar_libretro-vita.a",
+     "size": 2848908
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-windows-i686-debug.tar.gz",
+     "name": "virtualjaguar_libretro-windows-i686-debug.tar.gz",
+     "size": 2575323
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-windows-i686.dll",
+     "name": "virtualjaguar_libretro-windows-i686.dll",
+     "size": 24971961
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+     "size": 2718861
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro-windows-x86_64.dll",
+     "name": "virtualjaguar_libretro-windows-x86_64.dll",
+     "size": 25236359
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.8.0/virtualjaguar_libretro.info",
+     "name": "virtualjaguar_libretro.info",
+     "size": 3647
+    }
+   ],
+   "draft": false,
+   "html_url": "https://github.com/libretro/virtualjaguar-libretro/releases/tag/v3.8.0",
+   "prerelease": false,
+   "published_at": "2026-10-13T02:15:07Z",
+   "tag_name": "v3.8.0"
+  },
+  {
+   "assets": [
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/cue2cdi-linux-x86_64",
+     "name": "cue2cdi-linux-x86_64",
+     "size": 30856
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/cue2cdi-macos-universal",
+     "name": "cue2cdi-macos-universal",
+     "size": 84664
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/cue2cdi-windows-x86_64.exe",
+     "name": "cue2cdi-windows-x86_64.exe",
+     "size": 105984
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/jagcd-tools-linux-x64.zip",
+     "name": "jagcd-tools-linux-x64.zip",
+     "size": 2424264
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/jagcd-tools-macos.zip",
+     "name": "jagcd-tools-macos.zip",
+     "size": 885526
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/jagcd-tools-windows-x64.zip",
+     "name": "jagcd-tools-windows-x64.zip",
+     "size": 3468098
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/SHA256SUMS.txt",
+     "name": "SHA256SUMS.txt",
+     "size": 6074
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+     "size": 1054
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-arm64-v8a.so",
+     "name": "virtualjaguar_libretro-android-arm64-v8a.so",
+     "size": 2285496
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+     "size": 1097
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-armeabi-v7a.so",
+     "name": "virtualjaguar_libretro-android-armeabi-v7a.so",
+     "size": 1736972
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-x86-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-x86-debug.tar.gz",
+     "size": 1012
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-x86.so",
+     "name": "virtualjaguar_libretro-android-x86.so",
+     "size": 2179300
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+     "size": 1060
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-android-x86_64.so",
+     "name": "virtualjaguar_libretro-android-x86_64.so",
+     "size": 2349336
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+     "name": "virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+     "size": 3016591
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-emscripten-wasm.bc",
+     "name": "virtualjaguar_libretro-emscripten-wasm.bc",
+     "size": 29248042
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+     "size": 941111
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-ios-arm64.dylib",
+     "name": "virtualjaguar_libretro-ios-arm64.dylib",
+     "size": 2175368
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+     "size": 2096006
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-aarch64.so",
+     "name": "virtualjaguar_libretro-linux-aarch64.so",
+     "size": 2482208
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-i686-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-i686-debug.tar.gz",
+     "size": 2126280
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-i686.so",
+     "name": "virtualjaguar_libretro-linux-i686.so",
+     "size": 2479980
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi1-armv6-debug.tar.gz",
+     "size": 1946735
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi1-armv6.so",
+     "name": "virtualjaguar_libretro-linux-rpi1-armv6.so",
+     "size": 2185344
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7-debug.tar.gz",
+     "size": 2100942
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+     "name": "virtualjaguar_libretro-linux-rpi2-cortex-a7.so",
+     "size": 1894568
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53-debug.tar.gz",
+     "size": 2093672
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+     "name": "virtualjaguar_libretro-linux-rpi3-cortex-a53.so",
+     "size": 1894564
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53-debug.tar.gz",
+     "size": 2102973
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+     "name": "virtualjaguar_libretro-linux-rpi3_64-cortex-a53.so",
+     "size": 2482224
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72-debug.tar.gz",
+     "size": 2107253
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+     "name": "virtualjaguar_libretro-linux-rpi4-cortex-a72.so",
+     "size": 1992868
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72-debug.tar.gz",
+     "size": 2105521
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+     "name": "virtualjaguar_libretro-linux-rpi4_64-cortex-a72.so",
+     "size": 2482224
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76-debug.tar.gz",
+     "size": 2106676
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+     "name": "virtualjaguar_libretro-linux-rpi5-cortex-a76.so",
+     "size": 1992872
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76-debug.tar.gz",
+     "size": 2093627
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+     "name": "virtualjaguar_libretro-linux-rpi5_64-cortex-a76.so",
+     "size": 2482224
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+     "size": 2224277
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-linux-x86_64.so",
+     "name": "virtualjaguar_libretro-linux-x86_64.so",
+     "size": 2515312
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+     "size": 956441
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-macos-arm64.dylib",
+     "name": "virtualjaguar_libretro-macos-arm64.dylib",
+     "size": 2191400
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+     "size": 1121882
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-macos-x86_64.dylib",
+     "name": "virtualjaguar_libretro-macos-x86_64.dylib",
+     "size": 2142608
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-switch-debug.tar.gz",
+     "name": "virtualjaguar_libretro-switch-debug.tar.gz",
+     "size": 2805465
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-switch.a",
+     "name": "virtualjaguar_libretro-switch.a",
+     "size": 5669518
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+     "size": 1045524
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-tvos-arm64.dylib",
+     "name": "virtualjaguar_libretro-tvos-arm64.dylib",
+     "size": 2175368
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-vita-debug.tar.gz",
+     "name": "virtualjaguar_libretro-vita-debug.tar.gz",
+     "size": 2621643
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-vita.a",
+     "name": "virtualjaguar_libretro-vita.a",
+     "size": 2748816
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-windows-i686-debug.tar.gz",
+     "name": "virtualjaguar_libretro-windows-i686-debug.tar.gz",
+     "size": 2557175
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-windows-i686.dll",
+     "name": "virtualjaguar_libretro-windows-i686.dll",
+     "size": 24027805
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+     "size": 2704979
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro-windows-x86_64.dll",
+     "name": "virtualjaguar_libretro-windows-x86_64.dll",
+     "size": 24130924
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.5.0/virtualjaguar_libretro.info",
+     "name": "virtualjaguar_libretro.info",
+     "size": 3649
+    }
+   ],
+   "draft": false,
+   "html_url": "https://github.com/libretro/virtualjaguar-libretro/releases/tag/v3.5.0",
+   "prerelease": false,
+   "published_at": "2026-08-25T21:50:18Z",
+   "tag_name": "v3.5.0"
+  },
+  {
+   "assets": [
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/cue2cdi-linux-x86_64",
+     "name": "cue2cdi-linux-x86_64",
+     "size": 30856
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/cue2cdi-macos-universal",
+     "name": "cue2cdi-macos-universal",
+     "size": 84664
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/cue2cdi-windows-x86_64.exe",
+     "name": "cue2cdi-windows-x86_64.exe",
+     "size": 105984
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/SHA256SUMS.txt",
+     "name": "SHA256SUMS.txt",
+     "size": 3890
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-arm64-v8a-debug.tar.gz",
+     "size": 1052
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-arm64-v8a.so",
+     "name": "virtualjaguar_libretro-android-arm64-v8a.so",
+     "size": 1723232
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-armeabi-v7a-debug.tar.gz",
+     "size": 1084
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-armeabi-v7a.so",
+     "name": "virtualjaguar_libretro-android-armeabi-v7a.so",
+     "size": 1319040
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-x86-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-x86-debug.tar.gz",
+     "size": 1011
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-x86.so",
+     "name": "virtualjaguar_libretro-android-x86.so",
+     "size": 1572880
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-android-x86_64-debug.tar.gz",
+     "size": 1055
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-android-x86_64.so",
+     "name": "virtualjaguar_libretro-android-x86_64.so",
+     "size": 1677240
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+     "name": "virtualjaguar_libretro-emscripten-wasm-debug.tar.gz",
+     "size": 2272051
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-emscripten-wasm.bc",
+     "name": "virtualjaguar_libretro-emscripten-wasm.bc",
+     "size": 27397296
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-ios-arm64-debug.tar.gz",
+     "size": 604331
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-ios-arm64.dylib",
+     "name": "virtualjaguar_libretro-ios-arm64.dylib",
+     "size": 1600448
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-aarch64-debug.tar.gz",
+     "size": 1199030
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-linux-aarch64.so",
+     "name": "virtualjaguar_libretro-linux-aarch64.so",
+     "size": 1818752
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-linux-i686-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-i686-debug.tar.gz",
+     "size": 1123562
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-linux-i686.so",
+     "name": "virtualjaguar_libretro-linux-i686.so",
+     "size": 1697724
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-linux-x86_64-debug.tar.gz",
+     "size": 1212581
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-linux-x86_64.so",
+     "name": "virtualjaguar_libretro-linux-x86_64.so",
+     "size": 1745408
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-macos-arm64-debug.tar.gz",
+     "size": 601911
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-macos-arm64.dylib",
+     "name": "virtualjaguar_libretro-macos-arm64.dylib",
+     "size": 1595864
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-macos-x86_64-debug.tar.gz",
+     "size": 641909
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-macos-x86_64.dylib",
+     "name": "virtualjaguar_libretro-macos-x86_64.dylib",
+     "size": 1489744
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-switch-debug.tar.gz",
+     "name": "virtualjaguar_libretro-switch-debug.tar.gz",
+     "size": 1906085
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-switch.a",
+     "name": "virtualjaguar_libretro-switch.a",
+     "size": 4712234
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-tvos-arm64-debug.tar.gz",
+     "size": 678866
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-tvos-arm64.dylib",
+     "name": "virtualjaguar_libretro-tvos-arm64.dylib",
+     "size": 1600448
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-vita-debug.tar.gz",
+     "name": "virtualjaguar_libretro-vita-debug.tar.gz",
+     "size": 1834045
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-vita.a",
+     "name": "virtualjaguar_libretro-vita.a",
+     "size": 2216054
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-windows-i686-debug.tar.gz",
+     "name": "virtualjaguar_libretro-windows-i686-debug.tar.gz",
+     "size": 1435572
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-windows-i686.dll",
+     "name": "virtualjaguar_libretro-windows-i686.dll",
+     "size": 23059229
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+     "name": "virtualjaguar_libretro-windows-x86_64-debug.tar.gz",
+     "size": 1579423
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro-windows-x86_64.dll",
+     "name": "virtualjaguar_libretro-windows-x86_64.dll",
+     "size": 23204867
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/virtualjaguar_libretro.info",
+     "name": "virtualjaguar_libretro.info",
+     "size": 2221
+    },
+    {
+     "browser_download_url": "https://github.com/libretro/virtualjaguar-libretro/releases/download/v3.3.0/extra-notes.txt",
+     "name": "extra-notes.txt",
+     "size": 2048
+    }
+   ],
+   "draft": false,
+   "html_url": "https://github.com/libretro/virtualjaguar-libretro/releases/tag/v3.3.0",
+   "prerelease": false,
+   "published_at": "2026-08-13T06:36:26Z",
+   "tag_name": "v3.3.0"
+  }
+ ]
+}
