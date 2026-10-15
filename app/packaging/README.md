@@ -149,6 +149,17 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   `lipo`). `librashader.dylib` therefore ships arm64-only, with a warning; on an Intel Mac the app
   reports the shader runtime as unavailable and runs without shaders. Fix: build librashader for
   `x86_64-apple-darwin` in CI (Rust) and merge.
+* **OpenGL 4.1.** macOS stops at OpenGL 4.1 and has no `GL_ARB_arrays_of_arrays`. librashader 0.12 never
+  sets SPIRV-Cross's `flatten_multidimensional_arrays`, so a shader with a 2-D array (crt-geom's
+  `vec3 slotmask[3][4]`) compiles to GLSL that requires that extension and cannot build there. 15 bundled
+  presets do this: crt-geom, -deluxe, -tate; crt-hyllian, -ntsc, -ntsc-rainbow, -sinc-composite; crt-nobody,
+  crt-super-xbr, vt220, crt-fast-bilateral-super-xbr, img_mod, test-pattern-append/-prepend and
+  res-independent-scanlines. Where the context has neither GL 4.3 nor the extension, the preset list greys
+  them out ("needs OpenGL 4.3"), and a preset chosen anyway (config.ini, file dialog) gets that reason in
+  the on-screen message instead of the GL compiler's text. The list is `presetsNeedingArraysOfArrays()`
+  (`present_util.cpp`), pinned to the bundled slang-shaders commit; `shaders_bundled` and `shaders_gl`
+  check it. Real fix: librashader setting `flatten_multidimensional_arrays` when it generates GLSL below
+  4.30.
 * **Hardened runtime and entitlements.** Signed with `--options runtime`. Library validation (on with
   the hardened runtime) refuses any dylib not signed by Apple or by our team. The bundled
   `librashader.dylib` is re-signed with our identity, so it needs no exception. The shader code also

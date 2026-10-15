@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -275,6 +276,38 @@ std::vector<std::string> scanPresets(const std::string& root, size_t maxResults,
     }
     std::sort(out.begin(), out.end());
     return out;
+}
+
+const std::vector<const char*>& presetsNeedingArraysOfArrays() {
+    static const std::vector<const char*> k = {
+        "crt/crt-geom-deluxe.slangp",
+        "crt/crt-geom-tate.slangp",
+        "crt/crt-geom.slangp",
+        "crt/crt-hyllian-ntsc-rainbow.slangp",
+        "crt/crt-hyllian-ntsc.slangp",
+        "crt/crt-hyllian-sinc-composite.slangp",
+        "crt/crt-hyllian.slangp",
+        "crt/crt-nobody.slangp",
+        "crt/crt-super-xbr.slangp",
+        "crt/vt220.slangp",
+        "denoisers/crt-fast-bilateral-super-xbr.slangp",
+        "misc/img_mod.slangp",
+        "misc/test-pattern-append.slangp",
+        "misc/test-pattern-prepend.slangp",
+        "scanlines/res-independent-scanlines.slangp",
+    };
+    return k;
+}
+
+bool presetNeedsArraysOfArrays(const std::string& path) {
+    std::string p = path;
+    std::replace(p.begin(), p.end(), '\\', '/');
+    for (const char* rel : presetsNeedingArraysOfArrays()) {
+        size_t n = std::strlen(rel);
+        if (p.size() < n || p.compare(p.size() - n, n, rel) != 0) continue;
+        if (p.size() == n || p[p.size() - n - 1] == '/') return true;
+    }
+    return false;
 }
 
 }  // namespace vj

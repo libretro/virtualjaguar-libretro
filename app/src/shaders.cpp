@@ -424,6 +424,24 @@ void ShaderChain::paramChanged(size_t i) {
 // frames
 // ---------------------------------------------------------------------------------------
 
+void ShaderChain::probeGlCaps() {
+#if defined(VJ_HAVE_LIBRASHADER)
+    if (glAoA_ >= 0) return;
+    GLint major = 0, minor = 0, n = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    glGetIntegerv(GL_MINOR_VERSION, &minor);
+    if (major <= 0) return;   // no context current: try again later
+    glVer_ = std::to_string(major) + "." + std::to_string(minor);
+    bool aoa = major > 4 || (major == 4 && minor >= 3);
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    for (GLint i = 0; !aoa && i < n; i++) {
+        const char* e = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, (GLuint)i));
+        if (e && std::strcmp(e, "GL_ARB_arrays_of_arrays") == 0) aoa = true;
+    }
+    glAoA_ = aoa ? 1 : 0;
+#endif
+}
+
 void ShaderChain::destroyGL() {
 #if defined(VJ_HAVE_LIBRASHADER)
     if (!impl_) return;
@@ -455,11 +473,21 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
     if (!I.bindFbo)
         I.bindFbo = reinterpret_cast<BindFramebufferFn>(SDL_GL_GetProcAddress("glBindFramebuffer"));
 
+    probeGlCaps();
     auto fail = [&](const std::string& why) {
         failed_ = true;
         lastErr_ = why;
         I.freeChain();
         std::string brief = why.size() > 160 ? why.substr(0, 160) + "..." : why;   // full text stays in lastError()
+        // SPIRV-Cross's GLSL for a multi-dimensional array needs GL 4.3 or this extension
+        // (see presetsNeedingArraysOfArrays()); say so instead of quoting the GL compiler.
+        if (why.find("GL_ARB_arrays_of_arrays") != std::string::npos) {
+            brief = "it needs OpenGL 4.3 (arrays of arrays)";
+            if (!glVer_.empty()) brief += "; this system has OpenGL " + glVer_;
+            lastErr_ = "This preset needs OpenGL 4.3 (GL_ARB_arrays_of_arrays), which " +
+                       (glVer_.empty() ? std::string("this system") : "OpenGL " + glVer_) +
+                       " does not provide (macOS stops at 4.1). librashader: " + why;
+        }
         setNotice("Shader " + pathStem(preset) + " failed (" + brief + "); showing the plain picture");
         return 0u;
     };

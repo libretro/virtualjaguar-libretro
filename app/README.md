@@ -244,6 +244,9 @@ a failure.
   (`computePresentRect` in `present_util.cpp`): the chain renders into a texture
   of exactly the rectangle they pick, so a CRT preset at 3x integer scale looks
   the same as the plain picture at 3x. Both paths share that one function.
+- **OpenGL version.** macOS's OpenGL 4.1 cannot build presets with arrays of arrays (CRT-Geom,
+  CRT-Hyllian and 13 others in the bundle); the list greys them out and says why. Details:
+  [packaging/README.md](packaging/README.md#macos-notes).
 - **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
 
 `vj_shader_tests` (CTest `shaders_unit`, `shaders_bundled`, `shaders_library`, `shaders_gl`) covers

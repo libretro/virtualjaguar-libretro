@@ -76,6 +76,14 @@ public:
     void paramChanged(size_t index);        // pushes params()[index].value into the live chain
     void resetParams();
 
+    // ---- what the GL context can compile (context current; render() also calls it) ----
+    // Reads the GL version and extensions once.  Until then nothing is assumed missing.
+    void probeGlCaps();
+    // False when the context has neither OpenGL 4.3 nor GL_ARB_arrays_of_arrays (macOS):
+    // presetNeedsArraysOfArrays() presets cannot compile there.
+    bool glHasArraysOfArrays() const { return glAoA_ != 0; }
+    const std::string& glVersionText() const { return glVer_; }   // "4.1", once probed
+
     // ---- per frame (GL context current) -----------------------------------------------
     // True when a frame would go through the chain.
     bool active() const { return enabled && !preset.empty() && !failed_ && libraryLoaded(); }
@@ -117,6 +125,8 @@ private:
     bool noticedMissing_ = false;
     std::vector<ShaderParam> params_;
     uint64_t runs_ = 0, reuses_ = 0;
+    int glAoA_ = -1;            // arrays of arrays: -1 not probed yet, 0 no, 1 yes
+    std::string glVer_;
 
     void setNotice(const std::string& s);
 };
