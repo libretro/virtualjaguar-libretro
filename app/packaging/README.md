@@ -23,7 +23,7 @@ CI builds every installable package from one reusable workflow,
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | installs to `/usr/lib/virtualjaguar`, symlink in `/usr/bin` |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` | single-file Flatpak bundle, app id `io.github.libretro.VirtualJaguar`; see Flatpak notes |
 
-The `.deb`'s internal `Version:` is Debian-legal (`3.9.0`, `3.9.0~rc1`, `3.9.0~nightly.<sha>`; the version is the core's); the
+The `.deb`'s internal `Version:` is Debian-legal (`3.9.1`, `3.9.1~rc1`, `3.9.1~nightly.<sha>`; the version is the core's); the
 file name keeps the contract name.
 
 ### The version guard
