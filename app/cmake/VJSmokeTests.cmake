@@ -234,6 +234,18 @@ endif()
 add_test(NAME fonts_imgui_unit COMMAND vj_fonts_imgui_test)
 set_tests_properties(fonts_imgui_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# Frame pacing (pacing.h, #952): the loop's plan/charge/sleep/vsync-release decisions against a fake clock.
+add_executable(vj_pacing_test tests/pacing_test.cpp)
+target_include_directories(vj_pacing_test PRIVATE src)
+if(MSVC)
+    target_compile_options(vj_pacing_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_pacing_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_pacing_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME pacing_unit COMMAND vj_pacing_test)
+set_tests_properties(pacing_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 add_test(NAME remap_unit COMMAND vj_remap_test)
 add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")
 add_test(NAME devices_unit COMMAND vj_devices_test)

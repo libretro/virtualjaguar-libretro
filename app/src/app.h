@@ -23,6 +23,7 @@
 #include "instance.h"
 #include "library_service.h"
 #include "netplay.h"
+#include "pacing.h"
 #include "paths.h"
 #include "perf.h"
 #include "platform/commands.h"
@@ -206,6 +207,7 @@ public:
     void togglePause();
     void setFullscreen(bool fs);
     void applyVsync();
+    void syncSwapInterval();
     void applyTheme();                // the Dear ImGui style for the theme in force (theme.h); a no-op before the UI exists
     void setThemeChoice(const std::string& key);   // Settings > Interface > Appearance: system | dark | light | custom:<name>; remembered
     bool applyThemeChoice(const std::string& key); // the same without remembering; false when a custom theme is missing (System is used)
@@ -290,7 +292,7 @@ private:
 
     // pacing
     double lastTick_ = 0;
-    double accum_ = 0;
+    Pacer pacer_;
     uint64_t perfFreq_ = 1;
 
     // measured fps
