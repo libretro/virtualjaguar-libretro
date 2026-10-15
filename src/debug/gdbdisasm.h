@@ -28,6 +28,12 @@
 #define __GDBDISASM_H__
 
 #include <stdio.h>
+#ifdef _MSC_VER
+/* snprintf shim for MSVC < 2015 (buildbot msvc05/10).  Here, not in each
+ * includer: vjdebug.c included this header without it and the legacy MSVC
+ * link failed on an unresolved snprintf (v3.9.0). */
+#include <compat/msvc.h>
+#endif
 
 static const char * const GDBDisasmGPUMnemonics[64] =
 {
