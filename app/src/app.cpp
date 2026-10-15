@@ -1094,6 +1094,7 @@ void App::stepEmulation() {
         uint64_t r0 = perf.on ? perf.tick() : 0;
         host.runFrame();
         if (r0) perf.add(Perf::Retro, 1000.0 * (double)(perf.tick() - r0) / (double)perf.freq);
+        perf.emulated();
         ach.afterFrame();
         netplay.afterFrame();
         fpsWindowFrames_++;
