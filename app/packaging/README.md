@@ -142,13 +142,10 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   goes in `Contents/Frameworks/`, one of the places the shader code probes. The dev target is
   deliberately not a `MACOSX_BUNDLE`: its POST_BUILD copies would land in `Contents/MacOS`.
 * **Universal.** Two single-architecture builds merged with `lipo` (`make-universal.sh`), because
-  `VJShaders.cmake` fetches the prebuilt librashader for one architecture per configure. A gate
-  (`check-universal.sh`) fails the build if any Mach-O lacks a slice, and checks every binary's
-  `minos` against the deployment target (11.0).
-  **Known gap:** the `x86_64-macos` archive of librashader v0.12.0 contains an arm64 dylib (verified with
-  `lipo`). `librashader.dylib` therefore ships arm64-only, with a warning; on an Intel Mac the app
-  reports the shader runtime as unavailable and runs without shaders. Fix: build librashader for
-  `x86_64-apple-darwin` in CI (Rust) and merge.
+  each configure is handed one single-architecture librashader (`-DVJ_LIBRASHADER_LIB`). A gate
+  (`check-universal.sh`) fails the build if any Mach-O, `librashader.dylib` included, lacks a slice, and checks every
+  binary's `minos` against the deployment target (11.0). Both dylibs are built from source in CI from the same pinned
+  tag, see [Shader runtime](#shader-runtime-librashader).
 * **OpenGL 4.1.** macOS stops at OpenGL 4.1 and has no `GL_ARB_arrays_of_arrays`. librashader 0.12 never
   sets SPIRV-Cross's `flatten_multidimensional_arrays`, so a shader with a 2-D array (crt-geom's
   `vec3 slotmask[3][4]`) compiles to GLSL that requires that extension and cannot build there. 15 bundled
@@ -166,10 +163,6 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   fsr and smaa+fsr need `packHalf2x16` (GLSL 4.20), and 8 fail for reasons that do not look macOS-specific
   (not checked elsewhere): the six nedi bilateral-variant presets (unknown semantic `play`),
   crt-black_crush-koko (preset parse error) and ntsc-blastem (varying type mismatch at link).
-  each configure is handed one single-architecture librashader (`-DVJ_LIBRASHADER_LIB`). A gate
-  (`check-universal.sh`) fails the build if any Mach-O, `librashader.dylib` included, lacks a slice, and checks every
-  binary's `minos` against the deployment target (11.0). Both dylibs are built from source in CI from the same pinned
-  tag, see [Shader runtime](#shader-runtime-librashader).
 * **Hardened runtime and entitlements.** Signed with `--options runtime`. Library validation (on with
   the hardened runtime) refuses any dylib not signed by Apple or by our team. The bundled
   `librashader.dylib` is re-signed with our identity, so it needs no exception. The shader code also
