@@ -31,7 +31,7 @@ from pathlib import Path
 from urllib.parse import urldefrag
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_site import ALL_PAGES, SITE_BASE, page_url  # noqa: E402
+from build_site import ALL_PAGES, SITE_BASE, page_url, png_size  # noqa: E402
 
 # Substrings that must never appear: analytics, tag managers, CDNs, web fonts.
 FORBIDDEN = ("googletagmanager", "google-analytics", "gtag(", "plausible.io",
@@ -45,6 +45,12 @@ REQUIRED_META = ("og:type", "og:title", "og:description", "og:image",
                  "og:image:width", "og:image:height", "og:image:alt",
                  "twitter:card", "twitter:title", "twitter:description",
                  "twitter:image")
+
+# Share-card budget: what the networks document for summary_large_image.
+SHARE_MAX_BYTES = 1000 * 1000
+# Head <link>s every page must carry, by rel; each href is also covered by
+# the local-link check, so a missing file fails there.
+REQUIRED_ICON_RELS = ("icon", "apple-touch-icon")
 
 FAILS = []
 
@@ -61,6 +67,7 @@ class PageParser(HTMLParser):
         self.h1 = 0
         self.imgs = []
         self.links = []
+        self.link_rels = set()
         self.meta = {}
         self.canonical = None
         self.lang = None
@@ -86,6 +93,7 @@ class PageParser(HTMLParser):
                 self.canonical = a.get("href")
             elif a.get("href"):
                 self.links.append(a["href"])
+                self.link_rels.add(a.get("rel"))
         elif tag == "meta":
             key = a.get("name") or a.get("property")
             if key:
@@ -162,6 +170,23 @@ def check_page(out, name):
         check(rel and (out / rel).is_file(),
               "%s: %s does not point at a published file: %r"
               % (name, key, val))
+    check(pp.meta.get("twitter:image") == pp.meta.get("og:image"),
+          "%s: twitter:image %r != og:image %r" % (
+              name, pp.meta.get("twitter:image"), pp.meta.get("og:image")))
+    img = pp.meta.get("og:image", "")
+    img_path = out / img[len(SITE_BASE):] if img.startswith(SITE_BASE) else None
+    if img_path is not None and img_path.is_file():
+        w, h = png_size(img_path)
+        check((str(w), str(h)) == (pp.meta.get("og:image:width"),
+                                   pp.meta.get("og:image:height")),
+              "%s: og:image is %dx%d but the tags say %sx%s" % (
+                  name, w, h, pp.meta.get("og:image:width"),
+                  pp.meta.get("og:image:height")))
+        check(img_path.stat().st_size < SHARE_MAX_BYTES,
+              "%s: og:image %s is %d bytes, over the 1 MB card budget"
+              % (name, img, img_path.stat().st_size))
+    for rel in REQUIRED_ICON_RELS:
+        check(rel in pp.link_rels, "%s: no <link rel=%r>" % (name, rel))
 
     check(pp.ld, "%s: no JSON-LD block" % name)
     want = "SoftwareApplication" if name == "index.html" else "BreadcrumbList"
