@@ -1,7 +1,7 @@
 # TV mode and gamepad navigation for the desktop app: design
 
 Status: draft for review (2026-10-15). Scope: `app/` only; the core is untouched.
-Mockups: https://claude.ai/artifact/Gm3hMjVUwz33ULMan72SHi (A = Home, B = Library; C was not chosen).
+Mockups (private canvas, shared on request): https://claude.ai/artifact/Gm3hMjVUwz33ULMan72SHi (A = Home, B = Library; C was not chosen).
 
 ## 1. Goal
 
@@ -44,6 +44,16 @@ achievements, and quit back to the library. TV mode adds no input latency to a g
 | TV mode, game running | The game, except the TV-menu action |
 | TV in-game menu open (either mode) | The TV UI. The game is paused while the menu is open, through the app's existing pause |
 
+**RetroAchievements hardcore.** The menu goes through the same gates as the desktop UI. Opening it
+asks `Achievements::allowPause(why)`; when that refuses (rcheevos rate-limits pausing in hardcore),
+the menu does not open and `why` shows as a toast. Load state rows are hidden while
+`allowStateLoad()` is false; Save state stays. Netplay: see section 12.
+
+**Mouse in TV mode.** TV mode also works with a mouse, because the audience uses one: hovering a tile
+focuses it, a click activates it, and the wheel scrolls a shelf, grid or list. The desktop menu bar
+shows on hover at the top edge exactly as it does in fullscreen today. **Esc** is Back on every TV
+screen; on the root screen it keeps its current meaning (leave fullscreen).
+
 **Release guard.** When ownership moves from the UI to the game (closing the menu, starting a game),
 every button held at that moment is masked from the game until it is released. Pressing A on
 "Resume" must not also fire the game's A. The controls overlay already masks the pointer the same
@@ -59,7 +69,8 @@ Default bindings for the standard gamepad layout:
 
 1. **Share (Misc1) held**: Xbox Series Share, Switch Pro Capture, DualSense mic. A tap still
    toggles the keypad overlay.
-2. **Guide held.** A tap still sends `#`.
+2. **Guide held, only on pads without a Share button** (`SDL_GamepadHasButton(MISC1)` is false). On
+   pads with Share, Guide keeps today's plain `#` with no change at all.
 3. **Back paddles P1–P4**, when SDL reports them (Xbox Elite, DualSense Edge). These are plain
    presses, because the paddles have no other default use.
 4. **F4** on the keyboard.
@@ -81,9 +92,18 @@ A pure `HoldArbiter` decides what a physical input on a hold binding means:
   4 emulated frames, so a game that polls the pad only every second or third frame still sees it.
   The cost is that a tap reaches the game when it is released rather than when it is pressed. This
   is the only latency change in the design, it affects only buttons that carry a hold binding, and
-  the arbiter has to be told what they are.
+  the arbiter has to be told what they are. In full, for `#` on a Guide-hold pad: a press of any
+  length under 500 ms reaches the game as a 4-frame `#` starting at release, and a press of 500 ms or
+  more never reaches the game. A keypad chord that holds `#` (such as `*`+`#`) needs a pad with
+  Share, the keypad overlay, or the Guide-hold binding removed; the controls screen says so next to
+  the binding.
 - **Held past the threshold:** the action fires once (the menu toggles), and the input is
   swallowed until it is released.
+
+Saved profiles store one config key per control and parse each binding token on its own, dropping
+only tokens they cannot read (`parseBindings`). So an older build ignores the `C_TVMENU` key it does
+not know, and drops a `~hold` token on any other control without losing that control's other
+bindings.
 
 The arbiter keeps no SDL handles and no clock of its own. It takes press and release edges plus a
 timestamp, so it can be unit-tested with synthetic input.
@@ -219,7 +239,11 @@ commands, and the TV code does not change.
     is swallowed; two hold buttons at once; a pad unplugged mid-hold; threshold exactly reached.
   - `tv_mode`: every trigger order in section 8, including manual overrides and fullscreen with the
     controller trigger.
-  - `remap`: `~hold` serialise/parse round trip; an old build's parser rejects only that binding;
+  - `hold_arbiter`, more: a `*`+`#` chord on a Guide-hold pad (documents the limitation); Guide-hold
+    is not bound on a pad that has Share.
+  - The menu with hardcore on: refused pause shows the toast and keeps the game running; Load state
+    rows are hidden.
+  - `remap`: `~hold` serialise/parse round trip; a `~hold` token is the only one an older parser drops;
     `C_TVMENU` is appended without moving existing ids.
 - **End-to-end (CI)**, extending `input_e2e.cpp` and `devices_e2e.cpp`: a synthetic Guide tap
   reaches the core as `#` for 4 frames after release; a Guide hold never reaches the core and opens
