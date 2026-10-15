@@ -16,82 +16,32 @@
   <a href="#gallery">Jump to the screenshots.</a>
 </p>
 
-<section class="win" id="get">
-  <h2>Get it</h2>
+{{APP_DOWNLOADS}}
+
+<section class="win" id="packages">
+  <h2>About the packages</h2>
   <div class="win-body">
-    <p>
-      The packages are attached to each
-      <a href="{{REPO}}/releases">GitHub release</a> next to the core builds,
-      and listed in that release&rsquo;s <code>SHA256SUMS.txt</code>. Direct
-      links to the current files are on the
-      <a href="download.html#app">Download</a> page.
-    </p>
-    <p class="actions">
-      <a class="btn" href="download.html#app">Download the app</a>
-    </p>
-    <div class="table-wrap"><table>
-      <tr><th>System</th><th>Package</th><th>Notes</th></tr>
-      <tr>
-        <td>macOS</td>
-        <td><code>VirtualJaguar-3.9.1-macos-universal.zip</code></td>
-        <td><code>Virtual Jaguar.app</code>, Apple Silicon and Intel, macOS 11
-            or later. Zip only, no disk image.</td>
-      </tr>
-      <tr>
-        <td>Windows x64</td>
-        <td><code>VirtualJaguar-3.9.1-windows-x64.zip</code>,
-            <code>...-windows-x64-setup.exe</code></td>
-        <td>The zip is portable: <code>portable.txt</code> keeps settings in a
-            <code>data</code> folder beside the program. The installer is
-            per-user by default.</td>
-      </tr>
-      <tr>
-        <td>Windows ARM64</td>
-        <td><code>VirtualJaguar-3.9.1-windows-arm64.zip</code>,
-            <code>...-windows-arm64-setup.exe</code></td>
-        <td>Native builds for Windows on Arm, portable zip or per-user
-            installer. New in this release.</td>
-      </tr>
-      <tr>
-        <td>Linux x86_64, aarch64</td>
-        <td><code>VirtualJaguar-3.9.1-linux-&lt;arch&gt;.AppImage</code>,
-            <code>virtualjaguar_3.9.1_&lt;amd64|arm64&gt;.deb</code></td>
-        <td>Built on Ubuntu 22.04. The <code>.deb</code> installs under
-            <code>/usr/lib/virtualjaguar</code> with a link in
-            <code>/usr/bin</code>.</td>
-      </tr>
-      <tr>
-        <td>Linux x86_64 (Flatpak)</td>
-        <td><code>VirtualJaguar-3.9.1-linux-x86_64.flatpak</code></td>
-        <td>Install it with <code>flatpak install --user</code>; the runtime
-            comes from Flathub. New in this release.</td>
-      </tr>
-    </table></div>
-    <p>Or use the installer, which can install the core, the app, or both:</p>
-    <p><strong>macOS, Linux</strong></p>
-    <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh -s -- --what app</code></pre>
-    <p><strong>Windows</strong> (PowerShell)</p>
-    <pre><code>$env:VJ_WHAT = 'app'; irm {{RAW_URL}}/tools/install.ps1 | iex</code></pre>
+    <ul>
+      <li><strong>macOS:</strong> <code>Virtual Jaguar.app</code> in a zip,
+        Apple Silicon and Intel in one binary, macOS 11 or later. No disk
+        image.</li>
+      <li><strong>Windows:</strong> the zip is portable
+        (<code>portable.txt</code> keeps settings in a <code>data</code>
+        folder beside the program); the installer is per-user by default.
+        x64 and native ARM64 builds.</li>
+      <li><strong>Linux:</strong> AppImage and <code>.deb</code> for x86_64
+        and aarch64, built on Ubuntu 22.04; the <code>.deb</code> installs
+        under <code>/usr/lib/virtualjaguar</code> with a link in
+        <code>/usr/bin</code>. The Flatpak bundle (x86_64) installs with
+        <code>flatpak install --user</code> and takes its runtime from
+        Flathub.</li>
+      <li><strong>Nightly:</strong> rebuilt from <code>develop</code> on
+        every push, gated on compiling, not on the test suite. The installer
+        takes <code>--channel nightly</code>.</li>
+    </ul>
     <p class="footnote">
-      <code>--what</code> takes <code>core</code>, <code>app</code> or
-      <code>both</code>; the installer verifies each download against
-      <code>SHA256SUMS.txt</code>. More options, and the PowerShell
-      alternatives, are on the <a href="./#get">home page</a>.
-    </p>
-    <p>
-      <strong>Nightlies carry the app too.</strong> Nightly app builds are
-      rebuilt from <code>develop</code> on every push and linked from the
-      pinned builds issue; the rolling
-      <a href="{{REPO}}/releases/tag/nightly"><code>nightly</code></a>
-      prerelease carries the core. Add <code>--channel nightly</code> to the
-      installer to get the nightly builds. They are gated on compiling, not on
-      the test suite.
-    </p>
-    <p class="footnote">
-      <strong>Signing.</strong> The macOS app is signed with a Developer ID and
-      notarized by Apple, so it opens without a Gatekeeper prompt. The Windows
-      installer is not code-signed yet, so SmartScreen may warn. Builds you
-      make yourself, and builds from forks, are unsigned until you sign them. Packaging, signing and the
+      More installer options, and the PowerShell alternatives, are on the
+      <a href="./#get">home page</a>. Packaging, signing and the
       package-manager templates are in
       <a href="{{REPO}}/blob/develop/app/packaging/README.md">app/packaging/README.md</a>.
     </p>
@@ -232,15 +182,15 @@
       <figure class="shot smooth">
         <div class="win-bar">Plain <span class="badge">aspect fit</span></div>
         <div class="well">
-          <img src="assets/app_game.png" width="1280" height="860" loading="lazy"
-               alt="The Alien vs Predator main menu (Select Character, Restore Game, High Scores, Credits) drawn sharp at its 4:3 shape inside the app window, with black bars at the sides.">
+          <a class="gal-link" href="assets/app_game.png" aria-label="Enlarge: Plain"><img src="assets/app_game.png" width="1280" height="860" loading="lazy"
+               alt="The Alien vs Predator main menu (Select Character, Restore Game, High Scores, Credits) drawn sharp at its 4:3 shape inside the app window, with black bars at the sides."></a>
         </div>
       </figure>
       <figure class="shot smooth">
         <div class="win-bar">CRT-GDV-Mini Ultra Trinitron <span class="badge">same frame</span></div>
         <div class="well">
-          <img src="assets/app_game_crt.png" width="1280" height="860" loading="lazy"
-               alt="The same Alien vs Predator menu through the crt-gdv-mini-ultra-trinitron shader preset, in the same 4:3 frame, with vertical aperture-grille phosphor stripes, faint scanlines and a soft glow like a Sony Trinitron tube.">
+          <a class="gal-link" href="assets/app_game_crt.png" aria-label="Enlarge: CRT-GDV-Mini Ultra Trinitron"><img src="assets/app_game_crt.png" width="1280" height="860" loading="lazy"
+               alt="The same Alien vs Predator menu through the crt-gdv-mini-ultra-trinitron shader preset, in the same 4:3 frame, with vertical aperture-grille phosphor stripes, faint scanlines and a soft glow like a Sony Trinitron tube."></a>
         </div>
       </figure>
     </div>
