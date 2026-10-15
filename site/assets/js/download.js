@@ -1,4 +1,5 @@
-/* Download page: release picker and installer tabs.
+/* Download widget (Download page, and the app page's "Get it" window):
+ * release picker and installer tabs.
  *
  * Progressive enhancement.  The generator renders one panel per release and
  * shows only the latest; without this script that is what you get, plus links
@@ -15,8 +16,8 @@
  *     Home/End, roving tabindex). */
 (function () {
   "use strict";
-  var root = document.getElementById("app");
-  if (!root || !root.classList.contains("dl")) return;
+  var root = document.querySelector("section.dl");
+  if (!root) return;
 
   var panels = Array.prototype.slice.call(root.querySelectorAll(".dl-panel"));
   var picker = root.querySelector(".dl-picker");
@@ -39,20 +40,23 @@
     return null;
   }
 
-  /* Installer commands for the selected release. */
+  /* Installer commands for the selected release (data-what presets
+   * --what, on the app page). */
   var cmds = Array.prototype.slice.call(root.querySelectorAll("code[data-cmd]"));
   function setCommands(panel) {
     var kind = panel.getAttribute("data-kind");
     var rel = panel.getAttribute("data-rel");
     cmds.forEach(function (el) {
       var base = el.getAttribute("data-base");
-      var text = base;
-      if (kind !== "latest") {
-        if (el.getAttribute("data-cmd") === "sh") {
-          text = base + " -s -- --channel " + rel;
-        } else {
-          text = "$env:VJ_CHANNEL = '" + rel + "'; " + base;
-        }
+      var what = el.getAttribute("data-what");
+      var channel = kind !== "latest" ? rel : null;
+      var text;
+      if (el.getAttribute("data-cmd") === "sh") {
+        var args = (what ? " --what " + what : "") + (channel ? " --channel " + channel : "");
+        text = args ? base + " -s --" + args : base;
+      } else {
+        text = (what ? "$env:VJ_WHAT = '" + what + "'; " : "") +
+               (channel ? "$env:VJ_CHANNEL = '" + channel + "'; " : "") + base;
       }
       el.textContent = text;
     });

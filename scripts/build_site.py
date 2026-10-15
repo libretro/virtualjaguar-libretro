@@ -862,10 +862,12 @@ def _panel_id(tag):
     return "rel-" + re.sub(r"[^\w.-]", "_", tag)
 
 
-def render_panel(rel, kind, hidden, app_in=()):
+def render_panel(rel, kind, hidden, app_in=(), app_only=False):
     """One release's panel.  kind is 'latest', 'nightly' or 'older'.
     app_in: [(tag, url, label)] of the releases that ship the desktop app,
-    for the pointer shown when this one does not."""
+    for the pointer shown when this one does not.  app_only: the app page's
+    copy, which lists the app packages and nothing else (callers only pass
+    releases that carry the app)."""
     tag = rel["tag_name"]
     cls = classify_assets(rel["assets"])
     url = rel.get("html_url") or "%s/releases/tag/%s" % (REPO_URL, tag)
@@ -892,6 +894,10 @@ def render_panel(rel, kind, hidden, app_in=()):
                    'test suite. File names never change, so these links '
                    'always fetch the newest build.</p>')
 
+    if app_only:
+        out.append(_app_table(cls["app"]))
+        out.append("</div>")
+        return "\n".join(out)
     out.append('<h3 class="dl-h">Desktop app</h3>')
     if cls["app"]:
         out.append(_app_table(cls["app"]))
@@ -927,12 +933,16 @@ def render_panel(rel, kind, hidden, app_in=()):
     return "\n".join(out)
 
 
-def _installer_widget():
+def _installer_widget(what=None):
     """The one-line installers as tabs (JS) or three stacked blocks (no JS).
-    download.js rewrites the commands for the selected release through the
-    data-sh / data-ps attributes."""
+    download.js rewrites the commands for the selected release from the
+    data-cmd / data-base / data-what attributes.  what: preselect --what
+    (the app page passes 'app')."""
     sh = "curl -fsSL %s/tools/install.sh | sh" % RAW_URL
     ps = "irm %s/tools/install.ps1 | iex" % RAW_URL
+    sh_text = sh + (" -s -- --what %s" % what if what else "")
+    ps_text = ("$env:VJ_WHAT = '%s'; " % what if what else "") + ps
+    what_attr = ' data-what="%s"' % _esc(what) if what else ""
     return """<details class="plat inst" id="installer">
   <summary><span class="plat-name">%(i_term)sInstall with one command</span><span class="count">core, app or both, checksum-verified</span></summary>
   <div class="inst-tabs" role="tablist" aria-label="Operating system" hidden>
@@ -942,11 +952,11 @@ def _installer_widget():
   </div>
   <div class="inst-panel" id="inst-p-sh" role="tabpanel" aria-labelledby="inst-t-sh">
     <p class="inst-label"><strong>macOS, Linux, Raspberry Pi</strong></p>
-    <pre><code data-cmd="sh" data-base="%(sh)s">%(sh)s</code></pre>
+    <pre><code data-cmd="sh" data-base="%(sh)s"%(what_attr)s>%(sh_text)s</code></pre>
   </div>
   <div class="inst-panel" id="inst-p-ps" role="tabpanel" aria-labelledby="inst-t-ps">
     <p class="inst-label"><strong>Windows</strong> (PowerShell)</p>
-    <pre><code data-cmd="ps" data-base="%(ps)s">%(ps)s</code></pre>
+    <pre><code data-cmd="ps" data-base="%(ps)s"%(what_attr)s>%(ps_text)s</code></pre>
   </div>
   <div class="inst-panel" id="inst-p-pm" role="tabpanel" aria-labelledby="inst-t-pm">
     <p class="inst-label"><strong>Package managers</strong></p>
@@ -954,11 +964,16 @@ def _installer_widget():
     <a href="%(repo)s/blob/develop/app/packaging/manifests">app/packaging/manifests</a>;
     none is submitted yet. The Linux app also comes as a Flatpak bundle (table below).</p>
   </div>
-  <p class="footnote">It asks what to install (<code>--what core|app|both</code>), verifies each file against
+  <p class="footnote">%(what_note)s; it verifies each file against
   <code>SHA256SUMS.txt</code> and updates what you already have when run again. Selecting a release above
   adds its <code>--channel</code>. Other options and install locations are on the
   <a href="./#get">home page</a>.</p>
 </details>""" % {"sh": _esc(sh), "ps": _esc(ps), "repo": REPO_URL,
+                 "sh_text": _esc(sh_text), "ps_text": _esc(ps_text),
+                 "what_attr": what_attr,
+                 "what_note": ("<code>--what %s</code> is already filled in"
+                               % _esc(what)) if what else
+                              "It asks what to install (<code>--what core|app|both</code>)",
                  "i_term": _icon("terminal")}
 
 
@@ -980,14 +995,20 @@ ICON_SPRITE = """<svg class="sprite" width="0" height="0" aria-hidden="true" foc
 </svg>"""
 
 
-def render_downloads(releases):
+def render_downloads(releases, app_only=False):
     """The body of the Download page below the lede: one window holding the
     release picker, the installer widget, one panel per release and the
-    verification note."""
+    verification note.
+
+    app_only: the app page's "Get it" window -- the same picker, but only
+    over releases that ship the app, each panel just the app table, and the
+    installer preset to --what app."""
     releases = releases or {}
     latest = releases.get("latest")
     nightly = releases.get("nightly")
     older = releases.get("older") or []
+    if app_only:
+        return _render_app_downloads(latest, nightly, older)
     if not latest:
         return """<section class="win" id="app">
   <h2>Releases</h2>
@@ -1002,17 +1023,14 @@ def render_downloads(releases):
 </section>""" % {"repo": REPO_URL}
 
     ltag = latest["tag_name"]
-    def has_app(rel):
-        return any(APP_ASSET_RE.match(a["name"]) for a in rel["assets"])
-
     def rel_url(rel):
         return rel.get("html_url") or "%s/releases/tag/%s" % (
             REPO_URL, rel["tag_name"])
 
     app_in = []
-    if has_app(latest):
+    if _has_app(latest):
         app_in.append((ltag, rel_url(latest), "latest release"))
-    if nightly and has_app(nightly):
+    if nightly and _has_app(nightly):
         app_in.append((nightly["tag_name"], rel_url(nightly), "nightly build"))
     panels = []
     if nightly:
@@ -1072,6 +1090,96 @@ def render_downloads(releases):
 <script src="assets/js/download.js" defer></script>""" % {
         "sprite": ICON_SPRITE, "nojs": nojs, "picker": "\n".join(picker),
         "installer": _installer_widget(), "panels": "\n".join(panels),
+        "repo": REPO_URL}
+
+
+def _has_app(rel):
+    return any(APP_ASSET_RE.match(a["name"]) for a in rel["assets"])
+
+
+def _render_app_downloads(latest, nightly, older):
+    """{{APP_DOWNLOADS}}: see render_downloads(app_only=True).  The section
+    id is "get" (the app page's existing anchor); download.js finds it by
+    its .dl class."""
+    rels = [r for r in [latest] + list(older) if r and _has_app(r)]
+    if not rels:
+        return """<section class="win" id="get">
+  <h2>Get it</h2>
+  <div class="win-body">
+    <p>
+      The app packages are attached to each
+      <a href="%(repo)s/releases">GitHub release</a> next to the core builds;
+      the <a href="%(repo)s/releases/tag/nightly">nightly build</a> carries
+      them too.
+    </p>
+  </div>
+</section>""" % {"repo": REPO_URL}
+
+    head = rels[0]
+    htag = head["tag_name"]
+    panels = []
+    if nightly and _has_app(nightly):
+        panels.append(render_panel(nightly, "nightly", True, app_only=True))
+    panels.append(render_panel(head, "latest", False, app_only=True))
+    for r in rels[1:]:
+        panels.append(render_panel(r, "older", True, app_only=True))
+
+    picker = ['<div class="dl-picker" hidden>',
+              '<span class="dl-label" id="dl-pick-label">Release</span>',
+              '<div class="dl-seg" role="group" aria-labelledby="dl-pick-label">']
+    if nightly and _has_app(nightly):
+        picker.append('<button type="button" class="dl-btn" data-rel="nightly" '
+                      'aria-pressed="false">Nightly</button>')
+    picker.append('<button type="button" class="dl-btn" data-rel="%s" '
+                  'aria-pressed="true">Latest <code>%s</code></button>'
+                  % (_esc(htag), _esc(htag)))
+    picker.append("</div>")
+    if len(rels) > 1:
+        picker.append(
+            '<label class="dl-older"><span class="sr-only">Older releases'
+            '</span><select id="dl-older"><option value="">Older releases '
+            '(%d)</option>%s</select></label>' % (len(rels) - 1, "".join(
+                '<option value="%s">%s%s</option>' % (
+                    _esc(r["tag_name"]), _esc(r["tag_name"]),
+                    _esc(" (%s)" % r["published_at"][:10])
+                    if r.get("published_at") else "") for r in rels[1:])))
+    picker.append('<p class="sr-only" id="dl-status" role="status" '
+                  'aria-live="polite"></p></div>')
+
+    nojs = ('<p class="dl-nojs">Showing %s, the latest release. '
+            '<a href="%s/releases/tag/nightly">Nightly build</a> &middot; '
+            '<a href="download.html">Download page</a> (the RetroArch core '
+            'and older releases).</p>' % (_esc(htag), REPO_URL))
+
+    return """%(sprite)s
+<section class="win dl" id="get">
+  <h2>Get it</h2>
+  <div class="win-body">
+    <p>
+      The packages are attached to each
+      <a href="%(repo)s/releases">GitHub release</a> next to the core builds
+      and listed in its <code>SHA256SUMS.txt</code>. Pick a release; the
+      RetroArch core builds are on the <a href="download.html">Download</a>
+      page.
+    </p>
+%(nojs)s
+%(picker)s
+%(installer)s
+%(panels)s
+    <p class="footnote" id="verify">
+      Compare a download's SHA-256 with its line in <code>SHA256SUMS.txt</code>
+      (<code>shasum -a 256 &lt;file&gt;</code> on macOS and Linux,
+      <code>Get-FileHash &lt;file&gt;</code> in PowerShell). The macOS app is
+      Developer ID signed and notarized, so it opens without a Gatekeeper
+      prompt; the Windows installer is not yet code-signed, so SmartScreen may
+      warn. Builds you make yourself, and builds from forks, are unsigned.
+      <a href="%(repo)s/blob/develop/app/packaging/README.md">Packaging details</a>.
+    </p>
+  </div>
+</section>
+<script src="assets/js/download.js" defer></script>""" % {
+        "sprite": ICON_SPRITE, "nojs": nojs, "picker": "\n".join(picker),
+        "installer": _installer_widget("app"), "panels": "\n".join(panels),
         "repo": REPO_URL}
 
 
@@ -1525,6 +1633,7 @@ def main():
         "{{DOCS_COMPAT_URL}}": LIBRETRO_DOCS_COMPAT,
         "{{DOCS_SRC_URL}}": LIBRETRO_DOCS_SRC,
         "{{DOWNLOADS}}": render_downloads(releases),
+        "{{APP_DOWNLOADS}}": render_downloads(releases, app_only=True),
         "{{LATEST_LINK}}": latest_link_html(releases),
         "{{RELEASE_LOG}}": render_release_log(
             drop_unreleased(load_release_notes(), releases)),
