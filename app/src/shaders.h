@@ -62,6 +62,15 @@ public:
     bool libraryLoaded() const;
     const std::string& libraryPath() const { return libPath_; }
     const std::string& libraryError() const { return libErr_; }
+    // Why there is no library, for the Shader section.  Loaded: there is one.  NoSupport: the build
+    // has no librashader headers.  NotFound: no librashader file where we looked (or on the
+    // system path).  LoadFailed: a file was found and could not be used (wrong architecture, wrong
+    // ABI, not librashader, a missing dependency); libraryError() has the loader's reason.
+    enum class LibraryStatus { Loaded, NoSupport, NotFound, LoadFailed };
+    LibraryStatus libraryStatus() const { return libStatus_; }
+    // True when this build ships (or staged beside the executable) a runtime: a NotFound then means
+    // the file went missing, not that this build never had one.
+    static bool runtimeBundled();
     unsigned libraryApiVersion() const { return apiVersion_; }
     static const char* libraryFileName();   // librashader.dylib / .so / .dll
     static bool builtWithHeaders();         // false when configure could not fetch the header
@@ -108,6 +117,7 @@ private:
     std::unique_ptr<Impl> impl_;
     std::vector<std::string> dirs_;
     std::string libPath_, libErr_;
+    LibraryStatus libStatus_ = LibraryStatus::NotFound;
     unsigned apiVersion_ = 0;
     bool probed_ = false;
     bool failed_ = false;       // chain could not be built or a frame errored

@@ -121,6 +121,18 @@ jobs:
           echo "label=$label short=$short deb=$deb app_version=$proj run=$run"
 
   # ------------------------------------------------------------------------------------------
+  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for Intel macOS, Apple
+  # silicon macOS, and Linux x86_64 + aarch64: upstream's x86_64-macos zip holds an arm64 dylib
+  # and it publishes no Linux binary (#950).  Windows keeps upstream's DLLs.  Artifacts
+  # `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
+  # ------------------------------------------------------------------------------------------
+  librashader:
+    name: librashader runtime
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    uses: ./.github/workflows/librashader.yml
+
+  # ------------------------------------------------------------------------------------------
   # Package-manager templates must always render and parse (they are filled for real, with the
   # release's checksums, by a maintainer after the release; see app/packaging/README.md).
   # ------------------------------------------------------------------------------------------
@@ -147,12 +159,12 @@ jobs:
 
   # ------------------------------------------------------------------------------------------
   # macOS: universal .app (arm64 + x86_64), signed + notarized + stapled when the secrets exist.
-  # Two single-arch builds merged with lipo, not one multi-arch configure: the optional
-  # librashader runtime is fetched per architecture.
+  # Two single-arch builds merged with lipo, not one multi-arch configure: each architecture is
+  # handed its own librashader dylib (built from the same pinned source, librashader.yml).
   # ------------------------------------------------------------------------------------------
   macos:
     name: macOS universal
-    needs: [meta]
+    needs: [meta, librashader]
     if: needs.meta.outputs.run == 'true'
     runs-on: macos-latest
     env:
@@ -182,13 +194,24 @@ jobs:
               "It is ad-hoc signed; Gatekeeper refuses it until right-click > Open."
           fi
 
+      - name: Get the librashader runtimes (built from source, both architectures)
+        uses: actions/download-artifact@v8
+        with:
+          pattern: librashader-*-apple-darwin
+          path: librashader
+
       - name: Build both architectures
         run: |
           set -eu
+          cat librashader/*/BUILD-INFO.txt
           for arch in arm64 x86_64; do
+            case "$arch" in arm64) triple=aarch64-apple-darwin ;; *) triple=x86_64-apple-darwin ;; esac
+            # An explicit runtime per architecture: nothing is downloaded, and the Intel slice is
+            # a real x86_64 dylib (upstream's "x86_64" zip holds an arm64 one).
             cmake -S app -B "build-$arch" -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS" \
-              -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+              -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader-$triple/librashader.dylib" \
+              -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
               ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
             cmake --build "build-$arch" --config Release -j4
             cmake --install "build-$arch" --prefix "$PWD/stage-$arch"
@@ -199,10 +222,15 @@ jobs:
           set -eu
           # shaders_gl renders through the real librashader on a hidden GL context; on a GPU-less
           # runner it hangs until the 120 s timeout, so it is left to the developer machines.
+          # The shader runtime must LOAD (the test fails, not skips, when it does not).
+          export VJ_REQUIRE_LIBRASHADER=1
           ctest --test-dir build-arm64 -C Release --output-on-failure -E shaders_gl
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             arch -x86_64 build-x86_64/virtualjaguar --headless --frames 300 \
               --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+            # The Intel librashader, loaded and used to parse presets by an x86_64 process (Rosetta).
+            file build-x86_64/vj_shader_tests | grep -q x86_64
+            ctest --test-dir build-x86_64 -C Release --output-on-failure -R 'shaders_(unit|library|bundled)'
           else
             echo "::warning::Rosetta is not available on this runner: the x86_64 slice was built but not run"
           fi
@@ -229,6 +257,16 @@ jobs:
           "$exe" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             arch -x86_64 "$exe" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+          fi
+          # The universal librashader inside the bundle: both slices, each loaded by a process of its own
+          # architecture (the arm64 one natively, the x86_64 one under Rosetta).
+          lib="$t/Virtual Jaguar.app/Contents/Frameworks/librashader.dylib"
+          lipo -info "$lib"
+          [ "$(lipo -archs "$lib" | tr ' ' '\n' | sort | tr '\n' ' ')" = "arm64 x86_64 " ]
+          export VJ_REQUIRE_LIBRASHADER=1
+          VJ_LIBRASHADER="$lib" build-arm64/vj_shader_tests library
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            VJ_LIBRASHADER="$lib" build-x86_64/vj_shader_tests library
           fi
           rm -rf "$t"
           # The app looks for its bundled data beside SDL_GetBasePath(), which for a .app is
@@ -570,7 +608,7 @@ jobs:
   # ------------------------------------------------------------------------------------------
   linux:
     name: Linux ${{ matrix.arch }}
-    needs: [meta]
+    needs: [meta, librashader]
     if: needs.meta.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -580,15 +618,25 @@ jobs:
           - arch: x86_64
             debarch: amd64
             os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
           - arch: aarch64
             debarch: arm64
             os: ubuntu-22.04-arm
+            triple: aarch64-unknown-linux-gnu
     env:
       LABEL: ${{ needs.meta.outputs.label }}
       SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
       DEB_VERSION: ${{ needs.meta.outputs.deb_version }}
     steps:
       - uses: actions/checkout@v7
+
+      # Upstream publishes no Linux librashader: this is built from the pinned source on this same
+      # image (glibc 2.35), see librashader.yml.  It lands beside the executable and in both packages.
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-${{ matrix.triple }}
+          path: librashader
 
       - name: Install build dependencies
         run: |
@@ -603,10 +651,14 @@ jobs:
       - name: Build
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+            -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader.so" \
             ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
           cmake --build build -j"$(nproc)"
-          ctest --test-dir build --output-on-failure
+          # The runtime must load here (the test fails, not skips).  shaders_gl needs a GL context,
+          # which a display-less runner does not have.
+          VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
 
       - name: Validate the desktop file and appstream metadata
         run: |
@@ -635,6 +687,9 @@ jobs:
           bash app/packaging/check-payload.sh build squashfs-root/usr/bin virtualjaguar
           ldd squashfs-root/usr/bin/virtualjaguar | tee ldd.txt
           if grep -q 'not found' ldd.txt; then echo "::error::unresolved libraries in the AppImage"; exit 1; fi
+          # The shader runtime is in the AppImage, is the right architecture, resolves, and is
+          # found by the app's own search (beside the executable, VJ_LIBRASHADER unset).
+          bash app/packaging/linux/check-librashader.sh squashfs-root/usr/bin "${{ matrix.arch }}" build/vj_shader_tests
           rm -rf squashfs-root
 
       - name: Smoke-test the .deb (install, run through /usr/bin, check payload, remove)
@@ -646,6 +701,8 @@ jobs:
           virtualjaguar --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
           bash app/packaging/check-payload.sh build /usr/lib/virtualjaguar virtualjaguar
           dpkg -L virtualjaguar | head -40
+          dpkg -L virtualjaguar | grep -x '/usr/lib/virtualjaguar/librashader.so'
+          bash app/packaging/linux/check-librashader.sh /usr/lib/virtualjaguar "${{ matrix.arch }}" build/vj_shader_tests
           sudo apt-get remove -y -qq virtualjaguar
 
       - uses: actions/upload-artifact@v7

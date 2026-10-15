@@ -20,6 +20,7 @@ on:
       - 'test/roms/**'
       - '.github/workflows/app.yml'
       - '.github/workflows/app-package.yml'
+      - '.github/workflows/librashader.yml'
   pull_request:
     branches: [ develop, master, 'release/**' ]
     paths:
@@ -33,6 +34,7 @@ on:
       - 'test/roms/**'
       - '.github/workflows/app.yml'
       - '.github/workflows/app-package.yml'
+      - '.github/workflows/librashader.yml'
   workflow_dispatch:
 
 concurrency:

@@ -7,13 +7,17 @@
 #
 #   VJ_APP_SHADERS              ON   build the shader path at all
 #   VJ_LIBRASHADER_INCLUDE_DIR  ""   use librashader.h + librashader_ld.h from here (offline)
-#   VJ_APP_FETCH_LIBRASHADER    ON*  also download the prebuilt library (macOS, Windows;
-#                                    pinned by SHA256) and copy it beside the executable.
+#   VJ_APP_FETCH_LIBRASHADER    ON*  also download the prebuilt library (Apple silicon macOS and
+#                                    Windows; pinned by SHA256) and copy it beside the executable.
 #                                    *ON on macOS and Windows, OFF elsewhere; set OFF for
 #                                    offline builds.
-#                                    Upstream publishes no Linux binary: install the
-#                                    distro/OBS package or build it, then it is found on
-#                                    the system path.
+#                                    Upstream publishes no Linux binary and its Intel-macOS zip
+#                                    holds an arm64 dylib, so those come from source:
+#   VJ_LIBRASHADER_LIB          ""   a librashader.{so,dylib,dll} you built (CI builds it from the
+#                                    pinned source, app/packaging/librashader/build-from-source.sh):
+#                                    copied beside the executable and shipped by `cmake --install`.
+#                                    Wins over VJ_APP_FETCH_LIBRASHADER.  Without either, the
+#                                    app finds a system copy (distro/OBS package) at run time.
 #   VJ_APP_BUNDLE_SLANG_SHADERS ON   fetch a pinned subset of libretro/slang-shaders (tarball,
 #                                    SHA256-verified) and ship it as shaders/slang-shaders/
 #                                    beside the executable.  Fail-soft: no network, or a hash
@@ -21,8 +25,9 @@
 #                                    OFF for distro/offline builds.
 #   VJ_SLANG_SHADERS_ARCHIVE    ""   a local copy of the pinned tarball (offline builds)
 #
-# Pins: librashader-v0.12.0.  The v0.12.1 headers are byte-identical, but 0.12.0 is
-# the newest tag that has prebuilt binaries attached.
+# Pins.  Headers and from-source builds: the tag in app/packaging/librashader/pin.env (v0.12.1;
+# its headers are byte-identical to v0.12.0's, so the SHA-256s below hold for both).  Prebuilt
+# Windows/Apple-silicon binaries: librashader-v0.12.0, the newest tag that has them attached.
 
 option(VJ_APP_SHADERS "Build librashader (RetroArch shader preset) support" ON)
 # On by default where upstream publishes a binary, so a plain local build has working shaders.
@@ -34,7 +39,17 @@ endif()
 option(VJ_APP_FETCH_LIBRASHADER "Download the prebuilt librashader runtime and ship it beside the executable" ${_vj_fetch_rashader_default})
 set(VJ_LIBRASHADER_INCLUDE_DIR "" CACHE PATH "Directory holding librashader.h and librashader_ld.h (skips the download)")
 
-set(VJ_LIBRASHADER_TAG "librashader-v0.12.0")
+# One pin for the source tag (headers + the from-source runtime builds).
+set(VJ_LIBRASHADER_PIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../packaging/librashader/pin.env")
+file(STRINGS "${VJ_LIBRASHADER_PIN_FILE}" _pin_tag REGEX "^LIBRASHADER_TAG=")
+string(REGEX REPLACE "^LIBRASHADER_TAG=" "" VJ_LIBRASHADER_TAG "${_pin_tag}")
+if(NOT VJ_LIBRASHADER_TAG)
+    message(FATAL_ERROR "librashader: no LIBRASHADER_TAG in ${VJ_LIBRASHADER_PIN_FILE}")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VJ_LIBRASHADER_PIN_FILE}")
+# The tag whose release assets hold prebuilt binaries (Windows, Apple silicon).
+set(VJ_LIBRASHADER_PREBUILT_TAG "librashader-v0.12.0")
+set(VJ_LIBRASHADER_LIB "" CACHE FILEPATH "A librashader runtime you built (copied beside the executable and packaged); overrides the download")
 set(VJ_LIBRASHADER_RAW "https://raw.githubusercontent.com/SnowflakePowered/librashader/${VJ_LIBRASHADER_TAG}/include")
 set(VJ_LIBRASHADER_H_SHA256    "5d478897c391af3f60015810b67785ae1a286d262a845485276e36ded9f21e62")
 set(VJ_LIBRASHADER_LD_H_SHA256 "bcffcbc854afb287c9f935c1a0e3b569f5e6775ef85914bd7f7025ad1f6bde33")
@@ -93,10 +108,20 @@ if(VJ_APP_SHADERS)
 endif()
 message(STATUS "App shaders (librashader, runtime-loaded): ${VJ_SHADERS_AVAILABLE}")
 
-# Prebuilt runtime, for packaging and for trying shaders without building Rust.
+# The runtime library, for packaging and for trying shaders without building Rust.
+#   1. VJ_LIBRASHADER_LIB: a library the caller built (CI: from the pinned source).
+#   2. VJ_APP_FETCH_LIBRASHADER: upstream's prebuilt zip (Apple silicon macOS, Windows).
+#   3. nothing: the app looks for a system copy at run time.
 set(VJ_LIBRASHADER_LIB_FILE "")
-if(VJ_APP_FETCH_LIBRASHADER)
-    set(_base "https://github.com/SnowflakePowered/librashader/releases/download/${VJ_LIBRASHADER_TAG}")
+if(VJ_LIBRASHADER_LIB)
+    if(EXISTS "${VJ_LIBRASHADER_LIB}")
+        get_filename_component(VJ_LIBRASHADER_LIB_FILE "${VJ_LIBRASHADER_LIB}" ABSOLUTE)
+        message(STATUS "librashader runtime: ${VJ_LIBRASHADER_LIB_FILE} (VJ_LIBRASHADER_LIB)")
+    else()
+        message(FATAL_ERROR "VJ_LIBRASHADER_LIB is set but ${VJ_LIBRASHADER_LIB} does not exist")
+    endif()
+elseif(VJ_APP_FETCH_LIBRASHADER)
+    set(_base "https://github.com/SnowflakePowered/librashader/releases/download/${VJ_LIBRASHADER_PREBUILT_TAG}")
     set(_zip "")
     if(APPLE)
         set(_arch "${CMAKE_OSX_ARCHITECTURES}")
@@ -107,8 +132,10 @@ if(VJ_APP_FETCH_LIBRASHADER)
             set(_zip "librashader-aarch64-macos-v0.12.0-optimized.zip")
             set(_sha "49808004a4904f6a99e0231092dcfdfe52b7b61f68430a4c9f1e165749c4c90e")
         elseif(_arch MATCHES "x86_64")
-            set(_zip "librashader-x86_64-macos-v0.12.0-optimized.zip")
-            set(_sha "8b2a50cefacf4073e8fa4757bec30242a788068c4096a580d94430688c184767")
+            # Upstream's "x86_64-macos" v0.12.0 zip holds an arm64 dylib (lipo-verified), so there
+            # is no usable Intel download.  Build it: app/packaging/librashader/build-from-source.sh
+            # x86_64-apple-darwin <dir>, then -DVJ_LIBRASHADER_LIB=<dir>/librashader.dylib.
+            message(STATUS "librashader: no usable prebuilt for x86_64 macOS; pass -DVJ_LIBRASHADER_LIB=<your build> or install a system copy")
         endif()
         set(_libname "librashader.dylib")
     elseif(WIN32)
@@ -227,6 +254,11 @@ message(STATUS "App bundled slang-shaders subset: ${VJ_SLANG_SRC}")
 function(vj_app_shaders target)
     if(VJ_SHADERS_AVAILABLE)
         target_compile_definitions(${target} PRIVATE VJ_HAVE_LIBRASHADER=1)
+        # This build ships (or stages beside the executable) a runtime: lets the Shader section
+        # tell "this build does not include one" from "the bundled one failed to load".
+        if(VJ_LIBRASHADER_LIB_FILE)
+            target_compile_definitions(${target} PRIVATE VJ_LIBRASHADER_BUNDLED=1)
+        endif()
         target_include_directories(${target} SYSTEM PRIVATE "${VJ_SHADERS_INCLUDE}")
     endif()
 endfunction()
