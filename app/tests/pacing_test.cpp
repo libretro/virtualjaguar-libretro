@@ -48,7 +48,7 @@ struct Scenario {
     double vblank;   // display refresh interval, s (0 = no display clock)
     bool vsync;      // vsync wanted
     double jitter = 0;                       // +- uniform noise on every cost (frame, UI), s
-    std::function<double(long)> cost;        // optional: cost of emulated frame #i (overrides c)
+    std::function<double(long)> cost = nullptr;   // optional: cost of emulated frame #i (overrides c)
 };
 
 struct Result {
@@ -58,6 +58,7 @@ struct Result {
     double sleepSteps = 0; // fraction of iterations that slept
     double slept = 0;      // fraction of real time spent in sleep
     int toggles = 0;       // swap-interval changes
+    bool syncEnd = false;  // the swap interval is 1 when the run ends
 };
 
 // Seconds until the next vblank boundary at/after t.
@@ -102,6 +103,7 @@ Result simulateNew(const Scenario& s, double secs) {
             }
         }
     }
+    res.syncEnd = p.swapSync;
     res.fps = (double)frames / now;
     res.images = (double)imgs / now;
     res.multi = imgs ? (double)multi / (double)imgs : 0;
@@ -278,6 +280,26 @@ int main() {
         CHECK(n.fps >= o.fps - 0.6, "%s: %.2f fps is worse than legacy %.2f", what, n.fps, o.fps);
         CHECK(n.images >= o.images - 0.3, "%s: %.2f img/s is worse than legacy %.2f", what, n.images, o.images);
         CHECK(n.toggles <= 4, "%s: %d toggles", what, n.toggles);
+    }
+
+    // ---- a transient must not cost the vsync for the rest of the session ------------------------------------
+    // A heavy phase (Cybermorph 5.8 -> 14 ms, a savestate load, a loaded machine) releases the swap interval; when
+    // the core is back to a cost a vblank-locked loop holds, it must come back, once.
+    for (double v : {V60, V120}) {
+        for (double after : {0.011, 0.0125}) {
+            Scenario s{P, after, 0.0015, v, true, 0.0003, [=](long i) { return i < 150 ? 0.022 : after; }};
+            Result n = simulateNew(s, 20);
+            // the tail of the run must be vsync-locked again: images/s ~ frames/s and no batching
+            CHECK(n.toggles >= 1 && n.toggles <= 2, "heavy phase then %.1f ms, %.0f Hz: %d toggles, want 1 or 2",
+                  after * 1000, 1.0 / v, n.toggles);
+            CHECK(n.syncEnd, "heavy phase then %.1f ms, %.0f Hz: vsync never came back", after * 1000, 1.0 / v);
+        }
+    }
+    // a single stall (OS hitch, a state load) on a core with time to spare: no change of swap interval
+    for (double v : {V60, V120}) {
+        Scenario s{P, 0.008, 0.0015, v, true, 0.0003, [](long i) { return (i >= 300 && i < 306) ? 0.060 : 0.008; }};
+        Result n = simulateNew(s, kLong);
+        CHECK(n.toggles == 0, "a 6-frame 60 ms hitch, %.0f Hz: %d toggles", 1.0 / v, n.toggles);
     }
 
     // ---- the pieces ---------------------------------------------------------------------------------------

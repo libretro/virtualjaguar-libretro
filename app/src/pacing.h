@@ -28,7 +28,7 @@ struct Pacer {
     static constexpr double kReleasePressure = 0.25;   // share of recent steps that trimmed the backlog -> release
     static constexpr double kBatchPressure = 0.03;     // above this, batching is what keeps the core at speed
     static constexpr double kRestorePressure = 0.05;   // ...and below this, with a cheap core, vsync may return
-    static constexpr double kRestoreCost = 0.6;   // work per frame as a share of the period: room for UI + jitter
+    static constexpr double kRestoreCost = 0.8;   // work per frame as a share of the period: room left for UI + jitter
     static constexpr double kMinDwell = 2.0;      // seconds a released vsync stays released at least
 
     double accum = 0;        // emulation time owed, seconds
