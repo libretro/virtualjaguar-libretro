@@ -117,9 +117,9 @@
   <h2>Screenshot gallery</h2>
   <div class="win-body">
     <p>
-      Click a picture to enlarge it; Esc closes the viewer and the arrow keys
-      move between pictures. The pictures are real captures of the app with a
-      demo library (no personal data, no signed-in account).
+      Click a picture to enlarge it (Esc closes, arrow keys move on). All
+      real captures of the app with a demo library: no personal data, no
+      signed-in account.
     </p>
 
     <h3 id="library">Library &amp; artwork</h3>
@@ -127,7 +127,7 @@
       <li>Your games on the home screen, in Cartridges, Jaguar CD and BIOS &amp; system tabs, with search, filters and a size slider.</li>
       <li>Identified by CRC32 against the libretro database (No-Intro, Redump); box art comes from libretro-thumbnails on demand and is cached.</li>
       <li>Favorites and Recently played, as tabs, strips or both; a Save states tab lists every game with states.</li>
-      <li>Covers for Jaguar CD: a readable title card, or your own PNG.</li>
+      <li>Jaguar CD discs get their box art the same way; a disc without art gets a readable title card, or your own PNG.</li>
     </ul>
     <div class="gallery">
       <figure class="gal-card">
@@ -138,9 +138,9 @@
       </figure>
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_library_cd.png" aria-label="Enlarge: Jaguar CD">
-          <img src="assets/app_library_cd.png" width="1280" height="860" loading="lazy" alt="The Jaguar CD tab: a grid of disc tiles, each a coloured title card with the game name, and a note that libretro-thumbnails has no Jaguar CD art yet.">
+          <img src="assets/app_library_cd.png" width="1280" height="860" loading="lazy" alt="The Jaguar CD tab: a grid of thirteen disc tiles with Jaguar CD box art (Baldies, Battle Morph, Blue Lightning, BrainDead 13, Dragon&#x27;s Lair, Highlander, Hover Strike, Iron Soldier 2, Myst, Primal Rage, Space Ace, Vid Grid, World Tour Racing), each with a CD badge and the game name.">
         </a>
-        <figcaption><strong>Jaguar CD</strong> <span class="gal-cap">Discs without upstream art get a readable title card; set your own cover with a PNG.</span></figcaption>
+        <figcaption><strong>Jaguar CD</strong> <span class="gal-cap">Thirteen discs with box art from libretro-thumbnails; set your own cover with a PNG for any that lack it.</span></figcaption>
       </figure>
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_library_states.png" aria-label="Enlarge: Save states tab">
@@ -207,6 +207,12 @@
         </a>
         <figcaption><strong>A game running</strong> <span class="gal-cap">Skyhammer, with the picture scaled to the window.</span></figcaption>
       </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_cd_gameplay.png" aria-label="Enlarge: A Jaguar CD game running">
+          <img src="assets/app_cd_gameplay.png" width="1280" height="860" loading="lazy" alt="Blue Lightning running from a Jaguar CD image: a jet fighter seen from behind, flying low over a layer of clouds under a pale blue sky.">
+        </a>
+        <figcaption><strong>A Jaguar CD game</strong> <span class="gal-cap">Blue Lightning, started from its .cue file, in flight. Discs boot with the built-in CD BIOS.</span></figcaption>
+      </figure>
     </div>
 
     <h3 id="look">Look &amp; feel</h3>
@@ -244,6 +250,12 @@
           <img src="assets/app_settings_video.png" width="1280" height="860" loading="lazy" alt="Settings, Video tab: integer scaling, smooth filter, stretch, aspect ratio, VSync and fullscreen options, and a Shader section with the crt-gdv-mini-ultra-trinitron preset selected above a list of 500 built-in presets.">
         </a>
         <figcaption><strong>Video settings</strong> <span class="gal-cap">Integer scaling, filter, aspect ratio and the shader list with its CRT presets.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_game_lottes.png" aria-label="Enlarge: Another shader preset">
+          <img src="assets/app_game_lottes.png" width="1280" height="860" loading="lazy" alt="The Rayman title screen through the crt-lottes shader preset: a slightly curved screen with a dark rounded border, visible scanlines and a soft glow around the bright lettering.">
+        </a>
+        <figcaption><strong>Another preset</strong> <span class="gal-cap">crt-lottes on the Rayman title: curved glass, scanlines and glow. Presets are one click in Settings &gt; Video.</span></figcaption>
       </figure>
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_settings_interface.png" aria-label="Enlarge: Interface settings">
@@ -312,21 +324,15 @@
       </figure>
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_ra_achievements.png" aria-label="Enlarge: Achievements, this game">
-          <img src="assets/app_ra_achievements.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the This game tab: a progress bar at 38 percent, 3 of 8 achievements and 30 of 90 points, then a list of achievements with titles, descriptions, points, how many players earned them and whether each is locked or unlocked in hardcore or softcore.">
+          <img src="assets/app_ra_achievements.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the This game tab for Ultra Vortek over its title screen: the game icon, a progress bar at 61 percent, 11 of 18 achievements and 145 of 215 points, then a list with grey locked badges followed by coloured unlocked badges, each with a title, description, points, how many players earned it and the unlock date.">
         </a>
-        <figcaption><strong>This game</strong> <span class="gal-cap">Badges, points, rarity and unlock dates, with filters, sorting and search.</span></figcaption>
+        <figcaption><strong>This game</strong> <span class="gal-cap">Badge art, points, rarity and unlock dates, with filters, sorting and search.</span></figcaption>
       </figure>
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_ra_games.png" aria-label="Enlarge: Achievements, Jaguar games">
-          <img src="assets/app_ra_games.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the Jaguar games tab filtered to In my library: three games with achievement counts, points, progress bars and Play buttons.">
+          <img src="assets/app_ra_games.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the Jaguar games tab filtered to In my library: nine games, cartridges and Jaguar CD discs, each with its icon, achievement count, points, a progress bar and a Play button; the running game shows Playing.">
         </a>
         <figcaption><strong>Jaguar games</strong> <span class="gal-cap">Every Jaguar and Jaguar CD game with achievements, your progress, and Play for those in your library.</span></figcaption>
-      </figure>
-      <figure class="gal-card">
-        <a class="gal-link" href="assets/app_ra_profile.png" aria-label="Enlarge: Achievements, profile">
-          <img src="assets/app_ra_profile.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the Profile tab: a user name with hardcore and softcore points, a Sign out button, the Download pictures option and an Unlocked this session list.">
-        </a>
-        <figcaption><strong>Profile</strong> <span class="gal-cap">Your points, the softcore or hardcore rule in force, and what you unlocked this session.</span></figcaption>
       </figure>
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_settings_discord.png" aria-label="Enlarge: Discord settings">
@@ -336,9 +342,11 @@
       </figure>
     </div>
     <p class="footnote">
-      The RetroAchievements pictures come from the app&rsquo;s built-in mock
-      server (a sample account and sample games), so no real account or
-      network was involved, and Discord was off for its picture.
+      The RetroAchievements pictures use the app&rsquo;s built-in mock server,
+      so no real account or sign-in was involved. It answers with the real,
+      public achievement list and artwork of the games shown (from
+      retroachievements.org and its image host); the account, progress and
+      unlock dates are made up. Discord was off for its picture.
     </p>
 
     <h3 id="devtools">Developer tools</h3>
@@ -346,7 +354,20 @@
       <li>A Tools menu for the game that is running: memory viewer and editor, palette (CLUT) editor, cheat scanner, Object Processor list, blitter log, texture browser and audio scope.</li>
       <li>A CPU debugger with 68000, GPU and DSP tabs: registers, disassembly, breakpoints, step, step over and run to cursor (F9 breaks, F10 steps).</li>
       <li>Writes go to RAM freely; hardware registers need a tick-box, and everything is off under RetroAchievements hardcore. RetroArch is unaffected.</li>
+      <li><strong>gdb:</strong> the core also speaks the GDB remote protocol, so a real <code>gdb</code> can set breakpoints, read memory and registers and step the 68000 (the GPU and DSP via <code>monitor</code> commands). Off by default, loopback only. LLDB can attach but cannot debug the 68000. The <a href="{{REPO}}/blob/develop/docs/gdb-stub-guide.md">GDB remote debugging guide</a> has the rest.</li>
     </ul>
+    <pre><code>$ virtualjaguar --option virtualjaguar_gdb_stub=enabled --option virtualjaguar_gdb_wait=enabled game.jag
+$ gdb -ex 'set endian big' -ex 'target remote 127.0.0.1:2345'
+(gdb) x/3i $pc
+(gdb) stepi</code></pre>
+    <p class="footnote">
+      The first option turns the stub on (Settings, search &ldquo;gdb&rdquo;,
+      does the same; reopen the game); the second halts the 68000 before its
+      first instruction so gdb attaches at the start. Use a gdb with m68k
+      support (Homebrew <code>gdb</code>; <code>gdb-multiarch</code> on Debian
+      and Ubuntu); <code>set endian big</code> is needed, or every word reads
+      byte-swapped.
+    </p>
     <div class="gallery">
       <figure class="gal-card">
         <a class="gal-link" href="assets/app_dbg_cpu.png" aria-label="Enlarge: CPU debugger">
