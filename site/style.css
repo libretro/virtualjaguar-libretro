@@ -564,10 +564,6 @@ figcaption {
     repeating-linear-gradient(0deg,
       rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
 }
-/* Hero mosaic: four real frames, so no scanline/vignette overlay and a
- * smooth (not pixelated) downscale. */
-.crt-frame.mosaic { max-width: 46rem; }
-.crt-frame.mosaic .crt-screen::after { display: none; }
 
 .crt-frame figcaption {
   font-family: var(--font-mono);
@@ -944,6 +940,12 @@ details.inst .footnote { margin: 0.4rem 0.7rem 0.6rem; max-width: none; }
   outline-offset: -2px;
 }
 .gal-card img { display: block; width: 100%; height: auto; image-rendering: auto; }
+/* Captured frames (figure.shot) open in the same lightbox and take the same
+ * red hover.  The well already supplies the inset, so the link adds none;
+ * a wide (scrolling) frame's link is as wide as its picture, so the outline
+ * spans what scrolls. */
+.shot .well > .gal-link { padding: 0; background: none; outline-offset: 0; }
+.shot.wide .well > .gal-link { min-width: 42rem; }
 .gal-card figcaption {
   margin: 0;
   padding: 0.5rem 0.65rem 0.65rem;
@@ -1033,6 +1035,62 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, 0.78); }
 @media (max-width: 34rem) {
   .gallery { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* home page */
+/* The screenshot strip: six frames across, the rest a sideways scroll away
+ * (snap per frame, the beveled scrollbar from .shot.wide, and Prev/Next
+ * buttons once gallery.js runs).  Three across on tablets, two on phones;
+ * the scroll stays inside the strip, never the page. */
+.strip-wrap { margin: 1.4rem 0 0.4rem; }
+.strip {
+  --strip-cols: 6;
+  --strip-gap: 0.6rem;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - (var(--strip-cols) - 1) * var(--strip-gap)) / var(--strip-cols));
+  gap: var(--strip-gap);
+  max-width: none;
+  margin: 0;
+  padding: 0 0 0.6rem;
+  list-style: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: var(--red-fill) var(--code-bg);
+}
+.strip > li { margin: 0; scroll-snap-align: start; min-width: 0; }
+.strip .gal-card { position: relative; height: 100%; }
+.strip .gal-link { padding: 3px; }
+.strip .gal-card img { aspect-ratio: 4 / 3; object-fit: cover; }
+.strip .gal-card figcaption { padding: 0.3rem 0.45rem 0.4rem; font-size: 0.74rem; line-height: 1.3; }
+.strip .gal-card figcaption strong { font-size: 0.78rem; }
+/* In the strip a card shows the title (and the shader, when there is one);
+ * the full caption stays in the markup for the lightbox and screen readers. */
+.strip .gal-cap {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.strip .gal-card figcaption .badge { margin-top: 0.2rem; font-size: 0.62rem; }
+.strip::-webkit-scrollbar { height: 14px; -webkit-appearance: none; appearance: none; }
+.strip::-webkit-scrollbar-track {
+  background: var(--code-bg);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.strip::-webkit-scrollbar-thumb {
+  background: var(--red-fill);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+}
+.strip-bar { display: flex; align-items: center; gap: 0.4rem; margin: 0 0 0.5rem; }
+.strip-bar[hidden] { display: none; }
+.strip-bar .dl-label { margin-right: auto; }
+.strip-bar .dl-btn { min-height: 2rem; padding: 0.2rem 0.7rem; }
+.strip-bar .dl-btn:disabled { opacity: 0.45; cursor: default; color: var(--fg-dim); }
+.strip-note { margin: 0.2rem 0 0; font-size: 0.8rem; color: var(--fg-dim); max-width: none; }
+@media (max-width: 60rem) { .strip { --strip-cols: 3; } }
+@media (max-width: 34rem) { .strip { --strip-cols: 2; } }
 
 /* release log */
 table.release-log td:first-child, table.release-log td:last-child { white-space: nowrap; }
