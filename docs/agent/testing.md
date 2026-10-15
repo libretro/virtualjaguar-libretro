@@ -295,6 +295,16 @@ commit-to-commit delta — don't compare across machines. Full guide: `docs/prof
 host drift (an -O3 "+12.5%" flipped to -11.7% when interleaved) — always A/B/B/A, check `uptime`
 first.
 
+**Frame-time distribution (stutter, not average speed):** `test/tools/frame_cost_probe` gives the
+per-frame ms CSV + p50/p95/p99/max and over-budget counts. An armed vjtrace gates the GPU/DSP idle
+skip OFF (`idleSkipActive`), so the default run measures skip-OFF whatever `risc_idle_skip` says;
+pass `--no-arm` to keep the skip live (event columns then read 0 — pair with an armed run of the same
+config and join on frame, the emulation is deterministic and the skip bit-exact). Feed the CSV to
+`app/tests/pacing_trace.cpp` to see what the app's pacer does with that cost trace (uneven image gaps,
+vsync release/restore cycles); `virtualjaguar --perf-frames N` with `VJ_PERF_CSV=f.csv` records the
+real thing. `--option k=v` lists in an `ssh` command run under zsh must be built in `bash` (zsh does not
+word-split `$OPTS`; the option is then silently not applied and the harness prints no `option` line).
+
 ## Headless framebuffer caveat
 
 The miniretro harness in `test/regression_test.sh` doesn't expose the same composited

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,10 @@ struct Perf {
     double sum[kPhases] = {};
     double mx[kPhases] = {};
     std::vector<double> frameMs;
+    std::vector<unsigned char> emuPer;   // emulated frames run in each measured loop iteration (VJ_PERF_CSV)
+    std::vector<unsigned char> syncPer;  // the swap interval was 1 during that iteration
+    unsigned emuThis = 0;
+    bool curSync = true;                 // set by the loop; recorded per iteration
     double cpuStart = 0;
     uint64_t emuFrames = 0;      // emulated frames run inside the measured window (retro_run calls)
     std::string note;            // one line describing the setup (window size, GL, shader), printed first
@@ -77,7 +82,10 @@ struct Perf {
             cpuStart = cpuSeconds();
         } else if (seen > warmup) {
             frameMs.push_back(1000.0 * (double)(n - frameStart) / (double)freq);
+            emuPer.push_back((unsigned char)std::min(emuThis, 255u));
+            syncPer.push_back(curSync ? 1 : 0);
         }
+        emuThis = 0;
         frameStart = n;
         mark = n;
         return seen >= warmup + target;
@@ -98,6 +106,7 @@ struct Perf {
     // One emulated frame (a retro_run call) ran.  A UI frame may run several (catching up) or none.
     void emulated() {
         if (on && seen >= warmup) emuFrames++;
+        emuThis++;
     }
     void frameEnd() {
         if (on) seen++;
@@ -123,6 +132,17 @@ struct Perf {
         std::printf("PERF   %-28s avg %7.3f ms  p50 %6.3f  p99 %6.3f  max %6.3f\n", "loop iteration", tot / (double)n,
                     s[n / 2], s[std::min(n - 1, (size_t)((double)n * 0.99))], s.back());
         if (cpu >= 0) std::printf("PERF   process CPU: %.1f%% of one core (user+sys %.2f s / wall %.2f s)\n", 100.0 * cpu / wall, cpu, wall);
+        // VJ_PERF_CSV=path: one row per measured loop iteration (iteration ms, emulated frames run in it, swap
+        // interval 1?) -- the raw material for "how evenly were new images presented" (tests/pacing_trace.cpp
+        // replays the same thing from a core cost trace).
+        if (const char* csv = std::getenv("VJ_PERF_CSV")) {
+            if (FILE* f = std::fopen(csv, "w")) {
+                std::fprintf(f, "iter_ms,emu_frames,swap_sync\n");
+                for (size_t i = 0; i < n && i < emuPer.size(); i++)
+                    std::fprintf(f, "%.3f,%d,%d\n", frameMs[i], (int)emuPer[i], (int)syncPer[i]);
+                std::fclose(f);
+            }
+        }
         std::fflush(stdout);
     }
 };
