@@ -5,6 +5,11 @@ the repository.
   vj-sharp-bilinear.slangp   crisp scaling at non-integer window sizes
   vj-scanlines.slangp        scanlines + optional RGB mask, with parameters
 
-RetroArch's slang-shaders collection (CRT-Royale, CRT-Geom, ...) is NOT bundled:
-its files carry many different licences.  Point Settings > Video > Preset folder
-at a clone of https://github.com/libretro/slang-shaders to use them.
+slang-shaders/ (when present) is an unmodified subset of RetroArch's
+https://github.com/libretro/slang-shaders, fetched at build time; every shader
+keeps its own licence (see slang-shaders/NOTICE-virtualjaguar.txt).  For the rest
+of the collection, point Settings > Video > Preset folder at a clone of it.
+
+macOS: OpenGL stops at 4.1 there, so presets that need OpenGL 4.2/4.3 features
+(CRT-Geom, CRT-Hyllian and a few more: arrays of arrays) cannot compile.  The
+preset list greys them out; the plain picture is shown if one is chosen anyway.

@@ -142,6 +142,30 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   goes in `Contents/Frameworks/`, one of the places the shader code probes. The dev target is
   deliberately not a `MACOSX_BUNDLE`: its POST_BUILD copies would land in `Contents/MacOS`.
 * **Universal.** Two single-architecture builds merged with `lipo` (`make-universal.sh`), because
+  `VJShaders.cmake` fetches the prebuilt librashader for one architecture per configure. A gate
+  (`check-universal.sh`) fails the build if any Mach-O lacks a slice, and checks every binary's
+  `minos` against the deployment target (11.0).
+  **Known gap:** the `x86_64-macos` archive of librashader v0.12.0 contains an arm64 dylib (verified with
+  `lipo`). `librashader.dylib` therefore ships arm64-only, with a warning; on an Intel Mac the app
+  reports the shader runtime as unavailable and runs without shaders. Fix: build librashader for
+  `x86_64-apple-darwin` in CI (Rust) and merge.
+* **OpenGL 4.1.** macOS stops at OpenGL 4.1 and has no `GL_ARB_arrays_of_arrays`. librashader 0.12 never
+  sets SPIRV-Cross's `flatten_multidimensional_arrays`, so a shader with a 2-D array (crt-geom's
+  `vec3 slotmask[3][4]`) compiles to GLSL that requires that extension and cannot build there. 15 bundled
+  presets do this: crt-geom, -deluxe, -tate; crt-hyllian, -ntsc, -ntsc-rainbow, -sinc-composite; crt-nobody,
+  crt-super-xbr, vt220, crt-fast-bilateral-super-xbr, img_mod, test-pattern-append/-prepend and
+  res-independent-scanlines. Where the context has neither GL 4.3 nor the extension, the preset list greys
+  them out ("needs OpenGL 4.3"), and a preset chosen anyway (config.ini, file dialog) gets that reason in
+  the on-screen message instead of the GL compiler's text. The list is `presetsNeedingArraysOfArrays()`
+  (`present_util.cpp`), pinned to the bundled slang-shaders commit; `shaders_bundled` and `shaders_gl`
+  check it. Real fix: librashader setting `flatten_multidimensional_arrays` when it generates GLSL below
+  4.30.
+  The chain asks librashader for the context's own GLSL version (4.10 here). It used to ask for 3.30, which
+  cost 11 presets GLSL 4.00 features the context has (lottesRVM, nnedi3 x5, mmpx-ADV, vectorscale x4).
+  Rendering all 498 bundled presets on an M4 Max (GL 4.1 Metal) at 4.10, 473 work. Besides the 15 above,
+  fsr and smaa+fsr need `packHalf2x16` (GLSL 4.20), and 8 fail for reasons that do not look macOS-specific
+  (not checked elsewhere): the six nedi bilateral-variant presets (unknown semantic `play`),
+  crt-black_crush-koko (preset parse error) and ntsc-blastem (varying type mismatch at link).
   each configure is handed one single-architecture librashader (`-DVJ_LIBRASHADER_LIB`). A gate
   (`check-universal.sh`) fails the build if any Mach-O, `librashader.dylib` included, lacks a slice, and checks every
   binary's `minos` against the deployment target (11.0). Both dylibs are built from source in CI from the same pinned

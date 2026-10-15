@@ -1350,6 +1350,7 @@ int App::runInteractive(const CliArgs& a) {
             if (wait > 0) SDL_DelayNS((Uint64)(wait * 1e9));
         }
         perf.lap(Perf::Sleep);
+        perf.curSync = pacer_.swapSync;
         perf.frameEnd();
     }
 
