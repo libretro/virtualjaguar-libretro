@@ -190,6 +190,12 @@ cart "$TMP/n8e" "$STAMP2" "Trap|GAME_CODE|video, silent|? (bios_trap)|final_pc=\
 cart "$TMP/o8e" "$STAMP"  "Trap|GAME_CODE|video, silent|GAME_CODE|video, audio"
 run trap "$TMP/o8e" "$TMP/n8e"
 expect "GAME_CODE -> ? (bios_trap) is backward" 1 "Trap [BIOS]"
+# A trap_loop (#975: crashed 68K that used to score GAME_CODE) is a '?' row:
+# the scoring correction reads as backward, so it lands with a baseline refresh.
+cart "$TMP/n8f" "$STAMP2" "Parked|? (trap_loop)|68K stuck in an exception loop for the last 600 frames: fault PC \$004498, handler \$001000|GAME_CODE|black video (headless — undetermined), silent"
+cart "$TMP/o8f" "$STAMP"  "Parked|GAME_CODE|black video (headless — undetermined), silent|GAME_CODE|black video (headless — undetermined), silent"
+run parked "$TMP/o8f" "$TMP/n8f"
+expect "GAME_CODE -> ? (trap_loop) is backward" 1 "Parked [HLE]"
 
 echo "cart classifier (cart_classify.sh)"
 . "$SCRIPT_DIR/tools/matrix_common.sh"
@@ -240,6 +246,23 @@ export TIMEOUT_SECS FRAMES
 SUBSH="$(bash -c 'cart_classify_mode 0 "$1" bios' _ "$TMP/c7")"
 case "$SUBSH" in *dsp_pc_escape*) ok "signatures survive the xargs/bash -c subshell";;
     *) bad "signatures survive the xargs/bash -c subshell" "got: $SUBSH";; esac
+# Parked in the loader's ILLEGAL guard from frame 1 (#975: Mandelbrot Demo):
+# the final PC is in RAM, but it is a crash, not GAME_CODE.
+probe_log "$TMP/c9" 'pc=$001000 lit_frames=0 motion=0 audio_nonsilent=0 bios_ran=0 handoff=0 final_op=$60FE halt_frames=0 scored_from=0 scored_frames=600 scored_lit_frames=0 scored_motion=0 scored_audio_nonsilent=0 trap_frames=600 trap_pc=$004498 trap_handler=$001000' </dev/null
+cls "$TMP/c9" hle; want "guard-parked 68K -> ? (trap_loop)" "? (trap_loop)|68K stuck in an exception loop for the last 600 frames, no picture: fault PC \$004498, handler \$001000"
+# RTE ping-pong in cart space (Rayman Demo before #973): same verdict.
+probe_log "$TMP/c10" 'pc=$802BE6 lit_frames=0 motion=0 audio_nonsilent=0 bios_ran=0 handoff=0 final_op=$FFFE halt_frames=0 scored_from=0 scored_frames=600 scored_lit_frames=0 scored_motion=0 scored_audio_nonsilent=0 trap_frames=600 trap_pc=$802BE6 trap_handler=$000404' </dev/null
+cls "$TMP/c10" hle; want "RTE ping-pong in cart space -> ? (trap_loop)" "? (trap_loop)|"
+# Parked 68K WITH a picture is a BJL demo the GPU/OP drive (DEMO1, Ladybug):
+# still GAME_CODE, with the park noted.
+probe_log "$TMP/c13" 'pc=$001000 lit_frames=600 motion=590 audio_nonsilent=0 bios_ran=0 handoff=0 final_op=$60FE halt_frames=0 scored_from=0 scored_frames=600 scored_lit_frames=600 scored_motion=590 scored_audio_nonsilent=0 trap_frames=600 trap_pc=$8020F8 trap_handler=$001000' </dev/null
+cls "$TMP/c13" hle; want "parked 68K with video stays GAME_CODE" "GAME_CODE|video, silent; 68K parked in an exception loop (GPU/OP-driven)"
+# A trap that had not lasted 30 frames by the end of the run is not one.
+probe_log "$TMP/c11" 'pc=$001000 lit_frames=500 motion=100 audio_nonsilent=90000 bios_ran=0 handoff=0 final_op=$60FE halt_frames=0 scored_from=0 scored_frames=600 scored_lit_frames=500 scored_motion=100 scored_audio_nonsilent=90000 trap_frames=12 trap_pc=$004498 trap_handler=$001000' </dev/null
+cls "$TMP/c11" hle; want "short trap (<30 frames) stays GAME_CODE" "GAME_CODE|video, audio"
+# A BIOS reject also sits on a BRA.S * that the parked vectors name: the reject wins.
+FRAMES_RUN=278 probe_log "$TMP/c12" 'pc=$E005DC lit_frames=230 motion=34 audio_nonsilent=105158 bios_ran=1 handoff=-1 final_op=$60FE halt_frames=30 scored_from=0 scored_frames=278 scored_lit_frames=230 scored_motion=34 scored_audio_nonsilent=105158 trap_frames=40 trap_pc=$E005DC trap_handler=$E005DC' </dev/null
+cls "$TMP/c12" bios; want "BIOS reject outranks trap_loop" "BIOS_REJECT|"
 # Legacy probe line without the new fields still classifies as before.
 probe_log "$TMP/c8" 'pc=$00803000 lit_frames=500 motion=100 audio_nonsilent=90000 audio_onset=3' </dev/null
 cls "$TMP/c8" bios; want "legacy probe line (no bios_ran) scores the whole run" "GAME_CODE|video, audio"
