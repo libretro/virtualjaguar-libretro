@@ -1,53 +1,12 @@
 <!-- title: Download | Virtual Jaguar libretro -->
 <!-- nav: Download -->
-<!-- description: Direct downloads for Virtual Jaguar: the desktop app for macOS, Windows and Linux, the RetroArch core for 24 targets, the nightly build and the one-line installer. -->
+<!-- description: Direct downloads for Virtual Jaguar: the desktop app for macOS, Windows and Linux, the RetroArch core for 24 targets, the nightly build, older releases and the one-line installer. -->
 
 <h1>Download</h1>
 <p class="lede">
-  Every file below is a direct link to the asset on the
-  <a href="{{REPO}}/releases">GitHub release</a> it belongs to, and every
-  release lists its files with checksums in <code>SHA256SUMS.txt</code>.
-  Not sure which one you need? The <strong>app</strong> is a program you run
-  on its own; the <strong>core</strong> is a plug-in for RetroArch.
+  Pick a build. The <strong>app</strong> runs on its own; the
+  <strong>core</strong> is a plug-in for RetroArch. Every file links straight
+  to its asset on the <a href="{{REPO}}/releases">GitHub release</a>.
 </p>
 
 {{DOWNLOADS}}
-
-<section class="win" id="installer">
-  <h2>Or let the installer do it</h2>
-  <div class="win-body">
-    <p>
-      One command installs the core, the app, or both, checks each download
-      against <code>SHA256SUMS.txt</code>, and updates whatever you already
-      have when you run it again.
-    </p>
-    <p><strong>macOS, Linux, Raspberry Pi</strong></p>
-    <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh</code></pre>
-    <p><strong>Windows</strong> (PowerShell)</p>
-    <pre><code>irm {{RAW_URL}}/tools/install.ps1 | iex</code></pre>
-    <p class="footnote">
-      Options (<code>--what</code>, <code>--channel nightly</code>,
-      <code>--dry-run</code>) and where each thing is installed are on the
-      <a href="./#get">home page</a>. Package-manager manifests (Homebrew,
-      winget, Scoop, Flatpak) are rendered by CI as templates in
-      <a href="{{REPO}}/blob/develop/app/packaging/manifests">app/packaging/manifests</a>;
-      none is submitted yet.
-    </p>
-  </div>
-</section>
-
-<section class="win" id="verify">
-  <h2>Signing and verification</h2>
-  <div class="win-body">
-    <p>
-      The macOS app is signed with a Developer ID and notarized in CI, so it
-      opens without a Gatekeeper prompt. The Windows installer is not yet
-      code-signed, so SmartScreen may warn. The core files are plain
-      libraries and are not signed on any platform. To check a download,
-      compare its SHA-256 with the line for it in the release's
-      <code>SHA256SUMS.txt</code>: <code>shasum -a 256 &lt;file&gt;</code> on
-      macOS and Linux, <code>Get-FileHash &lt;file&gt;</code> in PowerShell.
-      Details: <a href="{{REPO}}/blob/develop/app/packaging/README.md">app/packaging/README.md</a>.
-    </p>
-  </div>
-</section>

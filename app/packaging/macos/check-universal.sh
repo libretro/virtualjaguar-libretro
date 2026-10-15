@@ -1,12 +1,11 @@
 #!/bin/bash
-# Fail unless every Mach-O under <dir> contains arm64 and x86_64, and report each
+# Fail unless EVERY Mach-O under <dir> (librashader.dylib included) contains arm64 and x86_64, and report each
 # one's minimum macOS version (a prebuilt dylib with a higher minos than LSMinimumSystemVersion
 # would make the app fail to launch on older systems).
 #
 #   check-universal.sh <dir> [<max-allowed-minos>]
 set -euo pipefail
 dir="$1"; maxmin="${2:-}"
-ARM64_ONLY_OK="${ARM64_ONLY_OK:-librashader.dylib}"   # see make-universal.sh
 bad=0; n=0
 while IFS= read -r -d '' f; do
   file -b "$f" | grep -q 'Mach-O' || continue
@@ -22,10 +21,7 @@ while IFS= read -r -d '' f; do
     fi
   done
   if [ "$ok" != 1 ]; then
-    case " $ARM64_ONLY_OK " in
-      *" $(basename "$f") "*) echo "::warning::${f#"$dir"/} is $archs only (tolerated)" ;;
-      *) echo "::error::${f#"$dir"/} is not universal (archs: $archs)"; bad=1 ;;
-    esac
+    echo "::error::${f#"$dir"/} is not universal (archs: $archs)"; bad=1
   fi
 done < <(find "$dir" -type f -print0)
 [ "$n" -gt 0 ] || { echo "::error::no Mach-O files under $dir"; exit 1; }

@@ -1,6 +1,6 @@
 <!-- title: Why this core | Virtual Jaguar libretro -->
 <!-- nav: Why this core -->
-<!-- description: What the Virtual Jaguar libretro core gives you in RetroArch: every platform RetroArch runs on, RetroAchievements, deterministic savestates for run-ahead, GPLv3. -->
+<!-- description: What the Virtual Jaguar libretro core gives you in RetroArch, and in the standalone desktop app: every platform, RetroAchievements, deterministic savestates for run-ahead, GPLv3. -->
 
 <h1>Why this core</h1>
 <p class="lede">
@@ -22,7 +22,9 @@
       </tr>
       <tr>
         <td><strong>RetroAchievements.</strong>
-            Memory maps and achievement support, asserted in CI.</td>
+            Memory maps and achievement support, asserted in CI. The
+            <a href="app.html">desktop app</a> adds softcore and hardcore
+            modes and an Achievements window.</td>
         <td><a href="{{REPO}}/blob/develop/test/tools/test_memory_map.c">test_memory_map.c</a> &middot;
             <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a></td>
       </tr>
@@ -46,6 +48,15 @@
         <td><a href="{{REPO}}/blob/develop/libretro.c">libretro.c</a></td>
       </tr>
       <tr>
+        <td><strong>Or skip RetroArch.</strong>
+            Since v3.9.0 a standalone <a href="app.html">desktop app</a> for
+            macOS, Windows and Linux runs the same core, with a game library,
+            shader presets, cheats, save states, LAN link play and debug
+            tools. Options and save states behave the same in both.</td>
+        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.0.md">v3.9.0 notes</a> &middot;
+            <a href="{{REPO}}/tree/develop/app">app/</a></td>
+      </tr>
+      <tr>
         <td><strong>Documented in the libretro docs.</strong>
             No BIOS files needed.</td>
         <td><a href="{{DOCS_URL}}">docs.libretro.com</a> &middot;
@@ -55,8 +66,8 @@
       <tr>
         <td><strong>The peripherals, not just the controller.</strong>
             Jaguar CD in both boot modes, JagLink and CatBox, the Voice Modem,
-            GameDrive, Memory Track, Team Tap, mouse, rotary, analog, driving,
-            lightgun.</td>
+            GameDrive (with its SD card), Memory Track, Team Tap, mouse,
+            rotary, analog, driving, lightgun.</td>
         <td><a href="./">front page</a> &middot;
             <a href="{{REPO}}/blob/develop/docs/input-devices-user-guide.md">input guide</a></td>
       </tr>
@@ -85,6 +96,7 @@
       options of the core itself, not a filter applied to the finished frame.
       <a href="enhancements.html">Both shipped</a> in v3.2.0 and v3.3.0, with
       the A/B captures and the settings that produced them on that page.
+      HD texture packs, clock scaling and per-title defaults are there too.
     </p>
   </div>
 </section>

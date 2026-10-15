@@ -1,0 +1,161 @@
+name: librashader runtime
+
+# Builds the librashader C API (the shader runtime the app loads with dlopen) FROM SOURCE for the
+# targets upstream publishes no usable binary for (#950):
+#
+#   x86_64-apple-darwin      upstream's "x86_64-macos" zip holds an arm64 dylib
+#   aarch64-apple-darwin     built here too, from the SAME source, so the universal dylib is one version
+#   x86_64-unknown-linux-gnu / aarch64-unknown-linux-gnu    upstream publishes no Linux binary at all
+#
+# Windows keeps using upstream's prebuilt DLLs (app/cmake/VJShaders.cmake).
+#
+# The source is pinned in app/packaging/librashader/pin.env (tag + commit + the SHA-256 of the
+# GitHub archive); the build is `cargo xtask build --profile optimized --target <triple> -- --locked`.
+# Linux is built on the packaging images (ubuntu-22.04, glibc 2.35) so the library runs wherever the
+# AppImage and .deb do.  The macOS libraries target MACOSX_DEPLOYMENT_TARGET=11.0, the app's minimum.
+#
+# Each target's result is cached by commit + target + Rust version (the build is ~10 minutes with LTO,
+# the cache hit is seconds) and uploaded as the artifact `librashader-<triple>`:
+#   librashader.so | librashader.dylib   (renamed from liblibrashader_capi.* by librashader's own build script)
+#   BUILD-INFO.txt                       tag, commit, archive digest, rustc, library digest
+# The artifacts are intermediates: release.yml leaves anything named librashader-* out of the release.
+#
+# Callers: app-package.yml (needs: librashader) for the macOS, AppImage and .deb packages.  Manual
+# dispatch builds and uploads the same four artifacts.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest        # Apple silicon runner, cross-compiled; no Intel runner needed
+            lib: librashader.dylib
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            lib: librashader.dylib
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            lib: librashader.so
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            lib: librashader.so
+    env:
+      TARGET: ${{ matrix.target }}
+      LIB: ${{ matrix.lib }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: app/packaging/librashader
+
+      - name: Read the pin
+        run: |
+          set -eu
+          grep -E '^[A-Z0-9_]+=' app/packaging/librashader/pin.env | tee -a "$GITHUB_ENV"
+
+      - name: Cache the built library
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: dist/${{ matrix.target }}
+          # -v1: bump to force a rebuild when this recipe (not the pin) changes.
+          key: librashader-${{ env.LIBRASHADER_COMMIT }}-${{ matrix.target }}-rust${{ env.LIBRASHADER_RUST }}-mac${{ env.LIBRASHADER_MACOS_MIN }}-v1
+
+      - name: Install Rust ${{ env.LIBRASHADER_RUST }} (${{ matrix.target }})
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          rustup toolchain install "$LIBRASHADER_RUST" --profile minimal --target "$TARGET" --no-self-update
+          rustup default "$LIBRASHADER_RUST"
+          rustc --version --verbose
+
+      - name: Build from the pinned source (digest-verified; cargo xtask build --profile optimized)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash app/packaging/librashader/build-from-source.sh "$TARGET" "dist/$TARGET" "$RUNNER_TEMP/lr"
+
+      - name: Check the library
+        run: |
+          set -eu
+          f="dist/$TARGET/$LIB"
+          test -f "$f"
+          ls -la "$f"
+          case "$TARGET" in
+            *-apple-darwin)
+              want="${TARGET%%-*}"; [ "$want" != aarch64 ] || want=arm64   # Mach-O says arm64
+              got="$(lipo -archs "$f")"
+              echo "archs: $got (want $want)"
+              [ "$got" = "$want" ] || { echo "::error::$f is '$got', expected '$want' only"; exit 1; }
+              id="$(otool -D "$f" | tail -1)"; echo "install name: $id"
+              [ "$id" = "@rpath/librashader.dylib" ] || { echo "::error::unexpected install name $id"; exit 1; }
+              minos="$(vtool -arch "$want" -show-build "$f" | awk '/minos/ {print $2; exit}')"; echo "minos: $minos"
+              [ "$(printf '%s\n%s\n' "$minos" "$LIBRASHADER_MACOS_MIN" | sort -V | tail -1)" = "$LIBRASHADER_MACOS_MIN" ] \
+                || { echo "::error::minos $minos is newer than $LIBRASHADER_MACOS_MIN"; exit 1; }
+              otool -L "$f"
+              nm -gU "$f" | grep -q ' _libra_instance_abi_version$' ;;
+            *-linux-gnu)
+              readelf -h "$f" | grep -E 'Class|Machine'
+              case "$TARGET" in x86_64*) m='Advanced Micro Devices X86-64' ;; *) m='AArch64' ;; esac
+              readelf -h "$f" | grep -q "Machine:.*$m" || { echo "::error::wrong ELF machine (want $m)"; exit 1; }
+              echo "--- NEEDED"; readelf -d "$f" | grep NEEDED | tee needed.txt
+              # Only the C/C++ runtime of every Linux; no GL, X11, Vulkan or SDL at link time.
+              if grep -vE 'lib(c|m|dl|pthread|rt|gcc_s|stdc\+\+)\.so|ld-linux|ld\.so' needed.txt; then
+                echo "::error::unexpected shared-library dependency (list above)"; exit 1
+              fi
+              echo "--- highest versioned symbols"
+              for p in GLIBC GLIBCXX CXXABI; do
+                v="$(objdump -T "$f" | grep -o "${p}_[0-9.]*" | sort -V | tail -1 || true)"; echo "$p: ${v:-none}"
+              done
+              g="$(objdump -T "$f" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1 | sed 's/GLIBC_//')"
+              [ "$(printf '%s\n2.35\n' "$g" | sort -V | tail -1)" = "2.35" ] || { echo "::error::needs glibc $g > 2.35 (Ubuntu 22.04)"; exit 1; }
+              objdump -T "$f" | grep -q ' libra_instance_abi_version$' ;;
+          esac
+
+      - name: Load it and read the ABI version (same-architecture runners)
+        run: |
+          set -eu
+          f="$PWD/dist/$TARGET/$LIB"
+          case "$TARGET" in
+            x86_64-apple-darwin) echo "x86_64 dylib: loaded by the app's tests under Rosetta in app-package.yml"; exit 0 ;;
+          esac
+          python3 - "$f" <<'PY'
+          import ctypes, sys
+          lib = ctypes.CDLL(sys.argv[1])
+          lib.libra_instance_abi_version.restype = ctypes.c_size_t
+          lib.libra_instance_api_version.restype = ctypes.c_size_t
+          abi, api = lib.libra_instance_abi_version(), lib.libra_instance_api_version()
+          print(f"{sys.argv[1]}: ABI {abi}, API {api}")
+          assert abi == 2, f"unexpected ABI {abi}"
+          PY
+
+      - name: Record what this is
+        run: |
+          set -eu
+          f="dist/$TARGET/$LIB"
+          if command -v sha256sum >/dev/null; then d="$(sha256sum "$f" | cut -d' ' -f1)"; else d="$(shasum -a 256 "$f" | cut -d' ' -f1)"; fi
+          {
+            echo "librashader $LIBRASHADER_TAG"
+            echo "commit     $LIBRASHADER_COMMIT"
+            echo "archive    sha256 $LIBRASHADER_SHA256"
+            echo "target     $TARGET"
+            echo "rust       $LIBRASHADER_RUST"
+            echo "build      cargo xtask build --profile optimized --target $TARGET -- --locked"
+            echo "macos min  $LIBRASHADER_MACOS_MIN (macOS targets only)"
+            echo "$LIB       sha256 $d"
+          } | tee "dist/$TARGET/BUILD-INFO.txt"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: librashader-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/*
+          if-no-files-found: error
+          retention-days: 14

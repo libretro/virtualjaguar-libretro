@@ -213,17 +213,26 @@ compile, the picture is drawn plain and a one-line message says why; it is never
 a failure.
 
 - **Library.** At configure time CMake fetches librashader's two MIT-licensed C
-  headers (tag `librashader-v0.12.0`, pinned by SHA256; `-DVJ_LIBRASHADER_INCLUDE_DIR=<dir>`
+  headers (the tag in `app/packaging/librashader/pin.env`, pinned by SHA256; `-DVJ_LIBRASHADER_INCLUDE_DIR=<dir>`
   for offline builds, `-DVJ_APP_SHADERS=OFF` to leave it out). At run time the
   app looks for `librashader.dylib` / `.so` / `.dll` in `$VJ_LIBRASHADER` (a file
   or folder; a path that does not exist means "missing"), next to the executable
   (and `../Frameworks` in a macOS bundle), in `<data folder>/librashader/`, and
   then the system library path (Homebrew's `/opt/homebrew/lib` included).
-  On macOS and Windows the build downloads the pinned prebuilt runtime (arm64/x86_64)
-  and copies it next to the executable (`-DVJ_APP_FETCH_LIBRASHADER=OFF` for offline
-  builds). Upstream
-  publishes no Linux binary: install the distro/OBS package or build it, and it
-  is picked up from the system path.
+  The release packages (macOS universal, Windows, AppImage, `.deb`) ship it:
+  Windows and Apple-silicon dev builds download upstream's pinned prebuilt
+  (`-DVJ_APP_FETCH_LIBRASHADER=OFF` for offline builds), while the **macOS (both
+  architectures) and Linux libraries are built from source in CI**
+  ([`librashader.yml`](../.github/workflows/librashader.yml), pinned commit and
+  archive SHA-256 in `app/packaging/librashader/pin.env`), because upstream's
+  Intel-macOS zip holds an arm64 dylib and it publishes no Linux binary. Any
+  build can be given a library it built itself with `-DVJ_LIBRASHADER_LIB=<file>`;
+  it is copied beside the executable and installed by `cmake --install`.
+  When no library can be used, **Settings > Video > Shader** says why: *not
+  bundled in this build* (none found anywhere), *the bundled runtime is
+  missing*, or *failed to load: ...* with the loader's reason (wrong
+  architecture, wrong ABI version, a missing dependency), and links here. It is
+  informational: the app never installs or downloads anything for you.
 - **Presets.** `shaders/` beside the executable holds two small first-party presets
   (`vj-sharp-bilinear`, `vj-scanlines`, also the offline test fixtures) and, by
   default, a subset of [libretro/slang-shaders](https://github.com/libretro/slang-shaders)
@@ -249,6 +258,44 @@ a failure.
   CRT-Hyllian and 13 others in the bundle); the list greys them out and says why. Details:
   [packaging/README.md](packaging/README.md#macos-notes).
 - **Settings keys.** `shader.enabled`, `shader.preset`, `shader.folder`.
+
+### Getting the shader runtime
+
+Only needed for a build that does not ship one (a distro or source build, or a
+package where the file was removed). The app loads any librashader of the right
+ABI (`LIBRASHADER_CURRENT_ABI`, currently 2) and CPU architecture; put
+`librashader.so` (Linux), `librashader.dylib` (macOS) or `librashader.dll`
+(Windows) next to the executable, in `<data folder>/librashader/`, or anywhere on
+the system library path, or point `VJ_LIBRASHADER` at the file.
+
+- **Linux, a system package.** librashader's author publishes packages on the
+  openSUSE Build Service (build recipes for RPM and Arch-style packages are in
+  upstream's `pkg/obs`); pick your distribution on
+  <https://software.opensuse.org//download.html?project=home%3Achyyran%3Alibrashader&package=librashader>.
+  The package installs `librashader.so` (and `librashader.so.2`, whose SONAME is the ABI
+  version) in the system library folder, where the app finds it by name; nothing else to do. If
+  your distribution only has `librashader.so.2`, add a `librashader.so` symlink next to the
+  app or set `VJ_LIBRASHADER=/path/to/librashader.so.2`. There was no Arch User Repository
+  package when this was written (October 2026); build from source, below.
+- **From source (Linux, macOS, Windows).** Needs stable Rust 1.88 or newer, a
+  C/C++ compiler, curl and tar:
+
+  ```bash
+  rustup target add <triple>      # e.g. x86_64-unknown-linux-gnu, x86_64-apple-darwin
+  bash app/packaging/librashader/build-from-source.sh <triple> ./lr
+  # -> ./lr/librashader.so (or .dylib / .dll), built from the pinned, SHA-256-verified source
+  cmake -S app -B build -DVJ_LIBRASHADER_LIB="$PWD/lr/librashader.so"   # optional: ship it with your build
+  ```
+
+  This is exactly what CI runs (`cargo xtask build --profile optimized --target <triple> -- --locked`
+  inside upstream's tree). Upstream's `README.md` documents the same command.
+- **macOS.** The release `.app` already includes a universal library. For a source
+  build on Apple silicon the default configure downloads upstream's arm64 library;
+  on an Intel Mac, or to avoid the download, build it as above with
+  `x86_64-apple-darwin` and pass `-DVJ_LIBRASHADER_LIB`. A Homebrew or
+  hand-built copy in `/opt/homebrew/lib` or `/usr/local/lib` is picked up too (a
+  signed release app additionally needs the library-validation entitlement in
+  `app/packaging/macos/entitlements.plist` to load a library someone else signed).
 
 `vj_shader_tests` (CTest `shaders_unit`, `shaders_bundled`, `shaders_library`, `shaders_gl`) covers
 the pure logic and the missing-library fallback anywhere; the other two need the

@@ -49,7 +49,7 @@ A standalone front end for the same core, in `app/`: SDL3 for window, audio and 
 </p>
 <p>
   <img src="site/assets/app_theme_jaguar_red.png" width="49%" alt="The library in a custom dark theme named Jaguar Red, with a red accent">
-  <img src="site/assets/app_ra_achievements.png" width="49%" alt="The Achievements window listing a sample game's achievements with points, rarity and unlock dates (a mock RetroAchievements account)">
+  <img src="site/assets/app_ra_achievements.png" width="49%" alt="The Achievements window for Ultra Vortek: grey locked and coloured unlocked badges, points, rarity and unlock dates (a mock RetroAchievements account)">
 </p>
 
 - **Library:** your games in Cartridges, Jaguar CD, Favorites, Recently played, Save states and BIOS & system tabs; identified by CRC32 (No-Intro, Redump), box art from [libretro-thumbnails](https://github.com/libretro-thumbnails/Atari_-_Jaguar) on demand, title cards or your own cover for discs.

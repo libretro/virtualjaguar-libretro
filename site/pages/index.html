@@ -1,12 +1,13 @@
 <!-- title: Virtual Jaguar libretro | Atari Jaguar, everywhere RetroArch runs -->
 <!-- nav: Home -->
-<!-- description: The open-source Atari Jaguar emulator core for RetroArch: Jaguar CD in two boot modes, every Jaguar controller, link play, HD texture packs, deterministic savestates, 24 builds per release. -->
+<!-- description: Open-source Atari Jaguar emulator: a RetroArch core for 24 targets plus a standalone desktop app. Jaguar CD, every controller, link play, RetroAchievements, HD texture packs, deterministic savestates. -->
 
 <div class="hero">
   <h1>Atari Jaguar, everywhere RetroArch runs.</h1>
   <p class="lede">
-    The open-source Atari Jaguar core for RetroArch. Cartridges, Jaguar CD,
-    every controller, link play. Prebuilt for
+    The open-source Atari Jaguar emulator: a core for RetroArch and a
+    standalone desktop app. Cartridges, Jaguar CD, every controller, link
+    play. The core is prebuilt for
     <a href="{{REPO}}/blob/develop/.github/workflows/release.yml">24 targets</a>:
     desktop, Raspberry Pi, iOS, tvOS, Android, web, Switch and Vita.
   </p>
@@ -33,12 +34,21 @@
   <div class="win-body">
     <p>
       <strong>The RetroArch core</strong> runs inside RetroArch and any other
-      libretro frontend, on every platform listed above. <strong>The
-      app</strong> is a standalone desktop program for macOS, Windows and
-      Linux, built on the same core: a game library with box art, RetroArch
-      shader presets, cheats, RetroAchievements, controller remapping, save
-      states and LAN link play. New in v3.9.0.
+      libretro frontend, on every platform above. <strong>The app</strong>
+      (new in v3.9.0) is a standalone program for macOS, Windows and Linux,
+      built on the same core, so options and save states behave the same.
     </p>
+    <ul>
+      <li>Game library with box art, favorites, recents and save-state thumbnails</li>
+      <li>RetroArch <code>.slangp</code> shader presets (librashader), cheats,
+          controller remapping, a Netplay window for LAN link play</li>
+      <li>RetroAchievements (softcore or hardcore, login kept in the system
+          keychain) and Discord Rich Presence</li>
+      <li>Light and dark themes, a theme editor and a choice of interface font</li>
+      <li>Debug tools: memory viewer, cheat scanner, Object Processor list,
+          blitter log, texture browser, audio scope, and a 68000, GPU and DSP
+          debugger with breakpoints</li>
+    </ul>
     <p class="actions">
       <a class="btn" href="app.html">See the app</a>
     </p>
@@ -52,16 +62,18 @@
       Direct links for every platform are on the
       <a href="download.html">Download</a> page ({{LATEST_LINK}}), or let the
       installer do it. It installs the <strong>RetroArch core</strong>, the
-      standalone <strong>app</strong> (new in v3.9.0), or <strong>both</strong>,
-      checks every download against the release's <code>SHA256SUMS.txt</code>,
-      and the same command updates whichever you already have. For the core it
-      finds your RetroArch, picks the matching build, backs up the core it
-      replaces and checks that the new one loads.
+      standalone <strong>app</strong>, or <strong>both</strong>, checks every
+      download against the release's <code>SHA256SUMS.txt</code>, and the same
+      command updates whichever you already have. For the core it finds your
+      RetroArch, backs up the core it replaces and checks that the new one
+      loads.
     </p>
     <p><strong>macOS, Linux, Raspberry Pi</strong></p>
     <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh</code></pre>
     <p><strong>Windows</strong> (PowerShell)</p>
     <pre><code>irm {{RAW_URL}}/tools/install.ps1 | iex</code></pre>
+    <details class="fold">
+      <summary>Installer options</summary>
     <p class="footnote">
       Both ask what to install when run in a terminal. To skip the question,
       add <code>--what core</code>, <code>--what app</code> or
@@ -80,15 +92,14 @@
       <code>-Channel nightly</code>. The app goes to <code>/Applications</code>
       on macOS, <code>~/.local/bin</code> as an AppImage on Linux
       (<code>--app-format deb</code> for the package) and
-      <code>%LOCALAPPDATA%\Programs\VirtualJaguar</code> on Windows. Until the
-      first release with the app exists, asking for the app says so and installs
-      nothing. On a Pi the core installer reads the word size from the
+      <code>%LOCALAPPDATA%\Programs\VirtualJaguar</code> on Windows. On a Pi the core installer reads the word size from the
       RetroArch binary, not the kernel, because the core must match RetroArch
       (<code>rpi4</code> is 32-bit, <code>rpi4_64</code> is 64-bit).
       <a href="{{REPO}}/releases/tag/nightly">Nightlies</a> build from
       <code>develop</code> (currently <code>v{{CORE_VERSION}}</code>) and are
       gated on compiling, not on the test suite.
     </p>
+    </details>
     <p class="footnote">
       Manual: <a href="{{DOCS_URL}}">libretro docs</a>, with
       <a href="{{DOCS_OPTIONS_URL}}">core options</a> and
@@ -114,7 +125,8 @@
         saved mid-load resumes the load. CHD needs a session-aware chdman;
         every release attaches one.</p>
         <p class="src"><a href="compatibility.html">compatibility</a> &middot;
-          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0 notes</a></p>
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0 notes</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0 notes</a></p>
       </dd>
 
       <dt>Controllers</dt>
@@ -132,9 +144,9 @@
       <dd>
         <p>JagLink and CatBox serial, at register level. Automatic mode rides
         a RetroArch netplay session with nothing to type. Direct TCP finds LAN
-        hosts by UDP beacon. Doom deathmatch is validated. Ultra Vortek dials
-        the emulated Voice Modem (press 911 at the title screen), and voice
-        chat carries speech over it.</p>
+        hosts by UDP beacon. Doom deathmatch is validated, and since v3.8.0 it
+        no longer drops to 30 fps. Ultra Vortek dials the emulated Voice Modem (press 911
+        at the title screen), and voice chat carries speech over it.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">user guide</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a></p>
       </dd>
@@ -142,8 +154,8 @@
       <dt>Savestates and run-ahead</dt>
       <dd>
         <p>Byte-identical replay under RetroArch&rsquo;s run-ahead loop,
-        checked by a harness. The format is v15. Older states still load, but
-        older cores cannot read v15.</p>
+        checked by a harness. The format is v17. Older states still load, but
+        older cores cannot read v17.</p>
         <p class="src"><a href="{{REPO}}/pull/327">PR #327</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/savestate-compat.md">savestate-compat.md</a></p>
       </dd>
@@ -153,14 +165,17 @@
         <p>Memory maps and achievement support, asserted in CI against the
         rcheevos mapping.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/test/tools/test_memory_map.c">test_memory_map.c</a> &middot;
-          <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a></p>
+          <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.0.md">v3.9.0 notes</a></p>
       </dd>
 
       <dt>GameDrive and Memory Track</dt>
       <dd>
         <p>GameDrive 16&nbsp;MB bank switching against RetroHQ&rsquo;s GDBIOS
-        bindings; GD-locked homebrew boots. The CD unit&rsquo;s Memory Track
-        save cartridge is emulated, so CD saves persist.</p>
+        bindings; GD-locked homebrew boots, and since v3.8.0 GameDrive software
+        can read and write an SD card backed by a host folder. The CD
+        unit&rsquo;s Memory Track save cartridge is emulated, so CD saves
+        persist.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/jgd-interface-notes.md">GameDrive notes</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/memory-track.md">memory-track.md</a></p>
       </dd>
@@ -190,6 +205,7 @@
         and Model M boot ROMs are embedded, and a custom image is identified
         by checksum.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/gdb-stub-design.md">GDB stub</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/app-debug-tools.md">app debug tools</a> &middot;
           <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash_detect.c</a></p>
       </dd>
 
@@ -208,49 +224,7 @@
 <section class="win">
   <h2>Release log</h2>
   <div class="win-body">
-    <div class="table-wrap"><table>
-      <tr><th>Version</th><th>What landed</th><th>Notes</th></tr>
-      <tr>
-        <td><strong>v3.7.0</strong></td>
-        <td>Broken-games release. Fixes for Baldies, Myst, Space Ace, World
-            Tour Racing, Vid Grid, Ocean Depths, Simone, PolyEngine and
-            PlaySFX, three blitter fixes and an Object Processor fix. HLE CD
-            titles are run-ahead safe. Savestate format v15.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.6.0, v3.6.1</strong></td>
-        <td>GDB stub. Disk control and no-content boot into the CD BIOS.
-            Auto frameskip. RISC idle-loop fast-forward on by default, for
-            GPU and DSP. SIMD speed-ups. User hooks. White Men Can&rsquo;t
-            Jump fix.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.6.0.md">v3.6.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.6.1.md">v3.6.1</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.5.0, v3.5.1</strong></td>
-        <td>Team Tap, Pro Controller, 6D stick and paddle. Texture replacement
-            on the 2x surface. Voice chat. Netlink auto speed. Widescreen
-            toggle. A log warning when settings cancel each other.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.5.0.md">v3.5.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.5.1.md">v3.5.1</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.4.0</strong></td>
-        <td>Mouse, rotary, analog, driving and lightgun. Ultra Vortek netplay
-            over the Voice Modem. LAN discovery. Texture dump and replacement.
-            Boot-ROM selection. CHD.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.1 to v3.3</strong></td>
-        <td>True colour, 2x internal resolution, scaled-sprite and CLUT
-            supersampling, GameDrive, clock scales, audio CD and VLM.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td>
-      </tr>
-    </table></div>
+{{RELEASE_LOG}}
   </div>
 </section>
 

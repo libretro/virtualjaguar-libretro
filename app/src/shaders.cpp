@@ -139,6 +139,14 @@ bool ShaderChain::builtWithHeaders() {
 #endif
 }
 
+bool ShaderChain::runtimeBundled() {
+#if defined(VJ_LIBRASHADER_BUNDLED)
+    return true;
+#else
+    return false;
+#endif
+}
+
 const char* ShaderChain::libraryFileName() {
 #if defined(_WIN32)
     return "librashader.dll";
@@ -203,6 +211,7 @@ bool ShaderChain::probeLibrary(bool retry) {
 #if !defined(VJ_HAVE_LIBRASHADER)
     (void)retry;
     probed_ = true;
+    libStatus_ = LibraryStatus::NoSupport;
     libErr_ = "this build has no librashader support (its header could not be fetched at configure time)";
     return false;
 #else
@@ -211,6 +220,7 @@ bool ShaderChain::probeLibrary(bool retry) {
     probed_ = true;
     libErr_.clear();
     libPath_.clear();
+    libStatus_ = LibraryStatus::NotFound;
     Impl& I = *impl_;
 
     const std::string leaf = libraryFileName();
@@ -237,6 +247,8 @@ bool ShaderChain::probeLibrary(bool retry) {
         searched = "the app folder, the data folder and the system library path";
     }
 
+    // loadErr: the last file that EXISTS and could not be used (reported as "failed to load").
+    // A bare name that the system loader cannot find only means "not found anywhere".
     std::string loadErr;
     for (const std::string& c : cands) {
         bool bare = c.find('/') == std::string::npos && c.find('\\') == std::string::npos;
@@ -251,7 +263,7 @@ bool ShaderChain::probeLibrary(bool retry) {
         SetErrorMode(oldMode);
 #endif
         if (!h) {
-            loadErr = c + ": " + SDL_GetError();
+            if (!bare) loadErr = c + ": " + SDL_GetError();
             continue;
         }
         // ABI first: an incompatible library must not have its other symbols read.
@@ -294,9 +306,16 @@ bool ShaderChain::probeLibrary(bool retry) {
         I.inst.instance_loaded = true;
         libPath_ = bare ? c : absolutePath(c);
         apiVersion_ = (unsigned)inst.instance_api_version();
+        libStatus_ = LibraryStatus::Loaded;
         return true;
     }
-    libErr_ = loadErr.empty() ? std::string(leaf) + " not found (looked in " + searched + ")" : loadErr;
+    if (loadErr.empty()) {
+        libStatus_ = LibraryStatus::NotFound;
+        libErr_ = std::string(leaf) + " not found (looked in " + searched + ")";
+    } else {
+        libStatus_ = LibraryStatus::LoadFailed;
+        libErr_ = loadErr;
+    }
     return false;
 #endif
 }
@@ -469,7 +488,9 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
     if (!probeLibrary()) {
         if (!noticedMissing_) {
             noticedMissing_ = true;
-            setNotice("Shaders are on but librashader was not found; showing the plain picture");
+            setNotice(libStatus_ == LibraryStatus::LoadFailed
+                          ? "Shaders are on but the shader runtime failed to load (see Settings > Video > Shader); showing the plain picture"
+                          : "Shaders are on but the shader runtime was not found; showing the plain picture");
         }
         return 0;
     }

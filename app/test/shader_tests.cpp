@@ -207,6 +207,7 @@ static void testFallback() {
         CHECK(!sc.probeLibrary(), "bogus VJ_LIBRASHADER must read as missing");
         CHECK(!sc.libraryLoaded() && !sc.active(), "not loaded, not active");
         CHECK(!sc.libraryError().empty(), "an error text is set");
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::NotFound, "a path with no file reads as not found, not as a failed load");
         std::string err;
         CHECK(sc.usePreset(str(d / "p.slangp"), err), "a valid preset is accepted even without the library: %s", err.c_str());
         CHECK(!sc.usePreset(str(d / "absent.slangp"), err) && !err.empty(), "an invalid preset is still refused");
@@ -234,6 +235,8 @@ static void testFallback() {
         ShaderChain sc;
         CHECK(!sc.probeLibrary(), "a text file must not load as a library");
         CHECK(!sc.libraryError().empty(), "and says why: %s", sc.libraryError().c_str());
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed, "a file that exists but cannot be used reads as a failed load");
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryError().find(ShaderChain::libraryFileName()) != std::string::npos, "and names the file");
     }
 
     STEP("fallback-settings");
@@ -368,6 +371,14 @@ static int runLibrary() {
     ShaderChain sc;
     sc.setLibrarySearchDirs({});
     if (!sc.probeLibrary()) {
+        // VJ_REQUIRE_LIBRASHADER=1 (CI, on the legs that ship a runtime): a runtime that does not load
+        // is a failure, never a skip.
+        const char* req = std::getenv("VJ_REQUIRE_LIBRASHADER");
+        if (req && *req && *req != '0') {
+            std::printf("shader_tests library: FAIL (VJ_REQUIRE_LIBRASHADER is set but the runtime did not load: %s)\n",
+                        sc.libraryError().c_str());
+            return 1;
+        }
         std::printf("shader_tests library: SKIP (%s)\n", sc.libraryError().c_str());
         return 77;
     }
@@ -684,12 +695,46 @@ static int runGl() {
     return g_fail ? 1 : 0;
 }
 
+// ---------------------------------------------------------------------------------------
+// probe (packaging smoke test, not a CTest entry)
+// ---------------------------------------------------------------------------------------
+//
+// vj_shader_tests probe <dir>: finds the library the way the APP does (beside the executable,
+// <base>/../Frameworks in a macOS bundle; no VJ_LIBRASHADER, no extra directories) and fails
+// unless it loaded from inside <dir>.  CI copies this executable into the unpacked AppImage,
+// the installed .deb tree and the .app, where it proves the packaged layout is the probed one.
+static int runProbe(const char* dir) {
+    if (!ShaderChain::builtWithHeaders()) {
+        std::printf("shader_tests probe: FAIL (built without librashader headers)\n");
+        return 1;
+    }
+    setEnv("VJ_LIBRASHADER", nullptr);
+    Config cfg;
+    ShaderChain sc;
+    sc.loadSettings(cfg, "");   // the same search list the app builds
+    if (!sc.probeLibrary()) {
+        std::printf("shader_tests probe: FAIL (%s)\n", sc.libraryError().c_str());
+        return 1;
+    }
+    std::error_code ec;
+    std::string got = fs::weakly_canonical(fs::path(sc.libraryPath()), ec).string();
+    std::string want = dir ? fs::weakly_canonical(fs::path(dir), ec).string() : "";
+    std::printf("shader_tests probe: found %s (API %u); expected inside %s\n", got.c_str(), sc.libraryApiVersion(), want.c_str());
+    if (want.empty() || got.find(want) != 0) {
+        std::printf("shader_tests probe: FAIL (not loaded from the package)\n");
+        return 1;
+    }
+    std::printf("shader_tests probe: OK\n");
+    return 0;
+}
+
 int main(int argc, char** argv) {
     std::string mode = argc > 1 ? argv[1] : "unit";
+    if (mode == "probe") return runProbe(argc > 2 ? argv[2] : nullptr);
     if (mode == "unit") return runUnit();
     if (mode == "bundled") return runBundled();
     if (mode == "library") return runLibrary();
     if (mode == "gl") return runGl();
-    std::fprintf(stderr, "usage: %s unit|library|gl\n", argv[0]);
+    std::fprintf(stderr, "usage: %s unit|bundled|library|gl|probe <dir>\n", argv[0]);
     return 2;
 }

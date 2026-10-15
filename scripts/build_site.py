@@ -507,58 +507,114 @@ def render_cart_table(rows):
 
 # ------------------------------------------------------------- downloads
 
-# Release data is fetched by the Pages workflow (GitHub API, releases/latest
-# and releases/tags/nightly) and passed in with --releases.  It is never
-# committed: the asset list changes with every release and the file names of
-# the app packages carry the version.  Without the file the Download page
-# still builds, with links to the release pages instead of to the files.
+# Release data is fetched by the Pages workflow (GitHub API: releases/latest,
+# releases/tags/nightly and the last few tagged releases) and passed in with
+# --releases.  It is never committed: the asset list changes with every
+# release and the file names of the app packages carry the version.  Without
+# the file the Download page still builds, with links to the release pages
+# instead of to the files.  scripts/testdata/releases.json is a trimmed
+# fixture of the same shape for offline builds and tests.
+#
+# Every release is rendered to its own panel here, in Python, from one
+# classification table, so the platform/arch grouping exists exactly once.
+# assets/js/download.js only reveals the panel the reader picks (the page
+# without it shows the latest release); it never rebuilds markup.
 
 APP_ASSET_RE = re.compile(
     r"^(?:VirtualJaguar-[^/]+\.(?:zip|exe|AppImage|flatpak)|virtualjaguar_[^/]+\.deb)$")
 CORE_ASSET_RE = re.compile(
     r"^virtualjaguar_libretro-(.+)\.(so|dll|dylib|bc|a)$")
+DEBUG_ASSET_RE = re.compile(r"^virtualjaguar_libretro-(.+)-debug\.tar\.gz$")
 TOOL_ASSET_RE = re.compile(
-    r"^(?:jagcd-tools-.+\.zip|cue2cdi-.+|SHA256SUMS\.txt|virtualjaguar_libretro\.info)$")
+    r"^(jagcd-tools|cue2cdi)-(linux|macos|windows)(?:-([\w.]+?))?(?:\.zip|\.exe)?$")
+SUMS_NAME = "SHA256SUMS.txt"
+INFO_NAME = "virtualjaguar_libretro.info"
 
-# (platform id prefix regex, group label) in display order.
-CORE_GROUPS = [
-    (r"windows-", "Windows"),
-    (r"macos-", "macOS"),
-    (r"linux-rpi", "Raspberry Pi"),
-    (r"linux-", "Linux"),
-    (r"(ios|tvos)-", "iOS and tvOS"),
-    (r"android-", "Android"),
-    (r"emscripten-", "Web (Emscripten)"),
-    (r"(switch|vita)$", "Switch and Vita"),
+# Platform id -> (label, icon id).  Order is display order for the core;
+# the app and the tools list follow the same order.  The icons are generic
+# glyphs (a laptop, a window, a prompt, a board ...) on purpose: no vendor
+# logo is redistributable here.  The name is always printed beside the icon,
+# so the icon itself is decoration (aria-hidden).
+PLATFORMS = [
+    ("macos", "macOS", "laptop"),
+    ("windows", "Windows", "window"),
+    ("linux", "Linux", "terminal"),
+    ("rpi", "Raspberry Pi", "board"),
+    ("android", "Android", "phone"),
+    ("ios", "iOS and tvOS", "tablet"),
+    ("web", "Web (Emscripten)", "globe"),
+    ("handheld", "Switch and Vita", "handheld"),
+    ("other", "Other", "box"),
 ]
+PLATFORM = dict((k, (label, icon)) for k, label, icon in PLATFORMS)
+# Groups opened by default; the long tail stays one line each until asked.
+PLATFORMS_OPEN = ("macos", "windows", "linux")
 
-# How an app package reads on the page, keyed by the part of the file name
-# after the version.  Order is display order.
+# How an app package reads on the page: (file-name regex, platform, arch
+# label, package label).  Order is display order.
 APP_KINDS = [
-    (r"-macos-universal\.zip$", "macOS", "Virtual Jaguar.app (universal zip)"),
-    (r"-windows-x64-setup\.exe$", "Windows x64", "Installer"),
-    (r"-windows-x64\.zip$", "Windows x64", "Portable zip"),
-    (r"-windows-arm64-setup\.exe$", "Windows arm64", "Installer"),
-    (r"-windows-arm64\.zip$", "Windows arm64", "Portable zip"),
-    (r"-linux-x86_64\.AppImage$", "Linux x86_64", "AppImage"),
-    (r"_amd64\.deb$", "Linux x86_64", ".deb"),
-    (r"-linux-x86_64\.flatpak$", "Linux x86_64", "Flatpak bundle"),
-    (r"-linux-aarch64\.AppImage$", "Linux aarch64", "AppImage"),
-    (r"_arm64\.deb$", "Linux aarch64", ".deb"),
+    (r"-macos-universal\.zip$", "macos", "universal", "App (zip)"),
+    (r"-windows-x64-setup\.exe$", "windows", "x64", "Installer"),
+    (r"-windows-x64\.zip$", "windows", "x64", "Portable zip"),
+    (r"-windows-arm64-setup\.exe$", "windows", "arm64", "Installer"),
+    (r"-windows-arm64\.zip$", "windows", "arm64", "Portable zip"),
+    (r"-linux-x86_64\.AppImage$", "linux", "x86_64", "AppImage"),
+    (r"_amd64\.deb$", "linux", "x86_64", ".deb"),
+    (r"-linux-x86_64\.flatpak$", "linux", "x86_64", "Flatpak"),
+    (r"-linux-aarch64\.AppImage$", "linux", "aarch64", "AppImage"),
+    (r"_arm64\.deb$", "linux", "aarch64", ".deb"),
 ]
+
+TOOL_BLURB = {
+    "jagcd-tools": "session-aware chdman for Jaguar CD images",
+    "cue2cdi": "converts CUE/BIN to CDI",
+}
+
+
+def arch_icon(arch):
+    """Icon id for an architecture or core-target string."""
+    a = arch.lower()
+    if a == "universal":
+        return "layers"
+    if a == "wasm":
+        return "cube"
+    if re.search(r"arm|aarch|rpi|cortex", a):
+        return "chip-arm"
+    return "chip"
+
+
+def core_platform(target):
+    """(platform id, short target) for the part of a core file name between
+    'virtualjaguar_libretro-' and the extension."""
+    if target.startswith("linux-rpi"):
+        return "rpi", target[len("linux-"):]
+    for prefix, plat in (("windows-", "windows"), ("macos-", "macos"),
+                         ("linux-", "linux"), ("android-", "android"),
+                         ("emscripten-", "web")):
+        if target.startswith(prefix):
+            return plat, target[len(prefix):]
+    if target.startswith("ios-"):
+        return "ios", "iOS " + target[4:]
+    if target.startswith("tvos-"):
+        return "ios", "tvOS " + target[5:]
+    if target in ("switch", "vita"):
+        return "handheld", target
+    return "other", target
 
 
 def load_releases(path):
-    """{"latest": <release>, "nightly": <release>} in the GitHub API shape.
-    Either key may be absent; a present one must look like a release."""
+    """{"latest": <release>, "nightly": <release>, "older": [<release>...]}
+    in the GitHub API shape.  Every key is optional; a present release must
+    look like one.  "older" is newest first."""
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         die("--releases %s: %s" % (path, e))
     if not isinstance(data, dict):
         die("--releases %s: expected an object with latest/nightly" % path)
-    for key in ("latest", "nightly"):
-        rel = data.get(key)
+    rels = [(k, data.get(k)) for k in ("latest", "nightly")]
+    rels += [("older[%d]" % i, r) for i, r in enumerate(data.get("older") or [])]
+    for key, rel in rels:
         if rel is None:
             continue
         if not (isinstance(rel, dict) and rel.get("tag_name")
@@ -572,20 +628,20 @@ def load_releases(path):
 
 
 GITHUB_API = "https://api.github.com/repos/" + REPO_URL[len("https://github.com/"):]
+OLDER_RELEASES = 10     # how many releases before the latest to offer
 
 
 def fetch_releases():
-    """The same {"latest", "nightly"} shape as --releases, straight from the
-    GitHub API.  Unauthenticated is fine (two requests); GH_TOKEN or
-    GITHUB_TOKEN is sent when set, which CI should do.  Any failure is
+    """The same {"latest", "nightly", "older"} shape as --releases, straight
+    from the GitHub API.  Unauthenticated is fine (three requests); GH_TOKEN
+    or GITHUB_TOKEN is sent when set, which CI should do.  Any failure is
     fatal: a publisher that cannot fetch must keep the previous deployment
     rather than publish a Download page without the links."""
     import urllib.request
     import urllib.error
     token = _os.environ.get("GH_TOKEN") or _os.environ.get("GITHUB_TOKEN")
-    out = {}
-    for key, path in (("latest", "releases/latest"),
-                      ("nightly", "releases/tags/nightly")):
+
+    def get(path):
         req = urllib.request.Request(
             "%s/%s" % (GITHUB_API, path),
             headers={"Accept": "application/vnd.github+json",
@@ -593,92 +649,345 @@ def fetch_releases():
                      **({"Authorization": "Bearer " + token} if token else {})})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                out[key] = json.loads(resp.read().decode("utf-8"))
+                return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, ValueError, OSError) as e:
             die("--releases-from-github: GET %s failed: %s" % (path, e))
+
+    out = {"latest": get("releases/latest"),
+           "nightly": get("releases/tags/nightly")}
+    listing = get("releases?per_page=30")
     for key, rel in out.items():
         if not (rel.get("tag_name") and isinstance(rel.get("assets"), list)):
             die("--releases-from-github: %s is not a release object" % key)
+    if not isinstance(listing, list):
+        die("--releases-from-github: releases listing is not a list")
+    # Tagged releases only: drafts, the rolling nightly and the rolling
+    # release-candidate prerelease are all marked draft/prerelease.
+    out["older"] = [
+        r for r in listing
+        if not r.get("draft") and not r.get("prerelease")
+        and r.get("tag_name") and r["tag_name"] != out["latest"]["tag_name"]
+        and isinstance(r.get("assets"), list)][:OLDER_RELEASES]
     return out
 
 
-def _mb(n):
+def _size(n):
     try:
-        return "%.1f MB" % (int(n) / 1048576.0)
+        n = int(n)
     except (TypeError, ValueError):
         return ""
+    if n >= 1048576:
+        return "%.1f MB" % (n / 1048576.0)
+    return "%d KB" % max(1, round(n / 1024.0))
 
 
-def _link(asset, text=None):
-    return '<a href="%s">%s</a>' % (
-        html.escape(asset["browser_download_url"], quote=True),
-        html.escape(text or asset["name"]))
+def _esc(s):
+    return html.escape(s, quote=True)
 
 
-def _app_rows(assets):
-    """[(system, label, asset)] for the app packages in a release, in
-    APP_KINDS order; packages with an unknown name are listed last as-is."""
-    rows, seen = [], set()
-    for pat, system, label in APP_KINDS:
+def _icon(icon_id):
+    return ('<svg class="ico" aria-hidden="true" focusable="false">'
+            '<use href="#i-%s"></use></svg>' % icon_id)
+
+
+def _plat_cell(plat):
+    label, icon = PLATFORM[plat]
+    return '<span class="plat-name">%s%s</span>' % (_icon(icon), _esc(label))
+
+
+def _arch_cell(arch):
+    return '<span class="arch">%s%s</span>' % (_icon(arch_icon(arch)),
+                                                _esc(arch))
+
+
+def _dl(asset, text, cls=""):
+    """A download link with the file name as its tooltip."""
+    return '<a%s href="%s" title="%s">%s</a>' % (
+        (' class="%s"' % cls) if cls else "",
+        _esc(asset["browser_download_url"]), _esc(asset["name"]), text)
+
+
+def classify_assets(assets):
+    """Sort a release's assets into the page's four lists.  Every asset
+    lands in exactly one list; nothing is dropped.
+      app:   [(platform, arch, label, asset)]
+      core:  [(platform, target, ext, asset)]
+      debug: [(platform, target, asset)]
+      tools: [(tool, platform, arch, asset)]
+      other: [asset]   (SHA256SUMS.txt and the .info file are returned by
+                        name, not listed here)
+    """
+    app, core, debug, tools, other = [], [], [], [], []
+    sums = info = None
+    seen = set()
+    for pat, plat, arch, label in APP_KINDS:
         for a in assets:
-            if APP_ASSET_RE.match(a["name"]) and re.search(pat, a["name"]):
-                rows.append((system, label, a))
+            if (APP_ASSET_RE.match(a["name"]) and a["name"] not in seen
+                    and re.search(pat, a["name"])):
+                app.append((plat, arch, label, a))
                 seen.add(a["name"])
     for a in assets:
-        if APP_ASSET_RE.match(a["name"]) and a["name"] not in seen:
-            rows.append(("Other", a["name"], a))
-    return rows
+        n = a["name"]
+        if n in seen:
+            continue
+        m_dbg = DEBUG_ASSET_RE.match(n)
+        m_core = CORE_ASSET_RE.match(n)
+        m_tool = TOOL_ASSET_RE.match(n)
+        if n == SUMS_NAME:
+            sums = a
+        elif n == INFO_NAME:
+            info = a
+        elif m_dbg:
+            # Keep the full id (linux-x86_64): out of its platform group a
+            # bare "x86_64" would not say which build the symbols belong to.
+            debug.append((core_platform(m_dbg.group(1))[0], m_dbg.group(1), a))
+        elif m_core:
+            plat, tgt = core_platform(m_core.group(1))
+            core.append((plat, tgt, "." + m_core.group(2), a))
+        elif m_tool:
+            tools.append((m_tool.group(1), m_tool.group(2),
+                          m_tool.group(3) or "", a))
+        elif APP_ASSET_RE.match(n):
+            app.append(("other", "", n, a))     # a package we have no row for
+        else:
+            other.append(a)
+    return {"app": app, "core": core, "debug": debug, "tools": tools,
+            "other": other, "sums": sums, "info": info}
 
 
-def _app_table(assets):
-    rows = _app_rows(assets)
-    if not rows:
-        return ""
-    out = ['<div class="table-wrap"><table>',
-           "<tr><th>System</th><th>Download</th><th>Size</th></tr>"]
-    for system, label, a in rows:
-        out.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>"
-                   % (html.escape(system), _link(a, label), _mb(a.get("size"))))
+def _plat_order(plat):
+    return [k for k, _l, _i in PLATFORMS].index(plat)
+
+
+def _app_table(rows):
+    """Platform / Arch / Download, one row per (platform, arch)."""
+    out = ['<div class="table-wrap"><table class="dl-table">',
+           "<thead><tr><th scope=\"col\">Platform</th>"
+           "<th scope=\"col\">Arch</th>"
+           "<th scope=\"col\">Download</th></tr></thead>"]
+    by_plat = []
+    for plat, arch, label, a in rows:
+        if not by_plat or by_plat[-1][0] != plat:
+            by_plat.append((plat, []))
+        grp = by_plat[-1][1]
+        if not grp or grp[-1][0] != arch:
+            grp.append((arch, []))
+        grp[-1][1].append((label, a))
+    for plat, archs in by_plat:
+        out.append("<tbody>")
+        for i, (arch, files) in enumerate(archs):
+            cells = []
+            if i == 0:
+                cells.append('<th scope="rowgroup" rowspan="%d">%s</th>'
+                             % (len(archs), _plat_cell(plat)))
+            cells.append("<td>%s</td>" % (_arch_cell(arch) if arch else ""))
+            cells.append('<td class="files">%s</td>' % " ".join(
+                '<span class="file">%s<small>%s</small></span>'
+                % (_dl(a, _esc(label)), _esc(_size(a.get("size"))))
+                for label, a in files))
+            out.append("<tr>%s</tr>" % "".join(cells))
+        out.append("</tbody>")
     out.append("</table></div>")
     return "\n".join(out)
 
 
-def _core_table(assets):
-    groups, seen = [], set()
-    for pat, label in CORE_GROUPS:
-        cells = []
-        for a in assets:
-            m = CORE_ASSET_RE.match(a["name"])
-            # First group wins: "Raspberry Pi" precedes "Linux" so the rpi
-            # builds are not listed twice.
-            if m and a["name"] not in seen and re.match(pat, m.group(1)):
-                seen.add(a["name"])
-                cells.append(_link(a, "<code>%s</code>" % html.escape(m.group(1))))
-        if cells:
-            groups.append((label, cells))
-    if not groups:
+def _chip(asset, target, ext, arch=None):
+    return ('<li><a class="chip" href="%s">%s<span class="t">%s</span>'
+            '<small>%s &middot; %s</small></a></li>'
+            % (_esc(asset["browser_download_url"]),
+               _icon(arch_icon(arch if arch is not None else target)),
+               _esc(target), _esc(ext), _esc(_size(asset.get("size")))))
+
+
+def _core_groups(core, debug):
+    """One <details> per platform: icon, name and count in the summary,
+    a grid of download chips inside."""
+    by = {}
+    for plat, tgt, ext, a in core:
+        by.setdefault(plat, []).append((tgt, ext, a))
+    out = []
+    for plat, _l, _i in PLATFORMS:
+        items = by.get(plat)
+        if not items:
+            continue
+        hint = ""
+        if plat == "rpi":
+            hint = ('<p class="dl-hint">Match RetroArch&#39;s word size, not '
+                    'the kernel&#39;s: <code>rpi4</code> is 32-bit, '
+                    '<code>rpi4_64</code> is 64-bit.</p>')
+        out.append(
+            '<details class="plat"%s><summary>%s<span class="count">%d '
+            'build%s</span></summary>%s<ul class="chips">%s</ul></details>'
+            % (" open" if plat in PLATFORMS_OPEN else "", _plat_cell(plat),
+               len(items), "" if len(items) == 1 else "s", hint,
+               "".join(_chip(a, tgt, ext) for tgt, ext, a in items)))
+    if debug:
+        out.append(
+            '<details class="plat"><summary><span class="plat-name">%s'
+            'Debug symbols</span><span class="count">%d bundle%s</span>'
+            '</summary><ul class="chips">%s</ul></details>'
+            % (_icon("box"), len(debug), "" if len(debug) == 1 else "s",
+               "".join(_chip(a, tgt, ".debug.tar.gz")
+                       for _p, tgt, a in debug)))
+    return "\n".join(out)
+
+
+def _tools_table(cls):
+    rows = []
+    for tool, plat, arch, a in sorted(
+            cls["tools"], key=lambda t: (t[0], _plat_order(t[1]
+                                         if t[1] in PLATFORM else "other"))):
+        rows.append(
+            '<tr><td><code>%s</code></td><td>%s%s</td><td>%s</td>'
+            '<td>%s</td></tr>'
+            % (_esc(tool), _plat_cell(plat) if plat in PLATFORM else _esc(plat),
+               (" " + _arch_cell(arch)) if arch else "",
+               _dl(a, _esc(a["name"])), _esc(_size(a.get("size")))))
+    if cls["info"]:
+        a = cls["info"]
+        rows.append('<tr><td>core info</td><td>any</td><td>%s</td><td>%s</td></tr>'
+                    % (_dl(a, _esc(a["name"])), _esc(_size(a.get("size")))))
+    for a in cls["other"]:
+        rows.append('<tr><td>other</td><td></td><td>%s</td><td>%s</td></tr>'
+                    % (_dl(a, _esc(a["name"])), _esc(_size(a.get("size")))))
+    if not rows:
         return ""
-    out = ['<div class="table-wrap"><table>',
-           "<tr><th>Platform</th><th>Core builds</th></tr>"]
-    for label, cells in groups:
-        out.append("<tr><td>%s</td><td>%s</td></tr>"
-                   % (html.escape(label), " &middot; ".join(cells)))
-    out.append("</table></div>")
-    # _link escapes its text; the <code> wrapper above must survive.
-    return "\n".join(out).replace("&lt;code&gt;", "<code>").replace(
-        "&lt;/code&gt;", "</code>")
+    return ('<div class="table-wrap"><table class="dl-table">'
+            '<thead><tr><th scope="col">Tool</th><th scope="col">Platform</th>'
+            '<th scope="col">File</th><th scope="col">Size</th></tr></thead>'
+            '<tbody>%s</tbody></table></div>' % "".join(rows))
 
 
-def _tool_list(assets):
-    items = [_link(a) for a in assets if TOOL_ASSET_RE.match(a["name"])]
-    return ("<p>%s.</p>" % " &middot; ".join(items)) if items else ""
+def _panel_id(tag):
+    return "rel-" + re.sub(r"[^\w.-]", "_", tag)
+
+
+def render_panel(rel, kind, hidden, app_in=()):
+    """One release's panel.  kind is 'latest', 'nightly' or 'older'.
+    app_in: [(tag, url, label)] of the releases that ship the desktop app,
+    for the pointer shown when this one does not."""
+    tag = rel["tag_name"]
+    cls = classify_assets(rel["assets"])
+    url = rel.get("html_url") or "%s/releases/tag/%s" % (REPO_URL, tag)
+    date = (rel.get("published_at") or "")[:10]
+    badge = {"latest": ' <span class="badge good">latest</span>',
+             "nightly": ' <span class="badge warn">nightly</span>',
+             "older": ""}[kind]
+    meta = ["<strong>%s</strong>%s" % (_esc("nightly build" if kind == "nightly"
+                                             else tag), badge)]
+    if date:
+        meta.append("<time datetime=\"%s\">%s</time>" % (_esc(date), _esc(date)))
+    meta.append('<a href="%s">%s</a>' % (
+        _esc(url), "release page" if kind == "nightly" else "release notes"))
+    if cls["sums"]:
+        s = cls["sums"]
+        meta.append(_dl(s, "SHA256SUMS.txt") + " <small>(%s)</small>"
+                    % _esc(_size(s.get("size"))))
+    out = ['<div class="dl-panel" id="%s" data-rel="%s" data-kind="%s"%s>'
+           % (_esc(_panel_id(tag)), _esc(tag), kind, " hidden" if hidden else ""),
+           '<p class="dl-meta">%s</p>' % " &middot; ".join(meta)]
+    if kind == "nightly":
+        out.append('<p class="dl-note">Rebuilt from <code>develop</code> on '
+                   'every push that compiles; gated on compiling, not on the '
+                   'test suite. File names never change, so these links '
+                   'always fetch the newest build.</p>')
+
+    out.append('<h3 class="dl-h">Desktop app</h3>')
+    if cls["app"]:
+        out.append(_app_table(cls["app"]))
+    else:
+        # Point at the builds that do carry it (data-rel-link: download.js
+        # switches the panel; the href is the GitHub page without it).
+        pointers = " or ".join(
+            '<a href="%s" data-rel-link="%s">%s</a>' % (_esc(u), _esc(t), l)
+            for t, u, l in app_in if t != tag)
+        out.append('<p class="dl-empty">No desktop app in this release.%s</p>'
+                   % ((" It is in the %s." % pointers) if pointers else ""))
+    n_core = len(cls["core"])
+    out.append('<h3 class="dl-h">RetroArch core <small>%d builds</small></h3>'
+               % n_core)
+    if n_core or cls["debug"]:
+        out.append(_core_groups(cls["core"], cls["debug"]))
+    else:
+        out.append('<p class="dl-empty">No core builds are attached to this '
+                   'release.</p>')
+    tools = _tools_table(cls)
+    if tools:
+        out.append(
+            '<details class="plat tools" id="tools-%s"><summary>'
+            '<span class="plat-name">%sTools and info file</span>'
+            '<span class="count">%s</span></summary>'
+            '<p class="dl-hint"><code>jagcd-tools</code> is a session-aware '
+            '<code>chdman</code> for Jaguar CD images; <code>cue2cdi</code> '
+            'converts CUE/BIN to CDI.</p>%s</details>'
+            % (_esc(_panel_id(tag)[4:]), _icon("wrench"),
+               "%d files" % (len(cls["tools"]) + bool(cls["info"])
+                             + len(cls["other"])), tools))
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def _installer_widget():
+    """The one-line installers as tabs (JS) or three stacked blocks (no JS).
+    download.js rewrites the commands for the selected release through the
+    data-sh / data-ps attributes."""
+    sh = "curl -fsSL %s/tools/install.sh | sh" % RAW_URL
+    ps = "irm %s/tools/install.ps1 | iex" % RAW_URL
+    return """<details class="plat inst" id="installer">
+  <summary><span class="plat-name">%(i_term)sInstall with one command</span><span class="count">core, app or both, checksum-verified</span></summary>
+  <div class="inst-tabs" role="tablist" aria-label="Operating system" hidden>
+    <button type="button" role="tab" id="inst-t-sh" aria-controls="inst-p-sh" aria-selected="true">macOS, Linux, Pi</button>
+    <button type="button" role="tab" id="inst-t-ps" aria-controls="inst-p-ps" aria-selected="false" tabindex="-1">Windows</button>
+    <button type="button" role="tab" id="inst-t-pm" aria-controls="inst-p-pm" aria-selected="false" tabindex="-1">Package managers</button>
+  </div>
+  <div class="inst-panel" id="inst-p-sh" role="tabpanel" aria-labelledby="inst-t-sh">
+    <p class="inst-label"><strong>macOS, Linux, Raspberry Pi</strong></p>
+    <pre><code data-cmd="sh" data-base="%(sh)s">%(sh)s</code></pre>
+  </div>
+  <div class="inst-panel" id="inst-p-ps" role="tabpanel" aria-labelledby="inst-t-ps">
+    <p class="inst-label"><strong>Windows</strong> (PowerShell)</p>
+    <pre><code data-cmd="ps" data-base="%(ps)s">%(ps)s</code></pre>
+  </div>
+  <div class="inst-panel" id="inst-p-pm" role="tabpanel" aria-labelledby="inst-t-pm">
+    <p class="inst-label"><strong>Package managers</strong></p>
+    <p>Homebrew, winget and Scoop manifests are rendered by CI as templates in
+    <a href="%(repo)s/blob/develop/app/packaging/manifests">app/packaging/manifests</a>;
+    none is submitted yet. The Linux app also comes as a Flatpak bundle (table below).</p>
+  </div>
+  <p class="footnote">It asks what to install (<code>--what core|app|both</code>), verifies each file against
+  <code>SHA256SUMS.txt</code> and updates what you already have when run again. Selecting a release above
+  adds its <code>--channel</code>. Other options and install locations are on the
+  <a href="./#get">home page</a>.</p>
+</details>""" % {"sh": _esc(sh), "ps": _esc(ps), "repo": REPO_URL,
+                 "i_term": _icon("terminal")}
+
+
+ICON_SPRITE = """<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+<symbol id="i-laptop" viewBox="0 0 16 16"><rect x="3" y="3.5" width="10" height="7"/><path d="M1.5 12.5h13"/></symbol>
+<symbol id="i-window" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10"/><path d="M2 6h12M4 4.5h.5M6 4.5h.5"/></symbol>
+<symbol id="i-terminal" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10"/><path d="M4.5 6.5l2 1.5-2 1.5M8 10.5h3"/></symbol>
+<symbol id="i-board" viewBox="0 0 16 16"><rect x="1.5" y="3" width="13" height="10"/><rect x="4.5" y="5.5" width="4" height="5"/><path d="M10.5 6h2M10.5 8h2M10.5 10h2"/></symbol>
+<symbol id="i-phone" viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1"/><path d="M7 12.5h2"/></symbol>
+<symbol id="i-tablet" viewBox="0 0 16 16"><rect x="2.5" y="2" width="11" height="12" rx="1"/><path d="M8 12h.01"/></symbol>
+<symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2.5 2.5-2.5 9.5 0 12M8 2c2.5 2.5 2.5 9.5 0 12"/></symbol>
+<symbol id="i-handheld" viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="7" rx="1.5"/><path d="M5 6.5v3M3.5 8h3M11 7.5h.01M12.5 9h.01"/></symbol>
+<symbol id="i-box" viewBox="0 0 16 16"><path d="M2 5l6-3 6 3v6l-6 3-6-3zM2 5l6 3 6-3M8 8v6"/></symbol>
+<symbol id="i-cube" viewBox="0 0 16 16"><path d="M2 5l6-3 6 3v6l-6 3-6-3zM2 5l6 3 6-3M8 8v6"/></symbol>
+<symbol id="i-wrench" viewBox="0 0 16 16"><path d="M10.5 2.5a3.5 3.5 0 0 0-3.2 4.8L2.5 12.1l1.4 1.4 4.8-4.8a3.5 3.5 0 0 0 4.8-3.2l-2 2-1.8-.4-.4-1.8z"/></symbol>
+<symbol id="i-chip" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8"/><path d="M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5"/></symbol>
+<symbol id="i-chip-arm" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8"/><circle cx="8" cy="8" r="1.4"/><path d="M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5"/></symbol>
+<symbol id="i-layers" viewBox="0 0 16 16"><rect x="2" y="2" width="8" height="8"/><rect x="6" y="6" width="8" height="8"/></symbol>
+</svg>"""
 
 
 def render_downloads(releases):
-    """The body of the Download page between the lede and the installer:
-    one section each for the app, the core, the tools and the nightly."""
-    latest = (releases or {}).get("latest")
-    nightly = (releases or {}).get("nightly")
+    """The body of the Download page below the lede: one window holding the
+    release picker, the installer widget, one panel per release and the
+    verification note."""
+    releases = releases or {}
+    latest = releases.get("latest")
+    nightly = releases.get("nightly")
+    older = releases.get("older") or []
     if not latest:
         return """<section class="win" id="app">
   <h2>Releases</h2>
@@ -692,98 +1001,78 @@ def render_downloads(releases):
   </div>
 </section>""" % {"repo": REPO_URL}
 
-    tag = latest["tag_name"]
-    tag_url = latest.get("html_url") or "%s/releases/tag/%s" % (REPO_URL, tag)
-    date = (latest.get("published_at") or "")[:10]
-    assets = latest["assets"]
-    n_assets = len(assets)
-    out = []
+    ltag = latest["tag_name"]
+    def has_app(rel):
+        return any(APP_ASSET_RE.match(a["name"]) for a in rel["assets"])
 
-    app_table = _app_table(assets)
-    if app_table:
-        out.append("""<section class="win" id="app">
-  <h2>The desktop app, %(tag)s</h2>
-  <div class="win-body">
-    <p>
-      From the <a href="%(url)s">%(tag)s release</a>%(date)s. macOS 11 or
-      later, Windows 10 or later, Linux built on Ubuntu 22.04. What the app
-      does is on the <a href="app.html">App</a> page.
-    </p>
-%(table)s
-  </div>
-</section>""" % {"tag": html.escape(tag), "url": html.escape(tag_url),
-                 "date": (" (%s)" % date) if date else "", "table": app_table})
-    else:
-        night_table = _app_table(nightly["assets"]) if nightly else ""
-        out.append("""<section class="win" id="app">
-  <h2>The desktop app</h2>
-  <div class="win-body">
-    <p>
-      The <a href="%(url)s">%(tag)s release</a> shipped before the app, so
-      until the next tagged release the app comes from the
-      <a href="%(repo)s/releases/tag/nightly">nightly build</a>, rebuilt from
-      <code>develop</code> on every push that compiles. These links always
-      point at the newest one.
-    </p>
-%(table)s
-  </div>
-</section>""" % {"tag": html.escape(tag), "url": html.escape(tag_url),
-                 "repo": REPO_URL,
-                 "table": night_table or
-                 '<p>No app packages are attached to the nightly right now; '
-                 'see the <a href="%s/releases/tag/nightly">nightly release</a>.</p>'
-                 % REPO_URL})
+    def rel_url(rel):
+        return rel.get("html_url") or "%s/releases/tag/%s" % (
+            REPO_URL, rel["tag_name"])
 
-    out.append("""<section class="win" id="core">
-  <h2>The RetroArch core, %(tag)s</h2>
-  <div class="win-body">
-    <p>
-      One file per platform; put it in RetroArch's cores folder, or let the
-      <a href="#installer">installer</a> find the right one. %(n)d files are
-      attached to the <a href="%(url)s">%(tag)s release</a>; the
-      <code>-debug.tar.gz</code> symbol bundles are listed there.
-    </p>
-%(table)s
-  </div>
-</section>""" % {"tag": html.escape(tag), "url": html.escape(tag_url),
-                 "n": n_assets, "table": _core_table(assets)})
-
-    tools = _tool_list(assets)
-    if tools:
-        out.append("""<section class="win" id="tools">
-  <h2>Tools and checksums</h2>
-  <div class="win-body">
-    <p>
-      <code>jagcd-tools</code> is a session-aware <code>chdman</code> for
-      Jaguar CD images, <code>cue2cdi</code> converts CUE/BIN to CDI,
-      <code>SHA256SUMS.txt</code> covers every file above and
-      <code>virtualjaguar_libretro.info</code> is the core's libretro info
-      file.
-    </p>
-%(tools)s
-  </div>
-</section>""" % {"tools": tools})
-
+    app_in = []
+    if has_app(latest):
+        app_in.append((ltag, rel_url(latest), "latest release"))
+    if nightly and has_app(nightly):
+        app_in.append((nightly["tag_name"], rel_url(nightly), "nightly build"))
+    panels = []
     if nightly:
-        n_url = nightly.get("html_url") or REPO_URL + "/releases/tag/nightly"
-        night_app = _app_table(nightly["assets"])
-        out.append("""<section class="win" id="nightly">
-  <h2>Nightly</h2>
-  <div class="win-body">
-    <p>
-      The <a href="%(url)s">nightly</a> is rebuilt from <code>develop</code>
-      on every push that compiles; it is gated on compiling, not on the test
-      suite. File names never change, so these links always fetch the newest
-      build. The core files use the same names as a release, under
-      <code>releases/download/nightly/</code>.
-    </p>
-%(table)s
-  </div>
-</section>""" % {"url": html.escape(n_url),
-                 "table": night_app or
-                 "<p>The nightly currently carries only the core.</p>"})
+        panels.append(render_panel(nightly, "nightly", True, app_in))
+    panels.append(render_panel(latest, "latest", False, app_in))
+    for r in older:
+        panels.append(render_panel(r, "older", True, app_in))
 
-    return "\n\n".join(out)
+    # The picker.  Hidden until download.js runs: without it there is
+    # nothing to operate, so the no-JS note below takes its place.
+    older_opts = "".join(
+        '<option value="%s">%s%s</option>' % (
+            _esc(r["tag_name"]), _esc(r["tag_name"]),
+            _esc(" (%s)" % r["published_at"][:10]) if r.get("published_at")
+            else "") for r in older)
+    picker = ['<div class="dl-picker" hidden>',
+              '<span class="dl-label" id="dl-pick-label">Release</span>',
+              '<div class="dl-seg" role="group" aria-labelledby="dl-pick-label">']
+    if nightly:
+        picker.append('<button type="button" class="dl-btn" data-rel="nightly" '
+                      'aria-pressed="false">Nightly</button>')
+    picker.append('<button type="button" class="dl-btn" data-rel="%s" '
+                  'aria-pressed="true">Latest <code>%s</code></button>'
+                  % (_esc(ltag), _esc(ltag)))
+    picker.append("</div>")
+    if older:
+        picker.append(
+            '<label class="dl-older"><span class="sr-only">Older releases'
+            '</span><select id="dl-older"><option value="">Older releases '
+            '(%d)</option>%s</select></label>' % (len(older), older_opts))
+    picker.append('<p class="sr-only" id="dl-status" role="status" '
+                  'aria-live="polite"></p></div>')
+
+    nojs = ('<p class="dl-nojs">Showing %s, the latest release. '
+            '<a href="%s/releases/tag/nightly">Nightly build</a> &middot; '
+            '<a href="%s/releases">All releases</a> on GitHub.</p>'
+            % (_esc(ltag), REPO_URL, REPO_URL))
+
+    return """%(sprite)s
+<section class="win dl" id="app">
+  <h2>Downloads</h2>
+  <div class="win-body">
+%(nojs)s
+%(picker)s
+%(installer)s
+%(panels)s
+    <p class="footnote" id="verify">
+      Compare a download's SHA-256 with its line in <code>SHA256SUMS.txt</code>
+      (<code>shasum -a 256 &lt;file&gt;</code> on macOS and Linux,
+      <code>Get-FileHash &lt;file&gt;</code> in PowerShell). The macOS app is
+      Developer ID signed and notarized; the Windows installer is not yet
+      code-signed, so SmartScreen may warn; the core files are unsigned.
+      <a href="%(repo)s/blob/develop/app/packaging/README.md">Packaging details</a>.
+    </p>
+  </div>
+</section>
+<script src="assets/js/download.js" defer></script>""" % {
+        "sprite": ICON_SPRITE, "nojs": nojs, "picker": "\n".join(picker),
+        "installer": _installer_widget(), "panels": "\n".join(panels),
+        "repo": REPO_URL}
 
 
 def latest_link_html(releases):
@@ -795,6 +1084,128 @@ def latest_link_html(releases):
         return 'latest: <a href="%s"><strong>%s</strong></a>' % (
             html.escape(url), html.escape(latest["tag_name"]))
     return '<a href="%s/releases">Releases</a>' % REPO_URL
+
+
+# ------------------------------------------------------------ release log
+#
+# The home page's release log is generated from docs/RELEASE_NOTES_v*.md, so a
+# new release appears on the site as soon as its notes are committed.  Each
+# row's summary is the notes file's own opening paragraph (the bold tagline
+# under the "# Virtual Jaguar libretro vX.Y.Z" heading), trimmed to whole
+# sentences.  Nothing is typed into the page by hand.
+
+NOTES_DIR = ROOT / "docs"
+NOTES_RE = re.compile(r"^RELEASE_NOTES_v(\d+)\.(\d+)\.(\d+)\.md$")
+RELEASE_LOG_MIN_MAJOR = 3      # v2.x predates the libretro rework; GitHub has it
+RELEASE_LOG_SHOWN = 5          # newest rows visible; the rest sit in a <details>
+RELEASE_LOG_SUMMARY_MAX = 240  # characters, cut at a sentence boundary
+RELEASE_LOG_SUMMARY_MIN = 80   # a shorter opener takes the next sentence too
+SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+
+def release_summary(text):
+    """Opening paragraph of a notes file as one plain-text summary.
+
+    Skips the H1, takes the first paragraph, drops markdown emphasis, code
+    ticks, links and "Closes ..." bookkeeping sentences, then keeps whole
+    sentences up to RELEASE_LOG_SUMMARY_MAX characters (at least
+    RELEASE_LOG_SUMMARY_MIN, so a one-line opener is not the whole row).
+    """
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or lines[i].startswith("#")):
+        i += 1
+    para = []
+    while i < len(lines) and lines[i].strip() and not lines[i].startswith(
+            ("#", "---", "- ", "* ")):
+        para.append(lines[i].strip())
+        i += 1
+    flat = " ".join(para)
+    flat = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", flat)
+    flat = re.sub(r"https?://\S+", "", flat)
+    flat = flat.replace("**", "").replace("`", "")
+    flat = re.sub(r"\s*\(#\d+[^)]*\)", "", flat)
+    flat = re.sub(r"\s+", " ", flat).strip()
+    sentences = [x for x in SENTENCE_RE.split(flat)
+                 if x and not x.startswith("Closes")
+                 and not re.search(r"\d+ commits", x)]
+    out = ""
+    for sent in sentences:
+        if (len(out) >= RELEASE_LOG_SUMMARY_MIN
+                and len(out) + 1 + len(sent) > RELEASE_LOG_SUMMARY_MAX):
+            break
+        out = (out + " " + sent).strip()
+    return normalize_dashes(out)
+
+
+def load_release_notes(notes_dir=NOTES_DIR):
+    """[(version tuple, 'vX.Y.Z', summary)] newest first, v3+ only."""
+    found = []
+    for path in notes_dir.glob("RELEASE_NOTES_v*.md"):
+        m = NOTES_RE.match(path.name)
+        if not m:
+            continue
+        ver = tuple(int(x) for x in m.groups())
+        if ver[0] < RELEASE_LOG_MIN_MAJOR:
+            continue
+        summary = release_summary(path.read_text(encoding="utf-8"))
+        if not summary:
+            die("%s: no opening paragraph to use as the release summary"
+                % path.name)
+        found.append((ver, "v%d.%d.%d" % ver, summary))
+    if not found:
+        die("no docs/RELEASE_NOTES_v*.md files found for the release log")
+    found.sort(reverse=True)
+    return found
+
+
+def drop_unreleased(entries, releases):
+    """With release data in hand, hide notes newer than the latest release.
+
+    Notes are committed before the tag exists (docs/release-process.md), and a
+    row whose release link 404s would announce a release that has not
+    shipped.  Without release data (offline build) every notes file shows.
+    """
+    tag = ((releases or {}).get("latest") or {}).get("tag_name", "")
+    m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", tag)
+    if not m:
+        return entries
+    newest = tuple(int(x) for x in m.groups())
+    return [e for e in entries if e[0] <= newest]
+
+
+def render_release_log(entries):
+    """The home page's release table, newest first; older rows folded."""
+    def row(tag, summary):
+        return (
+            "      <tr>\n"
+            "        <td><strong>%(tag)s</strong></td>\n"
+            "        <td>%(summary)s</td>\n"
+            "        <td><a href=\"%(repo)s/releases/tag/%(tag)s\">release</a>"
+            " &middot;\n"
+            "            <a href=\"%(repo)s/blob/develop/docs/"
+            "RELEASE_NOTES_%(tag)s.md\">notes</a></td>\n"
+            "      </tr>\n" % {"tag": tag, "repo": REPO_URL,
+                              "summary": html.escape(summary)})
+
+    def table(rows):
+        return ("    <div class=\"table-wrap\"><table class=\"release-log\">\n"
+                "      <tr><th>Version</th><th>What landed</th>"
+                "<th>Links</th></tr>\n" + "".join(rows) +
+                "    </table></div>")
+
+    rows = [row(tag, summary) for _, tag, summary in entries]
+    out = table(rows[:RELEASE_LOG_SHOWN])
+    if rows[RELEASE_LOG_SHOWN:]:
+        out += (
+            "\n    <details class=\"fold\">\n"
+            "      <summary>Older releases (%s to %s)</summary>\n%s\n"
+            "    </details>"
+            % (entries[RELEASE_LOG_SHOWN][1], entries[-1][1],
+               table(rows[RELEASE_LOG_SHOWN:])))
+    out += ("\n    <p class=\"footnote\">Every release, with its binaries, is "
+            "on the <a href=\"%s/releases\">releases page</a>.</p>" % REPO_URL)
+    return out
 
 
 # ---------------------------------------------------------------- pages
@@ -1046,7 +1457,7 @@ def main():
                     help="output directory (default: _site/)")
     ap.add_argument("--releases", default=None, metavar="JSON",
                     help="GitHub release data ({\"latest\": ..., \"nightly\": "
-                         "...}) for direct download links; without it the "
+                         "..., \"older\": [...]}) for direct download links; without it the "
                          "Download page links the release pages instead")
     ap.add_argument("--releases-from-github", action="store_true",
                     help="fetch that data from the GitHub API instead "
@@ -1085,10 +1496,11 @@ def main():
     releases = (load_releases(args.releases) if args.releases
                 else fetch_releases() if args.releases_from_github else None)
     if releases:
-        print("releases: latest %s (%d assets), nightly %s"
+        print("releases: latest %s (%d assets), nightly %s, %d older"
               % (releases.get("latest", {}).get("tag_name", "-"),
                  len(releases.get("latest", {}).get("assets", [])),
-                 "present" if releases.get("nightly") else "absent"))
+                 "present" if releases.get("nightly") else "absent",
+                 len(releases.get("older") or [])))
     else:
         print("releases: none (no --releases/--releases-from-github); the "
               "Download page links the release pages, not the files")
@@ -1114,6 +1526,8 @@ def main():
         "{{DOCS_SRC_URL}}": LIBRETRO_DOCS_SRC,
         "{{DOWNLOADS}}": render_downloads(releases),
         "{{LATEST_LINK}}": latest_link_html(releases),
+        "{{RELEASE_LOG}}": render_release_log(
+            drop_unreleased(load_release_notes(), releases)),
         "{{COMPAT_TABLE}}": table_html,
         "{{COMPAT_BUILD_IDS}}":
             ", ".join("<code>%s</code>" % html.escape(b) for b in build_ids)
@@ -1194,6 +1608,8 @@ def main():
         deps = [SITE_SRC / "pages" / p] + common_deps
         if p == "compatibility.html":
             deps.append(MATRIX_MD)
+        if p == "index.html":
+            deps.extend(sorted(NOTES_DIR.glob("RELEASE_NOTES_v*.md")))
         sitemap_entries.append(
             (page_url(p), last_modified(deps, build_date, shallow)))
         print("wrote %s" % (out / p))

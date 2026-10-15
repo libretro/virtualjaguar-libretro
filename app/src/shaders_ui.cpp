@@ -48,6 +48,10 @@ Listing g_user, g_builtin;
 char g_filter[64] = "";
 std::string g_presetError;
 
+// "Getting the shader runtime" in app/README.md: system packages (openSUSE OBS), building from source.
+const char* const kShaderRuntimeDocsUrl =
+    "https://github.com/libretro/virtualjaguar-libretro/blob/develop/app/README.md#getting-the-shader-runtime";
+
 std::string builtinDir() {
     const char* b = SDL_GetBasePath();
     return b ? std::string(b) + "shaders/" : std::string();
@@ -129,13 +133,36 @@ void drawShaderSettings(App& app) {
     if (sc.libraryLoaded()) {
         ui::hint("librashader API %u: %s", sc.libraryApiVersion(), sc.libraryPath().c_str());
     } else {
-        ui::coloredWrapped(ui::vec4(ui::pal().warning),
-                           ("librashader not available: " + sc.libraryError()).c_str());
-        ImGui::TextWrapped(
-            "Shaders need the librashader library (MPL-2.0). Put %s next to the app, or in the "
-            "librashader folder of the data directory, or install it system-wide. Without it the "
-            "picture is drawn plain; nothing else changes.",
-            ShaderChain::libraryFileName());
+        // Say WHY, in the user's terms; informational only (nothing is installed or downloaded
+        // from here).  The docs section lists how to get a system copy.
+        const char* leaf = ShaderChain::libraryFileName();
+        std::string head;
+        switch (sc.libraryStatus()) {
+            case ShaderChain::LibraryStatus::NoSupport:
+                head = "Shaders are not available: this build was made without librashader support.";
+                break;
+            case ShaderChain::LibraryStatus::LoadFailed:
+                head = "Shader runtime failed to load: " + sc.libraryError();
+                break;
+            case ShaderChain::LibraryStatus::NotFound:
+            default:
+                head = ShaderChain::runtimeBundled()
+                           ? std::string("The shader runtime that ships with this build is missing (") + leaf +
+                                 " was not found beside the app). " + sc.libraryError()
+                           : std::string("Shader runtime not bundled in this build. ") + sc.libraryError();
+                break;
+        }
+        ui::coloredWrapped(ui::vec4(ui::pal().warning), head.c_str());
+        if (sc.libraryStatus() != ShaderChain::LibraryStatus::NoSupport) {
+            ImGui::TextWrapped(
+                "Without it the picture is drawn plain; nothing else changes. To use your own copy of "
+                "librashader (MPL-2.0 or GPL-3.0), put %s next to the app, in the librashader folder "
+                "of the data directory, or on the system library path. Where to get one:",
+                leaf);
+            ui::hint("%s", kShaderRuntimeDocsUrl);
+            if (ImGui::Button("Open documentation")) SDL_OpenURL(kShaderRuntimeDocsUrl);
+            ImGui::SameLine();
+        }
         if (ImGui::Button("Check again")) {
             sc.probeLibrary(true);
             sc.retry();

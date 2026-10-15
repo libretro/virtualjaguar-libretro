@@ -123,6 +123,9 @@ public:
     // key is lib::coverKey): a cover set on the tile or a PNG in <data>/covers/ shows for unidentified discs too;
     // only identified titles ever reach the network.
     ArtView art(const lib::Entry& e);
+    // Entries of a section whose tile looked for art and found none (a transient failure waiting to retry counts
+    // too, so the answer does not blink while it does).  Tiles never drawn are not counted.
+    size_t missingArt(lib::Section section);
 
     // ---- custom covers (PNG, copied into <data>/covers/custom/) ----
     bool setCover(const lib::Entry& e, const std::string& imagePath);
