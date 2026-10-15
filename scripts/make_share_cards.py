@@ -171,8 +171,8 @@ def icon_svgs():
     """(rounded, full_bleed) SVG text derived from the app icon.
 
     rounded: viewBox cropped to the icon's rounded square, so a 16px favicon
-    spends no pixels on the transparent margin.  full_bleed: the same, with
-    the gradient painted behind the corners too -- an opaque square for
+    spends no pixels on the transparent margin.  full_bleed: the same crop
+    with a square in place of the rounded square -- opaque, for
     apple-touch-icon.  Both edits anchor on the SVG's current structure and
     fail loudly if it changes rather than emitting a wrong icon.
     """
@@ -183,9 +183,16 @@ def icon_svgs():
             "icon_svgs()" % ICON_SVG)
     rounded = re.sub(r"<!--.*?-->\s*", "", src, flags=re.S)
     rounded = rounded.replace(vb, 'viewBox="64 64 896 896"')
-    full = rounded.replace(
+    # full_bleed swaps the two rounded rects (fill and the faint outline
+    # stroke, which would show as a ring inside the square) for a square.
+    full, n = re.subn(r'\s*<rect x="64" y="64" width="896" height="896" '
+                      r'rx="200"[^>]*/>', "", rounded)
+    if n != 2:
+        die("%s no longer has the two rounded rects icon_svgs() expects"
+            % ICON_SVG)
+    full = full.replace(
         "</defs>",
-        '</defs>\n  <rect x="0" y="0" width="1024" height="1024" '
+        '</defs>\n  <rect x="64" y="64" width="896" height="896" '
         'fill="url(#bg)"/>', 1)
     return rounded, full
 

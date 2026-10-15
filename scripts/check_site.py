@@ -10,7 +10,9 @@ true as pages are edited.  Run in CI right after the build:
 Checks, per page: exactly one <h1>, lang="en", non-empty descriptive alt on
 every image, every local href/src resolves inside the output, no leftover
 {{PLACEHOLDER}}, canonical == og:url == the sitemap <loc>, the full Open
-Graph / Twitter card set present with an absolute image that exists, JSON-LD
+Graph / Twitter card set present with an absolute image that exists
+(twitter:image == og:image, width/height tags matching the PNG, under 1 MB),
+rel=icon and rel=apple-touch-icon links present, JSON-LD
 parses and is the expected @type.  Site-wide: titles and descriptions are
 distinct, sitemap.xml is well-formed and lists exactly the generated pages,
 robots.txt carries an absolute Sitemap: line, no page contains an em or en
