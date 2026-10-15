@@ -264,6 +264,15 @@ static void testFallback() {
 
 // Optional (VJ_TEST_SLANG_DIR=<slang-shaders checkout>): the parser against ~1500
 // real presets.  Not part of the default run; prints what it finds.
+static void testArraysOfArraysList() {
+    CHECK(presetNeedsArraysOfArrays("crt/crt-geom.slangp"), "relative path");
+    CHECK(presetNeedsArraysOfArrays("/x/slang-shaders/crt/crt-geom.slangp"), "clone path");
+    CHECK(presetNeedsArraysOfArrays("C:\\ss\\crt\\crt-geom.slangp"), "Windows separators");
+    CHECK(!presetNeedsArraysOfArrays("/x/mycrt/crt-geom.slangp"), "match stops at a separator");
+    CHECK(!presetNeedsArraysOfArrays("crt/crt-lottes.slangp"), "crt-lottes compiles on GL 4.1");
+    CHECK(!presetNeedsArraysOfArrays(""), "empty path");
+}
+
 static void testRealCheckout() {
     const char* dir = std::getenv("VJ_TEST_SLANG_DIR");
     if (!dir || !*dir) return;
@@ -291,6 +300,7 @@ static int runUnit() {
     testRect();
     testPresetParsing();
     testFallback();
+    testArraysOfArraysList();
     testRealCheckout();
     std::printf("shader_tests unit: %s (%s headers)\n", g_fail ? "FAIL" : "OK",
                 ShaderChain::builtWithHeaders() ? "with" : "without");
@@ -330,6 +340,12 @@ static int runBundled() {
     for (const char* rel : kBundledMustWork) {
         PresetInfo p = inspectPreset(root + rel);
         CHECK(p.ok, "%s: %s", rel, p.error.c_str());
+    }
+    // The needs-GL-4.3 list names bundled files: a slang-shaders bump that renames one
+    // must fail here, not quietly stop greying it out.
+    for (const char* rel : presetsNeedingArraysOfArrays()) {
+        CHECK(inspectPreset(root + rel).ok, "arrays-of-arrays list: %s is not a valid bundled preset", rel);
+        CHECK(presetNeedsArraysOfArrays(root + rel), "%s: full path should match", rel);
     }
     CHECK(fs::exists(fs::u8path(root + "NOTICE-virtualjaguar.txt")), "notice file");
     CHECK(fs::exists(fs::u8path(root + "crt/shaders/crt-royale/LICENSE.TXT")), "crt-royale licence travels with it");
@@ -572,11 +588,16 @@ static int runGl() {
     {
         std::string root = VJ_SLANG_DIR;
         if (!root.empty() && root.back() != '/') root += '/';
-        for (const char* rel : kBundledMustWork) {
+        std::vector<const char*> rels(std::begin(kBundledMustWork), std::end(kBundledMustWork));
+        for (const char* rel : presetsNeedingArraysOfArrays())
+            if (std::find_if(rels.begin(), rels.end(), [&](const char* r) { return std::strcmp(r, rel) == 0; }) == rels.end())
+                rels.push_back(rel);
+        for (const char* rel : rels) {
             if (!fs::exists(fs::u8path(root + rel))) continue;   // bundling was skipped
-            // crt-geom declares GL_ARB_arrays_of_arrays, which macOS's GL 4.1 lacks: there it
-            // must fall back cleanly (that is itself the check), elsewhere it must render.
-            bool optional = std::strstr(rel, "crt-geom") != nullptr;
+            // Presets that need arrays of arrays (GL 4.3) must render where the context has
+            // them, and elsewhere (macOS, GL 4.1) fail cleanly with that reason: the check
+            // that keeps presetsNeedingArraysOfArrays() honest in both directions.
+            bool optional = presetNeedsArraysOfArrays(rel);
             ShaderChain ex;
             ex.setLibrarySearchDirs({});
             ex.enabled = true;
@@ -595,8 +616,14 @@ static int runGl() {
             }
             std::printf("bundled %s: %s (energy %ld)%s%s\n", rel, t && sum > 0 ? "renders" : "FAILS", sum,
                         t ? "" : " -- ", t ? "" : (used ? ex.lastError().c_str() : e2.c_str()));
-            if (optional && !t) CHECK(!ex.lastError().empty() && !ex.active(), "%s: failure must be clean", rel);
-            else CHECK(t != 0 && sum > 0, "%s did not render a picture", rel);
+            if (optional && !ex.glHasArraysOfArrays()) {
+                CHECK(t == 0 && !ex.active(), "%s rendered on GL %s: drop it from the arrays-of-arrays list", rel,
+                      ex.glVersionText().c_str());
+                CHECK(ex.lastError().find("needs OpenGL 4.3") != std::string::npos,
+                      "%s: expected the arrays-of-arrays explanation, got: %s", rel, ex.lastError().c_str());
+            } else {
+                CHECK(t != 0 && sum > 0, "%s did not render a picture", rel);
+            }
             ex.destroyGL();
         }
     }

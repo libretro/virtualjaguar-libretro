@@ -88,6 +88,16 @@ void drawList(App& app, Listing& l, const char* id, float height) {
             if (!f.empty() && lowerStr(rel).find(f) == std::string::npos) continue;
             std::string full = l.root + rel;
             bool sel = (full == app.video.shader.preset);
+            // Shown, not hidden: a filter for "crt-geom" should find it and say why it is grey.
+            if (!app.video.shader.glHasArraysOfArrays() && presetNeedsArraysOfArrays(rel)) {
+                std::string label = rel + "  (needs OpenGL 4.3)";
+                ImGui::Selectable(label.c_str(), sel, ImGuiSelectableFlags_Disabled);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("This preset uses arrays of arrays, which need OpenGL 4.3.\n"
+                                      "This system has OpenGL %s (macOS stops at 4.1).",
+                                      app.video.shader.glVersionText().c_str());
+                continue;
+            }
             if (ImGui::Selectable(rel.c_str(), sel)) applyPreset(app, full);
             if (sel) ImGui::SetItemDefaultFocus();
         }
