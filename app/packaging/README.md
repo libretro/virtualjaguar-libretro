@@ -6,7 +6,7 @@ CI builds every installable package from one reusable workflow,
 | Caller | When | Result |
 |---|---|---|
 | `release.yml` | tag `v*`, push to `develop`, push to `release/**` | artifacts are attached next to the core assets (release / rolling `nightly` / rolling `prerelease`) and listed in `SHA256SUMS.txt` |
-| `app.yml` | pull requests | unsigned artifacts plus one sticky PR comment linking them |
+| `app.yml` | pull requests | artifacts plus one sticky PR comment linking them; signed and notarized like a release when the secrets exist (same-repo PRs), ad-hoc signed for fork PRs |
 | manual dispatch | on demand | artifacts only; the `sign` input exercises the signing path |
 
 ## Assets
@@ -46,8 +46,8 @@ build tree had (`check-payload.sh`).
 
 ## Secrets the maintainer must add
 
-Nothing is signed until these exist; without them forks, PRs and the first runs still build, with a
-warning in the log. Repository secrets (Settings > Secrets and variables > Actions):
+Nothing is Developer ID signed until these exist; without them forks, PRs and the first runs still build
+(macOS ad-hoc signed), with a warning in the log. Repository secrets (Settings > Secrets and variables > Actions):
 
 macOS (Developer ID + notarization, existing Apple Developer account):
 
@@ -71,9 +71,34 @@ The SignPath steps are written to the action's documented interface but have **n
 adjust them against the artifact configuration SignPath gives you (they sign `virtualjaguar.exe` before
 packaging and the installer after).
 
-Signing runs only when the caller asks (`release.yml` does, PRs do not) and the secrets exist. PR builds
-are never notarized: a notarization round trip per push is slow and the PRs come from branches that
-should not get certificate access by default.
+Signing runs when the caller asks (`release.yml` and `app.yml` do; a manual dispatch needs the `sign`
+input) and the secrets exist. GitHub passes no secrets to a fork pull request, so those builds stay
+ad-hoc signed and the log warns.
+
+### Every macOS build is signed (#989)
+
+All the macOS files people download are signed with the Developer ID Application certificate (hardened
+runtime, secure timestamp) and notarized, by one composite action,
+[`.github/actions/macos-sign`](../../.github/actions/macos-sign/action.yml), which wraps
+[`macos/codesign.sh`](macos/codesign.sh). It imports the certificate into a temporary keychain that is
+always deleted again, signs, submits one zip per call to `notarytool` (API key auth), and staples bundles.
+
+| What | Where | Stapled |
+|---|---|---|
+| `Virtual Jaguar.app` in the macOS zip | `app-package.yml` (PRs, nightlies, tags, dispatch with `sign`) | yes |
+| `virtualjaguar` binary, artifact `virtualjaguar-macOS arm64` | `app.yml` | no |
+| `virtualjaguar_libretro-macos-{arm64,x86_64}.dylib` | `release.yml` (tags, nightly, prerelease) | no |
+| `cue2cdi-macos-universal` | `release.yml` | no |
+| `chdman`, `jagcd-chd-check` in `jagcd-tools-macos.zip` | `chdman-tools.yml` | no |
+
+A bare Mach-O file cannot hold a stapled ticket: it is notarized inside a zip and Gatekeeper looks the
+ticket up online the first time. iOS and tvOS dylibs are not signed here (a Developer ID does not apply
+to them; Provenance signs them when it embeds them). A notarization failure (an Apple outage, a timeout)
+fails the step on a tag and only warns anywhere else, so PR CI keeps the signed-but-unnotarized build.
+Without the secrets the action prints the warning and does nothing.
+
+The secrets reach a same-repo pull request's workflow run, so anyone with write access to the repository
+can have CI sign a file. Keep that in mind when granting write access.
 
 ## Signing locally
 
@@ -175,8 +200,9 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   `ditto -c -k --sequesterRsrc --keepParent` (the stapled ticket and signature travel inside the app). CI
   unpacks the finished zip and re-verifies the signature (and, when signed, the staple and Gatekeeper's
   verdict) on the unpacked app. The zip itself is never notarized separately; Apple's ticket is on the app.
-* **Unsigned builds** are ad-hoc signed (`codesign -s -`), which Apple Silicon requires; Gatekeeper
-  still refuses them until right-click > Open or `xattr -dr com.apple.quarantine`.
+* **Builds without the secrets** (fork pull requests, local builds) are ad-hoc signed (`codesign -s -`),
+  which Apple Silicon requires; Gatekeeper still refuses them until right-click > Open or
+  `xattr -dr com.apple.quarantine`.
 
 ## Shader runtime (librashader)
 

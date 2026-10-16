@@ -1,0 +1,81 @@
+name: Sign and notarize macOS builds
+description: >-
+  Developer ID sign (hardened runtime, secure timestamp) and notarize macOS binaries and .app bundles
+  with a temporary keychain that is always deleted.  Does nothing but print a warning when the APPLE_*
+  secrets are empty (fork pull requests never receive them).  Needs the repository checked out (it
+  drives app/packaging/macos/codesign.sh) and a macOS runner.  Issue #989.
+
+# Composite actions cannot read `secrets`, so the five values come in as inputs:
+#
+#   - uses: ./.github/actions/macos-sign
+#     with:
+#       paths: |
+#         dist/virtualjaguar_libretro-macos-arm64.dylib
+#         dist/cue2cdi-macos-universal
+#       apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+#       ... (the other four)
+#
+# Bundles (*.app) are signed inside-out with app/packaging/macos/entitlements.plist, notarized, and the
+# ticket is stapled into them.  Bare Mach-O files (dylibs, CLI tools) are signed one by one and
+# notarized inside a zip; they cannot be stapled, so Gatekeeper looks the ticket up online.
+#
+# A notarization failure (Apple outage, timeout, rejection) FAILS the step on a tag and only WARNS
+# everywhere else: the signed-but-unnotarized files are kept, so a notary outage cannot fail PR CI.
+
+inputs:
+  paths:
+    description: "Files or .app bundles to sign, one per line (blank lines ignored)."
+    required: true
+  notarize:
+    description: "Submit the signed files to Apple's notary service and wait for the verdict."
+    required: false
+    default: 'true'
+  entitlements:
+    description: "Entitlements plist applied to the BARE Mach-O files (bundles always use app/packaging/macos/entitlements.plist)."
+    required: false
+    default: ''
+  apple-developer-id-p12-base64:
+    description: "Developer ID Application certificate + private key, base64 .p12 (secret APPLE_DEVELOPER_ID_P12_BASE64)."
+    required: false
+    default: ''
+  apple-developer-id-p12-password:
+    description: "Password of that .p12 (secret APPLE_DEVELOPER_ID_P12_PASSWORD)."
+    required: false
+    default: ''
+  apple-notary-key-id:
+    description: "App Store Connect API key id (secret APPLE_NOTARY_KEY_ID)."
+    required: false
+    default: ''
+  apple-notary-issuer-id:
+    description: "App Store Connect issuer UUID (secret APPLE_NOTARY_ISSUER_ID)."
+    required: false
+    default: ''
+  apple-notary-key-p8-base64:
+    description: "App Store Connect API key, base64 .p8 (secret APPLE_NOTARY_KEY_P8_BASE64)."
+    required: false
+    default: ''
+
+outputs:
+  signed:
+    description: "'true' when the files were Developer ID signed, 'false' when the secrets were missing."
+    value: ${{ steps.sign.outputs.signed }}
+  notarized:
+    description: "'true' when Apple accepted the submission, 'false' when it was skipped or failed on a non-tag ref."
+    value: ${{ steps.sign.outputs.notarized }}
+
+runs:
+  using: composite
+  steps:
+    - name: Developer ID sign and notarize
+      id: sign
+      shell: bash
+      env:
+        VJ_PATHS: ${{ inputs.paths }}
+        VJ_NOTARIZE: ${{ inputs.notarize }}
+        VJ_ENTITLEMENTS: ${{ inputs.entitlements }}
+        APPLE_DEVELOPER_ID_P12_BASE64: ${{ inputs.apple-developer-id-p12-base64 }}
+        APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ inputs.apple-developer-id-p12-password }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+        APPLE_NOTARY_KEY_P8_BASE64: ${{ inputs.apple-notary-key-p8-base64 }}
+      run: bash "$GITHUB_ACTION_PATH/sign.sh"

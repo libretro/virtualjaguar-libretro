@@ -7,6 +7,17 @@ name: CHD tools
 on:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64:
+        required: false
+      APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
+      APPLE_NOTARY_KEY_P8_BASE64:
+        required: false
 
 permissions:
   contents: read
@@ -145,7 +156,26 @@ jobs:
             docs/jagcd-chd.md dist-jagcd/
           chmod +x dist-jagcd/jagcd-to-chd dist-jagcd/jagcd-chd-check \
             dist-jagcd/chdman dist-jagcd/chdman.exe 2>/dev/null || true
-          cd dist-jagcd && zip -r ../${{ matrix.artifact }}.zip .
+
+      # macOS: the two compiled tools get a Developer ID signature + notarization before they are
+      # zipped (#989).  jagcd-to-chd is a shell script and needs neither.  Without the APPLE_*
+      # secrets the action only warns.
+      - name: Developer ID sign and notarize (macOS tools)
+        if: matrix.os == 'macos-latest'
+        uses: ./.github/actions/macos-sign
+        with:
+          paths: |
+            dist-jagcd/chdman
+            dist-jagcd/jagcd-chd-check
+          notarize: 'true'
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+
+      - name: Zip
+        run: cd dist-jagcd && zip -r ../${{ matrix.artifact }}.zip .
 
       - uses: actions/upload-artifact@v7
         with:

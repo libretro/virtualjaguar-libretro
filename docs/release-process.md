@@ -198,8 +198,12 @@ in place with `--clobber`, as before.
 - **Gating.** A tagged release needs the app job to succeed (or be skipped); re-run the failed jobs
   and the release follows. The nightly waits for it but does not require it, like the jagcd tools,
   so an Apple notarization outage cannot withhold the core nightly.
-- **Signing** is optional and secret-driven (macOS Developer ID + notarization, Windows SignPath);
-  without the secrets the packages are built unsigned and the log warns. The secrets, the
+- **Signing** is optional and secret-driven (macOS Developer ID + notarization, Windows SignPath).
+  Every macOS file we ship is Developer ID signed and notarized: the app, the macOS core dylibs,
+  `cue2cdi-macos-universal` and the macOS chdman/jagcd tools (composite action
+  `.github/actions/macos-sign`); same-repo PR app packages are too. Without the secrets (fork PRs) the
+  macOS app is ad-hoc signed, everything else unsigned, and the log warns. A notarization failure fails
+  a tag build and only warns on other refs. The secrets, the
   hardened-runtime reasoning and the manual steps are in [`app/packaging/README.md`](../app/packaging/README.md).
 - **After the release**, a maintainer fills the Homebrew, winget, Scoop and Flatpak templates from
   the published `SHA256SUMS.txt` (`app/packaging/manifests/render.sh`) and submits them. CI never
