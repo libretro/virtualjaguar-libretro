@@ -637,6 +637,18 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
 
          if (validVector)
             jaguarRunAddress = candidate;
+         /* An erased universal header ($FFFFFFFF at $404) is not a raw
+          * code stream at $800000 either: Phase Zero (2000) (PD) (issue
+          * #974) is the signed [a1] dump with the boot block and $400-$40B
+          * wiped to $FF, so $800000 is $FFFF (line-F) while the program
+          * still starts at $802000, the address [a1]'s vector names.
+          * Patching only $404 renders frames byte-identical to [a1]. */
+         else if (candidate == 0xFFFFFFFF
+               && cart_entry_looks_like_68k(GET16(jagMemSpace, 0x802000)))
+         {
+            LOG_INF("[CART] cart+$404 is erased ($FFFFFFFF); entering at $802000\n");
+            jaguarRunAddress = 0x802000;
+         }
          else
          {
             LOG_INF("[CART] cart+$404 ($%08X) is not a valid execute address; "
