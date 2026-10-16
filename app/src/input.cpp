@@ -129,6 +129,7 @@ void InputManager::setPadFilter(int f) {
     for (Pad& p : pads_) {
         if (p.handle) SDL_CloseGamepad(p.handle);
         holds_.forget((uint32_t)p.id);
+        guard_.forget((uint32_t)p.id);
     }
     pads_.clear();
     int n = 0;
@@ -237,6 +238,7 @@ bool InputManager::handleEvent(const SDL_Event& e) {
         for (size_t i = 0; i < pads_.size(); i++) {
             if (pads_[i].id == e.gdevice.which) {
                 holds_.forget((uint32_t)pads_[i].id);
+                guard_.forget((uint32_t)pads_[i].id);
                 SDL_CloseGamepad(pads_[i].handle);
                 pads_.erase(pads_.begin() + (long)i);
                 break;
@@ -251,16 +253,18 @@ void InputManager::feedHoldEdges(const SDL_Event& e) {
     // Losing focus drops the key-up / button-up with it: nothing may stay held, and nothing fires.
     if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
         holds_.clear();
+        tvMenu_ = false;
         return;
     }
-    if (capture_.active()) return;   // the press being bound is the binding's, not a hold
     const uint64_t ms = SDL_GetTicks();   // one clock for both edges and tickHolds()
+    // Only DOWN edges are gated (by a bind capture: the press being bound is the binding's, not a hold); an UP edge
+    // is always fed, or an input pressed before the capture and let go during it would stay down forever.
     if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-        holds_.press((uint32_t)e.gbutton.which, Binding::button((int)e.gbutton.button), ms);
+        if (!capture_.active()) holds_.press((uint32_t)e.gbutton.which, Binding::button((int)e.gbutton.button), ms);
     } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
         holds_.release((uint32_t)e.gbutton.which, Binding::button((int)e.gbutton.button), ms);
     } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
-        if (!uiWantsKeyboard && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)))
+        if (!capture_.active() && !uiWantsKeyboard && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)))
             holds_.press(kKeyboardDev, Binding::key((int)e.key.scancode), ms);
     } else if (e.type == SDL_EVENT_KEY_UP) {
         // Always: a key that went down before a text box or a chord took the keyboard must still come up.
@@ -289,6 +293,15 @@ void InputManager::armReleaseGuard() {
         snapshotPad(p.handle, s);
         guard_.arm((uint32_t)p.id, s);
     }
+    // After the guard has the raw state: whatever is still down is the guard's now, so its release must not count
+    // as a tap or a hold for the arbiter.
+    holds_.clear();
+}
+
+void InputManager::clearHolds() {
+    holds_.clear();
+    tvMenu_ = false;
+    armReleaseGuard();
 }
 
 std::vector<SDL_Gamepad*> InputManager::padHandles() const {

@@ -359,6 +359,24 @@ static void testGuardDetails() {
     CHECK(!g.armed());
 }
 
+static void testGuardForget() {
+    ReleaseGuard g;
+    DeviceSnapshot d{};
+    d.btn[SDL_GAMEPAD_BUTTON_EAST] = true;
+    g.arm(DEV, d);
+    g.arm(DEV + 1, d);
+    CHECK(g.armed());
+    g.forget(DEV);
+    CHECK(g.armed());   // the other device is still masked
+    DeviceSnapshot s = d;
+    g.apply(DEV, s);
+    CHECK(s.btn[SDL_GAMEPAD_BUTTON_EAST]);   // DEV's mask is gone: East reaches the game
+    g.forget(DEV + 1);
+    CHECK(!g.armed());
+    g.forget(DEV);   // unknown device: no-op
+    CHECK(!g.armed());
+}
+
 int main() {
     testTap();
     testHold();
@@ -374,6 +392,7 @@ int main() {
     testChord();
     testGuard();
     testGuardDetails();
+    testGuardForget();
     std::printf("hold_arbiter_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

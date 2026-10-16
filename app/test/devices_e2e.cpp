@@ -567,6 +567,25 @@ static void testHoldButtons() {
         holdFrame(arb, guard, prof, eastDown);
         CHECK(east());
     }
+    // held_guide_across_handoff_never_reaches_core: Guide went down before the menu closed onto the game.  The hand-off
+    // as InputManager::armReleaseGuard() does it: the guard takes the RAW state, then the arbiter forgets the hold.  Its
+    // release is then neither a tap (the negative control is the tap case above: the same release WITHOUT the hand-off
+    // pulses #) nor a hold.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        arb.press(kPadDev, G, 0);
+        guard.arm(kPadDev, guideDown);
+        arb.clear();
+        int on = 0;
+        for (int f = 0; f < 10; f++) { holdFrame(arb, guard, prof, guideDown); on += hash(); }
+        arb.release(kPadDev, G, 200);   // a no-op for the arbiter
+        for (int f = 0; f < 8; f++) { holdFrame(arb, guard, prof, none); on += hash(); }
+        CHECKF(on == 0, "# reached the core %d times for a Guide held across the hand-off", on);
+        CHECK(arb.takeFires(5000) == 0);
+        CHECK(!guard.armed());
+    }
 }
 
 static void testLockedOptions() {

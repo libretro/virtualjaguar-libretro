@@ -76,6 +76,7 @@ public:
     void arm(uint32_t dev, const DeviceSnapshot& now);
     // Clear what is masked and still down; forget what has been released.
     void apply(uint32_t dev, DeviceSnapshot& s);
+    void forget(uint32_t dev);   // pad unplugged: its masks go
     bool armed() const;   // anything still masked
     void clear();
 

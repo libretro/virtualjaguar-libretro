@@ -97,10 +97,12 @@ public:
     // The press / release half of the hold bindings.  App::handleEvent calls it once per event, before anything
     // can consume the event, so a release is never lost.  handleEvent() itself does not feed the arbiter.
     void feedHoldEdges(const SDL_Event& e);
-    // Input ownership changed (the TV menu closed onto a game): whatever is down now stays masked until released.
+    // Input ownership changed (the TV menu closed onto a game): whatever is down now stays masked until released, and
+    // the arbiter forgets it (its later release is neither a tap nor a hold).  The guard reads the raw devices.
     void armReleaseGuard();
-    // A game was opened or closed: no hold or pulse survives into the next one.
-    void clearHolds() { holds_.clear(); }
+    // A game was opened or closed: no hold, pulse or unconsumed menu toggle survives into the next one, and what is
+    // physically down stays masked until released.
+    void clearHolds();
     std::vector<SDL_Gamepad*> padHandles() const;
     // Mouse capture.  syncMouseCapture() runs once per UI frame: it turns SDL's relative mouse
     // mode on or off from wantRelativeMouse().  `uiOpen` = a menu, popup or window is open.

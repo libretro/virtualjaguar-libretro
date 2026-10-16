@@ -177,6 +177,10 @@ void ReleaseGuard::apply(uint32_t dev, DeviceSnapshot& s) {
     }
 }
 
+void ReleaseGuard::forget(uint32_t dev) {
+    masks_.erase(std::remove_if(masks_.begin(), masks_.end(), [&](const Mask& m) { return m.dev == dev; }), masks_.end());
+}
+
 bool ReleaseGuard::armed() const { return !masks_.empty(); }
 
 void ReleaseGuard::clear() { masks_.clear(); }
