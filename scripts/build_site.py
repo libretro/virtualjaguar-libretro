@@ -465,17 +465,37 @@ def parse_cart_matrix(path):
     return rows, sorted(build_ids)
 
 
-def classify_cart_stage(stage, notes):
+def classify_cart_stage(stage, notes, mode="hle"):
     """Map a cart stage + notes to (css_class, human_label).
 
-    Same honest three-state as the CD table.  'GAME_CODE' with a
-    black-video note downgrades to warn: the title executes but headless
-    video evidence is inconclusive (headless read-path caveat)."""
+    Same honest three-state as the CD table, plus 'plain' for an
+    authentic outcome that is neither a pass nor a bug (#976).
+
+    * 'GAME_CODE' with a black-video note downgrades to warn: the title
+      executes but headless video evidence is inconclusive (headless
+      read-path caveat).
+    * In the real-BIOS column, a run whose notes never mention the
+      handoff had no boot phase at all (cart_classify.sh: bios_ran=0, a
+      RAM-loaded executable), so the cell says the boot ROM was not used
+      rather than implying it accepted the file.
+    * 'BIOS_REJECT' is the real boot ROM's red "Jaguar" reject screen
+      (#852/#744): an observed, authentic outcome, never "not verified".
+    * '? (trap_loop)' / '? (bios_trap)' are crashes (#975)."""
     s = stage.strip()
     if s == "GAME_CODE":
+        no_boot_rom = mode == "bios" and "handoff" not in notes
         if "black video" in notes:
-            return ("warn", "Runs; video undetermined headlessly")
-        return ("good", "Boots and runs")
+            return ("warn", "Boot ROM not used; runs, no picture in the test"
+                    if no_boot_rom else
+                    "Runs; no picture in the test")
+        return ("good", "Boot ROM not used; runs" if no_boot_rom
+                else "Boots and runs")
+    if s == "BIOS_REJECT":
+        return ("plain", "Rejected by the boot ROM")
+    if s.startswith("? (trap_loop"):
+        return ("bad", "Known issue: crashes at start")
+    if s.startswith("? (bios_trap"):
+        return ("bad", "Known issue: crashes after the boot ROM")
     if (s == "LOAD_FAIL" or s.startswith("? (pc_escape") or
             s.startswith("? (timeout") or
             s.startswith("? (build_mismatch") or
@@ -496,7 +516,7 @@ def render_cart_table(rows):
         notes = []
         for mode, stage_k, notes_k in (("hle", "hle_stage", "hle_notes"),
                                        ("bios", "bios_stage", "bios_notes")):
-            cls, label = classify_cart_stage(r[stage_k], r[notes_k])
+            cls, label = classify_cart_stage(r[stage_k], r[notes_k], mode)
             if cls == "good":
                 n_good[mode] += 1
             # "Reaches game code" regardless of the headless video verdict.
