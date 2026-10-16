@@ -5,7 +5,7 @@ Xenowings SFX, faster GPU idle skip, shaders on every app package.
 Full notes: docs/RELEASE_NOTES_v3.9.1.md
 
 Cart corpus byte-identical to v3.9.0 except Xenowings (SFX play),
-a frame or two of Skyhammer (GPU divide by zero) and the eleven loader
+a frame or two of Skyhammer (GPU divide by zero) and the twelve loader
 fixes below. No option keys removed; savestate format stays v17.
 
 == Core ==
@@ -22,7 +22,8 @@ fixes below. No option keys removed; savestate format stays v17.
   detach/kill, watchpoints, full monitor output (#936, #948).
 * Loader: DRI 601A executables, JAGR type 2, headerless BJL programs
   at $4000, Painter (bin) at $10000, $802000-linked images (Rayman
-  Demo, BadCode4 (rom)) -- eleven files (#971-#973, #978).
+  Demo, BadCode4 (rom)), erased $404 enters at $802000 (Phase Zero)
+  -- twelve files (#971-#974, #978, #979).
 * Legacy MSVC 2005/2010 buildbot builds link again: snprintf shim
   for the debug interface's disassembler (#981, #982).
 

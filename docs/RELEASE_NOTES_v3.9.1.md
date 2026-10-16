@@ -7,10 +7,10 @@ picker.**
 v3.9.1 is a polish release on top of v3.9.0. For RetroArch and Provenance users it brings two
 DSP/GPU accuracy fixes derived from the original chip netlists, a faster GPU idle-loop
 fast-forward, a GDB stub that works with stock gdb, a framebuffer bounds fix, loader fixes for
-eleven homebrew and demo files, and working legacy MSVC Windows builds again. With default
+twelve homebrew and demo files, and working legacy MSVC Windows builds again. With default
 settings the cartridge corpus is byte-identical to v3.9.0 except Xenowings (sound effects now
 play), a frame or two of Skyhammer (a GPU divide by zero now returns the hardware's value), and
-the eleven files the loader now places where they were linked. No option keys were removed, no
+the twelve files the loader now places where they were linked. No option keys were removed, no
 listed option values changed, and the savestate format stays v17.
 
 ---
@@ -50,17 +50,20 @@ listed option values changed, and the savestate format stays v17.
   `set endian big`. `detach` and `kill` leave the emulator running, watchpoints work (one slot),
   and long `monitor` output is no longer cut at 512 bytes; `monitor trace` shows the newest
   entries. LLDB can read memory but has no 68K target. Recipe: `docs/gdb-stub-guide.md`.
-- **Eleven homebrew and demo files load where they were linked**
+- **Twelve homebrew and demo files load where they were linked**
   (https://github.com/libretro/virtualjaguar-libretro/issues/971,
   https://github.com/libretro/virtualjaguar-libretro/issues/972,
   https://github.com/libretro/virtualjaguar-libretro/issues/973,
-  https://github.com/libretro/virtualjaguar-libretro/pull/978). The loader now reads plain
+  https://github.com/libretro/virtualjaguar-libretro/issues/974,
+  https://github.com/libretro/virtualjaguar-libretro/pull/978,
+  https://github.com/libretro/virtualjaguar-libretro/pull/979). The loader now reads plain
   GEMDOS/DRI `601A` executables (Mandelbrot Demo) and Jaguar Server `JAGR` type 2 images (INTRO,
   INTROMOD) with their own layouts. Headerless BJL programs that used to be mapped as cartridges
   now load as RAM programs at `$4000` (Hubble Fade, Hubble Nebula, Drumpad2), and Painter (bin) is
   placed at `$10000`. Images linked at `$802000` are mapped there (Rayman Demo `.jag`/`.rom`,
-  BadCode4 (Metal)/(Modified) `(rom)`). In a full corpus sweep 15 matrix cells improved and
-  none regressed; no other file loads differently.
+  BadCode4 (Metal)/(Modified) `(rom)`). A cart whose `$404` vector is erased (`$FFFFFFFF`) is
+  entered at `$802000` when a program starts there (Phase Zero (PD)). In a full corpus sweep 16
+  matrix cells improved and none regressed; no other file loads differently.
 - **Legacy MSVC builds link again**
   (https://github.com/libretro/virtualjaguar-libretro/issues/981,
   https://github.com/libretro/virtualjaguar-libretro/pull/982). The libretro buildbot's MSVC
