@@ -338,6 +338,7 @@ set(VJ_APP_SOURCES
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
     src/desktop.cpp
+    src/tv_script.cpp
     src/platform/commands.cpp
     src/platform/events.cpp
     src/platform/platform.cpp
@@ -348,7 +349,6 @@ set(VJ_APP_SOURCES
     src/tv/tv_style.cpp
     src/tv/tv_shell.cpp
     src/tv/tv_app_host.cpp
-    src/tv/tv_script.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
     src/discord_app.cpp)

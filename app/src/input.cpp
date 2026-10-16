@@ -417,6 +417,12 @@ void InputManager::poll(bool captureKeyboard) {
     // While a binding is being captured nothing reaches the core: the press being bound
     // must not also act in the game (binding Start would pause it, for one).
     if (capture_.active()) return;
+    // The TV menu has the input: the core sees neutral everything, and a relative-mouse delta gathered meanwhile does
+    // not arrive as one jump when the menu closes.
+    if (menuOwns_) {
+        accDx_ = accDy_ = 0;
+        return;
+    }
 
     // ---- keyboard ---------------------------------------------------------------------
     HostSource kb;

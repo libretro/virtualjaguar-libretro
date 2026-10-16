@@ -13,7 +13,6 @@ bool Shell::backAtRoot() const { return !open_; }   // Back on the in-game menu 
 
 bool Shell::openMenu() {
     if (open_) return true;
-    if (!host_.gameLoaded()) return false;   // phase 1: the menu belongs to a running game
     std::string why;
     if (!host_.menuPause(why)) {             // hardcore rations pausing
         host_.toast(why);
@@ -45,10 +44,14 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
     if (!ownsInput()) return false;
     switch (e.type) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-    case SDL_EVENT_GAMEPAD_BUTTON_UP:
-        if (intentForButton(e.gbutton.button) == Intent::None) return false;   // a menu button / paddle is the app's
-        nav_.padButton(e.gbutton.button, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, ms);
-        return true;
+    case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+        // D-pad, face and shoulder buttons only: Start / Share / the paddles stay the app's (they may be the TV-menu action).
+        const Intent in = intentForButton(e.gbutton.button);
+        if (in == Intent::None || in == Intent::Menu) return false;
+        const bool down = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+        nav_.padButton(e.gbutton.button, down, ms);
+        return down;   // a release is fed to the nav (it stops a repeat) but still reaches the app
+    }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         // The left stick and the two triggers only; the right stick is the game's (and the pointer's).
         if (e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTX && e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTY &&
@@ -58,11 +61,13 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
         return true;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
-        if (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) return false;   // Alt+Enter and the like: hotkeys
+        const bool down = e.type == SDL_EVENT_KEY_DOWN;
+        // Alt+Enter and the like are hotkeys (a press only: a release always reaches the nav, or a repeat could stick).
+        if (down && (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;
         const bool shift = (e.key.mod & SDL_KMOD_SHIFT) != 0;
         if (intentForKey(e.key.scancode, shift) == Intent::None) return false;   // F4 and friends are the app's
-        nav_.key(e.key.scancode, e.type == SDL_EVENT_KEY_DOWN, shift, ms);
-        return true;
+        nav_.key(e.key.scancode, down, shift, ms);
+        return down;   // a key-up still reaches the app (a Tab held for fast-forward must be let go of)
     }
     case SDL_EVENT_WINDOW_FOCUS_LOST:
     case SDL_EVENT_GAMEPAD_REMOVED:
@@ -74,10 +79,6 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
 
 void Shell::frame(uint64_t ms) {
     if (!open_) return;
-    if (!host_.gameLoaded()) {   // the game went away under the menu
-        closeMenu();
-        return;
-    }
     if (page_ == Page::Root && host_.canLoadState() != rootHasLoad_) enter(Page::Root, rows_[(size_t)focus_.index].kind);
     for (Intent in : nav_.take(ms)) {
         intent(in);
@@ -124,8 +125,8 @@ void Shell::enter(Page p, Row::Kind focusKind) {
     case Page::ConfirmClose:
         title_ = p == Page::ConfirmReset ? "Reset the game?" : "Close the game?";
         rows_.clear();
-        rows_.push_back({Row::No, "No"});   // the safe answer first: focus starts there
         rows_.push_back({Row::Yes, "Yes"});
+        rows_.push_back({Row::No, "No"});   // focus starts on the safe answer (enter() is given Row::No)
         break;
     }
     focus_ = LinearFocus();

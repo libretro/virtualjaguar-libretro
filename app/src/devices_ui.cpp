@@ -43,6 +43,7 @@ void tvInputFrame(App& app, uint64_t ms) {
     // The toggle first: a plain press of the TV-menu action (F4, a paddle) or a hold that reached the threshold on an
     // earlier call.  With no game this phase gives it no meaning.
     if (in.takeTvMenuToggle() && app.host.isLoaded()) app.tvShell().toggleMenu();
+    if (app.tvShell().menuOpen() && !app.host.isLoaded()) app.tvShell().closeMenu();   // the game went away under it
     app.tvShell().frame(ms);   // the nav intents gathered since the last frame
     // `live` = the game owns the input: loaded, running, and the TV menu not laid over it.
     in.tickHolds(ms, app.host.isLoaded() && !app.paused && !app.tvShell().menuOpen());

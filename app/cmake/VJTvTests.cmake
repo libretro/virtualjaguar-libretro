@@ -35,8 +35,10 @@ set_tests_properties(tv_focus_unit tv_nav_unit PROPERTIES TIMEOUT 60 FAIL_REGULA
 
 # The TV in-game menu and its input ownership, through the real App (headless, no ImGui): F4 / Share-hold open and
 # close it, F4 while typing or capturing does nothing, a pause survives it, Esc is Back, a pad walks it to Close game.
-# The runner attaches a virtual gamepad (SDL_AttachVirtualJoystick, tv/tv_script.cpp), which SDL supports on every OS
-# with the dummy video driver; the script times are real time (the hold arbiter reads SDL_GetTicks()).
+# The runner attaches a virtual gamepad (SDL_AttachVirtualJoystick, src/tv_script.cpp).  It relies on SDL's virtual-joystick driver (built into SDL3 on
+# every OS), on a GAMEPAD-type virtual stick mapping its button i to SDL_GamepadButton i (MISC1 included), and on gamepad
+# init being on in a headless run (App::initSdl does it when --tv-test-script is given).  Script times are real time
+# (the hold arbiter reads SDL_GetTicks()).
 set(VJ_TV_MENU_SCRIPT "${CMAKE_BINARY_DIR}/tv_menu_headless.txt")
 configure_file("${CMAKE_CURRENT_LIST_DIR}/../tests/tv_menu_headless.txt.in" "${VJ_TV_MENU_SCRIPT}" @ONLY)
 add_test(NAME tv_menu_headless

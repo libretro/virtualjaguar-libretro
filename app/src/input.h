@@ -103,6 +103,11 @@ public:
     // A game was opened or closed: no hold, pulse or unconsumed menu toggle survives into the next one, and what is
     // physically down stays masked until released.
     void clearHolds();
+    // The TV in-game menu is open (tv/tv_shell.h): it owns the pads, keyboard and pointer.  While set, poll() hands the
+    // core neutral input in every mode -- the menu pauses the game, but under netplay it cannot, and the game must not
+    // play under the menu.  Cleared BEFORE armReleaseGuard() so the guard sees what is held at the hand-back.
+    void setMenuOwnsInput(bool on) { menuOwns_ = on; }
+    bool menuOwnsInput() const { return menuOwns_; }
     std::vector<SDL_Gamepad*> padHandles() const;
     // Mouse capture.  syncMouseCapture() runs once per UI frame: it turns SDL's relative mouse
     // mode on or off from wantRelativeMouse().  `uiOpen` = a menu, popup or window is open.
@@ -172,6 +177,7 @@ private:
     PicRect pic_;
     bool helpToggle_ = false;
     bool tvMenu_ = false;
+    bool menuOwns_ = false;
     HoldArbiter holds_;
     ReleaseGuard guard_;
     bool swallowPointer_ = false;  // the click / tap that hid the controls overlay: not the game's until released

@@ -24,6 +24,7 @@
 
 #include "app.h"
 #include "devices_ui.h"
+#include "libretro.h"
 #include "tv/tv_shell.h"
 
 namespace vj {
@@ -114,10 +115,19 @@ int App::runTvScript(const CliArgs& a) {
         while (SDL_PollEvent(&ev)) handleEvent(ev, true);
     };
     drain();   // GAMEPAD_ADDED -> InputManager opens it
-    if (!joy || input.gamepadCount() == 0 || input.padHandles().empty() ||
-        !SDL_GamepadHasButton(input.padHandles().back(), SDL_GAMEPAD_BUTTON_MISC1)) {
-        std::fprintf(stderr, "headless: FAIL tv script: the virtual gamepad did not open as a pad with a Share button\n");
-        return 1;
+    {
+        // Only the virtual pad plays: a real controller on the dev machine must not steer the menu.
+        int n = 0, which = -1;
+        SDL_JoystickID* ids = SDL_GetGamepads(&n);
+        for (int i = 0; ids && i < n; i++)
+            if (ids[i] == padId) which = i;
+        SDL_free(ids);
+        if (which >= 0) input.setPadFilter(which + 1);
+        if (!joy || which < 0 || input.gamepadCount() != 1 ||
+            !SDL_GamepadHasButton(input.padHandles()[0], SDL_GAMEPAD_BUTTON_MISC1)) {
+            std::fprintf(stderr, "headless: FAIL tv script: the virtual gamepad did not open as a pad with a Share button\n");
+            return 1;
+        }
     }
 
     // ---- loop pieces --------------------------------------------------------------------------------------------
@@ -231,6 +241,13 @@ int App::runTvScript(const CliArgs& a) {
             else if (name == "paused") got = flag(paused);
             else if (name == "loaded") got = flag(host.isLoaded());
             else if (name == "capturing") got = flag(input.capturing());
+            else if (name == "core-input") {   // does the core read any Player 1 pad button / keypad key right now?
+                input.poll(true);              // the paused menu runs no emulated frame, so take the snapshot by hand
+                bool any = false;
+                for (unsigned id = 0; id <= RETRO_DEVICE_ID_JOYPAD_R3; id++)
+                    if (input.state(0, RETRO_DEVICE_JOYPAD, 0, id)) any = true;
+                got = flag(any);
+            } else if (name == "fast-forward") got = flag(fastForward);
             else if (name == "kb-bind") {   // CTL:KEY -- the keyboard profile binds KEY (plain press) to CTL
                 const size_t colon = want.find(':');
                 Ctl c = C_HELP;

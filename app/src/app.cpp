@@ -598,6 +598,7 @@ bool App::openNoContent() {
         toast("The debugger has the game halted - resume it first", 2.5, 2);
         return false;
     }
+    if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
     resumeOffer.active = false;
     autoSave();
@@ -704,6 +705,10 @@ void App::reset() {
 }
 
 void App::togglePause() {
+    if (menuHeldPause_) {   // the TV menu holds the pause: a toggle here would be overwritten when it closes
+        toast("Close the menu to resume", 1.5);
+        return;
+    }
     if (!paused) {
         // Hardcore rations pausing (rc_client_can_pause); softcore never refuses.
         std::string why;
@@ -722,7 +727,10 @@ void App::togglePause() {
 // keeps running (a pause would stall the other side), so there the menu only lays over the picture.
 bool App::menuPause(std::string& why) {
     if (menuHeldPause_) return true;   // already open
-    if (netplay.configured()) return true;
+    if (netplay.configured()) {
+        input.setMenuOwnsInput(true);   // running on, but not for the pads: the menu has them
+        return true;
+    }
     if (!paused) {
         if (!ach.allowPause(why)) return false;   // hardcore rations pausing (rc_client_can_pause)
         paused = true;
@@ -732,10 +740,12 @@ bool App::menuPause(std::string& why) {
         pausedBeforeMenu_ = true;
     }
     menuHeldPause_ = true;
+    input.setMenuOwnsInput(true);
     return true;
 }
 
 void App::menuResume() {
+    input.setMenuOwnsInput(false);   // before the caller arms the release guard
     if (!menuHeldPause_) return;
     menuHeldPause_ = false;
     if (paused != pausedBeforeMenu_) {
@@ -1087,7 +1097,9 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_KEY_UP: {
         bool captured = imguiUp_ && ImGui::GetIO().WantCaptureKeyboard;
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && !captured) handleHotkey(e.key);
-        if (!captured && host.isLoaded()) {
+        // (a key-down under the TV menu is the menu's, not the game's; a key-up always goes through, or a key pressed
+        // before the menu opened would stay down in the core)
+        if (!captured && host.isLoaded() && (e.type == SDL_EVENT_KEY_UP || !tvShell().menuOpen())) {
             unsigned rk = InputManager::retroKey(e.key.scancode);
             if (rk) host.sendKeyEvent(e.type == SDL_EVENT_KEY_DOWN, rk, 0, 0);
         }
