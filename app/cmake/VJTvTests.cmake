@@ -12,3 +12,23 @@ else()
 endif()
 add_test(NAME hold_arbiter_unit COMMAND vj_hold_arbiter_test)
 set_tests_properties(hold_arbiter_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# Focus model + style metrics (tests/tv_focus_test.cpp) and nav intents (tests/tv_nav_test.cpp): pure.
+#   tv_focus_unit   LinearFocus / GridFocus / FocusMemory / A-Z jump helpers, Metrics, Tween
+#   tv_nav_unit     NavInput (repeat, stick hysteresis, triggers, newest-direction-wins) and the intent tables
+add_executable(vj_tv_focus_test tests/tv_focus_test.cpp src/tv/tv_focus.cpp src/tv/tv_style.cpp)
+target_include_directories(vj_tv_focus_test PRIVATE src)
+add_executable(vj_tv_nav_test tests/tv_nav_test.cpp src/tv/tv_nav.cpp)
+target_include_directories(vj_tv_nav_test PRIVATE src)
+target_link_libraries(vj_tv_nav_test PRIVATE ${VJ_SDL3_TARGET})
+foreach(t vj_tv_focus_test vj_tv_nav_test)
+    if(MSVC)
+        target_compile_options(${t} PRIVATE /W3 /utf-8)
+        target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(${t} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+endforeach()
+add_test(NAME tv_focus_unit COMMAND vj_tv_focus_test)
+add_test(NAME tv_nav_unit COMMAND vj_tv_nav_test)
+set_tests_properties(tv_focus_unit tv_nav_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
