@@ -27,6 +27,12 @@ fixes below. No option keys removed; savestate format stays v17.
 * Legacy MSVC 2005/2010 buildbot builds link again: snprintf shim
   for the debug interface's disassembler (#981, #982).
 
+== Downloads ==
+* Every macOS download is signed and notarized: core dylibs,
+  cue2cdi, Jaguar CD tools and the app (#989, #990).
+* macOS chdman no longer needs Homebrew SDL3; universal binary for
+  macOS 11+ (#993, #994).
+
 == Desktop app ==
 * Shaders on Intel Macs, AppImage, .deb (librashader built from
   source, #955) and the Flatpak (#953); the Shader section explains

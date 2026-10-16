@@ -93,6 +93,19 @@ listed option values changed, and the savestate format stays v17.
   (https://github.com/libretro/virtualjaguar-libretro/pull/940); the frame-rate label no longer
   draws over menus; duplicate ImGui IDs in the disc menu, option lists and cheat lists are gone.
 
+## Downloads
+
+- **Every macOS download is signed and notarized**
+  (https://github.com/libretro/virtualjaguar-libretro/issues/989,
+  https://github.com/libretro/virtualjaguar-libretro/pull/990): the core `.dylib`s, `cue2cdi`,
+  the Jaguar CD tools and the app, so Gatekeeper opens them without a right-click. Until now only
+  the app was.
+- **The macOS Jaguar CD tools work on every Mac**
+  (https://github.com/libretro/virtualjaguar-libretro/issues/993,
+  https://github.com/libretro/virtualjaguar-libretro/pull/994). The `chdman` in
+  `jagcd-tools-macos.zip` needed Homebrew's SDL3, ran only on Apple Silicon and required macOS 26.
+  It is now built without SDL, universal (Intel and Apple Silicon), for macOS 11 and later.
+
 ## Website
 
 - The download page is regrouped by platform and architecture, with a Nightly / Latest / Older
@@ -125,7 +138,7 @@ listed option values changed, and the savestate format stays v17.
   price. Leave them off unless a title needs them.
 - **Shaders** are verified to load on every package, but rendering is only checked by hand on
   macOS (CI has no GPU).
-- **Signing.** macOS packages are signed and notarized; Windows packages are not signed yet.
+- **Signing.** Every macOS download is signed and notarized; Windows packages are not signed yet.
 - The other v3.9.0 known issues still apply (RetroAchievements for `.chd`/`.cdi`, LAN-only
   link play, second instance on double-click on Windows and Linux).
 
