@@ -149,6 +149,22 @@ jobs:
           "$exe" --headless --frames 1500 test/roms/yarc.j64 2>&1 | grep '^TIMING' || true
         done
 
+    # Developer ID sign + notarize the macOS binary people download from this artifact (#989).  The
+    # app's own entitlements apply (it may load a user's librashader).  Fork PRs have no secrets: the
+    # action then only warns and the binary keeps the linker's ad-hoc signature.
+    - name: Developer ID sign and notarize (macOS)
+      if: runner.os == 'macOS'
+      uses: ./.github/actions/macos-sign
+      with:
+        paths: app/build/virtualjaguar
+        notarize: 'true'
+        entitlements: app/packaging/macos/entitlements.plist
+        apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+        apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+        apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+        apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+
     - name: Upload binary
       uses: actions/upload-artifact@v7
       with:
@@ -162,8 +178,9 @@ jobs:
 
   # ------------------------------------------------------------------------------------------
   # Installable packages (macOS .zip, Windows .zip/-setup.exe, Linux .AppImage/.deb), built
-  # by the reusable app-package.yml that release.yml also calls for tags and nightlies.  PR
-  # packages are unsigned (no secrets are passed): see the comment below the table.
+  # by the reusable app-package.yml that release.yml also calls for tags and nightlies.  Same-repo
+  # PRs get the same Developer ID signing + notarization as a release (#989); a fork PR receives no
+  # secrets, so its macOS package stays ad-hoc signed (and the log says so).
   # ------------------------------------------------------------------------------------------
   package:
     name: Packages
@@ -173,7 +190,8 @@ jobs:
     uses: ./.github/workflows/app-package.yml
     with:
       release_tag: ${{ github.event_name == 'pull_request' && format('pr{0}', github.event.number) || 'dev' }}
-      sign: false
+      sign: true
+    secrets: inherit
 
   # One sticky comment per PR, found and updated by a hidden marker.  Skipped on fork PRs:
   # their GITHUB_TOKEN is read-only.  (The step summary lists the same links for them.)
@@ -222,9 +240,9 @@ jobs:
               '|---|---|---|',
               ...rows,
               '',
-              '> Unsigned PR builds. Downloading an artifact needs a GitHub login. macOS: right-click > Open the first time',
-              '> (or `xattr -dr com.apple.quarantine "Virtual Jaguar.app"`). Windows: SmartScreen may warn. Linux AppImage:',
-              '> `chmod +x` it. Tagged releases and nightlies are signed once the signing secrets are configured.',
+              '> Downloading an artifact needs a GitHub login. macOS: Developer ID signed and notarized (PRs from forks get',
+              '> no signing secrets and stay ad-hoc signed: right-click > Open, or `xattr -dr com.apple.quarantine "Virtual Jaguar.app"`).',
+              '> Windows: not code-signed yet, SmartScreen may warn. Linux AppImage: `chmod +x` it.',
               '',
               `<sub>Updated by CI at ${new Date().toISOString()}</sub>`,
             ].join('\n');

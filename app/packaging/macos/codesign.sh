@@ -3,8 +3,13 @@
 #
 #   codesign.sh import-cert        create a temp keychain from the P12 secrets
 #   codesign.sh sign-app <app> [adhoc]   sign inside-out (dylibs, then the bundle)
+#   codesign.sh sign-file <file> [entitlements.plist]   sign one bare Mach-O (dylib, CLI tool)
 #   codesign.sh notarize <file>    submit (zip/pkg), wait, fail on Invalid
-#   codesign.sh staple <file>      staple the ticket
+#                                  (VJ_NOTARY_FAIL_LEVEL=warning turns the ::error:: annotation into
+#                                  a ::warning::; VJ_NOTARY_TIMEOUT overrides the 45m wait)
+#   codesign.sh staple <file>      staple the ticket (bundles / dmg / pkg only; not bare Mach-O)
+#
+# CI drives all of this through the composite action .github/actions/macos-sign.
 #
 # Environment (GitHub secrets mapped by the workflow; see app/packaging/README.md):
 #   APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD   Developer ID Application cert
@@ -63,6 +68,20 @@ case "${1:-}" in
     codesign --verify --deep --strict --verbose=2 "$app"
     codesign -dv --entitlements - "$app" 2>&1 | sed -n '1,25p'
     ;;
+  sign-file)
+    # A bare Mach-O (core dylib, CLI tool): hardened runtime + secure timestamp, same identity.
+    # It cannot be stapled; notarize a zip that holds it and Gatekeeper checks the ticket online.
+    f="$2"; ent="${3:-}"
+    [ -f "$f" ] || { echo "sign-file: $f is not a file" >&2; exit 1; }
+    id="$(identity)"; [ -n "$id" ] || { echo "no identity; run import-cert" >&2; exit 1; }
+    ts=--timestamp; [ "$id" = - ] && ts=--timestamp=none
+    if [ -n "$ent" ]; then
+      codesign --force --options runtime "$ts" --entitlements "$ent" --sign "$id" "$f"
+    else
+      codesign --force --options runtime "$ts" --sign "$id" "$f"
+    fi
+    codesign --verify --strict --verbose=2 "$f"
+    ;;
   notarize)
     # Credentials, first match wins (CI uses the third; local builds the first two):
     #   VJ_NOTARY_PROFILE                       a `xcrun notarytool store-credentials` profile
@@ -86,7 +105,7 @@ case "${1:-}" in
     fi
     log="$tmp/notarytool.json"
     set +e
-    xcrun notarytool submit "$2" "${auth[@]}" --wait --timeout 45m --output-format json > "$log"
+    xcrun notarytool submit "$2" "${auth[@]}" --wait --timeout "${VJ_NOTARY_TIMEOUT:-45m}" --output-format json > "$log"
     rc=$?
     set -e
     cat "$log"
@@ -95,7 +114,7 @@ case "${1:-}" in
       subid="$(sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' "$log" | head -1)"
       [ -n "$subid" ] && xcrun notarytool log "$subid" "${auth[@]}" || true
       [ -z "$made_p8" ] || rm -f "$p8"
-      echo "::error::notarization of $2 ended '$status'"
+      echo "::${VJ_NOTARY_FAIL_LEVEL:-error}::notarization of $2 ended '$status'"
       exit 1
     fi
     [ -z "$made_p8" ] || rm -f "$p8"
