@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 #include "theme.h"
 #include "tv/tv_shell.h"
@@ -82,6 +83,11 @@ void Shell::drawMenu(ImVec2 pos, ImVec2 size) {
     const float rowH = (slotPage ? 124 : 88) * m.u, gap = 14 * m.u;
     const float listH = hintY - 24 * m.u - listY;
     const int visible = std::max(1, (int)((listH + gap) / (rowH + gap)));
+    // The mouse wheel walks the list (a mouse-only player reaches the last slots): one focus step per notch.
+    wheelAcc_ += io.MouseWheel;
+    const int steps = (int)wheelAcc_;
+    wheelAcc_ -= (float)steps;
+    for (int s = 0; s < std::abs(steps); s++) focus_.move(steps > 0 ? -1 : 1);   // wheel up = toward the first row
     focus_.scrollToShow(visible);
     tweens_.update(focus_.count, focus_.index, (int)page_, now);
 

@@ -35,6 +35,8 @@ public:
     // hold flag is ignored.  Inputs no longer listed lose any state they had.
     void setHoldInputs(uint32_t dev, const std::vector<Binding>& inputs);
     bool isHoldInput(uint32_t dev, const Binding& in) const;
+    // A hold input that is down and not yet the game's: under the threshold, or swallowed after a hold.
+    bool withholds(uint32_t dev, const Binding& in) const;
 
     void press(uint32_t dev, const Binding& in, uint64_t ms);     // no-op unless isHoldInput; a repeat keeps the clock
     void release(uint32_t dev, const Binding& in, uint64_t ms);

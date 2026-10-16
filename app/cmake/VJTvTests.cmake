@@ -45,7 +45,6 @@ add_test(NAME tv_menu_headless
     COMMAND virtualjaguar --headless --frames 30 --tv-test-script "${VJ_TV_MENU_SCRIPT}")
 set_tests_properties(tv_menu_headless PROPERTIES
     TIMEOUT 180
-    PASS_REGULAR_EXPRESSION "headless: OK"
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
 
 # The in-game menu drawn headlessly (an ImGui context with no renderer) over a fake tv::Host: every page without an

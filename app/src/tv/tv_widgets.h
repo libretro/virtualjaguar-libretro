@@ -60,7 +60,8 @@ struct RowArgs {
 };
 Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs& a);
 
-// The button-hint bar: "[A] Select   [B] Back".  Glyph "" draws the label alone.
+// The button-hint bar: "[A] Select   [B] Back".  Glyph "" draws the label alone.  The LAST hint is the way out (Back /
+// Resume): its room is kept, so on a narrow bar the others are the ones that drop.
 struct Hint {
     std::string glyph, label;
 };

@@ -45,7 +45,12 @@ bool AppHost::loadState(int slot) {
 
 void AppHost::reset() { app_.reset(); }
 void AppHost::closeGame() { app_.closeContent(); }
-void AppHost::toggleControlsOverlay() { overlayEvent(app_.input.controls, OverlayEvent::Toggle); }
+void AppHost::showControlsOverlay() {
+    ControlsOverlayState& c = app_.input.controls;
+    if (!c.show) overlayEvent(c, OverlayEvent::Toggle);   // Toggle flips: only when hidden
+    c.autoShown = false;   // asked for by the player: it stays until they hide it
+    c.hideAt = 0;
+}
 void AppHost::armReleaseGuard() { app_.input.armReleaseGuard(); }
 void AppHost::clearHolds() { app_.input.clearHolds(); }
 void AppHost::toast(const std::string& text) { app_.toast(text, 2.5, 2); }

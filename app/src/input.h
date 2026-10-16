@@ -103,6 +103,8 @@ public:
     // A game was opened or closed: no hold, pulse or unconsumed menu toggle survives into the next one, and what is
     // physically down stays masked until released.
     void clearHolds();
+    // The keyboard key is a hold input the arbiter is withholding (or has swallowed): the core must not see the raw key either.
+    bool withholdsKey(int scancode) const { return holds_.withholds(kKeyboardDev, Binding::key(scancode)); }
     // The TV in-game menu is open (tv/tv_shell.h): it owns the pads, keyboard and pointer.  While set, poll() hands the
     // core neutral input in every mode -- the menu pauses the game, but under netplay it cannot, and the game must not
     // play under the menu.  Cleared BEFORE armReleaseGuard() so the guard sees what is held at the hand-back.
@@ -119,6 +121,7 @@ public:
     struct PadInfo {
         std::string name;
         std::string guid;
+        bool hasMisc1 = true;    // the pad has a Share / Capture button (the TV menu's hold default is Guide without)
         unsigned port = 0;       // connection order
         int instance = 0;        // which of several identical models (0 = first)
         int slot = -1;           // the player slot it drives right now, -1 none

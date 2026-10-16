@@ -64,6 +64,11 @@ void HoldArbiter::setHoldInputs(uint32_t dev, const std::vector<Binding>& inputs
 
 bool HoldArbiter::isHoldInput(uint32_t dev, const Binding& in) const { return find(dev, in) != nullptr; }
 
+bool HoldArbiter::withholds(uint32_t dev, const Binding& in) const {
+    const HoldInput* h = find(dev, in);
+    return h && h->down;
+}
+
 void HoldArbiter::press(uint32_t dev, const Binding& in, uint64_t ms) {
     HoldInput* h = find(dev, in);
     if (!h || h->down) return;   // not a hold input, or a repeat of a press already timing

@@ -38,7 +38,7 @@ public:
     virtual bool loadState(int slot) = 0;
     virtual void reset() = 0;
     virtual void closeGame() = 0;
-    virtual void toggleControlsOverlay() = 0;
+    virtual void showControlsOverlay() = 0;   // show (never hide) the controls cheat sheet
     virtual void armReleaseGuard() = 0;
     virtual void clearHolds() = 0;
     virtual void toast(const std::string& text) = 0;

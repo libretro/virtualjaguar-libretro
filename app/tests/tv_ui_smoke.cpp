@@ -34,6 +34,7 @@ struct FakeHost : Host {
     bool pausedBeforeMenu = false, heldPause = false;
     double clock = 0;
     int savedSlot = -1, loadedSlot = -1, resets = 0, closed = 0, resumed = 0, guardArmed = 0, holdsCleared = 0, controls = 0;
+    bool controlsShown = false;
     std::string lastToast;
 
     double now() const override { return clock; }
@@ -66,7 +67,7 @@ struct FakeHost : Host {
     bool loadState(int s) override { loadedSlot = s; return true; }
     void reset() override { resets++; }
     void closeGame() override { closed++; loaded = false; }
-    void toggleControlsOverlay() override { controls++; }
+    void showControlsOverlay() override { controls++; controlsShown = true; }   // idempotent, like the app's
     void armReleaseGuard() override { guardArmed++; }
     void clearHolds() override { holdsCleared++; }
     void toast(const std::string& t) override { lastToast = t; }
@@ -288,6 +289,64 @@ static void pointerFreeWhilePlaying() {
     CHECK(!menuWindowDrawn() && !io.WantCaptureMouse && !io.WantCaptureKeyboard);
 }
 
+// Controls SHOWS the cheat sheet (an already visible one stays), closes the menu onto the game.
+static void controlsRowShowsNeverHides() {
+    FakeHost host;
+    host.controlsShown = true;   // already up (auto-shown at boot)
+    Shell shell(host);
+    shell.openMenu();
+    frames(host, shell, 2);
+    down(host, shell, 3);   // Resume, Save state, Load state, Controls
+    CHECK(std::string(focusedLabel(shell)) == "Controls");
+    accept(host, shell);
+    CHECK(host.controls == 1 && host.controlsShown && !shell.menuOpen());
+}
+
+// The mouse wheel walks the list: a mouse-only player reaches slots 6-9.
+static void wheelReachesLastSlots() {
+    FakeHost host;
+    Shell shell(host);
+    ImGuiIO& io = ImGui::GetIO();
+    shell.openMenu();
+    frames(host, shell, 2);
+    down(host, shell);
+    accept(host, shell);   // Save state -> the slot page
+    CHECK(shell.menuPage() == Shell::Page::SaveSlots && shell.menuFocus() == 0);
+    for (int i = 0; i < 9; i++) {
+        io.AddMouseWheelEvent(0, -1.0f);   // down one notch
+        frames(host, shell, 1);
+    }
+    CHECK(shell.menuFocus() == 9);
+    io.AddMouseWheelEvent(0, 2.0f);        // up two notches
+    frames(host, shell, 1);
+    CHECK(shell.menuFocus() == 7);
+    io.AddMouseWheelEvent(0, -0.5f);       // half a notch (a trackpad) is not a step yet
+    frames(host, shell, 1);
+    CHECK(shell.menuFocus() == 7);
+}
+
+// A narrow hint bar drops the others, never the way out.
+static void hintBarKeepsBack() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1920, 1080);
+    Metrics m = metrics(1080);
+    const std::vector<widgets::Hint> hints = {{"D-pad", "Move"}, {"A", "Select"}, {"B", "Resume"}};
+    for (float w : {2000.0f, 600.0f, 160.0f}) {
+        g_texts.clear();
+        io.DeltaTime = 1.0f / 60.0f;
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::Begin("##hb", nullptr, ImGuiWindowFlags_NoDecoration);
+        widgets::hintBar(ImGui::GetWindowDrawList(), m, ImVec2(10, 10), w, hints);
+        ImGui::End();
+        ImGui::Render();
+        CHECK(drew("Resume"));
+        if (w >= 2000.0f) CHECK(drew("Move") && drew("Select"));
+        if (w <= 160.0f) CHECK(!drew("Move") && !drew("Select"));   // only the way out fits
+    }
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -310,6 +369,9 @@ int main() {
     netplayBanner();
     hintBarShowsWhatWorks();
     pointerFreeWhilePlaying();
+    controlsRowShowsNeverHides();
+    wheelReachesLastSlots();
+    hintBarKeepsBack();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;

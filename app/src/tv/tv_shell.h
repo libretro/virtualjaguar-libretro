@@ -77,6 +77,7 @@ private:
     LinearFocus focus_;
     NavInput nav_;
     widgets::FocusTweens tweens_;   // the focus ring easing between rows (drawing only)
+    float wheelAcc_ = 0;            // mouse-wheel notches not yet spent on a focus step (a trackpad sends fractions)
     bool focusWindow_ = false;      // the menu just opened: its window takes the focus once
     bool rootHasLoad_ = false;   // the Load-state row is in the root page (re-evaluated while it shows)
 };

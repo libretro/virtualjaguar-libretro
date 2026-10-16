@@ -121,7 +121,7 @@ Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs
         x = b1.x + pad;
     }
     const float maxW = p1.x - pad - x;
-    const float bodyPx = m.body * (0.92f + 0.08f * f);
+    const float bodyPx = m.body * (1.0f + 0.08f * f);   // the spec's body size at rest, the focus scale when focused
     if (a.sub.empty()) {
         text(dl, bodyPx, ImVec2(x, p0.y + (sz.y - bodyPx) * 0.5f), tc, a.label, maxW);
     } else {
@@ -136,11 +136,21 @@ Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs
 void hintBar(ImDrawList* dl, const Metrics& m, ImVec2 pos, float maxW, const std::vector<Hint>& hints) {
     const theme::Palette& p = theme::pal();
     const float px = m.caption, gap = 40 * m.u, chipPad = 12 * m.u;
+    // One hint's width: its chip (if any), the gap after the chip, and its label.
+    auto width = [&](const Hint& h) {
+        float w = textWidth(px, h.label);
+        if (!h.glyph.empty()) w += std::max(textWidth(px, h.glyph) + 2 * chipPad, px * 1.6f) + 8 * m.u;
+        return w;
+    };
+    // The last hint is the way out (Back / Resume): its room is kept, so a narrow bar drops the others first.
+    const float reserved = hints.empty() ? 0.0f : width(hints.back());
     float x = pos.x;
-    for (const Hint& h : hints) {
+    for (size_t i = 0; i < hints.size(); i++) {
+        const Hint& h = hints[i];
+        const bool last = i + 1 == hints.size();
+        if (x + width(h) + (last ? 0.0f : gap + reserved) > pos.x + maxW) continue;   // does not fit (with Back's room kept)
         if (!h.glyph.empty()) {
             const float gw = textWidth(px, h.glyph) + 2 * chipPad;
-            if (x + gw + 8 * m.u + textWidth(px, h.label) > pos.x + maxW) break;
             const float chipW = std::max(gw, px * 1.6f);
             dl->AddRectFilled(ImVec2(x, pos.y), ImVec2(x + chipW, pos.y + px + 8 * m.u), col(p.text), 10 * m.u);
             text(dl, px, ImVec2(x + (chipW - textWidth(px, h.glyph)) * 0.5f, pos.y + 4 * m.u), col(p.homeBg), h.glyph);

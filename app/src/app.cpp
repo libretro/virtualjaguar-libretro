@@ -599,6 +599,7 @@ bool App::openNoContent() {
         return false;
     }
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
+    input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
     resumeOffer.active = false;
     autoSave();
@@ -1102,7 +1103,8 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         // before the menu opened would stay down in the core)
         if (!captured && host.isLoaded() && (e.type == SDL_EVENT_KEY_UP || !tvShell().menuOpen())) {
             unsigned rk = InputManager::retroKey(e.key.scancode);
-            if (rk) host.sendKeyEvent(e.type == SDL_EVENT_KEY_DOWN, rk, 0, 0);
+            if (rk && !(e.type == SDL_EVENT_KEY_DOWN && input.withholdsKey((int)e.key.scancode)))
+                host.sendKeyEvent(e.type == SDL_EVENT_KEY_DOWN, rk, 0, 0);
         }
         if (e.key.scancode == SDL_SCANCODE_TAB && !captured) fastForward = (e.type == SDL_EVENT_KEY_DOWN);
         break;

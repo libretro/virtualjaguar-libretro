@@ -23,6 +23,18 @@ std::string bindingsText(const std::vector<Binding>& v) {
     return s;
 }
 
+// The every-gamepad view of the TV menu row: the Share hold default also means Guide on pads without Share.
+std::string tvMenuText(const std::vector<Binding>& v) {
+    if (v.empty()) return "(unbound)";
+    const Binding share = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold();
+    std::string s;
+    for (const Binding& b : v) {
+        if (!s.empty()) s += ", ";
+        s += b == share ? std::string("Share (hold); Guide (hold) on pads without Share") : b.display();
+    }
+    return s;
+}
+
 // The "From" column is narrow: the long forms ("global, this controller") are in the tooltip.
 const char* sourceShort(Source s) {
     switch (s) {
@@ -112,7 +124,14 @@ void drawControlsTab(App& app) {
     ui::hint("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
 
     // ---- the table -----------------------------------------------------------------------------
-    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId);
+    // A specific controller shows what that pad gets (a pad without Share holds Guide for the TV menu); the
+    // every-gamepad view shows the Share default and says what pads without Share do.
+    PadCaps caps;
+    if (device >= 2) caps.hasMisc1 = pads[(size_t)device - 2].hasMisc1;
+    bool anyNoShare = false;
+    for (const InputManager::PadInfo& p : pads)
+        if (!p.hasMisc1) anyNoShare = true;
+    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId, caps);
     bool dirty = false;
     ImGui::Separator();
     if (in.capturing()) {
@@ -154,10 +173,13 @@ void drawControlsTab(App& app) {
                 ImGui::TextWrapped("%s", ctlLabel(c));
                 ImGui::TableNextColumn();
                 if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
+                else if (c == C_TVMENU && device == 1)
+                    ImGui::TextWrapped("%s", tvMenuText(prof.binds[(size_t)i]).c_str());
                 else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
                 if (c == C_TVMENU) {
                     // Guide held opens the menu, and Guide is also the keypad's # (a tap): a chord that holds # collides.
-                    bool guideHold = false;
+                    // In the every-gamepad view that is also the case on any connected pad without Share.
+                    bool guideHold = device == 1 && anyNoShare;
                     for (const Binding& b : prof.binds[(size_t)c])
                         if (b == Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold()) guideHold = true;
                     if (guideHold)

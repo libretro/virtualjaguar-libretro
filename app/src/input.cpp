@@ -326,6 +326,7 @@ std::vector<InputManager::PadInfo> InputManager::pads() const {
         const char* s = SDL_GetGamepadName(pads_[i].handle);
         pi.name = s ? s : "Gamepad";
         pi.guid = pads_[i].guid;
+        pi.hasMisc1 = pads_[i].caps.hasMisc1;
         pi.port = (unsigned)i;
         for (size_t j = 0; j < i; j++)
             if (pads_[j].guid == pads_[i].guid) pi.instance++;
@@ -401,8 +402,16 @@ void InputManager::bindCaptured(const Binding& captured) {
         if (store_->defined(capLayer_, capCtl_)) {
             v = store_->get(capLayer_, capCtl_);
         } else {
-            std::string guid = capLayer_.guid;
-            v = store_->resolve(capLayer_.cls, guid, capLayer_.gameId).binds[capCtl_];
+            // A controller's own layer seeds from what that pad would get (the TV menu's Share default
+            // is Guide on a pad without Share); the shared layer seeds from the default caps and
+            // resolve() maps the Share default per pad.
+            PadCaps caps;
+            for (const Pad& p : pads_)
+                if (!capLayer_.guid.empty() && p.guid == capLayer_.guid) {
+                    caps = p.caps;
+                    break;
+                }
+            v = store_->resolve(capLayer_.cls, capLayer_.guid, capLayer_.gameId, caps).binds[capCtl_];
         }
     }
     if (std::find(v.begin(), v.end(), b) == v.end()) v.push_back(b);
@@ -439,7 +448,7 @@ void InputManager::poll(bool captureKeyboard) {
                 if (!ks[sc]) continue;
                 kb.snap.key[(size_t)sc] = true;
                 unsigned rk = retroKey((SDL_Scancode)sc);
-                if (rk) core_.addRawKey(rk);   // truthful, except the keys only the keypad synthesis may press
+                if (rk && !holds_.withholds(kKeyboardDev, Binding::key(sc))) core_.addRawKey(rk);   // truthful, except the keys only the keypad synthesis may press and a hold input being timed
             }
             holds_.apply(kKeyboardDev, kb.snap);
             guard_.apply(kKeyboardDev, kb.snap);

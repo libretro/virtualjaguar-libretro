@@ -402,6 +402,19 @@ Profile BindingStore::resolve(DeviceClass cls, const std::string& guid, const st
             }
         }
     }
+    // A pad with no Share button reaches the TV menu on Guide instead, whatever layer the
+    // Share default came from (the shared layer's "Add" seeds from the default list).
+    if (pad && !caps.hasMisc1) {
+        const Binding share = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold();
+        const Binding guide = Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold();
+        std::vector<Binding>& v = p.binds[C_TVMENU];
+        std::vector<Binding> out;
+        for (const Binding& b : v) {
+            Binding m = b == share ? guide : b;
+            if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+        }
+        v.swap(out);
+    }
     return p;
 }
 

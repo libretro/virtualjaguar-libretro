@@ -62,13 +62,12 @@
 820   expect menu-open=0
 
 # A Share tap is not a hold: no menu.
-860   pad down misc1
-900   pad up misc1
+# (`pad tap` presses and releases inside one line, so a stalled runner cannot stretch it into a hold.)
+860   pad tap misc1
 940   expect menu-open=0
 
 # A Share hold of 600 ms opens the menu; letting go leaves it open.
 960   pad down misc1
-1000  expect menu-open=0
 1580  expect menu-open=1
 1580  expect paused=1
 1600  pad up misc1

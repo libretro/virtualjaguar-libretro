@@ -681,6 +681,34 @@ static void testTvMenuDefaults() {
     Profile over = store.resolve(DeviceClass::Gamepad, "", "", PadCaps{false});
     CHECK(over.binds[C_TVMENU].size() == 1 && over.source[C_TVMENU] == SRC_GLOBAL);
 
+    // A shared layer that stored the Share default (the controls screen's "Add" seeds from the
+    // default list) must not strip a Share-less pad of its Guide-hold: resolve maps MISC1~hold to
+    // GUIDE~hold for that pad, from any layer, and nothing else.
+    {
+        Config cfg2;
+        BindingStore st2(cfg2);
+        const Binding share = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold();
+        const Binding guide = Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold();
+        const Binding paddle = Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1);
+        st2.set(LayerId{"", DeviceClass::Gamepad, ""}, C_TVMENU, {share, paddle});
+        Profile ns = st2.resolve(DeviceClass::Gamepad, "pad-a", "", PadCaps{false});
+        CHECK(has(ns, guide) && has(ns, paddle) && !has(ns, share) && ns.binds[C_TVMENU].size() == 2);
+        CHECK(ns.source[C_TVMENU] == SRC_GLOBAL);
+        Profile ws = st2.resolve(DeviceClass::Gamepad, "pad-a", "", PadCaps{true});
+        CHECK(has(ws, share) && has(ws, paddle) && !has(ws, guide) && ws.binds[C_TVMENU].size() == 2);
+        for (const Profile* pr : {&ns, &ws}) {
+            const std::vector<Binding>& h = pr->binds[C_HASH];
+            CHECK(std::find(h.begin(), h.end(), Binding::button(SDL_GAMEPAD_BUTTON_GUIDE)) != h.end());
+        }
+        // An explicit Guide-hold survives for a Share pad (the mapping only goes MISC1 -> GUIDE),
+        // and a Share-less pad with both listed gets it once.
+        st2.set(LayerId{"", DeviceClass::Gamepad, "pad-b"}, C_TVMENU, {guide});
+        CHECK(has(st2.resolve(DeviceClass::Gamepad, "pad-b", "", PadCaps{true}), guide));
+        st2.set(LayerId{"", DeviceClass::Gamepad, "pad-b"}, C_TVMENU, {share, guide});
+        Profile dd = st2.resolve(DeviceClass::Gamepad, "pad-b", "", PadCaps{false});
+        CHECK(dd.binds[C_TVMENU].size() == 1 && has(dd, guide));
+    }
+
     // A hold binding is never "down" in evaluate: only the arbiter (a later task) fires a hold.
     DeviceSnapshot s;
     s.btn[SDL_GAMEPAD_BUTTON_MISC1] = true;

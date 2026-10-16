@@ -168,7 +168,7 @@ void Shell::accept() {
     case Row::Load: enter(Page::LoadSlots, Row::Slot); break;
     case Row::Controls:
         closeMenu();   // the sheet is drawn over the game, so the game has to be showing
-        host_.toggleControlsOverlay();
+        host_.showControlsOverlay();
         break;
     case Row::Reset: enter(Page::ConfirmReset, Row::No); break;
     case Row::Close: enter(Page::ConfirmClose, Row::No); break;

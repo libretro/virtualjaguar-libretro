@@ -27,7 +27,7 @@ public:
     bool loadState(int slot) override;
     void reset() override;
     void closeGame() override;
-    void toggleControlsOverlay() override;
+    void showControlsOverlay() override;
     void armReleaseGuard() override;
     void clearHolds() override;
     void toast(const std::string& text) override;
