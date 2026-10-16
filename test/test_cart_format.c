@@ -721,6 +721,59 @@ TEST(exact_mib_without_marker_linked_at_802000)
    p_retro_unload_game();
 }
 
+/* Issue #974: Phase Zero (2000) (PD) is the signed [a1] dump with the
+ * boot block and $400-$40B erased to $FF.  The $FFFFFFFF vector used to
+ * fall back to $800000 ($FFFF, line-F, an RTE ping-pong); the program is at
+ * $802000.  Only an ERASED vector takes $802000: any other invalid one
+ * still falls back to $800000 (the raw-code-at-cart-base convention). */
+static uint8_t *make_erased_header_cart(uint32_t vector404)
+{
+   uint8_t *img = (uint8_t *)malloc(MIB);
+
+   if (!img)
+      return NULL;
+   memset(img, 0xFF, MIB);
+   put32(img, 0x404, vector404);
+   put32(img, 0x2000, 0x23FC0007);                  /* move.l #$70007,... */
+   put32(img, 0x2004, 0x000700F0);
+   put16(img, 0x2008, 0x210C);
+   return img;
+}
+
+TEST(erased_404_vector_enters_at_802000)
+{
+   uint8_t *img = make_erased_header_cart(0xFFFFFFFF);
+   unsigned pc;
+
+   ASSERT(img != NULL);
+   if (!load_image(img, MIB))
+   {
+      free(img);
+      FAIL("load failed");
+   }
+   pc = initial_pc(*p_mainram);
+   free(img);
+   p_retro_unload_game();
+   ASSERT_EQ_U(pc, 0x802000);
+}
+
+TEST(other_invalid_404_vector_still_enters_at_800000)
+{
+   uint8_t *img = make_erased_header_cart(0xFFE00001);
+   unsigned pc;
+
+   ASSERT(img != NULL);
+   if (!load_image(img, MIB))
+   {
+      free(img);
+      FAIL("load failed");
+   }
+   pc = initial_pc(*p_mainram);
+   free(img);
+   p_retro_unload_game();
+   ASSERT_EQ_U(pc, 0x800000);
+}
+
 /* ------------------------------------------------------------------ */
 /* Cart mirroring (issue #851)                                         */
 /* ------------------------------------------------------------------ */
@@ -958,6 +1011,8 @@ int main(int argc, char **argv)
    RUN(raw_binary_jmp_onto_decoded_instruction_picks_10000);
    RUN(alpine_header_stub_maps_at_802000);
    RUN(exact_mib_without_marker_linked_at_802000);
+   RUN(erased_404_vector_enters_at_802000);
+   RUN(other_invalid_404_vector_still_enters_at_800000);
    RUN(mirror_2mb_repeats_in_window);
    RUN(mirror_1mb_repeats_in_window);
    RUN(mirror_4mb_repeats_once);
