@@ -66,7 +66,7 @@ A standalone front end for the same core, in `app/`: SDL3 for window, audio and 
 | Linux x86_64, aarch64 | `VirtualJaguar-X.Y.Z-linux-<arch>.AppImage` or `virtualjaguar_X.Y.Z_<amd64\|arm64>.deb` |
 | Linux x86_64 (Flatpak) | `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` |
 
-The macOS app is signed with a Developer ID and notarized by Apple. The Windows installer is not code-signed yet, so SmartScreen may warn. Builds you make yourself are unsigned until you sign them. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
+The macOS app, core and command-line tools are signed with a Developer ID and notarized by Apple. The Windows installer is not code-signed yet, so SmartScreen may warn. Builds you make yourself are unsigned until you sign them. To build it, see [`app/README.md`](app/README.md); packaging is in [`app/packaging/README.md`](app/packaging/README.md).
 
 ## Features
 

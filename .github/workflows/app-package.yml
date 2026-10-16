@@ -18,9 +18,10 @@ name: App packages
 #   VirtualJaguar-X.Y.Z-linux-x86_64.AppImage        VirtualJaguar-X.Y.Z-linux-aarch64.AppImage
 #   virtualjaguar_X.Y.Z_amd64.deb                    virtualjaguar_X.Y.Z_arm64.deb
 #
-# Signing (all optional; without the secrets the packages are built unsigned and the log says so):
+# Signing (all optional; without the secrets the macOS app is ad-hoc signed, the others unsigned, and the log says so):
 #   macOS    APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD,
 #            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64
+#            (same-repo PRs, nightlies and tags all pass them; fork PRs get none, see macos-sign)
 #   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub until
 #            the SignPath Foundation application is approved
 # Details: app/packaging/README.md.
@@ -158,7 +159,8 @@ jobs:
           for y in winget/*.yaml flatpak/*.yml; do ruby -ryaml -rdate -e 'YAML.safe_load_file(ARGV[0], permitted_classes: [Date])' "$y"; echo "ok $y"; done
 
   # ------------------------------------------------------------------------------------------
-  # macOS: universal .app (arm64 + x86_64), signed + notarized + stapled when the secrets exist.
+  # macOS: universal .app (arm64 + x86_64), signed + notarized + stapled when the secrets exist
+  # (every same-repo run; fork PRs never get the secrets and stay ad-hoc signed).
   # Two single-arch builds merged with lipo, not one multi-arch configure: each architecture is
   # handed its own librashader dylib (built from the same pinned source, librashader.yml).
   # ------------------------------------------------------------------------------------------
@@ -171,28 +173,8 @@ jobs:
       LABEL: ${{ needs.meta.outputs.label }}
       SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
       MIN_MACOS: '11.0'
-      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-      APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: Decide whether to sign
-        id: sign
-        run: |
-          if [ "${{ inputs.sign }}" = "true" ] \
-              && [ -n "$APPLE_DEVELOPER_ID_P12_BASE64" ] && [ -n "$APPLE_DEVELOPER_ID_P12_PASSWORD" ] \
-              && [ -n "$APPLE_NOTARY_KEY_ID" ] && [ -n "$APPLE_NOTARY_ISSUER_ID" ] && [ -n "$APPLE_NOTARY_KEY_P8_BASE64" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "Developer ID signing + notarization: ON"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::macOS package is NOT Developer ID signed or notarized" \
-              "(signing not requested here, or the APPLE_* secrets are missing)." \
-              "It is ad-hoc signed; Gatekeeper refuses it until right-click > Open."
-          fi
 
       - name: Get the librashader runtimes (built from source, both architectures)
         uses: actions/download-artifact@v8
@@ -274,27 +256,32 @@ jobs:
           # that was built, to catch a future SDL bump changing it).
           grep -q 'resourcePath' build-arm64/_deps/sdl3-src/src/filesystem/cocoa/SDL_sysfilesystem.m
 
-      - name: Import the signing certificate
-        if: steps.sign.outputs.enabled == 'true'
-        run: bash app/packaging/macos/codesign.sh import-cert
+      # The composite action (.github/actions/macos-sign) imports the certificate into a temporary
+      # keychain, signs inside-out, notarizes, staples the .app and deletes the keychain again.
+      # Without the APPLE_* secrets (fork PRs) it only prints a warning and signs nothing.
+      - name: Developer ID sign, notarize and staple the app
+        id: devid
+        if: inputs.sign
+        uses: ./.github/actions/macos-sign
+        with:
+          paths: dist/Virtual Jaguar.app
+          notarize: 'true'
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
 
-      - name: Sign the app
+      # Apple Silicon refuses an unsigned binary ("damaged"), so a build that was not Developer ID
+      # signed still gets an ad-hoc signature.  Gatekeeper still refuses it until right-click > Open.
+      - name: Ad-hoc sign the app (no Developer ID signature)
+        if: steps.devid.outputs.signed != 'true'
         run: |
           set -eu
-          if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
-            bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app"
-          else
-            bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app" adhoc
-          fi
-
-      - name: Notarize and staple the app
-        if: steps.sign.outputs.enabled == 'true'
-        run: |
-          set -eu
-          ditto -c -k --keepParent "dist/Virtual Jaguar.app" "$RUNNER_TEMP/notarize-app.zip"
-          bash app/packaging/macos/codesign.sh notarize "$RUNNER_TEMP/notarize-app.zip"
-          bash app/packaging/macos/codesign.sh staple "dist/Virtual Jaguar.app"
-          spctl -a -t exec -vv "dist/Virtual Jaguar.app"
+          echo "::warning::macOS package is NOT Developer ID signed or notarized" \
+            "(signing not requested here, or the APPLE_* secrets are missing)." \
+            "It is ad-hoc signed; Gatekeeper refuses it until right-click > Open."
+          bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app" adhoc
 
       - name: Make the zip (the only macOS package) and check what it unpacks to
         run: |
@@ -309,16 +296,12 @@ jobs:
           test -d "$t/Virtual Jaguar.app"   # the .app is the zip's only top-level entry
           [ "$(find "$t" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1 ]
           codesign --verify --deep --strict "$t/Virtual Jaguar.app"
-          if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
+          if [ "${{ steps.devid.outputs.notarized }}" = "true" ]; then
             xcrun stapler validate "$t/Virtual Jaguar.app"
             spctl -a -t exec -vv "$t/Virtual Jaguar.app"
           fi
           rm -rf "$t"
           ls -la out
-
-      - name: Remove the temporary keychain
-        if: always() && steps.sign.outputs.enabled == 'true'
-        run: security delete-keychain vj-signing.keychain-db || true
 
       - uses: actions/upload-artifact@v7
         with:
