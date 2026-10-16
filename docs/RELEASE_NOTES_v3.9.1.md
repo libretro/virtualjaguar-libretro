@@ -62,7 +62,8 @@ listed option values changed, and the savestate format stays v17.
   now load as RAM programs at `$4000` (Hubble Fade, Hubble Nebula, Drumpad2), and Painter (bin) is
   placed at `$10000`. Images linked at `$802000` are mapped there (Rayman Demo `.jag`/`.rom`,
   BadCode4 (Metal)/(Modified) `(rom)`). A cart whose `$404` vector is erased (`$FFFFFFFF`) is
-  entered at `$802000` when a program starts there (Phase Zero (PD)). In a full corpus sweep 16
+  entered at `$802000` when a program starts there (Phase Zero (PD), and the Atari Jaguar Developer
+  CD BIOS `.j64`, which now runs instead of showing a black screen). In a full corpus sweep 16
   matrix cells improved and none regressed; no other file loads differently.
 - **Legacy MSVC builds link again**
   (https://github.com/libretro/virtualjaguar-libretro/issues/981,
