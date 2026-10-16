@@ -7,6 +7,7 @@
 
 #include "libretro.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -582,6 +583,121 @@ static void testIdentity() {
     CHECK(contentIdentity("/nonexistent/path/missing.j64").empty());
 }
 
+// ---------------------------------------------------------------------------------
+// What a build WITHOUT the "~hold" suffix makes of a stored binding list: a copy of
+// the old Binding::parse + parseBindings.  Documents how an older app reads a profile
+// written by a TV-mode one.
+static bool legacyParseOne(const std::string& s, Binding& out) {
+    if (s.size() < 2) return false;
+    if (s[0] == 'k') {
+        char* end = nullptr;
+        long v = std::strtol(s.c_str() + 1, &end, 10);
+        if (!end || *end != '\0' || v <= 0 || v >= SDL_SCANCODE_COUNT) return false;
+        out = Binding::key((int)v);
+        return true;
+    }
+    if (s[0] == 'b') {
+        SDL_GamepadButton b = SDL_GetGamepadButtonFromString(s.c_str() + 1);
+        if (b == SDL_GAMEPAD_BUTTON_INVALID) return false;
+        out = Binding::button((int)b);
+        return true;
+    }
+    return false;
+}
+
+static std::vector<Binding> legacyParse(const std::string& s) {
+    std::vector<Binding> out;
+    size_t pos = 0;
+    while (pos <= s.size()) {
+        size_t comma = s.find(',', pos);
+        std::string tok = s.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+        Binding b;
+        if (!tok.empty() && legacyParseOne(tok, b) && std::find(out.begin(), out.end(), b) == out.end()) out.push_back(b);
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    return out;
+}
+
+static void testTvMenuControl() {
+    CHECK(C_TVMENU == C_HELP + 1 && C_COUNT == C_TVMENU + 1 && isActionCtl(C_TVMENU));
+    CHECK(std::string(ctlId(C_TVMENU)) == "tvmenu");
+    CHECK(std::string(ctlLabel(C_TVMENU)) == "TV menu");
+    CHECK(std::string(ctlId(C_HELP)) == "help" && std::string(ctlId(C_OVERLAY)) == "overlay");   // ids unmoved
+    Ctl back = C_UP;
+    CHECK(ctlFromId("tvmenu", back) && back == C_TVMENU);
+}
+
+static void testHoldBindings() {
+    Binding g = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold();
+    CHECK(g.serialize() == "bmisc1~hold");
+    Binding p;
+    CHECK(Binding::parse("bmisc1~hold", p) && p == g && p.hold);
+    CHECK(Binding::parse("k61~hold", p) && p.kind == Binding::Key && p.hold);
+    CHECK(!Binding::parse("a+lefty~hold", p));   // hold is for keys and buttons only
+    CHECK(!Binding::parse("~hold", p));
+    CHECK(g.display() == "Share / Capture (hold)");
+    CHECK(Binding::button(SDL_GAMEPAD_BUTTON_GUIDE) != Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold());
+    // A plain binding parses with hold clear.
+    CHECK(Binding::parse("bmisc1", p) && !p.hold);
+    // Round trip through a list.
+    std::vector<Binding> v = {Binding::button(SDL_GAMEPAD_BUTTON_GUIDE), g};
+    bool ok = false;
+    CHECK(parseBindings(serializeBindings(v), &ok) == v && ok);
+    // What a pre-TV build does with the new form: it rejects only the ~hold token.
+    CHECK(legacyParse("bguide,bmisc1~hold").size() == 1);
+    CHECK(parseBindings("bguide,bmisc1~hold").size() == 2);
+}
+
+static void testTvMenuDefaults() {
+    Profile withShare = Profile::builtin(DeviceClass::Gamepad, PadCaps{true});
+    Profile noShare = Profile::builtin(DeviceClass::Gamepad, PadCaps{false});
+    auto has = [](const Profile& pr, Binding b) {
+        const std::vector<Binding>& v = pr.binds[C_TVMENU];
+        return std::find(v.begin(), v.end(), b) != v.end();
+    };
+    CHECK(has(withShare, Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold()));
+    CHECK(!has(withShare, Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold()));   // Guide keeps plain #
+    CHECK(has(noShare, Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold()));
+    CHECK(!has(noShare, Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold()));
+    for (int b : {SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1, SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2,
+                  SDL_GAMEPAD_BUTTON_LEFT_PADDLE2}) {
+        CHECK(has(withShare, Binding::button(b)));   // plain presses
+        CHECK(has(noShare, Binding::button(b)));
+    }
+    CHECK(has(Profile::builtin(DeviceClass::Keyboard), Binding::key(SDL_SCANCODE_F4)));
+    CHECK(!has(withShare, Binding::button(SDL_GAMEPAD_BUTTON_GUIDE)));   // C_TVMENU never gets plain Guide
+    CHECK(std::find(withShare.binds[C_HASH].begin(), withShare.binds[C_HASH].end(),
+                    Binding::button(SDL_GAMEPAD_BUTTON_GUIDE)) != withShare.binds[C_HASH].end());
+    // The default argument is "has Share".
+    CHECK(has(Profile::builtin(DeviceClass::Gamepad), Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold()));
+
+    // resolve() hands the capabilities to builtin(), and a stored layer still overrides them.
+    Config cfg;
+    BindingStore store(cfg);
+    CHECK(has(store.resolve(DeviceClass::Gamepad, "", "", PadCaps{false}), Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold()));
+    CHECK(has(store.resolve(DeviceClass::Gamepad, "", ""), Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold()));
+    store.set(LayerId{"", DeviceClass::Gamepad, ""}, C_TVMENU, {Binding::button(SDL_GAMEPAD_BUTTON_START)});
+    Profile over = store.resolve(DeviceClass::Gamepad, "", "", PadCaps{false});
+    CHECK(over.binds[C_TVMENU].size() == 1 && over.source[C_TVMENU] == SRC_GLOBAL);
+
+    // A hold binding is never "down" in evaluate: only the arbiter (a later task) fires a hold.
+    DeviceSnapshot s;
+    s.btn[SDL_GAMEPAD_BUTTON_MISC1] = true;
+    CHECK(!evaluateExtra(withShare, s).test(C_TVMENU));
+    CHECK(evaluate(withShare, s).test(C_OVERLAY));   // the plain mapping still sees the bit
+    DeviceSnapshot pad;
+    pad.btn[SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1] = true;
+    CHECK(evaluateExtra(withShare, pad).test(C_TVMENU));   // a plain paddle press does
+}
+
+static void testPaddleLabels() {
+    CHECK(Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1).display() == "Paddle P1");
+    CHECK(Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2).display() == "Paddle P2");
+    CHECK(Binding::button(SDL_GAMEPAD_BUTTON_LEFT_PADDLE1).display() == "Paddle P3");
+    CHECK(Binding::button(SDL_GAMEPAD_BUTTON_LEFT_PADDLE2).display() == "Paddle P4");
+}
+
 int main() {
     testBindingSerialisation();
     testKeyboardDefaults();
@@ -592,6 +708,10 @@ int main() {
     testOverlay();
     testCapture();
     testIdentity();
+    testTvMenuControl();
+    testHoldBindings();
+    testTvMenuDefaults();
+    testPaddleLabels();
     std::printf("remap_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

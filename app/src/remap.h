@@ -58,6 +58,7 @@ enum Ctl : uint8_t {
     C_MB_L, C_MB_R,                               // mouse buttons from the keyboard / a pad
     C_GUN_RELOAD,                                 // light gun: fire off-screen
     C_HELP,      // app action: the controls cheat-sheet overlay
+    C_TVMENU,    // app action: the TV-style in-game menu
     C_COUNT
 };
 static_assert(C_COUNT <= 64, "ControlSet is a 64-bit mask");
@@ -66,7 +67,7 @@ constexpr int kJaguarControls = C_OVERLAY;   // controls the console itself has
 inline bool isKeypad(Ctl c) { return c >= C_K0 && c <= C_HASH; }
 inline bool isAnalogCtl(Ctl c) { return c >= C_AX_LX_N && c <= C_PT_D; }   // has a 0..32767 strength
 inline bool isPointerCtl(Ctl c) { return c >= C_PT_L && c <= C_GUN_RELOAD; }
-inline bool isActionCtl(Ctl c) { return c == C_OVERLAY || c == C_HELP; }   // app actions, never reach the core
+inline bool isActionCtl(Ctl c) { return c == C_OVERLAY || c == C_HELP || c == C_TVMENU; }   // app actions, never reach the core
 const char* ctlId(Ctl c);                     // stable config id: "up", "a", "k7", "star", "overlay"
 const char* ctlLabel(Ctl c);                  // "Up", "A", "Keypad 7", "Keypad *"
 bool ctlFromId(const std::string& id, Ctl& out);
@@ -78,17 +79,19 @@ struct Binding {
     Kind kind = None;
     int code = 0;   // SDL_Scancode / SDL_GamepadButton / SDL_GamepadAxis
     int dir = 0;    // PadAxis: +1 / -1
+    bool hold = false;   // Key / PadButton: fires after a long press (HoldArbiter), never as a plain press
 
-    bool operator==(const Binding& o) const { return kind == o.kind && code == o.code && dir == o.dir; }
+    bool operator==(const Binding& o) const { return kind == o.kind && code == o.code && dir == o.dir && hold == o.hold; }
     bool operator!=(const Binding& o) const { return !(*this == o); }
 
     static Binding key(int scancode) { Binding b; b.kind = Key; b.code = scancode; return b; }
     static Binding button(int b_) { Binding b; b.kind = PadButton; b.code = b_; return b; }
     static Binding axis(int a, int d) { Binding b; b.kind = PadAxis; b.code = a; b.dir = d < 0 ? -1 : 1; return b; }
+    Binding withHold() const { Binding b = *this; b.hold = true; return b; }
 
     // Persistence form.  Scancodes are stored as numbers (SDL's names are display-only:
     // they differ per platform and a few collide); gamepad names come from SDL's
-    // mapping-string tables, which are stable.   "k224"  "bleftshoulder"  "a+righty"
+    // mapping-string tables, which are stable.   "k224"  "bleftshoulder"  "a+righty"  "bmisc1~hold"
     std::string serialize() const;
     static bool parse(const std::string& s, Binding& out);
     std::string display() const;   // for humans: "Z", "Left Shoulder", "Right Stick Up"
@@ -116,18 +119,23 @@ struct LayerId {
 enum Source : uint8_t { SRC_DEFAULT, SRC_GLOBAL, SRC_GLOBAL_PAD, SRC_GAME, SRC_GAME_PAD };
 const char* sourceLabel(Source s);
 
+// What the connected pad can do; Profile::builtin() adapts its defaults to it.
+struct PadCaps {
+    bool hasMisc1 = true;   // SDL_GamepadHasButton(MISC1): a Share / Capture button
+};
+
 struct Profile {
     std::array<std::vector<Binding>, C_COUNT> binds;
     std::array<Source, C_COUNT> source{};
     bool stickAsDpad = true;   // gamepads: the left stick also drives the D-pad
-    static Profile builtin(DeviceClass cls);
+    static Profile builtin(DeviceClass cls, PadCaps caps = PadCaps());
 };
 
 class BindingStore {
 public:
     explicit BindingStore(Config& cfg) : cfg_(&cfg) {}
 
-    Profile resolve(DeviceClass cls, const std::string& guid, const std::string& gameId) const;
+    Profile resolve(DeviceClass cls, const std::string& guid, const std::string& gameId, PadCaps caps = PadCaps()) const;
 
     bool defined(const LayerId& l, Ctl c) const;
     std::vector<Binding> get(const LayerId& l, Ctl c) const;   // what the layer defines (empty if not)
@@ -186,7 +194,7 @@ struct AnalogSet {
     }
 };
 AnalogSet evaluateAnalog(const Profile& p, const DeviceSnapshot& s, int deadzone = kAnalogDeadzone);
-// The digital controls beyond the standard pad: C_D, C_E, C_F, C_MB_L, C_MB_R, C_GUN_RELOAD, C_HELP.
+// The digital controls beyond the standard pad: C_D, C_E, C_F, C_MB_L, C_MB_R, C_GUN_RELOAD, C_HELP, C_TVMENU.
 // (evaluate() above covers C_UP..C_OVERLAY only, exactly as before the exotic devices existed.)
 ControlSet evaluateExtra(const Profile& p, const DeviceSnapshot& s);
 
