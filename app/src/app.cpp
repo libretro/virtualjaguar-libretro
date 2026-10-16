@@ -537,6 +537,7 @@ bool App::openContent(const std::string& pathIn) {
         return false;
     }
     const std::string path = absolutePath(pathIn);
+    input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
     resumeOffer.active = false;
     const bool noResume = suppressResume_ || reloading_;
@@ -670,6 +671,7 @@ void App::closeContent() {
         toast("The debugger has the game halted - resume it first", 2.5, 2);
         return;
     }
+    input.clearHolds();
     pendingStateSlot_ = kNoPendingSlot;
     resumeOffer.active = false;
     autoSave();
@@ -989,6 +991,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         debug.step();
         return;
     }
+    input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
     if (input.handleEvent(e)) return;
     switch (e.type) {
     case SDL_EVENT_QUIT:

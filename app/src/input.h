@@ -27,6 +27,7 @@
 #include "config.h"
 #include "cheatsheet.h"
 #include "devices.h"
+#include "hold_arbiter.h"
 #include "remap.h"
 #include "router.h"
 
@@ -86,6 +87,21 @@ public:
     bool uiWantsKeyboard = false;   // a text box has focus (set once per UI frame)
     // The controls-overlay key / button was pressed since the last call.
     bool takeHelpToggle() { bool h = helpToggle_; helpToggle_ = false; return h; }
+    // The TV-menu button was pressed (plain binding) or held (a hold binding reached kHoldMs) since the last call.
+    bool takeTvMenuToggle() { bool t = tvMenu_; tvMenu_ = false; return t; }
+
+    // ---- dual-use buttons (hold_arbiter.h) -----------------------------------------------------
+    // Every UI frame, also while paused: the holds that reached the threshold fire the TV-menu toggle.  `live` = a
+    // game is running and owns the input (a tap then reaches it as a short pulse; otherwise it is dropped).
+    void tickHolds(uint64_t ms, bool live);
+    // The press / release half of the hold bindings.  App::handleEvent calls it once per event, before anything
+    // can consume the event, so a release is never lost.  handleEvent() itself does not feed the arbiter.
+    void feedHoldEdges(const SDL_Event& e);
+    // Input ownership changed (the TV menu closed onto a game): whatever is down now stays masked until released.
+    void armReleaseGuard();
+    // A game was opened or closed: no hold or pulse survives into the next one.
+    void clearHolds() { holds_.clear(); }
+    std::vector<SDL_Gamepad*> padHandles() const;
     // Mouse capture.  syncMouseCapture() runs once per UI frame: it turns SDL's relative mouse
     // mode on or off from wantRelativeMouse().  `uiOpen` = a menu, popup or window is open.
     void syncMouseCapture(SDL_Window* w, bool gameRunning, bool uiOpen, bool uiWantsMouse);
@@ -111,7 +127,8 @@ public:
     void updateRoutes();
     // "Press a button to bind": the next key / pad button / axis push is stored into
     // `layer` for `ctl` (appended when `add`, replacing otherwise) and swallowed.
-    void beginCapture(const LayerId& layer, Ctl ctl, bool add);
+    // `hold`: the captured key / button is stored as a hold binding (fires after a long press, hold_arbiter.h).
+    void beginCapture(const LayerId& layer, Ctl ctl, bool add, bool hold = false);
     void cancelCapture() { capture_.cancel(); }
     bool capturing() const { return capture_.active(); }
     Ctl captureTarget() const { return capCtl_; }
@@ -125,12 +142,14 @@ private:
         SDL_JoystickID id = 0;
         std::string guid;
         Profile profile;
+        PadCaps caps;
     };
     void bindCaptured(const Binding& b);
     DevKind mousePortKind() const;
 
     bool padAllowed(SDL_JoystickID id) const;
     void openPad(SDL_JoystickID id);
+    void syncHoldInputs(uint32_t dev, const Profile& p);   // tell the arbiter which inputs of `p` are hold inputs
     int padFilter_ = -1;
     std::vector<Pad> pads_;
     CoreInput core_;
@@ -143,12 +162,16 @@ private:
     LayerId capLayer_;
     Ctl capCtl_ = C_COUNT;
     bool capAdd_ = false;
+    bool capHold_ = false;
 
     DevKind kind_[2] = {DevKind::Pad, DevKind::Pad};
     DeviceSettings settings_;
     Routes routes_;
     PicRect pic_;
     bool helpToggle_ = false;
+    bool tvMenu_ = false;
+    HoldArbiter holds_;
+    ReleaseGuard guard_;
     bool swallowPointer_ = false;  // the click / tap that hid the controls overlay: not the game's until released
 
     // pointer

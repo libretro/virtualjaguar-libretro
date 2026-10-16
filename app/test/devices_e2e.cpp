@@ -11,6 +11,7 @@
 // usage: vj_devices_e2e <rom.j64>
 #include "core_host.h"
 #include "devices.h"
+#include "hold_arbiter.h"
 #include "router.h"
 
 #include "libretro.h"
@@ -479,6 +480,95 @@ static void testProKeyboard() {
     }
 }
 
+// ---- TV-mode dual-use buttons: HoldArbiter + ReleaseGuard + Router + the real core (#991) --------------------------
+// One pad (device 1) on a controller with no Share / Capture button, so Guide is both the keypad's # and the TV
+// menu's held button.  Per frame the order is poll()'s: HoldArbiter::apply -> ReleaseGuard::apply -> Router::route
+// -> HoldArbiter::frame.  The profile is this test's own; the shared g_padp stays what every other case ran with.
+static const uint32_t kPadDev = 1;
+
+static void holdFrame(HoldArbiter& arb, ReleaseGuard& guard, const Profile& prof, DeviceSnapshot snap) {
+    arb.apply(kPadDev, snap);
+    guard.apply(kPadDev, snap);
+    HostSource h;
+    h.profile = &prof;
+    h.snap = snap;
+    HostSource k;
+    k.isKeyboard = true;
+    k.profile = &g_kbp;
+    g_in.beginFrame();
+    g_router.route(g_cfg, {h}, &k, PointerInput(), nullptr, g_in);
+    g_host->runFrame();
+    arb.frame();
+}
+
+static std::vector<Binding> holdBindings(const Profile& p) {
+    std::vector<Binding> v;
+    for (int c = 0; c < C_COUNT; c++)
+        for (const Binding& b : p.binds[c])
+            if (b.hold) v.push_back(b);
+    return v;
+}
+
+static void testHoldButtons() {
+    std::printf("-- Guide: tap = keypad #, hold = menu, release guard\n");
+    if (!load(DevKind::Pad, DevKind::Pad)) return;
+    g_host->sendKeyEvent(false, 0, 0, 0);   // the keypad announcement, as finishLoad() makes
+    g_cfg.routes.kb[0] = false;
+    g_cfg.routes.pad[0] = 0;
+    const Profile prof = Profile::builtin(DeviceClass::Gamepad, PadCaps{false});
+    const Binding G = Binding::button(SDL_GAMEPAD_BUTTON_GUIDE);
+    DeviceSnapshot none, guideDown, eastDown;
+    guideDown.btn[SDL_GAMEPAD_BUTTON_GUIDE] = true;
+    eastDown.btn[SDL_GAMEPAD_BUTTON_EAST] = true;
+    auto hash = [&]() { return joypad0Buttons[BUTTON_d] != 0; };
+    auto east = [&]() { return joypad0Buttons[BUTTON_A] != 0; };
+    CHECK(holdBindings(prof).size() == 1);   // Guide is the hold input of this pad
+
+    // A tap: nothing while it is down, then # for exactly kPulseFrames emulated frames.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        for (int f = 0; f < 3; f++) { holdFrame(arb, guard, prof, none); CHECK(!hash()); }   // negative control
+        arb.press(kPadDev, G, 0);
+        for (int f = 0; f < 10; f++) { holdFrame(arb, guard, prof, guideDown); CHECK(!hash()); }
+        arb.release(kPadDev, G, 200);
+        int on = 0;
+        for (int f = 0; f < 8; f++) { holdFrame(arb, guard, prof, none); on += hash(); }
+        CHECKF(on == HoldArbiter::kPulseFrames, "# pulse lasted %d frames", on);
+    }
+    // A hold: fires once, and # never reaches the game, not even after the button comes up.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        arb.press(kPadDev, G, 0);
+        CHECK(arb.takeFires(600) == 1);
+        int on = 0;
+        for (int f = 0; f < 40; f++) { holdFrame(arb, guard, prof, guideDown); on += hash(); }
+        arb.release(kPadDev, G, 2000);
+        for (int f = 0; f < 8; f++) { holdFrame(arb, guard, prof, none); on += hash(); }
+        CHECKF(on == 0, "# reached the core %d times during a hold", on);
+    }
+    // The guard: East was already down when the menu closed; it must not be a fresh A press for the game.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        holdFrame(arb, guard, prof, eastDown);
+        CHECK(east());   // negative control: unguarded, East is A
+        holdFrame(arb, guard, prof, none);
+        guard.arm(kPadDev, eastDown);
+        int a = 0;
+        for (int f = 0; f < 10; f++) { holdFrame(arb, guard, prof, eastDown); a += east(); }
+        CHECKF(a == 0, "A reached the game %d times while guarded", a);
+        holdFrame(arb, guard, prof, none);
+        CHECK(!guard.armed());
+        holdFrame(arb, guard, prof, eastDown);
+        CHECK(east());
+    }
+}
+
 static void testLockedOptions() {
     std::printf("-- locked core options\n");
     if (!load(DevKind::Pad, DevKind::Pad)) return;
@@ -544,6 +634,7 @@ int main(int argc, char** argv) {
     testLightgun();
     testTeamTap();
     testProKeyboard();
+    testHoldButtons();
     testLockedOptions();
 
     host.unloadContent();

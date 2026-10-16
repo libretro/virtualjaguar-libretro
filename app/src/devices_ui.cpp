@@ -37,8 +37,14 @@ void applyPortDevices(App& app) {
 // ---------------------------------------------------------------------------------
 // per frame
 // ---------------------------------------------------------------------------------
+void tvInputFrame(App& app, uint64_t ms) {
+    InputManager& in = app.input;
+    in.tickHolds(ms, app.host.isLoaded() && !app.paused);
+}
+
 void inputFrame(App& app) {
     InputManager& in = app.input;
+    tvInputFrame(app, SDL_GetTicks());
     bool uiOpen = app.showSettings || app.showStates || app.showCheats || app.showAbout || app.library.show ||
                   in.overlay.open;
     bool wantsMouse = false;

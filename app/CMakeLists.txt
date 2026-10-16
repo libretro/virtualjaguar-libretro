@@ -284,6 +284,7 @@ set(VJ_APP_SOURCES
     src/shaders.cpp
     src/shaders_ui.cpp
     src/input.cpp
+    src/hold_arbiter.cpp
     src/remap.cpp
     src/remap_ui.cpp
     src/devices.cpp
