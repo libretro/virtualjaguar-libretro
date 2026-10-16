@@ -20,8 +20,12 @@
 #include "tv/tv_focus.h"
 #include "tv/tv_host.h"
 #include "tv/tv_nav.h"
+#include "tv/tv_widgets.h"
 
 namespace vj::tv {
+
+// The ImGui window the in-game menu is drawn in (tests look for it: with the menu closed it must not exist).
+constexpr const char* kMenuWindowName = "TV menu##vjtv";
 
 enum class Layer { Base, Menu };   // Base: TV screens, under desktop windows; Menu: the in-game menu, over them
 
@@ -63,6 +67,7 @@ private:
     void buildRoot();
     void accept();
     void back();
+    void drawMenu(ImVec2 pos, ImVec2 size);   // tv_ingame.cpp: the menu model drawn over the dimmed game
 
     Host& host_;
     bool open_ = false;
@@ -71,6 +76,8 @@ private:
     std::vector<Row> rows_;
     LinearFocus focus_;
     NavInput nav_;
+    widgets::FocusTweens tweens_;   // the focus ring easing between rows (drawing only)
+    bool focusWindow_ = false;      // the menu just opened: its window takes the focus once
     bool rootHasLoad_ = false;   // the Load-state row is in the root page (re-evaluated while it shows)
 };
 

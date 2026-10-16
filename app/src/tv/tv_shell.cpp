@@ -19,6 +19,7 @@ bool Shell::openMenu() {
         return false;
     }
     open_ = true;
+    focusWindow_ = true;
     nav_.reset();
     enter(Page::Root, Row::Resume);
     return true;
@@ -86,7 +87,11 @@ void Shell::frame(uint64_t ms) {
     }
 }
 
-void Shell::draw(Layer, ImVec2, ImVec2) {}   // phase 1 part B (tv_ingame.cpp)
+void Shell::draw(Layer layer, ImVec2 pos, ImVec2 size) {
+    // Layer::Base (the TV screens) has none in phase 1.  Layer::Menu exists only while the menu is open: with a game
+    // running and the menu closed there is no shell window at all, so the pointer stays the game's.
+    if (layer == Layer::Menu && open_) drawMenu(pos, size);
+}
 
 // ---- the in-game menu ---------------------------------------------------------------------------------------------
 

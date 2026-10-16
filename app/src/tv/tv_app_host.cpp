@@ -50,9 +50,27 @@ void AppHost::armReleaseGuard() { app_.input.armReleaseGuard(); }
 void AppHost::clearHolds() { app_.input.clearHolds(); }
 void AppHost::toast(const std::string& text) { app_.toast(text, 2.5, 2); }
 
-// The button caption for a hint: the face buttons as the last-used pad labels them (A / Cross / ...), the keyboard's
-// keys while the last input was the keyboard or no pad is connected.  "Last-used" = the controls overlay's
-// lastInputWasPad flag and the first connected pad.
+void AppHost::noteInput(const SDL_Event& e) {
+    switch (e.type) {
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        lastWasPad_ = true;
+        lastPad_ = e.gbutton.which;
+        break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:   // a resting stick drifts: only a real push counts
+        if (e.gaxis.value > 16000 || e.gaxis.value < -16000) {
+            lastWasPad_ = true;
+            lastPad_ = e.gaxis.which;
+        }
+        break;
+    case SDL_EVENT_KEY_DOWN:
+        lastWasPad_ = false;
+        break;
+    default: break;
+    }
+}
+
+// The button caption for a hint: the face buttons as the pad used last labels them (A / Cross / ...), the keyboard's
+// keys while the keyboard was used last (or before any input).
 std::string AppHost::glyph(Intent i) const {
     SDL_GamepadButton b = SDL_GAMEPAD_BUTTON_INVALID;
     const char* key = "";
@@ -72,9 +90,8 @@ std::string AppHost::glyph(Intent i) const {
     case Intent::PageNext: key = "Page Down"; break;
     case Intent::None: break;
     }
-    std::vector<SDL_Gamepad*> pads = app_.input.padHandles();
-    if (!pads.empty() && app_.input.controls.lastInputWasPad && b != SDL_GAMEPAD_BUTTON_INVALID) {
-        SDL_Gamepad* g = pads[0];
+    SDL_Gamepad* g = lastWasPad_ ? SDL_GetGamepadFromID(lastPad_) : nullptr;   // null once that pad is gone
+    if (g && b != SDL_GAMEPAD_BUTTON_INVALID) {
         const bool sony = SDL_GetGamepadButtonLabel(g, SDL_GAMEPAD_BUTTON_SOUTH) == SDL_GAMEPAD_BUTTON_LABEL_CROSS;
         switch (b) {
         case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return sony ? "L1" : "LB";

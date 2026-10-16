@@ -24,6 +24,8 @@ struct SlotInfo {
 class Host {
 public:
     virtual ~Host() = default;
+    // SECONDS (App::now(), a steady clock): the unit the tweens run in.  Not the clock of the shell's input, which is
+    // SDL_GetTicks() MILLISECONDS (Shell::handleEvent / frame, NavInput, the hold arbiter); the two never mix.
     virtual double now() const = 0;
     virtual bool gameLoaded() const = 0;
     virtual std::string gameTitle() const = 0;

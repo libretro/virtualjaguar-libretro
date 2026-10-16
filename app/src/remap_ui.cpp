@@ -47,6 +47,7 @@ const Section kSections[] = {
     {"Pointer: mouse, rotary and light gun (motion is also taken from the mouse itself)", C_PT_L, C_GUN_RELOAD},
     {"App", C_OVERLAY, C_OVERLAY},
     {"App", C_HELP, C_HELP},
+    {"App", C_TVMENU, C_TVMENU},
 };
 
 }  // namespace
@@ -133,7 +134,8 @@ void drawControlsTab(App& app) {
                                   std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFontSize() * 7.0f));
     // Fixed columns for the short things; "Bound to" stretches (its text wraps) and gives way first.
     const float btnsW = ui::Flow::buttonW("Set") + ui::Flow::buttonW("Add") + ui::Flow::buttonW("Unbind") +
-                        ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3;
+                        ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3 +
+                        ui::Flow::buttonW("Add hold") + ImGui::GetStyle().ItemSpacing.x;   // the TV menu row's extra button
     if (ImGui::BeginTable("##binds", 3, tf, ImVec2(0, tableH))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
@@ -153,6 +155,15 @@ void drawControlsTab(App& app) {
                 ImGui::TableNextColumn();
                 if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
                 else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
+                if (c == C_TVMENU) {
+                    // Guide held opens the menu, and Guide is also the keypad's # (a tap): a chord that holds # collides.
+                    bool guideHold = false;
+                    for (const Binding& b : prof.binds[(size_t)c])
+                        if (b == Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold()) guideHold = true;
+                    if (guideHold)
+                        ui::hint("Guide (hold) opens the TV menu, so a keypad chord that holds # (such as * + #) needs the keypad "
+                                 "overlay, a pad with Share, or this binding removed.");
+                }
                 // Where the binding comes from sits under it (short form; the long one is the tooltip).
                 ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
@@ -160,6 +171,10 @@ void drawControlsTab(App& app) {
                 if (ImGui::SmallButton("Set")) in.beginCapture(layer, c, false);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Add")) in.beginCapture(layer, c, true);
+                if (c == C_TVMENU) {   // the TV menu is also bound to a long press (a tap stays free for the button's other job)
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Add hold")) in.beginCapture(layer, c, true, true);
+                }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Unbind")) {
                     st->set(layer, c, {});

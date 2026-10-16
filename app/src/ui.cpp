@@ -9,6 +9,7 @@
 #include "platform/platform.h"
 #include "settings_reset_ui.h"
 #include "shaders.h"
+#include "tv/tv_shell.h"
 #include "typed_ui.h"
 #include "ui_util.h"
 
@@ -705,6 +706,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     drawControlsOverlay(app, areaPos, areaSize);
     drawAchievementsUi(app);
     drawDebugWindows(app);
+    app.tvShell().draw(tv::Layer::Menu, vp->Pos, vp->Size);   // the in-game menu over everything but the OSD (no window while it is closed)
     drawOsd(app, areaPos, areaSize);
     drawDebugOverlay(app, areaPos.x, areaPos.y);
 

@@ -1039,6 +1039,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         return;
     }
     input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
+    tvHost_->noteInput(e);    // which device the hints should name (the shell consumes events InputManager never sees)
     if (tvShell().ownsInput() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys
     if (input.handleEvent(e)) return;
     switch (e.type) {
@@ -1325,6 +1326,10 @@ int App::runInteractive(const CliArgs& a) {
     library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
     if (a.showWindow == "library") library.show = true;
 
+    // dev: drive the TV menu from a script (a screenshot of it).  A script that cannot start ends the run through the normal teardown.
+    const bool scriptFailed = !a.tvTestScript.empty() && !tvScriptBegin(a, true);
+    if (scriptFailed) quit = true;
+
     lastTick_ = now();
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
@@ -1350,6 +1355,7 @@ int App::runInteractive(const CliArgs& a) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;
+        if (tvScript_) tvScriptStep();   // the script's lines that are due (the virtual pad stays until shutdown: the hints name it)
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         inputFrame(*this);   // mouse capture, the controls-overlay key
@@ -1414,6 +1420,7 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    tvScriptEnd();
     desktopShutdown();
     library.stop();   // joins its threads and frees its textures while the GL context is still alive
     if (a.verbose) {
@@ -1422,7 +1429,7 @@ int App::runInteractive(const CliArgs& a) {
                      audio.ratio(), (unsigned long long)audio.underruns());
         (void)secs;
     }
-    return 0;
+    return scriptFailed ? 2 : 0;
 }
 
 // --verbose, once, inside a frame: the numbers that decide how crisp the text is.  The glyph atlas bakes at

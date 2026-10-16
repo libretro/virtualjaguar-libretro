@@ -71,7 +71,7 @@ struct CliArgs {
     bool dumpNativeMenu = false;    // dev: print and check the real macOS menu tree, then exit (77 = no native menu here)
     bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
     int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
-    std::string tvTestScript;       // headless: replay this script of key / pad / focus events against the TV menu (tv_script.cpp)
+    std::string tvTestScript;       // replay this script of key / pad / focus events against the TV menu (tv_script.cpp); headless it replaces the run, windowed it runs between frames
     bool showHelp = false;
     bool showVersion = false;
     unsigned perfFrames = 0;        // dev: profile this many UI frames (after a warm-up), print the phase costs, exit
@@ -269,7 +269,14 @@ private:
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
-    int runTvScript(const CliArgs& a);   // tv_script.cpp: --tv-test-script
+    // tv_script.cpp: --tv-test-script.  Headless it is the whole run (runTvScript); windowed, runInteractive steps it between frames.
+    int runTvScript(const CliArgs& a);
+    struct TvScriptRun;
+    std::shared_ptr<TvScriptRun> tvScript_;
+    bool tvScriptBegin(const CliArgs& a, bool windowed);
+    int tvScriptStep();
+    void tvScriptDrain();
+    void tvScriptEnd();
     void saveWindowScreenshot(const std::string& path);
 
     void desktopInit();       // after the window exists: native menus, tray, dark title bar

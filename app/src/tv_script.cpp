@@ -1,5 +1,7 @@
-// --tv-test-script FILE (headless dev flag): replays a script of key / pad / focus events against the real App --
-// no window, no ImGui -- and checks what the TV shell and the input layer did.  It is the test of the input
+// --tv-test-script FILE (dev flag): replays a script of key / pad / focus events against the real App and checks what
+// the TV shell and the input layer did.  Headless (the CTest tv_menu_headless): no window, no ImGui, and a failed
+// `expect` fails the run.  Windowed (runInteractive): the same lines run between frames -- `load` included -- so a
+// screenshot (--screenshot) can be taken of the open menu; `expect` only prints a mismatch and the script goes on.  It is the test of the input
 // ownership rules (spec 3.1): who gets F4, a Share hold, Esc, a pad button, and when.  Format and verbs: the header
 // of tests/tv_menu_headless.txt.in.
 //
@@ -18,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -86,16 +89,24 @@ bool ctlByName(const std::string& n, Ctl& c) {
 
 }  // namespace
 
-int App::runTvScript(const CliArgs& a) {
+struct App::TvScriptRun {
     std::vector<Line> lines;
-    std::string err;
-    if (!readScript(a.tvTestScript, lines, err)) {
-        std::fprintf(stderr, "headless: FAIL tv script: %s\n", err.c_str());
-        return 2;
-    }
-    audio.open(48043.6);
-    applyAudioSettings();
+    size_t next = 0;
+    bool windowed = false;
+    SDL_Joystick* joy = nullptr;
+    SDL_JoystickID padId = 0;
+    uint64_t prevExec = 0, prevMs = 0;
+    unsigned expects = 0;
+};
 
+bool App::tvScriptBegin(const CliArgs& a, bool windowed) {
+    auto run = std::make_shared<TvScriptRun>();
+    run->windowed = windowed;
+    std::string err;
+    if (!readScript(a.tvTestScript, run->lines, err)) {
+        std::fprintf(stderr, "%s: FAIL tv script: %s\n", windowed ? "tv" : "headless", err.c_str());
+        return false;
+    }
     // ---- the virtual pad ----------------------------------------------------------------------------------------
     SDL_VirtualJoystickDesc desc;
     SDL_INIT_INTERFACE(&desc);
@@ -103,73 +114,68 @@ int App::runTvScript(const CliArgs& a) {
     desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
     desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;   // button i of the virtual stick is SDL_GamepadButton i, MISC1 included
     desc.name = "Virtual Jaguar test pad";
-    const SDL_JoystickID padId = SDL_AttachVirtualJoystick(&desc);
-    if (!padId) {
-        std::fprintf(stderr, "headless: FAIL tv script: no virtual gamepad here: %s\n", SDL_GetError());
-        return 1;
+    run->padId = SDL_AttachVirtualJoystick(&desc);
+    if (!run->padId) {
+        std::fprintf(stderr, "%s: FAIL tv script: no virtual gamepad here: %s\n", windowed ? "tv" : "headless", SDL_GetError());
+        return false;
     }
-    SDL_Joystick* joy = SDL_OpenJoystick(padId);
-
-    auto drain = [this]() {
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) handleEvent(ev, true);
-    };
-    drain();   // GAMEPAD_ADDED -> InputManager opens it
+    run->joy = SDL_OpenJoystick(run->padId);
+    tvScript_ = run;
+    tvScriptDrain();   // GAMEPAD_ADDED -> InputManager opens it
     {
         // Only the virtual pad plays: a real controller on the dev machine must not steer the menu.
         int n = 0, which = -1;
         SDL_JoystickID* ids = SDL_GetGamepads(&n);
         for (int i = 0; ids && i < n; i++)
-            if (ids[i] == padId) which = i;
+            if (ids[i] == run->padId) which = i;
         SDL_free(ids);
         if (which >= 0) input.setPadFilter(which + 1);
-        if (!joy || which < 0 || input.gamepadCount() != 1 ||
+        if (!run->joy || which < 0 || input.gamepadCount() != 1 ||
             !SDL_GamepadHasButton(input.padHandles()[0], SDL_GAMEPAD_BUTTON_MISC1)) {
-            std::fprintf(stderr, "headless: FAIL tv script: the virtual gamepad did not open as a pad with a Share button\n");
-            return 1;
+            std::fprintf(stderr, "%s: FAIL tv script: the virtual gamepad did not open as a pad with a Share button\n",
+                         windowed ? "tv" : "headless");
+            tvScriptEnd();
+            return false;
         }
     }
+    run->prevExec = SDL_GetTicks();
+    return true;
+}
 
-    // ---- loop pieces --------------------------------------------------------------------------------------------
-    uint64_t lastFrame = SDL_GetTicks();
-    unsigned stepped = 0;
+void App::tvScriptDrain() {
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) handleEvent(ev, headless_);
+}
+
+void App::tvScriptEnd() {
+    if (!tvScript_) return;
+    SDL_CloseJoystick(tvScript_->joy);
+    SDL_DetachVirtualJoystick(tvScript_->padId);
+    tvScriptDrain();
+    tvScript_.reset();
+}
+
+// Runs every line that is due now.  0 = more to come, 1 = the script is done, 2 = a headless check failed.
+int App::tvScriptStep() {
+    TvScriptRun& run = *tvScript_;
+    const char* tag = run.windowed ? "tv" : "headless";
     auto tick = [this]() { tvInputFrame(*this, SDL_GetTicks()); };
-    auto stepGame = [&]() {   // a loaded, running game takes one frame per 16 ms
-        const uint64_t t = SDL_GetTicks();
-        if (t - lastFrame < 16) return;
-        lastFrame = t;
-        if (!host.isLoaded() || paused || debug.halted()) return;
-        audio.update();
-        host.runFrame();
-        ach.afterFrame();
-        ach.pump();
-        if ((++stepped & 15) == 15) audio.clear();   // the dummy device drains in real time
-        for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
-    };
-    auto service = [&]() {
-        drain();
-        tick();
-        stepGame();
-    };
+    // A failure: headless ends the run; windowed prints it and goes on (a screenshot run has no use for an abort).
     auto fail = [&](const Line& l, const std::string& what) {
-        std::fprintf(stderr, "headless: FAIL tv script line %u: %s\n", l.no, what.c_str());
-        return 1;
+        std::fprintf(stderr, "%s: FAIL tv script line %u: %s\n", tag, l.no, what.c_str());
+        return run.windowed ? 0 : 2;
     };
-
-    unsigned expects = 0;
-    uint64_t prevExec = SDL_GetTicks(), prevMs = 0;
-    for (const Line& l : lines) {
-        const uint64_t due = prevExec + (l.ms - prevMs);
-        while (SDL_GetTicks() < due) {
-            service();
-            SDL_Delay(1);
-        }
-        prevExec = SDL_GetTicks();
-        prevMs = l.ms;
+    while (run.next < run.lines.size()) {
+        const Line& l = run.lines[run.next];
+        if (SDL_GetTicks() < run.prevExec + (l.ms - run.prevMs)) return 0;
+        run.next++;
+        run.prevExec = SDL_GetTicks();
+        run.prevMs = l.ms;
 
         const std::string& verb = l.w[0];
         const std::string arg1 = l.w.size() > 1 ? l.w[1] : std::string();
         const std::string arg2 = l.w.size() > 2 ? l.w[2] : std::string();
+        int rc = 0;
         if (verb == "load") {
             if (arg1.empty()) return fail(l, "load wants a path");
             paths.saves = paths.root + "saves" + std::to_string(headlessLoads_++) + "/";   // a private, empty save folder
@@ -179,9 +185,9 @@ int App::runTvScript(const CliArgs& a) {
             ev.type = SDL_EVENT_DROP_FILE;
             ev.drop.data = arg1.c_str();
             SDL_PushEvent(&ev);
-            drain();
+            tvScriptDrain();
             tick();
-            if (!host.isLoaded() || host.contentPath() != absolutePath(arg1)) return fail(l, "could not load " + arg1);
+            if (!host.isLoaded() || host.contentPath() != absolutePath(arg1)) rc = fail(l, "could not load " + arg1);
         } else if (verb == "key") {
             const SDL_Scancode sc = SDL_GetScancodeFromName(arg2.c_str());
             if (sc == SDL_SCANCODE_UNKNOWN) return fail(l, "unknown key '" + arg2 + "'");
@@ -196,7 +202,7 @@ int App::runTvScript(const CliArgs& a) {
                 ev.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
                 ev.key.down = down;
                 SDL_PushEvent(&ev);
-                drain();
+                tvScriptDrain();
                 tick();
             }
         } else if (verb == "pad") {
@@ -206,9 +212,9 @@ int App::runTvScript(const CliArgs& a) {
             for (int pass = 0; pass < 2; pass++) {
                 const bool down = pass == 0;
                 if ((down && arg1 == "up") || (!down && arg1 == "down")) continue;
-                SDL_SetJoystickVirtualButton(joy, (int)b, down);
+                SDL_SetJoystickVirtualButton(run.joy, (int)b, down);
                 SDL_UpdateJoysticks();
-                drain();
+                tvScriptDrain();
                 tick();
             }
         } else if (verb == "focus") {
@@ -217,10 +223,10 @@ int App::runTvScript(const CliArgs& a) {
             ev.type = arg1 == "lost" ? SDL_EVENT_WINDOW_FOCUS_LOST : SDL_EVENT_WINDOW_FOCUS_GAINED;
             if (arg1 != "lost" && arg1 != "gained") return fail(l, "focus wants lost|gained");
             SDL_PushEvent(&ev);
-            drain();
+            tvScriptDrain();
             tick();
         } else if (verb == "typing") {
-            input.uiWantsKeyboard = arg1 == "on";   // headless has no ImGui to say a text box has focus
+            input.uiWantsKeyboard = arg1 == "on";   // headless has no ImGui to say a text box has focus (windowed: the UI frame resets it)
         } else if (verb == "capture") {
             Ctl c = C_HELP;
             if (!ctlByName(arg1, c)) return fail(l, "capture wants help|tvmenu");
@@ -230,11 +236,11 @@ int App::runTvScript(const CliArgs& a) {
         } else if (verb == "expect") {
             tick();   // a hold that fired meanwhile toggles the menu now ...
             tick();   // ... and the housekeeping after it has run
-            drain();
+            tvScriptDrain();
             const size_t eq = arg1.find('=');
             if (eq == std::string::npos) return fail(l, "expect wants name=value");
             const std::string name = arg1.substr(0, eq), want = arg1.substr(eq + 1);
-            expects++;
+            run.expects++;
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
             std::string got;
             if (name == "menu-open") got = flag(tvShell().menuOpen());
@@ -257,15 +263,57 @@ int App::runTvScript(const CliArgs& a) {
                 bool has = false;
                 for (const Binding& b : input.keyboardProfile().binds[(size_t)c])
                     if (b.kind == Binding::Key && b.code == (int)sc && !b.hold) has = true;
-                if (!has) return fail(l, "the keyboard profile does not bind " + want);
+                if (!has) rc = fail(l, "the keyboard profile does not bind " + want);
+                if (rc) return rc;
                 continue;
             } else {
                 return fail(l, "unknown expect '" + name + "'");
             }
-            if (got != want) return fail(l, "expected " + name + "=" + want + ", got " + got);
+            if (got != want) rc = fail(l, "expected " + name + "=" + want + ", got " + got);
         } else {
             return fail(l, "unknown verb '" + verb + "'");
         }
+        if (rc) return rc;
+    }
+    return 1;
+}
+
+int App::runTvScript(const CliArgs& a) {
+    audio.open(48043.6);
+    applyAudioSettings();
+    if (!tvScriptBegin(a, false)) return 1;
+
+    uint64_t lastFrame = SDL_GetTicks();
+    unsigned stepped = 0;
+    auto stepGame = [&]() {   // a loaded, running game takes one frame per 16 ms
+        const uint64_t t = SDL_GetTicks();
+        if (t - lastFrame < 16) return;
+        lastFrame = t;
+        if (!host.isLoaded() || paused || debug.halted()) return;
+        audio.update();
+        host.runFrame();
+        ach.afterFrame();
+        ach.pump();
+        if ((++stepped & 15) == 15) audio.clear();   // the dummy device drains in real time
+        for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+    };
+    auto service = [&]() {
+        tvScriptDrain();
+        tvInputFrame(*this, SDL_GetTicks());
+        stepGame();
+    };
+
+    // The time of a line is a minimum gap to the previous one: service the app until it is due, then run it.
+    int rc = 0;
+    while (!(rc = tvScriptStep())) {
+        service();
+        SDL_Delay(1);
+    }
+    const unsigned expects = tvScript_->expects;
+    const size_t nLines = tvScript_->lines.size();
+    if (rc == 2) {
+        tvScriptEnd();
+        return 1;
     }
 
     // Let the last input settle, and a loaded game run a little (--frames N = N frame times).
@@ -274,10 +322,8 @@ int App::runTvScript(const CliArgs& a) {
         service();
         SDL_Delay(1);
     }
-    SDL_CloseJoystick(joy);
-    SDL_DetachVirtualJoystick(padId);
-    drain();
-    std::printf("headless: OK (tv script: %zu line(s), %u expect(s))\n", lines.size(), expects);
+    tvScriptEnd();
+    std::printf("headless: OK (tv script: %zu line(s), %u expect(s))\n", nLines, expects);
     return 0;
 }
 

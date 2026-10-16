@@ -349,6 +349,8 @@ set(VJ_APP_SOURCES
     src/tv/tv_style.cpp
     src/tv/tv_shell.cpp
     src/tv/tv_app_host.cpp
+    src/tv/tv_ingame.cpp
+    src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
     src/discord_app.cpp)

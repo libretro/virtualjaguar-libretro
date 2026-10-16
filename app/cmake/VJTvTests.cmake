@@ -47,3 +47,20 @@ set_tests_properties(tv_menu_headless PROPERTIES
     TIMEOUT 180
     PASS_REGULAR_EXPRESSION "headless: OK"
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
+
+# The in-game menu drawn headlessly (an ImGui context with no renderer) over a fake tv::Host: every page without an
+# ImGui error, the netplay banner and the missing Load rows in the text actually drawn, a menu that leaves the pointer
+# and the keyboard to the app (no window while closed, no keyboard capture while open).
+add_executable(vj_tv_ui_smoke
+    tests/tv_ui_smoke.cpp src/tv/tv_shell.cpp src/tv/tv_ingame.cpp src/tv/tv_widgets.cpp src/tv/tv_focus.cpp
+    src/tv/tv_nav.cpp src/tv/tv_style.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_tv_ui_smoke PRIVATE src)
+target_link_libraries(vj_tv_ui_smoke PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+if(MSVC)
+    target_compile_options(vj_tv_ui_smoke PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_tv_ui_smoke PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_tv_ui_smoke PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME tv_ui_smoke COMMAND vj_tv_ui_smoke)
+set_tests_properties(tv_ui_smoke PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
