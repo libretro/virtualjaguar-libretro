@@ -284,6 +284,7 @@ set(VJ_APP_SOURCES
     src/shaders.cpp
     src/shaders_ui.cpp
     src/input.cpp
+    src/hold_arbiter.cpp
     src/remap.cpp
     src/remap_ui.cpp
     src/devices.cpp
@@ -337,11 +338,19 @@ set(VJ_APP_SOURCES
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
     src/desktop.cpp
+    src/tv_script.cpp
     src/platform/commands.cpp
     src/platform/events.cpp
     src/platform/platform.cpp
     src/platform/tray.cpp
     src/platform/viewports.cpp
+    src/tv/tv_focus.cpp
+    src/tv/tv_nav.cpp
+    src/tv/tv_style.cpp
+    src/tv/tv_shell.cpp
+    src/tv/tv_app_host.cpp
+    src/tv/tv_ingame.cpp
+    src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
     src/discord_app.cpp)
@@ -452,4 +461,5 @@ if(VJ_APP_BUILD_TESTS)
     include(VJPlatformTests)
     include(VJDiscordTests)
     include(VJThemeTests)
+    include(VJTvTests)
 endif()

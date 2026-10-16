@@ -9,6 +9,8 @@
 #include "platform/platform.h"
 #include "platform/viewports.h"
 #include "theme_style.h"
+#include "tv/tv_app_host.h"
+#include "tv/tv_shell.h"
 
 #include <algorithm>
 #include <cctype>
@@ -67,7 +69,10 @@ void SDLCALL importDialogDone(void*, const char* const* list, int /*filter*/) {
 
 }  // namespace
 
-App::App() : host(CoreHost::instance()) {}
+App::App() : host(CoreHost::instance()) {
+    tvHost_ = std::make_unique<tv::AppHost>(*this);   // headless runs have them too: opening the menu needs no ImGui
+    tvShell_ = std::make_unique<tv::Shell>(*tvHost_);
+}
 App::~App() { shutdown(); }
 
 double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)perfFreq_; }
@@ -193,7 +198,7 @@ bool App::initSdl(const CliArgs& a) {
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, platform::kWebsiteUrl);
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "game");
     SDL_InitFlags flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS;
-    if (!headless_) flags |= SDL_INIT_GAMEPAD;
+    if (!headless_ || !a.tvTestScript.empty()) flags |= SDL_INIT_GAMEPAD;   // the TV script attaches a virtual pad
     if (!SDL_Init(flags)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return false;
@@ -537,6 +542,8 @@ bool App::openContent(const std::string& pathIn) {
         return false;
     }
     const std::string path = absolutePath(pathIn);
+    if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
+    input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
     resumeOffer.active = false;
     const bool noResume = suppressResume_ || reloading_;
@@ -591,6 +598,8 @@ bool App::openNoContent() {
         toast("The debugger has the game halted - resume it first", 2.5, 2);
         return false;
     }
+    if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
+    input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
     resumeOffer.active = false;
     autoSave();
@@ -670,6 +679,8 @@ void App::closeContent() {
         toast("The debugger has the game halted - resume it first", 2.5, 2);
         return;
     }
+    if (tvShell().menuOpen()) tvShell().closeMenu();   // gives the pause back before the game goes
+    input.clearHolds();
     pendingStateSlot_ = kNoPendingSlot;
     resumeOffer.active = false;
     autoSave();
@@ -695,6 +706,10 @@ void App::reset() {
 }
 
 void App::togglePause() {
+    if (menuHeldPause_) {   // the TV menu holds the pause: a toggle here would be overwritten when it closes
+        toast("Close the menu to resume", 1.5);
+        return;
+    }
     if (!paused) {
         // Hardcore rations pausing (rc_client_can_pause); softcore never refuses.
         std::string why;
@@ -707,6 +722,40 @@ void App::togglePause() {
     audio.setPaused(paused);
     toast(paused ? "Paused" : "Resumed", 1.2);
 }
+
+// The TV in-game menu's pause: the same gate and the same pause as togglePause(), without its toast, and it keeps
+// what was true before so that a game the player had paused stays paused when the menu closes.  A netplay session
+// keeps running (a pause would stall the other side), so there the menu only lays over the picture.
+bool App::menuPause(std::string& why) {
+    if (menuHeldPause_) return true;   // already open
+    if (netplay.configured()) {
+        input.setMenuOwnsInput(true);   // running on, but not for the pads: the menu has them
+        return true;
+    }
+    if (!paused) {
+        if (!ach.allowPause(why)) return false;   // hardcore rations pausing (rc_client_can_pause)
+        paused = true;
+        audio.setPaused(true);
+        pausedBeforeMenu_ = false;
+    } else {
+        pausedBeforeMenu_ = true;
+    }
+    menuHeldPause_ = true;
+    input.setMenuOwnsInput(true);
+    return true;
+}
+
+void App::menuResume() {
+    input.setMenuOwnsInput(false);   // before the caller arms the release guard
+    if (!menuHeldPause_) return;
+    menuHeldPause_ = false;
+    if (paused != pausedBeforeMenu_) {
+        paused = pausedBeforeMenu_;
+        audio.setPaused(paused);
+    }
+}
+
+tv::Shell& App::tvShell() { return *tvShell_; }
 
 void App::showOpenDialog() {
     if (!window_) return;
@@ -929,6 +978,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (alt) setFullscreen(!fullscreen);
         break;
     case SDLK_ESCAPE:
+        if (tvShell().ownsInput() && !tvShell().backAtRoot()) break;   // Back on a TV screen, not "leave fullscreen"
         if (fullscreen) setFullscreen(false);
         break;
     case SDLK_F1:
@@ -989,6 +1039,9 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         debug.step();
         return;
     }
+    input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
+    tvHost_->noteInput(e);    // which device the hints should name (the shell consumes events InputManager never sees)
+    if (tvShell().ownsInput() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys
     if (input.handleEvent(e)) return;
     switch (e.type) {
     case SDL_EVENT_QUIT:
@@ -1046,9 +1099,12 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_KEY_UP: {
         bool captured = imguiUp_ && ImGui::GetIO().WantCaptureKeyboard;
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && !captured) handleHotkey(e.key);
-        if (!captured && host.isLoaded()) {
+        // (a key-down under the TV menu is the menu's, not the game's; a key-up always goes through, or a key pressed
+        // before the menu opened would stay down in the core)
+        if (!captured && host.isLoaded() && (e.type == SDL_EVENT_KEY_UP || !tvShell().menuOpen())) {
             unsigned rk = InputManager::retroKey(e.key.scancode);
-            if (rk) host.sendKeyEvent(e.type == SDL_EVENT_KEY_DOWN, rk, 0, 0);
+            if (rk && !(e.type == SDL_EVENT_KEY_DOWN && input.withholdsKey((int)e.key.scancode)))
+                host.sendKeyEvent(e.type == SDL_EVENT_KEY_DOWN, rk, 0, 0);
         }
         if (e.key.scancode == SDL_SCANCODE_TAB && !captured) fastForward = (e.type == SDL_EVENT_KEY_DOWN);
         break;
@@ -1206,7 +1262,7 @@ int App::run(const CliArgs& a) {
     bootTarget_ = a.bootBios == "cart" ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
     if (!netplayInit(*this, a)) return 2;
 
-    int rc = a.headless ? runHeadless(a) : runInteractive(a);
+    int rc = a.headless ? (a.tvTestScript.empty() ? runHeadless(a) : runTvScript(a)) : runInteractive(a);
 
     saveConfig();
     shutdown();
@@ -1272,6 +1328,10 @@ int App::runInteractive(const CliArgs& a) {
     library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
     if (a.showWindow == "library") library.show = true;
 
+    // dev: drive the TV menu from a script (a screenshot of it).  A script that cannot start ends the run through the normal teardown.
+    const bool scriptFailed = !a.tvTestScript.empty() && !tvScriptBegin(a, true);
+    if (scriptFailed) quit = true;
+
     lastTick_ = now();
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
@@ -1297,6 +1357,7 @@ int App::runInteractive(const CliArgs& a) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;
+        if (tvScript_) tvScriptStep();   // the script's lines that are due (the virtual pad stays until shutdown: the hints name it)
 
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         inputFrame(*this);   // mouse capture, the controls-overlay key
@@ -1361,6 +1422,7 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.h", h);
     }
     if (host.isLoaded()) host.flushSaveRam(true);
+    tvScriptEnd();
     desktopShutdown();
     library.stop();   // joins its threads and frees its textures while the GL context is still alive
     if (a.verbose) {
@@ -1369,7 +1431,7 @@ int App::runInteractive(const CliArgs& a) {
                      audio.ratio(), (unsigned long long)audio.underruns());
         (void)secs;
     }
-    return 0;
+    return scriptFailed ? 2 : 0;
 }
 
 // --verbose, once, inside a frame: the numbers that decide how crisp the text is.  The glyph atlas bakes at

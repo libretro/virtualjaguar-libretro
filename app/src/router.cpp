@@ -59,6 +59,7 @@ void Router::route(const RouterConfig& cfg, const std::vector<HostSource>& pads,
             cs.clear(C_OVERLAY);
         }
         ex.clear(C_HELP);   // an app action, handled where the key event arrives (InputManager::handleEvent)
+        ex.clear(C_TVMENU);   // likewise (plain presses there, holds via the HoldArbiter)
         SlotAcc& a = acc[slot];
         a.cs.bits |= cs.bits;
         a.ex.bits |= ex.bits;

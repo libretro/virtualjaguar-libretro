@@ -1,0 +1,142 @@
+# tv_menu_headless: the TV in-game menu and its input ownership, through the real App (headless, no ImGui).
+# Run with:  virtualjaguar --headless --frames 30 --tv-test-script tv_menu_headless.txt
+# One event per line:  <ms> <verb> <args>.  <ms> is a script time; the gap to the previous line is the least real time
+# that passes between the two (the hold arbiter reads the real clock).  Lines starting with # are comments.
+#   load PATH            drop PATH on the window (the normal drop route)
+#   key down|up|tap NAME a key event (SDL scancode name: F4, Escape, F8)
+#   pad down|up|tap BTN  a button on the runner's virtual gamepad (SDL button name: a, b, dpdown, misc1)
+#   focus lost|gained    the window loses / gets keyboard focus
+#   typing on|off        pretend a text box has focus (input.uiWantsKeyboard)
+#   capture help|tvmenu  begin binding that action on the keyboard (the next key becomes its binding)
+#   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
+#   (core-input=1: the core would read some Player 1 pad button right now; the expect takes the snapshot itself)
+# An expect first lets the per-frame input housekeeping run, so a fired hold has been handled by then.
+
+# No game: the TV-menu action does nothing in this phase.
+0     expect loaded=0
+0     key tap F4
+40    expect menu-open=0
+40    load @VJ_ROMS@/yarc.j64
+80    expect loaded=1
+
+# F4 opens the menu (and pauses the game), F4 again closes it.
+100   key tap F4
+140   expect menu-open=1
+140   expect paused=1
+160   key tap F4
+200   expect menu-open=0
+200   expect paused=0
+
+# A pause the player made is theirs: the menu does not undo it.
+220   key tap F8
+240   expect paused=1
+260   key tap F4
+300   expect menu-open=1
+320   key tap F4
+360   expect menu-open=0
+360   expect paused=1
+380   key tap F8
+400   expect paused=0
+
+# F4 while a text box has the keyboard does nothing.
+420   typing on
+440   key tap F4
+480   expect menu-open=0
+480   typing off
+
+# Esc is Back, and Back on the menu's first page is Resume.
+500   key tap F4
+540   expect menu-open=1
+560   key tap Escape
+600   expect menu-open=0
+600   expect paused=0
+
+# A key let go while the menu is open still reaches the app (Tab is fast-forward and has to be let go of).
+620   key down Tab
+640   expect fast-forward=1
+660   key tap F4
+700   expect menu-open=1
+720   key up Tab
+760   expect fast-forward=0
+780   key tap F4
+820   expect menu-open=0
+
+# A Share tap is not a hold: no menu.
+# (`pad tap` presses and releases inside one line, so a stalled runner cannot stretch it into a hold.)
+860   pad tap misc1
+940   expect menu-open=0
+
+# A Share hold of 600 ms opens the menu; letting go leaves it open.
+960   pad down misc1
+1580  expect menu-open=1
+1580  expect paused=1
+1600  pad up misc1
+1640  expect menu-open=1
+
+# A Share hold while it is open closes it (the edge reaches the arbiter before the shell).
+1660  pad down misc1
+2300  expect menu-open=0
+2300  expect paused=0
+2320  pad up misc1
+2360  expect menu-open=0
+
+# Focus lost 200 ms into a Share hold: the hold is forgotten, so 700 ms later the menu is still closed.
+2380  pad down misc1
+2580  focus lost
+3280  expect menu-open=0
+3280  pad up misc1
+3320  expect menu-open=0
+
+# The menu holds the pause: F8 under it is refused, and closing gives back the state from before the menu.
+3340  key tap F4
+3380  expect menu-open=1
+3380  expect paused=1
+3400  key tap F8
+3440  expect paused=1
+3440  expect menu-open=1
+3460  key tap F4
+3500  expect menu-open=0
+3500  expect paused=0
+
+# The menu owns the input: with it open the core reads neutral input (under netplay the menu cannot pause the game, and this is
+# what keeps it from playing under the menu); a button held across the close stays masked until released; with the menu closed it plays.
+3520  key tap F4
+3560  expect menu-open=1
+3580  pad down dpright
+3620  expect core-input=0
+3640  pad up dpright
+3660  pad down dpright
+3680  key tap F4
+3720  expect menu-open=0
+3720  expect core-input=0
+3740  pad up dpright
+3760  expect core-input=0
+3780  pad down dpright
+3820  expect core-input=1
+3840  pad up dpright
+3880  expect core-input=0
+
+# F4 while a binding is being captured binds F4 and does not open the menu.
+3900  capture help
+3920  key tap F4
+3960  expect capturing=0
+3960  expect menu-open=0
+3960  expect kb-bind=help:F4
+
+# Walk the menu with the pad: down to Close game, ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
+4000  key tap F4
+4040  expect menu-open=1
+4060  pad tap dpdown
+4080  pad tap dpdown
+4100  pad tap dpdown
+4120  pad tap dpdown
+4140  pad tap dpdown
+4160  pad tap a
+4180  pad tap a
+4220  expect menu-open=1
+4220  expect loaded=1
+4240  pad tap a
+4260  pad tap dpup
+4280  pad tap a
+4320  expect loaded=0
+4320  expect menu-open=0

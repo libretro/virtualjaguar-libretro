@@ -61,6 +61,7 @@ struct Builder {
         head("App");
         ctl(C_OVERLAY);
         ctl(C_HELP);
+        ctl(C_TVMENU);
     }
 };
 

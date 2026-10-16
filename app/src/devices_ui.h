@@ -2,6 +2,7 @@
 // panel, the per-frame mouse-capture and controls-overlay housekeeping, the cheat-sheet window.
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "cheatsheet.h"
@@ -18,6 +19,10 @@ void applyPortDevices(App& app);
 
 // Once per UI frame, before the emulation steps: mouse capture, the controls-overlay key and timer.
 void inputFrame(App& app);
+
+// The TV-menu half of the per-frame input housekeeping, free of ImGui: ticks the hold bindings with `ms`
+// (SDL_GetTicks()).  inputFrame() calls it; so does the headless script runner, which never calls inputFrame.
+void tvInputFrame(App& app, uint64_t ms);
 
 // A game was just loaded: show the controls overlay by itself when the auto-show rule says so.
 void controlsOverlayOnLoad(App& app);

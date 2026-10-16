@@ -3,6 +3,7 @@
 
 #include "app.h"
 #include "libretro.h"
+#include "tv/tv_shell.h"
 #include "ui_util.h"
 
 #include <algorithm>
@@ -37,10 +38,24 @@ void applyPortDevices(App& app) {
 // ---------------------------------------------------------------------------------
 // per frame
 // ---------------------------------------------------------------------------------
+void tvInputFrame(App& app, uint64_t ms) {
+    InputManager& in = app.input;
+    // The toggle first: a plain press of the TV-menu action (F4, a paddle) or a hold that reached the threshold on an
+    // earlier call.  With no game this phase gives it no meaning, and while a binding is being captured the press
+    // belongs to the capture (the latch is drained either way, so it cannot fire the moment the capture ends).
+    const bool menuToggle = in.takeTvMenuToggle();
+    if (menuToggle && app.host.isLoaded() && !in.capturing()) app.tvShell().toggleMenu();
+    if (app.tvShell().menuOpen() && !app.host.isLoaded()) app.tvShell().closeMenu();   // the game went away under it
+    app.tvShell().frame(ms);   // the nav intents gathered since the last frame
+    // `live` = the game owns the input: loaded, running, and the TV menu not laid over it.
+    in.tickHolds(ms, app.host.isLoaded() && !app.paused && !app.tvShell().menuOpen());
+}
+
 void inputFrame(App& app) {
     InputManager& in = app.input;
+    tvInputFrame(app, SDL_GetTicks());
     bool uiOpen = app.showSettings || app.showStates || app.showCheats || app.showAbout || app.library.show ||
-                  in.overlay.open;
+                  in.overlay.open || app.tvShell().menuOpen();   // (the menu releases a captured mouse: netplay keeps it open over a running game)
     bool wantsMouse = false;
     if (ImGui::GetCurrentContext()) {
         ImGuiIO& io = ImGui::GetIO();

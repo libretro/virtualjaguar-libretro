@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,11 @@
 #include "video.h"
 
 namespace vj {
+
+namespace tv {
+class AppHost;
+class Shell;
+}  // namespace tv
 
 struct CliArgs {
     std::vector<std::string> content;
@@ -65,6 +71,7 @@ struct CliArgs {
     bool dumpNativeMenu = false;    // dev: print and check the real macOS menu tree, then exit (77 = no native menu here)
     bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
     int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
+    std::string tvTestScript;       // replay this script of key / pad / focus events against the TV menu (tv_script.cpp); headless it replaces the run, windowed it runs between frames
     bool showHelp = false;
     bool showVersion = false;
     unsigned perfFrames = 0;        // dev: profile this many UI frames (after a warm-up), print the phase costs, exit
@@ -205,6 +212,12 @@ public:
     void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
     void reset();
     void togglePause();
+    // The TV in-game menu's pause (tv/tv_app_host.cpp): like togglePause() but silent, and it remembers whether the
+    // game was already paused, so closing the menu gives back exactly that.  False = refused (hardcore rations pausing;
+    // `why` says so).  Under netplay it returns true without pausing: the link keeps running.
+    bool menuPause(std::string& why);
+    void menuResume();
+    tv::Shell& tvShell();
     void setFullscreen(bool fs);
     void applyVsync();
     void syncSwapInterval();
@@ -256,6 +269,14 @@ private:
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
+    // tv_script.cpp: --tv-test-script.  Headless it is the whole run (runTvScript); windowed, runInteractive steps it between frames.
+    int runTvScript(const CliArgs& a);
+    struct TvScriptRun;
+    std::shared_ptr<TvScriptRun> tvScript_;
+    bool tvScriptBegin(const CliArgs& a, bool windowed);
+    int tvScriptStep();
+    void tvScriptDrain();
+    void tvScriptEnd();
     void saveWindowScreenshot(const std::string& path);
 
     void desktopInit();       // after the window exists: native menus, tray, dark title bar
@@ -289,6 +310,10 @@ private:
     bool viewportsOn_ = false;         // ImGuiConfigFlags_ViewportsEnable is set right now
     uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
+    bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
+    bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
+    std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App
+    std::unique_ptr<tv::Shell> tvShell_;
 
     // pacing
     double lastTick_ = 0;

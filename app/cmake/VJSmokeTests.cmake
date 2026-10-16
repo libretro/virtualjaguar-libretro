@@ -145,7 +145,7 @@ add_executable(vj_devices_test test/devices_test.cpp src/cheatsheet.cpp ${VJ_DEV
 target_include_directories(vj_devices_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(vj_devices_test PRIVATE ${VJ_SDL3_TARGET})
 
-add_executable(vj_devices_e2e test/devices_e2e.cpp src/core_host.cpp ${VJ_DEVICE_SOURCES})
+add_executable(vj_devices_e2e test/devices_e2e.cpp src/core_host.cpp src/hold_arbiter.cpp ${VJ_DEVICE_SOURCES})
 target_include_directories(vj_devices_e2e PRIVATE src)
 target_link_libraries(vj_devices_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 

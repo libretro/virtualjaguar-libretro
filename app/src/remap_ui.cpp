@@ -23,6 +23,18 @@ std::string bindingsText(const std::vector<Binding>& v) {
     return s;
 }
 
+// The every-gamepad view of the TV menu row: the Share hold default also means Guide on pads without Share.
+std::string tvMenuText(const std::vector<Binding>& v) {
+    if (v.empty()) return "(unbound)";
+    const Binding share = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold();
+    std::string s;
+    for (const Binding& b : v) {
+        if (!s.empty()) s += ", ";
+        s += b == share ? std::string("Share (hold); Guide (hold) on pads without Share") : b.display();
+    }
+    return s;
+}
+
 // The "From" column is narrow: the long forms ("global, this controller") are in the tooltip.
 const char* sourceShort(Source s) {
     switch (s) {
@@ -47,6 +59,7 @@ const Section kSections[] = {
     {"Pointer: mouse, rotary and light gun (motion is also taken from the mouse itself)", C_PT_L, C_GUN_RELOAD},
     {"App", C_OVERLAY, C_OVERLAY},
     {"App", C_HELP, C_HELP},
+    {"App", C_TVMENU, C_TVMENU},
 };
 
 }  // namespace
@@ -111,7 +124,14 @@ void drawControlsTab(App& app) {
     ui::hint("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
 
     // ---- the table -----------------------------------------------------------------------------
-    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId);
+    // A specific controller shows what that pad gets (a pad without Share holds Guide for the TV menu); the
+    // every-gamepad view shows the Share default and says what pads without Share do.
+    PadCaps caps;
+    if (device >= 2) caps.hasMisc1 = pads[(size_t)device - 2].hasMisc1;
+    bool anyNoShare = false;
+    for (const InputManager::PadInfo& p : pads)
+        if (!p.hasMisc1) anyNoShare = true;
+    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId, caps);
     bool dirty = false;
     ImGui::Separator();
     if (in.capturing()) {
@@ -133,7 +153,8 @@ void drawControlsTab(App& app) {
                                   std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFontSize() * 7.0f));
     // Fixed columns for the short things; "Bound to" stretches (its text wraps) and gives way first.
     const float btnsW = ui::Flow::buttonW("Set") + ui::Flow::buttonW("Add") + ui::Flow::buttonW("Unbind") +
-                        ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3;
+                        ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3 +
+                        ui::Flow::buttonW("Add hold") + ImGui::GetStyle().ItemSpacing.x;   // the TV menu row's extra button
     if (ImGui::BeginTable("##binds", 3, tf, ImVec2(0, tableH))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
@@ -152,7 +173,19 @@ void drawControlsTab(App& app) {
                 ImGui::TextWrapped("%s", ctlLabel(c));
                 ImGui::TableNextColumn();
                 if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
+                else if (c == C_TVMENU && device == 1)
+                    ImGui::TextWrapped("%s", tvMenuText(prof.binds[(size_t)i]).c_str());
                 else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
+                if (c == C_TVMENU) {
+                    // Guide held opens the menu, and Guide is also the keypad's # (a tap): a chord that holds # collides.
+                    // In the every-gamepad view that is also the case on any connected pad without Share.
+                    bool guideHold = device == 1 && anyNoShare;
+                    for (const Binding& b : prof.binds[(size_t)c])
+                        if (b == Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold()) guideHold = true;
+                    if (guideHold)
+                        ui::hint("Guide (hold) opens the TV menu, so a keypad chord that holds # (such as * + #) needs the keypad "
+                                 "overlay, a pad with Share, or this binding removed.");
+                }
                 // Where the binding comes from sits under it (short form; the long one is the tooltip).
                 ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
@@ -160,6 +193,10 @@ void drawControlsTab(App& app) {
                 if (ImGui::SmallButton("Set")) in.beginCapture(layer, c, false);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Add")) in.beginCapture(layer, c, true);
+                if (c == C_TVMENU) {   // the TV menu is also bound to a long press (a tap stays free for the button's other job)
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Add hold")) in.beginCapture(layer, c, true, true);
+                }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Unbind")) {
                     st->set(layer, c, {});
