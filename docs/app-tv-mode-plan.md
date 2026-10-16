@@ -39,22 +39,34 @@ first: this plan argues from it and does not repeat its rationale.
 - Commit messages are conventional: `feat(app): …`, `test(app): …`, `docs(app): …`. Commits are signed. On
   "failed to fill whole buffer", wait and retry; never disable signing.
 
-## How this plan resolves the spec's open points and gaps
+## How this plan resolves the spec's open points
+
+These follow from the code or from the spec's own fallback rules; they need no new decision.
 
 | Spec point | Resolution (found in the code) |
 |---|---|
 | §12 option keys | Shader: `video.shader.*` through `ShaderChain`. Integer: `present.integerScale` (`video.integer`). Aspect: `present.aspectOverride` (`video.aspect`), the 4-entry table now in `drawVideoTab`. Internal resolution: core option `virtualjaguar_internal_resolution`. RISC overclock: `virtualjaguar_risc_clock_scale`. Idle-loop skip: `virtualjaguar_risc_idle_skip`. Volume: `app.volume` + `applyAudioSettings()`. Show FPS: `app.showFps` (`ui.show_fps`). Vsync: `app.vsync` + `applyVsync()`. Theme: `setThemeChoice(key)`. |
 | §12 "Recently added" | `LibraryService` does not expose it; `ScanFile.mtime` is the file's own date, not when the file joined the library. **The shelf is dropped**, as the spec's own fallback rule says. |
 | §12 netplay | The menu opens without pausing when `netplay.configured()` (the test the auto-save already uses for "during netplay"), and shows the banner "Netplay: the game keeps running". |
+| §8 "remembered for the next launch only in Manual" | New key `ui.tv_manual_on` (bool), written only while the setting is Manual. |
+| §9 nightly = Auto, first release = Manual | CMake option `VJ_TV_DEFAULT` (`auto` by default) becomes the compile definition `VJ_TV_DEFAULT_SETTING`. `release.yml` passes `-DVJ_TV_DEFAULT=manual` on every run that is not the `develop` nightly. |
+| §9 one-time hint | New key `ui.tv_hint_shown`. |
+
+## Changes to the approved spec (each needs the user's approval before its phase starts)
+
+The spec was approved as written; the code made these unavoidable or better. Phase 1 needs only the
+Reset / Close game row; the others apply from phase 2 on.
+
+| Spec point | Proposed change |
+|---|---|
 | §4 Library rail "Homebrew" | `lib::Entry` has no homebrew flag. **Dropped**, by the same no-new-index rule. Rail: All games, Favorites, Recently played, Jaguar CD. |
 | §4 Home hero "year and publisher", "achievement progress" | `lib::Entry` has neither year nor publisher, and RA progress is not keyed by library entry. The hero shows art, title, region, cartridge/CD, and the number of save states with the newest date. |
 | §4 Home "Y: achievements" | Per-game RA rows exist only for the loaded game. With no game running, the Achievements screen shows the RA games list (`ach.games()`, read-only progress); with a game running, it shows that game's rows. |
 | §4 "X on any tile" vs Home "X: resume" | Made consistent. **X (West) = resume the newest save state on any tile** (hidden when there is none, or in hardcore). **Start (Menu) = Game details on any tile**; a right-click does the same with a mouse. Y (North) = the letter picker in Library, Achievements on Home. |
 | §4 Game details "Per-game settings" | Per-game settings exist only as control overrides for the *loaded* game, and Game details is reached only with no game running. **Row dropped**; the in-game menu's Settings > More settings covers it. |
-| §8 "remembered for the next launch only in Manual" | New key `ui.tv_manual_on` (bool), written only while the setting is Manual. |
-| §9 nightly = Auto, first release = Manual | CMake option `VJ_TV_DEFAULT` (`auto` by default) becomes the compile definition `VJ_TV_DEFAULT_SETTING`. `release.yml` passes `-DVJ_TV_DEFAULT=manual` on every run that is not the `develop` nightly. |
-| §9 one-time hint | New key `ui.tv_hint_shown`. |
 | Reset / Close game from a pad | Both ask first: a two-row Yes/No list with focus on No (one A press must not lose progress). |
+| §3.1 the TV-menu action with no game | With no game loaded and the setting not Off, `C_TVMENU` toggles TV mode (Task 7). The spec lists the action as live in that state without saying what it does; the §9 hint ("Press Share (hold) or F4 for TV mode") needs this meaning. |
+| §9 the default per build | `release.yml` gains `-DVJ_TV_DEFAULT=manual` (Task 16). Another session owns the release workflow: coordinate before PR 4 touches it. |
 
 ## Review focus
 
@@ -176,6 +188,9 @@ public:
     void release(uint32_t dev, const Binding& in, uint64_t ms);
     int takeFires(uint64_t ms);       // UI frame: holds that reached kHoldMs since the last call (each fires once)
     void frame();                     // one emulated frame: pulses count down
+    // A tap queues a pulse only while live (a game loaded, not paused, the game owns input).  A tap in the library
+    // or the paused menu means nothing to a game and must not reach the next one.  Going not-live drops queued pulses.
+    void setLive(bool live);
     void apply(uint32_t dev, DeviceSnapshot& s) const;   // held-under-threshold or swallowed -> bit cleared; pulsing -> set
     void forget(uint32_t dev);        // pad unplugged: its holds and pulses go, nothing fires
     void clear();                     // focus lost / ownership change: everything goes, nothing fires
@@ -210,6 +225,11 @@ a.release(7, G, 1000); DeviceSnapshot r{}; a.apply(7, r); CHECK(!r.btn[GUIDE]); 
 // per_device_isolation: dev 7 holds Guide; apply(8, snap with Guide down) leaves dev 8's bit set
 // unplug_mid_hold: press(7,G,0); forget(7); takeFires(600) == 0; apply(7, snapG()) leaves the bit alone (no longer a hold input)
 // clear_drops_pulse: tap, clear() before frame(); apply shows no Guide bit
+// no_pulse_when_not_live: setLive(false); tap; setLive(true); apply shows no Guide bit for 4 frames
+//   (a Share tap in the library must not open the keypad overlay in the next game; a Guide tap while paused
+//   must not press # on resume)
+// going_not_live_drops_queued_pulse: setLive(true); tap; setLive(false); setLive(true); no Guide bit
+// holds_still_fire_when_not_live: setLive(false); press 0; takeFires(500) == 1   // the menu works paused / in the library
 // non_hold_input_untouched: Start on dev 7 passes through apply() unchanged
 // chord_star_hash_on_guide_hold_pad (documents the spec limitation): with right-stick-down (*) held and Guide
 //   pressed, the core-facing snapshot never has both until Guide is released, then Guide pulses 4 frames
@@ -240,7 +260,11 @@ CHECK(!g.armed());
 - Consumes: Tasks 1–2.
 - Produces (on `InputManager`):
   - `bool takeTvMenuToggle();`
-  - `void tickHolds(uint64_t ms);`, called by `inputFrame` every UI frame (it also runs while paused).
+  - `void tickHolds(uint64_t ms, bool live);`, called every UI frame (it also runs while paused). It passes `live`
+    to `HoldArbiter::setLive`.
+  - `void feedHoldEdges(const SDL_Event& e);`, the press/release half of `handleEvent`. `App::handleEvent` calls it
+    first, before the TV shell can consume the event, so a release is never lost and a Share hold can also
+    close the menu.
   - `void armReleaseGuard();`, which snapshots the keyboard and every open pad now.
   - `void clearHolds();`
   - `std::vector<SDL_Gamepad*> padHandles() const;`
@@ -274,17 +298,24 @@ CHECK(on == 4);
   defect is in Task 1 or 2: fix it there before going on.
 - [ ] **Step 3: Implement the glue.**
   - `router.cpp`: `ex.clear(C_TVMENU)` next to `ex.clear(C_HELP)`.
-  - `input.cpp` `handleEvent`:
+  - `input.cpp` `feedHoldEdges` (only `App::handleEvent` calls it, once per event; `InputManager::handleEvent`
+    does not feed the arbiter):
     - Pad button and key down/up feed `holds_.press/release` with `SDL_GetTicks()`. Do this only when no
       capture is running, and for keys only when `!uiWantsKeyboard` and no Ctrl/Alt/Cmd is held.
+  - `input.cpp` `handleEvent`:
     - A plain (non-hold) `C_TVMENU` binding sets `tvMenu_ = true`, exactly as `C_HELP` sets `helpToggle_`.
     - `GAMEPAD_REMOVED` calls `holds_.forget(id)`.
     - `WINDOW_FOCUS_LOST` calls `holds_.clear()`.
   - `reresolve()`/`openPad()` call `holds_.setHoldInputs(dev, <every hold binding in that profile>)`.
   - `poll()` calls `holds_.apply` and then `guard_.apply` on each `HostSource.snap` before `router_.route`, and
     `holds_.frame()` after it.
-  - `tickHolds(ms)`: `if (holds_.takeFires(ms)) tvMenu_ = true;`.
-  - `inputFrame()` calls `in.tickHolds(SDL_GetTicks())`.
+  - `tickHolds(ms, live)`: `holds_.setLive(live); if (holds_.takeFires(ms)) tvMenu_ = true;`.
+  - New `void tvInputFrame(App& app, uint64_t ms)` in `devices_ui.cpp`, free of ImGui:
+    - it calls `in.tickHolds(ms, app.host.isLoaded() && !app.paused && <the game owns input>)`;
+    - it consumes `takeTvMenuToggle()` (Task 5).
+    `inputFrame()` calls it, and the headless script runner (Task 5) calls it too, because `runHeadless` never
+    calls `inputFrame`.
+  - `App::openContent` and `App::closeContent` call `input.clearHolds()`.
 - [ ] **Step 4: Run** `ctest --test-dir app/build -R "devices_e2e|input_e2e|remap_unit|hold_arbiter_unit"`.
   Expected: all PASS.
 - [ ] **Step 5: Commit** `feat(app): route hold bindings, the TV-menu toggle and the release guard through input (#991)`.
@@ -470,15 +501,32 @@ CHECK(host.savedSlot == 3); frames(120); CHECK(g_imguiAsserts == 0);
 // menu_keeps_user_pause (Review focus 1): host.paused = true before open; open; Back; CHECK(host.paused)
 // close_game_asks_first: Accept on Close game, Accept (focus starts on No) -> CHECK(host.closed == 0); Down, Accept -> CHECK(host.closed == 1)
 // netplay_banner: host.netplay = true; open; CHECK(host.paused == false && drawnTexts contains "Netplay: the game keeps running")
+// pointer_free_while_playing: host.loaded = true, menu closed, io.MousePos at the viewport centre; frames(3)
+CHECK(!ImGui::GetIO().WantCaptureMouse);   // the light gun / mouse keep the picture
 ```
 
-  **Step 1b**: add CTest `tv_menu_headless`: `virtualjaguar --headless --frames 30 --tv-test-script <file>`, a dev
-  flag that replays the script's lines `F:key|pad|focus EVENT` into `App::handleEvent` and asserts
-  `menu-open=0/1`. Script cases:
-  - F4 opens the menu.
+  **Step 1b**: add CTest `tv_menu_headless`: `virtualjaguar --headless --frames 30 --tv-test-script <file>`.
+
+  - The dev flag replays the script's lines (`<ms> key|pad|focus|load|expect …`) at those times, in its own loop
+    in place of `runHeadless`'s positional-content loop. Each event goes through `App::handleEvent`, then
+    `tvInputFrame(app, ms)` runs, and a loaded game steps one frame per 16 ms. `load <rom>` drops content
+    through the same event path a drop uses, so lines before it run with no game. `expect menu-open=0|1` checks
+    `tvShell().menuOpen()`; `expect tv=0|1` (Task 7) checks `tvMode.active()`.
+  - The shell and its `AppHost` exist in headless runs too: they need no ImGui to open, close or pause.
+  - Pads: the runner attaches one with `SDL_AttachVirtualJoystick` (type `SDL_JOYSTICK_TYPE_GAMEPAD`, with a
+    MISC1 button; it works under the dummy video driver). It reaches `InputManager` through the normal
+    `GAMEPAD_ADDED` hot-plug path, and the script presses buttons with `SDL_SetJoystickVirtualButton` +
+    `SDL_UpdateJoysticks`. **Check this first:** if the virtual pad does not appear headless on all three CI
+    OSes, stop and report it. Don't fake `GAMEPAD_*` events for an unopened id: `InputManager` ignores them, so
+    the test would pass for the wrong reason.
+
+  Script cases:
+  - F4 opens the menu; F4 again closes it.
   - F4 while `uiWantsKeyboard` does nothing.
   - F4 during `beginCapture` binds F4 and does not open the menu.
-  - A `WINDOW_FOCUS_LOST` mid Share-hold leaves the menu closed after 600 ms.
+  - A Share hold of 600 ms opens it; a Share hold while it is open closes it (the edge reaches the arbiter
+    before the shell).
+  - `WINDOW_FOCUS_LOST` 200 ms into a Share hold, then 600 ms: the menu stays closed.
 
   Implement the flag in `main.cpp`/`app.cpp` next to `--expect-controls-overlay`, and print `headless: FAIL …`
   on a mismatch.
@@ -489,9 +537,17 @@ CHECK(host.savedSlot == 3); frames(120); CHECK(g_imguiAsserts == 0);
     - Pausing calls `ach.allowPause(why)` unless the game is already paused.
     - Under netplay, pausing returns true without pausing.
     - Neither direction shows the "Paused"/"Resumed" toast.
-  - `inputFrame`: `if (in.takeTvMenuToggle() && app.host.isLoaded()) app.tvShell().toggleMenu();`.
-  - `App::handleEvent`: give `tvShell().handleEvent` the event before `input.handleEvent` while
-    `tvShell().ownsInput()`.
+  - `tvInputFrame`: `if (in.takeTvMenuToggle() && app.host.isLoaded()) app.tvShell().toggleMenu();`. With no
+    game this phase does nothing; Task 7 adds the no-game meaning.
+  - `App::handleEvent`, in this order:
+    1. `input.feedHoldEdges(e)`;
+    2. `tvShell().handleEvent` while `tvShell().ownsInput()`;
+    3. `input.handleEvent`.
+  - Layers:
+    - `Layer::Base` is drawn only while no game is loaded and TV is active.
+    - `Layer::Menu` is drawn only while the menu is open.
+    - With a game running and the menu closed, no shell window exists, so `io.WantCaptureMouse` stays false
+      over the picture and mouse, rotary and light-gun games keep the pointer.
   - `handleHotkey` Esc: `if (tvShell().ownsInput() && !tvShell().backAtRoot()) break;` before leaving fullscreen.
   - `remap_ui.cpp`:
     - Add `{"App", C_TVMENU, C_TVMENU}` to `kSections`.
@@ -603,6 +659,12 @@ virtual std::string raStatus() const = 0;
   and `operator==` compares both.
 - Config: `ui.tv_mode` and `ui.tv_manual_on` are read in `loadConfig`/`applySettingsFromConfig` and written in
   `saveConfig`. `ui.tv_manual_on` is written only while the setting is Manual.
+- `C_TVMENU` with no game loaded (`tvInputFrame`):
+  - With the setting not Off, it calls `tvMode.toggle()`: desktop → TV mode, TV mode → desktop. This is what
+    spec §3.1 ("pads do nothing except the TV-menu action") and the §9 hint ("Press Share (hold) or F4 for TV
+    mode") need.
+  - With the setting Off, it does nothing.
+  - With a game loaded, it opens or closes the in-game menu, as in phase 1.
 
 - [ ] **Step 1: Write the failing tests.**
   - Smoke:
@@ -613,6 +675,10 @@ virtual std::string raStatus() const = 0;
     - the View menu model has "TV Mode", disabled when `tvAvailable == false`;
     - `Cmd::TvMode` dispatches to `toggleTvMode()`.
   - `settings_reset_test`: `classifyKey("ui.tv_mode") == KeyClass::Interface` for all five `ui.tv_*` keys.
+  - `tv_menu_headless` script cases, before any `load` line:
+    - Manual: F4 → `expect tv=1`; F4 → `expect tv=0`.
+    - `ui.tv_mode=off`: F4 → `expect tv=0`.
+    - A Share hold → `expect tv=1`.
 - [ ] **Step 2: Run** `ctest --test-dir app/build -R "tv_ui_smoke|platform|settings_reset"`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
   - `drawUi`: when TV is active, the menu bar shows only at the top-edge hover band, as in fullscreen today.
