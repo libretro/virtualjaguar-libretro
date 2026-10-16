@@ -1,0 +1,103 @@
+# tv_menu_headless: the TV in-game menu and its input ownership, through the real App (headless, no ImGui).
+# Run with:  virtualjaguar --headless --frames 30 --tv-test-script tv_menu_headless.txt
+# One event per line:  <ms> <verb> <args>.  <ms> is a script time; the gap to the previous line is the least real time
+# that passes between the two (the hold arbiter reads the real clock).  Lines starting with # are comments.
+#   load PATH            drop PATH on the window (the normal drop route)
+#   key down|up|tap NAME a key event (SDL scancode name: F4, Escape, F8)
+#   pad down|up|tap BTN  a button on the runner's virtual gamepad (SDL button name: a, b, dpdown, misc1)
+#   focus lost|gained    the window loses / gets keyboard focus
+#   typing on|off        pretend a text box has focus (input.uiWantsKeyboard)
+#   capture help|tvmenu  begin binding that action on the keyboard (the next key becomes its binding)
+#   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  kb-bind=help|tvmenu:KEY
+# An expect first lets the per-frame input housekeeping run, so a fired hold has been handled by then.
+
+# No game: the TV-menu action does nothing in this phase.
+0     expect loaded=0
+0     key tap F4
+40    expect menu-open=0
+40    load @VJ_ROMS@/yarc.j64
+80    expect loaded=1
+
+# F4 opens the menu (and pauses the game), F4 again closes it.
+100   key tap F4
+140   expect menu-open=1
+140   expect paused=1
+160   key tap F4
+200   expect menu-open=0
+200   expect paused=0
+
+# A pause the player made is theirs: the menu does not undo it.
+220   key tap F8
+240   expect paused=1
+260   key tap F4
+300   expect menu-open=1
+320   key tap F4
+360   expect menu-open=0
+360   expect paused=1
+380   key tap F8
+400   expect paused=0
+
+# F4 while a text box has the keyboard does nothing.
+420   typing on
+440   key tap F4
+480   expect menu-open=0
+480   typing off
+
+# Esc is Back, and Back on the menu's first page is Resume.
+500   key tap F4
+540   expect menu-open=1
+560   key tap Escape
+600   expect menu-open=0
+600   expect paused=0
+
+# A Share tap is not a hold: no menu.
+620   pad down misc1
+660   pad up misc1
+700   expect menu-open=0
+
+# A Share hold of 600 ms opens the menu; letting go leaves it open.
+720   pad down misc1
+1020  expect menu-open=0
+1340  expect menu-open=1
+1340  expect paused=1
+1360  pad up misc1
+1400  expect menu-open=1
+
+# A Share hold while it is open closes it (the edge reaches the arbiter before the shell).
+1420  pad down misc1
+2060  expect menu-open=0
+2060  expect paused=0
+2080  pad up misc1
+2120  expect menu-open=0
+
+# Focus lost 200 ms into a Share hold: the hold is forgotten, so 700 ms later the menu is still closed.
+2140  pad down misc1
+2340  focus lost
+3040  expect menu-open=0
+3040  pad up misc1
+3080  expect menu-open=0
+
+# F4 while a binding is being captured binds F4 and does not open the menu.
+3100  capture help
+3120  key tap F4
+3160  expect capturing=0
+3160  expect menu-open=0
+3160  expect kb-bind=help:F4
+
+# Walk the menu with the pad: down to Close game, ask, answer No (it stays), ask again, answer Yes.
+3200  key tap F4
+3240  expect menu-open=1
+3260  pad tap dpdown
+3280  pad tap dpdown
+3300  pad tap dpdown
+3320  pad tap dpdown
+3340  pad tap dpdown
+3360  pad tap a
+3380  pad tap a
+3420  expect menu-open=1
+3420  expect loaded=1
+3440  pad tap a
+3460  pad tap dpdown
+3480  pad tap a
+3520  expect loaded=0
+3520  expect menu-open=0

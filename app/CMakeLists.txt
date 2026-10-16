@@ -343,6 +343,12 @@ set(VJ_APP_SOURCES
     src/platform/platform.cpp
     src/platform/tray.cpp
     src/platform/viewports.cpp
+    src/tv/tv_focus.cpp
+    src/tv/tv_nav.cpp
+    src/tv/tv_style.cpp
+    src/tv/tv_shell.cpp
+    src/tv/tv_app_host.cpp
+    src/tv/tv_script.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
     src/discord_app.cpp)

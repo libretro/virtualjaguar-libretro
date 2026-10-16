@@ -9,6 +9,8 @@
 #include "platform/platform.h"
 #include "platform/viewports.h"
 #include "theme_style.h"
+#include "tv/tv_app_host.h"
+#include "tv/tv_shell.h"
 
 #include <algorithm>
 #include <cctype>
@@ -67,7 +69,10 @@ void SDLCALL importDialogDone(void*, const char* const* list, int /*filter*/) {
 
 }  // namespace
 
-App::App() : host(CoreHost::instance()) {}
+App::App() : host(CoreHost::instance()) {
+    tvHost_ = std::make_unique<tv::AppHost>(*this);   // headless runs have them too: opening the menu needs no ImGui
+    tvShell_ = std::make_unique<tv::Shell>(*tvHost_);
+}
 App::~App() { shutdown(); }
 
 double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)perfFreq_; }
@@ -193,7 +198,7 @@ bool App::initSdl(const CliArgs& a) {
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, platform::kWebsiteUrl);
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "game");
     SDL_InitFlags flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS;
-    if (!headless_) flags |= SDL_INIT_GAMEPAD;
+    if (!headless_ || !a.tvTestScript.empty()) flags |= SDL_INIT_GAMEPAD;   // the TV script attaches a virtual pad
     if (!SDL_Init(flags)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return false;
@@ -537,6 +542,7 @@ bool App::openContent(const std::string& pathIn) {
         return false;
     }
     const std::string path = absolutePath(pathIn);
+    if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
     resumeOffer.active = false;
@@ -671,6 +677,7 @@ void App::closeContent() {
         toast("The debugger has the game halted - resume it first", 2.5, 2);
         return;
     }
+    if (tvShell().menuOpen()) tvShell().closeMenu();   // gives the pause back before the game goes
     input.clearHolds();
     pendingStateSlot_ = kNoPendingSlot;
     resumeOffer.active = false;
@@ -709,6 +716,35 @@ void App::togglePause() {
     audio.setPaused(paused);
     toast(paused ? "Paused" : "Resumed", 1.2);
 }
+
+// The TV in-game menu's pause: the same gate and the same pause as togglePause(), without its toast, and it keeps
+// what was true before so that a game the player had paused stays paused when the menu closes.  A netplay session
+// keeps running (a pause would stall the other side), so there the menu only lays over the picture.
+bool App::menuPause(std::string& why) {
+    if (menuHeldPause_) return true;   // already open
+    if (netplay.configured()) return true;
+    if (!paused) {
+        if (!ach.allowPause(why)) return false;   // hardcore rations pausing (rc_client_can_pause)
+        paused = true;
+        audio.setPaused(true);
+        pausedBeforeMenu_ = false;
+    } else {
+        pausedBeforeMenu_ = true;
+    }
+    menuHeldPause_ = true;
+    return true;
+}
+
+void App::menuResume() {
+    if (!menuHeldPause_) return;
+    menuHeldPause_ = false;
+    if (paused != pausedBeforeMenu_) {
+        paused = pausedBeforeMenu_;
+        audio.setPaused(paused);
+    }
+}
+
+tv::Shell& App::tvShell() { return *tvShell_; }
 
 void App::showOpenDialog() {
     if (!window_) return;
@@ -931,6 +967,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (alt) setFullscreen(!fullscreen);
         break;
     case SDLK_ESCAPE:
+        if (tvShell().ownsInput() && !tvShell().backAtRoot()) break;   // Back on a TV screen, not "leave fullscreen"
         if (fullscreen) setFullscreen(false);
         break;
     case SDLK_F1:
@@ -992,6 +1029,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         return;
     }
     input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
+    if (tvShell().ownsInput() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys
     if (input.handleEvent(e)) return;
     switch (e.type) {
     case SDL_EVENT_QUIT:
@@ -1209,7 +1247,7 @@ int App::run(const CliArgs& a) {
     bootTarget_ = a.bootBios == "cart" ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
     if (!netplayInit(*this, a)) return 2;
 
-    int rc = a.headless ? runHeadless(a) : runInteractive(a);
+    int rc = a.headless ? (a.tvTestScript.empty() ? runHeadless(a) : runTvScript(a)) : runInteractive(a);
 
     saveConfig();
     shutdown();

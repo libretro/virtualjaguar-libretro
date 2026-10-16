@@ -3,6 +3,7 @@
 
 #include "app.h"
 #include "libretro.h"
+#include "tv/tv_shell.h"
 #include "ui_util.h"
 
 #include <algorithm>
@@ -39,7 +40,12 @@ void applyPortDevices(App& app) {
 // ---------------------------------------------------------------------------------
 void tvInputFrame(App& app, uint64_t ms) {
     InputManager& in = app.input;
-    in.tickHolds(ms, app.host.isLoaded() && !app.paused);
+    // The toggle first: a plain press of the TV-menu action (F4, a paddle) or a hold that reached the threshold on an
+    // earlier call.  With no game this phase gives it no meaning.
+    if (in.takeTvMenuToggle() && app.host.isLoaded()) app.tvShell().toggleMenu();
+    app.tvShell().frame(ms);   // the nav intents gathered since the last frame
+    // `live` = the game owns the input: loaded, running, and the TV menu not laid over it.
+    in.tickHolds(ms, app.host.isLoaded() && !app.paused && !app.tvShell().menuOpen());
 }
 
 void inputFrame(App& app) {

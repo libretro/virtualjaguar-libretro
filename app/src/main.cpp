@@ -53,6 +53,8 @@ static void usage(const char* argv0) {
         "  --print-controls      print Player 1's controls cheat sheet (the active bindings) after the load\n"
         "  --expect-controls-overlay shown|hidden   fail unless the controls overlay is (not) showing after the load\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
+        "  --tv-test-script FILE replay FILE's key / pad / focus events against the TV menu instead of running content\n"
+        "                        (format: tests/tv_menu_headless.txt.in; --frames N = settle for N frame times at the end)\n"
         "\n"
         "cheats (the command-line twins of the Cheats window; also work headless):\n"
         "  --cheats-dir DIR      look for .cht files (libretro cheat database) in DIR too\n"
@@ -165,6 +167,7 @@ int main(int argc, char** argv) {
             }
             a.expectControls = v == "shown" ? 1 : 0;
         }
+        else if (!std::strcmp(s, "--tv-test-script")) a.tvTestScript = need(s);
         else if (!std::strcmp(s, "--netplay")) a.netplay.role = need(s);
         else if (!std::strcmp(s, "--netplay-addr")) a.netplay.address = need(s);
         else if (!std::strcmp(s, "--netplay-device")) a.netplay.device = need(s);
