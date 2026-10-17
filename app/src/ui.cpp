@@ -68,10 +68,13 @@ void drawOption(App& app, const OptionDef& d, bool inCategory) {
     } else {
         ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 8.0f, 14.0f));
         if (ImGui::BeginCombo("##v", labelFor(d, cur))) {
+            int vi = 0;
             for (const OptionValue& v : d.values) {
                 bool sel = (v.value == cur);
+                ImGui::PushID(vi++);   // two values may share a label
                 if (ImGui::Selectable(v.label.empty() ? v.value.c_str() : v.label.c_str(), sel))
                     host.setOptionValue(d.key, v.value);
+                ImGui::PopID();
                 if (sel) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
@@ -189,9 +192,6 @@ void drawVideoTab(App& app) {
     if (ImGui::Checkbox("VSync", &app.vsync)) app.applyVsync();
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
-    ImGui::Checkbox("Show frame rate", &app.showFps);
-    drawAppearanceSettings(app);
-    drawFontSettings(app);
     drawShaderSettings(app);
 }
 
@@ -241,6 +241,17 @@ void drawStorageTab(App& app) {
     ImGui::Separator();
     ImGui::Checkbox("Flush saves every few seconds", &app.autosaveSram);
     ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed (Settings > BIOS).");
+}
+
+// Settings > Interface: how the app itself looks and behaves (as opposed to Video's picture and Storage's saves).
+// The config keys are the ones these controls always had (ui.*, saves.resume, library.*): nothing is renamed.
+void drawInterfaceTab(App& app) {
+    drawAppGroupReset(app, AppGroup::Interface);
+    ImGui::SeparatorText("Overlays");
+    ImGui::Checkbox("Show frame rate", &app.showFps);
+    drawControlsOverlaySettings(app);
+    drawAppearanceSettings(app);
+    drawFontSettings(app);
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");
     ImGui::SetNextItemWidth(ui::em(10.0f));
@@ -340,6 +351,7 @@ void drawSettings(App& app) {
         if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("BIOS", nullptr, tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Interface", nullptr, tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
@@ -405,7 +417,7 @@ void drawStates(App& app) {
     ImGui::End();
 }
 
-// "Resume from <time>?", after a game with an auto-save booted (Settings > Storage > Resume where I left off = Ask).
+// "Resume from <time>?", after a game with an auto-save booted (Settings > Interface > Resume where I left off = Ask).
 void drawResumePrompt(App& app) {
     static bool always = false;
     if (!app.resumeOffer.active) return;
@@ -549,8 +561,11 @@ void drawMenuBar(App& app) {
             ImGui::Separator();
             if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) host.discSetEject(!disc.ejected);
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
-                for (unsigned i = 0; i < disc.count; i++)
+                for (unsigned i = 0; i < disc.count; i++) {
+                    ImGui::PushID((int)i);   // a multi-disc set can repeat a label
                     if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) host.discSetIndex(i);
+                    ImGui::PopID();
+                }
                 ImGui::EndMenu();
             }
         }
@@ -652,7 +667,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
         if (app.homeLibrary) {
             drawLibraryHome(app, areaPos.x, areaPos.y, areaSize.x, areaSize.y);   // the game library is the home screen
         } else {
-            // The plain welcome screen (Settings > Storage turns the home-screen library off).
+            // The plain welcome screen (Settings > Interface turns the home-screen library off).
             const char* l1 = "Virtual Jaguar";
             const char* l2 = "Drop a Jaguar ROM or CD image here, or use File > Open or File > Game library";
             float wrap = std::max(ImGui::GetFontSize() * 10.0f, areaSize.x - ImGui::GetFontSize() * 4.0f);
@@ -669,11 +684,12 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     if (app.showFps) {
         char buf[64];
         std::snprintf(buf, sizeof buf, "%.1f fps%s", app.fpsMeasured(), app.fastForward ? "  >>" : "");
-        // A chip behind the number: it can sit over a white game frame or the light home screen.
-        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        // A chip behind the number: it can sit over a white game frame or the light home screen.  On the
+        // background list, right after the game picture, so every ImGui window, menu and modal covers it
+        // (the foreground list would draw over them, #934).
         ImVec2 ts = ImGui::CalcTextSize(buf), at(areaPos.x + 8, areaPos.y + 6);
-        fg->AddRectFilled(ImVec2(at.x - 4, at.y - 2), ImVec2(at.x + ts.x + 4, at.y + ts.y + 2), ui::u32(ui::overlay().fpsBg), 3.0f);
-        fg->AddText(at, ui::u32(ui::overlay().fpsText), buf);
+        bg->AddRectFilled(ImVec2(at.x - 4, at.y - 2), ImVec2(at.x + ts.x + 4, at.y + ts.y + 2), ui::u32(ui::overlay().fpsBg), 3.0f);
+        bg->AddText(at, ui::u32(ui::overlay().fpsText), buf);
     }
 
     if (app.showSettings) drawSettings(app);

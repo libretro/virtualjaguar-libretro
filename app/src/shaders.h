@@ -62,6 +62,15 @@ public:
     bool libraryLoaded() const;
     const std::string& libraryPath() const { return libPath_; }
     const std::string& libraryError() const { return libErr_; }
+    // Why there is no library, for the Shader section.  Loaded: there is one.  NoSupport: the build
+    // has no librashader headers.  NotFound: no librashader file where we looked (or on the
+    // system path).  LoadFailed: a file was found and could not be used (wrong architecture, wrong
+    // ABI, not librashader, a missing dependency); libraryError() has the loader's reason.
+    enum class LibraryStatus { Loaded, NoSupport, NotFound, LoadFailed };
+    LibraryStatus libraryStatus() const { return libStatus_; }
+    // True when this build ships (or staged beside the executable) a runtime: a NotFound then means
+    // the file went missing, not that this build never had one.
+    static bool runtimeBundled();
     unsigned libraryApiVersion() const { return apiVersion_; }
     static const char* libraryFileName();   // librashader.dylib / .so / .dll
     static bool builtWithHeaders();         // false when configure could not fetch the header
@@ -75,6 +84,14 @@ public:
     std::vector<ShaderParam>& params() { return params_; }
     void paramChanged(size_t index);        // pushes params()[index].value into the live chain
     void resetParams();
+
+    // ---- what the GL context can compile (context current; render() also calls it) ----
+    // Reads the GL version and extensions once.  Until then nothing is assumed missing.
+    void probeGlCaps();
+    // False when the context has neither OpenGL 4.3 nor GL_ARB_arrays_of_arrays (macOS):
+    // presetNeedsArraysOfArrays() presets cannot compile there.
+    bool glHasArraysOfArrays() const { return glAoA_ != 0; }
+    const std::string& glVersionText() const { return glVer_; }   // "4.1", once probed
 
     // ---- per frame (GL context current) -----------------------------------------------
     // True when a frame would go through the chain.
@@ -108,6 +125,7 @@ private:
     std::unique_ptr<Impl> impl_;
     std::vector<std::string> dirs_;
     std::string libPath_, libErr_;
+    LibraryStatus libStatus_ = LibraryStatus::NotFound;
     unsigned apiVersion_ = 0;
     bool probed_ = false;
     bool failed_ = false;       // chain could not be built or a frame errored
@@ -117,6 +135,9 @@ private:
     bool noticedMissing_ = false;
     std::vector<ShaderParam> params_;
     uint64_t runs_ = 0, reuses_ = 0;
+    int glAoA_ = -1;            // arrays of arrays: -1 not probed yet, 0 no, 1 yes
+    std::string glVer_;
+    unsigned glsl_ = 330;       // GLSL version librashader generates (the context's once probed)
 
     void setNotice(const std::string& s);
 };

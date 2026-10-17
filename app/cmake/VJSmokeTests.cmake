@@ -196,9 +196,9 @@ set_tests_properties(settings_reset PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSI
 
 # UI fonts (#833): settings round trip, the per-OS font lookup against fake machines, custom-file validation,
 # glyph coverage of the app's own text.  No ImGui context.
-add_executable(vj_fonts_test tests/fonts_test.cpp src/fonts.cpp src/paths.cpp src/config.cpp)
+add_executable(vj_fonts_test tests/fonts_test.cpp src/fonts.cpp src/fonts_system.cpp src/paths.cpp src/config.cpp)
 target_include_directories(vj_fonts_test PRIVATE src ${imgui_SOURCE_DIR})
-target_link_libraries(vj_fonts_test PRIVATE ${VJ_SDL3_TARGET})
+target_link_libraries(vj_fonts_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
 if(MSVC)
     target_compile_options(vj_fonts_test PRIVATE /W3 /utf-8)
     target_compile_definitions(vj_fonts_test PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -208,10 +208,23 @@ endif()
 add_test(NAME fonts_unit COMMAND vj_fonts_test "${CMAKE_CURRENT_SOURCE_DIR}/src" "${imgui_SOURCE_DIR}")
 set_tests_properties(fonts_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# Installed-font enumeration (fonts_system.cpp, #935): name tables of synthetic fonts, the folder walk, the per-OS folders.
+add_executable(vj_fonts_system_test tests/fonts_system_test.cpp src/fonts.cpp src/fonts_system.cpp src/paths.cpp src/config.cpp)
+target_include_directories(vj_fonts_system_test PRIVATE src ${imgui_SOURCE_DIR})
+target_link_libraries(vj_fonts_system_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_fonts_system_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_fonts_system_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_fonts_system_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME fonts_system_unit COMMAND vj_fonts_system_test)
+set_tests_properties(fonts_system_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 # The Dear ImGui half of the fonts (fonts_imgui.cpp): the symbol fallback in every typeface incl. the Retro pixel font.
-add_executable(vj_fonts_imgui_test tests/fonts_imgui_test.cpp src/fonts.cpp src/fonts_imgui.cpp src/paths.cpp src/config.cpp)
+add_executable(vj_fonts_imgui_test tests/fonts_imgui_test.cpp src/fonts.cpp src/fonts_system.cpp src/fonts_imgui.cpp src/paths.cpp src/config.cpp)
 target_include_directories(vj_fonts_imgui_test PRIVATE src)
-target_link_libraries(vj_fonts_imgui_test PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+target_link_libraries(vj_fonts_imgui_test PRIVATE vj_imgui ${VJ_SDL3_TARGET} Threads::Threads)
 if(MSVC)
     target_compile_options(vj_fonts_imgui_test PRIVATE /W3 /utf-8)
     target_compile_definitions(vj_fonts_imgui_test PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -220,6 +233,18 @@ else()
 endif()
 add_test(NAME fonts_imgui_unit COMMAND vj_fonts_imgui_test)
 set_tests_properties(fonts_imgui_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# Frame pacing (pacing.h, #952): the loop's plan/charge/sleep/vsync-release decisions against a fake clock.
+add_executable(vj_pacing_test tests/pacing_test.cpp)
+target_include_directories(vj_pacing_test PRIVATE src)
+if(MSVC)
+    target_compile_options(vj_pacing_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_pacing_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_pacing_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME pacing_unit COMMAND vj_pacing_test)
+set_tests_properties(pacing_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
 add_test(NAME remap_unit COMMAND vj_remap_test)
 add_test(NAME input_e2e COMMAND vj_input_e2e "${VJ_ROMS}/yarc.j64")

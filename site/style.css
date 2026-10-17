@@ -564,10 +564,6 @@ figcaption {
     repeating-linear-gradient(0deg,
       rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
 }
-/* Hero mosaic: four real frames, so no scanline/vignette overlay and a
- * smooth (not pixelated) downscale. */
-.crt-frame.mosaic { max-width: 46rem; }
-.crt-frame.mosaic .crt-screen::after { display: none; }
 
 .crt-frame figcaption {
   font-family: var(--font-mono);
@@ -672,6 +668,191 @@ tr:last-child td { border-bottom: none; }
 tbody tr:hover td, table tr:hover td { background: var(--red-wash); }
 table tr:hover th { background: var(--code-bg); }
 
+/* download page */
+
+/* Generic platform and architecture glyphs (inline <symbol> sprite on the
+ * page).  Stroke-only, currentColor: they follow the text colour in both
+ * themes.  Always printed next to the platform name, so aria-hidden. */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+svg.ico {
+  width: 1.05em; height: 1.05em;
+  flex: none;
+  vertical-align: -0.17em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.dl .win-body { padding-top: 0.8rem; }
+.dl-nojs { margin: 0 0 0.8rem; font-size: 0.9rem; }
+
+/* Release picker: two quick buttons and a select for older tags. */
+.dl-picker {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 0.5rem 0.7rem;
+  margin: 0 0 0.9rem;
+}
+.dl-picker[hidden] { display: none; }
+.dl-label {
+  font-family: var(--font-mono); font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--fg-dim);
+}
+.dl-seg { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; }
+.dl-btn, .dl-older select {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--fg);
+  background: var(--code-bg);
+  padding: 0.32rem 0.8rem;
+  min-height: 2.2rem;
+  cursor: pointer;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 0;
+}
+.dl-btn code { background: none; padding: 0; font-size: inherit; }
+.dl-btn:hover, .dl-older select:hover { color: var(--red-link); }
+.dl-btn[aria-pressed="true"], .dl-older select.on {
+  color: #fff;
+  background: var(--red-fill);
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.dl-btn[aria-pressed="true"]:hover { color: #fff; }
+.dl-btn:focus-visible, .dl-older select:focus-visible,
+.inst-tabs [role="tab"]:focus-visible, details.plat > summary:focus-visible {
+  outline: 2px solid var(--red-link);
+  outline-offset: 2px;
+}
+.dl-older select { max-width: 100%; padding-right: 0.4rem; }
+
+/* One release. */
+.dl-meta {
+  margin: 0 0 0.6rem; max-width: none;
+  font-family: var(--font-mono); font-size: 0.8rem; color: var(--fg-dim);
+}
+.dl-meta strong { color: var(--fg); }
+.dl-note { margin: 0 0 0.6rem; font-size: 0.86rem; color: var(--fg-dim); max-width: none; }
+.dl-h {
+  display: flex; align-items: baseline; gap: 0.6rem;
+  margin: 1.1rem 0 0.45rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 2px solid var(--red-rule);
+  font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
+.dl-h small { font-weight: 400; letter-spacing: 0.04em; color: var(--fg-dim); text-transform: none; }
+.dl-empty { margin: 0.4rem 0; font-size: 0.9rem; color: var(--fg-dim); max-width: none; }
+.dl-hint { margin: 0.1rem 0 0.5rem; font-size: 0.84rem; color: var(--fg-dim); max-width: none; }
+
+.plat-name { display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+.arch { display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.82rem; white-space: nowrap; }
+
+table.dl-table { font-size: 0.86rem; }
+.dl-table th, .dl-table td { padding: 0.38rem 0.7rem; vertical-align: middle; }
+.dl-table tbody th[scope="rowgroup"] {
+  position: static; background: none; border-bottom: 1px solid var(--line);
+  text-transform: none; letter-spacing: 0; font-size: 0.86rem;
+  vertical-align: middle;
+}
+.dl-table tbody:not(:last-child) tr:last-child > * { border-bottom: 1px solid var(--line); }
+.dl-table td.files { white-space: normal; }
+.file { display: inline-block; margin: 0.1rem 1rem 0.1rem 0; white-space: nowrap; }
+.file small, .chip small { margin-left: 0.4rem; color: var(--fg-dim); font-family: var(--font-mono); font-size: 0.72rem; }
+
+/* Platform groups: the long core list collapses to one line per platform. */
+details.plat { border-bottom: 1px solid var(--line); }
+details.plat > summary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.8rem;
+  padding: 0.4rem 0.2rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.9rem; font-weight: 600;
+}
+details.plat > summary::-webkit-details-marker { display: none; }
+details.plat > summary::before {
+  content: "+"; flex: none; width: 1.1rem; text-align: center;
+  font-family: var(--font-mono); font-weight: 700; color: var(--red-link);
+}
+details.plat[open] > summary::before { content: "-"; }
+details.plat > summary:hover { background: var(--red-wash); }
+.count { font-family: var(--font-mono); font-size: 0.74rem; font-weight: 400; color: var(--fg-dim); }
+ul.chips {
+  list-style: none; margin: 0.1rem 0 0.7rem; padding: 0;
+  display: grid; gap: 0.35rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14.5rem), 1fr));
+}
+ul.chips li { margin: 0; }
+a.chip {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.1rem;
+  height: 100%;
+  padding: 0.3rem 0.55rem;
+  background: var(--well);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+a.chip svg.ico { align-self: center; margin-right: 0.4rem; color: var(--fg-dim); }
+a.chip .t { font-family: var(--font-mono); font-size: 0.82rem; }
+a.chip:hover, a.chip:focus-visible { background: var(--red-wash); color: var(--red-link); text-decoration: none; }
+a.chip:focus-visible { outline: 2px solid var(--red-link); outline-offset: 1px; }
+details.tools > .table-wrap { margin-top: 0.3rem; }
+.dl .footnote#verify { margin-top: 0.9rem; }
+
+/* Installer: a compact widget, tabs when scripts run. */
+details.inst { margin: 0 0 0.6rem; border: 1px solid var(--line); background: var(--well); }
+details.inst > summary { padding: 0.45rem 0.7rem; }
+details.inst[open] > summary { border-bottom: 1px solid var(--line); }
+details.inst > :not(summary) { margin-left: 0.7rem; margin-right: 0.7rem; }
+details.inst .inst-label { margin: 0.6rem 0 0.2rem; max-width: none; font-size: 0.86rem; }
+details.inst pre { margin: 0 0 0.5rem; }
+details.inst .footnote { margin: 0.4rem 0.7rem 0.6rem; max-width: none; }
+.inst-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.6rem; margin-bottom: 0.5rem; }
+.inst-tabs[hidden] { display: none; }
+.inst-tabs [role="tab"] {
+  font: inherit; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700;
+  color: var(--fg); background: var(--code-bg);
+  padding: 0.28rem 0.7rem; min-height: 2rem; cursor: pointer;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 0;
+}
+.inst-tabs [role="tab"][aria-selected="true"] {
+  color: #fff; background: var(--red-fill);
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.inst-tabs:not([hidden]) ~ .inst-panel .inst-label { display: none; }
+.inst-panel[hidden] { display: none; }
+
+@media (max-width: 34rem) {
+  .dl .win-body { padding-left: 0.7rem; padding-right: 0.7rem; }
+  .dl-picker { gap: 0.4rem; }
+  .dl-label { flex-basis: 100%; }
+  .dl-older { flex: 1 1 100%; }
+  .dl-older select { width: 100%; }
+  .dl-seg { flex: 1 1 100%; }
+  .dl-seg .dl-btn { flex: 1 1 0; }
+  .dl-table th, .dl-table td { padding: 0.35rem 0.5rem; }
+  /* The app table becomes platform headers over arch + files lines. */
+  .dl-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .dl-table tbody { display: block; }
+  .dl-table tbody tr { display: grid; grid-template-columns: 6.6rem 1fr; align-items: baseline; }
+  .dl-table tbody tr th[rowspan] { grid-column: 1 / -1; padding-bottom: 0.1rem; border-bottom: 0; }
+  .dl-table tbody tr td { border-bottom: 0; padding-top: 0.1rem; padding-bottom: 0.1rem; }
+  .dl-table tbody tr:last-child td { padding-bottom: 0.4rem; }
+  .dl-table tbody:not(:last-child) { border-bottom: 1px solid var(--line); }
+  .dl-table tbody:not(:last-child) tr:last-child > * { border-bottom: 0; }
+  .file { margin-right: 0.8rem; }
+}
+
 /* ---------------------------------------------------- notes / evidence */
 
 /* Two callouts, one shape: a thick coloured spine on an inset field.  The
@@ -729,6 +910,96 @@ table tr:hover th { background: var(--code-bg); }
   .btn:active { transform: none; }
 }
 
+/* ------------------------------------------------------------- gallery */
+
+/* A responsive grid of screenshot cards; each thumbnail is a link to the
+ * full picture, and assets/js/gallery.js upgrades it to a lightbox. */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr));
+  gap: 1rem;
+  margin: 1.1rem 0 1.8rem;
+}
+.gal-card {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 3px 3px 0 var(--shadow);
+}
+.gal-link {
+  display: block;
+  padding: 6px;
+  background: var(--well);
+  line-height: 0;
+}
+.gal-link:hover, .gal-link:focus-visible {
+  outline: 2px solid var(--red-link);
+  outline-offset: -2px;
+}
+.gal-card img { display: block; width: 100%; height: auto; image-rendering: auto; }
+/* Captured frames (figure.shot) open in the same lightbox and take the same
+ * red hover.  The well already supplies the inset, so the link adds none;
+ * a wide (scrolling) frame's link is as wide as its picture, so the outline
+ * spans what scrolls. */
+.shot .well > .gal-link { padding: 0; background: none; outline-offset: 0; }
+.shot.wide .well > .gal-link { min-width: 42rem; }
+.gal-card figcaption {
+  margin: 0;
+  padding: 0.5rem 0.65rem 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--fg-dim);
+  border-top: 1px solid var(--line);
+}
+.gal-card figcaption strong { display: block; color: var(--fg); font-size: 0.86rem; }
+.win-body > h3 { margin-top: 1.8rem; }
+
+dialog.lightbox {
+  width: min(96vw, 80rem);
+  max-width: 96vw;
+  max-height: 96vh;
+  padding: 0;
+  color: var(--fg);
+  background: var(--panel);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 4px 4px 0 var(--shadow);
+}
+dialog.lightbox::backdrop { background: rgba(0, 0, 0, 0.78); }
+.lb-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--red-bar);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lb-title { margin-right: auto; }
+.lb-btn {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--red-link);
+  background: var(--panel);
+  padding: 0.2rem 0.7rem;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  cursor: pointer;
+}
+.lb-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.lb-well { background: var(--well); padding: 6px; line-height: 0; overflow: auto; max-height: calc(96vh - 7rem); }
+.lb-img { display: block; width: 100%; height: auto; max-height: calc(96vh - 8rem); object-fit: contain; }
+.lb-cap { margin: 0; padding: 0.5rem 0.8rem 0.7rem; font-size: 0.86rem; color: var(--fg-dim); min-height: 1.2em; }
+
 /* --------------------------------------------------------------- print */
 
 @media print {
@@ -740,3 +1011,86 @@ table tr:hover th { background: var(--code-bg); }
   a { color: #000; text-decoration: underline; }
   main { max-width: none; }
 }
+
+/* app page */
+/* The screenshot galleries (only app.html uses .gallery): always 4 columns, 2 on
+ * narrower screens, never 3 -- every gallery holds an even number of cards, so
+ * the last row is never ragged.  Tighter gaps and captions mean less scrolling. */
+.gallery {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin: 0.8rem 0 1.2rem;
+}
+.gal-link { padding: 4px; }
+.gal-card figcaption { padding: 0.35rem 0.5rem 0.45rem; font-size: 0.78rem; line-height: 1.35; }
+.gal-card figcaption strong { font-size: 0.82rem; }
+#gallery > .win-body > h3 { margin-top: 1.3rem; }
+/* The short bullet intros above each gallery run in two columns on wide screens. */
+#gallery .win-body > ul { max-width: none; columns: 2; column-gap: 2rem; margin-bottom: 0.7rem; }
+#gallery .win-body > ul > li { break-inside: avoid; }
+@media (max-width: 60rem) {
+  .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #gallery .win-body > ul { columns: 1; max-width: 46rem; }
+}
+@media (max-width: 34rem) {
+  .gallery { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* home page */
+/* The screenshot strip: six frames across, the rest a sideways scroll away
+ * (snap per frame, the beveled scrollbar from .shot.wide, and Prev/Next
+ * buttons once gallery.js runs).  Three across on tablets, two on phones;
+ * the scroll stays inside the strip, never the page. */
+.strip-wrap { margin: 1.4rem 0 0.4rem; }
+.strip {
+  --strip-cols: 6;
+  --strip-gap: 0.6rem;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - (var(--strip-cols) - 1) * var(--strip-gap)) / var(--strip-cols));
+  gap: var(--strip-gap);
+  max-width: none;
+  margin: 0;
+  padding: 0 0 0.6rem;
+  list-style: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: var(--red-fill) var(--code-bg);
+}
+.strip > li { margin: 0; scroll-snap-align: start; min-width: 0; }
+.strip .gal-card { position: relative; height: 100%; }
+.strip .gal-link { padding: 3px; }
+.strip .gal-card img { aspect-ratio: 4 / 3; object-fit: cover; }
+.strip .gal-card figcaption { padding: 0.3rem 0.45rem 0.4rem; font-size: 0.74rem; line-height: 1.3; }
+.strip .gal-card figcaption strong { font-size: 0.78rem; }
+/* In the strip a card shows the title (and the shader, when there is one);
+ * the full caption stays in the markup for the lightbox and screen readers. */
+.strip .gal-cap {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.strip .gal-card figcaption .badge { margin-top: 0.2rem; font-size: 0.62rem; }
+.strip::-webkit-scrollbar { height: 14px; -webkit-appearance: none; appearance: none; }
+.strip::-webkit-scrollbar-track {
+  background: var(--code-bg);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.strip::-webkit-scrollbar-thumb {
+  background: var(--red-fill);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+}
+.strip-bar { display: flex; align-items: center; gap: 0.4rem; margin: 0 0 0.5rem; }
+.strip-bar[hidden] { display: none; }
+.strip-bar .dl-label { margin-right: auto; }
+.strip-bar .dl-btn { min-height: 2rem; padding: 0.2rem 0.7rem; }
+.strip-bar .dl-btn:disabled { opacity: 0.45; cursor: default; color: var(--fg-dim); }
+.strip-note { margin: 0.2rem 0 0; font-size: 0.8rem; color: var(--fg-dim); max-width: none; }
+@media (max-width: 60rem) { .strip { --strip-cols: 3; } }
+@media (max-width: 34rem) { .strip { --strip-cols: 2; } }
+
+/* release log */
+table.release-log td:first-child, table.release-log td:last-child { white-space: nowrap; }

@@ -1,0 +1,189 @@
+<!-- title: Privacy Policy | Virtual Jaguar libretro -->
+<!-- nav: Privacy -->
+<!-- description: What the Virtual Jaguar app and libretro core do with your data: no accounts, no telemetry, no ads. Every network connection they can make, who receives it, and where local files live. -->
+
+<h1>Privacy Policy</h1>
+<p class="lede">
+  Virtual Jaguar does not collect your data. There is no account, no
+  telemetry, no analytics, no crash reporting and no advertising, in the
+  app, in the core or on this website. This page lists the few network
+  connections the software can make, so you can decide which to allow.
+</p>
+<p class="footnote">Effective 2026-10-14. Applies to the Virtual Jaguar libretro core and the Virtual Jaguar desktop app, as of app version 3.9.0.</p>
+
+<section class="win" id="who">
+  <h2>Who we are</h2>
+  <div class="win-body">
+    <p>
+      Virtual Jaguar libretro is an open-source project, maintained by Joseph
+      Mattiello. The source code is at
+      <a href="{{REPO}}">github.com/libretro/virtualjaguar-libretro</a>, so
+      everything described here can be checked against it. To ask a question
+      or report a problem, open an
+      <a href="{{REPO}}/issues">issue on GitHub</a>. Issues are public:
+      do not put personal information in one.
+    </p>
+  </div>
+</section>
+
+<section class="win" id="collect">
+  <h2>What we collect</h2>
+  <div class="win-body">
+    <p>
+      Nothing. The project runs no servers that receive data from the app or
+      the core. This website is static pages hosted on GitHub Pages and has no
+      scripts, cookies, analytics or third-party assets. GitHub, as the host,
+      may log visitors&rsquo; IP addresses and requests under
+      <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub&rsquo;s privacy statement</a>.
+      We do not receive those logs.
+    </p>
+    <p>
+      The app has no update check. It never contacts anyone to ask whether a
+      newer version exists; you download releases yourself.
+    </p>
+  </div>
+</section>
+
+<section class="win" id="network">
+  <h2>What the app sends, and to whom</h2>
+  <div class="win-body">
+    <p>
+      The app and core never send your ROMs, save files, save states,
+      settings, file names or folder paths anywhere. Every connection also
+      reveals your IP address to the server you contact, which is how the
+      internet works. Requests from the app identify themselves as
+      <code>VirtualJaguar/&lt;version&gt;</code>.
+    </p>
+    <div class="table-wrap"><table>
+      <tr><th>Service</th><th>When</th><th>What is sent</th><th>Their policy</th></tr>
+      <tr>
+        <td>RetroAchievements<br>(retroachievements.org, media.retroachievements.org)</td>
+        <td>Only if you use achievements. Signing in, loading a game while signed in, earning an achievement, opening the Achievements window.
+            Can be turned off in the app (Enable RetroAchievements).</td>
+        <td>When you sign in: your user name and password, once, to obtain a login token; the password is not kept. After that: the token, the checksum (hash) of the game you load, your unlocks, whether hardcore mode is on, and the game&rsquo;s rich-presence text. Opening the Games tab downloads the public list of games with achievements (no login data). Achievement pictures are downloaded from their image server.</td>
+        <td><a href="https://retroachievements.org/terms">Legal &amp; Terms</a></td>
+      </tr>
+      <tr>
+        <td>libretro thumbnails<br>(thumbnails.libretro.com)</td>
+        <td>When the game library recognises a game from its database and &ldquo;download art&rdquo; is on (the default). Turn it off in the Library settings.</td>
+        <td>A request for that game&rsquo;s box-art and screenshot pictures. The game&rsquo;s database title (not your file name) is part of the address.</td>
+        <td><a href="https://www.libretro.com/index.php/privacy-policy/">libretro privacy policy</a></td>
+      </tr>
+      <tr>
+        <td>This project&rsquo;s website<br>(jaguar.provenance-emu.com, hosted by GitHub Pages)</td>
+        <td>Same as above, for Jaguar CD games whose art is not on libretro thumbnails.</td>
+        <td>A request for the disc&rsquo;s picture; the game&rsquo;s title is part of the address. The site operator does not see these requests, but GitHub, the host, may log them.</td>
+        <td><a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub privacy statement</a></td>
+      </tr>
+      <tr>
+        <td>GitHub<br>(raw.githubusercontent.com)</td>
+        <td>Only when you press &ldquo;Update database&rdquo; in the Library.</td>
+        <td>A request for the two public game-database files from the libretro-database project. Nothing about your games.</td>
+        <td><a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub privacy statement</a></td>
+      </tr>
+      <tr>
+        <td>Discord<br>(your own Discord app, on this computer)</td>
+        <td>From version 3.9.0, only while the Discord app is running, and only if &ldquo;Show what I&rsquo;m playing on Discord&rdquo; is on.</td>
+        <td>The app talks to the Discord program on your computer over a local connection and never contacts Discord&rsquo;s servers itself. It hands that program the game&rsquo;s title, platform, paused or netplay state, elapsed time, a box-art web address, and for achievement games the progress count and a link to the game&rsquo;s RetroAchievements page. Discord then shows this on your profile under Discord&rsquo;s own rules. Turn it off in Settings.</td>
+        <td><a href="https://discord.com/privacy">Discord privacy policy</a></td>
+      </tr>
+    </table></div>
+    <p class="footnote">
+      The shaders, cheat files and achievement library the app ships with are
+      downloaded when the app is built, not when you run it. Installing the
+      app downloads it from GitHub Releases, which is governed by GitHub&rsquo;s
+      policy.
+    </p>
+  </div>
+</section>
+
+<section class="win" id="link">
+  <h2>Link play, netplay and debugging</h2>
+  <div class="win-body">
+    <p>
+      These are off until you turn them on, and they never go through a server
+      of ours.
+    </p>
+    <ul>
+      <li><strong>Network Link (core option, also used by the app&rsquo;s
+          Netplay window).</strong> In TCP Host or TCP Client mode the
+          emulator connects directly to the other player&rsquo;s computer at
+          the address you choose. The data is the emulated console&rsquo;s
+          serial-port traffic. It is not encrypted, so use it with people and
+          networks you trust. A host listens on the port you pick on all of
+          your network connections.</li>
+      <li><strong>LAN discovery.</strong> While hosting, the core broadcasts a
+          small message to your local network once a second, containing your
+          computer&rsquo;s name, the link port and the device type, so other
+          players on the same network can find you. A client only listens for
+          these. Nothing is broadcast in the default mode, and the app does
+          not remember a host or client choice between launches.</li>
+      <li><strong>In RetroArch.</strong> The default &ldquo;Automatic&rdquo;
+          link mode rides on RetroArch&rsquo;s own netplay, if you use it. Any
+          lobby or relay server is RetroArch&rsquo;s, and RetroArch has its own
+          privacy practices and its own RetroAchievements support. The core
+          itself opens no connection in that mode.</li>
+      <li><strong>GDB debug stub.</strong> A developer option, off by
+          default. When enabled it listens on a port on this computer only,
+          unless you separately choose the LAN setting, which exposes it to
+          your local network with no authentication.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="win" id="local">
+  <h2>Data stored on your computer</h2>
+  <div class="win-body">
+    <p>
+      The app keeps its files in one folder and uploads none of them. By
+      default that is <code>~/Library/Application Support/VirtualJaguar/</code>
+      on macOS, <code>%APPDATA%\VirtualJaguar\</code> on Windows and
+      <code>~/.local/share/VirtualJaguar/</code> on Linux. The portable
+      Windows zip uses a <code>data</code> folder next to the program instead.
+    </p>
+    <ul>
+      <li><code>config.ini</code>: your settings, the list of game folders you
+          added, and, if you signed in to RetroAchievements, your user name
+          (the login token itself is not kept here; see below).</li>
+      <li><code>saves/</code> and <code>states/</code>: game saves and save states.</li>
+      <li><code>library/</code>: the list of games found in your folders, and your favorites and recents.</li>
+      <li><code>thumbnails/</code>, <code>covers/</code> and <code>ra-cache/</code>: downloaded and custom pictures.</li>
+      <li><code>system/</code>: BIOS files you put there.</li>
+    </ul>
+    <p>
+      The RetroAchievements login token is kept in your operating
+      system&rsquo;s credential store: the Keychain on macOS, Credential
+      Manager on Windows, and the Secret Service keyring (libsecret) on
+      Linux. If no credential store can be used (for example, no keyring is
+      running, or access is denied), the app falls back to keeping the token
+      as plain text in <code>config.ini</code> and says so in Settings; in
+      that case, treat the file like a password.
+    </p>
+    <p>
+      To delete everything, choose Sign out in the app (this removes the token
+      from the credential store), then quit the app and delete that folder;
+      uninstalling the app does not remove it. To forget only your
+      RetroAchievements sign-in, choose Sign out in the app. The app writes no log file; its
+      diagnostics go to the terminal if you start it from one. Inside
+      RetroArch, the core keeps nothing of its own: your saves, states and
+      logs are in RetroArch&rsquo;s folders.
+    </p>
+  </div>
+</section>
+
+<section class="win" id="other">
+  <h2>Children, changes, contact</h2>
+  <div class="win-body">
+    <p>
+      We collect no personal information from anyone, including children.
+      RetroAchievements and Discord have their own age rules; read theirs
+      before signing in to them.
+    </p>
+    <p>
+      If the software changes in a way that affects this page, the page will
+      be updated in the same project and its effective date changed. The full
+      history is in the <a href="{{REPO}}/commits/develop/site/pages/privacy.html">repository</a>.
+      Questions: <a href="{{REPO}}/issues">GitHub issues</a>.
+    </p>
+  </div>
+</section>

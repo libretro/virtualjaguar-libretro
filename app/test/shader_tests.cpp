@@ -207,6 +207,7 @@ static void testFallback() {
         CHECK(!sc.probeLibrary(), "bogus VJ_LIBRASHADER must read as missing");
         CHECK(!sc.libraryLoaded() && !sc.active(), "not loaded, not active");
         CHECK(!sc.libraryError().empty(), "an error text is set");
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::NotFound, "a path with no file reads as not found, not as a failed load");
         std::string err;
         CHECK(sc.usePreset(str(d / "p.slangp"), err), "a valid preset is accepted even without the library: %s", err.c_str());
         CHECK(!sc.usePreset(str(d / "absent.slangp"), err) && !err.empty(), "an invalid preset is still refused");
@@ -234,6 +235,8 @@ static void testFallback() {
         ShaderChain sc;
         CHECK(!sc.probeLibrary(), "a text file must not load as a library");
         CHECK(!sc.libraryError().empty(), "and says why: %s", sc.libraryError().c_str());
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryStatus() == ShaderChain::LibraryStatus::LoadFailed, "a file that exists but cannot be used reads as a failed load");
+        CHECK(!ShaderChain::builtWithHeaders() || sc.libraryError().find(ShaderChain::libraryFileName()) != std::string::npos, "and names the file");
     }
 
     STEP("fallback-settings");
@@ -261,6 +264,15 @@ static void testFallback() {
 
 // Optional (VJ_TEST_SLANG_DIR=<slang-shaders checkout>): the parser against ~1500
 // real presets.  Not part of the default run; prints what it finds.
+static void testArraysOfArraysList() {
+    CHECK(presetNeedsArraysOfArrays("crt/crt-geom.slangp"), "relative path");
+    CHECK(presetNeedsArraysOfArrays("/x/slang-shaders/crt/crt-geom.slangp"), "clone path");
+    CHECK(presetNeedsArraysOfArrays("C:\\ss\\crt\\crt-geom.slangp"), "Windows separators");
+    CHECK(!presetNeedsArraysOfArrays("/x/mycrt/crt-geom.slangp"), "match stops at a separator");
+    CHECK(!presetNeedsArraysOfArrays("crt/crt-lottes.slangp"), "crt-lottes compiles on GL 4.1");
+    CHECK(!presetNeedsArraysOfArrays(""), "empty path");
+}
+
 static void testRealCheckout() {
     const char* dir = std::getenv("VJ_TEST_SLANG_DIR");
     if (!dir || !*dir) return;
@@ -288,6 +300,7 @@ static int runUnit() {
     testRect();
     testPresetParsing();
     testFallback();
+    testArraysOfArraysList();
     testRealCheckout();
     std::printf("shader_tests unit: %s (%s headers)\n", g_fail ? "FAIL" : "OK",
                 ShaderChain::builtWithHeaders() ? "with" : "without");
@@ -328,6 +341,12 @@ static int runBundled() {
         PresetInfo p = inspectPreset(root + rel);
         CHECK(p.ok, "%s: %s", rel, p.error.c_str());
     }
+    // The needs-GL-4.3 list names bundled files: a slang-shaders bump that renames one
+    // must fail here, not quietly stop greying it out.
+    for (const char* rel : presetsNeedingArraysOfArrays()) {
+        CHECK(inspectPreset(root + rel).ok, "arrays-of-arrays list: %s is not a valid bundled preset", rel);
+        CHECK(presetNeedsArraysOfArrays(root + rel), "%s: full path should match", rel);
+    }
     CHECK(fs::exists(fs::u8path(root + "NOTICE-virtualjaguar.txt")), "notice file");
     CHECK(fs::exists(fs::u8path(root + "crt/shaders/crt-royale/LICENSE.TXT")), "crt-royale licence travels with it");
     std::printf("shader_tests bundled: %s\n", g_fail ? "FAIL" : "OK");
@@ -352,6 +371,14 @@ static int runLibrary() {
     ShaderChain sc;
     sc.setLibrarySearchDirs({});
     if (!sc.probeLibrary()) {
+        // VJ_REQUIRE_LIBRASHADER=1 (CI, on the legs that ship a runtime): a runtime that does not load
+        // is a failure, never a skip.
+        const char* req = std::getenv("VJ_REQUIRE_LIBRASHADER");
+        if (req && *req && *req != '0') {
+            std::printf("shader_tests library: FAIL (VJ_REQUIRE_LIBRASHADER is set but the runtime did not load: %s)\n",
+                        sc.libraryError().c_str());
+            return 1;
+        }
         std::printf("shader_tests library: SKIP (%s)\n", sc.libraryError().c_str());
         return 77;
     }
@@ -561,11 +588,16 @@ static int runGl() {
     {
         std::string root = VJ_SLANG_DIR;
         if (!root.empty() && root.back() != '/') root += '/';
-        for (const char* rel : kBundledMustWork) {
+        std::vector<const char*> rels(std::begin(kBundledMustWork), std::end(kBundledMustWork));
+        for (const char* rel : presetsNeedingArraysOfArrays())
+            if (std::find_if(rels.begin(), rels.end(), [&](const char* r) { return std::strcmp(r, rel) == 0; }) == rels.end())
+                rels.push_back(rel);
+        for (const char* rel : rels) {
             if (!fs::exists(fs::u8path(root + rel))) continue;   // bundling was skipped
-            // crt-geom declares GL_ARB_arrays_of_arrays, which macOS's GL 4.1 lacks: there it
-            // must fall back cleanly (that is itself the check), elsewhere it must render.
-            bool optional = std::strstr(rel, "crt-geom") != nullptr;
+            // Presets that need arrays of arrays (GL 4.3) must render where the context has
+            // them, and elsewhere (macOS, GL 4.1) fail cleanly with that reason: the check
+            // that keeps presetsNeedingArraysOfArrays() honest in both directions.
+            bool optional = presetNeedsArraysOfArrays(rel);
             ShaderChain ex;
             ex.setLibrarySearchDirs({});
             ex.enabled = true;
@@ -584,8 +616,14 @@ static int runGl() {
             }
             std::printf("bundled %s: %s (energy %ld)%s%s\n", rel, t && sum > 0 ? "renders" : "FAILS", sum,
                         t ? "" : " -- ", t ? "" : (used ? ex.lastError().c_str() : e2.c_str()));
-            if (optional && !t) CHECK(!ex.lastError().empty() && !ex.active(), "%s: failure must be clean", rel);
-            else CHECK(t != 0 && sum > 0, "%s did not render a picture", rel);
+            if (optional && !ex.glHasArraysOfArrays()) {
+                CHECK(t == 0 && !ex.active(), "%s rendered on GL %s: drop it from the arrays-of-arrays list", rel,
+                      ex.glVersionText().c_str());
+                CHECK(ex.lastError().find("needs OpenGL 4.3") != std::string::npos,
+                      "%s: expected the arrays-of-arrays explanation, got: %s", rel, ex.lastError().c_str());
+            } else {
+                CHECK(t != 0 && sum > 0, "%s did not render a picture", rel);
+            }
             ex.destroyGL();
         }
     }
@@ -657,12 +695,46 @@ static int runGl() {
     return g_fail ? 1 : 0;
 }
 
+// ---------------------------------------------------------------------------------------
+// probe (packaging smoke test, not a CTest entry)
+// ---------------------------------------------------------------------------------------
+//
+// vj_shader_tests probe <dir>: finds the library the way the APP does (beside the executable,
+// <base>/../Frameworks in a macOS bundle; no VJ_LIBRASHADER, no extra directories) and fails
+// unless it loaded from inside <dir>.  CI copies this executable into the unpacked AppImage,
+// the installed .deb tree and the .app, where it proves the packaged layout is the probed one.
+static int runProbe(const char* dir) {
+    if (!ShaderChain::builtWithHeaders()) {
+        std::printf("shader_tests probe: FAIL (built without librashader headers)\n");
+        return 1;
+    }
+    setEnv("VJ_LIBRASHADER", nullptr);
+    Config cfg;
+    ShaderChain sc;
+    sc.loadSettings(cfg, "");   // the same search list the app builds
+    if (!sc.probeLibrary()) {
+        std::printf("shader_tests probe: FAIL (%s)\n", sc.libraryError().c_str());
+        return 1;
+    }
+    std::error_code ec;
+    std::string got = fs::weakly_canonical(fs::path(sc.libraryPath()), ec).string();
+    std::string want = dir ? fs::weakly_canonical(fs::path(dir), ec).string() : "";
+    std::printf("shader_tests probe: found %s (API %u); expected inside %s\n", got.c_str(), sc.libraryApiVersion(), want.c_str());
+    if (want.empty() || got.find(want) != 0) {
+        std::printf("shader_tests probe: FAIL (not loaded from the package)\n");
+        return 1;
+    }
+    std::printf("shader_tests probe: OK\n");
+    return 0;
+}
+
 int main(int argc, char** argv) {
     std::string mode = argc > 1 ? argv[1] : "unit";
+    if (mode == "probe") return runProbe(argc > 2 ? argv[2] : nullptr);
     if (mode == "unit") return runUnit();
     if (mode == "bundled") return runBundled();
     if (mode == "library") return runLibrary();
     if (mode == "gl") return runGl();
-    std::fprintf(stderr, "usage: %s unit|library|gl\n", argv[0]);
+    std::fprintf(stderr, "usage: %s unit|bundled|library|gl|probe <dir>\n", argv[0]);
     return 2;
 }

@@ -18,6 +18,15 @@
 #                 ended up back in the boot ROM window ($E00000-$E3FFFF) -- a
 #                 game exception through the boot-ROM vectors (Flip Out parks
 #                 at $E005DC).  A crash after a successful handoff.
+#   ? (trap_loop) (issue #975) the 68K spent the last 30+ frames stuck in an
+#                 exception loop -- parked in the loader's ILLEGAL guard
+#                 ($1000 BRA.S *), or ping-ponging between one faulting PC
+#                 and the HLE RTE stub -- AND the run never put a picture up.
+#                 Its final PC is in RAM or cart space, so it used to score
+#                 GAME_CODE ("runs, video undetermined") while the title had
+#                 crashed in frame 1.  The probe's trap_frames field decides
+#                 it (cart_boot_probe.c).  With video it stays GAME_CODE: BJL
+#                 demos park the 68K on purpose and let the GPU/OP run.
 #   ? (...)       harness / crash verdicts as before; LOAD_FAIL
 #
 # BIOS-mode runs are scored from the boot-ROM -> cart handoff onward: the
@@ -40,6 +49,7 @@ cart_classify_mode() {
     local rc="$1" logfile="$2" mode="${3:-hle}"
     local line sigs core_err frames pc_valid pc_hex lit motion audio
     local bios_ran handoff halt_frames sf pc notes short
+    local trap_frames trap_pc trap_handler
     # Inside the function on purpose: process_one runs under `xargs bash -c`
     # with only `export -f` functions carried over, never plain variables.
     local sig_re='gpu_pc_escape|dsp_pc_escape|gpu_wedge|dsp_wedge|video_stall|inframe_hang'
@@ -78,7 +88,8 @@ cart_classify_mode() {
 
     frames="$(field frames "$line")"; frames="${frames:-0}"
     pc_valid="$(field pc_valid "$line")"; pc_valid="${pc_valid:-0}"
-    pc_hex="$(printf '%s' "$line" | grep -oE 'pc=\$[0-9A-Fa-f]+' | grep -oE '[0-9A-Fa-f]+$')"
+    # Field-anchored: trap_pc= (#975) must not match.
+    pc_hex="$(printf '%s' "$line" | grep -oE '(^| )pc=\$[0-9A-Fa-f]+' | head -1 | grep -oE '[0-9A-Fa-f]+$')"
 
     if [ -z "$pc_hex" ] || [ "$frames" -eq 0 ]; then
         echo "LOAD_FAIL|no frames rendered"
@@ -137,6 +148,21 @@ cart_classify_mode() {
     fi
     lit="${lit:-0}"; motion="${motion:-0}"; audio="${audio:-0}"
 
+    # Stuck in an exception loop at the end of the run with nothing on screen
+    # (#975): a crash, not a reached stage, whatever the final PC's band.  30
+    # frames = the same bar as the reject halt, so a transient trap that
+    # recovers never counts.  With a picture it is NOT a crash: BJL demos such
+    # as DEMO1 and Ladybug leave the 68K parked in the ILLEGAL guard by design
+    # while the GPU/OP run the demo; those stay GAME_CODE with a note.  Absent
+    # from an old probe line: 0, classified as before.
+    trap_frames="$(field trap_frames "$line")"; trap_frames="${trap_frames:-0}"
+    if [ "$trap_frames" -ge 30 ] && [ "$lit" -lt 30 ]; then
+        trap_pc="$(field trap_pc "$line")"
+        trap_handler="$(field trap_handler "$line")"
+        echo "? (trap_loop)|68K stuck in an exception loop for the last $trap_frames frames, no picture: fault PC ${trap_pc:-?}, handler ${trap_handler:-?}${sigs:+; $sigs}"
+        return
+    fi
+
     notes=""
     if [ "$lit" -ge 30 ]; then
         if [ "$motion" -ge 30 ]; then notes="video"; else notes="static video"; fi
@@ -152,6 +178,7 @@ cart_classify_mode() {
     elif [ "$bios_ran" -eq 1 ]; then
         notes="$notes (handoff not observed; whole run scored)"
     fi
+    [ "$trap_frames" -ge 30 ] && notes="$notes; 68K parked in an exception loop (GPU/OP-driven)"
     [ -n "$sigs" ] && notes="$notes; $sigs"
     echo "GAME_CODE|$notes"
 }

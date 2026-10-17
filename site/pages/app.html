@@ -1,6 +1,6 @@
 <!-- title: The Virtual Jaguar App | Virtual Jaguar libretro -->
 <!-- nav: App -->
-<!-- description: The standalone Virtual Jaguar app for macOS, Windows and Linux: game library with box art, RetroArch shaders, cheats, RetroAchievements, controller remapping, save states and LAN link play. -->
+<!-- description: The standalone Virtual Jaguar app for macOS, Windows and Linux: game library with box art, save states, shaders, themes, cheats, RetroAchievements, Discord, netplay and debug tools. -->
 
 <h1>The Virtual Jaguar app</h1>
 <p class="lede">
@@ -13,353 +13,358 @@
 <p>
   Two ways to play: the <a href="./">RetroArch core</a>, or this app. The core
   is not going away, and nothing here changes how it works.
+  <a href="#gallery">Jump to the screenshots.</a>
 </p>
 
-<section class="win" id="get">
-  <h2>Get it</h2>
+{{APP_DOWNLOADS}}
+
+<section class="win" id="packages">
+  <h2>About the packages</h2>
   <div class="win-body">
-    <p>
-      The packages are attached to each
-      <a href="{{REPO}}/releases">GitHub release</a> next to the core builds,
-      and listed in that release&rsquo;s <code>SHA256SUMS.txt</code>.
-    </p>
-    <div class="table-wrap"><table>
-      <tr><th>System</th><th>Package</th><th>Notes</th></tr>
-      <tr>
-        <td>macOS</td>
-        <td><code>VirtualJaguar-X.Y.Z-macos-universal.zip</code></td>
-        <td><code>Virtual Jaguar.app</code>, Apple Silicon and Intel, macOS 11
-            or later. Zip only, no disk image.</td>
-      </tr>
-      <tr>
-        <td>Windows x64</td>
-        <td><code>VirtualJaguar-X.Y.Z-windows-x64.zip</code>,
-            <code>...-windows-x64-setup.exe</code></td>
-        <td>The zip is portable: <code>portable.txt</code> keeps settings in a
-            <code>data</code> folder beside the program. The installer is
-            per-user by default.</td>
-      </tr>
-      <tr>
-        <td>Windows ARM64</td>
-        <td><code>VirtualJaguar-X.Y.Z-windows-arm64.zip</code>,
-            <code>...-windows-arm64-setup.exe</code></td>
-        <td>Native ARM64 build (Snapdragon X and other ARM64 PCs), same
-            layout as x64. The installer needs ARM64 Windows.</td>
-      </tr>
-      <tr>
-        <td>Linux x86_64, aarch64</td>
-        <td><code>VirtualJaguar-X.Y.Z-linux-&lt;arch&gt;.AppImage</code>,
-            <code>virtualjaguar_X.Y.Z_&lt;amd64|arm64&gt;.deb</code></td>
-        <td>Built on Ubuntu 22.04. The <code>.deb</code> installs under
-            <code>/usr/lib/virtualjaguar</code> with a link in
-            <code>/usr/bin</code>.</td>
-      </tr>
-      <tr>
-        <td>Linux x86_64 (Flatpak)</td>
-        <td><code>VirtualJaguar-X.Y.Z-linux-x86_64.flatpak</code></td>
-        <td>A single-file bundle:
-            <code>flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo</code>,
-            then <code>flatpak install --user VirtualJaguar-X.Y.Z-linux-x86_64.flatpak</code>.
-            It can read your home folder (read-only) to find ROMs. No shaders
-            in the Flatpak yet.</td>
-      </tr>
-    </table></div>
-    <p>Or use the installer, which can install the core, the app, or both:</p>
-    <p><strong>macOS, Linux</strong></p>
-    <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh -s -- --what app</code></pre>
-    <p><strong>Windows</strong> (PowerShell)</p>
-    <pre><code>$env:VJ_WHAT = 'app'; irm {{RAW_URL}}/tools/install.ps1 | iex</code></pre>
+    <ul>
+      <li><strong>macOS:</strong> <code>Virtual Jaguar.app</code> in a zip,
+        Apple Silicon and Intel in one binary, macOS 11 or later. No disk
+        image.</li>
+      <li><strong>Windows:</strong> the zip is portable
+        (<code>portable.txt</code> keeps settings in a <code>data</code>
+        folder beside the program); the installer is per-user by default.
+        x64 and native ARM64 builds.</li>
+      <li><strong>Linux:</strong> AppImage and <code>.deb</code> for x86_64
+        and aarch64, built on Ubuntu 22.04; the <code>.deb</code> installs
+        under <code>/usr/lib/virtualjaguar</code> with a link in
+        <code>/usr/bin</code>. The Flatpak bundle (x86_64) installs with
+        <code>flatpak install --user</code> and takes its runtime from
+        Flathub.</li>
+      <li><strong>Nightly:</strong> rebuilt from <code>develop</code> on
+        every push, gated on compiling, not on the test suite. The installer
+        takes <code>--channel nightly</code>.</li>
+    </ul>
     <p class="footnote">
-      <code>--what</code> takes <code>core</code>, <code>app</code> or
-      <code>both</code>; the installer verifies each download against
-      <code>SHA256SUMS.txt</code>. More options, and the PowerShell
-      alternatives, are on the <a href="./#get">home page</a>.
-    </p>
-    <p>
-      <strong>Nightlies carry the app too.</strong> The rolling
-      <a href="{{REPO}}/releases/tag/nightly"><code>nightly</code></a>
-      prerelease holds <code>VirtualJaguar-nightly-*</code> packages built from
-      the same <code>develop</code> commit as the nightly core. Add
-      <code>--channel nightly</code> to the installer to get them. They are
-      gated on compiling, not on the test suite.
-    </p>
-    <p class="footnote">
-      <strong>Unsigned builds.</strong> Until signing is configured for the
-      release, macOS may refuse the app at first launch (right-click the app
-      and choose Open, once) and Windows SmartScreen may warn about the
-      installer. Packaging, signing and the package-manager templates are in
+      More installer options, and the PowerShell alternatives, are on the
+      <a href="./#get">home page</a>. Packaging, signing and the
+      package-manager templates are in
       <a href="{{REPO}}/blob/develop/app/packaging/README.md">app/packaging/README.md</a>.
     </p>
   </div>
 </section>
 
-<section class="win" id="library">
-  <h2>Game library</h2>
+<section class="win" id="requirements">
+  <h2>System requirements</h2>
   <div class="win-body">
-    <figure class="shot smooth">
-      <div class="win-bar">Home screen <span class="badge">Cartridges</span></div>
-      <div class="well">
-        <img src="assets/app_library.png" width="1280" height="860"
-             alt="The Virtual Jaguar app home screen: a search box, filter and size controls above Cartridges, Jaguar CD and BIOS and system tabs, then a grid of 22 Atari Jaguar box art tiles with game titles beneath.">
-      </div>
-      <figcaption>
-        With no game loaded, the main window is the library. Add a folder and
-        it scans it for cartridge and disc images.
-      </figcaption>
-    </figure>
     <ul>
-      <li><strong>Three tabs:</strong> Cartridges, Jaguar CD, and BIOS &amp;
-        system. BIOS files are recognised by checksum and name, shown with what
-        the core uses them for, and never launched as games. None is
-        required.</li>
-      <li><strong>Favorites, recently played and save states:</strong> star a
-        game, and the games you boot are remembered; each list shows as its
-        own tab, as a strip on the Cartridges and Jaguar CD tabs, both, or not
-        at all. A Save states tab lists every state with the screenshot saved
-        with it, and a game's right-click menu can load one.</li>
-      <li><strong>Identification</strong> is by CRC32 against the libretro
-        database: No-Intro for cartridges, Redump for CDs. A name-only match is
-        badged <code>?</code>, an unidentified file <code>??</code>. Discs in
-        <code>.cue</code>, <code>.chd</code> and <code>.cdi</code> form are
-        checksummed from their first track; a rip that is not a Redump dump
-        is matched by its file or folder name when that is unambiguous.</li>
-      <li><strong>Box art</strong> comes from
-        <a href="https://github.com/libretro-thumbnails/Atari_-_Jaguar">libretro-thumbnails</a>,
-        downloaded on demand for the tiles you can see and cached on your
-        machine. Upstream does not have art for every title, so some tiles show
-        a snapshot or a placeholder. <strong>Download box art</strong> turns
-        downloading off. libretro-thumbnails has no Jaguar CD art yet, so
-        discs fall back to
-        <a href="thumbnails/">artwork hosted on this site</a>
-        until it does; right-click any tile (or drop a PNG on it) to set your
-        own cover, or
-        put PNGs named after the game in the <code>covers</code> folder of the
-        app's data directory.</li>
-      <li>Click a tile to launch. File &gt; Open, drag and drop, and the
-        command line still work, and so does File &gt; Open recent.</li>
+      <li>macOS 11 or later (Apple Silicon or Intel), 64-bit Windows (x64 or
+        ARM64), or a 64-bit Linux desktop (x86_64 or aarch64).</li>
+      <li>A GPU and driver with OpenGL 3.3. Every package bundles the
+        librashader runtime the shaders need.</li>
+      <li>No BIOS file is needed: the core has the boot ROM and the CD BIOS
+        built in. A game controller is optional; the keyboard plays.</li>
     </ul>
   </div>
 </section>
 
-<section class="win" id="video">
-  <h2>Shaders and scaling</h2>
+<section class="win" id="gallery">
+  <h2>Screenshot gallery</h2>
   <div class="win-body">
     <p>
-      The app runs RetroArch <code>.slangp</code> presets, unmodified, through
-      <a href="https://github.com/SnowflakePowered/librashader">librashader</a>.
-      Presets from
-      <a href="https://github.com/libretro/slang-shaders">libretro/slang-shaders</a>
-      are bundled: the CRT family (CRT-Royale, CRT-Geom, CRT-EasyMode and
-      others), scanlines and interpolation, plus two small first-party presets
-      (<code>vj-scanlines</code>, <code>vj-sharp-bilinear</code>). Point
-      <strong>Preset folder</strong> at a full slang-shaders checkout for the
-      rest, and preset parameters get sliders. Integer scaling and the aspect
-      modes are separate from shaders and apply to both.
+      Click a picture to enlarge it (Esc closes, arrow keys move on). All
+      real captures of the app with a demo library: no personal data, no
+      signed-in account.
+    </p>
+
+    <h3 id="library">Library &amp; artwork</h3>
+    <ul>
+      <li>Your games on the home screen, in Cartridges, Jaguar CD and BIOS &amp; system tabs, with search, filters and a size slider.</li>
+      <li>Identified by CRC32 against the libretro database (No-Intro, Redump); box art comes from libretro-thumbnails on demand and is cached.</li>
+      <li>Favorites and Recently played, as tabs, strips or both; a Save states tab lists every game with states.</li>
+      <li>Jaguar CD discs get box art too, from the project&rsquo;s own thumbnail mirror (libretro-thumbnails has none for the system); a disc without art gets a readable title card, or your own PNG.</li>
+    </ul>
+    <div class="gallery">
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_library.png" aria-label="Enlarge: Home screen">
+          <img src="assets/app_library.png" width="1280" height="860" loading="lazy" alt="The app home screen on the Cartridges tab: a Favorites strip of five games and a Recently played strip of six above a grid of Atari Jaguar box art tiles with titles.">
+        </a>
+        <figcaption><strong>Home screen</strong> <span class="gal-cap">Cartridges tab: Favorites and Recently played strips above the box art grid.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_library_cd.png" aria-label="Enlarge: Jaguar CD">
+          <img src="assets/app_library_cd.png" width="1280" height="860" loading="lazy" alt="The Jaguar CD tab: a grid of thirteen disc tiles with Jaguar CD box art (Baldies, Battle Morph, Blue Lightning, BrainDead 13, Dragon&#x27;s Lair, Highlander, Hover Strike, Iron Soldier 2, Myst, Primal Rage, Space Ace, Vid Grid, World Tour Racing), each with a CD badge and the game name.">
+        </a>
+        <figcaption><strong>Jaguar CD</strong> <span class="gal-cap">Thirteen discs with box art from the project&rsquo;s thumbnail mirror; set your own cover with a PNG for any that lack it.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_library_states.png" aria-label="Enlarge: Save states tab">
+          <img src="assets/app_library_states.png" width="1280" height="860" loading="lazy" alt="The Save states tab: games grouped by title, each with thumbnails of its Auto-save and numbered slots, timestamps and Delete buttons.">
+        </a>
+        <figcaption><strong>Save states tab</strong> <span class="gal-cap">Every game with states, with the screenshot saved with each; click one to start from it.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_library_bios.png" aria-label="Enlarge: BIOS and system">
+          <img src="assets/app_library_bios.png" width="1280" height="860" loading="lazy" alt="The BIOS and system tab: console boot ROM and Jaguar CD BIOS pickers, HLE or real BIOS choice, Boot buttons, an Import button and one BIOS file found.">
+        </a>
+        <figcaption><strong>BIOS and system</strong> <span class="gal-cap">Choose the boot ROM or CD BIOS the core uses, or boot one on its own.</span></figcaption>
+      </figure>
+    </div>
+
+    <h3 id="playing">Playing</h3>
+    <ul>
+      <li>Save states with thumbnails (F5, F6, F7) and a state manager; <strong>Resume where I left off</strong> keeps an Auto-save when you close a game.</li>
+      <li>Per-device and per-game remapping, all 12 keypad keys on a gamepad, the Tempest rotary, mice, light gun and Team Tap.</li>
+      <li>Cheats from the libretro database, plus manual codes.</li>
+      <li>Netplay for the link-cable games (Doom, BattleSphere, AirCars, Ultra Vortek) on a local network; it is not rollback netplay and not for the Internet.</li>
+      <li>Several windows at once (File &gt; New window) for local multiplayer or netplay tests on one machine.</li>
+    </ul>
+    <div class="gallery">
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_resume.png" aria-label="Enlarge: Resume prompt">
+          <img src="assets/app_resume.png" width="1280" height="860" loading="lazy" alt="A dialog titled Resume where you left off asking whether to resume Alien vs Predator from the saved time, with an Always resume checkbox and Resume and Start fresh buttons over the dimmed game.">
+        </a>
+        <figcaption><strong>Resume prompt</strong> <span class="gal-cap">Next boot offers to continue from the automatic save, or does it at once.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_states.png" aria-label="Enlarge: State manager">
+          <img src="assets/app_states.png" width="1280" height="860" loading="lazy" alt="The Save states window for Tempest 2000 listing numbered slots, four with a thumbnail of the saved frame and a timestamp, the rest empty, each with Save and Load buttons.">
+        </a>
+        <figcaption><strong>State manager</strong> <span class="gal-cap">Ten slots with thumbnails and Save and Load buttons (F5, F6, F7).</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_controls.png" aria-label="Enlarge: Controls overlay">
+          <img src="assets/app_controls.png" width="1280" height="860" loading="lazy" alt="A translucent panel over the Alien vs Predator title screen listing the Player 1 keyboard bindings: D-pad on the arrow keys, A B C on X Z C, Option on Return, and the keypad on the number row.">
+        </a>
+        <figcaption><strong>Controls overlay</strong> <span class="gal-cap">F3 shows the bindings in effect; it appears by itself when a game starts with a keyboard.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_input.png" aria-label="Enlarge: Input settings">
+          <img src="assets/app_settings_input.png" width="1280" height="860" loading="lazy" alt="Settings, Input tab, Devices and players: Jaguar port 1 set to Rotary (Tempest), port 2 set to Team Tap, five player slots and tuning sliders for mouse, rotary and stick.">
+        </a>
+        <figcaption><strong>Input settings</strong> <span class="gal-cap">Devices and players: Tempest rotary on port 1, a Team Tap on port 2, and the player slots.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_cheats.png" aria-label="Enlarge: Cheats">
+          <img src="assets/app_cheats.png" width="1280" height="860" loading="lazy" alt="The Cheats window for Tempest 2000: the cheat set, database cheats Infinite Lives (ticked) and Start with 999999 Score, and a manual code entry row.">
+        </a>
+        <figcaption><strong>Cheats</strong> <span class="gal-cap">The libretro cheat database for the running game, plus manual codes.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_netplay.png" aria-label="Enlarge: Netplay">
+          <img src="assets/app_netplay.png" width="1280" height="860" loading="lazy" alt="The Netplay window over Doom: the link device choice between JagLink and Voice Modem, Host a game and Join a game tabs, a Start hosting button and a table of games that use the link.">
+        </a>
+        <figcaption><strong>Netplay</strong> <span class="gal-cap">Host or join link-cable play over a local network.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_gameplay.png" aria-label="Enlarge: A game running">
+          <img src="assets/app_gameplay.png" width="1280" height="860" loading="lazy" alt="Skyhammer&#x27;s cockpit view inside a rusty industrial structure, with green heads-up displays for fire, fuel, shield damage and altitude, a minimap and a Gatling gun gauge.">
+        </a>
+        <figcaption><strong>A game running</strong> <span class="gal-cap">Skyhammer, with the picture scaled to the window.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_cd_gameplay.png" aria-label="Enlarge: A Jaguar CD game running">
+          <img src="assets/app_cd_gameplay.png" width="1280" height="860" loading="lazy" alt="Blue Lightning running from a Jaguar CD image: a jet fighter seen from behind, flying low over a layer of clouds under a pale blue sky.">
+        </a>
+        <figcaption><strong>A Jaguar CD game</strong> <span class="gal-cap">Blue Lightning, started from its .cue file, in flight. No BIOS file needed.</span></figcaption>
+      </figure>
+    </div>
+
+    <h3 id="look">Look &amp; feel</h3>
+    <ul>
+      <li>Dark, light or your own themes: the Theme picker in Settings &gt; Interface follows the OS or takes a fixed choice, and the theme editor changes eleven colours, the rounding and the spacing live, with a contrast check, and exports and imports theme files.</li>
+      <li>Any font installed on your computer for the interface, at 11 to 24 pt: every name in the list is drawn in its own typeface, starred fonts stay at the top, and the debug windows have a monospace font of their own.</li>
+      <li>RetroArch <code>.slangp</code> shader presets through librashader, with the slang-shaders CRT, scanline and interpolation families bundled; aspect fit, integer scaling or stretch.</li>
+      <li>Native menus: the macOS menu bar and Dock menu, the Windows dark title bar and Jump List, Linux desktop actions; windows can be dragged out of the main window.</li>
+    </ul>
+    <p>
+      The same saved moment, plain and through the bundled
+      <code>crt-gdv-mini-ultra-trinitron</code> preset (an aperture-grille,
+      Sony Trinitron style look). Both use aspect fit: the picture keeps its
+      4:3 shape and is letterboxed, never stretched.
     </p>
     <div class="ab-pair">
       <figure class="shot smooth">
-        <div class="win-bar">Plain <span class="badge">integer scale</span></div>
+        <div class="win-bar">Plain <span class="badge">aspect fit</span></div>
         <div class="well">
-          <img src="assets/app_game.png" width="1280" height="860"
-               alt="The Alien vs Predator main menu (Select Character, Restore Game, High Scores, Credits) drawn sharp on a black window, centred with integer scaling.">
+          <a class="gal-link" href="assets/app_game.png" aria-label="Enlarge: Plain"><img src="assets/app_game.png" width="1280" height="860" loading="lazy"
+               alt="The Alien vs Predator main menu (Select Character, Restore Game, High Scores, Credits) drawn sharp at its 4:3 shape inside the app window, with black bars at the sides."></a>
         </div>
       </figure>
       <figure class="shot smooth">
-        <div class="win-bar">CRT-Royale <span class="badge">same frame</span></div>
+        <div class="win-bar">CRT-GDV-Mini Ultra Trinitron <span class="badge">same frame</span></div>
         <div class="well">
-          <img src="assets/app_game_crt.png" width="1280" height="860"
-               alt="The same Alien vs Predator menu through the CRT-Royale shader preset, with visible scanlines, phosphor mask and glow.">
+          <a class="gal-link" href="assets/app_game_crt.png" aria-label="Enlarge: CRT-GDV-Mini Ultra Trinitron"><img src="assets/app_game_crt.png" width="1280" height="860" loading="lazy"
+               alt="The same Alien vs Predator menu through the crt-gdv-mini-ultra-trinitron shader preset, in the same 4:3 frame, with vertical aperture-grille phosphor stripes, faint scanlines and a soft glow like a Sony Trinitron tube."></a>
         </div>
+      </figure>
+    </div>
+    <div class="gallery">
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_video.png" aria-label="Enlarge: Video settings">
+          <img src="assets/app_settings_video.png" width="1280" height="860" loading="lazy" alt="Settings, Video tab: integer scaling, smooth filter, stretch, aspect ratio, VSync and fullscreen options, and a Shader section with the crt-gdv-mini-ultra-trinitron preset selected above a list of 500 built-in presets.">
+        </a>
+        <figcaption><strong>Video settings</strong> <span class="gal-cap">Integer scaling, filter, aspect ratio and the shader list with its CRT presets.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_game_lottes.png" aria-label="Enlarge: Another shader preset">
+          <img src="assets/app_game_lottes.png" width="1280" height="860" loading="lazy" alt="The Rayman title screen through the crt-lottes shader preset: a slightly curved screen with a dark rounded border, visible scanlines and a soft glow around the bright lettering.">
+        </a>
+        <figcaption><strong>Another preset</strong> <span class="gal-cap">crt-lottes on the Rayman title: curved glass, scanlines and glow. Presets are one click in Settings &gt; Video.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_interface.png" aria-label="Enlarge: Interface settings">
+          <img src="assets/app_settings_interface.png" width="1280" height="860" loading="lazy" alt="Settings, Interface tab: Show frame rate and controls overlay options, an Appearance section with a Dark theme choice and a Customize button, and a Font section with a searchable typeface list and a size slider.">
+        </a>
+        <figcaption><strong>Interface settings</strong> <span class="gal-cap">Overlays, Theme and Font in one tab: frame rate, controls overlay, typeface and size.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_fonts.png" aria-label="Enlarge: Font picker">
+          <img src="assets/app_settings_fonts.png" width="1280" height="860" loading="lazy" alt="The Font section of Settings, Interface, set to Inter: a searchable list with Built-in, Favorites and Recent groups and every name drawn in its own typeface, a preview of mixed text, and a Debugger font list with a hex and disassembly sample beside each monospace font.">
+        </a>
+        <figcaption><strong>Font picker</strong> <span class="gal-cap">Installed fonts drawn in their own typeface, favorites and recents, and a debugger font with samples.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_light.png" aria-label="Enlarge: Light theme">
+          <img src="assets/app_theme_light.png" width="1280" height="860" loading="lazy" alt="The home screen library with the built-in Light theme: a pale grey background, light buttons and tabs, and the same Favorites, Recently played and box art grid.">
+        </a>
+        <figcaption><strong>Light theme</strong> <span class="gal-cap">The same library in the built-in Light theme.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_jaguar_red.png" aria-label="Enlarge: Custom theme: Jaguar Red">
+          <img src="assets/app_theme_jaguar_red.png" width="1280" height="860" loading="lazy" alt="The home screen library in a custom dark theme named Jaguar Red: near-black red background, dark red tiles and tabs, and red buttons and highlights.">
+        </a>
+        <figcaption><strong>Custom theme</strong> <span class="gal-cap">Jaguar Red, a dark custom theme with a red accent and rounder corners.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_paper.png" aria-label="Enlarge: Custom theme: Paper">
+          <img src="assets/app_theme_paper.png" width="1280" height="860" loading="lazy" alt="The home screen library in a custom light theme named Paper: cream background, sand coloured tiles, green tabs and buttons and larger rounding.">
+        </a>
+        <figcaption><strong>Another theme</strong> <span class="gal-cap">Paper, a warm light theme with a green accent and extra spacing.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_theme_editor.png" aria-label="Enlarge: Theme editor">
+          <img src="assets/app_theme_editor.png" width="1280" height="860" loading="lazy" alt="The Theme editor window over the library in the Jaguar Red theme: a name field, hex colour boxes with swatches for home background, window, input fields, text, accent and the status colours, rounding and spacing sliders, a contrast check message and Save, Duplicate, Delete, Export and Import buttons.">
+        </a>
+        <figcaption><strong>Theme editor</strong> <span class="gal-cap">Eleven colours, rounding and spacing change the whole app live; contrast is checked.</span></figcaption>
       </figure>
     </div>
     <p class="footnote">
       Shaders are optional: if a preset does not compile or librashader is
-      missing, the app draws the plain picture and says why.
-      <strong>Platform notes:</strong> the macOS and Windows packages bundle
-      the librashader runtime; upstream publishes no Linux build, so on Linux
-      install a librashader package and the app finds it. The macOS universal
-      package currently ships an arm64-only librashader, so shaders may be
-      unavailable on Intel Macs (see the
-      <a href="{{REPO}}/blob/develop/app/packaging/README.md#macos-notes">packaging notes</a>).
+      missing, the app draws the plain picture and says why. Point
+      <strong>Preset folder</strong> at a full slang-shaders checkout for the
+      rest, and preset parameters get sliders.
+      <strong>Platform notes:</strong> every package bundles the librashader
+      runtime: macOS (Apple Silicon and Intel), Windows, the AppImage, the
+      <code>.deb</code> and the Flatpak (details in the
+      <a href="{{REPO}}/blob/develop/app/packaging/README.md#shader-runtime-librashader">packaging notes</a>).
     </p>
-    <figure class="shot smooth">
-      <div class="win-bar">Settings &gt; Video <span class="badge">Shader</span></div>
-      <div class="well">
-        <img src="assets/app_settings_video.png" width="1280" height="860"
-             alt="The Settings window on the Video tab: integer scaling, smooth filter, stretch, aspect ratio, VSync and fullscreen options, then a Shader section with a Use shader checkbox, the selected CRT-Royale preset path and a scrollable list of 500 built-in presets.">
-      </div>
-      <figcaption>
-        Settings &gt; Video &gt; Shader: pick a preset from the built-in list
-        or load a file. View &gt; Shader switches it on and off.
-      </figcaption>
-    </figure>
-    <figure class="shot smooth">
-      <div class="win-bar">Skyhammer <span class="badge">running</span></div>
-      <div class="well">
-        <img src="assets/app_gameplay.png" width="1280" height="860"
-             alt="Skyhammer's cockpit view inside a rusty industrial structure, with green heads-up displays for fire, fuel, shield damage and altitude, a minimap and a Gatling gun gauge.">
-      </div>
-      <figcaption>
-        The picture is drawn at the largest whole-number scale that fits when
-        integer scaling is on. Pacing follows the core&rsquo;s reported field
-        rate, 60.05445&nbsp;Hz NTSC and 50.08013&nbsp;Hz PAL.
-      </figcaption>
-    </figure>
-  </div>
-</section>
 
-<section class="win" id="input">
-  <h2>Controllers and keyboard</h2>
-  <div class="win-body">
+    <h3 id="ra">RetroAchievements &amp; Discord</h3>
     <ul>
-      <li><strong>Remapping.</strong> Settings &gt; Input edits bindings per
-        device (the keyboard, every gamepad, or one controller model), either
-        everywhere or for one game. Unknown controllers can be added with a
-        <code>gamecontrollerdb.txt</code> in the data folder.</li>
-      <li><strong>All 12 keypad keys.</strong> The default gamepad layout
-        reaches 0&ndash;9, <code>*</code> and <code>#</code> without the
-        overlay (face button, shoulders, triggers and the right stick).
-        <strong>F2</strong> opens an on-screen keypad as well.</li>
-      <li><strong>Keyboard play</strong> uses the Jaguar Pro Controller
-        6-button layout: arrows, Z X C, Enter and Right Shift, A S D for X Y Z,
-        Q and E for the shoulders, the number row for the keypad.</li>
-      <li><strong>Controls overlay (F3)</strong> is a cheat sheet of the
-        bindings in effect. It appears by itself for a few seconds when a game
-        starts with a keyboard on Player 1, and once per gamepad model, and can
-        be turned off in Settings &gt; Input.</li>
-      <li><strong>Unusual devices.</strong> Settings &gt; Input &gt; Devices
-        &amp; players picks what is plugged into each Jaguar port: the ST and
-        Amiga mouse, the Tempest 2000 rotary, analog, driving and paddle
-        controllers, the 6D stick, the light gun, or a Team Tap, and which
-        controller plays which player.</li>
+      <li>RetroAchievements: sign in from the Achievements menu; the login token lives in the system keychain, never your password. Softcore by default, optional hardcore (no loading states, no cheats).</li>
+      <li>The Achievements window has your profile, the game&rsquo;s list with badges, and a Jaguar games tab with your progress and a Play button for games in your library. Cartridges and <code>.cue</code> discs are identified.</li>
+      <li><strong>Discord Rich Presence</strong> (Settings &gt; Discord): shows the game you are playing, its box art, how long and your achievement progress, with a Get Virtual Jaguar button for other people. On by default, needs Discord running, and you can turn it off.</li>
+      <li>See the <a href="privacy.html">privacy policy</a> and <a href="terms.html">terms</a> for what the app sends where (box art and database downloads, RetroAchievements, Discord).</li>
     </ul>
-    <figure class="shot smooth">
-      <div class="win-bar">Settings &gt; Input <span class="badge">Devices &amp; players</span></div>
-      <div class="well">
-        <img src="assets/app_settings_input.png" width="1280" height="860"
-             alt="The Settings window on the Input tab, Devices and players sub-tab: Jaguar port 1 set to Rotary (Tempest) and port 2 set to Team Tap, five player slots below, and tuning sliders for mouse speed, rotary speed and stick dead zone.">
-      </div>
-      <figcaption>
-        Port 1 set to the Tempest rotary, port 2 to a Team Tap. The Players
-        list grows by three sockets for each Team Tap.
-      </figcaption>
-    </figure>
-    <figure class="shot smooth">
-      <div class="win-bar">Controls overlay <span class="badge">F3</span></div>
-      <div class="well">
-        <img src="assets/app_controls.png" width="1280" height="860"
-             alt="A translucent panel over the Tempest 2000 credits listing the keyboard bindings for Player 1: the D-pad on the arrow keys, buttons A B C on X Z C, Option on Return, and the keypad on the number row with Pro Controller letters.">
-      </div>
-      <figcaption>
-        The overlay never takes input. It reads the bindings you actually have,
-        including per-game changes.
-      </figcaption>
-    </figure>
+
+    <div class="gallery">
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_ra_login.png" aria-label="Enlarge: RetroAchievements sign in">
+          <img src="assets/app_ra_login.png" width="1280" height="860" loading="lazy" alt="The Sign in to RetroAchievements window over a running game: a note that the password is sent once and wiped, User name and Password fields, and Sign in and Cancel buttons.">
+        </a>
+        <figcaption><strong>Sign in</strong> <span class="gal-cap">The password goes to retroachievements.org once; only the login token is kept, in the system keychain.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_ra_achievements.png" aria-label="Enlarge: Achievements, this game">
+          <img src="assets/app_ra_achievements.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the This game tab for Ultra Vortek over its title screen: the game icon, a progress bar at 61 percent, 11 of 18 achievements and 145 of 215 points, then a list with grey locked badges followed by coloured unlocked badges, each with a title, description, points, how many players earned it and the unlock date.">
+        </a>
+        <figcaption><strong>This game</strong> <span class="gal-cap">Badge art, points, rarity and unlock dates, with filters, sorting and search.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_ra_games.png" aria-label="Enlarge: Achievements, Jaguar games">
+          <img src="assets/app_ra_games.png" width="1280" height="860" loading="lazy" alt="The Achievements window on the Jaguar games tab filtered to In my library: nine games, cartridges and Jaguar CD discs, each with its icon, achievement count, points, a progress bar and a Play button; the running game shows Playing.">
+        </a>
+        <figcaption><strong>Jaguar games</strong> <span class="gal-cap">Every Jaguar and Jaguar CD game with achievements, your progress, and Play for those in your library.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_settings_discord.png" aria-label="Enlarge: Discord settings">
+          <img src="assets/app_settings_discord.png" width="1280" height="860" loading="lazy" alt="Settings, Discord tab: Show what I'm playing on Discord, Show game artwork and Show buttons options, a status line and a note listing exactly what is shared, and a collapsed Application ID section.">
+        </a>
+        <figcaption><strong>Discord</strong> <span class="gal-cap">What is shared with Discord, and switches for artwork and buttons. Off here.</span></figcaption>
+      </figure>
+    </div>
     <p class="footnote">
-      The mouse is captured only while a mouse or rotary is plugged in and a
-      game has focus; Esc or F10 releases it. Controller details:
-      <a href="{{REPO}}/blob/develop/docs/input-devices-user-guide.md">input devices guide</a>
-      and the
-      <a href="{{REPO}}/blob/develop/app/README.md#controls-and-the-keypad">app README</a>.
+      The RetroAchievements pictures use the app&rsquo;s built-in mock server,
+      so no real account or sign-in was involved. It answers with the real,
+      public achievement list and artwork of the games shown (from
+      retroachievements.org and its image host); the account, progress and
+      unlock dates are made up. Discord was off for its picture.
     </p>
-  </div>
-</section>
 
-<section class="win" id="extras">
-  <h2>Cheats, achievements and save states</h2>
-  <div class="win-body">
-    <h3>Cheats</h3>
-    <p>
-      Emulation &gt; Cheats lists the cheats the
-      <a href="https://github.com/libretro/libretro-database/tree/master/cht/Atari%20-%20Jaguar">libretro cheat database</a>
-      has for the running game, with a toggle each, plus manual
-      <code>ADDRESS:VALUE</code> codes. What is on is remembered per game. The
-      database files are bundled with the app, with their licence
-      (CC&nbsp;BY-SA&nbsp;4.0); you can add your own <code>.cht</code> files.
-    </p>
-    <figure class="shot smooth">
-      <div class="win-bar">Emulation &gt; Cheats <span class="badge">Tempest 2000</span></div>
-      <div class="well">
-        <img src="assets/app_cheats.png" width="1280" height="860"
-             alt="The Cheats window for Tempest 2000: the cheat set picker, database cheats Infinite Lives (ticked) and Start with 999999 Score, a manual code entry row and a collapsed Cheat library section.">
-      </div>
-    </figure>
-    <h3>RetroAchievements</h3>
+    <h3 id="devtools">Developer tools</h3>
     <ul>
-      <li>Sign in from the Achievements menu. The app keeps only the login
-        token, not your password, and keeps it in your system keychain. Unlocks, leaderboard events and progress show
-        as toasts, and the menu has the achievement list and rich
-        presence. The achievements window shows your avatar, the game icon and
-        every badge, filters the list, and lists the Jaguar and Jaguar CD
-        games that have achievements with your progress and a Play button for
-        the ones in your library.</li>
-      <li>Softcore is the default. <strong>Hardcore</strong> is a toggle:
-        while it is on, <strong>loading save states is refused</strong> (saving
-        still works) and <strong>no cheat reaches the core</strong>. Turning it
-        on mid-game restarts the game for a clean run.</li>
-      <li>Cartridges and <code>.cue</code> discs are identified. <code>.chd</code>
-        and <code>.cdi</code> discs are not identified yet: the game runs
-        without achievements and the app says why.</li>
+      <li>A Tools menu for the game that is running: memory viewer and editor, palette (CLUT) editor, cheat scanner, Object Processor list, blitter log, texture browser and audio scope.</li>
+      <li>A CPU debugger with 68000, GPU and DSP tabs: registers, disassembly, breakpoints, step, step over and run to cursor (F9 breaks, F10 steps).</li>
+      <li>Writes go to RAM freely; hardware registers need a tick-box, and everything is off under RetroAchievements hardcore. RetroArch is unaffected.</li>
+      <li><strong>gdb:</strong> the core also speaks the GDB remote protocol, so a real <code>gdb</code> can set breakpoints, read memory and registers and step the 68000 (the GPU and DSP via <code>monitor</code> commands). Off by default, loopback only. LLDB can attach but cannot debug the 68000. The <a href="{{REPO}}/blob/develop/docs/gdb-stub-guide.md">GDB remote debugging guide</a> has the rest.</li>
     </ul>
-    <h3>Save states</h3>
-    <p>
-      F5 saves, F7 loads, F6 cycles the slot; Emulation &gt; State manager
-      shows every slot with a thumbnail. States use the core&rsquo;s own
-      format, so they behave as they do in RetroArch.
-    </p>
-    <figure class="shot smooth">
-      <div class="win-bar">State manager <span class="badge">thumbnails</span></div>
-      <div class="well">
-        <img src="assets/app_states.png" width="1280" height="860"
-             alt="The Save states window for Tempest 2000: ten numbered slots, four with a thumbnail of the saved frame and a timestamp, the rest marked empty, each with Save and Load buttons.">
-      </div>
-    </figure>
-  </div>
-</section>
-
-<section class="win" id="netplay">
-  <h2>Netplay</h2>
-  <div class="win-body">
-    <p>
-      The Netplay window sets up Jaguar <strong>link-cable play</strong> over a
-      local network: it joins the two emulated link ports. It is not rollback
-      netplay and not general online play, and play over the Internet or a VPN
-      is not supported. The link swaps many small messages every frame, so it
-      is limited by network delay: a wired connection is best.
-    </p>
-    <ul>
-      <li><strong>Host</strong> shows your LAN addresses and starts listening;
-        <strong>Join</strong> finds hosts on the LAN by discovery, or takes a
-        typed address.</li>
-      <li>Choose the device plugged into the link port: the
-        <strong>JagLink / CatBox cable</strong> or the <strong>Voice
-        Modem</strong>. Both players choose the same, run the same game and
-        the same version of the app.</li>
-      <li>Games: Doom (Game Mode &gt; Deathmatch), BattleSphere Gold, AirCars,
-        and Ultra Vortek over the Voice Modem (type 911 at the title screen).</li>
-      <li><strong>Two windows on one machine</strong> work too: File &gt; New
-        window (or <code>open -n</code> on macOS) starts another copy with its
-        own save folder, so you can host in one and join <code>127.0.0.1</code>
-        in the other, or give each window its own controller for local
-        multiplayer.</li>
-      <li>The same setup is on the command line:
-        <code>--netplay host|join|join-discovered|browse|loopback</code>.</li>
-    </ul>
-    <figure class="shot smooth">
-      <div class="win-bar">Netplay window <span class="badge">Host a game</span></div>
-      <div class="well">
-        <img src="assets/app_netplay.png" width="1280" height="860"
-             alt="The Netplay window over Doom: the link device choice between JagLink and Voice Modem, Host a game and Join a game tabs with a port picker, a Start hosting button, a note about delay, and a table of the games that use the link.">
-      </div>
-      <figcaption>
-        The machine&rsquo;s own LAN address is blanked in this image.
-      </figcaption>
-    </figure>
+    <pre><code>$ virtualjaguar --option virtualjaguar_gdb_stub=enabled --option virtualjaguar_gdb_wait=enabled game.jag
+$ gdb -ex 'set endian big' -ex 'target remote 127.0.0.1:2345'
+(gdb) x/3i $pc
+(gdb) stepi</code></pre>
     <p class="footnote">
-      Background and the details of the link itself:
-      <a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">netlink user guide</a>
-      and <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a>.
+      The first option turns the stub on (Settings, search &ldquo;gdb&rdquo;,
+      does the same; reopen the game); the second halts the 68000 before its
+      first instruction so gdb attaches at the start. Use a gdb with m68k
+      support (Homebrew <code>gdb</code>; <code>gdb-multiarch</code> on Debian
+      and Ubuntu); <code>set endian big</code> is needed, or every word reads
+      byte-swapped.
     </p>
+    <div class="gallery">
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_cpu.png" aria-label="Enlarge: CPU debugger">
+          <img src="assets/app_dbg_cpu.png" width="1280" height="860" loading="lazy" alt="The CPU debugger window halted on a 68000 instruction: data and address registers, status register flags, a disassembly with the current line marked, and a breakpoints list, with a HALTED bar at the top of the window.">
+        </a>
+        <figcaption><strong>CPU debugger</strong> <span class="gal-cap">68000, GPU and DSP tabs: registers, disassembly, breakpoints, step. Shown halted.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_memory.png" aria-label="Enlarge: Memory viewer">
+          <img src="assets/app_dbg_memory.png" width="1280" height="860" loading="lazy" alt="The Memory window over Alien vs Predator: a region picker, 8, 16 or 32 bit view, a go-to box and a hex dump of main RAM with an ASCII column.">
+        </a>
+        <figcaption><strong>Memory viewer</strong> <span class="gal-cap">Hex view and editor over RAM and the hardware registers.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_objects.png" aria-label="Enlarge: Object list">
+          <img src="assets/app_dbg_objects.png" width="1280" height="860" loading="lazy" alt="The Object list window: the decoded Object Processor display list with branch, stop and bitmap objects, their addresses, sizes and depths, and a preview of the selected bitmap.">
+        </a>
+        <figcaption><strong>Object list</strong> <span class="gal-cap">The whole display list decoded, with a bitmap preview.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_scanner.png" aria-label="Enlarge: Cheat scanner">
+          <img src="assets/app_dbg_scanner.png" width="1280" height="860" loading="lazy" alt="The Cheat scanner window: a value size picker, Signed and Aligned options, an initial value mode and Start search, Undo and New search buttons.">
+        </a>
+        <figcaption><strong>Cheat scanner</strong> <span class="gal-cap">Search RAM for a changing value; finds become ordinary cheats.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_palette.png" aria-label="Enlarge: Palette editor">
+          <img src="assets/app_dbg_palette.png" width="1280" height="860" loading="lazy" alt="The Palette (CLUT) window over Alien vs Predator: a CRY or RGB16 choice and a 16 by 16 grid of colour swatches spanning the hue and brightness range.">
+        </a>
+        <figcaption><strong>Palette (CLUT)</strong> <span class="gal-cap">The 256-entry colour lookup table as CRY or RGB16; click a swatch to edit it.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_blitter.png" aria-label="Enlarge: Blitter log">
+          <img src="assets/app_dbg_blitter.png" width="1280" height="860" loading="lazy" alt="The Blitter log window: counters for shown, seen and missed launches and a table of blits with frame, command flags, A1 and A2 addresses, size and engine.">
+        </a>
+        <figcaption><strong>Blitter log</strong> <span class="gal-cap">Every blit the game launches, newest first, with a filter and a full decode of each.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_textures.png" aria-label="Enlarge: Texture browser">
+          <img src="assets/app_dbg_textures.png" width="1280" height="860" loading="lazy" alt="The Textures window with Dump textures while playing ticked: a count of 856 captured tiles for Alien vs Predator, filter and size controls, and a grid of tile thumbnails.">
+        </a>
+        <figcaption><strong>Texture browser</strong> <span class="gal-cap">Dump the tiles a game blits, then export them or swap in your own art.</span></figcaption>
+      </figure>
+      <figure class="gal-card">
+        <a class="gal-link" href="assets/app_dbg_scope.png" aria-label="Enlarge: Audio scope">
+          <img src="assets/app_dbg_scope.png" width="1280" height="860" loading="lazy" alt="The Audio scope window: left and right waveform plots over 1024 samples and level meters with peak markers near minus 13 decibels.">
+        </a>
+        <figcaption><strong>Audio scope</strong> <span class="gal-cap">What the core sends to the audio device: left and right waveforms and peak meters.</span></figcaption>
+      </figure>
+    </div>
   </div>
 </section>
 
@@ -367,10 +372,13 @@
   <h2>More</h2>
   <div class="win-body">
     <ul>
-      <li>It behaves like a program of your OS: a native menu bar and Dock menu on macOS, a dark title bar and
-        taskbar recent games on Windows, MIME types and desktop actions on Linux, double-click or Open With
-        for <code>.j64 .jag .cue .chd</code> and the other game formats (an installer checkbox on Windows),
-        and an optional tray or menu-bar icon.</li>
+      <li>Controller details: the
+        <a href="{{REPO}}/blob/develop/docs/input-devices-user-guide.md">input devices guide</a>
+        and the
+        <a href="{{REPO}}/blob/develop/app/README.md#controls-and-the-keypad">app README</a>.
+        The link-cable details are in the
+        <a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">netlink user guide</a>
+        and <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a>.</li>
       <li>The app keeps its settings, saves and states in the per-user data
         folder (or beside the program in portable mode). Everything is listed
         in the <a href="{{REPO}}/blob/develop/app/README.md#where-files-go">app README</a>.</li>
@@ -384,3 +392,5 @@
     </ul>
   </div>
 </section>
+
+<script src="assets/js/gallery.js" defer></script>

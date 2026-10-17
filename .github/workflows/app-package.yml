@@ -18,9 +18,10 @@ name: App packages
 #   VirtualJaguar-X.Y.Z-linux-x86_64.AppImage        VirtualJaguar-X.Y.Z-linux-aarch64.AppImage
 #   virtualjaguar_X.Y.Z_amd64.deb                    virtualjaguar_X.Y.Z_arm64.deb
 #
-# Signing (all optional; without the secrets the packages are built unsigned and the log says so):
+# Signing (all optional; without the secrets the macOS app is ad-hoc signed, the others unsigned, and the log says so):
 #   macOS    APPLE_DEVELOPER_ID_P12_BASE64, APPLE_DEVELOPER_ID_P12_PASSWORD,
 #            APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID, APPLE_NOTARY_KEY_P8_BASE64
+#            (same-repo PRs, nightlies and tags all pass them; fork PRs get none, see macos-sign)
 #   Windows  SIGNPATH_API_TOKEN (+ repository variable SIGNPATH_ORGANIZATION_ID)  -- stub until
 #            the SignPath Foundation application is approved
 # Details: app/packaging/README.md.
@@ -121,6 +122,18 @@ jobs:
           echo "label=$label short=$short deb=$deb app_version=$proj run=$run"
 
   # ------------------------------------------------------------------------------------------
+  # The librashader shader runtime, built FROM SOURCE (pinned, cached) for Intel macOS, Apple
+  # silicon macOS, and Linux x86_64 + aarch64: upstream's x86_64-macos zip holds an arm64 dylib
+  # and it publishes no Linux binary (#950).  Windows keeps upstream's DLLs.  Artifacts
+  # `librashader-<triple>` are intermediates; see .github/workflows/librashader.yml.
+  # ------------------------------------------------------------------------------------------
+  librashader:
+    name: librashader runtime
+    needs: [meta]
+    if: needs.meta.outputs.run == 'true'
+    uses: ./.github/workflows/librashader.yml
+
+  # ------------------------------------------------------------------------------------------
   # Package-manager templates must always render and parse (they are filled for real, with the
   # release's checksums, by a maintainer after the release; see app/packaging/README.md).
   # ------------------------------------------------------------------------------------------
@@ -146,49 +159,41 @@ jobs:
           for y in winget/*.yaml flatpak/*.yml; do ruby -ryaml -rdate -e 'YAML.safe_load_file(ARGV[0], permitted_classes: [Date])' "$y"; echo "ok $y"; done
 
   # ------------------------------------------------------------------------------------------
-  # macOS: universal .app (arm64 + x86_64), signed + notarized + stapled when the secrets exist.
-  # Two single-arch builds merged with lipo, not one multi-arch configure: the optional
-  # librashader runtime is fetched per architecture.
+  # macOS: universal .app (arm64 + x86_64), signed + notarized + stapled when the secrets exist
+  # (every same-repo run; fork PRs never get the secrets and stay ad-hoc signed).
+  # Two single-arch builds merged with lipo, not one multi-arch configure: each architecture is
+  # handed its own librashader dylib (built from the same pinned source, librashader.yml).
   # ------------------------------------------------------------------------------------------
   macos:
     name: macOS universal
-    needs: [meta]
+    needs: [meta, librashader]
     if: needs.meta.outputs.run == 'true'
     runs-on: macos-latest
     env:
       LABEL: ${{ needs.meta.outputs.label }}
       SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
       MIN_MACOS: '11.0'
-      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-      APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Decide whether to sign
-        id: sign
-        run: |
-          if [ "${{ inputs.sign }}" = "true" ] \
-              && [ -n "$APPLE_DEVELOPER_ID_P12_BASE64" ] && [ -n "$APPLE_DEVELOPER_ID_P12_PASSWORD" ] \
-              && [ -n "$APPLE_NOTARY_KEY_ID" ] && [ -n "$APPLE_NOTARY_ISSUER_ID" ] && [ -n "$APPLE_NOTARY_KEY_P8_BASE64" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "Developer ID signing + notarization: ON"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::macOS package is NOT Developer ID signed or notarized" \
-              "(signing not requested here, or the APPLE_* secrets are missing)." \
-              "It is ad-hoc signed; Gatekeeper refuses it until right-click > Open."
-          fi
+      - name: Get the librashader runtimes (built from source, both architectures)
+        uses: actions/download-artifact@v8
+        with:
+          pattern: librashader-*-apple-darwin
+          path: librashader
 
       - name: Build both architectures
         run: |
           set -eu
+          cat librashader/*/BUILD-INFO.txt
           for arch in arm64 x86_64; do
+            case "$arch" in arm64) triple=aarch64-apple-darwin ;; *) triple=x86_64-apple-darwin ;; esac
+            # An explicit runtime per architecture: nothing is downloaded, and the Intel slice is
+            # a real x86_64 dylib (upstream's "x86_64" zip holds an arm64 one).
             cmake -S app -B "build-$arch" -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS" \
-              -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+              -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader-$triple/librashader.dylib" \
+              -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
               ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
             cmake --build "build-$arch" --config Release -j4
             cmake --install "build-$arch" --prefix "$PWD/stage-$arch"
@@ -199,10 +204,15 @@ jobs:
           set -eu
           # shaders_gl renders through the real librashader on a hidden GL context; on a GPU-less
           # runner it hangs until the 120 s timeout, so it is left to the developer machines.
+          # The shader runtime must LOAD (the test fails, not skips, when it does not).
+          export VJ_REQUIRE_LIBRASHADER=1
           ctest --test-dir build-arm64 -C Release --output-on-failure -E shaders_gl
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             arch -x86_64 build-x86_64/virtualjaguar --headless --frames 300 \
               --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
+            # The Intel librashader, loaded and used to parse presets by an x86_64 process (Rosetta).
+            file build-x86_64/vj_shader_tests | grep -q x86_64
+            ctest --test-dir build-x86_64 -C Release --output-on-failure -R 'shaders_(unit|library|bundled)'
           else
             echo "::warning::Rosetta is not available on this runner: the x86_64 slice was built but not run"
           fi
@@ -230,33 +240,48 @@ jobs:
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             arch -x86_64 "$exe" --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
           fi
+          # The universal librashader inside the bundle: both slices, each loaded by a process of its own
+          # architecture (the arm64 one natively, the x86_64 one under Rosetta).
+          lib="$t/Virtual Jaguar.app/Contents/Frameworks/librashader.dylib"
+          lipo -info "$lib"
+          [ "$(lipo -archs "$lib" | tr ' ' '\n' | sort | tr '\n' ' ')" = "arm64 x86_64 " ]
+          export VJ_REQUIRE_LIBRASHADER=1
+          VJ_LIBRASHADER="$lib" build-arm64/vj_shader_tests library
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            VJ_LIBRASHADER="$lib" build-x86_64/vj_shader_tests library
+          fi
           rm -rf "$t"
           # The app looks for its bundled data beside SDL_GetBasePath(), which for a .app is
           # Contents/Resources (headless mode uses a temp data dir, so this is checked in the SDL source
           # that was built, to catch a future SDL bump changing it).
           grep -q 'resourcePath' build-arm64/_deps/sdl3-src/src/filesystem/cocoa/SDL_sysfilesystem.m
 
-      - name: Import the signing certificate
-        if: steps.sign.outputs.enabled == 'true'
-        run: bash app/packaging/macos/codesign.sh import-cert
+      # The composite action (.github/actions/macos-sign) imports the certificate into a temporary
+      # keychain, signs inside-out, notarizes, staples the .app and deletes the keychain again.
+      # Without the APPLE_* secrets (fork PRs) it only prints a warning and signs nothing.
+      - name: Developer ID sign, notarize and staple the app
+        id: devid
+        if: inputs.sign
+        uses: ./.github/actions/macos-sign
+        with:
+          paths: dist/Virtual Jaguar.app
+          notarize: 'true'
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
 
-      - name: Sign the app
+      # Apple Silicon refuses an unsigned binary ("damaged"), so a build that was not Developer ID
+      # signed still gets an ad-hoc signature.  Gatekeeper still refuses it until right-click > Open.
+      - name: Ad-hoc sign the app (no Developer ID signature)
+        if: steps.devid.outputs.signed != 'true'
         run: |
           set -eu
-          if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
-            bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app"
-          else
-            bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app" adhoc
-          fi
-
-      - name: Notarize and staple the app
-        if: steps.sign.outputs.enabled == 'true'
-        run: |
-          set -eu
-          ditto -c -k --keepParent "dist/Virtual Jaguar.app" "$RUNNER_TEMP/notarize-app.zip"
-          bash app/packaging/macos/codesign.sh notarize "$RUNNER_TEMP/notarize-app.zip"
-          bash app/packaging/macos/codesign.sh staple "dist/Virtual Jaguar.app"
-          spctl -a -t exec -vv "dist/Virtual Jaguar.app"
+          echo "::warning::macOS package is NOT Developer ID signed or notarized" \
+            "(signing not requested here, or the APPLE_* secrets are missing)." \
+            "It is ad-hoc signed; Gatekeeper refuses it until right-click > Open."
+          bash app/packaging/macos/codesign.sh sign-app "dist/Virtual Jaguar.app" adhoc
 
       - name: Make the zip (the only macOS package) and check what it unpacks to
         run: |
@@ -271,16 +296,12 @@ jobs:
           test -d "$t/Virtual Jaguar.app"   # the .app is the zip's only top-level entry
           [ "$(find "$t" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = 1 ]
           codesign --verify --deep --strict "$t/Virtual Jaguar.app"
-          if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
+          if [ "${{ steps.devid.outputs.notarized }}" = "true" ]; then
             xcrun stapler validate "$t/Virtual Jaguar.app"
             spctl -a -t exec -vv "$t/Virtual Jaguar.app"
           fi
           rm -rf "$t"
           ls -la out
-
-      - name: Remove the temporary keychain
-        if: always() && steps.sign.outputs.enabled == 'true'
-        run: security delete-keychain vj-signing.keychain-db || true
 
       - uses: actions/upload-artifact@v7
         with:
@@ -533,7 +554,7 @@ jobs:
           bundle: VirtualJaguar-${{ needs.meta.outputs.label }}-linux-x86_64.flatpak
           manifest-path: app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
           arch: x86_64
-          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/CMakeLists.txt', 'app/cmake/**') }}
+          cache-key: flatpak-builder-x86_64-${{ hashFiles('app/packaging/flatpak/*.yml', 'app/packaging/flatpak/*.json', 'app/CMakeLists.txt', 'app/cmake/**') }}
           upload-artifact: false
 
       - name: Smoke-test the bundle (install, run headless against the public ROM)
@@ -549,6 +570,13 @@ jobs:
           # The bundled data must be beside the executable inside the sandbox.
           flatpak run --user --command=sh "$APP_ID" -c \
             'ls /app/bin/cheats | head -3 && ls "/app/bin/libretro-db" && test -d /app/bin/shaders/slang-shaders && ls /app/share/metainfo'
+          # The shader runtime (#951): librashader.so must be in /app/lib, resolve all its libraries and
+          # speak the ABI the app was built against (LIBRASHADER_CURRENT_ABI 2).  The app finds it through
+          # LD_LIBRARY_PATH=/app/lib, so load it by bare name exactly as src/shaders.cpp does.
+          flatpak run --user --command=sh "$APP_ID" -c \
+            'ls -l /app/lib/librashader.so && ls /app/share/licenses/io.github.libretro.VirtualJaguar && ! ldd /app/lib/librashader.so | grep "not found"'
+          flatpak run --user --command=python3 "$APP_ID" -c \
+            'import ctypes; l = ctypes.CDLL("librashader.so"); a = l.libra_instance_abi_version(); print("librashader ABI", a); assert a == 2'
 
       - uses: actions/upload-artifact@v7
         with:
@@ -563,7 +591,7 @@ jobs:
   # ------------------------------------------------------------------------------------------
   linux:
     name: Linux ${{ matrix.arch }}
-    needs: [meta]
+    needs: [meta, librashader]
     if: needs.meta.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -573,15 +601,25 @@ jobs:
           - arch: x86_64
             debarch: amd64
             os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
           - arch: aarch64
             debarch: arm64
             os: ubuntu-22.04-arm
+            triple: aarch64-unknown-linux-gnu
     env:
       LABEL: ${{ needs.meta.outputs.label }}
       SHORT_VERSION: ${{ needs.meta.outputs.short_version }}
       DEB_VERSION: ${{ needs.meta.outputs.deb_version }}
     steps:
       - uses: actions/checkout@v7
+
+      # Upstream publishes no Linux librashader: this is built from the pinned source on this same
+      # image (glibc 2.35), see librashader.yml.  It lands beside the executable and in both packages.
+      - name: Get the librashader runtime (built from source)
+        uses: actions/download-artifact@v8
+        with:
+          name: librashader-${{ matrix.triple }}
+          path: librashader
 
       - name: Install build dependencies
         run: |
@@ -596,10 +634,14 @@ jobs:
       - name: Build
         run: |
           set -eu
+          cat librashader/BUILD-INFO.txt
           cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_PACKAGE_VERSION="$SHORT_VERSION" \
+            -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader.so" \
             ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
           cmake --build build -j"$(nproc)"
-          ctest --test-dir build --output-on-failure
+          # The runtime must load here (the test fails, not skips).  shaders_gl needs a GL context,
+          # which a display-less runner does not have.
+          VJ_REQUIRE_LIBRASHADER=1 ctest --test-dir build --output-on-failure -E shaders_gl
 
       - name: Validate the desktop file and appstream metadata
         run: |
@@ -628,6 +670,9 @@ jobs:
           bash app/packaging/check-payload.sh build squashfs-root/usr/bin virtualjaguar
           ldd squashfs-root/usr/bin/virtualjaguar | tee ldd.txt
           if grep -q 'not found' ldd.txt; then echo "::error::unresolved libraries in the AppImage"; exit 1; fi
+          # The shader runtime is in the AppImage, is the right architecture, resolves, and is
+          # found by the app's own search (beside the executable, VJ_LIBRASHADER unset).
+          bash app/packaging/linux/check-librashader.sh squashfs-root/usr/bin "${{ matrix.arch }}" build/vj_shader_tests
           rm -rf squashfs-root
 
       - name: Smoke-test the .deb (install, run through /usr/bin, check payload, remove)
@@ -639,6 +684,8 @@ jobs:
           virtualjaguar --headless --frames 300 --expect-hash "$SMOKE_HASH" "$SMOKE_ROM"
           bash app/packaging/check-payload.sh build /usr/lib/virtualjaguar virtualjaguar
           dpkg -L virtualjaguar | head -40
+          dpkg -L virtualjaguar | grep -x '/usr/lib/virtualjaguar/librashader.so'
+          bash app/packaging/linux/check-librashader.sh /usr/lib/virtualjaguar "${{ matrix.arch }}" build/vj_shader_tests
           sudo apt-get remove -y -qq virtualjaguar
 
       - uses: actions/upload-artifact@v7

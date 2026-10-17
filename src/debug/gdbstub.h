@@ -99,8 +99,9 @@ struct GDBTargetOps
    /* qXfer:features:read target: return a pointer to a static,
     * NUL-terminated XML blob (annex is ignored -- each target has
     * exactly one description) and its length. NULL (xmlLen set to 0)
-    * means "this target has no custom description" (thread 1 / 68K: GDB
-    * already knows the m68k architecture natively). */
+    * means "this target has no custom description". The 68K falls back
+    * to the engine's built-in m68k description (GDBTarget68KXML), which
+    * is what stock gdb connects with. */
    const char * (*targetXML)(void *user, int *xmlLen);
 
    /* qRcmd ("monitor ..."), cmd already hex-decoded and NUL-terminated.
@@ -109,11 +110,32 @@ struct GDBTargetOps
    int (*monitorCmd)(void *user, const char *cmd, char *out, int outMax);
 };
 
+/* Largest monitor (qRcmd) reply the engine will buffer. Long output goes
+ * to the client as a run of 'O' console packets of GDB_MONITOR_CHUNK
+ * bytes of text each, then a final "OK" -- the standard qRcmd shape, so
+ * stock gdb prints it all. */
+#define GDB_MONITOR_MAX    16384
+#define GDB_MONITOR_CHUNK  1024
+
+/* Set in GDBSession.detachRequested by D / vKill / k. 1 = the reply
+ * (OK) goes out, then the session ends; 2 = ('k') the session ends with
+ * no reply at all. The transport owner (gdbtarget.c) acts on it. */
+#define GDB_END_REPLY    1
+#define GDB_END_NOREPLY  2
+
 struct GDBSession
 {
    const struct GDBTargetOps *ops[GDB_NUM_TARGETS];
    void *user[GDB_NUM_TARGETS];
    int noAckMode;
+   /* D / vKill / k: end the debug session. Cleared by the transport
+    * after it has sent the reply and torn the session down. */
+   int detachRequested;
+   /* Optional out-of-band sender for 'O' console packets (monitor
+    * output). NULL (tests, or a transport that cannot) falls back to a
+    * single hex reply truncated to fit. payload is NOT framed. */
+   int (*sendPacket)(void *ctx, const char *payload, int len);
+   void *sendCtx;
    /* Hg/Hc thread selection, RSP thread numbers (1-based); 0 means
     * "any"/unset and is treated as thread 1. */
    int threadG;
@@ -122,6 +144,11 @@ struct GDBSession
 
 void GDBSessionInit(struct GDBSession *s, const struct GDBTargetOps *ops68k,
                     void *user68k);
+
+/* The 68K target description served for qXfer:features:read:target.xml
+ * (a register-accurate m68k-core description matching the 'g' layout).
+ * Lives in the engine so test_gdbstub_proto checks the real text. */
+const char *GDBTarget68KXML(int *xmlLen);
 
 /* Registers (or clears, with ops==NULL) the ops/user pair for one
  * non-68K target. Safe to call before any packet is processed. */
@@ -277,6 +304,9 @@ int  GDBSockGetBindMode(void);
 int GDBSockOpen(int port);
 void GDBSockClose(void);
 int GDBSockPoll(void);
+/* Closes the connected client only; the listener stays up so the next
+ * `target remote` is accepted (D / vKill / k). */
+void GDBSockDropClient(void);
 int GDBSockRecv(char *buf, int max);
 int GDBSockSend(const char *buf, int len);
 /* True iff a client is currently connected (accept()ed, not yet

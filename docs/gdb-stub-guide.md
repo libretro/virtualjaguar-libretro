@@ -8,11 +8,11 @@ not just using it. This page is for the developer on the other end of the socket
 ## What this is, in one paragraph
 
 The core can open a TCP socket that speaks GDB's Remote Serial Protocol (RSP), so a real debugger
-— `gdb`, `lldb`, VS Code, or any RSP-speaking tool — can inspect and control the emulated Jaguar:
-set breakpoints, read and write registers and memory, single-step, and watch memory addresses.
-All three processors are exposed: the 68000 as a native GDB target, and the GPU and DSP RISC
-cores as two additional GDB "threads" with a custom register description. It is off by default,
-developer-facing, and never reachable from another machine.
+can inspect and control the emulated Jaguar: set breakpoints, read and write registers and memory,
+single-step, and watch a memory address. **Use a `gdb` built with m68k support** (see "Which
+debugger" below — `brew install gdb` has it; LLDB cannot debug the 68K). The 68000 is the GDB
+thread; the GPU and DSP RISC cores are reached through `monitor` commands. It is off by default,
+developer-facing, and bound to loopback unless you opt in to the LAN.
 
 ## Quick start
 
@@ -23,11 +23,21 @@ developer-facing, and never reachable from another machine.
    machine.
 3. Load your content. You should see an on-screen message: `GDB stub listening on
    127.0.0.1:2345 -- halts will freeze this frontend`.
-4. Point your debugger at `127.0.0.1:<port>`. With `gdb`:
+4. Point your debugger at `127.0.0.1:<port>`. With `gdb` (Homebrew's `brew install gdb` works as
+   is):
 
    ```
+   (gdb) set endian big
    (gdb) target remote 127.0.0.1:2345
    ```
+
+   Nothing else is needed: the stub serves an m68k target description, so gdb selects the m68k
+   architecture and the `d0-d7`/`a0-a7`/`ps`/`pc` register set by itself (no `set architecture`,
+   no `set remote target-features-packet off`). **`set endian big` is still required**: a target
+   description cannot declare byte order and a bare gdb assumes the host's, so without it every
+   register and memory word is byte-swapped (`pc` shows `0x208000` instead of `0x802000`).
+   Loading an m68k ELF/COFF with `file` also fixes it, since the binary carries its byte order.
+   `tools/gdb/connect.sh` / `jconnect` do this for you.
 
    You'll see a second on-screen banner (`GDB client attached...`) the moment the socket accepts
    your connection.
@@ -41,46 +51,87 @@ developer-facing, and never reachable from another machine.
 When the breakpoint hits, the emulator freezes exactly at that instruction — see "Halts freeze
 the frontend" below before you rely on this in a session you care about.
 
+End the session with `detach` (or `disconnect`, or just quitting gdb). All three leave the emulator
+running and the stub listening, so you can reconnect with another `target remote`. A halted machine
+resumes and every breakpoint/watchpoint is disarmed.
+
+A complete, verified session (yarc.j64 with **GDB Stub: Halt At Boot** on, stock gdb 18.1; output
+trimmed to the interesting lines):
+
+```
+(gdb) set endian big
+(gdb) target remote 127.0.0.1:2345
+0x00802000 in ?? ()
+(gdb) info registers pc
+pc             0x802000            0x802000
+(gdb) x/4i $pc
+=> 0x802000:	movew #9984,%sr
+   0x802004:	lea 0x1000,%sp
+   0x802008:	lea 0xf00000,%a0
+   0x80200e:	movel #458759,%d0
+(gdb) break *0x802008
+(gdb) continue
+Breakpoint 1, 0x00802008 in ?? ()
+(gdb) stepi
+0x0080200e in ?? ()
+(gdb) watch *(int*)0xf0210c
+Hardware watchpoint 2: *(int*)0xf0210c
+(gdb) continue
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x00802018 in ?? ()
+(gdb) continue
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x00802018 in ?? ()
+(gdb) monitor regs gpu
+GPU PC=$F03000 FLAGS=$00000000 CTRL=$00002800
+...
+(gdb) detach
+[Inferior 1 (Remote target) detached]
+```
+
+Note the watchpoint stops **twice** at the same `pc`: the 68K performs this 32-bit store as two
+16-bit bus writes and both match the watched address, so the second `continue` is needed to get
+past the same instruction. (Accesses inside main RAM are single bus accesses and stop once.)
+
 ### Faster: `tools/gdb/`
 
 Steps 4 onward above are exactly what [`tools/gdb/connect.sh`](../tools/gdb/connect.sh)
 (`connect.cmd` on Windows) automates: it finds a `gdb` on your machine (with a clear error if it
-can't — see "No shipped `m68k-elf-gdb`" below), and launches it pre-loaded with
+can't — see "Which debugger" below), and launches it pre-loaded with
 [`tools/gdb/jaguar.gdbinit`](../tools/gdb/jaguar.gdbinit) (sane `set` defaults plus `jconnect`,
+which also runs `set endian big`,
 `jdisasm`, `jregs`, `jhalt`, `jtrace`, `jwatch` aliases over the `monitor` commands below) and
 [`tools/gdb/jaguar_gdb.py`](../tools/gdb/jaguar_gdb.py) (richer `jag-disasm`, `jag-regs`,
 `jag-trace`, `jag-halt`, `jag-watch`, `jag-info-registers` commands with argument checking and a
-pretty-printed, FLAGS-decoded register dump for the GPU/DSP threads). Run
+pretty-printed, FLAGS-decoded register dump). Run
 `tools/gdb/install.sh` once to add the same commands to your personal `~/.gdbinit` so they exist
 in every session, not just ones launched through `connect.sh`.
 
-LLDB works too — it speaks RSP as well, so `gdb-remote 127.0.0.1:2345` is LLDB's equivalent of
-`target remote`. [`tools/gdb/jaguar_lldb.py`](../tools/gdb/jaguar_lldb.py) is the same
-convenience layer reimplemented against LLDB's Python API; `tools/gdb/install.sh` installs it
-into `~/.lldbinit` too.
+LLDB can attach (`gdb-remote 127.0.0.1:2345`) but **cannot debug the 68K**: it has no m68k target
+triple, so there are no registers, no disassembly and no stepping UI, only `memory read` and the
+`jag-*` monitor helpers. [`tools/gdb/jaguar_lldb.py`](../tools/gdb/jaguar_lldb.py) is the
+convenience layer for that; `tools/gdb/install.sh` installs it into `~/.lldbinit` too. Use gdb.
 
-## The three targets (GDB threads)
+## The three processors: one GDB thread, two via `monitor`
 
-| GDB thread | Processor | What GDB knows about it |
-|---|---|---|
-| 1 | 68000 (main CPU) | Native `m68k` architecture — GDB already understands it. Full register names, disassembly, and backtraces work exactly as they would for any other m68k target. |
-| 2 | GPU RISC (TOM) | A custom 34-register description (`R0`-`R31`, `PC`, `FLAGS`) served over `qXfer:features:read`. GDB can display and set these registers by name and place breakpoints on them. It **cannot** disassemble this processor — see below. |
-| 3 | DSP RISC (JERRY) | Same custom description as the GPU (same underlying RISC core, different opcode table from R32 up — see `monitor disasm`). Same disassembly limitation. |
+| Processor | How you reach it from gdb |
+|---|---|
+| 68000 (main CPU) | **GDB thread 1.** An m68k target description (`org.gnu.gdb.m68k.core`: `d0-d7`, `a0-a5`, `fp`, `sp`, `ps`, `pc`) is served over `qXfer:features:read`, so registers, `x/i`, `stepi`, breakpoints and watchpoints behave like any m68k target. |
+| GPU RISC (TOM) | `monitor regs gpu`, `monitor disasm gpu <addr> [n]`, `monitor halt gpu`; `break` on it is protocol-level only (`Hg2` + `Z0`, for raw RSP clients). |
+| DSP RISC (JERRY) | Same, with `dsp`. |
 
-Switch threads in `gdb` with `thread 2` / `thread 3`, or address a specific one with `Hg`/`Hc` at
-the protocol level if you're driving the socket by hand.
+Why only one thread: gdb reads **one** target description per connection and applies it to every
+thread it knows about. The GPU/DSP have a different register layout (34 registers, not 18), so
+advertising them as threads 2/3 made `info threads` and `thread 2` fail with `Remote 'g' packet
+reply is too long (expected 72 bytes, got 136 bytes)`. `qfThreadInfo` therefore reports only
+thread 1. If the GPU or DSP halts (a breakpoint set from the app's debugger, or `monitor halt gpu`)
+gdb is told the 68K stopped (thread 1, which is genuinely frozen with the rest of the machine) and
+a console line `GPU halted at $F03010 -- see monitor regs gpu` is printed; inspect the RISC with
+`monitor regs gpu|dsp` and `monitor disasm`, then `continue`.
 
-Register numbering for threads 2/3 is fixed permanently (clients cache it across a session):
-index 0-31 are `R0`-`R31`, 32 is `PC`, 33 is `FLAGS`.
-
-**Multi-architecture caveat:** mixing one native-architecture thread (68K) with two
-custom-description threads (GPU/DSP) in a single GDB session is not a mainstream use of RSP, and
-this repo has no way to test it against a real `gdb` binary (see "No shipped `m68k-elf-gdb`"
-below). The protocol-level pieces (register numbering, XML shape, thread enumeration) are
-implemented to the RSP specification and covered by this repo's own scripted test client, but
-real GDB's behavior when a target description changes mid-session between threads has not been
-verified end to end. If you find a `gdb` build that handles this cleanly (or doesn't), the
-project would like to know.
+A raw RSP client can still select threads 2/3 with `Hg`/`Hc` and read their 34-register
+`org.atari.jaguar.gpu|dsp` description (R0-R31 = 0-31, PC = 32, FLAGS = 33, fixed permanently);
+stock gdb simply isn't offered them.
 
 ## Breakpoints and watchpoints
 
@@ -88,7 +139,13 @@ project would like to know.
   Software and hardware breakpoint requests are treated identically: **this stub never patches
   emulated memory** to implement a breakpoint (see the design doc for why — the short version is
   that patched instruction bytes would leak into savestates). Up to 64 breakpoints per processor.
-- `watch`/`rwatch`/`awatch` (GDB's `Z2`/`Z3`/`Z4`) set a memory watchpoint on the 68000's bus.
+- `watch`/`rwatch`/`awatch` (GDB's `Z2`/`Z3`/`Z4`) set a memory watchpoint on the 68000's bus
+  (verified with stock gdb: `watch *(int*)0xf0210c` stops at the access). The match is on the exact
+  access address, the stop is reported as `Program received signal SIGTRAP` (the stub's stop reply
+  carries no `watch:` field), and it is taken as the 68K issues the access, before the store lands.
+  A 32-bit access outside main RAM is two 16-bit bus accesses and stops twice at the same `pc`
+  (`continue` once more). The stub does not de-duplicate: guessing "same instruction" could hide a
+  real hit, and the dedupe would live in the memory hot path.
   **Only one memory watchpoint can be armed at a time** — this rides a single-slot mechanism
   that predates the GDB stub (an old, previously-unused breakpoint-on-memory-access hook in the
   core). Setting a second watchpoint while one is already armed at a different address is
@@ -107,20 +164,26 @@ GDB forwards `monitor <text>` to the stub verbatim. Available commands:
 monitor disasm <gpu|dsp> <addr> [count]   RISC disassembly (see below)
 monitor regs [gpu|dsp]                    full register + control-register dump
 monitor halt <68k|gpu|dsp>                halt one processor without a breakpoint
-monitor trace                             dump the 68K PC traceback ring (issue #542)
+monitor trace [N]                         newest N (default 64, max 1024) 68K PCs from the traceback ring (issue #542), oldest first
 monitor watch [<addr> [r|w]]              set/clear the memory watchpoint (same slot as Z2-Z4)
 ```
 
 `monitor trace` is worth knowing about even outside a GDB session: the traceback ring it dumps is
 already maintained unconditionally by the core (it backs the crash-detection watchdog), so this
-command is free to use after any wild jump or crash to see where the 68K had been.
+command is free to use after any wild jump or crash to see where the 68K had been. The last line
+is the most recent PC.
+
+Output of any length arrives in full: the stub streams it as RSP `O` console packets (1 KB of text
+each) followed by `OK`, the standard `qRcmd` shape, so gdb prints all of `monitor regs gpu` and
+`monitor trace 1024`. (Before issue #936 replies were cut at 512 bytes, which lost the end of the
+register dump and, for `trace`, every recent entry.)
 
 ## The RISCs have no GDB disassembly
 
 GDB ships disassemblers for real-world architectures. The Jaguar's GPU and DSP are a bespoke
-RISC ISA with no GDB (or LLVM, or binutils) backend, and none is coming. When you `disassemble` a
-function on thread 2 or 3, GDB will fail or print garbage — this is not a bug in the stub, it is
-GDB correctly telling you it doesn't know this instruction set.
+RISC ISA with no GDB (or LLVM, or binutils) backend, and none is coming. GDB cannot
+disassemble the GPU/DSP at all — this is not a bug in the stub, it is GDB correctly telling you it
+doesn't know this instruction set.
 
 `monitor disasm <gpu|dsp> <addr> [count]` fills that gap using this repo's own RISC
 disassembler (the same one `test/tools/gpu_disasm_dump` uses offline — there is exactly one
@@ -176,24 +239,30 @@ DWARF.**
 
 What you do get: `rln -m`'s load map resolves your program's global symbol names to addresses,
 so you can set breakpoints and read memory by the symbol names your own code defines, and GDB's
-disassembly (on the 68K thread — see above for the RISC threads) shows raw instructions annotated
+disassembly (on the 68K — see above for the RISC cores) shows raw instructions annotated
 with whatever symbols it can resolve from the binary. That is a long way from a source debugger,
 but it is a long way ahead of "reason about a hex dump," which was the alternative before this
 feature existed.
 
-## No shipped `m68k-elf-gdb`
+## Which debugger
 
-This project's toolchain (`tools/jaguar-toolchain`, see the fetch script referenced from the
-design doc) pins exactly five tools — `rmac`, `rln`, `lyxass`, `pc_jagcrypt`, `new_bjl` — and
-none of them is a debugger. **You bring your own `m68k-elf-gdb`.** A stock GNU binutils/gdb build
-targeting `m68k-elf` (the kind distributed for classic Mac/Amiga/Atari ST bare-metal development)
-works against a plain `m68k` architecture with no custom target description needed for thread 1.
-This repository's own test coverage for the wire protocol uses a small scripted Python RSP client
-(`test/tools/gdb_attach_probe.py`, `test/tools/gdb_breakpoint_probe.py`,
-`test/tools/gdb_reconnect_probe.py`) rather than a real `gdb`
-binary, for exactly this reason — there wasn't one to test against. If something in this guide
-doesn't match what your particular `gdb` build does, the scripted client is the ground truth this
-implementation was actually verified against; please file an issue with what you saw.
+This project ships no debugger (`tools/jaguar-toolchain` pins `rmac`, `rln`, `lyxass`,
+`pc_jagcrypt`, `new_bjl`). You bring one, and it has to be **built with m68k support**. Verified
+against real debuggers (issue #936, 2026-10-14):
+
+| Debugger | Works? | Notes |
+|---|---|---|
+| **gdb 18.1, Homebrew** (`brew install gdb`, macOS arm64) | **Yes** | Built `--enable-targets=all`, so it has m68k; no `m68k-elf-gdb` formula is needed (none exists). Registers, memory, `x/i`, breakpoints, `stepi`, watchpoints, `monitor`, `detach` all verified, against the headless harness and the desktop app (`--headless`). Needs `set endian big` (see Quick start). The "codesign gdb" notice from Homebrew applies only to debugging native processes, not remote targets. |
+| gdb, Debian/Ubuntu | Only `gdb-multiarch` | Plain `gdb` is not built with m68k. Check: `gdb -nx -batch -ex 'set architecture m68k'` must not print `Undefined item`. |
+| a gdb built for `m68k-elf` | Yes | Sets the architecture natively. |
+| **LLDB** (Apple, swiftly) | **Memory only** | Re-checked against the stub that serves the m68k description: it still attaches without hanging, `memory read` works, `thread list` shows the one 68K thread, and `process detach` leaves the emulator running. But LLDB has no m68k triple (`invalid triple 'm68k'`): `register read` fails ("Command requires a process, which is currently stopped"), no disassembly, no stepping UI. Raw packets work via `process plugin packet send` (`Z0`, `vCont`; `qRcmd` text comes back as `O` console packets). |
+| a scripted RSP client | Yes | `test/tools/gdb_*_probe.py`, the ground truth for the wire protocol. |
+
+If you are on a **core older than issue #936** (v3.9.0 and earlier), the 68K had no target
+description and `target remote` aborted with `Protocol error: qXfer:features:read (target-features)
+conflicting enabled responses`. Work around it with `set architecture m68k` and
+`set remote target-features-packet off` before `target remote`, and use `disconnect` instead of
+`detach` (`D` was not implemented).
 
 ## Security notes (short version — see the design doc for the full reasoning)
 
@@ -223,7 +292,15 @@ implementation was actually verified against; please file an issue with what you
 
 ## Known limitations
 
-- One memory watchpoint at a time (see "Breakpoints and watchpoints" above).
+- One memory watchpoint at a time, matched on the exact access address (see "Breakpoints and
+  watchpoints" above).
+- `set endian big` is required (a target description cannot declare byte order).
+- Attaching never halts a running machine and Ctrl-C (`0x03`) is not implemented: a bare `continue`
+  on a running machine just waits for the next breakpoint. Use **GDB Stub: Halt At Boot** to attach
+  before anything runs, or `monitor halt 68k` to halt a running machine (the stop reply for that
+  asynchronous halt is consumed by gdb as the reply to its NEXT command, which can leave gdb's idea
+  of stopped/running one step behind; prefer a breakpoint or Halt At Boot).
+- gdb ignores the stub's `vCont?` reply and drives `c`/`s` instead; this is harmless.
 - No debugging across a savestate load: breakpoints stay armed at addresses that may no longer
   mean anything once new content or a different program state loads.
 - No support for run-ahead: a second core instance under run-ahead will simply fail to bind the
@@ -233,13 +310,5 @@ implementation was actually verified against; please file an issue with what you
   while leaving the GPU running.
 - Tracepoints (`QTDP` and friends) and GDB's file-I/O extension (`vFile`) are not implemented, and
   the latter never will be — see the design doc's "Out of scope".
-- **A packet the stub doesn't implement gets no reply at all, not the empty `$#00` RSP defines
-  for "unsupported."** Verified with a real LLDB `gdb-remote` attach (proxied and logged
-  byte-for-byte while building `tools/gdb/`): LLDB's handshake sent `QThreadSuffixSupported`,
-  which this stub doesn't implement, got silence instead of `$#00`, and hung indefinitely rather
-  than treating it as "not supported" and moving on. This is plausibly why "no way to test
-  against a real gdb binary" turned out true beyond mere toolchain availability — real `gdb`
-  handshakes send other packets this stub doesn't recognize too (`qTStatus`, `qSymbol::`,
-  `vMustReplyEmpty`, whose entire purpose is checking exactly this). Tracked for a fix; until
-  then, a hang immediately after `target remote`/`gdb-remote` with no stop-reply is a known
-  symptom, not a sign your setup is wrong.
+- An unimplemented packet gets the RSP-mandated empty `$#00` reply (issue #697), so strict clients
+  no longer hang on it.

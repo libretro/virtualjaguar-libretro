@@ -22,9 +22,14 @@
           <td>Alien vs Predator, Doom and the JagDoomEX hacks, Hover Strike, Missile Command 3D, Skyhammer</td></tr>
       <tr><td>True colour</td>
           <td>Cybermorph, Air Cars, Kasumi Ninja, Tempest 2000, I-War, Skyhammer</td></tr>
+      <tr><td>Blitter Bus Timing, 68000 only <span class="badge">compatibility</span></td>
+          <td>White Men Can&rsquo;t Jump</td></tr>
     </table></div>
     <p>
-      Any option you set yourself always wins.
+      A <em>compatibility</em> row (the last one) is never withheld by the
+      profile and cites the ticket for the real fix, so it can be retired.
+      Since v3.8.0 RetroArch also shows an on-screen notice naming the presets
+      applied when a game loads. Any option you set yourself always wins.
       <code>virtualjaguar_pertitle_defaults</code> turns the database off for
       stock behaviour. <code>virtualjaguar_enhancement_profile</code> (Auto,
       Quality, Performance) decides whether the expensive ones may apply: Auto
@@ -49,16 +54,16 @@
       <figure class="shot">
         <div class="win-bar">Stock 16-bit CRY, off</div>
         <div class="well">
-          <img src="assets/cyber_off_850.png" width="326" height="240"
-               alt="Cybermorph terrain, stock 16-bit CRY rendering: visible banding on shaded polygon surfaces">
+          <a class="gal-link" href="assets/cyber_off_850.png" aria-label="Enlarge: Stock 16-bit CRY, off"><img src="assets/cyber_off_850.png" width="326" height="240"
+               alt="Cybermorph terrain, stock 16-bit CRY rendering: visible banding on shaded polygon surfaces"></a>
         </div>
         <figcaption>Cybermorph, frame 850. 304 unique colours.</figcaption>
       </figure>
       <figure class="shot">
         <div class="win-bar">True colour, on</div>
         <div class="well">
-          <img src="assets/cyber_on_850.png" width="326" height="240"
-               alt="Cybermorph terrain, true-color rendering: smooth gradients on shaded polygon surfaces">
+          <a class="gal-link" href="assets/cyber_on_850.png" aria-label="Enlarge: True colour, on"><img src="assets/cyber_on_850.png" width="326" height="240"
+               alt="Cybermorph terrain, true-color rendering: smooth gradients on shaded polygon surfaces"></a>
         </div>
         <figcaption>Same frame, same inputs. 450 unique colours.</figcaption>
       </figure>
@@ -100,8 +105,8 @@
     <figure class="shot smooth wide">
       <div class="win-bar">Alien vs Predator, frame 6000 <span class="badge">1x / 2x</span></div>
       <div class="well">
-        <img src="assets/hires_ab_avp_fullframe.png" width="1360" height="574"
-             alt="Alien vs Predator frame 6000, two panels side by side: left is the 1x frame with every pixel doubled, right is the same frame at 2x internal resolution. Both show an Alien's claw in a textured corridor facing a chevron-panelled door; the panels differ only in fine texture detail.">
+        <a class="gal-link" href="assets/hires_ab_avp_fullframe.png" aria-label="Enlarge: Alien vs Predator, frame 6000"><img src="assets/hires_ab_avp_fullframe.png" width="1360" height="574"
+             alt="Alien vs Predator frame 6000, two panels side by side: left is the 1x frame with every pixel doubled, right is the same frame at 2x internal resolution. Both show an Alien's claw in a textured corridor facing a chevron-panelled door; the panels differ only in fine texture detail."></a>
       </div>
       <figcaption>
         Same ROM, same input, one option changed. <strong>At 1:1 the
@@ -113,8 +118,8 @@
     <figure class="shot smooth wide">
       <div class="win-bar">Corridor wall <span class="badge">magnified 6x</span></div>
       <div class="well">
-        <img src="assets/hires_ab_avp_wall.png" width="1016" height="446"
-             alt="Magnified 6x crop of the corridor wall and floor. In the 1x panel the wall ribs are flat 2x2 blocks of a single colour; in the 2x panel the same ribs carry intermediate texel values and the diagonal wall-floor edge steps in half-pixel increments.">
+        <a class="gal-link" href="assets/hires_ab_avp_wall.png" aria-label="Enlarge: Corridor wall"><img src="assets/hires_ab_avp_wall.png" width="1016" height="446"
+             alt="Magnified 6x crop of the corridor wall and floor. In the 1x panel the wall ribs are flat 2x2 blocks of a single colour; in the 2x panel the same ribs carry intermediate texel values and the diagonal wall-floor edge steps in half-pixel increments."></a>
       </div>
       <figcaption>
         Same frame, magnified. The ribbed wall is where it reads: the 1x walk
@@ -125,8 +130,8 @@
     <figure class="shot smooth wide">
       <div class="win-bar">Val d&rsquo;Is&egrave;re, 46 MPH <span class="badge">1x / 2x</span></div>
       <div class="well">
-        <img src="assets/hires_ab_valdisere_fullframe.png" width="1048" height="448"
-             alt="Val d'Isere Skiing and Snowboarding, downhill run: left is the 1x frame pixel-doubled, right is the same frame at 2x internal resolution. The snowboarder, trees and course furniture carry finer edges on the right.">
+        <a class="gal-link" href="assets/hires_ab_valdisere_fullframe.png" aria-label="Enlarge: Val d’Isère, 46 MPH"><img src="assets/hires_ab_valdisere_fullframe.png" width="1048" height="448"
+             alt="Val d'Isere Skiing and Snowboarding, downhill run: left is the 1x frame pixel-doubled, right is the same frame at 2x internal resolution. The snowboarder, trees and course furniture carry finer edges on the right."></a>
       </div>
       <figcaption>
         Every scaled object here is an 8bpp CLUT sprite in RGB16 mode. This
@@ -226,10 +231,14 @@
       <dd>
         <p><code>virtualjaguar_m68k_clock_scale</code> runs 0.5x to 3x and
         <code>virtualjaguar_risc_clock_scale</code> 0.5x to 2x. Bus latencies
-        stay in wall time, so pacing and pitch do not drift. Idle-skip stays
-        active at any scale; see
+        stay in wall time, so pacing and pitch do not drift. Both also take
+        a percentage such as <code>175%</code> (25 to 400). Since v3.9.0
+        idle-skip stays active at any RISC scale, so a 2x overclock no longer
+        emulates twice the spinning (Doom at 2x: 52 to 82 fps in the
+        project&rsquo;s headless harness); see
         <a href="performance.html">Settings &amp; performance</a>.</p>
-        <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a></p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.0.md">v3.9.0 notes</a></p>
       </dd>
       <dt>CD read speed</dt>
       <dd>
@@ -259,9 +268,12 @@
         <p><code>virtualjaguar_crash_detect</code>, on by default, matches
         known failure signatures and names the broken subsystem in your
         frontend log. Since v3.7.0 it also logs <code>inframe_hang</code> for
-        a blit too large to ever finish, which per-frame checks cannot see.</p>
+        a blit too large to ever finish, which per-frame checks cannot see,
+        and since v3.8.0 it sees DSP runaways in HLE boot too.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash_detect.c</a></p>
       </dd>
     </dl>
   </div>
 </section>
+
+<script src="assets/js/gallery.js" defer></script>

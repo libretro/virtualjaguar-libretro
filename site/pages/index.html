@@ -1,31 +1,128 @@
 <!-- title: Virtual Jaguar libretro | Atari Jaguar, everywhere RetroArch runs -->
 <!-- nav: Home -->
-<!-- description: The open-source Atari Jaguar emulator core for RetroArch: Jaguar CD in two boot modes, every Jaguar controller, link play, HD texture packs, deterministic savestates, 24 builds per release. -->
+<!-- description: Open-source Atari Jaguar emulator: a RetroArch core for 24 targets plus a standalone desktop app. Jaguar CD, every controller, link play, RetroAchievements, HD texture packs, deterministic savestates. -->
 
 <div class="hero">
   <h1>Atari Jaguar, everywhere RetroArch runs.</h1>
   <p class="lede">
-    The open-source Atari Jaguar core for RetroArch. Cartridges, Jaguar CD,
-    every controller, link play. Prebuilt for
+    The open-source Atari Jaguar emulator: a core for RetroArch and a
+    standalone desktop app. Cartridges, Jaguar CD, every controller, link
+    play. The core is prebuilt for
     <a href="{{REPO}}/blob/develop/.github/workflows/release.yml">24 targets</a>:
     desktop, Raspberry Pi, iOS, tvOS, Android, web, Switch and Vita.
   </p>
   <p class="actions">
-    <a class="btn" href="{{REPO}}/releases">Download</a>
+    <a class="btn" href="download.html">Download</a>
     <a class="btn secondary" href="app.html">Desktop app</a>
     <a class="btn secondary" href="compatibility.html">Compatibility</a>
     <a class="btn secondary" href="enhancements.html">Enhancements</a>
   </p>
-  <figure class="crt-frame mosaic smooth">
-    <div class="crt-bezel">
-      <div class="crt-screen">
-        <img src="assets/hero_mosaic.webp"
-             alt="Four frames rendered by the core: an Alien vs Predator corridor ending in a chevron door, Iron Soldier's teal mech firing a rifle, the Skyhammer cockpit facing a red BREW sign, and the Hover Strike cockpit over a cratered moonscape"
-             width="964" height="724">
-      </div>
+  <div class="strip-wrap">
+    <div class="strip-bar" hidden>
+      <span class="dl-label">16 games, rendered by the core</span>
+      <button type="button" class="dl-btn strip-prev" aria-label="Previous screenshots">&lsaquo; Prev</button>
+      <button type="button" class="dl-btn strip-next" aria-label="Next screenshots">Next &rsaquo;</button>
     </div>
-    <figcaption>Alien vs Predator, Iron Soldier, Skyhammer, Hover Strike. Rendered by the core with 2x internal resolution, true colour, the Accurate blitter and per-title defaults off.</figcaption>
-  </figure>
+    <ul class="strip" aria-label="Gameplay screenshots">
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/doom.webp" aria-label="Enlarge: Doom">
+          <img src="assets/home/doom-480.webp" width="480" height="360" loading="lazy" alt="Doom: An outdoor courtyard on E1M1 with a green-floored pit; ammo 50, health 100%">
+        </a>
+        <figcaption><strong>Doom</strong> <span class="gal-cap">An outdoor courtyard on E1M1 with a green-floored pit; ammo 50, health 100%. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/tempest-2000-crt-lottes.webp" aria-label="Enlarge: Tempest 2000">
+          <img src="assets/home/tempest-2000-crt-lottes-480.webp" width="480" height="360" loading="lazy" alt="Tempest 2000: The claw at the rim of a flat lane web, flippers climbing toward it">
+        </a>
+        <figcaption><strong>Tempest 2000</strong> <span class="badge plain">crt-lottes</span> <span class="gal-cap">The claw at the rim of a flat lane web, flippers climbing toward it. <em>Shader: crt-lottes.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/hero-avp.webp" aria-label="Enlarge: Alien vs Predator">
+          <img src="assets/home/hero-avp.webp" width="480" height="360" loading="lazy" alt="Alien vs Predator: An Alien&#x27;s claw in a corridor facing a chevron-panelled door">
+        </a>
+        <figcaption><strong>Alien vs Predator</strong> <span class="gal-cap">An Alien's claw in a corridor facing a chevron-panelled door. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/wolfenstein-3d.webp" aria-label="Enlarge: Wolfenstein 3D">
+          <img src="assets/home/wolfenstein-3d-480.webp" width="480" height="360" loading="lazy" alt="Wolfenstein 3D: A guard in a blue-stone corridor; 100 health, 23 ammo">
+        </a>
+        <figcaption><strong>Wolfenstein 3D</strong> <span class="gal-cap">A guard in a blue-stone corridor; 100 health, 23 ammo. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/raiden-crt-aperture.webp" aria-label="Enlarge: Raiden">
+          <img src="assets/home/raiden-crt-aperture-480.webp" width="480" height="360" loading="lazy" alt="Raiden: Over forest and beach, a red fighter below a large craft and an explosion">
+        </a>
+        <figcaption><strong>Raiden</strong> <span class="badge plain">crt-aperture</span> <span class="gal-cap">Over forest and beach, a red fighter below a large craft and an explosion. <em>Shader: crt-aperture.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/missile-command-3d.webp" aria-label="Enlarge: Missile Command 3D">
+          <img src="assets/home/missile-command-3d-480.webp" width="480" height="360" loading="lazy" alt="Missile Command 3D: Two fireballs and an impact flash over a desert base, a missile coming down">
+        </a>
+        <figcaption><strong>Missile Command 3D</strong> <span class="gal-cap">Two fireballs and an impact flash over a desert base, a missile coming down. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/hero-ironsoldier.webp" aria-label="Enlarge: Iron Soldier">
+          <img src="assets/home/hero-ironsoldier.webp" width="480" height="360" loading="lazy" alt="Iron Soldier: The teal mech firing a rifle in the attract sequence">
+        </a>
+        <figcaption><strong>Iron Soldier</strong> <span class="gal-cap">The teal mech firing a rifle. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/defender-2000-crt-easymode.webp" aria-label="Enlarge: Defender 2000">
+          <img src="assets/home/defender-2000-crt-easymode-480.webp" width="480" height="360" loading="lazy" alt="Defender 2000: The ship firing a laser over desert mountains: “Catch that humanoid!”">
+        </a>
+        <figcaption><strong>Defender 2000</strong> <span class="badge plain">crt-easymode</span> <span class="gal-cap">The ship firing a laser over desert mountains: &ldquo;Catch that humanoid!&rdquo; <em>Shader: crt-easymode.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/atari-karts.webp" aria-label="Enlarge: Atari Karts">
+          <img src="assets/home/atari-karts-480.webp" width="480" height="360" loading="lazy" alt="Atari Karts: Race start on a purple alien plain, lap 1 of 5">
+        </a>
+        <figcaption><strong>Atari Karts</strong> <span class="gal-cap">Race start on a purple alien plain, lap 1 of 5. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/hero-skyhammer.webp" aria-label="Enlarge: Skyhammer">
+          <img src="assets/home/hero-skyhammer.webp" width="480" height="360" loading="lazy" alt="Skyhammer: Cockpit view facing a red BREW sign">
+        </a>
+        <figcaption><strong>Skyhammer</strong> <span class="gal-cap">Cockpit view facing a red BREW sign. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/cybermorph.webp" aria-label="Enlarge: Cybermorph">
+          <img src="assets/home/cybermorph-480.webp" width="480" height="360" loading="lazy" alt="Cybermorph: A fireball beside the ship; 18 pods remaining">
+        </a>
+        <figcaption><strong>Cybermorph</strong> <span class="gal-cap">A fireball beside the ship; 18 pods remaining. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/ultra-vortek-crt-royale.webp" aria-label="Enlarge: Ultra Vortek">
+          <img src="assets/home/ultra-vortek-crt-royale-480.webp" width="480" height="360" loading="lazy" alt="Ultra Vortek: A gold-armoured fighter against a stone-skinned opponent in a gothic hall">
+        </a>
+        <figcaption><strong>Ultra Vortek</strong> <span class="badge plain">crt-royale</span> <span class="gal-cap">A gold-armoured fighter against a stone-skinned opponent in a gothic hall. <em>Shader: crt-royale.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/super-burnout.webp" aria-label="Enlarge: Super Burnout">
+          <img src="assets/home/super-burnout-480.webp" width="480" height="360" loading="lazy" alt="Super Burnout: Fourth place at about 115 mph, a city skyline ahead">
+        </a>
+        <figcaption><strong>Super Burnout</strong> <span class="gal-cap">Fourth place at about 115 mph, a city skyline ahead. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/hero-hoverstrike.webp" aria-label="Enlarge: Hover Strike">
+          <img src="assets/home/hero-hoverstrike.webp" width="480" height="360" loading="lazy" alt="Hover Strike: Cockpit over a cratered moonscape with Earth on the horizon">
+        </a>
+        <figcaption><strong>Hover Strike</strong> <span class="gal-cap">Cockpit over a cratered moonscape with Earth on the horizon. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/checkered-flag.webp" aria-label="Enlarge: Checkered Flag">
+          <img src="assets/home/checkered-flag-480.webp" width="480" height="360" loading="lazy" alt="Checkered Flag: A red open-wheel car, fourth of six on lap 1">
+        </a>
+        <figcaption><strong>Checkered Flag</strong> <span class="gal-cap">A red open-wheel car, fourth of six on lap 1. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+      <li><figure class="gal-card">
+        <a class="gal-link" href="assets/home/iron-soldier.webp" aria-label="Enlarge: Iron Soldier">
+          <img src="assets/home/iron-soldier-480.webp" width="480" height="360" loading="lazy" alt="Iron Soldier: The Manipulator mech cockpit over city blocks and snowy mountains">
+        </a>
+        <figcaption><strong>Iron Soldier</strong> <span class="gal-cap">The Manipulator mech cockpit over city blocks and snowy mountains. <em>2x internal resolution, true colour, Accurate blitter.</em></span></figcaption>
+      </figure></li>
+    </ul>
+    <p class="strip-note">Real core frames at 2x internal resolution with true colour and the Accurate blitter; four go through a RetroArch CRT shader in the desktop app. Click one to enlarge.</p>
+  </div>
 </div>
 
 <section class="win">
@@ -33,12 +130,21 @@
   <div class="win-body">
     <p>
       <strong>The RetroArch core</strong> runs inside RetroArch and any other
-      libretro frontend, on every platform listed above. <strong>The
-      app</strong> is a standalone desktop program for macOS, Windows and
-      Linux, built on the same core: a game library with box art, RetroArch
-      shader presets, cheats, RetroAchievements, controller remapping, save
-      states and LAN link play. New in v3.9.0.
+      libretro frontend, on every platform above. <strong>The app</strong>
+      (new in v3.9.0) is a standalone program for macOS, Windows and Linux,
+      built on the same core, so options and save states behave the same.
     </p>
+    <ul>
+      <li>Game library with box art, favorites, recents and save-state thumbnails</li>
+      <li>RetroArch <code>.slangp</code> shader presets (librashader), cheats,
+          controller remapping, a Netplay window for LAN link play</li>
+      <li>RetroAchievements (softcore or hardcore, login kept in the system
+          keychain) and Discord Rich Presence</li>
+      <li>Light and dark themes, a theme editor and a choice of interface font</li>
+      <li>Debug tools: memory viewer, cheat scanner, Object Processor list,
+          blitter log, texture browser, audio scope, and a 68000, GPU and DSP
+          debugger with breakpoints</li>
+    </ul>
     <p class="actions">
       <a class="btn" href="app.html">See the app</a>
     </p>
@@ -49,19 +155,21 @@
   <h2>Get it</h2>
   <div class="win-body">
     <p>
-      Download a build from <a href="{{REPO}}/releases">Releases</a>
-      (latest: <strong>v3.7.0</strong>, mostly Jaguar CD fixes), or let the
+      Direct links for every platform are on the
+      <a href="download.html">Download</a> page ({{LATEST_LINK}}), or let the
       installer do it. It installs the <strong>RetroArch core</strong>, the
-      standalone <strong>app</strong> (new in v3.9.0), or <strong>both</strong>,
-      checks every download against the release's <code>SHA256SUMS.txt</code>,
-      and the same command updates whichever you already have. For the core it
-      finds your RetroArch, picks the matching build, backs up the core it
-      replaces and checks that the new one loads.
+      standalone <strong>app</strong>, or <strong>both</strong>, checks every
+      download against the release's <code>SHA256SUMS.txt</code>, and the same
+      command updates whichever you already have. For the core it finds your
+      RetroArch, backs up the core it replaces and checks that the new one
+      loads.
     </p>
     <p><strong>macOS, Linux, Raspberry Pi</strong></p>
     <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh</code></pre>
     <p><strong>Windows</strong> (PowerShell)</p>
     <pre><code>irm {{RAW_URL}}/tools/install.ps1 | iex</code></pre>
+    <details class="fold">
+      <summary>Installer options</summary>
     <p class="footnote">
       Both ask what to install when run in a terminal. To skip the question,
       add <code>--what core</code>, <code>--what app</code> or
@@ -80,15 +188,14 @@
       <code>-Channel nightly</code>. The app goes to <code>/Applications</code>
       on macOS, <code>~/.local/bin</code> as an AppImage on Linux
       (<code>--app-format deb</code> for the package) and
-      <code>%LOCALAPPDATA%\Programs\VirtualJaguar</code> on Windows. Until the
-      first release with the app exists, asking for the app says so and installs
-      nothing. On a Pi the core installer reads the word size from the
+      <code>%LOCALAPPDATA%\Programs\VirtualJaguar</code> on Windows. On a Pi the core installer reads the word size from the
       RetroArch binary, not the kernel, because the core must match RetroArch
       (<code>rpi4</code> is 32-bit, <code>rpi4_64</code> is 64-bit).
       <a href="{{REPO}}/releases/tag/nightly">Nightlies</a> build from
       <code>develop</code> (currently <code>v{{CORE_VERSION}}</code>) and are
       gated on compiling, not on the test suite.
     </p>
+    </details>
     <p class="footnote">
       Manual: <a href="{{DOCS_URL}}">libretro docs</a>, with
       <a href="{{DOCS_OPTIONS_URL}}">core options</a> and
@@ -114,7 +221,8 @@
         saved mid-load resumes the load. CHD needs a session-aware chdman;
         every release attaches one.</p>
         <p class="src"><a href="compatibility.html">compatibility</a> &middot;
-          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0 notes</a></p>
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0 notes</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0 notes</a></p>
       </dd>
 
       <dt>Controllers</dt>
@@ -132,9 +240,9 @@
       <dd>
         <p>JagLink and CatBox serial, at register level. Automatic mode rides
         a RetroArch netplay session with nothing to type. Direct TCP finds LAN
-        hosts by UDP beacon. Doom deathmatch is validated. Ultra Vortek dials
-        the emulated Voice Modem (press 911 at the title screen), and voice
-        chat carries speech over it.</p>
+        hosts by UDP beacon. Doom deathmatch is validated, and since v3.8.0 it
+        no longer drops to 30 fps. Ultra Vortek dials the emulated Voice Modem (press 911
+        at the title screen), and voice chat carries speech over it.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">user guide</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a></p>
       </dd>
@@ -142,8 +250,8 @@
       <dt>Savestates and run-ahead</dt>
       <dd>
         <p>Byte-identical replay under RetroArch&rsquo;s run-ahead loop,
-        checked by a harness. The format is v15. Older states still load, but
-        older cores cannot read v15.</p>
+        checked by a harness. The format is v17. Older states still load, but
+        older cores cannot read v17.</p>
         <p class="src"><a href="{{REPO}}/pull/327">PR #327</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/savestate-compat.md">savestate-compat.md</a></p>
       </dd>
@@ -153,14 +261,17 @@
         <p>Memory maps and achievement support, asserted in CI against the
         rcheevos mapping.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/test/tools/test_memory_map.c">test_memory_map.c</a> &middot;
-          <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a></p>
+          <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.1.md">v3.9.1 notes</a></p>
       </dd>
 
       <dt>GameDrive and Memory Track</dt>
       <dd>
         <p>GameDrive 16&nbsp;MB bank switching against RetroHQ&rsquo;s GDBIOS
-        bindings; GD-locked homebrew boots. The CD unit&rsquo;s Memory Track
-        save cartridge is emulated, so CD saves persist.</p>
+        bindings; GD-locked homebrew boots, and since v3.8.0 GameDrive software
+        can read and write an SD card backed by a host folder. The CD
+        unit&rsquo;s Memory Track save cartridge is emulated, so CD saves
+        persist.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/jgd-interface-notes.md">GameDrive notes</a> &middot;
           <a href="{{REPO}}/blob/develop/docs/memory-track.md">memory-track.md</a></p>
       </dd>
@@ -190,6 +301,7 @@
         and Model M boot ROMs are embedded, and a custom image is identified
         by checksum.</p>
         <p class="src"><a href="{{REPO}}/blob/develop/docs/gdb-stub-design.md">GDB stub</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/app-debug-tools.md">app debug tools</a> &middot;
           <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash_detect.c</a></p>
       </dd>
 
@@ -208,49 +320,7 @@
 <section class="win">
   <h2>Release log</h2>
   <div class="win-body">
-    <div class="table-wrap"><table>
-      <tr><th>Version</th><th>What landed</th><th>Notes</th></tr>
-      <tr>
-        <td><strong>v3.7.0</strong></td>
-        <td>Broken-games release. Fixes for Baldies, Myst, Space Ace, World
-            Tour Racing, Vid Grid, Ocean Depths, Simone, PolyEngine and
-            PlaySFX, three blitter fixes and an Object Processor fix. HLE CD
-            titles are run-ahead safe. Savestate format v15.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.0.md">v3.7.0</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.6.0, v3.6.1</strong></td>
-        <td>GDB stub. Disk control and no-content boot into the CD BIOS.
-            Auto frameskip. RISC idle-loop fast-forward on by default, for
-            GPU and DSP. SIMD speed-ups. User hooks. White Men Can&rsquo;t
-            Jump fix.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.6.0.md">v3.6.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.6.1.md">v3.6.1</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.5.0, v3.5.1</strong></td>
-        <td>Team Tap, Pro Controller, 6D stick and paddle. Texture replacement
-            on the 2x surface. Voice chat. Netlink auto speed. Widescreen
-            toggle. A log warning when settings cancel each other.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.5.0.md">v3.5.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.5.1.md">v3.5.1</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.4.0</strong></td>
-        <td>Mouse, rotary, analog, driving and lightgun. Ultra Vortek netplay
-            over the Voice Modem. LAN discovery. Texture dump and replacement.
-            Boot-ROM selection. CHD.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td>
-      </tr>
-      <tr>
-        <td><strong>v3.1 to v3.3</strong></td>
-        <td>True colour, 2x internal resolution, scaled-sprite and CLUT
-            supersampling, GameDrive, clock scales, audio CD and VLM.</td>
-        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a> &middot;
-            <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td>
-      </tr>
-    </table></div>
+{{RELEASE_LOG}}
   </div>
 </section>
 
@@ -264,3 +334,5 @@
     </p>
   </div>
 </section>
+
+<script src="assets/js/gallery.js" defer></script>

@@ -107,7 +107,10 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   regression reached develop), and it compares the hash stream rather than the transition **count**
   (Super Burnout reads 143 transitions on both sides of #632 while rendering different pixels, so a
   count comparison calls a real change "no change"). Exit 1 on any SKIP: an unchecked ROM must not
-  look like a clean sweep.
+  look like a clean sweep. `AUDIO=1` also hashes each frame's audio (`frame_hash_ab --audio-hash`)
+  and reports video/audio differing-frame counts -- use it for any DSP/audio change; `ARGS="--bios
+  --option ..."` passes extra args to both arms. Only top-level ROMs in the dir are swept: for a
+  parallel run, symlink chunks of the corpus into scratch dirs (never into the ROM tree).
 - `test/sram_test.sh` — SRAM round-trip.
 - `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS) vs
   `docs/cd-boot-matrix.md`. Env: `CD_MATRIX_FRAMES CD_MATRIX_TIMEOUT CD_MATRIX_MAX_RUNS
@@ -291,6 +294,16 @@ commit-to-commit delta — don't compare across machines. Full guide: `docs/prof
 **Measurement hazards:** concurrent `make` swaps the dylib mid-sweep; sequential A/B measures
 host drift (an -O3 "+12.5%" flipped to -11.7% when interleaved) — always A/B/B/A, check `uptime`
 first.
+
+**Frame-time distribution (stutter, not average speed):** `test/tools/frame_cost_probe` gives the
+per-frame ms CSV + p50/p95/p99/max and over-budget counts. An armed vjtrace gates the GPU/DSP idle
+skip OFF (`idleSkipActive`), so the default run measures skip-OFF whatever `risc_idle_skip` says;
+pass `--no-arm` to keep the skip live (event columns then read 0 — pair with an armed run of the same
+config and join on frame, the emulation is deterministic and the skip bit-exact). Feed the CSV to
+`app/tests/pacing_trace.cpp` to see what the app's pacer does with that cost trace (uneven image gaps,
+vsync release/restore cycles); `virtualjaguar --perf-frames N` with `VJ_PERF_CSV=f.csv` records the
+real thing. `--option k=v` lists in an `ssh` command run under zsh must be built in `bash` (zsh does not
+word-split `$OPTS`; the option is then silently not applied and the harness prints no `option` line).
 
 ## Headless framebuffer caveat
 

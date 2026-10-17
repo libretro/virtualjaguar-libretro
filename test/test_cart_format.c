@@ -303,7 +303,8 @@ TEST(small_headered_with_copier_header_loads)
 
 /* Headerless homebrew below 1 MiB still loads as a cart so real-BIOS
  * mode can boot it from $800000.  Floor is $408 so a 512-byte copier
- * header by itself is still refused. */
+ * header by itself is still refused.  Byte 0 is an encrypted boot block's
+ * block count ($FC): a BootIntro, not a RAM program (issue #972). */
 TEST(small_headerless_bootintro_loads)
 {
    uint8_t tiny[2048];
@@ -311,6 +312,7 @@ TEST(small_headerless_bootintro_loads)
 
    for (i = 0; i < 2048; i++)
       tiny[i] = (uint8_t)(0x60 + (i & 0x1F));
+   tiny[0] = 0xFC;
    /* No universal header at $400. */
    tiny[0x400] = 0x11;
    tiny[0x401] = 0x22;
@@ -318,6 +320,7 @@ TEST(small_headerless_bootintro_loads)
    tiny[0x403] = 0x44;
    ASSERT(load_image(tiny, 2048u));
    ASSERT_EQ_U(*p_romsize, 2048u);
+   ASSERT(memcmp(p_memspace + 0x800000, tiny, sizeof(tiny)) == 0);
    p_retro_unload_game();
 }
 
@@ -514,6 +517,261 @@ TEST(raw_binary_tie_without_io_descriptor_stays_4000)
    ASSERT(memcmp(ram + 0x4000, img, sizeof(img)) == 0);
    ASSERT_EQ_U(initial_pc(ram), 0x4000);
    p_retro_unload_game();
+}
+
+/* Issue #971 helpers: big-endian stores into a synthetic file. */
+static void put16(uint8_t *img, unsigned off, unsigned v)
+{
+   img[off + 0] = (uint8_t)(v >> 8);
+   img[off + 1] = (uint8_t)v;
+}
+
+static void put32(uint8_t *img, unsigned off, uint32_t v)
+{
+   put16(img, off, (unsigned)(v >> 16));
+   put16(img, off + 2, (unsigned)(v & 0xFFFF));
+}
+
+static uint32_t ram32(const uint8_t *ram, uint32_t addr)
+{
+   return ((uint32_t)ram[addr] << 24) | ((uint32_t)ram[addr + 1] << 16)
+      | ((uint32_t)ram[addr + 2] << 8) | ram[addr + 3];
+}
+
+/* Issue #971: Mandelbrot Demo is a plain GEMDOS/DRI executable (601A, no
+ * "JAG" at $1C).  It used to be read as JST_WTFOMGBBQ, whose load address
+ * is the little-endian long at $1C -- here the first instruction -- so the
+ * program was copied outside main RAM.  The 28-byte header gives sizes,
+ * not an address: text+data go to the inferred base, else $4000. */
+TEST(dri_601a_loads_text_at_4000)
+{
+   static uint8_t img[0x1C + 0x100 + 0x40 + 4];
+   uint8_t *ram;
+   unsigned i;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x601A);
+   put32(img, 0x02, 0x100);                         /* text */
+   put32(img, 0x0E, 0x40);                          /* symbols */
+   put32(img, 0x1C, 0x46FC2700);                    /* move #$2700,sr */
+   for (i = 0x20; i < 0x1C + 0x100; i++)
+      img[i] = (uint8_t)(0x4E + (i & 1) * 0x23);    /* NOP filler */
+
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4000, img + 0x1C, 0x100) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   p_retro_unload_game();
+}
+
+/* A DRI file with a relocation table: each fixup adds the load base to the
+ * long at that text offset (first offset as a long, then byte deltas, 1 =
+ * skip 254, 0 = end). */
+TEST(dri_601a_applies_relocations)
+{
+   static uint8_t img[0x1C + 0x200 + 4 + 4];
+   uint8_t *ram;
+   unsigned reloc = 0x1C + 0x200;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x601A);
+   put32(img, 0x02, 0x200);                         /* text, no symbols */
+   put32(img, 0x1C, 0x46FC2700);
+   put32(img, 0x1C + 0x010, 0x00000100);            /* fixed up */
+   put32(img, 0x1C + 0x014, 0x00000123);            /* left alone */
+   put32(img, 0x1C + 0x116, 0x00000040);            /* $10 + 254 + 8 */
+   put32(img, reloc, 0x10);                         /* first fixup */
+   img[reloc + 4] = 1;                              /* +254, no fix */
+   img[reloc + 5] = 8;                              /* -> $116 */
+   img[reloc + 6] = 0;                              /* end */
+
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   ASSERT_EQ_U(ram32(ram, 0x4010), 0x4100);
+   ASSERT_EQ_U(ram32(ram, 0x4014), 0x0123);
+   ASSERT_EQ_U(ram32(ram, 0x4116), 0x4040);
+   p_retro_unload_game();
+}
+
+/* Issue #971: JAGR type 2 (Jaguar Server INTRO / INTROMOD) is load $22,
+ * length $26, code at $2A, entered at the load address.  Read as type 3 it
+ * jumped to the first code long and lost four code bytes. */
+TEST(jagr_type2_loads_at_load_address)
+{
+   static uint8_t img[0x2A + 0x80];
+   uint8_t *ram;
+   unsigned i;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x601A);
+   img[0x1C] = 'J'; img[0x1D] = 'A'; img[0x1E] = 'G'; img[0x1F] = 'R';
+   put16(img, 0x20, 0x0002);
+   put32(img, 0x22, 0x4FF6);                        /* load = run */
+   put32(img, 0x26, 0x80);                          /* length */
+   put32(img, 0x2A, 0x23FC03D0);                    /* move.l #...,abs */
+   for (i = 0x2E; i < sizeof(img); i++)
+      img[i] = (uint8_t)i;
+
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4FF6, img + 0x2A, 0x80) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4FF6);
+   p_retro_unload_game();
+}
+
+/* Issue #972: Hubble Fade / Hubble Nebula (BSR first) and Drumpad2 (LEA
+ * abs.L,A7 first) carry one absolute reference or none, so the raw scorer
+ * cannot place them, and they fell through to the cart fallback.  A
+ * headerless sub-1 MiB image that opens with a 68K instruction and has no
+ * boot block is a BJL RAM program: $4000. */
+TEST(raw_binary_68k_start_without_evidence_loads_at_4000)
+{
+   static uint8_t img[0x3000];
+   uint8_t *ram;
+
+   memset(img, 0, sizeof(img));
+   put32(img, 0x00, 0x610002D6);                    /* BSR.W */
+   put32(img, 0x04, 0x610004C2);
+   put16(img, 0x400, 0x1122);                       /* no universal header */
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x4000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x4000);
+   p_retro_unload_game();
+}
+
+/* Issue #972: Painter (bin) is linked at $10000.  One LEA $4000,A0 (a RAM
+ * buffer below the image) gives $4000 the containment edge; what places it
+ * is a JMP abs.L that lands on an abs.L instruction the scorer decoded,
+ * which happens under $10000 alone. */
+TEST(raw_binary_jmp_onto_decoded_instruction_picks_10000)
+{
+   /* Large enough that a $4000 window holds every target too: containment
+    * alone is 14 ($4000) against 13 ($10000). */
+   static uint8_t img[0x14000];
+   uint8_t *ram;
+   unsigned k;
+
+   memset(img, 0, sizeof(img));
+   for (k = 0; k < 3; k++)                          /* LEA abs.L,A0 */
+      put_abs(img, 6 * k, 0x41F9, 0x13000 + 0x100 * k);
+   put_abs(img, 0x12, 0x4FF9, 0x001FFFFC);          /* LEA $1FFFFC,A7 */
+   for (k = 0; k < 9; k++)
+      put_abs(img, 0x40 + 6 * k, 0x41F9, 0x14000 + 0x10 * k);
+   put_abs(img, 0x9A, 0x4EF9, 0x10012);             /* JMP -> offset $12 */
+   put_abs(img, 0x200, 0x41F9, 0x4000);             /* the RAM buffer */
+   put16(img, 0x400, 0x1122);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(ram + 0x10000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(initial_pc(ram), 0x10000);
+   p_retro_unload_game();
+}
+
+/* Issue #973: BadCode4 "(rom)" images open with a stub that reads its own
+ * header through cart addresses (movea.l $802054,a0 / $802048,a1 / move.l
+ * $80204C,d0) and copies the program to RAM.  Offset 0 is $802000. */
+TEST(alpine_header_stub_maps_at_802000)
+{
+   static uint8_t img[0x6000];
+   uint8_t *ram;
+
+   memset(img, 0, sizeof(img));
+   put16(img, 0x00, 0x7200);                        /* moveq #0,d1 */
+   put_abs(img, 0x02, 0x2079, 0x802054);
+   put_abs(img, 0x08, 0x2279, 0x802048);
+   put_abs(img, 0x0E, 0x2039, 0x80204C);
+   put16(img, 0x400, 0x1122);
+   ASSERT(load_image(img, (unsigned)sizeof(img)));
+   ram = *p_mainram;
+   ASSERT(ram != NULL);
+   ASSERT(memcmp(p_memspace + 0x802000, img, sizeof(img)) == 0);
+   ASSERT_EQ_U(p_memspace[0x801FFF], 0xFF);
+   ASSERT_EQ_U(initial_pc(ram), 0x802000);
+   p_retro_unload_game();
+}
+
+/* Issue #973: Rayman Demo is exactly 2 MiB with no universal header; its
+ * startup calls subroutines at $802xxx.  Mapped at $800000 every call
+ * landed $2000 low.  No $400 marker plus a raw-scorer verdict of $802000
+ * loads it like an Alpine image. */
+TEST(exact_mib_without_marker_linked_at_802000)
+{
+   uint8_t *img = (uint8_t *)calloc(2 * MIB, 1);
+   uint8_t *ram;
+
+   ASSERT(img != NULL);
+   build_linked_image(img, 0x2000, 0x802000);
+   ASSERT(load_image(img, 2 * MIB));
+   ram = *p_mainram;
+   if (!ram || memcmp(p_memspace + 0x802000, img, 2 * MIB) != 0
+         || initial_pc(ram) != 0x802000)
+   {
+      free(img);
+      FAIL("not mapped with offset 0 at $802000 (pc $%06X)",
+            ram ? initial_pc(ram) : 0);
+   }
+   free(img);
+   p_retro_unload_game();
+}
+
+/* Issue #974: Phase Zero (2000) (PD) is the signed [a1] dump with the
+ * boot block and $400-$40B erased to $FF.  The $FFFFFFFF vector used to
+ * fall back to $800000 ($FFFF, line-F, an RTE ping-pong); the program is at
+ * $802000.  Only an ERASED vector takes $802000: any other invalid one
+ * still falls back to $800000 (the raw-code-at-cart-base convention). */
+static uint8_t *make_erased_header_cart(uint32_t vector404)
+{
+   uint8_t *img = (uint8_t *)malloc(MIB);
+
+   if (!img)
+      return NULL;
+   memset(img, 0xFF, MIB);
+   put32(img, 0x404, vector404);
+   put32(img, 0x2000, 0x23FC0007);                  /* move.l #$70007,... */
+   put32(img, 0x2004, 0x000700F0);
+   put16(img, 0x2008, 0x210C);
+   return img;
+}
+
+TEST(erased_404_vector_enters_at_802000)
+{
+   uint8_t *img = make_erased_header_cart(0xFFFFFFFF);
+   unsigned pc;
+
+   ASSERT(img != NULL);
+   if (!load_image(img, MIB))
+   {
+      free(img);
+      FAIL("load failed");
+   }
+   pc = initial_pc(*p_mainram);
+   free(img);
+   p_retro_unload_game();
+   ASSERT_EQ_U(pc, 0x802000);
+}
+
+TEST(other_invalid_404_vector_still_enters_at_800000)
+{
+   uint8_t *img = make_erased_header_cart(0xFFE00001);
+   unsigned pc;
+
+   ASSERT(img != NULL);
+   if (!load_image(img, MIB))
+   {
+      free(img);
+      FAIL("load failed");
+   }
+   pc = initial_pc(*p_mainram);
+   free(img);
+   p_retro_unload_game();
+   ASSERT_EQ_U(pc, 0x800000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -746,6 +1004,15 @@ int main(int argc, char **argv)
    RUN(raw_binary_bss_refs_do_not_pull_4000_image_to_5000);
    RUN(raw_binary_io_descriptor_tie_goes_to_5000);
    RUN(raw_binary_tie_without_io_descriptor_stays_4000);
+   RUN(dri_601a_loads_text_at_4000);
+   RUN(dri_601a_applies_relocations);
+   RUN(jagr_type2_loads_at_load_address);
+   RUN(raw_binary_68k_start_without_evidence_loads_at_4000);
+   RUN(raw_binary_jmp_onto_decoded_instruction_picks_10000);
+   RUN(alpine_header_stub_maps_at_802000);
+   RUN(exact_mib_without_marker_linked_at_802000);
+   RUN(erased_404_vector_enters_at_802000);
+   RUN(other_invalid_404_vector_still_enters_at_800000);
    RUN(mirror_2mb_repeats_in_window);
    RUN(mirror_1mb_repeats_in_window);
    RUN(mirror_4mb_repeats_once);

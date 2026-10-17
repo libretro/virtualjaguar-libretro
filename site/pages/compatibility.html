@@ -1,54 +1,50 @@
 <!-- title: Compatibility | Virtual Jaguar libretro -->
 <!-- nav: Compatibility -->
-<!-- description: Which Atari Jaguar and Jaguar CD games have known problems in Virtual Jaguar libretro v3.7.0, what was fixed recently, and the headless boot matrices behind the claims. -->
+<!-- description: Which Atari Jaguar and Jaguar CD games have known problems in Virtual Jaguar libretro v3.9.1, what was fixed recently, and the headless boot matrices behind the claims. -->
 
 <h1>Compatibility</h1>
 <p class="lede">
   Most of the library boots and plays. This page lists what does not, what
   was fixed recently, and how much to trust the test data. Current as of
-  v3.7.0 (2026-10-06). No BIOS files are required
+  v3.9.1. No BIOS files are required
   (<a href="{{REPO}}#bios">README: BIOS</a>).
 </p>
 
 <section class="win">
-  <h2>Known problems <span class="badge warn">v3.7.0</span></h2>
+  <h2>Known problems <span class="badge warn">v3.9.1</span></h2>
   <div class="win-body">
     <div class="table-wrap"><table>
       <tr><th>Title</th><th>Problem</th><th>Tracking</th></tr>
-      <tr><td>Dragon&rsquo;s Lair, Space Ace, BrainDead 13 (CD)</td>
-          <td>Intro and attract loop play. The interactive scenes do not load.</td>
-          <td><a href="{{REPO}}/issues/737">#737</a></td></tr>
       <tr><td>White Men Can&rsquo;t Jump</td>
-          <td>Menu freeze and missing audio are fixed. Still very glitchy in play.</td>
-          <td><a href="{{REPO}}/issues/736">#736</a></td></tr>
-      <tr><td>Club Drive</td>
-          <td>Freezes in gameplay at default settings, reported after holding the accelerator for a few seconds.</td>
-          <td><a href="{{REPO}}/issues/611">#611</a></td></tr>
+          <td>Menu freeze, missing audio, the intro logo and gameplay tearing are fixed. Some flicker remains.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a></td></tr>
       <tr><td>Doom, Hover Strike</td>
           <td>Run faster than hardware, and touchscreen taps register as repeated presses.</td>
           <td><a href="{{REPO}}/issues/401">#401</a> &middot; <a href="{{REPO}}/issues/399">#399</a> &middot; <a href="{{REPO}}/issues/743">#743</a></td></tr>
       <tr><td>Battle Morph (CD)</td>
-          <td>Reported too fast. May be paced correctly with GPU Pipeline Timing on; not yet re-verified.</td>
+          <td>Reported too fast. May be paced correctly with GPU/DSP Pipeline Timing on; not yet re-verified.</td>
           <td><a href="{{REPO}}/issues/331">#331</a></td></tr>
-      <tr><td>Alien vs Predator</td>
-          <td>High-pitched noise during play, reported on Windows, Linux and Android. Not reproduced on macOS or iOS.</td>
-          <td><a href="{{REPO}}/issues/633">#633</a></td></tr>
       <tr><td>Defender 2000</td>
           <td>Hangs at level start with M68K Clock Scale 3x. Stock clocks are fine.</td>
           <td><a href="{{REPO}}/issues/460">#460</a></td></tr>
-      <tr><td>Seven homebrew cart images (Chroma-Luma Color Pick (bin), DEMO1 (bin), DEMO1B, DEMO1B [a1], JagMania (Jul 8), Ladybug Demo, Ladybug Demo (rom))</td>
-          <td>Freeze in HLE with the default Accurate blitter. No commercial title is affected.</td>
-          <td><a href="{{REPO}}/issues/800">#800</a></td></tr>
-      <tr><td>Music Demo (2002), real-BIOS mode</td>
-          <td>GPU wedges at frame 338.</td>
-          <td><a href="{{REPO}}/issues/794">#794</a></td></tr>
-      <tr><td>Hover Strike, real-BIOS CD mode</td>
-          <td>Run-ahead diverges mid-load. HLE, the default, is deterministic.</td>
-          <td><a href="{{REPO}}/issues/804">#804</a></td></tr>
+      <tr><td>Doom, 2-player link play</td>
+          <td>Holds 60 fps since v3.8.0, but over Wi-Fi it still plays slower than single player.</td>
+          <td><a href="{{REPO}}/issues/864">#864</a></td></tr>
+      <tr><td>JaGol (JaguarDemos)</td>
+          <td>Shows an almost empty field in real-BIOS mode: it seeds its Game of Life from power-on RAM, which is now zero.</td>
+          <td><a href="{{REPO}}/issues/876">#876</a></td></tr>
+      <tr><td>Ruiner Pinball</td>
+          <td>No longer crashes its GPU. Whether it plays correctly is unconfirmed.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a></td></tr>
     </table></div>
     <p class="footnote">
       Inserting a disc restarts the console, so a mid-session swap is a
-      reboot. What is scheduled for the next releases is on the
+      reboot. Closed as not reproducible: the Dragon&rsquo;s Lair, Space Ace
+      and BrainDead 13 interactive scenes
+      (<a href="{{REPO}}/issues/737">#737</a>: those games start on A, B or C,
+      not START) and the Alien vs Predator noise
+      (<a href="{{REPO}}/issues/633">#633</a>). Reopen either if it still
+      happens to you. What is scheduled for the next releases is on the
       <a href="{{REPO}}/milestones">milestones</a> page.
     </p>
   </div>
@@ -57,6 +53,44 @@
 <section class="win">
   <h2>Fixed recently <span class="badge good">release notes</span></h2>
   <div class="win-body">
+    <div class="table-wrap"><table>
+      <tr><th>Title</th><th>What was fixed</th><th>Release</th></tr>
+      <tr><td>Xenowings</td>
+          <td>Shot and explosion sound effects were missing. A RISC store right after a divide now waits for the quotient in the one case the chip netlists show it does.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.1.md">v3.9.1</a></td></tr>
+      <tr><td>Homebrew and demos: Mandelbrot Demo, Jaguar Server INTRO / INTROMOD, Painter, Hubble Fade / Nebula, Drumpad2, Rayman Demo, BadCode4 (rom), Phase Zero</td>
+          <td>Black screen or a crash at start: the loader put them at the wrong address. They now load where they were linked.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.1.md">v3.9.1</a></td></tr>
+      <tr><td>Flip Out</td>
+          <td>Ran into an <code>ILLEGAL</code> loop in HLE and the boot ROM in BIOS mode. 1, 2 and 4 MB cartridge images now repeat across the cartridge window as on hardware.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a></td></tr>
+      <tr><td>Fight For Your Life (1996)</td>
+          <td>Address error into the boot ROM on the real BIOS. Power-on RAM in BIOS mode is now zero-filled, as in HLE.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a></td></tr>
+      <tr><td>Club Drive</td>
+          <td>Silent under the default HLE boot (v3.8.0). Froze or crashed a few seconds into driving, and drew a flat clear colour for its indoor walls and ceilings (v3.7.1).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.1.md">v3.7.1</a></td></tr>
+      <tr><td>White Men Can&rsquo;t Jump</td>
+          <td>Gameplay tearing, through a new &ldquo;68000 only&rdquo; Blitter Bus Timing value (v3.8.0). Intro logo mostly missing (v3.7.1).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.1.md">v3.7.1</a></td></tr>
+      <tr><td>Music Demo, Ruiner Pinball, Native Demo (bin)</td>
+          <td>The DSP or GPU ran off into garbage. Music Demo now runs in both boot modes.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a></td></tr>
+      <tr><td>Xenowings</td>
+          <td>Black gameplay, a drop back to the loader, and ignored input. Needed two Atari hardware-bug rules and 68000 prefetch emulation. Headless-verified.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.1.md">v3.7.1</a></td></tr>
+      <tr><td>Seven homebrew cartridge images</td>
+          <td>Froze the default Accurate blitter. Six more homebrew binaries drew a black screen because they loaded at the wrong address.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.1.md">v3.7.1</a></td></tr>
+      <tr><td>Hover Strike (real-BIOS CD)</td>
+          <td>Run-ahead diverged mid-load.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.1.md">v3.7.1</a></td></tr>
+      <tr><td>Memory Track saves</td>
+          <td>Did not work after a no-content boot plus a disc insert.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.7.1.md">v3.7.1</a></td></tr>
+    </table></div>
+    <details class="fold">
+      <summary>Fixed in v3.7.0 and earlier</summary>
     <div class="table-wrap"><table>
       <tr><th>Title</th><th>What was fixed</th><th>Release</th></tr>
       <tr><td>Baldies (CD)</td>
@@ -99,6 +133,7 @@
           <td>Colour bars and a red shotgun background; a one-frame playfield collapse; a black screen in gameplay; missing music.</td>
           <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
     </table></div>
+    </details>
   </div>
 </section>
 
@@ -109,19 +144,27 @@
       The two tables below are a headless smoke test, generated from
       committed logs. <strong>Reaches game code</strong> means the 68K was
       executing game code when the run ended. It does not mean the game can
-      be finished, and menus are not told apart from gameplay. A
-      &ldquo;video undetermined&rdquo; badge means the headless video check
-      was inconclusive, not that the title is broken.
+      be finished, and menus are not told apart from gameplay.
+      &ldquo;No picture in the test&rdquo; means the headless video check
+      was inconclusive (some titles are audio-only or wait for a button),
+      not that the title is broken. &ldquo;Crashes at start&rdquo; means
+      the 68K was stuck in an exception loop with a black screen.
     </p>
     <ul>
       <li>The <strong>cartridge matrix</strong> runs the Fast blitter only,
-          so it cannot see the default-settings freezes in
-          <a href="{{REPO}}/issues/800">#800</a>.</li>
-      <li>The <strong>CD matrix</strong> predates several v3.7.0 CD fixes.
-          Trust the list above over its rows.</li>
-      <li>The PlaySFX HLE row predates the fix for
-          <a href="{{REPO}}/issues/739">#739</a> (fixed in v3.7.0 by
-          <a href="{{REPO}}/pull/805">#805</a>) and now boots.</li>
+          so it cannot see freezes that only the default Accurate blitter
+          hits, like <a href="{{REPO}}/issues/800">#800</a> (fixed in
+          v3.7.1).</li>
+      <li>&ldquo;Rejected by the boot ROM&rdquo; is the real boot ROM&rsquo;s
+          red &ldquo;Jaguar&rdquo; screen: alternate or bad dumps and unsigned
+          images that the boot ROM itself refuses, not regressions. Most of
+          them run in HLE mode.</li>
+      <li>&ldquo;Boot ROM not used&rdquo; in the real-BIOS column is a
+          RAM-loaded program (BJL, ST or Alpine-style image): it never goes
+          through the boot ROM, so both columns run the same way.</li>
+      <li>The matrices record a stage plus coarse video and audio flags, so
+          they cannot see most rendering or audio changes. Both were last
+          regenerated for v3.8.0.</li>
     </ul>
     <p>
       Your game is not listed, or the list says it runs and it does not?

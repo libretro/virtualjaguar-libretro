@@ -139,6 +139,14 @@ bool ShaderChain::builtWithHeaders() {
 #endif
 }
 
+bool ShaderChain::runtimeBundled() {
+#if defined(VJ_LIBRASHADER_BUNDLED)
+    return true;
+#else
+    return false;
+#endif
+}
+
 const char* ShaderChain::libraryFileName() {
 #if defined(_WIN32)
     return "librashader.dll";
@@ -203,6 +211,7 @@ bool ShaderChain::probeLibrary(bool retry) {
 #if !defined(VJ_HAVE_LIBRASHADER)
     (void)retry;
     probed_ = true;
+    libStatus_ = LibraryStatus::NoSupport;
     libErr_ = "this build has no librashader support (its header could not be fetched at configure time)";
     return false;
 #else
@@ -211,6 +220,7 @@ bool ShaderChain::probeLibrary(bool retry) {
     probed_ = true;
     libErr_.clear();
     libPath_.clear();
+    libStatus_ = LibraryStatus::NotFound;
     Impl& I = *impl_;
 
     const std::string leaf = libraryFileName();
@@ -237,6 +247,8 @@ bool ShaderChain::probeLibrary(bool retry) {
         searched = "the app folder, the data folder and the system library path";
     }
 
+    // loadErr: the last file that EXISTS and could not be used (reported as "failed to load").
+    // A bare name that the system loader cannot find only means "not found anywhere".
     std::string loadErr;
     for (const std::string& c : cands) {
         bool bare = c.find('/') == std::string::npos && c.find('\\') == std::string::npos;
@@ -251,7 +263,7 @@ bool ShaderChain::probeLibrary(bool retry) {
         SetErrorMode(oldMode);
 #endif
         if (!h) {
-            loadErr = c + ": " + SDL_GetError();
+            if (!bare) loadErr = c + ": " + SDL_GetError();
             continue;
         }
         // ABI first: an incompatible library must not have its other symbols read.
@@ -294,9 +306,16 @@ bool ShaderChain::probeLibrary(bool retry) {
         I.inst.instance_loaded = true;
         libPath_ = bare ? c : absolutePath(c);
         apiVersion_ = (unsigned)inst.instance_api_version();
+        libStatus_ = LibraryStatus::Loaded;
         return true;
     }
-    libErr_ = loadErr.empty() ? std::string(leaf) + " not found (looked in " + searched + ")" : loadErr;
+    if (loadErr.empty()) {
+        libStatus_ = LibraryStatus::NotFound;
+        libErr_ = std::string(leaf) + " not found (looked in " + searched + ")";
+    } else {
+        libStatus_ = LibraryStatus::LoadFailed;
+        libErr_ = loadErr;
+    }
     return false;
 #endif
 }
@@ -424,6 +443,29 @@ void ShaderChain::paramChanged(size_t i) {
 // frames
 // ---------------------------------------------------------------------------------------
 
+void ShaderChain::probeGlCaps() {
+#if defined(VJ_HAVE_LIBRASHADER)
+    if (glAoA_ >= 0) return;
+    GLint major = 0, minor = 0, n = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    glGetIntegerv(GL_MINOR_VERSION, &minor);
+    if (major <= 0) return;   // no context current: try again later
+    glVer_ = std::to_string(major) + "." + std::to_string(minor);
+    // GLSL to generate: the context's own (4.1 on macOS, usually 4.6 elsewhere), capped at
+    // librashader's highest.  330 everywhere threw away GLSL 4.00 (textureGather with a
+    // component, packUnorm4x8, bitCount/findLSB) on contexts that have it.
+    int glsl = major * 100 + minor * 10;
+    glsl_ = (unsigned)(glsl < 330 ? 330 : glsl > 460 ? 460 : glsl);
+    bool aoa = major > 4 || (major == 4 && minor >= 3);
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    for (GLint i = 0; !aoa && i < n; i++) {
+        const char* e = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, (GLuint)i));
+        if (e && std::strcmp(e, "GL_ARB_arrays_of_arrays") == 0) aoa = true;
+    }
+    glAoA_ = aoa ? 1 : 0;
+#endif
+}
+
 void ShaderChain::destroyGL() {
 #if defined(VJ_HAVE_LIBRASHADER)
     if (!impl_) return;
@@ -446,7 +488,9 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
     if (!probeLibrary()) {
         if (!noticedMissing_) {
             noticedMissing_ = true;
-            setNotice("Shaders are on but librashader was not found; showing the plain picture");
+            setNotice(libStatus_ == LibraryStatus::LoadFailed
+                          ? "Shaders are on but the shader runtime failed to load (see Settings > Video > Shader); showing the plain picture"
+                          : "Shaders are on but the shader runtime was not found; showing the plain picture");
         }
         return 0;
     }
@@ -455,11 +499,21 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
     if (!I.bindFbo)
         I.bindFbo = reinterpret_cast<BindFramebufferFn>(SDL_GL_GetProcAddress("glBindFramebuffer"));
 
+    probeGlCaps();
     auto fail = [&](const std::string& why) {
         failed_ = true;
         lastErr_ = why;
         I.freeChain();
         std::string brief = why.size() > 160 ? why.substr(0, 160) + "..." : why;   // full text stays in lastError()
+        // SPIRV-Cross's GLSL for a multi-dimensional array needs GL 4.3 or this extension
+        // (see presetsNeedingArraysOfArrays()); say so instead of quoting the GL compiler.
+        if (why.find("GL_ARB_arrays_of_arrays") != std::string::npos) {
+            brief = "it needs OpenGL 4.3 (arrays of arrays)";
+            if (!glVer_.empty()) brief += "; this system has OpenGL " + glVer_;
+            lastErr_ = "This preset needs OpenGL 4.3 (GL_ARB_arrays_of_arrays), which " +
+                       (glVer_.empty() ? std::string("this system") : "OpenGL " + glVer_) +
+                       " does not provide (macOS stops at 4.1). librashader: " + why;
+        }
         setNotice("Shader " + pathStem(preset) + " failed (" + brief + "); showing the plain picture");
         return 0u;
     };
@@ -477,7 +531,7 @@ unsigned ShaderChain::render(const ShaderFrame& f) {
         filter_chain_gl_opt_t co;
         std::memset(&co, 0, sizeof co);
         co.version = apiVersion_ < (unsigned)LIBRASHADER_CURRENT_VERSION ? apiVersion_ : (unsigned)LIBRASHADER_CURRENT_VERSION;
-        co.glsl_version = 330;
+        co.glsl_version = (uint16_t)glsl_;   // the context's, from probeGlCaps()
         co.use_dsa = false;   // GL 3.3 core; DSA (and with it librashader's shader cache) needs 4.5
         co.force_no_mipmaps = false;
         co.disable_cache = false;

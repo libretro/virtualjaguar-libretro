@@ -33,6 +33,7 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
+#include "risc_div.h"
 #include "event.h"
 #include "settings.h"
 #include "blit_memo.h"
@@ -1780,18 +1781,22 @@ void GPUSyncToM68K(void)
  *     body.  GPUExec's dispatches are the GPUHandleIRQs() call at slice
  *     ENTRY, before the exec loop, and the re-check a GPU-issued G_FLAGS
  *     store owes at its retire point (GPUFlagsRetire, #865: GPUExec's
- *     countdown or a taken jump/jr's redirect).  Only a store opens such
- *     a window, the whitelist admits no store, and the taken `jr` that
- *     enters the probe has already retired any window open ahead of it
- *     (gpuFlagsRetireDelay == gpuFlagsIRQPending == 0 on return from
- *     gpu_opcode_jr).  GPUSetIRQLine's other callers (tom.c timers,
- *     op.c, cdrom.c) all run from event callbacks, i.e. between slices
- *     per (1).  So the probe needs no retire-delay reset check at all.
+ *     countdown or a taken jump/jr's redirect).  Only a store to G_FLAGS
+ *     (or a G_CTRL write, which raises GPUINT0 from a delay slot) opens
+ *     such a window; the only stores admitted (see STORES below) are
+ *     long stores whose EA the S2 check proves lies in GPU local RAM,
+ *     where GPUWriteLong is a plain SET32 with no side effect, and the
+ *     taken `jr` that enters the probe has already retired any window
+ *     open ahead of it (gpuFlagsRetireDelay == gpuFlagsIRQPending == 0
+ *     on return from gpu_opcode_jr).  GPUSetIRQLine's other callers
+ *     (tom.c timers, op.c, cdrom.c) all run from event callbacks, i.e.
+ *     between slices per (1).  So the probe needs no retire-delay reset
+ *     check at all.
  *
  * (3) The register banks cannot move.  gpu_reg / gpu_alternate_reg are
  *     repointed only by GPUUpdateRegisterBanks(), reachable from a host
  *     G_FLAGS write (not inside GPUExec), from retiring a GPU-issued
- *     G_FLAGS store (needs a store -- excluded, see (2)) or from
+ *     G_FLAGS store (no G_FLAGS store is admitted, see (2)) or from
  *     GPUHandleIRQs (excluded by (2)).  The probe still records and
  *     re-checks the bank pointer, same belt-and-braces as the DSP.
  *
@@ -1843,10 +1848,53 @@ void GPUSyncToM68K(void)
  *     range and mask only in that branch, so the admission check here
  *     classifies the raw EA exactly as the opcode will.
  *
- *   - Delay-slot IRQ hazard (gpu_ds_irq_dispatched): an admitted body
- *     contains no store, so its delay slot cannot dispatch an
- *     interrupt and the probe can never be reached with gpu_pc
+ *   - Delay-slot IRQ hazard (gpu_ds_irq_dispatched): the only stores an
+ *     admitted body may contain are local-RAM long stores (STORES
+ *     below), which cannot raise an interrupt, so its delay slot cannot
+ *     dispatch one and the probe can never be reached with gpu_pc
  *     pointing at a vector from its own loop's delay slot.
+ *
+ *   - STORES (perf(gpu), issue #952).  Doom's frame-wait loop
+ *     (`store r1,(r7) ; movei #$F03048,r2 ; load (r2),r1 ; or r1,r1 ;
+ *     jr Z`) stores to a GPU-local flag on every pass, and a blanket
+ *     "no stores" rule kept the skip from ever firing on it.  A store
+ *     is admitted when ALL of the following hold, each one tested
+ *     where noted:
+ *       a. every register the store reads (address base, index, value)
+ *          has per-iteration delta zero at the three head snapshots
+ *          and is not a counter -- the generic rule in
+ *          gpu_idle_check_body, which also forbids a counter feeding a
+ *          store.  With the flags and the memory the body reads
+ *          unchanged (c), the iteration is a pure function of a fixed
+ *          head state, so the address AND the value stored are the
+ *          same on every iteration.  (A register the body rewrites,
+ *          such as the polled-flag register above, is fine: what
+ *          matters is that its value at the head is the same on every
+ *          pass, not that no instruction writes it.)
+ *       b. the EA is long-aligned and inside GPU local RAM
+ *          $F03000-$F03FFC (JTRM v8 p.36: "F03000 - F03FFF local RAM";
+ *          registers sit at $F02000-$F021FF, the blitter at
+ *          $F02200).  That is the branch in which every GPU store
+ *          opcode reaches GPUWriteLong's plain SET32 of gpu_ram_8: no
+ *          G_FLAGS / G_CTRL / G_DIVCTRL decode, no external bus, no
+ *          bus-arbiter charge, no blitter/OP/DSP/TOM register.
+ *          Alignment makes the written bytes exactly [ea, ea+3]
+ *          independent of GPU_CORRECT_ALIGNMENT*.  storeb / storew
+ *          (their local path writes a zero-extended long at an
+ *          unmasked address) and storep (two longs) are not admitted.
+ *       c. the written long is not a long any load in the body reads
+ *          (no aliasing with the polled word or any table), and does
+ *          not overlap [head, jr+3], the code that is being skipped.
+ *     Skipping then needs NO store of its own: the probe's S0->S1 and
+ *     S1->S2 iterations were interpreted, so the (identical) store has
+ *     already landed twice, and nothing can write that long again
+ *     before the next iteration that runs normally (the n-skipped
+ *     iterations would rewrite the same bytes with the same value; see
+ *     (1) for why no other agent runs inside this call).  Cycle and
+ *     opcode accounting need no change: the store is a local-RAM
+ *     access, costs gpu_opcode_cycles[] and nothing else (the idle
+ *     skip is off whenever busArbiter or pipeline timing is on), and
+ *     the per-iteration cost is MEASURED, not recomputed.
  *
  * Extrapolation, exit and savestate behavior are the DSP's: n =
  * (cycles / cost) - 1 iterations are applied as reg += n*delta,
@@ -1857,12 +1905,18 @@ void GPUSyncToM68K(void)
  * slice, so savestates are untouched.
  */
 
-/* Longest body accepted, in 16-bit words (jr offset range [-8,-1]).
- * Belt-and-braces only: the caller's `pcThis - gpu_pc <= 14` filter
- * already caps [head, jr) at 7 words, so this bound never binds. */
-#define GPU_IDLE_MAX_BODY	8
-/* Body instruction slots: <= 7 before the jr, plus the delay slot. */
-#define GPU_IDLE_MAX_INSN	10
+/* Farthest back a taken jr can land, in bytes.  gpu_opcode_jr adds a
+ * 5-bit signed WORD offset (-16..+15) to the address just past the jr,
+ * so the head is at most 32 - 2 = 30 bytes before the jr.  This is the
+ * architectural reach, not a tuning knob: it used to be 14 (7 words),
+ * which cut off Doom's frame-wait loop (movei/moveq/store/movei/load/
+ * or/jr, 20 bytes) before the probe ever saw it (#952). */
+#define GPU_IDLE_MAX_JR_REACH	30
+/* Longest body accepted, in 16-bit words: [head, jr) spans at most
+ * GPU_IDLE_MAX_JR_REACH / 2 = 15 words, each at least one instruction. */
+#define GPU_IDLE_MAX_BODY	15
+/* Body instruction slots: <= 15 before the jr, plus the delay slot. */
+#define GPU_IDLE_MAX_INSN	16
 /* Per-slice reject memo: without it a loop that fails the fixed-point
  * test would be re-probed every three iterations for the whole slice. */
 #define GPU_IDLE_MEMO		16
@@ -1919,7 +1973,7 @@ static int       idleMemoNext;
  * admitted, 32 differs and stays out), 42 (GPU loadp reads AND writes
  * gpu_hidata, which the snapshot does not model -- rejected, where the
  * DSP's 42 was sat32s rejected for reading the accumulator), 48 (GPU
- * storep -- a store, out like every store) and 62/63 (GPU sat24/pack
+ * storep -- two longs, stays out) and 62/63 (GPU sat24/pack
  * -- pure, but left out to keep the whitelist to opcodes wait loops
  * actually use, same policy as the DSP's mirror/move_pc).  Both
  * branches (52/53) are deliberately absent: excluding every
@@ -1942,8 +1996,11 @@ static int gpu_idle_op_admitted(uint32_t idx)
 	case 38:								/* movei */
 	case 39: case 40: case 41:				/* loadb loadw load */
 	case 43: case 44:						/* load_r14/15_indexed */
+	case 47:								/* store (long) */
+	case 49: case 50:						/* store_r14/15_indexed */
 	case 57:								/* nop */
 	case 58: case 59:						/* load_r14/15_ri */
+	case 60: case 61:						/* store_r14/15_ri */
 		return 1;
 	default:
 		return 0;
@@ -2016,6 +2073,28 @@ static int gpu_idle_operands(uint32_t idx, uint32_t p1, uint32_t p2,
 		src[(*nsrc)++] = cur + 15;
 		src[(*nsrc)++] = cur + (int)p1;
 		*dst = cur + (int)p2;
+		return 1;
+	case 47:								/* store RN,(RM) -- no register dest */
+		src[(*nsrc)++] = cur + (int)p1;
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case 49:								/* store_r14_indexed */
+		src[(*nsrc)++] = cur + 14;
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case 50:								/* store_r15_indexed */
+		src[(*nsrc)++] = cur + 15;
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case 60:								/* store_r14_ri */
+		src[(*nsrc)++] = cur + 14;
+		src[(*nsrc)++] = cur + (int)p1;
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case 61:								/* store_r15_ri */
+		src[(*nsrc)++] = cur + 15;
+		src[(*nsrc)++] = cur + (int)p1;
+		src[(*nsrc)++] = cur + (int)p2;
 		return 1;
 	case 57:								/* nop */
 		return 1;
@@ -2113,6 +2192,9 @@ static int gpu_idle_check_body(const uint32_t *delta, int cur, int alt)
 	int src[3];
 	int nsrc, dst, s, j, i;
 	uint32_t idx, p1, p2, ea;
+	uint32_t ldAddr[GPU_IDLE_MAX_INSN];		/* local-RAM longs the body reads */
+	uint32_t stAddr[GPU_IDLE_MAX_INSN];		/* local-RAM longs the body writes */
+	int nld = 0, nst = 0;
 
 	for (i = 0; i < 32; i++)
 	{
@@ -2197,8 +2279,74 @@ static int gpu_idle_check_body(const uint32_t *delta, int cur, int alt)
 			if (!GPU_IDLE_EA_OK(ea))
 				return 0;
 			break;
+		case 47:							/* store (long) */
+		case 49: case 50:					/* store_r14/15_indexed */
+		case 60: case 61:					/* store_r14/15_ri */
+			/* Admitted store -- see the "STORES" paragraph of the
+			 * header block.  The EA is rebuilt from the same raw
+			 * operands the opcode uses; every source register has
+			 * already passed the delta-zero test above (a counter
+			 * may not feed a store), so the EA and the value are
+			 * identical on every iteration.  Only GPU local RAM
+			 * ($F03000-$F03FFF, JTRM v8 p.36) is accepted, long-
+			 * aligned so the four bytes written are exactly
+			 * [ea, ea+3] whatever GPU_CORRECT_ALIGNMENT does to the
+			 * address, and so GPUWriteLong takes its plain SET32
+			 * branch: no G_FLAGS / G_CTRL / G_DIVCTRL decode, no
+			 * external bus, no interrupt, no register-bank switch. */
+			if (idx == 47)
+			{
+				if (!kok[cur + (int)p1])
+					return 0;
+				ea = kval[cur + (int)p1];
+			}
+			else if (idx == 49)
+			{
+				if (!kok[cur + 14])
+					return 0;
+				ea = kval[cur + 14] + (gpu_convert_zero[p1] << 2);
+			}
+			else if (idx == 50)
+			{
+				if (!kok[cur + 15])
+					return 0;
+				ea = kval[cur + 15] + (gpu_convert_zero[p1] << 2);
+			}
+			else if (idx == 60)
+			{
+				if (!kok[cur + 14] || !kok[cur + (int)p1])
+					return 0;
+				ea = kval[cur + 14] + kval[cur + (int)p1];
+			}
+			else
+			{
+				if (!kok[cur + 15] || !kok[cur + (int)p1])
+					return 0;
+				ea = kval[cur + 15] + kval[cur + (int)p1];
+			}
+			if ((ea & 3) != 0
+			    || ea < GPU_WORK_RAM_BASE || ea > GPU_WORK_RAM_BASE + 0xFFC)
+				return 0;
+			/* The body is fetched from this same SRAM: a store that
+			 * lands on any byte of [head, jr+3] (body, immediates,
+			 * delay slot) rewrites the code being skipped. */
+			if (ea + 3 >= idleProbeHead && ea <= idleProbeJr + 3)
+				return 0;
+			stAddr[nst++] = ea;
+			break;
 		default:
 			break;
+		}
+
+		/* Every load that reads GPU local RAM reads the whole long
+		 * containing its EA (loadb/loadw/load and the indexed forms all
+		 * mask, see gpu_opcode_load*).  Record it for the store-alias
+		 * test below; loads from main DRAM cannot overlap local RAM. */
+		if (idx == 39 || idx == 40 || idx == 41 || idx == 43 || idx == 44
+		    || idx == 58 || idx == 59)
+		{
+			if (ea >= GPU_WORK_RAM_BASE && ea <= GPU_WORK_RAM_BASE + 0xFFF)
+				ldAddr[nld++] = ea & 0xFFFFFFFC;
 		}
 
 		/* Propagate what we can still prove about the destination. */
@@ -2224,6 +2372,17 @@ static int gpu_idle_check_body(const uint32_t *delta, int cur, int alt)
 			}
 		}
 	}
+
+	/* No-alias rule: the loop only stays a fixed point if nothing it
+	 * reads can be changed by what it writes.  Any store long that
+	 * coincides with a local-RAM long some load in the body reads (the
+	 * polled flag itself, a table entry, ...) is turned down; so is a
+	 * load that precedes the store in program order, since the next
+	 * iteration would see the new value. */
+	for (s = 0; s < nst; s++)
+		for (j = 0; j < nld; j++)
+			if (stAddr[s] == ldAddr[j])
+				return 0;
 
 	return 1;
 }
@@ -2266,9 +2425,9 @@ static int32_t GPUIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 	}
 
 	/* No retire-delay reset here, deliberately: only a G_FLAGS store
-	 * opens a retire window, no store is admitted, and the taken jr
-	 * that got us here retired any window ahead of it -- see theorem
-	 * (2). */
+	 * opens a retire window, no G_FLAGS store is admitted (only
+	 * local-RAM long stores are), and the taken jr that got us here
+	 * retired any window ahead of it -- see theorem (2). */
 
 	/* A different loop showed up mid-probe.  Only then -- calling this
 	 * unconditionally would reset the probe of the loop we are actually
@@ -2676,12 +2835,12 @@ void GPUExec(int32_t cycles)
       }
 
       /* Idle-loop fast-forward (issue #569, GPU port).  A taken `jr`
-       * that landed on or behind its own address, at most 8 words back,
-       * is the only candidate; the unsigned difference rejects a
-       * not-taken jr (pc = pcThis + 2) and every forward branch in one
-       * compare. */
+       * that landed on or behind its own address, at most 15 words back
+       * (the jr's full reach), is the only candidate; the unsigned
+       * difference rejects a not-taken jr (pc = pcThis + 2) and every
+       * forward branch in one compare. */
       if (idleSkipActive && index == 53
-          && (uint32_t)(pcThis - gpu_pc) <= 14)
+          && (uint32_t)(pcThis - gpu_pc) <= GPU_IDLE_MAX_JR_REACH)
          cycles = GPUIdleLoopProbe(cycles, gpu_pc, pcThis);
 
       /* Single-step barrier (G_CTRL SINGLE_STEP, bit 3): a running RISC core
@@ -3730,27 +3889,9 @@ INLINE static void gpu_opcode_abs(void)
 
 INLINE static void gpu_opcode_div(void)	// RN / RM
 {
-   unsigned i;
-   // Real algorithm, courtesy of SCPCD: NYAN!
-   uint32_t q = RN;
-   uint32_t r = 0;
-
-   // If 16.16 division, stuff top 16 bits of RN into remainder and put the
-   // bottom 16 of RN in top 16 of quotient
-   if (gpu_div_control & 0x01)
-      q <<= 16, r = RN >> 16;
-
-   for(i=0; i<32; i++)
-   {
-      uint32_t sign = r & 0x80000000;
-      r = (r << 1) | ((q >> 31) & 0x01);
-      r += (sign ? RM : -RM);
-      q = (q << 1) | (((~r) >> 31) & 0x01);
-   }
-
-   RN = q;
-   gpu_remain = r;
-
+   /* 33-bit non-restoring divide, netlist-exact (risc_div.h): correct
+    * for divisors above $80000000. */
+   RN = risc_divide(RN, RM, gpu_div_control & 0x01, &gpu_remain);
 }
 
 

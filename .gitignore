@@ -72,6 +72,7 @@ test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
 test/tools/cd_wedge_probe
 test/tools/xenowings_ingame_video
+test/tools/xenowings_sfx_probe
 test/tools/wmcj_intro_logo
 test/tools/fb_flicker_probe
 test/tools/fmv_seek_probe

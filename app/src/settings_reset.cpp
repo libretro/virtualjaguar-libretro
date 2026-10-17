@@ -20,24 +20,24 @@ struct Exact {
 const Exact kExact[] = {
     {"video.integer", KeyClass::Video},       {"video.linear", KeyClass::Video},
     {"video.stretch", KeyClass::Video},       {"video.aspect", KeyClass::Video},
-    {"video.vsync", KeyClass::Video},         {"ui.show_fps", KeyClass::Video},
-    {"ui.theme", KeyClass::Video},
+    {"video.vsync", KeyClass::Video},
     // shader.folder is a path the user picked, like a library folder: kept.
     {"shader.enabled", KeyClass::Shader},     {"shader.preset", KeyClass::Shader},
     {"audio.volume", KeyClass::Audio},        {"audio.mute", KeyClass::Audio},
     {"audio.target_ms", KeyClass::Audio},
-    {"ui.controls.autoshow", KeyClass::Input},
-    {"saves.autosave", KeyClass::Storage},    {"ui.home_library", KeyClass::Storage},
-    {"ui.tray", KeyClass::Storage},           {"ui.keep_awake", KeyClass::Storage},   // Settings > Storage > Desktop
-    {"ui.viewports", KeyClass::Storage},      {"ui.menubar_in_window", KeyClass::Storage},
-    {"library.art", KeyClass::Storage},
-    {"library.hide_on_launch", KeyClass::Storage}, {"library.size", KeyClass::Storage},
-    {"library.section", KeyClass::Storage},
-    {"library.favorites.show", KeyClass::Storage}, {"library.recents.show", KeyClass::Storage},
-    {"saves.resume", KeyClass::Storage},
+    {"input.stick_dpad", KeyClass::Mapping},  {"input.kb.port", KeyClass::Mapping},
+    {"saves.autosave", KeyClass::Storage},
+    // Settings > Interface: the app's own look and behaviour (the keys keep their pre-#933 names).
+    {"ui.show_fps", KeyClass::Interface},     {"ui.theme", KeyClass::Interface},      {"ui.controls.autoshow", KeyClass::Interface},
+    {"ui.home_library", KeyClass::Interface}, {"saves.resume", KeyClass::Interface},
+    {"ui.tray", KeyClass::Interface},         {"ui.keep_awake", KeyClass::Interface},   // Interface > Desktop
+    {"ui.viewports", KeyClass::Interface},    {"ui.menubar_in_window", KeyClass::Interface},
+    {"library.art", KeyClass::Interface},
+    {"library.hide_on_launch", KeyClass::Interface}, {"library.size", KeyClass::Interface},
+    {"library.section", KeyClass::Interface},
+    {"library.favorites.show", KeyClass::Interface}, {"library.recents.show", KeyClass::Interface},
     // discord.app_id is an ID the user chose, like a path: kept.
     {"discord.enabled", KeyClass::Discord},   {"discord.art", KeyClass::Discord},   {"discord.buttons", KeyClass::Discord},
-    {"input.stick_dpad", KeyClass::Mapping},  {"input.kb.port", KeyClass::Mapping},
 };
 
 }  // namespace
@@ -69,6 +69,7 @@ std::vector<KeyClass> groupClasses(AppGroup g) {
     case AppGroup::Audio: return {KeyClass::Audio};
     case AppGroup::Input: return {KeyClass::Input};
     case AppGroup::Storage: return {KeyClass::Storage};
+    case AppGroup::Interface: return {KeyClass::Interface};
     case AppGroup::Discord: return {KeyClass::Discord};
     }
     return {};
@@ -80,6 +81,7 @@ const char* groupName(AppGroup g) {
     case AppGroup::Audio: return "Audio";
     case AppGroup::Input: return "Input";
     case AppGroup::Storage: return "Storage";
+    case AppGroup::Interface: return "Interface";
     case AppGroup::Discord: return "Discord";
     }
     return "";
@@ -101,7 +103,7 @@ size_t resetGroupKeys(Config& cfg, AppGroup g) {
 }
 
 std::vector<KeyClass> classesFor(const ResetAllRequest& r) {
-    std::vector<KeyClass> v = {KeyClass::Video, KeyClass::Shader, KeyClass::Audio, KeyClass::Input, KeyClass::Storage, KeyClass::Discord};
+    std::vector<KeyClass> v = {KeyClass::Video, KeyClass::Shader, KeyClass::Audio, KeyClass::Input, KeyClass::Storage, KeyClass::Interface, KeyClass::Discord};
     if (r.alsoMappings) v.push_back(KeyClass::Mapping);
     if (r.alsoPerGame) v.push_back(KeyClass::PerGame);
     return v;

@@ -6,7 +6,7 @@ CI builds every installable package from one reusable workflow,
 | Caller | When | Result |
 |---|---|---|
 | `release.yml` | tag `v*`, push to `develop`, push to `release/**` | artifacts are attached next to the core assets (release / rolling `nightly` / rolling `prerelease`) and listed in `SHA256SUMS.txt` |
-| `app.yml` | pull requests | unsigned artifacts plus one sticky PR comment linking them |
+| `app.yml` | pull requests | artifacts plus one sticky PR comment linking them; signed and notarized like a release when the secrets exist (same-repo PRs), ad-hoc signed for fork PRs |
 | manual dispatch | on demand | artifacts only; the `sign` input exercises the signing path |
 
 ## Assets
@@ -23,7 +23,7 @@ CI builds every installable package from one reusable workflow,
 | `virtualjaguar_X.Y.Z_amd64.deb`, `virtualjaguar_X.Y.Z_arm64.deb` | installs to `/usr/lib/virtualjaguar`, symlink in `/usr/bin` |
 | `VirtualJaguar-X.Y.Z-linux-x86_64.flatpak` | single-file Flatpak bundle, app id `io.github.libretro.VirtualJaguar`; see Flatpak notes |
 
-The `.deb`'s internal `Version:` is Debian-legal (`3.9.0`, `3.9.0~rc1`, `3.9.0~nightly.<sha>`; the version is the core's); the
+The `.deb`'s internal `Version:` is Debian-legal (`3.9.1`, `3.9.1~rc1`, `3.9.1~nightly.<sha>`; the version is the core's); the
 file name keeps the contract name.
 
 ### The version guard
@@ -46,8 +46,8 @@ build tree had (`check-payload.sh`).
 
 ## Secrets the maintainer must add
 
-Nothing is signed until these exist; without them forks, PRs and the first runs still build, with a
-warning in the log. Repository secrets (Settings > Secrets and variables > Actions):
+Nothing is Developer ID signed until these exist; without them forks, PRs and the first runs still build
+(macOS ad-hoc signed), with a warning in the log. Repository secrets (Settings > Secrets and variables > Actions):
 
 macOS (Developer ID + notarization, existing Apple Developer account):
 
@@ -71,9 +71,34 @@ The SignPath steps are written to the action's documented interface but have **n
 adjust them against the artifact configuration SignPath gives you (they sign `virtualjaguar.exe` before
 packaging and the installer after).
 
-Signing runs only when the caller asks (`release.yml` does, PRs do not) and the secrets exist. PR builds
-are never notarized: a notarization round trip per push is slow and the PRs come from branches that
-should not get certificate access by default.
+Signing runs when the caller asks (`release.yml` and `app.yml` do; a manual dispatch needs the `sign`
+input) and the secrets exist. GitHub passes no secrets to a fork pull request, so those builds stay
+ad-hoc signed and the log warns.
+
+### Every macOS build is signed (#989)
+
+All the macOS files people download are signed with the Developer ID Application certificate (hardened
+runtime, secure timestamp) and notarized, by one composite action,
+[`.github/actions/macos-sign`](../../.github/actions/macos-sign/action.yml), which wraps
+[`macos/codesign.sh`](macos/codesign.sh). It imports the certificate into a temporary keychain that is
+always deleted again, signs, submits one zip per call to `notarytool` (API key auth), and staples bundles.
+
+| What | Where | Stapled |
+|---|---|---|
+| `Virtual Jaguar.app` in the macOS zip | `app-package.yml` (PRs, nightlies, tags, dispatch with `sign`) | yes |
+| `virtualjaguar` binary, artifact `virtualjaguar-macOS arm64` | `app.yml` | no |
+| `virtualjaguar_libretro-macos-{arm64,x86_64}.dylib` | `release.yml` (tags, nightly, prerelease) | no |
+| `cue2cdi-macos-universal` | `release.yml` | no |
+| `chdman`, `jagcd-chd-check` in `jagcd-tools-macos.zip` | `chdman-tools.yml` | no |
+
+A bare Mach-O file cannot hold a stapled ticket: it is notarized inside a zip and Gatekeeper looks the
+ticket up online the first time. iOS and tvOS dylibs are not signed here (a Developer ID does not apply
+to them; Provenance signs them when it embeds them). A notarization failure (an Apple outage, a timeout)
+fails the step on a tag and only warns anywhere else, so PR CI keeps the signed-but-unnotarized build.
+Without the secrets the action prints the warning and does nothing.
+
+The secrets reach a same-repo pull request's workflow run, so anyone with write access to the repository
+can have CI sign a file. Keep that in mind when granting write access.
 
 ## Signing locally
 
@@ -142,13 +167,27 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   goes in `Contents/Frameworks/`, one of the places the shader code probes. The dev target is
   deliberately not a `MACOSX_BUNDLE`: its POST_BUILD copies would land in `Contents/MacOS`.
 * **Universal.** Two single-architecture builds merged with `lipo` (`make-universal.sh`), because
-  `VJShaders.cmake` fetches the prebuilt librashader for one architecture per configure. A gate
-  (`check-universal.sh`) fails the build if any Mach-O lacks a slice, and checks every binary's
-  `minos` against the deployment target (11.0).
-  **Known gap:** the `x86_64-macos` archive of librashader v0.12.0 contains an arm64 dylib (verified with
-  `lipo`). `librashader.dylib` therefore ships arm64-only, with a warning; on an Intel Mac the app
-  reports the shader runtime as unavailable and runs without shaders. Fix: build librashader for
-  `x86_64-apple-darwin` in CI (Rust) and merge.
+  each configure is handed one single-architecture librashader (`-DVJ_LIBRASHADER_LIB`). A gate
+  (`check-universal.sh`) fails the build if any Mach-O, `librashader.dylib` included, lacks a slice, and checks every
+  binary's `minos` against the deployment target (11.0). Both dylibs are built from source in CI from the same pinned
+  tag, see [Shader runtime](#shader-runtime-librashader).
+* **OpenGL 4.1.** macOS stops at OpenGL 4.1 and has no `GL_ARB_arrays_of_arrays`. librashader 0.12 never
+  sets SPIRV-Cross's `flatten_multidimensional_arrays`, so a shader with a 2-D array (crt-geom's
+  `vec3 slotmask[3][4]`) compiles to GLSL that requires that extension and cannot build there. 15 bundled
+  presets do this: crt-geom, -deluxe, -tate; crt-hyllian, -ntsc, -ntsc-rainbow, -sinc-composite; crt-nobody,
+  crt-super-xbr, vt220, crt-fast-bilateral-super-xbr, img_mod, test-pattern-append/-prepend and
+  res-independent-scanlines. Where the context has neither GL 4.3 nor the extension, the preset list greys
+  them out ("needs OpenGL 4.3"), and a preset chosen anyway (config.ini, file dialog) gets that reason in
+  the on-screen message instead of the GL compiler's text. The list is `presetsNeedingArraysOfArrays()`
+  (`present_util.cpp`), pinned to the bundled slang-shaders commit; `shaders_bundled` and `shaders_gl`
+  check it. Real fix: librashader setting `flatten_multidimensional_arrays` when it generates GLSL below
+  4.30.
+  The chain asks librashader for the context's own GLSL version (4.10 here). It used to ask for 3.30, which
+  cost 11 presets GLSL 4.00 features the context has (lottesRVM, nnedi3 x5, mmpx-ADV, vectorscale x4).
+  Rendering all 498 bundled presets on an M4 Max (GL 4.1 Metal) at 4.10, 473 work. Besides the 15 above,
+  fsr and smaa+fsr need `packHalf2x16` (GLSL 4.20), and 8 fail for reasons that do not look macOS-specific
+  (not checked elsewhere): the six nedi bilateral-variant presets (unknown semantic `play`),
+  crt-black_crush-koko (preset parse error) and ntsc-blastem (varying type mismatch at link).
 * **Hardened runtime and entitlements.** Signed with `--options runtime`. Library validation (on with
   the hardened runtime) refuses any dylib not signed by Apple or by our team. The bundled
   `librashader.dylib` is re-signed with our identity, so it needs no exception. The shader code also
@@ -161,8 +200,55 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   `ditto -c -k --sequesterRsrc --keepParent` (the stapled ticket and signature travel inside the app). CI
   unpacks the finished zip and re-verifies the signature (and, when signed, the staple and Gatekeeper's
   verdict) on the unpacked app. The zip itself is never notarized separately; Apple's ticket is on the app.
-* **Unsigned builds** are ad-hoc signed (`codesign -s -`), which Apple Silicon requires; Gatekeeper
-  still refuses them until right-click > Open or `xattr -dr com.apple.quarantine`.
+* **Builds without the secrets** (fork pull requests, local builds) are ad-hoc signed (`codesign -s -`),
+  which Apple Silicon requires; Gatekeeper still refuses them until right-click > Open or
+  `xattr -dr com.apple.quarantine`.
+
+## Shader runtime (librashader)
+
+The app loads [librashader](https://github.com/SnowflakePowered/librashader) with `dlopen` (#834); every
+package ships it beside the executable (`Contents/Frameworks/librashader.dylib`, `usr/bin/librashader.so` in the
+AppImage, `/usr/lib/virtualjaguar/librashader.so` in the `.deb`, `librashader.dll` next to the exe), and
+`THIRD-PARTY-NOTICES.txt` carries its licence (MPL-2.0 OR GPL-3.0-only).
+
+| Package | Where the library comes from |
+|---|---|
+| macOS universal (arm64 + x86_64) | **built from source in CI**, both slices, then `lipo`-merged |
+| AppImage / `.deb`, x86_64 and aarch64 | **built from source in CI** on the packaging runner (Ubuntu 22.04) |
+| Windows x64 / ARM64 | upstream's prebuilt `librashader-v0.12.0` zip (SHA-256-pinned in `app/cmake/VJShaders.cmake`) |
+| Flatpak | see Flatpak notes |
+
+Why source: upstream's `x86_64-macos` v0.12.0 zip holds an **arm64** dylib (`lipo`-verified), so Intel Macs had no
+shader runtime, and upstream publishes no Linux binary. Building both macOS slices ourselves (instead of mixing
+upstream's arm64 with a self-built x86_64) keeps one version, one deployment target and one install name in the
+universal file.
+
+* **The recipe** is [`.github/workflows/librashader.yml`](../../.github/workflows/librashader.yml), called by
+  `app-package.yml` (job `librashader`, which the macOS and Linux jobs `need`). The pin is
+  [`librashader/pin.env`](librashader/pin.env): tag `librashader-v0.12.1`, its commit and the SHA-256 of the GitHub
+  archive for that commit, a pinned stable Rust, and the macOS deployment target. The build is
+  [`librashader/build-from-source.sh`](librashader/build-from-source.sh): fetch, verify the digest, then
+  `cargo xtask build --profile optimized --target <triple> -- --locked`. `VJShaders.cmake` reads the same tag for
+  the C headers, whose digests are pinned there (the 0.12.1 headers are byte-identical to 0.12.0's, ABI 2).
+* **Targets:** `x86_64-apple-darwin` (cross-built on the Apple-silicon runner), `aarch64-apple-darwin`,
+  `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (native, `ubuntu-22.04` / `ubuntu-22.04-arm`,
+  glibc 2.35 like the packages). macOS uses `MACOSX_DEPLOYMENT_TARGET=11.0` and the install name
+  `@rpath/librashader.dylib` (cargo's default would bake the runner's absolute path in).
+* **Cache and artifacts.** Each target is cached under `librashader-<commit>-<triple>-rust<ver>-mac<min>-v1`
+  (a cold build is ~10 minutes with LTO, a hit is seconds; bump `-v1` in the workflow to force a rebuild after a
+  recipe change) and uploaded as the artifact `librashader-<triple>` (library + `BUILD-INFO.txt`). These are
+  intermediates: `release.yml` leaves `librashader-*` out of the release assets.
+* **Checks.** In `librashader.yml`: the architecture (`lipo -archs` / ELF machine), `minos`, install name, the
+  highest `GLIBC` symbol version (must be <= 2.35), only C/C++-runtime `NEEDED` entries, and (same-architecture
+  runners) a load that reads the ABI version. In `app-package.yml`: `vj_shader_tests library` with
+  `VJ_REQUIRE_LIBRASHADER=1` (a missing runtime fails instead of skipping); the macOS bundle's universal dylib
+  is loaded by an arm64 process and, under Rosetta, an x86_64 one; for the AppImage and the `.deb`,
+  `linux/check-librashader.sh` checks the file, its CPU and dependencies, and runs `vj_shader_tests probe` from the
+  package's own folder, i.e. the app's real lookup (beside the executable, `VJ_LIBRASHADER` unset).
+* **Bumping:** change `LIBRASHADER_TAG`, `LIBRASHADER_COMMIT` and `LIBRASHADER_SHA256` together (and re-pin the header
+  digests in `VJShaders.cmake` if `include/` changed; its comment says how), update `THIRD-PARTY-NOTICES.txt`.
+* **Without the bundled file** the Shader section of the app says why (not bundled / failed to load: reason) and
+  links to the "Getting the shader runtime" section of [`app/README.md`](../README.md#getting-the-shader-runtime).
 
 ## Windows notes
 
@@ -191,13 +277,16 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   `/usr/lib/virtualjaguar` with a `/usr/bin` symlink (`SDL_GetBasePath()` resolves `/proc/self/exe`).
   `Depends` comes from `dpkg-shlibdeps`; the display and audio stacks SDL loads at run time are `Recommends`.
 * Built on Ubuntu 22.04 runners, the oldest available, for the lowest glibc floor.
+* `librashader.so` is built from source on the same runners (see Shader runtime above) and installed beside the
+  executable by `cmake --install`; it is not a linked dependency (no rpath needed, the app `dlopen`s it by
+  absolute path from `SDL_GetBasePath()`), so linuxdeploy and `dpkg-shlibdeps` leave it alone.
 
 ## Flatpak notes
 
 * **Manifest:** [`flatpak/io.github.libretro.VirtualJaguar.yml`](flatpak/io.github.libretro.VirtualJaguar.yml),
   runtime `org.freedesktop.Platform` 25.08. It builds the checked-out tree (`type: dir`); `manifests/render.sh`
   derives the Flathub form (git tag + commit) from the same file, so there is one manifest.
-* **Offline.** Flatpak builds have no network. SDL3, Dear ImGui, FreeType, rcheevos, the librashader headers, the
+* **Offline.** Flatpak builds have no network. SDL3, Dear ImGui, FreeType, rcheevos, the librashader headers and source archive (+ vendored crates), the
   slang-shaders archive, the two libretro dats and the 41 cheat files + licence are `archive`/`file` sources with
   SHA-256, wired in through the app's offline knobs (`FETCHCONTENT_SOURCE_DIR_SDL3|IMGUI|FREETYPE|RCHEEVOS`,
   `VJ_LIBRASHADER_INCLUDE_DIR`, `VJ_SLANG_SHADERS_ARCHIVE`, `VJ_APP_LIBRETRO_DB_DIR`, `VJ_APP_CHEATS_SOURCE_DIR`),
@@ -205,9 +294,30 @@ after each rebuild of an unsigned binary. It does not use hardened runtime and n
   from `app/cmake/VJCheatManifest.cmake`: when that file's pinned commit changes, regenerate the manifest's cheat
   entries (same names, URLs and hashes). A `post-install` step fails the build if the data directories or libcurl
   are missing.
-* **No shaders yet.** Upstream publishes no Linux librashader binary and building it needs a vendored Rust build
-  (`org.freedesktop.Sdk.Extension.rust-stable` + cargo sources). The Flatpak ships the shader presets and the app
-  reports the runtime as unavailable. Adding a `librashader` module is the follow-up.
+* **Shaders (librashader, #951).** Upstream publishes no Linux binary and the sandbox cannot load a host library,
+  so the manifest's `librashader` module builds the C API from the pinned release tag
+  (`librashader-v0.12.1` archive, SHA-256) with `org.freedesktop.Sdk.Extension.rust-stable` (Rust 1.98 on the 25.08
+  branch; librashader needs >= 1.88), offline: `build-options` puts `/usr/lib/sdk/rust-stable/bin` on `PATH`, sets
+  `CARGO_HOME=/run/build/librashader/cargo` and `CARGO_NET_OFFLINE=true`, and every crate is a hash-pinned source
+  in [`flatpak/cargo-sources.json`](flatpak/cargo-sources.json) (which also carries the `cargo/config` that points
+  cargo at the vendored sources). Only the OpenGL runtime is built
+  (`--no-default-features --features runtime-opengl`, the one backend the app uses). The result is installed as
+  `/app/lib/librashader.so`, which the app finds through the sandbox's `LD_LIBRARY_PATH`, with the MPL-2.0 text in
+  `/app/share/licenses/io.github.libretro.VirtualJaguar/`. The slang presets ship beside the executable as before.
+  **Bumping librashader** (also keep the header pins and `VJ_LIBRASHADER_TAG` in `cmake/VJShaders.cmake` in step
+  when the C ABI changes):
+  1. change the tag in the module's archive `url`, and its `sha256` (`curl -L <url> | shasum -a 256`);
+  2. regenerate the crate list from that tag's lock file with
+     [flatpak-cargo-generator](https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo)
+     (`pip install aiohttp tomlkit PyYAML`; last run with `cargo/flatpak-cargo-generator.py` at
+     flatpak-builder-tools `41c20aa`):
+     ```
+     curl -L https://github.com/SnowflakePowered/librashader/archive/refs/tags/librashader-vX.Y.Z.tar.gz | tar xz
+     python3 flatpak-cargo-generator.py librashader-librashader-vX.Y.Z/Cargo.lock -o app/packaging/flatpak/cargo-sources.json
+     ```
+  3. commit both together. The file lists every crate in the workspace lock (a vendored build must be able to
+     resolve all of them, including the Windows/Metal/Vulkan backends it does not compile); that is why it is
+     large. `manifests/render.sh` copies it next to the rendered Flathub manifest.
 * **Permissions:** network (achievements, box art, netplay), Wayland + X11 fallback, PulseAudio, `--device=all` (gamepads),
   IPC, and `--filesystem=home:ro`. The last is needed because the library scans folders and a `.cue` needs its
   sibling `.bin` tracks, neither of which the file-chooser portal grants; it is read-only and limited to the home

@@ -187,7 +187,7 @@ bool App::applyTray() {
     return platform::setTray(trayIcon, window_);
 }
 
-// ---- Settings > Storage > Desktop ------------------------------------------------------------------------------
+// ---- Settings > Interface > Desktop ------------------------------------------------------------------------------
 void drawDesktopSettings(App& app) {
     ImGui::SeparatorText("Desktop");
 #if defined(__APPLE__)

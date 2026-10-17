@@ -7,6 +7,17 @@ name: CHD tools
 on:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64:
+        required: false
+      APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
+      APPLE_NOTARY_KEY_P8_BASE64:
+        required: false
 
 permissions:
   contents: read
@@ -53,13 +64,14 @@ jobs:
         run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
 
       # MAME's genie pass generates the full OSD project set even with
-      # EMULATOR=0 TOOLS=1, so it still probes for SDL. The hosted runner
-      # images no longer ship it. (The 2026-08-18 nightly break was this
-      # step failing for the Qt reason below; the nightly publish was gated
-      # on chdman, so three days of good 16-platform core builds were never
-      # released. Nightly is ungated from this workflow now -- see
-      # release.yml -- but chdman itself still has to build for tagged
-      # releases to carry the tools zips.)
+      # EMULATOR=0 TOOLS=1, so with the SDL OSD (Linux) it still probes for
+      # SDL. The hosted runner images no longer ship it. macOS uses MAME's
+      # native Cocoa OSD instead and needs no SDL at all (#993). (The
+      # 2026-08-18 nightly break was this step failing for the Qt reason
+      # below; the nightly publish was gated on chdman, so three days of
+      # good 16-platform core builds were never released. Nightly is ungated
+      # from this workflow now -- see release.yml -- but chdman itself still
+      # has to build for tagged releases to carry the tools zips.)
       - name: Install chdman build dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -68,9 +80,14 @@ jobs:
             libsdl2-dev libsdl2-ttf-dev libasound2-dev \
             libfontconfig1-dev libpulse-dev ccache
 
+      # Nothing on the macOS path uses SDL. Uninstall whatever the runner
+      # image carries so a stray probe or link cannot quietly succeed, and
+      # so the launch check after signing runs without Homebrew's sdl3.
       - name: Install chdman build dependencies (macOS)
         if: matrix.os == 'macos-latest'
-        run: brew install sdl2 sdl2_ttf ccache || true
+        run: |
+          brew install ccache
+          brew uninstall --ignore-dependencies sdl3 sdl2 sdl2_ttf 2>/dev/null || true
 
       - name: Read chdman pin
         id: pin
@@ -90,9 +107,11 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ matrix.os }}-chdman-ccache-${{ steps.pin.outputs.sha }}
+          # macOS: own prefix since #993 (two arches, native OSD); the old
+          # arm64-only SDL cache matches nothing it compiles now.
+          key: ${{ matrix.os }}-chdman-ccache-${{ matrix.os == 'macos-latest' && 'universal-' || '' }}${{ steps.pin.outputs.sha }}
           restore-keys: |
-            ${{ matrix.os }}-chdman-ccache-
+            ${{ matrix.os }}-chdman-ccache-${{ matrix.os == 'macos-latest' && 'universal-' || '' }}
 
       - name: Clone MAME at pin
         run: |
@@ -107,6 +126,7 @@ jobs:
       # Object Compiler (moc) wasn't found!" before a single tool compiles.
       # chdman has no Qt dependency -- only the (excluded) debugger does.
       - name: Build chdman
+        if: matrix.os != 'macos-latest'
         working-directory: mame
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -117,9 +137,57 @@ jobs:
             USE_QTDEBUG=0 CC="ccache gcc" CXX="ccache g++"
           ccache -s || true
 
+      # macOS (#993). The default macOS OSD is sdl3, and under it every tool
+      # links Homebrew's libSDL3 by absolute path although chdman calls none
+      # of it, so the shipped chdman would not launch without `brew install
+      # sdl3`. OSD=mac is MAME's native Cocoa OSD: ocore_mac is POSIX file
+      # I/O plus system frameworks, no SDL. Only the chdman project is built
+      # (straight from genie's Makefile; the top-level makefile has no
+      # per-tool target), once per architecture in its own BUILDDIR -- the
+      # obj dir is keyed by config (x64/Release), not by arch, so a shared
+      # one would hand arm64 objects to the x86_64 link -- then lipo'd.
+      # PLATFORM=x86 makes genie take its "x64, not arm64" config
+      # (-m64 -DHAVE_IMMINTRIN_H=1); ARCHOPTS reaches compile and link.
+      # MACOSX_DEPLOYMENT_TARGET: MAME sets none, so the binary inherited
+      # the runner's macOS (minos 26.0); 11.0 is the app's minimum.
+      - name: Build chdman (macOS universal)
+        if: matrix.os == 'macos-latest'
+        working-directory: mame
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 600M
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/chdman-macos"
+          mkdir -p "$out"
+          for arch in arm64 x86_64; do
+            case "$arch" in arm64) plat=arm64 ;; x86_64) plat=x86 ;; esac
+            bdir="build-$arch"
+            vars=(OSD=mac BUILDDIR="$bdir" PLATFORM="$plat" ARCHOPTS="-arch $arch"
+                  TOOLS=1 EMULATOR=0 NOWERROR=1 PRECOMPILE=0 USE_QTDEBUG=0
+                  CC="ccache clang" CXX="ccache clang++")
+            make REGENIE=1 "${vars[@]}" generate "$bdir/projects/mac/mame/gmake-osx-clang/Makefile"
+            make -C "$bdir/projects/mac/mame/gmake-osx-clang" config=release64 \
+              -j"$(sysctl -n hw.ncpu)" CC="ccache clang" CXX="ccache clang++" chdman
+            # chdman's targetdir is the MAME root for both builds.
+            command mv -f chdman "$out/chdman-$arch"
+            got=$(lipo -archs "$out/chdman-$arch")
+            [ "$got" = "$arch" ] || { echo "::error::chdman-$arch has slices '$got'"; exit 1; }
+          done
+          lipo -create -output "$out/chdman" "$out/chdman-arm64" "$out/chdman-x86_64"
+          lipo -info "$out/chdman"
+          ccache -s || true
+
       - name: Build jagcd-chd-check
         run: |
-          gcc -O2 -std=c99 \
+          # macOS: universal, same deployment target as chdman (#993).
+          arch_flags=""
+          if [ "$RUNNER_OS" = macOS ]; then
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+            arch_flags="-arch arm64 -arch x86_64"
+          fi
+          gcc -O2 -std=c99 $arch_flags \
             -I deps/libchdr/include \
             -I deps/libchdr/deps/lzma-25.01/include \
             -I deps/libchdr/deps/miniz-3.1.1 \
@@ -138,6 +206,8 @@ jobs:
           # rather than "| head -1": the step runs under pipefail, where
           # head closing the pipe early can SIGPIPE find into a 141 exit.
           CHDMAN=$(find mame -type f \( -name chdman -o -name chdman.exe \) -print -quit)
+          # macOS: the lipo'd universal binary, not a find hit (#993).
+          [ "$RUNNER_OS" != macOS ] || CHDMAN=chdman-macos/chdman
           test -n "$CHDMAN"
           command cp -f "$CHDMAN" dist-jagcd/
           command cp -f tools/jagcd/jagcd-to-chd tools/jagcd/jagcd-to-chd.cmd \
@@ -145,7 +215,73 @@ jobs:
             docs/jagcd-chd.md dist-jagcd/
           chmod +x dist-jagcd/jagcd-to-chd dist-jagcd/jagcd-chd-check \
             dist-jagcd/chdman dist-jagcd/chdman.exe 2>/dev/null || true
-          cd dist-jagcd && zip -r ../${{ matrix.artifact }}.zip .
+
+      # macOS: the two compiled tools get a Developer ID signature + notarization before they are
+      # zipped (#989).  jagcd-to-chd is a shell script and needs neither.  Without the APPLE_*
+      # secrets the action only warns.
+      - name: Developer ID sign and notarize (macOS tools)
+        id: sign
+        if: matrix.os == 'macos-latest'
+        uses: ./.github/actions/macos-sign
+        with:
+          paths: |
+            dist-jagcd/chdman
+            dist-jagcd/jagcd-chd-check
+          notarize: 'true'
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+
+      # #993 gate, on the signed files: both slices, nothing linked outside
+      # the OS, macOS 11 minimum, and chdman starts with no Homebrew SDL on
+      # the runner. chdman's help exits 1, so match its banner instead.
+      - name: Check macOS tools (universal, OS-only links, launch without SDL)
+        if: matrix.os == 'macos-latest'
+        env:
+          SIGNED: ${{ steps.sign.outputs.signed }}
+          NOTARIZED: ${{ steps.sign.outputs.notarized }}
+        run: |
+          set -euo pipefail
+          echo "signed=$SIGNED notarized=$NOTARIZED"
+          if [ -e "$(brew --prefix)/opt/sdl3" ]; then
+            echo "::error::Homebrew sdl3 is installed; the launch check would prove nothing"; exit 1
+          fi
+          for f in dist-jagcd/chdman dist-jagcd/jagcd-chd-check; do
+            archs=$(lipo -archs "$f")
+            echo "$f: $archs"
+            for a in arm64 x86_64; do
+              case " $archs " in *" $a "*) ;; *) echo "::error::$f has no $a slice"; exit 1 ;; esac
+            done
+            otool -L -arch all "$f"
+            bad=$(otool -L -arch all "$f" | awk '/^\t/ {print $1}' | grep -v -E '^(/usr/lib/|/System/)' || true)
+            [ -z "$bad" ] || { echo "::error::$f links outside the OS: $bad"; exit 1; }
+            minos=$(otool -l -arch all "$f" | awk '$1 == "minos" {print $2}' | sort -u)
+            echo "minos: $minos"
+            [ "$minos" = 11.0 ] || { echo "::error::$f minos is '$minos', expected 11.0"; exit 1; }
+            codesign -dvv "$f" 2>&1 | grep -E '^(Format|Authority|Timestamp|TeamIdentifier|Runtime)' || true
+          done
+          run_chdman() {
+            out=$("$@" dist-jagcd/chdman help 2>&1) || true
+            printf '%s\n' "$out" | head -n 4
+            if printf '%s' "$out" | grep -q 'Library not loaded'; then
+              echo "::error::chdman failed to load a library"; exit 1
+            fi
+            printf '%s' "$out" | grep -q 'chdman - MAME Compressed Hunks of Data' \
+              || { echo "::error::chdman did not start"; exit 1; }
+          }
+          run_chdman
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            run_chdman arch -x86_64
+          else
+            echo "::notice::Rosetta unavailable; x86_64 slice checked by otool only"
+          fi
+          out=$(dist-jagcd/jagcd-chd-check 2>&1) || true
+          printf '%s' "$out" | grep -q '^usage:' || { echo "::error::jagcd-chd-check did not start: $out"; exit 1; }
+
+      - name: Zip
+        run: cd dist-jagcd && zip -r ../${{ matrix.artifact }}.zip .
 
       - uses: actions/upload-artifact@v7
         with:

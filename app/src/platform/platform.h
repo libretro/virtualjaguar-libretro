@@ -40,7 +40,7 @@ bool nativeMenuActive();
 // Re-renders the native menus and the tray when `s` differs from the last call (cheap otherwise).
 void updateState(const MenuState& s);
 
-// ---- tray / menu-bar extra (off by default; Settings > Storage) ------------------------------------
+// ---- tray / menu-bar extra (off by default; Settings > Interface) ------------------------------------
 // Returns false (and leaves it off) when the desktop has no tray to show it in.
 bool setTray(bool on, SDL_Window* w);
 bool trayActive();

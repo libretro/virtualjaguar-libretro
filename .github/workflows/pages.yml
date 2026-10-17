@@ -15,12 +15,22 @@ on:
       - 'site/**'
       - 'scripts/build_site.py'
       - 'scripts/check_site.py'
+      - 'scripts/check_downloads.py'
+      - 'scripts/testdata/**'
       - 'docs/cd-boot-matrix.md'
       - 'docs/cart-boot-matrix.md'
+      # The home page's release log is generated from these.
+      - 'docs/RELEASE_NOTES_v*.md'
       # CORE_BASE_VERSION feeds the JSON-LD softwareVersion, so a version
       # bump must redeploy or the structured data goes stale.
       - 'Makefile'
       - '.github/workflows/pages.yml'
+  # The Download page links release assets by name, and the app packages
+  # carry the version in theirs, so a new release must redeploy.  Releases
+  # are published on libretro/virtualjaguar-libretro; the schedule catches
+  # them wherever this workflow runs (the Pages fork included).
+  schedule:
+    - cron: '41 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -44,13 +54,27 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # Direct download links: the generator reads releases/latest and the
+      # nightly from the upstream repo by name (not github.repository, so it
+      # also works from the Pages fork).  A failed fetch fails the run, so a
+      # transient API error keeps the previous deployment.
       - name: Build site
-        run: python3 scripts/build_site.py
+        run: python3 scripts/build_site.py --releases-from-github
+        env:
+          GH_TOKEN: ${{ github.token }}
       # build_site.py fails on bad input; this fails on bad output (missing
       # or mismatched SEO tags, a second <h1>, a dead local link, malformed
       # JSON-LD or sitemap).  Nothing is deployed if it trips.
       - name: Check generated site
         run: python3 scripts/check_site.py _site
+      # The Download page again from the committed offline fixture (latest,
+      # nightly and older releases), into a scratch dir: every asset must be
+      # listed once and every link must be a real asset of its release.
+      - name: Check Download page against the release fixture
+        run: |
+          python3 scripts/build_site.py --out "$RUNNER_TEMP/site-fixture" --releases scripts/testdata/releases.json
+          python3 scripts/check_site.py "$RUNNER_TEMP/site-fixture"
+          python3 scripts/check_downloads.py "$RUNNER_TEMP/site-fixture" scripts/testdata/releases.json
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

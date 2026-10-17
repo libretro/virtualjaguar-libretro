@@ -66,7 +66,7 @@ struct FakeMachine {
 };
 
 static void testNamesAndConfig(const fs::path& tmp) {
-    for (Family f : {Family::Retro, Family::System, Family::Mono, Family::Custom}) {
+    for (Family f : {Family::Retro, Family::System, Family::Mono, Family::Custom, Family::Installed}) {
         Family back = Family::Retro;
         CHECK(parseFamily(familyKey(f), back) && back == f);
         CHECK(std::strlen(familyLabel(f)) > 3);
@@ -169,6 +169,118 @@ static bool hasPath(const std::vector<FontFile>& v, const std::string& p) {
     for (const FontFile& f : v)
         if (f.path == p) return true;
     return false;
+}
+
+// The font list's state (#935): which OS font, the debugger font, favorites and recents.
+static void testChoices(const fs::path& tmp) {
+    // choices <-> settings
+    Settings s;
+    CHECK(choiceId(s) == "@retro");
+    CHECK(applyChoice(s, "@system") && s.family == Family::System && choiceId(s) == "@system");
+    CHECK(applyChoice(s, "@mono") && s.family == Family::Mono);
+    CHECK(applyChoice(s, "@custom:My Font.ttf") && s.family == Family::Custom && s.custom == "My Font.ttf" &&
+          choiceId(s) == "@custom:My Font.ttf");
+    CHECK(applyChoice(s, "/Library/Fonts/Georgia.ttf|2") && s.family == Family::Installed &&
+          s.installed == "/Library/Fonts/Georgia.ttf|2" && choiceId(s) == s.installed);
+    Settings before = s;
+    CHECK(!applyChoice(s, "nonsense") && !applyChoice(s, "@custom:") && s == before);
+
+    // favorites: newest first, no repeats, removable
+    Settings f;
+    setFavorite(f, "/a.ttf|0", true);
+    setFavorite(f, "/b.ttf|0", true);
+    setFavorite(f, "/a.ttf|0", true);
+    CHECK(f.favorites.size() == 2 && f.favorites[0] == "/b.ttf|0" && isFavorite(f, "/a.ttf|0"));
+    setFavorite(f, "/b.ttf|0", false);
+    CHECK(f.favorites.size() == 1 && !isFavorite(f, "/b.ttf|0"));
+
+    // recents: most recent first, deduped, capped, built-ins not recorded
+    Settings r;
+    for (int i = 0; i < 12; i++) noteRecent(r, "/f" + std::to_string(i) + ".ttf|0");
+    CHECK(r.recents.size() == kMaxRecents && r.recents[0] == "/f11.ttf|0" && r.recents.back() == "/f4.ttf|0");
+    noteRecent(r, "/f6.ttf|0");
+    CHECK(r.recents.size() == kMaxRecents && r.recents[0] == "/f6.ttf|0");
+    int sixes = 0;
+    for (const std::string& e : r.recents) sixes += e == "/f6.ttf|0";
+    CHECK(sixes == 1);
+    noteRecent(r, "@retro");
+    noteRecent(r, "@system");
+    noteRecent(r, "");
+    CHECK(r.recents[0] == "/f6.ttf|0");
+    forgetChoice(r, "/f6.ttf|0");
+    CHECK(r.recents[0] == "/f11.ttf|0");
+
+    // config round trip, including a path with odd characters, an empty list, and old files without the new keys
+    const fs::path cfgPath = tmp / "choices.ini";
+    {
+        Config c;
+        c.setPath(cfgPath.string());
+        Settings w;
+        w.family = Family::Installed;
+        w.installed = "/Fonts/Weird = Name;1.ttc|3";
+        w.debugFont = "/Fonts/Mono.ttf|0";
+        w.favorites = {"/Fonts/A B.ttf|0", "@retro", w.installed};
+        w.recents = {"/x.ttf|0", "/y.ttf|1"};
+        store(c, w);
+        CHECK(c.save());
+    }
+    {
+        Config c;
+        c.load(cfgPath.string());
+        const Settings l = load(c);
+        CHECK(l.family == Family::Installed && l.installed == "/Fonts/Weird = Name;1.ttc|3");
+        CHECK(l.debugFont == "/Fonts/Mono.ttf|0");
+        CHECK(l.favorites.size() == 3 && l.favorites[0] == "/Fonts/A B.ttf|0" && l.favorites[2] == l.installed);
+        CHECK(l.recents.size() == 2 && l.recents[1] == "/y.ttf|1");
+        // shrinking the lists leaves no stale tail
+        Settings w = l;
+        w.favorites.resize(1);
+        w.recents.clear();
+        store(c, w);
+        const Settings l2 = load(c);
+        CHECK(l2.favorites.size() == 1 && l2.recents.empty());
+        CHECK(c.get("ui.font.fav.1", "gone") == "gone" && c.get("ui.font.recent.0", "gone") == "gone");
+        erase(c);
+        const Settings l3 = load(c);
+        CHECK(l3 == Settings() && !c.has("ui.font.os") && !c.has("ui.font.debug") && !c.has("ui.font.fav.0"));
+    }
+    {   // a config written by an older version: no new keys, same result as before
+        Config c;
+        c.set("ui.font.family", "system");
+        c.set("ui.font.size", "15");
+        const Settings l = load(c);
+        CHECK(l.family == Family::System && l.size == 15.0f && l.installed.empty() && l.favorites.empty());
+    }
+
+    // sanitising: Installed with no usable id is Retro; junk debug ids and over-long lists are tidied
+    Settings bad;
+    bad.family = Family::Installed;
+    CHECK(sanitized(bad).family == Family::Retro);
+    bad.installed = "not an id";
+    CHECK(sanitized(bad).family == Family::Retro && sanitized(bad).installed.empty());
+    bad.debugFont = "junk";
+    CHECK(sanitized(bad).debugFont.empty());
+    bad.debugFont = "@retro";
+    CHECK(sanitized(bad).debugFont == "@retro");
+    for (int i = 0; i < 300; i++) bad.favorites.push_back("/f" + std::to_string(i % 250) + ".ttf|0");
+    bad.favorites.push_back("");
+    CHECK(sanitized(bad).favorites.size() == kMaxFavorites);
+
+    // the dev spec
+    Settings d;
+    CHECK(applySpec("installed:/Fonts/X.ttf", d) && d.family == Family::Installed && d.installed == "/Fonts/X.ttf|0");
+    CHECK(applySpec("installed:/Fonts/Z.ttc|2", d) && d.installed == "/Fonts/Z.ttc|2");
+
+    // a font that can draw its own name / cannot
+    const FontFile ui = resolve(Role::Ui);
+    if (!ui.empty()) {
+        std::vector<unsigned char> data;
+        if (readFile(ui.path, data)) {
+            CHECK(dataCoversText(data.data(), data.size(), ui.index, "Helvetica Neue Bold 123"));
+            CHECK(!dataCoversText(data.data(), data.size(), ui.index, "\xF0\x9F\x99\x82 \xF0\x9F\x98\x80\xF0\x9F\x98\x80"));
+        }
+    }
+    CHECK(!dataCoversText(nullptr, 0, 0, "A"));
 }
 
 static void testResolveMac() {
@@ -439,6 +551,7 @@ int main(int argc, char** argv) {
     fs::create_directories(tmp);
 
     testNamesAndConfig(tmp);
+    testChoices(tmp);
     testResolveMac();
     testResolveWindows();
     testResolveLinux();

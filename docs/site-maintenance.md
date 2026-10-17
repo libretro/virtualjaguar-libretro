@@ -34,9 +34,24 @@ robots -- derives from that single string, so they cannot drift apart.
   - `site/style.css` — the one stylesheet (system fonts, light/dark via
     `prefers-color-scheme`, no external assets of any kind).
   - `site/assets/` — images, copied verbatim (the true-color A/B screenshots
-    live here). `assets/truecolor_ab_cybermorph.png` is the default social
-    share image; its `og:image:width`/`height` are read from the PNG's own
-    IHDR at build time, so they can't drift.
+    live here). `assets/share/home.png` is the default social share card and
+    `assets/share/app.png` is the app page's (`SHARE_DEFAULT` /
+    `SHARE_IMAGES` in `build_site.py`); their `og:image:width`/`height` are
+    read from each PNG's own IHDR at build time, so they can't drift.
+    `assets/icons/` holds the favicon set; `favicon.ico` is also copied to
+    the output root, where browsers request it unprompted.
+- **Share cards and favicons**: `scripts/make_share_cards.py` composes both
+  1200x630 cards from the game captures in `site/assets/home/` and the app
+  captures `site/assets/app_*.png`, and renders the favicon set
+  (`favicon.svg`, `favicon.ico`, `icon-192/512.png`, an opaque
+  `apple-touch-icon.png`) from the app icon
+  `app/packaging/icons/virtualjaguar.svg`. Its outputs are committed; the
+  build only copies them. It needs Pillow, `rsvg-convert`
+  (`brew install librsvg`) and the Impact font (macOS ships it; elsewhere
+  pass `--display-font` / `--text-font`), none of which the site build
+  needs. Rerun it after changing the app icon or any capture it lists
+  (`HOME_SHOTS` / `APP_*` at the top), then commit what it writes. It
+  refuses to write a card that is not exactly 1200x630 or is 1 MB or more.
 - **Generator**: `scripts/build_site.py` — python3 **stdlib only** (no pip).
   It renders everything into `_site/` (gitignored).
 - **Output check**: `scripts/check_site.py _site` — also stdlib only. The
@@ -63,6 +78,7 @@ robots -- derives from that single string, so they cannot drift apart.
 | `{{DOCS_COMPAT_URL}}` | libretro's community Jaguar compatibility list |
 | `{{COMPAT_TABLE}}`, `{{COMPAT_BUILD_IDS}}`, `{{COMPAT_N_TITLES}}`, `{{COMPAT_N_HLE_GOOD}}`, `{{COMPAT_N_BIOS_GOOD}}` | parsed from `docs/cd-boot-matrix.md` |
 | `{{CART_TABLE}}`, `{{CART_BUILD_IDS}}`, `{{CART_N_TITLES}}`, `{{CART_N_HLE_GOOD}}`, `{{CART_N_BIOS_GOOD}}` | parsed from `docs/cart-boot-matrix.md` |
+| `{{RELEASE_LOG}}` | the home page's release log, generated from every `docs/RELEASE_NOTES_v*.md` (v3 and later): newest first, five rows visible, the rest folded. A row's summary is the notes file's opening paragraph (the bold tagline under the H1), so write that paragraph for readers and a new release shows up on the site with no page edit. |
 | `{{CART_N_HLE_RUN}}`, `{{CART_N_BIOS_RUN}}` | "N of M" cart rows whose stage is `GAME_CODE`, regardless of the headless video verdict |
 
 The home-page hero is `assets/hero_mosaic.webp`: four frames rendered by the
@@ -90,7 +106,11 @@ tags into a page fragment** — that is how tags drift apart page to page.
   handles the header and nav; `check_site.py` fails the build if any `href` in
   the output is `index.html`.
 - Open Graph + Twitter (`summary_large_image`) tags, with an absolute
-  `og:image` pointing at the true-color A/B composite.
+  per-page `og:image` (the home card by default, the app card on
+  `app.html`) and its own alt text; the home page's JSON-LD `image` is the
+  same card.
+- Favicon links on every page: `favicon.ico`, the SVG, the 192/512 PNGs and
+  `apple-touch-icon`.
 - JSON-LD: `SoftwareApplication` on the home page (version pulled from the
   `Makefile`, GPL-3.0, `isAccessibleForFree`, the platform list that
   `release.yml` actually builds) and `BreadcrumbList` on each subpage. Emitted
@@ -150,7 +170,8 @@ tags into a page fragment** — that is how tags drift apart page to page.
 one `<h1>`, `lang="en"`, descriptive `alt` on every image, every local
 `href`/`src` resolving, no leftover `{{PLACEHOLDER}}`, canonical == `og:url`
 == sitemap `<loc>`, the full Open Graph / Twitter set with an absolute image
-that actually exists, JSON-LD that parses with the expected `@type` and no
+that actually exists (twitter:image == og:image, the width/height tags match
+the PNG, under 1 MB), the icon and apple-touch-icon links, JSON-LD that parses with the expected `@type` and no
 fabricated rating data, distinct titles and descriptions, a well-formed
 sitemap listing exactly the generated pages, and no tracker or external-asset
 reference, plus the zero-em-dash copy standard. Add a check there when you add

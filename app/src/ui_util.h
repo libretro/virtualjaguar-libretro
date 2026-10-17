@@ -37,7 +37,7 @@ inline float em(float n) { return ImGui::GetFontSize() * n; }
 
 inline ImVec2 workSize() { return ImGui::GetMainViewport()->WorkSize; }
 
-// Extra OS windows (Settings > Storage > Desktop > "Let windows move outside the main window"): on, ImGui coordinates
+// Extra OS windows (Settings > Interface > Desktop > "Let windows move outside the main window"): on, ImGui coordinates
 // are the screen's and a window may live anywhere on any monitor, so the main window is not the limit any more.
 inline bool outsideWindowsOn() { return (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0; }
 

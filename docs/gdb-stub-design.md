@@ -99,12 +99,27 @@ GDB threads map to processors:
 | 2 | GPU RISC (TOM) | R0-R31, PC, FLAGS, plus the memory-mapped control registers |
 | 3 | DSP RISC (JERRY) | R0-R31, PC, FLAGS, plus its control registers |
 
-`qfThreadInfo` / `qsThreadInfo` enumerate them; `Hg` / `Hc` select one;
-stop replies (`T05thread:N;`) name the thread that halted.
+`Hg` / `Hc` select one. **`qfThreadInfo` enumerates only thread 1** (issue #936): gdb reads exactly one
+target description per connection and applies it to every thread, so offering
+the GPU/DSP (a 34-register layout) next to the 68K (18 registers) made
+`info threads` fail with "Remote 'g' packet reply is too long". Hg2/Hg3 and the
+RISC descriptions remain for raw RSP clients; stock gdb reaches the RISCs
+through `monitor regs|disasm|halt gpu|dsp`. Stop replies are therefore always `T05thread:1;`: a GPU/DSP halt is
+reported as a stop of thread 1 (the 68K is frozen with the rest of the
+machine), preceded by an `O` console line ("GPU halted at $F03010 -- see
+monitor regs gpu"). A raw client that used `Hg2` + `Z0` and relied on
+`thread:2` in the stop reply now learns which core halted only from that `O`
+line (behaviour change; no in-tree client depended on it).
 
-Thread 1 is served with no target description at all, so GDB applies its own
-`m68k` architecture: full disassembly and backtraces come free. **Source-
-level debugging with DWARF does not** — see Open Question 2, answered during
+Thread 1 is served the engine's built-in m68k description (`GDBTarget68KXML`
+in `gdbstub.c`): `<architecture>m68k</architecture>` and the
+`org.gnu.gdb.m68k.core` registers in exactly the `g` layout (`d0-d7`,
+`a0-a5`, `fp`, `sp`, `ps`, `pc`), no FP feature. This replaced "no description,
+GDB applies its own m68k", which cannot work: the stub advertises
+`qXfer:features:read+`, so an empty answer to `target.xml` makes stock gdb abort
+("conflicting enabled responses"). A description cannot declare byte order, so
+`set endian big` is still the user's job. **Source-
+level debugging with DWARF does not** come for free — see Open Question 2, answered during
 Phase 1 implementation: `rln` emits classic mc68k COFF, not ELF/DWARF, and its
 one debug-info flag (`-g`) produced byte-identical output to a build without
 it on a real test case. The honest claim is symbol-level (global symbol
@@ -112,9 +127,9 @@ addresses via `rln -m`'s load map), not source-level.
 
 Threads 2 and 3 are served a custom description via `qXfer:features:read`,
 defining an `org.atari.jaguar.risc` feature with the 32 general registers and
-the flags. GDB will display and modify them by name and set breakpoints on
-them. It will **not** disassemble them — no GDB backend for this ISA exists.
-That gap is filled by `monitor` commands rather than pretended away.
+the flags (raw clients only, see above). GDB cannot disassemble them — no GDB
+backend for this ISA exists. That gap is filled by `monitor` commands rather
+than pretended away.
 
 ### `monitor` commands
 
@@ -454,6 +469,16 @@ Five layers, in increasing cost:
    blocked on an ack that never came (observed with lldb, then this repo's own
    `gdb_attach_probe.py`, against one running core).
 
+   Issue #936 (stock-gdb compatibility) added three layers. The engine unit
+   tests in `test_gdbstub_proto` (part of `make test`) pin the 68K
+   `target.xml` (m68k architecture, 18 registers in `g` order, no RSP special
+   characters), the 68K-only thread roster, `D`/`vKill`/`k` and the `O`-packet
+   monitor streaming. `test/tools/gdb_stock_compat_probe.py` checks the same
+   against the live core (target.xml for the real ops, `Z2`, `monitor trace
+   1024` complete, detach/kill leave the emulator running and the listener
+   open). `test/tools/gdb_stock_gdb_check.sh` drives a real m68k-capable gdb
+   end to end with no workaround settings (skips when none is installed).
+
 ## Out of scope
 
 - **Tracepoints** (`QTDP` and the rest of GDB's tracepoint machinery).
@@ -601,13 +626,21 @@ from how this document originally described them:
   `test/tools/gpu_disasm_dump.c` (offline, dlsym-based) — the latter was
   refactored to drop its own inline copy of the mnemonic table and operand
   decode logic in favour of the shared one.
-- **Multi-architecture GDB sessions (native m68k thread 1 + custom-
-  description threads 2/3 in one inferior) are implemented to the RSP
-  specification and covered by this repo's own scripted test client, but
-  never verified against a real `gdb` binary** — consistent with Open
-  Question 1's answer (no `m68k-elf-gdb` ships anywhere in this repo's
-  toolchain). Documented as an explicit caveat in the user guide rather
-  than claimed as verified.
+- **Multi-architecture GDB sessions (m68k thread 1 + custom-description
+  threads 2/3) do NOT work with a real gdb -- verified against gdb 18.1
+  (issue #936).** gdb reads one target description per connection and applies
+  it to every thread; the first `g` for thread 2 fails ("reply is too long
+  (expected 72 bytes, got 136 bytes)") and a GPU description is rejected
+  without an `<architecture>`. Resolution: only the 68K is enumerated and
+  described to gdb; the RISC cores are `monitor` targets (see "Targets"
+  above). Same issue: the 68K now gets a real m68k description (without it
+  `target remote` aborted), the watch gate in `gdbtarget.c` that duplicated
+  `ALPINE_FUNCTIONS` (never defined there) was removed so Z2/Z3/Z4 work, `D` /
+  `vKill` / `k` end a session without stopping the emulator, and long
+  `monitor` output streams as `O` packets (the old 512-byte buffer could also
+  be overrun by an unclamped `snprintf` accumulation in `monitor regs`).
+  None of this touches a per-instruction or per-access path: the watch sites
+  in `jaguar.c` and the `gdbArmed*` checks are unchanged.
 
 ## Sequencing
 

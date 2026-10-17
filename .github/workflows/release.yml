@@ -464,6 +464,30 @@ jobs:
               ;;
           esac
 
+      # ----------------------------------------------------------------
+      # macOS desktop cores and cue2cdi: Developer ID sign + notarize (#989).
+      # Runs after strip (it would invalidate the signature) and before the
+      # upload.  Bare Mach-O files cannot be stapled; they are notarized in
+      # a zip and Gatekeeper checks the ticket online.  iOS/tvOS dylibs are
+      # NOT signed here (Developer ID does not apply to them; Provenance
+      # signs them when it embeds them).  Without the APPLE_* secrets the
+      # action only warns.  Needs a macOS runner: macos-arm64 also carries
+      # the universal cue2cdi built above.
+      # ----------------------------------------------------------------
+      - name: Developer ID sign and notarize (macOS core${{ matrix.config.platform == 'macos-arm64' && ' + cue2cdi' || '' }})
+        if: ${{ matrix.config.platform == 'macos-arm64' || matrix.config.platform == 'macos-x86_64' }}
+        uses: ./.github/actions/macos-sign
+        with:
+          paths: |
+            dist/virtualjaguar_libretro-${{ matrix.config.platform }}.dylib
+            ${{ matrix.config.platform == 'macos-arm64' && 'dist/cue2cdi-macos-universal' || '' }}
+          notarize: 'true'
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          apple-notary-key-p8-base64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
@@ -556,6 +580,7 @@ jobs:
     name: jagcd tools (chdman)
     needs: [guard]
     uses: ./.github/workflows/chdman-tools.yml
+    secrets: inherit
 
   # ----------------------------------------------------------------
   # Standalone app packages (#839): macOS zip, Windows zip/setup,
@@ -614,8 +639,10 @@ jobs:
           set -e
           mkdir -p release
           # Flatten one level: each artifact directory contains the
-          # binary + matching -debug.tar.gz; copy them all into release/
-          find artifacts/ -mindepth 2 -type f -exec cp {} release/ \;
+          # binary + matching -debug.tar.gz; copy them all into release/.
+          # librashader-<triple> are intermediates of the app packages (the shader runtime built
+          # from source, librashader.yml): already inside the packages, not release assets.
+          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -exec cp {} release/ \;
           # Include the RetroArch core .info file so frontend maintainers
           # / users can drop it into RetroArch's info/ dir.  The same file
           # is what gets PR'd to libretro/libretro-super after the release.
@@ -760,7 +787,8 @@ jobs:
         run: |
           set -e
           mkdir -p release
-          find artifacts/ -mindepth 2 -type f -exec cp {} release/ \;
+          # (librashader-<triple> are intermediates of the app packages, not release assets.)
+          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -exec cp {} release/ \;
           # The .info file's display_version names the last TAGGED release, so
           # shipping it verbatim would label a nightly "v2.3.2".  Rewrite it to
           # the build's actual identity — this also makes it obvious that a
@@ -953,9 +981,10 @@ jobs:
               echo "\$env:VJ_WHAT='app'; \$env:VJ_CHANNEL='nightly'; irm ${RAW}/install.ps1 | iex"
               echo '```'
               echo
-              P="Nightly app builds are signed and notarized only once the release signing"
-              P="$P secrets are configured; until then macOS needs right-click > Open the first"
-              P="$P time and Windows SmartScreen may warn."
+              P="Nightly macOS builds (the app, the cores and the command-line tools) are Developer ID"
+              P="$P signed and notarized by Apple when the release signing secrets are configured;"
+              P="$P without them macOS needs right-click > Open the first time."
+              P="$P Windows binaries are not code-signed yet, so SmartScreen may warn."
               echo "$P"
               echo
               echo "---"
