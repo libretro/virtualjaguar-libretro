@@ -89,7 +89,7 @@ void testErrors() {
 
 void testProducers() {
     EmuCommands q;
-    const int kProducers = 4, kEach = 2000;
+    static constexpr int kProducers = 4, kEach = 2000;   // static: usable in the lambdas without a capture (MSVC)
     std::vector<std::pair<int, int>> got;   // (producer, sequence); appended by the drains on this thread
     std::atomic<int> finished{0};
     std::vector<std::thread> ps;

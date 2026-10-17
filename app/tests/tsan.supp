@@ -1,2 +1,6 @@
 # ThreadSanitizer suppressions for the emulation-thread tests (#967).  Empty on purpose: add an entry only for a race
 # inside a third-party library (SDL, ...), with the report and the reason, never for the app's own code.
+
+# libdbus (system library, not instrumented) takes two of its own mutexes in opposite orders in SDL_Init and SDL_Quit,
+# both on the main thread: a lock-order-inversion inside libdbus, reported on Linux CI for every threaded app run (#967).
+deadlock:libdbus-1.so
