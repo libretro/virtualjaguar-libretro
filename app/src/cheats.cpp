@@ -653,7 +653,10 @@ void CheatManager::setUserEnabled(size_t i, bool on) {
 void CheatManager::apply() {
     appliedSegments_ = 0;
     if (resetSink) resetSink();
-    if (blockedNow()) return;   // hardcore: the core's list stays empty
+    if (blockedNow()) {   // hardcore: the core's list stays empty
+        if (doneSink) doneSink();
+        return;
+    }
     if (setLoaded_) {
         for (size_t i = 0; i < set_.cheats.size(); i++) {
             const ChtCheat& c = set_.cheats[i];
@@ -669,6 +672,7 @@ void CheatManager::apply() {
         if (setSink) setSink(kUserIndexBase + (unsigned)i, true, user_[i].code.c_str());
         appliedSegments_ += segs;
     }
+    if (doneSink) doneSink();
     if (appliedSegments_ > kCoreLimit && warn)
         warn("cheats: " + std::to_string(appliedSegments_) + " writes exceed the core's limit of " +
              std::to_string(kCoreLimit) + "; the excess is ignored");

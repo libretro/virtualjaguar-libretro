@@ -75,7 +75,11 @@ public:
     // ---- can the tools be used? -----------------------------------------------------------
     bool hasCore() const { return iface_ != nullptr; }
     // The core supports it, content is loaded and hardcore is off.
-    bool enabled() const { return iface_ != nullptr && loaded_ && !hardcore_; }
+    bool enabled() const { return iface_ != nullptr && loaded_ && !hardcore_ && !threadBlocked_; }
+    // The emulation runs on its own thread (#967 phase 1): until the halt pump and the tool windows move there
+    // (phase 3) the tools are off.  Turning it on detaches and closes the windows, like hardcore does.
+    void setThreadBlocked(bool on);
+    bool threadBlocked() const { return threadBlocked_; }
     // Why not (for a tooltip / the greyed Tools menu); "" when enabled().
     std::string disabledReason() const;
     bool hardcore() const { return hardcore_; }
@@ -162,6 +166,7 @@ private:
     vj_debug_host host_{};
     bool loaded_ = false;
     bool hardcore_ = false;
+    bool threadBlocked_ = false;
     bool attached_ = false;
     bool halted_ = false;
     int haltedTarget_ = -1;

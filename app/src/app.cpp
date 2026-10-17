@@ -441,6 +441,25 @@ void App::syncDebug() {
     debug.tick(now(), host.isLoaded() && !paused && !debug.halted());
 }
 
+// #967 phase 1 runs the emulation on its own thread before these features are thread-safe: they are switched off
+// for the run rather than racing the core (docs/app-emulation-thread-plan-phase1.md, "Phase 1 boundary").
+//   * RetroAchievements: ach.init() is skipped, so available() is false and the menu is hidden.
+//   * Netplay: netplayInit / the Netplay menu (netplay_ui.cpp).
+//   * The Tools windows: they read core memory from the UI thread, and a halt would run the UI on the emulation thread.
+//   * The GDB stub: a socket halt would park the emulation thread with every call() waiting behind it.
+void App::limitFeaturesForEmuThread() {
+    debug.setThreadBlocked(true);
+    host.announceDebug = false;   // the core never hands over its debug interface, so it never halts for the app
+    host.optionLock = [](const std::string& key, std::string& value) {
+        if (key == "virtualjaguar_gdb_stub") {
+            value = "disabled";
+            return true;
+        }
+        return lockedCoreOption(key, value);
+    };
+    std::fprintf(stderr, "[emu] RetroAchievements, netplay and the debugger tools are off while the emulation thread is on\n");
+}
+
 void App::noteInputLatency(uint64_t eventNs) {
     const uint64_t t = SDL_GetTicksNS();
     // An event older than 250 ms waited out a pause or a load, not the pacing: it would only pollute the average.
@@ -552,7 +571,7 @@ double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0
 // nothing here may re-enter the core -- CoreHost refuses state loads, resets, loads and option changes
 // while inFrame().
 void App::haltedFrame() {
-    if (!imguiUp_ || !window_) {
+    if (!imguiUp_ || !window_ || emu.onEmuThread()) {   // never run the UI on the emulation thread (#967 phase 3 moves the pump)
         debug.detachAndResume();   // no UI to release the core with: never leave it parked
         return;
     }
@@ -1474,7 +1493,8 @@ int App::run(const CliArgs& a) {
         std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());
     }
     wireHost();
-    ach.init(*this, a);
+    if (emuThreadThisRun_) limitFeaturesForEmuThread();
+    else ach.init(*this, a);   // with the emulation thread on, RetroAchievements waits for #967 phase 2
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
@@ -1531,7 +1551,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "theme-editor") showThemeEditor = true;
     else if (a.showWindow == "controls") input.controls.show = true;
-    else if (openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
+    else if (!emuThreadThisRun_ && openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
     unsigned uiFrames = 0;
 
     std::string firstErr;

@@ -13,6 +13,7 @@
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
+#   *_threaded limits     RetroAchievements, netplay, the debugger and the GDB stub are off while threaded
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -118,3 +119,17 @@ set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threa
     TIMEOUT 300 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+add_test(NAME emu_thread_limits
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "RetroAchievements, netplay and the debugger tools are off while the emulation thread is on")
+add_test(NAME netplay_refused_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --netplay host --frames 5 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(netplay_refused_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "netplay: not available while the emulation thread is on")
+add_test(NAME gdb_locked_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
+            "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_locked_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core")

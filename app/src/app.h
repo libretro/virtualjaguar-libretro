@@ -286,6 +286,7 @@ private:
     void shutdown();
     void loadConfig();
     void wireHost();
+    void limitFeaturesForEmuThread();   // #967 phase 1: RetroAchievements, netplay, the debugger tools, the GDB stub
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
