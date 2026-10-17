@@ -101,11 +101,6 @@ GameRef gameRef(const lib::Entry& e, int index) {
     return g;
 }
 
-std::string lowerAscii(std::string s) {
-    for (char& c : s) c = (char)std::tolower((unsigned char)c);
-    return s;
-}
-
 Art artOf(const ArtView& v) {
     Art a;
     if (v.state == ArtView::Ready) {
@@ -139,14 +134,12 @@ std::vector<GameRef> AppHost::games(List l) {
         }
         return out;
     }
-    std::vector<std::pair<std::string, int>> keyed;   // (lower-case title, position), sorted by title
+    // entries() is already sorted by case-insensitive title (LibraryService::reidentify), so a filter keeps the order.
     for (size_t i = 0; i < all.size(); i++) {
         const lib::Entry& e = all[i];
         if (e.section == lib::Section::Bios || (l == List::Disc && e.section != lib::Section::Disc)) continue;
-        keyed.emplace_back(lowerAscii(e.title), (int)i);
+        out.push_back(gameRef(e, (int)i));
     }
-    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    for (const auto& k : keyed) out.push_back(gameRef(all[(size_t)k.second], k.second));
     return out;
 }
 

@@ -1082,6 +1082,320 @@ static void homeWalk120FramesNoAsserts() {
     CHECK(g_imguiErrors == errors);
 }
 
+// ---- Library (phase 2, Task 9) -----------------------------------------------------------------------------------
+
+// Six titles in sorted order: the fixture the Library tests walk.
+static std::vector<GameRef> libraryFixture() {
+    const char* titles[] = {"Alien vs Predator", "Atari Karts", "Battlemorph", "Blue Lightning", "Cybermorph", "Doom"};
+    std::vector<GameRef> v;
+    for (int i = 0; i < 6; i++) {
+        GameRef g;
+        g.title = titles[i];
+        g.key = std::string("/games/") + titles[i] + ".j64";
+        g.region = "USA";
+        g.index = i;
+        v.push_back(g);
+    }
+    return v;
+}
+
+// A host showing the Library (RB from Home), drawn once.
+static void librarySetup(FakeHost& host, Shell& shell) {
+    host.tv = true;
+    host.loaded = false;
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    frames(host, shell, 2);
+    rb(host, shell);
+    frames(host, shell, 2);
+}
+
+// A trigger pulled all the way and let go: LT / RT are PagePrev / PageNext.
+static void pullTrigger(FakeHost& h, Shell& s, SDL_GamepadAxis axis) {
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+    e.gaxis.axis = (Uint8)axis;
+    e.gaxis.value = 32767;
+    s.handleEvent(e, g_ms);
+    frames(h, s, 1);
+    e.gaxis.value = 0;
+    s.handleEvent(e, g_ms);
+    frames(h, s, 1);
+}
+
+static void libraryRailGridHandoff() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    CHECK(shell.screenId() == "library");
+    rightN(host, shell, 2);       // the grid has the focus on entry: index 2
+    leftN(host, shell, 3);        // 1, 0, then off the left edge onto the rail (so the place left is 0, not 2)
+    down(host, shell);            // Favorites (empty here)
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Favorites \xC2\xB7 0 games"));
+    up(host, shell);              // All games again
+    rightN(host, shell, 1);       // back to the grid, at the remembered index
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[0].key && host.launches == 1);
+    CHECK(host.guardArmed == 1 && host.holdsCleared == 1);
+}
+
+// The rail remembers where the grid was left: row 1, column 0 of a longer list.
+static void libraryRailKeepsGridPlace() {
+    FakeHost host;
+    host.all = mkGames("Game", 12);
+    host.favs = mkGames("Fav", 3);
+    Shell shell(host);
+    librarySetup(host, shell);
+    down(host, shell);            // index 6
+    leftN(host, shell, 1);        // the rail
+    down(host, shell);            // Favorites: its own place (0)
+    rightN(host, shell, 1);       // onto the grid
+    rightN(host, shell, 1);       // Favorites index 1
+    leftN(host, shell, 2);        // 0, then the rail again
+    up(host, shell);
+    rightN(host, shell, 1);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[6].key);
+    leftN(host, shell, 1);        // column 0: the rail
+    down(host, shell);
+    rightN(host, shell, 1);       // Favorites kept its own place: 0
+    accept(host, shell);
+    CHECK(host.launchedKey == host.favs[0].key);
+}
+
+static void libraryLtRtJumpInitial() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[2].key);   // Battlemorph
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[4].key);   // Cybermorph
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[2].key);   // back to Battlemorph
+}
+
+static void libraryLetterPickerJumps() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);
+    CHECK(shell.screenId() == "letters");
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Jump to letter") && drew("Z") && drew("9"));
+    rightN(host, shell, 3);       // A -> D
+    accept(host, shell);
+    CHECK(shell.screenId() == "library");
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[5].key);   // Doom
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);
+    CHECK(shell.screenId() == "letters");         // opens on the focused title's initial: D
+    down(host, shell, 4);         // row 4: "YZ0123", column 3 is '1'
+    leftN(host, shell, 2);        // 'Z': no title starts with it
+    accept(host, shell);
+    CHECK(shell.screenId() == "letters");
+    back(host, shell);
+    CHECK(shell.screenId() == "library");
+}
+
+static void libraryTypingFiltersAndBackspace() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("All games \xC2\xB7 6 games") && !drew("Filter: d"));
+    CHECK(keyEvent(shell, SDL_SCANCODE_D, SDLK_D));
+    CHECK(keyEvent(shell, SDL_SCANCODE_O, SDLK_O));
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("All games \xC2\xB7 1 game") && drew("Filter: do"));
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[5].key);   // the one match, Doom
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE));
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE));
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("All games \xC2\xB7 6 games") && !drew("Filter: d"));
+    CHECK(shell.screenId() == "library");
+    // With nothing to delete Backspace is Back: to Home.
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE);
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, false);
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "home");
+}
+
+// A filter is a case-insensitive substring; switching lists drops it; a non-matching filter is an empty grid.
+static void libraryFilterSubstringAndListSwitch() {
+    FakeHost host;
+    host.all = libraryFixture();
+    host.favs = {host.all[1], host.all[3]};
+    Shell shell(host);
+    librarySetup(host, shell);
+    rightN(host, shell, 1);                       // Atari Karts: the place the filter must not lose
+    keyEvent(shell, SDL_SCANCODE_M, SDLK_M);
+    keyEvent(shell, SDL_SCANCODE_O, SDLK_O);
+    keyEvent(shell, SDL_SCANCODE_R, SDLK_R);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("All games \xC2\xB7 2 games"));    // Battlemorph, Cybermorph
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[4].key);   // the jump works inside the filtered list
+    keyEvent(shell, SDL_SCANCODE_Z, SDLK_Z);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("All games \xC2\xB7 0 games") && drew("Filter: morz"));
+    accept(host, shell);                          // nothing to launch
+    CHECK(host.launches == 1);
+    leftN(host, shell, 1);                        // an empty grid still lets focus back to the rail
+    down(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Favorites \xC2\xB7 2 games") && !drew("Filter: morz"));
+    // The place in All games was kept while the filter was on, and comes back after the switch.
+    up(host, shell);
+    rightN(host, shell, 1);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[1].key);
+}
+
+static void libraryTypingLeavesHotkeys() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    CHECK(!keyEvent(shell, SDL_SCANCODE_D, SDLK_D, true, SDL_KMOD_CTRL));
+    CHECK(!keyEvent(shell, SDL_SCANCODE_F4, SDLK_F4));
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("All games \xC2\xB7 6 games"));   // neither typed anything
+}
+
+// The pointer: hovering a rail item selects it, hovering a tile focuses it, a click plays it, the wheel steps rows.
+static void libraryMouse() {
+    FakeHost host;
+    for (int i = 0; i < 20; i++) {
+        GameRef g;
+        g.title = "Game " + std::string(1, (char)('A' + i));
+        g.key = "/games/" + g.title + ".j64";
+        g.index = i;
+        host.all.push_back(g);
+    }
+    host.favs = {host.all[7], host.all[8]};
+    Shell shell(host);
+    librarySetup(host, shell);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(96 + 100, 150 + 62 + 27);          // the second rail item: Favorites
+    frames(host, shell, 2);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Favorites \xC2\xB7 2 games"));
+    io.AddMousePosEvent(96 + 100, 150 + 27);               // ... and the first again
+    frames(host, shell, 2);
+    io.AddMousePosEvent(504 + 225 + 96, 330);              // column 1 of the first row
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[1].key);
+    host.launchedKey.clear();
+    io.AddMouseButtonEvent(0, true);
+    frames(host, shell, 1);
+    io.AddMouseButtonEvent(0, false);
+    frames(host, shell, 1);
+    CHECK(host.launchedKey == host.all[1].key && host.guardArmed == 2);
+    io.AddMouseWheelEvent(0, -1.0f);                       // one notch down: one row (six titles)
+    frames(host, shell, 1);
+    host.launchedKey.clear();
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[7].key);
+    io.AddMouseWheelEvent(0, 1.0f);
+    frames(host, shell, 1);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[1].key);
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+static void libraryFocusRememberedAcrossVisits() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    rightN(host, shell, 3);
+    lb(host, shell);                                       // Home
+    rb(host, shell);                                       // a fresh Library screen
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[3].key);
+}
+
+static void libraryWalk120FramesNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    for (int i = 0; i < 70; i++) {
+        GameRef g;
+        g.title = std::string(1, (char)('A' + i % 26)) + " game number " + std::to_string(i) + " with a rather long title";
+        g.key = "/games/" + std::to_string(i) + ".j64";
+        g.index = i;
+        g.disc = i % 5 == 0;
+        g.region = i % 3 ? "Europe" : "";
+        host.all.push_back(g);
+    }
+    host.favs = {host.all[3], host.all[9]};
+    host.disc = mkGames("Disc", 8, true);
+    host.st[host.all[0].key] = {{1, 1792152000}, {-1, 100}};
+    Shell shell(host);
+    const int errors = g_imguiErrors;
+    for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        frames(host, shell, 3);
+        rb(host, shell);
+        for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_UP,
+                                    SDL_GAMEPAD_BUTTON_DPAD_LEFT}) {
+            for (int i = 0; i < 10; i++) tapButton(host, shell, b);
+            frames(host, shell, 120);
+        }
+        for (int i = 0; i < 4; i++) {                                    // the rail
+            down(host, shell);
+            frames(host, shell, 10);
+        }
+        up(host, shell, 3);
+        rightN(host, shell, 1);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);                // the picker
+        rightN(host, shell, 5);
+        down(host, shell, 5);
+        frames(host, shell, 120);
+        CHECK(shell.screenId() == "letters");
+        back(host, shell);
+        keyEvent(shell, SDL_SCANCODE_G, SDLK_G);                         // the filter
+        keyEvent(shell, SDL_SCANCODE_A, SDLK_A);
+        keyEvent(shell, SDL_SCANCODE_Z, SDLK_Z);
+        frames(host, shell, 120);
+        for (int i = 0; i < 3; i++) keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE);
+        frames(host, shell, 120);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.4f);
+        io.AddMouseWheelEvent(0, -2.0f);
+        frames(host, shell, 30);
+        io.AddMousePosEvent(0, 0);
+        frames(host, shell, 3);
+        lb(host, shell);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == errors);
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -1135,6 +1449,16 @@ int main() {
     homeEmptyLibraryCard();
     formatDateIsEnglishDayMonthYear();
     homeWalk120FramesNoAsserts();
+    libraryRailGridHandoff();
+    libraryRailKeepsGridPlace();
+    libraryLtRtJumpInitial();
+    libraryLetterPickerJumps();
+    libraryTypingFiltersAndBackspace();
+    libraryFilterSubstringAndListSwitch();
+    libraryTypingLeavesHotkeys();
+    libraryMouse();
+    libraryFocusRememberedAcrossVisits();
+    libraryWalk120FramesNoAsserts();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;
