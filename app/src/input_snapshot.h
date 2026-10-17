@@ -17,22 +17,25 @@ namespace vj {
 class InputSnapshot {
 public:
     // UI thread.  `eventNs`: SDL timestamp (SDL_GetTicksNS base) of the oldest input event this state includes that
-    // was not published before, 0 = none.
-    void publish(const CoreInput& in, uint64_t eventNs) {
+    // was not published before, 0 = none.  Returns this publish's sequence number (from 1), which the frame that
+    // polls it carries to the UI (FrameExchange::Slot::inputSeq) for the event -> present measurement.
+    uint64_t publish(const CoreInput& in, uint64_t eventNs) {
         std::lock_guard<std::mutex> l(mu_);
         CoreInput next = in;
         next.carryMotion(latest_);   // motion the emulation has not taken yet is kept, not replaced
         latest_ = next;
         if (eventNs && !eventNs_) eventNs_ = eventNs;
+        return ++seq_;
     }
 
     // Emulation thread (the core's input-poll callback).  Returns the oldest untaken event's timestamp (0 = none),
-    // for the input-latency measurement.
-    uint64_t take(CoreInput& out) {
+    // for the input-latency measurement; `seq` (optional) gets the newest publish handed out (0 = none yet).
+    uint64_t take(CoreInput& out, uint64_t* seq = nullptr) {
         std::lock_guard<std::mutex> l(mu_);
         out = latest_;
         latest_.clearMotion();
         taken_++;
+        if (seq) *seq = seq_;
         const uint64_t ns = eventNs_;
         eventNs_ = 0;
         return ns;
@@ -51,6 +54,7 @@ private:
     CoreInput latest_;
     uint64_t eventNs_ = 0;
     unsigned taken_ = 0;
+    uint64_t seq_ = 0;   // publishes so far
 };
 
 }  // namespace vj

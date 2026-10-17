@@ -23,6 +23,7 @@ public:
         Frame frame;
         float aspect = 4.0f / 3.0f;   // CoreHost::aspect() when the frame was made
         uint64_t epoch = 0;           // stamped by writeBuffer()
+        uint64_t inputSeq = 0;        // the InputSnapshot publish this frame's poll took (event -> present, VJ_PERF_CSV)
     };
 
     // ---- writer (the emulation thread) ----

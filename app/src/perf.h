@@ -49,6 +49,8 @@ struct Perf {
     std::vector<float> latPer;              // input event -> core poll latency measured in it, ms; -1 = none
     unsigned curUnder = 0;                  // set by the loop for the current iteration (App::perfSample)
     float curLat = -1.0f;
+    std::vector<float> presPer;             // input event -> the swap that showed its frame, ms; -1 = none
+    float curPres = -1.0f;                  // set by the loop for the current iteration (App::perfSample)
     double cpuStart = 0;
     uint64_t emuFrames = 0;      // emulated frames run inside the measured window (retro_run calls)
     std::string note;            // one line describing the setup (window size, GL, shader), printed first
@@ -90,10 +92,12 @@ struct Perf {
             syncPer.push_back(curSync ? 1 : 0);
             underPer.push_back((unsigned short)std::min(curUnder, 65535u));
             latPer.push_back(curLat);
+            presPer.push_back(curPres);
         }
         emuThis = 0;
         curUnder = 0;
         curLat = -1.0f;
+        curPres = -1.0f;
         frameStart = n;
         mark = n;
         return seen >= warmup + target;
@@ -154,18 +158,31 @@ struct Perf {
             if (ln)
                 std::printf("PERF   input latency (event -> core poll): avg %.3f ms  max %.3f ms  (%zu samples)\n",
                             lsum / (double)ln, lmax, ln);
+            double psum = 0, pmax = 0;
+            size_t pn = 0;
+            for (float l : presPer)
+                if (l >= 0) {
+                    psum += l;
+                    pmax = std::max(pmax, (double)l);
+                    pn++;
+                }
+            if (pn)
+                std::printf("PERF   input latency (event -> present): avg %.3f ms  max %.3f ms  (%zu samples)\n",
+                            psum / (double)pn, pmax, pn);
             std::printf("PERF   audio underruns: %llu\n", under);
         }
         // VJ_PERF_CSV=path: one row per measured loop iteration (iteration ms, emulated frames run in it, swap
-        // interval 1?, audio underruns, input latency ms or -1) -- the raw material for "how evenly were new images
-        // presented" (tests/pacing_trace.cpp replays the first three from a core cost trace).
+        // interval 1?, audio underruns, input latency ms or -1, event -> present ms or -1) -- the raw material for
+        // "how evenly were new images presented" (tests/pacing_trace.cpp replays the first three from a core cost
+        // trace).
         if (const char* csv = std::getenv("VJ_PERF_CSV")) {
             if (FILE* f = std::fopen(csv, "w")) {
-                std::fprintf(f, "iter_ms,emu_frames,swap_sync,underruns,input_lat_ms\n");
+                std::fprintf(f, "iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms\n");
                 for (size_t i = 0; i < n && i < emuPer.size(); i++)
-                    std::fprintf(f, "%.3f,%d,%d,%u,%.3f\n", frameMs[i], (int)emuPer[i], (int)syncPer[i],
+                    std::fprintf(f, "%.3f,%d,%d,%u,%.3f,%.3f\n", frameMs[i], (int)emuPer[i], (int)syncPer[i],
                                  i < underPer.size() ? (unsigned)underPer[i] : 0u,
-                                 i < latPer.size() ? (double)latPer[i] : -1.0);
+                                 i < latPer.size() ? (double)latPer[i] : -1.0,
+                                 i < presPer.size() ? (double)presPer[i] : -1.0);
                 std::fclose(f);
             }
         }

@@ -40,6 +40,24 @@ bool isInputEvent(Uint32 type) {
     }
 }
 
+// --perf-input: a synthetic key (F24: bound to nothing), pushed from an SDL timer thread so the event lands at a swept
+// point of the display period.  Pushed from the loop it would always arrive just after a swap, where the single-thread
+// loop polls at once and the threaded loop waits longest, biasing the comparison (#967).
+Uint64 SDLCALL perfInputKey(void* window, SDL_TimerID, Uint64) {
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_KEY_DOWN;
+    ev.key.windowID = (SDL_WindowID)(uintptr_t)window;
+    ev.key.scancode = SDL_SCANCODE_F24;
+    ev.key.down = true;
+    ev.key.timestamp = SDL_GetTicksNS();
+    SDL_PushEvent(&ev);
+    ev.type = SDL_EVENT_KEY_UP;
+    ev.key.down = false;
+    SDL_PushEvent(&ev);
+    return 0;   // once
+}
+
 const int kMaxRecents = 10;
 
 std::string joinExtensions(const std::string& pipeList) {
@@ -389,12 +407,15 @@ void App::wireHost() {
     };
     host.inputPoll = [this]() {
         if (host.threaded()) {   // the emulation thread: the newest input the UI thread published (input_snapshot.h)
-            const uint64_t ns = inputSnap.take(emuInput_);
+            uint64_t seq = 0;
+            const uint64_t ns = inputSnap.take(emuInput_, &seq);
+            emuInputSeq_ = seq;   // stamped on the next frame this thread publishes
             if (ns) noteInputLatency(ns);
             return;
         }
         if (pendingEventNs_) {   // VJ_PERF_CSV: from the oldest unhandled input event to this poll
             noteInputLatency(pendingEventNs_);
+            if (!presentEventNs_) presentEventNs_ = pendingEventNs_;   // and to this iteration's swap
             pendingEventNs_ = 0;
         }
         input.poll(!inputCaptured_);
@@ -480,6 +501,8 @@ void App::perfSample() {
     const uint64_t n = latCount_.exchange(0, std::memory_order_relaxed);
     const uint64_t s = latSumNs_.exchange(0, std::memory_order_relaxed);
     perf.curLat = n ? (float)((double)s / (double)n / 1e6) : -1.0f;
+    perf.curPres = presCount_ ? (float)((double)presSumNs_ / (double)presCount_ / 1e6) : -1.0f;
+    presSumNs_ = presCount_ = 0;
 }
 
 // ---- the emulation thread (#967) ------------------------------------------------------------------------
@@ -522,6 +545,7 @@ void App::emuRunOneFrame() {
         s.frame.serial = f.serial;
         s.frame.pixels.assign(f.pixels.begin(), f.pixels.end());
         s.aspect = host.aspect();
+        s.inputSeq = emuInputSeq_;
         frames.publish();
         lastSentSerial_ = f.serial;
     }
@@ -549,9 +573,7 @@ void App::syncEmuFlags() {
 // Threaded mode, once per UI iteration (#967): hand the newest input over and adopt what the emulation thread
 // published.  Never waits for the emulation.
 void App::threadedFrame() {
-    input.poll(!inputCaptured_, inputSnap.takenSince());   // on this thread: SDL_GetMouseState is main-thread only
-    inputSnap.publish(input.coreInput(), pendingEventNs_);
-    pendingEventNs_ = 0;
+    publishInput();
     host.pinSnapshot();
     const uint64_t fr = emu.framesRun();
     for (uint64_t k = emuFramesSeen_; k < fr; k++) perf.emulated();
@@ -565,6 +587,38 @@ void App::threadedFrame() {
         loadState(slot);
     }
     for (const OsdMessage& m : host.takeMessages()) toast(m.text, m.durationMs / 1000.0, m.level);
+}
+
+// Threaded: hand the input the UI thread sees now to the emulation thread, and remember which publish carried an input
+// event, so the swap that first shows a frame which polled it can time event -> present (VJ_PERF_CSV).
+void App::publishInput() {
+    input.poll(!inputCaptured_, inputSnap.takenSince());   // on this thread: SDL_GetMouseState is main-thread only
+    const uint64_t seq = inputSnap.publish(input.coreInput(), pendingEventNs_);
+    if (pendingEventNs_ && perf.on) {
+        if (presentQueue_.size() >= 64) presentQueue_.pop_front();
+        presentQueue_.push_back({seq, pendingEventNs_});
+    }
+    pendingEventNs_ = 0;
+}
+
+// Right after the swap (VJ_PERF_CSV): time the input events whose frame this swap shows.  With vsync the swap returns
+// at the vblank in both loops, so its return is the same photon proxy for both.
+void App::notePresented(uint64_t swapEndNs) {
+    if (!perf.on) return;
+    auto note = [&](uint64_t eventNs) {
+        if (!eventNs || swapEndNs <= eventNs || swapEndNs - eventNs > 250000000ull) return;   // as noteInputLatency
+        presSumNs_ += swapEndNs - eventNs;
+        presCount_++;
+    };
+    if (!threaded()) {
+        note(presentEventNs_);
+        presentEventNs_ = 0;
+        return;
+    }
+    while (!presentQueue_.empty() && presentQueue_.front().first <= shownSeq_) {
+        note(presentQueue_.front().second);
+        presentQueue_.pop_front();
+    }
 }
 
 // UI thread, threaded: a content switch (load / unload; the call ran frames.clear() on the emulation thread) must not
@@ -1656,6 +1710,7 @@ int App::runInteractive(const CliArgs& a) {
             if (const FrameExchange::Slot* s = frames.takeNewest()) {   // nothing new: redraw the one on screen
                 video.upload(s->frame);
                 shownAspect_ = s->aspect;
+                shownSeq_ = s->inputSeq;
             }
         }
         if (perf.on && perf.gpu) Perf::finish();
@@ -1684,7 +1739,9 @@ int App::runInteractive(const CliArgs& a) {
         presentViewports();
         const Uint64 swap0 = SDL_GetTicksNS();
         SDL_GL_SwapWindow(window_);
-        const Uint64 swapNs = SDL_GetTicksNS() - swap0;
+        const Uint64 swap1 = SDL_GetTicksNS();
+        const Uint64 swapNs = swap1 - swap0;
+        notePresented(swap1);
         perf.lap(Perf::Present);
 
         updateTitle();
@@ -1712,20 +1769,9 @@ int App::runInteractive(const CliArgs& a) {
         perf.lap(Perf::Sleep);
         perf.curSync = threaded() ? vsync : pacer_.swapSync;
         perfSample();
-        if (a.perfInput && perf.on && perf.seen % 30 == 29) {
-            // A synthetic key (F24: bound to nothing) so the input-latency column has samples in an unattended run.
-            SDL_Event ev;
-            SDL_zero(ev);
-            ev.type = SDL_EVENT_KEY_DOWN;
-            ev.key.windowID = SDL_GetWindowID(window_);
-            ev.key.scancode = SDL_SCANCODE_F24;
-            ev.key.down = true;
-            ev.key.timestamp = SDL_GetTicksNS();
-            SDL_PushEvent(&ev);
-            ev.type = SDL_EVENT_KEY_UP;
-            ev.key.down = false;
-            SDL_PushEvent(&ev);
-        }
+        if (a.perfInput && perf.on && perf.seen % 30 == 29)   // delays 0.5 .. 16.7 ms in 37 steps: every phase at 60 Hz
+            SDL_AddTimerNS(500000ull + (uint64_t)(perfInputK_++ % 37) * 450000ull, perfInputKey,
+                           (void*)(uintptr_t)SDL_GetWindowID(window_));
         perf.frameEnd();
     }
 

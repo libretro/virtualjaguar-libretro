@@ -102,6 +102,21 @@ void testTakenSince() {
     CHECK(s.takenSince() == 0, "and none since");
 }
 
+void testSequence() {
+    InputSnapshot s;
+    CoreInput out;
+    uint64_t seq = 99;
+    s.take(out, &seq);
+    CHECK(seq == 0, "nothing published yet: sequence 0 (%llu)", (unsigned long long)seq);
+    const uint64_t a = s.publish(released(), 5);
+    const uint64_t b = s.publish(released(), 0);
+    CHECK(a == 1 && b == 2, "publishes are numbered from 1 (%llu, %llu)", (unsigned long long)a, (unsigned long long)b);
+    s.take(out, &seq);
+    CHECK(seq == 2, "a take reports the newest publish it handed out (%llu)", (unsigned long long)seq);
+    s.take(out, &seq);
+    CHECK(seq == 2, "and again with nothing new (%llu)", (unsigned long long)seq);
+}
+
 void testConcurrentMotion() {
     InputSnapshot s;
     const int kMoves = 20000;
@@ -130,6 +145,7 @@ int main() {
     testOldestEventKept();
     testMotionOnce();
     testTakenSince();
+    testSequence();
     testConcurrentMotion();
     std::printf(g_fail ? "input_snapshot_test: %d FAILED\n" : "input_snapshot_test: OK\n", g_fail);
     return g_fail ? 1 : 0;

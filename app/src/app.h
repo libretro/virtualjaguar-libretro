@@ -7,9 +7,11 @@
 
 #include <cstdint>
 #include <atomic>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "achievements.h"
@@ -343,6 +345,15 @@ private:
     uint64_t underrunsSeen_ = 0;
     void noteInputLatency(uint64_t eventNs);
     void perfSample();
+    // VJ_PERF_CSV event -> present (#967: the late latch's measurement).  The swap's return stands in for the photon.
+    uint64_t presentEventNs_ = 0;   // inline: the oldest input event the frames of this iteration polled
+    uint64_t shownSeq_ = 0;         // threaded: the InputSnapshot publish the frame on screen polled
+    std::deque<std::pair<uint64_t, uint64_t>> presentQueue_;   // threaded: (publish seq, oldest event ns), oldest first
+    uint64_t presSumNs_ = 0, presCount_ = 0;
+    uint64_t emuInputSeq_ = 0;      // emulation thread: the publish the last core poll took
+    unsigned perfInputK_ = 0;       // --perf-input: the next injected key's delay step
+    void publishInput();
+    void notePresented(uint64_t swapEndNs);
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App

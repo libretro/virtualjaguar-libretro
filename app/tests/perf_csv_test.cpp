@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
         p.emulated();
         p.curUnder = i == 2 ? 1u : 0u;
         p.curLat = i == 1 ? 4.5f : -1.0f;
+        p.curPres = i == 1 ? 21.25f : -1.0f;
         p.frameEnd();
     }
     p.report("perf_csv_test");
@@ -54,10 +55,13 @@ int main(int argc, char** argv) {
     for (std::string l; std::getline(f, l);) lines.push_back(l);
     CHECK(lines.size() == 4, "a header and three rows (%zu lines)", lines.size());
     if (lines.size() == 4) {
-        CHECK(lines[0] == "iter_ms,emu_frames,swap_sync,underruns,input_lat_ms", "header: %s", lines[0].c_str());
-        CHECK(lines[1].find(",1,1,0,-1.000") != std::string::npos, "row 1, one frame and no input: %s", lines[1].c_str());
-        CHECK(lines[2].find(",0,4.500") != std::string::npos, "row 2, a 4.5 ms input latency: %s", lines[2].c_str());
-        CHECK(lines[3].find(",1,-1.000") != std::string::npos, "row 3, one underrun: %s", lines[3].c_str());
+        CHECK(lines[0] == "iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms", "header: %s",
+              lines[0].c_str());
+        CHECK(lines[1].find(",1,1,0,-1.000,-1.000") != std::string::npos, "row 1, one frame and no input: %s",
+              lines[1].c_str());
+        CHECK(lines[2].find(",0,4.500,21.250") != std::string::npos, "row 2, 4.5 ms to the poll, 21.25 to the swap: %s",
+              lines[2].c_str());
+        CHECK(lines[3].find(",1,-1.000,-1.000") != std::string::npos, "row 3, one underrun: %s", lines[3].c_str());
     }
     std::printf(g_fail ? "perf_csv_test: %d FAILED\n" : "perf_csv_test: OK\n", g_fail);
     return g_fail ? 1 : 0;

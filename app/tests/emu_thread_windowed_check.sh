@@ -25,6 +25,8 @@ for mode in on off; do
   [ "$rows" -ge 590 ] || { echo "FAIL $mode: $rows CSV rows, expected 600"; fail=1; }
   awk -F, 'NR > 1 && $2 > 0 { n++ } END { exit !(n > 250) }' "$csv" 2>/dev/null \
     || { echo "FAIL $mode: fewer than 250 of 600 UI frames showed a new emulated frame"; fail=1; }
+  awk -F, 'NR > 1 && $6 >= 0 { n++ } END { exit !(n >= 15) }' "$csv" 2>/dev/null \
+    || { echo "FAIL $mode: fewer than 15 event -> present samples (--perf-input injects one every 30 frames)"; fail=1; }
   grep -E "^PERF|\[emu\]" "$log"
 done
 # Paused (at UI frame 30): the UI keeps drawing while the emulation thread is parked; nothing may reach into the core.
