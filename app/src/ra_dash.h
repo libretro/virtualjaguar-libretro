@@ -106,7 +106,11 @@ enum class GameSort { Title, Points, Achievements, Progress, OwnedFirst };
 // Indexes into `games`, filtered by `f` and the case-insensitive substring `text`, then sorted
 // (stable, title as the tie-break).  Progress filters need progress: with none they match nothing
 // but All/Owned.
+// A game RetroAchievements lists without a published set (0 achievements: a registered hash, a set still in
+// development) is never in a view.
 std::vector<size_t> viewGames(const std::vector<GameEntry>& games, GameFilter f, GameSort s, const std::string& text);
+// How many games have a published set, and (`owned`) how many of those are in the local library.
+size_t countWithSets(const std::vector<GameEntry>& games, size_t& owned);
 const char* gameFilterLabel(GameFilter f);
 const char* gameSortLabel(GameSort s);
 

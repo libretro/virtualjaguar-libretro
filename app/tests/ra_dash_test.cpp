@@ -233,6 +233,30 @@ static void testGameViews() {
     CHECK(titles(ra::viewGames(games, ra::GameFilter::All, ra::GameSort::Achievements, "")).compare(0, 17, "Alien vs Predator") == 0);
     CHECK(titles(ra::viewGames(games, ra::GameFilter::All, ra::GameSort::Progress, "")).compare(0, 16, "Mock Game (yarc)") == 0);
     CHECK(titles(ra::viewGames(games, ra::GameFilter::All, ra::GameSort::OwnedFirst, "")).compare(0, 24, "~Homebrew~ Tower Toppler") == 0);
+    // A game RetroAchievements lists with no published set (0 achievements, e.g. only a registered hash) is never
+    // shown, owned or not, whatever the filter; the header's counts skip it too.
+    {
+        std::vector<ra::GameEntry> g2 = games;
+        ra::GameEntry noSet;
+        noSet.id = 7777;
+        noSet.console = 17;
+        noSet.title = "Aircars";
+        noSet.libIndex = 3;
+        noSet.haveProgress = true;
+        g2.push_back(noSet);
+        for (ra::GameFilter f : {ra::GameFilter::All, ra::GameFilter::Owned, ra::GameFilter::NotStarted})
+            for (size_t i : ra::viewGames(g2, f, ra::GameSort::Title, "")) CHECK(g2[i].title != "Aircars");
+        CHECK(ra::viewGames(g2, ra::GameFilter::All, ra::GameSort::Title, "Aircars").empty());
+        size_t owned = 0;
+        CHECK(ra::countWithSets(g2, owned) == 6 && owned == 1);
+        // a progress row that reports a set makes it a game with achievements after all
+        std::map<uint32_t, ra::Progress> p2 = p;
+        p2[7777] = ra::Progress{12, 0, 0};
+        ra::applyProgress(g2, p2);
+        std::vector<size_t> v = ra::viewGames(g2, ra::GameFilter::All, ra::GameSort::Title, "Aircars");
+        CHECK(v.size() == 1 && g2[v[0]].title == "Aircars");
+        CHECK(ra::countWithSets(g2, owned) == 7 && owned == 2);
+    }
     // without progress (signed out): progress filters match nothing, All still works
     for (ra::GameEntry& g : games) g.haveProgress = false;
     CHECK(ra::viewGames(games, ra::GameFilter::NotStarted, ra::GameSort::Title, "").empty());

@@ -305,10 +305,22 @@ const char* gameSortLabel(GameSort s) {
     return "";
 }
 
+size_t countWithSets(const std::vector<GameEntry>& games, size_t& owned) {
+    size_t n = 0;
+    owned = 0;
+    for (const GameEntry& g : games) {
+        if (g.achievements == 0) continue;
+        n++;
+        if (g.libIndex >= 0) owned++;
+    }
+    return n;
+}
+
 std::vector<size_t> viewGames(const std::vector<GameEntry>& games, GameFilter f, GameSort s, const std::string& text) {
     std::vector<size_t> v;
     for (size_t i = 0; i < games.size(); i++) {
         const GameEntry& g = games[i];
+        if (g.achievements == 0) continue;   // no published set: nothing to show or play for
         bool ok = true;
         switch (f) {
         case GameFilter::All: break;
