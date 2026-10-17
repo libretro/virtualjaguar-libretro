@@ -95,8 +95,11 @@ void testNoRoom() {
     l.setPeriodNs(kP60);
     uint64_t end = 0;
     runGrid(l, kP60, 60, end);
-    l.noteBuild(16 * kMs);   // one build nearly a whole period long
-    CHECK(l.wakeAt(end + 200000) == end + 200000, "a 16 ms build leaves no room to wait");
+    l.noteBuild(16 * kMs);   // one build nearly a whole period long: a one-off (a window opening)
+    CHECK(l.wakeAt(end + 200000) > end + 200000 && l.budgetNs() == 3 * kMs,
+          "one 16 ms build does not set the budget (%llu ns): the wait goes on", (unsigned long long)l.budgetNs());
+    l.noteBuild(16 * kMs);   // a second one within the window: the UI really is that slow now
+    CHECK(l.wakeAt(end + 200000) == end + 200000, "two 16 ms builds leave no room to wait");
 }
 
 void testMissGrowsPad() {
@@ -201,6 +204,32 @@ void testLateStartIsNotAMiss() {
                   "the same late swap after an on-time wait is a miss (%u)", l.misses());
         }
     }
+}
+
+void testLateStartsAreCapped() {
+    // Every wait overruns its wake time by 3 ms (event handling that always takes longer than the room it is given) and
+    // every swap then misses.  The first kMaxLateExempt are excused; after that they are outcomes, and the miss rate
+    // must release the latch.
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t cur = 0;
+    runGrid(l, kP60, 60, cur);
+    unsigned waits = 0;
+    for (; waits < 200; waits++) {
+        const uint64_t now = cur + 200000;
+        const uint64_t w = l.wakeAt(now);
+        if (w == now) break;   // released
+        const uint64_t nextV = cur - 50000 + kP60;
+        l.noteWaitEnd(w + 3 * kMs);
+        l.noteBuild(2 * kMs);
+        l.onSwap(w + 5 * kMs, nextV + kP60 + 50000);
+        cur = nextV + kP60 + 50000;
+    }
+    CHECK(!l.locked() && l.released() == 1, "always-late waits release the latch (after %u waits)", waits);
+    CHECK(waits > LateLatch::kMaxLateExempt && waits <= LateLatch::kMaxLateExempt + 60,
+          "after the excused ones (%u waits)", waits);
+    CHECK(l.misses() == waits - LateLatch::kMaxLateExempt, "the excused waits are not misses (%u of %u)", l.misses(),
+          waits);
 }
 
 void testOffNominal() {
@@ -341,6 +370,7 @@ int main() {
     testPersistentMissReleases();
     testJitterHysteresis();
     testLateStartIsNotAMiss();
+    testLateStartsAreCapped();
     testOffNominal();
     testModel();
     std::printf(g_fail ? "late_latch_test: %d FAILED\n" : "late_latch_test: OK\n", g_fail);

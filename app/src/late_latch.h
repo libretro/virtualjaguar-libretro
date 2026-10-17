@@ -31,6 +31,7 @@ public:
     static constexpr unsigned kOutcomes = 60;           // waits whose outcome (made the vblank / missed) is remembered
     static constexpr unsigned kMinOutcomes = 8;         // waits observed before the miss rate can release the lock
     static constexpr unsigned kCooldownSwaps = 300;     // swaps after a release before the lock may be taken again
+    static constexpr unsigned kMaxLateExempt = 8;       // consecutive late-start waits excused; after that they count
 
     // The display's refresh period (SDL_DisplayMode), 0 = unknown: the latch stays off.
     void setPeriodNs(uint64_t ns) {
@@ -53,6 +54,8 @@ public:
 
     // When the wait that wakeAt() sized really ended.  A wait that overran its wake time (a call() or event handling
     // inside it, a descheduled thread) started the UI late: its swap missing the vblank says nothing about the budget.
+    // Only kMaxLateExempt in a row are excused, though: a wait that overruns every time (event handling that always
+    // takes longer than the wake leaves room for) is the latch's own cost, and must reach the miss rate that releases it.
     void noteWaitEnd(uint64_t ns) { waitEndNs_ = ns; }
 
     // Right after SDL_GL_SwapWindow: when the call began and when it returned.  A swap that blocked returned at a
@@ -63,7 +66,9 @@ public:
         if (cooldown_) cooldown_--;
         const bool lateStart = waitEndNs_ && targetNs_ && waitEndNs_ > wakeNs_ + kOverrunNs;
         waitEndNs_ = 0;
-        if (targetNs_ && lateStart) {   // the UI was late before the build began: not a budget miss, not an outcome
+        if (targetNs_) lateRun_ = lateStart ? lateRun_ + 1 : 0;
+        if (targetNs_ && lateStart && lateRun_ <= kMaxLateExempt) {   // the UI was late before the build began: not a
+                                                                      // budget miss, not an outcome
             targetNs_ = 0;
         } else if (targetNs_) {   // this iteration waited: did its swap make the vblank it aimed at?
             const bool miss = (int64_t)(endNs - targetNs_) > P / 2;
@@ -136,10 +141,20 @@ public:
     uint64_t padNs() const { return padNs_; }
     unsigned misses() const { return misses_; }
     unsigned released() const { return releases_; }   // times the miss rate let the lock go
-    uint64_t budgetNs() const {   // the slowest recent build, plus the pad
-        uint64_t mx = 0;
-        for (unsigned i = 0; i < std::min(buildAt_, kBuilds); i++) mx = std::max(mx, builds_[i]);
-        return mx + padNs_;
+    // The second-slowest of the last kBuilds builds, plus the pad.  One long build (a window opening, a shader compile)
+    // misses its own vblank whatever the budget says; letting it set the budget would also give up the wait (budget near a
+    // whole period) or move the take point several ms earlier for the next second.  Two long builds in a second do count.
+    uint64_t budgetNs() const {
+        uint64_t mx = 0, mx2 = 0;
+        for (unsigned i = 0; i < std::min(buildAt_, kBuilds); i++) {
+            if (builds_[i] > mx) {
+                mx2 = mx;
+                mx = builds_[i];
+            } else if (builds_[i] > mx2) {
+                mx2 = builds_[i];
+            }
+        }
+        return (buildAt_ > 1 ? mx2 : mx) + padNs_;
     }
 
 private:
@@ -161,6 +176,7 @@ private:
     unsigned releases_ = 0, cooldown_ = 0;
     uint8_t outcomes_[kOutcomes] = {};   // 1 = that wait's swap missed its vblank
     unsigned outcomeAt_ = 0, recentMisses_ = 0;
+    unsigned lateRun_ = 0;   // consecutive waits that ended late (noteWaitEnd)
     uint64_t wakeNs_ = 0, waitEndNs_ = 0;   // the wake time wakeAt() returned; when the wait really ended (0 = not told)
     uint64_t targetNs_ = 0;   // the vblank the current wait aims at (0 = no wait this iteration)
     uint64_t builds_[kBuilds] = {};
