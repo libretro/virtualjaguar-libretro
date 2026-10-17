@@ -30,6 +30,8 @@ platform::MenuState App::menuState() {
     s.controlsOverlay = input.controls.show;
     s.vsync = vsync;
     s.homeLibrary = homeLibrary;
+    s.tvMode = tvMode.active();
+    s.tvAvailable = tv::effectiveSetting(tvSetting) != tv::TvSetting::Off;
     s.libraryOpen = homeVisible() || library.show;
     if (s.gameLoaded) {
         DiscInfo d = host.discInfo();
@@ -120,6 +122,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             a.applyVsync();
         }
         void toggleHomeLibrary() override { a.homeLibrary = !a.homeLibrary; }
+        void toggleTvMode() override { a.toggleTvMode(); }
         void showSettings() override { a.showSettings = true; }
         void toggleMute() override {
             a.mute = !a.mute;

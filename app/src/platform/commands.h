@@ -31,7 +31,7 @@ enum class Cmd : int {
     Pause, Reset, FastForward, SaveState, LoadState, SetSlot /*arg = 0..9*/, StateManager, Cheats,
     DiscTray, DiscSelect /*arg = disc index*/,
     // View
-    Fullscreen, IntegerScale, SmoothFilter, Shader, ShowFps, KeypadOverlay, ControlsOverlay, VSync, HomeLibrary,
+    Fullscreen, IntegerScale, SmoothFilter, Shader, ShowFps, KeypadOverlay, ControlsOverlay, VSync, HomeLibrary, TvMode,
     // Settings / help
     Settings, Mute, About, ShowDataFolder, Website, ReportIssue,
     // Online
@@ -70,6 +70,7 @@ struct MenuState {
     unsigned usedSlots = 0;        // bit n: slot n has a state
     bool mute = false, integerScale = false, smoothFilter = false, shader = false, showFps = false;
     bool keypadOverlay = false, controlsOverlay = false, vsync = false, homeLibrary = false;
+    bool tvMode = false, tvAvailable = false;   // TV mode is on; the setting is not Off
     bool libraryOpen = false;      // the library window (or the home screen) is what is showing
     DiscState disc;
     std::vector<std::string> recents;   // full paths, newest first
@@ -147,6 +148,7 @@ struct Actions {
     virtual void toggleControlsOverlay() = 0;
     virtual void toggleVsync() = 0;
     virtual void toggleHomeLibrary() = 0;
+    virtual void toggleTvMode() = 0;
     virtual void showSettings() = 0;
     virtual void toggleMute() = 0;
     virtual void showAbout() = 0;

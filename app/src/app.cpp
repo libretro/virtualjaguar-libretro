@@ -178,6 +178,18 @@ void App::applySettingsFromConfig() {
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     emuThreadPref = cfg.has("ui.emu_thread") ? (cfg.getBool("ui.emu_thread", false) ? 1 : 0) : -1;
+    tvSetting = tv::TvSetting::Manual;
+    tv::settingFromKey(cfg.get("ui.tv_mode", "manual"), tvSetting);   // an unknown value stays Manual
+    configureTvMode();
+    if (tv::effectiveSetting(tvSetting) == tv::TvSetting::Manual && cfg.getBool("ui.tv_manual_on", false)) tvMode.setOn(true);
+}
+
+void App::configureTvMode() {
+    tv::TvConfig c;
+    c.setting = tv::effectiveSetting(tvSetting);   // Auto acts as Manual until its triggers are wired up
+    c.autoFullscreen = cfg.getBool("ui.tv_auto_fullscreen", true);
+    c.autoController = cfg.getBool("ui.tv_auto_controller", true);
+    tvMode.configure(c, fullscreen);
 }
 
 void App::saveConfig() {
@@ -194,6 +206,9 @@ void App::saveConfig() {
     fonts::store(cfg, fontSettings);
     if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
+    // ui.tv_mode is read, never written (no UI changes it yet): a stored value would pin a default that is meant to move
+    // (Auto on nightlies, #991 Task 16) for everyone who ran this build.  The Settings combo will write it when it exists.
+    if (tv::effectiveSetting(tvSetting) == tv::TvSetting::Manual && !tvFromCli_) cfg.setBool("ui.tv_manual_on", tvMode.active());
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("ui.tray", trayIcon);
     cfg.setBool("ui.keep_awake", keepAwake);
@@ -1409,7 +1424,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     }
     input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
     tvHost_->noteInput(e);    // which device the hints should name (the shell consumes events InputManager never sees)
-    if (tvShell().ownsInput() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys
+    if (tvShell().ownsInput() && !input.capturing() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys (not while a binding is being captured)
     if (input.handleEvent(e)) return;
     switch (e.type) {
     case SDL_EVENT_QUIT:
@@ -1451,7 +1466,9 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         } else if (e.user.code == 0x56414A47 && e.user.data1) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
+            suppressResume_ = e.user.data2 != nullptr;   // a TV launch starts fresh: the resume prompt needs a mouse
             handleDrop(p);
+            suppressResume_ = false;
         } else if (e.user.code == 0x56414A53 && e.user.data1) {   // 'VAJS': the library's "load this state"
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
@@ -1623,6 +1640,10 @@ int App::run(const CliArgs& a) {
         emuThreadThisRun_ = false;
         std::fprintf(stderr, "[emu] --emu-thread on is ignored with --headless --tv-test-script (the script runs the core inline)\n");
     }
+    if (a.tv) {
+        tvFromCli_ = true;
+        tvMode.setOn(true);   // after the config: a no-op when the setting is Off
+    }
     if (paths.instance > 1) {
         host.setSaveFallbackDir(paths.savesShared);
         std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());
@@ -1783,6 +1804,7 @@ int App::runInteractive(const CliArgs& a) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Ui);
+        tvScriptFrameEnd();   // the script's `shot`: this frame's TV drawing is in the buffer, not yet swapped
         if (!a.screenshot.empty() && ++uiFrames == a.screenshotFrame) {
             saveWindowScreenshot(a.screenshot);
             quit = true;
