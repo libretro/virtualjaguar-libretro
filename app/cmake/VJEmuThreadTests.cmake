@@ -6,6 +6,7 @@
 #   emu_commands_unit     EmuCommands: FIFO per producer, timed waits, close-and-drain, errors
 #   pacing_clock_unit     PacingClock mode A against a fake clock and a fake 512-frame-chunk audio device
 #   emu_thread_unit       EmuThread: inline vs threaded, call/post ordering, pause/advance, stop/join timeout, shutdown races
+#   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -42,3 +43,10 @@ target_link_libraries(vj_emu_thread_test PRIVATE Threads::Threads)
 vj_emu_thread_warnings(vj_emu_thread_test)
 add_test(NAME emu_thread_unit COMMAND vj_emu_thread_test)
 set_tests_properties(emu_thread_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_input_snapshot_test tests/input_snapshot_test.cpp src/remap.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_input_snapshot_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(vj_input_snapshot_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
+vj_emu_thread_warnings(vj_input_snapshot_test)
+add_test(NAME input_snapshot_unit COMMAND vj_input_snapshot_test)
+set_tests_properties(input_snapshot_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
