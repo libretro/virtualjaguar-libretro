@@ -130,6 +130,7 @@ MenuBar buildMenuBar(const MenuState& s) {
         if (s.disc.available) {
             e.push_back(sep());
             e.push_back(item(Cmd::DiscTray, s.disc.ejected ? "Close Tray" : "Open Tray"));
+            e.push_back(item(Cmd::DiscAdd, "Add Disc Image" ELL));
             if (s.disc.count > 1) {
                 std::vector<MenuItem> discs;
                 for (unsigned i = 0; i < s.disc.count; i++) {
@@ -290,6 +291,7 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount, int 
         if (arg < 0 || arg >= discCount) return false;
         a.selectDisc(arg);
         return true;
+    case Cmd::DiscAdd: a.addDisc(); return true;
     case Cmd::Fullscreen: a.toggleFullscreen(); return true;
     case Cmd::IntegerScale: a.toggleIntegerScale(); return true;
     case Cmd::SmoothFilter: a.toggleSmoothFilter(); return true;

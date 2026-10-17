@@ -15,6 +15,7 @@
 #   smoke_bad_option  an --option key the core never registered must be REJECTED
 #                   (it would otherwise silently run the default).
 #   smoke_cd        the synthetic Jaguar CD image, path-loaded (no BIOS).
+#   smoke_disc_swap the disc menu commands on a loaded CD: add a second disc, swap to it and back.
 #   remap_unit      controller remapping logic (test/remap_test.cpp): binding
 #                   serialisation, profile / per-game override precedence, the
 #                   config round trip, keypad -> core-input translation, the
@@ -82,6 +83,15 @@ set_tests_properties(smoke_locked_option PROPERTIES
 add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank
             "${VJ_ROMS}/synth_jagcd.chd")
+
+# File > Disc end to end: the loaded CD is in the disc list, Add disc image... swaps to a second one, then Open tray,
+# File > Disc > the first and Close tray boot the first again.  The PASS line names all three discs.
+add_test(NAME smoke_disc_swap
+    COMMAND virtualjaguar --headless --frames 120 --allow-blank --disc-swap "${VJ_ROMS}/synth_jagcd_multi.chd"
+            "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_swap PROPERTIES TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "DISC swap synth_jagcd\\.chd -> synth_jagcd_multi\\.chd -> synth_jagcd\\.chd \\(inline\\)"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
 
 # BIOS-only boots (#838, #833).  No BIOS file is needed: the core's built-in images run, so these work on CI.
 # Neither passes --allow-blank: the boot ROM's logo and the CD BIOS's logo and cube must actually draw (the hashes

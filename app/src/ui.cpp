@@ -577,6 +577,7 @@ void drawMenuBar(App& app) {
                 const bool eject = !disc.ejected;
                 app.emu.call([&host, eject] { host.discSetEject(eject); });
             }
+            if (ImGui::MenuItem("Add disc image...")) app.showDiscDialog();
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
                 for (unsigned i = 0; i < disc.count; i++) {
                     ImGui::PushID((int)i);   // a multi-disc set can repeat a label

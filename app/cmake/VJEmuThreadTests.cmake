@@ -14,6 +14,7 @@
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
+#   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   *_threaded limits     RetroAchievements, netplay, the debugger and the GDB stub are off while threaded
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
@@ -125,6 +126,15 @@ set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threa
     TIMEOUT 300 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+# The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the
+# staged-BIOS record), and the menus read the disc list from the pinned snapshot.
+add_test(NAME smoke_disc_swap_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 120 --allow-blank
+            --disc-swap "${VJ_ROMS}/synth_jagcd_multi.chd" "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_swap_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "DISC swap synth_jagcd\\.chd -> synth_jagcd_multi\\.chd -> synth_jagcd\\.chd \\(emulation thread\\)"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
 add_test(NAME emu_thread_limits
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")

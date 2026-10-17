@@ -29,7 +29,7 @@ enum class Cmd : int {
     CloseGame, RevealGame, Quit,
     // Emulation
     Pause, Reset, FastForward, SaveState, LoadState, SetSlot /*arg = 0..9*/, StateManager, Cheats,
-    DiscTray, DiscSelect /*arg = disc index*/,
+    DiscTray, DiscSelect /*arg = disc index*/, DiscAdd,
     // View
     Fullscreen, IntegerScale, SmoothFilter, Shader, ShowFps, KeypadOverlay, ControlsOverlay, VSync, HomeLibrary, TvMode,
     // Settings / help
@@ -139,6 +139,7 @@ struct Actions {
     virtual void showCheats() = 0;
     virtual void toggleDiscTray() = 0;
     virtual void selectDisc(int index) = 0;
+    virtual void addDisc() = 0;   // a file picker; the disc picked joins the list and goes in
     virtual void toggleFullscreen() = 0;
     virtual void toggleIntegerScale() = 0;
     virtual void toggleSmoothFilter() = 0;

@@ -92,6 +92,16 @@ void SDLCALL dialogDone(void* ud, const char* const* list, int /*filter*/) {
     SDL_PushEvent(&ev);
 }
 
+void SDLCALL discDialogDone(void*, const char* const* list, int /*filter*/) {
+    if (!list || !list[0]) return;
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 0x564A4441;  // 'VJDA': add this disc image to the disc list
+    ev.user.data1 = SDL_strdup(list[0]);
+    SDL_PushEvent(&ev);
+}
+
 void SDLCALL importDialogDone(void*, const char* const* list, int /*filter*/) {
     if (!list || !list[0]) return;
     SDL_Event ev;
@@ -1198,6 +1208,46 @@ void App::showOpenDialog() {
                            g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
 }
 
+// ---- discs ------------------------------------------------------------------------------------------------------
+// Every disc command is a call(), not a post(): inserting a disc can re-stage the CD BIOS, which writes the staged-BIOS
+// record the BIOS panel reads (#967).
+void App::showDiscDialog() {
+    if (!window_) return;
+    static const SDL_DialogFileFilter kFilters[2] = {{"Jaguar CD images", "cue;cdi;chd"}, {"All files", "*"}};
+    SDL_ShowOpenFileDialog(discDialogDone, this, window_, kFilters, 2, g_lastDir.empty() ? nullptr : g_lastDir.c_str(),
+                           false);
+}
+
+bool App::addDisc(const std::string& path) {
+    if (!host.isLoaded()) return false;
+    if (haltedNow()) {
+        toast("The debugger has the game halted - resume it first", 2.5, 2);
+        return false;
+    }
+    int idx = -1;
+    bool wasEjected = false, nowEjected = false;
+    emu.call([&] {
+        wasEjected = host.discInfo().ejected;
+        idx = host.discAppend(path);
+        // The same as picking it in File > Disc: with the tray closed this swaps at once, with it open the disc goes in
+        // when the tray closes.
+        if (idx >= 0) host.discSetIndex((unsigned)idx);
+        nowEjected = host.discInfo().ejected;
+    });
+    host.pinSnapshot();
+    if (idx < 0) {
+        toast("Not added: " + pathStem(path) + " is not a CD image (cue, cdi or chd)", 3.0, 2);
+        return false;
+    }
+    if (!wasEjected && nowEjected) {   // the core left the tray open and put the previous disc back
+        toast("Could not start " + pathStem(path) + " - the tray is open", 3.0, 2);
+        return false;
+    }
+    toast((wasEjected ? "Disc selected: " : "Disc inserted: ") + pathStem(path));
+    debug.requestRefresh();
+    return true;
+}
+
 // ---- resume where I left off ------------------------------------------------------------------------------------
 // Policy in library_lists.h (shouldAutoSave / resumeAction), tested in vj_library_tests.  The auto-save is its own
 // slot (lib::kAutoSlot): one file pair per game, always the latest, written like any state (temp file + rename).
@@ -1534,6 +1584,10 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
             openAndLoadState(p, (int)(intptr_t)e.user.data2 - 1000);
+        } else if (e.user.code == 0x564A4441 && e.user.data1) {   // 'VJDA': File > Add disc image...
+            std::string p = (const char*)e.user.data1;
+            SDL_free(e.user.data1);
+            addDisc(p);
         } else if (e.user.code == 0x56424A49 && e.user.data1) {   // 'VBJI': import this BIOS file
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
@@ -2004,6 +2058,52 @@ void App::saveWindowScreenshot(const std::string& path) {
     }
 }
 
+// --disc-swap: the disc commands end to end, through the entry points the menus use (addDisc for File > Add disc
+// image..., runNativeCommand for the tray and File > Disc), reading the disc state the menus read -- the pinned
+// snapshot when threaded.
+bool App::discSwapHeadlessCheck(const std::string& path) {
+    auto menuDisc = [this] {
+        host.pinSnapshot();
+        return host.discInfo();
+    };
+    DiscInfo d = menuDisc();
+    if (!d.available || d.count != 1 || d.index != 0 || d.ejected) {
+        std::fprintf(stderr, "headless: FAIL --disc-swap: the loaded disc is not in the disc list (%u image(s))\n", d.count);
+        return false;
+    }
+    const std::string first = d.labels[0];
+    if (!addDisc(absolutePath(path))) {
+        std::fprintf(stderr, "headless: FAIL --disc-swap: could not add and insert %s\n", path.c_str());
+        return false;
+    }
+    runHeadlessFrames(60);
+    d = menuDisc();
+    if (d.count != 2 || d.index != 1 || d.ejected) {
+        std::fprintf(stderr, "headless: FAIL --disc-swap: after the add, %u image(s), index %u, tray %s\n", d.count,
+                     d.index, d.ejected ? "open" : "closed");
+        return false;
+    }
+    const std::string second = d.labels[1];
+    runNativeCommand(platform::Cmd::DiscTray, 0);   // Open tray
+    d = menuDisc();
+    if (!d.ejected) {
+        std::fprintf(stderr, "headless: FAIL --disc-swap: Open tray left the tray closed\n");
+        return false;
+    }
+    runNativeCommand(platform::Cmd::DiscSelect, 0);   // File > Disc > the first disc
+    runNativeCommand(platform::Cmd::DiscTray, 0);     // Close tray: the first disc boots again
+    d = menuDisc();
+    if (d.ejected || d.index != 0) {
+        std::fprintf(stderr, "headless: FAIL --disc-swap: Close tray left index %u, tray %s\n", d.index,
+                     d.ejected ? "open (the insert failed)" : "closed");
+        return false;
+    }
+    runHeadlessFrames(60);
+    std::printf("DISC swap %s -> %s -> %s (%s)\n", first.c_str(), second.c_str(), d.labels[0].c_str(),
+                threaded() ? "emulation thread" : "inline");
+    return true;
+}
+
 int App::runHeadless(const CliArgs& a) {
     audio.open(48043.6);
     applyAudioSettings();
@@ -2111,6 +2211,7 @@ int App::runHeadless(const CliArgs& a) {
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;
         }
+        if (!a.discSwap.empty() && !discSwapHeadlessCheck(a.discSwap)) rc = 1;
         if (!emu.call([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = shownFrame();

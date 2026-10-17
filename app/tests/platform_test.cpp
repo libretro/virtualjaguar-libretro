@@ -94,6 +94,7 @@ static void testIdleModel() {
     CHECK(findCmd(bar, Cmd::RevealGame)->title == "Show in Finder");
     CHECK(findCmd(bar, Cmd::ShowDataFolder)->title == "Show Data Folder in Finder");
     CHECK(findCmd(bar, Cmd::DiscTray) == nullptr);   // no disc drive: no tray item
+    CHECK(findCmd(bar, Cmd::DiscAdd) == nullptr);    // nor a way to add a disc to it
     CHECK(findCmd(bar, Cmd::NetplayDisconnect) == nullptr);
     CHECK(findCmd(bar, Cmd::AchSignIn) == nullptr);
 }
@@ -162,6 +163,7 @@ static void testStateReflected() {
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscTray)->title == "Close Tray");
     s.disc.count = 1;   // a single disc: no Disc submenu
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscSelect) == nullptr);
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscAdd) != nullptr);   // ...but a second one can be added
 
     // achievements
     CHECK(findCmd(bar, Cmd::AchSignIn) && !findCmd(bar, Cmd::AchSignOut));
@@ -422,6 +424,7 @@ struct Recorder : Actions {
     void showCheats() override { rec("showCheats"); }
     void toggleDiscTray() override { rec("toggleDiscTray"); }
     void selectDisc(int i) override { rec("selectDisc", i); }
+    void addDisc() override { rec("addDisc"); }
     void toggleFullscreen() override { rec("toggleFullscreen"); }
     void toggleIntegerScale() override { rec("toggleIntegerScale"); }
     void toggleSmoothFilter() override { rec("toggleSmoothFilter"); }
@@ -470,6 +473,7 @@ static void testDispatch() {
     CHECK(one(Cmd::DiscSelect, 2) == "selectDisc:2");
     CHECK(one(Cmd::DiscSelect, 3) == "rejected");        // only 3 discs now
     CHECK(one(Cmd::DiscSelect, 0, 5, 0) == "rejected");  // disc went away
+    CHECK(one(Cmd::DiscAdd, 0) == "addDisc");
     CHECK(one(Cmd::None, 0) == "rejected");
     CHECK(one(Cmd::Count_, 0) == "rejected");
     CHECK(one(Cmd::Website, 0) == std::string("openUrl:") + kWebsiteUrl);
