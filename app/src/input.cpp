@@ -420,9 +420,9 @@ void InputManager::bindCaptured(const Binding& captured) {
     reresolve();
 }
 
-void InputManager::poll(bool captureKeyboard) {
+void InputManager::poll(bool captureKeyboard, unsigned overlayTicks) {
     core_.beginFrame();
-    overlay.tick();
+    for (unsigned i = 0; i < overlayTicks; i++) overlay.tick();
     // While a binding is being captured nothing reaches the core: the press being bound
     // must not also act in the game (binding Start would pause it, for one).
     if (capture_.active()) return;
@@ -512,7 +512,7 @@ void InputManager::poll(bool captureKeyboard) {
     pi.y = my;
 
     router_.route(rc, padSrc, &kb, pi, &overlay, core_);   // (the controls-overlay key is handled in handleEvent)
-    holds_.frame();   // tap pulses count emulated frames
+    for (unsigned i = 0; i < overlayTicks; i++) holds_.frame();   // tap pulses count emulated frames
 
     // Keys the overlay is holding down (a mouse click or a gamepad press in the overlay).
     core_.addControls(overlay.port > 1 ? 0u : overlay.port, overlay.held());

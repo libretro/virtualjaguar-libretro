@@ -1,0 +1,157 @@
+# Emulation thread (#967, docs/app-emulation-thread-design.md, docs/app-emulation-thread-plan-phase1.md).
+# Every test here carries the label `emu_thread`: the ThreadSanitizer job in .github/workflows/app.yml runs exactly
+# these (ctest -L emu_thread).
+#
+#   frame_exchange_unit   FrameExchange: newest wins, the reader's slot is never written, no tearing, content epochs
+#   emu_commands_unit     EmuCommands: FIFO per producer, timed waits, close-and-drain, errors
+#   pacing_clock_unit     PacingClock mode A against a fake clock and a fake 512-frame-chunk audio device
+#   emu_thread_unit       EmuThread: inline vs threaded, call/post ordering, pause/advance, stop/join timeout, shutdown races
+#   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
+#   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
+#   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
+#   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock
+#   emu_thread_flag_rejects  --emu-thread takes on or off only
+#   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
+#   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
+#   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
+#   *_threaded limits     RetroAchievements, netplay, the debugger and the GDB stub are off while threaded
+#   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
+
+function(vj_emu_thread_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W3 /utf-8)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+endfunction()
+
+add_executable(vj_frame_exchange_test tests/frame_exchange_test.cpp)
+target_include_directories(vj_frame_exchange_test PRIVATE src)
+target_link_libraries(vj_frame_exchange_test PRIVATE Threads::Threads)
+vj_emu_thread_warnings(vj_frame_exchange_test)
+add_test(NAME frame_exchange_unit COMMAND vj_frame_exchange_test)
+set_tests_properties(frame_exchange_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_emu_commands_test tests/emu_commands_test.cpp)
+target_include_directories(vj_emu_commands_test PRIVATE src)
+target_link_libraries(vj_emu_commands_test PRIVATE Threads::Threads)
+vj_emu_thread_warnings(vj_emu_commands_test)
+add_test(NAME emu_commands_unit COMMAND vj_emu_commands_test)
+set_tests_properties(emu_commands_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_pacing_clock_test tests/pacing_clock_test.cpp)
+target_include_directories(vj_pacing_clock_test PRIVATE src)
+vj_emu_thread_warnings(vj_pacing_clock_test)
+add_test(NAME pacing_clock_unit COMMAND vj_pacing_clock_test)
+set_tests_properties(pacing_clock_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_emu_thread_test tests/emu_thread_test.cpp src/emu_thread.cpp)
+target_include_directories(vj_emu_thread_test PRIVATE src)
+target_link_libraries(vj_emu_thread_test PRIVATE Threads::Threads)
+vj_emu_thread_warnings(vj_emu_thread_test)
+add_test(NAME emu_thread_unit COMMAND vj_emu_thread_test)
+set_tests_properties(emu_thread_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_input_snapshot_test tests/input_snapshot_test.cpp src/remap.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_input_snapshot_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(vj_input_snapshot_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
+vj_emu_thread_warnings(vj_input_snapshot_test)
+add_test(NAME input_snapshot_unit COMMAND vj_input_snapshot_test)
+set_tests_properties(input_snapshot_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_audio_out_test tests/audio_out_test.cpp src/audio.cpp)
+target_include_directories(vj_audio_out_test PRIVATE src)
+target_link_libraries(vj_audio_out_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
+vj_emu_thread_warnings(vj_audio_out_test)
+add_test(NAME audio_out_unit COMMAND vj_audio_out_test)
+set_tests_properties(audio_out_unit PROPERTIES TIMEOUT 120 LABELS emu_thread SKIP_RETURN_CODE 77
+                     FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_core_host_thread_test tests/core_host_thread_test.cpp src/core_host.cpp src/emu_thread.cpp src/paths.cpp)
+target_include_directories(vj_core_host_thread_test PRIVATE src)
+target_link_libraries(vj_core_host_thread_test PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_core_host_thread_test PRIVATE ws2_32 iphlpapi)
+endif()
+vj_emu_thread_warnings(vj_core_host_thread_test)
+add_test(NAME core_host_thread COMMAND vj_core_host_thread_test "${VJ_ROMS}/yarc.j64")
+set_tests_properties(core_host_thread PROPERTIES TIMEOUT 300 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_emu_thread_e2e tests/emu_thread_e2e.cpp src/core_host.cpp src/emu_thread.cpp src/remap.cpp
+               src/config.cpp src/paths.cpp)
+target_include_directories(vj_emu_thread_e2e PRIVATE src)
+target_link_libraries(vj_emu_thread_e2e PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_emu_thread_e2e PRIVATE ws2_32 iphlpapi)
+endif()
+vj_emu_thread_warnings(vj_emu_thread_e2e)
+add_test(NAME emu_thread_e2e COMMAND vj_emu_thread_e2e "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_e2e PROPERTIES TIMEOUT 600 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_test(NAME emu_thread_flag_rejects COMMAND virtualjaguar --headless --emu-thread maybe "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_REGULAR_EXPRESSION "--emu-thread wants on or off"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
+
+add_executable(vj_perf_csv_test tests/perf_csv_test.cpp)
+target_include_directories(vj_perf_csv_test PRIVATE src)
+target_link_libraries(vj_perf_csv_test PRIVATE ${VJ_SDL3_TARGET})
+vj_emu_thread_warnings(vj_perf_csv_test)
+add_test(NAME perf_csv_unit COMMAND vj_perf_csv_test "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(perf_csv_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The headless smoke tests (VJSmokeTests.cmake) again with --emu-thread on: the same hashes as inline, nothing on the
+# UI thread calling into the core, and the run really threaded (the OK line says so only then).
+set(_vj_threaded_ok "headless: OK \\([0-9]+ load\\(s\\), emulation thread\\)")
+add_test(NAME smoke_yarc_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames ${VJ_SMOKE_FRAMES} ${_yarc_hash_args}
+            "${VJ_ROMS}/yarc.j64")
+add_test(NAME smoke_reload_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames ${VJ_SMOKE_FRAMES}
+            "${VJ_ROMS}/yarc.j64" "${VJ_ROMS}/jagniccc.j64" "${VJ_ROMS}/yarc.j64")
+add_test(NAME smoke_state_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 240 --state-roundtrip "${VJ_ROMS}/jagniccc.j64")
+add_test(NAME smoke_boot_cd_bios_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 400 --boot-bios cd --expect-bios cd:builtin
+            --expect-hash b83cb3ee)
+add_test(NAME cheat_apply_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 60 --cheat 001F0000:AB --expect-ram 1F0000=AB
+            "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threaded smoke_boot_cd_bios_threaded
+                     cheat_apply_threaded PROPERTIES
+    TIMEOUT 300 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+add_test(NAME emu_thread_limits
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "RetroAchievements, netplay and the debugger tools are off while the emulation thread is on"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
+add_test(NAME netplay_refused_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --netplay host --frames 5 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(netplay_refused_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "netplay: not available while the emulation thread is on"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
+add_test(NAME gdb_locked_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
+            "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_locked_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
+
+add_executable(vj_late_latch_test tests/late_latch_test.cpp)
+target_include_directories(vj_late_latch_test PRIVATE src)
+vj_emu_thread_warnings(vj_late_latch_test)
+add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
+set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+if(VJ_APP_TSAN)
+    add_executable(vj_tsan_canary tests/tsan_canary.cpp)
+    target_link_libraries(vj_tsan_canary PRIVATE Threads::Threads)
+    # abort_on_error=0: ThreadSanitizer on macOS aborts (SIGABRT) by default, and ctest does not invert a signal death
+    # for WILL_FAIL; with 0 it exits 66 like on Linux, so the canary reads the same everywhere.
+    add_test(NAME tsan_canary
+        COMMAND ${CMAKE_COMMAND} -E env TSAN_OPTIONS=halt_on_error=1:abort_on_error=0 $<TARGET_FILE:vj_tsan_canary>)
+    set_tests_properties(tsan_canary PROPERTIES WILL_FAIL TRUE LABELS emu_thread TIMEOUT 60)
+endif()

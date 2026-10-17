@@ -253,6 +253,17 @@ void drawInterfaceTab(App& app) {
     drawControlsOverlaySettings(app);
     drawAppearanceSettings(app);
     drawFontSettings(app);
+    ImGui::SeparatorText("Performance");
+    bool emuThread = app.emuThreadWanted();
+    if (ImGui::Checkbox("Emulation thread", &emuThread)) {
+        app.emuThreadPref = emuThread ? 1 : 0;
+        app.saveConfig();
+    }
+    ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
+             "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
+             "app starts. While it is on, this version turns off RetroAchievements, netplay and the Tools (debugger) "
+             "menu; they come back in a later update. Off by default.");
+    if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");
     ImGui::SetNextItemWidth(ui::em(10.0f));
@@ -535,13 +546,13 @@ void drawMenuBar(App& app) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !host.inFrame())) app.closeContent();
+        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !app.haltedNow())) app.closeContent();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) app.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-        bool loaded = host.isLoaded() && !host.inFrame();   // a debugger halt parks the core: nothing that re-enters it
+        bool loaded = host.isLoaded() && !app.haltedNow();   // a debugger halt parks the core: nothing that re-enters it
         if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, loaded)) app.togglePause();
         if (ImGui::MenuItem("Reset", "Ctrl+R", false, loaded)) app.reset();
         ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, loaded);
@@ -559,12 +570,17 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Cheats...", nullptr, false, loaded)) app.showCheats = true;
         DiscInfo disc = host.discInfo();
         if (disc.available) {
+            // A disc command is a call(), not a post(): inserting a disc can re-stage the CD BIOS, which writes the
+            // staged-BIOS record the BIOS panel reads (#967).
             ImGui::Separator();
-            if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) host.discSetEject(!disc.ejected);
+            if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) {
+                const bool eject = !disc.ejected;
+                app.emu.call([&host, eject] { host.discSetEject(eject); });
+            }
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
                 for (unsigned i = 0; i < disc.count; i++) {
                     ImGui::PushID((int)i);   // a multi-disc set can repeat a label
-                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) host.discSetIndex(i);
+                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) app.emu.call([&host, i] { host.discSetIndex(i); });
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();
@@ -661,7 +677,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImVec2 areaPos(vp->Pos.x, vp->Pos.y + menuH);
     ImVec2 areaSize(vp->Size.x, vp->Size.y - menuH);
     if (app.host.isLoaded() && app.video.hasFrame()) {
-        ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
+        ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.pictureAspect(), app.present,
                                     io.DisplayFramebufferScale.x);
         app.input.setPicture(pic.x - vp->Pos.x, pic.y - vp->Pos.y, pic.z, pic.w);   // window-relative, like SDL's pointer events   // where the picture is, for the light gun
     } else if (!app.host.isLoaded()) {

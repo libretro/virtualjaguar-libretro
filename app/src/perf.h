@@ -45,6 +45,12 @@ struct Perf {
     std::vector<unsigned char> syncPer;  // the swap interval was 1 during that iteration
     unsigned emuThis = 0;
     bool curSync = true;                 // set by the loop; recorded per iteration
+    std::vector<unsigned short> underPer;   // audio underruns counted during that iteration (VJ_PERF_CSV)
+    std::vector<float> latPer;              // input event -> core poll latency measured in it, ms; -1 = none
+    unsigned curUnder = 0;                  // set by the loop for the current iteration (App::perfSample)
+    float curLat = -1.0f;
+    std::vector<float> presPer;             // input event -> the swap that showed its frame, ms; -1 = none
+    float curPres = -1.0f;                  // set by the loop for the current iteration (App::perfSample)
     double cpuStart = 0;
     uint64_t emuFrames = 0;      // emulated frames run inside the measured window (retro_run calls)
     std::string note;            // one line describing the setup (window size, GL, shader), printed first
@@ -84,8 +90,14 @@ struct Perf {
             frameMs.push_back(1000.0 * (double)(n - frameStart) / (double)freq);
             emuPer.push_back((unsigned char)std::min(emuThis, 255u));
             syncPer.push_back(curSync ? 1 : 0);
+            underPer.push_back((unsigned short)std::min(curUnder, 65535u));
+            latPer.push_back(curLat);
+            presPer.push_back(curPres);
         }
         emuThis = 0;
+        curUnder = 0;
+        curLat = -1.0f;
+        curPres = -1.0f;
         frameStart = n;
         mark = n;
         return seen >= warmup + target;
@@ -132,14 +144,45 @@ struct Perf {
         std::printf("PERF   %-28s avg %7.3f ms  p50 %6.3f  p99 %6.3f  max %6.3f\n", "loop iteration", tot / (double)n,
                     s[n / 2], s[std::min(n - 1, (size_t)((double)n * 0.99))], s.back());
         if (cpu >= 0) std::printf("PERF   process CPU: %.1f%% of one core (user+sys %.2f s / wall %.2f s)\n", 100.0 * cpu / wall, cpu, wall);
+        {
+            double lsum = 0, lmax = 0;
+            size_t ln = 0;
+            unsigned long long under = 0;
+            for (float l : latPer)
+                if (l >= 0) {
+                    lsum += l;
+                    lmax = std::max(lmax, (double)l);
+                    ln++;
+                }
+            for (unsigned short u : underPer) under += u;
+            if (ln)
+                std::printf("PERF   input latency (event -> core poll): avg %.3f ms  max %.3f ms  (%zu samples)\n",
+                            lsum / (double)ln, lmax, ln);
+            double psum = 0, pmax = 0;
+            size_t pn = 0;
+            for (float l : presPer)
+                if (l >= 0) {
+                    psum += l;
+                    pmax = std::max(pmax, (double)l);
+                    pn++;
+                }
+            if (pn)
+                std::printf("PERF   input latency (event -> present): avg %.3f ms  max %.3f ms  (%zu samples)\n",
+                            psum / (double)pn, pmax, pn);
+            std::printf("PERF   audio underruns: %llu\n", under);
+        }
         // VJ_PERF_CSV=path: one row per measured loop iteration (iteration ms, emulated frames run in it, swap
-        // interval 1?) -- the raw material for "how evenly were new images presented" (tests/pacing_trace.cpp
-        // replays the same thing from a core cost trace).
+        // interval 1?, audio underruns, input latency ms or -1, event -> present ms or -1) -- the raw material for
+        // "how evenly were new images presented" (tests/pacing_trace.cpp replays the first three from a core cost
+        // trace).
         if (const char* csv = std::getenv("VJ_PERF_CSV")) {
             if (FILE* f = std::fopen(csv, "w")) {
-                std::fprintf(f, "iter_ms,emu_frames,swap_sync\n");
+                std::fprintf(f, "iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms\n");
                 for (size_t i = 0; i < n && i < emuPer.size(); i++)
-                    std::fprintf(f, "%.3f,%d,%d\n", frameMs[i], (int)emuPer[i], (int)syncPer[i]);
+                    std::fprintf(f, "%.3f,%d,%d,%u,%.3f,%.3f\n", frameMs[i], (int)emuPer[i], (int)syncPer[i],
+                                 i < underPer.size() ? (unsigned)underPer[i] : 0u,
+                                 i < latPer.size() ? (double)latPer[i] : -1.0,
+                                 i < presPer.size() ? (double)presPer[i] : -1.0);
                 std::fclose(f);
             }
         }

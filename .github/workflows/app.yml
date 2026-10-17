@@ -177,6 +177,46 @@ jobs:
         retention-days: 7
 
   # ------------------------------------------------------------------------------------------
+  # ThreadSanitizer over the emulation-thread tests (#967): FrameExchange, EmuCommands, EmuThread,
+  # InputSnapshot, AudioOut, CoreHost's owner model, the real core inline vs threaded, and the
+  # headless smoke tests with --emu-thread on.  Any race report fails the job; tsan_canary proves
+  # the sanitizer is really on.
+  # ------------------------------------------------------------------------------------------
+  tsan:
+    name: ThreadSanitizer (emulation thread)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Linux build dependencies (SDL3 needs the desktop dev packages)
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq cmake pkg-config clang \
+          libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev \
+          libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+          libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libegl1-mesa-dev \
+          libdbus-1-dev libudev-dev libwayland-dev wayland-protocols libdecor-0-dev \
+          libcurl4-openssl-dev
+
+    # Newer runner kernels randomise mmap with more bits than TSan's shadow layout allows
+    # ("FATAL: ThreadSanitizer: unexpected memory mapping"); 28 is what it supports.
+    - name: Let TSan map its shadow memory
+      run: sudo sysctl vm.mmap_rnd_bits=28
+
+    - name: Configure (TSan, RelWithDebInfo, no LTO)
+      run: >-
+        cmake -S app -B app/build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVJ_APP_TSAN=ON -DVJ_APP_LTO=OFF
+        -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+    - name: Build
+      run: cmake --build app/build-tsan --config RelWithDebInfo -j4
+
+    - name: Emulation-thread tests under ThreadSanitizer
+      env:
+        TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1 suppressions=${{ github.workspace }}/app/tests/tsan.supp"
+      run: ctest --test-dir app/build-tsan -C RelWithDebInfo -L emu_thread --output-on-failure
+
+  # ------------------------------------------------------------------------------------------
   # Installable packages (macOS .zip, Windows .zip/-setup.exe, Linux .AppImage/.deb), built
   # by the reusable app-package.yml that release.yml also calls for tags and nightlies.  Same-repo
   # PRs get the same Developer ID signing + notarization as a release (#989); a fork PR receives no

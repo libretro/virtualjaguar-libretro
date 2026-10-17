@@ -9,6 +9,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <vector>
 
 namespace vj {
 
@@ -23,6 +25,15 @@ struct CliCheats {
     bool failed = false;   // a --cheat-set / --cheat-on / --cheat the manager refused
 };
 CliCheats g_cli;
+
+// A cheat-list change made on the UI thread while the emulation thread runs (#967): collected here, posted whole.
+struct CheatOp {
+    bool reset = false;
+    unsigned index = 0;
+    bool enabled = false;
+    std::string code;
+};
+std::vector<CheatOp> g_batch;
 
 GameIdentity identityOf(const CoreHost& host) {
     GameIdentity id;
@@ -72,8 +83,34 @@ void cheatsInit(App& app, const CliArgs& a) {
     g_cli.dir = a.cheatsDir;
 
     CheatManager& cm = app.cheats;
-    cm.resetSink = [] { retro_cheat_reset(); };
-    cm.setSink = [](unsigned index, bool enabled, const char* code) { retro_cheat_set(index, enabled, code); };
+    // Inline, or on the emulation thread (inside a load call): straight into the core.  From the UI thread while
+    // threaded: batched, and posted as one command by doneSink, so a frame never sees half a cheat list.
+    cm.resetSink = [&app] {
+        if (app.emu.threaded() && !app.emu.onEmuThread()) {
+            g_batch.clear();
+            g_batch.push_back(CheatOp{true, 0, false, std::string()});
+            return;
+        }
+        retro_cheat_reset();
+    };
+    cm.setSink = [&app](unsigned index, bool enabled, const char* code) {
+        if (app.emu.threaded() && !app.emu.onEmuThread()) {
+            g_batch.push_back(CheatOp{false, index, enabled, code ? code : ""});
+            return;
+        }
+        retro_cheat_set(index, enabled, code);
+    };
+    cm.doneSink = [&app] {
+        if (g_batch.empty()) return;
+        std::vector<CheatOp> ops;
+        ops.swap(g_batch);
+        app.emu.post([ops] {
+            for (const CheatOp& o : ops) {
+                if (o.reset) retro_cheat_reset();
+                else retro_cheat_set(o.index, o.enabled, o.code.c_str());
+            }
+        });
+    };
     // RetroAchievements hardcore: no cheat may reach the core.  The saved selections
     // stay on disk untouched and go back in when hardcore ends (see the callback).
     cm.blocked = [&app] { return !app.ach.allowCheats(); };

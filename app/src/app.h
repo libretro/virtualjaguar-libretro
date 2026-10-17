@@ -6,9 +6,12 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <atomic>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "achievements.h"
@@ -20,8 +23,12 @@
 #include "debug/debug_session.h"
 #include "fonts.h"
 #include "discord_presence.h"
+#include "emu_thread.h"
+#include "frame_exchange.h"
+#include "input_snapshot.h"
 #include "input.h"
 #include "instance.h"
+#include "late_latch.h"
 #include "library_service.h"
 #include "netplay.h"
 #include "pacing.h"
@@ -79,6 +86,9 @@ struct CliArgs {
     unsigned perfShaderW = 0, perfShaderH = 0;   // dev: run the shader chain at this output size (4K cost on a 1080p display)
     bool perfNoReuse = false;       // dev: disable the shader output reuse (before/after comparison)
     bool perfPause = false;         // dev: pause after loading (idle-cost profile)
+    int emuThread = -1;             // --emu-thread on|off: the emulation on its own thread for this run (-1 = the setting; headless: off)
+    bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
+    int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -131,6 +141,18 @@ public:
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
     DebugSession debug;      // the core's debug interface: Tools menu, halt pump, breakpoints (debug/debug_session.h)
+    // ---- the emulation thread (#967; docs/app-emulation-thread-design.md) ------------------------------------
+    EmuThread emu;              // inline (no thread) unless this run turned it on (emuThreadThisRun)
+    FrameExchange frames;       // finished frames, emulation thread -> UI thread
+    InputSnapshot inputSnap;    // the newest input, UI thread -> the core's poll
+    bool threaded() const { return emu.threaded(); }
+    // The aspect to draw the picture with: the frame on screen's own when threaded (a frame and its aspect travel
+    // together through FrameExchange), the core's current one inline.
+    float pictureAspect() const { return threaded() ? shownAspect_ : host.aspect(); }
+    // The core is parked at a debugger breakpoint (it then runs the UI from inside retro_run; inline mode only).  This
+    // is what every "may the UI re-enter the core?" check asks: CoreHost::inFrame() is the core's own view, and when
+    // threaded it is true for the whole of every frame.
+    bool haltedNow() const { return debug.halted(); }
     discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
     struct DiscordState {        // what discordTick() remembers between calls
         double lastTick = -1;
@@ -189,6 +211,11 @@ public:
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
     bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)
     bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
+    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen, 0 off, 1 on.  Never chosen is
+    // off in Phase 1 on every build; Phase 3 turns it on by default in nightlies.
+    int emuThreadPref = -1;
+    bool emuThreadWanted() const;                                 // the choice (never chosen = off)
+    bool emuThreadThisRun() const { return emuThreadThisRun_; }   // decided once at start-up
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
@@ -266,6 +293,7 @@ private:
     void shutdown();
     void loadConfig();
     void wireHost();
+    void limitFeaturesForEmuThread();   // #967 phase 1: RetroAchievements, netplay, the debugger tools, the GDB stub
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
@@ -287,16 +315,18 @@ private:
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+    void threadedFrame();             // UI thread, threaded: input out, frames / counters / messages in
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
     void frameUi();
     void updateTitle();
-    uint32_t frameHash() const;
+    uint32_t frameHash(const Frame& f) const;
 
     static constexpr int kNoPendingSlot = -1000;
     int pendingStateSlot_ = kNoPendingSlot;       // openAndLoadState: load this slot after the new game has run a few frames
     int pendingStateFrames_ = 0;
-    double runSeconds_ = 0;           // emulated seconds of the loaded game (auto-save needs a few)
+    std::atomic<uint64_t> runFrames_{0};   // emulated frames of the loaded game (auto-save needs a few seconds)
+    double runSeconds() const;
     bool reloading_ = false;          // reloadContent: a restart, not a new game
     bool suppressResume_ = false;     // the library opened a game to load a chosen state: no auto-save offer
     bool headless_ = false;
@@ -310,6 +340,32 @@ private:
     bool viewportsOn_ = false;         // ImGuiConfigFlags_ViewportsEnable is set right now
     uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
+    bool emuThreadThisRun_ = false;   // run(): --emu-thread, else the setting (headless: off unless asked)
+    // VJ_PERF_CSV input latency and underruns (#967 measurement)
+    uint64_t pendingEventNs_ = 0;             // UI thread: SDL timestamp of the oldest input event not yet polled
+    std::atomic<uint64_t> latSumNs_{0}, latCount_{0};   // written where the core polls, read per UI iteration
+    uint64_t underrunsSeen_ = 0;
+    void noteInputLatency(uint64_t eventNs);
+    void perfSample();
+    // VJ_PERF_CSV event -> present (#967: the late latch's measurement).  The swap's return stands in for the photon.
+    uint64_t presentEventNs_ = 0;   // inline: the oldest input event the frames of this iteration polled
+    uint64_t shownSeq_ = 0;         // threaded: the InputSnapshot publish the frame on screen polled
+    std::deque<std::pair<uint64_t, uint64_t>> presentQueue_;   // threaded: (publish seq, oldest event ns), oldest first
+    uint64_t presSumNs_ = 0, presCount_ = 0;
+    uint64_t emuInputSeq_ = 0;      // emulation thread: the publish the last core poll took
+    unsigned perfInputK_ = 0;       // --perf-input: the next injected key's delay step
+    void publishInput();
+    void notePresented(uint64_t swapEndNs);
+    // The late latch (#967, late_latch.h): threaded + vsync, wait until shortly before the next vblank, handing input
+    // to the emulation thread as it arrives, then take the newest frame.
+    LateLatch latch_;
+    bool lateLatchOn_ = true;
+    uint64_t latchedAtNs_ = 0;   // when this iteration's wait ended: its UI work starts there
+    unsigned latchChecks_ = 0;
+    bool latchLogged_ = false;
+    void latchWait();
+    void latchLog();
+    void latchUpdatePeriod();
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App
@@ -319,6 +375,28 @@ private:
     double lastTick_ = 0;
     Pacer pacer_;
     uint64_t perfFreq_ = 1;
+
+    // the emulation thread (#967)
+    struct EmuClient;                          // EmuThread::Client -> App (app.cpp)
+    std::unique_ptr<EmuClient> emuClient_;
+    void startEmuThread();                     // after the window and the audio device; stays inline if it cannot
+    void stopEmuThread();                      // exits the process if the thread is stuck in the core
+    void emuRunOneFrame();                     // emulation thread: one frame, then publish it
+    double emuAudioQueuedMs() const;           // mode A's audio clock, or -1 for none
+    void syncEmuFlags();                       // UI thread: pause / fast-forward / mute / audio target -> emulation side
+    const Frame& shownFrame();                 // the newest finished frame (FrameExchange when threaded)
+    void runHeadlessFrames(unsigned n);
+    bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
+    bool openNoContentOnCore(std::string& err);
+    std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side
+    std::atomic<uint64_t> retroTicks_{0};      // performance-counter ticks inside retro_run, since the UI last read them
+    CoreInput emuInput_;                       // emulation thread: what the core reads this frame
+    uint64_t lastSentSerial_ = 0;              // emulation thread: the last frame handed to FrameExchange
+    uint64_t emuFramesSeen_ = 0;               // UI thread: EmuThread::framesRun() at the previous iteration
+    uint64_t pendingStateAt_ = 0;              // threaded: run the pending state load once framesRun() reaches this
+    uint64_t shownEpoch_ = 0;                  // UI thread: FrameExchange::epoch() the picture on screen belongs to
+    float shownAspect_ = 4.0f / 3.0f;          // UI thread: the aspect of the frame on screen (FrameExchange::Slot::aspect)
+    void adoptFrameEpoch();                    // UI thread: a content switch drops the previous game's picture
 
     // measured fps
     double fpsWindowStart_ = 0;
@@ -347,7 +425,7 @@ private:
         unsigned optVisible = 0, optTotal = 0;
     };
     std::vector<HeadlessResult> results_;
-    size_t audioFramesSeen_ = 0;
+    std::atomic<size_t> audioFramesSeen_{0};
 };
 
 // ImGui frame builder (ui.cpp).
