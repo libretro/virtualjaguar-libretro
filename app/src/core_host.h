@@ -285,10 +285,13 @@ public:
     //     there, and reaches the core's copy through `post` at the next frame boundary.  The UI's copy
     //     (uiUser_ / uiSession_) is written only on the UI thread, plus -- inside an EmuThread::call(), while the
     //     UI thread waits -- by the owner-side branch of the same method;
-    //   * setControllerDevice, discSetEject / discSetIndex and sendKeyEvent are queued through `post`;
-    //   * the fields only load / unload write (isLoaded, contentPath / contentName, stagedBios, controllerPorts,
-    //     coreName / coreVersion, eventsActive, debugIface) are read directly: they change only inside an
-    //     EmuThread::call(), while the UI thread waits;
+    //   * setControllerDevice and sendKeyEvent are queued through `post`.  discSetEject / discSetIndex are queued
+    //     too if called off the owner, but the app's callers wrap them in an EmuThread::call(): a disc insert can
+    //     re-stage the CD BIOS, which writes stagedBios (see below);
+    //   * the fields only load / unload / reset / a disc insert write (isLoaded, contentPath / contentName,
+    //     stagedBios, controllerPorts, coreName / coreVersion, eventsActive, debugIface) are read directly: they
+    //     change only inside an EmuThread::call(), while the UI thread waits -- never in a `post`ed command,
+    //     which would run while the UI reads them;
     //   * anything else (runFrame, loads, states, SRAM, memory, frame(), inFrame()) is a bug: it is counted in
     //     ownerViolations() and logged once per method, and the calls into the core are refused.
     void setOwner(std::thread::id owner);

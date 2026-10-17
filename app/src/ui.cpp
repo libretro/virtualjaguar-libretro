@@ -570,12 +570,17 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Cheats...", nullptr, false, loaded)) app.showCheats = true;
         DiscInfo disc = host.discInfo();
         if (disc.available) {
+            // A disc command is a call(), not a post(): inserting a disc can re-stage the CD BIOS, which writes the
+            // staged-BIOS record the BIOS panel reads (#967).
             ImGui::Separator();
-            if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) host.discSetEject(!disc.ejected);
+            if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) {
+                const bool eject = !disc.ejected;
+                app.emu.call([&host, eject] { host.discSetEject(eject); });
+            }
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
                 for (unsigned i = 0; i < disc.count; i++) {
                     ImGui::PushID((int)i);   // a multi-disc set can repeat a label
-                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) host.discSetIndex(i);
+                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) app.emu.call([&host, i] { host.discSetIndex(i); });
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();
