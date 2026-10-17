@@ -788,6 +788,10 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
         stopSession();
         return false;
     }
+    // The core's disc list starts empty even after it booted this CD (libretro.c: "nothing to insert"), so without
+    // this the tray and disc menus never appear.  The count check keeps a core that lists its own disc working.
+    if (isDiscImage(path) && diskRegistered_ && disk_.get_num_images && disk_.get_num_images() == 0)
+        appendDiscImage(path);
     return finishLoad(pathStem(path), err);
 }
 
@@ -974,8 +978,13 @@ DiscInfo CoreHost::discInfoLive() {
     for (unsigned i = 0; i < d.count; i++) {
         char label[256] = {0};
         std::string name;
-        if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0])
+        if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0]) {
+            // The core's label is the path after its last '/', so a Windows path ("D:\Games\Disc 1.chd") arrives
+            // whole: keep only the file name, as on every other OS.
             name = label;
+            const size_t sep = name.find_last_of("/\\");
+            if (sep != std::string::npos) name.erase(0, sep + 1);
+        }
         else if (disk_.get_image_path && disk_.get_image_path(i, label, sizeof label) && label[0])
             name = pathStem(label);
         else
@@ -1007,6 +1016,40 @@ void CoreHost::discSetIndex(unsigned idx) {
         discDirty_ = true;
         publishSnapshot();
     }
+}
+
+bool CoreHost::isDiscImage(const std::string& path) {
+    // The core's own is_cd_content test (libretro.c).  A cartridge must never reach the disc list: the core registers
+    // disk control for a cartridge too, and closing the tray would try to mount the cartridge as a disc.
+    const std::string e = pathExt(path);
+    return e == "cue" || e == "cdi" || e == "chd" || e == "iso";
+}
+
+int CoreHost::discAppend(const std::string& path) {
+    if (noteOffOwner("discAppend")) return -1;
+    if (!loaded_ || inFrame_) return -1;
+    const int idx = appendDiscImage(path);
+    if (idx >= 0) {
+        discDirty_ = true;
+        publishSnapshot();
+    }
+    return idx;
+}
+
+int CoreHost::appendDiscImage(const std::string& path) {
+    if (!isDiscImage(path) || !diskRegistered_ || !disk_.add_image_index || !disk_.replace_image_index ||
+        !disk_.get_num_images)
+        return -1;
+    if (!disk_.add_image_index()) return -1;   // the list is full
+    const unsigned idx = disk_.get_num_images() - 1;
+    retro_game_info gi;
+    std::memset(&gi, 0, sizeof gi);
+    gi.path = path.c_str();   // the core copies the path
+    if (!disk_.replace_image_index(idx, &gi)) {
+        disk_.replace_image_index(idx, nullptr);   // drop the empty slot again
+        return -1;
+    }
+    return (int)idx;
 }
 
 // ---- threading (#967) -------------------------------------------------------------

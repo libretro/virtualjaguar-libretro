@@ -105,6 +105,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             }
         }
         void selectDisc(int i) override { a.emu.call([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }); }
+        void addDisc() override { a.showDiscDialog(); }
         void toggleFullscreen() override { a.setFullscreen(!a.fullscreen); }
         void toggleIntegerScale() override { a.present.integerScale = !a.present.integerScale; }
         void toggleSmoothFilter() override { a.present.linearFilter = !a.present.linearFilter; }

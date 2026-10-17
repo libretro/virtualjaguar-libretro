@@ -274,6 +274,11 @@ public:
     DiscInfo discInfo();
     void discSetEject(bool eject);
     void discSetIndex(unsigned idx);
+    // Adds a CD image to the core's disc list (RetroArch's "Disk Image Append") and returns its index, or -1.  The
+    // core never lists a disc of its own, so loadContent registers the CD it loaded this way.  Owner thread only
+    // (refused and counted off it): the app calls it inside an EmuThread::call(), like the other disc commands.
+    int discAppend(const std::string& path);
+    static bool isDiscImage(const std::string& path);   // cue / cdi / chd / iso: what the core mounts as a disc
 
     // ---- threading (#967, docs/app-emulation-thread-design.md) -------------------------------------
     // Inline (no owner, the default): every method runs on its caller's thread, exactly as before.
@@ -287,7 +292,7 @@ public:
     //     UI thread waits -- by the owner-side branch of the same method;
     //   * setControllerDevice and sendKeyEvent are queued through `post`.  discSetEject / discSetIndex are queued
     //     too if called off the owner, but the app's callers wrap them in an EmuThread::call(): a disc insert can
-    //     re-stage the CD BIOS, which writes stagedBios (see below);
+    //     re-stage the CD BIOS, which writes stagedBios (see below).  discAppend is owner-only;
     //   * the fields only load / unload / reset / a disc insert write (isLoaded, contentPath / contentName,
     //     stagedBios, controllerPorts, coreName / coreVersion, eventsActive, debugIface) are read directly: they
     //     change only inside an EmuThread::call(), while the UI thread waits -- never in a `post`ed command,
@@ -381,6 +386,7 @@ private:
     // threading (#967)
     float aspectLive() const;
     DiscInfo discInfoLive();
+    int appendDiscImage(const std::string& path);   // discAppend without the loaded / owner checks (loadContent)
     const OptionTable& uiTable() const;
     bool noteOffOwner(const char* what) const;   // true (counted, logged once) when called off the owner
     void queue(std::function<void()> fn);         // through `post`, or now when there is none

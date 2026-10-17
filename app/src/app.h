@@ -67,6 +67,7 @@ struct CliArgs {
     unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
     bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
+    std::string discSwap;           // headless: add this CD image to the loaded disc's list, swap to it and back (File > Disc)
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
     std::string expectHash;         // headless: expected hash of the FIRST content
@@ -238,6 +239,8 @@ public:
     bool reloadContent();
     void closeContent();
     void showOpenDialog();
+    void showDiscDialog();            // File > Add disc image...: the picked image joins the disc list and goes in
+    bool addDisc(const std::string& path);   // the picked image: appended, then selected (a closed tray swaps at once)
     void showImportBiosDialog();      // a file picker that imports the BIOS picked (BIOS & boot)
     bool homeVisible() const { return homeLibrary && !host.isLoaded() && !tvMode.active(); }   // is the desktop library standing in for the game? (TV mode's screens stand in instead)
     bool desktopWindowOpen() const;   // Settings, States, Cheats, About, the library window, the keypad overlay or any popup / menu is open (devices_ui.cpp)
@@ -402,6 +405,7 @@ private:
     void syncEmuFlags();                       // UI thread: pause / fast-forward / mute / audio target -> emulation side
     const Frame& shownFrame();                 // the newest finished frame (FrameExchange when threaded)
     void runHeadlessFrames(unsigned n);
+    bool discSwapHeadlessCheck(const std::string& path);   // --disc-swap
     bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
     bool openNoContentOnCore(std::string& err);
     std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side
