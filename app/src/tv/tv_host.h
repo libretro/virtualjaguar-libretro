@@ -43,6 +43,13 @@ public:
     virtual void clearHolds() = 0;
     virtual void toast(const std::string& text) = 0;
     virtual std::string glyph(Intent i) const = 0;   // "A", "Cross", "Enter": SDL_GetGamepadButtonLabel on the last-used pad
+
+    // ---- TV mode itself (phase 2) ----------------------------------------------------------------------------------
+    virtual bool tvActive() const = 0;
+    virtual bool tvAvailable() const = 0;          // the setting is not Off
+    virtual void setTvActive(bool on) = 0;         // through App::toggleTvMode's path; no-op when Off
+    virtual std::string clockText() const = 0;     // "8:42 PM" or "20:42" (SDL_GetDateTimeLocalePreferences)
+    virtual std::string raStatus() const = 0;      // "" unless signed in; "RetroAchievements: <user>", + " - Hardcore" when wanted (a middle dot in the text)
 };
 
 }  // namespace vj::tv

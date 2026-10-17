@@ -3,6 +3,7 @@
 // an ImGui error (ID / stack / window misuse) on any page of the menu, the text it really draws (the netplay banner,
 // the Load rows that must not exist under hardcore), and that the menu leaves the pointer and the keyboard to the app
 // (no ImGui window while it is closed; no keyboard capture while it is open: F4 and the hold edges are gated on it).
+#include "tv/tv_screen.h"
 #include "tv/tv_shell.h"
 #include "tv/tv_widgets.h"
 
@@ -36,6 +37,9 @@ struct FakeHost : Host {
     int savedSlot = -1, loadedSlot = -1, resets = 0, closed = 0, resumed = 0, guardArmed = 0, holdsCleared = 0, controls = 0;
     bool controlsShown = false;
     std::string lastToast;
+    bool tv = false, tvOn = true;   // TV mode on right now; tvOn = tvAvailable() (the setting is not Off)
+    std::string ra;                 // raStatus(): "" unless signed in
+    std::string clockStr = "8:42 PM";
 
     double now() const override { return clock; }
     bool gameLoaded() const override { return loaded; }
@@ -80,6 +84,11 @@ struct FakeHost : Host {
         default: return "";
         }
     }
+    bool tvActive() const override { return tv; }
+    bool tvAvailable() const override { return tvOn; }
+    void setTvActive(bool on) override { tv = on && tvOn; }
+    std::string clockText() const override { return clockStr; }
+    std::string raStatus() const override { return ra; }
 };
 
 static void onImGuiError(ImGuiContext*, void*, const char* msg) {
@@ -98,7 +107,7 @@ static void frames(FakeHost& host, Shell& shell, int n) {
         g_ms += 16;
         ImGui::NewFrame();
         shell.frame(g_ms);
-        shell.draw(Layer::Base, ImVec2(0, 0), io.DisplaySize);   // phase 1: nothing
+        shell.draw(Layer::Base, ImVec2(0, 0), io.DisplaySize);
         shell.draw(Layer::Menu, ImVec2(0, 0), io.DisplaySize);
         ImGui::Render();
     }
@@ -347,6 +356,362 @@ static void hintBarKeepsBack() {
     }
 }
 
+
+// ---- the Base layer: sections, chrome, Back, typing, the cursor (phase 2) ------------------------------------------
+
+static ImGuiWindow* baseWindow() { return ImGui::FindWindowByName(kBaseWindowName); }
+
+static bool keyEvent(Shell& shell, SDL_Scancode sc, SDL_Keycode k, bool down = true, SDL_Keymod mod = SDL_KMOD_NONE) {
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+    e.key.scancode = sc;
+    e.key.key = k;
+    e.key.mod = mod;
+    e.key.down = down;
+    return shell.handleEvent(e, g_ms);
+}
+static void rb(FakeHost& h, Shell& s) { tapButton(h, s, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER); }
+static void lb(FakeHost& h, Shell& s) { tapButton(h, s, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER); }
+
+// The Base window exists only while TV mode is on with no game running.  Run before anything draws it: ImGui keeps a
+// window it has seen for the life of the context.
+static void baseOnlyWithoutGame() {
+    {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = true;
+        Shell shell(host);
+        frames(host, shell, 5);
+        CHECK(baseWindow() == nullptr && !shell.ownsInput());
+    }
+    {
+        FakeHost host;
+        host.tv = false;
+        host.loaded = false;
+        Shell shell(host);
+        frames(host, shell, 5);
+        CHECK(baseWindow() == nullptr && !shell.ownsInput());
+    }
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    CHECK(shell.ownsInput() && baseWindow() && baseWindow()->WasActive);
+}
+
+static void tvShellWalksSections() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    g_texts.clear();
+    frames(host, shell, 1);
+    CHECK(shell.screenId() == "home" && shell.section() == Section::Home);
+    rb(host, shell);
+    CHECK(shell.screenId() == "library");
+    rb(host, shell);   // no wrap
+    CHECK(shell.screenId() == "library");
+    lb(host, shell);
+    CHECK(shell.screenId() == "home");
+    lb(host, shell);
+    CHECK(shell.screenId() == "home");
+    frames(host, shell, 120);
+    CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("8:42 PM"));
+    CHECK(drew("VIRTUAL JAGUAR"));
+    rb(host, shell);
+    frames(host, shell, 3);
+    CHECK(drew("Library"));
+}
+
+static void escBackThenRoot() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 1);
+    rb(host, shell);
+    CHECK(shell.screenId() == "library" && !shell.backAtRoot());
+    CHECK(keyEvent(shell, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE));
+    keyEvent(shell, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE, false);
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "home" && shell.backAtRoot());
+    CHECK(!keyEvent(shell, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE));   // at the root Esc keeps its desktop meaning
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "home");
+}
+
+static void baseNeverCapturesKeyboard() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    down(host, shell, 2);
+    accept(host, shell);
+    frames(host, shell, 3);
+    CHECK(!ImGui::GetIO().WantCaptureKeyboard);
+    // ... not even with a click held in the window's empty space
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(900, 500);
+    frames(host, shell, 2);
+    io.AddMouseButtonEvent(0, true);
+    frames(host, shell, 3);
+    CHECK(!io.WantCaptureKeyboard);
+    io.AddMouseButtonEvent(0, false);
+    frames(host, shell, 2);
+}
+
+static void padHidesCursor() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    down(host, shell);
+    frames(host, shell, 1);
+    CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_None);
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_MOUSE_MOTION;
+    e.motion.xrel = 5;
+    CHECK(!shell.handleEvent(e, g_ms));
+    frames(host, shell, 1);
+    CHECK(ImGui::GetMouseCursor() != ImGuiMouseCursor_None);
+}
+
+static void baseReturnsAfterGame() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 1);
+    rb(host, shell);
+    CHECK(shell.screenId() == "library");
+    host.loaded = true;
+    frames(host, shell, 5);
+    CHECK(!shell.ownsInput());
+    host.loaded = false;
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "library" && shell.section() == Section::Library && shell.ownsInput());
+}
+
+static void raStatusHiddenWhenEmpty() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    g_texts.clear();
+    frames(host, shell, 3);
+    bool any = false;
+    for (const std::string& t : g_texts)
+        if (t.rfind("RetroAchievements", 0) == 0) any = true;
+    CHECK(!any);
+    host.ra = "RetroAchievements: joe \xC2\xB7 Hardcore";
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("RetroAchievements: joe \xC2\xB7 Hardcore"));
+}
+
+// A screen that records what the shell hands it.
+struct ProbeScreen : Screen {
+    std::string name;
+    bool isModal = false, takesLetters = true, takesBackspace = true, popInDraw = false;
+    Shell* shell = nullptr;
+    std::vector<Intent> intents;
+    std::string typedLog;
+    std::vector<std::string>* drawLog = nullptr;
+    explicit ProbeScreen(std::string n) : name(std::move(n)) {}
+    const char* id() const override { return name.c_str(); }
+    void intent(Intent in) override { intents.push_back(in); }
+    bool typed(char c) override {
+        typedLog += c;
+        return c == '\b' ? takesBackspace : takesLetters;
+    }
+    void draw(const DrawCtx& c) override {
+        if (drawLog) drawLog->push_back(name);
+        widgets::text(c.dl, c.m.body, c.pos, IM_COL32_WHITE, name);
+        if (popInDraw && shell) shell->pop();
+    }
+    std::vector<widgets::Hint> hints() const override { return {{"A", "Go"}, {"B", "Out"}}; }
+    bool modal() const override { return isModal; }
+};
+
+static ProbeScreen* pushProbe(Shell& shell, const char* name, bool modal = false) {
+    auto p = std::make_unique<ProbeScreen>(name);
+    p->isModal = modal;
+    p->shell = &shell;
+    ProbeScreen* raw = p.get();
+    shell.push(std::move(p));
+    return raw;
+}
+
+static void screenStackRoutesInput() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    ProbeScreen* a = pushProbe(shell, "probe-a");
+    CHECK(shell.screenId() == "probe-a" && !shell.backAtRoot());
+    down(host, shell);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_WEST);
+    CHECK(a->intents.size() == 2 && a->intents[0] == Intent::Down && a->intents[1] == Intent::Alt);
+    // Start is the screens' Menu while the Base layer owns the input.
+    SDL_Event st;
+    SDL_zero(st);
+    st.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    st.gbutton.button = SDL_GAMEPAD_BUTTON_START;
+    st.gbutton.down = true;
+    CHECK(shell.handleEvent(st, g_ms));
+    frames(host, shell, 1);
+    st.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    st.gbutton.down = false;
+    shell.handleEvent(st, g_ms);
+    frames(host, shell, 1);
+    CHECK(a->intents.back() == Intent::Menu);
+    // Typing: a letter or a digit goes to the screen, and is consumed when the screen uses it.
+    CHECK(keyEvent(shell, SDL_SCANCODE_D, SDLK_D));
+    CHECK(keyEvent(shell, SDL_SCANCODE_5, SDLK_5));
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE));
+    CHECK(a->typedLog == "d5\b");
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "probe-a");   // a used Backspace is not also Back
+    // A key chord is a hotkey, never typing.
+    CHECK(!keyEvent(shell, SDL_SCANCODE_A, SDLK_A, true, SDL_KMOD_CTRL));
+    CHECK(!keyEvent(shell, SDL_SCANCODE_F, SDLK_F, true, SDL_KMOD_GUI));
+    CHECK(!keyEvent(shell, SDL_SCANCODE_F4, SDLK_F4));
+    CHECK(a->typedLog == "d5\b");
+    // A key the screen does not use is not consumed; an unused Backspace is Back.
+    a->takesLetters = false;
+    a->takesBackspace = false;
+    CHECK(!keyEvent(shell, SDL_SCANCODE_Q, SDLK_Q));
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE));
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, false);
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "home");
+    // The root is never popped.
+    shell.pop();
+    CHECK(shell.screenId() == "home");
+}
+
+// A text box on a desktop window above the TV screens owns the typing.
+static void textBoxOwnsTyping() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    ProbeScreen* a = pushProbe(shell, "probe-a");
+    ImGuiIO& io = ImGui::GetIO();
+    char buf[16] = "";
+    for (int i = 0; i < 3; i++) {
+        io.DeltaTime = 1.0f / 60.0f;
+        ImGui::NewFrame();
+        shell.frame(g_ms);
+        shell.draw(Layer::Base, ImVec2(0, 0), io.DisplaySize);
+        ImGui::Begin("box");
+        ImGui::SetKeyboardFocusHere();
+        ImGui::InputText("##t", buf, sizeof buf);
+        ImGui::End();
+        ImGui::Render();
+    }
+    CHECK(io.WantTextInput);
+    CHECK(!keyEvent(shell, SDL_SCANCODE_B, SDLK_B) && a->typedLog.empty());
+    frames(host, shell, 3);   // the box is gone: the keyboard is the TV screen's again
+    CHECK(!io.WantTextInput);
+    CHECK(keyEvent(shell, SDL_SCANCODE_B, SDLK_B) && a->typedLog == "b");
+}
+
+static void screenStackDrawsModalsOverScreen() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    std::vector<std::string> log;
+    pushProbe(shell, "under")->drawLog = &log;
+    pushProbe(shell, "over", true)->drawLog = &log;
+    g_texts.clear();
+    log.clear();
+    frames(host, shell, 1);
+    CHECK(log.size() == 2 && log[0] == "under" && log[1] == "over");
+    // The hints are the top screen's, with the section hint ahead of the way out.
+    CHECK(drew("Go") && drew("Out") && drew("Sections"));
+    // The root below is not drawn while a non-modal screen covers it.
+    CHECK(g_imguiErrors == 0);
+}
+
+static void screenMayPopItselfWhileDrawing() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    pushProbe(shell, "x")->popInDraw = true;
+    pushProbe(shell, "y", true)->popInDraw = true;
+    frames(host, shell, 3);
+    CHECK(shell.screenId() == "home");
+    CHECK(g_imguiErrors == 0);
+}
+
+// Start is the app's while a game runs (the shell owns nothing then).
+static void startStaysAppsWithGame() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = true;
+    Shell shell(host);
+    SDL_Event st;
+    SDL_zero(st);
+    st.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    st.gbutton.button = SDL_GAMEPAD_BUTTON_START;
+    CHECK(!shell.handleEvent(st, g_ms));
+}
+
+// Inputs released while a game had the pads never reach the nav: coming back to the Base layer must not find a button
+// still "down" (the first A would be swallowed) or a direction still repeating.
+static void navForgetsAcrossGame() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    ProbeScreen* a = pushProbe(shell, "probe-a");
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.down = true;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_SOUTH;
+    shell.handleEvent(e, g_ms);             // A goes down on the Base layer ...
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+    shell.handleEvent(e, g_ms);             // ... and so does Down
+    host.loaded = true;                     // ... a game starts under them
+    frames(host, shell, 3);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;   // both are let go during the game: the shell never sees it
+    e.gbutton.down = false;
+    CHECK(!shell.handleEvent(e, g_ms));
+    host.loaded = false;
+    frames(host, shell, 90);                // back on the Base layer: no Down keeps repeating
+    a->intents.clear();
+    frames(host, shell, 60);
+    CHECK(a->intents.empty());
+    accept(host, shell);                    // and the first A is not swallowed
+    CHECK(a->intents.size() == 1 && a->intents[0] == Intent::Accept);
+}
+
+static void launchedArmsGuard() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    shell.launched();
+    CHECK(host.guardArmed == 1 && host.holdsCleared == 1);
+    CHECK(&shell.host() == &host);
+    shell.memory().put("home/x", 3);
+    CHECK(shell.memory().get("home/x") == 3);
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -360,6 +725,7 @@ int main() {
     io.Fonts->GetTexDataAsRGBA32(&px, &w, &h);
 
     widgets::setTextProbe(&g_texts);
+    baseOnlyWithoutGame();   // first: ImGui remembers a window it has seen
     menuOpensAndWalks();
     menuRefusedInHardcore();
     loadRowsHiddenInHardcore();
@@ -372,6 +738,19 @@ int main() {
     controlsRowShowsNeverHides();
     wheelReachesLastSlots();
     hintBarKeepsBack();
+    tvShellWalksSections();
+    escBackThenRoot();
+    baseNeverCapturesKeyboard();
+    padHidesCursor();
+    baseReturnsAfterGame();
+    raStatusHiddenWhenEmpty();
+    screenStackRoutesInput();
+    textBoxOwnsTyping();
+    screenStackDrawsModalsOverScreen();
+    screenMayPopItselfWhileDrawing();
+    startStaysAppsWithGame();
+    navForgetsAcrossGame();
+    launchedArmsGuard();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;
@@ -381,6 +760,25 @@ int main() {
             io.DisplaySize = ImVec2(hh * 16 / 9, hh);
             frames(host, shell, 3);
             // Everything the menu drew lies inside the display (the 5% safe area holds its text; only the scrim is edge to edge).
+            ImDrawData* dd = ImGui::GetDrawData();
+            bool inside = dd->CmdListsCount > 0;
+            for (int l = 0; l < dd->CmdListsCount; l++)
+                for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
+                    if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
+            CHECK(inside);
+        }
+        CHECK(g_imguiErrors == 0);
+    }
+    // The Base layer (chrome and the stub screens) at the same sizes, signed in to RetroAchievements (the longest top bar).
+    {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.ra = "RetroAchievements: a_rather_long_user_name \xC2\xB7 Hardcore";
+        Shell shell(host);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 3);
             ImDrawData* dd = ImGui::GetDrawData();
             bool inside = dd->CmdListsCount > 0;
             for (int l = 0; l < dd->CmdListsCount; l++)

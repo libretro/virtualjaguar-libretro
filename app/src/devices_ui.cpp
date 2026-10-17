@@ -41,10 +41,14 @@ void applyPortDevices(App& app) {
 void tvInputFrame(App& app, uint64_t ms) {
     InputManager& in = app.input;
     // The toggle first: a plain press of the TV-menu action (F4, a paddle) or a hold that reached the threshold on an
-    // earlier call.  With no game this phase gives it no meaning, and while a binding is being captured the press
-    // belongs to the capture (the latch is drained either way, so it cannot fire the moment the capture ends).
+    // earlier call.  With a game it opens / closes the in-game menu, without one it turns TV mode on / off (a no-op
+    // when the setting is Off).  While a binding is being captured the press belongs to the capture (the latch is
+    // drained either way, so it cannot fire the moment the capture ends).
     const bool menuToggle = in.takeTvMenuToggle();
-    if (menuToggle && app.host.isLoaded() && !in.capturing()) app.tvShell().toggleMenu();
+    if (menuToggle && !in.capturing()) {
+        if (app.host.isLoaded()) app.tvShell().toggleMenu();
+        else app.toggleTvMode();
+    }
     if (app.tvShell().menuOpen() && !app.host.isLoaded()) app.tvShell().closeMenu();   // the game went away under it
     app.tvShell().frame(ms);   // the nav intents gathered since the last frame
     // `live` = the game owns the input: loaded, running, and the TV menu not laid over it.

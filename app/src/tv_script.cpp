@@ -227,6 +227,9 @@ int App::tvScriptStep() {
             tick();
         } else if (verb == "typing") {
             input.uiWantsKeyboard = arg1 == "on";   // headless has no ImGui to say a text box has focus (windowed: the UI frame resets it)
+        } else if (verb == "tvsetting") {   // what Settings > Interface will do: store the setting, reconfigure TV mode
+            if (!tv::settingFromKey(arg1, tvSetting)) return fail(l, "tvsetting wants off|manual|auto");
+            configureTvMode();
         } else if (verb == "capture") {
             Ctl c = C_HELP;
             if (!ctlByName(arg1, c)) return fail(l, "capture wants help|tvmenu");
@@ -244,6 +247,8 @@ int App::tvScriptStep() {
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
             std::string got;
             if (name == "menu-open") got = flag(tvShell().menuOpen());
+            else if (name == "tv") got = flag(tvMode.active());
+            else if (name == "tv-screen") got = tvShell().screenId();
             else if (name == "paused") got = flag(paused);
             else if (name == "loaded") got = flag(host.isLoaded());
             else if (name == "capturing") got = flag(input.capturing());

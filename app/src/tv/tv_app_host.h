@@ -32,6 +32,11 @@ public:
     void clearHolds() override;
     void toast(const std::string& text) override;
     std::string glyph(Intent i) const override;
+    bool tvActive() const override;
+    bool tvAvailable() const override;
+    void setTvActive(bool on) override;
+    std::string clockText() const override;
+    std::string raStatus() const override;
 
     // Every SDL event, before anything can consume it (App::handleEvent): remembers which device was used last, so
     // glyph() follows what the player is actually pressing -- including the buttons the shell itself consumes, which

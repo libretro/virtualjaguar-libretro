@@ -126,6 +126,18 @@ void App::applySettingsFromConfig() {
     showInWindowMenu = cfg.getBool("ui.menubar_in_window", false);
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
+    tvSetting = tv::TvSetting::Manual;
+    tv::settingFromKey(cfg.get("ui.tv_mode", "manual"), tvSetting);   // an unknown value stays Manual
+    configureTvMode();
+    if (tv::effectiveSetting(tvSetting) == tv::TvSetting::Manual && cfg.getBool("ui.tv_manual_on", false)) tvMode.setOn(true);
+}
+
+void App::configureTvMode() {
+    tv::TvConfig c;
+    c.setting = tv::effectiveSetting(tvSetting);   // Auto acts as Manual until its triggers are wired up
+    c.autoFullscreen = cfg.getBool("ui.tv_auto_fullscreen", true);
+    c.autoController = cfg.getBool("ui.tv_auto_controller", true);
+    tvMode.configure(c, fullscreen);
 }
 
 void App::saveConfig() {
@@ -142,6 +154,8 @@ void App::saveConfig() {
     fonts::store(cfg, fontSettings);
     if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
+    cfg.set("ui.tv_mode", tv::settingKey(tvSetting));
+    if (tv::effectiveSetting(tvSetting) == tv::TvSetting::Manual && !tvFromCli_) cfg.setBool("ui.tv_manual_on", tvMode.active());
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("ui.tray", trayIcon);
     cfg.setBool("ui.keep_awake", keepAwake);
@@ -1248,6 +1262,10 @@ int App::run(const CliArgs& a) {
         applyThemeChoice(a.theme);
     }
     loadConfig();
+    if (a.tv) {
+        tvFromCli_ = true;
+        tvMode.setOn(true);   // after the config: a no-op when the setting is Off
+    }
     if (paths.instance > 1) {
         host.setSaveFallbackDir(paths.savesShared);
         std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());

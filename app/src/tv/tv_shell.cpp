@@ -1,15 +1,35 @@
 #include "tv/tv_shell.h"
 
+#include <cstdlib>
+
 namespace vj::tv {
 
 namespace {
 constexpr int kSlots = 10;   // state slots 0..9 (App::stateSlot cycles through the same ten)
+
+// A key that goes to the top screen as typing: a-z and 0-9 by the layout-aware keycode (not the scancode: AZERTY
+// types its own letters), Backspace as '\b'.  0 = not typing.
+char typedChar(const SDL_KeyboardEvent& k) {
+    if (k.key >= SDLK_A && k.key <= SDLK_Z) return (char)('a' + (k.key - SDLK_A));
+    if (k.key >= 'A' && k.key <= 'Z') return (char)('a' + (k.key - 'A'));   // (SDL gives the unshifted keycode; just in case)
+    if (k.key >= SDLK_0 && k.key <= SDLK_9) return (char)('0' + (k.key - SDLK_0));
+    if (k.scancode == SDL_SCANCODE_BACKSPACE) return '\b';
+    return 0;
 }
+}  // namespace
 
 Shell::Shell(Host& h) : host_(h) {}
 
-bool Shell::ownsInput() const { return open_; }
-bool Shell::backAtRoot() const { return !open_; }   // Back on the in-game menu is always something (a page up, or Resume)
+bool Shell::ownsInput() const { return inputOwner(host_.tvActive(), host_.gameLoaded(), open_) == Owner::TvUi; }
+bool Shell::baseActive() const { return host_.tvActive() && !host_.gameLoaded(); }
+
+// Esc keeps its desktop meaning (leave fullscreen) only where Back would do nothing: on the Home root.  Back on the
+// in-game menu is always something (a page up, or Resume).
+bool Shell::backAtRoot() const {
+    if (open_) return false;
+    if (baseActive()) return stack_.size() <= 1 && section_ == Section::Home;
+    return true;
+}
 
 bool Shell::openMenu() {
     if (open_) return true;
@@ -43,13 +63,17 @@ void Shell::toggleMenu() {
 
 bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
     if (!ownsInput()) return false;
+    const bool base = !open_;   // ownsInput() with the menu closed = the Base layer (TV on, no game)
     switch (e.type) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP: {
-        // D-pad, face and shoulder buttons only: Start / Share / the paddles stay the app's (they may be the TV-menu action).
+        // D-pad, face and shoulder buttons only: Share / the paddles stay the app's (they may be the TV-menu action).
+        // Start too, except on the Base layer, where it is the screens' Menu (Game details); with the menu open it
+        // stays the app's.
         const Intent in = intentForButton(e.gbutton.button);
-        if (in == Intent::None || in == Intent::Menu) return false;
+        if (in == Intent::None || (in == Intent::Menu && !base)) return false;
         const bool down = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+        if (down) padDriven_ = true;
         nav_.padButton(e.gbutton.button, down, ms);
         return down;   // a release is fed to the nav (it stops a repeat) but still reaches the app
     }
@@ -58,6 +82,7 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
         if (e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTX && e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTY &&
             e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && e.gaxis.axis != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
             return false;
+        if (std::abs((int)e.gaxis.value) >= NavInput::kTriggerOn) padDriven_ = true;   // a resting stick drifts: only a push counts
         nav_.padAxis(e.gaxis.axis, e.gaxis.value, ms);
         return true;
     case SDL_EVENT_KEY_DOWN:
@@ -66,10 +91,22 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
         // Alt+Enter and the like are hotkeys (a press only: a release always reaches the nav, or a repeat could stick).
         if (down && (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;
         const bool shift = (e.key.mod & SDL_KMOD_SHIFT) != 0;
+        if (base && down) {
+            // Esc where Back would do nothing keeps its desktop meaning: not fed, not consumed.
+            if (e.key.scancode == SDL_SCANCODE_ESCAPE && backAtRoot()) return false;
+            // Typing goes to the top screen -- unless a text box of a desktop window has the keyboard.
+            const bool textBox = ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
+            const char c = textBox ? 0 : typedChar(e.key);
+            if (c && top() && top()->typed(c)) return true;   // used: not Back, not the app's
+        }
         if (intentForKey(e.key.scancode, shift) == Intent::None) return false;   // F4 and friends are the app's
         nav_.key(e.key.scancode, down, shift, ms);
         return down;   // a key-up still reaches the app (a Tab held for fast-forward must be let go of)
     }
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        padDriven_ = false;   // the pointer is the player's again
+        return false;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
     case SDL_EVENT_GAMEPAD_REMOVED:
         nav_.reset();   // the matching "up" will never come: no direction may keep repeating
@@ -79,7 +116,19 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
 }
 
 void Shell::frame(uint64_t ms) {
-    if (!open_) return;
+    retired_.clear();   // screens removed since the last frame: nothing can be inside them now
+    // The Base layer got or lost the input (a game started or closed, TV mode toggled): the releases in between never
+    // reached the nav, so forget what it thinks is held, or a direction would repeat and a button would stay "down".
+    if (baseActive() != baseWas_) {
+        baseWas_ = baseActive();
+        nav_.reset();
+    }
+    if (!open_) {
+        if (!baseActive()) return;
+        if (stack_.empty()) setSection(Section::Home);
+        for (Intent in : nav_.take(ms)) baseIntent(in);
+        return;
+    }
     if (page_ == Page::Root && host_.canLoadState() != rootHasLoad_) enter(Page::Root, rows_[(size_t)focus_.index].kind);
     for (Intent in : nav_.take(ms)) {
         intent(in);
@@ -88,9 +137,66 @@ void Shell::frame(uint64_t ms) {
 }
 
 void Shell::draw(Layer layer, ImVec2 pos, ImVec2 size) {
-    // Layer::Base (the TV screens) has none in phase 1.  Layer::Menu exists only while the menu is open: with a game
-    // running and the menu closed there is no shell window at all, so the pointer stays the game's.
-    if (layer == Layer::Menu && open_) drawMenu(pos, size);
+    // Layer::Base exists only while TV mode is on with no game running; Layer::Menu only while the menu is open.  With a
+    // game running and the menu closed there is no shell window at all, so the pointer stays the game's.
+    if (layer == Layer::Base && baseActive()) drawBase(pos, size);
+    else if (layer == Layer::Menu && open_) drawMenu(pos, size);
+}
+
+// ---- the Base layer -----------------------------------------------------------------------------------------------
+
+void Shell::setSection(Section s) {
+    section_ = s;
+    for (std::unique_ptr<Screen>& old : stack_) retire(std::move(old));
+    stack_.clear();
+    stack_.push_back(s == Section::Home ? makeHomeScreen(host_, *this) : makeLibraryScreen(host_, *this));
+    stackGen_++;
+}
+
+void Shell::push(std::unique_ptr<Screen> s) {
+    if (!s) return;
+    stack_.push_back(std::move(s));
+    stackGen_++;
+}
+
+void Shell::pop() {
+    if (stack_.size() <= 1) return;
+    retire(std::move(stack_.back()));
+    stack_.pop_back();
+    stackGen_++;
+}
+
+void Shell::retire(std::unique_ptr<Screen> s) {
+    if (s) retired_.push_back(std::move(s));
+}
+
+std::string Shell::screenId() const { return stack_.empty() ? std::string() : std::string(stack_.back()->id()); }
+
+void Shell::launched() {
+    host_.armReleaseGuard();   // the A that started the game must not also reach it
+    host_.clearHolds();
+}
+
+void Shell::stepSection(int delta) {
+    const int n = (int)section_ + delta;
+    if (n < (int)Section::Home || n > (int)Section::Library) return;   // no wrap
+    setSection((Section)n);
+}
+
+// Back and the section steps are the shell's; everything else is the top screen's.
+void Shell::baseIntent(Intent in) {
+    switch (in) {
+    case Intent::SectionPrev: stepSection(-1); break;
+    case Intent::SectionNext: stepSection(1); break;
+    case Intent::Back:
+        if (stack_.size() > 1) pop();
+        else if (section_ != Section::Home) setSection(Section::Home);
+        break;
+    case Intent::None: break;
+    default:
+        if (Screen* t = top()) t->intent(in);
+        break;
+    }
 }
 
 // ---- the in-game menu ---------------------------------------------------------------------------------------------

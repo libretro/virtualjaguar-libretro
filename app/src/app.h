@@ -29,6 +29,7 @@
 #include "perf.h"
 #include "platform/commands.h"
 #include "theme_custom.h"
+#include "tv/tv_mode.h"
 #include "video.h"
 
 namespace vj {
@@ -71,6 +72,7 @@ struct CliArgs {
     bool dumpNativeMenu = false;    // dev: print and check the real macOS menu tree, then exit (77 = no native menu here)
     bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
     int expectControls = -1;        // headless: 1 = the controls overlay must be showing after load, 0 = hidden
+    bool tv = false;                // --tv: start with TV mode on (a no-op when the setting is Off; not remembered)
     std::string tvTestScript;       // replay this script of key / pad / focus events against the TV menu (tv_script.cpp); headless it replaces the run, windowed it runs between frames
     bool showHelp = false;
     bool showVersion = false;
@@ -184,6 +186,7 @@ public:
     float uiScale_ = 1.0f;            // the scale the style was set up at (the display's content scale times ui.scale)
     std::string themeBeforePreview_;  // the choice to keep/restore while the theme editor previews an unsaved theme
     bool themePreviewing_ = false;
+    bool tvFromCli_ = false;          // --tv was given: this run's TV state is not remembered (ui.tv_manual_on)
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
@@ -218,6 +221,10 @@ public:
     bool menuPause(std::string& why);
     void menuResume();
     tv::Shell& tvShell();
+    tv::TvMode tvMode;                           // TV mode (#991): when it is on
+    tv::TvSetting tvSetting = tv::TvSetting::Manual;   // ui.tv_mode as stored; effectiveSetting() is what TvMode acts on
+    void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off
+    void configureTvMode();                      // tvMode.configure() from tvSetting + the config (also when Settings changes it)
     void setFullscreen(bool fs);
     void applyVsync();
     void syncSwapInterval();

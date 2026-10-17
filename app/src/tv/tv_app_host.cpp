@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdio>
+
 #include "app.h"
 
 namespace vj::tv {
@@ -54,6 +56,32 @@ void AppHost::showControlsOverlay() {
 void AppHost::armReleaseGuard() { app_.input.armReleaseGuard(); }
 void AppHost::clearHolds() { app_.input.clearHolds(); }
 void AppHost::toast(const std::string& text) { app_.toast(text, 2.5, 2); }
+
+bool AppHost::tvActive() const { return app_.tvMode.active(); }
+bool AppHost::tvAvailable() const { return effectiveSetting(app_.tvSetting) != TvSetting::Off; }
+
+void AppHost::setTvActive(bool on) {
+    if (on != app_.tvMode.active()) app_.toggleTvMode();   // a no-op when the setting is Off
+}
+
+// The wall clock for the top bar, in the form the OS prefers (12 h "8:42 PM", 24 h "20:42").
+std::string AppHost::clockText() const {
+    SDL_Time t = 0;
+    SDL_DateTime dt;
+    if (!SDL_GetCurrentTime(&t) || !SDL_TimeToDateTime(t, &dt, true)) return "";
+    SDL_DateFormat df;
+    SDL_TimeFormat tf = SDL_TIME_FORMAT_24HR;
+    SDL_GetDateTimeLocalePreferences(&df, &tf);
+    char b[24];
+    if (tf == SDL_TIME_FORMAT_12HR) std::snprintf(b, sizeof b, "%d:%02d %s", dt.hour % 12 == 0 ? 12 : dt.hour % 12, dt.minute, dt.hour < 12 ? "AM" : "PM");
+    else std::snprintf(b, sizeof b, "%02d:%02d", dt.hour, dt.minute);
+    return b;
+}
+
+std::string AppHost::raStatus() const {
+    if (!app_.ach.signedIn()) return "";
+    return "RetroAchievements: " + app_.ach.userName() + (app_.ach.hardcoreWanted() ? " \xC2\xB7 Hardcore" : "");
+}
 
 void AppHost::noteInput(const SDL_Event& e) {
     switch (e.type) {

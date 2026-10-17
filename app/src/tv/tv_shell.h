@@ -1,31 +1,38 @@
-// TV mode (#991): the shell.  Owns what the TV UI is doing -- today (phase 1) only the in-game menu laid over the
-// desktop UI -- and who the pads and keyboard belong to while it is up (spec 3.1).  Everything it needs of the app
-// goes through tv::Host.
+// TV mode (#991): the shell.  Owns what the TV UI is doing -- the Base layer (a stack of screens under a shared
+// chrome, shown while TV mode is on with no game running) and the in-game menu laid over the desktop UI -- and who the
+// pads and keyboard belong to while either is up (spec 3.1).  Everything it needs of the app goes through tv::Host.
 //
 // The in-game menu is plain data here: pages of rows, a focus index, and what Accept / Back do on each.  Drawing it
-// (tv_ingame.cpp) only reads that model.
+// (tv_ingame.cpp) only reads that model.  The Base layer is a stack of tv::Screen (tv_screen.h) with a section tab
+// per root screen; the chrome around it is tv_chrome.cpp.
 //
-// Input: while the menu is open handleEvent() feeds NavInput with the buttons / keys / axes that mean something to
-// the TV UI and reports those events consumed; everything else (F4 / a menu button, which close the menu again,
-// window and hot-plug events) is left for the app.  frame() turns the nav intents into menu moves.
+// Input: while the shell owns the input handleEvent() feeds NavInput with the buttons / keys / axes that mean
+// something to the TV UI and reports those events consumed; everything else (F4 / a menu button, which close the menu
+// again, window and hot-plug events) is left for the app.  frame() turns the nav intents into menu moves, or, on the
+// Base layer, into section steps, Back and the top screen's intents.
 #pragma once
 
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "imgui.h"
 #include "tv/tv_focus.h"
 #include "tv/tv_host.h"
+#include "tv/tv_mode.h"
 #include "tv/tv_nav.h"
+#include "tv/tv_screen.h"
 #include "tv/tv_widgets.h"
 
 namespace vj::tv {
 
 // The ImGui window the in-game menu is drawn in (tests look for it: with the menu closed it must not exist).
 constexpr const char* kMenuWindowName = "TV menu##vjtv";
+// ... and the Base layer's (with TV mode off, or a game running, it must not exist).
+constexpr const char* kBaseWindowName = "TV##vjtvbase";
 
 enum class Layer { Base, Menu };   // Base: TV screens, under desktop windows; Menu: the in-game menu, over them
 
@@ -47,11 +54,22 @@ public:
     bool openMenu();                 // menuPause(); refused -> toast(why), false
     void closeMenu();                // menuResume(), armReleaseGuard(), clearHolds()
     void toggleMenu();
-    bool ownsInput() const;          // §3.1: menu open, or TV active with no game running (phase 2)
+    bool ownsInput() const;          // §3.1: inputOwner() == TvUi: the menu is open, or TV is active with no game running
     bool handleEvent(const SDL_Event& e, uint64_t ms);   // nav input while ownsInput(); true = consumed
     void frame(uint64_t ms);         // NavInput::take -> the top screen
     void draw(Layer layer, ImVec2 pos, ImVec2 size);
     bool backAtRoot() const;         // Esc keeps its desktop meaning (leave fullscreen) only here
+
+    // ---- the Base layer ----------------------------------------------------------------------------------------------
+    bool baseActive() const;                    // host.tvActive() && !host.gameLoaded()
+    Section section() const { return section_; }
+    void setSection(Section s);                 // replaces the stack with that section's root screen (created fresh; focus via memory())
+    void push(std::unique_ptr<Screen> s);
+    void pop();                                 // never pops the root
+    std::string screenId() const;               // the top screen's id(), "" when the stack is empty
+    FocusMemory& memory() { return memory_; }
+    void launched();                            // a game was started from a screen: armReleaseGuard() + clearHolds()
+    Host& host() { return host_; }
 
     Page menuPage() const { return page_; }
     const std::string& menuTitle() const { return title_; }
@@ -68,6 +86,11 @@ private:
     void accept();
     void back();
     void drawMenu(ImVec2 pos, ImVec2 size);   // tv_ingame.cpp: the menu model drawn over the dimmed game
+    void drawBase(ImVec2 pos, ImVec2 size);   // tv_chrome.cpp: the Base window -- chrome, then the stack
+    void baseIntent(Intent in);               // one nav intent on the Base layer: section step, Back, or the top screen's
+    void stepSection(int delta);              // +-1, no wrap
+    Screen* top() const { return stack_.empty() ? nullptr : stack_.back().get(); }
+    void retire(std::unique_ptr<Screen> s);   // a removed screen may be mid-call (a Play pops its own screen): it dies at the next frame
 
     Host& host_;
     bool open_ = false;
@@ -80,6 +103,15 @@ private:
     float wheelAcc_ = 0;            // mouse-wheel notches not yet spent on a focus step (a trackpad sends fractions)
     bool focusWindow_ = false;      // the menu just opened: its window takes the focus once
     bool rootHasLoad_ = false;   // the Load-state row is in the root page (re-evaluated while it shows)
+
+    // The Base layer.  The stack is kept while a game runs, so closing the game lands back where the player was.
+    std::vector<std::unique_ptr<Screen>> stack_;   // [0] is the section's root
+    std::vector<std::unique_ptr<Screen>> retired_;
+    Section section_ = Section::Home;
+    unsigned stackGen_ = 0;       // bumped on every push / pop / section change: drawBase stops when its list went stale
+    FocusMemory memory_;
+    bool baseWas_ = false;        // baseActive() at the last frame(): a change resets the nav
+    bool padDriven_ = false;      // the last input was a pad: the pointer is hidden until the mouse moves
 };
 
 }  // namespace vj::tv

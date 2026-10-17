@@ -583,6 +583,8 @@ void drawMenuBar(App& app) {
             overlayEvent(app.input.controls, OverlayEvent::Toggle);
         }
         ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
+        if (ImGui::MenuItem("TV mode", nullptr, app.tvMode.active(), tv::effectiveSetting(app.tvSetting) != tv::TvSetting::Off))
+            app.toggleTvMode();
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
@@ -651,7 +653,9 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     bool nearTop = mouseY >= 0 && mouseY < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
     menuHot = nearTop || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     // A native menu bar (macOS) replaces this one; every item here has a twin in platform/commands.cpp.
-    bool showMenu = platform::nativeMenuActive() ? app.showInWindowMenu : (!app.fullscreen || app.menuPinned || menuHot);
+    // TV mode's Base layer is a couch screen: its menu bar behaves as in fullscreen.
+    const bool tvBase = app.tvShell().baseActive();
+    bool showMenu = platform::nativeMenuActive() ? app.showInWindowMenu : (!(app.fullscreen || tvBase) || app.menuPinned || menuHot);
     float menuH = 0;
     if (showMenu) {
         drawMenuBar(app);
@@ -665,7 +669,9 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
                                     io.DisplayFramebufferScale.x);
         app.input.setPicture(pic.x - vp->Pos.x, pic.y - vp->Pos.y, pic.z, pic.w);   // window-relative, like SDL's pointer events   // where the picture is, for the light gun
     } else if (!app.host.isLoaded()) {
-        if (app.homeLibrary) {
+        if (tvBase) {
+            app.tvShell().draw(tv::Layer::Base, vp->Pos, vp->Size);   // the TV screens stand in for the library / welcome screen
+        } else if (app.homeLibrary) {
             drawLibraryHome(app, areaPos.x, areaPos.y, areaSize.x, areaSize.y);   // the game library is the home screen
         } else {
             // The plain welcome screen (Settings > Interface turns the home-screen library off).
