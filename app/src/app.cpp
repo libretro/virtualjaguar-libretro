@@ -351,7 +351,7 @@ void App::shutdown() {
     if (host.isLoaded() && !emu.callFor(std::chrono::milliseconds(3000), [this] { host.unloadContent(); })) {
         std::fprintf(stderr, "[emu] the emulation thread did not answer within 3 s (the core is blocked); exiting without unloading\n");
         std::fflush(stderr);
-        std::_Exit(0);
+        std::_Exit(3);   // nonzero: a wedged quit must be visible
     }
     stopEmuThread();
     invalidateThumbs();
@@ -382,7 +382,10 @@ void App::shutdown() {
 void App::wireHost() {
     host.onAudio = [this](const int16_t* d, size_t n) {
         audioFramesSeen_ += n;
-        if (!emuFastForward_.load(std::memory_order_relaxed) && !emuMute_.load(std::memory_order_relaxed)) audio.push(d, n);
+        // Threaded: the copies syncEmuFlags() hands over.  Inline: the real flags (the inline TV-script path never syncs).
+        const bool ff = host.threaded() ? emuFastForward_.load(std::memory_order_relaxed) : fastForward;
+        const bool mu = host.threaded() ? emuMute_.load(std::memory_order_relaxed) : mute;
+        if (!ff && !mu) audio.push(d, n);
     };
     host.inputPoll = [this]() {
         if (host.threaded()) {   // the emulation thread: the newest input the UI thread published (input_snapshot.h)
@@ -497,7 +500,7 @@ void App::stopEmuThread() {
     if (!emu.stop(std::chrono::milliseconds(3000))) {
         std::fprintf(stderr, "[emu] the emulation thread did not stop within 3 s (the core is blocked); exiting without unloading\n");
         std::fflush(stderr);
-        std::_Exit(0);   // the core still belongs to that thread: nothing here may touch it, nor run destructors over it
+        std::_Exit(3);   // (nonzero: a wedged quit must be visible) the core still belongs to that thread: nothing here may touch it, nor run destructors over it
     }
     host.post = nullptr;
 }
@@ -541,6 +544,36 @@ void App::syncEmuFlags() {
     emu.setFastForward(fastForward);
     emu.setPaused(paused || headless_);   // headless: frames only through advance(), so a run is exactly --frames long
     emu.setAudioTargetMs(audioTargetMs);
+}
+
+// Threaded mode, once per UI iteration (#967): hand the newest input over and adopt what the emulation thread
+// published.  Never waits for the emulation.
+void App::threadedFrame() {
+    input.poll(!inputCaptured_, inputSnap.takenSince());   // on this thread: SDL_GetMouseState is main-thread only
+    inputSnap.publish(input.coreInput(), pendingEventNs_);
+    pendingEventNs_ = 0;
+    host.pinSnapshot();
+    const uint64_t fr = emu.framesRun();
+    for (uint64_t k = emuFramesSeen_; k < fr; k++) perf.emulated();
+    fpsWindowFrames_ += fr - emuFramesSeen_;
+    emuFramesSeen_ = fr;
+    const uint64_t rt = retroTicks_.exchange(0, std::memory_order_relaxed);
+    if (rt) perf.add(Perf::Retro, 1000.0 * (double)rt / (double)perfFreq_);
+    if (pendingStateSlot_ != kNoPendingSlot && fr >= pendingStateAt_) {   // openAndLoadState / resume: after 2 frames
+        const int slot = pendingStateSlot_;
+        pendingStateSlot_ = kNoPendingSlot;
+        loadState(slot);
+    }
+    for (const OsdMessage& m : host.takeMessages()) toast(m.text, m.durationMs / 1000.0, m.level);
+}
+
+// UI thread, threaded: a content switch (load / unload; the call ran frames.clear() on the emulation thread) must not
+// leave the previous game's last picture on screen until the new game's first frame arrives.
+void App::adoptFrameEpoch() {
+    const uint64_t ep = frames.epoch();
+    if (ep == shownEpoch_) return;
+    shownEpoch_ = ep;
+    video.invalidate();
 }
 
 // The newest finished frame: the core's own buffer inline, FrameExchange's newest when threaded (the UI thread then
@@ -737,6 +770,7 @@ bool App::openContent(const std::string& pathIn) {
     // threaded (this thread waits), right here otherwise.
     const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors); });
     host.pinSnapshot();
+    if (threaded()) adoptFrameEpoch();
     if (!ok) {
         toast("Could not open " + pathStem(path) + ": " + err, 5.0, 3);
         std::fprintf(stderr, "open failed: %s\n", err.c_str());
@@ -753,7 +787,6 @@ bool App::openContent(const std::string& pathIn) {
     invalidateThumbs();
     debug.requestRefresh();
     discordNoteGameStarted(*this);
-    runFrames_.store(0);
     toast("Loaded " + host.contentName());
     if (!noResume) offerResume();
     saveConfig();
@@ -765,6 +798,10 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     host.setDirectories(paths.system, paths.saves);
     applyBios();
     frames.clear();   // no frame of the previous game is shown after this
+    // Before the load, on the thread that runs the frames: every frame of this game is counted, however soon it runs
+    // after the call returns.  A state load queued for this game (resume / library) waits for 2 of them.
+    runFrames_.store(0);
+    pendingStateAt_ = emu.framesRun() + 2;
     if (!host.loadContent(path, err)) {
         ach.onContentClosed();
         cheatsOnClose(*this);
@@ -804,6 +841,7 @@ bool App::openNoContent() {
     std::string err;
     const bool ok = emu.call([&] { return openNoContentOnCore(err); });
     host.pinSnapshot();
+    if (threaded()) adoptFrameEpoch();
     if (!ok) {
         toast("Could not boot: " + err, 5.0, 3);
         return false;
@@ -857,7 +895,7 @@ void App::setBiosChoice(bios::Role role, const std::string& path) {
     biosChoice.of(role) = path.empty() ? std::string() : absolutePath(path);
     bios::storeSelection(cfg, biosChoice);
     cfg.save();
-    applyBios();   // the core reads it at the next load
+    emu.call([this] { applyBios(); });   // the core reads it at the next load; threaded: where the core lives
 }
 
 bool App::importBios(const std::string& path, bool trustSize) {
@@ -904,6 +942,7 @@ void App::closeContent() {
         host.publishSnapshot();
     });
     host.pinSnapshot();
+    if (threaded()) adoptFrameEpoch();
     debug.requestRefresh();
     invalidateThumbs();
 }
@@ -1001,8 +1040,7 @@ void App::offerResume() {
     switch (lib::resumeAction(resumeMode, !ach.allowStateLoad(), netplay.configured(), exists)) {
     case lib::ResumeAction::Load:
         pendingStateSlot_ = lib::kAutoSlot;   // after the first frames, like a state picked in the library
-        pendingStateFrames_ = 2;
-        pendingStateAt_ = emu.framesRun() + 2;
+        pendingStateFrames_ = 2;   // (threaded: pendingStateAt_, set by openContentOnCore)
         break;
     case lib::ResumeAction::Ask:
         resumeOffer.active = true;
@@ -1043,8 +1081,7 @@ void App::openAndLoadState(const std::string& pathIn, int slot) {
     handleDrop(path);
     suppressResume_ = false;
     if (host.isLoaded() && host.contentPath() == path) pendingStateSlot_ = slot;   // cleared if the open failed
-    pendingStateFrames_ = 2;
-    pendingStateAt_ = emu.framesRun() + 2;
+    pendingStateFrames_ = 2;   // (threaded: pendingStateAt_, set by openContentOnCore)
 }
 
 void App::showImportBiosDialog() {
@@ -1528,6 +1565,7 @@ int App::runInteractive(const CliArgs& a) {
     unsigned fontFrames = 0;
     applyAudioSettings();
     audio.open(48043.6);
+    if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
@@ -1591,6 +1629,7 @@ int App::runInteractive(const CliArgs& a) {
                         ", source " + std::to_string(video.frameWidth()) + "x" + std::to_string(video.frameHeight());
             perf.note += ", chain runs " + std::to_string(video.shader.chainRuns()) + " reuses " +
                          std::to_string(video.shader.chainReuses());
+            perf.note += std::string(", emulation thread ") + (threaded() ? "on" : "off");
             perf.report(host.contentName().c_str());
             break;
         }
@@ -1607,10 +1646,18 @@ int App::runInteractive(const CliArgs& a) {
         discordTick(*this);
         perf.lap(Perf::Events);
         syncEmuFlags();
-        stepEmulation();
+        if (threaded()) threadedFrame();
+        else stepEmulation();
         perf.lap(Perf::Step);
         video.setSourceFps((float)host.fps());
-        video.upload(host.frame());
+        if (!threaded()) video.upload(host.frame());
+        else {
+            adoptFrameEpoch();
+            if (const FrameExchange::Slot* s = frames.takeNewest()) {   // nothing new: redraw the one on screen
+                video.upload(s->frame);
+                shownAspect_ = s->aspect;
+            }
+        }
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Upload);
 
@@ -1635,25 +1682,35 @@ int App::runInteractive(const CliArgs& a) {
             quit = true;
         }
         presentViewports();
+        const Uint64 swap0 = SDL_GetTicksNS();
         SDL_GL_SwapWindow(window_);
+        const Uint64 swapNs = SDL_GetTicksNS() - swap0;
         perf.lap(Perf::Present);
 
         updateTitle();
         desktopFrame();
         double t = now();
         if (autosaveSram && host.isLoaded() && t - lastSramFlush_ > 5.0) {
-            host.flushSaveRam();
+            if (threaded()) emu.post([this] { host.flushSaveRam(); });   // on the emulation thread, never waited for
+            else host.flushSaveRam();
             lastSramFlush_ = t;
         }
-        syncSwapInterval();
-        if (!pacer_.swapSync) {
-            // No swap-interval pacing: sleep until the next emulated frame is due -- never when the core is behind.
-            double period = 1.0 / std::max(1.0, host.fps());
-            double wait = (host.isLoaded() && !paused) ? pacer_.sleepFor(t - lastTick_, period) : 0.008;
-            if (wait > 0) SDL_DelayNS((Uint64)(wait * 1e9));
+        if (threaded()) {
+            // The emulation keeps its own time on its own thread; this loop only presents.  Vsync on: the swap paces
+            // it.  Off: a short nap, so a new frame still shows within a few ms without spinning a core.  A swap that
+            // returned at once with vsync on (a minimized or occluded window does not block) gets the same nap.
+            if (!vsync || swapNs < 250000) SDL_DelayNS(4000000);
+        } else {
+            syncSwapInterval();
+            if (!pacer_.swapSync) {
+                // No swap-interval pacing: sleep until the next emulated frame is due -- never when the core is behind.
+                double period = 1.0 / std::max(1.0, host.fps());
+                double wait = (host.isLoaded() && !paused) ? pacer_.sleepFor(t - lastTick_, period) : 0.008;
+                if (wait > 0) SDL_DelayNS((Uint64)(wait * 1e9));
+            }
         }
         perf.lap(Perf::Sleep);
-        perf.curSync = pacer_.swapSync;
+        perf.curSync = threaded() ? vsync : pacer_.swapSync;
         perfSample();
         if (a.perfInput && perf.on && perf.seen % 30 == 29) {
             // A synthetic key (F24: bound to nothing) so the input-latency column has samples in an unattended run.

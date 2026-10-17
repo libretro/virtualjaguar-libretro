@@ -672,7 +672,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImVec2 areaPos(vp->Pos.x, vp->Pos.y + menuH);
     ImVec2 areaSize(vp->Size.x, vp->Size.y - menuH);
     if (app.host.isLoaded() && app.video.hasFrame()) {
-        ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
+        ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.pictureAspect(), app.present,
                                     io.DisplayFramebufferScale.x);
         app.input.setPicture(pic.x - vp->Pos.x, pic.y - vp->Pos.y, pic.z, pic.w);   // window-relative, like SDL's pointer events   // where the picture is, for the light gun
     } else if (!app.host.isLoaded()) {

@@ -28,6 +28,9 @@ public:
     void shutdown();
 
     void upload(const Frame& f);  // no-op if f.serial already uploaded
+    // Drops the picture: nothing is drawn (hasFrame() is false) until the next upload.  A content switch on the
+    // emulation thread uses it so the previous game's last frame does not stay on screen (#967).
+    void invalidate() { w_ = h_ = 0; serial_ = 0; }
     // Draw the frame into the given area using `dl`.  Returns the rectangle used.
     // `pixelScale` is framebuffer pixels per ImGui point (2 on a Retina display):
     // integer scaling and pixel snapping are done in framebuffer pixels.

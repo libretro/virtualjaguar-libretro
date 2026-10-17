@@ -142,6 +142,9 @@ public:
     FrameExchange frames;       // finished frames, emulation thread -> UI thread
     InputSnapshot inputSnap;    // the newest input, UI thread -> the core's poll
     bool threaded() const { return emu.threaded(); }
+    // The aspect to draw the picture with: the frame on screen's own when threaded (a frame and its aspect travel
+    // together through FrameExchange), the core's current one inline.
+    float pictureAspect() const { return threaded() ? shownAspect_ : host.aspect(); }
     // The core is parked at a debugger breakpoint (it then runs the UI from inside retro_run; inline mode only).  This
     // is what every "may the UI re-enter the core?" check asks: CoreHost::inFrame() is the core's own view, and when
     // threaded it is true for the whole of every frame.
@@ -308,6 +311,7 @@ private:
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+    void threadedFrame();             // UI thread, threaded: input out, frames / counters / messages in
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
     void frameUi();
@@ -367,6 +371,9 @@ private:
     uint64_t lastSentSerial_ = 0;              // emulation thread: the last frame handed to FrameExchange
     uint64_t emuFramesSeen_ = 0;               // UI thread: EmuThread::framesRun() at the previous iteration
     uint64_t pendingStateAt_ = 0;              // threaded: run the pending state load once framesRun() reaches this
+    uint64_t shownEpoch_ = 0;                  // UI thread: FrameExchange::epoch() the picture on screen belongs to
+    float shownAspect_ = 4.0f / 3.0f;          // UI thread: the aspect of the frame on screen (FrameExchange::Slot::aspect)
+    void adoptFrameEpoch();                    // UI thread: a content switch drops the previous game's picture
 
     // measured fps
     double fpsWindowStart_ = 0;
