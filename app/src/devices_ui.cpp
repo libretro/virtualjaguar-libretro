@@ -50,6 +50,7 @@ void tvInputFrame(App& app, uint64_t ms) {
         else app.toggleTvMode();
     }
     if (app.tvShell().menuOpen() && !app.host.isLoaded()) app.tvShell().closeMenu();   // the game went away under it
+    app.tvShell().noteCapture(in.capturing());   // a capture start / end forgets what the nav thinks is held
     app.tvShell().frame(ms);   // the nav intents gathered since the last frame
     // `live` = the game owns the input: loaded, running, and the TV menu not laid over it.
     in.tickHolds(ms, app.host.isLoaded() && !app.paused && !app.tvShell().menuOpen());

@@ -92,11 +92,13 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
         if (down && (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;
         const bool shift = (e.key.mod & SDL_KMOD_SHIFT) != 0;
         if (base && down) {
+            // A text field of a desktop window has the keyboard: every key is the field's (Enter, Tab, Backspace, the
+            // arrows, Esc too).  Key-ups still reach the nav below, so a repeat that began earlier can stop.
+            if (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput) return false;
             // Esc where Back would do nothing keeps its desktop meaning: not fed, not consumed.
             if (e.key.scancode == SDL_SCANCODE_ESCAPE && backAtRoot()) return false;
-            // Typing goes to the top screen -- unless a text box of a desktop window has the keyboard.
-            const bool textBox = ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
-            const char c = textBox ? 0 : typedChar(e.key);
+            // Typing goes to the top screen.
+            const char c = typedChar(e.key);
             if (c && top() && top()->typed(c)) return true;   // used: not Back, not the app's
         }
         if (intentForKey(e.key.scancode, shift) == Intent::None) return false;   // F4 and friends are the app's
@@ -171,6 +173,14 @@ void Shell::retire(std::unique_ptr<Screen> s) {
 }
 
 std::string Shell::screenId() const { return stack_.empty() ? std::string() : std::string(stack_.back()->id()); }
+
+// While a binding is being captured App::handleEvent keeps every event from the shell: a direction that was down when the
+// capture began would never see its release and repeat on, so the nav starts over at both edges.
+void Shell::noteCapture(bool active) {
+    if (active == capturing_) return;
+    capturing_ = active;
+    nav_.reset();
+}
 
 void Shell::launched() {
     host_.armReleaseGuard();   // the A that started the game must not also reach it

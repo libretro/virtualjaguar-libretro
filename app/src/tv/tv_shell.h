@@ -70,6 +70,7 @@ public:
     FocusMemory& memory() { return memory_; }
     void launched();                            // a game was started from a screen: armReleaseGuard() + clearHolds()
     Host& host() { return host_; }
+    void noteCapture(bool active);              // a binding capture started / ended: its events bypass the shell, so reset the nav
 
     Page menuPage() const { return page_; }
     const std::string& menuTitle() const { return title_; }
@@ -110,6 +111,7 @@ private:
     Section section_ = Section::Home;
     unsigned stackGen_ = 0;       // bumped on every push / pop / section change: drawBase stops when its list went stale
     FocusMemory memory_;
+    bool capturing_ = false;
     bool baseWas_ = false;        // baseActive() at the last frame(): a change resets the nav
     bool padDriven_ = false;      // the last input was a pad: the pointer is hidden until the mouse moves
 };

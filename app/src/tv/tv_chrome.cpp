@@ -64,6 +64,9 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     if (padDriven_) ImGui::SetMouseCursor(ImGuiMouseCursor_None);   // a pad is driving: no pointer until the mouse moves
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImGuiIO& io = ImGui::GetIO();
+    const bool hovered = ImGui::IsWindowHovered();
+    const bool leftClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    int tabClicked = -1;   // a click on a section tab: applied once the screens are drawn
 
     // ---- the top bar ------------------------------------------------------------------------------------------------
     const float barY = pos.y + m.safeY;
@@ -89,6 +92,8 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
         const float ty = barY + (kBarH * u - m.body) * 0.5f;
         const float tw = widgets::textWidth(m.body, label);
         widgets::text(dl, m.body, ImVec2(x, ty), widgets::col(active ? pal.text : pal.textMuted), label);
+        if (leftClick && io.MousePos.x >= x && io.MousePos.x < x + tw && io.MousePos.y >= barY && io.MousePos.y < barY + kBarH * u)
+            tabClicked = (int)i;
         if (active)
             dl->AddRectFilled(ImVec2(x, ty + m.body + 6 * u), ImVec2(x + tw, ty + m.body + 10 * u), widgets::col(pal.hoverEdge));
         x += tw + (i + 1 < sizeof sections / sizeof sections[0] ? 40 * u : 20 * u);
@@ -114,9 +119,9 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     c.m = m;
     c.pos = ImVec2(pos.x, pos.y + kContentTop * u);
     c.size = ImVec2(size.x, (kHintTop - kContentTop) * u);
-    c.hovered = ImGui::IsWindowHovered();
+    c.hovered = hovered;
     c.mouse = io.MousePos;
-    c.clicked = c.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    c.clicked = leftClick;
     c.rightClicked = c.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
     c.wheel = c.hovered ? io.MouseWheel : 0.0f;
     c.now = now;
@@ -131,6 +136,8 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
             if (stackGen_ != gen) break;   // a screen popped itself or pushed another: the rest of the list is stale
         }
     }
+
+    if (tabClicked >= 0 && sections[tabClicked] != section_) setSection(sections[tabClicked]);
 
     // ---- the hint bar: the top screen's hints, with the section hint ahead of the way out ----------------------------
     std::vector<widgets::Hint> hints;

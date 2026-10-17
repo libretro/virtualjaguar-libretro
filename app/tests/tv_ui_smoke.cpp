@@ -606,7 +606,7 @@ static void textBoxOwnsTyping() {
     ProbeScreen* a = pushProbe(shell, "probe-a");
     ImGuiIO& io = ImGui::GetIO();
     char buf[16] = "";
-    for (int i = 0; i < 3; i++) {
+    auto boxFrame = [&]() {
         io.DeltaTime = 1.0f / 60.0f;
         ImGui::NewFrame();
         shell.frame(g_ms);
@@ -616,9 +616,24 @@ static void textBoxOwnsTyping() {
         ImGui::InputText("##t", buf, sizeof buf);
         ImGui::End();
         ImGui::Render();
-    }
+    };
+    for (int i = 0; i < 3; i++) boxFrame();
     CHECK(io.WantTextInput);
     CHECK(!keyEvent(shell, SDL_SCANCODE_B, SDLK_B) && a->typedLog.empty());
+    // ... and so do Enter, Tab, Backspace, an arrow and Esc: none is consumed, none navigates (a key-up still reaches the nav).
+    const Section sec = shell.section();
+    const std::string id = shell.screenId();
+    const std::pair<SDL_Scancode, SDL_Keycode> keys[] = {{SDL_SCANCODE_RETURN, SDLK_RETURN}, {SDL_SCANCODE_TAB, SDLK_TAB},
+                                                           {SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE}, {SDL_SCANCODE_LEFT, SDLK_LEFT},
+                                                           {SDL_SCANCODE_ESCAPE, SDLK_ESCAPE}};
+    a->intents.clear();
+    for (const auto& k : keys) {
+        CHECK(!keyEvent(shell, k.first, k.second));
+        CHECK(!keyEvent(shell, k.first, k.second, false));
+        boxFrame();
+        boxFrame();
+    }
+    CHECK(a->typedLog.empty() && shell.section() == sec && shell.screenId() == id);
     frames(host, shell, 3);   // the box is gone: the keyboard is the TV screen's again
     CHECK(!io.WantTextInput);
     CHECK(keyEvent(shell, SDL_SCANCODE_B, SDLK_B) && a->typedLog == "b");
@@ -700,6 +715,48 @@ static void navForgetsAcrossGame() {
     CHECK(a->intents.size() == 1 && a->intents[0] == Intent::Accept);
 }
 
+// Text width needs a frame (the font atlas is built in NewFrame).
+static float measure(float px, const char* t) {
+    ImGui::GetIO().DeltaTime = 1.0f / 60.0f;
+    ImGui::NewFrame();
+    const float w = widgets::textWidth(px, t);
+    ImGui::Render();
+    return w;
+}
+
+// A left click on a section tab switches to it (the mouse works in TV mode, spec 3.1).
+static void tabClickSwitchesSection() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    CHECK(shell.section() == Section::Home);
+    // The Library tab at 1920x1080: safe margin 96, accent 22 + gap 16, the logo at 34, gap 56, the LB pill (24 + 2x10) and
+    // its gap 20, the Home tab (30) and its gap 40.
+    const float x = 96 + 38 + measure(34, "VIRTUAL JAGUAR") + 56 + measure(24, "LB") + 20 + 20 +
+                    measure(30, "Home") + 40;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(x + 10, 54 + 28);
+    frames(host, shell, 2);
+    CHECK(shell.section() == Section::Home);   // hovering alone does nothing
+    io.AddMouseButtonEvent(0, true);
+    frames(host, shell, 2);
+    io.AddMouseButtonEvent(0, false);
+    frames(host, shell, 2);
+    CHECK(shell.section() == Section::Library && shell.screenId() == "library");
+    // ... and back: the Home tab
+    io.AddMousePosEvent(96 + 38 + measure(34, "VIRTUAL JAGUAR") + 56 + measure(24, "LB") + 40 + 10, 54 + 28);
+    frames(host, shell, 2);
+    io.AddMouseButtonEvent(0, true);
+    frames(host, shell, 2);
+    io.AddMouseButtonEvent(0, false);
+    frames(host, shell, 2);
+    CHECK(shell.section() == Section::Home);
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
 static void launchedArmsGuard() {
     FakeHost host;
     host.tv = true;
@@ -750,6 +807,7 @@ int main() {
     screenMayPopItselfWhileDrawing();
     startStaysAppsWithGame();
     navForgetsAcrossGame();
+    tabClickSwitchesSection();
     launchedArmsGuard();
     // The menu at the other sizes the app runs at.
     {

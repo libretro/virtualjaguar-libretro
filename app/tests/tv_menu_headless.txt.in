@@ -193,3 +193,19 @@
 5800  expect tv-screen=library
 5820  key tap F4
 5860  expect tv=0
+
+# A binding capture started with TV mode on keeps its input: the shoulder button that would switch sections (the screen
+# the player left is Library: LB would take it to Home) and the Return key that would be Accept go to the capture instead
+# of navigating.
+5900  key tap F4
+5940  expect tv=1
+5940  expect tv-screen=library
+5960  capture help
+5980  pad tap leftshoulder
+6020  expect tv-screen=library
+6040  key tap Return
+6080  expect capturing=0
+6080  expect tv-screen=library
+6080  expect kb-bind=help:Return
+6100  key tap F4
+6140  expect tv=0
