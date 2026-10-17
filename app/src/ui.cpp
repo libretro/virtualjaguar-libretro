@@ -546,13 +546,13 @@ void drawMenuBar(App& app) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !host.inFrame())) app.closeContent();
+        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !app.haltedNow())) app.closeContent();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) app.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-        bool loaded = host.isLoaded() && !host.inFrame();   // a debugger halt parks the core: nothing that re-enters it
+        bool loaded = host.isLoaded() && !app.haltedNow();   // a debugger halt parks the core: nothing that re-enters it
         if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, loaded)) app.togglePause();
         if (ImGui::MenuItem("Reset", "Ctrl+R", false, loaded)) app.reset();
         ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, loaded);

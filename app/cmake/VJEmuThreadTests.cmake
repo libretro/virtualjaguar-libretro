@@ -12,6 +12,7 @@
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
+#   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -94,3 +95,26 @@ target_link_libraries(vj_perf_csv_test PRIVATE ${VJ_SDL3_TARGET})
 vj_emu_thread_warnings(vj_perf_csv_test)
 add_test(NAME perf_csv_unit COMMAND vj_perf_csv_test "${CMAKE_CURRENT_BINARY_DIR}")
 set_tests_properties(perf_csv_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The headless smoke tests (VJSmokeTests.cmake) again with --emu-thread on: the same hashes as inline, nothing on the
+# UI thread calling into the core, and the run really threaded (the OK line says so only then).
+set(_vj_threaded_ok "headless: OK \\([0-9]+ load\\(s\\), emulation thread\\)")
+add_test(NAME smoke_yarc_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames ${VJ_SMOKE_FRAMES} ${_yarc_hash_args}
+            "${VJ_ROMS}/yarc.j64")
+add_test(NAME smoke_reload_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames ${VJ_SMOKE_FRAMES}
+            "${VJ_ROMS}/yarc.j64" "${VJ_ROMS}/jagniccc.j64" "${VJ_ROMS}/yarc.j64")
+add_test(NAME smoke_state_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 240 --state-roundtrip "${VJ_ROMS}/jagniccc.j64")
+add_test(NAME smoke_boot_cd_bios_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 400 --boot-bios cd --expect-bios cd:builtin
+            --expect-hash b83cb3ee)
+add_test(NAME cheat_apply_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 60 --cheat 001F0000:AB --expect-ram 1F0000=AB
+            "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threaded smoke_boot_cd_bios_threaded
+                     cheat_apply_threaded PROPERTIES
+    TIMEOUT 300 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")

@@ -21,6 +21,9 @@
 #include "debug/debug_session.h"
 #include "fonts.h"
 #include "discord_presence.h"
+#include "emu_thread.h"
+#include "frame_exchange.h"
+#include "input_snapshot.h"
 #include "input.h"
 #include "instance.h"
 #include "library_service.h"
@@ -134,6 +137,15 @@ public:
     Perf perf;          // dev: --perf-frames
     Netplay netplay{host};   // link-cable play over the network
     DebugSession debug;      // the core's debug interface: Tools menu, halt pump, breakpoints (debug/debug_session.h)
+    // ---- the emulation thread (#967; docs/app-emulation-thread-design.md) ------------------------------------
+    EmuThread emu;              // inline (no thread) unless this run turned it on (emuThreadThisRun)
+    FrameExchange frames;       // finished frames, emulation thread -> UI thread
+    InputSnapshot inputSnap;    // the newest input, UI thread -> the core's poll
+    bool threaded() const { return emu.threaded(); }
+    // The core is parked at a debugger breakpoint (it then runs the UI from inside retro_run; inline mode only).  This
+    // is what every "may the UI re-enter the core?" check asks: CoreHost::inFrame() is the core's own view, and when
+    // threaded it is true for the whole of every frame.
+    bool haltedNow() const { return debug.halted(); }
     discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
     struct DiscordState {        // what discordTick() remembers between calls
         double lastTick = -1;
@@ -299,12 +311,13 @@ private:
     void syncDebug();                 // content loaded / hardcore -> the debug session
     void frameUi();
     void updateTitle();
-    uint32_t frameHash() const;
+    uint32_t frameHash(const Frame& f) const;
 
     static constexpr int kNoPendingSlot = -1000;
     int pendingStateSlot_ = kNoPendingSlot;       // openAndLoadState: load this slot after the new game has run a few frames
     int pendingStateFrames_ = 0;
-    double runSeconds_ = 0;           // emulated seconds of the loaded game (auto-save needs a few)
+    std::atomic<uint64_t> runFrames_{0};   // emulated frames of the loaded game (auto-save needs a few seconds)
+    double runSeconds() const;
     bool reloading_ = false;          // reloadContent: a restart, not a new game
     bool suppressResume_ = false;     // the library opened a game to load a chosen state: no auto-save offer
     bool headless_ = false;
@@ -335,6 +348,25 @@ private:
     Pacer pacer_;
     uint64_t perfFreq_ = 1;
 
+    // the emulation thread (#967)
+    struct EmuClient;                          // EmuThread::Client -> App (app.cpp)
+    std::unique_ptr<EmuClient> emuClient_;
+    void startEmuThread();                     // after the window and the audio device; stays inline if it cannot
+    void stopEmuThread();                      // exits the process if the thread is stuck in the core
+    void emuRunOneFrame();                     // emulation thread: one frame, then publish it
+    double emuAudioQueuedMs() const;           // mode A's audio clock, or -1 for none
+    void syncEmuFlags();                       // UI thread: pause / fast-forward / mute / audio target -> emulation side
+    const Frame& shownFrame();                 // the newest finished frame (FrameExchange when threaded)
+    void runHeadlessFrames(unsigned n);
+    bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
+    bool openNoContentOnCore(std::string& err);
+    std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side
+    std::atomic<uint64_t> retroTicks_{0};      // performance-counter ticks inside retro_run, since the UI last read them
+    CoreInput emuInput_;                       // emulation thread: what the core reads this frame
+    uint64_t lastSentSerial_ = 0;              // emulation thread: the last frame handed to FrameExchange
+    uint64_t emuFramesSeen_ = 0;               // UI thread: EmuThread::framesRun() at the previous iteration
+    uint64_t pendingStateAt_ = 0;              // threaded: run the pending state load once framesRun() reaches this
+
     // measured fps
     double fpsWindowStart_ = 0;
     uint64_t fpsWindowFrames_ = 0;
@@ -362,7 +394,7 @@ private:
         unsigned optVisible = 0, optTotal = 0;
     };
     std::vector<HeadlessResult> results_;
-    size_t audioFramesSeen_ = 0;
+    std::atomic<size_t> audioFramesSeen_{0};
 };
 
 // ImGui frame builder (ui.cpp).
