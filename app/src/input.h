@@ -11,6 +11,8 @@
 //             Start=Option, d-pad / left stick = d-pad; keypad 0-6 on North,
 //             shoulders, triggers and stick clicks, 7/8/9/* on the right stick,
 //             # on Guide, the overlay on Share/Capture, the controls overlay on Touchpad.
+//             On a Pro Controller port: Left Shoulder / North / Right Shoulder = X / Y / Z,
+//             the triggers = L / R, keypad 0-4 only on the overlay.
 // How the keypad reaches the core (it has no RetroPad buttons for 7, 8, 9, *, #)
 // is documented in remap.h.  What each port's DEVICE reads (mouse, rotary, analog, light
 // gun, Team Tap ...) and which host controller plays which player is devices.h / router.h;
@@ -41,7 +43,12 @@ public:
     // Snapshot the devices once per emulated frame.  When `captureKeyboard`
     // is false (a text box has focus, or a modifier chord is held) the
     // keyboard contributes nothing.
-    void poll(bool captureKeyboard);
+    // `overlayTicks`: emulated frames since the last poll.  Inline that is always 1 (the core polls); threaded, the UI
+    // thread polls once per UI iteration and passes InputSnapshot::takenSince(), so the keypad overlay's press timing
+    // (and the HoldArbiter's tap pulses) stay per emulated frame.
+    void poll(bool captureKeyboard, unsigned overlayTicks = 1);
+    // The result of the last poll() (threaded: what the UI thread publishes to InputSnapshot).
+    const CoreInput& coreInput() const { return core_; }
     // Added to Player 1 by every poll(): what the Neuro API client presses this frame (neuro_agent.h).
     ControlSet agentControls;
     // retro_input_state_t for every device (joypad, keyboard, mouse, analog, light gun).
@@ -131,6 +138,11 @@ public:
     std::vector<PadInfo> pads() const;
     const Profile& keyboardProfile() const { return kbProfile_; }
     const Profile& padProfile(size_t i) const { return pads_[i].profile; }
+    // What pad i plays on a Pro Controller port (Profile::builtin proPort; the keyboard has no such variant).
+    const Profile& padProProfile(size_t i) const { return pads_[i].proProfile; }
+    // The remap table's view of a layer: true when the controller(s) it covers drive a Pro Controller port now
+    // (`guid` "" = every gamepad: any port holds one).
+    bool proPortFor(const std::string& guid) const;
 
     KeypadOverlay overlay;
     ControlsOverlayState controls;   // the controls cheat sheet (cheatsheet.h)
@@ -154,6 +166,7 @@ private:
         SDL_JoystickID id = 0;
         std::string guid;
         Profile profile;
+        Profile proProfile;   // the same layers over the Pro Controller port defaults
         PadCaps caps;
     };
     void bindCaptured(const Binding& b);

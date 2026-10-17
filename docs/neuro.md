@@ -18,6 +18,7 @@ controls to the model.
 - The default server comes from `NEURO_SDK_WS_URL` when it is set, like the official SDKs.
 
 Only `ws://` is supported (no TLS); Neuro API servers normally run on the same machine or the LAN.
+Like RetroAchievements and netplay, Neuro is off while Settings > Interface > *Emulation thread* is on.
 
 Config keys (`virtualjaguar.cfg`): `neuro.enabled`, `neuro.url`, `neuro.auto_force` (default on),
 `neuro.force_interval` (seconds, default 1), `neuro.game_name` (overrides the API game name).

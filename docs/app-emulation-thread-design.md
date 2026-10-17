@@ -78,6 +78,18 @@ The UI never waits on emulation.
 - The sound card's clock is the master, so the game runs at true speed and audio never drifts. On a 60 Hz panel one
   frame repeats about every 20 s.
 - No audio device, muted output, or a paused stream: fall back to the wall clock at the core's period.
+- *Amended 2026-10-17 (#967 evenness): phase steering.* A frame ends at its due time plus its wake-up lateness and
+  cost, so the end times spread over a window (a few ms for Cybermorph). While the slowly drifting grid carries the UI's
+  take point through that window, each frame's own cost decides whether it makes the take. The result is a run of random
+  repeat + skip pairs at every crossing (60-160 a minute) instead of the one skip the beat owes. While the UI has the
+  vblank grid locked, it publishes its take time and the display period. When the next frame's end window would contain
+  a take point, `PacingClock` steps the grid's phase once across it, in the direction the grid is drifting (its trimmed
+  period, so the queue error a step leaves can never turn the steps against the drift). Only the phase moves: at most
+  the window's width, once per crossing, with at least 30 frames between steps. The rate is still the trimmed audio
+  rate, and the display never holds the drift back, so this is not mode B. Steering runs only where the grid creeps
+  along the take grid (under 0.2 ms a frame: 60.05 Hz on 60, 120 or 59.94 Hz panels). At ratios like 50.08 Hz on 60 Hz,
+  every few frames straddle a take point by construction (5:6 judder), and only mode B can change that.
+  `--pace-steer off` turns steering off for A/B runs.
 
 ### Mode B: display lock
 - The main thread sends a tick after each swap; the emulation thread runs one frame per tick (one per k ticks when the

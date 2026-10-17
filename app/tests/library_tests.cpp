@@ -909,6 +909,31 @@ static void testServicePipeline() {
         if (got) SDL_free(ev.user.data1);
         CHECK(got);
         CHECK(!svc.show);   // "close on launch"
+        // ... a plain launch carries no marker; a fresh one (the TV screens: the resume prompt needs a mouse) marks the event
+        // so App::handleEvent opens the game without it (#991).
+        SDL_PumpEvents();
+        SDL_FlushEvents(SDL_EVENT_USER, SDL_EVENT_USER);
+        svc.launch(*a);
+        svc.launch(*a, /*fresh=*/true);
+        SDL_PumpEvents();
+        std::vector<SDL_Event> opens;   // the "open this path" events, in order
+        {
+            SDL_Event got[8];
+            const int n = SDL_PeepEvents(got, 8, SDL_GETEVENT, SDL_EVENT_USER, SDL_EVENT_USER);
+            for (int i = 0; i < n; i++)
+                if (got[i].user.code == 0x56414A47 && got[i].user.data1) opens.push_back(got[i]);
+        }
+        const bool gotPlain = opens.size() == 2, gotFresh = opens.size() == 2;
+        SDL_Event plain = opens.size() == 2 ? opens[0] : SDL_Event(), fresh = opens.size() == 2 ? opens[1] : SDL_Event();
+        CHECK(gotPlain && gotFresh);
+        if (gotPlain) {
+            CHECK(plain.user.data2 == nullptr);
+            SDL_free(plain.user.data1);
+        }
+        if (gotFresh) {
+            CHECK(fresh.user.data2 != nullptr && std::string((const char*)fresh.user.data1) == a->file.path);
+            SDL_free(fresh.user.data1);
+        }
 
         // database update: both dats downloaded, validated, written, re-identified
         svc.updateDatabase();

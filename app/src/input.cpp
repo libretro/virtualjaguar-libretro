@@ -75,7 +75,8 @@ void InputManager::reresolve() {
     syncHoldInputs(kKeyboardDev, kbProfile_);
     for (Pad& p : pads_) {
         p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps);
-        syncHoldInputs((uint32_t)p.id, p.profile);
+        p.proProfile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps, true);
+        syncHoldInputs((uint32_t)p.id, p.profile);   // (the Pro variant has the same hold inputs)
     }
 }
 
@@ -113,6 +114,7 @@ void InputManager::openPad(SDL_JoystickID id) {
     p.caps.hasMisc1 = SDL_GamepadHasButton(g, SDL_GAMEPAD_BUTTON_MISC1);
     if (store_) {
         p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps);
+        p.proProfile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps, true);
         syncHoldInputs((uint32_t)p.id, p.profile);
     }
     pads_.push_back(p);
@@ -354,6 +356,16 @@ void InputManager::updateRoutes() {
     routes_ = assignSlots(slotConfig(), activeSlots(kind_[0] == DevKind::TeamTap, kind_[1] == DevKind::TeamTap), guids, kbSlot);
 }
 
+bool InputManager::proPortFor(const std::string& guid) const {
+    if (guid.empty()) return kind_[0] == DevKind::ProPad || kind_[1] == DevKind::ProPad;
+    for (size_t i = 0; i < pads_.size(); i++) {
+        if (pads_[i].guid != guid) continue;
+        for (unsigned sl = 0; sl < kSlots; sl++)
+            if (routes_.pad[sl] == (int)i && slotSocket(sl) == 0 && kind_[slotJaguarPort(sl)] == DevKind::ProPad) return true;
+    }
+    return false;
+}
+
 void InputManager::setPortKinds(DevKind p1, DevKind p2) {
     kind_[0] = p1;
     kind_[1] = p2;
@@ -411,7 +423,8 @@ void InputManager::bindCaptured(const Binding& captured) {
                     caps = p.caps;
                     break;
                 }
-            v = store_->resolve(capLayer_.cls, capLayer_.guid, capLayer_.gameId, caps).binds[capCtl_];
+            v = store_->resolve(capLayer_.cls, capLayer_.guid, capLayer_.gameId, caps,
+                                capLayer_.cls == DeviceClass::Gamepad && proPortFor(capLayer_.guid)).binds[capCtl_];
         }
     }
     if (std::find(v.begin(), v.end(), b) == v.end()) v.push_back(b);
@@ -420,9 +433,9 @@ void InputManager::bindCaptured(const Binding& captured) {
     reresolve();
 }
 
-void InputManager::poll(bool captureKeyboard) {
+void InputManager::poll(bool captureKeyboard, unsigned overlayTicks) {
     core_.beginFrame();
-    overlay.tick();
+    for (unsigned i = 0; i < overlayTicks; i++) overlay.tick();
     // While a binding is being captured nothing reaches the core: the press being bound
     // must not also act in the game (binding Start would pause it, for one).
     if (capture_.active()) return;
@@ -471,7 +484,9 @@ void InputManager::poll(bool captureKeyboard) {
             if (routes_.pad[sl] == (int)i && slotSocket(sl) == 0)
                 stickDpad = stickDrivesDpad(kind_[slotJaguarPort(sl)], stickDpad);
         p.profile.stickAsDpad = stickDpad;
+        p.proProfile.stickAsDpad = stickDpad;
         hs.profile = &p.profile;
+        hs.proProfile = &p.proProfile;
         snapshotPad(g, hs.snap);
         holds_.apply((uint32_t)p.id, hs.snap);
         guard_.apply((uint32_t)p.id, hs.snap);
@@ -512,7 +527,7 @@ void InputManager::poll(bool captureKeyboard) {
     pi.y = my;
 
     router_.route(rc, padSrc, &kb, pi, &overlay, core_);   // (the controls-overlay key is handled in handleEvent)
-    holds_.frame();   // tap pulses count emulated frames
+    for (unsigned i = 0; i < overlayTicks; i++) holds_.frame();   // tap pulses count emulated frames
 
     // Keys the overlay is holding down (a mouse click or a gamepad press in the overlay).
     core_.addControls(overlay.port > 1 ? 0u : overlay.port, overlay.held());

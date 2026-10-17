@@ -43,6 +43,7 @@ neuro::AgentSettings settingsFrom(const App& app) {
     s.autoForce = app.cfg.getBool("neuro.auto_force", true);
     s.forceInterval = app.cfg.getFloat("neuro.force_interval", 1.0f);
     s.gameNameOverride = app.cfg.get("neuro.game_name", "");
+    if (app.emuThreadThisRun()) s.enabled = false;   // #967 phase 1: the input poll and RAM are the emulation thread's
     return s;
 }
 
@@ -87,6 +88,8 @@ void neuroInit(App& app, const CliArgs& a) {
     for (const std::string& p : app.neuro.loadProfiles(app.paths.root + "neuro"))
         std::fprintf(stderr, "[neuro] profile skipped: %s\n", p.c_str());
     app.neuro.configure(settingsFrom(app));
+    if (app.emuThreadThisRun() && (!a.neuroUrl.empty() || app.cfg.getBool("neuro.enabled", false)))
+        std::fprintf(stderr, "[neuro] off for this run: the emulation thread is on (Settings > Interface)\n");
 }
 
 void neuroTick(App& app) {
@@ -124,6 +127,7 @@ void drawNeuroTab(App& app) {
                        "API server, offers her the Jaguar controller as actions, and presses what she chooses as "
                        "Player 1 (your own controls keep working alongside).");
     ImGui::Spacing();
+    if (app.emuThreadThisRun()) ui::hint("Off while the emulation thread is on (Settings > Interface); turn it off and restart to play.");
     if (!app.neuroCliUrl.empty()) ui::hint("On for this run (--neuro); these settings take over next time.");
     bool on = app.cfg.getBool("neuro.enabled", false);
     if (ImGui::Checkbox("Connect to Neuro", &on)) app.cfg.setBool("neuro.enabled", on);

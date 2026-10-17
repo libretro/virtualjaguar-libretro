@@ -9,6 +9,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <string>
 #include <vector>
 
 using namespace vj::tv;
@@ -184,6 +185,12 @@ static void testBriefSequence() {
     CHECK(n.take(0) == Intents{Intent::PageNext});
 }
 
+static void testTriggerLabels() {
+    CHECK(std::string(triggerLabel(Intent::PagePrev, false)) == "LT" && std::string(triggerLabel(Intent::PageNext, false)) == "RT");
+    CHECK(std::string(triggerLabel(Intent::PagePrev, true)) == "L2" && std::string(triggerLabel(Intent::PageNext, true)) == "R2");
+    CHECK(std::string(triggerLabel(Intent::Accept, false)).empty() && std::string(triggerLabel(Intent::None, true)).empty());
+}
+
 int main() {
     testBriefSequence();
     testDpadRepeat();
@@ -196,6 +203,7 @@ int main() {
     testKeyboard();
     testReset();
     testTables();
+    testTriggerLabels();
     std::printf("tv_nav_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

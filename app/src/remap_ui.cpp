@@ -55,6 +55,7 @@ struct Section {
 const Section kSections[] = {
     {"Standard pad", C_UP, C_PAUSE},
     {"Keypad (the Pro Controller's X Y Z and shoulders are keypad 9 8 7 and 4 6)", C_K0, C_HASH},
+    {"Pro Controller (6-button): read on a Pro Controller port only", C_PRO_X, C_PRO_R},
     {"Analog, driving, 6D and paddle controllers", C_D, C_AX_R1},
     {"Pointer: mouse, rotary and light gun (motion is also taken from the mouse itself)", C_PT_L, C_GUN_RELOAD},
     {"App", C_OVERLAY, C_OVERLAY},
@@ -131,7 +132,12 @@ void drawControlsTab(App& app) {
     bool anyNoShare = false;
     for (const InputManager::PadInfo& p : pads)
         if (!p.hasMisc1) anyNoShare = true;
-    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId, caps);
+    // A gamepad driving a Pro Controller port plays the Pro defaults (keypad 0-4 give their buttons to X Y Z L R).
+    const bool proView = layer.cls == DeviceClass::Gamepad && in.proPortFor(layer.guid);
+    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId, caps, proView);
+    if (proView)
+        ui::hint("Showing the Pro Controller port defaults: X / Y / Z = Left Shoulder / North / Right Shoulder, L / R = the "
+                 "triggers; keypad 0-4 are on the keypad overlay there.");
     bool dirty = false;
     ImGui::Separator();
     if (in.capturing()) {

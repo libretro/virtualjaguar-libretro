@@ -2,8 +2,9 @@
 // input they press (neuro_actions.h), and the game profiles.  No App, no ImGui: neuro_app.cpp feeds it the app's
 // state and draws Settings > Neuro.
 //
-// Threads: everything here is called on the UI / emulation thread (they are the same thread in this app); only
-// the WebSocket worker runs elsewhere, behind WsClient's queues.
+// Threads: everything here is called on the UI thread, which is then also the emulation thread (the app turns Neuro
+// off when the emulation runs on its own thread, #967 phase 1); only the WebSocket worker runs elsewhere, behind
+// WsClient's queues.
 #pragma once
 
 #include <cstdint>

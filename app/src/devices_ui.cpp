@@ -24,12 +24,28 @@ static std::string optionOf(const App& app, const char* key) {
 void applyPortDevices(App& app) {
     const std::string game = app.input.content();
     DevKind kinds[2] = {DevKind::Pad, DevKind::Pad};
+    unsigned claims[2] = {RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD};
+    std::array<bool, 2> pro{{false, false}};
     for (unsigned p = 0; p < kJaguarPorts; p++) {
         int d = resolvePortDevice(app.cfg, p, game);
-        unsigned claim = (d >= 0 && portOffers(p, (unsigned)d)) ? (unsigned)d : (unsigned)RETRO_DEVICE_JOYPAD;
-        app.host.setControllerDevice(p, claim);   // JOYPAD releases the claim: the core option (locked to auto) decides
-        kinds[p] = effectiveDevKind(claim == RETRO_DEVICE_JOYPAD ? -1 : (int)claim,
-                                    optionOf(app, p == 0 ? "virtualjaguar_p1_device" : "virtualjaguar_p2_device"));
+        unsigned stored = (d >= 0 && portOffers(p, (unsigned)d)) ? (unsigned)d : (unsigned)RETRO_DEVICE_JOYPAD;
+        pro[p] = stored == devLibretroId(DevKind::ProPad);
+        app.proPorts[p].store(pro[p]);
+        claims[p] = coreClaimFor(stored);
+    }
+    // The Pro Controller is a standard pad to retro_set_controller_port_device plus virtualjaguar_pN_device =
+    // pad_pro, which only the option lock can hand the core (the core turns its Pro path on from the option alone).
+    // With the emulation thread both are queued, in this order, ahead of the next frame.
+    app.host.refreshLocks();
+    for (unsigned p = 0; p < kJaguarPorts; p++) {
+        unsigned claim = claims[p];
+        app.host.setControllerDevice(p, claim);   // JOYPAD releases the claim: the core option (locked to auto / pad_pro) decides
+        // The option the core will read: the lock's value, from `pro` here and now (threaded, the UI's snapshot of
+        // the locked values catches up only after the queued refreshLocks() and a pin).
+        const char* key = p == 0 ? "virtualjaguar_p1_device" : "virtualjaguar_p2_device";
+        std::string opt;
+        if (!lockedCoreOptionFor(key, opt, pro)) opt = optionOf(app, key);
+        kinds[p] = effectiveDevKind(claim == RETRO_DEVICE_JOYPAD ? -1 : (int)claim, opt);
     }
     app.input.setPortKinds(kinds[0], kinds[1]);
     app.input.updateRoutes();
@@ -41,25 +57,34 @@ void applyPortDevices(App& app) {
 void tvInputFrame(App& app, uint64_t ms) {
     InputManager& in = app.input;
     // The toggle first: a plain press of the TV-menu action (F4, a paddle) or a hold that reached the threshold on an
-    // earlier call.  With no game this phase gives it no meaning, and while a binding is being captured the press
-    // belongs to the capture (the latch is drained either way, so it cannot fire the moment the capture ends).
+    // earlier call.  With a game it opens / closes the in-game menu, without one it turns TV mode on / off (a no-op
+    // when the setting is Off).  While a binding is being captured the press belongs to the capture (the latch is
+    // drained either way, so it cannot fire the moment the capture ends).
     const bool menuToggle = in.takeTvMenuToggle();
-    if (menuToggle && app.host.isLoaded() && !in.capturing()) app.tvShell().toggleMenu();
+    if (menuToggle && !in.capturing()) {
+        if (app.host.isLoaded()) app.tvShell().toggleMenu();
+        else app.toggleTvMode();
+    }
     if (app.tvShell().menuOpen() && !app.host.isLoaded()) app.tvShell().closeMenu();   // the game went away under it
+    app.tvShell().noteCapture(in.capturing());   // a capture start / end forgets what the nav thinks is held
     app.tvShell().frame(ms);   // the nav intents gathered since the last frame
     // `live` = the game owns the input: loaded, running, and the TV menu not laid over it.
     in.tickHolds(ms, app.host.isLoaded() && !app.paused && !app.tvShell().menuOpen());
 }
 
+// The windows that take the pointer from a running game, and the pad / keyboard from the TV screens beneath them.
+bool App::desktopWindowOpen() const {
+    if (showSettings || showStates || showCheats || showAbout || library.show || input.overlay.open) return true;
+    return ImGui::GetCurrentContext() && ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+}
+
 void inputFrame(App& app) {
     InputManager& in = app.input;
     tvInputFrame(app, SDL_GetTicks());
-    bool uiOpen = app.showSettings || app.showStates || app.showCheats || app.showAbout || app.library.show ||
-                  in.overlay.open || app.tvShell().menuOpen();   // (the menu releases a captured mouse: netplay keeps it open over a running game)
+    bool uiOpen = app.desktopWindowOpen() || app.tvShell().menuOpen();   // (the menu releases a captured mouse: netplay keeps it open over a running game)
     bool wantsMouse = false;
     if (ImGui::GetCurrentContext()) {
         ImGuiIO& io = ImGui::GetIO();
-        if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) uiOpen = true;
         // A captured mouse has no position, so what ImGui thinks it hovers is stale then.
         wantsMouse = io.WantCaptureMouse && !in.mouseCaptured();
         in.uiWantsKeyboard = io.WantCaptureKeyboard;
@@ -118,11 +143,21 @@ struct Choice {
 std::vector<Choice> choicesFor(App& app, unsigned port) {
     std::vector<Choice> v;
     const auto& ports = app.host.controllerPorts();
+    const int pro = (int)devLibretroId(DevKind::ProPad);
     if (app.host.isLoaded() && port < ports.size()) {
         for (const ControllerType& t : ports[port]) v.push_back({t.desc, (int)t.id});   // SET_CONTROLLER_INFO
     } else {
         for (int i = 0; i < kDevKinds; i++)   // before a game loads: the same lists, from devices.cpp
-            if (portOffers(port, devLibretroId((DevKind)i))) v.push_back({devKindLabel((DevKind)i), (int)devLibretroId((DevKind)i)});
+            if ((DevKind)i != DevKind::ProPad && portOffers(port, devLibretroId((DevKind)i)))
+                v.push_back({devKindLabel((DevKind)i), (int)devLibretroId((DevKind)i)});
+    }
+    // The Pro Controller is not in SET_CONTROLLER_INFO (the core has it as an option value only): right after
+    // the Standard Joypad.
+    if (portOffers(port, (unsigned)pro)) {
+        size_t at = 0;
+        for (size_t i = 0; i < v.size(); i++)
+            if (v[i].id == (int)RETRO_DEVICE_JOYPAD) at = i + 1;
+        v.insert(v.begin() + (long)at, Choice{devKindLabel(DevKind::ProPad), pro});
     }
     return v;
 }

@@ -9,6 +9,7 @@
 // theme's text colour and a drop shadow, and eases there over kTweenSeconds (FocusTweens).
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,10 @@ void panel(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size);
 // Returns the drawn size.
 ImVec2 text(ImDrawList* dl, float px, ImVec2 pos, ImU32 col, const std::string& s, float maxW = 0, float wrapW = 0);
 float textWidth(float px, const std::string& s);
+// The size `text` would draw `s` at, wrapped at wrapW (0 = no wrap).
+ImVec2 textSize(float px, const std::string& s, float wrapW = 0);
+// "16 Oct 2026": a date in the local time zone, from seconds since the epoch (English month names, whatever the locale).
+std::string formatDate(int64_t secs);
 
 // A list row: label (and an optional second line), `focus` 0..1 from FocusTweens.  A disabled row is drawn muted.
 // `thumb` (an OpenGL texture, 0 = none) of thumbW x thumbH design units is a picture box at the row's left: slot rows.
@@ -60,12 +65,27 @@ struct RowArgs {
 };
 Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs& a);
 
+// A cover tile (Home, Library, Game details' art): the picture fitted inside, or -- with no picture yet -- the card with the
+// title wrapped at its foot; a "CD" badge top-right for a disc.  `focus` 0..1 from FocusTweens grows it to
+// Metrics::focusScale about its centre and adds the ring and the shadow, as `row` does.
+struct TileArgs {
+    std::string title;
+    bool disc = false;
+    unsigned tex = 0;   // an OpenGL texture, 0 = the placeholder
+    int texW = 0, texH = 0;
+    float focus = 0;
+};
+Hit tile(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const TileArgs& a);
+
 // The button-hint bar: "[A] Select   [B] Back".  Glyph "" draws the label alone.  The LAST hint is the way out (Back /
 // Resume): its room is kept, so on a narrow bar the others are the ones that drop.
 struct Hint {
     std::string glyph, label;
 };
-void hintBar(ImDrawList* dl, const Metrics& m, ImVec2 pos, float maxW, const std::vector<Hint>& hints);
+void hintBar(ImDrawList* dl, const Metrics& m, ImVec2 pos, float maxW, const std::vector<Hint>& hints, float px = 0);   // px 0 = Metrics::caption
+// Removes the hints whose glyph is "": a button the current input device does not have (Host::glyph says so), so the bar
+// lists only what works.  The screens' bars (chrome) and Home's hero buttons call it; hintBar itself keeps drawing a bare label.
+void dropUnbound(std::vector<Hint>& hints);
 
 // A banner pill (a state the player should not forget); returns its height.
 float banner(ImDrawList* dl, const Metrics& m, ImVec2 pos, float w, const std::string& s);

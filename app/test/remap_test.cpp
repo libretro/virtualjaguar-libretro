@@ -620,7 +620,7 @@ static std::vector<Binding> legacyParse(const std::string& s) {
 }
 
 static void testTvMenuControl() {
-    CHECK(C_TVMENU == C_HELP + 1 && C_COUNT == C_TVMENU + 1 && isActionCtl(C_TVMENU));
+    CHECK(C_TVMENU == C_HELP + 1 && C_PRO_X == C_TVMENU + 1 && isActionCtl(C_TVMENU));   // the Pro controls follow it
     CHECK(std::string(ctlId(C_TVMENU)) == "tvmenu");
     CHECK(std::string(ctlLabel(C_TVMENU)) == "TV menu");
     CHECK(std::string(ctlId(C_HELP)) == "help" && std::string(ctlId(C_OVERLAY)) == "overlay");   // ids unmoved
@@ -719,6 +719,95 @@ static void testTvMenuDefaults() {
     CHECK(evaluateExtra(withShare, pad).test(C_TVMENU));   // a plain paddle press does
 }
 
+// The standard defaults of every control that existed before the Pro Controller ones (ids 0 .. C_PRO_X - 1),
+// serialised, FNV-1a 64.  Frozen from the tree BEFORE C_PRO_* were added: the Pro work must not move one of them.
+static std::string defaultsDump(const Profile& p) {
+    std::string s;
+    for (int i = 0; i < C_PRO_X; i++) s += std::string(ctlId((Ctl)i)) + "=" + serializeBindings(p.binds[(size_t)i]) + "\n";
+    return s;
+}
+
+static void testProControls() {
+    // Appended after C_TVMENU, nothing before them moved (saved profiles keep their meaning).
+    CHECK(C_PRO_X == 46 && C_PRO_R == C_PRO_X + 4 && C_COUNT == C_PRO_R + 1);
+    const char* ids[] = {"pro_x", "pro_y", "pro_z", "pro_l", "pro_r"};
+    const char* labels[] = {"X (Pro)", "Y (Pro)", "Z (Pro)", "L (Pro)", "R (Pro)"};
+    for (int i = 0; i < 5; i++) {
+        Ctl c = (Ctl)(C_PRO_X + i), back = C_UP;
+        CHECK(std::string(ctlId(c)) == ids[i] && std::string(ctlLabel(c)) == labels[i]);
+        CHECK(ctlFromId(ids[i], back) && back == c && isProCtl(c));
+        CHECK(!isKeypad(c) && !isAnalogCtl(c) && !isPointerCtl(c) && !isActionCtl(c));
+    }
+    CHECK(!isProCtl(C_TVMENU) && !isProCtl(C_K9));
+
+    // The standard defaults are byte-identical to before.
+    std::string all = defaultsDump(Profile::builtin(DeviceClass::Keyboard)) +
+                      defaultsDump(Profile::builtin(DeviceClass::Gamepad, PadCaps{true})) +
+                      defaultsDump(Profile::builtin(DeviceClass::Gamepad, PadCaps{false}));
+    unsigned long long h = 1469598103934665603ull;
+    for (unsigned char ch : all) {
+        h ^= ch;
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0x39c1525059c2f12dull);
+    if (h != 0x39c1525059c2f12dull) std::fprintf(stderr, "%s", all.c_str());
+
+    // The Pro port defaults, Genesis 6-button style: X Y Z = LB North RB, L R = the triggers ...
+    const Binding LB = Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), RB = Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    const Binding N = Binding::button(SDL_GAMEPAD_BUTTON_NORTH);
+    const Binding LT = Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1), RT = Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1);
+    for (bool share : {true, false}) {
+        Profile std_ = Profile::builtin(DeviceClass::Gamepad, PadCaps{share});
+        Profile pro = Profile::builtin(DeviceClass::Gamepad, PadCaps{share}, true);
+        const std::vector<Binding> want[5] = {{LB}, {N}, {RB}, {LT}, {RT}};
+        for (int i = 0; i < 5; i++) {
+            CHECK(pro.binds[(size_t)(C_PRO_X + i)] == want[i]);
+            CHECK(std_.binds[(size_t)(C_PRO_X + i)] == want[i]);   // bound in both; the Router reads them on a Pro port only
+        }
+        // ... keypad 0-4 lose their pad buttons there (the overlay, Share, reaches them) ...
+        for (int c = C_K0; c <= C_K4; c++) CHECK(pro.binds[(size_t)c].empty() && !std_.binds[(size_t)c].empty());
+        // ... and everything else is the standard layout: A B C, Option, Pause, 5 / 6 on the stick clicks,
+        // 7 8 9 * on the right stick, # on Guide, the overlay on Share.
+        for (int c = 0; c < C_COUNT; c++)
+            if (c < C_K0 || c > C_K4) CHECK(pro.binds[(size_t)c] == std_.binds[(size_t)c]);
+        CHECK(pro.binds[C_A] == std::vector<Binding>{Binding::button(SDL_GAMEPAD_BUTTON_EAST)});
+        CHECK(pro.binds[C_B] == std::vector<Binding>{Binding::button(SDL_GAMEPAD_BUTTON_SOUTH)});
+        CHECK(pro.binds[C_C] == std::vector<Binding>{Binding::button(SDL_GAMEPAD_BUTTON_WEST)});
+        // One press, one control: no button is both a Pro button and a keypad digit on a Pro port.
+        DeviceSnapshot s;
+        s.btn[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER] = true;
+        s.axis[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = 32767;
+        CHECK(!evaluate(pro, s).any() && evaluateExtra(pro, s).test(C_PRO_X) && evaluateExtra(pro, s).test(C_PRO_R));
+        CHECK(evaluate(std_, s).test(C_K1) && evaluate(std_, s).test(C_K4));
+    }
+    // The keyboard's Pro port defaults are its standard ones (A S D / Q E already are keypad 9 8 7 / 4 6).
+    Profile kb = Profile::builtin(DeviceClass::Keyboard), kbPro = Profile::builtin(DeviceClass::Keyboard, PadCaps(), true);
+    for (int c = 0; c < C_COUNT; c++) CHECK(kb.binds[(size_t)c] == kbPro.binds[(size_t)c]);
+    for (int c = C_PRO_X; c <= C_PRO_R; c++) CHECK(kb.binds[(size_t)c].empty());
+
+    // A saved profile from before the Pro controls loads unchanged, on either kind of port; a saved keypad 1 is the
+    // user's choice and stays theirs on a Pro port too.
+    Config cfg;
+    cfg.set("input.pad.k1", Binding::button(SDL_GAMEPAD_BUTTON_WEST).serialize());
+    cfg.set("input.pad.a", Binding::button(SDL_GAMEPAD_BUTTON_NORTH).serialize());
+    cfg.set("input.kb.k9", "k4");
+    BindingStore st(cfg);
+    Profile p = st.resolve(DeviceClass::Gamepad, "", ""), pp = st.resolve(DeviceClass::Gamepad, "", "", PadCaps(), true);
+    for (const Profile* r : {&p, &pp}) {
+        CHECK(r->binds[C_K1] == std::vector<Binding>{Binding::button(SDL_GAMEPAD_BUTTON_WEST)} && r->source[C_K1] == SRC_GLOBAL);
+        CHECK(r->binds[C_A] == std::vector<Binding>{N} && r->source[C_A] == SRC_GLOBAL);
+        CHECK(r->binds[C_PRO_X] == std::vector<Binding>{LB} && r->source[C_PRO_X] == SRC_DEFAULT);
+    }
+    CHECK(p.binds[C_K0] == std::vector<Binding>{N} && pp.binds[C_K0].empty());
+    Profile k = st.resolve(DeviceClass::Keyboard, "", "");
+    CHECK(k.binds[C_K9] == std::vector<Binding>{Binding::key(SDL_SCANCODE_A)} && k.source[C_K9] == SRC_GLOBAL);
+    // ... and a Pro binding persists under its own id.
+    st.set(LayerId{"", DeviceClass::Gamepad, ""}, C_PRO_Y, {Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK)});
+    CHECK(cfg.get("input.pad.pro_y") == Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK).serialize());
+    CHECK(st.resolve(DeviceClass::Gamepad, "", "", PadCaps(), true).binds[C_PRO_Y] ==
+          std::vector<Binding>{Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK)});
+}
+
 static void testPaddleLabels() {
     CHECK(Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1).display() == "Paddle P1");
     CHECK(Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2).display() == "Paddle P2");
@@ -740,6 +829,7 @@ int main() {
     testHoldBindings();
     testTvMenuDefaults();
     testPaddleLabels();
+    testProControls();
     std::printf("remap_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

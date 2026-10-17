@@ -251,13 +251,12 @@ void drawGames(App& app) {
     Achievements& a = app.ach;
     const std::vector<ra::GameEntry>& games = a.games();
     size_t owned = 0;
-    for (const ra::GameEntry& g : games)
-        if (g.libIndex >= 0) owned++;
+    const size_t withSets = ra::countWithSets(games, owned);
     if (games.empty()) {
         ImGui::TextWrapped("%s", a.gamesBusy() ? "Loading the list of Atari Jaguar and Jaguar CD games on RetroAchievements..."
                                               : "No games list yet.");
     } else {
-        ImGui::Text("%zu games have achievements on RetroAchievements; %zu are in your library.", games.size(), owned);
+        ImGui::Text("%zu games have achievements on RetroAchievements; %zu are in your library.", withSets, owned);
     }
     if (a.gamesFetchedAt()) ImGui::TextDisabled("List updated %s%s", day(a.gamesFetchedAt()).c_str(), a.gamesFromCache() ? " (saved copy)" : "");
     if (!a.gamesError().empty()) ui::coloredWrapped(ui::vec4(ui::pal().error), a.gamesError().c_str());

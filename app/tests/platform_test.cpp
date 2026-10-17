@@ -94,8 +94,32 @@ static void testIdleModel() {
     CHECK(findCmd(bar, Cmd::RevealGame)->title == "Show in Finder");
     CHECK(findCmd(bar, Cmd::ShowDataFolder)->title == "Show Data Folder in Finder");
     CHECK(findCmd(bar, Cmd::DiscTray) == nullptr);   // no disc drive: no tray item
+    CHECK(findCmd(bar, Cmd::DiscAdd) == nullptr);    // nor a way to add a disc to it
     CHECK(findCmd(bar, Cmd::NetplayDisconnect) == nullptr);
     CHECK(findCmd(bar, Cmd::AchSignIn) == nullptr);
+}
+
+// View > TV Mode: greyed when the setting is Off, ticked while TV mode is on, and it runs the app's toggle.
+static void testTvModeItem() {
+    MenuState s = idle();
+    MenuBar bar = buildMenuBar(s);
+    const MenuItem* m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && !m->enabled && !m->checked);
+    CHECK(findTop(bar, "View") && findCmd(findTop(bar, "View")->sub, Cmd::TvMode, -1));
+    s.tvAvailable = true;
+    bar = buildMenuBar(s);
+    m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && m->enabled && !m->checked && m->title == "TV Mode");
+    s.tvMode = true;
+    bar = buildMenuBar(s);
+    m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && m->enabled && m->checked);
+    MenuState a = idle(), b = idle();
+    b.tvMode = true;
+    CHECK(a != b);   // a change reaches the native menu
+    b = idle();
+    b.tvAvailable = true;
+    CHECK(a != b);
 }
 
 static void testStateReflected() {
@@ -138,6 +162,12 @@ static void testStateReflected() {
     s.disc.ejected = true;
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscTray)->title == "Close Tray");
     s.disc.count = 1;   // a single disc: no Disc submenu
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscSelect) == nullptr);
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscAdd) != nullptr);   // ...but a second one can be added
+    s.disc.count = 0;   // the CD BIOS with no disc (#646): a drive, but nothing to close the tray on
+    s.disc.labels.clear();
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscTray) == nullptr);
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscAdd) != nullptr);   // the way to put the first disc in
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscSelect) == nullptr);
 
     // achievements
@@ -399,6 +429,7 @@ struct Recorder : Actions {
     void showCheats() override { rec("showCheats"); }
     void toggleDiscTray() override { rec("toggleDiscTray"); }
     void selectDisc(int i) override { rec("selectDisc", i); }
+    void addDisc() override { rec("addDisc"); }
     void toggleFullscreen() override { rec("toggleFullscreen"); }
     void toggleIntegerScale() override { rec("toggleIntegerScale"); }
     void toggleSmoothFilter() override { rec("toggleSmoothFilter"); }
@@ -408,6 +439,7 @@ struct Recorder : Actions {
     void toggleControlsOverlay() override { rec("toggleControlsOverlay"); }
     void toggleVsync() override { rec("toggleVsync"); }
     void toggleHomeLibrary() override { rec("toggleHomeLibrary"); }
+    void toggleTvMode() override { rec("toggleTvMode"); }
     void showSettings() override { rec("showSettings"); }
     void toggleMute() override { rec("toggleMute"); }
     void showAbout() override { rec("showAbout"); }
@@ -446,6 +478,7 @@ static void testDispatch() {
     CHECK(one(Cmd::DiscSelect, 2) == "selectDisc:2");
     CHECK(one(Cmd::DiscSelect, 3) == "rejected");        // only 3 discs now
     CHECK(one(Cmd::DiscSelect, 0, 5, 0) == "rejected");  // disc went away
+    CHECK(one(Cmd::DiscAdd, 0) == "addDisc");
     CHECK(one(Cmd::None, 0) == "rejected");
     CHECK(one(Cmd::Count_, 0) == "rejected");
     CHECK(one(Cmd::Website, 0) == std::string("openUrl:") + kWebsiteUrl);
@@ -459,6 +492,7 @@ static void testDispatch() {
     CHECK(one(Cmd::DebugDetach, 0) == "debugDetach");
     CHECK(one(Cmd::Quit, 0) == "quit");
     CHECK(one(Cmd::ShowWindow, 0) == "showWindow");
+    CHECK(one(Cmd::TvMode, 0) == "toggleTvMode");
 
     // Every command with a valid argument runs exactly one action, and no two commands run the same one.
     std::set<std::string> names;
@@ -565,6 +599,7 @@ static void testViewports() {
 int main() {
     testIdleModel();
     testStateReflected();
+    testTvModeItem();
     testToolsMenu();
     testRecents();
     testCoverage();

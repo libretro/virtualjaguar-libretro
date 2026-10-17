@@ -158,11 +158,15 @@ there keypad 0-6 ride X, L, R, L2, R2, L3, R3 and keypad 7-9, `*`, `#` are unrea
 
 **Settings > Input > Devices & players** (everywhere, or this game only; stored as
 `input.port.N` / `input.game.<id>.port.N`) picks the device in each Jaguar port from the
-core's own list and calls `retro_set_controller_port_device`:
+core's own list and calls `retro_set_controller_port_device`. The Pro Controller is not in
+that list (the core has it as the option value `virtualjaguar_pN_device = pad_pro` only): the
+app offers it after Standard Joypad, claims a standard pad and hands the core `pad_pro`, so the
+core's own Pro path turns the RetroPad X / L2 / R2 / L / R into keypad 9 / 8 / 7 / 4 / 6:
 
 | device | driven by (defaults, all rebindable under *Key / button bindings*) |
 | --- | --- |
-| Standard Joypad, Pro Controller | the pad and keypad bindings above |
+| Standard Joypad | the pad and keypad bindings above |
+| Pro Controller (6-button) | the pad bindings above, plus X / Y / Z = Left Shoulder / North / Right Shoulder and L / R = the triggers (rebindable as *X (Pro)* ... *R (Pro)*); keypad 0-4 move to the overlay on a gamepad, 5-9, `*`, `#` stay where they were; the keyboard keeps `A S D` / `Q E` |
 | ST / Amiga mouse (port 2) | the mouse or trackpad (captured); or the right stick / arrows; Z X or South East are the buttons |
 | Rotary (either port) | mouse left / right, or two keys (Left / Right), or the right stick; speed in *Tuning* |
 | Analog, driving, paddle | left stick or `A D W S`; driving: Right trigger / `E` accelerator, Left trigger / `Q` brake; D = North or `V` |
@@ -483,6 +487,35 @@ data). They are not committed to this repository, only downloaded and shipped un
 beside the binary, with attribution here. The box art is the property of its owners; the app
 downloads it to the user's own machine on demand, as RetroArch does, and never redistributes
 it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library was added.
+
+## Emulation thread
+
+**Settings > Interface > Performance > Emulation thread** (`ui.emu_thread`) runs the emulation on its own thread
+(#967; design in `docs/app-emulation-thread-design.md`). The window then only presents. A slow emulated frame or a
+busy UI no longer stalls the picture. The game runs at the true Jaguar rate (60.05 Hz, PAL 50.08 Hz), paced by the
+sound card's clock, and the display shows the newest frame (on a 60 Hz panel the true-rate drift alone skips one frame about every 18 s; in this phase frames that finish
+close to the take point also repeat or skip more often than in the single-thread loop, roughly 1 to 2.5 a second as
+measured on a 60 Hz panel, which the display-locked mode planned for a later phase addresses: that is why the setting is
+off by default).
+The setting takes effect at the next start and is **off** by default (nightly builds will turn it on once nothing is
+switched off while it runs). `--emu-thread on|off` decides for one run; headless runs stay single-threaded unless it
+says `on`.
+
+With vsync, the window waits until just before each vblank, passing input to the emulation as it arrives, and then
+shows the newest frame (the late latch, `src/late_latch.h`). It stays off until it has found where the vblanks are,
+and lets go by itself if frames keep missing them; the log says `[emu] late latch locked` / `released`.
+`--late-latch off` turns it off for a measurement. For a dev measurement, `virtualjaguar --perf-frames N` with
+`VJ_PERF_CSV=path` writes one row per measured iteration when the run ends, with the `input_lat_ms` (event to the
+emulation's poll) and `present_lat_ms` (event to the swap that shows it) columns; `--perf-input` injects a key every
+30 iterations so they have samples. `VJ_PERF_TRACE=prefix` adds `prefix-emu.csv` (each emulated frame: due, start, end,
+trim, audio queue) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace_summary.py prefix` counts
+the frames really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
+grid's phase once whenever frame ends would straddle the take point, so each 60.05-on-60 Hz crossing is one skip rather
+than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
+
+While it is on, this version switches off RetroAchievements, netplay, the Tools (debugger) windows and the GDB stub
+option. They move to the emulation thread in later phases. A log line `[core_host] owner violation: ...` means a UI
+path still called into the core directly: that is a bug, please report it.
 
 ## Running several instances
 
@@ -935,6 +968,9 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 `--show-window` takes `settings[-video|-input|-audio|-storage|-interface][:FILTER]`, `states`, `about`,
 `cheats`, `library`, `login`, `achievements`, `keypad` and `theme-editor`.
 
+The tests labelled `emu_thread` (`ctest -L emu_thread`) cover the emulation thread, including every
+`smoke_*_threaded` run with `--emu-thread on`; CI also runs them under ThreadSanitizer.
+
 ## Layout
 
 | file | job |
@@ -950,6 +986,11 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `shaders/` | first-party presets copied beside the executable |
 | `cmake/VJShaders.cmake` | pinned header fetch, optional prebuilt runtime, shader tests |
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
+| `src/emu_thread.*`, `src/emu_commands.h` | the emulation thread (#967): its loop, `post` / `call` / `advance`, the ordered command queue |
+| `src/pacing_clock.h` | mode A pacing: the core's period trimmed by the audio queue (the sound card as master clock) |
+| `src/frame_exchange.h`, `src/frame.h` | finished frames from the emulation thread to the UI (triple buffer, content epochs) |
+| `src/input_snapshot.h` | the newest input from the UI thread to the core's poll (pointer motion exactly once) |
+| `src/late_latch.h` | the late latch: when the threaded window loop stops waiting before a vblank (vblank tracking, UI build budget) |
 | `src/input.*` | keyboard and gamepad snapshots to libretro input |
 | `src/remap.*`, `src/remap_ui.cpp` | profiles, per-game overrides, keypad delivery, overlay, bind capture, and their UI |
 | `src/devices.*` | device kinds, per-port / per-game selection, player slots (Team Tap), light-gun geometry, mouse-capture policy, locked core options |

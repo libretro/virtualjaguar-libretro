@@ -134,8 +134,8 @@ void CoreHost::setDirectories(const std::string& systemDir, const std::string& s
 }
 
 std::string CoreHost::saveFallbackPath() const {
-    if (saveFallbackDir_.empty() || contentName_.empty()) return "";
-    return saveFallbackDir_ + contentName_ + ".srm";
+    if (saveFallbackDir_.empty() || loadedName_.empty()) return "";
+    return saveFallbackDir_ + loadedName_ + ".srm";
 }
 
 std::string CoreHost::validExtensions() {
@@ -145,7 +145,7 @@ std::string CoreHost::validExtensions() {
     return str(si.valid_extensions);
 }
 
-float CoreHost::aspect() const {
+float CoreHost::aspectLive() const {
     float a = avInfo_.geometry.aspect_ratio;
     if (a > 0.0f) return a;
     if (frame_.height) return (float)frame_.width / (float)frame_.height;
@@ -224,19 +224,50 @@ void CoreHost::captureOptions(const retro_core_options_v2* o) {
         for (const OptionDef& d : defs_) {
             std::string v;
             if (!optionLock(d.key, v)) continue;
-            bool ok = false;
-            for (const OptionValue& ov : d.values)
-                if (ov.value == v) ok = true;
-            locked_[d.key] = ok ? v : d.defaultValue;
+            locked_[d.key] = lockedValue(d, v);
         }
     }
     optionPushes_++;
+    optSerial_++;
+}
+
+// A locked value outside the option's own list falls back to its default ("" means the default too).
+std::string CoreHost::lockedValue(const OptionDef& d, const std::string& v) {
+    for (const OptionValue& ov : d.values)
+        if (ov.value == v) return v;
+    return d.defaultValue;
+}
+
+void CoreHost::refreshLocks() {
+    if (!onOwner()) {
+        queue([this] { refreshLocks(); });
+        return;
+    }
+    if (inFrame_ || !optionLock) return;
+    bool changed = false;
+    for (const OptionDef& d : defs_) {
+        auto l = locked_.find(d.key);
+        if (l == locked_.end()) continue;   // which keys are locked is settled at the push; only values move
+        std::string v;
+        if (!optionLock(d.key, v)) continue;
+        std::string nv = lockedValue(d, v);
+        if (nv == l->second) continue;
+        l->second = nv;
+        changed = true;
+    }
+    if (!changed) return;
+    variableUpdate_ = true;
+    optSerial_++;         // the UI's copy of the table (locked values included) is out of date
+    publishSnapshot();    // threaded: at once, as a disc change does (inline: a no-op)
 }
 
 bool CoreHost::optionVisible(const std::string& key) const {
-    if (locked_.count(key)) return false;
-    auto it = visibility_.find(key);
-    return it == visibility_.end() ? true : it->second;
+    const bool own = onOwner();
+    const std::map<std::string, std::string>& locked = own ? locked_ : uiTable().locked;
+    const std::map<std::string, bool>& vis = own ? visibility_ : uiTable().visibility;
+    if (locked.count(key)) return false;
+    auto it = vis.find(key);
+    return it == vis.end() ? true : it->second;
 }
 
 // A value the core will be handed: one of the core's own list entries, or -- for the keys in
@@ -249,12 +280,16 @@ static bool validFor(const OptionDef& d, const std::string& v) {
 }
 
 std::string CoreHost::optionValue(const OptionDef& d) const {
-    auto l = locked_.find(d.key);
-    if (l != locked_.end()) return l->second;
-    auto s = sessionValues_.find(d.key);
-    if (s != sessionValues_.end() && validFor(d, s->second)) return s->second;
-    auto u = userValues_.find(d.key);
-    if (u != userValues_.end() && validFor(d, u->second)) return u->second;
+    const bool own = onOwner();
+    const std::map<std::string, std::string>& locked = own ? locked_ : uiTable().locked;
+    const std::map<std::string, std::string>& session = own ? sessionValues_ : uiSession_;
+    const std::map<std::string, std::string>& user = own ? userValues_ : uiUser_;
+    auto l = locked.find(d.key);
+    if (l != locked.end()) return l->second;
+    auto s = session.find(d.key);
+    if (s != session.end() && validFor(d, s->second)) return s->second;
+    auto u = user.find(d.key);
+    if (u != user.end() && validFor(d, u->second)) return u->second;
     return d.defaultValue;
 }
 
@@ -263,9 +298,16 @@ void CoreHost::loadUserOptions(const std::vector<std::pair<std::string, std::str
 }
 
 void CoreHost::overrideOption(const std::string& key, const std::string& value) {
+    if (!onOwner()) {
+        // The UI's copy now, on the UI thread; the core's copy at the next frame boundary (never this method again
+        // on the emulation thread: that would write uiSession_ there, racing the UI's reads).
+        uiSession_[key] = value;
+        queue([this, key, value] { applyOverride(key, &value); });
+        return;
+    }
     if (inFrame_) return;   // the debugger has the core halted inside retro_run(): no option changes
-    sessionValues_[key] = value;
-    variableUpdate_ = true;
+    if (threaded()) uiSession_[key] = value;   // (threaded, on the owner: only inside a call(), while the UI waits)
+    applyOverride(key, &value);
 }
 
 static std::string problemFor(const std::vector<OptionDef>& defs, const std::string& key,
@@ -286,6 +328,7 @@ static std::string problemFor(const std::vector<OptionDef>& defs, const std::str
 }
 
 std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
+    noteOffOwner("checkOverrides");
     std::vector<std::string> out;
     const std::map<std::string, std::string>& m = sessionOnly ? sessionValues_ : userValues_;
     for (const auto& kv : m) {
@@ -307,35 +350,72 @@ std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
 
 unsigned CoreHost::visibleOptionCount() const {
     unsigned n = 0;
-    for (const OptionDef& d : defs_)
+    for (const OptionDef& d : optionDefs())
         if (optionVisible(d.key)) n++;
     return n;
 }
 
 void CoreHost::setOptionValue(const std::string& key, const std::string& value) {
+    if (!onOwner()) {
+        uiUser_[key] = value;
+        if (onOptionChanged) onOptionChanged(key, value, false);   // config.ini is only ever written on the UI thread
+        queue([this, key, value] { applyUserValue(key, &value); });
+        return;
+    }
     if (inFrame_) return;
-    userValues_[key] = value;
-    variableUpdate_ = true;
     if (onOptionChanged) onOptionChanged(key, value, false);
-    if (updateDisplayCb_) updateDisplayCb_();
+    if (threaded()) uiUser_[key] = value;
+    applyUserValue(key, &value);
 }
 
 void CoreHost::clearOverride(const std::string& key) {
+    if (!onOwner()) {
+        uiSession_.erase(key);
+        queue([this, key] { applyOverride(key, nullptr); });
+        return;
+    }
     if (inFrame_) return;
-    if (sessionValues_.erase(key)) variableUpdate_ = true;
+    if (threaded()) uiSession_.erase(key);
+    applyOverride(key, nullptr);
 }
 
 void CoreHost::resetOptionToDefault(const std::string& key) {
+    if (!onOwner()) {
+        uiUser_.erase(key);
+        if (onOptionChanged) onOptionChanged(key, "", true);
+        queue([this, key] { applyUserValue(key, nullptr); });
+        return;
+    }
     if (inFrame_) return;
-    userValues_.erase(key);
-    variableUpdate_ = true;
     if (onOptionChanged) onOptionChanged(key, "", true);
+    if (threaded()) uiUser_.erase(key);
+    applyUserValue(key, nullptr);
+}
+
+// The core's copy of a saved value (the owner side of setOptionValue / resetOptionToDefault).
+void CoreHost::applyUserValue(const std::string& key, const std::string* value) {
+    if (inFrame_) return;
+    if (value) userValues_[key] = *value;
+    else userValues_.erase(key);
+    variableUpdate_ = true;
     if (updateDisplayCb_) updateDisplayCb_();
+}
+
+// The core's copy of a session override (the owner side of overrideOption / clearOverride).
+void CoreHost::applyOverride(const std::string& key, const std::string* value) {
+    if (inFrame_) return;
+    if (value) {
+        sessionValues_[key] = *value;
+        variableUpdate_ = true;
+    } else if (sessionValues_.erase(key)) {
+        variableUpdate_ = true;
+    }
 }
 
 // ---- messages ------------------------------------------------------------------
 std::vector<OsdMessage> CoreHost::takeMessages() {
     std::vector<OsdMessage> out;
+    std::lock_guard<std::mutex> l(msgMu_);
     out.swap(messages_);
     return out;
 }
@@ -345,6 +425,7 @@ void CoreHost::pushMessage(const std::string& text, uint32_t ms, int level) {
     m.text = text;
     m.durationMs = ms;
     m.level = level;
+    std::lock_guard<std::mutex> l(msgMu_);
     messages_.push_back(std::move(m));
 }
 
@@ -390,7 +471,13 @@ bool CoreHost::env(unsigned cmd, void* data) {
         return true;
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY: {
         const retro_core_option_display* d = (const retro_core_option_display*)data;
-        if (d && d->key) visibility_[d->key] = d->visible;
+        if (d && d->key) {
+            auto it = visibility_.find(d->key);
+            if (it == visibility_.end() || it->second != d->visible) {
+                visibility_[d->key] = d->visible;
+                optSerial_++;   // the UI's snapshot of the table is out of date
+            }
+        }
         return true;
     }
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
@@ -452,7 +539,7 @@ bool CoreHost::env(unsigned cmd, void* data) {
         g_audioBufferCb = data ? ((const retro_audio_buffer_status_callback*)data)->callback : nullptr;
         return true;
     case RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY:
-        if (data) minAudioLatencyMs_ = *(const unsigned*)data;
+        if (data) minAudioLatencyMs_.store(*(const unsigned*)data);
         return true;
 
     // ---- directories / VFS ---------------------------------------------------
@@ -597,7 +684,7 @@ bool CoreHost::env(unsigned cmd, void* data) {
             }
         }
         if (e->type == VJ_EVT_CRASH_WATCHDOG) {
-            crashEvents_++;
+            crashEvents_.fetch_add(1);
             // The watchdog's own log line is easy to miss; say it on screen too.  The core rate-limits
             // each signature (about every 10 s), so this cannot flood.
             pushMessage(std::string("Core watchdog: ") + (e->s ? e->s : "?") +
@@ -627,6 +714,7 @@ bool CoreHost::startSession(std::string& err) {
     categories_.clear();
     defs_.clear();
     visibility_.clear();
+    optSerial_++;
     controllerPorts_.clear();
     updateDisplayCb_ = nullptr;
     keyboardCb_ = nullptr;
@@ -636,10 +724,10 @@ bool CoreHost::startSession(std::string& err) {
     for (StagedBios& b : staged_) b = StagedBios();
     contentOverrideExts_.clear();
     supportsNoGame_ = false;
-    minAudioLatencyMs_ = 0;
+    minAudioLatencyMs_.store(0);
     g_audioBufferCb = nullptr;
     frame_ = Frame();
-    frameCount_ = 0;
+    frameCount_.store(0);
 
     retro_set_environment(envCb);
     retro_init();
@@ -653,6 +741,7 @@ bool CoreHost::startSession(std::string& err) {
     retro_get_system_info(&sysInfo_);
     if (defs_.empty()) {
         err = "core did not register its options";
+        publishSnapshot();
         return false;
     }
     return true;
@@ -662,8 +751,11 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err) {
     std::memset(&avInfo_, 0, sizeof avInfo_);
     retro_get_system_av_info(&avInfo_);
     loaded_ = true;
-    crashEvents_ = 0;
+    crashEvents_.store(0);
+    discDirty_ = true;
     contentName_ = label;
+    loadedPath_ = contentPath_;
+    loadedName_ = label;
     // A desktop host always has a keyboard.  The core only polls its keypad key fallbacks
     // (the only route to keypad 7-9, * and #) once it has seen a keyboard event, and
     // retro_deinit forgets that on every load, so a gamepad-only player would otherwise
@@ -673,10 +765,14 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err) {
     // Re-read AV info after the SRAM write: region (PAL/NTSC) is latched at load.
     retro_get_system_av_info(&avInfo_);
     (void)err;
+    // A load made through EmuThread::call() returns before the batch ends (afterCommands), so publish now: the UI
+    // thread pins right after the call and must see the new table, AV info and discs.
+    publishSnapshot();
     return true;
 }
 
 bool CoreHost::loadContent(const std::string& path, std::string& err) {
+    if (noteOffOwner("loadContent")) { err = "called off the emulation thread"; return false; }
     if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     if (!startSession(err)) return false;
 
@@ -721,10 +817,15 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
         stopSession();
         return false;
     }
+    // The core's disc list starts empty even after it booted this CD (libretro.c: "nothing to insert"), so without
+    // this the tray and disc menus never appear.  The count check keeps a core that lists its own disc working.
+    if (isDiscImage(path) && diskRegistered_ && disk_.get_num_images && disk_.get_num_images() == 0)
+        appendDiscImage(path);
     return finishLoad(pathStem(path), err);
 }
 
 bool CoreHost::loadNoContent(std::string& err) {
+    if (noteOffOwner("loadNoContent")) { err = "called off the emulation thread"; return false; }
     if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     if (!startSession(err)) return false;
     if (!supportsNoGame_) {
@@ -738,6 +839,10 @@ bool CoreHost::loadNoContent(std::string& err) {
         stopSession();
         return false;
     }
+    // The core boots the CD BIOS unless it was told the cartridge boot ROM (VJ_ENV_GET_BOOT_TARGET, asked only
+    // after HELLO with VJ_CAP_BIOS).  The CD BIOS has a CD unit with nothing in it: the disc list is empty, yet
+    // inserting a disc is the reason to be there, so the disc menu must show (#646).
+    emptyCdTray_ = !(helloSeen_ && announceBios && bootTarget_ == VJ_BOOT_CART_BOOT_ROM);
     return finishLoad("(no cartridge)", err);
 }
 
@@ -761,18 +866,24 @@ void CoreHost::stopSession() {
     contentData_.shrink_to_fit();
     contentPath_.clear();
     contentName_.clear();
+    loadedPath_.clear();
+    loadedName_.clear();
     saveHashValid_ = false;
     g_audioBufferCb = nullptr;
     updateDisplayCb_ = nullptr;   // belongs to the core instance that just went away
     keyboardCb_ = nullptr;
     diskRegistered_ = false;
+    emptyCdTray_ = false;
     memDescs_.clear();   // the descriptors point into the core instance that just went away
     memMap_ = retro_memory_map{};
+    discDirty_ = true;
+    publishSnapshot();   // see finishLoad: an unload through call() must not leave the old discs / AV info pinned
 }
 
 bool CoreHost::memoryRegion(unsigned id, uint8_t*& data, size_t& size) const {
     data = nullptr;
     size = 0;
+    if (noteOffOwner("memoryRegion")) return false;
     if (!loaded_) return false;
     data = (uint8_t*)retro_get_memory_data(id);
     size = data ? retro_get_memory_size(id) : 0;
@@ -780,11 +891,13 @@ bool CoreHost::memoryRegion(unsigned id, uint8_t*& data, size_t& size) const {
 }
 
 void CoreHost::unloadContent() {
+    if (noteOffOwner("unloadContent")) return;
     if (inFrame_) return;   // never tear the core down from inside its own retro_run()
     stopSession();
 }
 
 void CoreHost::runFrame() {
+    if (noteOffOwner("runFrame")) return;
     if (!loaded_ || inFrame_) return;
     if (g_audioBufferCb && audioBufferStatus) {
         bool active = false, underrun = false;
@@ -795,19 +908,25 @@ void CoreHost::runFrame() {
     inFrame_ = true;
     retro_run();   // a debugger halt parks the core in here and runs the UI (see debug_session.h)
     inFrame_ = false;
-    frameCount_++;
+    frameCount_.fetch_add(1);
 }
 
 void CoreHost::reset() {
+    if (noteOffOwner("reset")) return;
     if (loaded_ && !inFrame_) retro_reset();
 }
 
 void CoreHost::sendKeyEvent(bool down, unsigned retroKey, uint32_t character, uint16_t mods) {
+    if (!onOwner()) {
+        queue([this, down, retroKey, character, mods] { sendKeyEvent(down, retroKey, character, mods); });
+        return;
+    }
     if (keyboardCb_) keyboardCb_(down, retroKey, character, mods);
 }
 
 // ---- save states -----------------------------------------------------------------
 bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
+    if (noteOffOwner("saveStateToFile")) { err = "called off the emulation thread"; return false; }
     if (!loaded_) { err = "no game loaded"; return false; }
     if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     size_t size = retro_serialize_size();
@@ -819,6 +938,7 @@ bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
 }
 
 bool CoreHost::loadStateFromFile(const std::string& path, std::string& err) {
+    if (noteOffOwner("loadStateFromFile")) { err = "called off the emulation thread"; return false; }
     if (!loaded_) { err = "no game loaded"; return false; }
     if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     std::vector<unsigned char> buf;
@@ -829,8 +949,8 @@ bool CoreHost::loadStateFromFile(const std::string& path, std::string& err) {
 
 // ---- SRAM -------------------------------------------------------------------------
 std::string CoreHost::saveRamPath() const {
-    if (contentName_.empty()) return "";
-    return saveDir_ + contentName_ + ".srm";
+    if (loadedName_.empty()) return "";
+    return saveDir_ + loadedName_ + ".srm";
 }
 
 void CoreHost::loadSaveRam() {
@@ -853,6 +973,7 @@ void CoreHost::loadSaveRam() {
 }
 
 bool CoreHost::flushSaveRam(bool force) {
+    if (noteOffOwner("flushSaveRam")) return false;
     if (!loaded_) return true;
     std::string p = saveRamPath();
     void* mem = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -871,21 +992,36 @@ bool CoreHost::flushSaveRam(bool force) {
 
 // ---- controllers / discs -------------------------------------------------------------
 void CoreHost::setControllerDevice(unsigned port, unsigned device) {
+    if (!onOwner()) {
+        queue([this, port, device] { setControllerDevice(port, device); });
+        return;
+    }
     if (loaded_ && !inFrame_) retro_set_controller_port_device(port, device);
 }
 
 DiscInfo CoreHost::discInfo() {
+    if (!onOwner()) return ui_.disc;
+    return discInfoLive();
+}
+
+DiscInfo CoreHost::discInfoLive() {
     DiscInfo d;
     if (!loaded_ || !diskRegistered_ || !disk_.get_num_images) return d;
     d.count = disk_.get_num_images();
-    d.available = d.count > 0;
+    // Not just "registered": the core registers disk control for a cartridge too, which must not show a disc menu.
+    d.available = d.count > 0 || emptyCdTray_;
     d.ejected = disk_.get_eject_state ? disk_.get_eject_state() : false;
     d.index = disk_.get_image_index ? disk_.get_image_index() : 0;
     for (unsigned i = 0; i < d.count; i++) {
         char label[256] = {0};
         std::string name;
-        if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0])
+        if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0]) {
+            // The core's label is the path after its last '/', so a Windows path ("D:\Games\Disc 1.chd") arrives
+            // whole: keep only the file name, as on every other OS.
             name = label;
+            const size_t sep = name.find_last_of("/\\");
+            if (sep != std::string::npos) name.erase(0, sep + 1);
+        }
         else if (disk_.get_image_path && disk_.get_image_path(i, label, sizeof label) && label[0])
             name = pathStem(label);
         else
@@ -896,11 +1032,154 @@ DiscInfo CoreHost::discInfo() {
 }
 
 void CoreHost::discSetEject(bool eject) {
-    if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_eject_state) disk_.set_eject_state(eject);
+    if (!onOwner()) {
+        queue([this, eject] { discSetEject(eject); });
+        return;
+    }
+    if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_eject_state) {
+        const bool ok = disk_.set_eject_state(eject);
+        if (!eject) followMountedDisc(ok);
+        discDirty_ = true;
+        publishSnapshot();
+    }
 }
 
 void CoreHost::discSetIndex(unsigned idx) {
-    if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_image_index) disk_.set_image_index(idx);
+    if (!onOwner()) {
+        queue([this, idx] { discSetIndex(idx); });
+        return;
+    }
+    if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_image_index) {
+        followMountedDisc(disk_.set_image_index(idx));
+        discDirty_ = true;
+        publishSnapshot();
+    }
+}
+
+// After an insert: the disc that booted becomes the content.  Only a call that worked and left the tray closed counts.
+// The core moves its image index BEFORE it tries the insert and keeps it there when the insert fails (it puts the
+// previous disc back and leaves the tray open), so the index alone does not say which disc is in.
+void CoreHost::followMountedDisc(bool ok) {
+    if (!ok || !disk_.get_eject_state || disk_.get_eject_state() || !disk_.get_image_index || !disk_.get_image_path)
+        return;
+    char path[4096] = {0};
+    if (!disk_.get_image_path(disk_.get_image_index(), path, sizeof path) || !path[0] || contentPath_ == path) return;
+    contentPath_ = path;
+    contentName_ = pathStem(contentPath_);
+    discSwaps_++;
+}
+
+bool CoreHost::isDiscImage(const std::string& path) {
+    // The core's own is_cd_content test (libretro.c).  A cartridge must never reach the disc list: the core registers
+    // disk control for a cartridge too, and closing the tray would try to mount the cartridge as a disc.
+    const std::string e = pathExt(path);
+    return e == "cue" || e == "cdi" || e == "chd" || e == "iso";
+}
+
+int CoreHost::discAppend(const std::string& path) {
+    if (noteOffOwner("discAppend")) return -1;
+    if (!loaded_ || inFrame_) return -1;
+    const int idx = appendDiscImage(path);
+    if (idx >= 0) {
+        discDirty_ = true;
+        publishSnapshot();
+    }
+    return idx;
+}
+
+int CoreHost::appendDiscImage(const std::string& path) {
+    if (!isDiscImage(path) || !diskRegistered_ || !disk_.add_image_index || !disk_.replace_image_index ||
+        !disk_.get_num_images)
+        return -1;
+    if (!disk_.add_image_index()) return -1;   // the list is full
+    const unsigned idx = disk_.get_num_images() - 1;
+    retro_game_info gi;
+    std::memset(&gi, 0, sizeof gi);
+    gi.path = path.c_str();   // the core copies the path
+    if (!disk_.replace_image_index(idx, &gi)) {
+        disk_.replace_image_index(idx, nullptr);   // drop the empty slot again
+        return -1;
+    }
+    return (int)idx;
+}
+
+// ---- threading (#967) -------------------------------------------------------------
+void CoreHost::setOwner(std::thread::id owner) {
+    if (owner != std::thread::id()) {
+        // Runs on the new emulation thread while the UI thread waits in EmuThread::start(): the copies start equal.
+        uiUser_ = userValues_;
+        uiSession_ = sessionValues_;
+        pubOptSerial_ = optSerial_ - 1;   // publish the table at once
+        discDirty_ = true;
+    }
+    owner_.store(owner);
+    if (owner != std::thread::id()) {
+        publishSnapshot();
+        std::lock_guard<std::mutex> l(snapMu_);
+        ui_ = pub_;
+    }
+}
+
+bool CoreHost::noteOffOwner(const char* what) const {
+    if (onOwner()) return false;
+    ownerViolations_.fetch_add(1);
+    std::lock_guard<std::mutex> l(violationMu_);
+    if (violationSeen_.insert(what).second)
+        std::fprintf(stderr, "[core_host] owner violation: %s called off the emulation thread\n", what);
+    return true;
+}
+
+void CoreHost::queue(std::function<void()> fn) {
+    if (post) {
+        post(std::move(fn));
+        return;
+    }
+    // Threaded with nowhere to queue: running fn() here would re-enter the same off-owner method and recurse, and
+    // would touch the core's copy from the UI thread.  Count it and drop the work.
+    noteOffOwner("queue without post");
+}
+
+const OptionTable& CoreHost::uiTable() const {
+    static const OptionTable kNone;
+    return ui_.options ? *ui_.options : kNone;
+}
+
+void CoreHost::publishSnapshot() {
+    if (!threaded() || !onOwner()) return;
+    std::shared_ptr<const OptionTable> table;
+    if (optSerial_ != pubOptSerial_) {
+        std::shared_ptr<OptionTable> t = std::make_shared<OptionTable>();
+        t->categories = categories_;
+        t->defs = defs_;
+        t->visibility = visibility_;
+        t->locked = locked_;
+        table = t;
+        pubOptSerial_ = optSerial_;
+    }
+    const bool discChanged = discDirty_;
+    DiscInfo disc;
+    if (discChanged) {
+        disc = discInfoLive();
+        discDirty_ = false;
+    }
+    std::lock_guard<std::mutex> l(snapMu_);
+    if (table) pub_.options = table;
+    pub_.optionPushes = optionPushes_;
+    pub_.fps = avInfo_.timing.fps;
+    pub_.sampleRate = avInfo_.timing.sample_rate;
+    pub_.aspect = aspectLive();
+    if (discChanged) {
+        pub_.disc = disc;
+        pub_.contentPath = contentPath_;
+        pub_.contentName = contentName_;
+        pub_.discSwaps = discSwaps_;
+    }
+}
+
+void CoreHost::pinSnapshot() {
+    if (onOwner()) return;
+    std::lock_guard<std::mutex> l(snapMu_);
+    ui_ = pub_;
 }
 
 }  // namespace vj

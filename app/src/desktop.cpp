@@ -30,6 +30,8 @@ platform::MenuState App::menuState() {
     s.controlsOverlay = input.controls.show;
     s.vsync = vsync;
     s.homeLibrary = homeLibrary;
+    s.tvMode = tvMode.active();
+    s.tvAvailable = tv::effectiveSetting(tvSetting) != tv::TvSetting::Off;
     s.libraryOpen = homeVisible() || library.show;
     if (s.gameLoaded) {
         DiscInfo d = host.discInfo();
@@ -97,9 +99,13 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void showCheats() override { a.showCheats = true; }
         void toggleDiscTray() override {
             DiscInfo d = a.host.discInfo();
-            if (d.available) a.host.discSetEject(!d.ejected);
+            if (d.available && d.count > 0) {   // an empty list (the CD BIOS with no disc) has nothing to insert
+                const bool eject = !d.ejected;
+                a.emu.call([&app = a, eject] { app.host.discSetEject(eject); });
+            }
         }
-        void selectDisc(int i) override { a.host.discSetIndex((unsigned)i); }
+        void selectDisc(int i) override { a.emu.call([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }); }
+        void addDisc() override { a.showDiscDialog(); }
         void toggleFullscreen() override { a.setFullscreen(!a.fullscreen); }
         void toggleIntegerScale() override { a.present.integerScale = !a.present.integerScale; }
         void toggleSmoothFilter() override { a.present.linearFilter = !a.present.linearFilter; }
@@ -117,6 +123,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             a.applyVsync();
         }
         void toggleHomeLibrary() override { a.homeLibrary = !a.homeLibrary; }
+        void toggleTvMode() override { a.toggleTvMode(); }
         void showSettings() override { a.showSettings = true; }
         void toggleMute() override {
             a.mute = !a.mute;

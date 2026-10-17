@@ -137,6 +137,17 @@ struct AchCallbacks {
         }
     }
 
+    static void RC_CCONV mediaChanged(int result, const char* error, rc_client_t* c, void*) {
+        Achievements* a = self(c);
+        if (!a || result == RC_OK || result == RC_ABORTED) return;
+        const std::string msg = error ? error : "the new disc could not be identified";
+        a->toast("RetroAchievements", msg, result == RC_HARDCORE_DISABLED ? 1 : 2, 6);
+        a->setStatus("Disc change: " + msg);
+        // RC_HARDCORE_DISABLED: rcheevos turned hardcore off for an unidentified disc.  Not applyHardcore(), which
+        // would turn it straight back on; pump()'s checkHardcoreTransition passes the change on.  The next open
+        // applies the user's choice again.
+    }
+
     static void RC_CCONV loadDone(int result, const char* error, rc_client_t* c, void*) {
         Achievements* a = self(c);
         if (!a) return;
@@ -309,6 +320,21 @@ void Achievements::onContentLoaded() {
     if (hardcoreActive()) retro_cheat_reset();   // cheats do not survive into a hardcore session
 }
 
+// rc_client's own multi-disc path: the session (and hardcore) carry on when the new disc belongs to the same game,
+// and rcheevos decides what an unknown disc means.  A disc it cannot hash (.chd / .cdi) is let through as "[NO HASH]".
+void Achievements::onDiscChanged() {
+    if (!client_ || !app_) return;
+    const std::string path = app_->host.contentPath();
+    if (path.empty() || path == loadedPath_) return;
+    loadedPath_ = path;
+    if (!loading_ && !rc_client_is_game_loaded(client_)) {   // the first disc was not identified: try this one
+        loadFailed_ = false;
+        beginLoad();
+        return;
+    }
+    rc_client_begin_identify_and_change_media(client_, path.c_str(), nullptr, 0, &AchCallbacks::mediaChanged, nullptr);
+}
+
 void Achievements::onContentClosed() {
     loading_ = false;
     gameKnown_ = false;
@@ -377,11 +403,12 @@ std::string Achievements::userName() const {
     return u ? u->display_name : "";
 }
 
-bool Achievements::hardcoreActive() const {
+bool Achievements::hardcoreNextGame() const {
     if (!client_ || !enabled_ || !hardcoreWanted_ || !settingsOk_) return false;
-    if (!signedIn() && !loginPending_) return false;
-    return loading_ || gameKnown_;
+    return signedIn() || loginPending_;
 }
+
+bool Achievements::hardcoreActive() const { return hardcoreNextGame() && (loading_ || gameKnown_); }
 
 void Achievements::checkSettings() {
     settingsOk_ = true;
