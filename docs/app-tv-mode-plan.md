@@ -570,18 +570,119 @@ CHECK(!ImGui::GetIO().WantCaptureMouse);   // the light gun / mouse keep the pic
 
 ## Phase 2 — the TV shell, Home, Library, Game details; Manual mode (PR 2)
 
+Revised 2026-10-16 against the code Phase 1 merged (5f21ab75). Branch `feat/991-tv-phase2`, worktree
+`~/Workspace/Provenance/vj-wt/tv-phase2`.
+
+### What Phase 1 left (read before any task)
+
+- `tv::Host` (`tv_host.h`) has `showControlsOverlay()` (not `toggleControlsOverlay`), plus the members listed in Task 5.
+- `Shell::ownsInput()` is `open_`, and `backAtRoot()` is `!open_`. `draw(Layer::Base, …)` draws nothing, and `drawUi`
+  calls only `draw(Layer::Menu, …)`.
+- The menu model (pages, rows, `accept`/`back`) lives inline in `Shell`. **It stays there.** Phase 2 adds a stack of
+  Base-layer screens beside it and does not fold the menu into the stack.
+- `tvInputFrame(App&, uint64_t)` is in `devices_ui.cpp`. Today it opens the menu only with a game loaded.
+- `tv_script.cpp` runs `tests/tv_menu_headless.txt.in`. The verbs are listed in that file's header.
+- Smoke harness: `tests/tv_ui_smoke.cpp` provides `FakeHost`, `frames()`, `tapButton()`, a `drew()` text probe and
+  `g_imguiErrors`. `DisplaySize` is 1920×1080.
+- `theme::Palette` has no accent field. TV chrome uses `hoverEdge` as its accent (it is a tile's hover outline).
+
+### Phase 2 decisions (the approval list at the end of this phase repeats the ones that change the spec)
+
+1. **Sections in PR 2 are Home and Library only**: `enum class Section { Home, Library }`. Phase 3 appends
+   Achievements and Settings. Until then, Y on Home does nothing and is not hinted, and Game details has no
+   Achievements row.
+2. **`auto` acts as Manual until Task 16.** `effectiveSetting(TvSetting)` maps Auto to Manual, and App passes its
+   result to `TvMode::configure`. The stored value is kept as written. A nightly started fullscreen must not enter TV
+   mode with no trigger wired to leave it. `defaultSetting()` moves to Task 16; until then the config default is
+   `manual`.
+3. **`tv_host.h` stays pure.** It holds no `lib::` types and no `LibraryService`. The TV module gets its own value types
+   (`GameRef`, `Art`, `StateRef`), fetched by value each frame. A `GameRef` is keyed by file path, so a rescan cannot
+   leave a screen holding a dead `const Entry*`.
+4. **Back belongs to the shell.** Screens never see `Intent::Back`. The shell pops a pushed screen; on Library's root
+   it goes to Home; on Home it does nothing.
+5. **A launch arms the release guard.** Every launch from a TV screen calls `Shell::launched()`
+   (`armReleaseGuard()` + `clearHolds()`), so the A that started the game does not also reach it.
+6. **Start (Intent::Menu) opens Game details** while the Base layer owns input; a right-click does the same with a
+   mouse. If a player binds `C_TVMENU` to Start, Start still opens Details on these screens; F4 and the Share hold
+   still toggle TV mode.
+7. **Keep `app.cpp` edits small** (#967 edits it too): config read/write, `--tv`, `toggleTvMode()`. Everything else
+   goes in `tv_app_host.cpp`, `devices_ui.cpp` and `ui.cpp`.
+
+### Screen geometry (design units, 1080 high; `x` runs to `W = viewport width / u`)
+
+Shared chrome, every Base screen:
+- **Top bar** at `(safeX, safeY)`, 56 high:
+  - an accent square 22×22 (`hoverEdge`), gap 16, then "VIRTUAL JAGUAR" at 34;
+  - gap 56, then the section tabs at body 30, gap 40, flanked by LB / RB key pills at 24 (2u outline, radius 8). The
+    active tab has a 4u `hoverEdge` underline 6u below its text, and the others are `textMuted`;
+  - right-aligned to `W − safeX`: `raStatus()` at caption 26 `textMuted`, gap 24, `clockText()` at 26 in `text`.
+- **Content area**: from y = 150 (54 + 56 + 40) to y = 968.
+- **Hint bar**: `widgets::hintBar` at y = 968..1026, x = safeX..W − safeX. The shell appends {"LB RB", "Sections"}
+  before the screen's last hint.
+
+**Home** (mockup A):
+- **Hero** at y = 150, 380 high:
+  - the box art 266×372 at x = safeX;
+  - a text column from x = safeX + 266 + 56, bottom-aligned with the art:
+    - the shelf name in upper case, at 26 `textMuted`;
+    - the title at `titleLarge` (84), cut with an ellipsis at the column width;
+    - "<region> · Cartridge" or "<region> · Jaguar CD", at 28 `textSecondary` (the region and its dot are dropped
+      when the region is empty);
+    - "N save states · newest <d Mon YYYY>", or "No save states", at 28;
+    - the button row at 28: glyph(Accept) "Play"; glyph(Alt) "Resume last state" (only when allowed, per Task 8);
+      glyph(Menu) "Details".
+- **Shelves** from y = 570:
+  - each shelf is a title at body 30, a gap of 22, then tiles 210×294 with a gap of 32, starting at x = safeX + 12;
+  - shelf pitch 386. The focused shelf is drawn in the first slot; the shelves above it are scrolled off. The next
+    shelf shows in part, clipped at y = 968. Vertical scroll eases with a `Tween`;
+  - tiles may run past the right safe edge (spec §6).
+
+**Tile** (Home and Library):
+- the art (`Art::tex`) fitted inside the tile; otherwise a placeholder: `cardBg`, with the title in `placeholderText`
+  at 26, wrapped inside 18u padding and bottom-aligned;
+- a "CD" badge at 24 (`badgeBg`/`badgeText`) top-right for a disc;
+- focus as in `widgets::row`: scale to `focusScale` about the centre, a `ring` of 5u in `text`, a drop shadow, all
+  driven by `FocusTweens`.
+
+**Library** (mockup B under the shared top bar; the mockup's logo is in the top bar instead):
+- **Rail** at x = safeX, 344 wide, from y = 150:
+  - four items (All games, Favorites, Recently played, Jaguar CD), each at body 30 with 12/20 padding, 54 high,
+    8 apart, radius 10;
+  - the selected list gets a `cardBgHover` fill and `text`; the others are `textMuted`;
+  - while the rail has focus, its focused item also gets the ring.
+- **Grid** from x = safeX + 344 + 64 to W − safeX:
+  - a caption at y = 150, at 26 `textMuted`: "<list name> · N games" ("1 game" in the singular), then
+    "   Filter: <text>" while filtering;
+  - tiles from y = 196 in 6 columns with a column gap of 32: `tileW = (gridW − 160) / 6`, `tileH = tileW × 7 / 5`;
+  - row pitch `tileH + 72`. The 72 keeps room for the focused tile's caption: "<region> · Cartridge|Jaguar CD · N
+    states" (the last part dropped at 0), at 24 `textSecondary`, at most 2 × tileW wide;
+  - `visibleRows = max(1, floor((968 − 196 + 72) / (tileH + 72)))`. A partial next row is drawn and clipped at 968.
+- **Letter picker** (modal over Library):
+  - a 0.6 scrim, then a centred `panel`: the title "Jump to letter" at 30, then a 6×6 grid of 96u cells 16 apart over
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  - a letter with no title (`firstWithInitial == -1`) is drawn `textMuted`, and Accept on it does nothing.
+
+**Game details**:
+- the art 266×372 at (safeX, 150);
+- right of it at x = safeX + 266 + 56: the title at `titleSmall` (56), then the region/kind line at 28;
+- rows from y = 150 + 56 + 28 + 40, 900 wide, drawn with `widgets::row`: 72 high, or 112 for Resume rows, which carry a
+  128×96 `thumbBox`.
+
+---
+
 ### Task 6: the mode state machine and input ownership (pure)
 
-**Files:** Create `app/src/tv/tv_mode.h/.cpp`, `app/tests/tv_mode_test.cpp` (register `tv_mode_unit`).
+**Files:** Create `app/src/tv/tv_mode.h/.cpp` and `app/tests/tv_mode_test.cpp`. Register `tv_mode_unit` in
+`cmake/VJTvTests.cmake`, next to `tv_focus_unit` (pure, no SDL).
 
-**Interfaces:**
+**Interfaces (produces):**
 
 ```cpp
 namespace vj::tv {
 enum class TvSetting { Off, Manual, Auto };
 const char* settingKey(TvSetting s);                       // "off" | "manual" | "auto"
 bool settingFromKey(const std::string& k, TvSetting& out);
-TvSetting defaultSetting();                                // VJ_TV_DEFAULT_SETTING (Task 16), Auto when undefined
+TvSetting effectiveSetting(TvSetting stored);              // Phase 2: Auto -> Manual (no Auto triggers yet); Task 16 makes it the identity
 struct TvConfig { TvSetting setting = TvSetting::Manual; bool autoFullscreen = true, autoController = true; };
 class TvMode {
 public:
@@ -589,7 +690,7 @@ public:
     enum class Cause { None, Manual, Fullscreen, Controller };
     void configure(const TvConfig& c, bool fullscreenNow);   // Off -> off; Auto + autoFullscreen + fullscreen -> on
     bool active() const; Cause cause() const;
-    void toggle();                           // View > TV mode, the in-game menu; no-op when Off
+    void toggle();                           // View > TV mode, the in-game menu, C_TVMENU with no game; no-op when Off
     void setOn(bool on);                     // --tv, the remembered Manual state; no-op when Off
     void onFullscreen(bool fs);              // Auto + autoFullscreen: enter -> on, leave -> off
     void onPadPress(bool desktopOwnsInput);  // Auto + autoController + desktopOwnsInput -> on (Cause::Controller)
@@ -601,7 +702,8 @@ Owner inputOwner(bool tvActive, bool gameRunning, bool menuOpen);   // the §3.1
 }
 ```
 
-- [ ] **Step 1: Write the failing tests.** Every §8 trigger order:
+- [ ] **Step 1: Write the failing tests** (every §8 trigger order; the Auto cases test the pure machine, which Phase 4
+  wires up):
 
 ```cpp
 TvMode m; m.configure({TvSetting::Off}, false); m.toggle(); m.onFullscreen(true); m.onPadPress(true); CHECK(!m.active());
@@ -616,6 +718,9 @@ m.onPadPress(true); m.onNonNavKey(); CHECK(!m.active());
 m.onPadPress(true); m.onFullscreen(true); m.onMouseMove(100, 0); CHECK(m.active());   // controller-on, then fullscreen holds it
 m.toggle(); CHECK(!m.active()); m.onMouseMove(100, 0); m.onFullscreen(true); CHECK(m.active());   // manual wins until the next edge
 TvConfig noFs{TvSetting::Auto, false, true}; m.configure(noFs, true); m.onFullscreen(false); m.onFullscreen(true); CHECK(!m.active());
+m.configure({TvSetting::Off}, false); m.setOn(true); CHECK(!m.active());
+m.configure({TvSetting::Manual}, false); m.setOn(true); CHECK(m.active() && m.cause() == TvMode::Cause::Manual);
+CHECK(effectiveSetting(TvSetting::Auto) == TvSetting::Manual && effectiveSetting(TvSetting::Off) == TvSetting::Off);
 CHECK(inputOwner(false, false, false) == Owner::DesktopUi && inputOwner(false, true, false) == Owner::Game);
 CHECK(inputOwner(true, false, false) == Owner::TvUi && inputOwner(true, true, false) == Owner::Game);
 CHECK(inputOwner(false, true, true) == Owner::TvUi && inputOwner(true, true, true) == Owner::TvUi);
@@ -623,164 +728,463 @@ TvSetting s; CHECK(settingFromKey("auto", s) && s == TvSetting::Auto && !setting
 ```
 
 - [ ] **Step 2: Run** `ctest --test-dir app/build -R tv_mode_unit`. Expected: it fails to build.
-- [ ] **Step 3: Implement.** `Shell::ownsInput()` (Task 5) now delegates to `inputOwner(...) == Owner::TvUi`.
+- [ ] **Step 3: Implement** `tv_mode.cpp`. The `toggle()` cause is `Manual`. A manual toggle wins until the next
+  fullscreen or pad edge.
 - [ ] **Step 4: Run** the same command. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(app): TV mode state machine and input ownership (#991)`.
 
-### Task 7: shell chrome, TV mode on and off, `--tv`, View menu
+### Task 7: the screen stack, the chrome, Manual TV mode, `--tv`, the View menu
 
 **Files:**
+- Create:
+  - `app/src/tv/tv_screen.h` (`Section`, `DrawCtx`, `Screen`);
+  - `app/src/tv/tv_chrome.cpp` (the Base window, the top bar, the hint bar);
+  - `app/src/tv/tv_home.cpp` with a stub `HomeScreen` (one text line, "Home"), which Task 8 fills;
+  - `app/src/tv/tv_library.cpp` with a stub `LibraryScreen` ("Library"), which Task 9 fills.
 - Modify:
-  - `tv_shell.h/.cpp`: screen stack, top bar, hint bar, sections, mouse.
-  - `tv_host.h` + `tv_app_host.cpp`: the members listed below.
-  - `app.h/.cpp`: `tvMode` member; config load/save.
-  - `main.cpp`: `--tv`.
-  - `ui.cpp` `drawUi`: TV active → no menu bar except the hover band; no `drawLibraryHome`.
-  - `ui.cpp` View menu: "TV mode".
-  - `platform/commands.h/.cpp`, `desktop.cpp`: native twin.
-  - `settings_reset.cpp` + `tests/settings_reset_test.cpp`: the `ui.tv_*` keys are Interface.
-- Test: `tv_ui_smoke.cpp` (extend), `tests/platform_test.cpp` (extend).
+  - `tv_host.h`, `tv_app_host.h/.cpp`: the Host members below;
+  - `tv_shell.h/.cpp`: the stack, sections, ownership and the Base-input rules;
+  - `devices_ui.cpp` `tvInputFrame`: `C_TVMENU` with no game;
+  - `app.h/.cpp`: the `tvMode`/`tvSetting` members, `toggleTvMode()`, config read/write and `--tv`;
+  - `main.cpp`: `--tv` and its usage line;
+  - `ui.cpp`: `drawUi` and the in-window View menu item "TV mode";
+  - `platform/commands.h/.cpp`, `desktop.cpp`: `Cmd::TvMode`;
+  - `settings_reset.cpp`: the five `ui.tv_*` keys are Interface;
+  - `tv_script.cpp` and `tests/tv_menu_headless.txt.in`: new verbs and cases;
+  - `cmake/VJTvTests.cmake`, `app/CMakeLists.txt`: the new sources.
+- Test: `tv_ui_smoke.cpp`, `platform_test.cpp`, `settings_reset_test.cpp`, `tv_menu_headless`.
 
-**Interfaces:**
-- Host gains:
+**Interfaces (produces):**
 
 ```cpp
+// tv_host.h, added
 virtual bool tvActive() const = 0;
-virtual bool tvAvailable() const = 0;   // setting != Off
-virtual void setTvActive(bool on) = 0;
-virtual bool fullscreen() const = 0;
-virtual std::string clockText() const = 0;
-virtual std::string raStatus() const = 0;
+virtual bool tvAvailable() const = 0;          // the setting is not Off
+virtual void setTvActive(bool on) = 0;         // through App::toggleTvMode's path; no-op when Off
+virtual std::string clockText() const = 0;     // "8:42 PM" or "20:42" (SDL_GetDateTimeLocalePreferences)
+virtual std::string raStatus() const = 0;      // "" unless signed in; "RetroAchievements: <user>", + " · Hardcore" when wanted
+
+// tv_screen.h
+enum class Section { Home, Library };          // Phase 3 appends Achievements, Settings
+struct DrawCtx {
+    ImDrawList* dl; Metrics m; ImVec2 pos, size;   // the content area (between the top bar and the hint bar), pixels
+    bool hovered;                                  // the Base window is hovered (not a desktop window above it)
+    ImVec2 mouse; bool clicked, rightClicked; float wheel; double now;
+};
+class Screen {
+public:
+    virtual ~Screen() = default;
+    virtual const char* id() const = 0;            // "home" | "library" | "letters" | "details": FocusMemory keys, tests
+    virtual void intent(Intent in) = 0;            // never Back, SectionPrev or SectionNext (the shell's)
+    virtual bool typed(char c) { return false; }   // 'a'..'z', '0'..'9', '\b'; true = used
+    virtual void draw(const DrawCtx& c) = 0;       // draws, and does hover-focus / click / wheel from c
+    virtual std::vector<widgets::Hint> hints() const = 0;   // last = the way out
+    virtual bool modal() const { return false; }   // drawn over the screen below it, which is drawn first
+};
+
+// tv_shell.h, added
+constexpr const char* kBaseWindowName = "TV##vjtvbase";
+bool baseActive() const;                    // host.tvActive() && !host.gameLoaded()
+Section section() const;
+void setSection(Section s);                 // replaces the stack with that section's root screen (created fresh; focus via memory())
+void push(std::unique_ptr<Screen> s);
+void pop();                                 // never pops the root
+std::string screenId() const;               // the top screen's id(), "" when the stack is empty
+FocusMemory& memory();
+void launched();                            // armReleaseGuard() + clearHolds()
+Host& host();
+
+// App, added
+tv::TvMode tvMode; tv::TvSetting tvSetting = tv::TvSetting::Manual;
+void toggleTvMode();                        // tvMode.toggle()
+// CliArgs: bool tv = false;   Cmd::TvMode after Cmd::HomeLibrary;   MenuState: bool tvMode = false, tvAvailable = false (in operator==)
+// DesktopActions: virtual void toggleTvMode() = 0;
 ```
 
-- `enum class Section { Home, Library, Achievements, Settings }`. LB/RB move between sections; the top bar shows
-  them, plus the clock and the RA status.
-- `CliArgs::tv` (bool). `Cmd::TvMode` goes after `Cmd::HomeLibrary`. `MenuState` gains `tvMode` and `tvAvailable`,
-  and `operator==` compares both.
-- Config: `ui.tv_mode` and `ui.tv_manual_on` are read in `loadConfig`/`applySettingsFromConfig` and written in
-  `saveConfig`. `ui.tv_manual_on` is written only while the setting is Manual.
-- `C_TVMENU` with no game loaded (`tvInputFrame`):
-  - With the setting not Off, it calls `tvMode.toggle()`: desktop → TV mode, TV mode → desktop. This is what
-    spec §3.1 ("pads do nothing except the TV-menu action") and the §9 hint ("Press Share (hold) or F4 for TV
-    mode") need.
-  - With the setting Off, it does nothing.
-  - With a game loaded, it opens or closes the in-game menu, as in phase 1.
+Shell behaviour:
+- `ownsInput()` is `inputOwner(host.tvActive(), host.gameLoaded(), open_) == Owner::TvUi`.
+- `backAtRoot()`:
+  - menu open: false;
+  - `baseActive()`: the stack holds only the root and the section is Home;
+  - otherwise: true.
+- The first `frame()` with `baseActive()` and an empty stack calls `setSection(Home)`. The stack is kept while a game
+  runs, so closing the game lands back where the player was.
+- Base-layer input in `handleEvent`, on top of the menu's rules:
+  - **Escape key-down with `backAtRoot()`:** not consumed and not fed, so it keeps its desktop meaning.
+  - **Start:** fed as `Intent::Menu` and consumed, but only while `baseActive()`. With the menu open it stays the
+    app's, as today.
+  - **Typing:** a key-down with no Ctrl/Alt/Gui whose `e.key.key` (the layout-aware keycode, not the scancode) is
+    a–z or 0–9 goes to `top()->typed(lowercase)`. Backspace goes to `top()->typed('\b')`. A key the screen uses is
+    consumed and not fed to the nav. A Backspace it does not use falls through to Back.
+  - **Cursor:** a pad event sets `padDriven_`, and mouse motion clears it. While it is set, the Base window calls
+    `ImGui::SetMouseCursor(ImGuiMouseCursor_None)`.
+- `frame()` with the menu closed and `baseActive()` routes each intent:
+  - SectionPrev / SectionNext: `setSection` ±1, with no wrap;
+  - Back: rule 4;
+  - anything else: `top()->intent`.
+- `draw(Layer::Base)` exists only while `baseActive()`:
+  - a full-viewport window `kBaseWindowName` with `NoDecoration | NoBackground | NoBringToFrontOnFocus | NoNav |
+    NoSavedSettings`;
+  - the chrome, then the stack: the topmost non-modal screen and every modal above it, in order;
+  - the hints of `top()`.
+
+App and UI:
+- **Config** (`applySettingsFromConfig` / `saveConfig`):
+  - read `ui.tv_mode` (default `manual`) into `tvSetting`;
+  - `tvMode.configure({effectiveSetting(tvSetting), cfg ui.tv_auto_fullscreen, cfg ui.tv_auto_controller}, fullscreen)`;
+  - when that is Manual and `ui.tv_manual_on` is set, `tvMode.setOn(true)`;
+  - save `ui.tv_mode`, and `ui.tv_manual_on = tvMode.active()` only while the setting is Manual and the run was not
+    started with `--tv`.
+- **`--tv`:** `tvMode.setOn(true)` after the config is applied (a no-op when Off).
+- **`tvInputFrame`:** `if (menuToggle && !in.capturing()) { if (loaded) toggleMenu(); else app.toggleTvMode(); }`.
+  `toggleTvMode` is already a no-op when Off.
+- **`drawUi`:**
+  - `const bool tvBase = app.tvShell().baseActive();`
+  - the in-window menu bar shows as in fullscreen when `tvBase`:
+    `showMenu = native ? showInWindowMenu : (!(app.fullscreen || tvBase) || app.menuPinned || menuHot)`;
+  - in the no-game branch, `tvBase` draws `Layer::Base` in place of `drawLibraryHome` and the welcome text.
+- **Native menu:** `commands.cpp` adds `item(Cmd::TvMode, "TV Mode", "", s.tvAvailable, s.tvMode)` after the
+  HomeLibrary item. `desktop.cpp` fills `tvMode`/`tvAvailable` and implements `toggleTvMode()`.
+- **AppHost:**
+  - `clockText` uses `SDL_GetCurrentTime` → `SDL_TimeToDateTime(…, true)`, in 12- or 24-hour form per
+    `SDL_GetDateTimeLocalePreferences`;
+  - `raStatus` uses `ach.signedIn()`, `ach.userName()` and `ach.hardcoreWanted()`.
+- **Script verbs** (add them to the header of `tv_menu_headless.txt.in`):
+  - `tvsetting off|manual|auto`: sets `tvSetting` and reconfigures, as Settings will;
+  - `expect tv=0|1`;
+  - `expect tv-screen=<id>`.
 
 - [ ] **Step 1: Write the failing tests.**
+  - `FakeHost` gains `tv = false, tvOn = true` (tvAvailable), `ra`, and `clock = "8:42 PM"`. `frames()` draws
+    `Layer::Base` before `Layer::Menu`.
   - Smoke:
-    - `tv_shell_walks_sections`: TV active with no game; RB×3, LB×3; 120 frames with no ImGui asserts.
-    - `esc_back_then_root`: Esc on Library → Home and consumed; on Home `backAtRoot() == true`.
-    - `mouse_hover_focuses`: a synthetic `MOUSE_MOTION` over tile 2 sets focus to 2; a click launches.
+    - `tv_shell_walks_sections`: `tv = true, loaded = false`; RB, RB, LB, LB with a frame after each.
+      `screenId()` goes "home", "library", "library", "home", "home". Then `frames(120)`;
+      `CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("8:42 PM"))`.
+    - `esc_back_then_root`: on Library, an Escape key-down → `handleEvent` returns true, and after a frame
+      `screenId() == "home"`. A second Escape → `handleEvent` returns false, and `backAtRoot()`.
+    - `base_only_without_game`:
+      - `tv = true, loaded = true`, frames → `ImGui::FindWindowByName(kBaseWindowName) == nullptr` and
+        `!shell.ownsInput()`;
+      - `tv = false, loaded = false` → no window and `!ownsInput()`.
+    - `base_never_captures_keyboard`: on Home after a pad walk, `!ImGui::GetIO().WantCaptureKeyboard`.
+    - `pad_hides_cursor`: a pad tap, then a frame → `ImGui::GetMouseCursor() == ImGuiMouseCursor_None`. A
+      `SDL_EVENT_MOUSE_MOTION` to `handleEvent`, then a frame → `!= ImGuiMouseCursor_None`.
+    - `base_returns_after_game`: on Library, `loaded = true` for 5 frames, `loaded = false` → `screenId() == "library"`.
+    - `ra_status_hidden_when_empty`: `ra = ""` → `!drew("RetroAchievements")` for any text that starts so.
   - `platform_test`:
-    - the View menu model has "TV Mode", disabled when `tvAvailable == false`;
-    - `Cmd::TvMode` dispatches to `toggleTvMode()`.
-  - `settings_reset_test`: `classifyKey("ui.tv_mode") == KeyClass::Interface` for all five `ui.tv_*` keys.
-  - `tv_menu_headless` script cases, before any `load` line:
-    - Manual: F4 → `expect tv=1`; F4 → `expect tv=0`.
-    - `ui.tv_mode=off`: F4 → `expect tv=0`.
-    - A Share hold → `expect tv=1`.
-- [ ] **Step 2: Run** `ctest --test-dir app/build -R "tv_ui_smoke|platform|settings_reset"`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-  - `drawUi`: when TV is active, the menu bar shows only at the top-edge hover band, as in fullscreen today.
-    `Layer::Base` replaces `drawLibraryHome`.
-  - The cursor hides while the last TV input came from a pad, and returns on mouse motion.
-- [ ] **Step 4: Run** the full suite. Expected: all PASS.
+    - the View menu has `Cmd::TvMode`, enabled iff `tvAvailable` and checked iff `tvMode`;
+    - dispatching it records `"toggleTvMode"`.
+  - `settings_reset_test`: `classifyKey(k) == KeyClass::Interface` for `ui.tv_mode`, `ui.tv_auto_fullscreen`,
+    `ui.tv_auto_controller`, `ui.tv_manual_on` and `ui.tv_hint_shown`.
+  - `tv_menu_headless`: replace the first block ("No game: the TV-menu action does nothing") with:
+    ```
+    0     expect loaded=0
+    0     expect tv=0
+    0     key tap F4
+    40    expect tv=1
+    40    expect tv-screen=home
+    60    key tap Escape          # at root: not the shell's
+    100   expect tv=1
+    100   key tap F4
+    140   expect tv=0
+    140   tvsetting off
+    160   key tap F4
+    200   expect tv=0
+    200   tvsetting auto           # acts as Manual in phase 2
+    220   key tap F4
+    260   expect tv=1
+    260   key tap F4
+    300   expect tv=0
+    300   tvsetting manual
+    320   pad down misc1
+    920   pad up misc1
+    960   expect tv=1
+    960   key tap F4
+    1000  expect tv=0
+    ```
+    Shift the later lines' times so they still increase.
+- [ ] **Step 2: Run** `ctest --test-dir app/build -R "tv_ui_smoke|platform|settings_reset|tv_menu_headless"`.
+  Expected: FAIL.
+- [ ] **Step 3: Implement** the interfaces and rules above.
+- [ ] **Step 4: Run** the full suite: `ctest --test-dir app/build -C Release --output-on-failure`. Expected: all PASS.
 - [ ] **Step 5: Commit** `feat(app): TV shell, Manual TV mode, --tv and the View menu entry (#991)`.
 
 ### Task 8: Home
 
-**Files:** Create `app/src/tv/tv_home.cpp`. Extend `tv_host.h`/`tv_app_host.cpp`. Test: `tv_ui_smoke.cpp`.
+**Files:** Fill `app/src/tv/tv_home.cpp` (`HomeScreen`). Add `formatDate` to `tv_widgets.h/.cpp`. Extend `tv_host.h`
+and `tv_app_host.cpp`, plus `achievements.h/.cpp` (one accessor). Test: `tv_ui_smoke.cpp`.
 
-**Interfaces:** Host gains:
+**Interfaces:**
+- Consumes: `Screen`, `DrawCtx`, `Shell::launched/push/memory` (Task 7); `LinearFocus`, `FocusMemory` (Task 4);
+  `widgets::*`.
+- Produces (`tv_host.h`):
 
 ```cpp
-virtual const std::vector<lib::Entry>& games() = 0;
-virtual const std::vector<lib::Resolved>& favorites() = 0;
-virtual const std::vector<lib::Resolved>& recents() = 0;
-virtual ArtView art(const lib::Entry& e) = 0;
-virtual const lib::StateGame* statesFor(const lib::Entry& e) = 0;
-virtual ArtView stateThumb(const lib::StateInfo& s) = 0;
-virtual void launch(const lib::Entry& e) = 0;
-virtual void launchState(const lib::Entry& e, int slot) = 0;
+struct Art { unsigned tex = 0; int w = 0, h = 0; bool loading = false; };   // tex 0: draw the placeholder
+struct GameRef {
+    std::string key;            // the file path: stable across rescans; what every action is keyed by
+    std::string title, region;
+    bool disc = false;
+    int index = -1;             // AppHost's position in library.entries(), valid for the frame it was fetched in only
+};
+struct StateRef { int slot; int64_t time; };   // slot -1 = the auto-save; time = seconds since the epoch; newest first
+enum class List { All, Favorites, Recent, Disc };
+virtual std::vector<GameRef> games(List l) = 0;   // All / Disc / Favorites: by title, case-insensitive; Recent: newest first; never BIOS
+virtual Art art(const GameRef& g) = 0;
+virtual std::vector<StateRef> states(const GameRef& g) = 0;
+virtual Art stateThumb(const GameRef& g, int slot) = 0;
+virtual void launch(const GameRef& g) = 0;
+virtual void launchState(const GameRef& g, int slot) = 0;
 ```
 
-Shelves, in this order: Continue playing (`recents`), Favorites (`favorites`), Jaguar CD (`games()` with
-`section == Disc`, by title). Empty shelves are hidden. With every shelf empty, a card reads: "Your library is
-empty. Add game folders in desktop mode: View > TV mode turns TV mode off."
+- `std::string widgets::formatDate(int64_t secs)` returns "16 Oct 2026" (local time).
+- `bool Achievements::hardcoreNextGame() const` is `client_ && enabled_ && hardcoreWanted_ && settingsOk_ &&
+  (signedIn() || loginPending_)`, and `hardcoreActive()` becomes `hardcoreNextGame() && (loading_ || gameKnown_)`.
+- `AppHost::canLoadState()` becomes `host.isLoaded() ? ach.allowStateLoad() : !ach.hardcoreNextGame()`. With no game,
+  `hardcoreActive()` is always false, so X would otherwise offer a load that hardcore refuses.
 
-The hero shows the focused game: art, title, region, Cartridge/CD, and "N save states, newest <date>". Buttons:
-- A: `launch`.
-- X: `launchState(e, newest slot)`, only when states exist and `canLoadState()`.
-- Y: the Achievements section.
-- Start (or a right-click): Game details.
+HomeScreen:
+- Shelves, in order: Continue playing (`Recent`, id `recent`), Favorites (`Favorites`), Jaguar CD (`Disc`, id `disc`).
+  Empty shelves are hidden.
+- Lists are fetched once per `draw` and the focus is clamped to them (`LinearFocus::clampTo`). The shelf index and
+  each shelf's tile index are stored in `memory()` under `home/shelf` and `home/<id>`.
+- Intents:
+  - Left / Right: within the shelf;
+  - Up / Down: to the neighbouring visible shelf, at that shelf's remembered index;
+  - Accept: `launch` + `launched()`;
+  - Alt (X): only when `states(g)` is non-empty and `canLoadState()`, `launchState(g, states[0].slot)` +
+    `launched()`;
+  - Menu: nothing until Task 10.
+- Mouse: hovering a tile focuses its shelf and index; a click is Accept; a right-click is Menu; each wheel notch is one
+  shelf down or up.
+- With every shelf empty, a centred `panel` reads "Your library is empty. Add game folders in desktop mode: View > TV
+  mode turns TV mode off.", at 30 and wrapped.
+- Hints: glyph(Accept) "Play"; glyph(Alt) "Resume state" (only when allowed); glyph(Menu) "Details".
 
-Focus is remembered per shelf (`FocusMemory` key `home/<shelf>`).
+AppHost:
+- `games()` maps `library.entries()` (skipping `Section::Bios`), `favoriteEntries()` and `recentEntries()` to
+  `GameRef`s. `index` is the entry's position in `entries()`.
+- Actions find the entry from `index` when `entries()[index].file.path == key`, and otherwise by a scan by path. No
+  entry → nothing happens.
+- The rest:
+  - `art`: `library.art(e)` (`tex` only when `Ready`; `loading` when `Loading`);
+  - `states`: from `statesFor(e)`;
+  - `stateThumb`: `library.stateThumb` of the matching `StateInfo`;
+  - `launch` / `launchState`: the library's own.
 
 - [ ] **Step 1: Write the failing smoke tests.**
-  - `home_hides_empty_shelves`
-  - `home_resume_hidden_without_states_or_in_hardcore`
-  - `home_focus_remembered_per_shelf`: Right×3 on Favorites, Down, Up → index 3.
-  - `home_accept_launches_focused`
-  - `home_empty_library_card`
-  - `home_walk_120_frames_no_asserts`
+  - `FakeHost` gains:
+    - lists: `all`, `favs`, `recent`, `disc` (`std::vector<GameRef>`);
+    - `std::map<std::string, std::vector<StateRef>> st`;
+    - `launchedKey`, plus `launchedState` as `{key, slot}`.
+  - `games()` returns copies; `art()` returns `{}`.
+  - Tests:
+    - `home_hides_empty_shelves`: `recent` 3, `favs` empty, `disc` 2 → `drew("Continue playing") &&
+      drew("Jaguar CD") && !drew("Favorites")`.
+    - `home_accept_launches_focused`: Right, Accept → `launchedKey == recent[1].key && guardArmed == 1 &&
+      holdsCleared == 1`.
+    - `home_x_resumes_newest`: `st[recent[0].key] = {{3, 200}, {-1, 100}}`; Alt → `launchedState == {recent[0].key, 3}`.
+    - `home_resume_hidden_without_states_or_in_hardcore`:
+      - focused game with no states → `!drew("Resume last state")`, and Alt launches nothing;
+      - with states → `drew("Resume last state")`;
+      - `canLoad = false` → not drawn, and Alt launches nothing.
+    - `home_focus_remembered_per_shelf`: `recent` 5, `favs` 5; Down, Right×3, Up, Down, Accept →
+      `launchedKey == favs[3].key`.
+    - `home_mouse_hover_focuses_and_clicks`: at 1920×1080, move the mouse (`io.AddMousePosEvent`) to tile 2 of the
+      first shelf, `(96 + 12 + 2 × 242 + 105, 622 + 147)`; frames(2); then a left click (`AddMouseButtonEvent`, down,
+      frame, up, frame) → `launchedKey == recent[2].key`.
+    - `home_survives_rescan` (Review focus 7): focus `recent[3]`; replace `recent` with a reordered copy of 2 items
+      whose `index` is -1; frames(3) → no ImGui error, and Accept launches one of the 2 items.
+    - `home_empty_library_card`.
+    - `home_walk_120_frames_no_asserts`: every direction ×10 at 720p, 1080p and 2160p, with `frames(120)` each.
 - [ ] **Step 2: Run** `ctest --test-dir app/build -R tv_ui_smoke`. Expected: FAIL.
-- [ ] **Step 3: Implement** `tv_home.cpp` with `LinearFocus` per shelf, `scrollToShow`, and tweens for focus
-  and scroll.
-- [ ] **Step 4: Run** the same command. Expected: PASS.
+- [ ] **Step 3: Implement** `HomeScreen`, the Host members, `AppHost`'s members and `hardcoreNextGame`.
+- [ ] **Step 4: Run** the full suite (an achievements test covers `hardcoreActive`). Expected: all PASS.
 - [ ] **Step 5: Commit** `feat(app): TV Home screen with shelves and hero panel (#991)`.
 
-### Task 9: Library
+### Task 9: Library and the letter picker
 
-**Files:** Create `app/src/tv/tv_library.cpp`. Test: `tv_ui_smoke.cpp`.
+**Files:** Fill `app/src/tv/tv_library.cpp` (`LibraryScreen`, `LettersScreen`). Test: `tv_ui_smoke.cpp`.
 
-**Interfaces:** consumes the Host members from Task 8, plus `GridFocus`, `jumpInitial` and `firstWithInitial`
-from Task 4.
+**Interfaces:**
+- Consumes: the Host members from Task 8; `GridFocus`, `LinearFocus`, `jumpInitial`, `firstWithInitial` and
+  `initialOf` from Task 4; `Shell::push/pop/launched/memory`.
+- Produces: `LettersScreen(Host&, Shell&, LibraryScreen& owner)`, which calls `owner.focusTitle(index)` and then
+  `shell.pop()`.
 
-- Rail: All games, Favorites, Recently played, Jaguar CD.
-- Grid: 6 columns, titles sorted by `sortByTitle`, and a caption under the focused cover.
-- Rail and grid hand focus across with `GridFocus::Left`/Right on the rail.
-- LT/RT call `jumpInitial`. Y opens the letter picker (A–Z, 0–9, a 6×6 `GridFocus`).
-- Typed letters and digits (key-down scancodes mapped to ASCII; no IME) filter by case-insensitive substring.
-  Backspace deletes the last filter character, and goes Back once the filter is empty.
+LibraryScreen:
+- **Rail** (`LinearFocus`, 4 items): moving on the rail switches the list at once. Each list's grid index is
+  remembered under `library/<list>`, and the rail under `library/rail`.
+- **Grid**: a `GridFocus` with 6 columns over the filtered list.
+- **Intents on the rail:** Right or Accept goes to the grid, at the remembered index.
+- **Intents on the grid:**
+  - a Left edge goes to the rail;
+  - Accept: launch + `launched()`;
+  - Alt: the Home resume rule;
+  - Aux (Y): push `LettersScreen`, focused on the focused title's initial;
+  - PagePrev / PageNext: `jumpInitial(titles, index, -1 / +1)`;
+  - Menu: nothing until Task 10.
+- **Filter:** `typed()` appends a letter or digit and filters by a case-insensitive substring of the title.
+  - `'\b'` with a non-empty filter drops the last character and returns true; with an empty filter it returns false,
+    which makes it Back (to Home).
+  - Switching lists clears the filter.
+  - The grid index is clamped to the filtered list.
+- **Mouse:**
+  - hovering a rail item selects it;
+  - hovering a tile focuses it; a click launches it; a right-click is Menu;
+  - each wheel notch over the grid moves one row.
+- **Hints:**
+  - on the rail: glyph(Accept) "Open", Back "Home";
+  - on the grid: glyph(Accept) "Play", glyph(Alt) "Resume state" (only when allowed), glyph(Menu) "Details",
+    glyph(Aux) "Jump to letter", glyph(PagePrev) + " " + glyph(PageNext) "A–Z", glyph(Back) "Home".
+
+LettersScreen:
+- a modal `GridFocus` (6 columns, 36 cells);
+- Accept on a letter that has titles: `owner.focusTitle(firstWithInitial(...))`, then `pop()`. On a muted letter it
+  does nothing;
+- Back pops it (the shell's rule);
+- hints: "Jump", "Back".
 
 - [ ] **Step 1: Write the failing smoke tests.**
-  - `library_rail_grid_handoff`: Left at column 0 → rail; Right → grid at the remembered index.
-  - `library_lt_rt_jump_initial`
-  - `library_letter_picker_jumps`: Y, pick D → focus on the first D title.
-  - `library_typing_filters_and_backspace`: type "do" → 1 tile; Backspace twice → full list; Backspace → Home.
-  - `library_walk_120_frames_no_asserts`
+  - The fixture `all` is six titles in order: "Alien vs Predator", "Atari Karts", "Battlemorph", "Blue Lightning",
+    "Cybermorph", "Doom". Every test starts with RB (to Library).
+  - Tests:
+    - `library_rail_grid_handoff`: Right, Right (grid index 2), Left ×3 (to the rail), Down (Favorites), Up (All),
+      Right, Accept → `launchedKey == all[2].key`.
+    - `library_lt_rt_jump_initial`: a right-trigger axis event to 32767, then back to 0 → focus on "Battlemorph". The
+      same again → "Cybermorph". A left trigger → "Battlemorph". Accept confirms each.
+    - `library_letter_picker_jumps`:
+      - Y → `screenId() == "letters"`;
+      - Right ×3 (to D), Accept → `screenId() == "library"`, and Accept → `launchedKey` is Doom's;
+      - Y again, Down ×4, Right (to Z: no title), Accept → still "letters".
+    - `library_typing_filters_and_backspace`: key-downs with `key.key = SDLK_D`, then `SDLK_O`, each consumed →
+      `drew("All games · 1 game")`. Backspace ×2 → `drew("All games · 6 games")`. Backspace → `screenId() == "home"`.
+    - `library_typing_leaves_hotkeys` (Review focus 8): a D key-down with `SDL_KMOD_CTRL`, and an F4 key-down, each
+      → `handleEvent` returns false.
+    - `library_walk_120_frames_no_asserts`: the rail, the grid, the picker and the filter, at three sizes.
 - [ ] **Step 2: Run** `ctest --test-dir app/build -R tv_ui_smoke`. Expected: FAIL.
-- [ ] **Step 3: Implement** `tv_library.cpp`.
+- [ ] **Step 3: Implement** `LibraryScreen` and `LettersScreen`.
 - [ ] **Step 4: Run** the same command. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(app): TV Library screen with rail, cover grid and letter jump (#991)`.
 
 ### Task 10: Game details, and "Enter / Exit TV mode" in the in-game menu
 
-**Files:** Create `app/src/tv/tv_details.cpp`. Modify `tv_ingame.cpp`. Extend the Host with
-`isFavorite(e)` and `setFavorite(e, on)`.
+**Files:**
+- Create `app/src/tv/tv_details.cpp` (`DetailsScreen`).
+- Modify:
+  - `tv_home.cpp`, `tv_library.cpp`: Menu and right-click push Details;
+  - `tv_shell.h/.cpp`: a new `Row::TvMode` in the root page;
+  - `tv_host.h`, `tv_app_host.cpp`: favourites.
+- Test: `tv_ui_smoke.cpp`.
 
-Rows: Play; one "Resume" row per state, with its screenshot (hidden when `!canLoadState()`); Favorite (on/off);
-Achievements (the Achievements section). The in-game menu gains "Enter TV mode"/"Exit TV mode", hidden when
-`!tvAvailable()`.
+**Interfaces:**
+
+```cpp
+virtual bool isFavorite(const GameRef& g) = 0;          // library.isFavorite(entry)
+virtual void setFavorite(const GameRef& g, bool on) = 0;
+class DetailsScreen : public Screen { public: DetailsScreen(Host&, Shell&, GameRef g); /* id() "details" */ };
+```
+
+- **Rows** (refetched each draw, keyed by `g.key`):
+  - "Play";
+  - one row per state, newest first: "Resume: Slot N" or "Resume: Auto-save", with `sub` = `formatDate(time)` and
+    the state's thumbnail. These rows are hidden when `!canLoadState()`;
+  - "Favorite: On" or "Favorite: Off".
+- **Accept:**
+  - Play: `launch` + `launched()`;
+  - Resume: `launchState(g, slot)` + `launched()`;
+  - Favorite: `setFavorite(g, !isFavorite(g))`.
+- **Hints:** glyph(Accept) "Select", glyph(Back) "Back".
+- **In-game menu:** a root row after Controls:
+  - its label is "Exit TV mode" while `tvActive()`, otherwise "Enter TV mode";
+  - it is hidden when `!tvAvailable()`;
+  - Accept calls `setTvActive(!tvActive())`, rebuilds the root and keeps the focus on the row. The menu stays open.
 
 - [ ] **Step 1: Write the failing smoke tests.**
-  - `details_from_start_on_any_tile`
-  - `details_resume_rows_match_states`
-  - `details_favorite_toggles`
-  - `ingame_tv_toggle_hidden_when_off`
+  - `FakeHost` gains `std::set<std::string> favSet`.
+  - Tests:
+    - `details_from_start_on_any_tile`:
+      - Home: Right, Start → `screenId() == "details"`; Back → "home"; Accept → `launchedKey == recent[1].key` (the
+        focus survived);
+      - Library: a right-click on a tile → "details".
+    - `details_resume_rows_match_states`:
+      - 2 states → exactly 2 drawn texts start with "Resume: ";
+      - `canLoad = false` → none.
+    - `details_favorite_toggles`: `drew("Favorite: Off")`; Down to the row, Accept → `favSet.count(key) &&
+      drew("Favorite: On")`.
+    - `details_play_launches`: Accept → `launchedKey`, `guardArmed == 1`.
+    - `ingame_tv_toggle_hidden_when_off`:
+      - `loaded = true, tvOn = false`, open the menu → neither label is drawn;
+      - `tvOn = true, tv = false` → `drew("Enter TV mode")`; Accept on it → `tv && drew("Exit TV mode") &&
+        shell.menuOpen()`.
 - [ ] **Step 2: Run** `ctest --test-dir app/build -R tv_ui_smoke`. Expected: FAIL.
-- [ ] **Step 3: Implement** `tv_details.cpp` and the new in-game menu rows.
+- [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the full suite. Expected: all PASS.
 - [ ] **Step 5: Commit** `feat(app): TV Game details and the TV-mode toggle in the in-game menu (#991)`.
 
 ### Task 11: screenshots on the Studio, then open PR 2
 
-- [ ] **Step 1:** On `studio-runner`, with a data dir that has a scanned library (copy one into
-  `~/vj-remote/…`), run `virtualjaguar --tv --screenshot <s>.png --screenshot-frame 120` at 1280×720,
-  1920×1080 and 3840×2160 (`--pixel-density 2` for the 4K one), for each of Home, Library, the letter picker and
-  Game details. Use a `--tv-test-script` to navigate to each screen.
-- [ ] **Step 2:** Pull the PNGs and compare them by eye with mockups A and B. Fix any drift before opening the PR.
-- [ ] **Step 3: Open PR 2** with `Refs #991` and the screenshots attached.
+**Files:** Modify `tv_script.cpp` and the header of `tv_menu_headless.txt.in` (the windowed-only verbs). Do not commit
+the screenshot scripts or data dirs: they live in `~/Workspace/Provenance/vj-eval/tvshots/`.
+
+- New verbs, windowed only (headless fails the line with "windowed only"):
+  - `wait library`: the script blocks until `!library.scanning() && !library.entries().empty()`, and FAILs after
+    120 s;
+  - `shot PATH`: `saveWindowScreenshot(PATH)` at the end of the next UI frame;
+  - `quit`: ends the run through the normal teardown.
+- [ ] **Step 1: Studio data dirs.** Make one per size, with the library folder `~/vj-remote/roms` and
+  `window.w`/`window.h` set to 1280×720 and 1920×1080. The 4K shot is the 1920×1080 window with
+  `--pixel-density 2`. Write a script `tv-shots.txt`:
+  1. `wait library`, then a 5000 ms gap (art);
+  2. `shot home.png`;
+  3. `key tap Tab`, `shot library.png`;
+  4. `pad tap y`, `shot letters.png`;
+  5. `key tap Escape`, `pad tap start`, `shot details.png`;
+  6. `quit`.
+- [ ] **Step 2: Run** on `studio-runner` with `vjr.sh push` and `vjr.sh run`:
+  `virtualjaguar --data-dir <dir> --tv --tv-test-script tv-shots.txt` for each size. Pull the PNGs. Never run this
+  locally.
+- [ ] **Step 3: Compare by eye** with mockups A and B, and fix any drift. If the Studio cannot fetch art, the tiles
+  show placeholders; the PR says so.
+- [ ] **Step 4: Open PR 2** into `develop`:
+  - title `feat(app): TV shell with Home, Library and Game details (TV mode phase 2)`;
+  - body with `Refs #991`, the test summary and the screenshots;
+  - then bind it (`ccd_pr`) and report CI.
+
+### Phase 2 review focus (added to the list above)
+
+6. **The A that launches a game reaches the game.** `launched()` arms the guard on every launch path (Task 8
+   `home_accept_launches_focused`, Task 10 `details_play_launches`).
+7. **A rescan while TV mode is showing** (entries rebuilt; a favourite's drive unplugged): screens hold `GameRef`s
+   keyed by path and refetch every frame (Task 8 `home_survives_rescan`).
+8. **Typing in Library eats a hotkey** (F4, Ctrl/Cmd shortcuts, Esc at root) (Task 9
+   `library_typing_leaves_hotkeys`; Task 7 `esc_back_then_root`).
+9. **TV mode turns on at startup with nothing to turn it off** (a stored `auto`, a fullscreen launch): `auto` acts as
+   Manual until Task 16 (Task 6 `effectiveSetting`; Task 7 `tvsetting auto` script case).
+10. **Closing a game from the in-game menu while TV mode is on** must land on the TV screen the player left (Task 7
+    `base_returns_after_game`).
+
+### Approval needed before Task 7 starts (spec changes for phase 2)
+
+The rows already in "Changes to the approved spec" that phase 2 uses:
+- Homebrew is dropped from the rail.
+- The hero shows no year, publisher or achievements.
+- X resumes the newest state; Start opens Game details.
+- The per-game settings row is dropped.
+- `C_TVMENU` with no game toggles TV mode.
+
+New in this revision:
+- **A.** Phase 2 has two sections (Home, Library). Y on Home and the Achievements row in Game details come in Phase 3.
+- **B.** A stored `auto` acts as Manual until Phase 4.
+- **C.** Library keeps the shared top bar. Mockup B's logo moves into it, and the rail holds only the four lists:
+  Achievements, Overlays and Settings are sections, not rail rows. The 64u "All games" title becomes the 26u caption
+  "All games · N games", because the top bar costs that height.
+- **D.** Where the mockups and the plan differ, the plan wins:
+  - Library's "X Details" becomes X = resume, Start = Details;
+  - Home's "Y Search" becomes Y = Achievements, in Phase 3;
+  - mockup A's "Jaguar CD" tab is a shelf on Home and a rail row in Library, not a section.
+- **E.** Start opens Game details in TV Home and Library even when the player bound the TV-menu action to Start.
 
 ---
 
@@ -889,6 +1293,9 @@ virtual std::vector<std::string> achTrackers() = 0;           // active leaderbo
 
 When not signed in, the screen shows one line: "Sign in from Settings > Achievements in desktop mode".
 
+Deferred here from phase 2 (decision A): append `Section::Achievements` and `Section::Settings` (Task 12) to the
+top bar, wire Y (Aux) on Home to the Achievements section with its hint, and add the Achievements row to Game details.
+
 - [ ] **Step 1: Write the failing smoke tests.**
   - `ach_not_signed_in_line`
   - `ach_rows_for_loaded_game`: locked/unlocked/progress drawn.
@@ -928,8 +1335,11 @@ When not signed in, the screen shows one line: "Sign in from Settings > Achievem
     `target_compile_definitions(virtualjaguar PRIVATE VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}")`.
   - `.github/workflows/release.yml`: where the app is configured, add `-DVJ_TV_DEFAULT=manual` whenever
     `github.ref != 'refs/heads/develop'`.
+- `tv_mode.h/.cpp`: add `TvSetting defaultSetting();` (`VJ_TV_DEFAULT_SETTING`, Auto when undefined; it
+  replaces the `manual` config default from Task 7), and make `effectiveSetting()` the identity (Phase 2 mapped
+  Auto to Manual).
 - Test: `tv_mode_test.cpp` (`defaultSetting()` under both definitions; compile a second tiny TU with the macro
-  set), plus `tv_menu_headless` script cases:
+  set; flip the `effectiveSetting(Auto)` check to `== Auto`), plus `tv_menu_headless` script cases:
   - fullscreen enter → TV on;
   - pad press with a game running → stays off;
   - a 40 px mouse move after a controller-on → off.
