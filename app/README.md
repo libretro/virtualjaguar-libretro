@@ -503,7 +503,11 @@ and lets go by itself if frames keep missing them; the log says `[emu] late latc
 `--late-latch off` turns it off for a measurement. For a dev measurement, `virtualjaguar --perf-frames N` with
 `VJ_PERF_CSV=path` writes one row per measured iteration when the run ends, with the `input_lat_ms` (event to the
 emulation's poll) and `present_lat_ms` (event to the swap that shows it) columns; `--perf-input` injects a key every
-30 iterations so they have samples.
+30 iterations so they have samples. `VJ_PERF_TRACE=prefix` adds `prefix-emu.csv` (each emulated frame: due, start, end,
+trim, audio queue) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace_summary.py prefix` counts
+the frames really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
+grid's phase once whenever frame ends would straddle the take point, so each 60.05-on-60 Hz crossing is one skip rather
+than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
 
 While it is on, this version switches off RetroAchievements, netplay, the Tools (debugger) windows and the GDB stub
 option. They move to the emulation thread in later phases. A log line `[core_host] owner violation: ...` means a UI
