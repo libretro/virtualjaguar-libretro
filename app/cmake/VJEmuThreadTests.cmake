@@ -4,6 +4,7 @@
 #
 #   frame_exchange_unit   FrameExchange: newest wins, the reader's slot is never written, no tearing, content epochs
 #   emu_commands_unit     EmuCommands: FIFO per producer, timed waits, close-and-drain, errors
+#   pacing_clock_unit     PacingClock mode A against a fake clock and a fake 512-frame-chunk audio device
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -27,3 +28,9 @@ target_link_libraries(vj_emu_commands_test PRIVATE Threads::Threads)
 vj_emu_thread_warnings(vj_emu_commands_test)
 add_test(NAME emu_commands_unit COMMAND vj_emu_commands_test)
 set_tests_properties(emu_commands_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_pacing_clock_test tests/pacing_clock_test.cpp)
+target_include_directories(vj_pacing_clock_test PRIVATE src)
+vj_emu_thread_warnings(vj_pacing_clock_test)
+add_test(NAME pacing_clock_unit COMMAND vj_pacing_clock_test)
+set_tests_properties(pacing_clock_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
