@@ -353,7 +353,9 @@ set(VJ_APP_SOURCES
     src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
-    src/discord_app.cpp)
+    src/discord_app.cpp
+    src/neuro_json.cpp src/neuro_ws.cpp src/neuro_actions.cpp src/neuro_profiles.cpp src/neuro_link.cpp src/neuro_agent.cpp
+    src/neuro_app.cpp)
 
 # Native-OS integration (#833): one source per OS behind src/platform/platform_os.h.
 if(APPLE)
@@ -460,6 +462,7 @@ if(VJ_APP_BUILD_TESTS)
     include(VJDebugTests)
     include(VJPlatformTests)
     include(VJDiscordTests)
+    include(VJNeuroTests)
     include(VJThemeTests)
     include(VJTvTests)
 endif()

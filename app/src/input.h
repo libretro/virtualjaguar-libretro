@@ -42,6 +42,8 @@ public:
     // is false (a text box has focus, or a modifier chord is held) the
     // keyboard contributes nothing.
     void poll(bool captureKeyboard);
+    // Added to Player 1 by every poll(): what the Neuro API client presses this frame (neuro_agent.h).
+    ControlSet agentControls;
     // retro_input_state_t for every device (joypad, keyboard, mouse, analog, light gun).
     int16_t state(unsigned port, unsigned device, unsigned index, unsigned id) const;
 
