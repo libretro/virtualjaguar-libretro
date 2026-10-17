@@ -16,12 +16,15 @@ set_tests_properties(hold_arbiter_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRES
 # Focus model + style metrics (tests/tv_focus_test.cpp) and nav intents (tests/tv_nav_test.cpp): pure.
 #   tv_focus_unit   LinearFocus / GridFocus / FocusMemory / A-Z jump helpers, Metrics, Tween
 #   tv_nav_unit     NavInput (repeat, stick hysteresis, triggers, newest-direction-wins) and the intent tables
+#   tv_mode_unit    TvMode (the on/off state machine and its triggers), inputOwner, the stored-setting keys
 add_executable(vj_tv_focus_test tests/tv_focus_test.cpp src/tv/tv_focus.cpp src/tv/tv_style.cpp)
 target_include_directories(vj_tv_focus_test PRIVATE src)
 add_executable(vj_tv_nav_test tests/tv_nav_test.cpp src/tv/tv_nav.cpp)
 target_include_directories(vj_tv_nav_test PRIVATE src)
 target_link_libraries(vj_tv_nav_test PRIVATE ${VJ_SDL3_TARGET})
-foreach(t vj_tv_focus_test vj_tv_nav_test)
+add_executable(vj_tv_mode_test tests/tv_mode_test.cpp src/tv/tv_mode.cpp)
+target_include_directories(vj_tv_mode_test PRIVATE src)
+foreach(t vj_tv_focus_test vj_tv_nav_test vj_tv_mode_test)
     if(MSVC)
         target_compile_options(${t} PRIVATE /W3 /utf-8)
         target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -31,7 +34,8 @@ foreach(t vj_tv_focus_test vj_tv_nav_test)
 endforeach()
 add_test(NAME tv_focus_unit COMMAND vj_tv_focus_test)
 add_test(NAME tv_nav_unit COMMAND vj_tv_nav_test)
-set_tests_properties(tv_focus_unit tv_nav_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+add_test(NAME tv_mode_unit COMMAND vj_tv_mode_test)
+set_tests_properties(tv_focus_unit tv_nav_unit tv_mode_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
 # The TV in-game menu and its input ownership, through the real App (headless, no ImGui): F4 / Share-hold open and
 # close it, F4 while typing or capturing does nothing, a pause survives it, Esc is Back, a pad walks it to Close game.

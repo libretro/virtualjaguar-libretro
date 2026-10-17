@@ -346,6 +346,7 @@ set(VJ_APP_SOURCES
     src/platform/viewports.cpp
     src/tv/tv_focus.cpp
     src/tv/tv_nav.cpp
+    src/tv/tv_mode.cpp
     src/tv/tv_style.cpp
     src/tv/tv_shell.cpp
     src/tv/tv_app_host.cpp
