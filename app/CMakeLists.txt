@@ -369,6 +369,28 @@ endif()
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
 
+# macOS SDK libcurl: FindCURL sets CURL_INCLUDE_DIR to <SDK>/usr/include and CURL::libcurl passes
+# it as -isystem.  CMake drops that only when it matches the compiler's implicit include list; when
+# the list names another SDK (two Xcodes + a ccache-cached compiler probe), the C headers land ahead
+# of libc++'s and every C++ file that links curl fails in <cstring>.  The SDK's usr/include is on
+# the default search path anyway, so take it off the target.  Covers both find_package(CURL) calls
+# (vj_library above, VJRcheevos) -- they share this one imported target.
+if(APPLE AND TARGET CURL::libcurl)
+    get_target_property(_vj_curl_target CURL::libcurl ALIASED_TARGET)
+    if(NOT _vj_curl_target)
+        set(_vj_curl_target CURL::libcurl)
+    endif()
+    get_target_property(_vj_curl_inc ${_vj_curl_target} INTERFACE_INCLUDE_DIRECTORIES)
+    if(_vj_curl_inc)
+        set(_vj_curl_inc_kept ${_vj_curl_inc})
+        list(FILTER _vj_curl_inc_kept EXCLUDE REGEX "/SDKs/MacOSX[^/]*\\.sdk/usr/include/?$")
+        if(NOT _vj_curl_inc_kept STREQUAL _vj_curl_inc)
+            set_property(TARGET ${_vj_curl_target} PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${_vj_curl_inc_kept})
+            message(STATUS "libcurl: macOS SDK include dir left to the default search path")
+        endif()
+    endif()
+endif()
+
 # The login token's home (secret_store.cpp): macOS Keychain (Security.framework), Windows Credential
 # Manager (advapi32), Linux libsecret loaded with dlopen at run time (no build dependency).
 if(APPLE)
