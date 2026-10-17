@@ -18,6 +18,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -247,6 +248,7 @@ private:
     std::string status_;
     uint64_t zoomSaveAt_ = 0;   // SDL ticks (ms) when to write library.size, 0 = nothing pending
     std::map<std::string, double> netFail_;   // "key|type|source" -> time of last transient failure
+    std::set<std::string> sessionMiss_;       // "key|type|source": 404s from a sessionMisses source (the mirror)
     std::atomic<bool> cancel_{false};
     std::atomic<bool> scanCancel_{false};
     std::atomic<bool> scanning_{false};
