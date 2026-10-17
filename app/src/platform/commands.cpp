@@ -18,7 +18,7 @@ bool MenuState::operator==(const MenuState& o) const {
            usedSlots == o.usedSlots && mute == o.mute && integerScale == o.integerScale &&
            smoothFilter == o.smoothFilter && shader == o.shader && showFps == o.showFps &&
            keypadOverlay == o.keypadOverlay && controlsOverlay == o.controlsOverlay && vsync == o.vsync &&
-           homeLibrary == o.homeLibrary &&
+           homeLibrary == o.homeLibrary && tvMode == o.tvMode && tvAvailable == o.tvAvailable &&
            libraryOpen == o.libraryOpen && disc == o.disc && recents == o.recents &&
            achAvailable == o.achAvailable && achSignedIn == o.achSignedIn && achBusy == o.achBusy &&
            achEnabled == o.achEnabled && achHardcore == o.achHardcore && achUnofficial == o.achUnofficial &&
@@ -158,6 +158,7 @@ MenuBar buildMenuBar(const MenuState& s) {
         v.push_back(item(Cmd::ControlsOverlay, "Controls Overlay", "", true, s.controlsOverlay));
         v.push_back(sep());
         v.push_back(item(Cmd::HomeLibrary, "Library on Home Screen", "", true, s.homeLibrary));
+        v.push_back(item(Cmd::TvMode, "TV Mode", "", s.tvAvailable, s.tvMode));
         v.push_back(item(Cmd::VSync, "VSync", "", true, s.vsync));
         bar.menus.push_back(submenu("View", std::move(v)));
     }
@@ -298,6 +299,7 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount, int 
     case Cmd::ControlsOverlay: a.toggleControlsOverlay(); return true;
     case Cmd::VSync: a.toggleVsync(); return true;
     case Cmd::HomeLibrary: a.toggleHomeLibrary(); return true;
+    case Cmd::TvMode: a.toggleTvMode(); return true;
     case Cmd::Settings: a.showSettings(); return true;
     case Cmd::Mute: a.toggleMute(); return true;
     case Cmd::About: a.showAbout(); return true;

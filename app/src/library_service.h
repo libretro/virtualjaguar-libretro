@@ -113,7 +113,9 @@ public:
     void addFolderDialog(SDL_Window* parent);   // async; the choice arrives through pump()
     void rescan();
     void updateDatabase();                       // download newer dat files (user action)
-    void launch(const lib::Entry& e);            // asks the app to open it (a drop-style event)
+    // Asks the app to open it (a drop-style event).  `fresh`: no "Resume where you left off?" prompt (the TV screens, which
+    // cannot answer it with a pad; they resume through a state row instead).
+    void launch(const lib::Entry& e, bool fresh = false);
     void setDownloadArt(bool on);
     // Copies a BIOS found in a library folder into the core's system folder under the name the core
     // searches for (lib::biosInstallName), never over an existing file.  The result goes to status().

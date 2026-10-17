@@ -98,6 +98,29 @@ static void testIdleModel() {
     CHECK(findCmd(bar, Cmd::AchSignIn) == nullptr);
 }
 
+// View > TV Mode: greyed when the setting is Off, ticked while TV mode is on, and it runs the app's toggle.
+static void testTvModeItem() {
+    MenuState s = idle();
+    MenuBar bar = buildMenuBar(s);
+    const MenuItem* m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && !m->enabled && !m->checked);
+    CHECK(findTop(bar, "View") && findCmd(findTop(bar, "View")->sub, Cmd::TvMode, -1));
+    s.tvAvailable = true;
+    bar = buildMenuBar(s);
+    m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && m->enabled && !m->checked && m->title == "TV Mode");
+    s.tvMode = true;
+    bar = buildMenuBar(s);
+    m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && m->enabled && m->checked);
+    MenuState a = idle(), b = idle();
+    b.tvMode = true;
+    CHECK(a != b);   // a change reaches the native menu
+    b = idle();
+    b.tvAvailable = true;
+    CHECK(a != b);
+}
+
 static void testStateReflected() {
     MenuState s = maximal(false);
     s.paused = true;
@@ -408,6 +431,7 @@ struct Recorder : Actions {
     void toggleControlsOverlay() override { rec("toggleControlsOverlay"); }
     void toggleVsync() override { rec("toggleVsync"); }
     void toggleHomeLibrary() override { rec("toggleHomeLibrary"); }
+    void toggleTvMode() override { rec("toggleTvMode"); }
     void showSettings() override { rec("showSettings"); }
     void toggleMute() override { rec("toggleMute"); }
     void showAbout() override { rec("showAbout"); }
@@ -459,6 +483,7 @@ static void testDispatch() {
     CHECK(one(Cmd::DebugDetach, 0) == "debugDetach");
     CHECK(one(Cmd::Quit, 0) == "quit");
     CHECK(one(Cmd::ShowWindow, 0) == "showWindow");
+    CHECK(one(Cmd::TvMode, 0) == "toggleTvMode");
 
     // Every command with a valid argument runs exactly one action, and no two commands run the same one.
     std::set<std::string> names;
@@ -565,6 +590,7 @@ static void testViewports() {
 int main() {
     testIdleModel();
     testStateReflected();
+    testTvModeItem();
     testToolsMenu();
     testRecents();
     testCoverage();

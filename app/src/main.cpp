@@ -16,6 +16,7 @@ static void usage(const char* argv0) {
         "usage: %s [options] [game.j64 | disc.cue | disc.chd ...]\n"
         "\n"
         "  --fullscreen          start in fullscreen\n"
+        "  --tv                  start with TV mode on (when the TV mode setting is not Off; not remembered)\n"
         "  --theme system|dark|light|custom:NAME   colour theme for this run (not saved; Settings > Interface > Appearance sets it)\n"
         "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
         "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
@@ -98,6 +99,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--version")) a.showVersion = true;
         else if (!std::strcmp(s, "--headless")) a.headless = true;
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
+        else if (!std::strcmp(s, "--tv")) a.tv = true;
         else if (!std::strcmp(s, "--theme")) {
             a.theme = need(s);
             if (a.theme != "system" && a.theme != "dark" && a.theme != "light" && a.theme.compare(0, 7, "custom:") != 0) {
