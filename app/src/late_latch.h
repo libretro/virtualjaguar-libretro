@@ -132,6 +132,7 @@ public:
     }
 
     bool locked() const { return locked_; }
+    uint64_t targetNs() const { return targetNs_; }   // the vblank the wait wakeAt() just sized aims at, 0 = none
     uint64_t padNs() const { return padNs_; }
     unsigned misses() const { return misses_; }
     unsigned released() const { return releases_; }   // times the miss rate let the lock go

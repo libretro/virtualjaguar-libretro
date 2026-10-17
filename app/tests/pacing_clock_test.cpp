@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <memory>
+#include <string>
 #include <vector>
 
 using vj::PacingClock;
@@ -41,14 +43,22 @@ struct Device {
     bool draining = true;
     double countFrom = 0;      // underruns before this time are not counted (start-up)
     uint64_t underruns = 0;
+    double pullJitter = 0;     // each pull lands up to this many seconds off its slot (a late or early audio thread)
+    uint32_t seed = 1;
+    double slot = 0;           // the pull's nominal time (pulls stay on the crystal's grid; only their timing jitters)
     void advanceTo(double t) {
         while (nextPull <= t) {
             if (draining) {
                 if (queued < kChunk && nextPull >= countFrom) underruns++;
                 queued = std::max(0.0, queued - kChunk);
             }
-            nextPull += kChunk / rate;
+            slot += kChunk / rate;
+            nextPull = slot + (pullJitter > 0 ? pullJitter * (2.0 * rnd(seed) - 1.0) : 0.0);
         }
+    }
+    static double rnd(uint32_t& s) {   // a fixed LCG: the same jitter on every run and platform
+        s = s * 1664525u + 1013904223u;
+        return (double)(s >> 8) / 16777216.0;
     }
     double ms() const { return 1000.0 * queued / kStreamHz; }
     void prime() { queued = kTargetMs / 1000.0 * kStreamHz; }
@@ -56,6 +66,7 @@ struct Device {
 
 struct Run {
     std::vector<double> starts, ends;   // each emulated frame's start and end (= when it can be shown)
+    std::vector<double> trims;          // the trim each frame's period was stretched by
     uint64_t dropped = 0;
     bool lockedAtEnd = false;
 };
@@ -82,6 +93,7 @@ Run simulate(double secs, const std::function<double(size_t)>& cost, bool audio,
             continue;
         }
         clock.frameStarted(in);
+        r.trims.push_back(clock.trim());
         r.starts.push_back(t);
         t += cost(i++);
         dev.advanceTo(t);
@@ -97,13 +109,14 @@ struct Shown {
     int repeats = 0, skips = 0, vblanks = 0;
 };
 
-// A display refreshing at `hz` shows, at each vblank, the newest frame finished by then.
-Shown present(const Run& r, double hz, double from, double to) {
+// A display refreshing at `hz` shows, at each vblank, the newest frame finished by then -- or, with `lead`, by that
+// long before it (the late latch's take point: the UI takes the frame `lead` before the vblank it is shown at).
+Shown present(const Run& r, double hz, double from, double to, double lead = 0) {
     Shown s;
     size_t k = 0;
     long last = -1;
     for (long n = (long)std::ceil(from * hz); (double)n / hz < to; n++) {
-        const double v = (double)n / hz;
+        const double v = (double)n / hz - lead;
         while (k < r.ends.size() && r.ends[k] <= v) k++;
         const long newest = (long)k - 1;
         if (last >= 0) {
@@ -242,9 +255,52 @@ void testFastForward() {
     CHECK(!r.lockedAtEnd, "fast-forward ignores the audio clock");
 }
 
+// ---- the presentation-evenness model (#967) ----------------------------------------------------------------------
+// The threaded loop showed 60-160 repeats and as many skips per minute where the 60.05-vs-60 Hz beat alone predicts
+// 3-4 skips.  Two candidate causes, separated here:
+//   * the trim: the +/-0.5% audio trim moving the grid's phase much faster than the 0.054 Hz beat, so frame ends keep
+//     crossing the take point (device pulls jittering is what would drive it);
+//   * the ends' spread: each frame ends at start + cost, so a cost (or wake-up) spread of S ms makes every crossing of
+//     the take point by the slowly drifting grid ambiguous for S / 15 us frames (15 us = the beat's drift per frame),
+//     each of which can come out as a repeat + skip pair.
+
+// The emulation grid's phase that the trim alone moved (seconds), max - min between two times.
+double trimWander(const Run& r, double from, double to) {
+    double ph = 0, lo = 0, hi = 0;
+    for (size_t i = 0; i < r.starts.size(); i++) {
+        if (r.starts[i] < from || r.starts[i] >= to) continue;
+        ph += (r.trims[i] - 1.0) * kPeriod;
+        lo = std::min(lo, ph);
+        hi = std::max(hi, ph);
+    }
+    return hi - lo;
+}
+
+std::function<double(size_t)> jitteredCost(double base, double spread, uint32_t seed) {
+    auto st = std::make_shared<uint32_t>(seed);
+    return [=](size_t) { return base + spread * (Device::rnd(*st) - 0.5); };
+}
+
+void modelTable() {
+    std::printf("model: 70 s, measured 10-70 s, 60 Hz panel; events = repeats + skips\n");
+    for (double pull : {0.0, 0.002, 0.005})
+        for (double spread : {0.0, 0.0005, 0.001, 0.002, 0.004})
+            for (double lead : {0.0, 0.003}) {
+                Device dev;
+                dev.prime();
+                dev.pullJitter = pull;
+                Run r = simulate(70.0, jitteredCost(0.006, spread, 7), true, dev);
+                const Shown sh = present(r, 60.0, 10.0, 70.0, lead);
+                std::printf("  pull jitter %.0f ms  cost spread %.1f ms  take %.0f ms early:  repeats %3d  skips %3d"
+                            "  trim phase wander %.2f ms\n",
+                            1000 * pull, 1000 * spread, 1000 * lead, sh.repeats, sh.skips, 1000 * trimWander(r, 10, 70));
+            }
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--model") modelTable();   // the numbers behind the #967 evenness notes
     testTrueRateOn60Hz();
     testFollowsTheCrystal();
     testNoAudioClock();

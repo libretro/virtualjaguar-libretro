@@ -34,6 +34,7 @@
 #include "pacing.h"
 #include "paths.h"
 #include "perf.h"
+#include "perf_trace.h"
 #include "platform/commands.h"
 #include "theme_custom.h"
 #include "tv/tv_mode.h"
@@ -401,6 +402,13 @@ private:
     std::atomic<uint64_t> retroTicks_{0};      // performance-counter ticks inside retro_run, since the UI last read them
     CoreInput emuInput_;                       // emulation thread: what the core reads this frame
     uint64_t lastSentSerial_ = 0;              // emulation thread: the last frame handed to FrameExchange
+    // VJ_PERF_TRACE (perf_trace.h, #967 evenness)
+    PerfTrace trace_;
+    PerfTrace::Emu tracePaced_{};              // emulation thread: the pacing of the frame about to run
+    bool tracePacedSet_ = false;
+    uint64_t traceWakeNs_ = 0, traceTargetNs_ = 0;   // UI thread: the late latch's last wait (0 = none)
+    void tracePaced(double lateSec, const PacingClock& clock);
+    void traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swap1);
     uint64_t emuFramesSeen_ = 0;               // UI thread: EmuThread::framesRun() at the previous iteration
     uint64_t pendingStateAt_ = 0;              // threaded: run the pending state load once framesRun() reaches this
     uint64_t shownEpoch_ = 0;                  // UI thread: FrameExchange::epoch() the picture on screen belongs to

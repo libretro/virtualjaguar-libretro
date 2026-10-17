@@ -77,6 +77,8 @@ public:
     bool audioLocked() const { return audio_; }
     double trim() const { return audio_ ? trim_ : 1.0; }
     uint64_t droppedFrames() const { return dropped_; }
+    double filteredQueueMs() const { return haveQ_ ? filtQ_ : -1.0; }   // (VJ_PERF_TRACE)
+    bool refilling() const { return refill_; }
 
 private:
     static double basePeriod(const PacingInput& in) { return in.fastForward ? in.period / kFastForward : in.period; }

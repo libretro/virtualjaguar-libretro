@@ -42,6 +42,9 @@ public:
         virtual double framePeriod() = 0;             // seconds per emulated frame (1 / the core's fps)
         virtual double audioQueuedMs() = 0;           // the audio clock; < 0 = none usable (wall clock)
         virtual void runFrame() = 0;                  // one emulated frame, then publish it
+        // Just before a paced runFrame(): how late it starts against its due time (seconds) and the clock that paced it
+        // (App: VJ_PERF_TRACE).  Frames run by advance() are not paced and do not call it.
+        virtual void framePaced(double lateSec, const PacingClock& clock) { (void)lateSec, (void)clock; }
         virtual void afterCommands() {}               // a batch of commands ran (App: CoreHost::publishSnapshot)
         virtual void commandFailed(const std::string& what) { (void)what; }   // a post()ed command threw
     };
