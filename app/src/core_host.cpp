@@ -714,6 +714,7 @@ bool CoreHost::startSession(std::string& err) {
     retro_get_system_info(&sysInfo_);
     if (defs_.empty()) {
         err = "core did not register its options";
+        publishSnapshot();
         return false;
     }
     return true;
@@ -735,6 +736,9 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err) {
     // Re-read AV info after the SRAM write: region (PAL/NTSC) is latched at load.
     retro_get_system_av_info(&avInfo_);
     (void)err;
+    // A load made through EmuThread::call() returns before the batch ends (afterCommands), so publish now: the UI
+    // thread pins right after the call and must see the new table, AV info and discs.
+    publishSnapshot();
     return true;
 }
 
@@ -833,6 +837,7 @@ void CoreHost::stopSession() {
     memDescs_.clear();   // the descriptors point into the core instance that just went away
     memMap_ = retro_memory_map{};
     discDirty_ = true;
+    publishSnapshot();   // see finishLoad: an unload through call() must not leave the old discs / AV info pinned
 }
 
 bool CoreHost::memoryRegion(unsigned id, uint8_t*& data, size_t& size) const {
@@ -988,6 +993,7 @@ void CoreHost::discSetEject(bool eject) {
     if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_eject_state) {
         disk_.set_eject_state(eject);
         discDirty_ = true;
+        publishSnapshot();
     }
 }
 
@@ -999,6 +1005,7 @@ void CoreHost::discSetIndex(unsigned idx) {
     if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_image_index) {
         disk_.set_image_index(idx);
         discDirty_ = true;
+        publishSnapshot();
     }
 }
 
@@ -1029,8 +1036,13 @@ bool CoreHost::noteOffOwner(const char* what) const {
 }
 
 void CoreHost::queue(std::function<void()> fn) {
-    if (post) post(std::move(fn));
-    else fn();
+    if (post) {
+        post(std::move(fn));
+        return;
+    }
+    // Threaded with nowhere to queue: running fn() here would re-enter the same off-owner method and recurse, and
+    // would touch the core's copy from the UI thread.  Count it and drop the work.
+    noteOffOwner("queue without post");
 }
 
 const OptionTable& CoreHost::uiTable() const {

@@ -5,6 +5,7 @@
 #include "core_host.h"
 #include "emu_thread.h"
 
+#include <atomic>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -37,7 +38,10 @@ struct HostClient : EmuThread::Client {
         host.runFrame();
         host.publishSnapshot();
     }
-    void afterCommands() override { host.publishSnapshot(); }
+    std::atomic<bool> quiet{false};   // true: the batch-end publish is off, so only the host's own publishes count
+    void afterCommands() override {
+        if (!quiet.load()) host.publishSnapshot();
+    }
 };
 
 const OptionDef* findDef(CoreHost& host, const std::string& key) {
@@ -156,12 +160,39 @@ int main(int argc, char** argv) {
     CHECK(emu.advance(2) && host.frameCount() == f0 + 2);   // the owner runs them
 
     // A reload in a call: after the next pin the UI sees the new option push, never the previous table.
+    // The batch-end publish is switched off (and the thread is paused, so no frame publishes either): the load has
+    // to publish by itself before call() returns, with no wait between the call and the pin.
     const unsigned pushes = host.optionPushes();
+    client.quiet.store(true);
     CHECK(emu.call([&] { return host.loadContent(rom, err); }));
     host.pinSnapshot();
     CHECK(host.optionPushes() > pushes);
     CHECK(findDef(host, key) != nullptr);
+    CHECK(host.fps() > 59.0 && host.fps() < 61.0);
+    CHECK(host.sampleRate() > 40000.0);
+    CHECK(host.aspect() > 1.0f);
 
+    // An unload through call() publishes too: the disc list is empty and the options are still the core's table.
+    emu.call([&] { host.unloadContent(); });
+    host.pinSnapshot();
+    CHECK(!host.discInfo().available);
+    client.quiet.store(false);
+
+    // Threaded with no `post`: queued writers are dropped and counted, never recursed into or run on this thread.
+    CHECK(emu.call([&] { return host.loadContent(rom, err); }));
+    host.pinSnapshot();
+    host.post = nullptr;
+    const unsigned v1 = host.ownerViolations();
+    host.sendKeyEvent(false, 0, 0, 0);
+    host.setControllerDevice(0, RETRO_DEVICE_JOYPAD);
+    host.discSetEject(false);
+    host.discSetIndex(0);
+    host.setOptionValue(key, other);
+    host.overrideOption(key, other);
+    CHECK(host.ownerViolations() == v1 + 6);
+    host.resetOptionToDefault(key);
+    host.clearOverride(key);
+    host.post = [&emu](std::function<void()> fn) { emu.post(std::move(fn)); };
     emu.call([&] { host.unloadContent(); });
     CHECK(emu.stop());
     host.post = nullptr;
