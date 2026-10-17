@@ -24,9 +24,9 @@ Decisions taken during design:
 | Question | Decision |
 |---|---|
 | Rate conflict (Jaguar 60.05 Hz vs display) | A setting. Default **A**: true Jaguar rate, paced by the audio clock, display shows the newest frame. **B**: lock to the display, nudging the audio rate. |
-| Rollout | A setting, **off in releases, on by default in nightlies**; the old loop is removed after a release ships it on by default without regressions. |
+| Rollout | A setting, **off in releases, on by default in nightlies**; the old loop is removed after a release ships it on by default without regressions. *Amended 2026-10-16: off in every build through phase 2; nightlies default it on from phase 3, once nothing is switched off while it runs.* |
 | Debug windows while running | **Live, copied once per emulated frame** from the emulation thread (consistent end-of-frame state). |
-| Input latency | **No regression**: the emulation thread takes the newest input snapshot right before each frame. |
+| Input latency | **No regression**: the emulation thread takes the newest input snapshot right before each frame. *Amended 2026-10-16: in mode A that alone costs ~22 ms event to present at 60 Hz, so phase 1 adds a late latch in the UI loop (input published as it arrives, the newest frame taken just before the vblank). It matches the old loop for light core frames; heavy frames (~14 ms) stay ~9 ms behind until mode B. Plan: "Decided: input latency in mode A".* |
 | Architecture | **One owner thread** with commands, synchronous calls and per-frame snapshots (not a global lock, not a separate process). |
 
 ## 2. Threading rule
@@ -156,6 +156,8 @@ the snapshot.
 ## 8. Rollout
 
 - Settings > Interface > "Emulation thread" (On/Off). Releases default Off, nightlies default On (nightly build flag).
+  Amended 2026-10-16: every build defaults Off through phase 2; the nightly default and its build flag arrive in
+  phase 3.
 - The old loop stays selectable until a release ships with the setting defaulting On and no regressions; then it is
   removed.
 
@@ -187,9 +189,9 @@ Each step is its own PR, with the setting Off by default:
 1. `EmuThread`, `EmuCommands`, `FrameExchange`, `InputSnapshot`, `PacingClock` mode A; basic commands (load, unload,
    reset, pause, fast-forward, save/load state).
 2. Option/message/event snapshots; achievements; cheats; netplay `afterFrame`.
-3. Debugger halt redesign; debug-view requests; the gdb stub path.
+3. Debugger halt redesign; debug-view requests; the gdb stub path; default On in nightlies (amended 2026-10-16).
 4. Mode B.
-5. Default On in nightlies; measure; then default On in a release and remove the old loop.
+5. Measure the nightly feedback; then default On in a release and remove the old loop.
 
 ## 11. Out of scope
 

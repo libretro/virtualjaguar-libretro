@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
-**Goal:** Run the desktop app's emulation on its own thread behind a Settings > Interface > "Emulation thread" switch (Off in releases, On in nightlies). The app must be fully usable with the switch On: load, boot BIOS, unload, reset, pause, fast-forward, mute, save and load states, options, discs and cheats all work, and the features that are not yet thread-safe are switched off cleanly.
+**Goal:** Run the desktop app's emulation on its own thread behind a Settings > Interface > "Emulation thread" switch (Off by default in every build in Phase 1; nightlies turn it on by default in Phase 3). The app must be fully usable with the switch On: load, boot BIOS, unload, reset, pause, fast-forward, mute, save and load states, options, discs and cheats all work, and the features that are not yet thread-safe are switched off cleanly.
 
-**Architecture:** One owner thread (`EmuThread`) is the only caller of the core: at each frame boundary it drains an ordered command queue (`EmuCommands`), waits until `PacingClock` (mode A: a wall-clock grid trimmed by the SDL audio queue) says the next frame is due, runs it and publishes the result. The UI thread hands input over through `InputSnapshot`, takes frames from `FrameExchange` (a triple buffer) and reads options, AV info and discs from the per-frame `EmuSnapshot` that `CoreHost` publishes. `CoreHost` keeps its public API: off the owner thread its readers answer from the pinned snapshot, its writers queue through `post`, and any other call is refused and counted.
+**Architecture:** One owner thread (`EmuThread`) is the only caller of the core: at each frame boundary it drains an ordered command queue (`EmuCommands`), waits until `PacingClock` (mode A: a wall-clock grid trimmed by the SDL audio queue) says the next frame is due, runs it and publishes the result. The UI thread hands input over through `InputSnapshot`, takes frames from `FrameExchange` (a triple buffer) and reads options, AV info and discs from the per-frame `EmuSnapshot` that `CoreHost` publishes. `CoreHost` keeps its public API: off the owner thread its readers answer from the pinned snapshot, its writers queue through `post`, and any other call is refused and counted. With vsync, the UI loop's late latch (`LateLatch`) waits until just before each vblank, handing input over as it arrives, then takes the newest frame.
 
 **Tech Stack:** C++17 (app/), SDL3 (audio stream, events), Dear ImGui, CMake/CTest, the statically linked C89 core (unchanged), ThreadSanitizer (clang), GitHub Actions.
 
@@ -16,8 +16,8 @@
 - Only the emulation thread calls into the core: every `retro_*` call, `vj_debug_iface`, and every read or write of core memory.
 - App CMake builds must NOT set `DEVELOPER_DIR` (it breaks the C++ toolchain; the `DEVELOPER_DIR=/Library/Developer/CommandLineTools` prefix is for the core's Makefile build only).
 - Never launch the app with a window on the maintainer's Mac. Windowed checks run on the Mac Studio only (`vjr.sh`, ssh alias `studio-runner`); headless runs are fine anywhere.
-- The setting is Off by default in releases (and dev and PR builds); only nightly builds default it On.
-- No input-latency regression: the emulation thread takes the newest input snapshot right before each frame.
+- The setting is Off by default in every build (release, nightly, dev, PR) in Phase 1, and Phase 1 adds no build-channel flag. Nightlies default it On from Phase 3, when nothing is switched off while threaded; that plan adds the `VJ_BUILD_CHANNEL` plumbing (decided 2026-10-16).
+- Input latency: the emulation thread takes the newest input snapshot right before each frame, the UI thread publishes input as each event arrives while it waits, and the late latch takes the newest frame just before the vblank (Task 15). Target: event-to-present within ~2 ms of the single-thread loop at 60 Hz. Where it misses (heavy core frames, see "Decided: input latency in mode A"), the PR says so with numbers.
 - True Jaguar rate in mode A: 60.05445 Hz NTSC / 50.08013 Hz PAL, paced by the audio clock. Never quantize to the display.
 - Conventional commits (`feat(app):`, `test(app):`, `ci(app):`, `docs(app):`), each message ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - If commit signing fails with a 1Password error, wait and retry. Never disable signing.
@@ -26,19 +26,21 @@
 
 ## Review Focus
 
-These are the five failure modes most likely to slip past the per-task tests. Each one has a pinning test in the task named.
+These are the six failure modes most likely to slip past the per-task tests. Each one has a pinning test in the task named.
 
 1. **A content switch shows the previous game's frame or option list.** Pinned by: `frame_exchange_unit` "a frame begun before a switch is never shown" (Task 1); `core_host_thread` "after a reload the UI sees the new option push" (Task 7); `emu_thread_e2e` "load while running" (Task 13).
 2. **Shutdown while a `call()` is pending, or while the core is blocked inside `retro_run`.** Pinned by: `emu_thread_unit` "calls during shutdown each run exactly once, no deadlock" and "a thread stuck in the core is abandoned after the join timeout, and call() then runs nothing" (Task 4).
 3. **A save-state thumbnail taken from a torn or previous-game frame.** Pinned by: `emu_thread_e2e` "inside the load call the core's buffer is empty" (Task 13) and `smoke_state_threaded`, which saves a state with its thumbnail and requires identical roundtrip hashes (Task 10).
 4. **Audio-device loss, or a paused stream, stalling mode-A pacing.** Pinned by: `pacing_clock_unit` "a device that stops draining falls back to the wall clock" and "no audio clock: the wall clock at the core's period" (Task 3). App passes `-1` for a paused or muted stream (Task 10).
 5. **A UI path still calling CoreHost directly while threaded.** Pinned by: `core_host_thread` "core calls off the owner are refused and counted" (Task 7); every `smoke_*_threaded` test fails on `owner violation` (Task 10); and the windowed check script greps the log for it (Task 12).
+6. **Input latency regressing against the single-thread loop.** Pinned by: `late_latch_unit`'s pipeline model (Task 15), which runs the real `LateLatch` against a fake clock; measured by Task 18 from the `input_lat_ms` and `present_lat_ms` columns (Tasks 10 and 14).
 
 ## Resolved spec ambiguities
 
 | Spec says | Phase 1 does | Why |
 |---|---|---|
-| "nightlies default On (nightly build flag)" | Adds `VJ_BUILD_CHANNEL` (CMake cache string: `release`, `nightly` or `dev`). `app-package.yml` sets it from its `release_tag` (`nightly` gives nightly; `v*` and `prerelease` give release; anything else gives dev). The flatpak job stamps it into the manifest with `sed`. | The app had no nightly flag. The packaging label (`nightly`) reached only file names, never the binary. |
+| "nightlies default On (nightly build flag)" | Phase 1 defaults it Off in every build and adds no build-channel flag. `--emu-thread on|off` and the Settings switch are how it is tested. | Decided 2026-10-16. With the switch On, Phase 1 turns off RetroAchievements, netplay, the debugger tools and the GDB stub, so nightly users would lose features. Nightlies default it On in Phase 3, and that plan adds `VJ_BUILD_CHANNEL` (set by `app-package.yml` from its `release_tag`). Until then this deviates from the approved spec (section 8, Rollout). |
+| "No regression in input latency" (mode A) | A late latch in the UI loop (Task 15), and an event-to-present column to measure it (Task 14). | Decided 2026-10-16. See "Decided: input latency in mode A". |
 | Mode A: "Below target: run the next frame. Above target: sleep for the time the queue takes to drain back to target." | Frames run on a wall-clock grid at the core's period. The period is trimmed by at most ±0.5%, from the queue level smoothed over 0.5 s. A nearly empty queue (below 25% of target) refills at up to 2x; an overfull queue (above 3x target, so the device is not draining) uses the plain wall clock. | SDL's device pulls 512-frame chunks (10.7 ms). Triggering frames off the raw queue level would jitter frame starts by up to one chunk, and a 60 Hz display would then repeat and skip frames constantly. The trimmed grid keeps the sound card as the master clock (long-run rate = device consumption rate), and frame starts stay even. |
 | "a 60.05 Hz core on a 60 Hz panel: one repeat in about 20 s" | The test asserts one **skipped** frame every ~18.3 s (2 to 5 in 60 s) and zero repeats. | The core runs faster than the panel (60.0545 > 60), so a frame is overwritten before it is shown. A repeat would need the core to run slower. |
 | Save/load state: "thumbnail from FrameExchange" | Inside the save `call()`, the emulation thread copies `host.frame()`, which is the frame the state was serialized on. The UI thread encodes the PNG afterwards. | At that boundary this is the same pixels FrameExchange last received. It also holds no frame at all right after a load (empty buffer, so no thumbnail rather than the previous game's). A UI-side FrameExchange read could be one frame newer than the state. |
@@ -52,33 +54,46 @@ These are the five failure modes most likely to slip past the per-task tests. Ea
 | Setting On/Off | Takes effect at the next launch. Settings shows "Restart the app to apply" while the choice and the running mode differ. | Switching threads live would mean moving the core between threads mid-session, for no user benefit. |
 | Fast-forward: "unthrottled or a set multiple" | 4x the core's rate on the wall clock, with the audio dropped. | The same 4 frames per 60 Hz UI frame that today's loop runs. |
 
-## Open decision: input latency in mode A
+## Decided: input latency in mode A
 
 The spec asks for no input-latency regression, and for mode A (a free-running grid on the audio clock). On a 60 Hz
 vsync display those two conflict, because the emulation grid's phase drifts against the display's:
 
 - **Inline** (today): events are polled at the start of a UI iteration (just after a vblank), the frame runs at once
   and polls them, and the result is swapped at the next vblank.
-- **Threaded mode A**: the UI publishes the input at the same point. Then the next emulated frame starts somewhere in
-  the following period (on average half a period later), finishes, and waits for the next UI iteration (another half
-  period on average) before it is swapped at the vblank after that.
+- **Threaded mode A, unlatched** (Task 13 alone): the UI publishes the input at the same point. Then the next emulated
+  frame starts somewhere in the following period (on average half a period later), finishes, and waits for the next UI
+  iteration (another half period on average) before it is swapped at the vblank after that.
 
-A fake-clock model (60 Hz display, 60.05445 Hz core, 5 ms frames, events uniform in time, 200 000 samples) gives:
+**Decision (the user, 2026-10-16): fix it in Phase 1 with a late latch in the UI loop (Task 15).** After the swap, the
+UI thread waits until shortly before the next vblank (minus the measured UI build time), then takes the newest frame,
+builds the UI and swaps. While it waits it pumps events and publishes the input the moment each one arrives, so the
+emulation thread's next poll sees it wherever in the period that frame starts. Publishing only once, at the latch, would
+leave event -> poll at a whole period on average and miss the target by about 8 ms. Task 14 adds the event-to-present
+column that measures it.
 
-| | event -> core poll | event -> photon |
-|---|---|---|
-| inline (today) | 8.3 ms | 25.0 ms |
-| threaded, mode A as specified | 16.7 ms | 46.7 ms |
+The fake-clock model in `late_latch_unit` (Task 15) runs the real `LateLatch`: a 60 Hz display, a 60.05445 Hz core,
+UI builds of 2 ms +- 0.3 ms and events uniform in time, over 22 000 display periods. It gives:
 
-So Phase 1 as specified adds about 8 ms of event-to-poll and about 22 ms of input-to-photon at 60 Hz. Task 16 measures
-it on the Studio. Two fixes exist, and neither is in this plan because each is a design change for the user to choose:
+| core frame | loop | event -> core poll | event -> present |
+|---|---|---|---|
+| 5 ms | inline (today) | 8.3 ms | 25.0 ms |
+| 5 ms | threaded, unlatched | 16.7 ms | 46.4 ms |
+| 5 ms | threaded + late latch | 8.7 ms | 25.3 ms |
+| 14 ms | inline (today) | 8.3 ms | 25.0 ms |
+| 14 ms | threaded, unlatched | 16.7 ms | 55.3 ms |
+| 14 ms | threaded + late latch | 8.7 ms | 34.2 ms |
 
-- **(a) A late latch in the UI loop.** After the swap, wait until shortly before the next vblank (minus the UI build
-  time), then pump events, publish, and take the newest frame. This recovers most of the photon side.
-- **(b) Mode B (Phase 4).** The emulation frame starts on the display tick, right after the input is published, and
-  the UI waits for that frame before it swaps. This matches inline latency, but at the display's rate.
+So the late latch meets the target (within ~2 ms of inline at 60 Hz) for light core frames, but not for heavy ones.
+With the latch, event -> present is about poll + core frame + half a period + the UI budget; inline it is poll + one
+period. The two meet only while the core frame is shorter than about half a period minus the UI budget (~5 ms at
+60 Hz). A heavy title such as Cybermorph (14 ms+ frames) stays about 9 ms behind inline. Only mode B (Phase 4) closes
+that gap, by starting the emulated frame on the display tick.
 
-Until the user decides, the PR must state the measured numbers and must not ask for a merge (Task 16, Step 5).
+Task 18 measures inline, threaded + late latch and threaded unlatched (`--late-latch off`) on the Studio. If threaded +
+late latch is within ~2 ms of inline event -> present on every measured title, the PR is opened for review. Otherwise
+the PR is a draft that puts the measured numbers next to this model, states that the target is missed and by how much,
+and leaves the next step to the user (mode B is Phase 4). Either way it is not merged by the agent.
 
 ## Phase 1 boundary: what is routed, snapshotted or switched off while threaded
 
@@ -96,32 +111,31 @@ Until the user decides, the PR must state the measured numbers and must not ask 
 | File | Status | Responsibility |
 |---|---|---|
 | `app/src/frame.h` | new | `struct Frame` (moved out of `core_host.h`), shared by CoreHost, FrameExchange and VideoOut |
-| `app/src/frame_exchange.h` | new | Lock-free triple buffer of finished frames with content epochs |
+| `app/src/frame_exchange.h` | new | Lock-free triple buffer of finished frames with content epochs (each slot carries the input publish its frame polled) |
 | `app/src/emu_commands.h` | new | Ordered multi-producer command queue: post, drain, timed wait, close-and-drain |
 | `app/src/pacing_clock.h` | new | Mode A pacing arithmetic (wall-clock grid trimmed by the audio queue), pure |
 | `app/src/emu_thread.h`, `app/src/emu_thread.cpp` | new | The emulation thread: lifecycle, frame loop, `post`/`call`/`callFor`/`advance`, inline mode |
-| `app/src/input_snapshot.h` | new | Newest input state from the UI thread to the core's poll; motion delivered exactly once |
-| `app/src/build_channel.h` | new | `buildChannel()` and `emuThreadDefaultOn()` |
+| `app/src/input_snapshot.h` | new | Newest input state from the UI thread to the core's poll; motion delivered exactly once; numbered publishes |
+| `app/src/late_latch.h` | new | When the threaded UI loop stops waiting after a swap: the vblank grid from blocking swaps, the UI build budget, missed-vblank backoff; pure |
 | `app/src/core_host.h`, `app/src/core_host.cpp` | modify | Owner thread, `EmuSnapshot` publish/pin, option mirror, marshalled writers, refused off-owner core calls, message mutex, atomics |
 | `app/src/remap.h`, `app/src/remap.cpp` | modify | `CoreInput::carryMotion` / `clearMotion` |
 | `app/src/input.h`, `app/src/input.cpp` | modify | `poll(captureKeyboard, overlayTicks)`, `coreInput()` |
 | `app/src/audio.h`, `app/src/audio.cpp` | modify | Thread-safe fields (atomics), `update(adjustRatio)`, `paused()` |
-| `app/src/perf.h` | modify | VJ_PERF_CSV columns `underruns`, `input_lat_ms` and their summary |
-| `app/src/app.h`, `app/src/app.cpp` | modify | EmuThread wiring, threaded UI loop, actions through `call()`, headless threaded path, feature limits, setting |
-| `app/src/main.cpp` | modify | `--emu-thread on|off`, `--perf-input` |
+| `app/src/perf.h` | modify | VJ_PERF_CSV columns `underruns`, `input_lat_ms`, `present_lat_ms` and their summary |
+| `app/src/app.h`, `app/src/app.cpp` | modify | EmuThread wiring, threaded UI loop and its late latch, actions through `call()`, headless threaded path, feature limits, setting, latency measurement |
+| `app/src/main.cpp` | modify | `--emu-thread on|off`, `--perf-input`, `--late-latch on|off` |
 | `app/src/ui.cpp` | modify | Interface > Performance > "Emulation thread"; halt checks use `haltedNow()` |
 | `app/src/settings_reset.cpp` | modify | `ui.emu_thread` belongs to the Interface group |
 | `app/src/cheats.h`, `app/src/cheats.cpp`, `app/src/cheats_core.cpp` | modify | `doneSink`; threaded sinks batch and post |
 | `app/src/debug/debug_session.h`, `app/src/debug/debug_session.cpp` | modify | `setThreadBlocked` |
 | `app/src/netplay_ui.cpp` | modify | Netplay off while threaded |
-| `app/CMakeLists.txt` | modify | `VJ_BUILD_CHANNEL`, `VJ_APP_TSAN`, new sources, include `VJEmuThreadTests` |
+| `app/CMakeLists.txt` | modify | `VJ_APP_TSAN`, new sources, include `VJEmuThreadTests` |
 | `app/cmake/VJEmuThreadTests.cmake` | new | Every new test (label `emu_thread`) |
-| `app/tests/frame_exchange_test.cpp`, `emu_commands_test.cpp`, `pacing_clock_test.cpp`, `emu_thread_test.cpp`, `input_snapshot_test.cpp`, `audio_out_test.cpp`, `core_host_thread_test.cpp`, `emu_thread_e2e.cpp`, `perf_csv_test.cpp` | new | Unit and end-to-end tests |
+| `app/tests/frame_exchange_test.cpp`, `emu_commands_test.cpp`, `pacing_clock_test.cpp`, `emu_thread_test.cpp`, `input_snapshot_test.cpp`, `audio_out_test.cpp`, `core_host_thread_test.cpp`, `emu_thread_e2e.cpp`, `perf_csv_test.cpp`, `late_latch_test.cpp` | new | Unit and end-to-end tests |
 | `app/tests/emu_thread_windowed_check.sh` | new | Windowed check for the Mac Studio only |
 | `app/tests/tsan.supp` | new | ThreadSanitizer suppressions (starts empty) |
 | `app/tests/settings_reset_test.cpp`, `app/tests/cheats_test.cpp`, `app/tests/debug_session_test.cpp` | modify | New checks |
 | `.github/workflows/app.yml` | modify | `tsan` job |
-| `.github/workflows/app-package.yml` | modify | Build channel into every package build |
 | `app/README.md` | modify | "Emulation thread" section, layout rows |
 
 ## Before Task 1: the worktree
@@ -3434,22 +3448,21 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-### Task 9: The "Emulation thread" setting, the build channel and `--emu-thread`
+### Task 9: The "Emulation thread" setting and `--emu-thread`
+
+Phase 1 defaults the setting Off in every build (decided 2026-10-16): with it On, this phase switches off RetroAchievements, netplay, the debugger tools and the GDB stub, so nightly users would lose features. Nightlies turn it on by default in Phase 3, and that plan adds the build-channel plumbing. Until then, `--emu-thread on` and the Settings switch are how it gets tested.
 
 **Files:**
-- Create: `app/src/build_channel.h`
-- Modify: `app/CMakeLists.txt` (cache variable after `set(VJ_APP_LIBRETRO_DB_DIR ...)` at `:69-70`; compile definitions after the `target_compile_definitions(virtualjaguar PRIVATE VJ_APP_VERSION=... VJ_DISCORD_APP_ID=...)` block at `:393-395`), `app/src/app.h` (`CliArgs` after `perfPause` at `:74`; `App` public after `keepAwake` at `:184`; private after `inputCaptured_` at `:291`), `app/src/app.cpp` (`applySettingsFromConfig` `:102-124`, `saveConfig` `:126-155`, a definition after `toast` `:165-174`, `run` after `loadConfig();` at `:1158`), `app/src/main.cpp` (usage text before `"dev: --perf-frames ..."` at `:38`; parsing after `--perf-pause` at `:178`), `app/src/ui.cpp` (`drawInterfaceTab` `:248-274`), `app/src/settings_reset.cpp:34`, `app/tests/settings_reset_test.cpp` (`:67`, `:98`, `:203`), `app/cmake/VJEmuThreadTests.cmake` (append), `.github/workflows/app-package.yml` (meta job `:80-123`, the `macos`, `windows`, `flatpak` and `linux` jobs)
+- Modify: `app/src/app.h` (`CliArgs` after `perfPause` at `:74`; `App` public after `keepAwake` at `:184`; private after `inputCaptured_` at `:291`), `app/src/app.cpp` (`applySettingsFromConfig` `:102-124`, `saveConfig` `:126-155`, a definition after `toast` `:165-174`, `run` after `loadConfig();` at `:1158`), `app/src/main.cpp` (usage text before `"dev: --perf-frames ..."` at `:38`; parsing after `--perf-pause` at `:178`), `app/src/ui.cpp` (`drawInterfaceTab` `:248-274`), `app/src/settings_reset.cpp:34`, `app/tests/settings_reset_test.cpp` (`:67`, `:98`, `:203`), `app/cmake/VJEmuThreadTests.cmake` (append)
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `const char* vj::buildChannel()`, `bool vj::emuThreadDefaultOn(const char* channel)`; `CliArgs::emuThread` (-1/0/1); `int App::emuThreadPref` (-1 never chosen, 0, 1); `bool App::emuThreadWanted() const`; `bool App::emuThreadThisRun() const`; config key `ui.emu_thread` (written only once chosen); CMake `VJ_BUILD_CHANNEL` and compile definitions `VJ_BUILD_CHANNEL_NIGHTLY` / `VJ_BUILD_CHANNEL_RELEASE`.
+- Produces: `CliArgs::emuThread` (-1/0/1); `int App::emuThreadPref` (-1 never chosen, 0, 1); `bool App::emuThreadWanted() const`; `bool App::emuThreadThisRun() const`; config key `ui.emu_thread` (written only once chosen, so Phase 3 can change the default for users who never chose).
 
-- [ ] **Step 1: Write the failing tests.** In `app/tests/settings_reset_test.cpp`, add `#include "build_channel.h"` with the other includes. In `fill()`'s key list, after `"ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window",` add `"ui.emu_thread",`. After the line `CHECK(classifyKey("ui.tray") == KeyClass::Interface && classifyKey("ui.keep_awake") == KeyClass::Interface);` add
+- [ ] **Step 1: Write the failing tests.** In `app/tests/settings_reset_test.cpp`, in `fill()`'s key list, after `"ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window",` add `"ui.emu_thread",`. After the line `CHECK(classifyKey("ui.tray") == KeyClass::Interface && classifyKey("ui.keep_awake") == KeyClass::Interface);` add
 
 ```cpp
     CHECK(classifyKey("ui.emu_thread") == KeyClass::Interface);   // #967: Settings > Interface > Emulation thread
-    CHECK(vj::emuThreadDefaultOn("nightly") && !vj::emuThreadDefaultOn("release") && !vj::emuThreadDefaultOn("dev"));
-    CHECK(!vj::emuThreadDefaultOn(nullptr));
 ```
 
 In the "Every app setting is gone" list, after `"ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window",` add `"ui.emu_thread",`.
@@ -3464,60 +3477,9 @@ set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_R
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `cmake --build app/build -j8 && ctest --test-dir app/build -C Release -R "settings_reset|emu_thread_flag_rejects" --output-on-failure`
-Expected: `settings_reset` does not compile (`build_channel.h: No such file`); `emu_thread_flag_rejects` fails because `--emu-thread` is an unknown option.
+Expected: `settings_reset` fails on `classifyKey("ui.emu_thread") == KeyClass::Interface` (the key is unknown); `emu_thread_flag_rejects` fails because `--emu-thread` is an unknown option.
 
-- [ ] **Step 3: Create `app/src/build_channel.h`**
-
-```cpp
-// Which kind of build this is (#967): CMake -DVJ_BUILD_CHANNEL=release|nightly|dev.  .github/workflows/app-package.yml
-// sets it from its release_tag; local and CI test builds are dev.  Header-only so a test can check the default rule.
-#pragma once
-
-#include <cstring>
-
-namespace vj {
-
-inline const char* buildChannel() {
-#if defined(VJ_BUILD_CHANNEL_NIGHTLY)
-    return "nightly";
-#elif defined(VJ_BUILD_CHANNEL_RELEASE)
-    return "release";
-#else
-    return "dev";
-#endif
-}
-
-// Settings > Interface > Emulation thread when the user never chose: on in nightly builds only.  This is the #967
-// rollout: releases keep it off until one release has shipped it on without regressions.
-inline bool emuThreadDefaultOn(const char* channel) { return channel && std::strcmp(channel, "nightly") == 0; }
-
-}  // namespace vj
-```
-
-- [ ] **Step 4: CMake.** In `app/CMakeLists.txt`, after the `set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH ...)` statement, add
-
-```cmake
-# Which kind of build this is (#967): release | nightly | dev.  .github/workflows/app-package.yml sets it from its
-# release_tag; local and CI test builds are dev.  A nightly turns Settings > Interface > Emulation thread on by default.
-set(VJ_BUILD_CHANNEL "dev" CACHE STRING "Build channel: release, nightly or dev")
-set_property(CACHE VJ_BUILD_CHANNEL PROPERTY STRINGS release nightly dev)
-if(NOT VJ_BUILD_CHANNEL MATCHES "^(release|nightly|dev)$")
-    message(FATAL_ERROR "VJ_BUILD_CHANNEL must be release, nightly or dev (got '${VJ_BUILD_CHANNEL}')")
-endif()
-```
-
-and after the `target_compile_definitions(virtualjaguar PRIVATE VJ_APP_VERSION=... VJ_DISCORD_APP_ID=...)` block, add
-
-```cmake
-if(VJ_BUILD_CHANNEL STREQUAL "nightly")
-    target_compile_definitions(virtualjaguar PRIVATE VJ_BUILD_CHANNEL_NIGHTLY=1)
-elseif(VJ_BUILD_CHANNEL STREQUAL "release")
-    target_compile_definitions(virtualjaguar PRIVATE VJ_BUILD_CHANNEL_RELEASE=1)
-endif()
-message(STATUS "Build channel: ${VJ_BUILD_CHANNEL}")
-```
-
-- [ ] **Step 5: The setting in App.** In `app/src/app.h`, in `CliArgs` after `bool perfPause = false;` add
+- [ ] **Step 3: The setting in App.** In `app/src/app.h`, in `CliArgs` after `bool perfPause = false;` add
 
 ```cpp
     int emuThread = -1;             // --emu-thread on|off: the emulation on its own thread for this run (-1 = the setting; headless: off)
@@ -3526,9 +3488,10 @@ message(STATUS "Build channel: ${VJ_BUILD_CHANNEL}")
 In `App`, after `bool keepAwake = true;` add
 
 ```cpp
-    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen (the build's default), 0 off, 1 on.
+    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen, 0 off, 1 on.  Never chosen is
+    // off in Phase 1 on every build; Phase 3 turns it on by default in nightlies.
     int emuThreadPref = -1;
-    bool emuThreadWanted() const;                                 // the choice, or the build channel's default
+    bool emuThreadWanted() const;                                 // the choice (never chosen = off)
     bool emuThreadThisRun() const { return emuThreadThisRun_; }   // decided once at start-up
 ```
 
@@ -3538,7 +3501,7 @@ and in the private section, after `bool inputCaptured_ = false;` add
     bool emuThreadThisRun_ = false;   // run(): --emu-thread, else the setting (headless: off unless asked)
 ```
 
-In `app/src/app.cpp`, add `#include "build_channel.h"` after `#include "app.h"`. At the end of `applySettingsFromConfig()` add
+In `app/src/app.cpp`, at the end of `applySettingsFromConfig()` add
 
 ```cpp
     emuThreadPref = cfg.has("ui.emu_thread") ? (cfg.getBool("ui.emu_thread", false) ? 1 : 0) : -1;
@@ -3547,16 +3510,14 @@ In `app/src/app.cpp`, add `#include "build_channel.h"` after `#include "app.h"`.
 In `saveConfig()`, after `cfg.setBool("ui.menubar_in_window", showInWindowMenu);` add
 
 ```cpp
-    if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen: the default follows the build
+    if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen (Phase 3's default)
     else cfg.erase("ui.emu_thread");
 ```
 
 After `App::toast`, add
 
 ```cpp
-bool App::emuThreadWanted() const {
-    return emuThreadPref >= 0 ? emuThreadPref == 1 : emuThreadDefaultOn(buildChannel());
-}
+bool App::emuThreadWanted() const { return emuThreadPref == 1; }   // never chosen: off in Phase 1 (#967)
 ```
 
 In `App::run`, right after `loadConfig();`, add
@@ -3567,7 +3528,7 @@ In `App::run`, right after `loadConfig();`, add
     emuThreadThisRun_ = a.emuThread >= 0 ? a.emuThread == 1 : (!a.headless && emuThreadWanted());
 ```
 
-- [ ] **Step 6: The command line.** In `app/src/main.cpp`, in the usage text, right before the `"dev: --perf-frames N ..."` line, add
+- [ ] **Step 4: The command line.** In `app/src/main.cpp`, in the usage text, right before the `"dev: --perf-frames N ..."` line, add
 
 ```cpp
         "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
@@ -3586,7 +3547,7 @@ and after `else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;` add
         }
 ```
 
-- [ ] **Step 7: Settings > Interface.** In `app/src/ui.cpp`, add `#include "build_channel.h"` with the other includes. In `drawInterfaceTab`, right before `ImGui::SeparatorText("Save states");`, add
+- [ ] **Step 5: Settings > Interface.** In `app/src/ui.cpp`, in `drawInterfaceTab`, right before `ImGui::SeparatorText("Save states");`, add
 
 ```cpp
     ImGui::SeparatorText("Performance");
@@ -3598,8 +3559,7 @@ and after `else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;` add
     ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
              "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
              "app starts. While it is on, this version turns off RetroAchievements, netplay and the Tools (debugger) "
-             "menu; they come back in a later update. Default in this build: %s.",
-             emuThreadDefaultOn(buildChannel()) ? "on (nightly)" : "off");
+             "menu; they come back in a later update. Off by default.");
     if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
 ```
 
@@ -3609,58 +3569,23 @@ In `app/src/settings_reset.cpp`, after the line `{"ui.viewports", KeyClass::Inte
     {"ui.emu_thread", KeyClass::Interface},   // Interface > Performance > Emulation thread (#967)
 ```
 
-- [ ] **Step 8: Packaging.** In `.github/workflows/app-package.yml`:
-
-In the `meta` job's `outputs:` add `channel: ${{ steps.m.outputs.channel }}`. In its `run:` script, right before the line `{ echo "run=$run"; ...`, add
-
-```bash
-          case "$TAG" in
-            nightly) channel=nightly ;;
-            v[0-9]*|prerelease) channel=release ;;
-            *) channel=dev ;;
-          esac
-```
-
-and change that output line to `{ echo "run=$run"; echo "label=$label"; echo "short_version=$short"; echo "deb_version=$deb"; echo "channel=$channel"; } >> "$GITHUB_OUTPUT"`.
-
-In the `env:` of the `macos`, `windows`, `flatpak` and `linux` jobs, after `LABEL: ${{ needs.meta.outputs.label }}`, add `CHANNEL: ${{ needs.meta.outputs.channel }}`. Append ` -DVJ_BUILD_CHANNEL="$CHANNEL"` to the three `cmake -S app -B ...` configure commands: the macOS loop, the Windows "Configure and build" step, and the Linux "Build" step. Each goes on its own continued line before the `${DISCORD_APP_ID:+...}` line, for example
-
-```bash
-              -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_BUILD_CHANNEL="$CHANNEL" \
-```
-
-In the `flatpak` job, before the `Build the bundle` step, add
-
-```yaml
-      - name: Stamp the build channel into the manifest (a nightly turns the emulation thread on by default)
-        run: |
-          sed -i "s|^      - -DCMAKE_BUILD_TYPE=Release$|      - -DCMAKE_BUILD_TYPE=Release\n      - -DVJ_BUILD_CHANNEL=${CHANNEL}|" \
-            app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
-          grep -n "VJ_BUILD_CHANNEL" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
-```
-
-Check the YAML still parses: `python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/app-package.yml')); print('ok')"`. Expected: `ok`.
-
-- [ ] **Step 9: Run the tests and a nightly configure**
+- [ ] **Step 6: Run the tests**
 
 Run: `cmake --build app/build -j8 && ctest --test-dir app/build -C Release -R "settings_reset|emu_thread_flag_rejects|smoke_yarc" --output-on-failure`
 Expected: all pass.
 
-Run: `cmake -S app -B app/build-nightly -DCMAKE_BUILD_TYPE=Release -DVJ_BUILD_CHANNEL=nightly -DVJ_APP_BUILD_TESTS=OFF | grep "Build channel"` then `trash app/build-nightly`
-Expected: `-- Build channel: nightly`.
-
-- [ ] **Step 10: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add app/src/build_channel.h app/CMakeLists.txt app/src/app.h app/src/app.cpp app/src/main.cpp app/src/ui.cpp \
-        app/src/settings_reset.cpp app/tests/settings_reset_test.cpp app/cmake/VJEmuThreadTests.cmake \
-        .github/workflows/app-package.yml
+git add app/src/app.h app/src/app.cpp app/src/main.cpp app/src/ui.cpp app/src/settings_reset.cpp \
+        app/tests/settings_reset_test.cpp app/cmake/VJEmuThreadTests.cmake
 git commit -F - <<'EOF'
-feat(app): Settings > Interface > Emulation thread, the build channel and --emu-thread (#967)
+feat(app): Settings > Interface > Emulation thread and --emu-thread (#967)
 
-Off by default; on by default in nightly builds (VJ_BUILD_CHANNEL, set by
-app-package.yml).  Decided once per run; headless runs stay inline unless
---emu-thread on.  Nothing starts a thread yet.
+Off by default in every build for now (nightlies default it on in phase 3,
+once nothing is switched off while threaded).  Decided once per run;
+headless runs stay inline unless --emu-thread on.  Nothing starts a thread
+yet.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
@@ -5016,11 +4941,949 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-### Task 14: ThreadSanitizer: CMake option and CI job
+### Task 14: Event-to-present latency column
+
+The late-latch target (Task 15) is event to photon, but Task 10 only measures event to core poll. This task adds the second half: from the input event to the swap that first shows a frame that polled it. With vsync on, that swap returns at the vblank, so its return time is the photon proxy in both loops. It also moves `--perf-input`'s synthetic key to an SDL timer with a swept delay. Pushed from the loop (Task 10), the key always lands just after a swap: the single-thread loop then polls it at once, while the threaded loop waits longest, which would bias the comparison.
+
+**Files:**
+- Modify: `app/src/frame_exchange.h` (`Slot`), `app/src/input_snapshot.h` (`publish`, `take`), `app/tests/input_snapshot_test.cpp`, `app/src/perf.h` (Task 10's fields, `frameBegin`, `report`), `app/tests/perf_csv_test.cpp`, `app/src/app.h` (includes; private, after Task 10's latency members), `app/src/app.cpp` (anonymous namespace; `wireHost`'s `inputPoll`; `emuRunOneFrame`; `threadedFrame`; the `runInteractive` loop: the frame take, the swap and the `--perf-input` injection; `perfSample`; new functions after `threadedFrame`), `app/tests/emu_thread_windowed_check.sh`, `docs/agent/testing.md`
+
+**Interfaces:**
+- Consumes: `InputSnapshot` (Task 5); `Perf::curLat`, `App::noteInputLatency`, `App::perfSample`, `--perf-input` (Task 10); `App::emuRunOneFrame`, `wireHost` (Task 11); `App::threadedFrame` (Task 13).
+- Produces: `FrameExchange::Slot::inputSeq`; `uint64_t InputSnapshot::publish(const CoreInput&, uint64_t eventNs)` (returns the publish's sequence number, from 1); `uint64_t InputSnapshot::take(CoreInput& out, uint64_t* seq = nullptr)` (`*seq` = the newest publish taken, 0 = none yet); `Perf::presPer`, `Perf::curPres`; CSV header `iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms`; `void App::publishInput()`; `void App::notePresented(uint64_t swapEndNs)`; members `presentEventNs_`, `shownSeq_`, `presentQueue_`, `presSumNs_`, `presCount_`, `emuInputSeq_`, `perfInputK_`.
+
+- [ ] **Step 1: Write the failing tests.** In `app/tests/input_snapshot_test.cpp`, after `testTakenSince`, add
+
+```cpp
+void testSequence() {
+    InputSnapshot s;
+    CoreInput out;
+    uint64_t seq = 99;
+    s.take(out, &seq);
+    CHECK(seq == 0, "nothing published yet: sequence 0 (%llu)", (unsigned long long)seq);
+    const uint64_t a = s.publish(released(), 5);
+    const uint64_t b = s.publish(released(), 0);
+    CHECK(a == 1 && b == 2, "publishes are numbered from 1 (%llu, %llu)", (unsigned long long)a, (unsigned long long)b);
+    s.take(out, &seq);
+    CHECK(seq == 2, "a take reports the newest publish it handed out (%llu)", (unsigned long long)seq);
+    s.take(out, &seq);
+    CHECK(seq == 2, "and again with nothing new (%llu)", (unsigned long long)seq);
+}
+```
+
+and call `testSequence();` in `main` after `testTakenSince();`.
+
+In `app/tests/perf_csv_test.cpp`, in the loop, after `p.curLat = i == 1 ? 4.5f : -1.0f;` add `p.curPres = i == 1 ? 21.25f : -1.0f;`, and replace the four header and row checks with
+
+```cpp
+        CHECK(lines[0] == "iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms", "header: %s",
+              lines[0].c_str());
+        CHECK(lines[1].find(",1,1,0,-1.000,-1.000") != std::string::npos, "row 1, one frame and no input: %s",
+              lines[1].c_str());
+        CHECK(lines[2].find(",0,4.500,21.250") != std::string::npos, "row 2, 4.5 ms to the poll, 21.25 to the swap: %s",
+              lines[2].c_str());
+        CHECK(lines[3].find(",1,-1.000,-1.000") != std::string::npos, "row 3, one underrun: %s", lines[3].c_str());
+```
+
+- [ ] **Step 2: Run them and watch them fail**
+
+Run: `cmake --build app/build -j8 --target vj_input_snapshot_test vj_perf_csv_test`
+Expected: compile errors: `take` does not accept two arguments, `publish` returns `void`, and `vj::Perf` has no member `curPres`.
+
+- [ ] **Step 3: Number the publishes.** In `app/src/input_snapshot.h`, replace `publish` and `take` with
+
+```cpp
+    // UI thread.  `eventNs`: SDL timestamp (SDL_GetTicksNS base) of the oldest input event this state includes that
+    // was not published before, 0 = none.  Returns this publish's sequence number (from 1), which the frame that
+    // polls it carries to the UI (FrameExchange::Slot::inputSeq) for the event -> present measurement.
+    uint64_t publish(const CoreInput& in, uint64_t eventNs) {
+        std::lock_guard<std::mutex> l(mu_);
+        CoreInput next = in;
+        next.carryMotion(latest_);   // motion the emulation has not taken yet is kept, not replaced
+        latest_ = next;
+        if (eventNs && !eventNs_) eventNs_ = eventNs;
+        return ++seq_;
+    }
+
+    // Emulation thread (the core's input-poll callback).  Returns the oldest untaken event's timestamp (0 = none),
+    // for the input-latency measurement; `seq` (optional) gets the newest publish handed out (0 = none yet).
+    uint64_t take(CoreInput& out, uint64_t* seq = nullptr) {
+        std::lock_guard<std::mutex> l(mu_);
+        out = latest_;
+        latest_.clearMotion();
+        taken_++;
+        if (seq) *seq = seq_;
+        const uint64_t ns = eventNs_;
+        eventNs_ = 0;
+        return ns;
+    }
+```
+
+and add `uint64_t seq_ = 0;   // publishes so far` after `unsigned taken_ = 0;`.
+
+In `app/src/frame_exchange.h`, in `Slot`, after `uint64_t epoch = 0;` add
+
+```cpp
+        uint64_t inputSeq = 0;        // the InputSnapshot publish this frame's poll took (event -> present, VJ_PERF_CSV)
+```
+
+- [ ] **Step 4: Perf.** In `app/src/perf.h`, after Task 10's `float curLat = -1.0f;` add
+
+```cpp
+    std::vector<float> presPer;             // input event -> the swap that showed its frame, ms; -1 = none
+    float curPres = -1.0f;                  // set by the loop for the current iteration (App::perfSample)
+```
+
+In `frameBegin`, after `latPer.push_back(curLat);` add `presPer.push_back(curPres);`, and after `curLat = -1.0f;` add `curPres = -1.0f;`.
+
+In `report`, in Task 10's block, replace
+
+```cpp
+            if (ln)
+                std::printf("PERF   input latency (event -> core poll): avg %.3f ms  max %.3f ms  (%zu samples)\n",
+                            lsum / (double)ln, lmax, ln);
+```
+
+with
+
+```cpp
+            if (ln)
+                std::printf("PERF   input latency (event -> core poll): avg %.3f ms  max %.3f ms  (%zu samples)\n",
+                            lsum / (double)ln, lmax, ln);
+            double psum = 0, pmax = 0;
+            size_t pn = 0;
+            for (float l : presPer)
+                if (l >= 0) {
+                    psum += l;
+                    pmax = std::max(pmax, (double)l);
+                    pn++;
+                }
+            if (pn)
+                std::printf("PERF   input latency (event -> present): avg %.3f ms  max %.3f ms  (%zu samples)\n",
+                            psum / (double)pn, pmax, pn);
+```
+
+and replace the CSV header and row lines with
+
+```cpp
+                std::fprintf(f, "iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms\n");
+                for (size_t i = 0; i < n && i < emuPer.size(); i++)
+                    std::fprintf(f, "%.3f,%d,%d,%u,%.3f,%.3f\n", frameMs[i], (int)emuPer[i], (int)syncPer[i],
+                                 i < underPer.size() ? (unsigned)underPer[i] : 0u,
+                                 i < latPer.size() ? (double)latPer[i] : -1.0,
+                                 i < presPer.size() ? (double)presPer[i] : -1.0);
+```
+
+Extend the comment above it: `..., input latency ms or -1, event -> present ms or -1) ...`.
+
+- [ ] **Step 5: Run the unit tests**
+
+Run: `cmake --build app/build -j8 --target vj_input_snapshot_test vj_perf_csv_test && ctest --test-dir app/build -C Release -R "input_snapshot_unit|perf_csv_unit" --output-on-failure`
+Expected: `input_snapshot_test: OK` and `perf_csv_test: OK`.
+
+- [ ] **Step 6: Feed the column from the app.** In `app/src/app.h`, add `#include <deque>` and `#include <utility>` with the other standard includes, and in the private section, after Task 10's `void perfSample();`, add
+
+```cpp
+    // VJ_PERF_CSV event -> present (#967: the late latch's measurement).  The swap's return stands in for the photon.
+    uint64_t presentEventNs_ = 0;   // inline: the oldest input event the frames of this iteration polled
+    uint64_t shownSeq_ = 0;         // threaded: the InputSnapshot publish the frame on screen polled
+    std::deque<std::pair<uint64_t, uint64_t>> presentQueue_;   // threaded: (publish seq, oldest event ns), oldest first
+    uint64_t presSumNs_ = 0, presCount_ = 0;
+    uint64_t emuInputSeq_ = 0;      // emulation thread: the publish the last core poll took
+    unsigned perfInputK_ = 0;       // --perf-input: the next injected key's delay step
+    void publishInput();
+    void notePresented(uint64_t swapEndNs);
+```
+
+In `app/src/app.cpp`, in `wireHost`, replace the `host.inputPoll` assignment (Task 11's) with
+
+```cpp
+    host.inputPoll = [this]() {
+        if (host.threaded()) {   // the emulation thread: the newest input the UI thread published (input_snapshot.h)
+            uint64_t seq = 0;
+            const uint64_t ns = inputSnap.take(emuInput_, &seq);
+            emuInputSeq_ = seq;   // stamped on the next frame this thread publishes
+            if (ns) noteInputLatency(ns);
+            return;
+        }
+        if (pendingEventNs_) {   // VJ_PERF_CSV: from the oldest unhandled input event to this poll
+            noteInputLatency(pendingEventNs_);
+            if (!presentEventNs_) presentEventNs_ = pendingEventNs_;   // and to this iteration's swap
+            pendingEventNs_ = 0;
+        }
+        input.poll(!inputCaptured_);
+    };
+```
+
+In `emuRunOneFrame`, after `s.aspect = host.aspect();` add `s.inputSeq = emuInputSeq_;`.
+
+After `App::threadedFrame`, add
+
+```cpp
+// Threaded: hand the input the UI thread sees now to the emulation thread, and remember which publish carried an input
+// event, so the swap that first shows a frame which polled it can time event -> present (VJ_PERF_CSV).
+void App::publishInput() {
+    input.poll(!inputCaptured_, inputSnap.takenSince());   // on this thread: SDL_GetMouseState is main-thread only
+    const uint64_t seq = inputSnap.publish(input.coreInput(), pendingEventNs_);
+    if (pendingEventNs_ && perf.on) {
+        if (presentQueue_.size() >= 64) presentQueue_.pop_front();
+        presentQueue_.push_back({seq, pendingEventNs_});
+    }
+    pendingEventNs_ = 0;
+}
+
+// Right after the swap (VJ_PERF_CSV): time the input events whose frame this swap shows.  With vsync the swap returns
+// at the vblank in both loops, so its return is the same photon proxy for both.
+void App::notePresented(uint64_t swapEndNs) {
+    if (!perf.on) return;
+    auto note = [&](uint64_t eventNs) {
+        if (!eventNs || swapEndNs <= eventNs || swapEndNs - eventNs > 250000000ull) return;   // as noteInputLatency
+        presSumNs_ += swapEndNs - eventNs;
+        presCount_++;
+    };
+    if (!threaded()) {
+        note(presentEventNs_);
+        presentEventNs_ = 0;
+        return;
+    }
+    while (!presentQueue_.empty() && presentQueue_.front().first <= shownSeq_) {
+        note(presentQueue_.front().second);
+        presentQueue_.pop_front();
+    }
+}
+```
+
+In `threadedFrame`, replace its first three lines (`input.poll(...)`, `inputSnap.publish(...)`, `pendingEventNs_ = 0;`) with `publishInput();`.
+
+In `perfSample`, at the end, add
+
+```cpp
+    perf.curPres = presCount_ ? (float)((double)presSumNs_ / (double)presCount_ / 1e6) : -1.0f;
+    presSumNs_ = presCount_ = 0;
+```
+
+In the `runInteractive` loop, replace Task 13's
+
+```cpp
+        else if (const FrameExchange::Slot* s = frames.takeNewest()) video.upload(s->frame);   // nothing new: redraw
+```
+
+with
+
+```cpp
+        else if (const FrameExchange::Slot* s = frames.takeNewest()) {   // nothing new: redraw
+            video.upload(s->frame);
+            shownSeq_ = s->inputSeq;
+        }
+```
+
+and replace `SDL_GL_SwapWindow(window_);` with
+
+```cpp
+        SDL_GL_SwapWindow(window_);
+        notePresented(SDL_GetTicksNS());
+```
+
+In the anonymous namespace, after `isInputEvent`, add
+
+```cpp
+// --perf-input: a synthetic key (F24: bound to nothing), pushed from an SDL timer thread so the event lands at a swept
+// point of the display period.  Pushed from the loop it would always arrive just after a swap, where the single-thread
+// loop polls at once and the threaded loop waits longest, biasing the comparison (#967).
+Uint64 SDLCALL perfInputKey(void* window, SDL_TimerID, Uint64) {
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_KEY_DOWN;
+    ev.key.windowID = (SDL_WindowID)(uintptr_t)window;
+    ev.key.scancode = SDL_SCANCODE_F24;
+    ev.key.down = true;
+    ev.key.timestamp = SDL_GetTicksNS();
+    SDL_PushEvent(&ev);
+    ev.type = SDL_EVENT_KEY_UP;
+    ev.key.down = false;
+    SDL_PushEvent(&ev);
+    return 0;   // once
+}
+```
+
+and in the loop replace Task 10's whole `if (a.perfInput && perf.on && perf.seen % 30 == 29) { ... }` block with
+
+```cpp
+        if (a.perfInput && perf.on && perf.seen % 30 == 29)   // delays 0.5 .. 16.7 ms in 37 steps: every phase at 60 Hz
+            SDL_AddTimerNS(500000ull + (uint64_t)(perfInputK_++ % 37) * 450000ull, perfInputKey,
+                           (void*)(uintptr_t)SDL_GetWindowID(window_));
+```
+
+In `app/tests/emu_thread_windowed_check.sh`, after the `fewer than 500 of 600 UI frames` check, add
+
+```bash
+  awk -F, 'NR > 1 && $6 >= 0 { n++ } END { exit !(n >= 15) }' "$csv" 2>/dev/null \
+    || { echo "FAIL $mode: fewer than 15 event -> present samples (--perf-input injects one every 30 frames)"; fail=1; }
+```
+
+In `docs/agent/testing.md`, in Task 10's text, replace `` (`iter_ms,emu_frames,swap_sync,underruns,input_lat_ms`; `` with `` (`iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms`; present = the swap that first shows a frame which polled the event; ``.
+
+- [ ] **Step 7: Build, run the headless suite, then the windowed check on the Studio**
+
+Run: `cmake --build app/build -j8 && ctest --test-dir app/build -C Release -E shaders_gl --output-on-failure -j4`
+Expected: everything passes.
+
+Commit (Step 8), then:
+
+```bash
+VJR=~/Workspace/Provenance/vj-eval/remote/vjr.sh
+bash $VJR push emu-p1 HEAD
+bash $VJR run emu-p1 'cmake --build app/build -j14 >/dev/null && VJ_WINDOWED_OK=1 bash app/tests/emu_thread_windowed_check.sh app/build/virtualjaguar test/roms/yarc.j64 ~/vj-remote/out/emu-p1-t14'
+```
+
+Expected: `emu_thread_windowed_check: OK`, and both PERF blocks print an `input latency (event -> present)` line.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add app/src/frame_exchange.h app/src/input_snapshot.h app/tests/input_snapshot_test.cpp app/src/perf.h \
+        app/tests/perf_csv_test.cpp app/src/app.h app/src/app.cpp app/tests/emu_thread_windowed_check.sh \
+        docs/agent/testing.md
+git commit -F - <<'EOF'
+feat(app): VJ_PERF_CSV event-to-present column (#967)
+
+The swap that first shows a frame which polled an input event, timed from
+the event: inline from the iteration's oldest polled event, threaded through
+the InputSnapshot publish number each frame carries.  --perf-input now
+injects its key from an SDL timer at a swept delay, so events land evenly
+over the display period in both loops.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+EOF
+```
+
+### Task 15: The late latch
+
+Decided on 2026-10-16 (see "Decided: input latency in mode A"). After the swap, the threaded loop waits until shortly before the next vblank, minus the measured UI build time. While it waits, it hands every input event to the emulation thread the moment the event arrives. Then it takes the newest frame, builds the UI and swaps. The fake-clock model in this task's test puts event-to-present at 25.3 ms for 5 ms core frames (single-thread loop: 25.0 ms; threaded without the latch: 46.4 ms). For 14 ms core frames it gives 34.2 ms against 25.0, because mode A cannot hide a heavy frame; mode B (Phase 4) is the fix for that.
+
+**Files:**
+- Create: `app/src/late_latch.h`, `app/tests/late_latch_test.cpp`
+- Modify: `app/src/app.h` (includes; `CliArgs` after `perfInput`; private, after Task 14's members), `app/src/app.cpp` (`runInteractive`: after `startEmuThread`, the perf note, the swap, the threaded sleep block; new functions after `notePresented`), `app/src/main.cpp` (usage text after the `--emu-thread` line; parsing after the `--perf-input` parsing), `app/cmake/VJEmuThreadTests.cmake` (append), `app/tests/emu_thread_windowed_check.sh`
+
+**Interfaces:**
+- Consumes: `App::publishInput`, `App::notePresented` (Task 14); `App::threadedFrame`, the threaded sleep block (Task 13); `App::handleEvent`.
+- Produces: `class vj::LateLatch { void setPeriodNs(uint64_t); uint64_t periodNs() const; void noteBuild(uint64_t); void onSwap(uint64_t beginNs, uint64_t endNs); uint64_t wakeAt(uint64_t nowNs); bool locked() const; uint64_t padNs() const; unsigned misses() const; uint64_t budgetNs() const; }`; `CliArgs::lateLatch` (-1/0/1, `--late-latch on|off`); `App::latchWait()`, `App::latchUpdatePeriod()`; members `latch_`, `lateLatchOn_`, `latchedAtNs_`, `latchChecks_`, `latchLogged_`; stderr lines `[emu] late latch locked: ...` and `[emu] late latch released: ...`.
+
+- [ ] **Step 1: Write the failing test** `app/tests/late_latch_test.cpp`
+
+```cpp
+// LateLatch (late_latch.h) against a fake clock: no thread, no sleeping, no display.  The first cases drive the vblank
+// tracker directly; the last one replays the whole pipeline (display, UI loop, mode-A emulation grid, input events) with
+// the real LateLatch deciding the waits, and compares event -> present with the single-thread loop (#967, plan section
+// "Decided: input latency in mode A").
+#include "late_latch.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <vector>
+
+namespace {
+
+int g_fail = 0;
+#define CHECK(c, ...)                                        \
+    do {                                                     \
+        if (!(c)) {                                          \
+            std::printf("FAIL %s:%d: ", __FILE__, __LINE__); \
+            std::printf(__VA_ARGS__);                        \
+            std::printf("\n");                               \
+            g_fail++;                                        \
+        }                                                    \
+    } while (0)
+
+using vj::LateLatch;
+
+constexpr uint64_t kMs = 1000000;
+constexpr uint64_t kP60 = 16666667;   // a 60 Hz display
+constexpr uint64_t kV0 = 1000000000;  // the first vblank
+
+uint32_t g_rng = 12345;
+double unit() {   // deterministic uniform [0, 1)
+    g_rng = g_rng * 1664525u + 1013904223u;
+    return (double)(g_rng >> 8) / 16777216.0;
+}
+
+// Swaps that block until a vblank of an exact grid, 2 ms builds.  Returns the latch after `n` of them.
+void runGrid(LateLatch& l, uint64_t period, unsigned n, uint64_t& lastEnd) {
+    for (unsigned k = 1; k <= n; k++) {
+        const uint64_t v = kV0 + k * period;
+        l.noteBuild(2 * kMs);
+        l.onSwap(v - 3 * kMs, v + 50000);
+        lastEnd = v + 50000;
+    }
+}
+
+void testLocks() {
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t end = 0;
+    runGrid(l, kP60, 10, end);
+    CHECK(!l.locked(), "not locked after 10 swaps");
+    CHECK(l.wakeAt(end + 200000) == end + 200000, "no wait before the lock");
+    runGrid(l, kP60, 40, end);
+    CHECK(l.locked(), "locked after 40 blocking swaps on an exact grid");
+    const uint64_t now = end + 200000;
+    const uint64_t nextV = end - 50000 + kP60;
+    const uint64_t w = l.wakeAt(now);
+    CHECK(l.budgetNs() == 3 * kMs, "budget = the slowest build (2 ms) + the 1 ms pad: %llu", (unsigned long long)l.budgetNs());
+    const int64_t err = (int64_t)w - (int64_t)(nextV - 3 * kMs);
+    CHECK(err > -200000 && err < 200000, "wakes 3 ms before the next vblank (off by %lld ns)", (long long)err);
+}
+
+void testNonBlocking() {
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    for (unsigned k = 1; k <= 200; k++) {
+        const uint64_t t = kV0 + k * kP60 + 2 * kMs;
+        l.noteBuild(2 * kMs);
+        l.onSwap(t, t + 20000);   // returns at once: vsync off, or a queued swap
+    }
+    CHECK(!l.locked(), "swaps that never block never lock");
+    CHECK(l.wakeAt(kV0 + 300 * kP60) == kV0 + 300 * kP60, "and never wait");
+}
+
+void testJitter() {
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    for (unsigned k = 1; k <= 600; k++) {
+        const uint64_t v = kV0 + k * kP60 + (uint64_t)(unit() * 6 * kMs);   // returns anywhere in a 6 ms window
+        l.noteBuild(2 * kMs);
+        l.onSwap(v - 3 * kMs, v);
+    }
+    CHECK(!l.locked(), "swap returns spread over 6 ms do not lock");
+}
+
+void testUnknownPeriod() {
+    LateLatch l;
+    uint64_t end = 0;
+    runGrid(l, kP60, 100, end);
+    CHECK(!l.locked() && l.wakeAt(end) == end, "no display period: off");
+}
+
+void testNoRoom() {
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t end = 0;
+    runGrid(l, kP60, 60, end);
+    l.noteBuild(16 * kMs);   // one build nearly a whole period long
+    CHECK(l.wakeAt(end + 200000) == end + 200000, "a 16 ms build leaves no room to wait");
+}
+
+void testMissGrowsPad() {
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t end = 0;
+    runGrid(l, kP60, 60, end);
+    const uint64_t w = l.wakeAt(end + 200000);
+    const uint64_t target = end - 50000 + kP60;
+    CHECK(w < target, "waits");
+    l.noteBuild(4 * kMs);                                   // the build ran long...
+    l.onSwap(w + 4 * kMs, target + kP60 + 50000);          // ...and the swap landed one vblank late
+    CHECK(l.misses() == 1, "a late swap counts as a miss (%u)", l.misses());
+    CHECK(l.padNs() == LateLatch::kPadMinNs + LateLatch::kPadUpNs, "the pad grows by 0.5 ms");
+    CHECK(l.locked(), "a single miss keeps the lock");
+    uint64_t v = target + kP60;
+    for (unsigned k = 0; k < LateLatch::kCalmRun * 20; k++) {   // calm again: the pad comes back down to the floor
+        const uint64_t ww = l.wakeAt(v + 250000);
+        l.noteBuild(2 * kMs);
+        v += kP60;
+        l.onSwap(ww + 2 * kMs, v + 50000);
+    }
+    CHECK(l.misses() == 1, "no further misses (%u)", l.misses());
+    CHECK(l.padNs() == LateLatch::kPadMinNs, "the pad shrinks back to 1 ms (%llu)", (unsigned long long)l.padNs());
+}
+
+void testOffNominal() {
+    // A display that really runs at 59.94 Hz while the mode says 60: the tracker follows the drift.
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    const uint64_t real = 16683350;
+    uint64_t v = kV0, worst = 0;
+    for (unsigned k = 0; k < 10000; k++) {
+        const uint64_t w = l.wakeAt(v + 250000);
+        if (l.locked()) {
+            const int64_t err = (int64_t)(v + real) - (int64_t)l.budgetNs() - (int64_t)w;
+            const uint64_t a = (uint64_t)(err < 0 ? -err : err);
+            if (k > 100 && a > worst) worst = a;
+        }
+        l.noteBuild(2 * kMs);
+        v += real;
+        l.onSwap(v - 2 * kMs, v + 50000);
+    }
+    CHECK(l.locked(), "stays locked on a 59.94 Hz display announced as 60 Hz");
+    CHECK(worst < 400000, "wake error at most 0.4 ms (%llu ns)", (unsigned long long)worst);
+    CHECK(l.misses() == 0, "no misses (%u)", l.misses());
+}
+
+// ---- the pipeline model ---------------------------------------------------------------------------------------------
+
+struct Iter {
+    uint64_t now;    // the wait starts (after the swap and the end-of-iteration work)
+    uint64_t take;   // the wait ends: pump the rest, publish, take the newest frame
+    uint64_t present;
+};
+
+struct Result {
+    double inlineMs, unlatchedMs, latchMs, latchPollMs;
+    unsigned misses, iters;
+};
+
+// Display at 60 Hz, emulation on the mode-A grid at 60.05445 Hz (its phase sweeps the display's every ~18 s), core
+// frames of `frameNs`, UI builds of 2 ms +- 0.3 ms, one input event per display period at a uniform time.
+Result model(uint64_t frameNs) {
+    const double E = 1e9 / 60.05445;
+    const double T0 = (double)kV0 + 0.37 * (double)kP60;
+    const uint64_t kEnd = 50000, kWork = 200000, kPump = 50000;
+    const unsigned K = 22000;   // ~6 minutes: the drift sweeps every phase many times
+    Result r = {};
+    for (int latched = 0; latched < 2; latched++) {
+        LateLatch l;
+        l.setPeriodNs(kP60);
+        g_rng = 777;
+        std::vector<Iter> it;
+        it.reserve(K);
+        uint64_t m = 0;   // the vblank index the last swap returned at
+        for (unsigned k = 0; k < K; k++) {
+            const uint64_t now = kV0 + m * kP60 + kEnd + kWork;
+            uint64_t w = latched ? l.wakeAt(now) : now;
+            if (w < now) w = now;
+            const uint64_t take = w + kPump;
+            const uint64_t build = (uint64_t)(1.7e6 + unit() * 0.6e6);
+            const uint64_t begin = take + build;
+            const uint64_t n = (begin - kV0 + kP60 - 1) / kP60;   // the first vblank at or after the swap call
+            l.noteBuild(begin - w);
+            l.onSwap(begin, kV0 + n * kP60 + kEnd);
+            it.push_back({now, take, kV0 + n * kP60});
+            m = n;
+        }
+        if (latched) {
+            r.misses = l.misses();
+            r.iters = K;
+        }
+        // Events from 2 s in (after the lock) to 2 s before the end.
+        double sum = 0, pollSum = 0, inl = 0;
+        unsigned cnt = 0;
+        size_t k = 0;
+        g_rng = 4242;
+        for (uint64_t e0 = kV0 + 120 * kP60; e0 + 120 * kP60 < it.back().present; e0 += kP60) {
+            const uint64_t e = e0 + (uint64_t)(unit() * (double)kP60);
+            while (k + 1 < it.size() && it[k + 1].now <= e) k++;
+            // Published at once while the UI waits; otherwise when the next wait starts (latched) or the next
+            // iteration starts (unlatched, where take == now + pump).
+            const uint64_t pub = (latched && e >= it[k].now && e < it[k].take) ? e : it[k + 1].now;
+            const double jf = (double)pub - T0 > 0 ? ((double)pub - T0) / E : 0;
+            uint64_t j = (uint64_t)jf;
+            if ((double)j < jf) j++;
+            const uint64_t poll = (uint64_t)(T0 + (double)j * E);
+            const uint64_t fin = poll + frameNs;
+            size_t q = k;
+            while (q < it.size() && it[q].take < fin) q++;
+            if (q >= it.size()) break;
+            sum += (double)(it[q].present - e);
+            pollSum += (double)(poll - e);
+            // The single-thread loop: polled when the iteration after the event starts (just after a vblank),
+            // presented one vblank later (the frame and the UI fit in a period).
+            const uint64_t vi = (e - kV0 + kP60 - 1) / kP60;
+            inl += (double)(kV0 + (vi + 1) * kP60 - e);
+            cnt++;
+        }
+        if (latched) {
+            r.latchMs = sum / cnt / 1e6;
+            r.latchPollMs = pollSum / cnt / 1e6;
+            r.inlineMs = inl / cnt / 1e6;
+        } else {
+            r.unlatchedMs = sum / cnt / 1e6;
+        }
+    }
+    return r;
+}
+
+void testModel() {
+    const Result a = model(5 * kMs);
+    std::printf("model, 5 ms frames:  inline %.1f ms, threaded %.1f ms, threaded + late latch %.1f ms (poll %.1f ms), "
+                "misses %u of %u\n",
+                a.inlineMs, a.unlatchedMs, a.latchMs, a.latchPollMs, a.misses, a.iters);
+    CHECK(a.latchMs <= a.inlineMs + 2.0, "5 ms frames: the late latch is within 2 ms of inline (%.2f vs %.2f)", a.latchMs,
+          a.inlineMs);
+    CHECK(a.latchMs + 15.0 < a.unlatchedMs, "and far below the unlatched loop (%.2f vs %.2f)", a.latchMs, a.unlatchedMs);
+    CHECK(a.misses * 100 <= a.iters, "at most 1%% missed vblanks (%u of %u)", a.misses, a.iters);
+    const Result b = model(14 * kMs);
+    std::printf("model, 14 ms frames: inline %.1f ms, threaded %.1f ms, threaded + late latch %.1f ms (poll %.1f ms), "
+                "misses %u of %u\n",
+                b.inlineMs, b.unlatchedMs, b.latchMs, b.latchPollMs, b.misses, b.iters);
+    // Mode A cannot hide a heavy frame: event -> present is about poll + frame + half a period + the budget, against
+    // inline's poll + one period.  Mode B (Phase 4) is the fix.  Pinned so a change to the model shows up here.
+    CHECK(b.latchMs + 15.0 < b.unlatchedMs, "14 ms frames: still far below the unlatched loop (%.2f vs %.2f)", b.latchMs,
+          b.unlatchedMs);
+    CHECK(b.misses * 100 <= b.iters, "at most 1%% missed vblanks (%u of %u)", b.misses, b.iters);
+}
+
+}  // namespace
+
+int main() {
+    testLocks();
+    testNonBlocking();
+    testJitter();
+    testUnknownPeriod();
+    testNoRoom();
+    testMissGrowsPad();
+    testOffNominal();
+    testModel();
+    std::printf(g_fail ? "late_latch_test: %d FAILED\n" : "late_latch_test: OK\n", g_fail);
+    return g_fail ? 1 : 0;
+}
+```
+
+- [ ] **Step 2: Register it.** Append to `app/cmake/VJEmuThreadTests.cmake`, and add `#   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock` to the header list:
+
+```cmake
+add_executable(vj_late_latch_test tests/late_latch_test.cpp)
+target_include_directories(vj_late_latch_test PRIVATE src)
+vj_emu_thread_warnings(vj_late_latch_test)
+add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
+set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+```
+
+- [ ] **Step 3: Run it and watch it fail**
+
+Run: `cmake --build app/build -j8 --target vj_late_latch_test`
+Expected: compile error `late_latch.h: No such file or directory`.
+
+- [ ] **Step 4: Implement `app/src/late_latch.h`**
+
+```cpp
+// The late latch (#967): how long the UI thread may wait after a swap so the frame it builds next still makes the
+// next vblank.  Threaded mode with vsync only.  App::latchWait sleeps until wakeAt(), handing every input event to the
+// emulation thread the moment it arrives; then the iteration takes the newest finished frame, builds the UI and swaps.
+// That moves the frame take from just after a vblank to just before the next one, which brings event -> present back
+// to the single-thread loop's ~25 ms at 60 Hz for a light core frame (plan: "Decided: input latency in mode A").
+//
+// Pure arithmetic on the times it is handed (SDL_GetTicksNS), so tests/late_latch_test.cpp drives it with a fake clock.
+// It can only shorten the wait: whenever it is unsure where the vblanks are, wakeAt() returns `now`, which is the
+// unlatched loop of Task 13.
+#pragma once
+
+#include <algorithm>
+#include <cstdint>
+
+namespace vj {
+
+class LateLatch {
+public:
+    static constexpr uint64_t kBlockedNs = 250000;      // a swap that took this long waited for a vblank
+    static constexpr uint64_t kTrackNs = 1500000;       // a vblank observation within this of the grid is tracked
+    static constexpr uint64_t kJitterMaxNs = 1000000;   // locked only while the smoothed |residual| stays under this
+    static constexpr unsigned kLockAfter = 30;          // consecutive tracked observations before the first wait
+    static constexpr unsigned kUnlockAfter = 4;         // consecutive outliers (or non-blocking swaps x 8) to let go
+    static constexpr uint64_t kPadMinNs = 1000000, kPadMaxNs = 4000000;
+    static constexpr uint64_t kPadUpNs = 500000, kPadDownNs = 100000;
+    static constexpr unsigned kCalmRun = 120;           // on-time swaps before the pad shrinks one step
+    static constexpr uint64_t kMinRoomNs = 1000000;     // a budget within this of a whole period: no wait
+    static constexpr unsigned kBuilds = 60;             // build times remembered (one second at 60 Hz)
+
+    // The display's refresh period (SDL_DisplayMode), 0 = unknown: the latch stays off.
+    void setPeriodNs(uint64_t ns) {
+        if (ns == periodNs_) return;
+        periodNs_ = ns;
+        havePhase_ = locked_ = false;
+        tracked_ = outliers_ = nonBlocking_ = 0;
+        jitterNs_ = 0;
+        targetNs_ = 0;
+    }
+    uint64_t periodNs() const { return periodNs_; }
+
+    // The UI's own work in one iteration: from the end of the wait to the start of the swap.
+    void noteBuild(uint64_t ns) {
+        builds_[buildAt_ % kBuilds] = ns;
+        buildAt_++;
+    }
+
+    // Right after SDL_GL_SwapWindow: when the call began and when it returned.  A swap that blocked returned at a
+    // vblank; one that did not says nothing about where the vblanks are.
+    void onSwap(uint64_t beginNs, uint64_t endNs) {
+        if (!periodNs_) return;
+        const int64_t P = (int64_t)periodNs_;
+        if (targetNs_) {   // this iteration waited: did its swap make the vblank it aimed at?
+            if ((int64_t)(endNs - targetNs_) > P / 2) {
+                misses_++;
+                padNs_ = std::min(kPadMaxNs, padNs_ + kPadUpNs);
+                calm_ = 0;
+            } else if (++calm_ >= kCalmRun) {
+                padNs_ = std::max(kPadMinNs, padNs_ - kPadDownNs);
+                calm_ = 0;
+            }
+            targetNs_ = 0;
+        }
+        if (endNs - beginNs < kBlockedNs) {   // vsync off, or a driver that queues the swap: nothing learned
+            if (++nonBlocking_ >= kUnlockAfter * 8) unlock();
+            return;
+        }
+        nonBlocking_ = 0;
+        if (!havePhase_) {
+            phaseNs_ = endNs;
+            havePhase_ = true;
+            return;
+        }
+        int64_t r = (int64_t)(endNs - phaseNs_) % P;   // signed distance to the nearest grid point
+        if (r < 0) r += P;
+        if (r > P / 2) r -= P;
+        const uint64_t ar = (uint64_t)(r < 0 ? -r : r);
+        jitterNs_ = (jitterNs_ * 7 + ar) / 8;
+        if (ar < kTrackNs) {
+            phaseNs_ = endNs - (uint64_t)(r - r / 4);   // move a quarter of the way toward the observation
+            outliers_ = 0;
+            if (++tracked_ >= kLockAfter && jitterNs_ < kJitterMaxNs) locked_ = true;
+        } else if (++outliers_ >= kUnlockAfter) {   // the grid moved (a new display mode, a compositor hiccup)
+            unlock();
+            phaseNs_ = endNs;
+        }
+        if (jitterNs_ >= kJitterMaxNs) locked_ = false;
+    }
+
+    // When to stop waiting, given the time now (after the swap and the end-of-iteration work).  <= now: no wait.
+    uint64_t wakeAt(uint64_t nowNs) {
+        targetNs_ = 0;
+        if (!locked_ || !periodNs_) return nowNs;
+        const uint64_t b = budgetNs();
+        if (b + kMinRoomNs >= periodNs_) return nowNs;   // the UI needs nearly a whole period: nothing to gain
+        const int64_t d = (int64_t)(nowNs + b - phaseNs_);
+        const uint64_t v = d <= 0 ? phaseNs_ : phaseNs_ + ((uint64_t)d + periodNs_ - 1) / periodNs_ * periodNs_;
+        targetNs_ = v;
+        return v - b;
+    }
+
+    bool locked() const { return locked_; }
+    uint64_t padNs() const { return padNs_; }
+    unsigned misses() const { return misses_; }
+    uint64_t budgetNs() const {   // the slowest recent build, plus the pad
+        uint64_t mx = 0;
+        for (unsigned i = 0; i < std::min(buildAt_, kBuilds); i++) mx = std::max(mx, builds_[i]);
+        return mx + padNs_;
+    }
+
+private:
+    void unlock() {
+        locked_ = false;
+        tracked_ = outliers_ = nonBlocking_ = 0;
+    }
+
+    uint64_t periodNs_ = 0;
+    uint64_t phaseNs_ = 0;   // a vblank time
+    bool havePhase_ = false;
+    bool locked_ = false;
+    unsigned tracked_ = 0, outliers_ = 0, nonBlocking_ = 0;
+    uint64_t jitterNs_ = 0;
+    uint64_t padNs_ = kPadMinNs;
+    unsigned calm_ = 0;
+    unsigned misses_ = 0;
+    uint64_t targetNs_ = 0;   // the vblank the current wait aims at (0 = no wait this iteration)
+    uint64_t builds_[kBuilds] = {};
+    unsigned buildAt_ = 0;
+};
+
+}  // namespace vj
+```
+
+- [ ] **Step 5: Run the test**
+
+Run: `cmake --build app/build -j8 --target vj_late_latch_test && ctest --test-dir app/build -C Release -R late_latch_unit --output-on-failure -V | grep -E "model|late_latch_test"`
+Expected: `late_latch_test: OK` and the two model lines, close to
+
+```text
+model, 5 ms frames:  inline 25.0 ms, threaded 46.4 ms, threaded + late latch 25.3 ms (poll 8.7 ms), misses 0 of 22000
+model, 14 ms frames: inline 25.0 ms, threaded 55.3 ms, threaded + late latch 34.2 ms (poll 8.7 ms), misses 0 of 22000
+```
+
+- [ ] **Step 6: Wire it into the loop.** In `app/src/app.h`, add `#include "late_latch.h"` with the app's own includes. In `CliArgs`, after `perfInput`, add
+
+```cpp
+    int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
+```
+
+In the private section, after Task 14's `void notePresented(uint64_t swapEndNs);`, add
+
+```cpp
+    // The late latch (#967, late_latch.h): threaded + vsync, wait until shortly before the next vblank, handing input
+    // to the emulation thread as it arrives, then take the newest frame.
+    LateLatch latch_;
+    bool lateLatchOn_ = true;
+    uint64_t latchedAtNs_ = 0;   // when this iteration's wait ended: its UI work starts there
+    unsigned latchChecks_ = 0;
+    bool latchLogged_ = false;
+    void latchWait();
+    void latchUpdatePeriod();
+```
+
+In `app/src/app.cpp`, in `runInteractive`, after Task 13's `if (emuThreadThisRun_) startEmuThread();` add
+
+```cpp
+    lateLatchOn_ = a.lateLatch != 0;
+```
+
+and after Task 13's `perf.note += std::string(", emulation thread ") + ...;` add
+
+```cpp
+        perf.note += std::string(", late latch ") +
+                     (threaded() && vsync && lateLatchOn_ ? (latch_.locked() ? "locked" : "not locked") : "off");
+```
+
+Replace Task 14's
+
+```cpp
+        SDL_GL_SwapWindow(window_);
+        notePresented(SDL_GetTicksNS());
+```
+
+with
+
+```cpp
+        const uint64_t swapBeginNs = SDL_GetTicksNS();
+        SDL_GL_SwapWindow(window_);
+        const uint64_t swapEndNs = SDL_GetTicksNS();
+        notePresented(swapEndNs);
+        if (threaded()) {
+            if (latchedAtNs_) latch_.noteBuild(swapBeginNs - latchedAtNs_);
+            latch_.onSwap(swapBeginNs, swapEndNs);
+        }
+```
+
+Replace Task 13's threaded sleep block
+
+```cpp
+        if (threaded()) {
+            // The emulation keeps its own time on its own thread; this loop only presents.  Vsync on: the swap paces
+            // it.  Off: a short nap, so a new frame still shows within a few ms without spinning a core.
+            if (!vsync) SDL_DelayNS(4000000);
+        } else {
+```
+
+with
+
+```cpp
+        if (threaded()) {
+            // The emulation keeps its own time on its own thread; this loop only presents.  Vsync on: the late latch
+            // waits until just before the next vblank, publishing input as it comes, and the swap paces the rest.
+            // Off: a short nap, so a new frame still shows within a few ms without spinning a core.
+            if (vsync && lateLatchOn_) latchWait();
+            else if (!vsync) SDL_DelayNS(4000000);
+            latchedAtNs_ = SDL_GetTicksNS();
+        } else {
+```
+
+After `App::notePresented`, add
+
+```cpp
+// Threaded + vsync (#967, the late latch): wait until shortly before the next vblank and hand every input event to the
+// emulation thread the moment it arrives, so the next emulated frame polls it wherever in the period that frame starts.
+// The iteration then takes the newest finished frame, builds the UI and swaps just in time.  While the latch does not
+// know where the vblanks are (late_latch.h), it returns at once: the unlatched loop.
+void App::latchWait() {
+    if (latchChecks_++ % 60 == 0) latchUpdatePeriod();   // the window may have moved to another display
+    const uint64_t wake = latch_.wakeAt(SDL_GetTicksNS());
+    if (latch_.locked() != latchLogged_) {
+        latchLogged_ = latch_.locked();
+        std::fprintf(stderr, "[emu] late latch %s: period %.3f ms, budget %.2f ms\n", latchLogged_ ? "locked" : "released",
+                     (double)latch_.periodNs() / 1e6, (double)latch_.budgetNs() / 1e6);
+    }
+    for (;;) {
+        const uint64_t t = SDL_GetTicksNS();
+        if (t >= wake || quit) return;
+        const uint64_t left = wake - t;
+        if (left < 2000000) {   // SDL_WaitEventTimeout counts whole ms: the last stretch is a precise sleep
+            SDL_DelayPrecise(left);
+            return;
+        }
+        SDL_Event e;
+        if (!SDL_WaitEventTimeout(&e, (Sint32)((left - 1000000) / 1000000))) continue;
+        do handleEvent(e, false);
+        while (!quit && SDL_PollEvent(&e));
+        publishInput();
+    }
+}
+
+// The display's refresh period for the latch (0 = unknown: it stays off).
+void App::latchUpdatePeriod() {
+    const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+    uint64_t ns = 0;
+    if (m && m->refresh_rate_numerator > 0 && m->refresh_rate_denominator > 0)
+        ns = (uint64_t)(1e9 * (double)m->refresh_rate_denominator / (double)m->refresh_rate_numerator);
+    else if (m && m->refresh_rate > 0.0f)
+        ns = (uint64_t)(1e9 / (double)m->refresh_rate);
+    latch_.setPeriodNs(ns);
+}
+```
+
+In `app/src/main.cpp`, after the `--emu-thread on|off` usage line, add
+
+```cpp
+        "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
+```
+
+and after `else if (!std::strcmp(s, "--perf-input")) a.perfInput = true;` add
+
+```cpp
+        else if (!std::strcmp(s, "--late-latch")) {
+            const std::string v = need(s);
+            if (v != "on" && v != "off") {
+                std::fprintf(stderr, "--late-latch wants on or off, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.lateLatch = v == "on" ? 1 : 0;
+        }
+```
+
+In `app/tests/emu_thread_windowed_check.sh`, after the `the emulation thread did not start` check, add
+
+```bash
+  if [ "$mode" = on ] && ! grep -q "\[emu\] late latch locked" "$log"; then
+    echo "FAIL on: the late latch never locked (do swaps block at the vblank on this machine?)"; fail=1
+  fi
+```
+
+- [ ] **Step 7: Build here (headless tests only), then the windowed check on the Studio**
+
+Run locally: `cmake --build app/build -j8 && ctest --test-dir app/build -C Release -E shaders_gl --output-on-failure -j4`
+Expected: everything passes.
+
+Commit (Step 8), then:
+
+```bash
+VJR=~/Workspace/Provenance/vj-eval/remote/vjr.sh
+bash $VJR push emu-p1 HEAD
+bash $VJR run emu-p1 'cmake --build app/build -j14 >/dev/null && VJ_WINDOWED_OK=1 bash app/tests/emu_thread_windowed_check.sh app/build/virtualjaguar test/roms/yarc.j64 ~/vj-remote/out/emu-p1-t15'
+```
+
+Expected: `emu_thread_windowed_check: OK`, with `[emu] late latch locked: period 16.667 ms, budget ...` in the `on` log. If the latch never locks there, the Studio's GL swaps do not block at the vblank, and the latch cannot work on that machine as designed. Do not tune the constants to force a lock: stop and report it with the swap timings. The PR must then say so (Task 18).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add app/src/late_latch.h app/tests/late_latch_test.cpp app/src/app.h app/src/app.cpp app/src/main.cpp \
+        app/cmake/VJEmuThreadTests.cmake app/tests/emu_thread_windowed_check.sh
+git commit -F - <<'EOF'
+feat(app): late latch for the threaded loop (#967)
+
+With the emulation thread and vsync on, the UI thread waits until just
+before the next vblank (the slowest recent UI build plus a pad that grows on
+a missed vblank), publishing input as each event arrives, then takes the
+newest frame.  It tracks the vblank grid from swaps that block and stays off
+while it cannot.  The fake-clock model: event -> present 25.3 ms for 5 ms
+core frames (inline 25.0, unlatched 46.4); 34.2 ms for 14 ms frames, which
+only mode B can fix.  --late-latch off for A/B measurement.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+EOF
+```
+
+### Task 16: ThreadSanitizer: CMake option and CI job
 
 **Files:**
 - Create: `app/tests/tsan_canary.cpp`, `app/tests/tsan.supp`
-- Modify: `app/CMakeLists.txt` (after the `VJ_BUILD_CHANNEL` block from Task 9), `app/cmake/VJEmuThreadTests.cmake` (append), `.github/workflows/app.yml` (new job after `app`)
+- Modify: `app/CMakeLists.txt` (after the `set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH ...)` statement, before SDL and the core are fetched), `app/cmake/VJEmuThreadTests.cmake` (append), `.github/workflows/app.yml` (new job after `app`)
 
 **Interfaces:**
 - Consumes: the `emu_thread` test label.
@@ -5078,7 +5941,7 @@ bash $VJR run emu-p1 'cmake -S app -B app/build-tsan -DCMAKE_BUILD_TYPE=RelWithD
 
 Expected: `tsan_canary ... Failed`. CMake warns that `VJ_APP_TSAN` is unused, the canary is built without the sanitizer, and it exits 0.
 
-- [ ] **Step 3: The option.** In `app/CMakeLists.txt`, after the `VJ_BUILD_CHANNEL` block, add
+- [ ] **Step 3: The option.** In `app/CMakeLists.txt`, after the `set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH ...)` statement, add
 
 ```cmake
 # ThreadSanitizer over the app, the core and the tests (#967; the `tsan` job in .github/workflows/app.yml).  It must
@@ -5164,7 +6027,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-### Task 15: Documentation
+### Task 17: Documentation
 
 **Files:**
 - Modify: `app/README.md` (a new `## Emulation thread` section before `## Running several instances` at `:486`; rows in the `## Layout` table at `:922-964`; one sentence in `## Smoke tests` at `:809`)
@@ -5180,9 +6043,11 @@ EOF
 (#967; design in `docs/app-emulation-thread-design.md`). The window then only presents. A slow emulated frame or a
 busy UI no longer stalls the picture. The game runs at the true Jaguar rate (60.05 Hz, PAL 50.08 Hz), paced by the
 sound card's clock, and the display shows the newest frame (on a 60 Hz panel one frame is skipped about every 18 s).
-The setting takes effect at the next start. It is **off** by default in releases and **on** in nightly builds (CMake
-`-DVJ_BUILD_CHANNEL=nightly`, set by `app-package.yml`). `--emu-thread on|off` decides for one run; headless runs
-stay single-threaded unless it says `on`.
+The setting takes effect at the next start and is **off** by default (nightly builds will turn it on once nothing is
+switched off while it runs). `--emu-thread on|off` decides for one run; headless runs stay single-threaded unless it
+says `on`. With vsync, the window waits until just before each vblank, passing input to the emulation as it arrives,
+and then shows the newest frame (the late latch, `src/late_latch.h`; `--late-latch off` turns it off for a
+measurement).
 
 While it is on, this version switches off RetroAchievements, netplay, the Tools (debugger) windows and the GDB stub
 option. They move to the emulation thread in later phases. A log line `[core_host] owner violation: ...` means a UI
@@ -5198,7 +6063,7 @@ In the `## Layout` table add these rows, in the table's format:
 | `src/pacing_clock.h` | mode A pacing: the core's period trimmed by the audio queue (the sound card as master clock) |
 | `src/frame_exchange.h`, `src/frame.h` | finished frames from the emulation thread to the UI (triple buffer, content epochs) |
 | `src/input_snapshot.h` | the newest input from the UI thread to the core's poll (pointer motion exactly once) |
-| `src/build_channel.h` | release / nightly / dev, and the emulation thread's default |
+| `src/late_latch.h` | the late latch: when the threaded window loop stops waiting before a vblank (vblank tracking, UI build budget) |
 ```
 
 - [ ] **Step 2: Check the links and the wording**
@@ -5217,14 +6082,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-### Task 16: Measurement on the Mac Studio, written into the PR
+### Task 18: Measurement on the Mac Studio, written into the PR
 
-Spec section 9: threaded vs single-thread, at 60 Hz and 120 Hz. Measure presentation evenness, input latency, audio underruns and CPU, using `VJ_PERF_CSV` (#966). Windowed runs happen on the Studio only.
+Spec section 9: threaded vs single-thread, at 60 Hz and 120 Hz. Measure presentation evenness, input latency (event to poll and event to present), audio underruns and CPU, using `VJ_PERF_CSV` (#966). The latency question is decided (see "Decided: input latency in mode A"): the comparison that counts is threaded + late latch against single-thread, with threaded unlatched (`--late-latch off`) alongside as the reference. Windowed runs happen on the Studio only.
 
 **Files:** none in the repository; the results go into the PR description.
 
 **Interfaces:**
-- Consumes: `--perf-frames`, `--perf-input`, `--emu-thread`, `VJ_PERF_CSV` (Tasks 9, 10, 13).
+- Consumes: `--perf-frames`, `--perf-input`, `--emu-thread`, `--late-latch`, `VJ_PERF_CSV` (Tasks 9, 10, 13, 14, 15).
 - Produces: the PR's measurement table.
 
 - [ ] **Step 1: Ship the branch and check the machine**
@@ -5239,26 +6104,30 @@ bash $VJR run emu-p1 'cmake -S app -B app/build -DCMAKE_BUILD_TYPE=Release >/dev
 
 Expected: load average under 2 (if it is higher, wait: measurements under load lie), the display's refresh rate, and the Cybermorph path (the heavy title from the spec: 14 ms+ frames). Use `test/roms/yarc.j64` as the light title. If the display cannot do 120 Hz, record "120 Hz: not available on this display" in the table instead of guessing.
 
-- [ ] **Step 2: Run A/B/B/A for each title at 60 Hz** (an interleaved order cancels host drift; never A,A,B,B). The whole loop runs on the Studio in one command, and the Cybermorph path is found there:
+- [ ] **Step 2: Run A/B/C/C/B/A for each title at 60 Hz** (an interleaved order cancels host drift; never A,A,B,B). A = single-thread, B = threaded + late latch, C = threaded unlatched. The whole loop runs on the Studio in one command, and the Cybermorph path is found there:
 
 ```bash
 VJR=~/Workspace/Provenance/vj-eval/remote/vjr.sh
 bash $VJR run emu-p1 'HZ=60
 cyb=$(find -L test/roms/private -iname "*cybermorph*" -type f | head -1)
 [ -n "$cyb" ] || { echo "no Cybermorph ROM under test/roms/private"; exit 1; }
-for run in 1-off 2-on 3-on 4-off; do
-  mode=${run#*-}
+for run in 1-off 2-latch 3-nolatch 4-nolatch 5-latch 6-off; do
+  case ${run#*-} in
+    off) flags="--emu-thread off" ;;
+    latch) flags="--emu-thread on --late-latch on" ;;
+    nolatch) flags="--emu-thread on --late-latch off" ;;
+  esac
   for rom in test/roms/yarc.j64 "$cyb"; do
     tag=$(basename "$rom" | tr -c "A-Za-z0-9\n" "_")
-    echo "== $HZ Hz  $tag  run $run"
-    VJ_PERF_CSV=$HOME/vj-remote/out/emu-p1-${HZ}hz-$tag-$run.csv app/build/virtualjaguar --emu-thread "$mode" \
+    echo "== $HZ Hz  $tag  run $run ($flags)"
+    VJ_PERF_CSV=$HOME/vj-remote/out/emu-p1-${HZ}hz-$tag-$run.csv app/build/virtualjaguar $flags \
       --perf-frames 3600 --perf-input "$rom" 2>&1 | grep -E "^PERF|\[emu\]|owner violation"
   done
 done'
 bash $VJR pull emu-p1
 ```
 
-Expected: each run prints its `PERF` block (`process CPU`, `input latency`, `audio underruns`) and no `owner violation`. The `on` runs also print `[emu] emulation thread on`.
+Expected: each run prints its `PERF` block (`process CPU`, both `input latency` lines, `audio underruns`) and no `owner violation`. The threaded runs print `[emu] emulation thread on`; the `latch` runs also print `[emu] late latch locked: ...`, and their `PERF` note says `late latch locked`.
 
 - [ ] **Step 3: Summarize each CSV**
 
@@ -5267,23 +6136,24 @@ for f in ~/Workspace/Provenance/vj-eval/remote/emu-p1/emu-p1-60hz-*.csv; do
   awk -F, -v f="$(basename "$f")" 'NR > 1 {
       n++; e[$2 > 2 ? 3 : $2]++; u += $4
       if ($5 >= 0) { l += $5; ln++; if ($5 > lm) lm = $5 }
+      if ($6 >= 0) { p += $6; pn++; if ($6 > pm) pm = $6 }
       ms += $1; if ($1 > mx) mx = $1
     } END {
-      printf "%-44s iters %d  repeats(0) %d  single(1) %d  skips(2) %d  skips(3+) %d  underruns %d  lat avg %.2f max %.2f ms (n=%d)  iter avg %.2f max %.2f ms\n",
-        f, n, e[0], e[1], e[2], e[3], u, ln ? l / ln : -1, lm, ln, ms / n, mx
+      printf "%-48s iters %d  repeats(0) %d  single(1) %d  skips(2) %d  skips(3+) %d  underruns %d  poll avg %.2f max %.2f ms (n=%d)  present avg %.2f max %.2f ms (n=%d)  iter avg %.2f max %.2f ms\n",
+        f, n, e[0], e[1], e[2], e[3], u, ln ? l / ln : -1, lm, ln, pn ? p / pn : -1, pm, pn, ms / n, mx
     }' "$f"
 done
 ```
 
-Expected: one line per run. "Repeats" are UI frames that showed no new emulated frame; "skips" are UI frames where 2 or more frames ran, so one was never shown. At 60 Hz the threaded runs should show about one skip per 18 s on yarc, and far fewer repeats and skips on Cybermorph than the single-thread runs.
+Expected: one line per run. "Repeats" are UI frames that showed no new emulated frame; "skips" are UI frames where 2 or more frames ran, so one was never shown. At 60 Hz the threaded runs should show about one skip per 18 s on yarc, and far fewer repeats and skips on Cybermorph than the single-thread runs. The model predicts event -> present of about 25 ms for single-thread on both titles, about 25 ms for threaded + late latch on a light title and about 34 ms on a 14 ms one, and 46-55 ms unlatched.
 
 - [ ] **Step 4: 120 Hz.** Only if Step 1 showed the display can do 120 Hz: ask the user to switch the Studio's display to 120 Hz (a system setting the agent must not change), then repeat Step 2 with `HZ=120` on its first line, and Step 3 over `emu-p1-120hz-*.csv`. Otherwise, skip.
 
-- [ ] **Step 5: Write the table into the PR description (a draft PR).** Push the branch, write the body to `~/Workspace/Provenance/vj-eval/remote/emu-p1/pr-body.md` (content below, every cell filled from Steps 2-4: the mean of the 4 runs, with the spread in brackets), and open the PR:
+- [ ] **Step 5: Write the table into the PR description.** Write the body to `~/Workspace/Provenance/vj-eval/remote/emu-p1/pr-body.md` (content below, every cell filled from Steps 2-4: the mean of the two runs of each arm, with both values in brackets). The latency target is met when threaded + late latch is within ~2 ms of single-thread event -> present on every measured title at 60 Hz. If it is met, open the PR for review. If it is not (the model predicts this for Cybermorph), open it as a draft (`--draft`), fill in the "Latency target" paragraph with the miss and its size, and leave the next step to the user (mode B is Phase 4). Either way, do not merge it.
 
 ```bash
 git push -u libretro feat/967-emu-thread-phase1
-gh pr create --draft --repo libretro/virtualjaguar-libretro --base develop --head feat/967-emu-thread-phase1 \
+gh pr create [--draft] --repo libretro/virtualjaguar-libretro --base develop --head feat/967-emu-thread-phase1 \
   --title "feat(app): emulation on its own thread, phase 1 (#967)" \
   --body-file ~/Workspace/Provenance/vj-eval/remote/emu-p1/pr-body.md
 ```
@@ -5293,34 +6163,44 @@ gh pr create --draft --repo libretro/virtualjaguar-libretro --base develop --hea
 ```markdown
 Refs #967 (phase 1 of 5: docs/app-emulation-thread-plan-phase1.md)
 
-Settings > Interface > Emulation thread: off in releases, on in nightlies. With it on, RetroAchievements, netplay,
-the debugger Tools and the GDB stub are off for the run (phases 2-3).
+Settings > Interface > Emulation thread, off by default in every build for now (nightlies turn it on in phase 3).
+With it on, RetroAchievements, netplay, the debugger Tools and the GDB stub are off for the run (phases 2-3). With
+vsync, the window loop uses a late latch: it waits until just before each vblank, passing input on as it arrives,
+then shows the newest frame.
 
-## Measurement (Mac Studio M4 Max, VJ_PERF_CSV, 3600 UI frames, A/B/B/A)
+## Measurement (Mac Studio M4 Max, VJ_PERF_CSV, 3600 UI frames, A/B/C/C/B/A)
 
-| title | display | loop | repeats / min | skips / min | input latency avg / max (ms) | underruns | CPU % | UI iteration avg / max (ms) |
-|---|---|---|---|---|---|---|---|---|
-| yarc | 60 Hz | single-thread | | | | | | |
-| yarc | 60 Hz | emulation thread | | | | | | |
-| Cybermorph | 60 Hz | single-thread | | | | | | |
-| Cybermorph | 60 Hz | emulation thread | | | | | | |
-| yarc | 120 Hz | single-thread | | | | | | |
-| yarc | 120 Hz | emulation thread | | | | | | |
+| title | display | loop | repeats / min | skips / min | event -> poll avg (ms) | event -> present avg / max (ms) | underruns | CPU % | UI iteration avg / max (ms) |
+|---|---|---|---|---|---|---|---|---|---|
+| yarc | 60 Hz | single-thread | | | | | | | |
+| yarc | 60 Hz | emulation thread + late latch | | | | | | | |
+| yarc | 60 Hz | emulation thread, unlatched | | | | | | | |
+| Cybermorph | 60 Hz | single-thread | | | | | | | |
+| Cybermorph | 60 Hz | emulation thread + late latch | | | | | | | |
+| Cybermorph | 60 Hz | emulation thread, unlatched | | | | | | | |
+| yarc | 120 Hz | single-thread | | | | | | | |
+| yarc | 120 Hz | emulation thread + late latch | | | | | | | |
+
+Model (`late_latch_unit`, event -> present): 5 ms core frames: single-thread 25.0, late latch 25.3, unlatched
+46.4 ms. 14 ms core frames: 25.0, 34.2 and 55.3 ms.
+
+Latency target (threaded + late latch within ~2 ms of single-thread event -> present at 60 Hz): met / missed on
+<titles> by <ms>.
 
 Windowed check: `app/tests/emu_thread_windowed_check.sh` OK on the Studio. TSan job: green.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
-Expected: the PR's CI (`app`, `tsan`, `pr-issue-link`) goes green. The model in "Open decision: input latency in mode A" predicts the threaded loop at about +8 ms event-to-poll and +22 ms event-to-photon at 60 Hz. Put the measured numbers next to that prediction in the PR, open it as a draft (`gh pr create --draft ...`), and leave the latency decision (late latch or mode B) to the user before any merge.
+Expected: the PR's CI (`app`, `tsan`, `pr-issue-link`) goes green.
 
 ## Follow-up plans
 
 **Phase 2: snapshots for options, messages, events; achievements; cheats; netplay `afterFrame`.** `EmuSnapshot` moves to its own file and gains the core-event stream (crash watchdog, BIOS staged/rejected, link up/down, `[NETLINK]` log lines). Netplay then reads its link state from the snapshot and `Netplay::afterFrame` runs per emulated frame on the emulation thread, so netplay comes back on with the switch On. RetroAchievements also returns: `rc_client_do_frame` runs right after each frame on the emulation thread, and unlock / progress / leaderboard events reach the UI through the snapshot while the HTTP worker stays as it is. The cheat batch from Phase 1 becomes a regular command. Two more items: `onOptionChanged`'s config write is replaced by snapshot events, and `call()` gets the 250 ms spinner from spec section 7. Tests: the `ra_*` and `netplay_pair*` suites run with `--emu-thread on`.
 
-**Phase 3: the debugger halt, debug-view requests, the GDB stub.** A new `halt_pump` runs on the emulation thread. It publishes a "halted" snapshot, pauses audio, serves the mid-frame-safe debug commands (peek/poke, registers, disassembly, breakpoints, object-list and blitter-log snapshots, texture reload), and waits for Continue / Step / Detach from the UI. `App::haltedFrame` and its nested event loop go away; held commands show "applies after Continue". Each tool window registers a per-frame copy request (memory range, registers, object list, blitter log head, textures, audio scope ring) filled into its double buffer after every frame. The GDB socket loop then blocks only the emulation thread, which fixes #936's frozen window, and `virtualjaguar_gdb_stub` is unlocked. `debug_e2e` is rewritten so the UI keeps drawing while halted, and `call()`'s shutdown path learns to detach a halt first.
+**Phase 3: the debugger halt, debug-view requests, the GDB stub.** A new `halt_pump` runs on the emulation thread. It publishes a "halted" snapshot, pauses audio, serves the mid-frame-safe debug commands (peek/poke, registers, disassembly, breakpoints, object-list and blitter-log snapshots, texture reload), and waits for Continue / Step / Detach from the UI. `App::haltedFrame` and its nested event loop go away; held commands show "applies after Continue". Each tool window registers a per-frame copy request (memory range, registers, object list, blitter log head, textures, audio scope ring) filled into its double buffer after every frame. The GDB socket loop then blocks only the emulation thread, which fixes #936's frozen window, and `virtualjaguar_gdb_stub` is unlocked. `debug_e2e` is rewritten so the UI keeps drawing while halted, and `call()`'s shutdown path learns to detach a halt first. With that, nothing is switched off while threaded any more, so Phase 3 also turns the setting on by default in nightlies: a `VJ_BUILD_CHANNEL` CMake cache string (`release`, `nightly` or `dev`) that `app-package.yml` sets from its `release_tag` (and the flatpak job stamps into its manifest), and a default rule that applies only while the user never chose (`ui.emu_thread` unwritten).
 
 **Phase 4: mode B (display lock).** The UI thread sends a tick after each swap and the emulation thread runs one frame per tick, or one per k ticks when the display is near a whole multiple of the core rate (120/144 Hz). The audio rate is nudged ±0.5% with today's `AudioOut::update` controller, which mode A switches off. When the display rate is not close to a whole multiple, a notice says so and mode A takes over. `PacingClock` gets `nextDue` for vsync ticks plus fake-vsync tests (60, 120 and 144 Hz panels, and a 75 Hz panel that must fall back), and Settings gains the A/B choice.
 
-**Phase 5: default On, measure, retire the old loop.** Nightlies already default On, so this phase collects the nightly feedback and repeats Task 16's measurements on more titles and displays. Once a release has shipped with the switch defaulting On and no regressions, the next release removes `stepEmulation`, `Pacer` and the inline branch of `runInteractive`. Inline mode stays only for headless runs and tests, and the setting and `VJ_BUILD_CHANNEL`'s default rule are retired.
+**Phase 5: default On, measure, retire the old loop.** Nightlies default On from Phase 3, so this phase collects the nightly feedback and repeats Task 18's measurements on more titles and displays. Once a release has shipped with the switch defaulting On and no regressions, the next release removes `stepEmulation`, `Pacer` and the inline branch of `runInteractive`. Inline mode stays only for headless runs and tests, and the setting and `VJ_BUILD_CHANNEL`'s default rule are retired.
 
