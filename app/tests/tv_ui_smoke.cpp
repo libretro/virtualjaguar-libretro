@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,6 +51,7 @@ struct FakeHost : Host {
     std::string launchedKey;
     std::pair<std::string, int> launchedState{"", -99};
     int launches = 0;
+    std::set<std::string> favSet;   // the keys marked favorite
 
     double now() const override { return clock; }
     bool gameLoaded() const override { return loaded; }
@@ -116,6 +118,11 @@ struct FakeHost : Host {
     Art stateThumb(const GameRef&, int) override { return {}; }
     void launch(const GameRef& g) override { launchedKey = g.key; launches++; }
     void launchState(const GameRef& g, int slot) override { launchedState = {g.key, slot}; }
+    bool isFavorite(const GameRef& g) override { return favSet.count(g.key) != 0; }
+    void setFavorite(const GameRef& g, bool on) override {
+        if (on) favSet.insert(g.key);
+        else favSet.erase(g.key);
+    }
 };
 
 // n games named "<prefix> 0" .. "<prefix> n-1", keyed by a path.
@@ -211,7 +218,7 @@ static void menuOpensAndWalks() {
     CHECK(shell.menuPage() == Shell::Page::LoadSlots);
     frames(host, shell, 10);
     back(host, shell);
-    down(host, shell, 2);
+    down(host, shell, 3);   // Controls, Enter TV mode, Reset
     accept(host, shell);
     CHECK(shell.menuPage() == Shell::Page::ConfirmReset);
     frames(host, shell, 10);
@@ -263,7 +270,7 @@ static void closeGameAsksFirst() {
     FakeHost host;
     Shell shell(host);
     shell.openMenu();
-    down(host, shell, 5);
+    down(host, shell, 6);
     CHECK(std::string(focusedLabel(shell)) == "Close game");
     accept(host, shell);                                // -> the confirm, focus on No
     CHECK(shell.menuPage() == Shell::Page::ConfirmClose && std::string(focusedLabel(shell)) == "No");
@@ -943,13 +950,13 @@ static void homeMouseHoverFocusesAndClicks() {
     host.launchedKey.clear();
     accept(host, shell);
     CHECK(host.launchedKey == host.recent[3].key);
-    // A right-click is Menu: nothing until Task 10.
+    // A right-click is Menu: Game details of the tile under the pointer, nothing launched.
     host.launchedKey.clear();
     io.AddMouseButtonEvent(1, true);
     frames(host, shell, 1);
     io.AddMouseButtonEvent(1, false);
     frames(host, shell, 1);
-    CHECK(host.launchedKey.empty());
+    CHECK(host.launchedKey.empty() && shell.screenId() == "details");
     io.AddMousePosEvent(0, 0);
     frames(host, shell, 2);
 }
@@ -1079,6 +1086,7 @@ static void homeWalk120FramesNoAsserts() {
         }
         tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
         frames(host, shell, 120);
+        back(host, shell);                                               // Game details, and out again
     }
     io.DisplaySize = ImVec2(1920, 1080);
     CHECK(g_imguiErrors == errors);
@@ -1408,6 +1416,8 @@ static void libraryWalk120FramesNoAsserts() {
         for (int i = 0; i < 3; i++) keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE);
         frames(host, shell, 120);
         tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        frames(host, shell, 30);
+        back(host, shell);                                               // Game details, and out again
         io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.4f);
         io.AddMouseWheelEvent(0, -2.0f);
         frames(host, shell, 30);
@@ -1417,6 +1427,228 @@ static void libraryWalk120FramesNoAsserts() {
     }
     io.DisplaySize = ImVec2(1920, 1080);
     CHECK(g_imguiErrors == errors);
+}
+
+// ---- Game details and the TV-mode row (phase 2, Task 10) --------------------------------------------------------------
+
+static void rightClick(FakeHost& h, Shell& s) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMouseButtonEvent(1, true);
+    frames(h, s, 1);
+    io.AddMouseButtonEvent(1, false);
+    frames(h, s, 1);
+}
+
+// Home with three recent games, on the second one's Game details.
+static void detailsSetup(FakeHost& host, Shell& shell) {
+    host.recent = mkGames("Recent", 3);
+    host.all = host.recent;
+    homeSetup(host, shell);
+    rightN(host, shell, 1);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+    frames(host, shell, 2);
+}
+
+static int resumeRowsDrawn() {
+    int n = 0;
+    for (const std::string& t : g_texts)
+        if (t.rfind("Resume: ", 0) == 0) n++;
+    return n;
+}
+
+static void detailsFromStartOnAnyTile() {
+    {
+        FakeHost host;
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        Shell shell(host);
+        homeSetup(host, shell);
+        rightN(host, shell, 1);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        CHECK(shell.screenId() == "details");
+        back(host, shell);
+        CHECK(shell.screenId() == "home");
+        accept(host, shell);                                   // the focus survived the round trip
+        CHECK(host.launchedKey == host.recent[1].key);
+    }
+    {
+        FakeHost host;
+        host.all = libraryFixture();
+        Shell shell(host);
+        librarySetup(host, shell);
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(504 + 225 + 96, 330);              // column 1 of the first row
+        frames(host, shell, 2);
+        rightClick(host, shell);
+        CHECK(shell.screenId() == "details" && host.launchedKey.empty());
+        back(host, shell);
+        CHECK(shell.screenId() == "library");
+        io.AddMousePosEvent(0, 0);
+        frames(host, shell, 2);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);      // ... and so does Start on a pad-focused tile
+        CHECK(shell.screenId() == "details");
+    }
+}
+
+static void detailsResumeRowsMatchStates() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    host.all = host.recent;
+    host.st[host.recent[1].key] = {{3, 1792152000}, {-1, 1792000000}};
+    Shell shell(host);
+    homeSetup(host, shell);
+    rightN(host, shell, 1);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+    g_texts.clear();
+    frames(host, shell, 1);
+    CHECK(resumeRowsDrawn() == 2 && drew("Resume: Slot 3") && drew("Resume: Auto-save"));
+    CHECK(drew("Play") && drew("Favorite: Off") && drew("Select") && drew("Back"));
+    CHECK(drew("Recent 1") && drew("Europe \xC2\xB7 Cartridge"));
+    CHECK(drew(widgets::formatDate(1792152000)));              // slot 3
+    host.canLoad = false;                                      // hardcore refuses loads: no Resume rows at all
+    g_texts.clear();
+    frames(host, shell, 1);
+    CHECK(resumeRowsDrawn() == 0 && drew("Play"));
+}
+
+static void detailsResumeLaunchesThatState() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    host.all = host.recent;
+    host.st[host.recent[1].key] = {{3, 1792152000}, {-1, 1792000000}};
+    Shell shell(host);
+    homeSetup(host, shell);
+    rightN(host, shell, 1);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+    down(host, shell, 2);                                      // Play, Resume: Slot 3, Resume: Auto-save
+    accept(host, shell);
+    CHECK(host.launchedState == std::make_pair(host.recent[1].key, -1) && host.guardArmed == 1 && host.launches == 0);
+    CHECK(shell.screenId() == "details");                      // closing the game lands back here
+}
+
+static void detailsFavoriteToggles() {
+    FakeHost host;
+    Shell shell(host);
+    detailsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 1);
+    CHECK(drew("Favorite: Off") && !drew("Favorite: On"));
+    down(host, shell);                                         // Play, Favorite (no states)
+    accept(host, shell);
+    CHECK(host.favSet.count(host.recent[1].key) == 1);
+    g_texts.clear();
+    frames(host, shell, 1);
+    CHECK(drew("Favorite: On") && !drew("Favorite: Off"));
+    accept(host, shell);
+    CHECK(host.favSet.empty() && host.launches == 0);
+    CHECK(shell.screenId() == "details");
+}
+
+static void detailsPlayLaunches() {
+    FakeHost host;
+    Shell shell(host);
+    detailsSetup(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[1].key && host.guardArmed == 1);
+}
+
+// A rescan dropped the game: the title and Back are all that is left, and A does nothing.
+static void detailsSurvivesGameVanishing() {
+    FakeHost host;
+    Shell shell(host);
+    detailsSetup(host, shell);
+    host.recent.clear();
+    host.all.clear();
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Recent 1") && !drew("Play") && !drew("Favorite: Off"));
+    accept(host, shell);
+    down(host, shell);
+    accept(host, shell);
+    CHECK(host.launches == 0 && host.favSet.empty() && host.guardArmed == 0);
+    back(host, shell);
+    CHECK(shell.screenId() == "home");
+}
+
+static void detailsMouse() {
+    FakeHost host;
+    Shell shell(host);
+    detailsSetup(host, shell);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(96 + 266 + 56 + 300, 274 + 72 + 12 + 30);   // the Favorite row (second)
+    frames(host, shell, 2);
+    io.AddMouseButtonEvent(0, true);
+    frames(host, shell, 1);
+    io.AddMouseButtonEvent(0, false);
+    frames(host, shell, 1);
+    CHECK(host.favSet.count(host.recent[1].key) == 1 && host.launches == 0);
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+// Every size, with a full set of states (the list scrolls), through every direction and the pointer.
+static void detailsWalk120FramesNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    host.recent = mkGames("Recent", 3);
+    host.all = host.recent;
+    for (int i = 0; i < 10; i++) host.st[host.recent[0].key].push_back({i, 1792152000 - i * 86400});
+    host.st[host.recent[0].key].push_back({-1, 1700000000});
+    Shell shell(host);
+    const int errors = g_imguiErrors;
+    for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        frames(host, shell, 3);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        CHECK(shell.screenId() == "details");
+        for (int i = 0; i < 14; i++) {
+            down(host, shell);
+            frames(host, shell, 5);
+        }
+        io.AddMousePosEvent(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.6f);
+        io.AddMouseWheelEvent(0, 3.0f);
+        frames(host, shell, 20);
+        up(host, shell, 14);
+        frames(host, shell, 30);
+        io.AddMousePosEvent(0, 0);
+        frames(host, shell, 2);
+        back(host, shell);
+        CHECK(shell.screenId() == "home");
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == errors);
+}
+
+static void ingameTvToggleHiddenWhenOff() {
+    FakeHost host;
+    host.loaded = true;
+    host.tvOn = false;                                         // the setting is Off: no way into TV mode
+    Shell shell(host);
+    shell.openMenu();
+    g_texts.clear();
+    frames(host, shell, 3);
+    for (const Shell::Row& r : shell.menuRows()) CHECK(r.label.find("TV mode") == std::string::npos);
+    CHECK(!drew("Enter TV mode") && !drew("Exit TV mode"));
+    shell.closeMenu();
+
+    host.tvOn = true;
+    host.tv = false;
+    shell.openMenu();
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Enter TV mode") && !drew("Exit TV mode"));
+    down(host, shell, 4);                                      // Resume, Save state, Load state, Controls, Enter TV mode
+    CHECK(std::string(focusedLabel(shell)) == "Enter TV mode");
+    accept(host, shell);
+    CHECK(host.tv && shell.menuOpen() && shell.menuPage() == Shell::Page::Root);
+    CHECK(std::string(focusedLabel(shell)) == "Exit TV mode");   // the focus stayed on the row, its label flipped
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Exit TV mode") && !drew("Enter TV mode"));
+    accept(host, shell);
+    CHECK(!host.tv && shell.menuOpen() && std::string(focusedLabel(shell)) == "Enter TV mode");
 }
 
 int main() {
@@ -1483,6 +1715,15 @@ int main() {
     libraryMouse();
     libraryFocusRememberedAcrossVisits();
     libraryWalk120FramesNoAsserts();
+    detailsFromStartOnAnyTile();
+    detailsResumeRowsMatchStates();
+    detailsResumeLaunchesThatState();
+    detailsFavoriteToggles();
+    detailsPlayLaunches();
+    detailsSurvivesGameVanishing();
+    detailsMouse();
+    detailsWalk120FramesNoAsserts();
+    ingameTvToggleHiddenWhenOff();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;

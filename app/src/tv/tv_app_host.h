@@ -44,6 +44,8 @@ public:
     Art stateThumb(const GameRef& g, int slot) override;
     void launch(const GameRef& g) override;
     void launchState(const GameRef& g, int slot) override;
+    bool isFavorite(const GameRef& g) override;
+    void setFavorite(const GameRef& g, bool on) override;
 
     // Every SDL event, before anything can consume it (App::handleEvent): remembers which device was used last, so
     // glyph() follows what the player is actually pressing -- including the buttons the shell itself consumes, which

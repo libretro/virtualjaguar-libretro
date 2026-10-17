@@ -58,7 +58,7 @@ public:
         case Intent::Down: moveShelf(1); break;
         case Intent::Accept: play(); break;
         case Intent::Alt: resume(); break;
-        case Intent::Menu: break;   // Game details: Task 10
+        case Intent::Menu: details(); break;
         default: break;
         }
         remember();
@@ -220,6 +220,13 @@ private:
         if (!g) return;
         host_.launch(*g);
         shell_.launched();
+    }
+
+    // Start / a right-click: Game details of the focused game.  Back from there lands on this tile again.
+    void details() {
+        const GameRef* g = focused();
+        if (!g) return;
+        shell_.push(std::make_unique<DetailsScreen>(host_, shell_, *g));
     }
 
     // X: the newest state of the focused game, unless the game has none or hardcore refuses state loads.

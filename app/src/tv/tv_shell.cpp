@@ -134,7 +134,8 @@ void Shell::frame(uint64_t ms) {
         for (Intent in : nav_.take(ms)) baseIntent(in);
         return;
     }
-    if (page_ == Page::Root && host_.canLoadState() != rootHasLoad_) enter(Page::Root, rows_[(size_t)focus_.index].kind);
+    if (page_ == Page::Root && (host_.canLoadState() != rootHasLoad_ || tvRowState() != rootTvRow_))
+        enter(Page::Root, rows_[(size_t)focus_.index].kind);
     for (Intent in : nav_.take(ms)) {
         intent(in);
         if (!open_) break;
@@ -214,6 +215,8 @@ void Shell::baseIntent(Intent in) {
 
 // ---- the in-game menu ---------------------------------------------------------------------------------------------
 
+int Shell::tvRowState() const { return !host_.tvAvailable() ? 0 : host_.tvActive() ? 2 : 1; }
+
 void Shell::buildRoot() {
     title_ = host_.gameTitle();
     rows_.clear();
@@ -222,6 +225,8 @@ void Shell::buildRoot() {
     rootHasLoad_ = host_.canLoadState();
     if (rootHasLoad_) rows_.push_back({Row::Load, "Load state"});   // hardcore refuses loads: no row at all
     rows_.push_back({Row::Controls, "Controls"});
+    rootTvRow_ = tvRowState();
+    if (rootTvRow_) rows_.push_back({Row::TvMode, rootTvRow_ == 2 ? "Exit TV mode" : "Enter TV mode"});   // none when the setting is Off
     rows_.push_back({Row::Reset, "Reset"});
     rows_.push_back({Row::Close, "Close game"});
 }
@@ -288,6 +293,10 @@ void Shell::accept() {
     case Row::Controls:
         closeMenu();   // the sheet is drawn over the game, so the game has to be showing
         host_.showControlsOverlay();
+        break;
+    case Row::TvMode:
+        host_.setTvActive(!host_.tvActive());
+        enter(Page::Root, Row::TvMode);   // the label flipped; the menu stays open and the focus stays on the row
         break;
     case Row::Reset: enter(Page::ConfirmReset, Row::No); break;
     case Row::Close: enter(Page::ConfirmClose, Row::No); break;

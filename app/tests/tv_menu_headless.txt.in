@@ -149,7 +149,7 @@
 4960  expect menu-open=0
 4960  expect kb-bind=help:F4
 
-# Walk the menu with the pad: down to Close game, ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
+# Walk the menu with the pad (six rows down: the TV-mode row sits between Controls and Reset): down to Close game, ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
 5000  key tap F4
 5040  expect menu-open=1
 5060  pad tap dpdown
@@ -157,6 +157,7 @@
 5100  pad tap dpdown
 5120  pad tap dpdown
 5140  pad tap dpdown
+5150  pad tap dpdown
 5160  pad tap a
 5180  pad tap a
 5220  expect menu-open=1
@@ -185,6 +186,7 @@
 5660  pad tap dpdown
 5680  pad tap dpdown
 5700  pad tap dpdown
+5710  pad tap dpdown
 5720  pad tap a
 5740  pad tap dpup
 5760  pad tap a

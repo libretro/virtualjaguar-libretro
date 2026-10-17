@@ -304,7 +304,7 @@ private:
         case Intent::Aux: openLetters(); break;
         case Intent::PagePrev: grid_.index = jumpInitial(titles_, grid_.index, -1); break;
         case Intent::PageNext: grid_.index = jumpInitial(titles_, grid_.index, 1); break;
-        case Intent::Menu: break;   // Game details: Task 10
+        case Intent::Menu: details(); break;
         default: break;
         }
     }
@@ -320,6 +320,13 @@ private:
         if (!g) return;
         host_.launch(*g);
         shell_.launched();
+    }
+
+    // Start / a right-click: Game details of the focused game.  Back from there lands on this tile again.
+    void details() {
+        const GameRef* g = focused();
+        if (!g) return;
+        shell_.push(std::make_unique<DetailsScreen>(host_, shell_, *g));
     }
 
     // X: the newest state of the focused game, unless the game has none or hardcore refuses state loads.

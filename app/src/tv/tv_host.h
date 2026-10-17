@@ -83,6 +83,8 @@ public:
     virtual Art stateThumb(const GameRef& g, int slot) = 0;
     virtual void launch(const GameRef& g) = 0;                   // opens the game (an event: the A that did it is the caller's to guard)
     virtual void launchState(const GameRef& g, int slot) = 0;    // opens the game and loads that state
+    virtual bool isFavorite(const GameRef& g) = 0;               // library.isFavorite(entry); false when the game is gone
+    virtual void setFavorite(const GameRef& g, bool on) = 0;     // library.setFavorite(entry, on); a no-op when the game is gone
 };
 
 }  // namespace vj::tv

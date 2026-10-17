@@ -174,6 +174,15 @@ void AppHost::launchState(const GameRef& g, int slot) {
     if (const lib::Entry* e = entryFor(g)) app_.library.launchState(*e, slot);
 }
 
+bool AppHost::isFavorite(const GameRef& g) {
+    const lib::Entry* e = entryFor(g);
+    return e && app_.library.isFavorite(*e);
+}
+
+void AppHost::setFavorite(const GameRef& g, bool on) {
+    if (const lib::Entry* e = entryFor(g)) app_.library.setFavorite(*e, on);
+}
+
 void AppHost::noteInput(const SDL_Event& e) {
     switch (e.type) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:

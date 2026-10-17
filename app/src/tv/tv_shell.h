@@ -41,7 +41,7 @@ public:
     // ---- the in-game menu model (read by tv_ingame.cpp) ---------------------------------------------------------
     enum class Page { Root, SaveSlots, LoadSlots, ConfirmReset, ConfirmClose };
     struct Row {
-        enum Kind { Resume, Save, Load, Controls, Reset, Close, Slot, No, Yes };
+        enum Kind { Resume, Save, Load, Controls, TvMode, Reset, Close, Slot, No, Yes };
         Kind kind;
         std::string label;
         int slot = -1;         // Slot rows: the state slot
@@ -84,6 +84,7 @@ public:
 private:
     void enter(Page p, Row::Kind focusKind);   // build `p`'s rows and focus the first row of `focusKind` (else row 0)
     void buildRoot();
+    int tvRowState() const;   // rootTvRow_ as the host says it is now
     void accept();
     void back();
     void drawMenu(ImVec2 pos, ImVec2 size);   // tv_ingame.cpp: the menu model drawn over the dimmed game
@@ -104,6 +105,7 @@ private:
     float wheelAcc_ = 0;            // mouse-wheel notches not yet spent on a focus step (a trackpad sends fractions)
     bool focusWindow_ = false;      // the menu just opened: its window takes the focus once
     bool rootHasLoad_ = false;   // the Load-state row is in the root page (re-evaluated while it shows)
+    int rootTvRow_ = 0;          // the TV-mode row of the root page: 0 = none, 1 = "Enter TV mode", 2 = "Exit TV mode" (re-evaluated while it shows)
 
     // The Base layer.  The stack is kept while a game runs, so closing the game lands back where the player was.
     std::vector<std::unique_ptr<Screen>> stack_;   // [0] is the section's root

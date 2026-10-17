@@ -354,6 +354,7 @@ set(VJ_APP_SOURCES
     src/tv/tv_chrome.cpp
     src/tv/tv_home.cpp
     src/tv/tv_library.cpp
+    src/tv/tv_details.cpp
     src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
