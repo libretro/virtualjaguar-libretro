@@ -103,6 +103,7 @@ private:
     std::atomic<bool> stop_{false}, paused_{false}, ff_{false};
     std::atomic<double> targetMs_{64.0};
     std::atomic<unsigned> advanceLeft_{0};
+    std::atomic<uint64_t> advanceDone_{0};   // budgeted frames run (bumped before advanceLeft_ drops)
     std::atomic<uint64_t> frames_{0}, dropped_{0};
     std::mutex mu_;
     std::condition_variable cv_;          // start and finish handshakes
@@ -121,6 +122,10 @@ auto EmuThread::call(F&& fn) -> decltype(fn()) {
         waitFinished();
         if (abandoned()) return R();
         (*task)();
+    }
+    // The task is in the queue.  An abandoned thread never answers it: poll for that instead of blocking in get().
+    while (done.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+        if (abandoned()) return R();
     }
     return done.get();
 }

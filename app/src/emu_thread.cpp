@@ -111,13 +111,15 @@ bool EmuThread::advance(unsigned n) {
     }
     if (onEmuThread()) return false;   // a command cannot wait for frames that only run after it
     std::unique_lock<std::mutex> l(mu_);
-    const uint64_t target = frames_.load() + n;
+    // Count budgeted frames only: a frame already in flight (it read a budget of 0) must not satisfy this request.
+    const uint64_t target = advanceDone_.load() + n;
     advanceLeft_.fetch_add(n);
     cmds_.notify();
     advanceCv_.wait(l, [&] {
-        return frames_.load() >= target || advanceLeft_.load() == 0 || finished_ || state_.load() == State::Abandoned;
+        return advanceDone_.load() >= target || advanceLeft_.load() == 0 || finished_ ||
+               state_.load() == State::Abandoned;
     });
-    return frames_.load() >= target;
+    return advanceDone_.load() >= target;
 }
 
 void EmuThread::loop() {
@@ -165,8 +167,11 @@ void EmuThread::loop() {
         }
         clock.frameStarted(in);
         client_->runFrame();
-        frames_.fetch_add(1);                    // before the budget: advance() reads frames_ when the budget hits 0
-        if (budget) advanceLeft_.fetch_sub(1);
+        frames_.fetch_add(1);
+        if (budget) {   // done before the budget drops: advance() reads advanceDone_ when the budget hits 0
+            advanceDone_.fetch_add(1);
+            advanceLeft_.fetch_sub(1);
+        }
         dropped_.store(clock.droppedFrames());
         notifyFrame();
     }

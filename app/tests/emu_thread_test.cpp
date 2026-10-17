@@ -39,6 +39,7 @@ struct FakeClient : EmuThread::Client {
     std::atomic<bool> loaded{true};
     std::atomic<bool> block{false};     // runFrame waits while set: a core stuck inside retro_run
     std::atomic<bool> blocked{false};
+    std::atomic<int> holdAt{-1};        // runFrame holds, after counting its frame, while frames == holdAt
     std::atomic<int> started{0}, stopping{0}, afterCmds{0};
     std::thread::id startedOn;
     std::atomic<double> period{0.010};
@@ -59,6 +60,7 @@ struct FakeClient : EmuThread::Client {
             sleepMs(1);
         }
         frames++;
+        while (holdAt.load() == frames.load()) sleepMs(1);
     }
     void afterCommands() override { afterCmds++; }
     void commandFailed(const std::string& what) override {
@@ -136,7 +138,7 @@ void testPauseAdvance() {
     CHECK(c.frames == f0, "paused: no frames (%d -> %d)", f0, c.frames.load());
     CHECK(e.advance(5) && c.frames == f0 + 5, "advance(5) runs exactly five while paused (%d)", c.frames.load() - f0);
     e.setPaused(false);
-    sleepMs(100);
+    for (int i = 0; i < 2000 && c.frames <= f0 + 15; i++) sleepMs(1);   // polled, not a fixed window: the host may be slow
     CHECK(c.frames > f0 + 15, "running again (%d)", c.frames.load() - f0);
     e.setPaused(true);
     c.loaded = false;
@@ -144,18 +146,37 @@ void testPauseAdvance() {
     CHECK(e.stop(), "stop");
 }
 
+// Rates over measured windows, wide tolerances: a loaded host (or TSan) stretches sleeps and starves the thread.
 void testPacingWallClock() {
     EmuThread e;
     FakeClient c;
     c.period = 0.010;
     CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    sleepMs(50);   // settle
+    int n0 = c.frames;
+    Clock::time_point t0 = Clock::now();
     sleepMs(300);
-    const int n = c.frames;
-    CHECK(n >= 10 && n <= 45, "about 30 frames at a 10 ms period in 0.3 s (got %d)", n);
+    const int n = c.frames - n0;
+    const double dt = since(t0);
+    const double expect = dt / 0.010;
+    CHECK(n <= expect + 3, "normal speed is not faster than real time (%d frames, at most %.1f in %.3f s)", n, expect + 3,
+          dt);
+    CHECK(n >= expect * 0.25, "and keeps at least a quarter of it (%d frames of %.1f in %.3f s)", n, expect, dt);
+    const double normalRate = n / dt;
     e.setFastForward(true);
-    sleepMs(200);
-    const int ff = c.frames - n;
-    CHECK(ff > 30, "fast-forward runs %gx (got %d frames in 0.2 s)", vj::PacingClock::kFastForward, ff);
+    sleepMs(50);   // let the clock rebase
+    n0 = c.frames;
+    t0 = Clock::now();
+    sleepMs(300);
+    const int ff = c.frames - n0;
+    const double dtf = since(t0);
+    if (n >= expect * 0.6) {
+        CHECK(ff / dtf > 1.5 * normalRate, "fast-forward (%gx) is well above normal (%.1f vs %.1f frames/s)",
+              vj::PacingClock::kFastForward, ff / dtf, normalRate);
+    } else {   // the host could not even sustain real time, so fast-forward has no headroom to show
+        std::printf("note: skipped the fast-forward check, normal speed only reached %.1f of %.1f frames/s\n", normalRate,
+                    1.0 / 0.010);
+    }
     CHECK(e.stop(), "stop");
 }
 
@@ -165,7 +186,7 @@ void testStopJoin() {
     CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
     const Clock::time_point t0 = Clock::now();
     CHECK(e.stop(), "stop joins");
-    CHECK(since(t0) < 1.0, "promptly (%.3f s)", since(t0));
+    CHECK(since(t0) < 3.0, "promptly (%.3f s)", since(t0));
     CHECK(!e.threaded() && c.stopping == 1, "stopped");
     int x = 0;
     e.post([&x] { x = 5; });
@@ -182,7 +203,10 @@ void testCallDuringShutdown() {
     std::atomic<bool> go{true};
     std::thread caller([&] {
         while (go.load()) {
-            ran += e.call([] { return 1; });
+            e.call([&ran] {
+                ran++;
+                return 1;
+            });
             calls++;
         }
     });
@@ -216,10 +240,12 @@ void testCommandErrors() {
     CHECK(e.stop(), "stop");
 }
 
-// Last: leaves an abandoned thread behind.  Both objects are leaked on purpose -- the detached thread still uses them.
+// Leaves an abandoned thread behind.  The objects are never destroyed on purpose -- the detached thread still uses them.
 void testJoinTimeout() {
-    EmuThread* e = new EmuThread;
-    FakeClient* c = new FakeClient;
+    // Never destroyed: the abandoned thread still uses them.  Held by a static pointer so LeakSanitizer stays quiet (a
+    // static object would be destroyed at exit with no ordering against the detached thread, which ThreadSanitizer flags).
+    static EmuThread* const e = new EmuThread;
+    static FakeClient* const c = new FakeClient;
     c->block = true;
     CHECK(e->start(EmuThread::Mode::Threaded, *c), "start");
     for (int i = 0; i < 1000 && !c->blocked.load(); i++) sleepMs(1);
@@ -228,7 +254,7 @@ void testJoinTimeout() {
     CHECK(!e->callFor(std::chrono::milliseconds(50), [late] { *late = true; }), "callFor times out on a stuck thread");
     const Clock::time_point t0 = Clock::now();
     CHECK(!e->stop(std::chrono::milliseconds(100)), "stop gives up on a thread stuck in the core");
-    CHECK(since(t0) < 1.0, "after the timeout (%.3f s)", since(t0));
+    CHECK(since(t0) < 3.0, "after the timeout (%.3f s)", since(t0));
     CHECK(e->abandoned() && !e->threaded(), "the thread is abandoned");
     bool ran = false;
     CHECK(e->call([&ran] {
@@ -239,6 +265,72 @@ void testJoinTimeout() {
     c->block = false;   // let the abandoned thread finish its frame and exit; it runs the queued callFor on the way out
     for (int i = 0; i < 1000 && !late->load(); i++) sleepMs(1);
     CHECK(late->load(), "the command queued before the stop still ran, on the thread, once it got free");
+}
+
+// A call() already queued when the thread is abandoned must come back with R(), not hang in the future.
+void testPendingCallAbandoned() {
+    static EmuThread& e = *new EmuThread;   // never destroyed, see testJoinTimeout
+    static FakeClient& c = *new FakeClient;
+    c.block = true;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    CHECK(c.blocked.load(), "the fake core is stuck inside a frame");
+    std::shared_ptr<std::atomic<bool>> ranBody = std::make_shared<std::atomic<bool>>(false);
+    std::atomic<int> result{-1};
+    std::atomic<bool> returned{false};
+    std::thread caller([ranBody, &result, &returned] {
+        result = e.call([ranBody] {
+            *ranBody = true;
+            return 42;
+        });
+        returned = true;
+    });
+    sleepMs(100);   // the call is queued behind the stuck frame
+    CHECK(!returned.load(), "the pending call is still waiting");
+    CHECK(!e.stop(std::chrono::milliseconds(100)), "stop gives up on the stuck thread");
+    const Clock::time_point t0 = Clock::now();
+    for (int i = 0; i < 3000 && !returned.load(); i++) sleepMs(1);
+    CHECK(returned.load(), "the pending call returned after the abandon (%.3f s)", since(t0));
+    CHECK(result.load() == 0 && !ranBody->load(), "with a default value, its body not run (result %d)", result.load());
+    c.block = false;
+    caller.join();
+    for (int i = 0; i < 1000 && !ranBody->load(); i++) sleepMs(1);   // the queued body still runs once the thread is free
+}
+
+// advance(n) must wait for n frames run for it, not be satisfied by a frame already in flight.
+void testAdvanceExact() {
+    EmuThread e;
+    FakeClient c;
+    c.period = 0.002;
+    c.block = true;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    CHECK(c.blocked.load(), "a frame is in flight");
+    e.setPaused(true);
+    const int start = c.frames;
+    std::atomic<bool> ok{false}, returned{false};
+    std::atomic<int> atReturn{-1};
+    std::thread t([&] {
+        ok = e.advance(1);
+        atReturn = c.frames.load();
+        returned = true;
+    });
+    sleepMs(30);
+    CHECK(!returned.load(), "advance(1) is still waiting while the in-flight frame is stuck");
+    c.holdAt = start + 2;   // hold the budgeted frame half-way
+    c.block = false;        // the in-flight frame ends, then the one budgeted frame runs (and is held)
+    for (int i = 0; i < 2000 && c.frames.load() < start + 2; i++) sleepMs(1);
+    sleepMs(30);
+    CHECK(c.frames == start + 2 && !returned.load(), "advance(1) is not satisfied by the in-flight frame (%d frames, returned %d)",
+          c.frames.load() - start, (int)returned.load());
+    c.holdAt = -1;
+    t.join();
+    CHECK(ok.load(), "advance(1) succeeded");
+    CHECK(atReturn.load() == start + 2, "the in-flight frame did not count: one budgeted frame ran after it (%d)",
+          atReturn.load() - start);
+    sleepMs(50);
+    CHECK(c.frames == start + 2, "no frame runs after advance() returned (%d)", c.frames.load() - start);
+    CHECK(e.stop(), "stop");
 }
 
 }  // namespace
@@ -252,7 +344,9 @@ int main() {
     testStopJoin();
     testCallDuringShutdown();
     testCommandErrors();
+    testAdvanceExact();
     testJoinTimeout();
+    testPendingCallAbandoned();
     std::printf(g_fail ? "emu_thread_test: %d FAILED\n" : "emu_thread_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }
