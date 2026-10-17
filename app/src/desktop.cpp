@@ -99,7 +99,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void showCheats() override { a.showCheats = true; }
         void toggleDiscTray() override {
             DiscInfo d = a.host.discInfo();
-            if (d.available) {
+            if (d.available && d.count > 0) {   // an empty list (the CD BIOS with no disc) has nothing to insert
                 const bool eject = !d.ejected;
                 a.emu.call([&app = a, eject] { app.host.discSetEject(eject); });
             }

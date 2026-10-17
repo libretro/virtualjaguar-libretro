@@ -129,7 +129,8 @@ MenuBar buildMenuBar(const MenuState& s) {
         e.push_back(item(Cmd::Cheats, "Cheats" ELL, "", s.gameLoaded));
         if (s.disc.available) {
             e.push_back(sep());
-            e.push_back(item(Cmd::DiscTray, s.disc.ejected ? "Close Tray" : "Open Tray"));
+            if (s.disc.count > 0)   // the CD BIOS with no disc (#646): nothing to insert yet, only Add Disc Image
+                e.push_back(item(Cmd::DiscTray, s.disc.ejected ? "Close Tray" : "Open Tray"));
             e.push_back(item(Cmd::DiscAdd, "Add Disc Image" ELL));
             if (s.disc.count > 1) {
                 std::vector<MenuItem> discs;

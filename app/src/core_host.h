@@ -68,7 +68,7 @@ struct ControllerType {
 };
 
 struct DiscInfo {
-    bool available = false;
+    bool available = false;   // a CD session: CD content, or the CD BIOS with no disc (count is then 0)
     bool ejected = false;
     unsigned count = 0;
     unsigned index = 0;
@@ -374,6 +374,7 @@ private:
     std::vector<std::vector<ControllerType>> controllerPorts_;
     retro_disk_control_ext_callback disk_{};
     bool diskRegistered_ = false;
+    bool emptyCdTray_ = false;   // a no-content boot into the CD BIOS: a CD unit with an empty disc list (#646)
 
     // SET_MEMORY_MAPS copy
     std::vector<retro_memory_descriptor> memDescs_;

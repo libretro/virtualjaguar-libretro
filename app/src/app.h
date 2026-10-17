@@ -68,6 +68,7 @@ struct CliArgs {
     bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     std::string discSwap;           // headless: add this CD image to the loaded disc's list, swap to it and back (File > Disc)
+    std::string discInsert;         // headless: put this CD image in the empty tray of a no-content CD BIOS boot (#646)
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
     std::string expectHash;         // headless: expected hash of the FIRST content
@@ -406,6 +407,7 @@ private:
     const Frame& shownFrame();                 // the newest finished frame (FrameExchange when threaded)
     void runHeadlessFrames(unsigned n);
     bool discSwapHeadlessCheck(const std::string& path);   // --disc-swap
+    bool discInsertHeadlessCheck(const std::string& path);   // --disc-insert
     bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
     bool openNoContentOnCore(std::string& err);
     std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side
