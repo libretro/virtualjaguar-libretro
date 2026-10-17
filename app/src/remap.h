@@ -233,6 +233,11 @@ public:
     enum { GUN_TRIGGER = 1, GUN_AUX_A = 2, GUN_AUX_B = 4, GUN_START = 8, GUN_SELECT = 16 };
     void setGun(unsigned port, int32_t x, int32_t y, bool offscreen, unsigned buttons);
 
+    // InputSnapshot (#967): pointer / rotary motion is a delta, not a state.  carryMotion() adds an older snapshot's
+    // motion that the core has not taken yet; clearMotion() forgets it once taken.
+    void carryMotion(const CoreInput& older);
+    void clearMotion();
+
     int16_t pad(unsigned port) const { return port < 8 ? (int16_t)pad_[port] : 0; }
     bool key(unsigned retroKey) const { return retroKey < keys_.size() && keys_[retroKey]; }
     bool keypadSynthesised() const { return synth_; }

@@ -99,9 +99,12 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void showCheats() override { a.showCheats = true; }
         void toggleDiscTray() override {
             DiscInfo d = a.host.discInfo();
-            if (d.available) a.host.discSetEject(!d.ejected);
+            if (d.available) {
+                const bool eject = !d.ejected;
+                a.emu.call([&app = a, eject] { app.host.discSetEject(eject); });
+            }
         }
-        void selectDisc(int i) override { a.host.discSetIndex((unsigned)i); }
+        void selectDisc(int i) override { a.emu.call([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }); }
         void toggleFullscreen() override { a.setFullscreen(!a.fullscreen); }
         void toggleIntegerScale() override { a.present.integerScale = !a.present.integerScale; }
         void toggleSmoothFilter() override { a.present.linearFilter = !a.present.linearFilter; }

@@ -515,6 +515,40 @@ static int corpus(const std::string& dir) {
     return g_fail ? 1 : 0;
 }
 
+// #967: the threaded app collects the sinks' calls and posts them as one command when apply() ends.
+static void testDoneSink() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-donesink";
+    fs::remove_all(tmp);
+    GameIdentity g;
+    g.key = "crc-deadbeef";
+    g.title = "Test Game";
+    g.fileStem = "Test Game (World)";
+    CheatManager m;
+    Recorder r;
+    r.attach(m);
+    m.setStateDir(tmp.string() + "/games/");
+    m.gameLoaded(g);
+    std::string err;
+    CHECK(m.addUser("My lives", "00001000:07", err));   // one enabled user cheat, so apply() has a set to send
+    r.log.clear();
+    int done = 0;
+    size_t logAtDone = 0;
+    m.doneSink = [&] {
+        done++;
+        logAtDone = r.log.size();
+    };
+    m.apply();
+    // doneSink fired once, after the reset AND the set (a premature call would see a shorter log)
+    CHECK(done == 1 && logAtDone == r.log.size() && r.log.size() == 2 && r.log[0] == "reset" &&
+          r.log[1].compare(0, 3, "set") == 0);
+    m.blocked = [] { return true; };
+    r.log.clear();
+    done = 0;
+    m.apply();
+    CHECK(done == 1 && r.log.size() == 1 && r.log[0] == "reset");   // blocked: the reset still goes, and the batch ends
+    fs::remove_all(tmp);
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--corpus")) return corpus(argv[2]);
     testHelpers();
@@ -522,6 +556,7 @@ int main(int argc, char** argv) {
     testReplay();
     testLibraryMatching();
     testPersistence();
+    testDoneSink();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

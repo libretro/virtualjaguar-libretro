@@ -41,7 +41,12 @@ public:
     // Snapshot the devices once per emulated frame.  When `captureKeyboard`
     // is false (a text box has focus, or a modifier chord is held) the
     // keyboard contributes nothing.
-    void poll(bool captureKeyboard);
+    // `overlayTicks`: emulated frames since the last poll.  Inline that is always 1 (the core polls); threaded, the UI
+    // thread polls once per UI iteration and passes InputSnapshot::takenSince(), so the keypad overlay's press timing
+    // (and the HoldArbiter's tap pulses) stay per emulated frame.
+    void poll(bool captureKeyboard, unsigned overlayTicks = 1);
+    // The result of the last poll() (threaded: what the UI thread publishes to InputSnapshot).
+    const CoreInput& coreInput() const { return core_; }
     // retro_input_state_t for every device (joypad, keyboard, mouse, analog, light gun).
     int16_t state(unsigned port, unsigned device, unsigned index, unsigned id) const;
 

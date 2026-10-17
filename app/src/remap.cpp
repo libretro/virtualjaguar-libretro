@@ -594,6 +594,17 @@ void CoreInput::addMouse(unsigned port, int32_t dx, int32_t dy, unsigned buttons
     extra_[port].mouseButtons |= buttons;
 }
 
+void CoreInput::carryMotion(const CoreInput& older) {
+    for (size_t p = 0; p < extra_.size(); p++) {
+        extra_[p].mouseDx += older.extra_[p].mouseDx;
+        extra_[p].mouseDy += older.extra_[p].mouseDy;
+    }
+}
+
+void CoreInput::clearMotion() {
+    for (PortExtra& e : extra_) e.mouseDx = e.mouseDy = 0;
+}
+
 void CoreInput::setAnalog(unsigned port, unsigned index, unsigned id, int32_t value) {
     if (port >= extra_.size() || index > 1 || id > 1) return;
     extra_[port].stick[index][id] = (int16_t)std::max(-32768, std::min(32767, value));

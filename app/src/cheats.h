@@ -104,6 +104,9 @@ public:
     // Core sinks.  Both may be null (unit tests substitute recorders).
     std::function<void()> resetSink;
     std::function<void(unsigned index, bool enabled, const char* code)> setSink;
+    // Called once at the end of every apply(), after the reset and the sets.  The threaded app (#967) collects the
+    // sinks' calls on the UI thread and posts them here as one command, so the core's list never changes mid-frame.
+    std::function<void()> doneSink;
     std::function<void(const std::string&)> warn;
     // RetroAchievements hardcore (#836): returns true while no cheat may reach the
     // core.  apply() then still empties the core's list but sends nothing; the

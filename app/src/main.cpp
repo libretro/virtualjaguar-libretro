@@ -23,6 +23,8 @@ static void usage(const char* argv0) {
         "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
         "  --cd-bios FILE        run the Jaguar CD BIOS from FILE for this run (256 KiB)\n"
         "  --option KEY=VALUE    set a core option for this run (not saved)\n"
+        "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
+        "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
@@ -36,7 +38,7 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
-        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
@@ -182,6 +184,23 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--perf-frames")) a.perfFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--perf-gpu")) a.perfGpu = true;
         else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;
+        else if (!std::strcmp(s, "--emu-thread")) {
+            const std::string v = need(s);
+            if (v != "on" && v != "off") {
+                std::fprintf(stderr, "--emu-thread wants on or off, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.emuThread = v == "on" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--perf-input")) a.perfInput = true;
+        else if (!std::strcmp(s, "--late-latch")) {
+            const std::string v = need(s);
+            if (v != "on" && v != "off") {
+                std::fprintf(stderr, "--late-latch wants on or off, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.lateLatch = v == "on" ? 1 : 0;
+        }
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {
             unsigned w = 0, h = 0;

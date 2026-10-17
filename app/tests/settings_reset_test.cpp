@@ -64,7 +64,7 @@ static void fill(Config& c) {
         "ui.controls.autoshow",
         // Storage + library display
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
-        "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window",
+        "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window", "ui.emu_thread",
         "ui.tv_mode", "ui.tv_auto_fullscreen", "ui.tv_auto_controller", "ui.tv_manual_on", "ui.tv_hint_shown",
         "library.favorites.show", "library.recents.show", "saves.resume",
         // Discord
@@ -97,6 +97,7 @@ static void testClassify() {
     CHECK(classifyKey("ui.controls.autoshow") == KeyClass::Interface);
     CHECK(classifyKey("ui.home_library") == KeyClass::Interface && classifyKey("saves.resume") == KeyClass::Interface);
     CHECK(classifyKey("ui.tray") == KeyClass::Interface && classifyKey("ui.keep_awake") == KeyClass::Interface);
+    CHECK(classifyKey("ui.emu_thread") == KeyClass::Interface);   // #967: Settings > Interface > Emulation thread
     for (const char* k : {"ui.tv_mode", "ui.tv_auto_fullscreen", "ui.tv_auto_controller", "ui.tv_manual_on", "ui.tv_hint_shown"})
         CHECK(classifyKey(k) == KeyClass::Interface);   // TV mode (#991): the Interface tab owns it
     CHECK(classifyKey("ui.font.family") == KeyClass::Keep && classifyKey("ui.scale") == KeyClass::Keep);
@@ -203,7 +204,7 @@ static void testResetAll() {
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
                               "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
                               "library.favorites.show", "library.recents.show", "saves.resume",
-                              "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window", "discord.enabled", "discord.art",
+                              "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window", "ui.emu_thread", "discord.enabled", "discord.art",
                               "discord.buttons", "ui.tv_mode", "ui.tv_auto_fullscreen", "ui.tv_auto_controller", "ui.tv_manual_on",
                               "ui.tv_hint_shown"})
             CHECK(after.count(k) == 0);

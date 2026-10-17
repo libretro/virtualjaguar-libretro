@@ -59,7 +59,18 @@ void DebugSession::setHardcore(bool on) {
     serial_++;
 }
 
+void DebugSession::setThreadBlocked(bool on) {
+    if (on == threadBlocked_) return;
+    threadBlocked_ = on;
+    if (on) {
+        detach();
+        closeAllTools("thread");
+    }
+    serial_++;
+}
+
 std::string DebugSession::disabledReason() const {
+    if (threadBlocked_) return "Not available while Settings > Interface > Emulation thread is on (this version)";
     if (!iface_) return "This core build has no debug interface";
     if (hardcore_) return "Disabled while RetroAchievements hardcore mode is on";
     if (!loaded_) return "No game is running";

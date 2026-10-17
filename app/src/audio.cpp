@@ -38,7 +38,7 @@ bool AudioOut::open(double coreRate) {
     }
     rate_ = rate;
     SDL_SetAudioStreamGain(stream_, volume_);
-    if (!paused_) SDL_ResumeAudioStreamDevice(stream_);
+    if (!paused_.load()) SDL_ResumeAudioStreamDevice(stream_);
     return true;
 }
 
@@ -50,7 +50,7 @@ void AudioOut::close() {
 }
 
 void AudioOut::push(const int16_t* stereo, size_t frames) {
-    if (!stream_ || paused_) return;
+    if (!stream_ || paused_.load()) return;
     SDL_PutAudioStreamData(stream_, stereo, (int)(frames * 2 * sizeof(int16_t)));
 }
 
@@ -60,20 +60,24 @@ float AudioOut::queuedMs() const {
     return 1000.0f * (float)bytes / (float)(rate_ * 4);
 }
 
-void AudioOut::update() {
+void AudioOut::update(bool adjustRatio) {
     if (!stream_) return;
-    float q = queuedMs();
-    if (q <= 0.5f) underruns_++;
+    const float q = queuedMs();
+    if (q <= 0.5f) underruns_.fetch_add(1);
+    if (!adjustRatio) return;
     // Relative error against the target, mapped to a +/-0.5% playback-speed
     // nudge.  Smoothed so one burst does not wobble the pitch.
-    float err = std::max(-1.0f, std::min(1.0f, (q - targetMs_) / targetMs_));
+    const float target = targetMs_.load();
+    float err = std::max(-1.0f, std::min(1.0f, (q - target) / target));
     double want = 1.0 + 0.005 * (double)err;
-    ratio_ += (want - ratio_) * 0.05;
-    SDL_SetAudioStreamFrequencyRatio(stream_, (float)ratio_);
+    double r = ratio_.load();
+    r += (want - r) * 0.05;
+    ratio_.store(r);
+    SDL_SetAudioStreamFrequencyRatio(stream_, (float)r);
 }
 
 void AudioOut::setPaused(bool p) {
-    paused_ = p;
+    paused_.store(p);
     if (!stream_) return;
     if (p) SDL_PauseAudioStreamDevice(stream_);
     else SDL_ResumeAudioStreamDevice(stream_);
@@ -86,15 +90,16 @@ void AudioOut::setVolume(float v) {
 
 void AudioOut::clear() {
     if (stream_) SDL_ClearAudioStream(stream_);
-    ratio_ = 1.0;
+    ratio_.store(1.0);
 }
 
 void AudioOut::bufferStatus(bool& active, unsigned& occupancy, bool& underrun) const {
-    active = stream_ != nullptr && !paused_;
-    float cap = std::max(targetMs_ * 2.0f, 1.0f);
+    active = stream_ != nullptr && !paused_.load();
+    const float target = targetMs_.load();
+    float cap = std::max(target * 2.0f, 1.0f);
     float q = queuedMs();
     occupancy = (unsigned)std::max(0.0f, std::min(100.0f, 100.0f * q / cap));
-    underrun = q < targetMs_ * 0.25f;
+    underrun = q < target * 0.25f;
 }
 
 }  // namespace vj
