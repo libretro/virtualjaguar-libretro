@@ -628,11 +628,6 @@ void App::notePresented(uint64_t swapEndNs) {
 void App::latchWait() {
     if (latchChecks_++ % 60 == 0) latchUpdatePeriod();   // the window may have moved to another display
     const uint64_t wake = latch_.wakeAt(SDL_GetTicksNS());
-    if (latch_.locked() != latchLogged_) {
-        latchLogged_ = latch_.locked();
-        std::fprintf(stderr, "[emu] late latch %s: period %.3f ms, budget %.2f ms\n", latchLogged_ ? "locked" : "released",
-                     (double)latch_.periodNs() / 1e6, (double)latch_.budgetNs() / 1e6);
-    }
     for (;;) {
         const uint64_t t = SDL_GetTicksNS();
         if (t >= wake || quit) return;
@@ -647,6 +642,16 @@ void App::latchWait() {
         while (!quit && SDL_PollEvent(&e));
         publishInput();
     }
+}
+
+// Called right after every threaded swap: the lock is taken and given up in LateLatch::onSwap, so this is where a change
+// shows, whether or not latchWait ran this iteration.  The counters tell "locked and good" from "locked and missing".
+void App::latchLog() {
+    if (latch_.locked() == latchLogged_) return;
+    latchLogged_ = latch_.locked();
+    std::fprintf(stderr, "[emu] late latch %s: period %.3f ms, budget %.2f ms, pad %.1f ms, misses %u, releases %u\n",
+                 latchLogged_ ? "locked" : "released", (double)latch_.periodNs() / 1e6, (double)latch_.budgetNs() / 1e6,
+                 (double)latch_.padNs() / 1e6, latch_.misses(), latch_.released());
 }
 
 // The display's refresh period for the latch (0 = unknown: it stays off).
@@ -1725,7 +1730,11 @@ int App::runInteractive(const CliArgs& a) {
                          std::to_string(video.shader.chainReuses());
             perf.note += std::string(", emulation thread ") + (threaded() ? "on" : "off");
             perf.note += std::string(", late latch ") +
-                         (threaded() && vsync && lateLatchOn_ ? (latch_.locked() ? "locked" : "not locked") : "off");
+                         (threaded() && vsync && lateLatchOn_
+                              ? std::string(latch_.locked() ? "locked" : "not locked") + " (misses " +
+                                    std::to_string(latch_.misses()) + ", released " + std::to_string(latch_.released()) +
+                                    ", pad " + std::to_string(latch_.padNs() / 1000000.0).substr(0, 4) + " ms)"
+                              : std::string("off"));
             perf.report(host.contentName().c_str());
             break;
         }
@@ -1787,6 +1796,7 @@ int App::runInteractive(const CliArgs& a) {
         if (threaded()) {
             if (latchedAtNs_) latch_.noteBuild(swap0 - latchedAtNs_);
             latch_.onSwap(swap0, swap1);
+            latchLog();
         }
         perf.lap(Perf::Present);
 
@@ -1803,9 +1813,10 @@ int App::runInteractive(const CliArgs& a) {
             // blocked: the late latch waits until just before the next vblank, publishing input as it comes, and the
             // swap paces the rest.  Off, or a swap that returned at once with vsync on (a minimized or occluded window
             // does not block): a short nap, so a new frame still shows within a few ms without spinning a core.
-            if (vsync && lateLatchOn_ && swapNs >= 250000) latchWait();
-            else if (!vsync || swapNs < 250000) SDL_DelayNS(4000000);
+            if (vsync && lateLatchOn_ && swapNs >= LateLatch::kBlockedNs) latchWait();
+            else if (!vsync || swapNs < LateLatch::kBlockedNs) SDL_DelayNS(4000000);
             latchedAtNs_ = SDL_GetTicksNS();
+            latch_.noteWaitEnd(latchedAtNs_);
         } else {
             syncSwapInterval();
             if (!pacer_.swapSync) {

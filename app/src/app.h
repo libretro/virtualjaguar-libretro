@@ -364,6 +364,7 @@ private:
     unsigned latchChecks_ = 0;
     bool latchLogged_ = false;
     void latchWait();
+    void latchLog();
     void latchUpdatePeriod();
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user

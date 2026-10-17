@@ -123,6 +123,86 @@ void testMissGrowsPad() {
     CHECK(l.padNs() == LateLatch::kPadMinNs, "the pad shrinks back to 1 ms (%llu)", (unsigned long long)l.padNs());
 }
 
+void testPersistentMissReleases() {
+    // A build whose GPU work finishes past the aimed vblank every time (the CPU-side budget cannot see it, and the pad is
+    // capped): every wait misses by one period.  The latch must give up rather than present a vblank late forever.
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t cur = 0;
+    runGrid(l, kP60, 60, cur);
+    CHECK(l.locked(), "locked before the misses");
+    unsigned waits = 0;
+    for (; waits < 200; waits++) {
+        const uint64_t now = cur + 200000;
+        const uint64_t w = l.wakeAt(now);
+        if (w == now) break;   // released
+        const uint64_t nextV = cur - 50000 + kP60;
+        l.noteBuild(2 * kMs);
+        l.onSwap(w + 2 * kMs, nextV + kP60 + 50000);   // lands one vblank late, on the grid
+        cur = nextV + kP60 + 50000;
+    }
+    CHECK(waits >= LateLatch::kMinOutcomes && waits <= 60, "released within 60 waits (%u)", waits);
+    CHECK(!l.locked() && l.released() == 1, "released once (locked %d, released %u)", (int)l.locked(), l.released());
+    CHECK(l.misses() == waits, "every wait missed (%u of %u)", l.misses(), waits);
+    // Cool-down: swaps keep arriving on the grid, the latch tracks them but does not wait.
+    for (unsigned k = 1; k <= LateLatch::kCooldownSwaps - 2; k++) {
+        const uint64_t v = cur - 50000 + kP60;
+        l.noteBuild(2 * kMs);
+        l.onSwap(v - 3 * kMs, v + 50000);
+        cur = v + 50000;
+        CHECK(!l.locked() && l.wakeAt(cur + 200000) == cur + 200000, "no wait in the cool-down (swap %u)", k);
+        if (g_fail) break;
+    }
+    for (unsigned k = 0; k < 4 && !l.locked(); k++) {   // the cool-down ends: tracking locks again
+        const uint64_t v = cur - 50000 + kP60;
+        l.noteBuild(2 * kMs);
+        l.onSwap(v - 3 * kMs, v + 50000);
+        cur = v + 50000;
+    }
+    CHECK(l.locked(), "locks again after the cool-down");
+}
+
+void testJitterHysteresis() {
+    // Locked on a clean grid, then swap returns scatter +-1.4 ms around it (a compositor, a busy GPU): smoothed jitter
+    // sits near 1.4 ms, over the 1 ms needed to lock but under the 2 ms needed to let go.  It must stay locked.
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t end = 0;
+    runGrid(l, kP60, 60, end);
+    CHECK(l.locked(), "locked before the scatter");
+    unsigned unlocked = 0;
+    for (unsigned k = 1; k <= 400; k++) {
+        const uint64_t v = kV0 + (60 + k) * kP60 + ((k & 1) ? 1400000 : 0) - ((k & 1) ? 0 : 1400000);
+        l.noteBuild(2 * kMs);
+        l.onSwap(v - 3 * kMs, v);
+        if (!l.locked()) unlocked++;
+    }
+    CHECK(unlocked == 0, "+-1.4 ms scatter keeps the lock (unlocked on %u of 400 swaps)", unlocked);
+}
+
+void testLateStartIsNotAMiss() {
+    // The wait overran its wake time by 3 ms (a call() inside it, a descheduled thread), the build then ran late and the
+    // swap landed a vblank after the aimed one: that is not the budget's fault.
+    for (int overran = 0; overran < 2; overran++) {
+        LateLatch l;
+        l.setPeriodNs(kP60);
+        uint64_t end = 0;
+        runGrid(l, kP60, 60, end);
+        const uint64_t w = l.wakeAt(end + 200000);
+        const uint64_t target = end - 50000 + kP60;
+        l.noteWaitEnd(overran ? w + 3 * kMs : w + 100000);
+        l.noteBuild(4 * kMs);
+        l.onSwap(w + 3 * kMs + 4 * kMs, target + kP60 + 50000);
+        if (overran) {
+            CHECK(l.misses() == 0 && l.padNs() == LateLatch::kPadMinNs, "an overrun wait is not a miss (%u, pad %llu)",
+                  l.misses(), (unsigned long long)l.padNs());
+        } else {
+            CHECK(l.misses() == 1 && l.padNs() == LateLatch::kPadMinNs + LateLatch::kPadUpNs,
+                  "the same late swap after an on-time wait is a miss (%u)", l.misses());
+        }
+    }
+}
+
 void testOffNominal() {
     // A display that really runs at 59.94 Hz while the mode says 60: the tracker follows the drift.
     LateLatch l;
@@ -258,6 +338,9 @@ int main() {
     testUnknownPeriod();
     testNoRoom();
     testMissGrowsPad();
+    testPersistentMissReleases();
+    testJitterHysteresis();
+    testLateStartIsNotAMiss();
     testOffNominal();
     testModel();
     std::printf(g_fail ? "late_latch_test: %d FAILED\n" : "late_latch_test: OK\n", g_fail);

@@ -19,6 +19,8 @@ public:
     static constexpr uint64_t kBlockedNs = 250000;      // a swap that took this long waited for a vblank
     static constexpr uint64_t kTrackNs = 1500000;       // a vblank observation within this of the grid is tracked
     static constexpr uint64_t kJitterMaxNs = 1000000;   // locked only while the smoothed |residual| stays under this
+    static constexpr uint64_t kUnlockJitterNs = 2000000;   // ... and let go only when it reaches this (hysteresis)
+    static constexpr uint64_t kOverrunNs = 500000;      // a wait that ended this much after its wake time started the UI late
     static constexpr unsigned kLockAfter = 30;          // consecutive tracked observations before the first wait
     static constexpr unsigned kUnlockAfter = 4;         // consecutive outliers (or non-blocking swaps x 8) to let go
     static constexpr uint64_t kPadMinNs = 1000000, kPadMaxNs = 4000000;
@@ -26,6 +28,9 @@ public:
     static constexpr unsigned kCalmRun = 120;           // on-time swaps before the pad shrinks one step
     static constexpr uint64_t kMinRoomNs = 1000000;     // a budget within this of a whole period: no wait
     static constexpr unsigned kBuilds = 60;             // build times remembered (one second at 60 Hz)
+    static constexpr unsigned kOutcomes = 60;           // waits whose outcome (made the vblank / missed) is remembered
+    static constexpr unsigned kMinOutcomes = 8;         // waits observed before the miss rate can release the lock
+    static constexpr unsigned kCooldownSwaps = 300;     // swaps after a release before the lock may be taken again
 
     // The display's refresh period (SDL_DisplayMode), 0 = unknown: the latch stays off.
     void setPeriodNs(uint64_t ns) {
@@ -35,6 +40,8 @@ public:
         tracked_ = outliers_ = nonBlocking_ = 0;
         jitterNs_ = 0;
         targetNs_ = 0;
+        outcomeAt_ = recentMisses_ = 0;
+        cooldown_ = 0;
     }
     uint64_t periodNs() const { return periodNs_; }
 
@@ -44,13 +51,23 @@ public:
         buildAt_++;
     }
 
+    // When the wait that wakeAt() sized really ended.  A wait that overran its wake time (a call() or event handling
+    // inside it, a descheduled thread) started the UI late: its swap missing the vblank says nothing about the budget.
+    void noteWaitEnd(uint64_t ns) { waitEndNs_ = ns; }
+
     // Right after SDL_GL_SwapWindow: when the call began and when it returned.  A swap that blocked returned at a
     // vblank; one that did not says nothing about where the vblanks are.
     void onSwap(uint64_t beginNs, uint64_t endNs) {
         if (!periodNs_) return;
         const int64_t P = (int64_t)periodNs_;
-        if (targetNs_) {   // this iteration waited: did its swap make the vblank it aimed at?
-            if ((int64_t)(endNs - targetNs_) > P / 2) {
+        if (cooldown_) cooldown_--;
+        const bool lateStart = waitEndNs_ && targetNs_ && waitEndNs_ > wakeNs_ + kOverrunNs;
+        waitEndNs_ = 0;
+        if (targetNs_ && lateStart) {   // the UI was late before the build began: not a budget miss, not an outcome
+            targetNs_ = 0;
+        } else if (targetNs_) {   // this iteration waited: did its swap make the vblank it aimed at?
+            const bool miss = (int64_t)(endNs - targetNs_) > P / 2;
+            if (miss) {
                 misses_++;
                 padNs_ = std::min(kPadMaxNs, padNs_ + kPadUpNs);
                 calm_ = 0;
@@ -59,6 +76,20 @@ public:
                 calm_ = 0;
             }
             targetNs_ = 0;
+            // Persistent misses (a GPU that finishes past the vblank, which the CPU-side budget and the capped pad
+            // cannot see): more than a quarter of the last waits missing means the latch is worse than no latch.
+            const unsigned slot = outcomeAt_ % kOutcomes;
+            if (outcomeAt_ >= kOutcomes) recentMisses_ -= outcomes_[slot];
+            outcomes_[slot] = miss ? 1 : 0;
+            recentMisses_ += outcomes_[slot];
+            outcomeAt_++;
+            const unsigned seen = std::min(outcomeAt_, kOutcomes);
+            if (locked_ && seen >= kMinOutcomes && recentMisses_ * 4 > seen) {
+                unlock();
+                releases_++;
+                cooldown_ = kCooldownSwaps;
+                outcomeAt_ = recentMisses_ = 0;
+            }
         }
         if (endNs - beginNs < kBlockedNs) {   // vsync off, or a driver that queues the swap: nothing learned
             if (++nonBlocking_ >= kUnlockAfter * 8) unlock();
@@ -78,29 +109,32 @@ public:
         if (ar < kTrackNs) {
             phaseNs_ = endNs - (uint64_t)(r - r / 4);   // move a quarter of the way toward the observation
             outliers_ = 0;
-            if (++tracked_ >= kLockAfter && jitterNs_ < kJitterMaxNs) locked_ = true;
+            if (++tracked_ >= kLockAfter && jitterNs_ < kJitterMaxNs && !cooldown_) locked_ = true;
         } else if (++outliers_ >= kUnlockAfter) {   // the grid moved (a new display mode, a compositor hiccup)
             unlock();
             phaseNs_ = endNs;
         }
-        if (jitterNs_ >= kJitterMaxNs) locked_ = false;
+        if (locked_ && jitterNs_ >= kUnlockJitterNs) locked_ = false;
     }
 
     // When to stop waiting, given the time now (after the swap and the end-of-iteration work).  <= now: no wait.
     uint64_t wakeAt(uint64_t nowNs) {
         targetNs_ = 0;
+        waitEndNs_ = 0;
         if (!locked_ || !periodNs_) return nowNs;
         const uint64_t b = budgetNs();
         if (b + kMinRoomNs >= periodNs_) return nowNs;   // the UI needs nearly a whole period: nothing to gain
         const int64_t d = (int64_t)(nowNs + b - phaseNs_);
         const uint64_t v = d <= 0 ? phaseNs_ : phaseNs_ + ((uint64_t)d + periodNs_ - 1) / periodNs_ * periodNs_;
         targetNs_ = v;
-        return v - b;
+        wakeNs_ = v - b;
+        return wakeNs_;
     }
 
     bool locked() const { return locked_; }
     uint64_t padNs() const { return padNs_; }
     unsigned misses() const { return misses_; }
+    unsigned released() const { return releases_; }   // times the miss rate let the lock go
     uint64_t budgetNs() const {   // the slowest recent build, plus the pad
         uint64_t mx = 0;
         for (unsigned i = 0; i < std::min(buildAt_, kBuilds); i++) mx = std::max(mx, builds_[i]);
@@ -111,6 +145,7 @@ private:
     void unlock() {
         locked_ = false;
         tracked_ = outliers_ = nonBlocking_ = 0;
+        outcomeAt_ = recentMisses_ = 0;
     }
 
     uint64_t periodNs_ = 0;
@@ -122,6 +157,10 @@ private:
     uint64_t padNs_ = kPadMinNs;
     unsigned calm_ = 0;
     unsigned misses_ = 0;
+    unsigned releases_ = 0, cooldown_ = 0;
+    uint8_t outcomes_[kOutcomes] = {};   // 1 = that wait's swap missed its vblank
+    unsigned outcomeAt_ = 0, recentMisses_ = 0;
+    uint64_t wakeNs_ = 0, waitEndNs_ = 0;   // the wake time wakeAt() returned; when the wait really ended (0 = not told)
     uint64_t targetNs_ = 0;   // the vblank the current wait aims at (0 = no wait this iteration)
     uint64_t builds_[kBuilds] = {};
     unsigned buildAt_ = 0;
