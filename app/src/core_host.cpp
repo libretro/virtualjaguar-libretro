@@ -978,8 +978,13 @@ DiscInfo CoreHost::discInfoLive() {
     for (unsigned i = 0; i < d.count; i++) {
         char label[256] = {0};
         std::string name;
-        if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0])
+        if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0]) {
+            // The core's label is the path after its last '/', so a Windows path ("D:\Games\Disc 1.chd") arrives
+            // whole: keep only the file name, as on every other OS.
             name = label;
+            const size_t sep = name.find_last_of("/\\");
+            if (sep != std::string::npos) name.erase(0, sep + 1);
+        }
         else if (disk_.get_image_path && disk_.get_image_path(i, label, sizeof label) && label[0])
             name = pathStem(label);
         else
