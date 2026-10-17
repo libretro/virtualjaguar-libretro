@@ -28,12 +28,28 @@
 
 These are the six failure modes most likely to slip past the per-task tests. Each one has a pinning test in the task named.
 
-1. **A content switch shows the previous game's frame or option list.** Pinned by: `frame_exchange_unit` "a frame begun before a switch is never shown" (Task 1); `core_host_thread` "after a reload the UI sees the new option push" (Task 7); `emu_thread_e2e` "load while running" (Task 13).
+1. **A content switch shows the previous game's frame or option list.** Pinned by: `frame_exchange_unit` "a frame begun before a switch is never shown" (Task 1); `core_host_thread` "after a reload the UI sees the new option push" (Task 7); `emu_thread_e2e` "load while running" (Task 8); on screen, the threaded loop drops the previous texture on a content switch (Task 13).
 2. **Shutdown while a `call()` is pending, or while the core is blocked inside `retro_run`.** Pinned by: `emu_thread_unit` "calls during shutdown each run exactly once, no deadlock" and "a thread stuck in the core is abandoned after the join timeout, and call() then runs nothing" (Task 4).
-3. **A save-state thumbnail taken from a torn or previous-game frame.** Pinned by: `emu_thread_e2e` "inside the load call the core's buffer is empty" (Task 13) and `smoke_state_threaded`, which saves a state with its thumbnail and requires identical roundtrip hashes (Task 10).
-4. **Audio-device loss, or a paused stream, stalling mode-A pacing.** Pinned by: `pacing_clock_unit` "a device that stops draining falls back to the wall clock" and "no audio clock: the wall clock at the core's period" (Task 3). App passes `-1` for a paused or muted stream (Task 10).
-5. **A UI path still calling CoreHost directly while threaded.** Pinned by: `core_host_thread` "core calls off the owner are refused and counted" (Task 7); every `smoke_*_threaded` test fails on `owner violation` (Task 10); and the windowed check script greps the log for it (Task 12).
+3. **A save-state thumbnail taken from a torn or previous-game frame.** Pinned by: `emu_thread_e2e` "inside the load call the core's buffer is empty" (Task 8) and `smoke_state_threaded`, which saves a state with its thumbnail and requires identical roundtrip hashes (Task 11).
+4. **Audio-device loss, or a paused stream, stalling mode-A pacing.** Pinned by: `pacing_clock_unit` "a device that stops draining falls back to the wall clock" and "no audio clock: the wall clock at the core's period" (Task 3). App passes `-1` for a paused or muted stream (Task 11).
+5. **A UI path still calling CoreHost directly while threaded.** Pinned by: `core_host_thread` "core calls off the owner are refused and counted" (Task 7); every `smoke_*_threaded` test fails on `owner violation` (Task 11); and the windowed check script greps the log for it (Task 13).
 6. **Input latency regressing against the single-thread loop.** Pinned by: `late_latch_unit`'s pipeline model (Task 15), which runs the real `LateLatch` against a fake clock; measured by Task 18 from the `input_lat_ms` and `present_lat_ms` columns (Tasks 10 and 14).
+
+## Execution notes (pre-flight scan, 2026-10-16)
+
+A scan of this plan against develop after TV mode (#995) found these corrections. They are applied during execution
+(the implementing task in brackets), not by editing the task text below:
+
+- `InputManager::poll` also ticks TV mode's `holds_.frame()` once per emulated frame, so it loops it `overlayTicks`
+  times like `overlay.tick()` (Task 5).
+- The replacement `openContent`, `openNoContent` and `closeContent` keep TV mode's `tvShell().closeMenu()` and
+  `input.clearHolds()` lines (Task 11).
+- `CoreHost::overrideOption` / `clearOverride` off the owner queue a core-only helper, so the UI mirror is written
+  only on the UI thread (Task 7).
+- The threaded loop naps when vsync is on but the swap did not block (minimized or occluded window), drops the
+  previous game's texture on a content switch, and draws with the shown frame's own aspect (Task 13).
+- `emu_thread_e2e`'s "load while running" polls against a deadline instead of asserting after fixed sleeps, so it
+  holds under load and TSan (Task 8). A headless `--tv-test-script` run stays inline (Task 9).
 
 ## Resolved spec ambiguities
 
@@ -129,11 +145,14 @@ and leaves the next step to the user (mode B is Phase 4). Either way it is not m
 | `app/src/cheats.h`, `app/src/cheats.cpp`, `app/src/cheats_core.cpp` | modify | `doneSink`; threaded sinks batch and post |
 | `app/src/debug/debug_session.h`, `app/src/debug/debug_session.cpp` | modify | `setThreadBlocked` |
 | `app/src/netplay_ui.cpp` | modify | Netplay off while threaded |
+| `app/src/debug/op_ui.cpp` | modify | Object list's "step one frame" refused while threaded |
+| `docs/agent/testing.md` | modify | VJ_PERF_CSV columns, `--perf-input`, `--emu-thread` |
 | `app/CMakeLists.txt` | modify | `VJ_APP_TSAN`, new sources, include `VJEmuThreadTests` |
 | `app/cmake/VJEmuThreadTests.cmake` | new | Every new test (label `emu_thread`) |
 | `app/tests/frame_exchange_test.cpp`, `emu_commands_test.cpp`, `pacing_clock_test.cpp`, `emu_thread_test.cpp`, `input_snapshot_test.cpp`, `audio_out_test.cpp`, `core_host_thread_test.cpp`, `emu_thread_e2e.cpp`, `perf_csv_test.cpp`, `late_latch_test.cpp` | new | Unit and end-to-end tests |
 | `app/tests/emu_thread_windowed_check.sh` | new | Windowed check for the Mac Studio only |
 | `app/tests/tsan.supp` | new | ThreadSanitizer suppressions (starts empty) |
+| `app/tests/tsan_canary.cpp` | new | A deliberate data race that proves the TSan build really is instrumented |
 | `app/tests/settings_reset_test.cpp`, `app/tests/cheats_test.cpp`, `app/tests/debug_session_test.cpp` | modify | New checks |
 | `.github/workflows/app.yml` | modify | `tsan` job |
 | `app/README.md` | modify | "Emulation thread" section, layout rows |
