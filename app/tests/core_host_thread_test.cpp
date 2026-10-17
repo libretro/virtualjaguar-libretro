@@ -207,17 +207,20 @@ int main(int argc, char** argv) {
     {
         static std::atomic<bool> pro{false}, pressX{false};
         const std::string dev = "virtualjaguar_p1_device";
-        host.optionLock = [dev](const std::string& k, std::string& v) {   // runs on the emulation thread
-            if (k != dev) return false;
-            v = pro.load() ? "pad_pro" : "auto";
-            return true;
-        };
-        host.inputState = [](unsigned port, unsigned device, unsigned, unsigned id) -> int16_t {
-            if (port != 0 || device != RETRO_DEVICE_JOYPAD || !pressX.load()) return 0;
-            const int16_t x = (int16_t)(1 << RETRO_DEVICE_ID_JOYPAD_X);
-            return id == RETRO_DEVICE_ID_JOYPAD_MASK ? x : (id == RETRO_DEVICE_ID_JOYPAD_X ? 1 : 0);
-        };
-        CHECK(emu.call([&] { return host.loadContent(rom, err); }));   // the definitions push takes the lock
+        // The hooks the emulation thread reads are swapped on it (as the reload that follows needs them).
+        CHECK(emu.call([&] {
+            host.optionLock = [dev](const std::string& k, std::string& v) {
+                if (k != dev) return false;
+                v = pro.load() ? "pad_pro" : "auto";
+                return true;
+            };
+            host.inputState = [](unsigned port, unsigned device, unsigned, unsigned id) -> int16_t {
+                if (port != 0 || device != RETRO_DEVICE_JOYPAD || !pressX.load()) return 0;
+                const int16_t x = (int16_t)(1 << RETRO_DEVICE_ID_JOYPAD_X);
+                return id == RETRO_DEVICE_ID_JOYPAD_MASK ? x : (id == RETRO_DEVICE_ID_JOYPAD_X ? 1 : 0);
+            };
+            return host.loadContent(rom, err);   // the definitions push takes the lock
+        }));
         host.pinSnapshot();
         CHECK(host.optionLocked(dev) && valueOf(host, dev) == "auto");
         auto keypad = [&](int slot) { return emu.call([slot] { return joypad0Buttons[slot] != 0; }); };
@@ -241,8 +244,10 @@ int main(int argc, char** argv) {
         CHECK(valueOf(host, dev) == "auto");
         CHECK(host.ownerViolations() == v2);
         pressX.store(false);
-        host.optionLock = nullptr;
-        host.inputState = [](unsigned, unsigned, unsigned, unsigned) -> int16_t { return 0; };
+        emu.call([&] {
+            host.optionLock = nullptr;
+            host.inputState = [](unsigned, unsigned, unsigned, unsigned) -> int16_t { return 0; };
+        });
     }
 
     emu.call([&] { host.unloadContent(); });
