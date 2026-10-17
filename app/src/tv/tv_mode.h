@@ -35,21 +35,28 @@ public:
 
     void toggle();                           // View > TV mode, the in-game menu, C_TVMENU with no game; no-op when Off
     void setOn(bool on);                     // --tv, the remembered Manual state; no-op when Off
-    void onFullscreen(bool fs);              // Auto + autoFullscreen: enter -> on, leave -> off
+    // onFullscreen and onPadPress are fed edges (a fullscreen change, a pad press), but a repeated onFullscreen(true)
+    // still re-applies: it turns TV mode back on after a manual off (the tests rely on it).  The current fullscreen
+    // state is recorded whatever the setting.
+    void onFullscreen(bool fs);              // Auto + autoFullscreen: enter -> on, leave -> off whatever the cause
     void onPadPress(bool desktopOwnsInput);  // Auto + autoController + desktopOwnsInput -> on (Cause::Controller)
-    void onMouseMove(float dx, float dy);    // adds to the travel; > kMouseOffPx -> off (see offByDesktopInput)
-    void onNonNavKey();                      // same rule as the mouse
+    // The mouse and the keyboard end a Controller-caused TV mode: the mouse once its summed path length passes
+    // kMouseOffPx, a non-nav key at once.  Never while Auto + autoFullscreen + fullscreen holds it, and never for a
+    // Manual or Fullscreen cause.  Every turn-on resets the travel (so does a pad press while a controller has it on).
+    void onMouseMove(float dx, float dy);
+    void onNonNavKey();
 
 private:
     void turnOn(Cause c);
     void turnOff();
     bool autoActing(bool trigger) const { return cfg_.setting == TvSetting::Auto && trigger; }
-    bool offByDesktopInput() const { return on_ && cause_ == Cause::Controller && !heldByFullscreen_; }
+    bool fullscreenHolds() const { return cfg_.setting == TvSetting::Auto && cfg_.autoFullscreen && fs_; }
+    bool offByDesktopInput() const { return on_ && cause_ == Cause::Controller && !fullscreenHolds(); }
 
     TvConfig cfg_;
     bool on_ = false;
     Cause cause_ = Cause::None;
-    bool heldByFullscreen_ = false;  // a controller-started TV mode that fullscreen then kept alive
+    bool fs_ = false;                // the window is fullscreen right now (configure, then every onFullscreen)
     float mouseTravel_ = 0.0f;       // summed path length of the mouse since TV mode went on (or the last pad press)
 };
 

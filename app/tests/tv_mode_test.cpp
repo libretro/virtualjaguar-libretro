@@ -124,15 +124,58 @@ static void testMouseTravel() {
     CHECK(!m.active());
 }
 
-static void testFullscreenLeaveKeepsController() {
+static void testFullscreenHoldIsState() {
+    TvMode m;
+    m.configure({TvSetting::Auto}, false);
+    m.onFullscreen(true);
+    m.toggle();
+    CHECK(!m.active());
+    m.onPadPress(true);
+    CHECK(m.active() && m.cause() == TvMode::Cause::Controller);
+    m.onMouseMove(33, 0);
+    CHECK(m.active());                                                      // still fullscreen: the mouse cannot end it
+    m.onNonNavKey();
+    CHECK(m.active());
+
+    m.configure({TvSetting::Auto}, true);                                   // fullscreen from configure() holds too
+    m.toggle();
+    m.onPadPress(true);
+    m.onMouseMove(33, 0);
+    CHECK(m.active());
+
+    m.configure({TvSetting::Auto}, false);                                  // control: not fullscreen, the mouse ends it
+    m.onFullscreen(true);
+    m.onFullscreen(false);                                                  // left fullscreen: off
+    m.onPadPress(true);
+    m.onMouseMove(33, 0);
+    CHECK(!m.active());
+
+    TvConfig noFs{TvSetting::Auto, false, true};                            // fullscreen does not hold without autoFullscreen
+    m.configure(noFs, true);
+    m.onPadPress(true);
+    m.onMouseMove(33, 0);
+    CHECK(!m.active());
+}
+
+static void testFullscreenLeaveTurnsOff() {
     TvMode m;
     m.configure({TvSetting::Auto}, false);
     m.onPadPress(true);
+    CHECK(m.cause() == TvMode::Cause::Controller);
     m.onFullscreen(true);
-    m.onFullscreen(false);                                                  // the pad still owns it: only the hold goes
-    CHECK(m.active() && m.cause() == TvMode::Cause::Controller);
-    m.onMouseMove(40, 0);
-    CHECK(!m.active());
+    m.onFullscreen(false);
+    CHECK(!m.active());                                                     // whatever the cause
+    m.onFullscreen(true);
+    m.toggle();
+    m.toggle();
+    CHECK(m.active() && m.cause() == TvMode::Cause::Manual);
+    m.onFullscreen(false);
+    CHECK(!m.active());                                                     // leaving ends a manual override too
+    m.configure({TvSetting::Manual}, false);                                // only under Auto
+    m.toggle();
+    m.onFullscreen(true);
+    m.onFullscreen(false);
+    CHECK(m.active());
 }
 
 static void testSettingKeys() {
@@ -159,7 +202,8 @@ int main() {
     testOffAndManual();
     testAutoTriggers();
     testMouseTravel();
-    testFullscreenLeaveKeepsController();
+    testFullscreenHoldIsState();
+    testFullscreenLeaveTurnsOff();
     testSettingKeys();
     testInputOwner();
     std::printf("tv_mode_test: %d checks, %d failed\n", g_checks, g_fail);

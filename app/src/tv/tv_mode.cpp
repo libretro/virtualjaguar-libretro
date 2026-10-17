@@ -28,19 +28,18 @@ TvSetting effectiveSetting(TvSetting stored) {
 void TvMode::turnOn(Cause c) {
     on_ = true;
     cause_ = c;
-    heldByFullscreen_ = false;
     mouseTravel_ = 0.0f;
 }
 
 void TvMode::turnOff() {
     on_ = false;
     cause_ = Cause::None;
-    heldByFullscreen_ = false;
     mouseTravel_ = 0.0f;
 }
 
 void TvMode::configure(const TvConfig& c, bool fullscreenNow) {
     cfg_ = c;
+    fs_ = fullscreenNow;
     turnOff();
     if (autoActing(cfg_.autoFullscreen) && fullscreenNow) turnOn(Cause::Fullscreen);
 }
@@ -59,13 +58,12 @@ void TvMode::setOn(bool on) {
 }
 
 void TvMode::onFullscreen(bool fs) {
+    fs_ = fs;
     if (!autoActing(cfg_.autoFullscreen)) return;
     if (fs) {
-        if (!on_) turnOn(Cause::Fullscreen);
-        else if (cause_ == Cause::Controller) heldByFullscreen_ = true;   // controller-on, then fullscreen holds it
+        if (!on_) turnOn(Cause::Fullscreen);   // already on (controller or manual): it stays, with its own cause
     } else if (on_) {
-        if (cause_ == Cause::Fullscreen) turnOff();
-        else if (cause_ == Cause::Controller) heldByFullscreen_ = false;  // the pad still owns it: only the hold goes
+        turnOff();                             // leaving fullscreen is a trigger edge: off whatever the cause
     }
 }
 
@@ -80,7 +78,7 @@ void TvMode::onPadPress(bool desktopOwnsInput) {
 
 void TvMode::onMouseMove(float dx, float dy) {
     if (!offByDesktopInput()) return;
-    mouseTravel_ += std::sqrt(dx * dx + dy * dy);
+    mouseTravel_ += std::hypot(dx, dy);
     if (mouseTravel_ > kMouseOffPx) turnOff();
 }
 
