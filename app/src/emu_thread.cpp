@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <exception>
 
+#if defined(__APPLE__)
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
+
 namespace vj {
 
 namespace {
@@ -124,6 +129,12 @@ bool EmuThread::advance(unsigned n) {
 
 void EmuThread::loop() {
     threadId_.store(std::this_thread::get_id());
+#if defined(__APPLE__)
+    // A default-QoS thread gets timer slack: on the Mac Studio its frame wake-ups ran ~2 ms (p99 ~3 ms) after their due
+    // time, which widens the window of frame end times the pacing grid has to keep off the UI's take point (#967).
+    // The frame loop is what the user is watching; it is as interactive as the main thread.
+    if (preciseWake_.load()) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
     client_->threadStarted();
     {
         std::unique_lock<std::mutex> l(mu_);
@@ -163,7 +174,14 @@ void EmuThread::loop() {
         if (!budget) {
             due = clock.nextDue(in);
             if (due > in.now + 0.0002) {
-                cmds_.waitUntil(atSec(std::min(due, in.now + 0.1)));   // re-checked at least every 100 ms
+                // Precise wake (default): the condition wait (woken by commands) ends kPreciseSec before the due time
+                // and short sleeps cover the rest, so a frame starts within ~0.2 ms of its due time instead of whenever
+                // the timer slack lets the condition wait return.
+                const bool precise = preciseWake_.load();
+                if (!precise || due - in.now > kPreciseSec)
+                    cmds_.waitUntil(atSec(std::min(precise ? due - kPreciseSec : due, in.now + 0.1)));   // <= 100 ms
+                else
+                    std::this_thread::sleep_for(std::chrono::duration<double>(std::min(due - in.now, 0.0002)));
                 continue;
             }
         }

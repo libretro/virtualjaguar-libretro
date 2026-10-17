@@ -26,6 +26,7 @@ static void usage(const char* argv0) {
         "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
         "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
         "  --pace-steer on|off   dev: with the emulation thread and vsync, keep frame ends off the take point (default on)\n"
+        "  --emu-wake precise|plain  dev: the emulation thread's frame wake-ups (default precise)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
@@ -212,6 +213,14 @@ int main(int argc, char** argv) {
                 return 2;
             }
             a.paceSteer = v == "on" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--emu-wake")) {
+            const std::string v = need(s);
+            if (v != "precise" && v != "plain") {
+                std::fprintf(stderr, "--emu-wake wants precise or plain, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.emuWake = v == "precise" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {
