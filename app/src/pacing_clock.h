@@ -49,6 +49,7 @@ public:
     }
 
     // When the next frame should start (absolute, on in.now's clock).  At or before in.now: start it now.
+    // Deliberately non-const: it feeds the queue filter and accumulates dropped frames; safe to call repeatedly.
     double nextDue(const PacingInput& in) {
         if (!init_) reset(in.now);
         observe(in);
@@ -67,7 +68,10 @@ public:
         const double base = basePeriod(in);
         if (in.now - next_ > kMaxLateFrames * base) next_ = in.now;
         lastStart_ = in.now;
-        next_ += base * (audio_ ? trim_ : 1.0);
+        // While refilling, frames start early; rebase the grid on each one.  Advancing the old grid a full period per
+        // early frame would leave it ahead of the clock by the extra audio just queued, and the loop would then sleep
+        // that long, drain the queue below the low-water mark and re-arm the refill (bursts and stalls forever).
+        next_ = (refill_ ? in.now : next_) + base * (audio_ ? trim_ : 1.0);
     }
 
     bool audioLocked() const { return audio_; }

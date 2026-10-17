@@ -195,14 +195,22 @@ void testDeviceStopsDraining() {
 
 void testRefillFromEmpty() {
     Device dev;   // a fresh stream: nothing queued
-    dev.countFrom = 0.5;
-    Run r = simulate(3.0, fiveMs, true, dev);
+    dev.countFrom = 1.0;
+    Run r = simulate(10.0, fiveMs, true, dev);
     double closest = 1.0;
     for (size_t i = 1; i < r.starts.size() && r.starts[i] < 0.5; i++) closest = std::min(closest, r.starts[i] - r.starts[i - 1]);
     CHECK(closest >= kPeriod / PacingClock::kRefillRate - 1e-9, "refilling runs at most %.0fx (closest starts %.2f ms)",
           PacingClock::kRefillRate, 1000.0 * closest);
-    CHECK(dev.underruns == 0, "refilled within half a second: no underrun after it (%llu)", (unsigned long long)dev.underruns);
+    CHECK(dev.underruns == 0, "refilled within a second: no underrun after it (%llu)", (unsigned long long)dev.underruns);
     CHECK(r.lockedAtEnd, "then it follows the audio clock");
+    // After the refill the grid must be even again: the refill must not leave the grid ahead of the clock, or the next
+    // frame sleeps a long stretch, the queue drains, and refill re-arms (a limit cycle of bursts and stalls).
+    const double worst = unevenness(r, 1.0, 10.0);
+    CHECK(worst < 0.002, "frame starts are even after the refill (worst %.2f ms off)", 1000.0 * worst);
+    const double want = kStreamHz / kBatch;
+    const double got = rateBetween(r, 1.0, 10.0);
+    CHECK(std::fabs(got - want) / want < 1e-3, "and run at the audio clock's rate: %.4f Hz, want %.4f", got, want);
+    CHECK(r.dropped == 0, "nothing dropped (%llu)", (unsigned long long)r.dropped);
 }
 
 void testSpikeCatchesUp() {
