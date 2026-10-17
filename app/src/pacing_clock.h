@@ -47,6 +47,7 @@ public:
     static constexpr unsigned kEnds = 120;          // frame ends remembered (2 s) for the steering window
     static constexpr unsigned kMinEnds = 30;        // ... before the window is trusted
     static constexpr double kSteerMargin = 0.00075; // room kept on each side of the window (take-time jitter)
+    static constexpr double kWindowDecay = 0.0002;  // the held window shrinks back at 0.2 ms per second
 
     void reset(double now) {
         next_ = now;
@@ -56,6 +57,9 @@ public:
         init_ = true;
         endAt_ = 0;
         curDue_ = -1;
+        loHeld_ = 1e9;
+        hiHeld_ = -1e9;
+        lastSteer_ = now;
     }
 
     // When the next frame should start (absolute, on in.now's clock).  At or before in.now: start it now.
@@ -119,8 +123,15 @@ private:
         const unsigned n = std::min(endAt_, kEnds);
         std::copy(ends_, ends_ + n, sorted);
         std::sort(sorted, sorted + n);
-        const double lo = sorted[n / 50] - kSteerMargin;            // ~p2 and ~p98: one outlier does not move them
-        const double hi = sorted[n - 1 - n / 50] + kSteerMargin;
+        // ~p2 and ~p98 (one outlier does not move them), held for a while: costs switch with the content (yarc runs
+        // ~7.5 ms frames for a few seconds, then ~2.9 ms), and a window that forgot the slow frames after kEnds would
+        // let the next switch land them on the take point.  The held edges come back at kWindowDecay.
+        const double dt = std::max(0.0, in.now - lastSteer_);
+        lastSteer_ = in.now;
+        loHeld_ = std::min(sorted[n / 50], loHeld_ + kWindowDecay * dt);
+        hiHeld_ = std::max(sorted[n - 1 - n / 50], hiHeld_ - kWindowDecay * dt);
+        const double lo = loHeld_ - kSteerMargin;
+        const double hi = hiHeld_ + kSteerMargin;
         if (hi - lo >= P - 2 * kSteerMargin) return;               // no gap between take points wide enough
         double x = std::fmod(in.takeAt - next_, P);                 // from the next frame's due to a take point
         if (x < lo) x += P * std::ceil((lo - x) / P);
@@ -130,7 +141,7 @@ private:
         double step;                                                // the trim averages out to the audio clock)
         if (r <= 0) step = -(hi - x);                               // x rising: start earlier, so this frame makes it
         else step = x - lo;                                         // x falling: start later, so it waits a period
-        if (next_ + step < in.now + hi - kSteerMargin) return;      // earlier than this frame can be done: not now
+        if (next_ + step < in.now) return;                          // (never before the frame starting now)
         next_ += step;
         steers_++;
     }
@@ -177,6 +188,7 @@ private:
     unsigned endAt_ = 0;
     double curDue_ = -1;        // the running frame's grid time (-1 = none: refill, fast-forward)
     uint64_t steers_ = 0;
+    double loHeld_ = 1e9, hiHeld_ = -1e9, lastSteer_ = 0;   // the held window edges (end - due), seconds
 };
 
 }  // namespace vj

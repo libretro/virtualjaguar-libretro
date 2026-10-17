@@ -75,7 +75,7 @@ struct Run {
 // cost(i) seconds, and queue its audio at its end (fast-forward drops it, as App does).
 // takeHz > 0: the UI takes frames `lead` before each vblank of a takeHz display and tells the clock (steering).
 Run simulate(double secs, const std::function<double(size_t)>& cost, bool audio, Device& dev, bool ff = false,
-             double takeHz = 0, double lead = 0) {
+             double takeHz = 0, double lead = 0, const std::function<double(size_t)>& wakeLate = nullptr) {
     PacingClock clock;
     Run r;
     double t = 0;
@@ -95,7 +95,7 @@ Run simulate(double secs, const std::function<double(size_t)>& cost, bool audio,
         }
         const double due = clock.nextDue(in);
         if (due > t + 1e-12) {
-            t = due;
+            t = due + (wakeLate ? wakeLate(i) : 0.0);   // the thread wakes up late (timer slack, scheduling)
             continue;
         }
         clock.frameStarted(in);
@@ -377,6 +377,22 @@ void testSteeringAt120Hz() {
     }
 }
 
+void testSteeringFollowsACostThatSwitches() {
+    // Measured on the Mac Studio (yarc, VJ_PERF_TRACE): the thread wakes 0.5-3 ms late and the frame cost switches with
+    // the content between ~7.5 ms and ~2.9 ms for seconds at a time.  When it drops, the ends jump 4.5 ms earlier,
+    // possibly onto the take point, while the window still remembers the 7.5 ms frames.
+    auto cost = [](size_t i) { return ((i / 300) % 2 ? 0.0029 : 0.0075) + 0.0004 * (double)((i * 7) % 5) / 4.0; };
+    auto late = [](size_t i) { return 0.0005 + 0.0025 * (double)((i * 13) % 11) / 10.0; };
+    for (double lead : {0.0025, 0.003, 0.004, 0.006, 0.009, 0.012}) {
+        Device dev;
+        dev.prime();
+        Run r = simulate(70.0, cost, true, dev, false, 60.0, lead, late);
+        const Shown s = present(r, 60.0, 10.0, 70.0, lead);
+        CHECK(s.repeats + s.skips <= 12, "a cost that switches 7.5 <-> 2.9 ms every 5 s, take %.1f ms early: %d repeats "
+              "+ %d skips in 60 s (%llu steps)", 1000 * lead, s.repeats, s.skips, (unsigned long long)r.steers);
+    }
+}
+
 void testWindowTooWideDoesNotSteer() {
     Device dev;
     dev.prime();
@@ -400,6 +416,7 @@ int main(int argc, char** argv) {
     testSteeringRestoresTheBeat();
     testSteeringKeepsTheAudioClock();
     testSteeringAt120Hz();
+    testSteeringFollowsACostThatSwitches();
     testWindowTooWideDoesNotSteer();
     std::printf(g_fail ? "pacing_clock_test: %d FAILED\n" : "pacing_clock_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
