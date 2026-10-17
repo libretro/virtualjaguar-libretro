@@ -28,6 +28,7 @@ static void usage(const char* argv0) {
         "  --version, --help\n"
         "\n"
         "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
+        "  --neuro URL           let Neuro-sama (or any Neuro API server) play, this run: ws://HOST:PORT (docs/neuro.md)\n"
         "  --netplay ROLE        host | join | join-discovered | browse | loopback\n"
         "  --netplay-addr ADDR   join: the host's address (no port)\n"
         "  --netplay-port N      link port, 1-65535 (default 42171; the window offers 42171-42174 and a custom box)\n"
@@ -169,6 +170,7 @@ int main(int argc, char** argv) {
             a.expectControls = v == "shown" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--tv-test-script")) a.tvTestScript = need(s);
+        else if (!std::strcmp(s, "--neuro")) a.neuroUrl = need(s);
         else if (!std::strcmp(s, "--netplay")) a.netplay.role = need(s);
         else if (!std::strcmp(s, "--netplay-addr")) a.netplay.address = need(s);
         else if (!std::strcmp(s, "--netplay-device")) a.netplay.device = need(s);

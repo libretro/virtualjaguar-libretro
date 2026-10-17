@@ -759,6 +759,20 @@ speaks Discord's local RPC protocol itself, no Discord SDK).
    CMake default in `app-package.yml`; leave it unset to use the default. An application ID is public, not a secret.
 4. Test from a second Discord account: buttons are hidden on your own profile.
 
+## Neuro API (AI players)
+
+**Settings > Neuro** connects the app to a [Neuro game API](https://github.com/VedalAI/neuro-sdk) server, so
+Neuro-sama, or any AI backend that speaks the API (the SDK's Randy, Tony and Gary included), can play as Player 1.
+The app registers the Jaguar controller as actions (`press_buttons`, `button_sequence`, `hold_buttons`,
+`release_all`), plus a game profile's own moves (Tempest 2000 is built in; more go in `<data folder>/neuro/*.json`),
+asks for the next move whenever the last one has played out, and presses the chosen buttons frame by frame.
+
+- `--neuro ws://HOST:PORT` turns it on for one run; the default server is `$NEURO_SDK_WS_URL`, else
+  `ws://localhost:8000` (Randy). Only `ws://`; no TLS.
+- Config keys `neuro.enabled`, `neuro.url`, `neuro.auto_force`, `neuro.force_interval`, `neuro.game_name`.
+- The socket lives on a background thread and reconnects by itself; the game never waits on it.
+- [docs/neuro.md](../docs/neuro.md) has the actions, the profile format and testing with Randy.
+
 Tests: `ctest -R discord` (frame encode/decode, JSON escaping, socket paths per OS, the rate limiter, the activity
 built from app state, and a loopback test against a fake Discord server on a Unix socket; skipped on Windows).
 

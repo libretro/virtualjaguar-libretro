@@ -20,6 +20,7 @@
 #include "debug/debug_session.h"
 #include "fonts.h"
 #include "discord_presence.h"
+#include "neuro_agent.h"
 #include "input.h"
 #include "instance.h"
 #include "library_service.h"
@@ -57,6 +58,7 @@ struct CliArgs {
     std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
     unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
     bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
+    std::string neuroUrl;           // --neuro URL: connect to this Neuro API server for this run (not saved)
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
@@ -138,6 +140,8 @@ public:
         std::string artKey, artUrl;
         double artAt = 0;
     } discordState;
+    neuro::Agent neuro;              // the Neuro API client (neuro_app.cpp): an AI plays as Player 1
+    std::string neuroCliUrl;         // --neuro URL: on for this run, whatever the config says
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -287,6 +291,7 @@ private:
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+    void headlessNeuroFrame(uint64_t t0, unsigned i);
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
     void frameUi();
@@ -383,7 +388,12 @@ void drawNetplay(App& app);
 void discordTick(App& app);                          // UI loop, every iteration: cheap, rate-limits itself
 void discordNoteGameStarted(App& app);               // a game booted: the "elapsed" timer restarts
 void discordShutdown(App& app);                      // clears the status and stops the worker
-std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_id, else the compile-time default ("" = none)
+std::string discordConfiguredAppId(const Config& cfg);
+// Neuro API (neuro_app.cpp): let Neuro-sama, or any Neuro API backend, play (docs/neuro.md).
+void neuroInit(App& app, const CliArgs& a);          // config, profiles; connects when enabled
+void neuroTick(App& app);                            // UI loop, every iteration: the socket, the game, the next force
+void neuroShutdown(App& app);                        // closes the connection
+void drawNeuroTab(App& app);                         // Settings > Neuro   // config discord.app_id, else the compile-time default ("" = none)
 // Themes (theme_ui.cpp): Settings > Interface > Appearance, the theme editor window and its file-dialog mailbox.
 void drawAppearanceSettings(App& app);
 void drawThemeEditor(App& app);
