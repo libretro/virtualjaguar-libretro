@@ -47,6 +47,12 @@ Intent intentForKey(int sc, bool shift) {
     }
 }
 
+const char* triggerLabel(Intent in, bool sony) {
+    if (in == Intent::PagePrev) return sony ? "L2" : "LT";
+    if (in == Intent::PageNext) return sony ? "R2" : "RT";
+    return "";
+}
+
 void NavInput::press(int src, Intent in, uint64_t ms) {
     if (in == Intent::None) return;
     if (isDirection(in)) {

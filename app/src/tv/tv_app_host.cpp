@@ -215,6 +215,8 @@ std::string AppHost::glyph(Intent i) const {
     case Intent::None: break;
     }
     SDL_Gamepad* g = lastWasPad_ ? SDL_GetGamepadFromID(lastPad_) : nullptr;   // null once that pad is gone
+    if (g && (i == Intent::PagePrev || i == Intent::PageNext))   // the triggers (axes, not buttons)
+        return triggerLabel(i, SDL_GetGamepadButtonLabel(g, SDL_GAMEPAD_BUTTON_SOUTH) == SDL_GAMEPAD_BUTTON_LABEL_CROSS);
     if (g && b != SDL_GAMEPAD_BUTTON_INVALID) {
         const bool sony = SDL_GetGamepadButtonLabel(g, SDL_GAMEPAD_BUTTON_SOUTH) == SDL_GAMEPAD_BUTTON_LABEL_CROSS;
         switch (b) {

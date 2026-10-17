@@ -403,9 +403,11 @@ static void hintBarKeepsBack() {
 
 static ImGuiWindow* baseWindow() { return ImGui::FindWindowByName(kBaseWindowName); }
 
-static bool keyEvent(Shell& shell, SDL_Scancode sc, SDL_Keycode k, bool down = true, SDL_Keymod mod = SDL_KMOD_NONE) {
+static bool keyEvent(Shell& shell, SDL_Scancode sc, SDL_Keycode k, bool down = true, SDL_Keymod mod = SDL_KMOD_NONE,
+                     bool repeat = false) {
     SDL_Event e;
     SDL_zero(e);
+    e.key.repeat = repeat;
     e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
     e.key.scancode = sc;
     e.key.key = k;
@@ -1270,6 +1272,27 @@ static void libraryFilterSubstringAndListSwitch() {
     CHECK(host.launchedKey == host.all[1].key);
 }
 
+// Holding Backspace clears the filter and stops there: the repeats after it ran out are dropped, only a fresh press is Back.
+static void libraryHeldBackspaceStopsAtEmptyFilter() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    keyEvent(shell, SDL_SCANCODE_D, SDLK_D);
+    keyEvent(shell, SDL_SCANCODE_O, SDLK_O);
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, true, SDL_KMOD_NONE, false));   // "d"
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, true, SDL_KMOD_NONE, true));    // ""
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, true, SDL_KMOD_NONE, true));    // dropped
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, true, SDL_KMOD_NONE, true));
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "library" && drew("All games \xC2\xB7 6 games"));
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, false);
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, true, SDL_KMOD_NONE, false));   // a fresh press: Back
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "home");
+}
+
 static void libraryTypingLeavesHotkeys() {
     FakeHost host;
     host.all = libraryFixture();
@@ -1455,6 +1478,7 @@ int main() {
     libraryLetterPickerJumps();
     libraryTypingFiltersAndBackspace();
     libraryFilterSubstringAndListSwitch();
+    libraryHeldBackspaceStopsAtEmptyFilter();
     libraryTypingLeavesHotkeys();
     libraryMouse();
     libraryFocusRememberedAcrossVisits();

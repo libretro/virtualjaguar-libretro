@@ -18,6 +18,8 @@ enum class Intent { None, Up, Down, Left, Right, Accept, Back, Alt, Aux, Menu, S
 
 Intent intentForButton(int sdlButton);           // SDL_GamepadButton -> Intent (None when unmapped)
 Intent intentForKey(int scancode, bool shift);   // SDL_Scancode -> Intent (None when unmapped)
+// The caption of the trigger behind PagePrev / PageNext on a pad ("LT"/"RT", "L2"/"R2" on a PlayStation-family pad); "" for any other intent.
+const char* triggerLabel(Intent in, bool sony);
 
 class NavInput {
 public:

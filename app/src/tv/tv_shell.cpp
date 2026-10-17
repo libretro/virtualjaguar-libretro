@@ -100,6 +100,9 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
             // Typing goes to the top screen.
             const char c = typedChar(e.key);
             if (c && top() && top()->typed(c)) return true;   // used: not Back, not the app's
+            // A held Backspace repeats: the repeats the screen does not use (the filter ran out) are dropped, not turned into
+            // Back -- only a fresh press may leave the screen.
+            if (c == '\b' && e.key.repeat) return true;
         }
         if (intentForKey(e.key.scancode, shift) == Intent::None) return false;   // F4 and friends are the app's
         nav_.key(e.key.scancode, down, shift, ms);
