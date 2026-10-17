@@ -693,7 +693,13 @@ void LibraryService::decodeJob(const ArtJob& job) {
                 if (sourceDown) continue;
                 int64_t missTime = 0;
                 std::string miss = lib::thumbnailMissPath(root_, type, key, src.system);
-                if (pathExists(miss, &missTime)) {
+                if (src.sessionMisses) {
+                    // The mirror: a 404 holds until the app quits.  A marker file here was written by an older
+                    // version and would hide art the site gained since (#997), so it goes.
+                    if (pathExists(miss)) SDL_RemovePath(miss.c_str());
+                    std::lock_guard<std::mutex> g(m_);
+                    if (sessionMiss_.count(key + "|" + type + "|" + std::to_string(si))) continue;
+                } else if (pathExists(miss, &missTime)) {
                     SDL_Time nowNs = 0;
                     SDL_GetCurrentTime(&nowNs);
                     if ((int64_t)(nowNs / 1000000000LL) - missTime < src.missRetrySeconds) continue;
@@ -747,8 +753,13 @@ void LibraryService::fetchJob(const ArtJob& job, const std::string& type, size_t
         SDL_CreateDirectory(dir.c_str());
         writeFileAtomic(cache, r.body.data(), r.body.size());
     } else if (ok && r.status == 404) {
-        SDL_CreateDirectory(dir.c_str());
-        writeFileAtomic(lib::thumbnailMissPath(root_, type, key, src.system), "", 0);
+        if (src.sessionMisses) {
+            std::lock_guard<std::mutex> g(m_);
+            sessionMiss_.insert(key + "|" + type + "|" + std::to_string(source));
+        } else {
+            SDL_CreateDirectory(dir.c_str());
+            writeFileAtomic(lib::thumbnailMissPath(root_, type, key, src.system), "", 0);
+        }
     } else {
         {
             std::lock_guard<std::mutex> g(m_);

@@ -234,7 +234,7 @@ static void testThumbnailNames() {
         CHECK(s[0].base == "http://up/" && std::strcmp(s[0].system, "Atari - Jaguar") == 0);
         CHECK(s[1].base == "http://mirror/thumbs/" && std::strcmp(s[1].system, "Atari - Jaguar CD") == 0);
         CHECK(std::string(s[0].system) != std::string(s[1].system));   // cache and misses are kept per source
-        CHECK(s[1].missRetrySeconds < s[0].missRetrySeconds);                  // the mirror is looked at again sooner
+        CHECK(s[1].sessionMisses && !s[0].sessionMisses);   // the mirror's misses last one session (#997)
     }
     CHECK(lib::artSources(lib::Section::Disc, "http://up/", "").size() == 1);   // mirror off
     CHECK(lib::artSources(lib::Section::Bios, "http://up/", lib::kMirrorBase).size() == 1);
@@ -1088,7 +1088,8 @@ static void testCdMirror() {
         CHECK_EQ(logAt(before + 3), mirPath(kT, snapOnly.datName));
         CHECK_EQ(logAt(before + 4), upPath(kS, snapOnly.datName));
         CHECK_EQ(logAt(before + 5), mirPath(kS, snapOnly.datName));
-        CHECK(miss(kB, snapOnly.datName, lib::kThumbSystemCd) && miss(kT, snapOnly.datName, lib::kThumbSystemCd));
+        // the mirror's misses are remembered for this session only, never written as files (#997)
+        CHECK(!miss(kB, snapOnly.datName, lib::kThumbSystemCd) && !miss(kT, snapOnly.datName, lib::kThumbSystemCd));
         CHECK(exists(lib::thumbnailCachePath(root, kS, snapOnly.datName, lib::kThumbSystemCd)));
 
         // a cart: upstream only (3 types), the mirror untouched even though it has a file by that name
@@ -1097,11 +1098,11 @@ static void testCdMirror() {
         CHECK(logSize() == before + 3);
         for (size_t i = before; i < logSize(); i++) CHECK(logAt(i).rfind("/up/", 0) == 0);
 
-        // nothing anywhere: Missing, six markers, and it stays quiet afterwards
+        // nothing anywhere: Missing, three upstream markers and no mirror ones, and it stays quiet afterwards
         before = logSize();
         CHECK(waitState(svc, nothing, ArtView::Missing));
         CHECK(logSize() == before + 6);
-        for (const char* t : {kB, kT, kS}) CHECK(miss(t, nothing.datName, lib::kThumbSystem) && miss(t, nothing.datName, lib::kThumbSystemCd));
+        for (const char* t : {kB, kT, kS}) CHECK(miss(t, nothing.datName, lib::kThumbSystem) && !miss(t, nothing.datName, lib::kThumbSystemCd));
         size_t quiet = logSize();
         for (int i = 0; i < 20; i++) {
             svc.pump();
@@ -1112,17 +1113,18 @@ static void testCdMirror() {
         CHECK(logSize() == quiet);
     }, srv.url(MIR));
 
-    // New session, nothing changed: every miss still holds, the cached art needs no request.
+    // New session, nothing changed: upstream's misses still hold and cached art needs no request; the mirror is
+    // asked once more about the disc it had nothing for, because its misses last one session.
     size_t base0 = logSize();
     runSession([&](LibraryService& svc, Config&) {
         CHECK(waitState(svc, nothing, ArtView::Missing));
         CHECK(waitState(svc, onlyMirror, ArtView::Ready));
         CHECK(waitState(svc, cart, ArtView::Missing));
-        CHECK(logSize() == base0);
+        CHECK(logSize() == base0 + 3);
+        for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/mirror/", 0) == 0);
     }, srv.url(MIR));
 
-    // The mirror's misses expire after a week and only the mirror is asked again; upstream's 30-day marker holds.
-    for (const char* t : {kB, kT, kS}) ageFile(lib::thumbnailMissPath(root, t, nothing.datName, lib::kThumbSystemCd), 8);
+    // The mirror gains art: the next session finds it, with no week-long wait; upstream's 30-day marker holds.
     setHave(mirPath(kT, nothing.datName));   // the mirror gained the title screen meanwhile
     base0 = logSize();
     runSession([&](LibraryService& svc, Config&) {
@@ -1130,6 +1132,24 @@ static void testCdMirror() {
         CHECK(logSize() >= base0 + 2);
         for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/mirror/", 0) == 0);   // upstream untouched
         CHECK_EQ(logAt(base0), mirPath(kB, nothing.datName));
+    }, srv.url(MIR));
+
+    // #997: mirror miss markers an older version wrote (fresh, so their week has not run out) are ignored and
+    // removed, and the mirror is asked: art the site gained after that miss shows on the next launch.
+    lib::Entry stale = mkEntry("Stale Marker (USA)", lib::Section::Disc);
+    for (const char* t : {kB, kT, kS}) {
+        std::string m = lib::thumbnailMissPath(root, t, stale.datName, lib::kThumbSystemCd);
+        fs::create_directories(fs::u8path(m.substr(0, m.find_last_of('/'))), ec);
+        std::ofstream(fs::u8path(m)).flush();
+        CHECK(exists(m));
+    }
+    setHave(mirPath(kB, stale.datName));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, stale, ArtView::Ready));
+        CHECK(logSize() == base0 + 2);   // upstream's box art, then the mirror's
+        CHECK_EQ(logAt(base0 + 1), mirPath(kB, stale.datName));
+        CHECK(!miss(kB, stale.datName, lib::kThumbSystemCd));
     }, srv.url(MIR));
 
     // libretro-thumbnails gains the art later: its 30-day marker expires and upstream wins over the mirror's file.
