@@ -15,6 +15,7 @@
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
 #   *_threaded limits     RetroAchievements, netplay, the debugger and the GDB stub are off while threaded
+#   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -140,3 +141,13 @@ target_include_directories(vj_late_latch_test PRIVATE src)
 vj_emu_thread_warnings(vj_late_latch_test)
 add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
 set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+if(VJ_APP_TSAN)
+    add_executable(vj_tsan_canary tests/tsan_canary.cpp)
+    target_link_libraries(vj_tsan_canary PRIVATE Threads::Threads)
+    # abort_on_error=0: ThreadSanitizer on macOS aborts (SIGABRT) by default, and ctest does not invert a signal death
+    # for WILL_FAIL; with 0 it exits 66 like on Linux, so the canary reads the same everywhere.
+    add_test(NAME tsan_canary
+        COMMAND ${CMAKE_COMMAND} -E env TSAN_OPTIONS=halt_on_error=1:abort_on_error=0 $<TARGET_FILE:vj_tsan_canary>)
+    set_tests_properties(tsan_canary PROPERTIES WILL_FAIL TRUE LABELS emu_thread TIMEOUT 60)
+endif()

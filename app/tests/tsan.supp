@@ -1,0 +1,2 @@
+# ThreadSanitizer suppressions for the emulation-thread tests (#967).  Empty on purpose: add an entry only for a race
+# inside a third-party library (SDL, ...), with the report and the reason, never for the app's own code.

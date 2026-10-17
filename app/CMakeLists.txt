@@ -69,6 +69,17 @@ option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configu
 set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH
     "Offline builds: a folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat' to use instead of downloading them")
 
+# ThreadSanitizer over the app, the core and the tests (#967; the `tsan` job in .github/workflows/app.yml).  It must
+# come before any target (SDL, the core) is defined so everything is instrumented.  Clang or GCC only.
+option(VJ_APP_TSAN "Build with ThreadSanitizer (-fsanitize=thread)" OFF)
+if(VJ_APP_TSAN)
+    if(MSVC)
+        message(FATAL_ERROR "VJ_APP_TSAN needs Clang or GCC")
+    endif()
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 # ---------------------------------------------------------------------------
