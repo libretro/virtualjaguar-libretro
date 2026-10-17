@@ -106,3 +106,6 @@ keep up.
 
 The client is tested by `ctest -R neuro` (`neuro_unit`, and `neuro_loopback`, which runs a WebSocket
 server on 127.0.0.1).
+
+The code is in `app/src/neuro/`. It is built by default; configure with `-DVJ_APP_NEURO=OFF` to leave it
+out (no Settings > Neuro tab, no `--neuro`, no `neuro_*` tests).

@@ -772,6 +772,7 @@ asks for the next move whenever the last one has played out, and presses the cho
 - Config keys `neuro.enabled`, `neuro.url`, `neuro.auto_force`, `neuro.force_interval`, `neuro.game_name`.
 - The socket lives on a background thread and reconnects by itself; the game never waits on it.
 - [docs/neuro.md](../docs/neuro.md) has the actions, the profile format and testing with Randy.
+- The code is in `src/neuro/`; `-DVJ_APP_NEURO=OFF` builds the app without it (no tab, no `--neuro`).
 
 Tests: `ctest -R discord` (frame encode/decode, JSON escaping, socket paths per OS, the rate limiter, the activity
 built from app state, and a loopback test against a fake Discord server on a Unix socket; skipped on Windows).

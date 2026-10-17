@@ -5,9 +5,8 @@
 #   neuro_loopback  a WebSocket server on a free 127.0.0.1 port: startup, register, force, action, result,
 #                   the buttons played out frame by frame, reregister_all, and the reconnect.  Skipped (77)
 #                   on Windows.
-add_executable(vj_neuro_test tests/neuro_test.cpp src/neuro_json.cpp src/neuro_ws.cpp src/neuro_actions.cpp
-    src/neuro_profiles.cpp src/neuro_link.cpp src/neuro_agent.cpp)
-target_include_directories(vj_neuro_test PRIVATE src)
+add_executable(vj_neuro_test tests/neuro_test.cpp ${VJ_NEURO_SOURCES})
+target_include_directories(vj_neuro_test PRIVATE src src/neuro)
 target_link_libraries(vj_neuro_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
 if(WIN32)
     target_link_libraries(vj_neuro_test PRIVATE ws2_32)

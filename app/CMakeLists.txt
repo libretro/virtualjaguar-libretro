@@ -65,6 +65,7 @@ endif()
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
 option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
 option(VJ_APP_FREETYPE "Rasterise UI fonts with FreeType (hinting + anti-aliasing choices; fetched, pinned, built static). Off: Dear ImGui's built-in stb_truetype" ON)
+option(VJ_APP_NEURO "Neuro API client (src/neuro/, docs/neuro.md): Neuro-sama or another AI can play as Player 1" ON)
 option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configure time and copy them next to the binary" ON)
 set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH
     "Offline builds: a folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat' to use instead of downloading them")
@@ -353,9 +354,14 @@ set(VJ_APP_SOURCES
     src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
-    src/discord_app.cpp
-    src/neuro_json.cpp src/neuro_ws.cpp src/neuro_actions.cpp src/neuro_profiles.cpp src/neuro_link.cpp src/neuro_agent.cpp
-    src/neuro_app.cpp)
+    src/discord_app.cpp)
+
+# Neuro API client (docs/neuro.md): an AI plays as Player 1.  Off: no Settings > Neuro tab, no --neuro.
+set(VJ_NEURO_SOURCES src/neuro/neuro_json.cpp src/neuro/neuro_ws.cpp src/neuro/neuro_actions.cpp
+    src/neuro/neuro_profiles.cpp src/neuro/neuro_link.cpp src/neuro/neuro_agent.cpp)
+if(VJ_APP_NEURO)
+    list(APPEND VJ_APP_SOURCES ${VJ_NEURO_SOURCES} src/neuro/neuro_app.cpp)
+endif()
 
 # Native-OS integration (#833): one source per OS behind src/platform/platform_os.h.
 if(APPLE)
@@ -393,6 +399,9 @@ vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src src/debug "${VJ_ROOT}/src/debug")
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
+if(VJ_APP_NEURO)
+    target_compile_definitions(virtualjaguar PRIVATE VJ_HAVE_NEURO=1)
+endif()
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
@@ -462,7 +471,9 @@ if(VJ_APP_BUILD_TESTS)
     include(VJDebugTests)
     include(VJPlatformTests)
     include(VJDiscordTests)
-    include(VJNeuroTests)
+    if(VJ_APP_NEURO)
+        include(VJNeuroTests)
+    endif()
     include(VJThemeTests)
     include(VJTvTests)
 endif()

@@ -77,6 +77,7 @@ App::~App() { shutdown(); }
 
 double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)perfFreq_; }
 
+#ifdef VJ_HAVE_NEURO
 // Headless with --neuro: the client runs as in the UI loop, and frame `i` waits for its time at 60 fps.
 void App::headlessNeuroFrame(uint64_t t0, unsigned i) {
     neuroTick(*this);
@@ -84,6 +85,7 @@ void App::headlessNeuroFrame(uint64_t t0, unsigned i) {
     const double wait = due - now();
     if (wait > 0) SDL_Delay((Uint32)(wait * 1000.0));
 }
+#endif
 
 // ---------------------------------------------------------------------------------
 // config
@@ -315,7 +317,9 @@ bool App::initImGui() {
 void App::shutdown() {
     if (host.isLoaded()) autoSave();   // quitting: keep where the game was
     discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
+#ifdef VJ_HAVE_NEURO
     neuroShutdown(*this);
+#endif
     ach.shutdown();
     if (host.isLoaded()) host.unloadContent();
     invalidateThumbs();
@@ -349,7 +353,9 @@ void App::wireHost() {
         if (!fastForward && !mute) audio.push(d, n);
     };
     host.inputPoll = [this]() {
+#ifdef VJ_HAVE_NEURO
         input.agentControls = neuro.frame();   // Neuro's buttons for this emulated frame
+#endif
         input.poll(!inputCaptured_);
     };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
@@ -1273,7 +1279,9 @@ int App::run(const CliArgs& a) {
     if (!a.cdBios.empty()) biosCli_[bios::Cd] = absolutePath(a.cdBios);
     bootTarget_ = a.bootBios == "cart" ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
     if (!netplayInit(*this, a)) return 2;
+#ifdef VJ_HAVE_NEURO
     neuroInit(*this, a);
+#endif
 
     int rc = a.headless ? (a.tvTestScript.empty() ? runHeadless(a) : runTvScript(a)) : runInteractive(a);
 
@@ -1310,7 +1318,9 @@ int App::runInteractive(const CliArgs& a) {
         else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
         else if (a.showWindow.rfind("settings-interface", 0) == 0) devSelectTab = "Interface";
         else if (a.showWindow.rfind("settings-discord", 0) == 0) devSelectTab = "Discord";
+#ifdef VJ_HAVE_NEURO
         else if (a.showWindow.rfind("settings-neuro", 0) == 0) devSelectTab = "Neuro";
+#endif
         else if (a.showWindow.rfind("settings-bios", 0) == 0) devSelectTab = "BIOS";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
@@ -1378,7 +1388,9 @@ int App::runInteractive(const CliArgs& a) {
         ach.pump();
         syncDebug();
         discordTick(*this);
+#ifdef VJ_HAVE_NEURO
         neuroTick(*this);
+#endif
         perf.lap(Perf::Events);
         stepEmulation();
         perf.lap(Perf::Step);
@@ -1563,7 +1575,9 @@ int App::runHeadless(const CliArgs& a) {
         double hlCpu0 = Perf::cpuSeconds();
         for (unsigned i = 0; i < a.frames; i++) {
             ach.headlessFrame(i);
+#ifdef VJ_HAVE_NEURO
             if (!neuroCliUrl.empty()) headlessNeuroFrame(hlT0, i);   // --neuro: real time, so she can keep up
+#endif
             audio.update();
             uint64_t hr0 = SDL_GetPerformanceCounter();
             host.runFrame();
