@@ -23,6 +23,20 @@ namespace vj {
 
 namespace {
 
+bool isInputEvent(Uint32 type) {
+    switch (type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: return true;
+    default: return false;
+    }
+}
+
 const int kMaxRecents = 10;
 
 std::string joinExtensions(const std::string& pipeList) {
@@ -344,7 +358,13 @@ void App::wireHost() {
         audioFramesSeen_ += n;
         if (!fastForward && !mute) audio.push(d, n);
     };
-    host.inputPoll = [this]() { input.poll(!inputCaptured_); };
+    host.inputPoll = [this]() {
+        if (pendingEventNs_) {   // VJ_PERF_CSV: from the oldest unhandled input event to this poll
+            noteInputLatency(pendingEventNs_);
+            pendingEventNs_ = 0;
+        }
+        input.poll(!inputCaptured_);
+    };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
     host.optionLock = &lockedCoreOption;   // the app's own Controls / Devices tabs replace these core options
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
@@ -388,6 +408,25 @@ void App::syncDebug() {
     debug.setContentLoaded(host.isLoaded());
     debug.setHardcore(ach.hardcoreActive());
     debug.tick(now(), host.isLoaded() && !paused && !debug.halted());
+}
+
+void App::noteInputLatency(uint64_t eventNs) {
+    const uint64_t t = SDL_GetTicksNS();
+    // An event older than 250 ms waited out a pause or a load, not the pacing: it would only pollute the average.
+    if (!eventNs || t <= eventNs || t - eventNs > 250000000ull) return;
+    latSumNs_.fetch_add(t - eventNs, std::memory_order_relaxed);
+    latCount_.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Once per UI iteration (VJ_PERF_CSV): the audio underruns and the input latency measured since the last one.
+void App::perfSample() {
+    if (!perf.on) return;
+    const uint64_t u = audio.underruns();
+    perf.curUnder = (unsigned)(u - underrunsSeen_);
+    underrunsSeen_ = u;
+    const uint64_t n = latCount_.exchange(0, std::memory_order_relaxed);
+    const uint64_t s = latSumNs_.exchange(0, std::memory_order_relaxed);
+    perf.curLat = n ? (float)((double)s / (double)n / 1e6) : -1.0f;
 }
 
 // One UI frame without stepping the emulation: events, ImGui, present.  The debugger's halt pump calls this
@@ -1038,6 +1077,7 @@ bool App::fromExtraWindow(const SDL_Event& e) const {
 void App::handleEvent(const SDL_Event& e, bool headless) {
     if (!headless && imguiUp_) ImGui_ImplSDL3_ProcessEvent(&e);
     if (fromExtraWindow(e)) return;   // ImGui has it; the game and the app's own window handling are about the main window
+    if (isInputEvent(e.type) && !pendingEventNs_) pendingEventNs_ = e.common.timestamp;
     // F10 steps while a processor is halted (it releases a captured mouse otherwise, which input.cpp owns).
     if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F10 && debug.halted() &&
         !(imguiUp_ && ImGui::GetIO().WantTextInput)) {
@@ -1425,6 +1465,21 @@ int App::runInteractive(const CliArgs& a) {
         }
         perf.lap(Perf::Sleep);
         perf.curSync = pacer_.swapSync;
+        perfSample();
+        if (a.perfInput && perf.on && perf.seen % 30 == 29) {
+            // A synthetic key (F24: bound to nothing) so the input-latency column has samples in an unattended run.
+            SDL_Event ev;
+            SDL_zero(ev);
+            ev.type = SDL_EVENT_KEY_DOWN;
+            ev.key.windowID = SDL_GetWindowID(window_);
+            ev.key.scancode = SDL_SCANCODE_F24;
+            ev.key.down = true;
+            ev.key.timestamp = SDL_GetTicksNS();
+            SDL_PushEvent(&ev);
+            ev.type = SDL_EVENT_KEY_UP;
+            ev.key.down = false;
+            SDL_PushEvent(&ev);
+        }
         perf.frameEnd();
     }
 

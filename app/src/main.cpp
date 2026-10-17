@@ -36,7 +36,7 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
-        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
@@ -189,6 +189,7 @@ int main(int argc, char** argv) {
             }
             a.emuThread = v == "on" ? 1 : 0;
         }
+        else if (!std::strcmp(s, "--perf-input")) a.perfInput = true;
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {
             unsigned w = 0, h = 0;

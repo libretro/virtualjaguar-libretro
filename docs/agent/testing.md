@@ -302,7 +302,8 @@ pass `--no-arm` to keep the skip live (event columns then read 0 — pair with a
 config and join on frame, the emulation is deterministic and the skip bit-exact). Feed the CSV to
 `app/tests/pacing_trace.cpp` to see what the app's pacer does with that cost trace (uneven image gaps,
 vsync release/restore cycles); `virtualjaguar --perf-frames N` with `VJ_PERF_CSV=f.csv` records the
-real thing. `--option k=v` lists in an `ssh` command run under zsh must be built in `bash` (zsh does not
+real thing (`iter_ms,emu_frames,swap_sync,underruns,input_lat_ms`; `--perf-input` injects a key every 30
+iterations so the latency column has samples; `--emu-thread on|off` picks the loop, #967). `--option k=v` lists in an `ssh` command run under zsh must be built in `bash` (zsh does not
 word-split `$OPTS`; the option is then silently not applied and the harness prints no `option` line).
 
 ## Headless framebuffer caveat

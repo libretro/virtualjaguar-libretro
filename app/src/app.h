@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <string>
@@ -80,6 +81,7 @@ struct CliArgs {
     bool perfNoReuse = false;       // dev: disable the shader output reuse (before/after comparison)
     bool perfPause = false;         // dev: pause after loading (idle-cost profile)
     int emuThread = -1;             // --emu-thread on|off: the emulation on its own thread for this run (-1 = the setting; headless: off)
+    bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -317,6 +319,12 @@ private:
     uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
     bool emuThreadThisRun_ = false;   // run(): --emu-thread, else the setting (headless: off unless asked)
+    // VJ_PERF_CSV input latency and underruns (#967 measurement)
+    uint64_t pendingEventNs_ = 0;             // UI thread: SDL timestamp of the oldest input event not yet polled
+    std::atomic<uint64_t> latSumNs_{0}, latCount_{0};   // written where the core polls, read per UI iteration
+    uint64_t underrunsSeen_ = 0;
+    void noteInputLatency(uint64_t eventNs);
+    void perfSample();
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App

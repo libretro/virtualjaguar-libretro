@@ -8,6 +8,7 @@
 #   emu_thread_unit       EmuThread: inline vs threaded, call/post ordering, pause/advance, stop/join timeout, shutdown races
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
+#   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
@@ -86,3 +87,10 @@ set_tests_properties(emu_thread_e2e PROPERTIES TIMEOUT 600 LABELS emu_thread FAI
 
 add_test(NAME emu_thread_flag_rejects COMMAND virtualjaguar --headless --emu-thread maybe "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_REGULAR_EXPRESSION "--emu-thread wants on or off")
+
+add_executable(vj_perf_csv_test tests/perf_csv_test.cpp)
+target_include_directories(vj_perf_csv_test PRIVATE src)
+target_link_libraries(vj_perf_csv_test PRIVATE ${VJ_SDL3_TARGET})
+vj_emu_thread_warnings(vj_perf_csv_test)
+add_test(NAME perf_csv_unit COMMAND vj_perf_csv_test "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(perf_csv_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
