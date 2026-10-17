@@ -49,6 +49,8 @@ public:
     static constexpr double kSteerMargin = 0.00075; // room kept on each side of the window (take-time jitter)
     static constexpr double kWindowDecay = 0.0002;  // the held window shrinks back at 0.2 ms per second
     static constexpr unsigned kStepGap = 30;        // frames at least between two steps: never a display lock
+    static constexpr double kMaxDrift = 0.0002;     // steer only where the grid creeps along the take grid (60.05 on
+                                                    // 60/120/59.94 Hz: 15-32 us a frame), never at a 5:6-style ratio
 
     void reset(double now) {
         next_ = now;
@@ -113,15 +115,20 @@ private:
     // core-vs-display beat (15 us per frame for 60.054 Hz on 60 Hz), so while a take point sits inside that window,
     // whether a frame makes it is decided by its own cost: for spread / 15 us frames in a row the UI shows a repeat,
     // then a skip, at random -- dozens of pairs per crossing instead of the one skip the beat owes.  So when the next
-    // frame's window would contain a take point, the grid steps once across it, in the direction the beat is already
-    // moving it: the crossing happens at once, as the single skip (or repeat) it has to be, and the drift then carries
-    // the window away from the take point for the next ~18 s.  Only the grid's phase moves, by at most the window's
-    // width once per beat; its rate stays the trimmed audio rate, and the step's audio (a few ms early or late) is what
-    // the queue absorbs and the trim corrects.  This is not a display lock: the drift is never held back.
+    // frame's window would contain a take point, the grid steps once across it, in the direction it is drifting (its
+    // trimmed period against the take period): the crossing happens at once, as the single skip (or repeat) it has to
+    // be, and the drift then carries the window away from the take point for the next ~18 s.  Only the grid's phase
+    // moves, by at most the window's width once per crossing; its rate stays the trimmed audio rate, and the step's
+    // audio (a few ms early or late) is what the queue absorbs and the trim corrects.  This is not a display lock: the
+    // drift is never held back, steps are at least kStepGap frames apart, and it only runs where the grid creeps along
+    // the take grid (kMaxDrift), never at a ratio like 50.08 Hz on 60 Hz where some frame always straddles a take.
     void steer(const PacingInput& in, double base) {
         const double P = in.takePeriod;
         if (sinceStep_ < kStepGap) sinceStep_++;
         if (P <= 0 || endAt_ < kMinEnds) return;
+        double r0 = std::fmod(base, P);   // the untrimmed creep per frame: off a whole ratio (50.08 Hz on 60, 60.05 on
+        if (r0 > P / 2) r0 -= P;          // 75 or 144) frames land ~3 ms apart on the take grid -- judder, not a crossing
+        if (std::fabs(r0) > kMaxDrift) return;
         double sorted[kEnds];
         const unsigned n = std::min(endAt_, kEnds);
         std::copy(ends_, ends_ + n, sorted);

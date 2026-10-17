@@ -426,6 +426,52 @@ void testSteeringFollowsTheTrimmedDrift() {
     }
 }
 
+void testNoSteeringOffAWholeRatio() {
+    // A PAL game (50.08 Hz) on a 60 Hz panel, or 60.05 Hz on 75 / 144 Hz: each frame lands ~3 ms further along the take
+    // grid, so some frame's window always holds a take point -- that is ordinary 5:6 (4:5, 5:12) judder, not a slow
+    // crossing, and stepping for it would cost production every 30 frames forever.  No steps, no underruns, the rate kept.
+    struct Case { double coreHz, panelHz; };
+    for (const Case c : {Case{50.08013, 60.0}, Case{60.05445, 75.0}, Case{60.05445, 144.0}}) {
+        Device dev;
+        const double period = 1.0 / c.coreHz;
+        dev.rate = kBatch / period;   // a sound card consuming exactly the core's rate (dev.rate is in stream frames/s)
+        dev.prime();
+        PacingClock clock;
+        Run r;
+        double t = 0;
+        clock.reset(t);
+        uint32_t seed = 3;
+        while (t < 60.0) {
+            dev.advanceTo(t);
+            PacingInput in;
+            in.now = t;
+            in.period = period;
+            in.audioQueuedMs = dev.ms();
+            in.targetMs = kTargetMs;
+            in.takePeriod = 1.0 / c.panelHz;
+            in.takeAt = std::floor((t + 0.003) * c.panelHz) / c.panelHz - 0.003;
+            const double due = clock.nextDue(in);
+            if (due > t + 1e-12) {
+                t = due;
+                continue;
+            }
+            clock.frameStarted(in);
+            r.starts.push_back(t);
+            t += 0.004 + 0.004 * Device::rnd(seed);
+            dev.advanceTo(t);
+            dev.queued += kBatch;
+            clock.frameEnded(t);
+        }
+        const double got = rateBetween(r, 20.0, 60.0);
+        CHECK(clock.steers() == 0, "%.2f Hz on %.0f Hz: no steps (%llu)", c.coreHz, c.panelHz,
+              (unsigned long long)clock.steers());
+        CHECK(dev.underruns == 0, "%.2f Hz on %.0f Hz: no underrun (%llu)", c.coreHz, c.panelHz,
+              (unsigned long long)dev.underruns);
+        CHECK(std::fabs(got - c.coreHz) / c.coreHz < 1e-4, "%.2f Hz on %.0f Hz: the rate is kept (%.4f Hz)", c.coreHz,
+              c.panelHz, got);
+    }
+}
+
 void testWindowTooWideDoesNotSteer() {
     Device dev;
     dev.prime();
@@ -452,6 +498,7 @@ int main(int argc, char** argv) {
     testSteeringFollowsACostThatSwitches();
     testSteeringWithAWideWindow();
     testSteeringFollowsTheTrimmedDrift();
+    testNoSteeringOffAWholeRatio();
     testWindowTooWideDoesNotSteer();
     std::printf(g_fail ? "pacing_clock_test: %d FAILED\n" : "pacing_clock_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
