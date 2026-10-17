@@ -393,6 +393,39 @@ void testSteeringFollowsACostThatSwitches() {
     }
 }
 
+void testSteeringWithAWideWindow() {
+    // Cybermorph on the Studio: 5-11 ms frames, 0.5-3 ms late, so a ~9 ms window and ~9 ms steps.  Each early step
+    // queues that much audio; the trim then slows the grid, and past ~12 ms of queue error (0.09%, the beat) the grid
+    // drifts the other way.  Steering must follow the drift it sees, not the untrimmed one.
+    auto cost = [](size_t i) { return 0.005 + 0.006 * (double)((i * 37) % 101) / 100.0; };
+    auto late = [](size_t i) { return 0.0005 + 0.0025 * (double)((i * 13) % 11) / 10.0; };
+    for (double lead : {0.002, 0.004, 0.006}) {
+        Device dev;
+        dev.prime();
+        Run r = simulate(130.0, cost, true, dev, false, 60.0, lead, late);
+        const Shown s = present(r, 60.0, 10.0, 130.0, lead);
+        CHECK(s.repeats + s.skips <= 20, "a 9 ms window, take %.0f ms early: %d repeats + %d skips in 120 s (%llu steps)",
+              1000 * lead, s.repeats, s.skips, (unsigned long long)r.steers);
+        CHECK(dev.underruns == 0, "no underrun (%llu)", (unsigned long long)dev.underruns);
+    }
+}
+
+void testSteeringFollowsTheTrimmedDrift() {
+    // The trim held where the grid runs slower than the panel: here a sound card 0.15% slow (59.96 Hz of frames on a
+    // 60 Hz panel), on hardware the queue error the steps themselves leave.  The grid now drifts the other way; the
+    // crossings are repeats, about one per 28 s, and steering must step later, not earlier.
+    for (double lead : {0.003, 0.009}) {
+        Device dev;
+        dev.rate = kStreamHz * (1.0 - 0.0015);
+        dev.prime();
+        Run r = simulate(130.0, jitteredCost(0.006, 0.004, 9), true, dev, false, 60.0, lead);
+        const Shown s = present(r, 60.0, 10.0, 130.0, lead);
+        CHECK(s.skips == 0 && s.repeats >= 2 && s.repeats <= 8, "a grid slower than the panel, take %.0f ms early: "
+              "%d repeats + %d skips in 120 s (%llu steps)", 1000 * lead, s.repeats, s.skips,
+              (unsigned long long)r.steers);
+    }
+}
+
 void testWindowTooWideDoesNotSteer() {
     Device dev;
     dev.prime();
@@ -417,6 +450,8 @@ int main(int argc, char** argv) {
     testSteeringKeepsTheAudioClock();
     testSteeringAt120Hz();
     testSteeringFollowsACostThatSwitches();
+    testSteeringWithAWideWindow();
+    testSteeringFollowsTheTrimmedDrift();
     testWindowTooWideDoesNotSteer();
     std::printf(g_fail ? "pacing_clock_test: %d FAILED\n" : "pacing_clock_test: OK\n", g_fail);
     return g_fail ? 1 : 0;

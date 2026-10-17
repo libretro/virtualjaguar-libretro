@@ -48,6 +48,7 @@ public:
     static constexpr unsigned kMinEnds = 30;        // ... before the window is trusted
     static constexpr double kSteerMargin = 0.00075; // room kept on each side of the window (take-time jitter)
     static constexpr double kWindowDecay = 0.0002;  // the held window shrinks back at 0.2 ms per second
+    static constexpr unsigned kStepGap = 30;        // frames at least between two steps: never a display lock
 
     void reset(double now) {
         next_ = now;
@@ -60,6 +61,7 @@ public:
         loHeld_ = 1e9;
         hiHeld_ = -1e9;
         lastSteer_ = now;
+        sinceStep_ = kStepGap;
     }
 
     // When the next frame should start (absolute, on in.now's clock).  At or before in.now: start it now.
@@ -118,6 +120,7 @@ private:
     // the queue absorbs and the trim corrects.  This is not a display lock: the drift is never held back.
     void steer(const PacingInput& in, double base) {
         const double P = in.takePeriod;
+        if (sinceStep_ < kStepGap) sinceStep_++;
         if (P <= 0 || endAt_ < kMinEnds) return;
         double sorted[kEnds];
         const unsigned n = std::min(endAt_, kEnds);
@@ -136,14 +139,19 @@ private:
         double x = std::fmod(in.takeAt - next_, P);                 // from the next frame's due to a take point
         if (x < lo) x += P * std::ceil((lo - x) / P);
         if (x > hi) return;                                         // (x is now the first candidate >= lo)
-        double r = std::fmod(base, P);                              // how the grid moves against the take points per
-        if (r > P / 2) r -= P;                                      // frame: x changes by -r (the untrimmed period:
-        double step;                                                // the trim averages out to the audio clock)
+        // How the grid moves against the take points per frame: x changes by -r.  The TRIMMED period: the queue error
+        // a step leaves (or a sound card well off nominal) holds the trim past the beat (0.09% at 60.054 on 60 Hz),
+        // and the grid then drifts the other way; stepping against that drift every frame would be a display lock.
+        double r = std::fmod(base * (audio_ ? trim_ : 1.0), P);
+        if (r > P / 2) r -= P;
+        double step;
         if (r <= 0) step = -(hi - x);                               // x rising: start earlier, so this frame makes it
         else step = x - lo;                                         // x falling: start later, so it waits a period
         if (next_ + step < in.now) return;                          // (never before the frame starting now)
+        if (sinceStep_ < kStepGap) return;
         next_ += step;
         steers_++;
+        sinceStep_ = 0;
     }
 
     static double basePeriod(const PacingInput& in) { return in.fastForward ? in.period / kFastForward : in.period; }
@@ -189,6 +197,7 @@ private:
     double curDue_ = -1;        // the running frame's grid time (-1 = none: refill, fast-forward)
     uint64_t steers_ = 0;
     double loHeld_ = 1e9, hiHeld_ = -1e9, lastSteer_ = 0;   // the held window edges (end - due), seconds
+    unsigned sinceStep_ = kStepGap;                         // frames since the last step
 };
 
 }  // namespace vj
