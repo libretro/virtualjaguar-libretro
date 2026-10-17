@@ -573,7 +573,9 @@ void drawMenuBar(App& app) {
             // A disc command is a call(), not a post(): inserting a disc can re-stage the CD BIOS, which writes the
             // staged-BIOS record the BIOS panel reads (#967).
             ImGui::Separator();
-            if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) {
+            // The CD BIOS with no disc (#646) has an empty list: closing the tray would have nothing to insert, so
+            // only Add disc image... shows until a disc is in it.
+            if (disc.count > 0 && ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) {
                 const bool eject = !disc.ejected;
                 app.emu.call([&host, eject] { host.discSetEject(eject); });
             }

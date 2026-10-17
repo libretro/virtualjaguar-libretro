@@ -810,6 +810,10 @@ bool CoreHost::loadNoContent(std::string& err) {
         stopSession();
         return false;
     }
+    // The core boots the CD BIOS unless it was told the cartridge boot ROM (VJ_ENV_GET_BOOT_TARGET, asked only
+    // after HELLO with VJ_CAP_BIOS).  The CD BIOS has a CD unit with nothing in it: the disc list is empty, yet
+    // inserting a disc is the reason to be there, so the disc menu must show (#646).
+    emptyCdTray_ = !(helloSeen_ && announceBios && bootTarget_ == VJ_BOOT_CART_BOOT_ROM);
     return finishLoad("(no cartridge)", err);
 }
 
@@ -838,6 +842,7 @@ void CoreHost::stopSession() {
     updateDisplayCb_ = nullptr;   // belongs to the core instance that just went away
     keyboardCb_ = nullptr;
     diskRegistered_ = false;
+    emptyCdTray_ = false;
     memDescs_.clear();   // the descriptors point into the core instance that just went away
     memMap_ = retro_memory_map{};
     discDirty_ = true;
@@ -972,7 +977,8 @@ DiscInfo CoreHost::discInfoLive() {
     DiscInfo d;
     if (!loaded_ || !diskRegistered_ || !disk_.get_num_images) return d;
     d.count = disk_.get_num_images();
-    d.available = d.count > 0;
+    // Not just "registered": the core registers disk control for a cartridge too, which must not show a disc menu.
+    d.available = d.count > 0 || emptyCdTray_;
     d.ejected = disk_.get_eject_state ? disk_.get_eject_state() : false;
     d.index = disk_.get_image_index ? disk_.get_image_index() : 0;
     for (unsigned i = 0; i < d.count; i++) {

@@ -2104,6 +2104,55 @@ bool App::discSwapHeadlessCheck(const std::string& path) {
     return true;
 }
 
+// --disc-insert: File > Add disc image... on the CD BIOS with no disc (#646), the boot that exists to take one.  The
+// menus must show the disc section with an empty list, and the add must reach the core's insert: the PASS line quotes
+// the core's own "disk control: inserted" log line, tapped for the duration of the add.
+bool App::discInsertHeadlessCheck(const std::string& path) {
+    host.pinSnapshot();
+    DiscInfo d = host.discInfo();
+    if (!d.available) {
+        std::fprintf(stderr, "headless: FAIL --disc-insert: the disc menu is hidden (no CD unit in this boot)\n");
+        return false;
+    }
+    if (d.count != 0 || d.ejected) {
+        std::fprintf(stderr, "headless: FAIL --disc-insert: the tray is not empty and closed (%u image(s), tray %s)\n",
+                     d.count, d.ejected ? "open" : "closed");
+        return false;
+    }
+    // The tap is set and cleared where the core lives, so it never changes under a running frame.
+    std::string inserted;
+    std::function<void(int, const char*)> prevLog;
+    emu.call([&] {
+        prevLog = host.onLog;
+        host.onLog = [&inserted, &prevLog](int level, const char* text) {
+            if (std::strstr(text, "disk control: inserted")) inserted = text;
+            if (prevLog) prevLog(level, text);
+        };
+    });
+    const bool added = addDisc(absolutePath(path));
+    emu.call([&] { host.onLog = prevLog; });
+    if (!added) {
+        std::fprintf(stderr, "headless: FAIL --disc-insert: could not add and insert %s\n", path.c_str());
+        return false;
+    }
+    runHeadlessFrames(60);
+    host.pinSnapshot();
+    d = host.discInfo();
+    if (!d.available || d.count != 1 || d.index != 0 || d.ejected) {
+        std::fprintf(stderr, "headless: FAIL --disc-insert: after the add, %u image(s), index %u, tray %s\n", d.count,
+                     d.index, d.ejected ? "open" : "closed");
+        return false;
+    }
+    if (inserted.empty()) {
+        std::fprintf(stderr, "headless: FAIL --disc-insert: the core never logged an insert\n");
+        return false;
+    }
+    const size_t at = inserted.find("disk control:");
+    std::printf("DISC insert %s into the empty tray (%s): %s\n", d.labels[0].c_str(),
+                threaded() ? "emulation thread" : "inline", inserted.c_str() + at);
+    return true;
+}
+
 int App::runHeadless(const CliArgs& a) {
     audio.open(48043.6);
     applyAudioSettings();
@@ -2212,6 +2261,7 @@ int App::runHeadless(const CliArgs& a) {
             else if (nr == 77 && rc == 0) rc = 77;
         }
         if (!a.discSwap.empty() && !discSwapHeadlessCheck(a.discSwap)) rc = 1;
+        if (!a.discInsert.empty() && !discInsertHeadlessCheck(a.discInsert)) rc = 1;
         if (!emu.call([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = shownFrame();

@@ -164,6 +164,11 @@ static void testStateReflected() {
     s.disc.count = 1;   // a single disc: no Disc submenu
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscSelect) == nullptr);
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscAdd) != nullptr);   // ...but a second one can be added
+    s.disc.count = 0;   // the CD BIOS with no disc (#646): a drive, but nothing to close the tray on
+    s.disc.labels.clear();
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscTray) == nullptr);
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscAdd) != nullptr);   // the way to put the first disc in
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscSelect) == nullptr);
 
     // achievements
     CHECK(findCmd(bar, Cmd::AchSignIn) && !findCmd(bar, Cmd::AchSignOut));

@@ -16,6 +16,8 @@
 #                   (it would otherwise silently run the default).
 #   smoke_cd        the synthetic Jaguar CD image, path-loaded (no BIOS).
 #   smoke_disc_swap the disc menu commands on a loaded CD: add a second disc, swap to it and back.
+#   smoke_disc_insert_bios  the CD BIOS with no disc: the disc menu shows, Add disc image... inserts the first disc.
+#   smoke_disc_insert_cart_hidden  the negative control: the cartridge boot ROM has no CD unit, so no disc menu.
 #   remap_unit      controller remapping logic (test/remap_test.cpp): binding
 #                   serialisation, profile / per-game override precedence, the
 #                   config round trip, keypad -> core-input translation, the
@@ -102,6 +104,20 @@ add_test(NAME smoke_boot_cart_rom
     COMMAND virtualjaguar --headless --frames 400 --boot-bios cart --expect-bios cart:builtin --expect-hash 3cc9c43e)
 set_tests_properties(smoke_boot_cd_bios PROPERTIES PASS_REGULAR_EXPRESSION "BIOS CD BIOS: built-in retail CD BIOS")
 set_tests_properties(smoke_boot_cart_rom PROPERTIES PASS_REGULAR_EXPRESSION "BIOS Cart boot ROM: built-in Series K boot ROM")
+
+# File > Boot BIOS > CD BIOS (no disc), then File > Add disc image... (#646): the disc menu must show with an empty
+# list, and the add must reach the core's insert.  The PASS line quotes the core's own "disk control: inserted" line.
+add_test(NAME smoke_disc_insert_bios
+    COMMAND virtualjaguar --headless --frames 120 --allow-blank --boot-bios cd --disc-insert "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_insert_bios PROPERTIES TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "DISC insert synth_jagcd\\.chd into the empty tray \\(inline\\): disk control: inserted '[^']*synth_jagcd\\.chd'"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
+# The cartridge boot ROM with an empty slot has no CD unit: the disc menu stays hidden (the core registers disk control
+# for it all the same).
+add_test(NAME smoke_disc_insert_cart_hidden
+    COMMAND virtualjaguar --headless --frames 30 --allow-blank --boot-bios cart --disc-insert "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_insert_cart_hidden PROPERTIES TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "headless: FAIL --disc-insert: the disc menu is hidden")
 
 set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd smoke_boot_cd_bios smoke_boot_cart_rom PROPERTIES
     TIMEOUT 300

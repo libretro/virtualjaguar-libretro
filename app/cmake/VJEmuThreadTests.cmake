@@ -16,6 +16,7 @@
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
 #   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
+#   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   *_threaded limits     RetroAchievements, netplay, the debugger and the GDB stub are off while threaded
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
@@ -140,6 +141,15 @@ add_test(NAME smoke_disc_swap_bios_threaded
             --disc-swap "${VJ_ROMS}/synth_jagcd_multi.chd" "${VJ_ROMS}/synth_jagcd.chd")
 set_tests_properties(smoke_disc_swap_threaded smoke_disc_swap_bios_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "DISC swap synth_jagcd\\.chd -> synth_jagcd_multi\\.chd -> synth_jagcd\\.chd \\(emulation thread\\)"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
+
+# File > Boot BIOS > CD BIOS (no disc), then Add disc image... (#646), threaded: the menus read the empty list from
+# the pinned snapshot, and the insert runs inside EmuThread::call.
+add_test(NAME smoke_disc_insert_bios_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 120 --allow-blank --boot-bios cd
+            --disc-insert "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_insert_bios_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "DISC insert synth_jagcd\\.chd into the empty tray \\(emulation thread\\): disk control: inserted '[^']*synth_jagcd\\.chd'"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
 add_test(NAME emu_thread_limits
