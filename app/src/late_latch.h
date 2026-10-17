@@ -21,7 +21,7 @@ public:
     static constexpr uint64_t kJitterMaxNs = 1000000;   // locked only while the smoothed |residual| stays under this
     static constexpr uint64_t kUnlockJitterNs = 2000000;   // ... and let go only when it reaches this (hysteresis)
     static constexpr uint64_t kOverrunNs = 500000;      // a wait that ended this much after its wake time started the UI late
-    static constexpr unsigned kLockAfter = 30;          // consecutive tracked observations before the first wait
+    static constexpr unsigned kLockAfter = 30;          // tracked vblank observations (single outliers do not reset the count) before the first wait
     static constexpr unsigned kUnlockAfter = 4;         // consecutive outliers (or non-blocking swaps x 8) to let go
     static constexpr uint64_t kPadMinNs = 1000000, kPadMaxNs = 4000000;
     static constexpr uint64_t kPadUpNs = 500000, kPadDownNs = 100000;

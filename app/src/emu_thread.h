@@ -68,7 +68,8 @@ public:
     // Applied at the next frame boundary, in order.  Inline (or from the emulation thread itself): runs now.
     void post(std::function<void()> fn);
     // Runs `fn` on the emulation thread at the next frame boundary and returns its result (rethrowing what it threw).
-    // Inline, or from the emulation thread itself: runs now.  Abandoned: returns R() and runs nothing.
+    // Inline, or from the emulation thread itself: runs now.  Abandoned: returns R() and does not wait.  A call queued
+    // before the abandon may still run later on the detached thread, so captures must be by value (as callFor says).
     template <class F>
     auto call(F&& fn) -> decltype(fn());
     // call() for shutdown: gives up after `timeout`.  On false the command may still run later, so capture by value.

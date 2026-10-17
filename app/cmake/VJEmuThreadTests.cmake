@@ -90,7 +90,8 @@ add_test(NAME emu_thread_e2e COMMAND vj_emu_thread_e2e "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_e2e PROPERTIES TIMEOUT 600 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 add_test(NAME emu_thread_flag_rejects COMMAND virtualjaguar --headless --emu-thread maybe "${VJ_ROMS}/yarc.j64")
-set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_REGULAR_EXPRESSION "--emu-thread wants on or off")
+set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_REGULAR_EXPRESSION "--emu-thread wants on or off"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 
 add_executable(vj_perf_csv_test tests/perf_csv_test.cpp)
 target_include_directories(vj_perf_csv_test PRIVATE src)
@@ -125,16 +126,19 @@ set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threa
 add_test(NAME emu_thread_limits
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "RetroAchievements, netplay and the debugger tools are off while the emulation thread is on")
+    PASS_REGULAR_EXPRESSION "RetroAchievements, netplay and the debugger tools are off while the emulation thread is on"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 add_test(NAME netplay_refused_threaded
     COMMAND virtualjaguar --headless --emu-thread on --netplay host --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(netplay_refused_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "netplay: not available while the emulation thread is on")
+    PASS_REGULAR_EXPRESSION "netplay: not available while the emulation thread is on"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 add_test(NAME gdb_locked_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
             "${VJ_ROMS}/yarc.j64")
 set_tests_properties(gdb_locked_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core")
+    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core"
+    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 
 add_executable(vj_late_latch_test tests/late_latch_test.cpp)
 target_include_directories(vj_late_latch_test PRIVATE src)
