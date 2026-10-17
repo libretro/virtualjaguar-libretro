@@ -94,6 +94,7 @@ No `-std=gnu89` is forced: `make` passes no `-std` either, and gnu89 changes
 ```sh
 virtualjaguar game.j64            # cartridge (HLE boot, no BIOS needed)
 virtualjaguar disc.cue            # or .chd / .cdi
+virtualjaguar game.m3u            # a multi-disc set: every disc listed in File > Disc
 virtualjaguar --option virtualjaguar_usefastblitter=enabled game.j64
 virtualjaguar --help
 ```
@@ -411,7 +412,12 @@ cartridge runs, and the Core options tab is empty before the first load).
    folders inside them are not followed) for the formats the core reads: cartridges
    `.j64 .jag .rom .abs .cof .prg .bin` and discs `.cue .chd .cdi`. A `.bin` that a `.cue`
    references is a disc track, not a cartridge, and so is any `.bin` over 8 MiB. Zip is not
-   scanned: the core cannot load it.
+   scanned: the core cannot load it. An `.m3u` multi-disc playlist (RetroArch's format: one
+   image per line, relative to the playlist or absolute; `#` lines and a `|label` suffix are
+   ignored) is listed in place of the discs it names, and is identified by its first disc.
+   Opening one boots the first disc and puts every disc in **File > Disc** (the core itself
+   reads no `.m3u`; the app does). Recents, Restart and the `.srm` (one per set) follow the
+   playlist; the window title, save states and achievements follow the disc in the tray.
 2. **Identification** by CRC32 against libretro-database (see licences below):
    - cartridges against the No-Intro "Atari - Jaguar" dat, using the whole file first and then
      the file minus a 512-byte copier header (the same rule as the core's

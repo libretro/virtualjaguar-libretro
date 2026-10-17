@@ -204,7 +204,7 @@ int App::tvScriptStep() {
             SDL_PushEvent(&ev);
             tvScriptDrain();
             tick();
-            if (!host.isLoaded() || host.contentPath() != absolutePath(arg1)) rc = fail(l, "could not load " + arg1);
+            if (!host.isLoaded() || host.loadedPath() != absolutePath(arg1)) rc = fail(l, "could not load " + arg1);
         } else if (verb == "key") {
             std::string keyName = arg2;   // "ctrl+L": a Ctrl-modified press
             SDL_Keymod mod = SDL_KMOD_NONE;

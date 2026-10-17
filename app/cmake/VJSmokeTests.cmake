@@ -18,6 +18,7 @@
 #   smoke_disc_swap the disc menu commands on a loaded CD: add a second disc, swap to it and back.
 #   smoke_disc_insert_bios  the CD BIOS with no disc: the disc menu shows, Add disc image... inserts the first disc.
 #   smoke_disc_insert_cart_hidden  the negative control: the cartridge boot ROM has no CD unit, so no disc menu.
+#   smoke_m3u_playlist  an .m3u two-disc set: both discs in the disc list, the .srm and recents on the playlist, disc 2 boots.
 #   remap_unit      controller remapping logic (test/remap_test.cpp): binding
 #                   serialisation, profile / per-game override precedence, the
 #                   config round trip, keypad -> core-input translation, the
@@ -95,6 +96,16 @@ add_test(NAME smoke_disc_swap
             --disc-swap "${VJ_ROMS}/synth_jagcd_multi.chd" "${VJ_ROMS}/synth_jagcd.chd")
 set_tests_properties(smoke_disc_swap PROPERTIES TIMEOUT 300
     PASS_REGULAR_EXPRESSION "DISC swap synth_jagcd\\.chd -> synth_jagcd_multi\\.chd -> synth_jagcd\\.chd \\(inline\\)"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
+
+# A multi-disc .m3u (app/src/m3u.h; the core reads none): its entries resolve against the playlist's folder, the first
+# disc boots, both are in the disc list File > Disc reads, and the second disc goes in.  The playlist is what was opened
+# (recents, Restart, the .srm), the disc in the tray the content (the title, the state slots), at boot and after.
+set(VJ_M3U_FIXTURE "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/synth_jagcd_set.m3u")
+add_test(NAME smoke_m3u_playlist
+    COMMAND virtualjaguar --headless --frames 120 --allow-blank --expect-discs 2 "${VJ_M3U_FIXTURE}")
+set_tests_properties(smoke_m3u_playlist PROPERTIES TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "DISC list 2: synth_jagcd\\.chd, synth_jagcd_multi\\.chd; content synth_jagcd -> synth_jagcd_multi, save RAM synth_jagcd_set \\(inline\\)"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
 
 # BIOS-only boots (#838, #833).  No BIOS file is needed: the core's built-in images run, so these work on CI.

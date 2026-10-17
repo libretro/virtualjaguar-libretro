@@ -1,0 +1,4 @@
+#EXTM3U
+# A two-disc set for smoke_m3u_playlist: relative entries, resolved against this folder.
+../../../test/roms/synth_jagcd.chd
+../../../test/roms/synth_jagcd_multi.chd|Disc 2
