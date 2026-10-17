@@ -126,6 +126,7 @@ void App::applySettingsFromConfig() {
     showInWindowMenu = cfg.getBool("ui.menubar_in_window", false);
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
+    emuThreadPref = cfg.has("ui.emu_thread") ? (cfg.getBool("ui.emu_thread", false) ? 1 : 0) : -1;
 }
 
 void App::saveConfig() {
@@ -147,6 +148,8 @@ void App::saveConfig() {
     cfg.setBool("ui.keep_awake", keepAwake);
     cfg.setBool("ui.viewports", windowsOutside);
     cfg.setBool("ui.menubar_in_window", showInWindowMenu);
+    if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen (Phase 3's default)
+    else cfg.erase("ui.emu_thread");
     cfg.setInt("saves.resume", resumeMode);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
     cfg.set("ui.last_dir", g_lastDir);
@@ -177,6 +180,8 @@ void App::toast(const std::string& text, double seconds, int level) {
     if (osd_.size() > 6) osd_.erase(osd_.begin());
     if (headless_) std::fprintf(stderr, "[osd] %s\n", text.c_str());
 }
+
+bool App::emuThreadWanted() const { return emuThreadPref == 1; }   // never chosen: off in Phase 1 (#967)
 
 // ---------------------------------------------------------------------------------
 // init / shutdown
@@ -1248,6 +1253,14 @@ int App::run(const CliArgs& a) {
         applyThemeChoice(a.theme);
     }
     loadConfig();
+    // The emulation thread (#967) is decided once per run: switching it live would move the core between threads.
+    // Headless runs stay inline unless asked (the smoke tests' hashes are inline hashes), whatever the setting says.
+    emuThreadThisRun_ = a.emuThread >= 0 ? a.emuThread == 1 : (!a.headless && emuThreadWanted());
+    // The headless TV script steps host.runFrame() itself and never starts the thread, so it always runs inline.
+    if (a.headless && !a.tvTestScript.empty() && emuThreadThisRun_) {
+        emuThreadThisRun_ = false;
+        std::fprintf(stderr, "[emu] --emu-thread on is ignored with --headless --tv-test-script (the script runs the core inline)\n");
+    }
     if (paths.instance > 1) {
         host.setSaveFallbackDir(paths.savesShared);
         std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());

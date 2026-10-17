@@ -79,6 +79,7 @@ struct CliArgs {
     unsigned perfShaderW = 0, perfShaderH = 0;   // dev: run the shader chain at this output size (4K cost on a 1080p display)
     bool perfNoReuse = false;       // dev: disable the shader output reuse (before/after comparison)
     bool perfPause = false;         // dev: pause after loading (idle-cost profile)
+    int emuThread = -1;             // --emu-thread on|off: the emulation on its own thread for this run (-1 = the setting; headless: off)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -189,6 +190,11 @@ public:
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
     bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)
     bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
+    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen, 0 off, 1 on.  Never chosen is
+    // off in Phase 1 on every build; Phase 3 turns it on by default in nightlies.
+    int emuThreadPref = -1;
+    bool emuThreadWanted() const;                                 // the choice (never chosen = off)
+    bool emuThreadThisRun() const { return emuThreadThisRun_; }   // decided once at start-up
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
@@ -310,6 +316,7 @@ private:
     bool viewportsOn_ = false;         // ImGuiConfigFlags_ViewportsEnable is set right now
     uint64_t menuStateTick_ = 0;       // desktopFrame throttle
     bool inputCaptured_ = false;
+    bool emuThreadThisRun_ = false;   // run(): --emu-thread, else the setting (headless: off unless asked)
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App

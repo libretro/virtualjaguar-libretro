@@ -32,6 +32,7 @@ const Exact kExact[] = {
     {"ui.home_library", KeyClass::Interface}, {"saves.resume", KeyClass::Interface},
     {"ui.tray", KeyClass::Interface},         {"ui.keep_awake", KeyClass::Interface},   // Interface > Desktop
     {"ui.viewports", KeyClass::Interface},    {"ui.menubar_in_window", KeyClass::Interface},
+    {"ui.emu_thread", KeyClass::Interface},   // Interface > Performance > Emulation thread (#967)
     {"library.art", KeyClass::Interface},
     {"library.hide_on_launch", KeyClass::Interface}, {"library.size", KeyClass::Interface},
     {"library.section", KeyClass::Interface},

@@ -253,6 +253,17 @@ void drawInterfaceTab(App& app) {
     drawControlsOverlaySettings(app);
     drawAppearanceSettings(app);
     drawFontSettings(app);
+    ImGui::SeparatorText("Performance");
+    bool emuThread = app.emuThreadWanted();
+    if (ImGui::Checkbox("Emulation thread", &emuThread)) {
+        app.emuThreadPref = emuThread ? 1 : 0;
+        app.saveConfig();
+    }
+    ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
+             "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
+             "app starts. While it is on, this version turns off RetroAchievements, netplay and the Tools (debugger) "
+             "menu; they come back in a later update. Off by default.");
+    if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");
     ImGui::SetNextItemWidth(ui::em(10.0f));
