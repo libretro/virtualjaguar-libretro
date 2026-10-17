@@ -13,7 +13,12 @@
 // The pad.  The runner attaches a virtual gamepad (SDL_AttachVirtualJoystick, type GAMEPAD, every button and axis of
 // the standard layout including MISC1/Share) and presses its buttons with SDL_SetJoystickVirtualButton.  It reaches
 // InputManager through the ordinary SDL_EVENT_GAMEPAD_ADDED hot-plug path, exactly like a real pad.  If it does not
-// open there, the run FAILS: nothing here fakes GAMEPAD_* events for an unopened id.
+// open there, the run FAILS: nothing here fakes GAMEPAD_* events for an unopened id.  Windowed runs attach it too.
+//
+// Windowed-only verbs (for screenshots of the TV screens): `wait library` blocks the script until the Library has
+// scanned (the LibraryService threads run only in a windowed run), `shot PATH` saves the window at the end of the
+// next UI frame (App::tvScriptFrameEnd, called after the UI is drawn and before the swap), `quit` ends the run through
+// the normal teardown.  Headless, each of them fails its line with "windowed only".
 #include <SDL3/SDL.h>
 
 #include <cstdint>
@@ -97,6 +102,11 @@ struct App::TvScriptRun {
     SDL_JoystickID padId = 0;
     uint64_t prevExec = 0, prevMs = 0;
     unsigned expects = 0;
+    // windowed-only verbs
+    bool waitLibrary = false;    // `wait library` is blocking the script
+    uint64_t waitStart = 0;
+    std::string shotPath;        // `shot PATH`: saved at the end of the next UI frame
+    unsigned shotLine = 0;
 };
 
 bool App::tvScriptBegin(const CliArgs& a, bool windowed) {
@@ -166,6 +176,13 @@ int App::tvScriptStep() {
         return run.windowed ? 0 : 2;
     };
     while (run.next < run.lines.size()) {
+        if (run.waitLibrary) {   // `wait library`: nothing runs until the scan is done (or 120 s have passed)
+            const bool ready = !library.scanning() && !library.entries().empty();
+            if (!ready && SDL_GetTicks() - run.waitStart < 120000) return 0;
+            run.waitLibrary = false;
+            run.prevExec = SDL_GetTicks();   // the gaps of the lines after it count from here
+            if (!ready) fail(run.lines[run.next - 1], "wait library: the library did not finish scanning in 120 s");
+        }
         const Line& l = run.lines[run.next];
         if (SDL_GetTicks() < run.prevExec + (l.ms - run.prevMs)) return 0;
         run.next++;
@@ -189,7 +206,13 @@ int App::tvScriptStep() {
             tick();
             if (!host.isLoaded() || host.contentPath() != absolutePath(arg1)) rc = fail(l, "could not load " + arg1);
         } else if (verb == "key") {
-            const SDL_Scancode sc = SDL_GetScancodeFromName(arg2.c_str());
+            std::string keyName = arg2;   // "ctrl+L": a Ctrl-modified press
+            SDL_Keymod mod = SDL_KMOD_NONE;
+            if (keyName.rfind("ctrl+", 0) == 0) {
+                mod = SDL_KMOD_CTRL;
+                keyName.erase(0, 5);
+            }
+            const SDL_Scancode sc = SDL_GetScancodeFromName(keyName.c_str());
             if (sc == SDL_SCANCODE_UNKNOWN) return fail(l, "unknown key '" + arg2 + "'");
             if (arg1 != "down" && arg1 != "up" && arg1 != "tap") return fail(l, "key wants down|up|tap");
             for (int pass = 0; pass < 2; pass++) {
@@ -200,6 +223,7 @@ int App::tvScriptStep() {
                 ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
                 ev.key.scancode = sc;
                 ev.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+                ev.key.mod = mod;
                 ev.key.down = down;
                 SDL_PushEvent(&ev);
                 tvScriptDrain();
@@ -227,6 +251,24 @@ int App::tvScriptStep() {
             tick();
         } else if (verb == "typing") {
             input.uiWantsKeyboard = arg1 == "on";   // headless has no ImGui to say a text box has focus (windowed: the UI frame resets it)
+        } else if (verb == "tvsetting") {   // what Settings > Interface will do: store the setting, reconfigure TV mode
+            if (!tv::settingFromKey(arg1, tvSetting)) return fail(l, "tvsetting wants off|manual|auto");
+            configureTvMode();
+        } else if (verb == "saveconfig") {   // App::saveConfig() (a headless run keeps its config in a private temp dir)
+            saveConfig();
+        } else if (verb == "wait" || verb == "shot" || verb == "quit") {   // windowed only
+            if (!run.windowed) return fail(l, verb + " is windowed only");
+            if (verb == "wait") {
+                if (arg1 != "library") return fail(l, "wait wants library");
+                run.waitLibrary = true;
+                run.waitStart = SDL_GetTicks();
+            } else if (verb == "shot") {
+                if (arg1.empty()) return fail(l, "shot wants a path");
+                run.shotPath = arg1;
+                run.shotLine = l.no;
+            } else {
+                quit = true;   // the loop finishes this frame (a pending shot is still taken), then the normal teardown
+            }
         } else if (verb == "capture") {
             Ctl c = C_HELP;
             if (!ctlByName(arg1, c)) return fail(l, "capture wants help|tvmenu");
@@ -244,6 +286,20 @@ int App::tvScriptStep() {
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
             std::string got;
             if (name == "menu-open") got = flag(tvShell().menuOpen());
+            else if (name == "tv") got = flag(tvMode.active());
+            else if (name == "tv-screen") got = tvShell().screenId();
+            else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
+            else if (name == "home-visible") got = flag(homeVisible());            // the desktop library standing in for the game
+            else if (name == "library-window") got = flag(library.show);           // the desktop Game library window
+            else if (name == "cfg") {   // KEY:VALUE -- the config holds KEY = VALUE ("absent": no such key at all)
+                const size_t colon = want.find(':');
+                if (colon == std::string::npos) return fail(l, "cfg wants KEY:VALUE or KEY:absent");
+                const std::string key = want.substr(0, colon), val = want.substr(colon + 1);
+                const std::string have = cfg.has(key) ? cfg.get(key) : std::string("absent");
+                if (have != val) rc = fail(l, "expected config " + key + "=" + val + ", got " + have);
+                if (rc) return rc;
+                continue;
+            }
             else if (name == "paused") got = flag(paused);
             else if (name == "loaded") got = flag(host.isLoaded());
             else if (name == "capturing") got = flag(input.capturing());
@@ -276,6 +332,19 @@ int App::tvScriptStep() {
         if (rc) return rc;
     }
     return 1;
+}
+
+// Windowed: called once per UI frame after the UI is drawn and before the buffers swap, so the picture has this
+// frame's TV drawing.  Saves the window for a pending `shot`.
+void App::tvScriptFrameEnd() {
+    if (!tvScript_ || tvScript_->shotPath.empty()) return;
+    const std::string path = tvScript_->shotPath;
+    const unsigned line = tvScript_->shotLine;
+    tvScript_->shotPath.clear();
+    saveWindowScreenshot(path);
+    SDL_PathInfo info;
+    if (SDL_GetPathInfo(path.c_str(), &info)) std::fprintf(stderr, "tv script: shot %s\n", path.c_str());
+    else std::fprintf(stderr, "tv: FAIL tv script line %u: shot wrote no file at %s\n", line, path.c_str());
 }
 
 int App::runTvScript(const CliArgs& a) {

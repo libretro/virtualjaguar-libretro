@@ -377,11 +377,12 @@ std::string Achievements::userName() const {
     return u ? u->display_name : "";
 }
 
-bool Achievements::hardcoreActive() const {
+bool Achievements::hardcoreNextGame() const {
     if (!client_ || !enabled_ || !hardcoreWanted_ || !settingsOk_) return false;
-    if (!signedIn() && !loginPending_) return false;
-    return loading_ || gameKnown_;
+    return signedIn() || loginPending_;
 }
+
+bool Achievements::hardcoreActive() const { return hardcoreNextGame() && (loading_ || gameKnown_); }
 
 void Achievements::checkSettings() {
     settingsOk_ = true;

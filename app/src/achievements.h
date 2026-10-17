@@ -89,6 +89,10 @@ public:
     // hardcore wanted, no disallowed setting, and a game that is (or is being)
     // looked up.  Everything below is derived from it.
     bool hardcoreActive() const;
+    // Would hardcore apply to the next game that starts?  hardcoreActive() minus the "a game is (being) looked up" part:
+    // with no game running it is false whatever this says, so a screen that offers a state load before any game is
+    // up (TV Home's Resume) asks this instead.
+    bool hardcoreNextGame() const;
     bool allowStateLoad() const { return !hardcoreActive(); }
     bool allowCheats() const { return !hardcoreActive(); }
     bool allowRewind() const { return !hardcoreActive(); }

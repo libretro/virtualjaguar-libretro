@@ -33,13 +33,18 @@ struct GridFocus {
 };
 
 // Where focus was on each screen/shelf, so coming back lands there.  Keys are the caller's ("home/favorites").
+// Next to the index a screen may remember WHICH item had the focus (a game's key): a list that reorders while the
+// player is away (launching a game moves it to the front of Recent) is then followed by item, not by position.
 class FocusMemory {
 public:
     int get(const std::string& key, int def = 0) const;
     void put(const std::string& key, int index);
+    std::string getItem(const std::string& key) const;                 // "" = none remembered
+    void putItem(const std::string& key, const std::string& item);
 
 private:
     std::unordered_map<std::string, int> m_;
+    std::unordered_map<std::string, std::string> items_;
 };
 
 char initialOf(const std::string& title);                                     // 'A'..'Z', '0'..'9', else '#'
