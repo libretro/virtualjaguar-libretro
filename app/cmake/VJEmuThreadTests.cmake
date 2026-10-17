@@ -3,6 +3,7 @@
 # these (ctest -L emu_thread).
 #
 #   frame_exchange_unit   FrameExchange: newest wins, the reader's slot is never written, no tearing, content epochs
+#   emu_commands_unit     EmuCommands: FIFO per producer, timed waits, close-and-drain, errors
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -19,3 +20,10 @@ target_link_libraries(vj_frame_exchange_test PRIVATE Threads::Threads)
 vj_emu_thread_warnings(vj_frame_exchange_test)
 add_test(NAME frame_exchange_unit COMMAND vj_frame_exchange_test)
 set_tests_properties(frame_exchange_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_emu_commands_test tests/emu_commands_test.cpp)
+target_include_directories(vj_emu_commands_test PRIVATE src)
+target_link_libraries(vj_emu_commands_test PRIVATE Threads::Threads)
+vj_emu_thread_warnings(vj_emu_commands_test)
+add_test(NAME emu_commands_unit COMMAND vj_emu_commands_test)
+set_tests_properties(emu_commands_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
