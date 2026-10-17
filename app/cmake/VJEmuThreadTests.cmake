@@ -9,6 +9,7 @@
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
+#   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -70,3 +71,14 @@ endif()
 vj_emu_thread_warnings(vj_core_host_thread_test)
 add_test(NAME core_host_thread COMMAND vj_core_host_thread_test "${VJ_ROMS}/yarc.j64")
 set_tests_properties(core_host_thread PROPERTIES TIMEOUT 300 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_emu_thread_e2e tests/emu_thread_e2e.cpp src/core_host.cpp src/emu_thread.cpp src/remap.cpp
+               src/config.cpp src/paths.cpp)
+target_include_directories(vj_emu_thread_e2e PRIVATE src)
+target_link_libraries(vj_emu_thread_e2e PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_emu_thread_e2e PRIVATE ws2_32 iphlpapi)
+endif()
+vj_emu_thread_warnings(vj_emu_thread_e2e)
+add_test(NAME emu_thread_e2e COMMAND vj_emu_thread_e2e "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_e2e PROPERTIES TIMEOUT 600 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
