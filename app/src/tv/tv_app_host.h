@@ -8,6 +8,7 @@
 namespace vj {
 
 class App;
+namespace lib { struct Entry; }
 
 namespace tv {
 
@@ -37,6 +38,12 @@ public:
     void setTvActive(bool on) override;
     std::string clockText() const override;
     std::string raStatus() const override;
+    std::vector<GameRef> games(List l) override;
+    Art art(const GameRef& g) override;
+    std::vector<StateRef> states(const GameRef& g) override;
+    Art stateThumb(const GameRef& g, int slot) override;
+    void launch(const GameRef& g) override;
+    void launchState(const GameRef& g, int slot) override;
 
     // Every SDL event, before anything can consume it (App::handleEvent): remembers which device was used last, so
     // glyph() follows what the player is actually pressing -- including the buttons the shell itself consumes, which
@@ -44,6 +51,8 @@ public:
     void noteInput(const SDL_Event& e);
 
 private:
+    const lib::Entry* entryFor(const GameRef& g) const;
+
     App& app_;
     bool lastWasPad_ = false;        // the last real input was a pad button / a pushed stick, not a key
     SDL_JoystickID lastPad_ = 0;     // ... on this pad

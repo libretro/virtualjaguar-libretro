@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <ctime>
 
 #include "theme.h"
 
@@ -72,6 +73,22 @@ float textWidth(float px, const std::string& s) {
     return ImGui::GetFont()->CalcTextSizeA(px, FLT_MAX, 0.0f, s.c_str(), s.c_str() + s.size()).x;
 }
 
+ImVec2 textSize(float px, const std::string& s, float wrapW) {
+    return ImGui::GetFont()->CalcTextSizeA(px, FLT_MAX, wrapW, s.c_str(), s.c_str() + s.size());
+}
+
+std::string formatDate(int64_t secs) {
+    static const char* const kMonths[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const std::time_t t = (std::time_t)secs;
+    std::tm tm = {};
+#ifdef _WIN32
+    if (localtime_s(&tm, &t) != 0) return "";
+#else
+    if (!localtime_r(&t, &tm)) return "";
+#endif
+    return std::to_string(tm.tm_mday) + " " + kMonths[tm.tm_mon % 12] + " " + std::to_string(tm.tm_year + 1900);
+}
+
 ImVec2 text(ImDrawList* dl, float px, ImVec2 pos, ImU32 c, const std::string& s, float maxW, float wrapW) {
     ImFont* f = ImGui::GetFont();
     const std::string shown = wrapW > 0 ? s : fit(px, s, maxW);
@@ -133,9 +150,52 @@ Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs
     return hit;
 }
 
-void hintBar(ImDrawList* dl, const Metrics& m, ImVec2 pos, float maxW, const std::vector<Hint>& hints) {
+Hit tile(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const TileArgs& a) {
     const theme::Palette& p = theme::pal();
-    const float px = m.caption, gap = 40 * m.u, chipPad = 12 * m.u;
+    Hit hit;
+    // The pointer tests the unscaled rectangle: a focused tile growing under the pointer must not flicker.
+    const ImGuiIO& io = ImGui::GetIO();
+    hit.hovered = ImGui::IsWindowHovered() && io.MousePos.x >= pos.x && io.MousePos.x < pos.x + size.x &&
+                  io.MousePos.y >= pos.y && io.MousePos.y < pos.y + size.y;
+
+    const float f = a.focus, k = 1.0f + (m.focusScale - 1.0f) * f;
+    ImVec2 sz;
+    const ImVec2 p0 = scaledAbout(pos, size, k, &sz);
+    const ImVec2 p1(p0.x + sz.x, p0.y + sz.y);
+    const float round = 12 * m.u * k;
+    if (f > 0.01f) {   // the drop shadow: a few soft layers, then the ring
+        for (int i = 3; i >= 1; i--) {
+            const float e = i * 6 * m.u * f;
+            dl->AddRectFilled(ImVec2(p0.x - e, p0.y - e + 10 * m.u * f), ImVec2(p1.x + e, p1.y + e + 10 * m.u * f),
+                              IM_COL32(0, 0, 0, (int)(40 * f)), round + e);
+        }
+    }
+    dl->AddRectFilled(p0, p1, col(p.cardBg), round);
+    if (a.tex && a.texW > 0 && a.texH > 0) {   // the picture, fitted inside
+        const float fit = std::min(sz.x / a.texW, sz.y / a.texH);
+        const float iw = a.texW * fit, ih = a.texH * fit;
+        const ImVec2 i0(p0.x + (sz.x - iw) * 0.5f, p0.y + (sz.y - ih) * 0.5f);
+        dl->AddImageRounded((ImTextureID)(intptr_t)a.tex, i0, ImVec2(i0.x + iw, i0.y + ih), ImVec2(0, 0), ImVec2(1, 1),
+                            IM_COL32_WHITE, round);
+    } else {   // no picture (yet): the title, wrapped inside the padding and sitting at the foot
+        const float pad = 18 * m.u * k, px = m.caption * k, wrap = sz.x - 2 * pad;
+        const ImVec2 ts = textSize(px, a.title, wrap);
+        text(dl, px, ImVec2(p0.x + pad, std::max(p0.y + pad, p1.y - pad - ts.y)), col(p.placeholderText), a.title, 0, wrap);
+    }
+    if (a.disc) {
+        const float px = m.minText * k, padX = 8 * m.u * k, padY = 3 * m.u * k;
+        const float w = textWidth(px, "CD") + 2 * padX, h = px + 2 * padY;
+        const ImVec2 b0(p1.x - 10 * m.u * k - w, p0.y + 10 * m.u * k);
+        dl->AddRectFilled(b0, ImVec2(b0.x + w, b0.y + h), col(p.badgeBg), 6 * m.u * k);
+        text(dl, px, ImVec2(b0.x + padX, b0.y + padY), col(p.badgeText), "CD");
+    }
+    if (f > 0.01f) dl->AddRect(p0, p1, col(p.text, f), round, 0, m.ring * f);
+    return hit;
+}
+
+void hintBar(ImDrawList* dl, const Metrics& m, ImVec2 pos, float maxW, const std::vector<Hint>& hints, float fontPx) {
+    const theme::Palette& p = theme::pal();
+    const float px = fontPx > 0 ? fontPx : m.caption, gap = 40 * m.u, chipPad = 12 * m.u;
     // One hint's width: its chip (if any), the gap after the chip, and its label.
     auto width = [&](const Hint& h) {
         float w = textWidth(px, h.label);

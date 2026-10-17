@@ -13,7 +13,11 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace vj::tv;
@@ -40,6 +44,12 @@ struct FakeHost : Host {
     bool tv = false, tvOn = true;   // TV mode on right now; tvOn = tvAvailable() (the setting is not Off)
     std::string ra;                 // raStatus(): "" unless signed in
     std::string clockStr = "8:42 PM";
+    // The library (phase 2): the four lists, each game's states, and what was launched.
+    std::vector<GameRef> all, favs, recent, disc;
+    std::map<std::string, std::vector<StateRef>> st;
+    std::string launchedKey;
+    std::pair<std::string, int> launchedState{"", -99};
+    int launches = 0;
 
     double now() const override { return clock; }
     bool gameLoaded() const override { return loaded; }
@@ -89,7 +99,39 @@ struct FakeHost : Host {
     void setTvActive(bool on) override { tv = on && tvOn; }
     std::string clockText() const override { return clockStr; }
     std::string raStatus() const override { return ra; }
+    std::vector<GameRef> games(List l) override {
+        switch (l) {
+        case List::All: return all;
+        case List::Favorites: return favs;
+        case List::Recent: return recent;
+        case List::Disc: return disc;
+        }
+        return {};
+    }
+    Art art(const GameRef&) override { return {}; }
+    std::vector<StateRef> states(const GameRef& g) override {
+        auto it = st.find(g.key);
+        return it == st.end() ? std::vector<StateRef>() : it->second;
+    }
+    Art stateThumb(const GameRef&, int) override { return {}; }
+    void launch(const GameRef& g) override { launchedKey = g.key; launches++; }
+    void launchState(const GameRef& g, int slot) override { launchedState = {g.key, slot}; }
 };
+
+// n games named "<prefix> 0" .. "<prefix> n-1", keyed by a path.
+static std::vector<GameRef> mkGames(const char* prefix, int n, bool disc = false) {
+    std::vector<GameRef> v;
+    for (int i = 0; i < n; i++) {
+        GameRef g;
+        g.title = std::string(prefix) + " " + std::to_string(i);
+        g.key = "/games/" + g.title + (disc ? ".cue" : ".j64");
+        g.region = i % 2 ? "Europe" : "USA";
+        g.disc = disc;
+        g.index = i;
+        v.push_back(g);
+    }
+    return v;
+}
 
 static void onImGuiError(ImGuiContext*, void*, const char* msg) {
     g_imguiErrors++;
@@ -769,6 +811,277 @@ static void launchedArmsGuard() {
     CHECK(shell.memory().get("home/x") == 3);
 }
 
+
+// ---- Home (phase 2, Task 8) ----------------------------------------------------------------------------------------
+
+static void rightN(FakeHost& h, Shell& s, int n) { for (int i = 0; i < n; i++) tapButton(h, s, SDL_GAMEPAD_BUTTON_DPAD_RIGHT); }
+static void leftN(FakeHost& h, Shell& s, int n) { for (int i = 0; i < n; i++) tapButton(h, s, SDL_GAMEPAD_BUTTON_DPAD_LEFT); }
+
+// A TV host on the Home screen with some games, drawn once.
+static void homeSetup(FakeHost& host, Shell& shell) {
+    host.tv = true;
+    host.loaded = false;
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    frames(host, shell, 2);
+}
+
+static void homeHidesEmptyShelves() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    host.disc = mkGames("Disc", 2, true);
+    Shell shell(host);
+    g_texts.clear();
+    homeSetup(host, shell);
+    frames(host, shell, 2);
+    CHECK(drew("Continue playing") && drew("Jaguar CD") && !drew("Favorites"));
+}
+
+static void homeAcceptLaunchesFocused() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    Shell shell(host);
+    homeSetup(host, shell);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[1].key && host.launches == 1);
+    CHECK(host.guardArmed == 1 && host.holdsCleared == 1);
+}
+
+static void homeXResumesNewest() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    host.st[host.recent[0].key] = {{3, 200}, {-1, 100}};
+    Shell shell(host);
+    homeSetup(host, shell);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_WEST);
+    CHECK(host.launchedState.first == host.recent[0].key && host.launchedState.second == 3);
+    CHECK(host.guardArmed == 1 && host.holdsCleared == 1 && host.launches == 0);
+}
+
+static void homeResumeHiddenWithoutStatesOrInHardcore() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    Shell shell(host);
+    homeSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Resume last state"));                      // no states
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_WEST);
+    CHECK(host.launchedState.first.empty());
+    host.st[host.recent[0].key] = {{-1, 100}};
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Resume last state") && drew("Resume state"));
+    host.canLoad = false;                                   // hardcore refuses state loads
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Resume last state") && !drew("Resume state"));
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_WEST);
+    CHECK(host.launchedState.first.empty() && host.guardArmed == 0);
+}
+
+static void homeFocusRememberedPerShelf() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 5);
+    host.favs = mkGames("Fav", 5);
+    Shell shell(host);
+    homeSetup(host, shell);
+    down(host, shell);
+    rightN(host, shell, 3);
+    up(host, shell);
+    down(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.favs[3].key);
+    // ... and the first shelf kept its own place too.
+    up(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[0].key);
+    // Leaving Home and coming back (a new screen) lands where it was.
+    down(host, shell);
+    rb(host, shell);
+    lb(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.favs[3].key);
+}
+
+static void homeEdgesDoNothing() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 2);
+    Shell shell(host);
+    homeSetup(host, shell);
+    up(host, shell);
+    leftN(host, shell, 3);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[0].key);
+    down(host, shell);                                      // one shelf only: nothing below
+    rightN(host, shell, 5);                                 // no wrap
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[1].key);
+}
+
+static void homeMouseHoverFocusesAndClicks() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 5);
+    host.disc = mkGames("Disc", 3, true);
+    Shell shell(host);
+    homeSetup(host, shell);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(96 + 12 + 2 * 242 + 105, 622 + 147);   // tile 2 of the first shelf
+    frames(host, shell, 2);
+    accept(host, shell);                                       // hovering focused it: A launches it
+    CHECK(host.launchedKey == host.recent[2].key);
+    host.launchedKey.clear();
+    io.AddMouseButtonEvent(0, true);
+    frames(host, shell, 1);
+    io.AddMouseButtonEvent(0, false);
+    frames(host, shell, 1);
+    CHECK(host.launchedKey == host.recent[2].key && host.guardArmed == 2);
+    // A resting pointer does not pull the focus back from the pad.
+    rightN(host, shell, 1);
+    host.launchedKey.clear();
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[3].key);
+    // A right-click is Menu: nothing until Task 10.
+    host.launchedKey.clear();
+    io.AddMouseButtonEvent(1, true);
+    frames(host, shell, 1);
+    io.AddMouseButtonEvent(1, false);
+    frames(host, shell, 1);
+    CHECK(host.launchedKey.empty());
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+// Each wheel notch is one shelf; the focused tile of each shelf is kept.
+static void homeWheelStepsShelves() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 4);
+    host.favs = mkGames("Fav", 4);
+    Shell shell(host);
+    homeSetup(host, shell);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(900, 300);   // over the Base window
+    frames(host, shell, 2);
+    rightN(host, shell, 2);
+    io.AddMouseWheelEvent(0, -1.0f);   // down one notch
+    frames(host, shell, 1);
+    host.launchedKey.clear();
+    accept(host, shell);
+    CHECK(host.launchedKey == host.favs[0].key);
+    io.AddMouseWheelEvent(0, 1.0f);    // up
+    frames(host, shell, 1);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[2].key);
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+// A rescan rebuilt the lists under the screen (a favourite's drive was unplugged): focus stays inside them.
+static void homeSurvivesRescan() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 6);
+    host.favs = mkGames("Fav", 2);
+    Shell shell(host);
+    homeSetup(host, shell);
+    rightN(host, shell, 3);
+    const int errors = g_imguiErrors;
+    std::vector<GameRef> small = {host.recent[4], host.recent[1]};
+    for (GameRef& g : small) g.index = -1;
+    host.recent = small;
+    host.favs.clear();
+    frames(host, shell, 3);
+    CHECK(g_imguiErrors == errors);
+    accept(host, shell);
+    CHECK(host.launchedKey == small[1].key || host.launchedKey == small[0].key);
+    CHECK(host.launches == 1);
+    host.recent.clear();                                    // ... and a library emptied altogether
+    frames(host, shell, 3);
+    accept(host, shell);
+    CHECK(host.launches == 1 && g_imguiErrors == errors);
+}
+
+static void homeHeroShowsFocusedGame() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    host.recent[1].region = "Europe";
+    host.disc = mkGames("Disc", 1, true);
+    host.st[host.recent[0].key] = {{3, 1792152000}, {-1, 100}};
+    Shell shell(host);
+    homeSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("CONTINUE PLAYING") && drew("Recent 0") && drew("USA \xC2\xB7 Cartridge"));
+    CHECK(drew("2 save states \xC2\xB7 newest " + widgets::formatDate(1792152000)));
+    CHECK(drew("Play") && drew("Details"));
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Europe \xC2\xB7 Cartridge") && drew("No save states") && !drew("Resume last state"));
+    down(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("JAGUAR CD") && drew("USA \xC2\xB7 Jaguar CD"));
+    host.disc[0].region.clear();
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Jaguar CD") && !drew(" \xC2\xB7 Jaguar CD"));
+}
+
+static void homeEmptyLibraryCard() {
+    FakeHost host;
+    Shell shell(host);
+    g_texts.clear();
+    homeSetup(host, shell);
+    frames(host, shell, 2);
+    CHECK(drew("Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off."));
+    CHECK(!drew("Play") && !drew("Continue playing"));
+    // Every direction and button is harmless.
+    for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT,
+                                SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_WEST,
+                                SDL_GAMEPAD_BUTTON_NORTH, SDL_GAMEPAD_BUTTON_START})
+        tapButton(host, shell, b);
+    CHECK(host.launches == 0 && host.launchedState.first.empty());
+}
+
+static void formatDateIsEnglishDayMonthYear() {
+#ifndef _WIN32
+    setenv("TZ", "UTC", 1);
+    tzset();
+    CHECK(widgets::formatDate(1792152000) == "16 Oct 2026");
+    CHECK(widgets::formatDate(0) == "1 Jan 1970");
+#else
+    const std::string d = widgets::formatDate(1792152000);
+    CHECK(d.find("Oct 2026") != std::string::npos);
+#endif
+}
+
+static void homeWalk120FramesNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    host.recent = mkGames("Recent", 20);
+    host.favs = mkGames("Favourite with a rather long title that cannot fit a tile", 12);
+    host.disc = mkGames("Disc", 15, true);
+    host.st[host.recent[0].key] = {{2, 1792152000}};
+    host.ra = "RetroAchievements: joe \xC2\xB7 Hardcore";
+    Shell shell(host);
+    const int errors = g_imguiErrors;
+    for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        frames(host, shell, 3);
+        for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT,
+                                    SDL_GAMEPAD_BUTTON_DPAD_UP}) {
+            for (int i = 0; i < 10; i++) tapButton(host, shell, b);
+            frames(host, shell, 120);
+        }
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        frames(host, shell, 120);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == errors);
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -809,6 +1122,19 @@ int main() {
     navForgetsAcrossGame();
     tabClickSwitchesSection();
     launchedArmsGuard();
+    homeHidesEmptyShelves();
+    homeAcceptLaunchesFocused();
+    homeXResumesNewest();
+    homeResumeHiddenWithoutStatesOrInHardcore();
+    homeFocusRememberedPerShelf();
+    homeEdgesDoNothing();
+    homeMouseHoverFocusesAndClicks();
+    homeWheelStepsShelves();
+    homeSurvivesRescan();
+    homeHeroShowsFocusedGame();
+    homeEmptyLibraryCard();
+    formatDateIsEnglishDayMonthYear();
+    homeWalk120FramesNoAsserts();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;

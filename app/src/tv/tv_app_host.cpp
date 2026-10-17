@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 
 #include "app.h"
@@ -14,7 +16,9 @@ std::string AppHost::gameTitle() const { return app_.host.contentName(); }
 bool AppHost::menuPause(std::string& why) { return app_.menuPause(why); }
 void AppHost::menuResume() { app_.menuResume(); }
 bool AppHost::netplayActive() const { return app_.netplay.configured(); }
-bool AppHost::canLoadState() const { return app_.ach.allowStateLoad(); }
+// With a game running: what the achievements policy says.  With none, hardcoreActive() is always false (no game is being
+// looked up), so ask whether hardcore would apply to the next one: a state load started from Home is refused then.
+bool AppHost::canLoadState() const { return app_.host.isLoaded() ? app_.ach.allowStateLoad() : !app_.ach.hardcoreNextGame(); }
 
 std::vector<SlotInfo> AppHost::slots() {
     std::vector<SlotInfo> v;
@@ -81,6 +85,100 @@ std::string AppHost::clockText() const {
 std::string AppHost::raStatus() const {
     if (!app_.ach.signedIn()) return "";
     return "RetroAchievements: " + app_.ach.userName() + (app_.ach.hardcoreWanted() ? " \xC2\xB7 Hardcore" : "");
+}
+
+// ---- the library -----------------------------------------------------------------------------------------------------
+
+namespace {
+
+GameRef gameRef(const lib::Entry& e, int index) {
+    GameRef g;
+    g.key = e.file.path;
+    g.title = e.title;
+    g.region = e.region;
+    g.disc = e.section == lib::Section::Disc;
+    g.index = index;
+    return g;
+}
+
+std::string lowerAscii(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+Art artOf(const ArtView& v) {
+    Art a;
+    if (v.state == ArtView::Ready) {
+        a.tex = v.tex;
+        a.w = v.w;
+        a.h = v.h;
+    }
+    a.loading = v.state == ArtView::Loading;
+    return a;
+}
+
+}  // namespace
+
+// The entry a GameRef stands for now: the position it carried when it is still right, else a scan by path (a rescan
+// moves entries).  Null when the game is gone.
+const lib::Entry* AppHost::entryFor(const GameRef& g) const {
+    const std::vector<lib::Entry>& all = app_.library.entries();
+    if (g.index >= 0 && g.index < (int)all.size() && all[(size_t)g.index].file.path == g.key) return &all[(size_t)g.index];
+    for (const lib::Entry& e : all)
+        if (e.file.path == g.key) return &e;
+    return nullptr;
+}
+
+std::vector<GameRef> AppHost::games(List l) {
+    std::vector<GameRef> out;
+    const std::vector<lib::Entry>& all = app_.library.entries();
+    if (l == List::Favorites || l == List::Recent) {   // already in their order: favorites by title, recents newest first
+        for (const lib::Resolved& r : l == List::Favorites ? app_.library.favoriteEntries() : app_.library.recentEntries()) {
+            if (!r.entry || r.entry->section == lib::Section::Bios) continue;
+            out.push_back(gameRef(*r.entry, (int)(r.entry - all.data())));
+        }
+        return out;
+    }
+    std::vector<std::pair<std::string, int>> keyed;   // (lower-case title, position), sorted by title
+    for (size_t i = 0; i < all.size(); i++) {
+        const lib::Entry& e = all[i];
+        if (e.section == lib::Section::Bios || (l == List::Disc && e.section != lib::Section::Disc)) continue;
+        keyed.emplace_back(lowerAscii(e.title), (int)i);
+    }
+    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& k : keyed) out.push_back(gameRef(all[(size_t)k.second], k.second));
+    return out;
+}
+
+Art AppHost::art(const GameRef& g) {
+    const lib::Entry* e = entryFor(g);
+    return e ? artOf(app_.library.art(*e)) : Art();
+}
+
+std::vector<StateRef> AppHost::states(const GameRef& g) {
+    std::vector<StateRef> out;
+    const lib::Entry* e = entryFor(g);
+    const lib::StateGame* sg = e ? app_.library.statesFor(*e) : nullptr;
+    if (sg)
+        for (const lib::StateInfo& s : sg->states) out.push_back({s.slot, s.mtime});
+    return out;
+}
+
+Art AppHost::stateThumb(const GameRef& g, int slot) {
+    const lib::Entry* e = entryFor(g);
+    const lib::StateGame* sg = e ? app_.library.statesFor(*e) : nullptr;
+    if (sg)
+        for (const lib::StateInfo& s : sg->states)
+            if (s.slot == slot) return artOf(app_.library.stateThumb(s));
+    return Art();
+}
+
+void AppHost::launch(const GameRef& g) {
+    if (const lib::Entry* e = entryFor(g)) app_.library.launch(*e);
+}
+
+void AppHost::launchState(const GameRef& g, int slot) {
+    if (const lib::Entry* e = entryFor(g)) app_.library.launchState(*e, slot);
 }
 
 void AppHost::noteInput(const SDL_Event& e) {

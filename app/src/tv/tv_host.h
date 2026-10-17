@@ -21,6 +21,30 @@ struct SlotInfo {
     int w, h;
 };
 
+// A picture the app owns: `tex` is an OpenGL texture (0 = draw the placeholder), good for the frame it was fetched in.
+struct Art {
+    unsigned tex = 0;
+    int w = 0, h = 0;
+    bool loading = false;
+};
+
+// A game as the TV screens see it, by value: nothing here points into the library, so a rescan cannot leave a screen
+// holding a dead entry.  Every action is keyed by `key` (the file path, stable across rescans).
+struct GameRef {
+    std::string key;
+    std::string title, region;
+    bool disc = false;
+    int index = -1;   // the app's position in library.entries(): a hint for finding the entry again, good for the frame it was fetched in only
+};
+
+// A save state of a game: slot -1 is the auto-save; `time` is seconds since the epoch.  Newest first.
+struct StateRef {
+    int slot;
+    int64_t time;
+};
+
+enum class List { All, Favorites, Recent, Disc };
+
 class Host {
 public:
     virtual ~Host() = default;
@@ -50,6 +74,15 @@ public:
     virtual void setTvActive(bool on) = 0;         // through App::toggleTvMode's path; no-op when Off
     virtual std::string clockText() const = 0;     // "8:42 PM" or "20:42" (SDL_GetDateTimeLocalePreferences)
     virtual std::string raStatus() const = 0;      // "" unless signed in; "RetroAchievements: <user>", + " - Hardcore" when wanted (a middle dot in the text)
+
+    // ---- the library (phase 2) -------------------------------------------------------------------------------------
+    // All / Disc / Favorites: by title, case-insensitive; Recent: newest first.  Never BIOS.  Fetched fresh every frame.
+    virtual std::vector<GameRef> games(List l) = 0;
+    virtual Art art(const GameRef& g) = 0;                       // starts the load on first use; tex 0 until it is ready
+    virtual std::vector<StateRef> states(const GameRef& g) = 0;
+    virtual Art stateThumb(const GameRef& g, int slot) = 0;
+    virtual void launch(const GameRef& g) = 0;                   // opens the game (an event: the A that did it is the caller's to guard)
+    virtual void launchState(const GameRef& g, int slot) = 0;    // opens the game and loads that state
 };
 
 }  // namespace vj::tv
