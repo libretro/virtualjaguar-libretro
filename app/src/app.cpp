@@ -114,6 +114,16 @@ struct App::EmuClient : EmuThread::Client {
     double framePeriod() override { return 1.0 / std::max(1.0, app.host.fps()); }
     double audioQueuedMs() override { return app.emuAudioQueuedMs(); }
     void runFrame() override { app.emuRunOneFrame(); }
+    void framePaced(double lateSec, const PacingClock& clock) override { app.tracePaced(lateSec, clock); }
+    bool takeGrid(double now, double& at, double& period) override {
+        const uint64_t p = app.takePeriodNs_.load(std::memory_order_acquire);
+        const uint64_t t = app.takeNs_.load(std::memory_order_relaxed);
+        if (!p || !t) return false;
+        const uint64_t sdlNow = SDL_GetTicksNS();   // the UI's clock -> this thread's
+        at = now - (double)(int64_t)(sdlNow - t) / 1e9;
+        period = (double)p / 1e9;
+        return true;
+    }
     void afterCommands() override { app.host.publishSnapshot(); }
     void commandFailed(const std::string& what) override {
         app.host.pushMessage("Emulation command failed: " + what, 5000, RETRO_LOG_ERROR);
@@ -547,6 +557,12 @@ void App::stopEmuThread() {
 void App::emuRunOneFrame() {
     if (!emuFastForward_.load(std::memory_order_relaxed)) audio.update(false);   // underruns only: mode A follows the audio clock
     host.wantVideo = true;
+    PerfTrace::Emu te = tracePaced_;
+    if (trace_.enabled()) {
+        te.startNs = SDL_GetTicksNS();
+        te.dueNs = tracePacedSet_ ? te.startNs - te.dueNs : te.startNs;   // tracePaced() left the lateness there
+        tracePacedSet_ = false;
+    }
     const uint64_t r0 = SDL_GetPerformanceCounter();
     host.runFrame();
     retroTicks_.fetch_add(SDL_GetPerformanceCounter() - r0, std::memory_order_relaxed);
@@ -564,7 +580,50 @@ void App::emuRunOneFrame() {
         frames.publish();
         lastSentSerial_ = f.serial;
     }
+    if (trace_.enabled()) {
+        te.endNs = SDL_GetTicksNS();
+        te.serial = f.serial;
+        trace_.emu(te);
+    }
     host.publishSnapshot();
+}
+
+// Emulation thread (VJ_PERF_TRACE): the pacing of the frame emuRunOneFrame() runs next.
+void App::tracePaced(double lateSec, const PacingClock& clock) {
+    if (!trace_.enabled()) return;
+    tracePaced_.dueNs = lateSec > 0 ? (uint64_t)(lateSec * 1e9) : 0;   // a lateness until the frame starts
+    tracePaced_.trim = (float)clock.trim();
+    tracePaced_.filtQMs = (float)clock.filteredQueueMs();
+    tracePaced_.queuedMs = (float)emuAudioQueuedMs();
+    tracePaced_.audio = clock.audioLocked() ? 1 : 0;
+    tracePaced_.refill = clock.refilling() ? 1 : 0;
+    tracePacedSet_ = true;
+}
+
+// UI thread, threaded: this iteration takes its frame now.  While the swaps sit on a tracked vblank grid (vsync on, the
+// latch's phase locked, whether or not it waits), the takes repeat every refresh, and the emulation thread keeps its
+// frame ends off them (PacingClock::steer).
+void App::publishTakeGrid(uint64_t takeNs) {
+    const uint64_t p = (paceSteerOn_ && vsync && latch_.locked()) ? latch_.periodNs() : 0;
+    takeNs_.store(takeNs, std::memory_order_relaxed);
+    takePeriodNs_.store(p, std::memory_order_release);
+}
+
+// UI thread (VJ_PERF_TRACE): one row per iteration, right after its swap.
+void App::traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swap1) {
+    if (!trace_.enabled()) return;
+    PerfTrace::Ui u{};
+    u.takeNs = takeNs;
+    u.serial = serial;
+    u.swap0Ns = swap0;
+    u.swap1Ns = swap1;
+    u.wakeNs = traceWakeNs_;
+    u.waitEndNs = threaded() ? latchedAtNs_ : 0;
+    u.budgetNs = latch_.budgetNs();
+    u.targetNs = traceTargetNs_;
+    u.locked = latch_.locked() ? 1 : 0;
+    trace_.ui(u);
+    traceWakeNs_ = traceTargetNs_ = 0;
 }
 
 // The audio clock for mode A, or -1 when there is none to follow: no device, a paused stream, mute (nothing is
@@ -643,6 +702,8 @@ void App::notePresented(uint64_t swapEndNs) {
 void App::latchWait() {
     if (latchChecks_++ % 60 == 0) latchUpdatePeriod();   // the window may have moved to another display
     const uint64_t wake = latch_.wakeAt(SDL_GetTicksNS());
+    traceWakeNs_ = wake;
+    traceTargetNs_ = latch_.targetNs();
     for (;;) {
         const uint64_t t = SDL_GetTicksNS();
         if (t >= wake || quit) return;
@@ -1536,7 +1597,16 @@ void App::stepEmulation() {
         host.wantVideo = (i == frames - 1);
         if (!fastForward) audio.update();
         uint64_t r0 = perf.on ? perf.tick() : 0;
+        PerfTrace::Emu te{};
+        if (trace_.enabled()) te.dueNs = te.startNs = SDL_GetTicksNS();
         host.runFrame();
+        if (trace_.enabled()) {
+            te.endNs = SDL_GetTicksNS();
+            te.serial = host.frame().serial;
+            te.trim = 1.0f;
+            te.filtQMs = te.queuedMs = audio.queuedMs();
+            trace_.emu(te);
+        }
         if (r0) perf.add(Perf::Retro, 1000.0 * (double)(perf.tick() - r0) / (double)perf.freq);
         perf.emulated();
         ach.afterFrame();
@@ -1686,6 +1756,7 @@ int App::runInteractive(const CliArgs& a) {
     audio.open(48043.6);
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     lateLatchOn_ = a.lateLatch != 0;
+    paceSteerOn_ = a.paceSteer != 0;
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
@@ -1735,6 +1806,8 @@ int App::runInteractive(const CliArgs& a) {
     fpsWindowStart_ = now();
     lastSramFlush_ = now();
     perf.init(a.perfFrames, a.perfGpu);
+    trace_.init(a.perfFrames);
+    uint64_t traceSerial = 0;
     video.shader.reuseOutput = !a.perfNoReuse;
     perf.forceW = a.perfShaderW;
     perf.forceH = a.perfShaderH;
@@ -1756,7 +1829,11 @@ int App::runInteractive(const CliArgs& a) {
                                     std::to_string(latch_.misses()) + ", released " + std::to_string(latch_.released()) +
                                     ", pad " + std::to_string(latch_.padNs() / 1000000.0).substr(0, 4) + " ms)"
                               : std::string("off"));
+            if (threaded())
+                perf.note += std::string(", pace steering ") + (paceSteerOn_ ? "on" : "off") + " (" +
+                             std::to_string(emu.phaseSteps()) + " steps)";
             perf.report(host.contentName().c_str());
+            trace_.write();
             break;
         }
         if (a.perfPause && perf.seen == 30 && !paused && host.isLoaded()) togglePause();   // after a few real frames
@@ -1776,6 +1853,8 @@ int App::runInteractive(const CliArgs& a) {
         else stepEmulation();
         perf.lap(Perf::Step);
         video.setSourceFps((float)host.fps());
+        const Uint64 takeNs = SDL_GetTicksNS();
+        if (threaded()) publishTakeGrid(takeNs);
         if (!threaded()) video.upload(host.frame());
         else {
             adoptFrameEpoch();
@@ -1784,6 +1863,10 @@ int App::runInteractive(const CliArgs& a) {
                 shownAspect_ = s->aspect;
                 shownSeq_ = s->inputSeq;
             }
+        }
+        if (trace_.enabled()) {
+            const FrameExchange::Slot* cur = threaded() ? frames.current() : nullptr;
+            traceSerial = threaded() ? (cur ? cur->frame.serial : 0) : host.frame().serial;
         }
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Upload);
@@ -1815,6 +1898,7 @@ int App::runInteractive(const CliArgs& a) {
         const Uint64 swap1 = SDL_GetTicksNS();
         const Uint64 swapNs = swap1 - swap0;
         notePresented(swap1);
+        traceUi(takeNs, traceSerial, swap0, swap1);
         if (threaded()) {
             if (latchedAtNs_) latch_.noteBuild(swap0 - latchedAtNs_);
             latch_.onSwap(swap0, swap1);

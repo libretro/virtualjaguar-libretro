@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <memory>
+#include <string>
 #include <vector>
 
 using vj::PacingClock;
@@ -41,14 +43,22 @@ struct Device {
     bool draining = true;
     double countFrom = 0;      // underruns before this time are not counted (start-up)
     uint64_t underruns = 0;
+    double pullJitter = 0;     // each pull lands up to this many seconds off its slot (a late or early audio thread)
+    uint32_t seed = 1;
+    double slot = 0;           // the pull's nominal time (pulls stay on the crystal's grid; only their timing jitters)
     void advanceTo(double t) {
         while (nextPull <= t) {
             if (draining) {
                 if (queued < kChunk && nextPull >= countFrom) underruns++;
                 queued = std::max(0.0, queued - kChunk);
             }
-            nextPull += kChunk / rate;
+            slot += kChunk / rate;
+            nextPull = slot + (pullJitter > 0 ? pullJitter * (2.0 * rnd(seed) - 1.0) : 0.0);
         }
+    }
+    static double rnd(uint32_t& s) {   // a fixed LCG: the same jitter on every run and platform
+        s = s * 1664525u + 1013904223u;
+        return (double)(s >> 8) / 16777216.0;
     }
     double ms() const { return 1000.0 * queued / kStreamHz; }
     void prime() { queued = kTargetMs / 1000.0 * kStreamHz; }
@@ -56,13 +66,16 @@ struct Device {
 
 struct Run {
     std::vector<double> starts, ends;   // each emulated frame's start and end (= when it can be shown)
-    uint64_t dropped = 0;
+    std::vector<double> trims;          // the trim each frame's period was stretched by
+    uint64_t dropped = 0, steers = 0;
     bool lockedAtEnd = false;
 };
 
 // The emulation thread's loop on a fake clock: ask when the next frame is due, "sleep" until then, run a frame of
 // cost(i) seconds, and queue its audio at its end (fast-forward drops it, as App does).
-Run simulate(double secs, const std::function<double(size_t)>& cost, bool audio, Device& dev, bool ff = false) {
+// takeHz > 0: the UI takes frames `lead` before each vblank of a takeHz display and tells the clock (steering).
+Run simulate(double secs, const std::function<double(size_t)>& cost, bool audio, Device& dev, bool ff = false,
+             double takeHz = 0, double lead = 0, const std::function<double(size_t)>& wakeLate = nullptr) {
     PacingClock clock;
     Run r;
     double t = 0;
@@ -76,19 +89,26 @@ Run simulate(double secs, const std::function<double(size_t)>& cost, bool audio,
         in.audioQueuedMs = audio ? dev.ms() : -1.0;
         in.targetMs = kTargetMs;
         in.fastForward = ff;
+        if (takeHz > 0) {
+            in.takePeriod = 1.0 / takeHz;
+            in.takeAt = std::floor((t + lead) * takeHz) / takeHz - lead;   // the UI's latest take
+        }
         const double due = clock.nextDue(in);
         if (due > t + 1e-12) {
-            t = due;
+            t = due + (wakeLate ? wakeLate(i) : 0.0);   // the thread wakes up late (timer slack, scheduling)
             continue;
         }
         clock.frameStarted(in);
+        r.trims.push_back(clock.trim());
         r.starts.push_back(t);
         t += cost(i++);
         dev.advanceTo(t);
         if (!ff) dev.queued += kBatch;
         r.ends.push_back(t);
+        clock.frameEnded(t);
     }
     r.dropped = clock.droppedFrames();
+    r.steers = clock.steers();
     r.lockedAtEnd = clock.audioLocked();
     return r;
 }
@@ -97,13 +117,14 @@ struct Shown {
     int repeats = 0, skips = 0, vblanks = 0;
 };
 
-// A display refreshing at `hz` shows, at each vblank, the newest frame finished by then.
-Shown present(const Run& r, double hz, double from, double to) {
+// A display refreshing at `hz` shows, at each vblank, the newest frame finished by then -- or, with `lead`, by that
+// long before it (the late latch's take point: the UI takes the frame `lead` before the vblank it is shown at).
+Shown present(const Run& r, double hz, double from, double to, double lead = 0) {
     Shown s;
     size_t k = 0;
     long last = -1;
     for (long n = (long)std::ceil(from * hz); (double)n / hz < to; n++) {
-        const double v = (double)n / hz;
+        const double v = (double)n / hz - lead;
         while (k < r.ends.size() && r.ends[k] <= v) k++;
         const long newest = (long)k - 1;
         if (last >= 0) {
@@ -242,9 +263,227 @@ void testFastForward() {
     CHECK(!r.lockedAtEnd, "fast-forward ignores the audio clock");
 }
 
+// ---- the presentation-evenness model (#967) ----------------------------------------------------------------------
+// The threaded loop showed 60-160 repeats and as many skips per minute where the 60.05-vs-60 Hz beat alone predicts
+// 3-4 skips.  Two candidate causes, separated here:
+//   * the trim: the +/-0.5% audio trim moving the grid's phase much faster than the 0.054 Hz beat, so frame ends keep
+//     crossing the take point (device pulls jittering is what would drive it);
+//   * the ends' spread: each frame ends at start + cost, so a cost (or wake-up) spread of S ms makes every crossing of
+//     the take point by the slowly drifting grid ambiguous for S / 15 us frames (15 us = the beat's drift per frame),
+//     each of which can come out as a repeat + skip pair.
+
+// The emulation grid's phase that the trim alone moved (seconds), max - min between two times.
+double trimWander(const Run& r, double from, double to) {
+    double ph = 0, lo = 0, hi = 0;
+    for (size_t i = 0; i < r.starts.size(); i++) {
+        if (r.starts[i] < from || r.starts[i] >= to) continue;
+        ph += (r.trims[i] - 1.0) * kPeriod;
+        lo = std::min(lo, ph);
+        hi = std::max(hi, ph);
+    }
+    return hi - lo;
+}
+
+std::function<double(size_t)> jitteredCost(double base, double spread, uint32_t seed) {
+    auto st = std::make_shared<uint32_t>(seed);
+    return [=](size_t) { return base + spread * (Device::rnd(*st) - 0.5); };
+}
+
+void modelTable() {
+    std::printf("model: 70 s, measured 10-70 s, 60 Hz panel; events = repeats + skips\n");
+    for (double pull : {0.0, 0.002, 0.005})
+        for (double spread : {0.0, 0.0005, 0.001, 0.002, 0.004})
+            for (double lead : {0.0, 0.003})
+                for (bool steer : {false, true}) {
+                    Device dev;
+                    dev.prime();
+                    dev.pullJitter = pull;
+                    Run r = simulate(70.0, jitteredCost(0.006, spread, 7), true, dev, false, steer ? 60.0 : 0.0, lead);
+                    const Shown sh = present(r, 60.0, 10.0, 70.0, lead);
+                    std::printf("  pull jitter %.0f ms  cost spread %.1f ms  take %.0f ms early  steer %d:  repeats %3d"
+                                "  skips %3d  steps %2llu  trim phase wander %.2f ms  underruns %llu\n",
+                                1000 * pull, 1000 * spread, 1000 * lead, (int)steer, sh.repeats, sh.skips,
+                                (unsigned long long)r.steers, 1000 * trimWander(r, 10, 70),
+                                (unsigned long long)dev.underruns);
+                }
+}
+
+// How many vblanks each frame stayed on screen: hold[n] = frames shown for n refreshes (0 = never shown).
+std::vector<int> holds(const Run& r, double hz, double from, double to, double lead) {
+    std::vector<int> hold(8, 0);
+    size_t k = 0;
+    long last = -1;
+    int run = 0;
+    for (long n = (long)std::ceil(from * hz); (double)n / hz < to; n++) {
+        const double v = (double)n / hz - lead;
+        while (k < r.ends.size() && r.ends[k] <= v) k++;
+        const long newest = (long)k - 1;
+        if (newest == last) {
+            run++;
+            continue;
+        }
+        if (last >= 0) {
+            hold[std::min(run, 7)]++;
+            hold[0] += (int)(newest - last - 1);
+        }
+        last = newest;
+        run = 1;
+    }
+    return hold;
+}
+
+void testSteeringRestoresTheBeat() {
+    // A 6 ms frame whose cost varies by 4 ms, taken 3 ms before each vblank of a 60 Hz panel.
+    Device dev;
+    dev.prime();
+    Run plain = simulate(70.0, jitteredCost(0.006, 0.004, 7), true, dev, false, 0.0, 0.003);
+    const Shown a = present(plain, 60.0, 10.0, 70.0, 0.003);
+    CHECK(a.repeats + a.skips > 100, "the mechanism: unsteered, a 4 ms spread repeats and skips at every crossing "
+          "(%d + %d in 60 s)", a.repeats, a.skips);
+    Device dev2;
+    dev2.prime();
+    Run r = simulate(70.0, jitteredCost(0.006, 0.004, 7), true, dev2, false, 60.0, 0.003);
+    const Shown s = present(r, 60.0, 10.0, 70.0, 0.003);
+    CHECK(s.repeats == 0, "steered: no repeat (%d)", s.repeats);
+    CHECK(s.skips >= 2 && s.skips <= 5, "steered: the beat's one skip per ~18 s (%d in 60 s)", s.skips);
+    CHECK(r.steers >= 3 && r.steers <= 8, "one phase step per crossing, not one per frame (%llu)",
+          (unsigned long long)r.steers);
+    CHECK(dev2.underruns == 0 && r.dropped == 0, "no underrun, nothing dropped");
+}
+
+void testSteeringKeepsTheAudioClock() {
+    Device dev;
+    dev.rate = kStreamHz * (1.0 + 200e-6);   // a sound card 200 ppm fast
+    dev.prime();
+    Run r = simulate(200.0, jitteredCost(0.006, 0.004, 11), true, dev, false, 60.0, 0.003);
+    const double want = dev.rate / kBatch;
+    const double got = rateBetween(r, 50.0, 200.0);
+    CHECK(std::fabs(got - want) / want < 3e-5, "steered, the long-run rate is still the sound card's: %.5f Hz, want %.5f",
+          got, want);
+    CHECK(dev.underruns == 0, "no underrun (%llu)", (unsigned long long)dev.underruns);
+    CHECK(std::fabs(dev.ms() - kTargetMs) < 25.0, "the queue stays near its target (%.1f ms)", dev.ms());
+}
+
+void testSteeringAt120Hz() {
+    // Two refreshes per frame: every frame should stay on screen for exactly two, except at the beat's crossings.
+    for (bool steer : {false, true}) {
+        Device dev;
+        dev.prime();
+        Run r = simulate(70.0, jitteredCost(0.006, 0.004, 5), true, dev, false, steer ? 120.0 : 0.0, 0.002);
+        const std::vector<int> h = holds(r, 120.0, 10.0, 70.0, 0.002);
+        const int odd = h[0] + h[1] + h[3] + h[4];
+        if (steer) CHECK(odd <= 8, "120 Hz, steered: frames held 1 or 3 refreshes only at crossings (%d)", odd);
+        else CHECK(odd > 40, "120 Hz, unsteered: the same mechanism (%d frames held 1 or 3 refreshes)", odd);
+    }
+}
+
+void testSteeringFollowsACostThatSwitches() {
+    // Measured on the Mac Studio (yarc, VJ_PERF_TRACE): the thread wakes 0.5-3 ms late and the frame cost switches with
+    // the content between ~7.5 ms and ~2.9 ms for seconds at a time.  When it drops, the ends jump 4.5 ms earlier,
+    // possibly onto the take point, while the window still remembers the 7.5 ms frames.
+    auto cost = [](size_t i) { return ((i / 300) % 2 ? 0.0029 : 0.0075) + 0.0004 * (double)((i * 7) % 5) / 4.0; };
+    auto late = [](size_t i) { return 0.0005 + 0.0025 * (double)((i * 13) % 11) / 10.0; };
+    for (double lead : {0.0025, 0.003, 0.004, 0.006, 0.009, 0.012}) {
+        Device dev;
+        dev.prime();
+        Run r = simulate(70.0, cost, true, dev, false, 60.0, lead, late);
+        const Shown s = present(r, 60.0, 10.0, 70.0, lead);
+        CHECK(s.repeats + s.skips <= 12, "a cost that switches 7.5 <-> 2.9 ms every 5 s, take %.1f ms early: %d repeats "
+              "+ %d skips in 60 s (%llu steps)", 1000 * lead, s.repeats, s.skips, (unsigned long long)r.steers);
+    }
+}
+
+void testSteeringWithAWideWindow() {
+    // Cybermorph on the Studio: 5-11 ms frames, 0.5-3 ms late, so a ~9 ms window and ~9 ms steps.  Each early step
+    // queues that much audio; the trim then slows the grid, and past ~12 ms of queue error (0.09%, the beat) the grid
+    // drifts the other way.  Steering must follow the drift it sees, not the untrimmed one.
+    auto cost = [](size_t i) { return 0.005 + 0.006 * (double)((i * 37) % 101) / 100.0; };
+    auto late = [](size_t i) { return 0.0005 + 0.0025 * (double)((i * 13) % 11) / 10.0; };
+    for (double lead : {0.002, 0.004, 0.006}) {
+        Device dev;
+        dev.prime();
+        Run r = simulate(130.0, cost, true, dev, false, 60.0, lead, late);
+        const Shown s = present(r, 60.0, 10.0, 130.0, lead);
+        CHECK(s.repeats + s.skips <= 20, "a 9 ms window, take %.0f ms early: %d repeats + %d skips in 120 s (%llu steps)",
+              1000 * lead, s.repeats, s.skips, (unsigned long long)r.steers);
+        CHECK(dev.underruns == 0, "no underrun (%llu)", (unsigned long long)dev.underruns);
+    }
+}
+
+void testSteeringFollowsTheTrimmedDrift() {
+    // The trim held where the grid runs slower than the panel: here a sound card 0.15% slow (59.96 Hz of frames on a
+    // 60 Hz panel), on hardware the queue error the steps themselves leave.  The grid now drifts the other way; the
+    // crossings are repeats, about one per 28 s, and steering must step later, not earlier.
+    for (double lead : {0.003, 0.009}) {
+        Device dev;
+        dev.rate = kStreamHz * (1.0 - 0.0015);
+        dev.prime();
+        Run r = simulate(130.0, jitteredCost(0.006, 0.004, 9), true, dev, false, 60.0, lead);
+        const Shown s = present(r, 60.0, 10.0, 130.0, lead);
+        CHECK(s.skips == 0 && s.repeats >= 2 && s.repeats <= 8, "a grid slower than the panel, take %.0f ms early: "
+              "%d repeats + %d skips in 120 s (%llu steps)", 1000 * lead, s.repeats, s.skips,
+              (unsigned long long)r.steers);
+    }
+}
+
+void testNoSteeringOffAWholeRatio() {
+    // A PAL game (50.08 Hz) on a 60 Hz panel, or 60.05 Hz on 75 / 144 Hz: each frame lands ~3 ms further along the take
+    // grid, so some frame's window always holds a take point -- that is ordinary 5:6 (4:5, 5:12) judder, not a slow
+    // crossing, and stepping for it would cost production every 30 frames forever.  No steps, no underruns, the rate kept.
+    struct Case { double coreHz, panelHz; };
+    for (const Case c : {Case{50.08013, 60.0}, Case{60.05445, 75.0}, Case{60.05445, 144.0}}) {
+        Device dev;
+        const double period = 1.0 / c.coreHz;
+        dev.rate = kBatch / period;   // a sound card consuming exactly the core's rate (dev.rate is in stream frames/s)
+        dev.prime();
+        PacingClock clock;
+        Run r;
+        double t = 0;
+        clock.reset(t);
+        uint32_t seed = 3;
+        while (t < 60.0) {
+            dev.advanceTo(t);
+            PacingInput in;
+            in.now = t;
+            in.period = period;
+            in.audioQueuedMs = dev.ms();
+            in.targetMs = kTargetMs;
+            in.takePeriod = 1.0 / c.panelHz;
+            in.takeAt = std::floor((t + 0.003) * c.panelHz) / c.panelHz - 0.003;
+            const double due = clock.nextDue(in);
+            if (due > t + 1e-12) {
+                t = due;
+                continue;
+            }
+            clock.frameStarted(in);
+            r.starts.push_back(t);
+            t += 0.004 + 0.004 * Device::rnd(seed);
+            dev.advanceTo(t);
+            dev.queued += kBatch;
+            clock.frameEnded(t);
+        }
+        const double got = rateBetween(r, 20.0, 60.0);
+        CHECK(clock.steers() == 0, "%.2f Hz on %.0f Hz: no steps (%llu)", c.coreHz, c.panelHz,
+              (unsigned long long)clock.steers());
+        CHECK(dev.underruns == 0, "%.2f Hz on %.0f Hz: no underrun (%llu)", c.coreHz, c.panelHz,
+              (unsigned long long)dev.underruns);
+        CHECK(std::fabs(got - c.coreHz) / c.coreHz < 1e-4, "%.2f Hz on %.0f Hz: the rate is kept (%.4f Hz)", c.coreHz,
+              c.panelHz, got);
+    }
+}
+
+void testWindowTooWideDoesNotSteer() {
+    Device dev;
+    dev.prime();
+    Run r = simulate(20.0, jitteredCost(0.008, 0.016, 3), true, dev, false, 60.0, 0.003);   // 0-16 ms frames
+    CHECK(r.steers == 0, "a spread of a whole period leaves no gap to steer into (%llu steps)",
+          (unsigned long long)r.steers);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--model") modelTable();   // the numbers behind the #967 evenness notes
     testTrueRateOn60Hz();
     testFollowsTheCrystal();
     testNoAudioClock();
@@ -253,6 +492,14 @@ int main() {
     testSpikeCatchesUp();
     testStallDropsOwedTime();
     testFastForward();
+    testSteeringRestoresTheBeat();
+    testSteeringKeepsTheAudioClock();
+    testSteeringAt120Hz();
+    testSteeringFollowsACostThatSwitches();
+    testSteeringWithAWideWindow();
+    testSteeringFollowsTheTrimmedDrift();
+    testNoSteeringOffAWholeRatio();
+    testWindowTooWideDoesNotSteer();
     std::printf(g_fail ? "pacing_clock_test: %d FAILED\n" : "pacing_clock_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

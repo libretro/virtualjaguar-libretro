@@ -154,25 +154,30 @@ void EmuThread::loop() {
         in.audioQueuedMs = client_->audioQueuedMs();
         in.targetMs = targetMs_.load();
         in.fastForward = ff_.load();
+        if (!client_->takeGrid(in.now, in.takeAt, in.takePeriod)) in.takeAt = in.takePeriod = 0;
         if (!pacing) {
             clock.reset(in.now);
             pacing = true;
         }
+        double due = in.now;
         if (!budget) {
-            const double due = clock.nextDue(in);
+            due = clock.nextDue(in);
             if (due > in.now + 0.0002) {
                 cmds_.waitUntil(atSec(std::min(due, in.now + 0.1)));   // re-checked at least every 100 ms
                 continue;
             }
         }
         clock.frameStarted(in);
+        if (!budget) client_->framePaced(in.now - due, clock);
         client_->runFrame();
+        clock.frameEnded(nowSec());
         frames_.fetch_add(1);
         if (budget) {   // done before the budget drops: advance() reads advanceDone_ when the budget hits 0
             advanceDone_.fetch_add(1);
             advanceLeft_.fetch_sub(1);
         }
         dropped_.store(clock.droppedFrames());
+        steers_.store(clock.steers());
         notifyFrame();
     }
     if (cmds_.closeAndDrain(onError) > 0) client_->afterCommands();
