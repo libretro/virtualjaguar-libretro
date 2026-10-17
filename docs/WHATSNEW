@@ -1,3 +1,57 @@
+Virtual Jaguar v3.9.1 libretro
+------------------------------
+
+Xenowings SFX, faster GPU idle skip, shaders on every app package.
+Full notes: docs/RELEASE_NOTES_v3.9.1.md
+
+Cart corpus byte-identical to v3.9.0 except Xenowings (SFX play),
+a frame or two of Skyhammer (GPU divide by zero) and the twelve loader
+fixes below. No option keys removed; savestate format stays v17.
+
+== Core ==
+* Xenowings shot/explosion sounds restored (#895, #954): an indexed
+  store right after a div waits for the quotient when its offset
+  field names the div's target (netlist scoreboard rule, errata B25).
+* RISC divide keeps 33 bits: divisors >= $80000000, overflowing 16.16
+  divides and divide by zero match the netlist (B26).
+* GPU idle skip admits invariant local-RAM long stores and the full
+  jr reach (#957): Doom EX 83M -> 36M instr/frame at 1x, 141M -> 37M
+  at RISC 2x. Corpus video/audio/state hashes identical.
+* Framebuffer overrun on wild video registers fixed (#944, #946).
+* GDB stub works with stock gdb: real 68K target description,
+  detach/kill, watchpoints, full monitor output (#936, #948).
+* Loader: DRI 601A executables, JAGR type 2, headerless BJL programs
+  at $4000, Painter (bin) at $10000, $802000-linked images (Rayman
+  Demo, BadCode4 (rom)), erased $404 enters at $802000 (Phase Zero,
+  Developer CD BIOS .j64)
+  -- twelve files (#971-#974, #978, #979).
+* Legacy MSVC 2005/2010 buildbot builds link again: snprintf shim
+  for the debug interface's disassembler (#981, #982).
+
+== Downloads ==
+* Every macOS download is signed and notarized: core dylibs,
+  cue2cdi, Jaguar CD tools and the app (#989, #990).
+* macOS chdman no longer needs Homebrew SDL3; universal binary for
+  macOS 11+ (#993, #994).
+
+== Desktop app ==
+* Shaders on Intel Macs, AppImage, .deb (librashader built from
+  source, #955) and the Flatpak (#953); the Shader section explains
+  when the runtime is unavailable.
+* Settings > Interface tab: theme, font, FPS, overlay, resume,
+  library and desktop options moved out of Video/Storage (#941).
+* Font picker: installed fonts, favorites/recents, per-font preview,
+  debugger monospace font (#943).
+* Pacing no longer sleeps while behind (#956).
+* BIOS selector picks the clicked file; FPS label under menus;
+  duplicate ImGui IDs fixed (#940, #941).
+
+== Known issues ==
+* Doom's attract demo runs too fast (#401).
+* Blit Memoization, DRAM Timing and GPU/DSP Pipeline Timing switch
+  the idle-loop fast-forward off while enabled.
+* Windows packages are not signed yet.
+
 Virtual Jaguar v3.9.0 libretro
 ------------------------------
 

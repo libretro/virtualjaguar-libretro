@@ -1,17 +1,17 @@
 <!-- title: Compatibility | Virtual Jaguar libretro -->
 <!-- nav: Compatibility -->
-<!-- description: Which Atari Jaguar and Jaguar CD games have known problems in Virtual Jaguar libretro v3.9.0, what was fixed recently, and the headless boot matrices behind the claims. -->
+<!-- description: Which Atari Jaguar and Jaguar CD games have known problems in Virtual Jaguar libretro v3.9.1, what was fixed recently, and the headless boot matrices behind the claims. -->
 
 <h1>Compatibility</h1>
 <p class="lede">
   Most of the library boots and plays. This page lists what does not, what
   was fixed recently, and how much to trust the test data. Current as of
-  v3.9.0 (2026-10-14). No BIOS files are required
+  v3.9.1. No BIOS files are required
   (<a href="{{REPO}}#bios">README: BIOS</a>).
 </p>
 
 <section class="win">
-  <h2>Known problems <span class="badge warn">v3.9.0</span></h2>
+  <h2>Known problems <span class="badge warn">v3.9.1</span></h2>
   <div class="win-body">
     <div class="table-wrap"><table>
       <tr><th>Title</th><th>Problem</th><th>Tracking</th></tr>
@@ -55,6 +55,12 @@
   <div class="win-body">
     <div class="table-wrap"><table>
       <tr><th>Title</th><th>What was fixed</th><th>Release</th></tr>
+      <tr><td>Xenowings</td>
+          <td>Shot and explosion sound effects were missing. A RISC store right after a divide now waits for the quotient in the one case the chip netlists show it does.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.1.md">v3.9.1</a></td></tr>
+      <tr><td>Homebrew and demos: Mandelbrot Demo, Jaguar Server INTRO / INTROMOD, Painter, Hubble Fade / Nebula, Drumpad2, Rayman Demo, BadCode4 (rom), Phase Zero</td>
+          <td>Black screen or a crash at start: the loader put them at the wrong address. They now load where they were linked.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.9.1.md">v3.9.1</a></td></tr>
       <tr><td>Flip Out</td>
           <td>Ran into an <code>ILLEGAL</code> loop in HLE and the boot ROM in BIOS mode. 1, 2 and 4 MB cartridge images now repeat across the cartridge window as on hardware.</td>
           <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.8.0.md">v3.8.0</a></td></tr>
