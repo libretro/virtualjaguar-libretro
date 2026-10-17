@@ -28,6 +28,7 @@
 #include "input_snapshot.h"
 #include "input.h"
 #include "instance.h"
+#include "late_latch.h"
 #include "library_service.h"
 #include "netplay.h"
 #include "pacing.h"
@@ -87,6 +88,7 @@ struct CliArgs {
     bool perfPause = false;         // dev: pause after loading (idle-cost profile)
     int emuThread = -1;             // --emu-thread on|off: the emulation on its own thread for this run (-1 = the setting; headless: off)
     bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
+    int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -354,6 +356,15 @@ private:
     unsigned perfInputK_ = 0;       // --perf-input: the next injected key's delay step
     void publishInput();
     void notePresented(uint64_t swapEndNs);
+    // The late latch (#967, late_latch.h): threaded + vsync, wait until shortly before the next vblank, handing input
+    // to the emulation thread as it arrives, then take the newest frame.
+    LateLatch latch_;
+    bool lateLatchOn_ = true;
+    uint64_t latchedAtNs_ = 0;   // when this iteration's wait ended: its UI work starts there
+    unsigned latchChecks_ = 0;
+    bool latchLogged_ = false;
+    void latchWait();
+    void latchUpdatePeriod();
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App

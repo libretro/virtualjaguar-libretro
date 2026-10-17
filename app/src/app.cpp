@@ -621,6 +621,45 @@ void App::notePresented(uint64_t swapEndNs) {
     }
 }
 
+// Threaded + vsync (#967, the late latch): wait until shortly before the next vblank and hand every input event to the
+// emulation thread the moment it arrives, so the next emulated frame polls it wherever in the period that frame starts.
+// The iteration then takes the newest finished frame, builds the UI and swaps just in time.  While the latch does not
+// know where the vblanks are (late_latch.h), it returns at once: the unlatched loop.
+void App::latchWait() {
+    if (latchChecks_++ % 60 == 0) latchUpdatePeriod();   // the window may have moved to another display
+    const uint64_t wake = latch_.wakeAt(SDL_GetTicksNS());
+    if (latch_.locked() != latchLogged_) {
+        latchLogged_ = latch_.locked();
+        std::fprintf(stderr, "[emu] late latch %s: period %.3f ms, budget %.2f ms\n", latchLogged_ ? "locked" : "released",
+                     (double)latch_.periodNs() / 1e6, (double)latch_.budgetNs() / 1e6);
+    }
+    for (;;) {
+        const uint64_t t = SDL_GetTicksNS();
+        if (t >= wake || quit) return;
+        const uint64_t left = wake - t;
+        if (left < 2000000) {   // SDL_WaitEventTimeout counts whole ms: the last stretch is a precise sleep
+            SDL_DelayPrecise(left);
+            return;
+        }
+        SDL_Event e;
+        if (!SDL_WaitEventTimeout(&e, (Sint32)((left - 1000000) / 1000000))) continue;
+        do handleEvent(e, false);
+        while (!quit && SDL_PollEvent(&e));
+        publishInput();
+    }
+}
+
+// The display's refresh period for the latch (0 = unknown: it stays off).
+void App::latchUpdatePeriod() {
+    const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+    uint64_t ns = 0;
+    if (m && m->refresh_rate_numerator > 0 && m->refresh_rate_denominator > 0)
+        ns = (uint64_t)(1e9 * (double)m->refresh_rate_denominator / (double)m->refresh_rate_numerator);
+    else if (m && m->refresh_rate > 0.0f)
+        ns = (uint64_t)(1e9 / (double)m->refresh_rate);
+    latch_.setPeriodNs(ns);
+}
+
 // UI thread, threaded: a content switch (load / unload; the call ran frames.clear() on the emulation thread) must not
 // leave the previous game's last picture on screen until the new game's first frame arrives.
 void App::adoptFrameEpoch() {
@@ -1620,6 +1659,7 @@ int App::runInteractive(const CliArgs& a) {
     applyAudioSettings();
     audio.open(48043.6);
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
+    lateLatchOn_ = a.lateLatch != 0;
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
@@ -1684,6 +1724,8 @@ int App::runInteractive(const CliArgs& a) {
             perf.note += ", chain runs " + std::to_string(video.shader.chainRuns()) + " reuses " +
                          std::to_string(video.shader.chainReuses());
             perf.note += std::string(", emulation thread ") + (threaded() ? "on" : "off");
+            perf.note += std::string(", late latch ") +
+                         (threaded() && vsync && lateLatchOn_ ? (latch_.locked() ? "locked" : "not locked") : "off");
             perf.report(host.contentName().c_str());
             break;
         }
@@ -1742,6 +1784,10 @@ int App::runInteractive(const CliArgs& a) {
         const Uint64 swap1 = SDL_GetTicksNS();
         const Uint64 swapNs = swap1 - swap0;
         notePresented(swap1);
+        if (threaded()) {
+            if (latchedAtNs_) latch_.noteBuild(swap0 - latchedAtNs_);
+            latch_.onSwap(swap0, swap1);
+        }
         perf.lap(Perf::Present);
 
         updateTitle();
@@ -1753,10 +1799,13 @@ int App::runInteractive(const CliArgs& a) {
             lastSramFlush_ = t;
         }
         if (threaded()) {
-            // The emulation keeps its own time on its own thread; this loop only presents.  Vsync on: the swap paces
-            // it.  Off: a short nap, so a new frame still shows within a few ms without spinning a core.  A swap that
-            // returned at once with vsync on (a minimized or occluded window does not block) gets the same nap.
-            if (!vsync || swapNs < 250000) SDL_DelayNS(4000000);
+            // The emulation keeps its own time on its own thread; this loop only presents.  Vsync on and the swap
+            // blocked: the late latch waits until just before the next vblank, publishing input as it comes, and the
+            // swap paces the rest.  Off, or a swap that returned at once with vsync on (a minimized or occluded window
+            // does not block): a short nap, so a new frame still shows within a few ms without spinning a core.
+            if (vsync && lateLatchOn_ && swapNs >= 250000) latchWait();
+            else if (!vsync || swapNs < 250000) SDL_DelayNS(4000000);
+            latchedAtNs_ = SDL_GetTicksNS();
         } else {
             syncSwapInterval();
             if (!pacer_.swapSync) {

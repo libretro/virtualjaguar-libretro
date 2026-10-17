@@ -21,6 +21,9 @@ for mode in on off; do
   if [ "$mode" = on ] && ! grep -q "\[emu\] emulation thread on" "$log"; then
     echo "FAIL on: the emulation thread did not start"; fail=1
   fi
+  if [ "$mode" = on ] && ! grep -q "\[emu\] late latch locked" "$log"; then
+    echo "FAIL on: the late latch never locked (do swaps block at the vblank on this machine?)"; fail=1
+  fi
   rows=$(( $(wc -l < "$csv" 2>/dev/null || echo 1) - 1 ))
   [ "$rows" -ge 590 ] || { echo "FAIL $mode: $rows CSV rows, expected 600"; fail=1; }
   awk -F, 'NR > 1 && $2 > 0 { n++ } END { exit !(n > 250) }' "$csv" 2>/dev/null \

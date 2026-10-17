@@ -23,6 +23,7 @@ static void usage(const char* argv0) {
         "  --cd-bios FILE        run the Jaguar CD BIOS from FILE for this run (256 KiB)\n"
         "  --option KEY=VALUE    set a core option for this run (not saved)\n"
         "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
+        "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
@@ -190,6 +191,14 @@ int main(int argc, char** argv) {
             a.emuThread = v == "on" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--perf-input")) a.perfInput = true;
+        else if (!std::strcmp(s, "--late-latch")) {
+            const std::string v = need(s);
+            if (v != "on" && v != "off") {
+                std::fprintf(stderr, "--late-latch wants on or off, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.lateLatch = v == "on" ? 1 : 0;
+        }
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {
             unsigned w = 0, h = 0;

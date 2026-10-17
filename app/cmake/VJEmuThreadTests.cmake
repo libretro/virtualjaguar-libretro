@@ -9,6 +9,7 @@
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 #   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
+#   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
@@ -133,3 +134,9 @@ add_test(NAME gdb_locked_threaded
             "${VJ_ROMS}/yarc.j64")
 set_tests_properties(gdb_locked_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
     PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core")
+
+add_executable(vj_late_latch_test tests/late_latch_test.cpp)
+target_include_directories(vj_late_latch_test PRIVATE src)
+vj_emu_thread_warnings(vj_late_latch_test)
+add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
+set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
