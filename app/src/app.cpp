@@ -115,6 +115,15 @@ struct App::EmuClient : EmuThread::Client {
     double audioQueuedMs() override { return app.emuAudioQueuedMs(); }
     void runFrame() override { app.emuRunOneFrame(); }
     void framePaced(double lateSec, const PacingClock& clock) override { app.tracePaced(lateSec, clock); }
+    bool takeGrid(double now, double& at, double& period) override {
+        const uint64_t p = app.takePeriodNs_.load(std::memory_order_acquire);
+        const uint64_t t = app.takeNs_.load(std::memory_order_relaxed);
+        if (!p || !t) return false;
+        const uint64_t sdlNow = SDL_GetTicksNS();   // the UI's clock -> this thread's
+        at = now - (double)(int64_t)(sdlNow - t) / 1e9;
+        period = (double)p / 1e9;
+        return true;
+    }
     void afterCommands() override { app.host.publishSnapshot(); }
     void commandFailed(const std::string& what) override {
         app.host.pushMessage("Emulation command failed: " + what, 5000, RETRO_LOG_ERROR);
@@ -589,6 +598,15 @@ void App::tracePaced(double lateSec, const PacingClock& clock) {
     tracePaced_.audio = clock.audioLocked() ? 1 : 0;
     tracePaced_.refill = clock.refilling() ? 1 : 0;
     tracePacedSet_ = true;
+}
+
+// UI thread, threaded: this iteration takes its frame now.  While the swaps sit on a tracked vblank grid (vsync on, the
+// latch's phase locked, whether or not it waits), the takes repeat every refresh, and the emulation thread keeps its
+// frame ends off them (PacingClock::steer).
+void App::publishTakeGrid(uint64_t takeNs) {
+    const uint64_t p = (paceSteerOn_ && vsync && latch_.locked()) ? latch_.periodNs() : 0;
+    takeNs_.store(takeNs, std::memory_order_relaxed);
+    takePeriodNs_.store(p, std::memory_order_release);
 }
 
 // UI thread (VJ_PERF_TRACE): one row per iteration, right after its swap.
@@ -1738,6 +1756,7 @@ int App::runInteractive(const CliArgs& a) {
     audio.open(48043.6);
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     lateLatchOn_ = a.lateLatch != 0;
+    paceSteerOn_ = a.paceSteer != 0;
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
@@ -1810,6 +1829,9 @@ int App::runInteractive(const CliArgs& a) {
                                     std::to_string(latch_.misses()) + ", released " + std::to_string(latch_.released()) +
                                     ", pad " + std::to_string(latch_.padNs() / 1000000.0).substr(0, 4) + " ms)"
                               : std::string("off"));
+            if (threaded())
+                perf.note += std::string(", pace steering ") + (paceSteerOn_ ? "on" : "off") + " (" +
+                             std::to_string(emu.phaseSteps()) + " steps)";
             perf.report(host.contentName().c_str());
             trace_.write();
             break;
@@ -1831,7 +1853,8 @@ int App::runInteractive(const CliArgs& a) {
         else stepEmulation();
         perf.lap(Perf::Step);
         video.setSourceFps((float)host.fps());
-        const Uint64 takeNs = trace_.enabled() ? SDL_GetTicksNS() : 0;
+        const Uint64 takeNs = SDL_GetTicksNS();
+        if (threaded()) publishTakeGrid(takeNs);
         if (!threaded()) video.upload(host.frame());
         else {
             adoptFrameEpoch();

@@ -18,6 +18,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace vj {
@@ -28,6 +29,10 @@ struct PacingInput {
     double audioQueuedMs = -1;    // queued audio; < 0 = no usable audio clock
     double targetMs = 64;         // audio.target_ms
     bool fastForward = false;
+    // Where the UI takes finished frames (threaded + vsync, while the swaps show the vblank grid): one take time on
+    // in.now's clock and the take period.  takePeriod 0 = no grid (vsync off, not tracked yet): no steering.
+    double takeAt = 0;
+    double takePeriod = 0;
 };
 
 class PacingClock {
@@ -39,6 +44,9 @@ public:
     static constexpr double kLowWater = 0.25;       // below this fraction of the target: refill...
     static constexpr double kRefillRate = 2.0;      // ...at up to this multiple of the core's rate, up to the target
     static constexpr double kHighWater = 3.0;       // above this multiple of the target the device is not draining
+    static constexpr unsigned kEnds = 120;          // frame ends remembered (2 s) for the steering window
+    static constexpr unsigned kMinEnds = 30;        // ... before the window is trusted
+    static constexpr double kSteerMargin = 0.00075; // room kept on each side of the window (take-time jitter)
 
     void reset(double now) {
         next_ = now;
@@ -46,6 +54,8 @@ public:
         haveQ_ = overfull_ = refill_ = audio_ = false;
         trim_ = 1.0;
         init_ = true;
+        endAt_ = 0;
+        curDue_ = -1;
     }
 
     // When the next frame should start (absolute, on in.now's clock).  At or before in.now: start it now.
@@ -68,10 +78,20 @@ public:
         const double base = basePeriod(in);
         if (in.now - next_ > kMaxLateFrames * base) next_ = in.now;
         lastStart_ = in.now;
+        curDue_ = (refill_ || in.fastForward) ? -1 : std::min(next_, in.now);   // (early refill frames: no grid time)
         // While refilling, frames start early; rebase the grid on each one.  Advancing the old grid a full period per
         // early frame would leave it ahead of the clock by the extra audio just queued, and the loop would then sleep
         // that long, drain the queue below the low-water mark and re-arm the refill (bursts and stalls forever).
         next_ = (refill_ ? in.now : next_) + base * (audio_ ? trim_ : 1.0);
+        if (!refill_ && !in.fastForward) steer(in, base);
+    }
+
+    // The frame started last has finished (its picture is handed over) now.  Feeds the steering window.
+    void frameEnded(double now) {
+        if (curDue_ < 0) return;
+        ends_[endAt_ % kEnds] = now - curDue_;
+        endAt_++;
+        curDue_ = -1;
     }
 
     bool audioLocked() const { return audio_; }
@@ -79,8 +99,42 @@ public:
     uint64_t droppedFrames() const { return dropped_; }
     double filteredQueueMs() const { return haveQ_ ? filtQ_ : -1.0; }   // (VJ_PERF_TRACE)
     bool refilling() const { return refill_; }
+    uint64_t steers() const { return steers_; }   // phase steps taken to keep frame ends off the take point
 
 private:
+    // Keep frame ends off the UI's take point (#967 evenness).  A frame ends somewhere in [due + lo, due + hi] (its
+    // wake-up lateness plus its cost, over the last kEnds frames).  The grid drifts against the take points at the
+    // core-vs-display beat (15 us per frame for 60.054 Hz on 60 Hz), so while a take point sits inside that window,
+    // whether a frame makes it is decided by its own cost: for spread / 15 us frames in a row the UI shows a repeat,
+    // then a skip, at random -- dozens of pairs per crossing instead of the one skip the beat owes.  So when the next
+    // frame's window would contain a take point, the grid steps once across it, in the direction the beat is already
+    // moving it: the crossing happens at once, as the single skip (or repeat) it has to be, and the drift then carries
+    // the window away from the take point for the next ~18 s.  Only the grid's phase moves, by at most the window's
+    // width once per beat; its rate stays the trimmed audio rate, and the step's audio (a few ms early or late) is what
+    // the queue absorbs and the trim corrects.  This is not a display lock: the drift is never held back.
+    void steer(const PacingInput& in, double base) {
+        const double P = in.takePeriod;
+        if (P <= 0 || endAt_ < kMinEnds) return;
+        double sorted[kEnds];
+        const unsigned n = std::min(endAt_, kEnds);
+        std::copy(ends_, ends_ + n, sorted);
+        std::sort(sorted, sorted + n);
+        const double lo = sorted[n / 50] - kSteerMargin;            // ~p2 and ~p98: one outlier does not move them
+        const double hi = sorted[n - 1 - n / 50] + kSteerMargin;
+        if (hi - lo >= P - 2 * kSteerMargin) return;               // no gap between take points wide enough
+        double x = std::fmod(in.takeAt - next_, P);                 // from the next frame's due to a take point
+        if (x < lo) x += P * std::ceil((lo - x) / P);
+        if (x > hi) return;                                         // (x is now the first candidate >= lo)
+        double r = std::fmod(base, P);                              // how the grid moves against the take points per
+        if (r > P / 2) r -= P;                                      // frame: x changes by -r (the untrimmed period:
+        double step;                                                // the trim averages out to the audio clock)
+        if (r <= 0) step = -(hi - x);                               // x rising: start earlier, so this frame makes it
+        else step = x - lo;                                         // x falling: start later, so it waits a period
+        if (next_ + step < in.now + hi - kSteerMargin) return;      // earlier than this frame can be done: not now
+        next_ += step;
+        steers_++;
+    }
+
     static double basePeriod(const PacingInput& in) { return in.fastForward ? in.period / kFastForward : in.period; }
 
     void observe(const PacingInput& in) {
@@ -119,6 +173,10 @@ private:
     double next_ = 0, lastStart_ = 0, filtQ_ = 0, lastObs_ = 0, trim_ = 1.0;
     bool init_ = false, haveQ_ = false, overfull_ = false, refill_ = false, audio_ = false;
     uint64_t dropped_ = 0;
+    double ends_[kEnds] = {};   // frame end - due, seconds
+    unsigned endAt_ = 0;
+    double curDue_ = -1;        // the running frame's grid time (-1 = none: refill, fast-forward)
+    uint64_t steers_ = 0;
 };
 
 }  // namespace vj

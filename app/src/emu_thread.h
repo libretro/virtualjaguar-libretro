@@ -45,6 +45,9 @@ public:
         // Just before a paced runFrame(): how late it starts against its due time (seconds) and the clock that paced it
         // (App: VJ_PERF_TRACE).  Frames run by advance() are not paced and do not call it.
         virtual void framePaced(double lateSec, const PacingClock& clock) { (void)lateSec, (void)clock; }
+        // Where the UI takes finished frames, for PacingClock's steering: one take time (seconds, on `now`'s clock:
+        // steady_clock) and the take period.  False = no take grid (vsync off, swaps not tracked): no steering.
+        virtual bool takeGrid(double now, double& at, double& period) { (void)now, (void)at, (void)period; return false; }
         virtual void afterCommands() {}               // a batch of commands ran (App: CoreHost::publishSnapshot)
         virtual void commandFailed(const std::string& what) { (void)what; }   // a post()ed command threw
     };
@@ -92,6 +95,7 @@ public:
     void setAudioTargetMs(double ms) { targetMs_.store(ms); }
     uint64_t framesRun() const { return frames_.load(); }
     uint64_t droppedFrames() const { return dropped_.load(); }
+    uint64_t phaseSteps() const { return steers_.load(); }   // PacingClock::steers()
 
 private:
     enum class State { Inline, Starting, Running, Stopping, Stopped, Abandoned };
@@ -108,7 +112,7 @@ private:
     std::atomic<double> targetMs_{64.0};
     std::atomic<unsigned> advanceLeft_{0};
     std::atomic<uint64_t> advanceDone_{0};   // budgeted frames run (bumped before advanceLeft_ drops)
-    std::atomic<uint64_t> frames_{0}, dropped_{0};
+    std::atomic<uint64_t> frames_{0}, dropped_{0}, steers_{0};
     std::mutex mu_;
     std::condition_variable cv_;          // start and finish handshakes
     std::condition_variable advanceCv_;   // a frame ran

@@ -92,6 +92,7 @@ struct CliArgs {
     int emuThread = -1;             // --emu-thread on|off: the emulation on its own thread for this run (-1 = the setting; headless: off)
     bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
     int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
+    int paceSteer = -1;             // dev: --pace-steer on|off, threaded + vsync only (default on; #967 evenness)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -370,6 +371,11 @@ private:
     // to the emulation thread as it arrives, then take the newest frame.
     LateLatch latch_;
     bool lateLatchOn_ = true;
+    // PacingClock's steering (#967 evenness): the UI publishes where it takes frames; the emulation thread keeps frame
+    // ends off those take points.  Period 0 = no take grid (vsync off, swaps not on a tracked vblank grid, steering off).
+    bool paceSteerOn_ = true;
+    std::atomic<uint64_t> takeNs_{0}, takePeriodNs_{0};
+    void publishTakeGrid(uint64_t takeNs);
     uint64_t latchedAtNs_ = 0;   // when this iteration's wait ended: its UI work starts there
     unsigned latchChecks_ = 0;
     bool latchLogged_ = false;

@@ -154,6 +154,7 @@ void EmuThread::loop() {
         in.audioQueuedMs = client_->audioQueuedMs();
         in.targetMs = targetMs_.load();
         in.fastForward = ff_.load();
+        if (!client_->takeGrid(in.now, in.takeAt, in.takePeriod)) in.takeAt = in.takePeriod = 0;
         if (!pacing) {
             clock.reset(in.now);
             pacing = true;
@@ -169,12 +170,14 @@ void EmuThread::loop() {
         clock.frameStarted(in);
         if (!budget) client_->framePaced(in.now - due, clock);
         client_->runFrame();
+        clock.frameEnded(nowSec());
         frames_.fetch_add(1);
         if (budget) {   // done before the budget drops: advance() reads advanceDone_ when the budget hits 0
             advanceDone_.fetch_add(1);
             advanceLeft_.fetch_sub(1);
         }
         dropped_.store(clock.droppedFrames());
+        steers_.store(clock.steers());
         notifyFrame();
     }
     if (cmds_.closeAndDrain(onError) > 0) client_->afterCommands();
