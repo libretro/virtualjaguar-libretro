@@ -1,6 +1,7 @@
 #include "core_host.h"
 
 #include "bios.h"
+#include "m3u.h"
 #include "paths.h"
 #include "typed_options.h"
 
@@ -747,15 +748,15 @@ bool CoreHost::startSession(std::string& err) {
     return true;
 }
 
-bool CoreHost::finishLoad(const std::string& label, std::string& err) {
+bool CoreHost::finishLoad(const std::string& label, std::string& err, const std::string& opened) {
     std::memset(&avInfo_, 0, sizeof avInfo_);
     retro_get_system_av_info(&avInfo_);
     loaded_ = true;
     crashEvents_.store(0);
     discDirty_ = true;
     contentName_ = label;
-    loadedPath_ = contentPath_;
-    loadedName_ = label;
+    loadedPath_ = opened.empty() ? contentPath_ : opened;   // an .m3u: the playlist, while the content is its first disc
+    loadedName_ = opened.empty() ? label : pathStem(opened);
     // A desktop host always has a keyboard.  The core only polls its keypad key fallbacks
     // (the only route to keypad 7-9, * and #) once it has seen a keyboard event, and
     // retro_deinit forgets that on every load, so a gamepad-only player would otherwise
@@ -776,11 +777,19 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
     if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
     if (!startSession(err)) return false;
 
+    // An .m3u: the core boots the first disc, and every disc goes in its disc list after the load.
+    std::vector<std::string> discs;
+    if (pathExt(path) == "m3u" && !readPlaylist(path, discs, err)) {
+        stopSession();
+        return false;
+    }
+    const std::string boot = discs.empty() ? path : discs[0];
+
     retro_game_info gi;
     std::memset(&gi, 0, sizeof gi);
-    gi.path = path.c_str();
+    gi.path = boot.c_str();
 
-    std::string ext = pathExt(path);
+    std::string ext = pathExt(boot);
     bool fullpath = false;
     {
         const std::string& list = contentOverrideExts_;
@@ -795,14 +804,14 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
     }
     contentData_.clear();
     if (fullpath) {
-        if (!fileExists(path)) {
-            err = "cannot open " + path;
+        if (!fileExists(boot)) {
+            err = "cannot open " + boot;
             stopSession();
             return false;
         }
     } else {
-        if (!readFile(path, contentData_) || contentData_.empty()) {
-            err = "cannot read " + path;
+        if (!readFile(boot, contentData_) || contentData_.empty()) {
+            err = "cannot read " + boot;
             stopSession();
             return false;
         }
@@ -810,18 +819,47 @@ bool CoreHost::loadContent(const std::string& path, std::string& err) {
         gi.size = contentData_.size();
     }
 
-    contentPath_ = path;
+    contentPath_ = boot;   // an .m3u: the disc in the tray; the playlist is what was opened (finishLoad)
     if (!retro_load_game(&gi)) {
-        err = "the core rejected " + path;
+        err = "the core rejected " + boot;
         contentPath_.clear();
         stopSession();
         return false;
     }
     // The core's disc list starts empty even after it booted this CD (libretro.c: "nothing to insert"), so without
     // this the tray and disc menus never appear.  The count check keeps a core that lists its own disc working.
-    if (isDiscImage(path) && diskRegistered_ && disk_.get_num_images && disk_.get_num_images() == 0)
-        appendDiscImage(path);
-    return finishLoad(pathStem(path), err);
+    if (discs.empty()) discs.push_back(path);
+    if (isDiscImage(boot) && diskRegistered_ && disk_.get_num_images && disk_.get_num_images() == 0) {
+        for (const std::string& d : discs)
+            if (appendDiscImage(d) < 0) std::fprintf(stderr, "disc list: could not add %s (the list is full?)\n", d.c_str());
+    }
+    return finishLoad(pathStem(boot), err, path);
+}
+
+bool CoreHost::readPlaylist(const std::string& m3uPath, std::vector<std::string>& discs, std::string& err) {
+    discs.clear();
+    std::vector<unsigned char> raw;
+    if (!readFile(m3uPath, raw)) {
+        err = "cannot read " + m3uPath;
+        return false;
+    }
+    for (const std::string& e : parseM3u(std::string(raw.begin(), raw.end()), pathDir(absolutePath(m3uPath)))) {
+        const std::string d = absolutePath(e);
+        if (!isDiscImage(d)) {   // a cartridge, or another playlist
+            err = pathStem(m3uPath) + ".m3u lists " + e + ", which is not a CD image (cue, cdi, chd or iso)";
+            return false;
+        }
+        if (!fileExists(d)) {
+            err = pathStem(m3uPath) + ".m3u lists " + e + ", which does not exist";
+            return false;
+        }
+        discs.push_back(d);
+    }
+    if (discs.empty()) {
+        err = pathStem(m3uPath) + ".m3u lists no disc images";
+        return false;
+    }
+    return true;
 }
 
 bool CoreHost::loadNoContent(std::string& err) {

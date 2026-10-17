@@ -1,6 +1,7 @@
 #include "library.h"
 
 #include "disc_hash.h"
+#include "m3u.h"
 
 #include <SDL3/SDL.h>
 
@@ -535,7 +536,8 @@ bool isCartExt(const std::string& e) {
     // JAGUAR_VALID_EXTENSIONS in libretro.c, minus the disc formats.  No zip: the core cannot read one.
     return e == "j64" || e == "jag" || e == "rom" || e == "abs" || e == "cof" || e == "bin" || e == "prg";
 }
-bool isDiscExt(const std::string& e) { return e == "cue" || e == "cdi" || e == "chd"; }
+// m3u: a multi-disc playlist (m3u.h).  The scan lists it in place of the discs it names.
+bool isDiscExt(const std::string& e) { return e == "cue" || e == "cdi" || e == "chd" || e == "m3u"; }
 
 namespace {
 
@@ -598,6 +600,7 @@ struct Candidate {
     uint64_t size = 0;
     int64_t mtime = 0;
     std::string track1;   // disc (.cue): resolved first FILE, or ""
+    std::string disc1;    // .m3u: its first disc (hashed in its place), or ""
     bool sysOnly = false; // found in the core's system folder: kept only if it is a BIOS / system file
 };
 
@@ -665,6 +668,32 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
             c.kind = disc ? Kind::Disc : Kind::Cart;
             c.sysOnly = sysRoot;
             if (!statFile(p, c.size, c.mtime)) continue;
+            if (e == "m3u") {
+                // The playlist stands for its discs: they leave the grid (step 2), and it is identified by its first.
+                size_t sz = 0;
+                void* data = SDL_LoadFile(p.c_str(), &sz);
+                std::string text = data ? std::string((const char*)data, std::min(sz, (size_t)(1u << 20))) : std::string();
+                SDL_free(data);
+                std::vector<std::string> discs = vj::parseM3u(text, p.substr(0, p.find_last_of("/\\") + 1));
+                for (size_t i = 0; i < discs.size(); i++) {
+                    std::string r = resolveCueFile("", discs[i]);   // the entry is already joined to the folder
+                    if (r.empty()) continue;
+                    claimed.insert(r);
+                    if (i == 0) c.disc1 = r;
+                }
+                if (extOf(c.disc1) == "cue") {   // a cue sheet's track 1, exactly as for the cue itself
+                    std::vector<std::string> files = cueFiles(c.disc1);
+                    if (!files.empty()) c.track1 = resolveCueFile(c.disc1.substr(0, c.disc1.find_last_of("/\\") + 1), files[0]);
+                    c.disc1.clear();
+                }
+                uint64_t bs;
+                int64_t bm;
+                const std::string& src = !c.track1.empty() ? c.track1 : c.disc1;
+                if (!src.empty() && statFile(src, bs, bm)) {   // the fingerprint covers what the hash was taken from
+                    c.size = bs;
+                    c.mtime = std::max(c.mtime, bm);
+                }
+            }
             if (e == "cue") {
                 std::vector<std::string> files = cueFiles(p);
                 std::string dir = p.substr(0, p.find_last_of("/\\") + 1);
@@ -691,6 +720,7 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
     // 2. drop disc tracks and anything too large to be a cartridge
     std::vector<Candidate> keep;
     for (Candidate& c : cands) {
+        if (c.kind == Kind::Disc && claimed.count(c.path)) continue;   // a disc an .m3u lists: the playlist is its entry
         if (c.kind == Kind::Cart) {
             if (claimed.count(c.path)) continue;
             if (extOf(c.path) == "bin" && c.size > kMaxBinCartBytes) continue;
@@ -746,10 +776,12 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
                     return out;
                 }
             } else {
-                // .chd / .cdi: track 1 straight from the image (0 = not hashable; the file name is all there is then)
-                const std::string ext = extOf(c.path);
+                // .chd / .cdi (or an .m3u's first one): track 1 straight from the image (0 = not hashable; the file
+                // name is all there is then)
+                const std::string& img = c.disc1.empty() ? c.path : c.disc1;
+                const std::string ext = extOf(img);
                 uint32_t crc = 0;
-                if (ext == "chd" ? crcOfChdTrack1(c.path, crc, cancel) : ext == "cdi" ? crcOfCdiTrack1(c.path, crc, cancel) : false)
+                if (ext == "chd" ? crcOfChdTrack1(img, crc, cancel) : ext == "cdi" ? crcOfCdiTrack1(img, crc, cancel) : false)
                     f.crcWhole = crc;
                 else if (cancel && cancel->load())
                     return out;

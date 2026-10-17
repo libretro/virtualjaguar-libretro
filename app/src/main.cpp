@@ -54,6 +54,7 @@ static void usage(const char* argv0) {
         "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
         "  --disc-swap IMAGE     (CD content) add IMAGE as a second disc, swap to it, then back to the first\n"
         "  --disc-insert IMAGE   (--boot-bios cd) put IMAGE in the CD BIOS's empty tray with Add disc image...\n"
+        "  --expect-discs N      fail unless the disc list holds N images (an .m3u's discs), then insert the last one\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
         "  --expect-bios R:SRC   fail unless the core ran the cart|cd BIOS from builtin, system or file (the --cart-bios/--cd-bios file)\n"
         "  --print-controls      print Player 1's controls cheat sheet (the active bindings) after the load\n"
@@ -233,6 +234,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--state-roundtrip")) a.stateRoundtrip = true;
         else if (!std::strcmp(s, "--disc-swap")) a.discSwap = need(s);
         else if (!std::strcmp(s, "--disc-insert")) a.discInsert = need(s);
+        else if (!std::strcmp(s, "--expect-discs")) a.expectDiscs = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);
         else if (!std::strcmp(s, "--data-dir")) a.dataDir = need(s);

@@ -897,7 +897,7 @@ static std::string slug(const std::string& s) {
 
 std::string contentIdentity(const std::string& path) {
     std::string ext = pathExt(path);
-    if (ext == "cue" || ext == "cdi" || ext == "chd") {
+    if (ext == "cue" || ext == "cdi" || ext == "chd" || ext == "m3u") {   // m3u: a multi-disc set, one identity
         std::string s = slug(pathStem(path));
         return s.empty() ? "" : "disc-" + s;
     }

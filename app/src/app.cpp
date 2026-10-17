@@ -1204,7 +1204,7 @@ tv::Shell& App::tvShell() { return *tvShell_; }
 
 void App::showOpenDialog() {
     if (!window_) return;
-    g_filterPattern = joinExtensions(CoreHost::validExtensions());
+    g_filterPattern = joinExtensions(CoreHost::validExtensions()) + ";m3u";   // multi-disc playlists: the app reads them (m3u.h)
     g_filters[0].name = g_filterName.c_str();
     g_filters[0].pattern = g_filterPattern.c_str();
     g_filters[1].name = "All files";
@@ -1330,14 +1330,16 @@ void App::openAndLoadState(const std::string& pathIn, int slot) {
         return;
     }
     if (slot >= 0) stateSlot = slot;
-    if (host.isLoaded() && host.contentPath() == path) {
+    // The running game: the disc in the tray, or what was opened (an .m3u, or the disc before a swap).
+    auto running = [&] { return host.isLoaded() && (host.contentPath() == path || host.loadedPath() == path); };
+    if (running()) {
         loadState(slot);
         return;
     }
     suppressResume_ = true;   // the state asked for replaces the auto-save offer
     handleDrop(path);
     suppressResume_ = false;
-    if (host.isLoaded() && host.contentPath() == path) pendingStateSlot_ = slot;   // cleared if the open failed
+    if (running()) pendingStateSlot_ = slot;   // cleared if the open failed
     pendingStateFrames_ = 2;   // (threaded: pendingStateAt_, set by openContentOnCore)
 }
 
@@ -2227,6 +2229,82 @@ bool App::discInsertHeadlessCheck(const std::string& path) {
     return true;
 }
 
+// --expect-discs: an .m3u's discs all reach the disc list File > Disc reads (the pinned snapshot when threaded), and the
+// two identities split the way followDiscSwap describes: the playlist is what was opened (the .srm, Restart, recents),
+// the disc in the tray is the content (the title, the save-state slots, achievements) -- the first disc at boot, the
+// last one once File > Disc has put it in.
+bool App::discListHeadlessCheck(unsigned want) {
+    auto menuDisc = [this] {
+        host.pinSnapshot();
+        followDiscSwap();   // what the UI loop does after each iteration
+        return host.discInfo();
+    };
+    const std::string opened = host.loadedPath(), srm = host.saveRamPath();
+    std::vector<std::string> discs;
+    std::string err;
+    if (!CoreHost::readPlaylist(opened, discs, err) || discs.size() != want) {
+        std::fprintf(stderr, "headless: FAIL --expect-discs: %s is not a playlist of %u disc(s) (%s)\n", opened.c_str(),
+                     want, err.empty() ? (std::to_string(discs.size()) + " listed").c_str() : err.c_str());
+        return false;
+    }
+    auto identity = [&](size_t disc, const char* when) {
+        bool ok = true;
+        const std::string slot = lib::stateFileName(pathStem(discs[disc]), stateSlot), state = statePath(stateSlot);
+        if (host.contentPath() != discs[disc] || host.contentName() != pathStem(discs[disc])) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: %s, the content is '%s', expected '%s'\n", when,
+                         host.contentPath().c_str(), discs[disc].c_str());
+            ok = false;
+        }
+        if (state.size() < slot.size() || state.compare(state.size() - slot.size(), slot.size(), slot) != 0) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: %s, the state slot is %s, expected one named %s\n", when,
+                         state.c_str(), slot.c_str());
+            ok = false;
+        }
+        if (host.loadedPath() != opened || host.saveRamPath() != srm || pathStem(srm) != pathStem(opened)) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: %s, the .srm is %s, expected the playlist's (%s)\n", when,
+                         host.saveRamPath().c_str(), opened.c_str());
+            ok = false;
+        }
+        return ok;
+    };
+    DiscInfo d = menuDisc();
+    if (!d.available || d.count != want || d.index != 0 || d.ejected) {
+        std::fprintf(stderr, "headless: FAIL --expect-discs: %u image(s), index %u, tray %s; expected %u with the first in\n",
+                     d.count, d.index, d.ejected ? "open" : "closed", want);
+        return false;
+    }
+    if (!identity(0, "at boot")) return false;
+    if (recents.empty() || recents[0] != opened) {
+        std::fprintf(stderr, "headless: FAIL --expect-discs: the recents list starts with %s, not %s\n",
+                     recents.empty() ? "nothing" : recents[0].c_str(), opened.c_str());
+        return false;
+    }
+    std::string names;
+    for (const std::string& l : d.labels) names += (names.empty() ? "" : ", ") + l;
+    if (want > 1) {
+        runNativeCommand(platform::Cmd::DiscTray, 0);   // Open tray
+        d = menuDisc();                                  // the tray toggle reads the pinned state, as a menu would
+        if (!d.ejected) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: Open tray left the tray closed\n");
+            return false;
+        }
+        runNativeCommand(platform::Cmd::DiscSelect, (int)want - 1);   // File > Disc > the last disc
+        runNativeCommand(platform::Cmd::DiscTray, 0);                 // Close tray: it boots
+        d = menuDisc();
+        if (d.ejected || d.index != want - 1) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: inserting the last disc left index %u, tray %s\n", d.index,
+                         d.ejected ? "open (the insert failed)" : "closed");
+            return false;
+        }
+        if (!identity(want - 1, "after inserting the last disc")) return false;
+        runHeadlessFrames(60);
+    }
+    std::printf("DISC list %u: %s; content %s -> %s, save RAM %s (%s)\n", d.count, names.c_str(),
+                pathStem(discs[0]).c_str(), host.contentName().c_str(), pathStem(host.saveRamPath()).c_str(),
+                threaded() ? "emulation thread" : "inline");
+    return true;
+}
+
 int App::runHeadless(const CliArgs& a) {
     audio.open(48043.6);
     applyAudioSettings();
@@ -2264,7 +2342,7 @@ int App::runHeadless(const CliArgs& a) {
             SDL_PushEvent(&ev);
             SDL_Event got;
             while (SDL_PollEvent(&got)) handleEvent(got, true);
-            if (!host.isLoaded() || host.contentPath() != absolutePath(path)) {
+            if (!host.isLoaded() || host.loadedPath() != absolutePath(path)) {   // the opened file (an .m3u boots its first disc)
                 std::fprintf(stderr, "headless: FAIL could not load %s\n", path.c_str());
                 return 1;
             }
@@ -2336,6 +2414,7 @@ int App::runHeadless(const CliArgs& a) {
         }
         if (!a.discSwap.empty() && !discSwapHeadlessCheck(a.discSwap)) rc = 1;
         if (!a.discInsert.empty() && !discInsertHeadlessCheck(a.discInsert)) rc = 1;
+        if (a.expectDiscs && !discListHeadlessCheck(a.expectDiscs)) rc = 1;
         if (!emu.call([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = shownFrame();
