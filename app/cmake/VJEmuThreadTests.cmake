@@ -7,6 +7,7 @@
 #   pacing_clock_unit     PacingClock mode A against a fake clock and a fake 512-frame-chunk audio device
 #   emu_thread_unit       EmuThread: inline vs threaded, call/post ordering, pause/advance, stop/join timeout, shutdown races
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
+#   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 
 function(vj_emu_thread_warnings target)
     if(MSVC)
@@ -50,3 +51,11 @@ target_link_libraries(vj_input_snapshot_test PRIVATE ${VJ_SDL3_TARGET} Threads::
 vj_emu_thread_warnings(vj_input_snapshot_test)
 add_test(NAME input_snapshot_unit COMMAND vj_input_snapshot_test)
 set_tests_properties(input_snapshot_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_audio_out_test tests/audio_out_test.cpp src/audio.cpp)
+target_include_directories(vj_audio_out_test PRIVATE src)
+target_link_libraries(vj_audio_out_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
+vj_emu_thread_warnings(vj_audio_out_test)
+add_test(NAME audio_out_unit COMMAND vj_audio_out_test)
+set_tests_properties(audio_out_unit PROPERTIES TIMEOUT 120 LABELS emu_thread SKIP_RETURN_CODE 77
+                     FAIL_REGULAR_EXPRESSION "FAIL ")
