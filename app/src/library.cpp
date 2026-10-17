@@ -1002,11 +1002,11 @@ std::string thumbnailMissPath(const std::string& root, const std::string& type, 
 
 std::vector<ArtSource> artSources(Section section, const std::string& upstreamBase, const std::string& mirrorBase) {
     std::vector<ArtSource> v;
-    v.push_back({upstreamBase, kThumbSystem, kMissRetrySeconds});
+    v.push_back({upstreamBase, kThumbSystem, kMissRetrySeconds, false});
     if (section == Section::Disc && !mirrorBase.empty()) {
         std::string b = mirrorBase;
         if (b.back() != '/') b += '/';
-        v.push_back({b, kThumbSystemCd, kMirrorMissRetrySeconds});
+        v.push_back({b, kThumbSystemCd, 0, true});
     }
     return v;
 }

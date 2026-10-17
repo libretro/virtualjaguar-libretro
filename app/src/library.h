@@ -208,11 +208,11 @@ std::string thumbnailUrl(const std::string& type, const std::string& title, cons
 // from the mirror can never stand in for upstream art that appears later.
 std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title,
                                const char* system = kThumbSystem);
-// Marker next to it recording "this source said 404" (retried after the source's missRetrySeconds).
+// Marker next to it recording "this source said 404" (retried after the source's missRetrySeconds).  Only
+// libretro-thumbnails gets markers: the site mirror's misses are kept for the session (ArtSource::sessionMisses).
 std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title,
                               const char* system = kThumbSystem);
-constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;        // libretro-thumbnails
-constexpr int64_t kMirrorMissRetrySeconds = 7LL * 24 * 3600;   // the site mirror: we publish it, so look again sooner
+constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;   // libretro-thumbnails
 
 // Where art for one tile is fetched from, in order.  libretro-thumbnails first, always; for a disc the site
 // mirror follows (libretro-thumbnails has no Jaguar CD repository yet, libretro-thumbnails#141), so the
@@ -221,6 +221,9 @@ struct ArtSource {
     std::string base;           // URL prefix, ends with '/'
     const char* system;         // folder under base, and under <root>thumbnails/ for the cache and miss markers
     int64_t missRetrySeconds;   // how long a miss marker holds
+    // A 404 is remembered until the app quits, never written as a marker.  For the site mirror: we publish it, so
+    // a miss written while the site lacked a picture (or was mid-deploy) must not hide art it gains later (#997).
+    bool sessionMisses;
 };
 std::vector<ArtSource> artSources(Section section, const std::string& upstreamBase, const std::string& mirrorBase);
 

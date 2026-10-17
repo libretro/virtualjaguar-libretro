@@ -441,8 +441,9 @@ cartridge runs, and the Core options tab is empty before the first load).
    For Jaguar CD titles libretro-thumbnails is asked first and, on a miss, the project site's mirror
    (`jaguar.provenance-emu.com/thumbnails/Atari - Jaguar CD/...`, box art from TheGamesDB plus title screens and snaps
    made with this emulator, hosted until libretro-thumbnails has a Jaguar CD repository, issue #141 there); each
-   source has its own cache folder and miss markers (the mirror's expire after 7 days), so mirror art never hides
-   upstream art that appears later. Set `library.art_mirror` in `config.ini`
+   source has its own cache folder, so mirror art never hides upstream art that appears later. A libretro-thumbnails
+   miss is remembered for 30 days; a mirror miss only until the app quits, so art the site gains shows on the next
+   launch. Set `library.art_mirror` in `config.ini`
    to another base URL, or to an empty value to turn the mirror off.
    **Download box art** turns all downloading off.
    **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
