@@ -954,6 +954,7 @@ bool App::openContent(const std::string& pathIn) {
     // threaded (this thread waits), right here otherwise.
     const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors); });
     host.pinSnapshot();
+    seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
     if (!ok) {
         toast("Could not open " + pathStem(path) + ": " + err, 5.0, 3);
@@ -1025,6 +1026,7 @@ bool App::openNoContent() {
     std::string err;
     const bool ok = emu.call([&] { return openNoContentOnCore(err); });
     host.pinSnapshot();
+    seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
     if (!ok) {
         toast("Could not boot: " + err, 5.0, 3);
@@ -1094,7 +1096,7 @@ bool App::importBios(const std::string& path, bool trustSize) {
 }
 
 bool App::reloadContent() {
-    std::string p = host.contentPath();
+    std::string p = host.loadedPath();   // after a disc swap too: the .srm and the disc list start from what was opened
     if (p.empty()) {
         if (host.isLoaded()) return openNoContent();
         return false;
@@ -1235,6 +1237,7 @@ bool App::addDisc(const std::string& path) {
         nowEjected = host.discInfo().ejected;
     });
     host.pinSnapshot();
+    followDiscSwap();
     if (idx < 0) {
         toast("Not added: " + pathStem(path) + " is not a CD image (cue, cdi or chd)", 3.0, 2);
         return false;
@@ -1246,6 +1249,33 @@ bool App::addDisc(const std::string& path) {
     toast((wasEjected ? "Disc selected: " : "Disc inserted: ") + pathStem(path));
     debug.requestRefresh();
     return true;
+}
+
+// After a disc swap, host.contentPath() names the disc that booted (CoreHost::followMountedDisc).  What follows it:
+//   * save states and their thumbnails (statePath): the core refuses a state taken on another disc, so a slot belongs
+//     to the disc it was saved on -- and the library's save-state tab finds it under that disc;
+//   * the window title, Discord (both read contentPath every frame), achievements (rc_client's change-media) and
+//     cheats (keyed on the per-title row the core re-reads on an insert, titledb_probe_disc);
+// and what stays with what was opened (host.loadedPath()):
+//   * the .srm: the core keeps the save RAM -- the EEPROM pair and the Memory Track every CD game shares -- across an
+//     insert, so it is still the file it was read from (CoreHost::saveRamPath);
+//   * Restart, recents and the library's recently played: reopening has to start from that .srm and that disc;
+//   * the per-game control overrides (input.setContent), which are picked once per open.
+void App::followDiscSwap() {
+    const unsigned n = host.discSwaps();
+    if (n == seenDiscSwaps_) return;
+    seenDiscSwaps_ = n;
+    if (!host.isLoaded()) return;
+    pendingStateSlot_ = kNoPendingSlot;   // a state queued for the previous disc would be refused now
+    resumeOffer.active = false;           // the offer was for the previous disc's auto-save
+    // On the emulation thread, like the load-time hooks they mirror (openContentOnCore).
+    emu.call([this] {
+        ach.onDiscChanged();
+        cheatsOnClose(*this);
+        cheatsAfterLoad(*this);
+    });
+    invalidateThumbs();
+    debug.requestRefresh();
 }
 
 // ---- resume where I left off ------------------------------------------------------------------------------------
@@ -1905,6 +1935,7 @@ int App::runInteractive(const CliArgs& a) {
         syncEmuFlags();
         if (threaded()) threadedFrame();
         else stepEmulation();
+        followDiscSwap();   // the disc menus (ImGui, native, TV) swap through the core; this catches up after any of them
         perf.lap(Perf::Step);
         video.setSourceFps((float)host.fps());
         const Uint64 takeNs = SDL_GetTicksNS();
@@ -2064,7 +2095,31 @@ void App::saveWindowScreenshot(const std::string& path) {
 bool App::discSwapHeadlessCheck(const std::string& path) {
     auto menuDisc = [this] {
         host.pinSnapshot();
+        followDiscSwap();   // what the UI loop does after each iteration
         return host.discInfo();
+    };
+    // What follows the disc in the tray and what stays with the opened one (followDiscSwap), as the UI reads it.
+    const std::string opened = host.loadedPath(), srm = host.saveRamPath();
+    auto identity = [&](const std::string& disc, const char* when) {
+        const std::string want = lib::stateFileName(pathStem(disc), stateSlot);
+        const std::string state = statePath(stateSlot);
+        bool ok = true;
+        if (host.contentPath() != disc || host.contentName() != pathStem(disc)) {
+            std::fprintf(stderr, "headless: FAIL --disc-swap: %s, the content is '%s', expected '%s'\n", when,
+                         host.contentPath().c_str(), disc.c_str());
+            ok = false;
+        }
+        if (state.size() < want.size() || state.compare(state.size() - want.size(), want.size(), want) != 0) {
+            std::fprintf(stderr, "headless: FAIL --disc-swap: %s, the state slot is %s, expected one named %s\n", when,
+                         state.c_str(), want.c_str());
+            ok = false;
+        }
+        if (host.loadedPath() != opened || host.saveRamPath() != srm) {
+            std::fprintf(stderr, "headless: FAIL --disc-swap: %s, the .srm moved to %s (opened %s, .srm %s)\n", when,
+                         host.saveRamPath().c_str(), opened.c_str(), srm.c_str());
+            ok = false;
+        }
+        return ok;
     };
     DiscInfo d = menuDisc();
     if (!d.available || d.count != 1 || d.index != 0 || d.ejected) {
@@ -2084,12 +2139,20 @@ bool App::discSwapHeadlessCheck(const std::string& path) {
         return false;
     }
     const std::string second = d.labels[1];
+    const unsigned swaps = host.discSwaps();
+    if (!identity(absolutePath(path), "after the add")) return false;
+    // A state saved now belongs to the second disc (the core would refuse it on the first).
+    if (!saveState(stateSlot, true) || !fileExists(statePath(stateSlot))) {
+        std::fprintf(stderr, "headless: FAIL --disc-swap: no state was written for the second disc\n");
+        return false;
+    }
     runNativeCommand(platform::Cmd::DiscTray, 0);   // Open tray
     d = menuDisc();
     if (!d.ejected) {
         std::fprintf(stderr, "headless: FAIL --disc-swap: Open tray left the tray closed\n");
         return false;
     }
+    if (!identity(absolutePath(path), "with the tray open")) return false;   // still running the second disc
     runNativeCommand(platform::Cmd::DiscSelect, 0);   // File > Disc > the first disc
     runNativeCommand(platform::Cmd::DiscTray, 0);     // Close tray: the first disc boots again
     d = menuDisc();
@@ -2098,7 +2161,15 @@ bool App::discSwapHeadlessCheck(const std::string& path) {
                      d.ejected ? "open (the insert failed)" : "closed");
         return false;
     }
+    if (!identity(opened, "back on the first disc")) return false;
+    if (host.discSwaps() != swaps + 1) {
+        std::fprintf(stderr, "headless: FAIL --disc-swap: %u disc swap(s) after the swap back, expected 1\n",
+                     host.discSwaps() - swaps);
+        return false;
+    }
     runHeadlessFrames(60);
+    std::printf("DISC content %s -> %s -> %s, save RAM %s\n", pathStem(opened).c_str(), pathStem(path).c_str(),
+                host.contentName().c_str(), pathStem(host.saveRamPath()).c_str());
     std::printf("DISC swap %s -> %s -> %s (%s)\n", first.c_str(), second.c_str(), d.labels[0].c_str(),
                 threaded() ? "emulation thread" : "inline");
     return true;

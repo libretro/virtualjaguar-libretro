@@ -408,6 +408,8 @@ private:
     void runHeadlessFrames(unsigned n);
     bool discSwapHeadlessCheck(const std::string& path);   // --disc-swap
     bool discInsertHeadlessCheck(const std::string& path);   // --disc-insert
+    void followDiscSwap();                     // UI thread: a disc swap moved host.contentPath(); catch up with it
+    unsigned seenDiscSwaps_ = 0;               // host.discSwaps() the app has caught up with
     bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
     bool openNoContentOnCore(std::string& err);
     std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side

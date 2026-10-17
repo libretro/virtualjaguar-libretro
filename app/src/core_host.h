@@ -91,6 +91,8 @@ struct EmuSnapshot {
     double fps = 0, sampleRate = 0;
     float aspect = 4.0f / 3.0f;
     DiscInfo disc;
+    std::string contentPath, contentName;   // the disc in the tray (CoreHost::contentPath); with `disc`
+    unsigned discSwaps = 0;
 };
 
 class CoreHost {
@@ -176,8 +178,17 @@ public:
     bool loadNoContent(std::string& err);
     void unloadContent();
     bool isLoaded() const { return loaded_; }
-    const std::string& contentPath() const { return contentPath_; }
-    const std::string& contentName() const { return contentName_; }  // file stem; "" with no content
+    // What is running: the opened file, or after a disc swap the disc in the tray (a swap moves it only once the new
+    // disc has booted; an open tray or a failed insert leaves it alone).  Save states, achievements, cheats and the
+    // window title follow it.
+    const std::string& contentPath() const { return onOwner() ? contentPath_ : ui_.contentPath; }
+    const std::string& contentName() const { return onOwner() ? contentName_ : ui_.contentName; }  // file stem; "" with no content
+    // What was opened, which a disc swap never changes.  The .srm is named after it: the core keeps its save RAM (the
+    // EEPROM pair and the Memory Track, libretro.c) across an insert and never reloads it, so the file must stay the
+    // one it was read from.  A restart reopens it too.
+    const std::string& loadedPath() const { return loadedPath_; }
+    const std::string& loadedName() const { return loadedName_; }
+    unsigned discSwaps() const { return onOwner() ? discSwaps_ : ui_.discSwaps; }   // counts moves of contentPath
 
     void runFrame();
     void reset();
@@ -293,7 +304,9 @@ public:
     //   * setControllerDevice and sendKeyEvent are queued through `post`.  discSetEject / discSetIndex are queued
     //     too if called off the owner, but the app's callers wrap them in an EmuThread::call(): a disc insert can
     //     re-stage the CD BIOS, which writes stagedBios (see below).  discAppend is owner-only;
-    //   * the fields only load / unload / reset / a disc insert write (isLoaded, contentPath / contentName,
+    //   * contentPath / contentName / discSwaps answer from the snapshot too: a disc insert moves them, and
+    //     discSetEject / discSetIndex may run as a queued command;
+    //   * the fields only load / unload / reset / a disc insert write (isLoaded, loadedPath / loadedName,
     //     stagedBios, controllerPorts, coreName / coreVersion, eventsActive, debugIface) are read directly: they
     //     change only inside an EmuThread::call(), while the UI thread waits -- never in a `post`ed command,
     //     which would run while the UI reads them;
@@ -343,7 +356,10 @@ private:
     uint64_t eventsSeen_ = 0;
     bool initialized_ = false;  // retro_init has run (and retro_deinit has not)
     bool loaded_ = false;
-    std::string contentPath_, contentName_;
+    std::string contentPath_, contentName_;   // the disc in the tray after a swap
+    std::string loadedPath_, loadedName_;     // what was opened
+    unsigned discSwaps_ = 0;
+    void followMountedDisc(bool ok);
     std::vector<unsigned char> contentData_;  // kept alive until unload
 
     retro_system_info sysInfo_{};

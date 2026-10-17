@@ -134,8 +134,8 @@ void CoreHost::setDirectories(const std::string& systemDir, const std::string& s
 }
 
 std::string CoreHost::saveFallbackPath() const {
-    if (saveFallbackDir_.empty() || contentName_.empty()) return "";
-    return saveFallbackDir_ + contentName_ + ".srm";
+    if (saveFallbackDir_.empty() || loadedName_.empty()) return "";
+    return saveFallbackDir_ + loadedName_ + ".srm";
 }
 
 std::string CoreHost::validExtensions() {
@@ -727,6 +727,8 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err) {
     crashEvents_.store(0);
     discDirty_ = true;
     contentName_ = label;
+    loadedPath_ = contentPath_;
+    loadedName_ = label;
     // A desktop host always has a keyboard.  The core only polls its keypad key fallbacks
     // (the only route to keypad 7-9, * and #) once it has seen a keyboard event, and
     // retro_deinit forgets that on every load, so a gamepad-only player would otherwise
@@ -837,6 +839,8 @@ void CoreHost::stopSession() {
     contentData_.shrink_to_fit();
     contentPath_.clear();
     contentName_.clear();
+    loadedPath_.clear();
+    loadedName_.clear();
     saveHashValid_ = false;
     g_audioBufferCb = nullptr;
     updateDisplayCb_ = nullptr;   // belongs to the core instance that just went away
@@ -918,8 +922,8 @@ bool CoreHost::loadStateFromFile(const std::string& path, std::string& err) {
 
 // ---- SRAM -------------------------------------------------------------------------
 std::string CoreHost::saveRamPath() const {
-    if (contentName_.empty()) return "";
-    return saveDir_ + contentName_ + ".srm";
+    if (loadedName_.empty()) return "";
+    return saveDir_ + loadedName_ + ".srm";
 }
 
 void CoreHost::loadSaveRam() {
@@ -1006,7 +1010,8 @@ void CoreHost::discSetEject(bool eject) {
         return;
     }
     if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_eject_state) {
-        disk_.set_eject_state(eject);
+        const bool ok = disk_.set_eject_state(eject);
+        if (!eject) followMountedDisc(ok);
         discDirty_ = true;
         publishSnapshot();
     }
@@ -1018,10 +1023,23 @@ void CoreHost::discSetIndex(unsigned idx) {
         return;
     }
     if (loaded_ && !inFrame_ && diskRegistered_ && disk_.set_image_index) {
-        disk_.set_image_index(idx);
+        followMountedDisc(disk_.set_image_index(idx));
         discDirty_ = true;
         publishSnapshot();
     }
+}
+
+// After an insert: the disc that booted becomes the content.  Only a call that worked and left the tray closed counts.
+// The core moves its image index BEFORE it tries the insert and keeps it there when the insert fails (it puts the
+// previous disc back and leaves the tray open), so the index alone does not say which disc is in.
+void CoreHost::followMountedDisc(bool ok) {
+    if (!ok || !disk_.get_eject_state || disk_.get_eject_state() || !disk_.get_image_index || !disk_.get_image_path)
+        return;
+    char path[4096] = {0};
+    if (!disk_.get_image_path(disk_.get_image_index(), path, sizeof path) || !path[0] || contentPath_ == path) return;
+    contentPath_ = path;
+    contentName_ = pathStem(contentPath_);
+    discSwaps_++;
 }
 
 bool CoreHost::isDiscImage(const std::string& path) {
@@ -1123,7 +1141,12 @@ void CoreHost::publishSnapshot() {
     pub_.fps = avInfo_.timing.fps;
     pub_.sampleRate = avInfo_.timing.sample_rate;
     pub_.aspect = aspectLive();
-    if (discChanged) pub_.disc = disc;
+    if (discChanged) {
+        pub_.disc = disc;
+        pub_.contentPath = contentPath_;
+        pub_.contentName = contentName_;
+        pub_.discSwaps = discSwaps_;
+    }
 }
 
 void CoreHost::pinSnapshot() {
