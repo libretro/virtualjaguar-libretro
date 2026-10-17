@@ -206,7 +206,13 @@ int App::tvScriptStep() {
             tick();
             if (!host.isLoaded() || host.contentPath() != absolutePath(arg1)) rc = fail(l, "could not load " + arg1);
         } else if (verb == "key") {
-            const SDL_Scancode sc = SDL_GetScancodeFromName(arg2.c_str());
+            std::string keyName = arg2;   // "ctrl+L": a Ctrl-modified press
+            SDL_Keymod mod = SDL_KMOD_NONE;
+            if (keyName.rfind("ctrl+", 0) == 0) {
+                mod = SDL_KMOD_CTRL;
+                keyName.erase(0, 5);
+            }
+            const SDL_Scancode sc = SDL_GetScancodeFromName(keyName.c_str());
             if (sc == SDL_SCANCODE_UNKNOWN) return fail(l, "unknown key '" + arg2 + "'");
             if (arg1 != "down" && arg1 != "up" && arg1 != "tap") return fail(l, "key wants down|up|tap");
             for (int pass = 0; pass < 2; pass++) {
@@ -217,6 +223,7 @@ int App::tvScriptStep() {
                 ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
                 ev.key.scancode = sc;
                 ev.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+                ev.key.mod = mod;
                 ev.key.down = down;
                 SDL_PushEvent(&ev);
                 tvScriptDrain();
@@ -247,6 +254,8 @@ int App::tvScriptStep() {
         } else if (verb == "tvsetting") {   // what Settings > Interface will do: store the setting, reconfigure TV mode
             if (!tv::settingFromKey(arg1, tvSetting)) return fail(l, "tvsetting wants off|manual|auto");
             configureTvMode();
+        } else if (verb == "saveconfig") {   // App::saveConfig() (a headless run keeps its config in a private temp dir)
+            saveConfig();
         } else if (verb == "wait" || verb == "shot" || verb == "quit") {   // windowed only
             if (!run.windowed) return fail(l, verb + " is windowed only");
             if (verb == "wait") {
@@ -279,6 +288,18 @@ int App::tvScriptStep() {
             if (name == "menu-open") got = flag(tvShell().menuOpen());
             else if (name == "tv") got = flag(tvMode.active());
             else if (name == "tv-screen") got = tvShell().screenId();
+            else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
+            else if (name == "home-visible") got = flag(homeVisible());            // the desktop library standing in for the game
+            else if (name == "library-window") got = flag(library.show);           // the desktop Game library window
+            else if (name == "cfg") {   // KEY:VALUE -- the config holds KEY = VALUE ("absent": no such key at all)
+                const size_t colon = want.find(':');
+                if (colon == std::string::npos) return fail(l, "cfg wants KEY:VALUE or KEY:absent");
+                const std::string key = want.substr(0, colon), val = want.substr(colon + 1);
+                const std::string have = cfg.has(key) ? cfg.get(key) : std::string("absent");
+                if (have != val) rc = fail(l, "expected config " + key + "=" + val + ", got " + have);
+                if (rc) return rc;
+                continue;
+            }
             else if (name == "paused") got = flag(paused);
             else if (name == "loaded") got = flag(host.isLoaded());
             else if (name == "capturing") got = flag(input.capturing());

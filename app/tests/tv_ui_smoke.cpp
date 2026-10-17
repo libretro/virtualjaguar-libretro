@@ -105,6 +105,9 @@ struct FakeHost : Host {
     void setTvActive(bool on) override { tv = on && tvOn; }
     std::string clockText() const override { return clockStr; }
     std::string raStatus() const override { return ra; }
+    bool desktopOpen = false, scanning = false;   // a desktop window covers the TV screens / a library scan is running
+    bool desktopWindowOpen() const override { return desktopOpen; }
+    bool libraryScanning() const override { return scanning; }
     std::vector<GameRef> games(List l) override {
         switch (l) {
         case List::All: return all;
@@ -1712,6 +1715,267 @@ static void ingameTvToggleHiddenWhenOff() {
     CHECK(!host.tv && shell.menuOpen() && std::string(focusedLabel(shell)) == "Enter TV mode");
 }
 
+// ---- the final-review fix wave (#991) --------------------------------------------------------------------------------
+
+// Launching a game moves it to the front of Recent.  The player who comes back lands on the game they left on, not on
+// whatever now sits at the same position (I3).
+static void moveToFront(std::vector<GameRef>& v, size_t i) {
+    GameRef g = v[i];
+    v.erase(v.begin() + (long)i);
+    v.insert(v.begin(), g);
+}
+static void gameRunsAndCloses(FakeHost& host, Shell& shell) {
+    host.loaded = true;
+    frames(host, shell, 4);
+    host.loaded = false;
+    frames(host, shell, 3);
+}
+
+static void homeReturnsToPlayedGame() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 6);
+    host.favs = mkGames("Fav", 4);
+    Shell shell(host);
+    homeSetup(host, shell);
+    rightN(host, shell, 3);
+    const std::string played = host.recent[3].key;
+    accept(host, shell);
+    CHECK(host.launchedKey == played);
+    moveToFront(host.recent, 3);                       // what noteLaunched does
+    CHECK(host.recent[0].key == played);
+    gameRunsAndCloses(host, shell);
+    host.launchedKey.clear();
+    accept(host, shell);
+    CHECK(host.launchedKey == played);                 // the same game (the old index 3 is now the game that was at 2)
+    // A different shelf kept its own game across the same reorder.
+    down(host, shell);
+    rightN(host, shell, 2);
+    const std::string fav = host.favs[2].key;
+    moveToFront(host.recent, 4);
+    gameRunsAndCloses(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedKey == fav);
+    // A game that vanished from the list falls back to the clamped index.
+    up(host, shell);                                   // back on Recent, on `played` (index 0)
+    rightN(host, shell, 5);                            // the last of six
+    const std::string last = host.recent[5].key;
+    host.recent.pop_back();                            // ... gone
+    host.recent.pop_back();                            // and one more: the clamp lands on the new last game
+    gameRunsAndCloses(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent.back().key && host.launchedKey != last);
+}
+
+static void libraryReturnsToPlayedGame() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 8);
+    Shell shell(host);
+    librarySetup(host, shell);
+    down(host, shell, 2);                              // the rail: All games -> Favorites -> Recently played
+    accept(host, shell);                               // into the grid
+    rightN(host, shell, 3);
+    const std::string played = host.recent[3].key;
+    accept(host, shell);
+    CHECK(host.launchedKey == played);
+    moveToFront(host.recent, 3);
+    gameRunsAndCloses(host, shell);
+    host.launchedKey.clear();
+    accept(host, shell);
+    CHECK(host.launchedKey == played);
+    // Still so when the screen is built again (another section and back): the memory holds the game too.
+    moveToFront(host.recent, 5);
+    lb(host, shell);
+    rb(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[0].key || host.launchedKey == played);
+    CHECK(host.launchedKey == played);
+}
+
+// Typing a filter still starts at the filtered list's first game, and clearing it returns to the remembered game.
+static void libraryFilterIgnoresRememberedGame() {
+    FakeHost host;
+    host.all = libraryFixture();
+    Shell shell(host);
+    librarySetup(host, shell);
+    rightN(host, shell, 4);                            // Cybermorph
+    keyEvent(shell, SDL_SCANCODE_B, SDLK_B);
+    keyEvent(shell, SDL_SCANCODE_L, SDLK_L);           // "bl": Blue Lightning only
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[3].key);
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE);
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, false);
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE);
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, false);
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.all[4].key);        // Cybermorph again
+}
+
+// M1: a desktop text field over the Base layer keeps the keyboard captured.
+static void baseLeavesTextFieldTheKeyboard() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    ImGuiIO& io = ImGui::GetIO();
+    char buf[16] = "";
+    auto boxFrame = [&]() {
+        io.DeltaTime = 1.0f / 60.0f;
+        ImGui::NewFrame();
+        shell.frame(g_ms);
+        shell.draw(Layer::Base, ImVec2(0, 0), io.DisplaySize);
+        ImGui::Begin("box");
+        ImGui::SetKeyboardFocusHere();
+        ImGui::InputText("##t", buf, sizeof buf);
+        ImGui::End();
+        ImGui::Render();
+    };
+    for (int i = 0; i < 4; i++) boxFrame();
+    CHECK(io.WantTextInput && io.WantCaptureKeyboard);   // (the Base window used to force this false)
+    frames(host, shell, 4);                              // the box is gone: the Base layer never wants the keyboard again
+    CHECK(!io.WantTextInput && !io.WantCaptureKeyboard);
+}
+
+// M2: an OS key repeat is never a fresh press.
+static void keyRepeatNeverActsAsPress() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 5);
+    Shell shell(host);
+    homeSetup(host, shell);
+    // Enter held across a game: the repeat that arrives on the reset nav does not relaunch.
+    gameRunsAndCloses(host, shell);
+    CHECK(keyEvent(shell, SDL_SCANCODE_RETURN, SDLK_RETURN, true, SDL_KMOD_NONE, true));   // consumed ...
+    frames(host, shell, 3);
+    CHECK(host.launches == 0);                                                              // ... and not an Accept
+    keyEvent(shell, SDL_SCANCODE_RETURN, SDLK_RETURN, false);
+    CHECK(keyEvent(shell, SDL_SCANCODE_RETURN, SDLK_RETURN));                               // a real press does
+    frames(host, shell, 2);
+    keyEvent(shell, SDL_SCANCODE_RETURN, SDLK_RETURN, false);
+    frames(host, shell, 2);
+    CHECK(host.launches == 1);
+    // A direction: the press moves once; OS repeats of it do not move it again (NavInput's own timer repeats it).
+    CHECK(keyEvent(shell, SDL_SCANCODE_RIGHT, SDLK_RIGHT));
+    frames(host, shell, 2);
+    for (int i = 0; i < 3; i++) {
+        CHECK(keyEvent(shell, SDL_SCANCODE_RIGHT, SDLK_RIGHT, true, SDL_KMOD_NONE, true));
+        frames(host, shell, 1);
+    }
+    keyEvent(shell, SDL_SCANCODE_RIGHT, SDLK_RIGHT, false);
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(host.launchedKey == host.recent[1].key);
+    // A repeat of a key that is no nav key is left to the app, as before.
+    CHECK(!keyEvent(shell, SDL_SCANCODE_F4, SDLK_F4, true, SDL_KMOD_NONE, true));
+    // The in-game menu too: a repeat does not press Resume.
+    FakeHost game;
+    Shell menu(game);
+    menu.openMenu();
+    frames(game, menu, 2);
+    CHECK(keyEvent(menu, SDL_SCANCODE_RETURN, SDLK_RETURN, true, SDL_KMOD_NONE, true));
+    frames(game, menu, 3);
+    CHECK(menu.menuOpen());
+}
+
+// M3: an empty grid lists no action that does nothing.
+static void libraryEmptyGridHintsOnlyBack() {
+    FakeHost host;
+    Shell shell(host);
+    librarySetup(host, shell);                          // no games at all
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(shell.screenId() == "library");
+    CHECK(!drew("Play") && !drew("Details") && !drew("Jump to letter") && !drew("A\xE2\x80\x93Z") && !drew("Open"));
+    CHECK(drew("Home"));
+    // A filter that matches nothing, with the focus on the grid (rail and grid both show nothing playable).
+    FakeHost host2;
+    host2.all = libraryFixture();
+    Shell shell2(host2);
+    librarySetup(host2, shell2);
+    g_texts.clear();
+    frames(host2, shell2, 2);
+    CHECK(drew("Play") && drew("Details") && drew("Jump to letter"));   // the full set with games (the fake pad has no triggers: no A-Z hint)
+    keyEvent(shell2, SDL_SCANCODE_Q, SDLK_Q);
+    keyEvent(shell2, SDL_SCANCODE_Z, SDLK_Z);
+    keyEvent(shell2, SDL_SCANCODE_Z, SDLK_Z);
+    g_texts.clear();
+    frames(host2, shell2, 3);
+    CHECK(drew("No games match"));
+    CHECK(!drew("Play") && !drew("Details") && !drew("Jump to letter") && !drew("A\xE2\x80\x93Z"));
+}
+
+// M7: an empty library that is still being scanned is not "empty".
+static void homeSaysScanningWhileScanning() {
+    const char* empty = "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+    FakeHost host;
+    host.scanning = true;
+    Shell shell(host);
+    g_texts.clear();
+    homeSetup(host, shell);
+    frames(host, shell, 2);
+    CHECK(drew("Scanning your library...") && !drew(empty));
+    host.scanning = false;                              // the scan found nothing
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Scanning your library...") && drew(empty));
+    host.scanning = true;                               // a rescan with games already listed keeps showing them
+    host.recent = mkGames("Recent", 2);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Continue playing") && !drew("Scanning your library..."));
+}
+
+// M11: a desktop window over the Base layer takes the pad from it.
+static void desktopWindowTakesInputFromBase() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 4);
+    Shell shell(host);
+    homeSetup(host, shell);
+    CHECK(shell.ownsInput());
+    host.desktopOpen = true;
+    CHECK(!shell.ownsInput());
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_SOUTH;
+    e.gbutton.down = true;
+    CHECK(!shell.handleEvent(e, g_ms));                // the app (and ImGui) get the A
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.down = false;
+    shell.handleEvent(e, g_ms);
+    frames(host, shell, 3);
+    accept(host, shell);
+    rb(host, shell);
+    CHECK(host.launches == 0 && shell.section() == Section::Home);
+    CHECK(!keyEvent(shell, SDL_SCANCODE_RETURN, SDLK_RETURN));
+    // ... and it still draws (the TV screens stay visible behind the window).
+    CHECK(baseWindow() && baseWindow()->WasActive);
+    // The window opens between a press and the frame that would act on it: that A is not a launch.
+    host.desktopOpen = false;
+    frames(host, shell, 2);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.down = true;
+    CHECK(shell.handleEvent(e, g_ms));
+    host.desktopOpen = true;
+    frames(host, shell, 3);
+    CHECK(host.launches == 0);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.down = false;
+    shell.handleEvent(e, g_ms);
+    // Closed again: the screens have the input back.
+    host.desktopOpen = false;
+    frames(host, shell, 2);
+    CHECK(shell.ownsInput());
+    accept(host, shell);
+    CHECK(host.launches == 1 && host.launchedKey == host.recent[0].key);
+    // The in-game menu is not the Base layer: a window next to it does not take its input.
+    FakeHost game;
+    Shell menu(game);
+    menu.openMenu();
+    game.desktopOpen = true;
+    CHECK(menu.ownsInput());
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -1787,6 +2051,14 @@ int main() {
     detailsMouse();
     detailsWalk120FramesNoAsserts();
     ingameTvToggleHiddenWhenOff();
+    homeReturnsToPlayedGame();
+    libraryReturnsToPlayedGame();
+    libraryFilterIgnoresRememberedGame();
+    baseLeavesTextFieldTheKeyboard();
+    keyRepeatNeverActsAsPress();
+    libraryEmptyGridHintsOnlyBack();
+    homeSaysScanningWhileScanning();
+    desktopWindowTakesInputFromBase();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;

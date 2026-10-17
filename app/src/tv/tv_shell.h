@@ -114,7 +114,7 @@ private:
     unsigned stackGen_ = 0;       // bumped on every push / pop / section change: drawBase stops when its list went stale
     FocusMemory memory_;
     bool capturing_ = false;
-    bool baseWas_ = false;        // baseActive() at the last frame(): a change resets the nav
+    bool baseWas_ = false;        // baseActive() with no desktop window open over it, at the last frame(): a change resets the nav
     bool padDriven_ = false;      // the last input was a pad: the pointer is hidden until the mouse moves
 };
 

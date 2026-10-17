@@ -57,7 +57,9 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     }
     // A click in a window's empty space (all of this one) activates its move ID, and an active ID makes
     // io.WantCaptureKeyboard true -- which gates F4 and the hold edges.  The Base layer never wants the keyboard.
-    ImGui::SetNextFrameWantCaptureKeyboard(false);
+    // Not while a desktop text field has the keyboard (Settings, cheats, a login opened from the menu bar over the Base
+    // layer): its keys are captured, or Esc / Ctrl+N would fire app hotkeys under the typing.
+    if (!ImGui::GetIO().WantTextInput) ImGui::SetNextFrameWantCaptureKeyboard(false);
     // Under every desktop window: ImGui puts a window it creates in front, and this one can appear (TV mode turned on) with
     // Settings or the state manager already open.
     ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());

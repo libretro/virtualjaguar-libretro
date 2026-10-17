@@ -56,15 +56,19 @@ void tvInputFrame(App& app, uint64_t ms) {
     in.tickHolds(ms, app.host.isLoaded() && !app.paused && !app.tvShell().menuOpen());
 }
 
+// The windows that take the pointer from a running game, and the pad / keyboard from the TV screens beneath them.
+bool App::desktopWindowOpen() const {
+    if (showSettings || showStates || showCheats || showAbout || library.show || input.overlay.open) return true;
+    return ImGui::GetCurrentContext() && ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+}
+
 void inputFrame(App& app) {
     InputManager& in = app.input;
     tvInputFrame(app, SDL_GetTicks());
-    bool uiOpen = app.showSettings || app.showStates || app.showCheats || app.showAbout || app.library.show ||
-                  in.overlay.open || app.tvShell().menuOpen();   // (the menu releases a captured mouse: netplay keeps it open over a running game)
+    bool uiOpen = app.desktopWindowOpen() || app.tvShell().menuOpen();   // (the menu releases a captured mouse: netplay keeps it open over a running game)
     bool wantsMouse = false;
     if (ImGui::GetCurrentContext()) {
         ImGuiIO& io = ImGui::GetIO();
-        if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) uiOpen = true;
         // A captured mouse has no position, so what ImGui thinks it hovers is stale then.
         wantsMouse = io.WantCaptureMouse && !in.mouseCaptured();
         in.uiWantsKeyboard = io.WantCaptureKeyboard;

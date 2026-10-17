@@ -478,13 +478,14 @@ void LibraryService::updateDatabase() {
 
 // ---- launching ---------------------------------------------------------------------------------------------------------
 
-void LibraryService::launch(const lib::Entry& e) {
+void LibraryService::launch(const lib::Entry& e, bool fresh) {
     // The same "open this path" event the file dialog posts; App::handleEvent turns it into openContent.
     SDL_Event ev;
     SDL_zero(ev);
     ev.type = SDL_EVENT_USER;
     ev.user.code = 0x56414A47;
     ev.user.data1 = SDL_strdup(e.file.path.c_str());
+    ev.user.data2 = fresh ? (void*)(intptr_t)1 : nullptr;   // 1 = open without the resume offer
     SDL_PushEvent(&ev);
     if (hideOnLaunch) show = false;
 }

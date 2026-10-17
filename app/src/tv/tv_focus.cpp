@@ -65,6 +65,13 @@ int FocusMemory::get(const std::string& key, int def) const {
 
 void FocusMemory::put(const std::string& key, int index) { m_[key] = index; }
 
+std::string FocusMemory::getItem(const std::string& key) const {
+    auto it = items_.find(key);
+    return it == items_.end() ? std::string() : it->second;
+}
+
+void FocusMemory::putItem(const std::string& key, const std::string& item) { items_[key] = item; }
+
 char initialOf(const std::string& title) {
     if (title.empty()) return '#';
     unsigned char c = (unsigned char)title[0];

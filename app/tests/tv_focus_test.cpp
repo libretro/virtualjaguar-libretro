@@ -87,6 +87,13 @@ static void testMemory() {
     CHECK(m.get("nope", 9) == 9);
     m.put("home/favorites", 5);
     CHECK(m.get("home/favorites") == 5);
+    // The item that had the focus is remembered beside the index, per key; none = "".
+    CHECK(m.getItem("home/favorites").empty());
+    m.putItem("home/favorites", "/games/a.j64");
+    CHECK(m.getItem("home/favorites") == "/games/a.j64" && m.getItem("home/recent").empty());
+    CHECK(m.get("home/favorites") == 5);   // the index is untouched
+    m.putItem("home/favorites", "/games/b.j64");
+    CHECK(m.getItem("home/favorites") == "/games/b.j64");
 }
 
 static void testInitials() {

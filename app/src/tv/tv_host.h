@@ -74,14 +74,21 @@ public:
     virtual void setTvActive(bool on) = 0;         // through App::toggleTvMode's path; no-op when Off
     virtual std::string clockText() const = 0;     // "8:42 PM" or "20:42" (SDL_GetDateTimeLocalePreferences)
     virtual std::string raStatus() const = 0;      // "" unless signed in; "RetroAchievements: <user>", + " - Hardcore" when wanted (a middle dot in the text)
+    // A desktop window (Settings, the state manager, cheats, About, the desktop Game library, the controls overlay ...) or
+    // a popup / menu is open over the TV screens.  The same set inputFrame treats as "a window is open".  The Base layer
+    // takes no nav input then: a pad A must not reach a tile hidden behind Settings.
+    virtual bool desktopWindowOpen() const = 0;
 
     // ---- the library (phase 2) -------------------------------------------------------------------------------------
     // All / Disc / Favorites: by title, case-insensitive; Recent: newest first.  Never BIOS.  Fetched fresh every frame.
+    virtual bool libraryScanning() const = 0;                    // a scan is running (an empty library may still fill up)
     virtual std::vector<GameRef> games(List l) = 0;
     virtual Art art(const GameRef& g) = 0;                       // starts the load on first use; tex 0 until it is ready
     virtual std::vector<StateRef> states(const GameRef& g) = 0;
     virtual Art stateThumb(const GameRef& g, int slot) = 0;
-    virtual void launch(const GameRef& g) = 0;                   // opens the game (an event: the A that did it is the caller's to guard)
+    // Opens the game (an event: the A that did it is the caller's to guard).  A fresh start: the app does not offer the
+    // "Resume where you left off?" prompt, which needs a mouse (X and Game details resume a state instead).
+    virtual void launch(const GameRef& g) = 0;
     virtual void launchState(const GameRef& g, int slot) = 0;    // opens the game and loads that state
     virtual bool isFavorite(const GameRef& g) = 0;               // library.isFavorite(entry); false when the game is gone
     virtual void setFavorite(const GameRef& g, bool on) = 0;     // library.setFavorite(entry, on); a no-op when the game is gone

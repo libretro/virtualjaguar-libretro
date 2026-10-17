@@ -38,6 +38,8 @@ public:
     void setTvActive(bool on) override;
     std::string clockText() const override;
     std::string raStatus() const override;
+    bool desktopWindowOpen() const override;
+    bool libraryScanning() const override;
     std::vector<GameRef> games(List l) override;
     Art art(const GameRef& g) override;
     std::vector<StateRef> states(const GameRef& g) override;

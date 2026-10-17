@@ -210,7 +210,8 @@ public:
     void closeContent();
     void showOpenDialog();
     void showImportBiosDialog();      // a file picker that imports the BIOS picked (BIOS & boot)
-    bool homeVisible() const { return homeLibrary && !host.isLoaded(); }   // is the library standing in for the game?
+    bool homeVisible() const { return homeLibrary && !host.isLoaded() && !tvMode.active(); }   // is the desktop library standing in for the game? (TV mode's screens stand in instead)
+    bool desktopWindowOpen() const;   // Settings, States, Cheats, About, the library window, the keypad overlay or any popup / menu is open (devices_ui.cpp)
     void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
     void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
     void reset();

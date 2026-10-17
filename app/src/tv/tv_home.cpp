@@ -188,6 +188,15 @@ private:
         for (int k = 0; k < kShelfKinds; k++) {
             Shelf s{k, host_.games(kKinds[k].list)};
             if (s.games.empty()) continue;   // its remembered index waits for it to come back
+            // Follow the game, not the position: launching a game moves it to the front of Recent, so the index the
+            // player left on is a different game when they come back.  A game that is gone falls back to the index.
+            const std::string want = shell_.memory().getItem(std::string("home/") + kKinds[k].id);
+            if (!want.empty())
+                for (int j = 0; j < (int)s.games.size(); j++)
+                    if (s.games[(size_t)j].key == want) {
+                        tile_[k].index = j;
+                        break;
+                    }
             tile_[k].clampTo((int)s.games.size());
             shelves_.push_back(std::move(s));
         }
@@ -202,6 +211,11 @@ private:
     void remember() {
         shell_.memory().put("home/shelf", want_);
         for (int k = 0; k < kShelfKinds; k++) shell_.memory().put(std::string("home/") + kKinds[k].id, tile_[k].index);
+        for (const Shelf& s : shelves_) {   // (a shelf that is empty right now keeps the game it last had)
+            const int i = tile_[s.kind].index;
+            if (i >= 0 && i < (int)s.games.size())
+                shell_.memory().putItem(std::string("home/") + kKinds[s.kind].id, s.games[(size_t)i].key);
+        }
     }
 
     void moveShelf(int d) {
@@ -256,7 +270,10 @@ private:
     void drawEmpty(const DrawCtx& c) {
         const Metrics& m = c.m;
         const float u = m.u, w = std::min(1100 * u, c.size.x - 2 * m.safeX), pad = 48 * u;
-        const std::string msg = "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+        // The first scan of a new install (or of an empty cache) is still running: the library is not empty yet.
+        const std::string msg = host_.libraryScanning()
+                                    ? "Scanning your library..."
+                                    : "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
         const ImVec2 ts = widgets::textSize(m.body, msg, w - 2 * pad);
         const ImVec2 size(w, ts.y + 2 * pad);
         const ImVec2 pos(c.pos.x + (c.size.x - size.x) * 0.5f, c.pos.y + (c.size.y - size.y) * 0.5f);

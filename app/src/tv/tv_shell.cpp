@@ -20,7 +20,12 @@ char typedChar(const SDL_KeyboardEvent& k) {
 
 Shell::Shell(Host& h) : host_(h) {}
 
-bool Shell::ownsInput() const { return inputOwner(host_.tvActive(), host_.gameLoaded(), open_) == Owner::TvUi; }
+// The Base layer also steps aside while a desktop window (Settings, States, the library window ...) or a popup is open over
+// it: a pad A must not launch the game hidden behind Settings.  The in-game menu keeps the input regardless.
+bool Shell::ownsInput() const {
+    if (inputOwner(host_.tvActive(), host_.gameLoaded(), open_) != Owner::TvUi) return false;
+    return open_ || !host_.desktopWindowOpen();
+}
 bool Shell::baseActive() const { return host_.tvActive() && !host_.gameLoaded(); }
 
 // Esc keeps its desktop meaning (leave fullscreen) only where Back would do nothing: on the Home root.  Back on the
@@ -104,6 +109,11 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
             // Back -- only a fresh press may leave the screen.
             if (c == '\b' && e.key.repeat) return true;
         }
+        // An OS key repeat is never a fresh press.  NavInput repeats the directions on its own timer, and a repeat that
+        // reaches a nav which was just reset (a game closed, a window closed, with Enter still held) would be taken for a
+        // new Accept and launch a game.  So every repeat of a nav key is dropped here (consumed: not the app's either);
+        // typing and the Backspace rule above came first.
+        if (down && e.key.repeat) return intentForKey(e.key.scancode, shift) != Intent::None;
         if (intentForKey(e.key.scancode, shift) == Intent::None) return false;   // F4 and friends are the app's
         nav_.key(e.key.scancode, down, shift, ms);
         return down;   // a key-up still reaches the app (a Tab held for fast-forward must be let go of)
@@ -124,13 +134,16 @@ void Shell::frame(uint64_t ms) {
     retired_.clear();   // screens removed since the last frame: nothing can be inside them now
     // The Base layer got or lost the input (a game started or closed, TV mode toggled): the releases in between never
     // reached the nav, so forget what it thinks is held, or a direction would repeat and a button would stay "down".
-    if (baseActive() != baseWas_) {
-        baseWas_ = baseActive();
+    // Same when a desktop window opens or closes over the Base layer: it stops taking input (ownsInput()).
+    const bool live = baseActive() && !host_.desktopWindowOpen();
+    if (live != baseWas_) {
+        baseWas_ = live;
         nav_.reset();
     }
     if (!open_) {
         if (!baseActive()) return;
         if (stack_.empty()) setSection(Section::Home);
+        if (!live) return;   // a desktop window has the pads and keys: the screens wait
         for (Intent in : nav_.take(ms)) baseIntent(in);
         return;
     }

@@ -87,6 +87,9 @@ std::string AppHost::raStatus() const {
     return "RetroAchievements: " + app_.ach.userName() + (app_.ach.hardcoreWanted() ? " \xC2\xB7 Hardcore" : "");
 }
 
+bool AppHost::desktopWindowOpen() const { return app_.desktopWindowOpen(); }
+bool AppHost::libraryScanning() const { return app_.library.scanning(); }
+
 // ---- the library -----------------------------------------------------------------------------------------------------
 
 namespace {
@@ -167,7 +170,7 @@ Art AppHost::stateThumb(const GameRef& g, int slot) {
 }
 
 void AppHost::launch(const GameRef& g) {
-    if (const lib::Entry* e = entryFor(g)) app_.library.launch(*e);
+    if (const lib::Entry* e = entryFor(g)) app_.library.launch(*e, /*fresh=*/true);   // the resume prompt needs a mouse: X / Details resume
 }
 
 void AppHost::launchState(const GameRef& g, int slot) {

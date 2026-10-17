@@ -59,6 +59,7 @@ public:
         rail_.index = list_;
         grid_.cols = kCols;
         grid_.index = std::max(0, s.memory().get(std::string("library/") + kKinds[list_].id));
+        focusKey_ = s.memory().getItem(std::string("library/") + kKinds[list_].id);
     }
 
     const char* id() const override { return "library"; }
@@ -76,13 +77,19 @@ public:
         if (c == '\b') {
             if (filter_.empty()) return false;
             filter_.pop_back();
-            if (filter_.empty()) grid_.index = std::max(0, shell_.memory().get(std::string("library/") + kKinds[list_].id));
-            else grid_.index = 0;
+            if (filter_.empty()) {   // back to the place the filter did not lose
+                grid_.index = std::max(0, shell_.memory().get(std::string("library/") + kKinds[list_].id));
+                focusKey_ = shell_.memory().getItem(std::string("library/") + kKinds[list_].id);
+            } else {
+                grid_.index = 0;
+                focusKey_.clear();
+            }
         } else {
             if (filter_.size() >= kMaxFilter) return true;   // used, full
             if (filter_.empty()) remember();                 // the place the filter must not lose
             filter_ += c;
             grid_.index = 0;
+            focusKey_.clear();   // the filtered list starts at its first game
         }
         snap_ = true;
         refresh();
@@ -225,6 +232,7 @@ public:
     }
 
     std::vector<widgets::Hint> hints() const override {
+        if (games_.empty()) return {{host_.glyph(Intent::Back), "Home"}};   // an empty grid: no game to open, play or jump in
         if (onRail_) return {{host_.glyph(Intent::Accept), "Open"}, {host_.glyph(Intent::Back), "Home"}};
         std::vector<widgets::Hint> h = {{host_.glyph(Intent::Accept), "Play"}};
         if (resumeOk_) h.push_back({host_.glyph(Intent::Alt), "Resume state"});
@@ -249,6 +257,14 @@ private:
             games_.push_back(std::move(g));
         }
         grid_.count = (int)games_.size();
+        // Follow the game, not the position: launching a game moves it to the front of Recently played, so the index the
+        // player left on is a different game when they come back.  A game that is gone falls back to the clamped index.
+        if (!focusKey_.empty())
+            for (int j = 0; j < (int)games_.size(); j++)
+                if (games_[(size_t)j].key == focusKey_) {
+                    grid_.index = j;
+                    break;
+                }
         grid_.index = std::clamp(grid_.index, 0, std::max(0, grid_.count - 1));
         if (!built_) {
             built_ = true;
@@ -259,7 +275,11 @@ private:
 
     void remember() {
         shell_.memory().put("library/rail", list_);
-        if (filter_.empty()) shell_.memory().put(std::string("library/") + kKinds[list_].id, grid_.index);
+        if (grid_.index >= 0 && grid_.index < (int)games_.size()) focusKey_ = games_[(size_t)grid_.index].key;   // (an empty list keeps the last game)
+        if (filter_.empty()) {
+            shell_.memory().put(std::string("library/") + kKinds[list_].id, grid_.index);
+            shell_.memory().putItem(std::string("library/") + kKinds[list_].id, focusKey_);
+        }
     }
 
     // Moving on the rail shows that list at once, at the place it was left.
@@ -270,6 +290,7 @@ private:
         rail_.index = k;
         filter_.clear();
         grid_.index = std::max(0, shell_.memory().get(std::string("library/") + kKinds[list_].id));
+        focusKey_ = shell_.memory().getItem(std::string("library/") + kKinds[list_].id);
         grid_.firstRow = 0;
         snap_ = true;
         refresh();
@@ -359,6 +380,7 @@ private:
     int list_ = 0;                      // the selected list: an index into kKinds
     bool onRail_ = false;
     bool built_ = false;
+    std::string focusKey_;              // the key of the focused game: refresh() follows it when the list reorders under the player
     std::string filter_;
     bool resumeOk_ = false;             // the focused game has a state and loading one is allowed (hints() reads it)
     Tween scroll_;                      // vertical scroll of the grid, in pixels
