@@ -456,7 +456,10 @@ void App::wireHost() {
         input.poll(!inputCaptured_);
     };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
-    host.optionLock = &lockedCoreOption;   // the app's own Controls / Devices tabs replace these core options
+    // The app's own Controls / Devices tabs replace these core options.
+    host.optionLock = [this](const std::string& k, std::string& v) {
+        return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
+    };
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
         return host.threaded() ? emuInput_.state(p, d, i, id) : input.state(p, d, i, id);
     };

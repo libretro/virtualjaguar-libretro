@@ -24,12 +24,28 @@ static std::string optionOf(const App& app, const char* key) {
 void applyPortDevices(App& app) {
     const std::string game = app.input.content();
     DevKind kinds[2] = {DevKind::Pad, DevKind::Pad};
+    unsigned claims[2] = {RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD};
+    std::array<bool, 2> pro{{false, false}};
     for (unsigned p = 0; p < kJaguarPorts; p++) {
         int d = resolvePortDevice(app.cfg, p, game);
-        unsigned claim = (d >= 0 && portOffers(p, (unsigned)d)) ? (unsigned)d : (unsigned)RETRO_DEVICE_JOYPAD;
-        app.host.setControllerDevice(p, claim);   // JOYPAD releases the claim: the core option (locked to auto) decides
-        kinds[p] = effectiveDevKind(claim == RETRO_DEVICE_JOYPAD ? -1 : (int)claim,
-                                    optionOf(app, p == 0 ? "virtualjaguar_p1_device" : "virtualjaguar_p2_device"));
+        unsigned stored = (d >= 0 && portOffers(p, (unsigned)d)) ? (unsigned)d : (unsigned)RETRO_DEVICE_JOYPAD;
+        pro[p] = stored == devLibretroId(DevKind::ProPad);
+        app.proPorts[p].store(pro[p]);
+        claims[p] = coreClaimFor(stored);
+    }
+    // The Pro Controller is a standard pad to retro_set_controller_port_device plus virtualjaguar_pN_device =
+    // pad_pro, which only the option lock can hand the core (the core turns its Pro path on from the option alone).
+    // With the emulation thread both are queued, in this order, ahead of the next frame.
+    app.host.refreshLocks();
+    for (unsigned p = 0; p < kJaguarPorts; p++) {
+        unsigned claim = claims[p];
+        app.host.setControllerDevice(p, claim);   // JOYPAD releases the claim: the core option (locked to auto / pad_pro) decides
+        // The option the core will read: the lock's value, from `pro` here and now (threaded, the UI's snapshot of
+        // the locked values catches up only after the queued refreshLocks() and a pin).
+        const char* key = p == 0 ? "virtualjaguar_p1_device" : "virtualjaguar_p2_device";
+        std::string opt;
+        if (!lockedCoreOptionFor(key, opt, pro)) opt = optionOf(app, key);
+        kinds[p] = effectiveDevKind(claim == RETRO_DEVICE_JOYPAD ? -1 : (int)claim, opt);
     }
     app.input.setPortKinds(kinds[0], kinds[1]);
     app.input.updateRoutes();
@@ -127,11 +143,21 @@ struct Choice {
 std::vector<Choice> choicesFor(App& app, unsigned port) {
     std::vector<Choice> v;
     const auto& ports = app.host.controllerPorts();
+    const int pro = (int)devLibretroId(DevKind::ProPad);
     if (app.host.isLoaded() && port < ports.size()) {
         for (const ControllerType& t : ports[port]) v.push_back({t.desc, (int)t.id});   // SET_CONTROLLER_INFO
     } else {
         for (int i = 0; i < kDevKinds; i++)   // before a game loads: the same lists, from devices.cpp
-            if (portOffers(port, devLibretroId((DevKind)i))) v.push_back({devKindLabel((DevKind)i), (int)devLibretroId((DevKind)i)});
+            if ((DevKind)i != DevKind::ProPad && portOffers(port, devLibretroId((DevKind)i)))
+                v.push_back({devKindLabel((DevKind)i), (int)devLibretroId((DevKind)i)});
+    }
+    // The Pro Controller is not in SET_CONTROLLER_INFO (the core has it as an option value only): right after
+    // the Standard Joypad.
+    if (portOffers(port, (unsigned)pro)) {
+        size_t at = 0;
+        for (size_t i = 0; i < v.size(); i++)
+            if (v[i].id == (int)RETRO_DEVICE_JOYPAD) at = i + 1;
+        v.insert(v.begin() + (long)at, Choice{devKindLabel(DevKind::ProPad), pro});
     }
     return v;
 }

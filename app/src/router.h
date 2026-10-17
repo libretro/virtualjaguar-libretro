@@ -18,6 +18,7 @@ namespace vj {
 
 struct HostSource {
     const Profile* profile = nullptr;
+    const Profile* proProfile = nullptr;   // the variant for a Pro Controller port (Profile::builtin proPort); null = `profile`
     DeviceSnapshot snap;
     bool isKeyboard = false;
     unsigned overlaySlot = 0;   // KeypadOverlay::filter() slot

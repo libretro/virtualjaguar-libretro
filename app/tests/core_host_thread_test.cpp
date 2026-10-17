@@ -5,6 +5,12 @@
 #include "core_host.h"
 #include "emu_thread.h"
 
+#include "libretro.h"
+
+extern "C" {
+#include "joystick.h"
+}
+
 #include <atomic>
 #include <cstdio>
 #include <ctime>
@@ -193,6 +199,52 @@ int main(int argc, char** argv) {
     host.resetOptionToDefault(key);
     host.clearOverride(key);
     host.post = [&emu](std::function<void()> fn) { emu.post(std::move(fn)); };
+
+    // A lock whose value moves while the emulation thread owns the core (the Pro Controller, #1017): refreshLocks()
+    // from the UI thread is queued, re-reads the rule on the owner, reaches the core through GET_VARIABLE_UPDATE
+    // ahead of the next frame's input, and the UI's snapshot shows the new locked value after the publish + pin.
+    // What the core reads back: RetroPad X is keypad 0 on a standard pad and keypad 9 (Pro X) under pad_pro.
+    {
+        static std::atomic<bool> pro{false}, pressX{false};
+        const std::string dev = "virtualjaguar_p1_device";
+        host.optionLock = [dev](const std::string& k, std::string& v) {   // runs on the emulation thread
+            if (k != dev) return false;
+            v = pro.load() ? "pad_pro" : "auto";
+            return true;
+        };
+        host.inputState = [](unsigned port, unsigned device, unsigned, unsigned id) -> int16_t {
+            if (port != 0 || device != RETRO_DEVICE_JOYPAD || !pressX.load()) return 0;
+            const int16_t x = (int16_t)(1 << RETRO_DEVICE_ID_JOYPAD_X);
+            return id == RETRO_DEVICE_ID_JOYPAD_MASK ? x : (id == RETRO_DEVICE_ID_JOYPAD_X ? 1 : 0);
+        };
+        CHECK(emu.call([&] { return host.loadContent(rom, err); }));   // the definitions push takes the lock
+        host.pinSnapshot();
+        CHECK(host.optionLocked(dev) && valueOf(host, dev) == "auto");
+        auto keypad = [&](int slot) { return emu.call([slot] { return joypad0Buttons[slot] != 0; }); };
+        const unsigned v2 = host.ownerViolations();
+        pressX.store(true);
+        CHECK(emu.advance(2));
+        CHECK(keypad(BUTTON_0) && !keypad(BUTTON_9));   // negative control: a standard pad
+        pro.store(true);
+        host.refreshLocks();                            // UI thread: queued
+        host.setControllerDevice(0, RETRO_DEVICE_JOYPAD);
+        CHECK(emu.advance(1));                          // the queued work runs before this frame reads the pad
+        CHECK(keypad(BUTTON_9) && !keypad(BUTTON_0));
+        host.pinSnapshot();
+        CHECK(valueOf(host, dev) == "pad_pro");         // the UI's copy of the locked value followed
+        CHECK(emu.call([&] { return valueOf(host, dev); }) == "pad_pro");
+        pro.store(false);
+        host.refreshLocks();
+        CHECK(emu.advance(1));
+        CHECK(keypad(BUTTON_0) && !keypad(BUTTON_9));
+        host.pinSnapshot();
+        CHECK(valueOf(host, dev) == "auto");
+        CHECK(host.ownerViolations() == v2);
+        pressX.store(false);
+        host.optionLock = nullptr;
+        host.inputState = [](unsigned, unsigned, unsigned, unsigned) -> int16_t { return 0; };
+    }
+
     emu.call([&] { host.unloadContent(); });
     CHECK(emu.stop());
     host.post = nullptr;

@@ -142,6 +142,9 @@ public:
     AudioOut audio;
     VideoOut video;
     InputManager input;
+    // Which Jaguar ports hold the Pro Controller (applyPortDevices, UI thread); host.optionLock turns it into
+    // virtualjaguar_pN_device = pad_pro (devices.h lockedCoreOptionFor) on the emulation thread: atomic.
+    std::array<std::atomic<bool>, 2> proPorts{{false, false}};
     LibraryService library;   // optional game library (#838); idle until start()ed
     Achievements ach;   // RetroAchievements (#836)
     Perf perf;          // dev: --perf-frames
