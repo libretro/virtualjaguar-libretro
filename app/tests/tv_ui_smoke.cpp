@@ -87,8 +87,12 @@ struct FakeHost : Host {
     void armReleaseGuard() override { guardArmed++; }
     void clearHolds() override { holdsCleared++; }
     void toast(const std::string& t) override { lastToast = t; }
+    bool keyboardLast = false;   // the keyboard was used last: it has no key for Menu / Alt / Aux (as AppHost::glyph)
     std::string glyph(Intent i) const override {
         switch (i) {
+        case Intent::Menu: return keyboardLast ? "" : "Start";
+        case Intent::Alt: return keyboardLast ? "" : "X";
+        case Intent::Aux: return keyboardLast ? "" : "Y";
         case Intent::Accept: return "A";
         case Intent::Back: return "B";
         case Intent::Up:
@@ -842,7 +846,64 @@ static void homeHidesEmptyShelves() {
     g_texts.clear();
     homeSetup(host, shell);
     frames(host, shell, 2);
-    CHECK(drew("Continue playing") && drew("Jaguar CD") && !drew("Favorites"));
+    CHECK(drew("Continue playing") && !drew("Favorites"));   // (the next shelf shows once it is focused, see homeHidesShelfThatCannotFit)
+    down(host, shell);
+    frames(host, shell, 40);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Jaguar CD") && !drew("Favorites"));
+}
+
+// A shelf shows only when its whole title fits above the hint bar: the next shelf is half under the bar at the top, so
+// its title and tiles are not drawn; the focused shelf's are.  At both 720p and 1080p, with all three shelves.
+static void homeHidesShelfThatCannotFit() {
+    for (float hh : {720.0f, 1080.0f}) {
+        FakeHost host;
+        host.recent = mkGames("Recent", 3);
+        host.favs = mkGames("Fav", 3);
+        host.disc = mkGames("Disc", 3, true);
+        Shell shell(host);
+        host.tv = true;
+        host.loaded = false;
+        ImGui::GetIO().DisplaySize = ImVec2(hh * 16 / 9, hh);
+        frames(host, shell, 3);
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Continue playing") && drew("Recent 0"));
+        CHECK(!drew("Favorites") && !drew("Fav 0") && !drew("Jaguar CD") && !drew("Disc 0"));
+        down(host, shell);                          // Favorites focused: its title shows, the shelf after it does not
+        frames(host, shell, 40);
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Favorites") && drew("Fav 0"));
+        CHECK(!drew("Jaguar CD") && !drew("Disc 0"));
+    }
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+}
+
+// The hint bar lists only what the last-used input device has: no Menu / Alt / Aux hint after keyboard input (the
+// chrome drops a hint whose glyph is "", Home's hero buttons too); the pad shows them.  The pure part of the rule;
+// AppHost::glyph itself (the "" for Menu / Alt / Aux while the keyboard was last used) needs an App and is not covered here.
+static void hintsListOnlyWhatWorks() {
+    for (int keyboard = 0; keyboard < 2; keyboard++) {
+        FakeHost host;
+        host.keyboardLast = keyboard != 0;
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        host.st[host.recent[0].key] = {{3, 1792152000}};
+        Shell shell(host);
+        homeSetup(host, shell);
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Play") && drew("Sections"));                 // Accept and the Tab pair exist on every device
+        CHECK(drew("Details") == !keyboard && drew("Resume state") == !keyboard && drew("Resume last state") == !keyboard);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);   // Library
+        CHECK(shell.screenId() == "library");
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Play") && drew("Sections"));
+        CHECK(drew("Details") == !keyboard && drew("Jump to letter") == !keyboard);
+    }
 }
 
 static void homeAcceptLaunchesFocused() {
@@ -1692,6 +1753,8 @@ int main() {
     tabClickSwitchesSection();
     launchedArmsGuard();
     homeHidesEmptyShelves();
+    homeHidesShelfThatCannotFit();
+    hintsListOnlyWhatWorks();
     homeAcceptLaunchesFocused();
     homeXResumesNewest();
     homeResumeHiddenWithoutStatesOrInHardcore();

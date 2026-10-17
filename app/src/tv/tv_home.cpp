@@ -100,6 +100,7 @@ public:
             std::vector<widgets::Hint> buttons = {{host_.glyph(Intent::Accept), "Play"}};
             if (resumeOk_) buttons.push_back({host_.glyph(Intent::Alt), "Resume last state"});
             buttons.push_back({host_.glyph(Intent::Menu), "Details"});
+            widgets::dropUnbound(buttons);
             widgets::hintBar(c.dl, m, ImVec2(tx, yButtons), colW, buttons, 28 * u);
         }
 
@@ -131,6 +132,8 @@ public:
             const Shelf& sh = shelves_[(size_t)i];
             const float y = top + (float)i * kShelfPitch * u - scroll;
             if (y + kShelfPitch * u <= top || y >= bottom) continue;
+            // A shelf is shown only when its whole title fits above the hint bar: a title half under the bar is noise.
+            if (y + widgets::textSize(m.body, kKinds[sh.kind].name).y > bottom) continue;
             LinearFocus& f = tile_[sh.kind];
             f.first = std::min(f.first, std::max(0, f.count - fit));
             f.scrollToShow(fit);

@@ -83,6 +83,9 @@ struct Hint {
     std::string glyph, label;
 };
 void hintBar(ImDrawList* dl, const Metrics& m, ImVec2 pos, float maxW, const std::vector<Hint>& hints, float px = 0);   // px 0 = Metrics::caption
+// Removes the hints whose glyph is "": a button the current input device does not have (Host::glyph says so), so the bar
+// lists only what works.  The screens' bars (chrome) and Home's hero buttons call it; hintBar itself keeps drawing a bare label.
+void dropUnbound(std::vector<Hint>& hints);
 
 // A banner pill (a state the player should not forget); returns its height.
 float banner(ImDrawList* dl, const Metrics& m, ImVec2 pos, float w, const std::string& s);

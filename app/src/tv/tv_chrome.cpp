@@ -131,8 +131,12 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
         std::vector<Screen*> list;
         for (size_t i = first; i < stack_.size(); i++) list.push_back(stack_[i].get());
         const unsigned gen = stackGen_;
-        for (Screen* s : list) {
-            s->draw(c);
+        for (size_t k = 0; k < list.size(); k++) {
+            list[k]->draw(c);
+            // The hint bar's opaque band: over whatever the screen drew down there, under the hints, and before any modal
+            // (which scrims the content area).
+            if (k == 0)
+                dl->AddRectFilled(ImVec2(pos.x, pos.y + kHintTop * u), ImVec2(pos.x + size.x, pos.y + size.y), widgets::col(pal.homeBg));
             if (stackGen_ != gen) break;   // a screen popped itself or pushed another: the rest of the list is stale
         }
     }
@@ -142,6 +146,7 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     // ---- the hint bar: the top screen's hints, with the section hint ahead of the way out ----------------------------
     std::vector<widgets::Hint> hints;
     if (Screen* t = top()) hints = t->hints();
+    widgets::dropUnbound(hints);   // a button this input device lacks (Menu / Alt / Aux on the keyboard) is not listed
     const widgets::Hint sections_hint{prev + " " + next, "Sections"};
     hints.insert(hints.empty() ? hints.end() : hints.end() - 1, sections_hint);
     widgets::hintBar(dl, m, ImVec2(pos.x + m.safeX, pos.y + kHintTop * u), size.x - 2 * m.safeX, hints);

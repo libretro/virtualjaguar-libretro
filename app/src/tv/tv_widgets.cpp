@@ -221,6 +221,10 @@ void hintBar(ImDrawList* dl, const Metrics& m, ImVec2 pos, float maxW, const std
     }
 }
 
+void dropUnbound(std::vector<Hint>& hints) {
+    hints.erase(std::remove_if(hints.begin(), hints.end(), [](const Hint& h) { return h.glyph.empty(); }), hints.end());
+}
+
 float banner(ImDrawList* dl, const Metrics& m, ImVec2 pos, float w, const std::string& s) {
     const theme::Palette& p = theme::pal();
     const float h = m.body + 2 * 14 * m.u;

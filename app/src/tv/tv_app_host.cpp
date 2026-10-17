@@ -214,9 +214,9 @@ std::string AppHost::glyph(Intent i) const {
     case Intent::Right: b = SDL_GAMEPAD_BUTTON_DPAD_RIGHT; key = "Right"; break;
     case Intent::Accept: b = SDL_GAMEPAD_BUTTON_SOUTH; key = "Enter"; break;
     case Intent::Back: b = SDL_GAMEPAD_BUTTON_EAST; key = "Esc"; break;
-    case Intent::Alt: b = SDL_GAMEPAD_BUTTON_WEST; break;
+    case Intent::Alt: b = SDL_GAMEPAD_BUTTON_WEST; break;   // Alt and Aux likewise have no key
     case Intent::Aux: b = SDL_GAMEPAD_BUTTON_NORTH; break;
-    case Intent::Menu: b = SDL_GAMEPAD_BUTTON_START; key = "Menu"; break;
+    case Intent::Menu: b = SDL_GAMEPAD_BUTTON_START; break;   // no keyboard key (intentForKey): "" so the hint is dropped
     case Intent::SectionPrev: b = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER; key = "Shift+Tab"; break;
     case Intent::SectionNext: b = SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER; key = "Tab"; break;
     case Intent::PagePrev: key = "Page Up"; break;
