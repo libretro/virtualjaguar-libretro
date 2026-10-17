@@ -12,6 +12,13 @@
 #   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
 #   expect tv=0|1         TV mode is on
 #   expect tv-screen=ID   the id of the TV screen on top (home, library, ...)
+#   wait library         WINDOWED ONLY: block the script until the Library has scanned (not scanning, and at least one
+#                        game); FAIL after 120 s.  The gaps of the lines after it count from the moment it is released.
+#   shot PATH            WINDOWED ONLY: save the window as a PNG at the end of the next UI frame (that frame's TV drawing
+#                        included).  Leave a gap before it for a screen change to finish animating.
+#   quit                 WINDOWED ONLY: end the run through the normal teardown
+#   (headless, wait / shot / quit fail their line with "windowed only": the Library is scanned by threads that only a
+#   windowed run starts, and there is no window to save.  Windowed, any FAIL is printed and the script goes on.)
 #   (core-input=1: the core would read some Player 1 pad button right now; the expect takes the snapshot itself)
 # An expect first lets the per-frame input housekeeping run, so a fired hold has been handled by then.
 

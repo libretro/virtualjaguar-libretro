@@ -1406,6 +1406,7 @@ int App::runInteractive(const CliArgs& a) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (perf.on && perf.gpu) Perf::finish();
         perf.lap(Perf::Ui);
+        tvScriptFrameEnd();   // the script's `shot`: this frame's TV drawing is in the buffer, not yet swapped
         if (!a.screenshot.empty() && ++uiFrames == a.screenshotFrame) {
             saveWindowScreenshot(a.screenshot);
             quit = true;

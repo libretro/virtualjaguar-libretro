@@ -13,7 +13,12 @@
 // The pad.  The runner attaches a virtual gamepad (SDL_AttachVirtualJoystick, type GAMEPAD, every button and axis of
 // the standard layout including MISC1/Share) and presses its buttons with SDL_SetJoystickVirtualButton.  It reaches
 // InputManager through the ordinary SDL_EVENT_GAMEPAD_ADDED hot-plug path, exactly like a real pad.  If it does not
-// open there, the run FAILS: nothing here fakes GAMEPAD_* events for an unopened id.
+// open there, the run FAILS: nothing here fakes GAMEPAD_* events for an unopened id.  Windowed runs attach it too.
+//
+// Windowed-only verbs (for screenshots of the TV screens): `wait library` blocks the script until the Library has
+// scanned (the LibraryService threads run only in a windowed run), `shot PATH` saves the window at the end of the
+// next UI frame (App::tvScriptFrameEnd, called after the UI is drawn and before the swap), `quit` ends the run through
+// the normal teardown.  Headless, each of them fails its line with "windowed only".
 #include <SDL3/SDL.h>
 
 #include <cstdint>
@@ -97,6 +102,11 @@ struct App::TvScriptRun {
     SDL_JoystickID padId = 0;
     uint64_t prevExec = 0, prevMs = 0;
     unsigned expects = 0;
+    // windowed-only verbs
+    bool waitLibrary = false;    // `wait library` is blocking the script
+    uint64_t waitStart = 0;
+    std::string shotPath;        // `shot PATH`: saved at the end of the next UI frame
+    unsigned shotLine = 0;
 };
 
 bool App::tvScriptBegin(const CliArgs& a, bool windowed) {
@@ -166,6 +176,13 @@ int App::tvScriptStep() {
         return run.windowed ? 0 : 2;
     };
     while (run.next < run.lines.size()) {
+        if (run.waitLibrary) {   // `wait library`: nothing runs until the scan is done (or 120 s have passed)
+            const bool ready = !library.scanning() && !library.entries().empty();
+            if (!ready && SDL_GetTicks() - run.waitStart < 120000) return 0;
+            run.waitLibrary = false;
+            run.prevExec = SDL_GetTicks();   // the gaps of the lines after it count from here
+            if (!ready) fail(run.lines[run.next - 1], "wait library: the library did not finish scanning in 120 s");
+        }
         const Line& l = run.lines[run.next];
         if (SDL_GetTicks() < run.prevExec + (l.ms - run.prevMs)) return 0;
         run.next++;
@@ -230,6 +247,19 @@ int App::tvScriptStep() {
         } else if (verb == "tvsetting") {   // what Settings > Interface will do: store the setting, reconfigure TV mode
             if (!tv::settingFromKey(arg1, tvSetting)) return fail(l, "tvsetting wants off|manual|auto");
             configureTvMode();
+        } else if (verb == "wait" || verb == "shot" || verb == "quit") {   // windowed only
+            if (!run.windowed) return fail(l, verb + " is windowed only");
+            if (verb == "wait") {
+                if (arg1 != "library") return fail(l, "wait wants library");
+                run.waitLibrary = true;
+                run.waitStart = SDL_GetTicks();
+            } else if (verb == "shot") {
+                if (arg1.empty()) return fail(l, "shot wants a path");
+                run.shotPath = arg1;
+                run.shotLine = l.no;
+            } else {
+                quit = true;   // the loop finishes this frame (a pending shot is still taken), then the normal teardown
+            }
         } else if (verb == "capture") {
             Ctl c = C_HELP;
             if (!ctlByName(arg1, c)) return fail(l, "capture wants help|tvmenu");
@@ -281,6 +311,19 @@ int App::tvScriptStep() {
         if (rc) return rc;
     }
     return 1;
+}
+
+// Windowed: called once per UI frame after the UI is drawn and before the buffers swap, so the picture has this
+// frame's TV drawing.  Saves the window for a pending `shot`.
+void App::tvScriptFrameEnd() {
+    if (!tvScript_ || tvScript_->shotPath.empty()) return;
+    const std::string path = tvScript_->shotPath;
+    const unsigned line = tvScript_->shotLine;
+    tvScript_->shotPath.clear();
+    saveWindowScreenshot(path);
+    SDL_PathInfo info;
+    if (SDL_GetPathInfo(path.c_str(), &info)) std::fprintf(stderr, "tv script: shot %s\n", path.c_str());
+    else std::fprintf(stderr, "tv: FAIL tv script line %u: shot wrote no file at %s\n", line, path.c_str());
 }
 
 int App::runTvScript(const CliArgs& a) {

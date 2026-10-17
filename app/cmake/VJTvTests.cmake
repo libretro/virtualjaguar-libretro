@@ -68,3 +68,11 @@ else()
 endif()
 add_test(NAME tv_ui_smoke COMMAND vj_tv_ui_smoke)
 set_tests_properties(tv_ui_smoke PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The windowed-only script verbs (`wait library`, `shot PATH`, `quit`) fail their line headless with "windowed only"
+# (tests/tv_script_windowed_only.cmake runs the app once per verb).  The windowed path itself is not CTest-covered: it
+# needs a window and a scanned Library.
+add_test(NAME tv_script_windowed_only
+    COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:virtualjaguar> -DDIR=${CMAKE_BINARY_DIR}/tv_script_windowed_only
+            -P "${CMAKE_CURRENT_LIST_DIR}/../tests/tv_script_windowed_only.cmake")
+set_tests_properties(tv_script_windowed_only PROPERTIES TIMEOUT 240)   # the cmake script ends in FATAL_ERROR on a mismatch

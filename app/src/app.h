@@ -284,6 +284,7 @@ private:
     int tvScriptStep();
     void tvScriptDrain();
     void tvScriptEnd();
+    void tvScriptFrameEnd();   // windowed: a pending `shot`, after the UI is drawn
     void saveWindowScreenshot(const std::string& path);
 
     void desktopInit();       // after the window exists: native menus, tray, dark title bar
