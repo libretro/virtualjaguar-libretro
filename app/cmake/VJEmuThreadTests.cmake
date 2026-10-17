@@ -152,6 +152,24 @@ set_tests_properties(smoke_disc_insert_bios_threaded PROPERTIES TIMEOUT 300 LABE
     PASS_REGULAR_EXPRESSION "DISC insert synth_jagcd\\.chd into the empty tray \\(emulation thread\\): disk control: inserted '[^']*synth_jagcd\\.chd'"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
+# The Pro Controller (#1017) through the app itself: a config naming it on Jaguar port 2 must hand the core
+# virtualjaguar_p2_device = pad_pro after the load, inline and threaded (on the emulation thread the option lock is
+# limitFeaturesForEmuThread()'s, and refreshLocks() runs on the owner).  The data dirs are written at configure time;
+# a headless run keeps input.port.1.
+foreach(_m on off)
+    set(_pd "${CMAKE_CURRENT_BINARY_DIR}/pro-controller-${_m}")
+    file(MAKE_DIRECTORY "${_pd}")
+    file(WRITE "${_pd}/config.ini" "input.port.1=65537\n")   # devLibretroId(DevKind::ProPad)
+    add_test(NAME pro_controller_option_${_m}
+        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 10 --verbose --data-dir "${_pd}" "${VJ_ROMS}/yarc.j64")
+endforeach()
+set_tests_properties(pro_controller_option_on PROPERTIES TIMEOUT 120 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "virtualjaguar_p2_device=pad_pro \\(locked\\).*${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+set_tests_properties(pro_controller_option_off PROPERTIES TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "virtualjaguar_p2_device=pad_pro \\(locked\\).*headless: OK"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL")
+
 add_test(NAME emu_thread_limits
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120

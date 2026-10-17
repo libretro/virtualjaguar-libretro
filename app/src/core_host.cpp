@@ -224,14 +224,41 @@ void CoreHost::captureOptions(const retro_core_options_v2* o) {
         for (const OptionDef& d : defs_) {
             std::string v;
             if (!optionLock(d.key, v)) continue;
-            bool ok = false;
-            for (const OptionValue& ov : d.values)
-                if (ov.value == v) ok = true;
-            locked_[d.key] = ok ? v : d.defaultValue;
+            locked_[d.key] = lockedValue(d, v);
         }
     }
     optionPushes_++;
     optSerial_++;
+}
+
+// A locked value outside the option's own list falls back to its default ("" means the default too).
+std::string CoreHost::lockedValue(const OptionDef& d, const std::string& v) {
+    for (const OptionValue& ov : d.values)
+        if (ov.value == v) return v;
+    return d.defaultValue;
+}
+
+void CoreHost::refreshLocks() {
+    if (!onOwner()) {
+        queue([this] { refreshLocks(); });
+        return;
+    }
+    if (inFrame_ || !optionLock) return;
+    bool changed = false;
+    for (const OptionDef& d : defs_) {
+        auto l = locked_.find(d.key);
+        if (l == locked_.end()) continue;   // which keys are locked is settled at the push; only values move
+        std::string v;
+        if (!optionLock(d.key, v)) continue;
+        std::string nv = lockedValue(d, v);
+        if (nv == l->second) continue;
+        l->second = nv;
+        changed = true;
+    }
+    if (!changed) return;
+    variableUpdate_ = true;
+    optSerial_++;         // the UI's copy of the table (locked values included) is out of date
+    publishSnapshot();    // threaded: at once, as a disc change does (inline: a no-op)
 }
 
 bool CoreHost::optionVisible(const std::string& key) const {

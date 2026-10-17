@@ -44,10 +44,13 @@ void Router::route(const RouterConfig& cfg, const std::vector<HostSource>& pads,
     const int dz = cfg.settings.deadzone();
 
     auto gather = [&](const HostSource& src, unsigned slot) {
-        if (!src.profile) return;
-        ControlSet cs = evaluate(*src.profile, src.snap);
-        ControlSet ex = evaluateExtra(*src.profile, src.snap);
-        AnalogSet an = evaluateAnalog(*src.profile, src.snap, dz);
+        // A source driving a Pro Controller port plays its Pro defaults (keypad 0-4 off the shoulders and triggers).
+        const bool pro = slotSocket(slot) == 0 && cfg.kind[slotJaguarPort(slot)] == DevKind::ProPad && src.proProfile;
+        const Profile* prof = pro ? src.proProfile : src.profile;
+        if (!prof) return;
+        ControlSet cs = evaluate(*prof, src.snap);
+        ControlSet ex = evaluateExtra(*prof, src.snap);
+        AnalogSet an = evaluateAnalog(*prof, src.snap, dz);
         if (overlay) {
             // Open: the keypad overlay owns the controls (and the sticks): nothing reaches the game.
             cs = overlay->filter(src.overlaySlot, cs);
@@ -101,6 +104,20 @@ void Router::route(const RouterConfig& cfg, const std::vector<HostSource>& pads,
         case DevKind::Pad:
         case DevKind::TeamTap:
             break;
+
+        case DevKind::ProPad: {
+            // libretro.c update_input(), pro_controller[]: RetroPad X -> keypad 9 (Pro X), L2 -> 8 (Y), R2 -> 7 (Z),
+            // L -> 4 (L), R -> 6 (R).  Only here: on any other port the same RetroPad buttons are keypad 0-4.  The
+            // app never also presses the keypad digits for them (the core makes them from the RetroPad).
+            uint16_t raw = 0;
+            if (c.ex.test(C_PRO_X)) raw |= (uint16_t)(1u << RETRO_DEVICE_ID_JOYPAD_X);
+            if (c.ex.test(C_PRO_Y)) raw |= (uint16_t)(1u << RETRO_DEVICE_ID_JOYPAD_L2);
+            if (c.ex.test(C_PRO_Z)) raw |= (uint16_t)(1u << RETRO_DEVICE_ID_JOYPAD_R2);
+            if (c.ex.test(C_PRO_L)) raw |= (uint16_t)(1u << RETRO_DEVICE_ID_JOYPAD_L);
+            if (c.ex.test(C_PRO_R)) raw |= (uint16_t)(1u << RETRO_DEVICE_ID_JOYPAD_R);
+            out.addRawPad(jp, raw);
+            break;
+        }
 
         case DevKind::MouseST:
         case DevKind::MouseAmiga:

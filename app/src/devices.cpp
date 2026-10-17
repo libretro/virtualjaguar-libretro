@@ -24,8 +24,13 @@ unsigned devLibretroId(DevKind k) {
     case DevKind::Paddle: return RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2);
     case DevKind::SixD: return RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 3);
     case DevKind::LightGun: return RETRO_DEVICE_LIGHTGUN;
+    case DevKind::ProPad: return RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0xff);   // app-only, never sent to the core
     }
     return RETRO_DEVICE_JOYPAD;
+}
+
+unsigned coreClaimFor(unsigned device) {
+    return device == devLibretroId(DevKind::ProPad) ? (unsigned)RETRO_DEVICE_JOYPAD : device;
 }
 
 bool devKindFromLibretro(unsigned id, DevKind& out) {
@@ -49,7 +54,8 @@ DevKind devKindFromOption(const std::string& v) {
     if (v == "paddle") return DevKind::Paddle;
     if (v == "6d") return DevKind::SixD;
     if (v == "lightgun") return DevKind::LightGun;
-    return DevKind::Pad;   // pad, pad_pro, auto, ""
+    if (v == "pad_pro") return DevKind::ProPad;
+    return DevKind::Pad;   // pad, auto, ""
 }
 
 DevKind effectiveDevKind(int frontendDevice, const std::string& optionValue) {
@@ -73,13 +79,14 @@ const char* devKindLabel(DevKind k) {
     case DevKind::Paddle: return "Analog Stick (paddle ADC)";
     case DevKind::SixD: return "6D Controller (bank-switching)";
     case DevKind::LightGun: return "Light Gun";
+    case DevKind::ProPad: return "Pro Controller (6-button)";
     }
     return "";
 }
 
 const char* devKindId(DevKind k) {
     static const char* const ids[kDevKinds] = {"pad", "teamtap", "mouse_st", "mouse_amiga", "mouse_amiga_adapter",
-                                               "rotary", "analog", "driving", "paddle", "6d", "lightgun"};
+                                               "rotary", "analog", "driving", "paddle", "6d", "lightgun", "pad_pro"};
     return ids[(int)k];
 }
 
@@ -100,6 +107,9 @@ const char* devKindHelp(DevKind k) {
     case DevKind::SixD: return "Six axes: Stick, Stick 2, the triggers and the shoulders; buttons A-F, Option = G, Pause = Rezero.";
     case DevKind::LightGun:
         return "Point at the picture with the mouse and click to shoot; right-click (or the reload control) fires off-screen.";
+    case DevKind::ProPad:
+        return "The standard pad plus X, Y, Z and the L / R shoulders (the Jaguar reads them as keypad 9, 8, 7, 4, 6). "
+               "On a gamepad, keypad 0-4 are on the keypad overlay.";
     }
     return "";
 }
@@ -132,11 +142,11 @@ void clearPortDevice(Config& cfg, unsigned port, const std::string& gameId) {
     if (gameId.empty()) cfg.erase("port." + std::to_string(port));
 }
 
-// libretro.c SET_CONTROLLER_INFO lists.
+// libretro.c SET_CONTROLLER_INFO lists, plus the Pro Controller (both ports' device options offer pad_pro).
 bool portOffers(unsigned port, unsigned device) {
-    static const DevKind p1[] = {DevKind::Pad, DevKind::TeamTap, DevKind::Rotary, DevKind::Analog,
+    static const DevKind p1[] = {DevKind::Pad, DevKind::ProPad, DevKind::TeamTap, DevKind::Rotary, DevKind::Analog,
                                  DevKind::Driving, DevKind::Paddle, DevKind::SixD, DevKind::LightGun};
-    static const DevKind p2[] = {DevKind::Pad, DevKind::TeamTap, DevKind::MouseST, DevKind::MouseAmiga,
+    static const DevKind p2[] = {DevKind::Pad, DevKind::ProPad, DevKind::TeamTap, DevKind::MouseST, DevKind::MouseAmiga,
                                  DevKind::MouseAmigaAD, DevKind::Rotary, DevKind::Analog, DevKind::Driving,
                                  DevKind::Paddle, DevKind::SixD};
     if (port >= kJaguarPorts) return false;
@@ -319,12 +329,17 @@ void gunToPointer(const PicRect& r, int32_t gx, int32_t gy, float& px, float& py
 }
 
 bool lockedCoreOption(const std::string& key, std::string& value) {
+    return lockedCoreOptionFor(key, value, {{false, false}});
+}
+
+bool lockedCoreOptionFor(const std::string& key, std::string& value, const std::array<bool, 2>& proPorts) {
     value.clear();
     if (key == "virtualjaguar_alt_inputs") {
         value = "disabled";
         return true;
     }
-    for (const char* port : {"virtualjaguar_p1_", "virtualjaguar_p2_"}) {
+    for (int p = 0; p < 2; p++) {
+        const char* port = p == 0 ? "virtualjaguar_p1_" : "virtualjaguar_p2_";
         if (key.rfind(port, 0) != 0) continue;
         std::string rest = key.substr(std::string(port).size());
         if (rest == "numpad_to_kb") {
@@ -332,7 +347,7 @@ bool lockedCoreOption(const std::string& key, std::string& value) {
             return true;
         }
         if (rest == "device") {
-            value = "auto";
+            value = proPorts[(size_t)p] ? "pad_pro" : "auto";
             return true;
         }
         if (rest.rfind("retropad_", 0) == 0) return true;   // its default

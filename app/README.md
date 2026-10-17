@@ -158,11 +158,15 @@ there keypad 0-6 ride X, L, R, L2, R2, L3, R3 and keypad 7-9, `*`, `#` are unrea
 
 **Settings > Input > Devices & players** (everywhere, or this game only; stored as
 `input.port.N` / `input.game.<id>.port.N`) picks the device in each Jaguar port from the
-core's own list and calls `retro_set_controller_port_device`:
+core's own list and calls `retro_set_controller_port_device`. The Pro Controller is not in
+that list (the core has it as the option value `virtualjaguar_pN_device = pad_pro` only): the
+app offers it after Standard Joypad, claims a standard pad and hands the core `pad_pro`, so the
+core's own Pro path turns the RetroPad X / L2 / R2 / L / R into keypad 9 / 8 / 7 / 4 / 6:
 
 | device | driven by (defaults, all rebindable under *Key / button bindings*) |
 | --- | --- |
-| Standard Joypad, Pro Controller | the pad and keypad bindings above |
+| Standard Joypad | the pad and keypad bindings above |
+| Pro Controller (6-button) | the pad bindings above, plus X / Y / Z = Left Shoulder / North / Right Shoulder and L / R = the triggers (rebindable as *X (Pro)* ... *R (Pro)*); keypad 0-4 move to the overlay on a gamepad, 5-9, `*`, `#` stay where they were; the keyboard keeps `A S D` / `Q E` |
 | ST / Amiga mouse (port 2) | the mouse or trackpad (captured); or the right stick / arrows; Z X or South East are the buttons |
 | Rotary (either port) | mouse left / right, or two keys (Left / Right), or the right stick; speed in *Tuning* |
 | Analog, driving, paddle | left stick or `A D W S`; driving: Right trigger / `E` accelerator, Left trigger / `Q` brake; D = North or `V` |

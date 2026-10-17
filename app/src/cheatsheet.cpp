@@ -85,6 +85,33 @@ Sheet buildSheet(const Profile& profile, DevKind kind, SheetSource src, const st
         b.keypad();
         break;
 
+    case DevKind::ProPad: {
+        b.head("Directions");
+        b.dpad();
+        if (pad && profile.stickAsDpad) b.line("Left stick", "also the D-pad");
+        b.head("Buttons");
+        b.buttons();
+        // Not headed "Keypad...": the overlay window folds those sections away in a small window.
+        b.head("Pro buttons (the Jaguar reads them as keypad 9 8 7, 4 6)");
+        static const struct { Ctl pro, key; } kPro[] = {
+            {C_PRO_X, C_K9}, {C_PRO_Y, C_K8}, {C_PRO_Z, C_K7}, {C_PRO_L, C_K4}, {C_PRO_R, C_K6}};
+        for (const auto& e : kPro) {
+            // The keyboard has no Pro bindings of its own: its keypad keys are the same wires (A S D / Q E by default).
+            if (profile.binds[(size_t)e.pro].empty() && !profile.binds[(size_t)e.key].empty())
+                b.line(ctlLabel(e.pro), bindingsLabel(profile.binds[(size_t)e.key]) + " (keypad " +
+                                            std::to_string(e.key - C_K0) + ")");
+            else b.ctl(e.pro);
+        }
+        b.head("Keypad");
+        b.keypad();
+        bool noLow = true;   // the Pro defaults spend keypad 0-4's pad buttons on X Y Z L R
+        for (int c = C_K0; c <= C_K4; c++) noLow = noLow && profile.binds[(size_t)c].empty();
+        if (pad && noLow)
+            b.line("Keypad 0-4", "no pad button on a Pro Controller port: use the keypad overlay (" +
+                                     bindingsLabel(profile.binds[C_OVERLAY]) + ", or View > Keypad overlay)");
+        break;
+    }
+
     case DevKind::Rotary:
         b.head("Rotary");
         b.line("Spin", "mouse left / right");

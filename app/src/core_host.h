@@ -225,6 +225,12 @@ public:
     // option is hidden from the options UI.  An empty `value` means "the option's default".
     // Set before the first load; evaluated when the core pushes its definitions.
     std::function<bool(const std::string& key, std::string& value)> optionLock;
+    // Re-evaluates `optionLock` for the options it already locks, when what it decides on changed (a port
+    // got or lost the Pro Controller); a value that moved reaches the core through GET_VARIABLE_UPDATE on the
+    // next retro_run(), before that frame's input is read.  Owner-side state: off the owner it is queued (`post`)
+    // and the UI sees the new value after the publish that follows and its next pin; `optionLock` then runs on the
+    // emulation thread, so what it reads must be safe there.  A no-op while the debugger holds the core mid-frame.
+    void refreshLocks();
     bool optionLocked(const std::string& key) const { return (onOwner() ? locked_ : uiTable().locked).count(key) != 0; }
     // A session override (overrideOption(): --option, or the Netplay window) is in force and decides what the
     // core reads, so a value picked in Settings is saved but does not show until the override ends.
@@ -338,6 +344,7 @@ private:
     bool env(unsigned cmd, void* data);
     void traceOption(const std::string& key, const char* value, const char* why);
     void captureOptions(const retro_core_options_v2* o);
+    static std::string lockedValue(const OptionDef& d, const std::string& v);
     bool startSession(std::string& err);
     bool finishLoad(const std::string& label, std::string& err);
     void stopSession();

@@ -45,7 +45,20 @@ static void testKinds() {
         CHECK(devKindFromOption(devKindId((DevKind)i)) == (DevKind)i || (DevKind)i == DevKind::Pad);
         CHECK(*devKindLabel((DevKind)i) && *devKindHelp((DevKind)i));
     }
-    CHECK(devKindFromOption("auto") == DevKind::Pad && devKindFromOption("pad_pro") == DevKind::Pad);
+    CHECK(devKindFromOption("auto") == DevKind::Pad && devKindFromOption("pad") == DevKind::Pad);
+    // The Pro Controller: the core's option value, an app-only id in the joypad class that the core is never handed.
+    CHECK(devKindFromOption("pad_pro") == DevKind::ProPad && std::string(devKindId(DevKind::ProPad)) == "pad_pro");
+    CHECK(std::string(devKindLabel(DevKind::ProPad)) == "Pro Controller (6-button)");
+    CHECK((devLibretroId(DevKind::ProPad) & RETRO_DEVICE_MASK) == RETRO_DEVICE_JOYPAD);
+    for (int i = 0; i < kDevKinds; i++)
+        if ((DevKind)i != DevKind::ProPad) CHECK(devLibretroId((DevKind)i) != devLibretroId(DevKind::ProPad));
+    CHECK(coreClaimFor(devLibretroId(DevKind::ProPad)) == RETRO_DEVICE_JOYPAD);
+    CHECK(coreClaimFor(devLibretroId(DevKind::Rotary)) == devLibretroId(DevKind::Rotary));
+    CHECK(effectiveDevKind(-1, "pad_pro") == DevKind::ProPad);                               // JOYPAD claim + the option
+    CHECK(effectiveDevKind((int)devLibretroId(DevKind::ProPad), "auto") == DevKind::ProPad);
+    CHECK(effectiveDevKind((int)devLibretroId(DevKind::Rotary), "pad_pro") == DevKind::Rotary);   // a claim outranks it
+    CHECK(portOffers(0, devLibretroId(DevKind::ProPad)) && portOffers(1, devLibretroId(DevKind::ProPad)));
+    CHECK(!portOffers(2, devLibretroId(DevKind::ProPad)));
 
     // The app's claim outranks the option (libretro.c: "an explicit frontend selection outranks the core option").
     CHECK(effectiveDevKind(-1, "rotary") == DevKind::Rotary);
@@ -215,6 +228,12 @@ static void testSettingsAndGeometry() {
     CHECK(lockedCoreOption("virtualjaguar_p1_numpad_to_kb", v) && v == "disabled");
     CHECK(lockedCoreOption("virtualjaguar_p2_retropad_analog_rr", v) && v.empty());
     CHECK(lockedCoreOption("virtualjaguar_p2_device", v) && v == "auto");
+    // A Pro Controller port: the device option is still the app's, now pad_pro, and only on that port.
+    CHECK(lockedCoreOptionFor("virtualjaguar_p2_device", v, {{false, true}}) && v == "pad_pro");
+    CHECK(lockedCoreOptionFor("virtualjaguar_p1_device", v, {{false, true}}) && v == "auto");
+    CHECK(lockedCoreOptionFor("virtualjaguar_p1_device", v, {{true, false}}) && v == "pad_pro");
+    CHECK(lockedCoreOptionFor("virtualjaguar_alt_inputs", v, {{true, true}}) && v == "disabled");
+    CHECK(!lockedCoreOptionFor("virtualjaguar_pal", v, {{true, true}}));
     CHECK(!lockedCoreOption("virtualjaguar_mouse_sensitivity", v) && !lockedCoreOption("virtualjaguar_rotary_deadzone", v));
     CHECK(!lockedCoreOption("virtualjaguar_pal", v));
 }
@@ -225,6 +244,7 @@ static void testSettingsAndGeometry() {
 struct Rig {
     Profile kbp = Profile::builtin(DeviceClass::Keyboard);
     Profile padp = Profile::builtin(DeviceClass::Gamepad);
+    Profile padPro = Profile::builtin(DeviceClass::Gamepad, PadCaps(), true);
     Router router;
     CoreInput in;
     RouterConfig cfg;
@@ -242,6 +262,7 @@ struct Rig {
         for (const DeviceSnapshot& s : pads) {
             HostSource h;
             h.profile = &padp;
+            h.proProfile = &padPro;
             h.snap = s;
             ps.push_back(h);
         }
@@ -493,6 +514,57 @@ static void testStickDpad() {
     }
 }
 
+static void testProPad() {
+    // A gamepad on a Pro Controller port: LB / North / RB / LT / RT are the Pro's X / Y / Z / L / R, pressed as the
+    // RetroPad X / L2 / R2 / L / R the core's Pro path reads -- never as synthesised keypad keys.
+    struct { int btn; int axis; int retro; Ctl keypadOnStd; } t[] = {
+        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, -1, RETRO_DEVICE_ID_JOYPAD_X, C_K1},
+        {SDL_GAMEPAD_BUTTON_NORTH, -1, RETRO_DEVICE_ID_JOYPAD_L2, C_K0},
+        {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, -1, RETRO_DEVICE_ID_JOYPAD_R2, C_K2},
+        {-1, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, RETRO_DEVICE_ID_JOYPAD_L, C_K3},
+        {-1, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, RETRO_DEVICE_ID_JOYPAD_R, C_K4},
+    };
+    for (unsigned port = 0; port < 2; port++) {
+        for (const auto& c : t) {
+            DeviceSnapshot s;
+            if (c.btn >= 0) s.btn[(size_t)c.btn] = true;
+            else s.axis[(size_t)c.axis] = 32767;
+            for (bool pro : {true, false}) {
+                Rig r;
+                r.cfg.kind = {{DevKind::Pad, DevKind::Pad}};
+                r.cfg.kind[port] = pro ? DevKind::ProPad : DevKind::Pad;
+                r.cfg.routes.kb[0] = false;
+                r.cfg.routes.pad[port] = 0;
+                r.frame(DeviceSnapshot(), PointerInput(), {s});
+                int keys = 0;
+                for (int k = C_K0; k <= C_HASH; k++) keys += r.in.key(CoreInput::keypadKey(port, (Ctl)k));
+                if (pro) {
+                    CHECK(r.in.pad(port) == (int16_t)(1 << c.retro) && keys == 0);
+                } else {   // a standard pad: today's keypad digit, as a synthesised key, and no RetroPad bit
+                    CHECK(r.in.pad(port) == 0 && keys == 1 && r.in.key(CoreInput::keypadKey(port, c.keypadOnStd)));
+                }
+                CHECK(r.in.pad(1 - port) == 0);
+            }
+        }
+    }
+    // The rest of the pad is untouched on a Pro port: A B C, keypad 5 / 6 on the stick clicks, 7 on the right stick.
+    Rig r;
+    r.cfg.kind = {{DevKind::ProPad, DevKind::Pad}};
+    r.cfg.routes.kb[0] = false;
+    r.cfg.routes.pad[0] = 0;
+    DeviceSnapshot s;
+    s.btn[SDL_GAMEPAD_BUTTON_EAST] = s.btn[SDL_GAMEPAD_BUTTON_LEFT_STICK] = true;
+    s.axis[SDL_GAMEPAD_AXIS_RIGHTX] = -32767;
+    r.frame(DeviceSnapshot(), PointerInput(), {s});
+    CHECK(r.in.pad(0) == (int16_t)(1 << RETRO_DEVICE_ID_JOYPAD_A));
+    CHECK(r.in.key(CoreInput::keypadKey(0, C_K5)) && r.in.key(CoreInput::keypadKey(0, C_K7)));
+    // The keyboard on a Pro port keeps A S D / Q E as keypad 9 8 7 / 4 6 (the same wires) and presses no RetroPad bit.
+    Rig k;
+    k.cfg.kind = {{DevKind::ProPad, DevKind::Pad}};
+    k.frame(keys({SDL_SCANCODE_A}));
+    CHECK(k.in.pad(0) == 0 && k.in.key(CoreInput::keypadKey(0, C_K9)));
+}
+
 static void testProKeyboard() {
     // The Pro Controller's X Y Z are keypad 9 8 7, its shoulders 4 6 (libretro.c pro_controller[]); the
     // keyboard profile carries them on A S D / Q E.
@@ -549,12 +621,28 @@ static void testCheatSheet() {
     CHECK(buildSheet(p, DevKind::Driving, SheetSource::Keyboard, "").text().find("Accelerator: E") != std::string::npos);
     CHECK(buildSheet(p, DevKind::Rotary, SheetSource::Keyboard, "").text().find("Spin clockwise: Right") != std::string::npos);
     CHECK(buildSheet(p, DevKind::SixD, SheetSource::Keyboard, "").text().find("Rezero") != std::string::npos);
+    // A Pro Controller port: the Pro buttons get their own section; the keyboard's are its keypad keys.
+    std::string pk = buildSheet(p, DevKind::ProPad, SheetSource::Keyboard, "").text();
+    CHECK(pk.find("Player 1: Pro Controller (6-button) - keyboard") != std::string::npos);
+    CHECK(pk.find("\nPro buttons") != std::string::npos);
+    CHECK(pk.find("X (Pro): 9, Keypad 9, A (keypad 9)") != std::string::npos);
+    CHECK(pk.find("R (Pro): 6, Keypad 6, E (keypad 6)") != std::string::npos);
+    CHECK(pk.find("Keypad 0-4") == std::string::npos);
     // A gamepad sheet shows the pad's bindings and its name.
     Profile gp = Profile::builtin(DeviceClass::Gamepad);
     std::string pg = buildSheet(gp, DevKind::Pad, SheetSource::Gamepad, "Test Pad").text();
     CHECK(pg.find("gamepad") == std::string::npos && pg.find("Test Pad") != std::string::npos);
     CHECK(pg.find("B: South") != std::string::npos);
     CHECK(pg.find("Controls overlay: Touchpad") != std::string::npos);
+    CHECK(pg.find("(Pro)") == std::string::npos);   // a standard pad's sheet has no Pro rows
+    std::string pp = buildSheet(Profile::builtin(DeviceClass::Gamepad, PadCaps(), true), DevKind::ProPad,
+                                SheetSource::Gamepad, "Test Pad").text();
+    CHECK(pp.find("X (Pro): Left Shoulder") != std::string::npos && pp.find("Y (Pro): North") != std::string::npos);
+    CHECK(pp.find("Z (Pro): Right Shoulder") != std::string::npos && pp.find("L (Pro): Left Trigger") != std::string::npos);
+    CHECK(pp.find("R (Pro): Right Trigger") != std::string::npos);
+    CHECK(pp.find("Keypad 1: (unbound)") != std::string::npos);
+    CHECK(pp.find("Keypad 0-4: no pad button on a Pro Controller port: use the keypad overlay (Share / Capture, or View > Keypad overlay)") != std::string::npos);
+    CHECK(pp.find("Keypad 7 (Pro: Z): Right Stick Left") != std::string::npos);
 
     // ---- auto-show ---------------------------------------------------------------------------------------------------
     AutoShowInput in;
@@ -631,6 +719,7 @@ int main() {
     testRouter();
     testStickDpad();
     testProKeyboard();
+    testProPad();
     testCheatSheet();
     testOverlayPolicy();
     std::printf("devices_unit: %d checks, %d failed\n", g_checks, g_fail);

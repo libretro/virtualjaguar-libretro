@@ -18,7 +18,8 @@ static const char* const kCtlId[] = {
     "up", "down", "left", "right", "a", "b", "c", "option", "pause",
     "k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "star", "hash", "overlay",
     "d", "e", "f", "ax_lx_n", "ax_lx_p", "ax_ly_n", "ax_ly_p", "ax_rx_n", "ax_rx_p", "ax_ry_n", "ax_ry_p",
-    "ax_l2", "ax_r2", "ax_l1", "ax_r1", "pt_l", "pt_r", "pt_u", "pt_d", "mb_l", "mb_r", "gun_reload", "help", "tvmenu"};
+    "ax_l2", "ax_r2", "ax_l1", "ax_r1", "pt_l", "pt_r", "pt_u", "pt_d", "mb_l", "mb_r", "gun_reload", "help", "tvmenu",
+    "pro_x", "pro_y", "pro_z", "pro_l", "pro_r"};
 static const char* const kCtlLabel[] = {
     "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "A", "B", "C", "Option", "Pause",
     "Keypad 0", "Keypad 1", "Keypad 2", "Keypad 3", "Keypad 4 (Pro: L)", "Keypad 5", "Keypad 6 (Pro: R)",
@@ -28,7 +29,8 @@ static const char* const kCtlLabel[] = {
     "Stick 2 left (6D)", "Stick 2 right (6D)", "Stick 2 up (6D)", "Stick 2 down (6D)",
     "Left trigger (L2)", "Right trigger (R2)", "Left shoulder (L)", "Right shoulder (R)",
     "Pointer left", "Pointer right", "Pointer up", "Pointer down",
-    "Mouse button left", "Mouse button right", "Light gun reload (fire off-screen)", "Controls overlay", "TV menu"};
+    "Mouse button left", "Mouse button right", "Light gun reload (fire off-screen)", "Controls overlay", "TV menu",
+    "X (Pro)", "Y (Pro)", "Z (Pro)", "L (Pro)", "R (Pro)"};
 static_assert(sizeof(kCtlId) / sizeof(kCtlId[0]) == C_COUNT, "one id per control");
 static_assert(sizeof(kCtlLabel) / sizeof(kCtlLabel[0]) == C_COUNT, "one label per control");
 
@@ -208,7 +210,7 @@ const char* sourceLabel(Source s) {
 
 static void add(Profile& p, Ctl c, Binding b) { p.binds[c].push_back(b); }
 
-Profile Profile::builtin(DeviceClass cls, PadCaps caps) {
+Profile Profile::builtin(DeviceClass cls, PadCaps caps, bool proPort) {
     Profile p;
     p.source.fill(SRC_DEFAULT);
     if (cls == DeviceClass::Keyboard) {
@@ -290,11 +292,13 @@ Profile Profile::builtin(DeviceClass cls, PadCaps caps) {
         add(p, C_C, Binding::button(SDL_GAMEPAD_BUTTON_WEST));
         add(p, C_OPTION, Binding::button(SDL_GAMEPAD_BUTTON_START));
         add(p, C_PAUSE, Binding::button(SDL_GAMEPAD_BUTTON_BACK));
-        add(p, C_K0, Binding::button(SDL_GAMEPAD_BUTTON_NORTH));
-        add(p, C_K1, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
-        add(p, C_K2, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
-        add(p, C_K3, Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1));
-        add(p, C_K4, Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1));
+        if (!proPort) {   // a Pro port spends these five on X Y Z L R (below); keypad 0-4 are the overlay's there
+            add(p, C_K0, Binding::button(SDL_GAMEPAD_BUTTON_NORTH));
+            add(p, C_K1, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+            add(p, C_K2, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
+            add(p, C_K3, Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1));
+            add(p, C_K4, Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1));
+        }
         add(p, C_K5, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK));
         add(p, C_K6, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_STICK));
         add(p, C_K7, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1));
@@ -340,7 +344,17 @@ Profile Profile::builtin(DeviceClass cls, PadCaps caps) {
         add(p, C_TVMENU, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_PADDLE1));
         add(p, C_TVMENU, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2));
         add(p, C_TVMENU, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_PADDLE2));
+        // The Pro Controller, Genesis 6-button style: X Y Z on Left Shoulder, North, Right Shoulder (the
+        // row above A B C) and its L / R shoulders on the triggers.  The Router reads these on a Pro port
+        // only (elsewhere the same RetroPad buttons are keypad 0-4), so they are bound in both variants.
+        add(p, C_PRO_X, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+        add(p, C_PRO_Y, Binding::button(SDL_GAMEPAD_BUTTON_NORTH));
+        add(p, C_PRO_Z, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
+        add(p, C_PRO_L, Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1));
+        add(p, C_PRO_R, Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1));
     }
+    // The keyboard leaves the Pro controls unbound: A S D / Q E already press keypad 9 8 7 / 4 6,
+    // which is what the Pro's X Y Z / L R are on the wire, on any port.
     return p;
 }
 
@@ -382,8 +396,9 @@ void BindingStore::clearLayer(const LayerId& l) {
 int BindingStore::keyboardPort() const { return cfg_->getInt("input.kb.port", 0) == 1 ? 1 : 0; }
 void BindingStore::setKeyboardPort(int p) { cfg_->setInt("input.kb.port", p == 1 ? 1 : 0); }
 
-Profile BindingStore::resolve(DeviceClass cls, const std::string& guid, const std::string& gameId, PadCaps caps) const {
-    Profile p = Profile::builtin(cls, caps);
+Profile BindingStore::resolve(DeviceClass cls, const std::string& guid, const std::string& gameId, PadCaps caps,
+                              bool proPort) const {
+    Profile p = Profile::builtin(cls, caps, proPort);
     struct Cand { LayerId id; Source src; };
     std::vector<Cand> cands;
     const bool pad = cls == DeviceClass::Gamepad;

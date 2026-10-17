@@ -11,6 +11,8 @@
 //   Jaguar port 2  Standard Joypad, Team Tap, ST / Amiga / Amiga-AD mouse, Rotary, Analog,
 //                  Driving, Paddle, 6D
 //   Team Tap sockets (frontend ports 3-8)  Standard Joypad only
+// plus, on both ports, the Pro Controller, which the core has as an option value only (no RETRO_DEVICE
+// id): see DevKind::ProPad.
 #pragma once
 
 #include <array>
@@ -24,21 +26,30 @@ namespace vj {
 
 // ---- device kinds --------------------------------------------------------------------------
 
+// ProPad: the Jaguar Pro Controller.  Electrically a standard pad whose X Y Z and L R buttons share
+// keypad 9 8 7 and 4 6 (libretro.c pro_controller[], docs/teamtap-procontroller-spike.md section 9).
+// The core has no RETRO_DEVICE id for it, only the option value virtualjaguar_pN_device = pad_pro,
+// so the app stores a private id for it (devLibretroId) and hands the core a standard pad plus that
+// option value (coreClaimFor, lockedCoreOptionFor).  Appended last: the other values are unmoved.
 enum class DevKind : uint8_t {
-    Pad, TeamTap, MouseST, MouseAmiga, MouseAmigaAD, Rotary, Analog, Driving, Paddle, SixD, LightGun
+    Pad, TeamTap, MouseST, MouseAmiga, MouseAmigaAD, Rotary, Analog, Driving, Paddle, SixD, LightGun, ProPad
 };
-constexpr int kDevKinds = 11;
+constexpr int kDevKinds = 12;
 
-// RETRO_DEVICE_JAG_* of libretro.c (the same ids SET_CONTROLLER_INFO advertises).
+// RETRO_DEVICE_JAG_* of libretro.c (the same ids SET_CONTROLLER_INFO advertises).  ProPad: an app-only
+// id in the joypad class that the core never sees.
 unsigned devLibretroId(DevKind k);
 bool devKindFromLibretro(unsigned id, DevKind& out);
-// The core's virtualjaguar_pN_device option values: pad, pad_pro, auto -> Pad; teamtap; mouse_st ...
+// What retro_set_controller_port_device is handed for a stored device id: the id itself, except the
+// Pro Controller, which is a standard pad there (its option value does the rest).
+unsigned coreClaimFor(unsigned device);
+// The core's virtualjaguar_pN_device option values: pad, auto -> Pad; pad_pro -> ProPad; teamtap; mouse_st ...
 DevKind devKindFromOption(const std::string& v);
 // What a port ends up as: the app's choice (a libretro id, -1 = none) outranks the core option,
 // exactly as libretro.c lets a frontend claim outrank the option.
 DevKind effectiveDevKind(int frontendDevice, const std::string& optionValue);
 const char* devKindLabel(DevKind k);   // "Rotary (Tempest)"
-const char* devKindId(DevKind k);      // "rotary"
+const char* devKindId(DevKind k);      // "rotary" (the option value)
 const char* devKindHelp(DevKind k);    // one sentence: what drives it
 
 inline bool devIsMouse(DevKind k) { return k == DevKind::MouseST || k == DevKind::MouseAmiga || k == DevKind::MouseAmigaAD; }
@@ -150,8 +161,13 @@ int resolveMousePort(const std::array<DevKind, 2>& kinds, int setting);
 //   virtualjaguar_p1/p2_retropad_*  (24 each)   -> default    (only read under alt_inputs)
 //   virtualjaguar_p1/p2_device                  -> auto       (Settings > Input picks the device; a stale saved
 //                                                              value must not fight retro_set_controller_port_device)
+//                                                 pad_pro    on a port Settings > Input gave the Pro Controller: the
+//                                                              option is the core's only way to turn its Pro path on
 // The tuning options (sensitivity, dead zone, offset, response) stay: the app has no equivalent.
-bool lockedCoreOption(const std::string& key, std::string& value);
+// `proPorts[p]`: Jaguar port p holds the Pro Controller.  CoreHost::refreshLocks() re-reads the rule
+// when that changes.
+bool lockedCoreOptionFor(const std::string& key, std::string& value, const std::array<bool, 2>& proPorts);
+bool lockedCoreOption(const std::string& key, std::string& value);   // no Pro port
 
 // ---- mouse capture -----------------------------------------------------------------------------------------
 struct CaptureInputs {

@@ -24,6 +24,9 @@
 //     (that would press the same keypad key a second time, or an alias under
 //     the Pro Controller device) and (c) sends one keyboard event after every
 //     load so a gamepad-only user is not locked out of the keypad.
+//   The one exception to (b) is a Pro Controller port (devices.h): there the Pro's X Y Z L R
+//   controls ride RetroPad X / L2 / R2 / L1 / R1, which the core's Pro path turns into keypad
+//   9 / 8 / 7 / 4 / 6 itself (router.cpp).
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -59,6 +62,10 @@ enum Ctl : uint8_t {
     C_GUN_RELOAD,                                 // light gun: fire off-screen
     C_HELP,      // app action: the controls cheat-sheet overlay
     C_TVMENU,    // app action: the TV-style in-game menu
+    // ---- the Jaguar Pro Controller (devices.h DevKind::ProPad).  Appended after C_TVMENU so every
+    // saved id keeps its meaning.  The Router presses them as the RetroPad buttons libretro.c's Pro
+    // path reads (pro_controller[]: X, L2, R2, L, R -> keypad 9, 8, 7, 4, 6) on a Pro port only.
+    C_PRO_X, C_PRO_Y, C_PRO_Z, C_PRO_L, C_PRO_R,
     C_COUNT
 };
 static_assert(C_COUNT <= 64, "ControlSet is a 64-bit mask");
@@ -68,6 +75,7 @@ inline bool isKeypad(Ctl c) { return c >= C_K0 && c <= C_HASH; }
 inline bool isAnalogCtl(Ctl c) { return c >= C_AX_LX_N && c <= C_PT_D; }   // has a 0..32767 strength
 inline bool isPointerCtl(Ctl c) { return c >= C_PT_L && c <= C_GUN_RELOAD; }
 inline bool isActionCtl(Ctl c) { return c == C_OVERLAY || c == C_HELP || c == C_TVMENU; }   // app actions, never reach the core
+inline bool isProCtl(Ctl c) { return c >= C_PRO_X && c <= C_PRO_R; }
 const char* ctlId(Ctl c);                     // stable config id: "up", "a", "k7", "star", "overlay"
 const char* ctlLabel(Ctl c);                  // "Up", "A", "Keypad 7", "Keypad *"
 bool ctlFromId(const std::string& id, Ctl& out);
@@ -128,14 +136,18 @@ struct Profile {
     std::array<std::vector<Binding>, C_COUNT> binds;
     std::array<Source, C_COUNT> source{};
     bool stickAsDpad = true;   // gamepads: the left stick also drives the D-pad
-    static Profile builtin(DeviceClass cls, PadCaps caps = PadCaps());
+    // `proPort`: the defaults for a pad driving a Pro Controller port, where the shoulders, triggers and
+    // North are the Pro's X Y Z L R and keypad 0-4 have no pad button (the overlay reaches them).  The
+    // keyboard's defaults are the same either way.
+    static Profile builtin(DeviceClass cls, PadCaps caps = PadCaps(), bool proPort = false);
 };
 
 class BindingStore {
 public:
     explicit BindingStore(Config& cfg) : cfg_(&cfg) {}
 
-    Profile resolve(DeviceClass cls, const std::string& guid, const std::string& gameId, PadCaps caps = PadCaps()) const;
+    Profile resolve(DeviceClass cls, const std::string& guid, const std::string& gameId, PadCaps caps = PadCaps(),
+                    bool proPort = false) const;
 
     bool defined(const LayerId& l, Ctl c) const;
     std::vector<Binding> get(const LayerId& l, Ctl c) const;   // what the layer defines (empty if not)
@@ -194,7 +206,7 @@ struct AnalogSet {
     }
 };
 AnalogSet evaluateAnalog(const Profile& p, const DeviceSnapshot& s, int deadzone = kAnalogDeadzone);
-// The digital controls beyond the standard pad: C_D, C_E, C_F, C_MB_L, C_MB_R, C_GUN_RELOAD, C_HELP, C_TVMENU.
+// The digital controls beyond the standard pad: C_D, C_E, C_F, C_MB_L, C_MB_R, C_GUN_RELOAD, C_HELP, C_TVMENU, C_PRO_*.
 // (evaluate() above covers C_UP..C_OVERLAY only, exactly as before the exotic devices existed.)
 ControlSet evaluateExtra(const Profile& p, const DeviceSnapshot& s);
 
