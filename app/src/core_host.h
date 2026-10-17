@@ -22,18 +22,11 @@
 #include <vector>
 
 #include "libretro.h"
+#include "frame.h"
 #include "vj_frontend_ext.h"   // the core's private event channel
 #include "vj_debug_iface.h"     // ...and its debug interface (docs/app-debug-tools.md)
 
 namespace vj {
-
-// One video frame, repacked to a tight pitch (width * 4 bytes), XRGB8888.
-struct Frame {
-    unsigned width = 0;
-    unsigned height = 0;
-    std::vector<uint32_t> pixels;
-    uint64_t serial = 0;  // bumps every time new pixels arrive (a NULL "dupe" frame does not)
-};
 
 struct OptionValue {
     std::string value;
