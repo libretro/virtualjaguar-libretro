@@ -278,6 +278,7 @@ set(VJ_APP_SOURCES
     src/instance.cpp
     src/config.cpp
     src/core_host.cpp
+    src/emu_thread.cpp
     src/audio.cpp
     src/video.cpp
     src/present_util.cpp
