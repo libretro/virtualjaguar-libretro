@@ -72,6 +72,7 @@ public:
     void onContentLoaded();      // a game/disc was just loaded into the core
     void onContentClosed();      // unloaded, failed to load, or no-content boot
     void onReset();              // the emulated machine was reset
+    void onDiscChanged();        // a disc swap booted another disc (host.contentPath() moved)
     void afterFrame();           // once per emulated frame, right after retro_run
     void pump();                 // once per UI-loop iteration, paused or not
 

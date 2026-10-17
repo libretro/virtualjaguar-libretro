@@ -87,10 +87,12 @@ add_test(NAME smoke_cd
             "${VJ_ROMS}/synth_jagcd.chd")
 
 # File > Disc end to end: the loaded CD is in the disc list, Add disc image... swaps to a second one, then Open tray,
-# File > Disc > the first and Close tray boot the first again.  The PASS line names all three discs.
+# File > Disc > the first and Close tray boot the first again.  The PASS line names all three discs.  After each step
+# the content (and the state slot names) must name the disc in the tray while the .srm stays the opened disc's; a
+# state is saved on the second disc, so the run gets its own --data-dir.
 add_test(NAME smoke_disc_swap
-    COMMAND virtualjaguar --headless --frames 120 --allow-blank --disc-swap "${VJ_ROMS}/synth_jagcd_multi.chd"
-            "${VJ_ROMS}/synth_jagcd.chd")
+    COMMAND virtualjaguar --headless --frames 120 --allow-blank --data-dir "${CMAKE_CURRENT_BINARY_DIR}/disc_swap_data"
+            --disc-swap "${VJ_ROMS}/synth_jagcd_multi.chd" "${VJ_ROMS}/synth_jagcd.chd")
 set_tests_properties(smoke_disc_swap PROPERTIES TIMEOUT 300
     PASS_REGULAR_EXPRESSION "DISC swap synth_jagcd\\.chd -> synth_jagcd_multi\\.chd -> synth_jagcd\\.chd \\(inline\\)"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
