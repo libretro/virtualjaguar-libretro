@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "app.h"
+#include "desktop_nav_ui.h"
 #include "imgui.h"
 #include "library_service.h"
 #include "ui_util.h"
@@ -76,6 +77,151 @@ void drawStar(ImDrawList* dl, ImVec2 c, float r, bool filled, bool hot) {
     }
 }
 
+// ---- controller navigation (#1021) ------------------------------------------------------------------------------------
+// The grid publishes its lists to app.deskPad.nav each frame, draws the focus ring on the focused tile, scrolls to it and
+// executes the commands the pad queued (desktop_nav_app.h).  The rest -- the focus model, the ring, the hint -- is in
+// desktop_nav.cpp / desktop_nav_ui.cpp.
+
+// A command that needs a tile's ID scope (its menu, a BIOS tile's popup) waits here until that tile is drawn; the grid
+// clips its rows, so a tile scrolled out of sight is submitted only after the scroll the command asked for.
+struct TileCmd {
+    bool active = false;
+    std::string key;
+    int age = 0;   // frames it has waited
+} g_tileCmd;
+
+// What the pad changed that the draw pass must not do midway (the tab the lists were built for, the window).
+struct DeskDefer {
+    int tabStep = 0;
+    bool back = false;
+} g_defer;
+
+bool g_searchActive = false;   // the search box has keyboard focus (drawToolbar)
+uint32_t g_searchSeq = 0;      // deskPad.seq when it got it
+
+struct StateRef {
+    const lib::Entry* owner;   // null: the game is not in the library, its states cannot be started
+    int slot;
+    std::string key;
+};
+// This frame's lists, so a command (which names an item by key) finds the entry.
+struct DeskFrame {
+    std::vector<const lib::Entry*> fav, recent, grid;
+    std::vector<StateRef> states;
+    bool scroll = false;   // the focus moved (or a command needs its tile drawn): bring it into view
+} g_df;
+
+const std::vector<const lib::Entry*>& entriesOf(DeskRegion r) {
+    return r == DeskRegion::FavStrip ? g_df.fav : r == DeskRegion::RecentStrip ? g_df.recent : g_df.grid;
+}
+
+const lib::Entry* findEntry(DeskRegion r, const std::string& key) {
+    for (const lib::Entry* e : entriesOf(r))
+        if (e->file.path == key) return e;
+    return nullptr;
+}
+
+// A click and the pad's Accept start a game the same way.  The pad also arms the release guard (the confirm press that
+// started it must not reach the game) and skips the resume prompt, which needs a mouse (as TV mode's launch does).
+void activateEntry(App& app, LibraryService& svc, const lib::Entry& e, bool fromPad) {
+    if (fromPad) app.input.armReleaseGuard();
+    svc.launch(e, fromPad);
+}
+
+void queueTileCmd(const std::string& key) {
+    g_tileCmd.active = true;
+    g_tileCmd.key = key;
+    g_tileCmd.age = 0;
+    g_df.scroll = true;
+}
+
+// Called inside a tile's ID scope: opens `popupId` there when the pad asked for it, under the tile (above it when the
+// screen has no room below) and marks the popup as the pad's.  True when it did.
+bool padOpensPopup(App& app, const lib::Entry& e, bool focus, ImVec2 p0, ImVec2 size, const char* popupId) {
+    if (!focus || !g_tileCmd.active || g_tileCmd.key != e.file.path) return false;
+    g_tileCmd.active = false;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const bool below = p0.y + size.y + ImGui::GetFontSize() * 14.0f < vp->WorkPos.y + vp->WorkSize.y;
+    ImGui::SetNextWindowPos(below ? ImVec2(p0.x, p0.y + size.y) : p0, ImGuiCond_Always, ImVec2(0.0f, below ? 0.0f : 1.0f));
+    ImGui::OpenPopup(popupId);
+    app.deskPad.padPopup = true;
+    return true;
+}
+
+// The pad's queued commands, once the frame's lists are published.  A press while the search box has focus leaves the
+// box (pads do not type): the press is swallowed, but a tab switch still happens.
+void runDeskCommands(App& app, LibraryService& svc) {
+    DesktopPad& d = app.deskPad;
+    if (g_searchActive && d.active && d.seq != g_searchSeq) {
+        deskLeaveTextInput();
+        g_searchActive = false;
+        d.in.reset();   // the matching release must not fire a tap on the grid
+        std::vector<DeskCmd> keep;
+        for (const DeskCmd& c : d.pending)
+            if (c.kind == DeskCmd::TabPrev || c.kind == DeskCmd::TabNext) keep.push_back(c);
+        d.pending.swap(keep);
+    }
+    if (d.pending.empty()) return;
+    std::vector<DeskCmd> cmds;
+    cmds.swap(d.pending);
+    if (!d.active) return;
+    const DeskRegion region = d.nav.region();
+    for (const DeskCmd& c : cmds) {
+        switch (c.kind) {
+        case DeskCmd::Activate:
+            if (region == DeskRegion::States) {
+                for (const StateRef& s : g_df.states)
+                    if (s.key == c.key && s.owner) {
+                        app.input.armReleaseGuard();
+                        svc.launchState(*s.owner, s.slot);
+                        break;
+                    }
+            } else if (const lib::Entry* e = findEntry(region, c.key)) {
+                if (e->section == lib::Section::Bios) queueTileCmd(c.key);   // its popup, as a click opens it
+                else activateEntry(app, svc, *e, true);
+            }
+            break;
+        case DeskCmd::OpenMenu:
+            if (region != DeskRegion::States && findEntry(region, c.key)) queueTileCmd(c.key);
+            break;
+        case DeskCmd::ToggleFavorite:
+            if (const lib::Entry* e = findEntry(region, c.key))
+                if (e->section != lib::Section::Bios) svc.setFavorite(*e, !svc.isFavorite(*e));
+            break;
+        case DeskCmd::TabPrev: g_defer.tabStep--; break;
+        case DeskCmd::TabNext: g_defer.tabStep++; break;
+        case DeskCmd::FocusSearch: svc.focusSearch = true; break;
+        case DeskCmd::Back: g_defer.back = true; break;
+        }
+    }
+}
+
+// After the grid is drawn (also when it returned early): the commands nothing drew for, then what waited for the end.
+void finishDeskFrame(App& app, LibraryService& svc) {
+    DesktopPad& d = app.deskPad;
+    runDeskCommands(app, svc);
+    if (g_tileCmd.active && ++g_tileCmd.age >= 4) g_tileCmd.active = false;   // its tile never came: give up
+    if (g_defer.tabStep != 0) {
+        const std::vector<int> tabs = lib::visibleTabs(svc.favoritesShow, svc.recentsShow);
+        int at = 0;
+        for (size_t i = 0; i < tabs.size(); i++)
+            if (tabs[i] == svc.activeTab()) at = (int)i;
+        const int to = std::min(std::max(at + g_defer.tabStep, 0), (int)tabs.size() - 1);   // no wrap, as the focus has none
+        if (to != at) {
+            svc.section = tabs[(size_t)to];
+            svc.saveSettings();
+        }
+    }
+    if (g_defer.back && !app.homeVisible()) {   // the home library is not a window: nothing to close
+        svc.show = false;
+        if (app.host.isLoaded()) app.input.armReleaseGuard();   // the Back press must not reach the paused game
+    }
+    g_defer = DeskDefer();
+    // The popup the pad opened is gone (closed by the mouse or Escape): the pad is the library's again.
+    if (d.padPopup && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        d.padPopup = false;
+}
+
 }  // namespace
 
 // Favorites and recently played: where each one shows.  Used by the toolbar popup and by Settings.
@@ -120,6 +266,9 @@ void drawToolbar(App& app, LibraryService& svc, char* search, int& filter, bool 
     }
     ImGui::SetNextItemWidth(ui::fitWidth(0.34f, 10.0f, 22.0f));
     ImGui::InputTextWithHint("##search", "Search", search, 128);
+    const bool searchActive = ImGui::IsItemActive();
+    if (searchActive && !g_searchActive) g_searchSeq = app.deskPad.seq;   // a pad press after this leaves the box (runDeskCommands)
+    g_searchActive = searchActive;
     static const char* filters[] = {"All", "Not verified"};
     float fw = ui::em(9.5f);
     flow.next(fw);
@@ -213,7 +362,7 @@ void drawFolders(LibraryService& svc) {
     if (remove >= 0) svc.removeFolder((size_t)remove);
 }
 
-void drawStatus(LibraryService& svc) {
+void drawStatus(App& app, LibraryService& svc) {
     if (svc.scanning()) {
         size_t t = svc.scanTotal();
         if (t > 0) ImGui::TextWrapped("Scanning... hashing %zu of %zu", svc.scanDone(), t);
@@ -223,6 +372,7 @@ void drawStatus(LibraryService& svc) {
         if (!s.empty()) ui::hint("%s", s.c_str());
         else ui::hint("%zu games%s", svc.entries().size(), svc.netBusy() ? "  (downloading)" : "");
     }
+    if (deskPadShown(app)) ui::hint("%s", deskHintLine(app).c_str());   // the pad's buttons, as its family labels them
     if (!svc.haveCartDat() && !svc.haveDiscDat()) {
         ui::coloredWrapped(ui::vec4(ui::pal().warning),
                            "No game database found: titles come from file names. Use Update database to download it.");
@@ -249,12 +399,13 @@ void drawSectionHint(LibraryService& svc) {
 // use.  A click opens its menu: Use this BIOS (the core runs exactly this file, any name, any folder), Boot (a boot
 // ROM with an empty slot, the CD BIOS with no disc, the Memory Track cartridge), Copy to the system folder (the
 // fixed name the core's own search and RetroArch look for).
-void drawBiosCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH) {
+void drawBiosCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH, bool focus) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImGui::PushID(e.file.path.c_str());
     bool clicked = ImGui::InvisibleButton("##cell", ImVec2(cellW, artH + textH));
     bool hovered = ImGui::IsItemHovered();
+    padOpensPopup(app, e, focus, p0, ImVec2(cellW, artH + textH), "##bios");   // the pad's Accept / menu on this tile
     const lib::BiosInfo& b = e.bios;
     const lib::BiosUse use = lib::biosUse(b, e.file.path, e.file.size, svc.systemDir);
     const std::string installAs = use.core || svc.systemDir.empty() ? std::string() : lib::biosInstallName(b, e.file.size);
@@ -314,6 +465,8 @@ void drawBiosCell(App& app, LibraryService& svc, const lib::Entry& e, float cell
     const bool readable = b.role == lib::BiosRole::CartBoot || b.role == lib::BiosRole::CdBios;
 
     ImVec2 a0 = p0, a1(p0.x + cellW, p0.y + artH);
+    const bool ring = focus && deskPadShown(app);
+    if (ring) deskDrawFocusShadow(dl, a0, a1, 4.0f);
     dl->AddRectFilled(a0, a1, ui::u32(hovered ? ui::pal().cardBgHover : ui::pal().cardBg), 4.0f);
     ImColor c = ImColor::HSV(b.role == lib::BiosRole::CdBios ? 0.58f : b.role == lib::BiosRole::CartBoot ? 0.08f : 0.33f,
                              0.30f, ui::pal().biosArtVal);
@@ -324,6 +477,7 @@ void drawBiosCell(App& app, LibraryService& svc, const lib::Entry& e, float cell
     dl->AddText(ImGui::GetFont(), fs, ImVec2(p0.x + (cellW - ts.x) * 0.5f, p0.y + (artH - ts.y) * 0.5f),
                 ui::u32(ui::pal().placeholderText, 215.0f / 235.0f), label, nullptr, cellW - 20.0f);
     if (hovered) dl->AddRect(a0, a1, ui::u32(ui::pal().hoverEdge), 4.0f, 0, 2.0f);
+    if (ring) deskDrawFocusRing(dl, a0, a1, 4.0f);
 
     float lh = ImGui::GetFontSize() + 2.0f;
     ImVec4 clip(p0.x, p0.y + artH, p0.x + cellW, p0.y + artH + textH);
@@ -383,7 +537,9 @@ void drawPlaceholder(ImDrawList* dl, ImVec2 a0, ImVec2 a1, const lib::Entry& e, 
 
 // A save state as a picture and two lines: its screenshot (letterboxed into a 4:3 box), "Slot N" and when it was
 // saved.  The caller's cursor is where the picture goes; returns the box so the caller can overlay buttons.
-void drawStateShot(ImDrawList* dl, LibraryService& svc, const lib::StateInfo& st, ImVec2 p0, ImVec2 box, bool hot) {
+void drawStateShot(ImDrawList* dl, LibraryService& svc, const lib::StateInfo& st, ImVec2 p0, ImVec2 box, bool hot,
+                   bool ring = false) {
+    if (ring) deskDrawFocusShadow(dl, p0, ImVec2(p0.x + box.x, p0.y + box.y), 3.0f);
     dl->AddRectFilled(p0, ImVec2(p0.x + box.x, p0.y + box.y), ui::u32(hot ? ui::pal().stateBgHover : ui::pal().stateBg), 3.0f);
     ArtView v = svc.stateThumb(st);
     if (v.state == ArtView::Ready && v.tex && v.w > 0 && v.h > 0) {
@@ -397,6 +553,7 @@ void drawStateShot(ImDrawList* dl, LibraryService& svc, const lib::StateInfo& st
         dl->AddText(ImVec2(p0.x + (box.x - ts.x) * 0.5f, p0.y + (box.y - ts.y) * 0.5f), ui::u32(ui::pal().textMuted), txt);
     }
     if (hot) dl->AddRect(p0, ImVec2(p0.x + box.x, p0.y + box.y), ui::u32(ui::pal().hoverEdge), 3.0f, 0, 2.0f);
+    if (ring) deskDrawFocusRing(dl, p0, ImVec2(p0.x + box.x, p0.y + box.y), 3.0f);
 }
 
 // One line of the tile menu's Load state list: a small screenshot, "Slot N" and the time.  True when clicked.
@@ -448,13 +605,14 @@ void drawTileMenu(App& app, LibraryService& svc, const lib::Entry& e) {
 // A game tile.  `strip` = the smaller tiles of a Favorites / Recently played strip (they take no cover drops: the
 // same game is in the grid below).  `when` (recents) is when it was played.
 void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, float artH, float textH, bool strip = false,
-              int64_t when = 0) {
+              int64_t when = 0, bool focus = false) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImVec2 total(cellW, artH + textH);
     ImGui::PushID(e.file.path.c_str());
     bool clicked = ImGui::InvisibleButton("##cell", total);
     bool hovered = ImGui::IsItemHovered();
+    padOpensPopup(app, e, focus, p0, total, "##cellmenu");   // the pad's menu (hold Accept, or the menu button)
     if (ImGui::BeginPopupContextItem("##cellmenu")) {
         drawTileMenu(app, svc, e);
         ImGui::EndPopup();
@@ -477,6 +635,8 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     }
 
     ImVec2 a0 = p0, a1(p0.x + cellW, p0.y + artH);
+    const bool ring = focus && deskPadShown(app);   // the pad's focus (the mouse hover outline below is unchanged)
+    if (ring) deskDrawFocusShadow(dl, a0, a1, 4.0f);
     dl->AddRectFilled(a0, a1, ui::u32(hovered ? ui::pal().cardBgHover : ui::pal().cardBg), 4.0f);
 
     ArtView v = svc.art(e);
@@ -491,6 +651,7 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
         placeholder = true;
     }
     if (hovered) dl->AddRect(a0, a1, ui::u32(ui::pal().hoverEdge), 4.0f, 0, 2.0f);
+    if (ring) deskDrawFocusRing(dl, a0, a1, 4.0f);
 
     // badges
     if (e.file.kind == lib::Kind::Disc) drawBadge(dl, ImVec2(a0.x + 4, a0.y + 4), "CD");
@@ -549,7 +710,7 @@ void drawCell(App& app, LibraryService& svc, const lib::Entry& e, float cellW, f
     }
     if (clicked) {
         if (overStar) svc.setFavorite(e, !fav);
-        else svc.launch(e);
+        else activateEntry(app, svc, e, false);
     }
 }
 
@@ -599,13 +760,14 @@ void handleZoomInput(LibraryService& svc) {
 // One scrolling row of smaller tiles with that media's favorites / recents.  Part of the grid's scroll area, drawn
 // before the grid itself.  The strip's items are in its own ID scope: the same game is also a tile below.
 void drawStrip(App& app, LibraryService& svc, const char* id, const char* title, const std::vector<lib::Resolved>& items,
-               bool withWhen, bool clearable) {
+               bool withWhen, bool clearable, DeskRegion region) {
     if (items.empty()) return;
     const float fs = ImGui::GetFontSize();
     const float cellW = fs * 9.0f * svc.cellScale * 0.62f;
     const float artH = cellW * 1.2f;
     const float textH = fs * 3.0f + 6.0f;
     ImGui::PushID(id);
+    const float top = ImGui::GetCursorScreenPos().y;
     ImGui::TextDisabled("%s", title);
     if (clearable) {
         ImGui::SameLine();
@@ -616,24 +778,42 @@ void drawStrip(App& app, LibraryService& svc, const char* id, const char* title,
                       ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);   // wheel scrolls the page
     for (size_t i = 0; i < items.size(); i++) {
         if (i > 0) ImGui::SameLine();
-        drawCell(app, svc, *items[i].entry, cellW, artH, textH, true, withWhen ? items[i].when : 0);
+        const bool focus = app.deskPad.nav.focused(region, (int)i);
+        if (focus && g_df.scroll) {   // inside the row: its own horizontal scroll
+            const float x = ImGui::GetCursorScreenPos().x;
+            deskEnsureVisibleX(x, x + cellW);
+        }
+        drawCell(app, svc, *items[i].entry, cellW, artH, textH, true, withWhen ? items[i].when : 0, focus);
     }
     ImGui::EndChild();
+    if (g_df.scroll && app.deskPad.nav.region() == region) deskEnsureVisibleY(top, ImGui::GetCursorScreenPos().y);   // the page
     ImGui::PopID();
 }
 
-// The two strips of a media tab, from the lists filtered like the grid below them (search, "Not verified").
-void drawStrips(App& app, LibraryService& svc, const std::string& needle, int filter) {
+// The two strips of a media tab, filtered like the grid below them (search, "Not verified").  Empty on a tab without them.
+struct StripItems {
+    std::vector<lib::Resolved> fav, recent;
+};
+
+StripItems pickStrips(LibraryService& svc, const std::string& needle, int filter) {
+    StripItems out;
     const int tab = svc.activeTab();
+    if (tab != lib::TabCart && tab != lib::TabDisc) return out;
     const lib::Section sec = tab == lib::TabDisc ? lib::Section::Disc : lib::Section::Cart;
     auto pick = [&](const std::vector<lib::Resolved>& all) {
-        std::vector<lib::Resolved> out;
+        std::vector<lib::Resolved> v;
         for (const lib::Resolved& r : lib::filterBySection(all, sec))
-            if (matches(*r.entry, filter, needle)) out.push_back(r);
-        return out;
+            if (matches(*r.entry, filter, needle)) v.push_back(r);
+        return v;
     };
-    if (lib::stripOnTab(tab, svc.favoritesShow)) drawStrip(app, svc, "stripfav", "Favorites", pick(svc.favoriteEntries()), false, false);
-    if (lib::stripOnTab(tab, svc.recentsShow)) drawStrip(app, svc, "striprec", "Recently played", pick(svc.recentEntries()), true, true);
+    if (lib::stripOnTab(tab, svc.favoritesShow)) out.fav = pick(svc.favoriteEntries());
+    if (lib::stripOnTab(tab, svc.recentsShow)) out.recent = pick(svc.recentEntries());
+    return out;
+}
+
+void drawStrips(App& app, LibraryService& svc, const StripItems& s) {
+    drawStrip(app, svc, "stripfav", "Favorites", s.fav, false, false, DeskRegion::FavStrip);
+    drawStrip(app, svc, "striprec", "Recently played", s.recent, true, true, DeskRegion::RecentStrip);
 }
 
 // ---- the Save states tab ----------------------------------------------------------------------------------------------------
@@ -643,8 +823,27 @@ struct PendingDelete {
     std::string title;
 } g_del;
 
-void drawStatesTab(LibraryService& svc, const std::string& needle) {
+// The shots drawStatesTab will list, in display order, for the pad's focus (key = the game's path + "#" + slot).
+void publishStates(App& app, const std::vector<lib::StateGame>& games, LibraryService& svc, const std::string& needle) {
+    DeskLists dl;
+    for (const lib::StateGame& g : games) {
+        const lib::Entry* owner = svc.entryForState(g);
+        const std::string title = owner ? owner->title : g.stem;
+        if (!needle.empty() && lower(title).find(needle) == std::string::npos && lower(g.stem).find(needle) == std::string::npos) continue;
+        for (const lib::StateInfo& st : g.states) {
+            const std::string key = (owner ? owner->file.path : g.stem) + "#" + std::to_string(st.slot);
+            dl.states.push_back({key, title});
+            g_df.states.push_back({owner, st.slot, key});
+        }
+    }
+    app.deskPad.nav.setLists(std::to_string(lib::TabStates), dl);
+    g_df.scroll = app.deskPad.nav.takeScroll();
+    runDeskCommands(app, svc);
+}
+
+void drawStatesTab(App& app, LibraryService& svc, const std::string& needle) {
     const std::vector<lib::StateGame>& games = svc.stateGames();
+    publishStates(app, games, svc, needle);
     if (games.empty()) {
         ImGui::TextWrapped("No save states yet.  Press F5 while playing (or use Save states in the Emulation menu) and the "
                            "state is listed here with the screenshot taken when you saved it.  Click one to start the game "
@@ -656,6 +855,7 @@ void drawStatesTab(LibraryService& svc, const std::string& needle) {
     const ImVec2 box(fs * 9.0f * std::max(0.8f, svc.cellScale) * 1.25f, fs * 9.0f * std::max(0.8f, svc.cellScale) * 1.25f * 0.75f);
     const float avail = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
     size_t listed = 0;
+    int shot = 0;   // the running index of the listed shots, as publishStates numbered them
     for (const lib::StateGame& g : games) {
         const lib::Entry* owner = svc.entryForState(g);
         const std::string title = owner ? owner->title : g.stem;
@@ -677,7 +877,8 @@ void drawStatesTab(LibraryService& svc, const std::string& needle) {
             ImVec2 p0 = ImGui::GetCursorScreenPos();
             const bool clicked = ImGui::InvisibleButton("##shot", box);
             const bool hot = ImGui::IsItemHovered();
-            drawStateShot(ImGui::GetWindowDrawList(), svc, st, p0, box, hot && owner);
+            const bool focus = app.deskPad.nav.focused(DeskRegion::States, shot++);
+            drawStateShot(ImGui::GetWindowDrawList(), svc, st, p0, box, hot && owner, focus && deskPadShown(app));
             if (hot) {
                 if (owner) ImGui::SetTooltip("Start %s from this state", title.c_str());
                 else ImGui::SetTooltip("%s is not in the library", title.c_str());
@@ -691,6 +892,7 @@ void drawStatesTab(LibraryService& svc, const std::string& needle) {
                 g_del.title = title;
             }
             ImGui::EndGroup();
+            if (focus && g_df.scroll) deskEnsureVisibleY(ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().y);   // picture, labels, Delete
             ImGui::PopID();
         }
         ImGui::PopID();
@@ -715,13 +917,15 @@ void drawStatesTab(LibraryService& svc, const std::string& needle) {
     }
 }
 
-void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filter) {
+void drawGridBody(App& app, LibraryService& svc, const std::string& needle, int filter) {
     handleZoomInput(svc);
+    deskStickScroll(app);   // the right stick (nothing unless the pad is driving)
     svc.tiles.clear();
     svc.tilesFrame = ImGui::GetFrameCount();
+    g_df = DeskFrame();
     const int tab = svc.activeTab();
     if (tab == lib::TabStates) {
-        drawStatesTab(svc, needle);
+        drawStatesTab(app, svc, needle);
         return;
     }
     const bool listTab = tab == lib::TabFavorites || tab == lib::TabRecents;
@@ -743,8 +947,39 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
                 shown.push_back(r);
             }
         }
-        if (tab == lib::TabCart || tab == lib::TabDisc) drawStrips(app, svc, needle, filter);
     }
+
+    // What the pad can focus, in display order: the strips, then the grid.  Published before anything is drawn so the
+    // ring and the commands see this frame's lists.
+    const StripItems strips = pickStrips(svc, needle, filter);
+    const float fs = ImGui::GetFontSize();
+    const float cellW = fs * 9.0f * svc.cellScale;
+    const float artH = cellW * 1.2f;
+    const float textH = fs * 3.0f + 6.0f;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float avail = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
+    const int cols = std::max(1, (int)((avail + gap) / (cellW + gap)));
+    {
+        DeskLists dl;
+        dl.gridCols = cols;
+        for (const lib::Resolved& r : strips.fav) {
+            dl.fav.push_back({r.entry->file.path, r.entry->title});
+            g_df.fav.push_back(r.entry);
+        }
+        for (const lib::Resolved& r : strips.recent) {
+            dl.recent.push_back({r.entry->file.path, r.entry->title});
+            g_df.recent.push_back(r.entry);
+        }
+        for (const lib::Resolved& r : shown) {
+            dl.grid.push_back({r.entry->file.path, r.entry->title});
+            g_df.grid.push_back(r.entry);
+        }
+        app.deskPad.nav.setLists(std::to_string(tab), dl);
+        g_df.scroll = app.deskPad.nav.takeScroll();
+        runDeskCommands(app, svc);
+        if (g_tileCmd.active) g_df.scroll = true;   // a command waits for its tile: make sure it gets drawn
+    }
+    drawStrips(app, svc, strips);
 
     if (svc.section == (int)lib::Section::Bios) {
         drawBiosPanel(app);
@@ -781,15 +1016,13 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
         (lib::stripOnTab(tab, svc.favoritesShow) || lib::stripOnTab(tab, svc.recentsShow)))
         ImGui::SeparatorText(tab == lib::TabCart ? "All cartridges" : "All CDs");
 
-    float fs = ImGui::GetFontSize();
-    float cellW = fs * 9.0f * svc.cellScale;
-    float artH = cellW * 1.2f;
-    float textH = fs * 3.0f + 6.0f;
-    float gap = ImGui::GetStyle().ItemSpacing.x;
-    float avail = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
-    int cols = std::max(1, (int)((avail + gap) / (cellW + gap)));
     int rows = ((int)shown.size() + cols - 1) / cols;
 
+    // The clipper only submits the visible rows, so a focused tile out of sight is scrolled to by its row.
+    if (g_df.scroll && app.deskPad.nav.region() == DeskRegion::Grid) {
+        const float y = ImGui::GetCursorScreenPos().y + (float)(app.deskPad.nav.index() / cols) * (artH + textH + gap);
+        deskEnsureVisibleY(y, y + artH + textH);
+    }
     ImGuiListClipper clip;
     clip.Begin(rows, artH + textH + gap);
     while (clip.Step()) {
@@ -798,12 +1031,18 @@ void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filt
                 size_t i = (size_t)r * (size_t)cols + (size_t)c;
                 if (i >= shown.size()) break;
                 if (c > 0) ImGui::SameLine();
-                if (shown[i].entry->section == lib::Section::Bios) drawBiosCell(app, svc, *shown[i].entry, cellW, artH, textH);
-                else drawCell(app, svc, *shown[i].entry, cellW, artH, textH, false, tab == lib::TabRecents ? shown[i].when : 0);
+                const bool focus = app.deskPad.nav.focused(DeskRegion::Grid, (int)i);
+                if (shown[i].entry->section == lib::Section::Bios) drawBiosCell(app, svc, *shown[i].entry, cellW, artH, textH, focus);
+                else drawCell(app, svc, *shown[i].entry, cellW, artH, textH, false, tab == lib::TabRecents ? shown[i].when : 0, focus);
             }
         }
     }
     clip.End();
+}
+
+void drawGrid(App& app, LibraryService& svc, const std::string& needle, int filter) {
+    drawGridBody(app, svc, needle, filter);
+    finishDeskFrame(app, svc);   // also after an early return: Back and the tab buttons work on an empty tab
 }
 
 // Search and filter are shared by the home screen and the window: one library, one view.
@@ -877,12 +1116,13 @@ void drawLibraryHome(App& app, float x, float y, float w, float h) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (ImGui::Begin("##home", nullptr, wf)) {
         if (svc.folders().empty()) {
+            app.deskPad.pending.clear();   // no grid to run the pad's commands
             drawEmptyHome(app, svc);
         } else {
             drawToolbar(app, svc, g_search, g_filter, true);
             drawSections(svc, "##homesec", g_homeSec);
             drawFolders(svc);
-            drawStatus(svc);
+            drawStatus(app, svc);
             drawSectionHint(svc);
             ImGui::Separator();
             ImGui::BeginChild("##homegrid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());
@@ -904,13 +1144,14 @@ void drawLibrary(App& app) {
     bool open = ImGui::Begin("Game library", &svc.show);
     ui::keepOnScreen();
     if (!open) {
+        app.deskPad.pending.clear();   // collapsed: no grid to run the pad's commands
         ImGui::End();
         return;
     }
     drawToolbar(app, svc, g_search, g_filter, false);
     drawSections(svc, "##winsec", g_winSec);
     drawFolders(svc);
-    drawStatus(svc);
+    drawStatus(app, svc);
     drawSectionHint(svc);
     ImGui::Separator();
     ImGui::BeginChild("##grid", ImVec2(0, 0), ImGuiChildFlags_None, gridWindowFlags());

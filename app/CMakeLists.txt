@@ -300,6 +300,7 @@ set(VJ_APP_SOURCES
     src/pad_profile.cpp
     src/desktop_nav.cpp
     src/desktop_nav_app.cpp
+    src/desktop_nav_ui.cpp
     src/hold_arbiter.cpp
     src/remap.cpp
     src/remap_ui.cpp

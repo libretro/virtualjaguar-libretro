@@ -22,6 +22,7 @@ struct DesktopPad {
     std::vector<DeskCmd> pending;   // commands deskPadFrame took from the nav; library_ui executes and clears them
     bool active = false;            // deskPadActive() as of the last frame
     bool padPopup = false;          // a popup the pad opened is driving ImGui's own nav (set by the popup glue)
+    uint32_t seq = 0;               // bumped by every pad press / push this consumed (library_ui: a press while the search box has focus leaves it)
     float scrollY = 0;              // right stick Y, -1 (up) .. +1 (down), as the last event left it
     // The last frame's state, so the edge of any of them starts the nav over (see deskPadFrame).
     bool seenPopup = false, seenShow = false;

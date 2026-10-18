@@ -1,0 +1,23 @@
+# pad_nav_windowed: controller navigation of the desktop library (#1021), WINDOWED only (it takes screenshots).
+# Run on the Mac Studio runner, never on the developer's Mac:
+#   virtualjaguar --tv-test-script pad_nav_windowed.txt            (a window at 1280x720; the library needs folders with games)
+# Format and verbs: tests/tv_menu_headless.txt.in.  <ms> is a script time; the gap to the previous line is the least real
+# time that passes between the two.  The virtual pad is a generic type: Confirm = A (south), Back = B (east).
+# Check by eye in the screenshots:
+#   pad_grid.png  the focus ring on the second tile of the second row, the hint line under the status ("A Play | hold A
+#                 Menu | Y Favorite | LB/RB Tabs"), the mouse hover outline untouched
+#   pad_menu.png  the tile menu open under the focused tile (a held A for 600 ms)
+#   pad_tab.png   the next tab (RB), the ring on that tab's first item
+# The B before the tab switch closes the menu with the pad, which needs the popup glue (task 7): without it the menu stays
+# open (close it with Escape) and the RB is not read until then.
+0      wait library
+300    pad tap dpright
+300    pad tap dpdown
+600    shot pad_grid.png
+900    pad down a
+600    pad up a
+500    shot pad_menu.png
+800    pad tap b
+400    pad tap rightshoulder
+600    shot pad_tab.png
+900    quit

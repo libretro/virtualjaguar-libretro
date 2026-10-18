@@ -357,6 +357,15 @@ static void visible_and_focused() {
     CHECK(n.visible());                                // reset is not a visibility change
 }
 
+static void scroll_to_show() {
+    CHECK(deskScrollToShow(10, 20, 0, 100, 4) == 0);        // fully inside: no scroll (no jitter on a static index)
+    CHECK(deskScrollToShow(0, 100, 0, 100, 4) == 0);        // exactly the view
+    CHECK(deskScrollToShow(-30, -10, 0, 100, 4) == -34);    // above: up to the item's top plus the margin
+    CHECK(deskScrollToShow(-5, 20, 0, 100, 4) == -9);       // partly above counts as not visible
+    CHECK(deskScrollToShow(90, 130, 0, 100, 4) == 34);      // below: down to the item's bottom plus the margin
+    CHECK(deskScrollToShow(200, 400, 0, 100, 4) == 196);    // taller than the view: its top lines up
+}
+
 int main() {
     grid_moves_and_edges();
     strip_to_grid_and_back();
@@ -368,6 +377,7 @@ int main() {
     empty_lists();
     scroll_flag_once();
     visible_and_focused();
+    scroll_to_show();
     std::printf("desktop_nav_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

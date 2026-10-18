@@ -37,6 +37,10 @@ struct DeskCmd {
     std::string key;
 };
 
+// How far to scroll (in the units given) so [itemMin, itemMax] sits fully inside [viewMin, viewMax]: 0 when it already
+// does, else the least that brings it in plus `margin`; an item taller than the view lines its top up.  Pure.
+float deskScrollToShow(float itemMin, float itemMax, float viewMin, float viewMax, float margin);
+
 class DesktopNav {
 public:
     // Offer this frame's lists for `tab`.  The focused item is followed by key when the list changes; if it is gone

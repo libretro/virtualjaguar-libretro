@@ -146,6 +146,7 @@ public:
     // before handleEvent sees it); lastPadFamily() is its family, Xbox before any press or once it is gone.
     void notePadUsed(uint32_t joystickId) { lastPad_ = joystickId; }
     PadFamily lastPadFamily() const { return navProfile(lastPad_).family; }
+    uint32_t lastPadId() const { return lastPad_; }
     // What pad i plays on a Pro Controller port (Profile::builtin proPort; the keyboard has no such variant).
     const Profile& padProProfile(size_t i) const { return pads_[i].proProfile; }
     // The remap table's view of a layer: true when the controller(s) it covers drive a Pro Controller port now

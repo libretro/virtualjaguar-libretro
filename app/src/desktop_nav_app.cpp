@@ -48,7 +48,10 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
         const Intent in = app.input.navProfile(e.gbutton.which).intentForButton(e.gbutton.button);
         if (in == Intent::None || in == Intent::Menu) return false;
         const bool down = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
-        if (down) d.nav.setVisible(true);
+        if (down) {
+            d.nav.setVisible(true);
+            d.seq++;
+        }
         d.in.padIntent(e.gbutton.which, e.gbutton.button, in, down, ms);
         return down;   // a release is fed (it ends a repeat, or fires a tap) but still reaches the app
     }
@@ -56,7 +59,10 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
         if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
             const Intent in = app.input.navProfile(e.gaxis.which).intentForTrigger(e.gaxis.axis);
             if (in == Intent::None) return false;   // an unbound trigger stays the app's
-            if (std::abs((int)e.gaxis.value) >= NavInput::kTriggerOn) d.nav.setVisible(true);
+            if (std::abs((int)e.gaxis.value) >= NavInput::kTriggerOn) {
+                d.nav.setVisible(true);
+                d.seq++;
+            }
             d.in.padTrigger(e.gaxis.which, e.gaxis.axis, in, e.gaxis.value, ms);
             return true;
         }
@@ -65,7 +71,10 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
             return false;
         }
         if (e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTX && e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTY) return false;
-        if (std::abs((int)e.gaxis.value) >= NavInput::kStickOn) d.nav.setVisible(true);   // a resting stick drifts: only a push counts
+        if (std::abs((int)e.gaxis.value) >= NavInput::kStickOn) {   // a resting stick drifts: only a push counts
+            d.nav.setVisible(true);
+            d.seq++;
+        }
         d.in.padAxis(e.gaxis.axis, e.gaxis.value, ms);
         return true;
     default: return false;

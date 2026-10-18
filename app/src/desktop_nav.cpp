@@ -20,6 +20,12 @@ const char* regionName(DeskRegion r) {
 
 }  // namespace
 
+float deskScrollToShow(float itemMin, float itemMax, float viewMin, float viewMax, float margin) {
+    if (itemMin >= viewMin && itemMax <= viewMax) return 0.0f;
+    if (itemMin < viewMin || itemMax - itemMin >= viewMax - viewMin) return itemMin - margin - viewMin;
+    return itemMax + margin - viewMax;
+}
+
 const std::vector<DeskItem>& DesktopNav::list(DeskRegion r) const {
     switch (r) {
         case DeskRegion::FavStrip: return lists_.fav;
