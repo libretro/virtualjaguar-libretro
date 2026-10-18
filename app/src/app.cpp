@@ -1609,6 +1609,8 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
     tvHost_->noteInput(e);    // which device the hints should name (the shell consumes events InputManager never sees)
     if (tvShell().ownsInput() && !input.capturing() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys (not while a binding is being captured)
+    // (phase 4's Auto controller trigger, TvMode::onPadPress, goes before this call: desktop nav sees a press only when it did not switch TV on)
+    if (deskPadHandleEvent(*this, e, SDL_GetTicks())) return;   // the desktop library has the pad (desktop_nav_app.h)
     if (input.handleEvent(e)) return;
     switch (e.type) {
     case SDL_EVENT_QUIT:

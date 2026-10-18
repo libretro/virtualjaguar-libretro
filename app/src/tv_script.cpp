@@ -299,6 +299,8 @@ int App::tvScriptStep() {
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
             else if (name == "home-visible") got = flag(homeVisible());            // the desktop library standing in for the game
             else if (name == "library-window") got = flag(library.show);           // the desktop Game library window
+            else if (name == "desk-pad") got = flag(deskPadActive(*this));          // the desktop library owns the pads (#1021)
+            else if (name == "desk-pending") got = std::to_string(deskPad.pending.size());   // commands the desktop nav queued (nothing draws them headless)
             else if (name == "cfg") {   // KEY:VALUE -- the config holds KEY = VALUE ("absent": no such key at all)
                 const size_t colon = want.find(':');
                 if (colon == std::string::npos) return fail(l, "cfg wants KEY:VALUE or KEY:absent");
