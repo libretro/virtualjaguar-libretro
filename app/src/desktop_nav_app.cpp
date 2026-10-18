@@ -35,6 +35,7 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
         return false;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         d.in.reset();   // the matching "up" will never come: no direction may keep repeating
+        d.scrollY = 0;  // ... nor may the grid keep scrolling
         return false;
     default: break;
     }
@@ -87,6 +88,7 @@ void deskPadFrame(App& app, uint64_t ms) {
         d.in.reset();
         d.pending.clear();
         d.nav.reset();
+        d.scrollY = 0;   // a right stick let go while the library was not listening must not scroll on when it is
     }
     if (!act) return;
     if (d.padPopup) return;   // the popup's rows are ImGui's (design section 4); the queued intents wait for that glue

@@ -249,6 +249,13 @@ int App::tvScriptStep() {
                 tvScriptDrain();
                 tick();
             }
+        } else if (verb == "axis") {   // axis NAME VALUE: a stick / trigger axis of the virtual pad (SDL axis name, -32768..32767)
+            const SDL_GamepadAxis ax = SDL_GetGamepadAxisFromString(arg1.c_str());
+            if (ax == SDL_GAMEPAD_AXIS_INVALID) return fail(l, "unknown pad axis '" + arg1 + "'");
+            SDL_SetJoystickVirtualAxis(run.joy, (int)ax, (Sint16)std::atoi(arg2.c_str()));
+            SDL_UpdateJoysticks();
+            tvScriptDrain();
+            tick();
         } else if (verb == "focus") {
             SDL_Event ev;
             SDL_zero(ev);
@@ -300,6 +307,7 @@ int App::tvScriptStep() {
             else if (name == "home-visible") got = flag(homeVisible());            // the desktop library standing in for the game
             else if (name == "library-window") got = flag(library.show);           // the desktop Game library window
             else if (name == "desk-pad") got = flag(deskPadActive(*this));          // the desktop library owns the pads (#1021)
+            else if (name == "desk-scroll") got = flag(deskPad.scrollY != 0.0f);   // the desktop nav holds a right-stick scroll
             else if (name == "desk-pending") got = std::to_string(deskPad.pending.size());   // commands the desktop nav queued (nothing draws them headless)
             else if (name == "cfg") {   // KEY:VALUE -- the config holds KEY = VALUE ("absent": no such key at all)
                 const size_t colon = want.find(':');
