@@ -224,6 +224,8 @@ std::string AppHost::glyph(Intent i) const {
     case Intent::SectionNext: b = SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER; key = "Tab"; break;
     case Intent::PagePrev: key = "Page Up"; break;
     case Intent::PageNext: key = "Page Down"; break;
+    case Intent::Search:        // profile-supplied intents (#1021): no fixed glyph here
+    case Intent::AcceptLong:
     case Intent::None: break;
     }
     SDL_Gamepad* g = lastWasPad_ ? SDL_GetGamepadFromID(lastPad_) : nullptr;   // null once that pad is gone
