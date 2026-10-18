@@ -652,16 +652,17 @@ void CheatManager::setUserEnabled(size_t i, bool on) {
 // ---------------------------------------------------------------------------------
 void CheatManager::apply() {
     appliedSegments_ = 0;
-    if (resetSink) resetSink();
+    CheatBatch b;
+    b.push_back(CheatOp{true, 0, false, std::string()});
     if (blockedNow()) {   // hardcore: the core's list stays empty
-        if (doneSink) doneSink();
+        if (commit) commit(std::move(b));
         return;
     }
     if (setLoaded_) {
         for (size_t i = 0; i < set_.cheats.size(); i++) {
             const ChtCheat& c = set_.cheats[i];
             if (!c.supported || !enabled_.count(c.id)) continue;
-            if (setSink) setSink((unsigned)i, true, c.code.c_str());
+            b.push_back(CheatOp{false, (unsigned)i, true, c.code});
             appliedSegments_ += c.segments;
         }
     }
@@ -669,10 +670,10 @@ void CheatManager::apply() {
         if (!user_[i].enabled) continue;
         unsigned segs = 0;
         validateCode(user_[i].code, &segs, nullptr);
-        if (setSink) setSink(kUserIndexBase + (unsigned)i, true, user_[i].code.c_str());
+        b.push_back(CheatOp{false, kUserIndexBase + (unsigned)i, true, user_[i].code});
         appliedSegments_ += segs;
     }
-    if (doneSink) doneSink();
+    if (commit) commit(std::move(b));
     if (appliedSegments_ > kCoreLimit && warn)
         warn("cheats: " + std::to_string(appliedSegments_) + " writes exceed the core's limit of " +
              std::to_string(kCoreLimit) + "; the excess is ignored");

@@ -76,11 +76,15 @@ static void play(Ram& ram, const std::string& code) {
 struct Recorder {
     std::vector<std::string> log;
     void attach(CheatManager& m) {
-        m.resetSink = [this] { log.push_back("reset"); };
-        m.setSink = [this](unsigned i, bool on, const char* code) {
-            log.push_back("set " + std::to_string(i) + (on ? " on " : " off ") + code);
+        m.commit = [this](CheatBatch b) {
+            batches++;
+            for (const CheatOp& o : b) {
+                if (o.reset) log.push_back("reset");
+                else log.push_back("set " + std::to_string(o.index) + (o.enabled ? " on " : " off ") + o.code);
+            }
         };
     }
+    int batches = 0;
 };
 
 // ---------------------------------------------------------------------------------
@@ -515,9 +519,9 @@ static int corpus(const std::string& dir) {
     return g_fail ? 1 : 0;
 }
 
-// #967: the threaded app collects the sinks' calls and posts them as one command when apply() ends.
-static void testDoneSink() {
-    fs::path tmp = fs::temp_directory_path() / "vj-cheats-donesink";
+// #967: one apply() is one command: the reset, then every set.
+static void testCommitBatch() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-commit";
     fs::remove_all(tmp);
     GameIdentity g;
     g.key = "crc-deadbeef";
@@ -531,21 +535,15 @@ static void testDoneSink() {
     std::string err;
     CHECK(m.addUser("My lives", "00001000:07", err));   // one enabled user cheat, so apply() has a set to send
     r.log.clear();
-    int done = 0;
-    size_t logAtDone = 0;
-    m.doneSink = [&] {
-        done++;
-        logAtDone = r.log.size();
-    };
+    r.batches = 0;
     m.apply();
-    // doneSink fired once, after the reset AND the set (a premature call would see a shorter log)
-    CHECK(done == 1 && logAtDone == r.log.size() && r.log.size() == 2 && r.log[0] == "reset" &&
-          r.log[1].compare(0, 3, "set") == 0);
+    CHECK(r.batches == 1);                                  // one apply, one command
+    CHECK(r.log.size() == 2 && r.log[0] == "reset" && r.log[1].compare(0, 3, "set") == 0);
     m.blocked = [] { return true; };
     r.log.clear();
-    done = 0;
+    r.batches = 0;
     m.apply();
-    CHECK(done == 1 && r.log.size() == 1 && r.log[0] == "reset");   // blocked: the reset still goes, and the batch ends
+    CHECK(r.batches == 1 && r.log.size() == 1 && r.log[0] == "reset");   // blocked: the reset still goes
     fs::remove_all(tmp);
 }
 
@@ -556,7 +554,7 @@ int main(int argc, char** argv) {
     testReplay();
     testLibraryMatching();
     testPersistence();
-    testDoneSink();
+    testCommitBatch();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

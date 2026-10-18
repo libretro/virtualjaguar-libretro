@@ -99,14 +99,21 @@ struct UserCheat {
     bool enabled = true;
 };
 
+// One step of a cheat-list change: the reset, or one retro_cheat_set.
+struct CheatOp {
+    bool reset = false;
+    unsigned index = 0;
+    bool enabled = false;
+    std::string code;
+};
+using CheatBatch = std::vector<CheatOp>;
+
 class CheatManager {
 public:
-    // Core sinks.  Both may be null (unit tests substitute recorders).
-    std::function<void()> resetSink;
-    std::function<void(unsigned index, bool enabled, const char* code)> setSink;
-    // Called once at the end of every apply(), after the reset and the sets.  The threaded app (#967) collects the
-    // sinks' calls on the UI thread and posts them here as one command, so the core's list never changes mid-frame.
-    std::function<void()> doneSink;
+    // One cheat-list change: the core's list is reset, then each set applied, as ONE command (#967).  The app posts it
+    // to the emulation thread (EmuThread::post, which runs it at once inline or when already there), so a frame never
+    // sees half a list.  May be null (unit tests substitute recorders).
+    std::function<void(CheatBatch)> commit;
     std::function<void(const std::string&)> warn;
     // RetroAchievements hardcore (#836): returns true while no cheat may reach the
     // core.  apply() then still empties the core's list but sends nothing; the
