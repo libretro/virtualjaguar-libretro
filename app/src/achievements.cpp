@@ -60,12 +60,24 @@ struct AchCallbacks {
 
     static uint32_t RC_CCONV readMemory(uint32_t address, uint8_t* buffer, uint32_t numBytes, rc_client_t* c) {
         Achievements* a = self(c);
-        if (!a || !a->memoryReady_) return 0;
+        if (!a || !a->memoryReady_.load()) return 0;
+        if (a->app_ && a->app_->emu.threaded() && !a->app_->emu.onEmuThread()) {
+            // Core RAM belongs to the emulation thread (#967).  The one reader that runs here is a game load completed
+            // in the UI's HTTP pump, validating its addresses (rc_client_validate_addresses: only the count matters):
+            // answer from the memory map, without touching RAM.
+            uint32_t avail = 0;
+            if (!rc_libretro_memory_find_avail(&a->regions_, address, &avail) || avail == 0) return 0;
+            const uint32_t n = avail < numBytes ? avail : numBytes;
+            std::memset(buffer, 0, n);
+            if (a->offThreadReads_.fetch_add(1) == 0)
+                std::fprintf(stderr, "[ra] address check off the emulation thread answered from the memory map\n");
+            return n;
+        }
         return rc_libretro_memory_read(&a->regions_, address, buffer, numBytes);
     }
 
     static void RC_CCONV event(const rc_client_event_t* e, rc_client_t* c) {
-        if (Achievements* a = self(c)) a->handleEvent(e);
+        if (Achievements* a = self(c)) a->queueEvent(achEventFrom(*e, rc_client_get_hardcore_enabled(c) != 0));
     }
 
     static void RC_CCONV log(const char* message, const rc_client_t*) {
@@ -190,6 +202,16 @@ struct AchCallbacks {
 // ---------------------------------------------------------------------------------
 // construction / lifecycle
 // ---------------------------------------------------------------------------------
+// The core belongs to the emulation thread (#967): run there (inline / already there: at once).
+void Achievements::coreCall(const std::function<void()>& fn) {
+    if (app_) app_->emu.call([&fn] { fn(); });
+    else fn();
+}
+void Achievements::corePost(std::function<void()> fn) {
+    if (app_) app_->emu.post(std::move(fn));
+    else fn();
+}
+
 Achievements::Achievements() { rc_libretro_memory_destroy(&regions_); }
 Achievements::~Achievements() { shutdown(); }
 
@@ -297,7 +319,7 @@ void Achievements::beginLoad() {
         loadFailed_ = true;
         return;
     }
-    rebuildMemory();
+    coreCall([this] { rebuildMemory(); });
     if (!memoryReady_) {
         toast("RetroAchievements", "The core did not publish a usable memory map.", 2, 6);
         return;
@@ -317,7 +339,7 @@ void Achievements::onContentLoaded() {
     trackers.clear();
     challenges.clear();
     beginLoad();
-    if (hardcoreActive()) retro_cheat_reset();   // cheats do not survive into a hardcore session
+    if (hardcoreActive()) corePost([] { retro_cheat_reset(); });   // cheats do not survive into a hardcore session
 }
 
 // rc_client's own multi-disc path: the session (and hardcore) carry on when the new disc belongs to the same game,
@@ -340,6 +362,11 @@ void Achievements::onContentClosed() {
     gameKnown_ = false;
     memoryReady_ = false;
     rc_libretro_memory_destroy(&regions_);
+    {
+        std::lock_guard<std::mutex> l(rpMu_);
+        richPresence_.clear();
+    }
+    rpFrames_ = 0;
     trackers.clear();
     challenges.clear();
     progress.clear();
@@ -357,23 +384,52 @@ void Achievements::afterFrame() {
     checkHardcoreTransition();   // never run an emulated frame under the wrong cheat policy
     if (!hardcoreActive()) ranUnrestricted_ = true;   // this game has run (or loaded states) outside hardcore
     if (mockMode() && app_ && app_->window()) headlessFrame(++mockFrames_);   // pokes in a windowed mock session
-    if (rc_client_is_game_loaded(client_) && memoryReady_) rc_client_do_frame(client_);
-    else rc_client_idle(client_);
+    emuFrame();
+}
+
+// After each emulated frame, on the emulation thread (threaded) -- or inline from afterFrame().  Reads game memory.
+void Achievements::emuFrame() {
+    if (!client_) return;
+    if (rc_client_is_game_loaded(client_) && memoryReady_.load()) {
+        rc_client_do_frame(client_);   // ends with rc_client_idle(): the scheduled pings evaluate rich presence here
+        if (++rpFrames_ >= 60) {
+            rpFrames_ = 0;
+            char rp[256] = "";
+            if (rc_client_has_rich_presence(client_)) rc_client_get_rich_presence_message(client_, rp, sizeof rp);
+            std::lock_guard<std::mutex> l(rpMu_);
+            richPresence_ = rp;
+        }
+    } else {
+        rc_client_idle(client_);
+    }
+}
+
+// The emulation thread's idle while no frame runs (paused, or no game identified): pings and retries.
+void Achievements::emuIdle() {
+    if (client_) rc_client_idle(client_);
+}
+
+// The rich-presence line, computed on the emulation thread (it evaluates game memory) every 60 frames.
+std::string Achievements::richPresence() const {
+    std::lock_guard<std::mutex> l(rpMu_);
+    return richPresence_;
 }
 
 void Achievements::pump() {
     if (!client_) return;
     http_.pump();
     mockDeliver();
+    drainEvents();
     updateImageNetwork();
     images.pump();
     if (showList && dashTab == 1) gamesTabShown();
     rc_client_idle(client_);
+    drainEvents();   // events raised by rc_client_idle and by completions delivered in this pump
     if (resetPending_) {
         resetPending_ = false;
         // Turning hardcore on mid-game restarts the game (rc_client's rule: the
         // run must start clean).  retro_cheat_reset: cheats may not outlive it.
-        retro_cheat_reset();
+        corePost([] { retro_cheat_reset(); });
         hardcoreResets_++;
         if (app_ && app_->host.isLoaded()) app_->reset();
     }
@@ -448,7 +504,7 @@ void Achievements::checkHardcoreTransition() {
     const bool now = hardcoreActive();
     if (now == lastHardcore_) return;
     lastHardcore_ = now;
-    if (now) retro_cheat_reset();   // whatever is in the core goes, whoever put it there
+    if (now) corePost([] { retro_cheat_reset(); });   // whatever is in the core goes, whoever put it there
     if (onHardcoreChanged) onHardcoreChanged(now);
 }
 
@@ -468,7 +524,7 @@ void Achievements::setHardcoreWanted(bool on) {
     if (on && !settingsOk_) {
         toast("Hardcore blocked", blocker_ + " is not allowed in hardcore mode. Change it, then restart the game.", 2, 8);
     } else if (on) {
-        retro_cheat_reset();
+        corePost([] { retro_cheat_reset(); });
         toast("Hardcore mode", "State loading and cheats are off. Enabling it restarts the game.", 1, 6);
     } else {
         toast("Softcore mode", "State loading is available again.", 1, 4);
@@ -605,79 +661,84 @@ void Achievements::toast(const std::string& title, const std::string& body, int 
     if (app_ && !app_->window()) std::fprintf(stderr, "[ra] %s: %s\n", title.c_str(), body.c_str());
 }
 
-void Achievements::handleEvent(const rc_client_event_t* e) {
-    switch (e->type) {
+void Achievements::queueEvent(AchEvent e) {
+    std::lock_guard<std::mutex> l(eventMu_);
+    events_.push_back(std::move(e));
+}
+
+void Achievements::drainEvents() {
+    std::vector<AchEvent> ready;
+    {
+        std::lock_guard<std::mutex> l(eventMu_);
+        ready.swap(events_);
+    }
+    for (const AchEvent& e : ready) handleEvent(e);
+}
+
+void Achievements::handleEvent(const AchEvent& e) {
+    switch (e.type) {
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED: {
-        const rc_client_achievement_t* a = e->achievement;
-        unlocked_.push_back(a->id);
+        unlocked_.push_back(e.id);
         char body[320];
-        std::snprintf(body, sizeof body, "%s  (%u pt%s)", a->description ? a->description : "", a->points,
-                      a->points == 1 ? "" : "s");
+        std::snprintf(body, sizeof body, "%s  (%u pt%s)", e.description.c_str(), e.points, e.points == 1 ? "" : "s");
         char badge[256] = "";
-        if (a->badge_url) std::snprintf(badge, sizeof badge, "%s", a->badge_url);
-        toast(std::string("Achievement unlocked: ") + (a->title ? a->title : ""), body, 0, 7, badge);
+        if (!e.badgeUrl.empty()) std::snprintf(badge, sizeof badge, "%s", e.badgeUrl.c_str());
+        toast(std::string("Achievement unlocked: ") + e.title, body, 0, 7, badge);
         {
             SessionUnlock u;
-            u.title = a->title ? a->title : "";
-            u.description = a->description ? a->description : "";
+            u.title = e.title;
+            u.description = e.description;
             u.badgeUrl = badge;
-            u.points = a->points;
-            u.hardcore = rc_client_get_hardcore_enabled(client_) != 0;
+            u.points = e.points;
+            u.hardcore = e.hardcore;
             u.when = (long long)std::time(nullptr);
             sessionUnlocks.insert(sessionUnlocks.begin(), std::move(u));
             if (sessionUnlocks.size() > 50) sessionUnlocks.pop_back();
         }
-        std::fprintf(stderr, "[ra] unlocked id=%u \"%s\" %u points%s\n", a->id, a->title ? a->title : "", a->points,
-                     rc_client_get_hardcore_enabled(client_) ? " (hardcore)" : "");
-        challenges.erase(a->id);
+        std::fprintf(stderr, "[ra] unlocked id=%u \"%s\" %u points%s\n", e.id, e.title.c_str(), e.points,
+                     e.hardcore ? " (hardcore)" : "");
+        challenges.erase(e.id);
         break;
     }
     case RC_CLIENT_EVENT_GAME_COMPLETED:
         toast(gameTitle_.empty() ? "Game complete" : gameTitle_,
-              rc_client_get_hardcore_enabled(client_) ? "Mastered: every achievement earned in hardcore!"
-                                                      : "Completed: every achievement earned!",
-              0, 8);
+              e.hardcore ? "Mastered: every achievement earned in hardcore!" : "Completed: every achievement earned!", 0, 8);
         break;
     case RC_CLIENT_EVENT_SUBSET_COMPLETED:
-        toast(e->subset && e->subset->title ? e->subset->title : "Set complete", "Every achievement in this set earned!", 0, 7);
+        toast(!e.subsetTitle.empty() ? e.subsetTitle : "Set complete", "Every achievement in this set earned!", 0, 7);
         break;
     case RC_CLIENT_EVENT_LEADERBOARD_STARTED:
-        toast("Leaderboard attempt started", e->leaderboard && e->leaderboard->title ? e->leaderboard->title : "", 1, 4);
+        toast("Leaderboard attempt started", e.title, 1, 4);
         break;
     case RC_CLIENT_EVENT_LEADERBOARD_FAILED:
-        toast("Leaderboard attempt failed", e->leaderboard && e->leaderboard->title ? e->leaderboard->title : "", 2, 4);
+        toast("Leaderboard attempt failed", e.title, 2, 4);
         break;
     case RC_CLIENT_EVENT_LEADERBOARD_SUBMITTED:
-        toast("Leaderboard submitted", e->leaderboard && e->leaderboard->title ? e->leaderboard->title : "", 1, 5);
+        toast("Leaderboard submitted", e.title, 1, 5);
         break;
-    case RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD:
-        if (e->leaderboard_scoreboard) {
-            char body[160];
-            std::snprintf(body, sizeof body, "Score %s  -  rank %u of %u", e->leaderboard_scoreboard->submitted_score,
-                          e->leaderboard_scoreboard->new_rank, e->leaderboard_scoreboard->num_entries);
-            toast("Leaderboard result", body, 1, 7);
-        }
+    case RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD: {
+        char body[160];
+        std::snprintf(body, sizeof body, "Score %s  -  rank %u of %u", e.submittedScore.c_str(), e.newRank, e.numEntries);
+        toast("Leaderboard result", body, 1, 7);
         break;
+    }
     case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW:
     case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_UPDATE:
-        if (e->leaderboard_tracker) trackers[e->leaderboard_tracker->id] = e->leaderboard_tracker->display;
+        trackers[e.id] = e.display;
         break;
     case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_HIDE:
-        if (e->leaderboard_tracker) trackers.erase(e->leaderboard_tracker->id);
+        trackers.erase(e.id);
         break;
     case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
-        if (e->achievement) challenges[e->achievement->id] = e->achievement->title ? e->achievement->title : "";
+        challenges[e.id] = e.title;
         break;
     case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE:
-        if (e->achievement) challenges.erase(e->achievement->id);
+        challenges.erase(e.id);
         break;
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
-        if (e->achievement) {
-            progress = std::string(e->achievement->title ? e->achievement->title : "") + ": " +
-                       e->achievement->measured_progress;
-            progressBorn = app_ ? app_->now() : 0;
-        }
+        progress = e.title + ": " + e.measured;
+        progressBorn = app_ ? app_->now() : 0;
         break;
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
         progress.clear();
@@ -686,11 +747,7 @@ void Achievements::handleEvent(const rc_client_event_t* e) {
         resetPending_ = true;   // acted on in pump(), never from inside rc_client
         break;
     case RC_CLIENT_EVENT_SERVER_ERROR:
-        if (e->server_error)
-            toast("RetroAchievements server error",
-                  std::string(e->server_error->api ? e->server_error->api : "") + ": " +
-                      (e->server_error->error_message ? e->server_error->error_message : ""),
-                  2, 8);
+        toast("RetroAchievements server error", e.api + ": " + e.error, 2, 8);
         break;
     case RC_CLIENT_EVENT_DISCONNECTED:
         toast("RetroAchievements", "Cannot reach the server. Unlocks are kept and sent when it is back.", 2, 8);
@@ -707,6 +764,7 @@ void Achievements::handleEvent(const rc_client_event_t* e) {
 // ---------------------------------------------------------------------------------
 void Achievements::mockRespond(const std::string& post, rc_client_server_callback_t cb, void* cbdata) {
     const std::string name = formValue(post, "r");
+    std::lock_guard<std::mutex> lock(mockMu_);   // an award arrives here from the emulation thread when it is on
     mockLog_.push_back(name);
     if (name == "gameid" || name == "achievementsets" || name == "patch") {
         const std::string h = formValue(post, "m");
@@ -743,7 +801,10 @@ void Achievements::mockRespond(const std::string& post, rc_client_server_callbac
 
 void Achievements::mockDeliver() {
     std::deque<MockReply> ready;
-    ready.swap(mockQueue_);   // callbacks may queue the next request
+    {
+        std::lock_guard<std::mutex> l(mockMu_);
+        ready.swap(mockQueue_);   // callbacks may queue the next request: never call one with the lock held
+    }
     for (MockReply& r : ready) {
         rc_api_server_response_t sr;
         std::memset(&sr, 0, sizeof sr);
@@ -788,19 +849,22 @@ void Achievements::runStep(const Step& s, unsigned frame) {
     else if (s.action.compare(0, 5, "poke:") == 0 || s.action.compare(0, 7, "expect:") == 0) {
         const bool poke = s.action[0] == 'p';
         unsigned addr = 0, val = 0;
-        uint8_t* ram = nullptr;
-        size_t size = 0;
         if (!parseRam(s.action.substr(poke ? 5 : 7), addr, val)) { fail("bad ADDR=VV"); return; }
-        if (!app_->host.memoryRegion(RETRO_MEMORY_SYSTEM_RAM, ram, size) || addr >= size) { fail("RAM not readable"); return; }
-        if (poke) {
-            ram[addr] = (uint8_t)val;
-        } else if (ram[addr] != (uint8_t)val) {
-            char buf[96];
-            std::snprintf(buf, sizeof buf, "RAM 0x%06X is %02X, expected %02X", addr, (unsigned)ram[addr], val);
-            fail(buf);
-        } else {
-            std::printf("ra-step: frame %u RAM 0x%06X = %02X ok\n", frame, addr, val);
-        }
+        // Core RAM is the emulation thread's (#967): the access runs there; the verdict is computed inside.
+        coreCall([&] {
+            uint8_t* ram = nullptr;
+            size_t size = 0;
+            if (!app_->host.memoryRegion(RETRO_MEMORY_SYSTEM_RAM, ram, size) || addr >= size) { fail("RAM not readable"); return; }
+            if (poke) {
+                ram[addr] = (uint8_t)val;
+            } else if (ram[addr] != (uint8_t)val) {
+                char buf[96];
+                std::snprintf(buf, sizeof buf, "RAM 0x%06X is %02X, expected %02X", addr, (unsigned)ram[addr], val);
+                fail(buf);
+            } else {
+                std::printf("ra-step: frame %u RAM 0x%06X = %02X ok\n", frame, addr, val);
+            }
+        });
     } else {
         fail("unknown step");
     }
@@ -823,7 +887,8 @@ void Achievements::headlessFrame(unsigned frame) {
         unlockedBeforePoke_ = (unsigned)unlocked_.size();
         std::fprintf(stderr, "[ra-test] frame %u: core cheat \"%s\" on (negative control: %u unlocks so far)\n", frame,
                      p.code.c_str(), unlockedBeforePoke_);
-        retro_cheat_set(pokeIndex_++, true, p.code.c_str());
+        coreCall([&] { retro_cheat_set(pokeIndex_, true, p.code.c_str()); });
+        pokeIndex_++;
     }
 }
 
@@ -833,6 +898,15 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         std::fprintf(stderr, "headless: FAIL ra: %s\n", why.c_str());
         ok = false;
     };
+    // A snapshot of the mock server's records (an award reaches it from the emulation thread when that is on); the
+    // lock is not held across the state save / load below.
+    std::vector<std::string> mockLog, mockHashes, mockUnhandled;
+    {
+        std::lock_guard<std::mutex> l(mockMu_);
+        mockLog = mockLog_;
+        mockHashes = mockHashes_;
+        mockUnhandled = mockUnhandled_;
+    }
     if (!mockMode()) {
         if (!a.raExpectUnlock.empty() || !a.raExpectNoUnlock.empty() || !a.raExpectRequests.empty() ||
             !a.raExpectHash.empty() || a.raExpectLoadError || a.raExpectHardcore || a.raExpectSoftcore ||
@@ -840,7 +914,7 @@ bool Achievements::headlessCheck(const CliArgs& a) {
             fail("--ra-expect-*/--ra-poke given but the mock session is not running (--ra-mock missing or unreadable)");
         return ok;
     }
-    for (const std::string& u : mockUnhandled_)
+    for (const std::string& u : mockUnhandled)
         if (u != "ping") fail("the client made a request the fixtures do not answer: r=" + u);
     if (!a.raPokes.empty() && unlockedBeforePoke_ != 0) fail("an achievement fired BEFORE the cheat was applied (the condition is not a real test)");
     for (unsigned id : a.raExpectUnlock)
@@ -850,11 +924,11 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         if (std::find(unlocked_.begin(), unlocked_.end(), id) != unlocked_.end())
             fail("achievement " + std::to_string(id) + " unlocked but must not have");
     for (const std::string& r : a.raExpectRequests)
-        if (std::find(mockLog_.begin(), mockLog_.end(), r) == mockLog_.end()) fail("no " + r + " request was sent");
+        if (std::find(mockLog.begin(), mockLog.end(), r) == mockLog.end()) fail("no " + r + " request was sent");
     if (!a.raExpectHash.empty() &&
-        std::find(mockHashes_.begin(), mockHashes_.end(), a.raExpectHash) == mockHashes_.end()) {
+        std::find(mockHashes.begin(), mockHashes.end(), a.raExpectHash) == mockHashes.end()) {
         std::string seen;
-        for (const std::string& h : mockHashes_) seen += " " + h;
+        for (const std::string& h : mockHashes) seen += " " + h;
         fail("game hash " + a.raExpectHash + " was never sent (sent:" + seen + ")");
     }
     if (a.raExpectLoadError && !loadFailed_) fail("expected the game NOT to be identified, but it was");
@@ -899,10 +973,10 @@ bool Achievements::headlessCheck(const CliArgs& a) {
     }
     if (ok)
         std::printf("ra: OK (%zu unlock(s), game hash %s, %zu request(s): %s)\n", unlocked_.size(),
-                    mockHashes_.empty() ? "-" : mockHashes_.front().c_str(), mockLog_.size(),
+                    mockHashes.empty() ? "-" : mockHashes.front().c_str(), mockLog.size(),
                     [&] {
                         std::string s;
-                        for (const std::string& r : mockLog_) s += (s.empty() ? "" : ",") + r;
+                        for (const std::string& r : mockLog) s += (s.empty() ? "" : ",") + r;
                         return s;
                     }().c_str());
     return ok;

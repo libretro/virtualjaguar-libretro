@@ -237,3 +237,10 @@ set_tests_properties(ra_cheat_softcore ra_cheat_hardcore_blocked ra_cheat_toggle
                      ra_cheat_saved_hardcore ra_cheat_saved_softcore_again PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
+
+# AchEvent: an rc_client event copied so it can cross threads (#967 phase 2).
+add_executable(vj_ach_event_test tests/ach_event_test.cpp src/ach_event.cpp)
+target_include_directories(vj_ach_event_test PRIVATE src)
+target_link_libraries(vj_ach_event_test PRIVATE vj_rcheevos)
+add_test(NAME ach_event_unit COMMAND vj_ach_event_test)
+set_tests_properties(ach_event_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")

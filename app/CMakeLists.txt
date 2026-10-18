@@ -321,6 +321,7 @@ set(VJ_APP_SOURCES
     src/cheats_core.cpp
     src/cheats_ui.cpp
     src/achievements.cpp
+    src/ach_event.cpp
     src/achievements_ui.cpp
     src/achievements_games.cpp
     src/ra_dash.cpp

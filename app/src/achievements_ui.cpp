@@ -189,11 +189,8 @@ void drawThisGame(App& app) {
     if (s.num_core_achievements)
         ImGui::ProgressBar((float)s.num_unlocked_achievements / (float)s.num_core_achievements, ImVec2(-1, 0));
     ImGui::EndGroup();
-    if (rc_client_has_rich_presence(c)) {
-        char rp[256];
-        rc_client_get_rich_presence_message(c, rp, sizeof rp);
-        ImGui::TextWrapped("Now: %s", rp);
-    }
+    const std::string rp = a.richPresence();   // computed on the emulation thread, published every 60 frames (#967)
+    if (!rp.empty()) ImGui::TextWrapped("Now: %s", rp.c_str());
     ImGui::Separator();
 
     const float w = ImGui::GetContentRegionAvail().x;
