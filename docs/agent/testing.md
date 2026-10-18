@@ -306,6 +306,27 @@ real thing (`iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms`
 iterations so the latency column has samples; `--emu-thread on|off` picks the loop, #967). `--option k=v` lists in an `ssh` command run under zsh must be built in `bash` (zsh does not
 word-split `$OPTS`; the option is then silently not applied and the harness prints no `option` line).
 
+## App emulation thread tests (#967)
+
+The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`) is what the ThreadSanitizer CI job runs:
+`ctest --test-dir app/build -C Release -L emu_thread`. Phase 2 added, on top of the phase 1 units and `smoke_*_threaded`:
+
+- **Units:** `core_events_unit` (the core-event queue: order, bounded log lines, content switch, two threads) and
+  `ach_event_unit` (`AchEvent`, an rc_client event copied across threads; in `app/cmake/VJAchTests.cmake`).
+- **RetroAchievements twins:** every RA test is registered through `vj_ra_test()` in `VJAchTests.cmake`, which adds
+  `<name>` (inline) and `<name>_threaded` (same run with `--emu-thread on`, label `emu_thread`; fixture names and the
+  saved-cheat data dir get a `_threaded` suffix so the chains never share state). A test with `PASS` is a control: its twin
+  fails only on `owner violation` or a TSan report. `ra_offthread_validation_threaded` is threaded-only: the game load
+  validates addresses on the UI thread, which must answer from the memory map.
+- **Netplay:** `netplay_pair_threaded`, `netplay_pair_voicemodem_threaded`, `netplay_pair_mixed` (one threaded copy
+  linked to one single-thread copy) and `netplay_no_partner_threaded` (a copy quitting with no peer exits 1, not 3).
+  They are `RUN_SERIAL` and real-time: a "no link within 30s" under heavy host load is load, so re-run them alone
+  before reading anything into it.
+- **Busy spinner:** `smoke_busy_threaded` runs with `VJ_TEST_SLOW_CALL_MS=400` (the load `call()` sleeps that long on
+  the emulation thread, max 5000) and expects `[emu] busy: a call has taken over 250 ms`.
+- **Failed start:** `emu_thread_start_fallback` runs with `VJ_TEST_EMU_START_FAIL=1`, which takes the real failure
+  branch of `App::startEmuThread`: the run falls back inline and the debugger and GDB limits are lifted.
+
 ## Headless framebuffer caveat
 
 The miniretro harness in `test/regression_test.sh` doesn't expose the same composited

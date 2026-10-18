@@ -118,6 +118,10 @@ Classification follows the read-only audit of every UI-to-core touch point (2026
 Callbacks that write app state today change to:
 - `onOptionChanged` (writes the config) and netplay's `onCoreLog`/`onEvent` become snapshot events applied on the main
   thread. The config is only ever written on the main thread.
+  *Amended 2026-10-18 (phase 2): the core-event stream, `app/src/emu_snapshot.h`.* Log lines, `vj_event`s and the
+  option writes made on the owner side travel as `CoreEvent`s in one ordered queue; the UI thread reads them when it
+  pins the newest snapshot, and `CoreHost::onUiEvent` is the UI-side channel they arrive on. `onLog` and `onEvent` stay
+  synchronous on the core's thread (the headless `--disc-insert` check relies on that), so they are not the UI's tap.
 - `fastForward` and `mute` become atomics; "input captured" becomes part of `InputSnapshot`.
 - `audioBufferStatus` reads the SDL stream's queued size (thread-safe) on the emulation thread.
 
@@ -127,6 +131,10 @@ Closed windows cost nothing. The `g` singletons in `app/src/debug/*_ui.cpp` read
 
 **Achievements.** `rc_client_do_frame` runs on the emulation thread after each frame. Unlock, progress and leaderboard
 events go to the main thread through the snapshot. The HTTP worker is unchanged.
+*Amended 2026-10-18 (phase 2): idle and rich presence run on the emulation thread too.* `read_memory` called off it
+(rc_client validates addresses while the game load completes on the UI thread) answers from the core's memory map,
+never from RAM. rc_client events are copied into `AchEvent`s (`app/src/ach_event.h`), queued, and applied in
+`Achievements::pump()` on the UI thread.
 
 **Guards.** The `inFrame_` refusals in `CoreHost` and `App` mostly disappear, because commands wait for the boundary.
 While halted, see section 6.
@@ -151,6 +159,10 @@ verdict wins, as today. The halt timeout is unchanged.
 frame budget assumes one `retro_run` per frontend period, which mode A provides. Its 3 ms frontend margin becomes
 conservative. `Netplay::afterFrame` runs per emulated frame on the emulation thread; its UI-visible state goes through
 the snapshot.
+*Amended 2026-10-18 (phase 2): `Netplay` stays a UI-thread object.* It reads what the core says from the core-event
+stream (`onUiEvent`, with an epoch filter that drops what came before its last start, stop or bounce), and its settings
+reach the core as commands. The restart bounce that a mode change needs is counted in emulated frames
+(`CoreHost::frameCount()`), not in UI-loop iterations, so it lasts as long as the core sees it.
 
 **Run-ahead (if added later).** Lives entirely on the emulation thread.
 
@@ -162,6 +174,12 @@ the snapshot.
   emulation thread), join. If the join takes more than 3 s, log and exit anyway.
 - **Command errors:** caught on the emulation thread and shown as a toast; the thread keeps running.
 - **Slow calls:** after 250 ms the UI shows a spinner instead of freezing.
+  *Amended 2026-10-18 (phase 2): the hook.* `EmuThread::setWaitHook(fn)` (set before `start()`) is called on the thread
+  that waits in `call()` once it has waited `kBusyAfter` (250 ms), then about every 16 ms until the call returns; the
+  first call has tick 0. It may pump OS events and swap a frame it draws with raw GL; it must never open an ImGui
+  frame, call `call()` or `post()`, or read a field that only a `call()` writes. It is never called inline, on the
+  emulation thread, or re-entered. `App::busyFrame` draws `VideoOut::drawBusy`, which replaces the picture with the
+  spinner while the call lasts.
 - **Content switch:** unload and load are calls; `FrameExchange` and `EmuSnapshot` are cleared on load, so no frame or
   option list from the previous game is shown.
 
