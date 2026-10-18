@@ -12,6 +12,7 @@ namespace vj {
 
 struct AchEvent {
     uint32_t type = 0;                 // RC_CLIENT_EVENT_*
+    uint32_t gen = 0;                  // Achievements::eventGen_ when it was queued (a content switch bumps it)
     uint32_t id = 0;                   // achievement / leaderboard / tracker id
     uint32_t points = 0;
     bool hardcore = false;             // rc_client's hardcore flag when the event was raised
@@ -23,6 +24,12 @@ struct AchEvent {
     uint32_t newRank = 0, numEntries = 0;
     std::string subsetTitle;
 };
+
+// Is this event still worth applying after a content switch (load / close) happened between queueing and draining?
+// Transient state of the old game (trackers, challenge and progress indicators, attempt started/failed toasts, a
+// pending hardcore reset) must not leak into the next one: no HIDE would ever come.  A real unlock, the scoreboards,
+// completions and the connection state describe the account, so they are kept.
+bool achKeepStaleEvent(uint32_t type);
 
 AchEvent achEventFrom(const rc_client_event_t& e, bool hardcore);
 

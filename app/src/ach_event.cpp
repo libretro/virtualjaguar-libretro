@@ -6,6 +6,25 @@ namespace {
 std::string str(const char* s) { return s ? std::string(s) : std::string(); }
 }  // namespace
 
+bool achKeepStaleEvent(uint32_t type) {
+    switch (type) {
+    case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW:
+    case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_UPDATE:
+    case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_HIDE:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
+    case RC_CLIENT_EVENT_LEADERBOARD_STARTED:
+    case RC_CLIENT_EVENT_LEADERBOARD_FAILED:
+    case RC_CLIENT_EVENT_RESET:
+        return false;
+    default:
+        return true;   // ACHIEVEMENT_TRIGGERED, GAME/SUBSET_COMPLETED, SUBMITTED, SCOREBOARD, SERVER_ERROR, (RE)CONNECTED
+    }
+}
+
 AchEvent achEventFrom(const rc_client_event_t& e, bool hardcore) {
     AchEvent o;
     o.type = e.type;

@@ -242,6 +242,9 @@ private:
     // rc_client events, copied where they were raised and applied in pump() on the UI thread (#967).
     std::mutex eventMu_;
     std::vector<AchEvent> events_;
+    // Bumped by onContentLoaded / onContentClosed (inside call()s).  Events carry the generation they were queued in;
+    // drainEvents drops the stale transient ones (a tracker from game A must not outlive A).
+    std::atomic<uint32_t> eventGen_{0};
     std::atomic<unsigned> offThreadReads_{0};
     // The rich-presence line, evaluated on the emulation thread every 60 frames.
     mutable std::mutex rpMu_;

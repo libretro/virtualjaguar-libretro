@@ -70,6 +70,21 @@ int main() {
     c = vj::achEventFrom(e, false);
     CHECK(c.title.empty());
 
+    // A content switch between queueing and draining: transient state of the old game is dropped, real results stay.
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_LEADERBOARD_TRACKER_UPDATE));
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW));
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_LEADERBOARD_TRACKER_HIDE));
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW));
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE));
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_LEADERBOARD_STARTED));
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_LEADERBOARD_FAILED));
+    CHECK(!vj::achKeepStaleEvent(RC_CLIENT_EVENT_RESET));
+    CHECK(vj::achKeepStaleEvent(RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED));
+    CHECK(vj::achKeepStaleEvent(RC_CLIENT_EVENT_SERVER_ERROR));
+    CHECK(vj::achKeepStaleEvent(RC_CLIENT_EVENT_DISCONNECTED));
+    CHECK(vj::achKeepStaleEvent(RC_CLIENT_EVENT_RECONNECTED));
+    CHECK(vj::achKeepStaleEvent(RC_CLIENT_EVENT_LEADERBOARD_SUBMITTED));
+
     std::printf("ach_event_test: %s\n", g_fail ? "FAILED" : "OK");
     return g_fail ? 1 : 0;
 }

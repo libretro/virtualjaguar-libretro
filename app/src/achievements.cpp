@@ -338,6 +338,7 @@ void Achievements::beginLoad() {
 // write the UI-side fields.
 void Achievements::onContentLoaded() {
     if (!client_) return;
+    eventGen_.fetch_add(1);   // events the previous game queued but the UI has not pumped yet are stale
     loadedPath_ = app_->host.contentPath();
     ranUnrestricted_ = false;   // a fresh boot
     if (app_) framesSeen_ = app_->emu.framesRun();   // pump() must not count frames that ran before this as the new game's
@@ -372,6 +373,7 @@ void Achievements::onDiscChanged() {
 // Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
 // write the UI-side fields.
 void Achievements::onContentClosed() {
+    eventGen_.fetch_add(1);
     loading_ = false;
     gameKnown_ = false;
     memoryReady_ = false;
@@ -697,6 +699,7 @@ void Achievements::toast(const std::string& title, const std::string& body, int 
 }
 
 void Achievements::queueEvent(AchEvent e) {
+    e.gen = eventGen_.load();
     std::lock_guard<std::mutex> l(eventMu_);
     events_.push_back(std::move(e));
 }
@@ -707,7 +710,11 @@ void Achievements::drainEvents() {
         std::lock_guard<std::mutex> l(eventMu_);
         ready.swap(events_);
     }
-    for (const AchEvent& e : ready) handleEvent(e);
+    const uint32_t gen = eventGen_.load();
+    for (const AchEvent& e : ready) {
+        if (e.gen != gen && !achKeepStaleEvent(e.type)) continue;   // the old game's tracker / indicator: no HIDE would come
+        handleEvent(e);
+    }
 }
 
 void Achievements::handleEvent(const AchEvent& e) {
