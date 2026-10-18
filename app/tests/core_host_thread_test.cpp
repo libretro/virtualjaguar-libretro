@@ -293,6 +293,18 @@ int main(int argc, char** argv) {
         CHECK(!host.optionOverridden(key));
     }
     {
+        // While the UI waits in a call (the spinner's hook runs), the fields only a call() writes may be changing:
+        // reading one there is a bug, counted like any other owner violation.
+        const unsigned v0 = host.ownerViolations();
+        host.setUiWaiting(true);
+        (void)host.isLoaded();
+        (void)host.stagedBios(2);
+        host.setUiWaiting(false);
+        CHECK(host.ownerViolations() == v0 + 2);
+        (void)host.isLoaded();   // not waiting: a direct read is fine
+        CHECK(host.ownerViolations() == v0 + 2);
+    }
+    {
         // The epoch rides the command queue: a call queued after the bump sees it.
         const uint32_t e1 = host.eventEpochBump();
         const uint32_t e2 = host.eventEpochBump();

@@ -1,5 +1,8 @@
 #include "video.h"
 
+#include <SDL3/SDL_video.h>
+
+#include <algorithm>
 #include <cmath>
 
 #include "perf.h"
@@ -8,6 +11,18 @@
 // Entry points come from the ImGui GL3 backend's own loader (declarations
 // only; the definitions live in imgui_impl_opengl3.cpp).
 #include "imgui_impl_opengl3_loader.h"
+
+// The backend's trimmed loader has no framebuffer binding entry points or glGetFloatv: drawBusy resolves them itself
+// (SDL_GL_GetProcAddress, as shaders.cpp does).
+#ifndef GL_DRAW_FRAMEBUFFER
+#define GL_DRAW_FRAMEBUFFER 0x8CA9
+#endif
+#ifndef GL_DRAW_FRAMEBUFFER_BINDING
+#define GL_DRAW_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+#ifndef GL_COLOR_CLEAR_VALUE
+#define GL_COLOR_CLEAR_VALUE 0x0C22
+#endif
 
 // Not in the backend's trimmed constant list.
 #ifndef GL_BGRA
@@ -155,6 +170,46 @@ unsigned VideoOut::createTextureRGBA(const void* pixels, int w, int h) {
 void VideoOut::destroyTexture(unsigned tex) {
     GLuint t = tex;
     if (t) glDeleteTextures(1, &t);
+}
+
+// A "busy" frame while a call() holds the core (#967): the window cleared dark, eight blocks in a ring, one lit and
+// turning.  Scissored clears only (no shader, no texture), so it is safe in the middle of an ImGui frame; the GL
+// state it touches is saved and restored.
+void VideoOut::drawBusy(int fbW, int fbH, double seconds) {
+    typedef void (*BindFramebufferFn)(GLenum target, GLuint framebuffer);
+    typedef void (*GetFloatvFn)(GLenum pname, GLfloat* data);
+    static BindFramebufferFn bindFbo = (BindFramebufferFn)SDL_GL_GetProcAddress("glBindFramebuffer");
+    static GetFloatvFn getFloatv = (GetFloatvFn)SDL_GL_GetProcAddress("glGetFloatv");
+    GLint fb = 0, vp[4], sc[4];
+    GLfloat cc[4] = {0.f, 0.f, 0.f, 1.f};
+    const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
+    glGetIntegerv(GL_VIEWPORT, vp);
+    glGetIntegerv(GL_SCISSOR_BOX, sc);
+    if (getFloatv) getFloatv(GL_COLOR_CLEAR_VALUE, cc);
+    if (bindFbo) bindFbo(GL_DRAW_FRAMEBUFFER, 0);
+    glViewport(0, 0, fbW, fbH);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(0.06f, 0.06f, 0.07f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_SCISSOR_TEST);
+    const int d = std::max(4, std::min(fbW, fbH) / 40);
+    const double r = d * 3.0;
+    const int lit = (int)(seconds * 10.0) % 8;
+    for (int i = 0; i < 8; i++) {
+        const double a = i * 3.14159265358979 / 4.0;
+        const int x = fbW / 2 + (int)(r * std::cos(a)) - d / 2;
+        const int y = fbH / 2 + (int)(r * std::sin(a)) - d / 2;
+        const float v = i == lit ? 0.9f : 0.3f;
+        glScissor(x, y, d, d);
+        glClearColor(v, v, v, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    if (!scissor) glDisable(GL_SCISSOR_TEST);
+    glScissor(sc[0], sc[1], sc[2], sc[3]);
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    glClearColor(cc[0], cc[1], cc[2], cc[3]);
+    if (bindFbo) bindFbo(GL_DRAW_FRAMEBUFFER, (GLuint)fb);
 }
 
 }  // namespace vj

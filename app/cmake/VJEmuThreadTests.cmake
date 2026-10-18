@@ -19,6 +19,7 @@
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
+#   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
 #   *_threaded limits     the debugger and the GDB stub are off while threaded
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
@@ -214,3 +215,12 @@ if(VJ_APP_TSAN)
         COMMAND ${CMAKE_COMMAND} -E env TSAN_OPTIONS=halt_on_error=1:abort_on_error=0 $<TARGET_FILE:vj_tsan_canary>)
     set_tests_properties(tsan_canary PROPERTIES WILL_FAIL TRUE LABELS emu_thread TIMEOUT 60)
 endif()
+
+# A load call slower than 250 ms (VJ_TEST_SLOW_CALL_MS stalls it on the emulation thread) runs the wait hook on the UI
+# thread; headless, that logs once (windowed, it swaps the spinner frame).
+add_test(NAME smoke_busy_threaded
+    COMMAND ${CMAKE_COMMAND} -E env VJ_TEST_SLOW_CALL_MS=400
+            $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 30 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_busy_threaded PROPERTIES TIMEOUT 120 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "\\[emu\\] busy: a call has taken over 250 ms"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")

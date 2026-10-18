@@ -77,7 +77,7 @@ public:
     void emitLogLine(int level, const std::string& line);
     // True once the core's HELLO was answered in the current session: the events are then authoritative
     // and the matching log lines need no parsing.
-    bool eventsActive() const { return helloSeen_; }
+    bool eventsActive() const { noteWaitingRead("eventsActive"); return helloSeen_; }
     uint64_t eventCount() const { return eventsSeen_; }
 
     // ---- BIOS selection (VJ_ENV_GET_BIOS_PATH / VJ_ENV_GET_BOOT_TARGET, vj_frontend_ext.h) ----
@@ -102,7 +102,9 @@ public:
         bool rejected = false;     // a file the app named was refused (VJ_EVT_BIOS_REJECTED)
         std::string rejectedPath;
     };
-    const StagedBios& stagedBios(unsigned role) const { return staged_[role >= 1 && role <= 2 ? role : 0]; }
+    const StagedBios& stagedBios(unsigned role) const {
+        noteWaitingRead("stagedBios");
+        return staged_[role >= 1 && role <= 2 ? role : 0]; }
 
     // ---- debug tools (VJ_CAP_DEBUG / VJ_ENV_SET_DEBUG_IFACE, vj_debug_iface.h) ----
     // The core hands over its debug interface once per session, right after the HELLO.  Off: the HELLO
@@ -110,7 +112,7 @@ public:
     bool announceDebug = true;
     // The interface of the current session, or null (before the first load, after an unload, or when the
     // core never sent it).  Valid until the next unload; every call through it is made on this thread.
-    const vj_debug_iface* debugIface() const { return debugIface_; }
+    const vj_debug_iface* debugIface() const { noteWaitingRead("debugIface"); return debugIface_; }
     // Called when the interface arrives (non-null) and just before it goes away on an unload (null).
     std::function<void(const vj_debug_iface*)> onDebugIface;
     // True while the core is inside retro_run().  A debugger halt parks the core there and runs the UI,
@@ -135,7 +137,7 @@ public:
     // Boot the console with an empty cartridge slot (SET_SUPPORT_NO_GAME).
     bool loadNoContent(std::string& err);
     void unloadContent();
-    bool isLoaded() const { return loaded_; }
+    bool isLoaded() const { noteWaitingRead("isLoaded"); return loaded_; }
     // What is running: the opened file (an .m3u: its first disc), or after a disc swap the disc in the tray (a swap moves it only once the new
     // disc has booted; an open tray or a failed insert leaves it alone).  Save states, achievements, cheats and the
     // window title follow it.
@@ -144,8 +146,8 @@ public:
     // What was opened, which a disc swap never changes.  The .srm is named after it: the core keeps its save RAM (the
     // EEPROM pair and the Memory Track, libretro.c) across an insert and never reloads it, so the file must stay the
     // one it was read from.  A restart reopens it too.  An .m3u playlist is what was opened: one .srm per set.
-    const std::string& loadedPath() const { return loadedPath_; }
-    const std::string& loadedName() const { return loadedName_; }
+    const std::string& loadedPath() const { noteWaitingRead("loadedPath"); return loadedPath_; }
+    const std::string& loadedName() const { noteWaitingRead("loadedName"); return loadedName_; }
     unsigned discSwaps() const { return onOwner() ? discSwaps_ : ui_.discSwaps; }   // counts moves of contentPath
     // An .m3u's discs, resolved against its folder.  False (with `err`) when it cannot be read, lists nothing, or an
     // entry is missing or not a CD image -- a disc that is not there would still register and fail only when picked.
@@ -247,7 +249,10 @@ public:
     std::string saveRamPath() const;
 
     // ---- controllers / discs ---------------------------------------------
-    const std::vector<std::vector<ControllerType>>& controllerPorts() const { return controllerPorts_; }
+    const std::vector<std::vector<ControllerType>>& controllerPorts() const {
+        noteWaitingRead("controllerPorts");
+        return controllerPorts_;
+    }
     void setControllerDevice(unsigned port, unsigned device);
     DiscInfo discInfo();
     void discSetEject(bool eject);
@@ -291,6 +296,9 @@ public:
     void publishSnapshot();   // emulation thread: after each frame and each command batch
     void pinSnapshot();       // UI thread, once per UI iteration; what the readers return stays valid until the next pin
     unsigned ownerViolations() const { return ownerViolations_.load(); }
+    // The UI thread is waiting in an EmuThread::call() and its wait hook is running (the busy spinner): the fields only
+    // a call() writes may be changing, so reading one off the owner now is a violation (noteWaitingRead).
+    void setUiWaiting(bool w) { uiWaiting_.store(w); }
 
 private:
     CoreHost() = default;
@@ -375,6 +383,8 @@ private:
     DiscInfo discInfoLive();
     int appendDiscImage(const std::string& path);   // discAppend without the loaded / owner checks (loadContent)
     const OptionTable& uiTable() const;
+    std::atomic<bool> uiWaiting_{false};
+    bool noteWaitingRead(const char* what) const;   // true (counted, logged once) for a call()-guarded read while the UI waits
     bool noteOffOwner(const char* what) const;   // true (counted, logged once) when called off the owner
     void queue(std::function<void()> fn);         // through `post`, or now when there is none
     void applyUserValue(const std::string& key, const std::string* value);   // null = erase; the core's copy only

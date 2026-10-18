@@ -1228,6 +1228,15 @@ bool CoreHost::noteOffOwner(const char* what) const {
     return true;
 }
 
+bool CoreHost::noteWaitingRead(const char* what) const {
+    if (!uiWaiting_.load() || onOwner()) return false;
+    ownerViolations_.fetch_add(1);
+    std::lock_guard<std::mutex> l(violationMu_);
+    if (violationSeen_.insert(what).second)
+        std::fprintf(stderr, "[core_host] owner violation: %s while the UI waits in a call\n", what);
+    return true;
+}
+
 void CoreHost::queue(std::function<void()> fn) {
     if (post) {
         post(std::move(fn));

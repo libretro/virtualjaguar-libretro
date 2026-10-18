@@ -387,6 +387,42 @@ void testAdvanceExact() {
     CHECK(e.stop(), "stop");
 }
 
+// #967 phase 2: a call() slower than 250 ms runs the wait hook on the caller (the UI draws a spinner there); a fast
+// one never does; the hook is never re-entered and never runs on the emulation thread.
+void testWaitHook() {
+    EmuThread e;
+    FakeClient c;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    std::atomic<int> calls{0};
+    std::atomic<int> firstTicks{0};
+    std::atomic<bool> onEmu{false};
+    std::atomic<bool> nested{false};
+    std::atomic<int> depth{0};
+    e.setWaitHook([&](double waited, unsigned tick) {
+        if (depth.fetch_add(1) != 0) nested = true;
+        if (e.onEmuThread()) onEmu = true;
+        if (tick == 0) firstTicks++;
+        if (waited < 0.24) nested = true;   // (abuse the flag: never before 250 ms)
+        calls++;
+        depth--;
+    });
+    e.call([] { return 0; });
+    CHECK(calls.load() == 0, "a fast call runs no hook (%d)", calls.load());
+    e.call([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(450));
+        return 0;
+    });
+    CHECK(calls.load() >= 3, "a 450 ms call runs the hook repeatedly from 250 ms (%d)", calls.load());
+    CHECK(firstTicks.load() == 1, "tick 0 once per call (%d)", firstTicks.load());
+    CHECK(!onEmu.load(), "never on the emulation thread");
+    CHECK(!nested.load(), "never re-entered, never before 250 ms");
+    const int before = calls.load();
+    e.post([] { std::this_thread::sleep_for(std::chrono::milliseconds(400)); });   // a slow post: nobody waits on it
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    CHECK(calls.load() == before, "posts never run the hook");
+    CHECK(e.stop(), "stop");
+}
+
 }  // namespace
 
 int main() {
@@ -406,6 +442,7 @@ int main() {
     testAdvanceExact();
     testJoinTimeout();
     testPendingCallAbandoned();
+    testWaitHook();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

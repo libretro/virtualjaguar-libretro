@@ -564,6 +564,12 @@ void App::perfSample() {
 void App::startEmuThread() {
     if (!emuClient_) emuClient_.reset(new EmuClient(*this));
     host.post = [this](std::function<void()> fn) { emu.post(std::move(fn)); };
+    emu.setWaitHook([this](double waited, unsigned tick) { busyFrame(waited, tick); });
+    testSlowCallMs_ = 0;
+    if (const char* slow = SDL_getenv("VJ_TEST_SLOW_CALL_MS")) {
+        const long ms = std::strtol(slow, nullptr, 10);
+        testSlowCallMs_ = ms < 0 ? 0u : ms > 5000 ? 5000u : (unsigned)ms;
+    }
     if (!emu.start(EmuThread::Mode::Threaded, *emuClient_)) {
         host.post = nullptr;
         std::fprintf(stderr, "[emu] could not start the emulation thread; running emulation on the UI thread\n");
@@ -571,6 +577,23 @@ void App::startEmuThread() {
     }
     syncEmuFlags();
     std::fprintf(stderr, "[emu] emulation thread on\n");
+}
+
+// The emulation thread is busy with a call() the UI waits on (#967): keep the window alive and say so.  Called by
+// EmuThread::call() on this thread -- possibly in the middle of an ImGui frame -- so: no ImGui, no call(), no event
+// dispatch (SDL_PumpEvents only queues them), no read of a field only a call() writes (CoreHost counts those).
+void App::busyFrame(double waited, unsigned tick) {
+    if (tick == 0) std::fprintf(stderr, "[emu] busy: a call has taken over 250 ms\n");
+    if (!window_ || !imguiUp_) return;
+    host.setUiWaiting(true);
+    SDL_PumpEvents();
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(window_, &w, &h);
+    if (w > 0 && h > 0) {
+        video.drawBusy(w, h, waited);
+        SDL_GL_SwapWindow(window_);
+    }
+    host.setUiWaiting(false);
 }
 
 void App::stopEmuThread() {
@@ -1021,6 +1044,7 @@ bool App::openContent(const std::string& pathIn) {
 
 // The part of openContent that touches the core, and what feeds it (#967: the emulation thread runs it).
 bool App::openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors) {
+    if (testSlowCallMs_) SDL_Delay(testSlowCallMs_);   // VJ_TEST_SLOW_CALL_MS (smoke_busy_threaded)
     host.setDirectories(paths.system, paths.saves);
     applyBios();
     frames.clear();   // no frame of the previous game is shown after this

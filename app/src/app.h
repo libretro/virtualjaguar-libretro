@@ -418,6 +418,7 @@ private:
     struct EmuClient;                          // EmuThread::Client -> App (app.cpp)
     std::unique_ptr<EmuClient> emuClient_;
     void startEmuThread();                     // after the window and the audio device; stays inline if it cannot
+    void busyFrame(double waited, unsigned tick);   // EmuThread::call's wait hook (>= 250 ms): the spinner frame
     void stopEmuThread();                      // exits the process if the thread is stuck in the core
     void emuRunOneFrame();                     // emulation thread: one frame, then publish it
     double emuAudioQueuedMs() const;           // mode A's audio clock, or -1 for none
@@ -464,6 +465,7 @@ private:
     std::string dataDirArg_;          // --data-dir as given (forwarded to a New Window copy)
     std::string headlessTmp_;
     unsigned headlessLoads_ = 0;
+    unsigned testSlowCallMs_ = 0;     // VJ_TEST_SLOW_CALL_MS: the load call() sleeps this long (smoke_busy_threaded)
     std::string biosOnce_[3];         // a one-off BIOS boot's file per role (bootBios): beats everything, until the next load
     std::string biosCli_[3];          // --cart-bios / --cd-bios: beats the saved choice for the whole run
     unsigned bootTarget_ = 0;         // what a no-content boot enters (VJ_BOOT_*)

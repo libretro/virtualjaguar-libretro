@@ -31,6 +31,8 @@
 
 namespace vj {
 
+inline thread_local bool g_inWaitHook = false;   // EmuThread::call: the wait hook is running on this thread
+
 class EmuThread {
 public:
     // What the loop drives.  Every method runs on the emulation thread (on the caller, inline).
@@ -92,6 +94,12 @@ public:
     void setFastForward(bool on) {
         if (ff_.exchange(on) != on) cmds_.notify();
     }
+    static constexpr std::chrono::milliseconds kBusyAfter{250};
+    // Called on the thread waiting in call() once it has waited kBusyAfter, then about every 16 ms until the call
+    // returns (tick 0 first).  See the contract in docs/app-emulation-thread-plan-phase2.md (Task 7): it may pump OS
+    // events and swap a frame drawn with raw GL; it must never open an ImGui frame, call()/post(), or read a field that
+    // only a call() writes.  Never called inline, on the emulation thread, or re-entered.  Set before start().
+    void setWaitHook(std::function<void(double waitedSec, unsigned tick)> hook) { waitHook_ = std::move(hook); }
     void setAudioTargetMs(double ms) { targetMs_.store(ms); }
     // Default on: user-interactive QoS on Apple (set when the thread starts) and a precise last stretch before each
     // frame's due time.  Off: the plain condition wait (#967 A/B, --emu-wake plain).
@@ -107,6 +115,7 @@ private:
     void notifyFrame();
 
     Client* client_ = nullptr;
+    std::function<void(double, unsigned)> waitHook_;   // set before start(); read only by call()'s waiter
     EmuCommands cmds_;
     std::thread thread_;
     std::atomic<State> state_{State::Inline};
@@ -136,8 +145,20 @@ auto EmuThread::call(F&& fn) -> decltype(fn()) {
         (*task)();
     }
     // The task is in the queue.  An abandoned thread never answers it: poll for that instead of blocking in get().
-    while (done.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+    // Past kBusyAfter, the wait hook runs between slices (the UI's spinner).
+    const auto t0 = std::chrono::steady_clock::now();
+    unsigned tick = 0;
+    for (;;) {
+        const bool busy = waitHook_ && !g_inWaitHook && std::chrono::steady_clock::now() - t0 >= kBusyAfter;
+        if (done.wait_for(busy ? std::chrono::milliseconds(16) : std::chrono::milliseconds(50)) ==
+            std::future_status::ready)
+            break;
         if (abandoned()) return R();
+        if (waitHook_ && !g_inWaitHook && std::chrono::steady_clock::now() - t0 >= kBusyAfter) {
+            g_inWaitHook = true;
+            waitHook_(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), tick++);
+            g_inWaitHook = false;
+        }
     }
     return done.get();
 }
