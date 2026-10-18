@@ -1539,6 +1539,9 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_N:
         if (mod) newWindow();
         break;
+    case SDLK_T:   // View > TV mode, fixed (not a rebindable action); the game keeps running.  A no-op when the setting is Off
+        if (mod && shift && !input.capturing() && !input.uiWantsKeyboard) toggleTvMode();
+        break;
     default: break;
     }
 }

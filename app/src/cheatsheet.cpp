@@ -62,6 +62,7 @@ struct Builder {
         ctl(C_OVERLAY);
         ctl(C_HELP);
         ctl(C_TVMENU);
+        line("TV mode", "Ctrl/Cmd+Shift+T");   // fixed, not a binding
     }
 };
 

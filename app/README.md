@@ -110,6 +110,8 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
 | A S D, Q E | Jaguar Pro Controller X Y Z and left / right shoulder (keypad 9 8 7, 4 6) |
 | F2 | keypad overlay |
+| Ctrl/Cmd+Shift+T | toggle TV mode (View > TV mode), with or without a game; the game keeps running. Fixed, not rebindable |
+| F4, or a Share hold | the "TV menu / TV mode" action (rebindable): with a game it opens the in-game TV menu, without one it toggles TV mode |
 | F3 | controls overlay: a cheat sheet of your current bindings (also View menu) |
 | Esc / F10 | release the captured mouse; F10 or a click on the picture captures it again (see below) |
 | F5 / F7 / F6 | save state / load state / next slot (Shift+F6 previous) |

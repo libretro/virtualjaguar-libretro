@@ -160,7 +160,7 @@ MenuBar buildMenuBar(const MenuState& s) {
         v.push_back(item(Cmd::ControlsOverlay, "Controls Overlay", "", true, s.controlsOverlay));
         v.push_back(sep());
         v.push_back(item(Cmd::HomeLibrary, "Library on Home Screen", "", true, s.homeLibrary));
-        v.push_back(item(Cmd::TvMode, "TV Mode", "", s.tvAvailable, s.tvMode));
+        v.push_back(item(Cmd::TvMode, "TV Mode", "cmd+shift+t", s.tvAvailable, s.tvMode));
         v.push_back(item(Cmd::VSync, "VSync", "", true, s.vsync));
         bar.menus.push_back(submenu("View", std::move(v)));
     }

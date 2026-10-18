@@ -3,7 +3,7 @@
 # One event per line:  <ms> <verb> <args>.  <ms> is a script time; the gap to the previous line is the least real time
 # that passes between the two (the hold arbiter reads the real clock).  Lines starting with # are comments.
 #   load PATH            drop PATH on the window (the normal drop route)
-#   key down|up|tap NAME a key event (SDL scancode name: F4, Escape, F8; "ctrl+L" = with Ctrl held)
+#   key down|up|tap NAME a key event (SDL scancode name: F4, Escape, F8; "ctrl+L", "ctrl+shift+T" = with those held)
 #   pad down|up|tap BTN  a button on the runner's virtual gamepad (SDL button name: a, b, dpdown, misc1)
 #   focus lost|gained    the window loses / gets keyboard focus
 #   typing on|off        pretend a text box has focus (input.uiWantsKeyboard)
@@ -267,3 +267,48 @@
 6480  expect kb-bind=help:Return
 6500  key tap F4
 6540  expect tv=0
+
+# Ctrl+Shift+T (Cmd+Shift+T on a Mac) toggles TV mode with or without a game, whatever F4 is bound to; a game keeps running
+# and the in-game menu stays shut.  It is ignored while a text box has the keyboard or a binding is being captured, and does
+# nothing when the TV-mode setting is Off.
+6560  key tap ctrl+shift+T
+6600  expect tv=1
+6600  expect menu-open=0
+6600  key tap ctrl+shift+T
+6640  expect tv=0
+6640  key tap ctrl+T
+6680  expect tv=0                # Ctrl alone is not the shortcut
+6680  key tap shift+T
+6720  expect tv=0
+6720  typing on
+6740  key tap ctrl+shift+T
+6780  expect tv=0
+6780  typing off
+6780  capture help
+6800  key tap ctrl+shift+T
+6840  expect tv=0
+6840  key tap Return             # ends the capture, if the shortcut did not already
+6880  expect capturing=0
+6880  tvsetting off
+6900  key tap ctrl+shift+T
+6940  expect tv=0
+6940  tvsetting manual
+
+# With a game loaded: the shortcut turns TV mode on and off, the game stays loaded and running, no menu opens.
+6960  load @VJ_ROMS@/yarc.j64
+7000  expect loaded=1
+7000  key tap ctrl+shift+T
+7040  expect tv=1
+7040  expect loaded=1
+7040  expect menu-open=0
+7040  expect paused=0
+7040  key tap ctrl+shift+T
+7080  expect tv=0
+7080  expect loaded=1
+7080  expect menu-open=0
+7080  expect paused=0
+7080  key tap F4              # F4 with a game is still the menu, not the TV-mode toggle
+7120  expect menu-open=1
+7120  expect tv=0
+7120  key tap F4
+7160  expect menu-open=0
