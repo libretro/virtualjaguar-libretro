@@ -291,6 +291,13 @@ int App::tvScriptStep() {
             const std::vector<InputManager::PadInfo> pads = input.pads();
             if (it == tv::Intent::None || pads.empty()) return fail(l, "capture nav: wants a menu intent key (confirm, back, ...) and a pad");
             input.beginNavCapture(pads[0].guid, it);
+        } else if (verb == "navdefault") {   // navdefault INTENT -- the Default button of that menu intent of the virtual pad
+            tv::Intent it = tv::Intent::None;
+            for (tv::Intent k : kNavIntents)
+                if (arg1 == navIntentKey(k)) it = k;
+            const std::vector<InputManager::PadInfo> pads = input.pads();
+            if (it == tv::Intent::None || pads.empty()) return fail(l, "navdefault wants a menu intent key and a pad");
+            input.resetNavBinding(pads[0].guid, it);
         } else if (verb == "capture") {
             Ctl c = C_HELP;
             if (!ctlByName(arg1, c)) return fail(l, "capture wants help|tvmenu");

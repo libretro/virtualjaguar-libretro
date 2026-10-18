@@ -429,28 +429,45 @@ void InputManager::beginNavCapture(const std::string& guid, tv::Intent in) {
     startCapture(DeviceClass::Gamepad);
 }
 
-// A pad button (or trigger push) was captured for a menu intent.  The pad's TV-menu bindings are reserved: the button that
-// opens the TV menu must not also be a library button.
-void InputManager::bindNavCaptured(const Binding& captured) {
+// A pad button (or trigger push) was captured for a menu intent.
+void InputManager::bindNavCaptured(const Binding& captured) { applyNavBinding(capNavGuid_, capNavIntent_, captured); }
+
+// Default on one intent: back to the family's button.  Through setNavBinding, so whoever swapped into that button gets the
+// intent's old one back and no two intents end up on one button.
+void InputManager::resetNavBinding(const std::string& guid, tv::Intent in) {
+    for (const Pad& p : pads_) {
+        if (p.guid != guid) continue;
+        const NavProfile def = familyNavProfile(p.nav.family);
+        applyNavBinding(guid, in, def.binds[(size_t)(std::find(std::begin(kNavIntents), std::end(kNavIntents), in) - std::begin(kNavIntents))]);
+        return;
+    }
+}
+
+// Binds `b` to menu intent `in` for the model: the pad's TV-menu bindings are reserved (the button that opens the TV menu
+// must not also be a library button).
+void InputManager::applyNavBinding(const std::string& guid, tv::Intent in, const Binding& b) {
     if (!cfg_) return;
     const Pad* pad = nullptr;
     for (const Pad& p : pads_)
-        if (p.guid == capNavGuid_) {
+        if (p.guid == guid) {
             pad = &p;
             break;
         }
     if (!pad) return;   // the model's last pad went away while the capture ran
     NavResult r;
     r.valid = true;
-    r.guid = capNavGuid_;
-    r.intent = capNavIntent_;
-    r.bound = captured;
-    std::vector<Binding> reserved = pad->profile.binds[C_TVMENU];
+    r.guid = guid;
+    r.intent = in;
+    r.bound = b;
+    const std::vector<Binding> reserved = pad->profile.binds[C_TVMENU];
     const NavProfile before = pad->nav;
-    r.set = setNavBinding(*cfg_, capNavGuid_, (int)SDL_GetGamepadType(pad->handle), capNavIntent_, captured, reserved);
+    r.set = setNavBinding(*cfg_, guid, (int)SDL_GetGamepadType(pad->handle), in, b, reserved);
     if (r.set == NavSet::Swapped)
-        for (size_t i = 0; i < before.binds.size(); i++)
-            if (kNavIntents[i] != capNavIntent_ && before.binds[i] == captured) r.other = kNavIntents[i];
+        for (size_t i = 0; i < before.binds.size(); i++) {
+            // (setNavBinding compares kind / code / dir: a hold flag does not make two buttons different)
+            const Binding& o = before.binds[i];
+            if (kNavIntents[i] != in && o.kind == b.kind && o.code == b.code && o.dir == b.dir) r.other = kNavIntents[i];
+        }
     navResult_ = r;
     if (r.set != NavSet::Reserved) {
         cfg_->save();

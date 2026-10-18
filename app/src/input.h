@@ -173,6 +173,8 @@ public:
     // menu intent `in` (setNavBinding): nothing is written to the game bindings.  The result -- stored, swapped with another
     // intent, or refused as reserved -- is in lastNav(); the config is saved and every pad re-resolved.  Esc cancels.
     void beginNavCapture(const std::string& guid, tv::Intent in);
+    // Default for one intent: the family's button again (swapping the partner back); saves and re-resolves like a capture.
+    void resetNavBinding(const std::string& guid, tv::Intent in);
     bool navCapturing() const { return capture_.active() && capNav_; }
     tv::Intent navCaptureIntent() const { return capNavIntent_; }
     struct NavResult {
@@ -202,6 +204,7 @@ private:
     };
     void bindCaptured(const Binding& b);
     void bindNavCaptured(const Binding& b);
+    void applyNavBinding(const std::string& guid, tv::Intent in, const Binding& b);
     void startCapture(DeviceClass cls);   // arm capture_ with every pad's resting axes as the baseline
     DevKind mousePortKind() const;
 

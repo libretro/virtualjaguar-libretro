@@ -11,6 +11,7 @@
 #   capture nav:INTENT   begin rebinding a menu button of the virtual pad (confirm back menu favorite start tabprev tabnext pageprev
 #                        pagenext search): the next pad button becomes it (#1021).  expect cfg=...{padguid}... is its GUID.
 #   tvsetting off|manual|auto  set the stored TV-mode setting and reconfigure (as Settings will); off = never, auto acts as manual
+#   navdefault INTENT    the Default button of that menu intent of the virtual pad (back to the family's button, partner swapped back)
 #   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
 #   expect tv=0|1         TV mode is on
 #   expect tv-screen=ID   the id of the TV screen on top (home, library, ...)
@@ -398,13 +399,17 @@
 8200  expect capturing=0
 8200  expect cfg=input.padguid.{padguid}.nav.confirm:by
 8200  expect cfg=input.padguid.{padguid}.nav.favorite:ba
+# Default on one half of the swap puts both back: no two intents on one button, and no stray key.
+8200  navdefault confirm
+8240  expect cfg=input.padguid.{padguid}.nav.confirm:absent
+8240  expect cfg=input.padguid.{padguid}.nav.favorite:absent
 # A reserved button is refused and writes nothing: the D-pad moves, so it cannot be a menu button.
-8200  capture nav:back
-8240  pad tap dpup
-8280  expect capturing=0
-8280  expect cfg=input.padguid.{padguid}.nav.back:absent
+8240  capture nav:back
+8280  pad tap dpup
+8320  expect capturing=0
+8320  expect cfg=input.padguid.{padguid}.nav.back:absent
 # Esc cancels a menu-button capture without writing anything.
-8280  capture nav:search
-8320  key tap Escape
-8360  expect capturing=0
-8360  expect cfg=input.padguid.{padguid}.nav.search:absent
+8320  capture nav:search
+8360  key tap Escape
+8400  expect capturing=0
+8400  expect cfg=input.padguid.{padguid}.nav.search:absent

@@ -94,7 +94,7 @@ void drawMenuButtons(App& app, const InputManager::PadInfo* pad, bool gameScope)
         const std::string autoLabel = std::string("Auto (") + familyName(pad->detected) + ")";
         const PadFamily kFamilies[] = {PadFamily::Xbox, PadFamily::PlayStation, PadFamily::Switch, PadFamily::Generic};
         ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 10.0f, 18.0f));
-        if (ImGui::BeginCombo("Layout", overridden ? familyName(cur) : autoLabel.c_str())) {
+        if (ImGui::BeginCombo("Family", overridden ? familyName(cur) : autoLabel.c_str())) {
             if (ImGui::Selectable(autoLabel.c_str(), !overridden) && overridden) {
                 setNavFamily(app.cfg, pad->guid, "auto");
                 dirty = true;
@@ -129,10 +129,7 @@ void drawMenuButtons(App& app, const InputManager::PadInfo* pad, bool gameScope)
                 if (ImGui::SmallButton("Set")) in.beginNavCapture(pad->guid, it);
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!app.cfg.has(key));
-                if (ImGui::SmallButton("Default")) {
-                    app.cfg.erase(key);
-                    dirty = true;
-                }
+                if (ImGui::SmallButton("Default")) in.resetNavBinding(pad->guid, it);   // saves and re-resolves
                 ImGui::EndDisabled();
             }
             ImGui::PopID();
