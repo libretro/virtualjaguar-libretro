@@ -398,7 +398,6 @@ bool App::initImGui() {
 void App::shutdown() {
     if (host.isLoaded()) autoSave();   // quitting: keep where the game was
     discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
-    ach.shutdown();
     // Unload (it flushes SRAM) where the core lives, then stop the thread.  A core stuck inside retro_run (it should
     // not happen in phase 1: the GDB stub is locked off) must not hang the quit: give up after 3 s and exit.
     if (host.isLoaded() && !emu.callFor(std::chrono::milliseconds(3000), [this] { host.unloadContent(); })) {
@@ -407,6 +406,9 @@ void App::shutdown() {
         std::_Exit(3);   // nonzero: a wedged quit must be visible
     }
     stopEmuThread();
+    // Only now: until the emulation thread is gone it may be inside rc_client_do_frame or a posted emuIdle.  Still before
+    // video.shutdown() -- images.stop() needs the GL context.
+    ach.shutdown();
     invalidateThumbs();
     shutdownDebugTools();    // the Textures / Object list windows hold GL textures
     video.shutdown();

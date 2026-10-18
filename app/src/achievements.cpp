@@ -340,6 +340,7 @@ void Achievements::onContentLoaded() {
     if (!client_) return;
     loadedPath_ = app_->host.contentPath();
     ranUnrestricted_ = false;   // a fresh boot
+    if (app_) framesSeen_ = app_->emu.framesRun();   // pump() must not count frames that ran before this as the new game's
     {
         std::lock_guard<std::mutex> l(rpMu_);
         richPresence_.clear();   // a replacement load never shows the previous game's line
@@ -389,6 +390,7 @@ void Achievements::onContentClosed() {
 
 void Achievements::onReset() {
     ranUnrestricted_ = false;
+    if (app_) framesSeen_ = app_->emu.framesRun();   // as onContentLoaded
     if (client_ && rc_client_is_game_loaded(client_)) rc_client_reset(client_);
 }
 
