@@ -64,7 +64,8 @@ enum class NavSet { Ok, Swapped, Reserved };
 NavSet setNavBinding(Config& cfg, const std::string& guid, int sdlGamepadType, tv::Intent in, const Binding& b,
                      const std::vector<Binding>& reserved);
 
-// "auto" (or anything that is not a family key) erases the override.
+// "auto" (or anything that is not a family key) erases the override.  Either way the model's per-intent overrides are
+// erased too: a family change means that family's defaults.
 void setNavFamily(Config& cfg, const std::string& guid, const std::string& keyOrAuto);
 void clearNavProfile(Config& cfg, const std::string& guid);   // erases every key under navKeyPrefix(guid)
 

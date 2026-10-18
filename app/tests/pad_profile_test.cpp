@@ -6,6 +6,12 @@
 #include "pad_profile.h"
 
 #include <cstdio>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
+#include <unistd.h>
+#endif
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -281,7 +287,7 @@ static void testStoredGarbageIgnored() {
 }
 
 static void testRoundTrip() {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vj_pad_profile_test";
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("vj_pad_profile_test_" + std::to_string((long long)getpid()));
     std::filesystem::create_directories(dir);
     const std::string path = (dir / "config.ini").string();
     std::filesystem::remove(path);
@@ -312,6 +318,42 @@ static void testRoundTrip() {
     CHECK(b.intentForButton(SDL_GAMEPAD_BUTTON_LEFT_STICK) == Intent::PagePrev);
     CHECK(b.intentForButton(EAST) == Intent::Accept);   // the Switch family under the layer
     std::filesystem::remove(path);
+    std::filesystem::remove(dir);
+}
+
+static void testFamilyChangeClearsOverrides() {
+    // Customise on an Xbox pad, then every way of changing the family drops the overrides and gives pure defaults.
+    const char* targets[] = {"switch", "playstation", "generic", "xbox", "auto"};
+    for (const char* target : targets) {
+        Config c;
+        setNavBinding(c, GUID, XBOX, Intent::Accept, Binding::button(NORTH), kNoReserved);
+        setNavBinding(c, GUID, XBOX, Intent::Search, Binding::button(SDL_GAMEPAD_BUTTON_MISC1), kNoReserved);
+        setNavBinding(c, GUID, XBOX, Intent::PagePrev, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK), kNoReserved);
+        CHECK(keyCount(c, GUID) >= 4);
+        setNavFamily(c, GUID, target);
+        PadFamily want = familyForType(XBOX);
+        familyFromKey(target, want);   // "auto" leaves the pad's own family
+        const NavProfile p = resolveNavProfile(c, GUID, XBOX), d = familyNavProfile(want);
+        CHECK(p.family == want);
+        for (size_t i = 0; i < 10; i++) CHECK(p.binds[i] == d.binds[i]);
+        CHECK(keyCount(c, GUID) == (std::string(target) == "auto" ? 0u : 1u));   // only the family key remains
+    }
+    // From an explicit family back to auto: overrides made under the explicit family go too.
+    Config c;
+    setNavFamily(c, GUID, "switch");
+    setNavBinding(c, GUID, XBOX, Intent::Back, Binding::button(NORTH), kNoReserved);
+    CHECK(keyCount(c, GUID) >= 3);
+    setNavFamily(c, GUID, "auto");
+    CHECK(keyCount(c, GUID) == 0);
+    const NavProfile p = resolveNavProfile(c, GUID, XBOX);
+    CHECK(p.family == PadFamily::Xbox && !p.familyOverridden);
+    for (size_t i = 0; i < 10; i++) CHECK(p.binds[i] == familyNavProfile(PadFamily::Xbox).binds[i]);
+    // Another model's layer and this model's game bindings are untouched.
+    Config d;
+    setNavBinding(d, OTHER, XBOX, Intent::Search, Binding::button(SDL_GAMEPAD_BUTTON_MISC1), kNoReserved);
+    d.set("input.padguid." + GUID + ".A", "bsouth");
+    setNavFamily(d, GUID, "switch");
+    CHECK(keyCount(d, OTHER) == 1 && d.has("input.padguid." + GUID + ".A"));
 }
 
 static void testButtonNames() {
@@ -338,7 +380,7 @@ static void testButtonNames() {
     CHECK(navButtonName(PadFamily::Switch, Binding::button(SDL_GAMEPAD_BUTTON_START)) == "+");
     CHECK(navButtonName(PadFamily::Xbox, Binding::button(SDL_GAMEPAD_BUTTON_BACK)) == "View");
     CHECK(navButtonName(PadFamily::PlayStation, Binding::button(SDL_GAMEPAD_BUTTON_BACK)) == "Create");
-    CHECK(navButtonName(PadFamily::Switch, Binding::button(SDL_GAMEPAD_BUTTON_BACK)) == "\xE2\x88\x92");
+    CHECK(navButtonName(PadFamily::Switch, Binding::button(SDL_GAMEPAD_BUTTON_BACK)) == "-");
     // Anything else is Binding::display().
     const Binding m = Binding::button(SDL_GAMEPAD_BUTTON_MISC1);
     CHECK(navButtonName(PadFamily::Xbox, m) == m.display());
@@ -361,6 +403,7 @@ int main() {
     testUnknownGuidDefaults();
     testStoredGarbageIgnored();
     testRoundTrip();
+    testFamilyChangeClearsOverrides();
     testButtonNames();
     std::printf("pad_profile: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

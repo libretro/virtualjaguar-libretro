@@ -214,9 +214,13 @@ NavSet setNavBinding(Config& cfg, const std::string& guid, int sdlGamepadType, t
 
 void setNavFamily(Config& cfg, const std::string& guid, const std::string& keyOrAuto) {
     if (guid.empty()) return;
+    const std::string prefix = navKeyPrefix(guid);
+    // A family change means that family's pure defaults: overrides are stored relative to the old family and would
+    // otherwise leave two intents on one button.
+    for (tv::Intent in : kNavIntents) cfg.erase(prefix + navIntentKey(in));
     PadFamily f;
-    if (familyFromKey(keyOrAuto, f)) cfg.set(navKeyPrefix(guid) + "family", familyKey(f));
-    else cfg.erase(navKeyPrefix(guid) + "family");
+    if (familyFromKey(keyOrAuto, f)) cfg.set(prefix + "family", familyKey(f));
+    else cfg.erase(prefix + "family");
 }
 
 void clearNavProfile(Config& cfg, const std::string& guid) {
@@ -236,7 +240,7 @@ std::string navButtonName(PadFamily f, const Binding& b) {
         case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return ps ? "L1" : sw ? "L" : "LB";
         case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return ps ? "R1" : sw ? "R" : "RB";
         case SDL_GAMEPAD_BUTTON_START: return ps ? "Options" : sw ? "+" : "Menu";
-        case SDL_GAMEPAD_BUTTON_BACK: return ps ? "Create" : sw ? "\xE2\x88\x92" : "View";   // U+2212 MINUS SIGN
+        case SDL_GAMEPAD_BUTTON_BACK: return ps ? "Create" : sw ? "-" : "View";   // ASCII hyphen: the UI font has no U+2212
         default: break;
         }
     } else if (b.kind == Binding::PadAxis && b.dir > 0) {
