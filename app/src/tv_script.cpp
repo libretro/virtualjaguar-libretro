@@ -284,6 +284,13 @@ int App::tvScriptStep() {
             } else {
                 quit = true;   // the loop finishes this frame (a pending shot is still taken), then the normal teardown
             }
+        } else if (verb == "capture" && arg1.rfind("nav:", 0) == 0) {   // capture nav:INTENT -- rebind a menu button of the virtual pad (#1021)
+            tv::Intent it = tv::Intent::None;
+            for (tv::Intent k : kNavIntents)
+                if (arg1.substr(4) == navIntentKey(k)) it = k;
+            const std::vector<InputManager::PadInfo> pads = input.pads();
+            if (it == tv::Intent::None || pads.empty()) return fail(l, "capture nav: wants a menu intent key (confirm, back, ...) and a pad");
+            input.beginNavCapture(pads[0].guid, it);
         } else if (verb == "capture") {
             Ctl c = C_HELP;
             if (!ctlByName(arg1, c)) return fail(l, "capture wants help|tvmenu");
@@ -313,7 +320,14 @@ int App::tvScriptStep() {
             else if (name == "cfg") {   // KEY:VALUE -- the config holds KEY = VALUE ("absent": no such key at all)
                 const size_t colon = want.find(':');
                 if (colon == std::string::npos) return fail(l, "cfg wants KEY:VALUE or KEY:absent");
-                const std::string key = want.substr(0, colon), val = want.substr(colon + 1);
+                std::string key = want.substr(0, colon);
+                const std::string val = want.substr(colon + 1);
+                const size_t gp = key.find("{padguid}");   // the virtual pad's GUID (input.padguid.<guid>.nav.confirm ...)
+                if (gp != std::string::npos) {
+                    const std::vector<InputManager::PadInfo> pads = input.pads();
+                    if (pads.empty()) return fail(l, "{padguid}: no pad is open");
+                    key.replace(gp, 9, pads[0].guid);
+                }
                 const std::string have = cfg.has(key) ? cfg.get(key) : std::string("absent");
                 if (have != val) rc = fail(l, "expected config " + key + "=" + val + ", got " + have);
                 if (rc) return rc;

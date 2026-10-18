@@ -135,6 +135,8 @@ public:
         unsigned port = 0;       // connection order
         int instance = 0;        // which of several identical models (0 = first)
         int slot = -1;           // the player slot it drives right now, -1 none
+        PadFamily detected = PadFamily::Generic;   // the family SDL's gamepad type says (what "Auto" means in the menu-button editor)
+        NavProfile nav;          // its menu buttons in effect (family + the model's custom layer)
     };
     std::vector<PadInfo> pads() const;
     const Profile& keyboardProfile() const { return kbProfile_; }
@@ -164,7 +166,26 @@ public:
     void beginCapture(const LayerId& layer, Ctl ctl, bool add, bool hold = false);
     void cancelCapture() { capture_.cancel(); }
     bool capturing() const { return capture_.active(); }
-    Ctl captureTarget() const { return capCtl_; }
+    Ctl captureTarget() const { return capCtl_; }   // C_COUNT while a menu button is being captured (navCapturing())
+
+    // ---- menu buttons (#1021) ---------------------------------------------------------------------------------------
+    // Same capture path as beginCapture, but the next pad button / trigger push becomes the model's (`guid`) button for the
+    // menu intent `in` (setNavBinding): nothing is written to the game bindings.  The result -- stored, swapped with another
+    // intent, or refused as reserved -- is in lastNav(); the config is saved and every pad re-resolved.  Esc cancels.
+    void beginNavCapture(const std::string& guid, tv::Intent in);
+    bool navCapturing() const { return capture_.active() && capNav_; }
+    tv::Intent navCaptureIntent() const { return capNavIntent_; }
+    struct NavResult {
+        bool valid = false;
+        std::string guid;
+        tv::Intent intent = tv::Intent::None;   // the intent that was being set
+        tv::Intent other = tv::Intent::None;    // Swapped: the intent that held the button and now has the old one
+        Binding bound;                          // what was pressed
+        NavSet set = NavSet::Ok;
+    };
+    const NavResult& lastNav() const { return navResult_; }
+    NavSet lastNavSet() const { return navResult_.set; }
+    void clearNavResult() { navResult_ = NavResult(); }
     DeviceClass captureClass() const { return capLayer_.cls; }
     // True while any keypad key is being synthesised (diagnostics / UI).
     bool keypadSynthesised() const { return core_.keypadSynthesised(); }
@@ -180,6 +201,8 @@ private:
         PadCaps caps;
     };
     void bindCaptured(const Binding& b);
+    void bindNavCaptured(const Binding& b);
+    void startCapture(DeviceClass cls);   // arm capture_ with every pad's resting axes as the baseline
     DevKind mousePortKind() const;
 
     bool padAllowed(SDL_JoystickID id) const;
@@ -199,6 +222,10 @@ private:
     Ctl capCtl_ = C_COUNT;
     bool capAdd_ = false;
     bool capHold_ = false;
+    bool capNav_ = false;                      // the capture in progress is a menu button, not a game binding
+    std::string capNavGuid_;
+    tv::Intent capNavIntent_ = tv::Intent::None;
+    NavResult navResult_;
 
     DevKind kind_[2] = {DevKind::Pad, DevKind::Pad};
     DeviceSettings settings_;

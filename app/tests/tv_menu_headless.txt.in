@@ -8,6 +8,8 @@
 #   focus lost|gained    the window loses / gets keyboard focus
 #   typing on|off        pretend a text box has focus (input.uiWantsKeyboard)
 #   capture help|tvmenu  begin binding that action on the keyboard (the next key becomes its binding)
+#   capture nav:INTENT   begin rebinding a menu button of the virtual pad (confirm back menu favorite start tabprev tabnext pageprev
+#                        pagenext search): the next pad button becomes it (#1021).  expect cfg=...{padguid}... is its GUID.
 #   tvsetting off|manual|auto  set the stored TV-mode setting and reconfigure (as Settings will); off = never, auto acts as manual
 #   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
 #   expect tv=0|1         TV mode is on
@@ -386,3 +388,23 @@
 8080  expect desk-pad=0
 8080  key tap F8
 8120  expect paused=0
+
+# Menu buttons (#1021): Set captures the virtual pad's next button for a menu intent, and writes no game binding.  North (Y)
+# becomes Confirm; Y was Favorite's, so the two swap (Favorite takes Confirm's old button, South).
+8120  expect capturing=0
+8120  capture nav:confirm
+8160  expect capturing=1
+8160  pad tap y
+8200  expect capturing=0
+8200  expect cfg=input.padguid.{padguid}.nav.confirm:by
+8200  expect cfg=input.padguid.{padguid}.nav.favorite:ba
+# A reserved button is refused and writes nothing: the D-pad moves, so it cannot be a menu button.
+8200  capture nav:back
+8240  pad tap dpup
+8280  expect capturing=0
+8280  expect cfg=input.padguid.{padguid}.nav.back:absent
+# Esc cancels a menu-button capture without writing anything.
+8280  capture nav:search
+8320  key tap Escape
+8360  expect capturing=0
+8360  expect cfg=input.padguid.{padguid}.nav.search:absent

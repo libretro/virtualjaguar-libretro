@@ -338,6 +338,8 @@ std::vector<InputManager::PadInfo> InputManager::pads() const {
         pi.name = s ? s : "Gamepad";
         pi.guid = pads_[i].guid;
         pi.hasMisc1 = pads_[i].caps.hasMisc1;
+        pi.detected = familyForType((int)SDL_GetGamepadType(pads_[i].handle));
+        pi.nav = pads_[i].nav;
         pi.port = (unsigned)i;
         for (size_t j = 0; j < i; j++)
             if (pads_[j].guid == pads_[i].guid) pi.instance++;
@@ -402,18 +404,65 @@ void InputManager::syncMouseCapture(SDL_Window* w, bool gameRunning, bool uiOpen
     if (want && notify) notify("Mouse captured (Esc or F10 releases it)");
 }
 
-void InputManager::beginCapture(const LayerId& layer, Ctl ctl, bool add, bool hold) {
-    capLayer_ = layer;
-    capCtl_ = ctl;
-    capAdd_ = add;
-    capHold_ = hold;
-    capture_.begin(layer.cls);
+void InputManager::startCapture(DeviceClass cls) {
+    capture_.begin(cls);
     for (const Pad& p : pads_)
         for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++)
             capture_.setBaseline(p.id, a, SDL_GetGamepadAxis(p.handle, (SDL_GamepadAxis)a));
 }
 
+void InputManager::beginCapture(const LayerId& layer, Ctl ctl, bool add, bool hold) {
+    capLayer_ = layer;
+    capCtl_ = ctl;
+    capAdd_ = add;
+    capHold_ = hold;
+    capNav_ = false;
+    startCapture(layer.cls);
+}
+
+void InputManager::beginNavCapture(const std::string& guid, tv::Intent in) {
+    capNav_ = true;
+    capNavGuid_ = guid;
+    capNavIntent_ = in;
+    capCtl_ = C_COUNT;   // no game binding is written: bindCaptured() would return, and the controls table shows no waiting row
+    navResult_ = NavResult();
+    startCapture(DeviceClass::Gamepad);
+}
+
+// A pad button (or trigger push) was captured for a menu intent.  The pad's TV-menu bindings are reserved: the button that
+// opens the TV menu must not also be a library button.
+void InputManager::bindNavCaptured(const Binding& captured) {
+    if (!cfg_) return;
+    const Pad* pad = nullptr;
+    for (const Pad& p : pads_)
+        if (p.guid == capNavGuid_) {
+            pad = &p;
+            break;
+        }
+    if (!pad) return;   // the model's last pad went away while the capture ran
+    NavResult r;
+    r.valid = true;
+    r.guid = capNavGuid_;
+    r.intent = capNavIntent_;
+    r.bound = captured;
+    std::vector<Binding> reserved = pad->profile.binds[C_TVMENU];
+    const NavProfile before = pad->nav;
+    r.set = setNavBinding(*cfg_, capNavGuid_, (int)SDL_GetGamepadType(pad->handle), capNavIntent_, captured, reserved);
+    if (r.set == NavSet::Swapped)
+        for (size_t i = 0; i < before.binds.size(); i++)
+            if (kNavIntents[i] != capNavIntent_ && before.binds[i] == captured) r.other = kNavIntents[i];
+    navResult_ = r;
+    if (r.set != NavSet::Reserved) {
+        cfg_->save();
+        reresolve();
+    }
+}
+
 void InputManager::bindCaptured(const Binding& captured) {
+    if (capNav_) {
+        bindNavCaptured(captured);
+        return;
+    }
     if (!store_ || capCtl_ >= C_COUNT) return;
     Binding b = captured;
     if (capHold_ && (b.kind == Binding::Key || b.kind == Binding::PadButton)) b = b.withHold();   // axes cannot be held
