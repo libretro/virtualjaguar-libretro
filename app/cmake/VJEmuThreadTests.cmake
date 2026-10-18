@@ -18,7 +18,7 @@
 #   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
-#   *_threaded limits     RetroAchievements, netplay, the debugger and the GDB stub are off while threaded
+#   *_threaded limits     the debugger and the GDB stub are off while threaded
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
 function(vj_emu_thread_warnings target)
@@ -174,7 +174,7 @@ set_tests_properties(pro_controller_option_off PROPERTIES TIMEOUT 120
 add_test(NAME emu_thread_limits
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "RetroAchievements, netplay and the debugger tools are off while the emulation thread is on"
+    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are off while the emulation thread is on"
     FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 add_test(NAME gdb_locked_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled

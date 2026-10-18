@@ -62,9 +62,9 @@ struct AchCallbacks {
         Achievements* a = self(c);
         if (!a || !a->memoryReady_.load()) return 0;
         if (a->app_ && a->app_->emu.threaded() && !a->app_->emu.onEmuThread()) {
-            // Core RAM belongs to the emulation thread (#967).  The one reader that runs here is a game load completed
-            // in the UI's HTTP pump, validating its addresses (rc_client_validate_addresses: only the count matters):
-            // answer from the memory map, without touching RAM.
+            // Core RAM belongs to the emulation thread (#967).  pump() leaves rc_client_idle to that thread, so the only
+            // reader that runs here is a game load completed in the UI's HTTP pump, validating its addresses
+            // (rc_client_validate_addresses: only the count matters): answer from the memory map, without touching RAM.
             uint32_t avail = 0;
             if (!rc_libretro_memory_find_avail(&a->regions_, address, &avail) || avail == 0) return 0;
             const uint32_t n = avail < numBytes ? avail : numBytes;
@@ -288,8 +288,8 @@ uint32_t Achievements::consoleId(const std::string& path) const {
 }
 
 void Achievements::rebuildMemory() {
+    memoryReady_ = false;   // first: an off-thread address check must never see the flag up while regions_ is torn down
     rc_libretro_memory_destroy(&regions_);
-    memoryReady_ = false;
     if (!app_) return;
     CoreHost& host = app_->host;
     auto info = [](uint32_t id, rc_libretro_core_memory_info_t* out) {
@@ -302,6 +302,8 @@ void Achievements::rebuildMemory() {
     memoryReady_ = rc_libretro_memory_init(&regions_, host.memoryMap(), info, consoleId(host.contentPath())) != 0;
 }
 
+// Threaded, the toast and status writes below run on the emulation thread inside an EmuThread::call(), while the UI
+// thread waits (#967): it may write the UI-side fields.
 void Achievements::beginLoad() {
     if (!client_ || !app_ || !enabled_) return;
     CoreHost& host = app_->host;
@@ -332,10 +334,17 @@ void Achievements::beginLoad() {
                                            nullptr);
 }
 
+// Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
+// write the UI-side fields.
 void Achievements::onContentLoaded() {
     if (!client_) return;
     loadedPath_ = app_->host.contentPath();
     ranUnrestricted_ = false;   // a fresh boot
+    {
+        std::lock_guard<std::mutex> l(rpMu_);
+        richPresence_.clear();   // a replacement load never shows the previous game's line
+    }
+    rpFrames_ = 0;
     trackers.clear();
     challenges.clear();
     beginLoad();
@@ -344,6 +353,8 @@ void Achievements::onContentLoaded() {
 
 // rc_client's own multi-disc path: the session (and hardcore) carry on when the new disc belongs to the same game,
 // and rcheevos decides what an unknown disc means.  A disc it cannot hash (.chd / .cdi) is let through as "[NO HASH]".
+// Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
+// write the UI-side fields.
 void Achievements::onDiscChanged() {
     if (!client_ || !app_) return;
     const std::string path = app_->host.contentPath();
@@ -357,6 +368,8 @@ void Achievements::onDiscChanged() {
     rc_client_begin_identify_and_change_media(client_, path.c_str(), nullptr, 0, &AchCallbacks::mediaChanged, nullptr);
 }
 
+// Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
+// write the UI-side fields.
 void Achievements::onContentClosed() {
     loading_ = false;
     gameKnown_ = false;
@@ -423,7 +436,23 @@ void Achievements::pump() {
     updateImageNetwork();
     images.pump();
     if (showList && dashTab == 1) gamesTabShown();
-    rc_client_idle(client_);
+    // Threaded, rc_client_idle belongs to the emulation thread: it runs inside rc_client_do_frame, or through emuIdle
+    // posted here while no frame runs (paused, or no game identified), so pings and retries keep going.
+    const bool threaded = app_ && app_->emu.threaded();
+    if (!threaded) {
+        rc_client_idle(client_);
+    } else {
+        const uint64_t ran = app_->emu.framesRun();
+        if (ran != framesSeen_) {
+            if (!hardcoreActive()) ranUnrestricted_ = true;
+            if (mockMode() && app_->window())
+                for (uint64_t f = framesSeen_; f < ran; f++) headlessFrame(++mockFrames_);
+            framesSeen_ = ran;
+        } else if (app_->now() - lastIdlePost_ > 1.0) {
+            lastIdlePost_ = app_->now();
+            app_->emu.post([this] { emuIdle(); });
+        }
+    }
     drainEvents();   // events raised by rc_client_idle and by completions delivered in this pump
     if (resetPending_) {
         resetPending_ = false;
@@ -615,6 +644,8 @@ void Achievements::logout() {
 // ---------------------------------------------------------------------------------
 // save states
 // ---------------------------------------------------------------------------------
+// Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
+// write the UI-side fields.
 void Achievements::onStateSaved(const std::string& statePath) {
     const std::string side = statePath + ".rcp";
     if (!client_ || !rc_client_is_game_loaded(client_)) {
@@ -630,6 +661,8 @@ void Achievements::onStateSaved(const std::string& statePath) {
     if (rc_client_serialize_progress_sized(client_, buf.data(), n) == RC_OK) writeFileAtomic(side, buf.data(), n);
 }
 
+// Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
+// write the UI-side fields.
 void Achievements::onStateLoaded(const std::string& statePath) {
     if (!client_ || !rc_client_is_game_loaded(client_)) return;
     size_t n = 0;

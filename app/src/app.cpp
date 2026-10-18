@@ -504,8 +504,8 @@ void App::syncDebug() {
 }
 
 // #967 phase 1 runs the emulation on its own thread before these features are thread-safe: they are switched off
-// for the run rather than racing the core (docs/app-emulation-thread-plan-phase1.md, "Phase 1 boundary").
-//   * RetroAchievements: ach.init() is skipped, so available() is false and the menu is hidden.
+// for the run rather than racing the core (docs/app-emulation-thread-plan-phase1.md, "Phase 1 boundary").  Only the
+// two below remain off, until phase 3; RetroAchievements and netplay work with the thread on.
 //   * The Tools windows: they read core memory from the UI thread, and a halt would run the UI on the emulation thread.
 //   * The GDB stub: a socket halt would park the emulation thread with every call() waiting behind it.
 void App::limitFeaturesForEmuThread() {
@@ -518,7 +518,7 @@ void App::limitFeaturesForEmuThread() {
         }
         return lockedCoreOptionFor(key, value, {{proPorts[0].load(), proPorts[1].load()}});   // as wireHost()'s
     };
-    std::fprintf(stderr, "[emu] RetroAchievements, netplay and the debugger tools are off while the emulation thread is on\n");
+    std::fprintf(stderr, "[emu] the debugger tools and the GDB stub are off while the emulation thread is on\n");
 }
 
 void App::noteInputLatency(uint64_t eventNs) {
@@ -579,6 +579,7 @@ void App::emuRunOneFrame() {
     host.runFrame();
     retroTicks_.fetch_add(SDL_GetPerformanceCounter() - r0, std::memory_order_relaxed);
     runFrames_.fetch_add(1, std::memory_order_relaxed);
+    ach.emuFrame();   // rc_client_do_frame: reads game RAM, so here
     if (audio.queuedMs() > 1000.0f) audio.clear();   // a device that stopped pulling: keep the queue (and memory) bounded
     const Frame& f = host.frame();
     if (f.serial != lastSentSerial_ && f.width && f.height) {
@@ -1807,7 +1808,7 @@ int App::run(const CliArgs& a) {
     }
     wireHost();
     if (emuThreadThisRun_) limitFeaturesForEmuThread();
-    else ach.init(*this, a);   // with the emulation thread on, RetroAchievements waits for #967 phase 2
+    ach.init(*this, a);   // with the emulation thread on, rc_client_do_frame runs there (Achievements::emuFrame)
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
@@ -2299,12 +2300,26 @@ int App::runHeadless(const CliArgs& a) {
         double hlCpu0 = Perf::cpuSeconds();
         if (threaded()) {
             retroTicks_.store(0);
-            for (unsigned i = 0; i < a.frames;) {
-                const unsigned n = std::min(16u, a.frames - i);   // the dummy device drains in real time: clear every 16
-                emu.advance(n);
-                i += n;
-                emu.call([this] { audio.clear(); });
-                for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+            if (ach.mockMode()) {
+                // RetroAchievements steps and pokes are frame-numbered: the same order as the inline loop below, one
+                // frame at a time (the steps, then the frame -- rc_client_do_frame runs after it, on the emulation
+                // thread -- then the UI's pump).
+                for (unsigned i = 0; i < a.frames; i++) {
+                    ach.headlessFrame(i);
+                    emu.advance(1);
+                    ach.pump();
+                    if ((i & 15) == 15) emu.call([this] { audio.clear(); });
+                    host.pinSnapshot();
+                    for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+                }
+            } else {
+                for (unsigned i = 0; i < a.frames;) {
+                    const unsigned n = std::min(16u, a.frames - i);   // the dummy device drains in real time: clear every 16
+                    emu.advance(n);
+                    i += n;
+                    emu.call([this] { audio.clear(); });
+                    for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+                }
             }
             hlRun = retroTicks_.exchange(0);
             host.pinSnapshot();

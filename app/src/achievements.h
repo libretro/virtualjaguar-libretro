@@ -226,6 +226,8 @@ private:
     unsigned unlockedBeforePoke_ = 0;
     unsigned pokeIndex_ = 0;
     unsigned mockFrames_ = 0;
+    uint64_t framesSeen_ = 0;          // threaded: EmuThread::framesRun() at the last pump()
+    double lastIdlePost_ = 0;          // threaded: when pump() last posted emuIdle()
     unsigned hardcoreResets_ = 0;      // clean-start restarts performed (tests)
     unsigned loginAt_ = 0;             // headless: delay the mock sign-in to this frame
     std::atomic<bool> ranUnrestricted_{false};     // frames ran (or states loaded) outside hardcore since boot/reset
