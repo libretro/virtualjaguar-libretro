@@ -23,6 +23,9 @@
 #include "debug/debug_session.h"
 #include "fonts.h"
 #include "discord_presence.h"
+#ifdef VJ_HAVE_NEURO
+#include "neuro/neuro_agent.h"
+#endif
 #include "emu_thread.h"
 #include "frame_exchange.h"
 #include "input_snapshot.h"
@@ -66,6 +69,9 @@ struct CliArgs {
     std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
     unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
     bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
+#ifdef VJ_HAVE_NEURO
+    std::string neuroUrl;           // --neuro URL: connect to this Neuro API server for this run (not saved)
+#endif
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     std::string discSwap;           // headless: add this CD image to the loaded disc's list, swap to it and back (File > Disc)
     std::string discInsert;         // headless: put this CD image in the empty tray of a no-content CD BIOS boot (#646)
@@ -171,6 +177,10 @@ public:
         std::string artKey, artUrl;
         double artAt = 0;
     } discordState;
+#ifdef VJ_HAVE_NEURO
+    neuro::Agent neuro;              // the Neuro API client (neuro/neuro_app.cpp): an AI plays as Player 1
+    std::string neuroCliUrl;         // --neuro URL: on for this run, whatever the config says
+#endif
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -335,6 +345,9 @@ private:
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+#ifdef VJ_HAVE_NEURO
+    void headlessNeuroFrame(uint64_t t0, unsigned i);
+#endif
     void threadedFrame();             // UI thread, threaded: input out, frames / counters / messages in
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
@@ -502,6 +515,13 @@ void discordTick(App& app);                          // UI loop, every iteration
 void discordNoteGameStarted(App& app);               // a game booted: the "elapsed" timer restarts
 void discordShutdown(App& app);                      // clears the status and stops the worker
 std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_id, else the compile-time default ("" = none)
+#ifdef VJ_HAVE_NEURO
+// Neuro API (neuro/neuro_app.cpp, CMake option VJ_APP_NEURO): let Neuro-sama, or any Neuro API backend, play (docs/neuro.md).
+void neuroInit(App& app, const CliArgs& a);          // config, profiles; connects when enabled
+void neuroTick(App& app);                            // UI loop, every iteration: the socket, the game, the next force
+void neuroShutdown(App& app);                        // closes the connection
+void drawNeuroTab(App& app);                         // Settings > Neuro
+#endif
 // Themes (theme_ui.cpp): Settings > Interface > Appearance, the theme editor window and its file-dialog mailbox.
 void drawAppearanceSettings(App& app);
 void drawThemeEditor(App& app);

@@ -365,6 +365,9 @@ void drawSettings(App& app) {
         if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Interface", nullptr, tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
+#ifdef VJ_HAVE_NEURO
+        if (ImGui::BeginTabItem("Neuro", nullptr, tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
+#endif
         ImGui::EndTabBar();
     }
     ImGui::End();

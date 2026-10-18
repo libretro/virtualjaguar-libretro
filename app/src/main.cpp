@@ -30,6 +30,9 @@ static void usage(const char* argv0) {
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
+#ifdef VJ_HAVE_NEURO
+        "  --neuro URL           let Neuro-sama (or any Neuro API server) play, this run: ws://HOST:PORT (docs/neuro.md)\n"
+#endif
         "  --version, --help\n"
         "\n"
         "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
@@ -178,6 +181,9 @@ int main(int argc, char** argv) {
             a.expectControls = v == "shown" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--tv-test-script")) a.tvTestScript = need(s);
+#ifdef VJ_HAVE_NEURO
+        else if (!std::strcmp(s, "--neuro")) a.neuroUrl = need(s);
+#endif
         else if (!std::strcmp(s, "--netplay")) a.netplay.role = need(s);
         else if (!std::strcmp(s, "--netplay-addr")) a.netplay.address = need(s);
         else if (!std::strcmp(s, "--netplay-device")) a.netplay.device = need(s);
