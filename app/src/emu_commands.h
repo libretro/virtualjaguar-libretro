@@ -14,6 +14,8 @@
 #include <string>
 #if defined(__MINGW32__)
 #include <thread>
+
+#include "precise_sleep.h"
 #endif
 
 namespace vj {
@@ -53,14 +55,15 @@ public:
 #if defined(__MINGW32__)
         // MinGW's timed condition wait (winpthreads) rounds a short timeout up to the scheduler tick (~10-16 ms), even
         // with the 1 ms timer resolution SDL sets, which held threaded fast-forward below normal speed on the Windows
-        // runners.  Wait on the condition only while more than 20 ms remain, then poll in 1 ms sleeps (Sleep honours the
-        // timer resolution), so the frame grid holds and a post() still wakes within about 1 ms.
+        // runners.  Wait on the condition only while more than 20 ms remain, then poll in 1 ms waits on a
+        // high-resolution timer (MinGW's Sleep and sleep_for honour the 1 ms timer resolution only on some hosts), so
+        // the frame grid holds and a post() still wakes within about 1 ms.
         const auto pending = [this] { return wake_ || !q_.empty(); };
         const auto coarse = deadline - std::chrono::milliseconds(20);
         if (std::chrono::steady_clock::now() < coarse) cv_.wait_until(l, coarse, pending);
         while (!pending() && std::chrono::steady_clock::now() < deadline) {
             l.unlock();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            vj::preciseSleepNs(1000000);
             l.lock();
         }
 #else

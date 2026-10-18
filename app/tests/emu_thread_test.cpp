@@ -3,6 +3,7 @@
 //
 //   vj_emu_thread_test
 #include "emu_thread.h"
+#include "precise_sleep.h"
 
 #include <algorithm>
 #include <atomic>
@@ -160,13 +161,16 @@ void testPauseAdvance() {
 // 4x a 10 ms period needs ~2.5 ms waits; on a host whose sleeps or clock are much coarser than that, the ratio check
 // below measures the platform, not EmuThread, so it is reported instead of asserted.
 struct TimerCaps {
-    double sleepMs = 0, clockStepMs = 0;
+    double sleepMs = 0, clockStepMs = 0, preciseMs = 0;
 };
 TimerCaps measureTimers() {
     TimerCaps t;
     const Clock::time_point s0 = Clock::now();
     for (int i = 0; i < 20; i++) sleepMs(1);
     t.sleepMs = since(s0) * 1000.0 / 20.0;
+    const Clock::time_point p0 = Clock::now();
+    for (int i = 0; i < 20; i++) vj::preciseSleepNs(1000000);
+    t.preciseMs = since(p0) * 1000.0 / 20.0;
     double step = 1e9;
     for (int i = 0; i < 50; i++) {
         const Clock::time_point a = Clock::now();
@@ -206,8 +210,10 @@ void testPacingWallClock() {
     const double dtf = since(t0);
     const bool ffOk = ff / dtf > 1.5 * normalRate;
     const TimerCaps caps = measureTimers();
-    std::printf("note: timers here: sleep_for(1 ms) takes %.2f ms, steady_clock steps %.4f ms; fast-forward %.1f vs "
-                "normal %.1f frames/s\n", caps.sleepMs, caps.clockStepMs, ff / dtf, normalRate);
+    std::printf("note: timers here: sleep_for(1 ms) takes %.2f ms, preciseSleepNs(1 ms) takes %.2f ms, "
+                "steady_clock steps %.4f ms; fast-forward %.1f vs normal %.1f frames/s\n", caps.sleepMs, caps.preciseMs,
+                caps.clockStepMs, ff / dtf, normalRate);
+    CHECK(caps.preciseMs < 4.0, "preciseSleepNs(1 ms) takes %.2f ms on average", caps.preciseMs);
     if (!ffOk && (caps.sleepMs > 6.0 || caps.clockStepMs > 1.0)) {
         std::printf("note: fast-forward not checked: this host's timers are too coarse to pace 2.5 ms frames\n");
     } else if (!ffOk && n < expect * 0.6) {   // the host could not even sustain real time: no headroom to show
