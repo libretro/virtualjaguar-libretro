@@ -51,19 +51,20 @@ bool g_logVerbose = false;
 void RETRO_CALLCONV logCb(enum retro_log_level level, const char* fmt, ...) {
     CoreHost& h = CoreHost::instance();
     const bool print = level >= RETRO_LOG_WARN || g_logVerbose;
-    if (!print && !h.onLog) return;
+    if (!print && !h.onLog && !h.onUiEvent) return;
     static const char* const tag[] = {"DEBUG", "INFO", "WARN", "ERROR"};
     char buf[1024];
     va_list ap;
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    // The tap sees every line, INFO included: the Netplay window reads the core's
+    // The taps see every line, INFO included: the Netplay window reads the core's
     // "[NETLINK] link UP / link stats" lines from here (they are INFO).
-    if (h.onLog) {
+    if (h.onLog || h.onUiEvent) {
         std::string line(buf);
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
-        h.onLog((int)level, line.c_str());
+        if (h.onLog) h.onLog((int)level, line.c_str());
+        h.emitLogLine((int)level, line);
     }
     if (!print) return;
     std::fprintf(stderr, "[core %s] %s", (unsigned)level < 4 ? tag[level] : "?", buf);
@@ -297,6 +298,57 @@ void CoreHost::loadUserOptions(const std::vector<std::pair<std::string, std::str
     for (const auto& p : kv) userValues_[p.first] = p.second;
 }
 
+static CoreEvent optionEvent(CoreEvent::Kind k, const std::string& key, const std::string& value, bool erased) {
+    CoreEvent e;
+    e.kind = k;
+    e.text = key;
+    e.value = value;
+    e.erased = erased;
+    return e;
+}
+
+void CoreHost::emitUi(CoreEvent e) {
+    e.epoch = epoch_;
+    const bool option = e.kind == CoreEvent::Kind::UserOption || e.kind == CoreEvent::Kind::SessionOption;
+    if (threaded() && onOwner()) {
+        if (option || onUiEvent) uiEvents_.push(std::move(e));
+        return;
+    }
+    if (!option && onUiEvent) onUiEvent(e);   // inline: the option writes were applied directly by the caller
+}
+
+void CoreHost::emitLogLine(int level, const std::string& line) {
+    if (!onUiEvent) return;
+    CoreEvent e;
+    e.kind = CoreEvent::Kind::Log;
+    e.level = level;
+    e.text = line;
+    emitUi(std::move(e));
+}
+
+void CoreHost::applyUiEvent(CoreEvent& e) {
+    switch (e.kind) {
+    case CoreEvent::Kind::UserOption:
+        if (e.erased) uiUser_.erase(e.text);
+        else uiUser_[e.text] = e.value;
+        if (onOptionChanged) onOptionChanged(e.text, e.value, e.erased);
+        break;
+    case CoreEvent::Kind::SessionOption:
+        if (e.erased) uiSession_.erase(e.text);
+        else uiSession_[e.text] = e.value;
+        break;
+    default:
+        if (onUiEvent) onUiEvent(e);
+    }
+}
+
+uint32_t CoreHost::eventEpochBump() {
+    const uint32_t n = ++uiEpoch_;
+    if (onOwner()) epoch_ = n;
+    else queue([this, n] { epoch_ = n; });
+    return n;
+}
+
 void CoreHost::overrideOption(const std::string& key, const std::string& value) {
     if (!onOwner()) {
         // The UI's copy now, on the UI thread; the core's copy at the next frame boundary (never this method again
@@ -306,7 +358,7 @@ void CoreHost::overrideOption(const std::string& key, const std::string& value) 
         return;
     }
     if (inFrame_) return;   // the debugger has the core halted inside retro_run(): no option changes
-    if (threaded()) uiSession_[key] = value;   // (threaded, on the owner: only inside a call(), while the UI waits)
+    if (threaded()) emitUi(optionEvent(CoreEvent::Kind::SessionOption, key, value, false));   // the UI applies it at its next pin
     applyOverride(key, &value);
 }
 
@@ -363,8 +415,8 @@ void CoreHost::setOptionValue(const std::string& key, const std::string& value) 
         return;
     }
     if (inFrame_) return;
-    if (onOptionChanged) onOptionChanged(key, value, false);
-    if (threaded()) uiUser_[key] = value;
+    if (threaded()) emitUi(optionEvent(CoreEvent::Kind::UserOption, key, value, false));   // the UI applies it at its next pin
+    else if (onOptionChanged) onOptionChanged(key, value, false);
     applyUserValue(key, &value);
 }
 
@@ -375,7 +427,7 @@ void CoreHost::clearOverride(const std::string& key) {
         return;
     }
     if (inFrame_) return;
-    if (threaded()) uiSession_.erase(key);
+    if (threaded()) emitUi(optionEvent(CoreEvent::Kind::SessionOption, key, "", true));
     applyOverride(key, nullptr);
 }
 
@@ -387,8 +439,8 @@ void CoreHost::resetOptionToDefault(const std::string& key) {
         return;
     }
     if (inFrame_) return;
-    if (onOptionChanged) onOptionChanged(key, "", true);
-    if (threaded()) uiUser_.erase(key);
+    if (threaded()) emitUi(optionEvent(CoreEvent::Kind::UserOption, key, "", true));
+    else if (onOptionChanged) onOptionChanged(key, "", true);
     applyUserValue(key, nullptr);
 }
 
@@ -692,6 +744,14 @@ bool CoreHost::env(unsigned cmd, void* data) {
                         6000, RETRO_LOG_WARN);
         }
         if (onEvent) onEvent(*e);
+        if (onUiEvent) {
+            CoreEvent ce;
+            ce.kind = CoreEvent::Kind::Event;
+            ce.type = e->type;
+            ce.a = e->a, ce.b = e->b, ce.c = e->c, ce.d = e->d;
+            if (e->s) ce.text = e->s;
+            emitUi(std::move(ce));
+        }
         return true;
     }
 
@@ -721,6 +781,7 @@ bool CoreHost::startSession(std::string& err) {
     diskRegistered_ = false;
     variableUpdate_ = false;
     helloSeen_ = false;
+    uiEvents_.dropLogsAndEvents();
     for (StagedBios& b : staged_) b = StagedBios();
     contentOverrideExts_.clear();
     supportsNoGame_ = false;
@@ -1178,8 +1239,11 @@ void CoreHost::publishSnapshot() {
 
 void CoreHost::pinSnapshot() {
     if (onOwner()) return;
-    std::lock_guard<std::mutex> l(snapMu_);
-    ui_ = pub_;
+    {
+        std::lock_guard<std::mutex> l(snapMu_);
+        ui_ = pub_;
+    }
+    for (CoreEvent& e : uiEvents_.take()) applyUiEvent(e);
 }
 
 }  // namespace vj

@@ -64,6 +64,17 @@ public:
     bool announceExtensions = true;
     unsigned crashEvents() const { return crashEvents_.load(); }   // crash-watchdog events since the content loaded
     std::function<void(const vj_event&)> onEvent;   // string pointers are valid for the call only
+    // What the core says, for the UI thread (#967 phase 2): every log line and every event, in order.  Inline it is
+    // called right where the core says it; threaded, pinSnapshot() calls it on the UI thread.  Set before the first
+    // load.  onLog / onEvent stay synchronous on the core's thread (the --disc-insert check relies on that).
+    std::function<void(const CoreEvent&)> onUiEvent;
+    // A new epoch for what the core says from now on (UI thread).  The bump rides the command queue, so every line
+    // and event the core emits after the commands queued before it carries an epoch >= the returned value: a
+    // consumer that just changed the core's settings drops what came before (Netplay::onUiEvent).
+    uint32_t eventEpochBump();
+    uint32_t eventEpoch() const { return epoch_; }   // owner side
+    // The core's log tap for onUiEvent (logCb, which lives outside the class, calls it): queues or delivers one line.
+    void emitLogLine(int level, const std::string& line);
     // True once the core's HELLO was answered in the current session: the events are then authoritative
     // and the matching log lines need no parsing.
     bool eventsActive() const { return helloSeen_; }
@@ -250,8 +261,10 @@ public:
     //     publishSnapshot()s after each frame and each command batch);
     //   * option values are mirrored: a write updates the UI's copy and calls onOptionChanged (config.ini) right
     //     there, and reaches the core's copy through `post` at the next frame boundary.  The UI's copy
-    //     (uiUser_ / uiSession_) is written only on the UI thread, plus -- inside an EmuThread::call(), while the
-    //     UI thread waits -- by the owner-side branch of the same method;
+    //     (uiUser_ / uiSession_) is written only on the UI thread: by the off-owner branches, and by pinSnapshot(),
+    //     which applies the option events the owner-side branches queued (a write made inside an EmuThread::call());
+    //     onOptionChanged is called there too, never on the emulation thread;
+    //   * what the core says (log lines, vj_events) reaches onUiEvent the same way, at the next pin;
     //   * setControllerDevice and sendKeyEvent are queued through `post`.  discSetEject / discSetIndex are queued
     //     too if called off the owner, but the app's callers wrap them in an EmuThread::call(): a disc insert can
     //     re-stage the CD BIOS, which writes stagedBios (see below).  discAppend is owner-only;
@@ -361,6 +374,11 @@ private:
     void queue(std::function<void()> fn);         // through `post`, or now when there is none
     void applyUserValue(const std::string& key, const std::string* value);   // null = erase; the core's copy only
     void applyOverride(const std::string& key, const std::string* value);    // null = clear; the core's copy only
+    void emitUi(CoreEvent e);           // the core's thread: queue for the UI (threaded) or deliver now (inline)
+    void applyUiEvent(CoreEvent& e);    // UI thread, from pinSnapshot()
+    CoreEventQueue uiEvents_;
+    uint32_t epoch_ = 0;     // owner side: stamped on every event
+    uint32_t uiEpoch_ = 0;   // UI side: the last epoch handed out
     std::atomic<std::thread::id> owner_{std::thread::id()};
     mutable std::atomic<unsigned> ownerViolations_{0};
     mutable std::mutex violationMu_;

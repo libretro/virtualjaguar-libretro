@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     fs::path tmp = fs::temp_directory_path(ec) / ("vj-core-host-thread-" + std::to_string((long long)std::time(nullptr)));
     fs::create_directories(tmp / "saves", ec);
     fs::create_directories(tmp / "system", ec);
+    const std::thread::id uiThread = std::this_thread::get_id();
     CoreHost& host = CoreHost::instance();
     host.setDirectories((tmp / "system").string() + "/", (tmp / "saves").string() + "/");
     host.inputPoll = [] {};
@@ -248,6 +249,66 @@ int main(int argc, char** argv) {
             host.optionLock = nullptr;
             host.inputState = [](unsigned, unsigned, unsigned, unsigned) -> int16_t { return 0; };
         });
+    }
+
+    // ---- phase 2: the core-event stream ----
+    {
+        std::vector<std::thread::id> logOn;
+        std::vector<std::string> lines;
+        host.onUiEvent = [&](const CoreEvent& e) {
+            if (e.kind != CoreEvent::Kind::Log) return;
+            logOn.push_back(std::this_thread::get_id());
+            lines.push_back(e.text);
+        };
+        std::string lerr;
+        CHECK(emu.call([&] { return host.loadContent(rom, lerr); }));   // the core logs while it loads
+        CHECK(lines.empty());                                           // nothing before the pin
+        host.pinSnapshot();
+        CHECK(!lines.empty());
+        bool allUi = true;
+        for (std::thread::id t : logOn) allUi = allUi && t == uiThread;
+        CHECK(allUi);                                                   // never on the emulation thread
+        host.onUiEvent = nullptr;
+    }
+    {
+        // An option write made on the owner (inside a call) reaches the mirror and the config on the UI thread, at
+        // the next pin -- never on the emulation thread.
+        changed.clear();
+        changedOn = std::thread::id();
+        emu.call([&] { host.setOptionValue(key, "disabled"); });
+        CHECK(changed.empty());
+        host.pinSnapshot();
+        CHECK(changed.size() == 1 && changed[0] == std::string(key) + "=disabled");
+        CHECK(changedOn == uiThread);
+        CHECK(host.userOptions().count(key) && host.userOptions().at(key) == "disabled");
+        emu.call([&] { host.resetOptionToDefault(key); });
+        host.pinSnapshot();
+        CHECK(changed.size() == 2 && changed[1] == std::string(key) + "=<erased>");
+        CHECK(host.userOptions().count(key) == 0);
+        emu.call([&] { host.overrideOption(key, "enabled"); });
+        host.pinSnapshot();
+        CHECK(host.optionOverridden(key));
+        emu.call([&] { host.clearOverride(key); });
+        host.pinSnapshot();
+        CHECK(!host.optionOverridden(key));
+    }
+    {
+        // The epoch rides the command queue: a call queued after the bump sees it.
+        const uint32_t e1 = host.eventEpochBump();
+        const uint32_t e2 = host.eventEpochBump();
+        CHECK(e2 > e1);
+        CHECK(emu.call([&] { return host.eventEpoch(); }) == e2);
+    }
+    {
+        // A reload drops what the previous game said but keeps the user's option writes.
+        changed.clear();
+        std::string lerr;
+        emu.call([&] {
+            host.setOptionValue(key, "disabled");
+            return host.loadContent(rom, lerr);
+        });
+        host.pinSnapshot();
+        CHECK(changed.size() == 1 && changed[0] == std::string(key) + "=disabled");
     }
 
     emu.call([&] { host.unloadContent(); });
