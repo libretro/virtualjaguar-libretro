@@ -516,16 +516,23 @@ void Achievements::checkSettings() {
     }
 }
 
+// rc_client is driven by the emulation thread (rc_client_do_frame / rc_client_idle run there), and it raises events
+// from the thread that mutates it: every mutating call from the UI thread goes through coreCall (#967).  Inline, or
+// already on the emulation thread, coreCall just runs it.
 void Achievements::applyHardcore() {
     if (!client_) return;
     const int want = (hardcoreWanted_ && settingsOk_) ? 1 : 0;
-    if (rc_client_get_hardcore_enabled(client_) != want) rc_client_set_hardcore_enabled(client_, want);
+    coreCall([this, want] {
+        if (rc_client_get_hardcore_enabled(client_) != want) rc_client_set_hardcore_enabled(client_, want);
+    });
 }
 
 bool Achievements::allowPause(std::string& why) {
     if (!hardcoreActive() || !rc_client_is_game_loaded(client_)) return true;
     uint32_t frames = 0;
-    if (rc_client_can_pause(client_, &frames)) return true;
+    int ok = 1;
+    coreCall([&] { ok = rc_client_can_pause(client_, &frames); });   // it advances the pause-decay state do_frame also touches
+    if (ok) return true;
     const double fps = app_ ? std::max(1.0, app_->host.fps()) : 60.0;
     char buf[96];
     std::snprintf(buf, sizeof buf, "Hardcore: pausing is available again in %.0f s", std::ceil(frames / fps));
@@ -592,7 +599,7 @@ void Achievements::setEnabled(bool on) {
     if (!on) {
         loading_ = false;
         gameKnown_ = false;
-        if (client_) rc_client_unload_game(client_);
+        if (client_) coreCall([this] { rc_client_unload_game(client_); });   // frees the game do_frame runs on
         checkHardcoreTransition();
     } else if (app_ && app_->host.isLoaded()) {
         beginLoad();
@@ -628,7 +635,7 @@ void Achievements::persistLogin() {
 
 void Achievements::logout() {
     if (!client_) return;
-    rc_client_logout(client_);   // also unloads the game
+    coreCall([this] { rc_client_logout(client_); });   // also unloads the game: not while do_frame runs on it
     loading_ = false;
     gameKnown_ = false;
     loginPending_ = false;

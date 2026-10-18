@@ -1231,9 +1231,12 @@ void App::reset() {
         return;
     }
     // A call, not a post: retro_reset can re-stage the CD BIOS, which the BIOS panel reads.
-    emu.call([this] { host.reset(); });
+    // ach.onReset() drives rc_client (rc_client_reset raises events): on the emulation thread, with do_frame.
+    emu.call([this] {
+        host.reset();
+        ach.onReset();
+    });
     debug.requestRefresh();
-    ach.onReset();
     toast("Reset");
 }
 
