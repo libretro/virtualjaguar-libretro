@@ -78,6 +78,11 @@ Default bindings for the standard gamepad layout:
 Every binding can be changed or removed in the controls screen, like any other action. Pads with a
 custom SDL mapping get the same defaults wherever those buttons exist.
 
+Separately from the action, **Ctrl+Shift+T** (**Cmd+Shift+T** on macOS) is a fixed, non-rebindable keyboard shortcut
+that toggles TV mode with or without a game (the game keeps running; the in-game menu does not open). It sits on View >
+TV mode like the other menu shortcuts and is ignored while a text field has the keyboard or a binding is being captured.
+The controls screen and the cheat sheet name the action "TV menu / TV mode" (#1020).
+
 ### 3.3 Hold bindings
 
 `Binding` gains a `hold` flag. It serialises as a `~hold` suffix (`bmisc1~hold`); the hold flag is
