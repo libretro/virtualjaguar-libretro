@@ -87,6 +87,15 @@ struct FakeHost : Host {
     void armReleaseGuard() override { guardArmed++; }
     void clearHolds() override { holdsCleared++; }
     void toast(const std::string& t) override { lastToast = t; }
+    // A Switch-family pad (#1021): its EAST button is Confirm and SOUTH is Back, so the shell must ask the host, not the Xbox table.
+    bool switchPad = false, desktopIntents = false;   // desktopIntents: WEST is Search, NORTH is AcceptLong (the desktop library's)
+    Intent padIntent(uint32_t, int b) const override {
+        if (desktopIntents && b == SDL_GAMEPAD_BUTTON_WEST) return Intent::Search;
+        if (desktopIntents && b == SDL_GAMEPAD_BUTTON_NORTH) return Intent::AcceptLong;
+        if (switchPad && b == SDL_GAMEPAD_BUTTON_EAST) return Intent::Accept;
+        if (switchPad && b == SDL_GAMEPAD_BUTTON_SOUTH) return Intent::Back;
+        return intentForButton(b);
+    }
     bool keyboardLast = false;   // the keyboard was used last: it has no key for Menu / Alt / Aux (as AppHost::glyph)
     std::string glyph(Intent i) const override {
         switch (i) {
@@ -918,6 +927,39 @@ static void homeAcceptLaunchesFocused() {
     accept(host, shell);
     CHECK(host.launchedKey == host.recent[1].key && host.launches == 1);
     CHECK(host.guardArmed == 1 && host.holdsCleared == 1);
+}
+
+// A pad whose profile swaps Confirm and Back (a Switch-family pad) drives TV mode through that profile (#1021).
+static void switchPadAcceptsEast() {
+    FakeHost host;
+    host.switchPad = true;
+    host.recent = mkGames("Recent", 3);
+    Shell shell(host);
+    homeSetup(host, shell);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_SOUTH);          // Back at the root: nothing happens
+    CHECK(host.launches == 0 && shell.screenId() == "home");
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_EAST);           // Confirm: launches the focused game
+    CHECK(host.launchedKey == host.recent[0].key && host.launches == 1);
+}
+
+// Search and AcceptLong are not TV's: the shell neither feeds nor consumes a button mapped to one (the app keeps it).
+static void desktopIntentsAreNotTvs() {
+    FakeHost host;
+    host.desktopIntents = true;
+    host.recent = mkGames("Recent", 3);
+    host.st[host.recent[0].key] = {{3, 200}};
+    Shell shell(host);
+    homeSetup(host, shell);
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.down = true;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_WEST;                // would be Resume state on the Xbox table
+    CHECK(!shell.handleEvent(e, g_ms));
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_NORTH;
+    CHECK(!shell.handleEvent(e, g_ms));
+    frames(host, shell, 2);
+    CHECK(host.launchedState.first.empty() && host.launches == 0 && shell.screenId() == "home");
 }
 
 static void homeXResumesNewest() {
@@ -2020,6 +2062,8 @@ int main() {
     homeHidesShelfThatCannotFit();
     hintsListOnlyWhatWorks();
     homeAcceptLaunchesFocused();
+    switchPadAcceptsEast();
+    desktopIntentsAreNotTvs();
     homeXResumesNewest();
     homeResumeHiddenWithoutStatesOrInHardcore();
     homeFocusRememberedPerShelf();

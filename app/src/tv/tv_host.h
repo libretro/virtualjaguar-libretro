@@ -3,6 +3,8 @@
 // services.  Pure interface: no SDL handles, no ImGui.
 #pragma once
 
+#include <SDL3/SDL_gamepad.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -66,7 +68,15 @@ public:
     virtual void armReleaseGuard() = 0;
     virtual void clearHolds() = 0;
     virtual void toast(const std::string& text) = 0;
-    virtual std::string glyph(Intent i) const = 0;   // "A", "Cross", "Enter": SDL_GetGamepadButtonLabel on the last-used pad
+    virtual std::string glyph(Intent i) const = 0;   // "A", "Cross", "Enter": the last-used pad's profile binding, as that pad labels it
+
+    // What a pad's button / trigger means in the menus (#1021): the pad's controller-family profile in the app, the Xbox
+    // table here.  The shell asks per event, so a profile edited in the controls screen takes effect at once.
+    // Search and AcceptLong come back from a profile but are not TV's: the shell neither feeds nor consumes them.
+    virtual Intent padIntent(uint32_t pad, int sdlButton) const { return intentForButton(sdlButton); }
+    virtual Intent padTriggerIntent(uint32_t pad, int sdlAxis) const {
+        return sdlAxis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? Intent::PagePrev : sdlAxis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER ? Intent::PageNext : Intent::None;
+    }
 
     // ---- TV mode itself (phase 2) ----------------------------------------------------------------------------------
     virtual bool tvActive() const = 0;

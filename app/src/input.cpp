@@ -77,7 +77,15 @@ void InputManager::reresolve() {
         p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps);
         p.proProfile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps, true);
         syncHoldInputs((uint32_t)p.id, p.profile);   // (the Pro variant has the same hold inputs)
+        if (cfg_) p.nav = resolveNavProfile(*cfg_, p.guid, (int)SDL_GetGamepadType(p.handle));
     }
+}
+
+const NavProfile& InputManager::navProfile(uint32_t joystickId) const {
+    static const NavProfile kDefault = familyNavProfile(PadFamily::Xbox);
+    for (const Pad& p : pads_)
+        if ((uint32_t)p.id == joystickId) return p.nav;
+    return kDefault;
 }
 
 void InputManager::syncHoldInputs(uint32_t dev, const Profile& p) {
@@ -117,6 +125,7 @@ void InputManager::openPad(SDL_JoystickID id) {
         p.proProfile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps, true);
         syncHoldInputs((uint32_t)p.id, p.profile);
     }
+    if (cfg_) p.nav = resolveNavProfile(*cfg_, p.guid, (int)SDL_GetGamepadType(g));
     pads_.push_back(p);
 }
 

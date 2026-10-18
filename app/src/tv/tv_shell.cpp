@@ -16,6 +16,10 @@ char typedChar(const SDL_KeyboardEvent& k) {
     if (k.scancode == SDL_SCANCODE_BACKSPACE) return '\b';
     return 0;
 }
+
+// An intent the TV screens act on.  Search and AcceptLong are profile intents of the desktop library (#1021): a button
+// mapped to one is not TV's, as an unmapped button is not.
+bool isTvIntent(Intent in) { return in != Intent::None && in != Intent::Search && in != Intent::AcceptLong; }
 }  // namespace
 
 Shell::Shell(Host& h) : host_(h) {}
@@ -72,21 +76,27 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
     switch (e.type) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP: {
-        // D-pad, face and shoulder buttons only: Share / the paddles stay the app's (they may be the TV-menu action).
-        // Start too, except on the Base layer, where it is the screens' Menu (Game details); with the menu open it
-        // stays the app's.
-        const Intent in = intentForButton(e.gbutton.button);
-        if (in == Intent::None || (in == Intent::Menu && !base)) return false;
+        // The pad's own menu-button profile (#1021), asked of the host: D-pad, face, shoulder buttons and whatever else the
+        // profile maps.  Not TV's: Search and AcceptLong (the desktop library's), so those buttons stay the app's.
+        // Start (Menu) too, except on the Base layer, where it is the screens' Menu (Game details); with the menu open
+        // it stays the app's.
+        const Intent in = host_.padIntent(e.gbutton.which, e.gbutton.button);
+        if (!isTvIntent(in) || (in == Intent::Menu && !base)) return false;
         const bool down = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
         if (down) padDriven_ = true;
-        nav_.padButton(e.gbutton.button, down, ms);
+        nav_.padIntent(e.gbutton.which, e.gbutton.button, in, down, ms);
         return down;   // a release is fed to the nav (it stops a repeat) but still reaches the app
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         // The left stick and the two triggers only; the right stick is the game's (and the pointer's).
-        if (e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTX && e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTY &&
-            e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && e.gaxis.axis != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
-            return false;
+        if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+            const Intent in = host_.padTriggerIntent(e.gaxis.which, e.gaxis.axis);
+            if (!isTvIntent(in)) return false;   // an unbound trigger stays the app's
+            if (std::abs((int)e.gaxis.value) >= NavInput::kTriggerOn) padDriven_ = true;
+            nav_.padTrigger(e.gaxis.which, e.gaxis.axis, in, e.gaxis.value, ms);
+            return true;
+        }
+        if (e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTX && e.gaxis.axis != SDL_GAMEPAD_AXIS_LEFTY) return false;
         if (std::abs((int)e.gaxis.value) >= NavInput::kTriggerOn) padDriven_ = true;   // a resting stick drifts: only a push counts
         nav_.padAxis(e.gaxis.axis, e.gaxis.value, ms);
         return true;
@@ -122,8 +132,14 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
         padDriven_ = false;   // the pointer is the player's again
         return false;
-    case SDL_EVENT_WINDOW_FOCUS_LOST:
     case SDL_EVENT_GAMEPAD_REMOVED:
+        // Only that pad's holds go (the matching "up" will never come); the keyboard's and the other pads' stay.  The
+        // left stick is shared (padAxis): centre it, or a direction held on the unplugged pad would repeat forever.
+        nav_.forgetPad(e.gdevice.which);
+        nav_.padAxis(SDL_GAMEPAD_AXIS_LEFTX, 0, ms);
+        nav_.padAxis(SDL_GAMEPAD_AXIS_LEFTY, 0, ms);
+        return false;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
         nav_.reset();   // the matching "up" will never come: no direction may keep repeating
         return false;
     default: return false;

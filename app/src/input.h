@@ -30,6 +30,7 @@
 #include "cheatsheet.h"
 #include "devices.h"
 #include "hold_arbiter.h"
+#include "pad_profile.h"
 #include "remap.h"
 #include "router.h"
 
@@ -138,6 +139,13 @@ public:
     std::vector<PadInfo> pads() const;
     const Profile& keyboardProfile() const { return kbProfile_; }
     const Profile& padProfile(size_t i) const { return pads_[i].profile; }
+    // The menu-button profile of a pad by joystick id (#1021): its controller family plus the model's custom layer.  An id
+    // that is not open (unplugged, or never a gamepad) gets the Xbox family map.
+    const NavProfile& navProfile(uint32_t joystickId) const;
+    // The pad the player last pressed something on (the app notes it from the event stream, which the TV shell consumes
+    // before handleEvent sees it); lastPadFamily() is its family, Xbox before any press or once it is gone.
+    void notePadUsed(uint32_t joystickId) { lastPad_ = joystickId; }
+    PadFamily lastPadFamily() const { return navProfile(lastPad_).family; }
     // What pad i plays on a Pro Controller port (Profile::builtin proPort; the keyboard has no such variant).
     const Profile& padProProfile(size_t i) const { return pads_[i].proProfile; }
     // The remap table's view of a layer: true when the controller(s) it covers drive a Pro Controller port now
@@ -167,6 +175,7 @@ private:
         std::string guid;
         Profile profile;
         Profile proProfile;   // the same layers over the Pro Controller port defaults
+        NavProfile nav;       // its menu buttons (pad_profile.h): the family map plus the model's custom layer
         PadCaps caps;
     };
     void bindCaptured(const Binding& b);
@@ -176,6 +185,7 @@ private:
     void openPad(SDL_JoystickID id);
     void syncHoldInputs(uint32_t dev, const Profile& p);   // tell the arbiter which inputs of `p` are hold inputs
     int padFilter_ = -1;
+    uint32_t lastPad_ = 0;
     std::vector<Pad> pads_;
     CoreInput core_;
     Router router_;
