@@ -388,6 +388,15 @@ static void testButtonNames() {
     CHECK(navButtonName(PadFamily::Switch, ls) == ls.display());
 }
 
+static void testButtonLabelNoHandle() {
+    // No open pad (null handle): the family's names; an intent the profile leaves unbound has no caption.
+    CHECK(padButtonLabel(nullptr, familyNavProfile(PadFamily::Switch), tv::Intent::Accept) == "A");   // Switch confirms on its right-hand A
+    CHECK(padButtonLabel(nullptr, familyNavProfile(PadFamily::PlayStation), tv::Intent::Accept) == "Cross");
+    CHECK(padButtonLabel(nullptr, familyNavProfile(PadFamily::Xbox), tv::Intent::SectionNext) == "RB");
+    CHECK(padButtonLabel(nullptr, familyNavProfile(PadFamily::Xbox), tv::Intent::Up).empty());   // directions are not rebindable
+    CHECK(padButtonLabel(nullptr, familyNavProfile(PadFamily::Xbox), tv::Intent::None).empty());
+}
+
 int main() {
     testFamilyForEveryType();
     testIntentNames();
@@ -405,6 +414,7 @@ int main() {
     testRoundTrip();
     testFamilyChangeClearsOverrides();
     testButtonNames();
+    testButtonLabelNoHandle();
     std::printf("pad_profile: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

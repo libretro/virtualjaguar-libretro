@@ -16,27 +16,6 @@ namespace {
 
 float dpi() { return ImGui::GetStyle().FontScaleDpi; }   // the display scale the UI was set up at (app.cpp initImGui)
 
-// A face button as SDL labels it on this very pad (an 8BitDo in Switch mode says A/B/X/Y, a DualSense Cross/Circle/...),
-// else the family's name for it (pad_profile.h).  As tv::AppHost::glyph does for TV hints.
-std::string buttonName(SDL_Gamepad* g, const NavProfile& np, tv::Intent in) {
-    const Binding bd = np.binding(in);
-    if (bd.kind == Binding::None) return std::string();
-    if (g && bd.kind == Binding::PadButton) {
-        switch (SDL_GetGamepadButtonLabel(g, (SDL_GamepadButton)bd.code)) {
-        case SDL_GAMEPAD_BUTTON_LABEL_A: return "A";
-        case SDL_GAMEPAD_BUTTON_LABEL_B: return "B";
-        case SDL_GAMEPAD_BUTTON_LABEL_X: return "X";
-        case SDL_GAMEPAD_BUTTON_LABEL_Y: return "Y";
-        case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return "Cross";
-        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return "Circle";
-        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: return "Square";
-        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: return "Triangle";
-        default: break;
-        }
-    }
-    return navButtonName(np.family, bd);
-}
-
 }  // namespace
 
 void deskDrawFocusShadow(ImDrawList* dl, ImVec2 a0, ImVec2 a1, float round) {
@@ -76,24 +55,36 @@ void deskStickScroll(App& app) {
     ImGui::SetScrollY(ImGui::GetScrollY() + v * ImGui::GetFontSize() * 40.0f * ImGui::GetIO().DeltaTime);
 }
 
-std::string deskHintLine(App& app) {
+std::string deskHintLine(App& app, bool states) {
     const uint32_t id = app.input.lastPadId();
     const NavProfile& np = app.input.navProfile(id);
     SDL_Gamepad* g = SDL_GetGamepadFromID(id);   // null once that pad is gone
-    const std::string ok = buttonName(g, np, tv::Intent::Accept), fav = buttonName(g, np, tv::Intent::Aux);
-    const std::string prev = buttonName(g, np, tv::Intent::SectionPrev), next = buttonName(g, np, tv::Intent::SectionNext);
+    const std::string ok = padButtonLabel(g, np, tv::Intent::Accept), fav = padButtonLabel(g, np, tv::Intent::Aux);
+    const std::string prev = padButtonLabel(g, np, tv::Intent::SectionPrev), next = padButtonLabel(g, np, tv::Intent::SectionNext);
     std::string s;
     auto add = [&](const std::string& part) {
         if (!s.empty()) s += "  |  ";
         s += part;
     };
-    if (!ok.empty()) {
-        add(ok + " Play");
-        add("hold " + ok + " Menu");
+    if (states) {   // a shot loads; it has no menu and is no favorite
+        if (!ok.empty()) add(ok + " Load");
+    } else {
+        if (!ok.empty()) {
+            add(ok + " Play");
+            add("hold " + ok + " Menu");
+        }
+        if (!fav.empty()) add(fav + " Favorite");
     }
-    if (!fav.empty()) add(fav + " Favorite");
     if (!prev.empty() && !next.empty()) add(prev + "/" + next + " Tabs");
     return s;
+}
+
+int deskFollowStick(App& app, int index, int cols, int count, float row0Top, float pitch, float tileH) {
+    const DesktopPad& d = app.deskPad;
+    if (!d.active || std::fabs(d.scrollY) < 0.25f) return index;   // only the right stick moves focus by scrolling
+    const float top = ImGui::GetWindowPos().y;
+    return deskNearestVisibleIndex(index, cols, count, row0Top, pitch, tileH, top,
+                                   top + ImGui::GetWindowHeight() - ImGui::GetStyle().ScrollbarSize);
 }
 
 }  // namespace vj

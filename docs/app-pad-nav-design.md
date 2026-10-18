@@ -180,9 +180,10 @@ game and closing it again arms it too.
 
 ## 10. Input rules settled after review (my calls)
 
-- **Search box.** Pads never type, so pad intents are not blocked by a focused text field. While the
-  search box has focus, Back, Down and Accept from a pad leave it and put focus back on the grid
-  (`ImGui::SetWindowFocus` / clearing the active id); the keyboard keeps typing as before.
+- **Search box.** Pads never type, so pad intents are not blocked by a focused text field. While the search box has
+  focus, **any** pad press leaves it (a direction also moves the grid focus as usual; a Back / Accept / menu / favorite
+  command of that press is dropped and its release forgotten, so it neither acts nor closes the window; tab switches still
+  run). The library clears the box's active id; the keyboard keeps typing as before.
 - **A release only counts if its press was seen here.** `NavInput` keeps a per-source "pressed here"
   latch: a release whose press it did not see, or that went down before the last `reset()`, produces
   nothing. Every ownership or state change (a popup opens or closes, the library window opens or

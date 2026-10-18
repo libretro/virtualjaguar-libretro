@@ -15,6 +15,8 @@
 #include "remap.h"
 #include "tv/tv_nav.h"
 
+struct SDL_Gamepad;
+
 #include <array>
 #include <string>
 #include <vector>
@@ -72,5 +74,10 @@ void clearNavProfile(Config& cfg, const std::string& guid);   // erases every ke
 // A button as the family prints it: face buttons (Xbox A/B/X/Y, PlayStation Cross/Circle/Square/Triangle, Switch by SDL's
 // label), shoulders, triggers, START and BACK.  Anything else is Binding::display().
 std::string navButtonName(PadFamily f, const Binding& b);
+
+// The caption for the button `p` gives `in`: a face button as SDL labels it on the open pad `g` (an 8BitDo in Switch mode says
+// A/B/X/Y, a DualSense Cross/Circle/...), else navButtonName() for the family; "" when the profile leaves the intent unbound.
+// `g` may be null (the pad is gone, or no handle is known).
+std::string padButtonLabel(SDL_Gamepad* g, const NavProfile& p, tv::Intent in);
 
 }  // namespace vj

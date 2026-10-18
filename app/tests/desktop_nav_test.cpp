@@ -366,6 +366,42 @@ static void scroll_to_show() {
     CHECK(deskScrollToShow(200, 400, 0, 100, 4) == 196);    // taller than the view: its top lines up
 }
 
+static void nearest_visible() {
+    // 11 items, 3 columns: 4 rows at y 0, 10, 20, 30 (the last row has 2); a tile is 8 tall.
+    const float t = 8, p = 10;
+    CHECK(deskNearestVisibleIndex(4, 3, 11, 0, p, t, 0, 100) == 4);              // fully visible: stays
+    CHECK(deskNearestVisibleIndex(1, 3, 11, 0, p, t, 12, 38) == 7);              // left above: first full row (y 20), same column
+    CHECK(deskNearestVisibleIndex(0, 3, 11, 0, p, t, 12, 38) == 6);
+    CHECK(deskNearestVisibleIndex(7, 3, 11, 0, p, t, 12, 38) == 7);              // row 2 is fully visible
+    CHECK(deskNearestVisibleIndex(10, 3, 11, 0, p, t, 0, 28) == 7);              // left below: last full row (y 20)
+    CHECK(deskNearestVisibleIndex(9, 3, 11, 0, p, t, 0, 18) == 3);               // ... y 10
+    CHECK(deskNearestVisibleIndex(2, 3, 8, 0, p, t, 12, 38) == 7);               // the full row lacks the column: its last item
+    CHECK(deskNearestVisibleIndex(4, 3, 11, 0, p, t, 12, 16) == 4);              // no row fits in the view: unchanged
+    CHECK(deskNearestVisibleIndex(4, 3, 11, 100, p, t, 0, 50) == 4);             // everything below: no full row, unchanged
+    CHECK(deskNearestVisibleIndex(0, 3, 0, 0, p, t, 0, 50) == 0);                // empty list
+    // the scroll position is not part of the arithmetic: shifting everything shifts nothing
+    CHECK(deskNearestVisibleIndex(1, 3, 11, 500, p, t, 512, 538) == 7);
+}
+
+static void focus_index_no_scroll() {
+    DesktopNav n;
+    n.setLists("all", gridOnly("a b c d e f", 3));
+    n.takeScroll();
+    n.focusIndex(DeskRegion::Grid, 4);
+    CHECK(n.index() == 4 && n.focusedKey() == "e");
+    CHECK(!n.takeScroll());                           // the view is where the player put it
+    n.setLists("all", gridOnly("x a b c d e f", 3));
+    CHECK(n.focusedKey() == "e");                     // remembered by key like any move
+    n.takeScroll();
+    n.focusIndex(DeskRegion::Grid, 99);               // clamped
+    CHECK(n.focusedKey() == "f" && !n.takeScroll());
+    n.focusIndex(DeskRegion::States, 0);              // an empty region: nothing
+    CHECK(n.region() == DeskRegion::Grid && n.focusedKey() == "f");
+    n.setLists("all", gridOnly("", 3));
+    n.focusIndex(DeskRegion::Grid, 0);
+    CHECK(n.focusedKey().empty());
+}
+
 int main() {
     grid_moves_and_edges();
     strip_to_grid_and_back();
@@ -378,6 +414,8 @@ int main() {
     scroll_flag_once();
     visible_and_focused();
     scroll_to_show();
+    nearest_visible();
+    focus_index_no_scroll();
     std::printf("desktop_nav_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

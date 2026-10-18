@@ -238,23 +238,7 @@ std::string AppHost::glyph(Intent i) const {
     if (!g) return key;
     if (dpad != SDL_GAMEPAD_BUTTON_INVALID) return "D-pad";
     if (i == Intent::Search || i == Intent::AcceptLong || i == Intent::None) return key;
-    const NavProfile& np = app_.input.navProfile(lastPad_);
-    const Binding bd = np.binding(i);
-    if (bd.kind == Binding::None) return "";   // the profile leaves it unbound: no hint
-    if (bd.kind == Binding::PadButton) {       // a face button as SDL labels it on this very pad
-        switch (SDL_GetGamepadButtonLabel(g, (SDL_GamepadButton)bd.code)) {
-        case SDL_GAMEPAD_BUTTON_LABEL_A: return "A";
-        case SDL_GAMEPAD_BUTTON_LABEL_B: return "B";
-        case SDL_GAMEPAD_BUTTON_LABEL_X: return "X";
-        case SDL_GAMEPAD_BUTTON_LABEL_Y: return "Y";
-        case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return "Cross";
-        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return "Circle";
-        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: return "Square";
-        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: return "Triangle";
-        default: break;
-        }
-    }
-    return navButtonName(np.family, bd);
+    return padButtonLabel(g, app_.input.navProfile(lastPad_), i);   // "" when the profile leaves it unbound: no hint
 }
 
 }  // namespace vj::tv

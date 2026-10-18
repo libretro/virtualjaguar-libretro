@@ -26,6 +26,27 @@ float deskScrollToShow(float itemMin, float itemMax, float viewMin, float viewMa
     return itemMax + margin - viewMax;
 }
 
+int deskNearestVisibleIndex(int index, int cols, int count, float row0Top, float pitch, float tileH, float viewMin, float viewMax) {
+    if (count <= 0 || cols < 1 || pitch <= 0.0f || index < 0 || index >= count) return index;
+    const int rows = (count + cols - 1) / cols, col = index % cols;
+    auto top = [&](int r) { return row0Top + (float)r * pitch; };
+    auto full = [&](int r) { return top(r) >= viewMin && top(r) + tileH <= viewMax; };
+    const int row = index / cols;
+    if (full(row)) return index;
+    if (top(row) < viewMin) {                       // left above: the first fully visible row
+        for (int r = row + 1; r < rows; r++) {
+            if (top(r) >= viewMax) break;
+            if (full(r)) return std::min(r * cols + col, count - 1);
+        }
+    } else {                                        // left below: the last fully visible row
+        for (int r = row - 1; r >= 0; r--) {
+            if (top(r) + tileH <= viewMin) break;
+            if (full(r)) return r * cols + col;     // rows above the last are full, so the column exists
+        }
+    }
+    return index;
+}
+
 const std::vector<DeskItem>& DesktopNav::list(DeskRegion r) const {
     switch (r) {
         case DeskRegion::FavStrip: return lists_.fav;
@@ -101,6 +122,12 @@ void DesktopNav::setLists(const std::string& tab, const DeskLists& lists) {
     remember();
 
     if (tabChanged || region_ != oldRegion || index() != oldIndex || focusedKey() != oldKey) scroll_ = true;
+}
+
+void DesktopNav::focusIndex(DeskRegion r, int index) {
+    if (!active(r)) return;
+    go(r, index);
+    remember();
 }
 
 std::string DesktopNav::focusedKey() const {

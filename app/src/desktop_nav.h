@@ -41,6 +41,12 @@ struct DeskCmd {
 // does, else the least that brings it in plus `margin`; an item taller than the view lines its top up.  Pure.
 float deskScrollToShow(float itemMin, float itemMax, float viewMin, float viewMax, float margin);
 
+// The right stick scrolled the grid and the focused tile may have left the view: the index to focus instead.  Tiles are laid
+// out `cols` to a row, rows `pitch` apart from `row0Top`, each `tileH` tall; [viewMin, viewMax] is the visible range (same
+// units).  A fully visible focused tile keeps focus.  One that left above takes the first fully visible tile of its column,
+// one that left below the last; a column the last row lacks steps back a row.  `index` when no row is fully visible.  Pure.
+int deskNearestVisibleIndex(int index, int cols, int count, float row0Top, float pitch, float tileH, float viewMin, float viewMax);
+
 class DesktopNav {
 public:
     // Offer this frame's lists for `tab`.  The focused item is followed by key when the list changes; if it is gone
@@ -57,6 +63,10 @@ public:
     std::string focusedKey() const;                       // "" when no region has an item
     bool focused(DeskRegion r, int index) const;          // is this item the focused one (for drawing the ring)
     bool takeScroll();                                    // true once after any focus change: scroll the item into view
+
+    // Focus (r, index clamped) without asking for a scroll: the view is already where the player put it (right stick).
+    // Nothing when r has no items.
+    void focusIndex(DeskRegion r, int index);
 
     // A plain flag the glue sets (pad input shows the ring, mouse movement hides it).  The model ignores it.
     void setVisible(bool v) { visible_ = v; }

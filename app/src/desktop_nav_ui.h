@@ -34,7 +34,13 @@ void deskLeaveTextInput();
 void deskStickScroll(App& app);
 
 // "A Play  |  hold A Menu  |  Y Favorite  |  LB/RB Tabs", the buttons named as the last-used pad's family labels them
-// (SDL's face labels where that pad is open).  A part whose button the profile leaves unbound is dropped.
-std::string deskHintLine(App& app);
+// (SDL's face labels where that pad is open).  A part whose button the profile leaves unbound is dropped.  `states`: the
+// States tab, where a shot only loads ("A Load  |  LB/RB Tabs").
+std::string deskHintLine(App& app, bool states);
+
+// While the right stick scrolls, the focused grid tile that left the view hands focus to the nearest fully visible one
+// (deskNearestVisibleIndex, in the grid window's visible range): returns the index to focus, `index` itself when the stick is
+// at rest or the tile is still in view.  The arguments describe the grid's layout in screen coordinates.
+int deskFollowStick(App& app, int index, int cols, int count, float row0Top, float pitch, float tileH);
 
 }  // namespace vj

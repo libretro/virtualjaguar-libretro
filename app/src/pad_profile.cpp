@@ -250,4 +250,23 @@ std::string navButtonName(PadFamily f, const Binding& b) {
     return b.display();
 }
 
+std::string padButtonLabel(SDL_Gamepad* g, const NavProfile& p, tv::Intent in) {
+    const Binding bd = p.binding(in);
+    if (bd.kind == Binding::None) return std::string();
+    if (g && bd.kind == Binding::PadButton) {
+        switch (SDL_GetGamepadButtonLabel(g, (SDL_GamepadButton)bd.code)) {
+        case SDL_GAMEPAD_BUTTON_LABEL_A: return "A";
+        case SDL_GAMEPAD_BUTTON_LABEL_B: return "B";
+        case SDL_GAMEPAD_BUTTON_LABEL_X: return "X";
+        case SDL_GAMEPAD_BUTTON_LABEL_Y: return "Y";
+        case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return "Cross";
+        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return "Circle";
+        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: return "Square";
+        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: return "Triangle";
+        default: break;
+        }
+    }
+    return navButtonName(p.family, bd);
+}
+
 }  // namespace vj
