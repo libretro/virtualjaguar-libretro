@@ -19,6 +19,7 @@
 #   axis NAME VALUE       set an axis of the virtual pad (SDL axis name: righty, lefttrigger; -32768..32767)
 #   expect desk-scroll=0|1    the desktop nav holds a right-stick scroll (nonzero)
 #   expect desk-pending=N     commands the desktop nav has queued (headless nothing draws the library, so they stay queued)
+#   expect desk-popup=0|1     a library popup (tile menu, BIOS popup, delete modal) opened from the pad is open and driven by it
 #   saveconfig           App::saveConfig() (a headless run keeps its config in a private temp dir)
 #   expect cfg=KEY:VALUE  the config holds KEY = VALUE; KEY:absent = the config has no such key
 #   wait library         WINDOWED ONLY: block the script until the Library has scanned (not scanning, and at least one

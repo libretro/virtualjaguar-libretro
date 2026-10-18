@@ -44,4 +44,8 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms);
 // popup, then turns the queued intents into commands in `pending`.
 void deskPadFrame(App& app, uint64_t ms);
 
+// Between ImGui_ImplSDL3_NewFrame() and ImGui::NewFrame(): ImGui's gamepad navigation is on exactly while a popup the pad opened
+// is open (the Manual-mode backend clears HasGamepad every frame, so it is set here), and off otherwise.
+void deskPadBeforeNewFrame(App& app);
+
 }  // namespace vj

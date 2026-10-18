@@ -394,6 +394,8 @@ bool App::initImGui() {
     const char* glsl = "#version 330 core";
 #endif
     if (!ImGui_ImplSDL3_InitForOpenGL(window_, gl_)) return false;
+    // The backend submits no pad state: the library's popups get ImGui gamepad nav fed with our intents (deskPadBeforeNewFrame).
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
     if (simDensity_) {   // --pixel-density: the multi-viewport path asks the platform handler too
         ImGui::GetPlatformIO().Platform_GetWindowFramebufferScale = [](ImGuiViewport*) {
             return ImVec2(g_simDensity, g_simDensity);
@@ -841,6 +843,7 @@ void App::haltedFrame() {
     applyViewports();
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    deskPadBeforeNewFrame(*this);   // the library popups' pad nav flags, after the backend's own (desktop_nav_app.h)
     simulateDensity();
     ImGui::NewFrame();
     bool capKb = false;
@@ -2018,6 +2021,7 @@ int App::runInteractive(const CliArgs& a) {
         applyViewports();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
+        deskPadBeforeNewFrame(*this);
         simulateDensity();
         ImGui::NewFrame();
         if (a.verbose && !densityLogged_ && ++densityFrames_ >= 5) logDensity();

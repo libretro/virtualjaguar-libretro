@@ -222,9 +222,6 @@ void finishDeskFrame(App& app, LibraryService& svc) {
         if (app.host.isLoaded()) app.input.armReleaseGuard();   // the Back press must not reach the paused game
     }
     g_defer = DeskDefer();
-    // The popup the pad opened is gone (closed by the mouse or Escape): the pad is the library's again.
-    if (d.padPopup && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
-        d.padPopup = false;
 }
 
 }  // namespace
@@ -909,6 +906,7 @@ void drawStatesTab(App& app, LibraryService& svc, const std::string& needle) {
     // The confirmation lives outside the loops: deleting re-lists the states, and `games` with it.
     if (g_del.ask) {
         ImGui::OpenPopup("Delete save state?");
+        if (deskPadShown(app)) app.deskPad.padPopup = true;   // asked with the pad's ring up: the pad answers it (as the tile menu)
         g_del.ask = false;
     }
     if (ImGui::BeginPopupModal("Delete save state?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {

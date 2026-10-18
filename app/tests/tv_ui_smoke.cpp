@@ -3,6 +3,7 @@
 // an ImGui error (ID / stack / window misuse) on any page of the menu, the text it really draws (the netplay banner,
 // the Load rows that must not exist under hardcore), and that the menu leaves the pointer and the keyboard to the app
 // (no ImGui window while it is closed; no keyboard capture while it is open: F4 and the hold edges are gated on it).
+#include "desktop_nav_popup.h"
 #include "tv/tv_screen.h"
 #include "tv/tv_shell.h"
 #include "tv/tv_widgets.h"
@@ -507,6 +508,89 @@ static void escBackThenRoot() {
     CHECK(!keyEvent(shell, SDL_SCANCODE_ESCAPE, SDLK_ESCAPE));   // at the root Esc keeps its desktop meaning
     frames(host, shell, 2);
     CHECK(shell.screenId() == "home");
+}
+
+
+// The desktop library's popups under the pad (#1021, design section 4): ImGui's own gamepad navigation, fed with intents.
+// Gamepad nav alone must not make ImGui want the keyboard (F4 and the #1020 shortcut keep working), the intents must walk
+// and activate rows and Back must close the popup, and with the flags off the same intents must do nothing.
+struct PopupProbe {
+    int a = 0, b = 0, c = 0;
+    bool open = false;
+};
+static void popupFrame(PopupProbe& p, bool navOn, bool openNow) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DeltaTime = 1.0f / 60.0f;
+    vj::deskSetPopupNav(navOn);
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(20, 20));
+    ImGui::SetNextWindowSize(ImVec2(300, 200));
+    ImGui::Begin("padpopup");
+    if (openNow) ImGui::OpenPopup("##m");
+    p.open = false;
+    if (ImGui::BeginPopup("##m")) {
+        p.open = true;
+        if (ImGui::MenuItem("Row A")) p.a++;
+        if (ImGui::MenuItem("Row B")) p.b++;
+        if (ImGui::MenuItem("Row C")) p.c++;
+        ImGui::EndPopup();
+    }
+    ImGui::End();
+    ImGui::Render();
+}
+static void popupFrames(PopupProbe& p, bool navOn, int n) {
+    for (int i = 0; i < n; i++) {
+        popupFrame(p, navOn, false);
+        CHECK(!ImGui::GetIO().WantCaptureKeyboard);   // gamepad nav is not keyboard capture, popup open or not
+    }
+}
+static void padPopupNav() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiConfigFlags savedFlags = io.ConfigFlags;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;   // as the app has it (initImGui); main() turns it on for the worst case
+    // Unmapped intents press nothing; the six that matter map to the gamepad keys.
+    CHECK(vj::deskPopupKey(Intent::Alt) == ImGuiKey_None && vj::deskPopupKey(Intent::Aux) == ImGuiKey_None &&
+          vj::deskPopupKey(Intent::SectionNext) == ImGuiKey_None && vj::deskPopupKey(Intent::AcceptLong) == ImGuiKey_None);
+    CHECK(vj::deskPopupKey(Intent::Accept) == ImGuiKey_GamepadFaceDown && vj::deskPopupKey(Intent::Back) == ImGuiKey_GamepadFaceRight);
+    CHECK(vj::deskPopupKey(Intent::Down) == ImGuiKey_GamepadDpadDown && vj::deskPopupKey(Intent::Up) == ImGuiKey_GamepadDpadUp);
+
+    PopupProbe p;
+    popupFrames(p, false, 2);
+    popupFrame(p, false, true);   // the popup opens (as the pad's long press opens the tile menu)
+    popupFrames(p, true, 3);      // ... and the nav goes on the frame after
+    CHECK(p.open);
+    CHECK(!io.WantCaptureKeyboard);
+
+    // With the nav off the same intents do nothing at all.
+    vj::deskFeedPopupIntents({Intent::Down, Intent::Accept});
+    popupFrames(p, false, 4);
+    CHECK(p.a == 0 && p.b == 0 && p.c == 0 && p.open);
+
+    // On: the popup opens with its first row focused, so Down, Down lands on the third; Accept activates that row, once,
+    // and (a MenuItem) closes the popup.
+    vj::deskFeedPopupIntents({Intent::Down});
+    popupFrames(p, true, 3);
+    vj::deskFeedPopupIntents({Intent::Down});
+    popupFrames(p, true, 3);
+    vj::deskFeedPopupIntents({Intent::Accept});
+    popupFrames(p, true, 4);
+    CHECK(p.a == 0 && p.b == 0 && p.c == 1);
+    CHECK(!p.open);
+    // Reopened: the intents a popup does not use do nothing; Back closes it without activating anything.
+    popupFrame(p, true, true);
+    popupFrames(p, true, 3);
+    CHECK(p.open);
+    vj::deskFeedPopupIntents({Intent::Alt, Intent::Aux, Intent::SectionNext, Intent::PagePrev});
+    popupFrames(p, true, 4);
+    CHECK(p.open && p.a == 0 && p.b == 0 && p.c == 1);
+    vj::deskFeedPopupIntents({Intent::Back});
+    popupFrames(p, true, 4);
+    CHECK(!p.open);
+    CHECK(p.a == 0 && p.b == 0 && p.c == 1);
+    CHECK(g_imguiErrors == 0);
+    vj::deskSetPopupNav(false);
+    popupFrames(p, false, 3);
+    io.ConfigFlags = savedFlags;
 }
 
 static void baseNeverCapturesKeyboard() {
@@ -2103,6 +2187,7 @@ int main() {
     libraryEmptyGridHintsOnlyBack();
     homeSaysScanningWhileScanning();
     desktopWindowTakesInputFromBase();
+    padPopupNav();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;

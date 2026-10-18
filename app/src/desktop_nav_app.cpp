@@ -3,6 +3,8 @@
 #include <cstdlib>
 
 #include "app.h"
+#include "desktop_nav_popup.h"
+#include "imgui.h"
 #include "tv/tv_shell.h"
 
 namespace vj {
@@ -81,14 +83,23 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
     }
 }
 
+// The pad's popup is live: the pad opened it, the library still owns the pad, and an ImGui popup is still open.  The one
+// place `padPopup` is cleared (closed by the pad, a row, the mouse or Escape; or the pad changed hands under it).
+static bool popupLive(App& app) {
+    return app.deskPad.padPopup && ImGui::GetCurrentContext() && deskPadActive(app) &&
+           ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+}
+
 void deskPadFrame(App& app, uint64_t ms) {
     DesktopPad& d = app.deskPad;
+    if (d.padPopup && !popupLive(app)) d.padPopup = false;   // before the edge check: the way out is seen this frame
     const bool act = deskPadActive(app);
     const bool show = app.library.show;
     const int tab = app.library.activeTab();
     // Ownership or the screen changed (a game started or closed, a window opened, a tab switched, a popup opened or closed):
     // the releases in between never reached the nav, so forget what it thinks is held and what it queued, or a direction
-    // would repeat on and a release of a press seen elsewhere would fire.
+    // would repeat on and a release of a press seen elsewhere would fire.  That includes the Accept still held from the
+    // long press that opened a tile menu: its release is then a press-never-seen release and does nothing.
     if (act != d.active || show != d.seenShow || tab != d.seenTab || d.padPopup != d.seenPopup) {
         d.active = act;
         d.seenShow = show;
@@ -98,13 +109,22 @@ void deskPadFrame(App& app, uint64_t ms) {
         d.pending.clear();
         d.nav.reset();
         d.scrollY = 0;   // a right stick let go while the library was not listening must not scroll on when it is
+        d.in.setLongAccept(!d.padPopup);   // inside a popup Accept acts on press (it is a row, not the grid's tap / hold)
     }
     if (!act) return;
-    if (d.padPopup) return;   // the popup's rows are ImGui's (design section 4); the queued intents wait for that glue
+    if (d.padPopup) d.scrollY = 0;   // the grid stays put under the menu it anchors
     const std::vector<Intent> intents = d.in.take(ms);
     if (intents.empty()) return;
+    if (d.padPopup) {   // the popup's rows are ImGui's (design section 4): our intents, as its gamepad keys
+        deskFeedPopupIntents(intents);
+        return;
+    }
     const std::vector<DeskCmd> cmds = d.nav.apply(intents);
     d.pending.insert(d.pending.end(), cmds.begin(), cmds.end());
+}
+
+void deskPadBeforeNewFrame(App& app) {
+    deskSetPopupNav(popupLive(app));
 }
 
 }  // namespace vj

@@ -309,6 +309,7 @@ int App::tvScriptStep() {
             else if (name == "desk-pad") got = flag(deskPadActive(*this));          // the desktop library owns the pads (#1021)
             else if (name == "desk-scroll") got = flag(deskPad.scrollY != 0.0f);   // the desktop nav holds a right-stick scroll
             else if (name == "desk-pending") got = std::to_string(deskPad.pending.size());   // commands the desktop nav queued (nothing draws them headless)
+            else if (name == "desk-popup") got = flag(deskPad.padPopup);   // a library popup the pad opened is open (windowed: it is drawn)
             else if (name == "cfg") {   // KEY:VALUE -- the config holds KEY = VALUE ("absent": no such key at all)
                 const size_t colon = want.find(':');
                 if (colon == std::string::npos) return fail(l, "cfg wants KEY:VALUE or KEY:absent");
