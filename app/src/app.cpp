@@ -635,8 +635,13 @@ void App::traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swa
     u.budgetNs = latch_.budgetNs();
     u.targetNs = traceTargetNs_;
     u.locked = latch_.locked() ? 1 : 0;
+    u.waitEvents = traceWaitEvents_;
+    u.waitOverNs = traceWaitOverNs_;
+    u.waitOverBy = traceWaitOverBy_;
     trace_.ui(u);
-    traceWakeNs_ = traceTargetNs_ = 0;
+    traceWakeNs_ = traceTargetNs_ = traceWaitOverNs_ = 0;
+    traceWaitEvents_ = 0;
+    traceWaitOverBy_ = 0;
 }
 
 // The audio clock for mode A, or -1 when there is none to follow: no device, a paused stream, mute (nothing is
@@ -717,18 +722,32 @@ void App::latchWait() {
     const uint64_t wake = latch_.wakeAt(SDL_GetTicksNS());
     traceWakeNs_ = wake;
     traceTargetNs_ = latch_.targetNs();
+    const auto over = [this](uint64_t wantNs, unsigned char by) {   // VJ_PERF_TRACE: a blocking call that overran
+        const uint64_t now = SDL_GetTicksNS();
+        if (now > wantNs && now - wantNs > traceWaitOverNs_) {
+            traceWaitOverNs_ = now - wantNs;
+            traceWaitOverBy_ = by;
+        }
+    };
     for (;;) {
         const uint64_t t = SDL_GetTicksNS();
         if (t >= wake || quit) return;
         const uint64_t left = wake - t;
         if (left < 2000000) {   // SDL_WaitEventTimeout counts whole ms: the last stretch is a precise sleep
             SDL_DelayPrecise(left);
+            over(wake, 2);
             return;
         }
         SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, (Sint32)((left - 1000000) / 1000000))) continue;
-        do handleEvent(e, false);
-        while (!quit && SDL_PollEvent(&e));
+        const Sint32 ms = (Sint32)((left - 1000000) / 1000000);
+        if (!SDL_WaitEventTimeout(&e, ms)) {
+            over(t + (uint64_t)ms * 1000000ull, 1);
+            continue;
+        }
+        do {
+            handleEvent(e, false);
+            traceWaitEvents_++;
+        } while (!quit && SDL_PollEvent(&e));
         publishInput();
     }
 }
@@ -1846,6 +1865,7 @@ int App::runInteractive(const CliArgs& a) {
     unsigned fontFrames = 0;
     applyAudioSettings();
     audio.open(48043.6);
+    emu.setPreciseWake(a.emuWake != 0);   // (read when the thread starts)
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     lateLatchOn_ = a.lateLatch != 0;
     paceSteerOn_ = a.paceSteer != 0;

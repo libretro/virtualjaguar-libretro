@@ -96,6 +96,7 @@ struct CliArgs {
     bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
     int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
     int paceSteer = -1;             // dev: --pace-steer on|off, threaded + vsync only (default on; #967 evenness)
+    int emuWake = -1;               // dev: --emu-wake precise|plain, the emulation thread's wake-ups (default precise)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -426,6 +427,9 @@ private:
     PerfTrace::Emu tracePaced_{};              // emulation thread: the pacing of the frame about to run
     bool tracePacedSet_ = false;
     uint64_t traceWakeNs_ = 0, traceTargetNs_ = 0;   // UI thread: the late latch's last wait (0 = none)
+    unsigned traceWaitEvents_ = 0;                    // ... the input events it handled
+    uint64_t traceWaitOverNs_ = 0;                    // ... its largest overshoot of one blocking call
+    unsigned char traceWaitOverBy_ = 0;               // ... and which call that was (1 wait-event, 2 precise delay)
     void tracePaced(double lateSec, const PacingClock& clock);
     void traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swap1);
     uint64_t emuFramesSeen_ = 0;               // UI thread: EmuThread::framesRun() at the previous iteration
