@@ -27,6 +27,19 @@ endif()
 add_test(NAME pad_profile_unit COMMAND vj_pad_profile_test)
 set_tests_properties(pad_profile_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# Controller navigation (#1021): the DesktopNav focus model over the desktop library's regions
+# (tests/desktop_nav_test.cpp).  Pure; only the Intent enum from tv_nav.h and tv_focus.cpp are used.
+add_executable(vj_desktop_nav_test tests/desktop_nav_test.cpp src/desktop_nav.cpp src/tv/tv_focus.cpp)
+target_include_directories(vj_desktop_nav_test PRIVATE src)
+if(MSVC)
+    target_compile_options(vj_desktop_nav_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_desktop_nav_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_desktop_nav_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME desktop_nav_unit COMMAND vj_desktop_nav_test)
+set_tests_properties(desktop_nav_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 # Focus model + style metrics (tests/tv_focus_test.cpp) and nav intents (tests/tv_nav_test.cpp): pure.
 #   tv_focus_unit   LinearFocus / GridFocus / FocusMemory / A-Z jump helpers, Metrics, Tween
 #   tv_nav_unit     NavInput (repeat, stick hysteresis, triggers, newest-direction-wins) and the intent tables
