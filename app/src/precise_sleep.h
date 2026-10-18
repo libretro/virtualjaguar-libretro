@@ -12,6 +12,9 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN   // this header reaches ~24 translation units: keep legacy winsock and macros out
+#endif
 #include <windows.h>
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -38,8 +41,7 @@ inline void preciseSleepNs(uint64_t ns) {
         due.QuadPart = -(LONGLONG)(ns / 100);   // relative, in 100 ns units
         if (due.QuadPart == 0) due.QuadPart = -1;
         if (SetWaitableTimer(t.h, &due, 0, nullptr, nullptr, FALSE)) {
-            WaitForSingleObject(t.h, INFINITE);
-            return;
+            if (WaitForSingleObject(t.h, INFINITE) == WAIT_OBJECT_0) return;
         }
     }
     Sleep(1);
