@@ -26,9 +26,13 @@ static void usage(const char* argv0) {
         "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
         "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
         "  --pace-steer on|off   dev: with the emulation thread and vsync, keep frame ends off the take point (default on)\n"
+        "  --emu-wake precise|plain  dev: the emulation thread's frame wake-ups (default precise)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
+#ifdef VJ_HAVE_NEURO
+        "  --neuro URL           let Neuro-sama (or any Neuro API server) play, this run: ws://HOST:PORT (docs/neuro.md)\n"
+#endif
         "  --version, --help\n"
         "\n"
         "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
@@ -54,6 +58,7 @@ static void usage(const char* argv0) {
         "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
         "  --disc-swap IMAGE     (CD content) add IMAGE as a second disc, swap to it, then back to the first\n"
         "  --disc-insert IMAGE   (--boot-bios cd) put IMAGE in the CD BIOS's empty tray with Add disc image...\n"
+        "  --expect-discs N      fail unless the disc list holds N images (an .m3u's discs), then insert the last one\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
         "  --expect-bios R:SRC   fail unless the core ran the cart|cd BIOS from builtin, system or file (the --cart-bios/--cd-bios file)\n"
         "  --print-controls      print Player 1's controls cheat sheet (the active bindings) after the load\n"
@@ -176,6 +181,9 @@ int main(int argc, char** argv) {
             a.expectControls = v == "shown" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--tv-test-script")) a.tvTestScript = need(s);
+#ifdef VJ_HAVE_NEURO
+        else if (!std::strcmp(s, "--neuro")) a.neuroUrl = need(s);
+#endif
         else if (!std::strcmp(s, "--netplay")) a.netplay.role = need(s);
         else if (!std::strcmp(s, "--netplay-addr")) a.netplay.address = need(s);
         else if (!std::strcmp(s, "--netplay-device")) a.netplay.device = need(s);
@@ -212,6 +220,14 @@ int main(int argc, char** argv) {
             }
             a.paceSteer = v == "on" ? 1 : 0;
         }
+        else if (!std::strcmp(s, "--emu-wake")) {
+            const std::string v = need(s);
+            if (v != "precise" && v != "plain") {
+                std::fprintf(stderr, "--emu-wake wants precise or plain, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.emuWake = v == "precise" ? 1 : 0;
+        }
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {
             unsigned w = 0, h = 0;
@@ -233,6 +249,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--state-roundtrip")) a.stateRoundtrip = true;
         else if (!std::strcmp(s, "--disc-swap")) a.discSwap = need(s);
         else if (!std::strcmp(s, "--disc-insert")) a.discInsert = need(s);
+        else if (!std::strcmp(s, "--expect-discs")) a.expectDiscs = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);
         else if (!std::strcmp(s, "--data-dir")) a.dataDir = need(s);

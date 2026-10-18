@@ -365,6 +365,9 @@ void drawSettings(App& app) {
         if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Interface", nullptr, tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
+#ifdef VJ_HAVE_NEURO
+        if (ImGui::BeginTabItem("Neuro", nullptr, tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
+#endif
         ImGui::EndTabBar();
     }
     ImGui::End();
@@ -602,7 +605,7 @@ void drawMenuBar(App& app) {
             overlayEvent(app.input.controls, OverlayEvent::Toggle);
         }
         ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
-        if (ImGui::MenuItem("TV mode", nullptr, app.tvMode.active(), tv::effectiveSetting(app.tvSetting) != tv::TvSetting::Off))
+        if (ImGui::MenuItem("TV mode", "Ctrl+Shift+T", app.tvMode.active(), tv::effectiveSetting(app.tvSetting) != tv::TvSetting::Off))
             app.toggleTvMode();
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();

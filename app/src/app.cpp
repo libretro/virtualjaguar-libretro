@@ -148,6 +148,16 @@ App::~App() { shutdown(); }
 
 double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)perfFreq_; }
 
+#ifdef VJ_HAVE_NEURO
+// Headless with --neuro: the client runs as in the UI loop, and frame `i` waits for its time at 60 fps.
+void App::headlessNeuroFrame(uint64_t t0, unsigned i) {
+    neuroTick(*this);
+    const double due = (double)t0 / (double)perfFreq_ + i / 60.0;
+    const double wait = due - now();
+    if (wait > 0) SDL_Delay((Uint32)(wait * 1000.0));
+}
+#endif
+
 // ---------------------------------------------------------------------------------
 // config
 // ---------------------------------------------------------------------------------
@@ -398,6 +408,9 @@ bool App::initImGui() {
 void App::shutdown() {
     if (host.isLoaded()) autoSave();   // quitting: keep where the game was
     discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
+#ifdef VJ_HAVE_NEURO
+    neuroShutdown(*this);
+#endif
     // Unload (it flushes SRAM) where the core lives, then stop the thread.  A core stuck inside retro_run (it should
     // not happen in phase 1: the GDB stub is locked off) must not hang the quit: give up after 3 s and exit.
     if (host.isLoaded() && !emu.callFor(std::chrono::milliseconds(3000), [this] { host.unloadContent(); })) {
@@ -455,6 +468,9 @@ void App::wireHost() {
             if (!presentEventNs_) presentEventNs_ = pendingEventNs_;   // and to this iteration's swap
             pendingEventNs_ = 0;
         }
+#ifdef VJ_HAVE_NEURO
+        input.agentControls = neuro.frame();   // Neuro's buttons for this emulated frame (inline only: off when threaded)
+#endif
         input.poll(!inputCaptured_);
     };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
@@ -637,8 +653,13 @@ void App::traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swa
     u.budgetNs = latch_.budgetNs();
     u.targetNs = traceTargetNs_;
     u.locked = latch_.locked() ? 1 : 0;
+    u.waitEvents = traceWaitEvents_;
+    u.waitOverNs = traceWaitOverNs_;
+    u.waitOverBy = traceWaitOverBy_;
     trace_.ui(u);
-    traceWakeNs_ = traceTargetNs_ = 0;
+    traceWakeNs_ = traceTargetNs_ = traceWaitOverNs_ = 0;
+    traceWaitEvents_ = 0;
+    traceWaitOverBy_ = 0;
 }
 
 // The audio clock for mode A, or -1 when there is none to follow: no device, a paused stream, mute (nothing is
@@ -720,18 +741,32 @@ void App::latchWait() {
     const uint64_t wake = latch_.wakeAt(SDL_GetTicksNS());
     traceWakeNs_ = wake;
     traceTargetNs_ = latch_.targetNs();
+    const auto over = [this](uint64_t wantNs, unsigned char by) {   // VJ_PERF_TRACE: a blocking call that overran
+        const uint64_t now = SDL_GetTicksNS();
+        if (now > wantNs && now - wantNs > traceWaitOverNs_) {
+            traceWaitOverNs_ = now - wantNs;
+            traceWaitOverBy_ = by;
+        }
+    };
     for (;;) {
         const uint64_t t = SDL_GetTicksNS();
         if (t >= wake || quit) return;
         const uint64_t left = wake - t;
         if (left < 2000000) {   // SDL_WaitEventTimeout counts whole ms: the last stretch is a precise sleep
             SDL_DelayPrecise(left);
+            over(wake, 2);
             return;
         }
         SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, (Sint32)((left - 1000000) / 1000000))) continue;
-        do handleEvent(e, false);
-        while (!quit && SDL_PollEvent(&e));
+        const Sint32 ms = (Sint32)((left - 1000000) / 1000000);
+        if (!SDL_WaitEventTimeout(&e, ms)) {
+            over(t + (uint64_t)ms * 1000000ull, 1);
+            continue;
+        }
+        do {
+            handleEvent(e, false);
+            traceWaitEvents_++;
+        } while (!quit && SDL_PollEvent(&e));
         publishInput();
     }
 }
@@ -1207,7 +1242,7 @@ tv::Shell& App::tvShell() { return *tvShell_; }
 
 void App::showOpenDialog() {
     if (!window_) return;
-    g_filterPattern = joinExtensions(CoreHost::validExtensions());
+    g_filterPattern = joinExtensions(CoreHost::validExtensions()) + ";m3u";   // multi-disc playlists: the app reads them (m3u.h)
     g_filters[0].name = g_filterName.c_str();
     g_filters[0].pattern = g_filterPattern.c_str();
     g_filters[1].name = "All files";
@@ -1333,14 +1368,16 @@ void App::openAndLoadState(const std::string& pathIn, int slot) {
         return;
     }
     if (slot >= 0) stateSlot = slot;
-    if (host.isLoaded() && host.contentPath() == path) {
+    // The running game: the disc in the tray, or what was opened (an .m3u, or the disc before a swap).
+    auto running = [&] { return host.isLoaded() && (host.contentPath() == path || host.loadedPath() == path); };
+    if (running()) {
         loadState(slot);
         return;
     }
     suppressResume_ = true;   // the state asked for replaces the auto-save offer
     handleDrop(path);
     suppressResume_ = false;
-    if (host.isLoaded() && host.contentPath() == path) pendingStateSlot_ = slot;   // cleared if the open failed
+    if (running()) pendingStateSlot_ = slot;   // cleared if the open failed
     pendingStateFrames_ = 2;   // (threaded: pendingStateAt_, set by openContentOnCore)
 }
 
@@ -1539,6 +1576,9 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         break;
     case SDLK_N:
         if (mod) newWindow();
+        break;
+    case SDLK_T:   // View > TV mode, fixed (not a rebindable action); the game keeps running.  A no-op when the setting is Off
+        if (mod && shift && !input.capturing() && !input.uiWantsKeyboard) toggleTvMode();
         break;
     default: break;
     }
@@ -1818,6 +1858,9 @@ int App::run(const CliArgs& a) {
     if (!a.cdBios.empty()) biosCli_[bios::Cd] = absolutePath(a.cdBios);
     bootTarget_ = a.bootBios == "cart" ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
     if (!netplayInit(*this, a)) return 2;
+#ifdef VJ_HAVE_NEURO
+    neuroInit(*this, a);
+#endif
 
     int rc = a.headless ? (a.tvTestScript.empty() ? runHeadless(a) : runTvScript(a)) : runInteractive(a);
 
@@ -1844,6 +1887,7 @@ int App::runInteractive(const CliArgs& a) {
     unsigned fontFrames = 0;
     applyAudioSettings();
     audio.open(48043.6);
+    emu.setPreciseWake(a.emuWake != 0);   // (read when the thread starts)
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     lateLatchOn_ = a.lateLatch != 0;
     paceSteerOn_ = a.paceSteer != 0;
@@ -1857,6 +1901,9 @@ int App::runInteractive(const CliArgs& a) {
         else if (a.showWindow.rfind("settings-storage", 0) == 0) devSelectTab = "Storage";
         else if (a.showWindow.rfind("settings-interface", 0) == 0) devSelectTab = "Interface";
         else if (a.showWindow.rfind("settings-discord", 0) == 0) devSelectTab = "Discord";
+#ifdef VJ_HAVE_NEURO
+        else if (a.showWindow.rfind("settings-neuro", 0) == 0) devSelectTab = "Neuro";
+#endif
         else if (a.showWindow.rfind("settings-bios", 0) == 0) devSelectTab = "BIOS";
         size_t c = a.showWindow.find(':');   // settings:FILTER pre-fills the options search box
         if (c != std::string::npos) std::snprintf(optionFilter, sizeof optionFilter, "%s", a.showWindow.c_str() + c + 1);
@@ -1937,6 +1984,9 @@ int App::runInteractive(const CliArgs& a) {
         ach.pump();
         syncDebug();
         discordTick(*this);
+#ifdef VJ_HAVE_NEURO
+        neuroTick(*this);
+#endif
         perf.lap(Perf::Events);
         syncEmuFlags();
         if (threaded()) threadedFrame();
@@ -2230,6 +2280,82 @@ bool App::discInsertHeadlessCheck(const std::string& path) {
     return true;
 }
 
+// --expect-discs: an .m3u's discs all reach the disc list File > Disc reads (the pinned snapshot when threaded), and the
+// two identities split the way followDiscSwap describes: the playlist is what was opened (the .srm, Restart, recents),
+// the disc in the tray is the content (the title, the save-state slots, achievements) -- the first disc at boot, the
+// last one once File > Disc has put it in.
+bool App::discListHeadlessCheck(unsigned want) {
+    auto menuDisc = [this] {
+        host.pinSnapshot();
+        followDiscSwap();   // what the UI loop does after each iteration
+        return host.discInfo();
+    };
+    const std::string opened = host.loadedPath(), srm = host.saveRamPath();
+    std::vector<std::string> discs;
+    std::string err;
+    if (!CoreHost::readPlaylist(opened, discs, err) || discs.size() != want) {
+        std::fprintf(stderr, "headless: FAIL --expect-discs: %s is not a playlist of %u disc(s) (%s)\n", opened.c_str(),
+                     want, err.empty() ? (std::to_string(discs.size()) + " listed").c_str() : err.c_str());
+        return false;
+    }
+    auto identity = [&](size_t disc, const char* when) {
+        bool ok = true;
+        const std::string slot = lib::stateFileName(pathStem(discs[disc]), stateSlot), state = statePath(stateSlot);
+        if (host.contentPath() != discs[disc] || host.contentName() != pathStem(discs[disc])) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: %s, the content is '%s', expected '%s'\n", when,
+                         host.contentPath().c_str(), discs[disc].c_str());
+            ok = false;
+        }
+        if (state.size() < slot.size() || state.compare(state.size() - slot.size(), slot.size(), slot) != 0) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: %s, the state slot is %s, expected one named %s\n", when,
+                         state.c_str(), slot.c_str());
+            ok = false;
+        }
+        if (host.loadedPath() != opened || host.saveRamPath() != srm || pathStem(srm) != pathStem(opened)) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: %s, the .srm is %s, expected the playlist's (%s)\n", when,
+                         host.saveRamPath().c_str(), opened.c_str());
+            ok = false;
+        }
+        return ok;
+    };
+    DiscInfo d = menuDisc();
+    if (!d.available || d.count != want || d.index != 0 || d.ejected) {
+        std::fprintf(stderr, "headless: FAIL --expect-discs: %u image(s), index %u, tray %s; expected %u with the first in\n",
+                     d.count, d.index, d.ejected ? "open" : "closed", want);
+        return false;
+    }
+    if (!identity(0, "at boot")) return false;
+    if (recents.empty() || recents[0] != opened) {
+        std::fprintf(stderr, "headless: FAIL --expect-discs: the recents list starts with %s, not %s\n",
+                     recents.empty() ? "nothing" : recents[0].c_str(), opened.c_str());
+        return false;
+    }
+    std::string names;
+    for (const std::string& l : d.labels) names += (names.empty() ? "" : ", ") + l;
+    if (want > 1) {
+        runNativeCommand(platform::Cmd::DiscTray, 0);   // Open tray
+        d = menuDisc();                                  // the tray toggle reads the pinned state, as a menu would
+        if (!d.ejected) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: Open tray left the tray closed\n");
+            return false;
+        }
+        runNativeCommand(platform::Cmd::DiscSelect, (int)want - 1);   // File > Disc > the last disc
+        runNativeCommand(platform::Cmd::DiscTray, 0);                 // Close tray: it boots
+        d = menuDisc();
+        if (d.ejected || d.index != want - 1) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: inserting the last disc left index %u, tray %s\n", d.index,
+                         d.ejected ? "open (the insert failed)" : "closed");
+            return false;
+        }
+        if (!identity(want - 1, "after inserting the last disc")) return false;
+        runHeadlessFrames(60);
+    }
+    std::printf("DISC list %u: %s; content %s -> %s, save RAM %s (%s)\n", d.count, names.c_str(),
+                pathStem(discs[0]).c_str(), host.contentName().c_str(), pathStem(host.saveRamPath()).c_str(),
+                threaded() ? "emulation thread" : "inline");
+    return true;
+}
+
 int App::runHeadless(const CliArgs& a) {
     audio.open(48043.6);
     applyAudioSettings();
@@ -2267,7 +2393,7 @@ int App::runHeadless(const CliArgs& a) {
             SDL_PushEvent(&ev);
             SDL_Event got;
             while (SDL_PollEvent(&got)) handleEvent(got, true);
-            if (!host.isLoaded() || host.contentPath() != absolutePath(path)) {
+            if (!host.isLoaded() || host.loadedPath() != absolutePath(path)) {   // the opened file (an .m3u boots its first disc)
                 std::fprintf(stderr, "headless: FAIL could not load %s\n", path.c_str());
                 return 1;
             }
@@ -2328,6 +2454,9 @@ int App::runHeadless(const CliArgs& a) {
         } else {
             for (unsigned i = 0; i < a.frames; i++) {
                 ach.headlessFrame(i);
+#ifdef VJ_HAVE_NEURO
+                if (!neuroCliUrl.empty()) headlessNeuroFrame(hlT0, i);   // --neuro: real time, so she can keep up
+#endif
                 audio.update();
                 uint64_t hr0 = SDL_GetPerformanceCounter();
                 host.runFrame();
@@ -2353,6 +2482,7 @@ int App::runHeadless(const CliArgs& a) {
         }
         if (!a.discSwap.empty() && !discSwapHeadlessCheck(a.discSwap)) rc = 1;
         if (!a.discInsert.empty() && !discInsertHeadlessCheck(a.discInsert)) rc = 1;
+        if (a.expectDiscs && !discListHeadlessCheck(a.expectDiscs)) rc = 1;
         if (!emu.call([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = shownFrame();

@@ -276,6 +276,7 @@ static void testShortcuts() {
     CHECK(findCmd(bar, Cmd::Quit)->key == "cmd+q");
     CHECK(findCmd(bar, Cmd::Reset)->key == "cmd+r");
     CHECK(findCmd(bar, Cmd::Fullscreen)->key == "cmd+ctrl+f");
+    CHECK(findCmd(bar, Cmd::TvMode)->key == "cmd+shift+t");   // fixed; the in-window hotkey and the ImGui View menu say Ctrl/Cmd+Shift+T
     // The tray and the Dock menu show no shortcuts.
     std::vector<std::string> tk;
     collectKeys(buildTrayMenu(maximal(false)), tk);

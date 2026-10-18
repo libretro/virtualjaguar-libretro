@@ -18,6 +18,7 @@
 #   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
+#   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
 #   *_threaded limits     the debugger and the GDB stub are off while threaded
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
@@ -170,6 +171,14 @@ set_tests_properties(pro_controller_option_on PROPERTIES TIMEOUT 120 LABELS emu_
 set_tests_properties(pro_controller_option_off PROPERTIES TIMEOUT 120
     PASS_REGULAR_EXPRESSION "virtualjaguar_p2_device=pad_pro \\(locked\\).*headless: OK"
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
+
+# An .m3u set threaded: loadContent registers every disc on the emulation thread; the menus read the pinned snapshot.
+add_test(NAME smoke_m3u_playlist_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 120 --allow-blank --expect-discs 2
+            "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/synth_jagcd_set.m3u")
+set_tests_properties(smoke_m3u_playlist_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "DISC list 2: synth_jagcd\\.chd, synth_jagcd_multi\\.chd; content synth_jagcd -> synth_jagcd_multi, save RAM synth_jagcd_set \\(emulation thread\\)"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
 add_test(NAME emu_thread_limits
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")

@@ -129,22 +129,27 @@ public:
     // ---- content ----------------------------------------------------------
     // Full cycle: unload any previous game, retro_deinit, set_environment,
     // retro_init, retro_load_game, then load SRAM.  Safe to call repeatedly.
+    // An .m3u playlist (m3u.h) boots its first disc and puts every disc in the disc list.  The playlist is what was
+    // opened (loadedPath / loadedName: the .srm, Restart, recents), the disc in the tray the content, as in RetroArch.
     bool loadContent(const std::string& path, std::string& err);
     // Boot the console with an empty cartridge slot (SET_SUPPORT_NO_GAME).
     bool loadNoContent(std::string& err);
     void unloadContent();
     bool isLoaded() const { return loaded_; }
-    // What is running: the opened file, or after a disc swap the disc in the tray (a swap moves it only once the new
+    // What is running: the opened file (an .m3u: its first disc), or after a disc swap the disc in the tray (a swap moves it only once the new
     // disc has booted; an open tray or a failed insert leaves it alone).  Save states, achievements, cheats and the
     // window title follow it.
     const std::string& contentPath() const { return onOwner() ? contentPath_ : ui_.contentPath; }
     const std::string& contentName() const { return onOwner() ? contentName_ : ui_.contentName; }  // file stem; "" with no content
     // What was opened, which a disc swap never changes.  The .srm is named after it: the core keeps its save RAM (the
     // EEPROM pair and the Memory Track, libretro.c) across an insert and never reloads it, so the file must stay the
-    // one it was read from.  A restart reopens it too.
+    // one it was read from.  A restart reopens it too.  An .m3u playlist is what was opened: one .srm per set.
     const std::string& loadedPath() const { return loadedPath_; }
     const std::string& loadedName() const { return loadedName_; }
     unsigned discSwaps() const { return onOwner() ? discSwaps_ : ui_.discSwaps; }   // counts moves of contentPath
+    // An .m3u's discs, resolved against its folder.  False (with `err`) when it cannot be read, lists nothing, or an
+    // entry is missing or not a CD image -- a disc that is not there would still register and fail only when picked.
+    static bool readPlaylist(const std::string& m3uPath, std::vector<std::string>& discs, std::string& err);
 
     void runFrame();
     void reset();
@@ -304,7 +309,7 @@ private:
     void captureOptions(const retro_core_options_v2* o);
     static std::string lockedValue(const OptionDef& d, const std::string& v);
     bool startSession(std::string& err);
-    bool finishLoad(const std::string& label, std::string& err);
+    bool finishLoad(const std::string& label, std::string& err, const std::string& opened = std::string());
     void stopSession();
     void loadSaveRam();
 

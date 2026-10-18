@@ -24,6 +24,7 @@
 #include "http.h"
 #include "library.h"
 #include "library_service.h"
+#include "m3u.h"
 #include "paths.h"
 
 #ifndef _WIN32
@@ -1736,6 +1737,52 @@ static void testChdAndCdiChecksums() {
 
 // ---- dev tool -------------------------------------------------------------------------------------------------------
 
+// .m3u multi-disc playlists (m3u.h): the parser, and the scan listing the playlist in place of its discs.
+static void testM3u() {
+    // parsing: comments, blank lines, a BOM, CRLF, "|label", Windows separators, absolute entries
+    std::vector<std::string> e = parseM3u("\xEF\xBB\xBF#EXTM3U\r\n\r\n#EXTINF:0,Disc 1\r\nGame (Disc 1).cue\r\n"
+                                          "  sub\\Game (Disc 2).chd|Second disc  \r\n/abs/Game (Disc 3).cdi\nC:/win/d4.chd\n# end",
+                                          "/set/");
+    CHECK(e.size() == 4);
+    if (e.size() == 4) {
+        CHECK_EQ(e[0], std::string("/set/Game (Disc 1).cue"));
+        CHECK_EQ(e[1], std::string("/set/sub/Game (Disc 2).chd"));
+        CHECK_EQ(e[2], std::string("/abs/Game (Disc 3).cdi"));
+        CHECK_EQ(e[3], std::string("C:/win/d4.chd"));
+    }
+    CHECK(parseM3u("", "/x/").empty() && parseM3u("#EXTM3U\n\n", "/x/").empty());
+    CHECK(lib::isDiscExt("m3u"));
+
+    // scanning: a cue set + a chd listed by one playlist, a chd-first playlist, and a loose chd no playlist names
+    std::string dir = g_tmp + "m3u/";
+    std::atomic<bool> noCancel{false};
+    std::vector<unsigned char> d1t1 = noise(2352 * 12, 71);
+    writeBytes(dir + "Set (Disc 1) (Track 1).bin", d1t1);
+    writeText(dir + "Set (Disc 1).cue", "FILE \"Set (Disc 1) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    std::vector<unsigned char> pcm = noise(2352 * 10, 72);
+    SynthTrack t;
+    t.type = "AUDIO";
+    t.frames = 10;
+    t.stored = swapWords(pcm);
+    writeSynthChd(dir + "discs/Set (Disc 2).chd", {t}, true);
+    writeText(dir + "Set.m3u", "#EXTM3U\nSet (Disc 1).cue\ndiscs\\Set (Disc 2).chd\n");
+    writeText(dir + "Chd First.m3u", "discs/Set (Disc 2).chd\n");
+    writeSynthChd(dir + "Loose.chd", {t}, true);
+    lib::ScanOptions opt;
+    opt.folders = {dir};
+    std::vector<lib::ScanFile> files = lib::scanFolders(opt, lib::ScanCache(), &noCancel, nullptr);
+    std::map<std::string, lib::ScanFile> by;
+    for (const lib::ScanFile& f : files) by[fs::path(f.path).filename().string()] = f;
+    CHECK(by.count("Set.m3u") && by["Set.m3u"].kind == lib::Kind::Disc);
+    CHECK_EQ(hex8(by["Set.m3u"].crcWhole), hex8(crcOf(d1t1)));   // identified by its first disc's track 1
+    CHECK(by.count("Chd First.m3u") && by["Chd First.m3u"].kind == lib::Kind::Disc);
+    CHECK_EQ(hex8(by["Chd First.m3u"].crcWhole), hex8(crcOf(pcm)));
+    CHECK(!by.count("Set (Disc 1).cue") && !by.count("Set (Disc 2).chd"));   // the playlists stand for them
+    CHECK(!by.count("Set (Disc 1) (Track 1).bin"));
+    CHECK(by.count("Loose.chd"));
+    CHECK(files.size() == 3);
+}
+
 static int scanTool(const std::string& dir, const std::string& dbDir) {
     lib::Dat carts, discs;
     bool haveCarts = carts.load(dbDir + "/Atari - Jaguar.dat");
@@ -2364,6 +2411,7 @@ int main(int argc, char** argv) {
     testCoverService();
     testLooseNames();
     testChdAndCdiChecksums();
+    testM3u();
     testDisplayOptionsAndTabs();
     testPersonalListsLogic();
     testUserStoreAndInstances();

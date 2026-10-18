@@ -29,7 +29,7 @@ static const char* const kCtlLabel[] = {
     "Stick 2 left (6D)", "Stick 2 right (6D)", "Stick 2 up (6D)", "Stick 2 down (6D)",
     "Left trigger (L2)", "Right trigger (R2)", "Left shoulder (L)", "Right shoulder (R)",
     "Pointer left", "Pointer right", "Pointer up", "Pointer down",
-    "Mouse button left", "Mouse button right", "Light gun reload (fire off-screen)", "Controls overlay", "TV menu",
+    "Mouse button left", "Mouse button right", "Light gun reload (fire off-screen)", "Controls overlay", "TV menu / TV mode",
     "X (Pro)", "Y (Pro)", "Z (Pro)", "L (Pro)", "R (Pro)"};
 static_assert(sizeof(kCtlId) / sizeof(kCtlId[0]) == C_COUNT, "one id per control");
 static_assert(sizeof(kCtlLabel) / sizeof(kCtlLabel[0]) == C_COUNT, "one label per control");
@@ -897,7 +897,7 @@ static std::string slug(const std::string& s) {
 
 std::string contentIdentity(const std::string& path) {
     std::string ext = pathExt(path);
-    if (ext == "cue" || ext == "cdi" || ext == "chd") {
+    if (ext == "cue" || ext == "cdi" || ext == "chd" || ext == "m3u") {   // m3u: a multi-disc set, one identity
         std::string s = slug(pathStem(path));
         return s.empty() ? "" : "disc-" + s;
     }

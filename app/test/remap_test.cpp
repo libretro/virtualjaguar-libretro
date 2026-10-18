@@ -622,7 +622,7 @@ static std::vector<Binding> legacyParse(const std::string& s) {
 static void testTvMenuControl() {
     CHECK(C_TVMENU == C_HELP + 1 && C_PRO_X == C_TVMENU + 1 && isActionCtl(C_TVMENU));   // the Pro controls follow it
     CHECK(std::string(ctlId(C_TVMENU)) == "tvmenu");
-    CHECK(std::string(ctlLabel(C_TVMENU)) == "TV menu");
+    CHECK(std::string(ctlLabel(C_TVMENU)) == "TV menu / TV mode");
     CHECK(std::string(ctlId(C_HELP)) == "help" && std::string(ctlId(C_OVERLAY)) == "overlay");   // ids unmoved
     Ctl back = C_UP;
     CHECK(ctlFromId("tvmenu", back) && back == C_TVMENU);

@@ -23,6 +23,9 @@
 #include "debug/debug_session.h"
 #include "fonts.h"
 #include "discord_presence.h"
+#ifdef VJ_HAVE_NEURO
+#include "neuro/neuro_agent.h"
+#endif
 #include "emu_thread.h"
 #include "frame_exchange.h"
 #include "input_snapshot.h"
@@ -66,9 +69,13 @@ struct CliArgs {
     std::string font, fontThen;     // dev: --font SPEC (override ui.font.* for this run), --font-then SPEC (switch to it live after 60 frames)
     unsigned pixelDensity = 0;      // dev: --pixel-density N: lay out in points but render N pixels per point (a Retina display on a 1x or offscreen window), for screenshots
     bool lowDpi = false;            // dev: no high-pixel-density window (a 1x framebuffer even on a Retina Mac): screenshots of a 1x display
+#ifdef VJ_HAVE_NEURO
+    std::string neuroUrl;           // --neuro URL: connect to this Neuro API server for this run (not saved)
+#endif
     bool stateRoundtrip = false;    // headless: save a state, run on, load it, run on again; both runs must hash alike
     std::string discSwap;           // headless: add this CD image to the loaded disc's list, swap to it and back (File > Disc)
     std::string discInsert;         // headless: put this CD image in the empty tray of a no-content CD BIOS boot (#646)
+    unsigned expectDiscs = 0;       // headless: the disc list must hold N images (an .m3u's discs); the last is then inserted
     bool allowBlank = false;        // headless: a blank final frame is not a failure (synthetic discs)
     unsigned frames = 300;          // headless frames per content
     std::string expectHash;         // headless: expected hash of the FIRST content
@@ -95,6 +102,7 @@ struct CliArgs {
     bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
     int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
     int paceSteer = -1;             // dev: --pace-steer on|off, threaded + vsync only (default on; #967 evenness)
+    int emuWake = -1;               // dev: --emu-wake precise|plain, the emulation thread's wake-ups (default precise)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -169,6 +177,10 @@ public:
         std::string artKey, artUrl;
         double artAt = 0;
     } discordState;
+#ifdef VJ_HAVE_NEURO
+    neuro::Agent neuro;              // the Neuro API client (neuro/neuro_app.cpp): an AI plays as Player 1
+    std::string neuroCliUrl;         // --neuro URL: on for this run, whatever the config says
+#endif
 
     // ---- state ----------------------------------------------------------------
     bool paused = false;
@@ -333,6 +345,9 @@ private:
     void handleDrop(const std::string& path);
     void handleHotkey(const SDL_KeyboardEvent& k);
     void stepEmulation();
+#ifdef VJ_HAVE_NEURO
+    void headlessNeuroFrame(uint64_t t0, unsigned i);
+#endif
     void threadedFrame();             // UI thread, threaded: input out, frames / counters / messages in
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
@@ -413,6 +428,7 @@ private:
     bool discInsertHeadlessCheck(const std::string& path);   // --disc-insert
     void followDiscSwap();                     // UI thread: a disc swap moved host.contentPath(); catch up with it
     unsigned seenDiscSwaps_ = 0;               // host.discSwaps() the app has caught up with
+    bool discListHeadlessCheck(unsigned want);             // --expect-discs
     bool openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors);
     bool openNoContentOnCore(std::string& err);
     std::atomic<bool> emuFastForward_{false}, emuMute_{false};   // the UI's fastForward / mute, for the emulation side
@@ -424,6 +440,9 @@ private:
     PerfTrace::Emu tracePaced_{};              // emulation thread: the pacing of the frame about to run
     bool tracePacedSet_ = false;
     uint64_t traceWakeNs_ = 0, traceTargetNs_ = 0;   // UI thread: the late latch's last wait (0 = none)
+    unsigned traceWaitEvents_ = 0;                    // ... the input events it handled
+    uint64_t traceWaitOverNs_ = 0;                    // ... its largest overshoot of one blocking call
+    unsigned char traceWaitOverBy_ = 0;               // ... and which call that was (1 wait-event, 2 precise delay)
     void tracePaced(double lateSec, const PacingClock& clock);
     void traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swap1);
     uint64_t emuFramesSeen_ = 0;               // UI thread: EmuThread::framesRun() at the previous iteration
@@ -496,6 +515,13 @@ void discordTick(App& app);                          // UI loop, every iteration
 void discordNoteGameStarted(App& app);               // a game booted: the "elapsed" timer restarts
 void discordShutdown(App& app);                      // clears the status and stops the worker
 std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_id, else the compile-time default ("" = none)
+#ifdef VJ_HAVE_NEURO
+// Neuro API (neuro/neuro_app.cpp, CMake option VJ_APP_NEURO): let Neuro-sama, or any Neuro API backend, play (docs/neuro.md).
+void neuroInit(App& app, const CliArgs& a);          // config, profiles; connects when enabled
+void neuroTick(App& app);                            // UI loop, every iteration: the socket, the game, the next force
+void neuroShutdown(App& app);                        // closes the connection
+void drawNeuroTab(App& app);                         // Settings > Neuro
+#endif
 // Themes (theme_ui.cpp): Settings > Interface > Appearance, the theme editor window and its file-dialog mailbox.
 void drawAppearanceSettings(App& app);
 void drawThemeEditor(App& app);

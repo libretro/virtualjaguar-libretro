@@ -204,13 +204,21 @@ int App::tvScriptStep() {
             SDL_PushEvent(&ev);
             tvScriptDrain();
             tick();
-            if (!host.isLoaded() || host.contentPath() != absolutePath(arg1)) rc = fail(l, "could not load " + arg1);
+            if (!host.isLoaded() || host.loadedPath() != absolutePath(arg1)) rc = fail(l, "could not load " + arg1);
         } else if (verb == "key") {
-            std::string keyName = arg2;   // "ctrl+L": a Ctrl-modified press
+            std::string keyName = arg2;   // "ctrl+L", "ctrl+shift+T": a modified press
             SDL_Keymod mod = SDL_KMOD_NONE;
-            if (keyName.rfind("ctrl+", 0) == 0) {
-                mod = SDL_KMOD_CTRL;
-                keyName.erase(0, 5);
+            for (bool more = true; more;) {
+                more = false;
+                if (keyName.rfind("ctrl+", 0) == 0) {
+                    mod = (SDL_Keymod)(mod | SDL_KMOD_CTRL);
+                    keyName.erase(0, 5);
+                    more = true;
+                } else if (keyName.rfind("shift+", 0) == 0) {
+                    mod = (SDL_Keymod)(mod | SDL_KMOD_SHIFT);
+                    keyName.erase(0, 6);
+                    more = true;
+                }
             }
             const SDL_Scancode sc = SDL_GetScancodeFromName(keyName.c_str());
             if (sc == SDL_SCANCODE_UNKNOWN) return fail(l, "unknown key '" + arg2 + "'");

@@ -93,6 +93,9 @@ public:
         if (ff_.exchange(on) != on) cmds_.notify();
     }
     void setAudioTargetMs(double ms) { targetMs_.store(ms); }
+    // Default on: user-interactive QoS on Apple (set when the thread starts) and a precise last stretch before each
+    // frame's due time.  Off: the plain condition wait (#967 A/B, --emu-wake plain).
+    void setPreciseWake(bool on) { preciseWake_.store(on); }
     uint64_t framesRun() const { return frames_.load(); }
     uint64_t droppedFrames() const { return dropped_.load(); }
     uint64_t phaseSteps() const { return steers_.load(); }   // PacingClock::steers()
@@ -108,7 +111,8 @@ private:
     std::thread thread_;
     std::atomic<State> state_{State::Inline};
     std::atomic<std::thread::id> threadId_{std::thread::id()};
-    std::atomic<bool> stop_{false}, paused_{false}, ff_{false};
+    static constexpr double kPreciseSec = 0.001;   // the condition wait ends this long before a frame is due
+    std::atomic<bool> stop_{false}, paused_{false}, ff_{false}, preciseWake_{true};
     std::atomic<double> targetMs_{64.0};
     std::atomic<unsigned> advanceLeft_{0};
     std::atomic<uint64_t> advanceDone_{0};   // budgeted frames run (bumped before advanceLeft_ drops)

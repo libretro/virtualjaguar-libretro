@@ -94,6 +94,7 @@ No `-std=gnu89` is forced: `make` passes no `-std` either, and gnu89 changes
 ```sh
 virtualjaguar game.j64            # cartridge (HLE boot, no BIOS needed)
 virtualjaguar disc.cue            # or .chd / .cdi
+virtualjaguar game.m3u            # a multi-disc set: every disc listed in File > Disc
 virtualjaguar --option virtualjaguar_usefastblitter=enabled game.j64
 virtualjaguar --help
 ```
@@ -109,6 +110,8 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
 | A S D, Q E | Jaguar Pro Controller X Y Z and left / right shoulder (keypad 9 8 7, 4 6) |
 | F2 | keypad overlay |
+| Ctrl/Cmd+Shift+T | toggle TV mode (View > TV mode), with or without a game; the game keeps running. Fixed, not rebindable |
+| F4, or a Share hold | the "TV menu / TV mode" action (rebindable): with a game it opens the in-game TV menu, without one it toggles TV mode |
 | F3 | controls overlay: a cheat sheet of your current bindings (also View menu) |
 | Esc / F10 | release the captured mouse; F10 or a click on the picture captures it again (see below) |
 | F5 / F7 / F6 | save state / load state / next slot (Shift+F6 previous) |
@@ -411,7 +414,12 @@ cartridge runs, and the Core options tab is empty before the first load).
    folders inside them are not followed) for the formats the core reads: cartridges
    `.j64 .jag .rom .abs .cof .prg .bin` and discs `.cue .chd .cdi`. A `.bin` that a `.cue`
    references is a disc track, not a cartridge, and so is any `.bin` over 8 MiB. Zip is not
-   scanned: the core cannot load it.
+   scanned: the core cannot load it. An `.m3u` multi-disc playlist (RetroArch's format: one
+   image per line, relative to the playlist or absolute; `#` lines and a `|label` suffix are
+   ignored) is listed in place of the discs it names, and is identified by its first disc.
+   Opening one boots the first disc and puts every disc in **File > Disc** (the core itself
+   reads no `.m3u`; the app does). Recents, Restart and the `.srm` (one per set) follow the
+   playlist; the window title, save states and achievements follow the disc in the tray.
 2. **Identification** by CRC32 against libretro-database (see licences below):
    - cartridges against the No-Intro "Atari - Jaguar" dat, using the whole file first and then
      the file minus a 512-byte copier header (the same rule as the core's
@@ -791,6 +799,21 @@ speaks Discord's local RPC protocol itself, no Discord SDK).
 3. CI: the repository variable `DISCORD_APP_ID` (Settings > Secrets and variables > Actions > Variables) overrides the
    CMake default in `app-package.yml`; leave it unset to use the default. An application ID is public, not a secret.
 4. Test from a second Discord account: buttons are hidden on your own profile.
+
+## Neuro API (AI players)
+
+**Settings > Neuro** connects the app to a [Neuro game API](https://github.com/VedalAI/neuro-sdk) server, so
+Neuro-sama, or any AI backend that speaks the API (the SDK's Randy, Tony and Gary included), can play as Player 1.
+The app registers the Jaguar controller as actions (`press_buttons`, `button_sequence`, `hold_buttons`,
+`release_all`), plus a game profile's own moves (Tempest 2000 is built in; more go in `<data folder>/neuro/*.json`),
+asks for the next move whenever the last one has played out, and presses the chosen buttons frame by frame.
+
+- `--neuro ws://HOST:PORT` turns it on for one run; the default server is `$NEURO_SDK_WS_URL`, else
+  `ws://localhost:8000` (Randy). Only `ws://`; no TLS.
+- Config keys `neuro.enabled`, `neuro.url`, `neuro.auto_force`, `neuro.force_interval`, `neuro.game_name`.
+- The socket lives on a background thread and reconnects by itself; the game never waits on it.
+- [docs/neuro.md](../docs/neuro.md) has the actions, the profile format and testing with Randy.
+- The code is in `src/neuro/`; `-DVJ_APP_NEURO=OFF` builds the app without it (no tab, no `--neuro`).
 
 Tests: `ctest -R discord` (frame encode/decode, JSON escaping, socket paths per OS, the rate limiter, the activity
 built from app state, and a loopback test against a fake Discord server on a Unix socket; skipped on Windows).
