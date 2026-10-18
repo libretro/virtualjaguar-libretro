@@ -10,6 +10,7 @@
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 #   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
 #   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock
+#   core_events_unit      CoreEventQueue: order, bounded log lines, content switch, two threads
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
@@ -192,6 +193,13 @@ target_include_directories(vj_late_latch_test PRIVATE src)
 vj_emu_thread_warnings(vj_late_latch_test)
 add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
 set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_core_events_test tests/core_events_test.cpp)
+target_include_directories(vj_core_events_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(vj_core_events_test PRIVATE Threads::Threads)
+vj_emu_thread_warnings(vj_core_events_test)
+add_test(NAME core_events_unit COMMAND vj_core_events_test)
+set_tests_properties(core_events_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 if(VJ_APP_TSAN)
     add_executable(vj_tsan_canary tests/tsan_canary.cpp)

@@ -28,71 +28,16 @@
 #include <vector>
 
 #include "libretro.h"
+#include "emu_snapshot.h"
 #include "frame.h"
 #include "vj_frontend_ext.h"   // the core's private event channel
 #include "vj_debug_iface.h"     // ...and its debug interface (docs/app-debug-tools.md)
 
 namespace vj {
 
-struct OptionValue {
-    std::string value;
-    std::string label;
-};
-
-struct OptionDef {
-    std::string key;
-    std::string desc;            // flat-menu title
-    std::string descCategorized; // title when shown under a category (may be empty)
-    std::string info;
-    std::string infoCategorized;
-    std::string categoryKey;
-    std::string defaultValue;
-    std::vector<OptionValue> values;
-};
-
-struct OptionCategory {
-    std::string key;
-    std::string desc;
-    std::string info;
-};
-
-struct OsdMessage {
-    std::string text;
-    uint32_t durationMs = 3000;
-    int level = RETRO_LOG_INFO;
-};
-
 struct ControllerType {
     std::string desc;
     unsigned id = 0;
-};
-
-struct DiscInfo {
-    bool available = false;   // a CD session: CD content, or the CD BIOS with no disc (count is then 0)
-    bool ejected = false;
-    unsigned count = 0;
-    unsigned index = 0;
-    std::vector<std::string> labels;
-};
-
-// What SET_CORE_OPTIONS_V2 / _DISPLAY last said, plus the app's locks: the part of the option state the core writes.
-struct OptionTable {
-    std::vector<OptionCategory> categories;
-    std::vector<OptionDef> defs;
-    std::map<std::string, bool> visibility;
-    std::map<std::string, std::string> locked;
-};
-
-// The per-frame state the emulation thread publishes for the UI thread (#967, design section 3).  Phase 1 holds what
-// the UI reads every frame; phase 2 adds events, achievements and debug views and moves it to its own file.
-struct EmuSnapshot {
-    std::shared_ptr<const OptionTable> options;   // replaced only when the table changed
-    unsigned optionPushes = 0;
-    double fps = 0, sampleRate = 0;
-    float aspect = 4.0f / 3.0f;
-    DiscInfo disc;
-    std::string contentPath, contentName;   // the disc in the tray (CoreHost::contentPath); with `disc`
-    unsigned discSwaps = 0;
 };
 
 class CoreHost {
