@@ -53,16 +53,23 @@ std::vector<std::string> Agent::loadProfiles(const std::string& dir) {
 }
 
 void Agent::configure(const AgentSettings& s) {
-    const bool restart = s.enabled != s_.enabled || s.url != s_.url || s.gameNameOverride != s_.gameNameOverride;
+    if (s == s_) return;   // the app calls this every UI frame
+    const bool wasAllowed = allowed(), wasBlocked = blockedByHardcore(), wasConnected = link_.connected();
+    const bool restart = allowed() != (s.enabled && !s.hardcore) || (s.enabled && !s.hardcore && (s.url != s_.url)) ||
+                         s.gameNameOverride != s_.gameNameOverride;
     s_ = s;
     link_.autoForce = s.autoForce;
     link_.forceInterval = s.forceInterval;
+    if (blockedByHardcore() && !wasBlocked && notify)
+        notify("Neuro is off while RetroAchievements hardcore is on");
     if (!restart) return;
+    // Whatever she was pressing is released with the link: a held button must not outlive the connection.
     link_.onDisconnected();
     queue_.clear();
     gameKey_ = "\x01";   // the game name may differ now
     ws_.stop();
-    startPending_ = s_.enabled;   // tick() connects, once it knows the game's name
+    startPending_ = allowed();   // tick() connects, once it knows the game's name
+    if (wasAllowed && wasConnected && notify) notify("Neuro disconnected");
 }
 
 std::string Agent::wantedName(const GameState& g) const {
@@ -76,13 +83,37 @@ std::string Agent::wantedName(const GameState& g) const {
 void Agent::pump() {
     WsClient::Event ev;
     while (ws_.poll(ev)) {
-        if (ev.kind == WsClient::Event::Connected) link_.onConnected();
-        else if (ev.kind == WsClient::Event::Message) link_.onMessage(ev.text);
-        else {
+        if (ev.kind == WsClient::Event::Connected) {
+            link_.onConnected();
+            if (!actions_.blocked().empty()) tellBlock();
+            if (notify) notify("Neuro connected: an AI is playing Player 1");
+        } else if (ev.kind == WsClient::Event::Message) {
+            link_.onMessage(ev.text);
+        } else {
             link_.onDisconnected();
+            queue_.clear();   // a hold_buttons must not outlive the server that sent it
             if (log) log("neuro: disconnected: " + ev.text);
+            if (notify) notify("Neuro disconnected");
         }
     }
+    // A link that is down (still connecting, or refused) has no input to play.
+    if (!link_.connected() && ws_.state() != WsClient::State::Open && (queue_.busy() || queue_.hold().any())) queue_.clear();
+}
+
+// Player 1's buttons stop or start reaching the game.  What is queued is dropped (it would play out into a menu), and
+// the AI is told, so it does not wonder why nothing it presses does anything.
+void Agent::setInputBlock(const char* why) {
+    const char* w = why ? why : "";
+    if (actions_.blocked() == w) return;
+    actions_.setBlocked(w);
+    if (*w) queue_.clear();
+    tellBlock();
+}
+
+void Agent::tellBlock() {
+    if (!link_.connected()) return;
+    const std::string& w = actions_.blocked();
+    link_.context(w.empty() ? "Your controller input reaches the game again." : "Your controller input is not reaching the game: " + w + ".", true);
 }
 
 void Agent::followGame(const GameState& g) {
@@ -121,14 +152,16 @@ void Agent::gameChanged(const GameState& g, bool first) {
 }
 
 void Agent::tick(double now, const GameState& g) {
-    if (!s_.enabled) return;
+    if (!allowed()) return;
     pump();
     followGame(g);
+    setInputBlock(g.inputBlock);
     if (startPending_) {
         startPending_ = false;
+        if (wsUrlIsRemote(s_.url) && log) log("neuro: " + s_.url + " is not on this machine, and ws:// is not encrypted");
         ws_.start(s_.url);
     }
-    const bool canForce = g.loaded && !g.paused && !queue_.busy();
+    const bool canForce = g.loaded && !g.paused && !queue_.busy() && actions_.blocked().empty();
     link_.tick(now, canForce, canForce && link_.connected() ? stateText(g) : std::string());
 }
 
@@ -146,6 +179,7 @@ std::string Agent::stateText(const GameState& g) const {
 
 std::string Agent::statusText() const {
     if (!s_.enabled) return "Off";
+    if (s_.hardcore) return "Off while RetroAchievements hardcore is on";
     std::string e = ws_.lastError();
     switch (ws_.state()) {
     case WsClient::State::Open: return "Connected to " + s_.url + " as \"" + link_.gameName() + "\"";
