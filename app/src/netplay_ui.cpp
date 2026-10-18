@@ -324,12 +324,6 @@ void drawTitles() {
 // ---------------------------------------------------------------------------------
 void drawNetplayMenu(App& app) {
     if (!ImGui::BeginMenu("Netplay")) return;
-    if (app.emuThreadThisRun()) {
-        ImGui::MenuItem("Netplay window...", nullptr, false, false);
-        ImGui::TextDisabled("Not available while Settings > Interface > Emulation thread is on");
-        ImGui::EndMenu();
-        return;
-    }
     if (ImGui::MenuItem("Netplay window...")) app.showNetplay = true;
     Netplay& np = app.netplay;
     if (np.configured()) {
@@ -343,10 +337,6 @@ void drawNetplayMenu(App& app) {
 }
 
 void drawNetplay(App& app) {
-    if (app.emuThreadThisRun()) {   // #967 phase 1: netplay is off for this run
-        app.showNetplay = false;
-        return;
-    }
     initUi(app);
     ui::nextWindow(34.0f, 36.0f, 24.0f, 16.0f);
     bool open = ImGui::Begin("Netplay", &app.showNetplay);
@@ -419,18 +409,8 @@ void drawNetplay(App& app) {
 // App glue
 // ---------------------------------------------------------------------------------
 bool netplayInit(App& app, const CliArgs& a) {
-    if (app.emuThreadThisRun()) {
-        // #967 phase 1: the core's link events and [NETLINK] log lines arrive on the emulation thread and Netplay is not
-        // thread-safe yet, so netplay is off for this run: no taps, no window, and the command line says so.
-        app.netplay.setSystemDir(app.paths.system);
-        if (!a.netplay.role.empty()) {
-            std::fprintf(stderr, "netplay: not available while the emulation thread is on (this version; use --emu-thread off)\n");
-            return false;
-        }
-        return true;
-    }
-    app.host.onLog = [&app](int level, const char* text) { app.netplay.onCoreLog(level, text); };
-    app.host.onEvent = [&app](const vj_event& e) { app.netplay.onCoreEvent(e); };
+    // Inline, called where the core says it; threaded, on this (the UI) thread at each pin (#967 phase 2).
+    app.host.onUiEvent = [&app](const CoreEvent& e) { app.netplay.onUiEvent(e); };
     app.netplay.setSystemDir(app.paths.system);
     const NetplayCli& c = a.netplay;
     if (c.role.empty()) return true;
@@ -483,10 +463,16 @@ int netplayHeadlessCheck(App& app, const CliArgs& a) {
     auto elapsed = [&]() { return std::chrono::duration<double>(Clock::now() - t0).count(); };
     unsigned frame = 0;
     auto step = [&]() {
-        app.audio.update();
-        app.host.runFrame();
+        if (app.threaded()) {
+            app.emu.advance(1);
+            app.host.pinSnapshot();   // the core's link lines and events arrive here
+            if ((++frame & 15) == 15) app.emu.call([&app] { app.audio.clear(); });
+        } else {
+            app.audio.update();
+            app.host.runFrame();
+            if ((++frame & 15) == 15) app.audio.clear();
+        }
         np.afterFrame();
-        if ((++frame & 15) == 15) app.audio.clear();
         app.host.takeMessages();
         SDL_Delay(2);   // real time, so the partner process gets to run and TCP gets to connect
     };

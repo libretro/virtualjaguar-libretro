@@ -176,11 +176,6 @@ add_test(NAME emu_thread_limits
 set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
     PASS_REGULAR_EXPRESSION "RetroAchievements, netplay and the debugger tools are off while the emulation thread is on"
     FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
-add_test(NAME netplay_refused_threaded
-    COMMAND virtualjaguar --headless --emu-thread on --netplay host --frames 5 "${VJ_ROMS}/yarc.j64")
-set_tests_properties(netplay_refused_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "netplay: not available while the emulation thread is on"
-    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 add_test(NAME gdb_locked_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
             "${VJ_ROMS}/yarc.j64")

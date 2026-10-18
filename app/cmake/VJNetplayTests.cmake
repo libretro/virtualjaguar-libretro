@@ -51,6 +51,19 @@ set_tests_properties(netplay_unit netplay_pair netplay_pair_voicemodem netplay_n
     PROPERTIES RUN_SERIAL TRUE)
 set_tests_properties(netplay_discovery PROPERTIES SKIP_RETURN_CODE 77)
 
+# #967 phase 2: the same sessions with the emulation thread on -- both sides, and a mixed pair (link play between a
+# threaded and a single-thread copy).  netplay_no_partner_threaded: a copy quitting with no peer must exit 1, not 3.
+add_test(NAME netplay_pair_threaded COMMAND vj_netplay_test pair $<TARGET_FILE:virtualjaguar> "${_yarc}" jaglink on on)
+add_test(NAME netplay_pair_voicemodem_threaded
+    COMMAND vj_netplay_test pair $<TARGET_FILE:virtualjaguar> "${_yarc}" voicemodem on on)
+add_test(NAME netplay_pair_mixed COMMAND vj_netplay_test pair $<TARGET_FILE:virtualjaguar> "${_yarc}" jaglink on off)
+add_test(NAME netplay_no_partner_threaded COMMAND vj_netplay_test control $<TARGET_FILE:virtualjaguar> "${_yarc}" on)
+set_tests_properties(netplay_pair_threaded netplay_pair_voicemodem_threaded netplay_pair_mixed netplay_no_partner_threaded
+    PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE LABELS "emu_thread")
+set_tests_properties(netplay_pair_threaded netplay_pair_voicemodem_threaded netplay_pair_mixed
+    PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
+set_tests_properties(netplay_no_partner_threaded PROPERTIES FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
+
 # Settings > Core options > Network: every option in the core's "network" category must show the value
 # picked from its combo, across the frames (and option re-pushes) that follow.
 add_executable(vj_network_options_test

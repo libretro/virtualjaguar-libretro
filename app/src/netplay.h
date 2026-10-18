@@ -22,7 +22,7 @@
 //              SET_CORE_OPTIONS_V2; CoreHost re-captures it, we read it back.
 // Nothing from the core's JLink* internals is called.
 //
-// Single-threaded: every method runs on the thread that drives CoreHost.
+// Every method runs on the UI thread.
 #pragma once
 
 #include <chrono>
@@ -100,7 +100,8 @@ public:
     // (the core re-reads them every frame); the check keeps the window correct if one ever is.
     bool start(const NetSettings& s, std::string& err, std::vector<std::string>* restartKeys = nullptr);
     void stop();
-    // Call once per emulated frame (after CoreHost::runFrame).
+    // Call on the UI thread, once per emulated frame or once per UI iteration.  It completes an endpoint change once
+    // the core has read "disabled" for long enough, counted in emulated frames.
     void afterFrame();
 
     // ---- state -------------------------------------------------------------
@@ -130,6 +131,9 @@ public:
     // trouble).  A core that never said HELLO is read the old way, entirely from its log text.
     void onCoreLog(int level, const char* text);
     void onCoreEvent(const vj_event& e);
+    // The app's tap (CoreHost::onUiEvent, on the UI thread): drops what the core said before the last start() /
+    // stop() / bounce (its epoch), then reads it like onCoreLog / onCoreEvent.
+    void onUiEvent(const CoreEvent& e);
     // How a typed address reaches the core.  true (default): the host option takes it.  false: the core's
     // own "From file" route, <system dir>/vj_netlink.txt (the fallback for a core whose host option is a
     // closed list).  That file is ONE file per system directory, shared by every copy of the app on a data
@@ -167,7 +171,9 @@ private:
     // (UARTSetLinkMode only acts on a mode change), so such a change bounces through
     // "disabled" for a couple of frames first.
     bool bouncing_ = false;
-    int bounceFrames_ = 0;
+    uint64_t bounceFrom_ = 0;   // CoreHost::frameCount() when the bounce began
+    unsigned bounceNeed_ = 2;   // emulated frames "disabled" must be read for
+    uint32_t minEpoch_ = 0;     // core lines and events from before this epoch are stale
     NetSettings bounceTarget_;
 
     LinkState state_ = LinkState::Off;

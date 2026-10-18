@@ -506,7 +506,6 @@ void App::syncDebug() {
 // #967 phase 1 runs the emulation on its own thread before these features are thread-safe: they are switched off
 // for the run rather than racing the core (docs/app-emulation-thread-plan-phase1.md, "Phase 1 boundary").
 //   * RetroAchievements: ach.init() is skipped, so available() is false and the menu is hidden.
-//   * Netplay: netplayInit / the Netplay menu (netplay_ui.cpp).
 //   * The Tools windows: they read core memory from the UI thread, and a halt would run the UI on the emulation thread.
 //   * The GDB stub: a socket halt would park the emulation thread with every call() waiting behind it.
 void App::limitFeaturesForEmuThread() {
@@ -662,6 +661,7 @@ void App::syncEmuFlags() {
 void App::threadedFrame() {
     publishInput();
     host.pinSnapshot();
+    netplay.afterFrame();   // completes an endpoint change once enough emulated frames have run
     const uint64_t fr = emu.framesRun();
     for (uint64_t k = emuFramesSeen_; k < fr; k++) perf.emulated();
     fpsWindowFrames_ += fr - emuFramesSeen_;
@@ -2330,7 +2330,7 @@ int App::runHeadless(const CliArgs& a) {
             if (hlCpu0 >= 0 && cpu > 0) std::snprintf(cpuTxt, sizeof cpuTxt, "%.3f s (%.1f fps)", cpu, a.frames / cpu);
             std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
                          a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, label.c_str());
-            int nr = threaded() ? 0 : netplayHeadlessCheck(*this, a);
+            int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;
         }
