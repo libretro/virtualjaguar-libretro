@@ -358,6 +358,18 @@ void testModel() {
     CHECK(b.misses * 100 <= b.iters, "at most 1%% missed vblanks (%u of %u)", b.misses, b.iters);
 }
 
+// #967 final-review minor 3: with vsync off (or a swap that did not block), the threaded loop naps until the display's
+// next refresh instead of a flat 4 ms (which presented at ~250 Hz for nothing).
+void testIdleNap() {
+    const uint64_t ms = 1000000ull;
+    const uint64_t p60 = 16666667ull;
+    CHECK(vj::LateLatch::idleNapNs(0, p60) == p60, "just swapped: a whole period");
+    CHECK(vj::LateLatch::idleNapNs(10 * ms, p60) == p60 - 10 * ms, "the rest of the period");
+    CHECK(vj::LateLatch::idleNapNs(16 * ms, p60) == 1 * ms, "never under 1 ms (do not spin)");
+    CHECK(vj::LateLatch::idleNapNs(40 * ms, p60) == 1 * ms, "late already: 1 ms");
+    CHECK(vj::LateLatch::idleNapNs(0, 0) == 4 * ms, "refresh unknown: the old 4 ms");
+}
+
 }  // namespace
 
 int main() {
@@ -373,6 +385,7 @@ int main() {
     testLateStartsAreCapped();
     testOffNominal();
     testModel();
+    testIdleNap();
     std::printf(g_fail ? "late_latch_test: %d FAILED\n" : "late_latch_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

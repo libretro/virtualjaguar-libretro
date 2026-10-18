@@ -25,6 +25,14 @@ public:
     static constexpr unsigned kUnlockAfter = 4;         // consecutive outliers (or non-blocking swaps x 8) to let go
     static constexpr uint64_t kPadMinNs = 1000000, kPadMaxNs = 4000000;
     static constexpr uint64_t kPadUpNs = 500000, kPadDownNs = 100000;
+
+    // The threaded loop's nap when vsync is off or the swap did not block: until the display's next refresh, at least
+    // 1 ms; a flat 4 ms when the refresh rate is unknown (0).
+    static uint64_t idleNapNs(uint64_t sinceSwapNs, uint64_t displayPeriodNs) {
+        if (!displayPeriodNs) return 4000000ull;
+        const uint64_t left = sinceSwapNs < displayPeriodNs ? displayPeriodNs - sinceSwapNs : 0;
+        return left < 1000000ull ? 1000000ull : left;
+    }
     static constexpr unsigned kCalmRun = 120;           // on-time swaps before the pad shrinks one step
     static constexpr uint64_t kMinRoomNs = 1000000;     // a budget within this of a whole period: no wait
     static constexpr unsigned kBuilds = 60;             // build times remembered (one second at 60 Hz)

@@ -322,7 +322,8 @@ private:
     void shutdown();
     void loadConfig();
     void wireHost();
-    void limitFeaturesForEmuThread();   // #967 phase 1: RetroAchievements, netplay, the debugger tools, the GDB stub
+    void limitFeaturesForEmuThread();   // #967: the debugger tools and the GDB stub are off while the thread is on
+    void liftFeatureLimits();           // undoes it when the thread did not start (nothing is loaded yet)
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
@@ -366,6 +367,9 @@ private:
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;
     SDL_Window* window_ = nullptr;
+    uint64_t displayPeriodNs();                  // the window's display refresh period, cached; 0 when unknown
+    uint64_t displayPeriodNs_ = 0;
+    bool displayPeriodValid_ = false;            // cleared when the window moves to another display
     SDL_GLContext gl_ = nullptr;
     bool imguiUp_ = false;
     float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)

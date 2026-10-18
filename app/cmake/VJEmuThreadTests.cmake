@@ -20,6 +20,7 @@
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
+#   emu_thread_start_fallback  a failed thread start lifts the debugger/GDB limits and runs inline
 #   *_threaded limits     the debugger and the GDB stub are off while threaded
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
@@ -130,6 +131,15 @@ set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threa
                      cheat_apply_threaded PROPERTIES
     TIMEOUT 300 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+# A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline and the
+# debugger tools and the GDB stub come back on.
+add_test(NAME emu_thread_start_fallback
+    COMMAND ${CMAKE_COMMAND} -E env VJ_TEST_EMU_START_FAIL=1
+            $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_start_fallback PROPERTIES TIMEOUT 120 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are back on .the emulation thread did not start."
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
 
 # The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the

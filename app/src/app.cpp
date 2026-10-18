@@ -539,6 +539,29 @@ void App::limitFeaturesForEmuThread() {
     std::fprintf(stderr, "[emu] the debugger tools and the GDB stub are off while the emulation thread is on\n");
 }
 
+// The emulation thread did not start: the run is inline after all, so give back what limitFeaturesForEmuThread() took.
+void App::liftFeatureLimits() {
+    debug.setThreadBlocked(false);
+    host.announceDebug = true;
+    host.optionLock = [this](const std::string& k, std::string& v) {   // wireHost()'s rule
+        return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
+    };
+    std::fprintf(stderr, "[emu] the debugger tools and the GDB stub are back on (the emulation thread did not start)\n");
+}
+
+// UI thread: 1e9 / the refresh rate of the display the window is on, or 0 when there is no window or the rate is unknown.
+uint64_t App::displayPeriodNs() {
+    if (!displayPeriodValid_) {
+        displayPeriodNs_ = 0;
+        if (window_) {
+            const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+            if (m && m->refresh_rate > 1.0f) displayPeriodNs_ = (uint64_t)(1e9 / (double)m->refresh_rate);
+        }
+        displayPeriodValid_ = true;
+    }
+    return displayPeriodNs_;
+}
+
 void App::noteInputLatency(uint64_t eventNs) {
     const uint64_t t = SDL_GetTicksNS();
     // An event older than 250 ms waited out a pause or a load, not the pacing: it would only pollute the average.
@@ -570,8 +593,11 @@ void App::startEmuThread() {
         const long ms = std::strtol(slow, nullptr, 10);
         testSlowCallMs_ = ms < 0 ? 0u : ms > 5000 ? 5000u : (unsigned)ms;
     }
-    if (!emu.start(EmuThread::Mode::Threaded, *emuClient_)) {
+    // VJ_TEST_EMU_START_FAIL: take the failure branch below as a real emu.start() failure does (emu_thread_start_fallback).
+    if (SDL_getenv("VJ_TEST_EMU_START_FAIL") || !emu.start(EmuThread::Mode::Threaded, *emuClient_)) {
         host.post = nullptr;
+        emuThreadThisRun_ = false;   // Settings offers "Restart the app to apply" again
+        liftFeatureLimits();
         std::fprintf(stderr, "[emu] could not start the emulation thread; running emulation on the UI thread\n");
         return;
     }
@@ -1663,6 +1689,9 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             handleDrop(path);
         }
         break;
+    case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+        displayPeriodValid_ = false;   // the next displayPeriodNs() reads the new display's refresh rate
+        break;
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
         fullscreen = true;    // also the green button / Ctrl+Cmd+F on macOS, which never go through setFullscreen()
         break;
@@ -2085,7 +2114,8 @@ int App::runInteractive(const CliArgs& a) {
             // swap paces the rest.  Off, or a swap that returned at once with vsync on (a minimized or occluded window
             // does not block): a short nap, so a new frame still shows within a few ms without spinning a core.
             if (vsync && lateLatchOn_ && swapNs >= LateLatch::kBlockedNs) latchWait();
-            else if (!vsync || swapNs < LateLatch::kBlockedNs) SDL_DelayNS(4000000);
+            else if (!vsync || swapNs < LateLatch::kBlockedNs)
+                SDL_DelayNS(LateLatch::idleNapNs(SDL_GetTicksNS() - swap1, displayPeriodNs()));
             latchedAtNs_ = SDL_GetTicksNS();
             latch_.noteWaitEnd(latchedAtNs_);
         } else {
