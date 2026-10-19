@@ -222,12 +222,18 @@ private:
     bool unicodeEscape(std::string& o) {
         unsigned cp = 0;
         if (!hex4(cp)) return false;
-        if (cp >= 0xD800 && cp <= 0xDBFF && t_.compare(p_, 2, "\\u") == 0) {
+        // A high surrogate wants a low one right behind it.  Anything else leaves it unpaired (U+FFFD), and the
+        // escape that followed it is read again on its own terms (it may be the high half of the real pair).
+        while (cp >= 0xD800 && cp <= 0xDBFF && t_.compare(p_, 2, "\\u") == 0) {
             p_ += 2;
             unsigned lo = 0;
             if (!hex4(lo)) return false;
-            if (lo >= 0xDC00 && lo <= 0xDFFF) cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-            else putUtf8(o, 0xFFFD), cp = lo;
+            if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                break;
+            }
+            putUtf8(o, 0xFFFD);
+            cp = lo;
         }
         if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;   // an unpaired surrogate
         putUtf8(o, cp);

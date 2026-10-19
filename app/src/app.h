@@ -21,6 +21,7 @@
 #include "config.h"
 #include "core_host.h"
 #include "debug/debug_session.h"
+#include "desktop_nav_app.h"
 #include "fonts.h"
 #include "discord_presence.h"
 #ifdef VJ_HAVE_NEURO
@@ -42,6 +43,8 @@
 #include "theme_custom.h"
 #include "tv/tv_mode.h"
 #include "video.h"
+
+struct ImDrawList;   // (imgui.h)
 
 namespace vj {
 
@@ -180,6 +183,8 @@ public:
 #ifdef VJ_HAVE_NEURO
     neuro::Agent neuro;              // the Neuro API client (neuro/neuro_app.cpp): an AI plays as Player 1
     std::string neuroCliUrl;         // --neuro URL: on for this run, whatever the config says
+    neuro::AgentSettings neuroCfg;   // the config as of neuroCfgAt (re-read 4 times a second, not every UI frame)
+    double neuroCfgAt = -1e9;
 #endif
 
     // ---- state ----------------------------------------------------------------
@@ -271,6 +276,7 @@ public:
     void menuResume();
     tv::Shell& tvShell();
     tv::TvMode tvMode;                           // TV mode (#991): when it is on
+    DesktopPad deskPad;                          // pad navigation of the desktop library (#1021, desktop_nav_app.h)
     tv::TvSetting tvSetting = tv::TvSetting::Manual;   // ui.tv_mode as stored; effectiveSetting() is what TvMode acts on
     void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off
     void configureTvMode();                      // tvMode.configure() from tvSetting + the config (also when Settings changes it)
@@ -528,6 +534,7 @@ std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_i
 void neuroInit(App& app, const CliArgs& a);          // config, profiles; connects when enabled
 void neuroTick(App& app);                            // UI loop, every iteration: the socket, the game, the next force
 void neuroShutdown(App& app);                        // closes the connection
+void drawNeuroMarker(App& app, ImDrawList* bg, float areaX, float areaY, float areaW);   // the "AI plays P1" chip, top right of the picture area (background list)
 void drawNeuroTab(App& app);                         // Settings > Neuro
 #endif
 // Themes (theme_ui.cpp): Settings > Interface > Appearance, the theme editor window and its file-dialog mailbox.

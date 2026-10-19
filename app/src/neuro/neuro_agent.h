@@ -3,8 +3,8 @@
 // state and draws Settings > Neuro.
 //
 // Threads: everything here is called on the UI thread, which is then also the emulation thread (the app turns Neuro
-// off when the emulation runs on its own thread, #967 phase 1); only the WebSocket worker runs elsewhere, behind
-// WsClient's queues.
+// off when the emulation runs on its own thread, #967 phase 1; docs/neuro.md); only the WebSocket worker runs
+// elsewhere, behind WsClient's queues.
 #pragma once
 
 #include <cstdint>
@@ -25,6 +25,15 @@ struct AgentSettings {
     bool autoForce = true;
     double forceInterval = 1.0;
     std::string gameNameOverride;   // "" = the profile's game_name, else the game's title
+    // RetroAchievements hardcore is on: an AI is not a human player, so Neuro stays disconnected (like cheats and
+    // state loads).  `enabled` keeps the user's choice, so it connects by itself when hardcore ends.
+    bool hardcore = false;
+
+    bool operator==(const AgentSettings& o) const {
+        return enabled == o.enabled && url == o.url && autoForce == o.autoForce && forceInterval == o.forceInterval &&
+               gameNameOverride == o.gameNameOverride && hardcore == o.hardcore;
+    }
+    bool operator!=(const AgentSettings& o) const { return !(*this == o); }
 };
 
 struct GameState {
@@ -34,6 +43,9 @@ struct GameState {
     uint32_t crc = 0;    // the content's CRC-32 when the library knows it, else 0
     const uint8_t* ram = nullptr;   // main RAM (2 MB), for the profile's watches
     size_t ramSize = 0;
+    // Why Player 1's buttons are not reaching the game right now ("the in-game menu is open"), or null.  Points at a
+    // string with static lifetime; compared by content.
+    const char* inputBlock = nullptr;
 };
 
 class Agent {
@@ -47,11 +59,17 @@ public:
     const std::vector<Profile>& profiles() const { return profiles_; }
 
     void configure(const AgentSettings& s);   // cheap when nothing changed
+    // Connecting is allowed: enabled, and hardcore is not on.
+    bool allowed() const { return s_.enabled && !s_.hardcore; }
+    bool blockedByHardcore() const { return s_.enabled && s_.hardcore; }
+    // Connected, with a game running: the AI is (or may at any moment be) pressing Player 1's buttons.
+    bool driving() const { return allowed() && link_.connected() && actions_.active(); }
     const AgentSettings& settings() const { return s_; }
     // Once per UI frame: pumps the socket, follows the game (profile, name, context), forces the next move.
     void tick(double now, const GameState& g);
-    // Once per emulated frame (from the core's input poll): what Neuro presses in it.
-    ControlSet frame() { return s_.enabled ? queue_.frame() : ControlSet(); }
+    // Once per emulated frame (from the core's input poll): what Neuro presses in it.  Nothing while the app is not
+    // delivering Player 1's buttons (GameState::inputBlock): the queue does not advance behind the menu's back.
+    ControlSet frame() { return allowed() && actions_.blocked().empty() ? queue_.frame() : ControlSet(); }
 
     std::string statusText() const;
     const Link& link() const { return link_; }
@@ -61,6 +79,7 @@ public:
     // The state text sent with each force (also shown in Settings > Neuro).
     std::string stateText(const GameState& g) const;
     std::function<void(const std::string&)> log;
+    std::function<void(const std::string&)> notify;   // a line for the player (the app shows a toast): connected, dropped, blocked
 
 private:
     AgentSettings s_;
@@ -73,6 +92,8 @@ private:
     bool wasLoaded_ = false, wasPaused_ = false;
     bool startPending_ = false;
 
+    void setInputBlock(const char* why);
+    void tellBlock();
     void followGame(const GameState& g);
     void gameChanged(const GameState& g, bool first);
     void pump();

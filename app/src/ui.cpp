@@ -721,6 +721,10 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
         bg->AddText(at, ui::u32(ui::overlay().fpsText), buf);
     }
 
+#ifdef VJ_HAVE_NEURO
+    drawNeuroMarker(app, bg, areaPos.x, areaPos.y, areaSize.x);   // same list, same reason as the FPS chip
+#endif
+
     if (app.showSettings) drawSettings(app);
     if (app.showStates) drawStates(app);
     if (app.showCheats) drawCheats(app);

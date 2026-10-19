@@ -87,6 +87,12 @@
         <td>The app talks to the Discord program on your computer over a local connection and never contacts Discord&rsquo;s servers itself. It hands that program the game&rsquo;s title, platform, paused or netplay state, elapsed time, a box-art web address, and for achievement games the progress count and a link to the game&rsquo;s RetroAchievements page. Discord then shows this on your profile under Discord&rsquo;s own rules. Turn it off in Settings.</td>
         <td><a href="https://discord.com/privacy">Discord privacy policy</a></td>
       </tr>
+      <tr>
+        <td>Neuro API server<br>(an address you type: <code>ws://localhost:8000</code> by default)</td>
+        <td>Only if you tick &ldquo;Connect to Neuro&rdquo; in Settings (or start the app with <code>--neuro</code>). Off by default, and never while RetroAchievements hardcore is on.</td>
+        <td>The app connects to the server and acts as a game for the Neuro game API: it sends the name of the game (its title from the game library, else one made from the file&rsquo;s name; &ldquo;Atari Jaguar&rdquo; when none is loaded), the actions it offers, whether the game is paused, which controller buttons are held, short notices (a new game was loaded, the in-game menu is open or Player 1 is a mouse so button presses are not reaching the game), and the values of the few memory locations a game profile watches (a score, lives). The server sends back the button presses it wants, which the app plays as Player 1. Nothing else is sent: not your files, folder paths or saves. The connection is <code>ws://</code>, which is <strong>not encrypted</strong>: anyone on the network path between you and the server can read and change it. It is meant for a server on this computer or your own network; the settings page warns when the address is somewhere else. <code>wss://</code> is not supported.</td>
+        <td>Whoever runs the server you point it at (for the SDK&rsquo;s test bots: you).</td>
+      </tr>
     </table></div>
     <p class="footnote">
       The shaders, cheat files and achievement library the app ships with are

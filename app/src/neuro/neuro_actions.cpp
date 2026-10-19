@@ -367,6 +367,8 @@ Json ActionSet::definitions() const {
 ActionResult ActionSet::execute(const std::string& name, const std::string& data) {
     if (!active_) return {true, "No game is running right now, so nothing was pressed."};
     if (!has(name)) return {false, "Unknown action \"" + name + "\"."};
+    if (!blocked_.empty() && name != "release_all")
+        return {false, "Nothing was pressed: " + blocked_ + ". Try again in a moment."};
     Json d = Json::object();
     if (!data.empty()) {
         std::string err;

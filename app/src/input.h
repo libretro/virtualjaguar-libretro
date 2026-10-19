@@ -30,6 +30,7 @@
 #include "cheatsheet.h"
 #include "devices.h"
 #include "hold_arbiter.h"
+#include "pad_profile.h"
 #include "remap.h"
 #include "router.h"
 
@@ -134,10 +135,20 @@ public:
         unsigned port = 0;       // connection order
         int instance = 0;        // which of several identical models (0 = first)
         int slot = -1;           // the player slot it drives right now, -1 none
+        PadFamily detected = PadFamily::Generic;   // the family SDL's gamepad type says (what "Auto" means in the menu-button editor)
+        NavProfile nav;          // its menu buttons in effect (family + the model's custom layer)
     };
     std::vector<PadInfo> pads() const;
     const Profile& keyboardProfile() const { return kbProfile_; }
     const Profile& padProfile(size_t i) const { return pads_[i].profile; }
+    // The menu-button profile of a pad by joystick id (#1021): its controller family plus the model's custom layer.  An id
+    // that is not open (unplugged, or never a gamepad) gets the Xbox family map.
+    const NavProfile& navProfile(uint32_t joystickId) const;
+    // The pad the player last pressed something on (the app notes it from the event stream, which the TV shell consumes
+    // before handleEvent sees it); lastPadFamily() is its family, Xbox before any press or once it is gone.
+    void notePadUsed(uint32_t joystickId) { lastPad_ = joystickId; }
+    PadFamily lastPadFamily() const { return navProfile(lastPad_).family; }
+    uint32_t lastPadId() const { return lastPad_; }
     // What pad i plays on a Pro Controller port (Profile::builtin proPort; the keyboard has no such variant).
     const Profile& padProProfile(size_t i) const { return pads_[i].proProfile; }
     // The remap table's view of a layer: true when the controller(s) it covers drive a Pro Controller port now
@@ -155,7 +166,28 @@ public:
     void beginCapture(const LayerId& layer, Ctl ctl, bool add, bool hold = false);
     void cancelCapture() { capture_.cancel(); }
     bool capturing() const { return capture_.active(); }
-    Ctl captureTarget() const { return capCtl_; }
+    Ctl captureTarget() const { return capCtl_; }   // C_COUNT while a menu button is being captured (navCapturing())
+
+    // ---- menu buttons (#1021) ---------------------------------------------------------------------------------------
+    // Same capture path as beginCapture, but the next pad button / trigger push becomes the model's (`guid`) button for the
+    // menu intent `in` (setNavBinding): nothing is written to the game bindings.  The result -- stored, swapped with another
+    // intent, or refused as reserved -- is in lastNav(); the config is saved and every pad re-resolved.  Esc cancels.
+    void beginNavCapture(const std::string& guid, tv::Intent in);
+    // Default for one intent: the family's button again (swapping the partner back); saves and re-resolves like a capture.
+    void resetNavBinding(const std::string& guid, tv::Intent in);
+    bool navCapturing() const { return capture_.active() && capNav_; }
+    tv::Intent navCaptureIntent() const { return capNavIntent_; }
+    struct NavResult {
+        bool valid = false;
+        std::string guid;
+        tv::Intent intent = tv::Intent::None;   // the intent that was being set
+        tv::Intent other = tv::Intent::None;    // Swapped: the intent that held the button and now has the old one
+        Binding bound;                          // what was pressed
+        NavSet set = NavSet::Ok;
+    };
+    const NavResult& lastNav() const { return navResult_; }
+    NavSet lastNavSet() const { return navResult_.set; }
+    void clearNavResult() { navResult_ = NavResult(); }
     DeviceClass captureClass() const { return capLayer_.cls; }
     // True while any keypad key is being synthesised (diagnostics / UI).
     bool keypadSynthesised() const { return core_.keypadSynthesised(); }
@@ -167,15 +199,20 @@ private:
         std::string guid;
         Profile profile;
         Profile proProfile;   // the same layers over the Pro Controller port defaults
+        NavProfile nav = familyNavProfile(PadFamily::Xbox);   // its menu buttons (pad_profile.h): the family map plus the model's custom layer
         PadCaps caps;
     };
     void bindCaptured(const Binding& b);
+    void bindNavCaptured(const Binding& b);
+    void applyNavBinding(const std::string& guid, tv::Intent in, const Binding& b);
+    void startCapture(DeviceClass cls);   // arm capture_ with every pad's resting axes as the baseline
     DevKind mousePortKind() const;
 
     bool padAllowed(SDL_JoystickID id) const;
     void openPad(SDL_JoystickID id);
     void syncHoldInputs(uint32_t dev, const Profile& p);   // tell the arbiter which inputs of `p` are hold inputs
     int padFilter_ = -1;
+    uint32_t lastPad_ = 0;
     std::vector<Pad> pads_;
     CoreInput core_;
     Router router_;
@@ -188,6 +225,10 @@ private:
     Ctl capCtl_ = C_COUNT;
     bool capAdd_ = false;
     bool capHold_ = false;
+    bool capNav_ = false;                      // the capture in progress is a menu button, not a game binding
+    std::string capNavGuid_;
+    tv::Intent capNavIntent_ = tv::Intent::None;
+    NavResult navResult_;
 
     DevKind kind_[2] = {DevKind::Pad, DevKind::Pad};
     DeviceSettings settings_;

@@ -118,6 +118,11 @@ public:
     const Profile* profile() const { return profile_; }
     void setActive(bool a) { active_ = a; }      // false (no game running): no actions at all
     bool active() const { return active_; }
+    // The game is running but the app is not delivering Player 1's buttons (the in-game menu has the pads, P1 is a
+    // mouse): every action but release_all fails with `why` instead of queueing input that would be thrown away,
+    // so Neuro is told the truth.  "" = delivering.
+    void setBlocked(const std::string& why) { blocked_ = why; }
+    const std::string& blocked() const { return blocked_; }
 
     std::vector<std::string> names() const;
     Json definitions() const;                    // the "actions" array of actions/register
@@ -129,6 +134,7 @@ private:
     InputQueue& q_;
     const Profile* profile_ = nullptr;
     bool active_ = true;
+    std::string blocked_;
 
     ActionResult pressButtons(const Json& d);
     ActionResult sequence(const Json& d);

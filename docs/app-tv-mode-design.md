@@ -38,7 +38,7 @@ achievements, and quit back to the library. TV mode adds no input latency to a g
 
 | State | Pads and keyboard drive |
 |---|---|
-| Desktop mode, no game | The desktop UI (mouse first; pads do nothing except the TV-menu action and the auto-switch trigger) |
+| Desktop mode, no game | The desktop UI (mouse first). Pads browse the desktop library (see `docs/app-pad-nav-design.md`), plus the TV-menu action and the auto-switch trigger, which wins under Auto (§2 of that design) |
 | Desktop mode, game running | The game. The TV-menu action opens the TV in-game menu over the desktop UI |
 | TV mode, no game | The TV UI, from every connected pad and from the keyboard (arrows, Enter, Esc, Backspace) |
 | TV mode, game running | The game, except the TV-menu action |

@@ -1,6 +1,6 @@
 # Build & C89 detail
 
-Detail for the compact rules in [`CLAUDE.md`](../../CLAUDE.md). LLM-oriented shorthand.
+Detail for the compact rules in [`AGENTS.md`](../../AGENTS.md). LLM-oriented shorthand.
 
 ## Commands
 

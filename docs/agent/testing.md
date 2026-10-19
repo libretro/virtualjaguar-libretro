@@ -1,6 +1,6 @@
 # Testing detail
 
-Detail for [`CLAUDE.md`](../../CLAUDE.md). Local-only RetroAchievements validation — no RA
+Detail for [`AGENTS.md`](../../AGENTS.md). Local-only RetroAchievements validation — no RA
 account/API/server. `test/tools/test_rcheevos_e2e.sh` downloads pinned `RCHEEVOS_REF` and
 verifies `rc_libretro` mapping (`RC_CONSOLE_ATARI_JAGUAR`) matches host RAM.
 
