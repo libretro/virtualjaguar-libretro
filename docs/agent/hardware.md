@@ -1,6 +1,6 @@
 # Hardware model, libretro layer & JTRM reference
 
-Detail for [`CLAUDE.md`](../../CLAUDE.md). **Verify clocks/register behavior against the JTRM,
+Detail for [`AGENTS.md`](../../AGENTS.md). **Verify clocks/register behavior against the JTRM,
 never against source comments** — comments have historically been wrong (e.g. PIT clock was
 incorrectly halved).
 

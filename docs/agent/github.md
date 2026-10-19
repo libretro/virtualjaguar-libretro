@@ -1,6 +1,6 @@
 # GitHub, releases & site
 
-Detail for [`CLAUDE.md`](../../CLAUDE.md).
+Detail for [`AGENTS.md`](../../AGENTS.md).
 
 ## Every PR must be linked to an issue — `Closes #N` will NOT do it
 
