@@ -207,8 +207,12 @@ struct AchCallbacks {
 // ---------------------------------------------------------------------------------
 // The core belongs to the emulation thread (#967): run there (inline / already there: at once).
 void Achievements::coreCall(const std::function<void()>& fn) {
-    if (app_) app_->emu.call([&fn] { fn(); });
-    else fn();
+    auto locked = [&] {
+        std::lock_guard<std::recursive_mutex> lock(clientMu_);
+        fn();
+    };
+    if (app_) app_->emu.call(locked);
+    else locked();
 }
 void Achievements::corePost(std::function<void()> fn) {
     if (app_) app_->emu.post(std::move(fn));
@@ -268,6 +272,7 @@ void Achievements::init(App& app, const CliArgs& args) {
 }
 
 void Achievements::shutdown() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     hashStop_ = true;
     if (hashThread_.joinable()) hashThread_.join();
     http_.shutdown();
@@ -308,38 +313,41 @@ void Achievements::rebuildMemory() {
 // Threaded, the toast and status writes below run on the emulation thread inside an EmuThread::call(), while the UI
 // thread waits (#967): it may write the UI-side fields.
 void Achievements::beginLoad() {
-    if (!client_ || !app_ || !enabled_) return;
-    CoreHost& host = app_->host;
-    if (!host.isLoaded() || host.contentPath().empty()) return;   // no-content boot: nothing to look up
-    if (!signedIn() && !loginPending_) return;
-    loadFailed_ = false;
+    coreCall([&] {
+        if (!client_ || !app_ || !enabled_) return;
+        CoreHost& host = app_->host;
+        if (!host.isLoaded() || host.contentPath().empty()) return;   // no-content boot: nothing to look up
+        if (!signedIn() && !loginPending_) return;
+        loadFailed_ = false;
 
-    const std::string path = host.contentPath();
-    const std::string ext = lowerExt(path);
-    if (ext == "chd" || ext == "cdi") {
-        // rcheevos' disc reader handles cue/bin, gdi and raw tracks only.  Say so
-        // rather than hashing garbage (the game still runs, without achievements).
-        toast("RetroAchievements", "Disc images in ." + ext + " format cannot be identified yet; use a .cue/.bin image.", 1, 7);
-        setStatus("Not tracking this game: ." + ext + " discs cannot be identified (use .cue/.bin)");
-        loadFailed_ = true;
-        return;
-    }
-    coreCall([this] { rebuildMemory(); });
-    if (!memoryReady_) {
-        toast("RetroAchievements", "The core did not publish a usable memory map.", 2, 6);
-        return;
-    }
-    checkSettings();
-    applyHardcore();
-    loading_ = true;
-    gameKnown_ = false;
-    rc_client_begin_identify_and_load_game(client_, consoleId(path), path.c_str(), nullptr, 0, &AchCallbacks::loadDone,
-                                           nullptr);
+        const std::string path = host.contentPath();
+        const std::string ext = lowerExt(path);
+        if (ext == "chd" || ext == "cdi") {
+            // rcheevos' disc reader handles cue/bin, gdi and raw tracks only.  Say so
+            // rather than hashing garbage (the game still runs, without achievements).
+            toast("RetroAchievements", "Disc images in ." + ext + " format cannot be identified yet; use a .cue/.bin image.", 1, 7);
+            setStatus("Not tracking this game: ." + ext + " discs cannot be identified (use .cue/.bin)");
+            loadFailed_ = true;
+            return;
+        }
+        coreCall([this] { rebuildMemory(); });
+        if (!memoryReady_) {
+            toast("RetroAchievements", "The core did not publish a usable memory map.", 2, 6);
+            return;
+        }
+        checkSettings();
+        applyHardcore();
+        loading_ = true;
+        gameKnown_ = false;
+        rc_client_begin_identify_and_load_game(client_, consoleId(path), path.c_str(), nullptr, 0, &AchCallbacks::loadDone,
+                                               nullptr);
+    });
 }
 
 // Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
 // write the UI-side fields.
 void Achievements::onContentLoaded() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     if (!client_) return;
     eventGen_.fetch_add(1);   // events the previous game queued but the UI has not pumped yet are stale
     loadedPath_ = app_->host.contentPath();
@@ -361,6 +369,7 @@ void Achievements::onContentLoaded() {
 // Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
 // write the UI-side fields.
 void Achievements::onDiscChanged() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     if (!client_ || !app_) return;
     const std::string path = app_->host.contentPath();
     if (path.empty() || path == loadedPath_) return;
@@ -376,6 +385,7 @@ void Achievements::onDiscChanged() {
 // Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
 // write the UI-side fields.
 void Achievements::onContentClosed() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     eventGen_.fetch_add(1);
     loading_ = false;
     gameKnown_ = false;
@@ -394,6 +404,7 @@ void Achievements::onContentClosed() {
 }
 
 void Achievements::onReset() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     ranUnrestricted_ = false;
     if (app_) framesSeen_ = app_->emu.framesRun();   // as onContentLoaded
     if (client_ && rc_client_is_game_loaded(client_)) rc_client_reset(client_);
@@ -409,6 +420,7 @@ void Achievements::afterFrame() {
 
 // After each emulated frame, on the emulation thread (threaded) -- or inline from afterFrame().  Reads game memory.
 void Achievements::emuFrame() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     if (!client_) return;
     if (rc_client_is_game_loaded(client_) && memoryReady_.load()) {
         rc_client_do_frame(client_);   // ends with rc_client_idle(): the scheduled pings evaluate rich presence here
@@ -426,6 +438,7 @@ void Achievements::emuFrame() {
 
 // The emulation thread's idle while no frame runs (paused, or no game identified): pings and retries.
 void Achievements::emuIdle() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     if (client_) rc_client_idle(client_);
 }
 
@@ -488,9 +501,35 @@ void Achievements::pump() {
 // ---------------------------------------------------------------------------------
 // policy
 // ---------------------------------------------------------------------------------
-bool Achievements::signedIn() const { return client_ && rc_client_get_user_info(client_) != nullptr; }
+bool Achievements::signedIn() const {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
+    return client_ && rc_client_get_user_info(client_) != nullptr;
+}
+
+Achievements::ClientSnapshot Achievements::clientSnapshot() const {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
+    ClientSnapshot snapshot;
+    if (!client_) return snapshot;
+    snapshot.hardcore = rc_client_get_hardcore_enabled(client_) != 0;
+    if (const rc_client_user_t* u = rc_client_get_user_info(client_)) {
+        snapshot.signedIn = true;
+        snapshot.displayName = u->display_name ? u->display_name : "";
+        snapshot.score = u->score;
+        snapshot.softcoreScore = u->score_softcore;
+        snapshot.unreadMessages = u->num_unread_messages;
+    }
+    if (rc_client_is_game_loaded(client_)) {
+        if (const rc_client_game_t* g = rc_client_get_game_info(client_)) {
+            snapshot.gameId = g->id;
+            snapshot.gameTitle = g->title ? g->title : "";
+            rc_client_get_user_game_summary(client_, &snapshot.summary);
+        }
+    }
+    return snapshot;
+}
 
 std::string Achievements::userName() const {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     const rc_client_user_t* u = client_ ? rc_client_get_user_info(client_) : nullptr;
     return u ? u->display_name : "";
 }
@@ -531,10 +570,10 @@ void Achievements::applyHardcore() {
 }
 
 bool Achievements::allowPause(std::string& why) {
-    if (!hardcoreActive() || !rc_client_is_game_loaded(client_)) return true;
+    if (!hardcoreActive()) return true;
     uint32_t frames = 0;
     int ok = 1;
-    coreCall([&] { ok = rc_client_can_pause(client_, &frames); });   // it advances the pause-decay state do_frame also touches
+    coreCall([&] { if (rc_client_is_game_loaded(client_)) ok = rc_client_can_pause(client_, &frames); });   // it advances the pause-decay state do_frame also touches
     if (ok) return true;
     const double fps = app_ ? std::max(1.0, app_->host.fps()) : 60.0;
     char buf[96];
@@ -586,7 +625,7 @@ void Achievements::setImagesWanted(bool on) {
 
 void Achievements::setUnofficialWanted(bool on) {
     unofficial_ = on;
-    if (client_) rc_client_set_unofficial_enabled(client_, on ? 1 : 0);
+    if (client_) coreCall([&] { rc_client_set_unofficial_enabled(client_, on ? 1 : 0); });
     if (app_) {
         app_->cfg.setBool("ra.unofficial", on);
         app_->saveConfig();
@@ -620,10 +659,11 @@ void Achievements::login(const std::string& user, const std::string& password) {
     }
     loginPending_ = true;
     setStatus("Signing in...");
-    rc_client_begin_login_with_password(client_, user.c_str(), password.c_str(), &AchCallbacks::loginDone, nullptr);
+    coreCall([&] { rc_client_begin_login_with_password(client_, user.c_str(), password.c_str(), &AchCallbacks::loginDone, nullptr); });
 }
 
 void Achievements::persistLogin() {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     const rc_client_user_t* u = client_ ? rc_client_get_user_info(client_) : nullptr;
     if (!u || !app_) return;
     if (mockMode()) return;   // a canned token must never reach the real store or config
@@ -661,6 +701,7 @@ void Achievements::logout() {
 // Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
 // write the UI-side fields.
 void Achievements::onStateSaved(const std::string& statePath) {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     const std::string side = statePath + ".rcp";
     if (!client_ || !rc_client_is_game_loaded(client_)) {
         SDL_RemovePath(side.c_str());
@@ -678,6 +719,7 @@ void Achievements::onStateSaved(const std::string& statePath) {
 // Threaded, this runs on the emulation thread inside an EmuThread::call(), while the UI thread waits (#967): it may
 // write the UI-side fields.
 void Achievements::onStateLoaded(const std::string& statePath) {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     if (!client_ || !rc_client_is_game_loaded(client_)) return;
     size_t n = 0;
     void* data = SDL_LoadFile((statePath + ".rcp").c_str(), &n);
@@ -878,7 +920,7 @@ bool Achievements::headlessSetup(const CliArgs& a) {
     if (loginAt_ == 0) {
         loginPending_ = true;
         // The mock accepts any token; this is the login path of a real start-up.
-        rc_client_begin_login_with_token(client_, mockUser_.c_str(), "mock-token", &AchCallbacks::loginDone, (void*)1);
+        coreCall([&] { rc_client_begin_login_with_token(client_, mockUser_.c_str(), "mock-token", &AchCallbacks::loginDone, (void*)1); });
     }
     return true;
 }
@@ -897,6 +939,52 @@ void Achievements::runStep(const Step& s, unsigned frame) {
     if (s.action == "hardcore:on") setHardcoreWanted(true);
     else if (s.action == "hardcore:off") setHardcoreWanted(false);
     else if (s.action == "signout") logout();
+    else if (s.action == "signin") login(mockUser_, "mock-password");
+    else if (s.action == "unofficial:on") setUnofficialWanted(true);
+    else if (s.action == "unofficial:off") setUnofficialWanted(false);
+    else if (s.action == "enabled:on") setEnabled(true);
+    else if (s.action == "enabled:off") setEnabled(false);
+    else if (s.action == "ui:stress") {
+        // Real rc_client mutations on the owner race copied dashboard reads on this thread.
+        // Commands also run while headless is paused; the final call drains them before we return.
+        const auto before = clientSnapshot();
+        if (!before.signedIn || !before.gameId) { fail("no tracked game to exercise"); return; }
+        for (unsigned i = 0; i < 2000; ++i) {
+            corePost([this] {
+                coreCall([this] {
+                    rc_client_set_hardcore_enabled(client_, !rc_client_get_hardcore_enabled(client_));
+                    if (rc_client_is_game_loaded(client_)) rc_client_reset(client_);
+                    emuFrame();
+                });
+            });
+            const auto snapshot = clientSnapshot();
+            std::vector<ra::AchRow> rows;
+            std::string version;
+            if (!snapshot.signedIn || snapshot.gameId != before.gameId || snapshot.gameTitle != before.gameTitle ||
+                snapshot.displayName != before.displayName || !signedIn() || userName().empty() ||
+                !achievementRows(rows) || rows.empty() || gameIconUrl().empty() || avatarUrl(version).empty()) {
+                fail("dashboard snapshot lost account/game data");
+                break;
+            }
+            unsigned points = 0;
+            for (const auto& row : rows) points += row.points;
+            if (rows.size() != snapshot.summary.num_core_achievements || points != snapshot.summary.points_core) {
+                fail("dashboard summary disagrees with its rows");
+                break;
+            }
+        }
+        coreCall([&] { rc_client_set_hardcore_enabled(client_, before.hardcore ? 1 : 0); });
+        std::printf("ra-step: frame %u concurrent dashboard reads complete\n", frame);
+    } else if (s.action == "ui:signout") {
+        const auto before = clientSnapshot();
+        std::vector<ra::AchRow> rows;
+        achievementRows(rows);
+        logout();
+        const auto after = clientSnapshot();
+        if (!before.signedIn || !before.gameId || before.gameTitle.empty() || before.displayName.empty() || rows.empty() ||
+            rows.front().title.empty() || after.signedIn || after.gameId || signedIn())
+            fail("dashboard copies did not survive signout");
+    }
     else if (s.action.compare(0, 6, "games:") == 0) headlessGamesStep(s.action.substr(6), frame);
     else if (s.action.compare(0, 5, "poke:") == 0 || s.action.compare(0, 7, "expect:") == 0) {
         const bool poke = s.action[0] == 'p';
@@ -931,7 +1019,7 @@ void Achievements::headlessFrame(unsigned frame) {
     if (loginAt_ && frame >= loginAt_ && !loginPending_ && !signedIn()) {
         // A late sign-in: the game has been running for a while already.
         loginPending_ = true;
-        rc_client_begin_login_with_token(client_, mockUser_.c_str(), "mock-token", &AchCallbacks::loginDone, (void*)1);
+        coreCall([&] { rc_client_begin_login_with_token(client_, mockUser_.c_str(), "mock-token", &AchCallbacks::loginDone, (void*)1); });
     }
     for (Poke& p : pokes_) {
         if (p.done || p.frame > frame) continue;
@@ -991,7 +1079,7 @@ bool Achievements::headlessCheck(const CliArgs& a) {
     if (a.raExpectHardcore) {
         // Hardcore must be on and must refuse a state load; saving stays allowed.
         if (!hardcoreActive()) fail("hardcore is not active");
-        if (rc_client_get_hardcore_enabled(client_) != 1) fail("rc_client is not in hardcore");
+        if (!clientSnapshot().hardcore) fail("rc_client is not in hardcore");
         if (!app_->saveState(0)) fail("saving a state must still work in hardcore");
         if (app_->loadState(0)) fail("a state load was ALLOWED in hardcore");
         if (allowCheats() || allowRewind() || allowSlowMotion() || allowFrameAdvance()) fail("a restricted feature is allowed in hardcore");
@@ -1014,7 +1102,7 @@ bool Achievements::headlessCheck(const CliArgs& a) {
         if (hardcoreActive()) fail("hardcore is active despite a disallowed setting");
         if (hardcoreBlocker().find("virtualjaguar_pal") == std::string::npos)
             fail("the blocking setting was not reported (got \"" + hardcoreBlocker() + "\")");
-        if (rc_client_get_hardcore_enabled(client_) != 0) fail("rc_client is still in hardcore");
+        if (clientSnapshot().hardcore) fail("rc_client is still in hardcore");
         if (!allowStateLoad()) fail("state loads are refused although hardcore is off");
     }
     if (a.raExpectSoftcore) {

@@ -322,6 +322,11 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   saved-cheat data dir get a `_threaded` suffix so the chains never share state). A test with `PASS` is a control: its twin
   fails only on `owner violation` or a TSan report. `ra_reply_owner_threaded` is threaded-only: login/game-load replies must run on the core owner,
   serialized with frames. It requires the mock login/load/session requests and rejects off-thread address reads.
+  `ra_ui_client_access` and its threaded twin overlap owner-side hardcore/reset/evaluation commands with copied
+  dashboard/profile/Discord snapshots, achievement rows, and image URLs (`--ra-step FRAME:ui:stress`). They also
+  exercise unofficial/enabled toggles and password sign-in, and retain copied UI data across signout. Without
+  the shared client lock, TSan reports a race between the hardcore getter and setter. UI code must never retain
+  rcheevos pointers: use `clientSnapshot()` or the copied rows/URLs.
 - **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
   test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
   still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.

@@ -146,7 +146,15 @@ public:
     std::map<unsigned, std::string> challenges;     // achievement id -> title
     std::string progress;                           // transient progress indicator text
     double progressBorn = 0;
-    rc_client_t* client() const { return client_; }
+    // Copies only: rcheevos objects remain protected until their strings and counters are copied.
+    struct ClientSnapshot {
+        bool signedIn = false, hardcore = false;
+        uint32_t gameId = 0;
+        std::string gameTitle, displayName;
+        uint32_t score = 0, softcoreScore = 0, unreadMessages = 0;
+        rc_client_user_game_summary_t summary{};
+    };
+    ClientSnapshot clientSnapshot() const;
     App* app() const { return app_; }
 
     // ---- pictures and the dashboard (achievements_games.cpp, achievements_ui.cpp) ----------
@@ -210,6 +218,10 @@ private:
     void mockRespond(const std::string& post, rc_client_server_callback_t cb, void* cbdata);
 
     App* app_ = nullptr;
+    // Frame evaluation and UI snapshots share this lock. Mutations still dispatch to the core owner;
+    // acquire inside coreCall, never while the UI is waiting for an owner command. Recursive because
+    // rcheevos invokes our callbacks synchronously and those may query the client again.
+    mutable std::recursive_mutex clientMu_;
     rc_client_t* client_ = nullptr;
     AchHttp http_;
     bool enabled_ = true;

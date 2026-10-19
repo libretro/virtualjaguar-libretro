@@ -280,3 +280,15 @@ target_include_directories(vj_ach_event_test PRIVATE src)
 target_link_libraries(vj_ach_event_test PRIVATE vj_rcheevos)
 add_test(NAME ach_event_unit COMMAND vj_ach_event_test)
 set_tests_properties(ach_event_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# Dashboard/profile/Discord readers must copy rcheevos objects before releasing the client lock.
+# ui:stress overlaps owner-side reset/evaluation with the same readers the UI uses, even headless.
+vj_ra_test(NAME ra_ui_client_access
+    ARGS --frames 180 --ra-mock "${VJ_RA_FIX}"
+         --ra-step 20:ui:stress
+         --ra-step 30:unofficial:on --ra-step 40:unofficial:off
+         --ra-step 50:enabled:off --ra-step 60:enabled:on
+         --ra-step 80:ui:stress --ra-step 90:ui:signout
+         --ra-step 100:signin --ra-step 120:ui:stress
+         --ra-expect-request login2 --ra-expect-request achievementsets
+         "${VJ_ROMS}/yarc.j64")
