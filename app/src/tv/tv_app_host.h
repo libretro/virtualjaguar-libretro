@@ -33,6 +33,8 @@ public:
     void clearHolds() override;
     void toast(const std::string& text) override;
     std::string glyph(Intent i) const override;
+    Intent padIntent(uint32_t pad, int sdlButton) const override;
+    Intent padTriggerIntent(uint32_t pad, int sdlAxis) const override;
     bool tvActive() const override;
     bool tvAvailable() const override;
     void setTvActive(bool on) override;

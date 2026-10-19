@@ -157,6 +157,30 @@ and **Devices & players** do all of that. Team Tap sockets read only the RetroPa
 there keypad 0-6 ride X, L, R, L2, R2, L3, R3 and keypad 7-9, `*`, `#` are unreachable
 (a limit of the core).
 
+### Controller in the desktop library
+
+With TV mode off and no game running (or a paused game with the Game library window open), a pad
+browses the library: a focus ring follows it over the grid, the Favorites and Recently played strips,
+and the BIOS and States tabs. Mouse and keyboard work as before.
+
+| Pad | Library |
+| --- | --- |
+| D-pad, left stick | move the focus |
+| A (tap) | play the focused game; open a BIOS tile's menu; load a state |
+| A (hold) or X | the tile's menu (D-pad moves, A picks, B closes) |
+| B | close the open menu, or the Game library window |
+| Y | favorite / unfavorite |
+| LB / RB | previous / next tab |
+| LT / RT | previous / next initial letter |
+| Right stick | scroll the grid |
+| View / Back | focus the search box |
+| Share or Guide, held | toggle TV mode |
+
+The buttons follow the controller family, detected automatically: Xbox, PlayStation, Nintendo Switch
+(A on the right confirms, B on the bottom goes back) and MFi / generic (Xbox layout). A custom layout
+is under **Settings > Input**: pick one controller in the device list, then **Menu buttons** (a Family
+choice, and **Set** / **Default** per button). **Reset menu buttons** clears that controller's overrides.
+
 ### Devices, players and the mouse
 
 **Settings > Input > Devices & players** (everywhere, or this game only; stored as

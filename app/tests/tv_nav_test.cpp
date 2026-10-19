@@ -191,6 +191,167 @@ static void testTriggerLabels() {
     CHECK(std::string(triggerLabel(Intent::Accept, false)).empty() && std::string(triggerLabel(Intent::None, true)).empty());
 }
 
+// ---- #1021: per-pad sources, supplied intents, long-press Accept, Search ----
+
+static void testLongAcceptTap() {
+    NavInput n;
+    n.setLongAccept(true);
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, true, 0);
+    CHECK(n.take(100).empty());   // held back until the release says tap or long
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 200);
+    CHECK(n.take(200) == Intents{Intent::Accept});
+    CHECK(n.take(300).empty());
+}
+
+static void testLongAcceptHold() {
+    NavInput n;
+    n.setLongAccept(true);
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, true, 0);
+    CHECK(n.take(499).empty());
+    CHECK(n.take(500) == Intents{Intent::AcceptLong});
+    CHECK(n.take(600).empty());   // once
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 900);
+    CHECK(n.take(900).empty());   // the release is swallowed
+    CHECK(NavInput::kLongMs == 500);
+}
+
+// A release that crossed the threshold between two take() calls is still a long press, not a tap.
+static void testLongAcceptReleaseBeforeTake() {
+    NavInput n;
+    n.setLongAccept(true);
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, true, 0);
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 800);
+    CHECK(n.take(800) == Intents{Intent::AcceptLong});
+}
+
+static void testLongAcceptUnseenRelease() {
+    NavInput n;
+    n.setLongAccept(true);
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, true, 0);
+    n.reset();
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 100);
+    CHECK(n.take(100).empty());
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 200);   // a release with no press at all
+    CHECK(n.take(200).empty());
+}
+
+static void testLongAcceptOffUnchanged() {
+    NavInput n;
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, true, 0);
+    CHECK(n.take(0) == Intents{Intent::Accept});
+    CHECK(n.take(1000).empty());
+    n.padIntent(7, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 1100);
+    CHECK(n.take(1100).empty());
+}
+
+// Long Accept covers Accept from pad buttons only; keys and the other intents are not delayed.
+static void testLongAcceptScope() {
+    NavInput n;
+    n.setLongAccept(true);
+    n.key(SDL_SCANCODE_RETURN, true, false, 0);
+    CHECK(n.take(0) == Intents{Intent::Accept});
+    n.padIntent(1, SDL_GAMEPAD_BUTTON_EAST, Intent::Back, true, 0);
+    CHECK(n.take(0) == Intents{Intent::Back});
+    n.padIntent(1, SDL_GAMEPAD_BUTTON_START, Intent::Search, true, 0);
+    CHECK(n.take(0) == Intents{Intent::Search});
+}
+
+static void testTwoPadsSameButton() {
+    NavInput n;
+    n.setLongAccept(true);
+    n.padIntent(1, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, true, 0);
+    n.padIntent(2, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Back, true, 10);   // same button, other pad, other intent
+    CHECK(n.take(10) == Intents{Intent::Back});
+    n.padIntent(2, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Back, false, 20);
+    n.padIntent(1, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 100);
+    CHECK(n.take(100) == Intents{Intent::Accept});
+}
+
+static void testUnplugMidHold() {
+    NavInput n;
+    n.setLongAccept(true);
+    n.padIntent(3, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, true, 0);
+    n.padIntent(3, SDL_GAMEPAD_BUTTON_DPAD_DOWN, Intent::Down, true, 0);
+    n.forgetPad(3);
+    CHECK(n.take(1000) == Intents{Intent::Down});   // only the edge from before; no AcceptLong, no repeat
+    CHECK(n.take(2000).empty());
+    n.padIntent(3, SDL_GAMEPAD_BUTTON_SOUTH, Intent::Accept, false, 2100);   // a late release is not ours
+    CHECK(n.take(2100).empty());
+}
+
+// Unplugging the newest holder hands the repeat to an older hold from another pad, after a fresh delay.
+static void testUnplugHandsRepeatBack() {
+    NavInput n;
+    n.padIntent(1, SDL_GAMEPAD_BUTTON_DPAD_LEFT, Intent::Left, true, 0);
+    n.padIntent(2, SDL_GAMEPAD_BUTTON_DPAD_DOWN, Intent::Down, true, 100);
+    CHECK(n.take(100) == (Intents{Intent::Left, Intent::Down}));
+    n.forgetPad(2);
+    CHECK(n.take(500).empty());              // fresh delay starts at the first take after the unplug
+    CHECK(n.take(849).empty());
+    CHECK(n.take(850) == Intents{Intent::Left});
+    n.forgetPad(1);
+    CHECK(n.take(5000).empty());
+}
+
+// Unplug the newest of three holds, then let go of a non-current older one: the take-over delay still stands.
+static void testUnplugThenOlderRelease() {
+    NavInput n;
+    n.padIntent(1, SDL_GAMEPAD_BUTTON_DPAD_LEFT, Intent::Left, true, 0);
+    n.padIntent(2, SDL_GAMEPAD_BUTTON_DPAD_UP, Intent::Up, true, 10);
+    n.padIntent(3, SDL_GAMEPAD_BUTTON_DPAD_DOWN, Intent::Down, true, 20);
+    CHECK(n.take(20) == (Intents{Intent::Left, Intent::Up, Intent::Down}));
+    n.forgetPad(3);                                                          // Up (pad 2) is current again
+    n.padIntent(1, SDL_GAMEPAD_BUTTON_DPAD_LEFT, Intent::Left, false, 30);   // older, not current
+    CHECK(n.take(100).empty() && n.take(449).empty());                       // fresh delay from the first take
+    CHECK(n.take(450) == Intents{Intent::Up});
+}
+
+static void testPadTriggerEdges() {
+    NavInput n;
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 9000, 0);
+    CHECK(n.take(0) == Intents{Intent::PageNext});
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 5000, 10);   // between off and on: still on
+    CHECK(n.take(10).empty() && n.take(2000).empty());                              // and no repeat
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 9000, 20);
+    CHECK(n.take(20).empty());
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 3000, 30);
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 9000, 40);
+    CHECK(n.take(40) == Intents{Intent::PageNext});
+    // Pad 2's trigger is its own latch.
+    n.padTrigger(2, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 9000, 50);
+    CHECK(n.take(50) == Intents{Intent::PageNext});
+    // A different axis of the same pad too; and an unmapped axis (None) is ignored.
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, Intent::PagePrev, 9000, 60);
+    CHECK(n.take(60) == Intents{Intent::PagePrev});
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, Intent::None, 0, 65);
+    n.padTrigger(1, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, Intent::None, 20000, 70);
+    CHECK(n.take(70).empty());
+}
+
+static void testPadTriggerForgetAndReset() {
+    NavInput n;
+    n.padTrigger(4, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 9000, 0);
+    CHECK(n.take(0) == Intents{Intent::PageNext});
+    n.forgetPad(4);   // replugged with the trigger resting low: the next pull is a fresh edge
+    n.padTrigger(4, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 9000, 10);
+    CHECK(n.take(10) == Intents{Intent::PageNext});
+    n.reset();
+    n.padTrigger(4, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, Intent::PageNext, 9000, 20);
+    CHECK(n.take(20) == Intents{Intent::PageNext});
+}
+
+// The old entry points are the new ones with pad 0 and the Xbox table.
+static void testLegacyEntryPoints() {
+    NavInput a, b;
+    a.padButton(SDL_GAMEPAD_BUTTON_DPAD_DOWN, true, 0);
+    b.padIntent(0, SDL_GAMEPAD_BUTTON_DPAD_DOWN, intentForButton(SDL_GAMEPAD_BUTTON_DPAD_DOWN), true, 0);
+    CHECK(a.take(0) == b.take(0) && a.take(400) == b.take(400));
+    a.padButton(SDL_GAMEPAD_BUTTON_DPAD_DOWN, false, 410);
+    b.padIntent(0, SDL_GAMEPAD_BUTTON_DPAD_DOWN, Intent::Down, false, 410);
+    CHECK(a.take(5000).empty() && b.take(5000).empty());
+    CHECK(Intent::Search != Intent::PageNext && Intent::AcceptLong != Intent::Accept);
+}
+
 int main() {
     testBriefSequence();
     testDpadRepeat();
@@ -204,6 +365,19 @@ int main() {
     testReset();
     testTables();
     testTriggerLabels();
+    testLongAcceptTap();
+    testLongAcceptHold();
+    testLongAcceptReleaseBeforeTake();
+    testLongAcceptUnseenRelease();
+    testLongAcceptOffUnchanged();
+    testLongAcceptScope();
+    testTwoPadsSameButton();
+    testUnplugMidHold();
+    testUnplugHandsRepeatBack();
+    testUnplugThenOlderRelease();
+    testPadTriggerEdges();
+    testPadTriggerForgetAndReset();
+    testLegacyEntryPoints();
     std::printf("tv_nav_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

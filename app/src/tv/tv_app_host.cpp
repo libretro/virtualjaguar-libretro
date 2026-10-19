@@ -191,11 +191,13 @@ void AppHost::noteInput(const SDL_Event& e) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         lastWasPad_ = true;
         lastPad_ = e.gbutton.which;
+        app_.input.notePadUsed(lastPad_);
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:   // a resting stick drifts: only a real push counts
         if (e.gaxis.value > 16000 || e.gaxis.value < -16000) {
             lastWasPad_ = true;
             lastPad_ = e.gaxis.which;
+            app_.input.notePadUsed(lastPad_);
         }
         break;
     case SDL_EVENT_KEY_DOWN:
@@ -205,55 +207,38 @@ void AppHost::noteInput(const SDL_Event& e) {
     }
 }
 
-// The button caption for a hint: the face buttons as the pad used last labels them (A / Cross / ...), the keyboard's
-// keys while the keyboard was used last (or before any input).
+// What the pad's menu-button profile (the controller family plus the model's custom layer, #1021) says a button means.
+Intent AppHost::padIntent(uint32_t pad, int sdlButton) const { return app_.input.navProfile(pad).intentForButton(sdlButton); }
+Intent AppHost::padTriggerIntent(uint32_t pad, int sdlAxis) const { return app_.input.navProfile(pad).intentForTrigger(sdlAxis); }
+
+// The button caption for a hint: the button the last-used pad's profile gives the intent, named as that pad labels it
+// (A / Cross / ...), the keyboard's keys while the keyboard was used last (or before any input).
 std::string AppHost::glyph(Intent i) const {
-    SDL_GamepadButton b = SDL_GAMEPAD_BUTTON_INVALID;
     const char* key = "";
+    SDL_GamepadButton dpad = SDL_GAMEPAD_BUTTON_INVALID;
     switch (i) {
-    case Intent::Up: b = SDL_GAMEPAD_BUTTON_DPAD_UP; key = "Up"; break;
-    case Intent::Down: b = SDL_GAMEPAD_BUTTON_DPAD_DOWN; key = "Down"; break;
-    case Intent::Left: b = SDL_GAMEPAD_BUTTON_DPAD_LEFT; key = "Left"; break;
-    case Intent::Right: b = SDL_GAMEPAD_BUTTON_DPAD_RIGHT; key = "Right"; break;
-    case Intent::Accept: b = SDL_GAMEPAD_BUTTON_SOUTH; key = "Enter"; break;
-    case Intent::Back: b = SDL_GAMEPAD_BUTTON_EAST; key = "Esc"; break;
-    case Intent::Alt: b = SDL_GAMEPAD_BUTTON_WEST; break;   // Alt and Aux likewise have no key
-    case Intent::Aux: b = SDL_GAMEPAD_BUTTON_NORTH; break;
-    case Intent::Menu: b = SDL_GAMEPAD_BUTTON_START; break;   // no keyboard key (intentForKey): "" so the hint is dropped
-    case Intent::SectionPrev: b = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER; key = "Shift+Tab"; break;
-    case Intent::SectionNext: b = SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER; key = "Tab"; break;
+    case Intent::Up: dpad = SDL_GAMEPAD_BUTTON_DPAD_UP; key = "Up"; break;
+    case Intent::Down: dpad = SDL_GAMEPAD_BUTTON_DPAD_DOWN; key = "Down"; break;
+    case Intent::Left: dpad = SDL_GAMEPAD_BUTTON_DPAD_LEFT; key = "Left"; break;
+    case Intent::Right: dpad = SDL_GAMEPAD_BUTTON_DPAD_RIGHT; key = "Right"; break;
+    case Intent::Accept: key = "Enter"; break;
+    case Intent::Back: key = "Esc"; break;
+    case Intent::Alt: break;    // Alt and Aux have no key
+    case Intent::Aux: break;
+    case Intent::Menu: break;   // no keyboard key (intentForKey): "" so the hint is dropped
+    case Intent::SectionPrev: key = "Shift+Tab"; break;
+    case Intent::SectionNext: key = "Tab"; break;
     case Intent::PagePrev: key = "Page Up"; break;
     case Intent::PageNext: key = "Page Down"; break;
+    case Intent::Search:        // the desktop library's (#1021): no TV hint
+    case Intent::AcceptLong:
     case Intent::None: break;
     }
     SDL_Gamepad* g = lastWasPad_ ? SDL_GetGamepadFromID(lastPad_) : nullptr;   // null once that pad is gone
-    if (g && (i == Intent::PagePrev || i == Intent::PageNext))   // the triggers (axes, not buttons)
-        return triggerLabel(i, SDL_GetGamepadButtonLabel(g, SDL_GAMEPAD_BUTTON_SOUTH) == SDL_GAMEPAD_BUTTON_LABEL_CROSS);
-    if (g && b != SDL_GAMEPAD_BUTTON_INVALID) {
-        const bool sony = SDL_GetGamepadButtonLabel(g, SDL_GAMEPAD_BUTTON_SOUTH) == SDL_GAMEPAD_BUTTON_LABEL_CROSS;
-        switch (b) {
-        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return sony ? "L1" : "LB";
-        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return sony ? "R1" : "RB";
-        case SDL_GAMEPAD_BUTTON_START: return "Start";
-        case SDL_GAMEPAD_BUTTON_DPAD_UP:
-        case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
-        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
-        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return "D-pad";
-        default: break;
-        }
-        switch (SDL_GetGamepadButtonLabel(g, b)) {
-        case SDL_GAMEPAD_BUTTON_LABEL_A: return "A";
-        case SDL_GAMEPAD_BUTTON_LABEL_B: return "B";
-        case SDL_GAMEPAD_BUTTON_LABEL_X: return "X";
-        case SDL_GAMEPAD_BUTTON_LABEL_Y: return "Y";
-        case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return "Cross";
-        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return "Circle";
-        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: return "Square";
-        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: return "Triangle";
-        default: break;
-        }
-    }
-    return key;
+    if (!g) return key;
+    if (dpad != SDL_GAMEPAD_BUTTON_INVALID) return "D-pad";
+    if (i == Intent::Search || i == Intent::AcceptLong || i == Intent::None) return key;
+    return padButtonLabel(g, app_.input.navProfile(lastPad_), i);   // "" when the profile leaves it unbound: no hint
 }
 
 }  // namespace vj::tv

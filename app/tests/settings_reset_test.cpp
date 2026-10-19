@@ -71,6 +71,7 @@ static void fill(Config& c) {
         "discord.enabled", "discord.art", "discord.buttons",
         // Mappings
         "input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port", "input.stick_dpad",
+        "input.padguid.030000.nav.family", "input.padguid.030000.nav.confirm",   // a model's menu-button layer (#1021)
         "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C",
         // Per-game device choices
         "input.game.cart-1234.port.0", "input.game.cart-1234.slot.2", "input.game.disc-myst.dev.mouse_speed",
@@ -118,6 +119,8 @@ static void testClassify() {
     CHECK(classifyKey("input.pad.A") == KeyClass::Mapping);
     CHECK(classifyKey("input.pads.1") == KeyClass::Keep);
     CHECK(classifyKey("input.padguid.0300.A") == KeyClass::Mapping);
+    CHECK(classifyKey("input.padguid.0300.nav.family") == KeyClass::Mapping);    // the menu-button layer resets with the controls (#1021)
+    CHECK(classifyKey("input.padguid.0300.nav.pagenext") == KeyClass::Mapping);
     CHECK(classifyKey("input.kb.port") == KeyClass::Mapping);
     CHECK(classifyKey("input.game.cart-1.kb.A") == KeyClass::Mapping);
     CHECK(classifyKey("input.game.cart-1.padguid.03.A") == KeyClass::Mapping);
@@ -184,7 +187,7 @@ static void testResetAll() {
         "discord.app_id", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc", "shader.folder",
         "opt.virtualjaguar_frameskip_max"};   // core options go through CoreHost, not Config
     const std::set<std::string> mappings = {"input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port",
-        "input.stick_dpad", "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C"};
+        "input.stick_dpad", "input.padguid.030000.nav.family", "input.padguid.030000.nav.confirm", "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C"};
     const std::set<std::string> perGame = {"input.game.cart-1234.port.0", "input.game.cart-1234.slot.2",
                                            "input.game.disc-myst.dev.mouse_speed"};
     for (int variant = 0; variant < 4; variant++) {

@@ -21,6 +21,7 @@
 #include "config.h"
 #include "core_host.h"
 #include "debug/debug_session.h"
+#include "desktop_nav_app.h"
 #include "fonts.h"
 #include "discord_presence.h"
 #ifdef VJ_HAVE_NEURO
@@ -275,6 +276,7 @@ public:
     void menuResume();
     tv::Shell& tvShell();
     tv::TvMode tvMode;                           // TV mode (#991): when it is on
+    DesktopPad deskPad;                          // pad navigation of the desktop library (#1021, desktop_nav_app.h)
     tv::TvSetting tvSetting = tv::TvSetting::Manual;   // ui.tv_mode as stored; effectiveSetting() is what TvMode acts on
     void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off
     void configureTvMode();                      // tvMode.configure() from tvSetting + the config (also when Settings changes it)
