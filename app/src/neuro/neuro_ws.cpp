@@ -5,7 +5,11 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <random>
+#include <system_error>
+#include <thread>
 
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -47,7 +51,8 @@ namespace neuro {
 // ---------------------------------------------------------------------------------------------------------------
 namespace {
 
-// "  WS://host/x " -> "host/x"; false for wss:// and other schemes.
+// "  WS://host/x " -> "host/x"; false for wss:// and other schemes.  A "://" after the first slash belongs to the
+// path ("host/go?to=http://x"), not to a scheme.
 bool stripScheme(const std::string& url, std::string& rest, std::string& err) {
     rest = url;
     while (!rest.empty() && std::isspace((unsigned char)rest.back())) rest.pop_back();
@@ -56,7 +61,11 @@ bool stripScheme(const std::string& url, std::string& rest, std::string& err) {
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     if (lower.compare(0, 6, "wss://") == 0) return (err = "wss:// (TLS) is not supported; use a ws:// URL", false);
     if (lower.compare(0, 5, "ws://") == 0) rest = rest.substr(5);
-    else if (lower.find("://") != std::string::npos) return (err = "not a ws:// URL", false);
+    else {
+        const size_t scheme = lower.find("://"), slash = lower.find('/');
+        if (scheme != std::string::npos && (slash == std::string::npos || scheme < slash))
+            return (err = "not a ws:// URL", false);
+    }
     return true;
 }
 
@@ -99,6 +108,35 @@ bool parseWsUrl(const std::string& url, WsUrl& out, std::string& err) {
     return true;
 }
 
+bool isLoopbackHost(const std::string& host) {
+    std::string h = host;
+    std::transform(h.begin(), h.end(), h.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    if (h == "localhost" || h == "::1" || h == "0:0:0:0:0:0:0:1") return true;
+    if (h.size() > 10 && h.compare(h.size() - 10, 10, ".localhost") == 0) return true;
+    // 127.0.0.0/8: four decimal fields, each 0-255, the first 127
+    unsigned field[4] = {0, 0, 0, 0};
+    unsigned n = 0, digits = 0;
+    for (size_t i = 0; i <= h.size(); i++) {
+        const char ch = i < h.size() ? h[i] : '.';
+        if (ch >= '0' && ch <= '9') {
+            field[n] = field[n] * 10 + (unsigned)(ch - '0');
+            if (++digits > 3 || field[n] > 255) return false;
+        } else if (ch == '.' && digits > 0 && (n < 3 || i == h.size())) {
+            if (++n == 4) return field[0] == 127;
+            digits = 0;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool wsUrlIsRemote(const std::string& url) {
+    WsUrl u;
+    std::string err;
+    return parseWsUrl(url, u, err) && !isLoopbackHost(u.host);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // framing
 // ---------------------------------------------------------------------------------------------------------------
@@ -127,6 +165,8 @@ int FrameReader::next(Msg& out, std::string& err) {
         const uint8_t b0 = (uint8_t)buf_[0], b1 = (uint8_t)buf_[1];
         const bool fin = (b0 & 0x80) != 0, masked = (b1 & 0x80) != 0;
         const uint8_t op = b0 & 0x0F;
+        if (b0 & 0x70) return (err = "reserved bits set (no extension was negotiated)", -1);
+        if (masked != fromClient_) return (err = masked ? "masked frame from the server" : "unmasked frame from the client", -1);
         uint64_t len = b1 & 0x7F;
         size_t hdr = 2;
         if (len == 126) {
@@ -241,6 +281,8 @@ std::string wsAccept(const std::string& key) { return base64(sha1(key + "258EAFA
 // ---------------------------------------------------------------------------------------------------------------
 // sockets
 // ---------------------------------------------------------------------------------------------------------------
+std::atomic<int> g_testLookupDelayMs{0};
+
 namespace {
 
 std::mt19937& rng() {
@@ -301,16 +343,64 @@ bool sendAll(sock_t s, const std::string& data, const std::atomic<bool>& stop) {
     return true;
 }
 
-sock_t connectTo(const WsUrl& u, const std::atomic<bool>& stop, std::string& why) {
-    addrinfo hints;
-    std::memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+// getaddrinfo cannot be interrupted, and an unresponsive resolver holds it for many seconds.  The lookup runs on a
+// helper thread that owns everything it touches (this struct, shared with the worker), so the worker can stop
+// waiting for it and walk away: the helper frees its own result whenever it finishes.
+struct Lookup {
+    std::mutex mu;
+    bool done = false, abandoned = false;
+    int rc = 0;
     addrinfo* res = nullptr;
-    if (getaddrinfo(u.host.c_str(), std::to_string(u.port).c_str(), &hints, &res) != 0 || !res) {
-        why = "cannot resolve " + u.host;
-        return VJ_BAD_SOCK;
+};
+
+// The addresses of u.host, or nullptr (`why` says so) when it does not resolve or a stop came first.
+addrinfo* resolve(const WsUrl& u, const std::atomic<bool>& stop, std::string& why) {
+    std::shared_ptr<Lookup> l = std::make_shared<Lookup>();
+    try {
+        std::thread([l, host = u.host, port = std::to_string(u.port)] {
+            if (const int d = g_testLookupDelayMs.load()) std::this_thread::sleep_for(std::chrono::milliseconds(d));
+            addrinfo hints;
+            std::memset(&hints, 0, sizeof hints);
+            hints.ai_family = AF_UNSPEC;
+            hints.ai_socktype = SOCK_STREAM;
+            addrinfo* res = nullptr;
+            const int rc = getaddrinfo(host.c_str(), port.c_str(), &hints, &res);
+            std::lock_guard<std::mutex> g(l->mu);
+            if (l->abandoned) {
+                if (res) freeaddrinfo(res);
+                return;
+            }
+            l->rc = rc;
+            l->res = res;
+            l->done = true;
+        }).detach();
+    } catch (const std::system_error&) {
+        why = "cannot start the name lookup";
+        return nullptr;
     }
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> g(l->mu);
+            if (l->done) {
+                if (l->rc != 0 || !l->res) {
+                    if (l->res) freeaddrinfo(l->res);
+                    why = "cannot resolve " + u.host;
+                    return nullptr;
+                }
+                return l->res;
+            }
+            if (stop.load()) {
+                l->abandoned = true;
+                return nullptr;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+sock_t connectTo(const WsUrl& u, const std::atomic<bool>& stop, std::string& why) {
+    addrinfo* res = resolve(u, stop, why);
+    if (!res) return VJ_BAD_SOCK;
     sock_t s = VJ_BAD_SOCK;
     why = "connection refused";
     for (addrinfo* a = res; a && !stop.load(); a = a->ai_next) {
@@ -399,12 +489,16 @@ void WsClient::stop() {
     state_ = State::Stopped;
     std::lock_guard<std::mutex> l(mu_);
     outbox_.clear();
+    events_.clear();   // a Connected / Message of the link we just closed must not reach the next one
+    eventBytes_ = outboxBytes_ = 0;
 }
 
 void WsClient::send(const std::string& text) {
     if (state_.load() != State::Open) return;
     std::lock_guard<std::mutex> l(mu_);
+    if (outboxBytes_ + text.size() > kMaxQueuedBytes) return;   // the socket is stalled; do not pile up behind it
     outbox_.push_back(text);
+    outboxBytes_ += text.size();
 }
 
 bool WsClient::poll(Event& ev) {
@@ -412,6 +506,7 @@ bool WsClient::poll(Event& ev) {
     if (events_.empty()) return false;
     ev = std::move(events_.front());
     events_.pop_front();
+    eventBytes_ -= std::min(eventBytes_, ev.text.size());
     return true;
 }
 
@@ -425,8 +520,16 @@ void WsClient::push(Event::Kind k, const std::string& text) {
     Event e;
     e.kind = k;
     e.text = text;
+    eventBytes_ += e.text.size();
     events_.push_back(std::move(e));
-    if (events_.size() > 4096) events_.pop_front();   // an owner that stopped polling must not grow us forever
+    // An owner that stopped polling must not grow us forever: by count, and by bytes (a few huge messages are as
+    // bad as many small ones).  The oldest Message goes first; the link's state changes stay.
+    while (events_.size() > 4096 || eventBytes_ > kMaxQueuedBytes) {
+        auto it = std::find_if(events_.begin(), events_.end(), [](const Event& x) { return x.kind == Event::Message; });
+        if (it == events_.end()) break;
+        eventBytes_ -= std::min(eventBytes_, it->text.size());
+        events_.erase(it);
+    }
 }
 
 void WsClient::setError(const std::string& e) {
@@ -451,7 +554,8 @@ void WsClient::run(WsUrl u) {
             backoff = 1000;
         }
         state_ = State::Waiting;
-        waitRetry(backoff);
+        // +-20% so a server that comes back to many waiting clients is not hit by all of them in the same instant.
+        waitRetry(backoff + (int)(rng()() % (uint32_t)(backoff * 2 / 5 + 1)) - backoff / 5);
         backoff = std::min(backoff * 2, 10000);
     }
     state_ = State::Stopped;
@@ -474,6 +578,7 @@ bool WsClient::session(const WsUrl& u, std::string& why) {
     {
         std::lock_guard<std::mutex> l(mu_);
         outbox_.clear();
+        outboxBytes_ = 0;
         lastError_.clear();
     }
     state_ = State::Open;
@@ -485,6 +590,7 @@ bool WsClient::session(const WsUrl& u, std::string& why) {
     {
         std::lock_guard<std::mutex> l(mu_);
         outbox_.clear();
+        outboxBytes_ = 0;
     }
     vj_close(s);
     return true;
@@ -495,6 +601,7 @@ bool WsClient::flushOutbox(intptr_t fd, std::string& why) {
     {
         std::lock_guard<std::mutex> l(mu_);
         out.swap(outbox_);
+        outboxBytes_ = 0;
     }
     for (const std::string& m : out) {
         if (!sendAll((sock_t)fd, clientFrame(kOpText, m), stop_)) return (why = "send failed", false);

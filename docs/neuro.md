@@ -18,7 +18,24 @@ controls to the model.
 - The default server comes from `NEURO_SDK_WS_URL` when it is set, like the official SDKs.
 
 Only `ws://` is supported (no TLS); Neuro API servers normally run on the same machine or the LAN.
-Like RetroAchievements and netplay, Neuro is off while Settings > Interface > *Emulation thread* is on.
+`ws://` is plaintext: Settings > Neuro warns when the server (also one from `NEURO_SDK_WS_URL`) is not
+on this machine, and the privacy page (`site/pages/privacy.html`) lists exactly what is sent: the game's
+title, the actions, the held buttons, the profile's RAM watch values and the pause state.
+
+**RetroAchievements hardcore blocks Neuro**, as it does cheats and save-state loads: an AI is not a
+human player. While hardcore is active the app does not connect (or drops the link and lets go of every
+button), Settings > Neuro says why, and a toast appears when it gets blocked. When hardcore ends,
+Neuro connects again by itself if it is ticked.
+
+**Emulation thread:** like RetroAchievements and netplay, Neuro is off while Settings > Interface >
+*Emulation thread* is on, because the input poll and the RAM it reads are that thread's. Phase 3 of
+#967 makes the thread the default, which would turn Neuro off for everyone; carrying it onto the
+thread (it must press through the input snapshot the UI thread publishes, not `agentControls`, and read
+RAM there) is a prerequisite of phase 3 of #967 and has to land before that default flips.
+
+You can tell the AI is playing: a toast on connect and disconnect, and while it is connected with a game
+running a small "AI plays P1" chip in the top right corner of the picture (menus and windows cover it,
+like the FPS chip).
 
 Config keys (`virtualjaguar.cfg`): `neuro.enabled`, `neuro.url`, `neuro.auto_force` (default on),
 `neuro.force_interval` (seconds, default 1), `neuro.game_name` (overrides the API game name).
@@ -52,7 +69,12 @@ Every game has these unless its profile turns them off (`"generic_actions": fals
 | `hold_buttons` | `buttons` | keep them held until `release_all` or another `hold_buttons` |
 | `release_all` | | let go of everything and drop what is queued |
 
-At most 30 s of input can be queued at once.
+At most 30 s of input can be queued at once. A dropped connection, turning Neuro off, or hardcore
+starting lets go of every held button.
+
+Actions fail (and Neuro is told why) while Player 1's buttons would not reach the game: the in-game menu
+is open (under netplay the game keeps running behind it), or Player 1 is set to a mouse (the core drops
+the pad on a port whose mouse is in use). What is queued at that moment is dropped, and no new moves are asked for until input is back.
 
 ## Game profiles
 
