@@ -38,16 +38,31 @@ inline void deskFeedPopupIntents(const std::vector<tv::Intent>& intents) {
     }
 }
 
+// Is an ImGui popup open that the pad did not open (a right-click or menu-bar menu, the Lists popup, a combo, a modal)?  The
+// library then does not own the pad.  False without an ImGui context (headless).
+inline bool deskForeignPopupOpen(bool padPopup) {
+    return !padPopup && ImGui::GetCurrentContext() &&
+           ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+}
+
 // Gamepad navigation on or off.  HasGamepad is a backend flag: the Manual-mode SDL3 backend clears it every NewFrame, so
 // this runs between ImGui_ImplSDL3_NewFrame() and ImGui::NewFrame().  Navigation is live only with both flags set.
+// While it is on the nav cursor is always visible: a popup the pad opened has its first row focused from the first frame
+// (a press of Accept acts on it at once), and ImGui would otherwise draw no highlight until a direction was pressed.  A
+// popup the mouse opened never runs with this on, so its look is unchanged.
 inline void deskSetPopupNav(bool on) {
     ImGuiIO& io = ImGui::GetIO();
     if (on) {
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+        io.ConfigNavCursorVisibleAlways = true;
     } else {
         io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
+        if (io.ConfigNavCursorVisibleAlways) {   // just turned off: the highlight goes with it
+            io.ConfigNavCursorVisibleAlways = false;
+            ImGui::SetNavCursorVisible(false);
+        }
     }
 }
 

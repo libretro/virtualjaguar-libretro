@@ -33,7 +33,8 @@ struct DesktopPad {
 
 // Is the desktop library the owner of the pads right now?  TV mode off and its in-game menu shut, no binding capture,
 // the home library or the Game library window showing, no game running (a paused one with the window open is fine),
-// and none of Settings / States / Cheats / About / the controls overlay open.
+// and none of Settings / States / Cheats / About / the controls overlay open, nor any ImGui popup the pad did not open
+// itself (a right-click or menu-bar menu, a combo, a modal: those are the mouse's, and A must not launch a game behind one).
 bool deskPadActive(App& app);
 
 // One SDL event.  True = consumed (a mapped press, the left stick, a mapped trigger); a release is fed but still

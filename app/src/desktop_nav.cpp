@@ -1,6 +1,7 @@
 #include "desktop_nav.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace vj {
 
@@ -101,7 +102,7 @@ void DesktopNav::settle() {
     }
 }
 
-void DesktopNav::setLists(const std::string& tab, const DeskLists& lists) {
+void DesktopNav::setLists(const std::string& tab, DeskLists lists) {
     bool tabChanged = !haveTab_ || tab != tab_;
     DeskRegion oldRegion = region_;
     int oldIndex = index();
@@ -109,7 +110,7 @@ void DesktopNav::setLists(const std::string& tab, const DeskLists& lists) {
 
     tab_ = tab;
     haveTab_ = true;
-    lists_ = lists;
+    lists_ = std::move(lists);
     if (lists_.gridCols < 1) lists_.gridCols = 1;
     for (DeskRegion r : kRegions) idx_[(int)r] = resolve(r);
 

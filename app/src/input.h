@@ -199,7 +199,7 @@ private:
         std::string guid;
         Profile profile;
         Profile proProfile;   // the same layers over the Pro Controller port defaults
-        NavProfile nav;       // its menu buttons (pad_profile.h): the family map plus the model's custom layer
+        NavProfile nav = familyNavProfile(PadFamily::Xbox);   // its menu buttons (pad_profile.h): the family map plus the model's custom layer
         PadCaps caps;
     };
     void bindCaptured(const Binding& b);

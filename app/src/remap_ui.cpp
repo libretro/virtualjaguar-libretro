@@ -87,23 +87,29 @@ void drawMenuButtons(App& app, const InputManager::PadInfo* pad, bool gameScope)
     bool dirty = false;
     if (pad) {
         // "Auto" follows what SDL says the pad is; a family choice also clears the model's per-button changes (setNavFamily),
-        // so it is applied only when the choice actually changes.
+        // so it is applied only when the choice actually changes the effective family (or leaves an explicit choice for Auto)
+        // and the item says so.  Picking the family the pad already has changes nothing and keeps its changes.
         PadFamily cur = pad->detected;
         const bool overridden = pad->nav.familyOverridden;
         if (overridden) cur = pad->nav.family;
         const std::string autoLabel = std::string("Auto (") + familyName(pad->detected) + ")";
         const PadFamily kFamilies[] = {PadFamily::Xbox, PadFamily::PlayStation, PadFamily::Switch, PadFamily::Generic};
+        const char* const kResets = "Resets this controller's menu buttons to the family's defaults";
         ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 10.0f, 18.0f));
         if (ImGui::BeginCombo("Family", overridden ? familyName(cur) : autoLabel.c_str())) {
             if (ImGui::Selectable(autoLabel.c_str(), !overridden) && overridden) {
                 setNavFamily(app.cfg, pad->guid, "auto");
                 dirty = true;
             }
-            for (PadFamily f : kFamilies)
-                if (ImGui::Selectable(familyName(f), overridden && cur == f) && !(overridden && cur == f)) {
+            if (overridden && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kResets);
+            for (PadFamily f : kFamilies) {
+                const bool same = f == cur;   // the effective family: Auto's pick while not overridden, else the explicit one
+                if (ImGui::Selectable(familyName(f), overridden && same) && !same) {
                     setNavFamily(app.cfg, pad->guid, familyKey(f));
                     dirty = true;
                 }
+                if (!same && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kResets);
+            }
             ImGui::EndCombo();
         }
     }
@@ -152,7 +158,7 @@ void drawMenuButtons(App& app, const InputManager::PadInfo* pad, bool gameScope)
                 ui::hint("Swapped with %s: it now has the button %s had.", navIntentLabel(r.other), navIntentLabel(r.intent));
             else if (r.set == NavSet::Reserved)
                 ui::coloredWrapped(ui::vec4(ui::pal().warning),
-                                   (btn + " is reserved (D-pad, left stick, or the TV-menu button).").c_str());
+                                   (btn + " is reserved (D-pad, left stick, or the TV-menu or controls-overlay button).").c_str());
         }
     }
     if (dirty) {

@@ -560,6 +560,13 @@ static void padPopupNav() {
     popupFrames(p, true, 3);      // ... and the nav goes on the frame after
     CHECK(p.open);
     CHECK(!io.WantCaptureKeyboard);
+    // The first row is focused and its highlight is up before any direction is pressed (Accept acts on press: a player must
+    // see which row an A would take).
+    CHECK(ImGui::GetCurrentContext()->NavCursorVisible && ImGui::GetCurrentContext()->NavId != 0);
+
+    // That popup was opened by the "mouse" here (nothing marked it the pad's): a foreign one, under which the library does not
+    // own the pad.  Marked as the pad's, it is not.  (deskPadActive applies this predicate.)
+    CHECK(vj::deskForeignPopupOpen(false) && !vj::deskForeignPopupOpen(true));
 
     // With the nav off the same intents do nothing at all.
     vj::deskFeedPopupIntents({Intent::Down, Intent::Accept});
@@ -587,9 +594,11 @@ static void padPopupNav() {
     popupFrames(p, true, 4);
     CHECK(!p.open);
     CHECK(p.a == 0 && p.b == 0 && p.c == 1);
+    CHECK(!vj::deskForeignPopupOpen(false));   // no popup open: nothing foreign
     CHECK(g_imguiErrors == 0);
     vj::deskSetPopupNav(false);
     popupFrames(p, false, 3);
+    CHECK(!io.ConfigNavCursorVisibleAlways && !ImGui::GetCurrentContext()->NavCursorVisible);   // the highlight goes with the nav
     io.ConfigFlags = savedFlags;
 }
 

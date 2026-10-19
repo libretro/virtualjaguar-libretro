@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 #include "app.h"
 #include "desktop_nav_ui.h"
@@ -578,7 +579,8 @@ bool stateMenuRow(LibraryService& svc, const lib::StateInfo& st) {
 
 // The tile's right-click menu.  Built only while open, so none of this runs for every tile every frame.
 void drawTileMenu(App& app, LibraryService& svc, const lib::Entry& e) {
-    if (ImGui::MenuItem("Play")) svc.launch(e);
+    // From the pad's menu the Play row starts the game as the grid's Accept does (no resume prompt, the confirm press guarded).
+    if (ImGui::MenuItem("Play")) activateEntry(app, svc, e, app.deskPad.padPopup);
     const lib::StateGame* sg = svc.statesFor(e);
     if (ImGui::BeginMenu("Load state", sg && !sg->states.empty())) {
         int shown = 0;
@@ -830,6 +832,7 @@ struct PendingDelete {
 
 // The shots drawStatesTab will list, in display order, for the pad's focus (key = the game's path + "#" + slot).
 void publishStates(App& app, const std::vector<lib::StateGame>& games, LibraryService& svc, const std::string& needle) {
+    if (!app.deskPad.active) return;   // a mouse-only user builds none of this
     DeskLists dl;
     for (const lib::StateGame& g : games) {
         const lib::Entry* owner = svc.entryForState(g);
@@ -841,7 +844,7 @@ void publishStates(App& app, const std::vector<lib::StateGame>& games, LibrarySe
             g_df.states.push_back({owner, st.slot, key});
         }
     }
-    app.deskPad.nav.setLists(std::to_string(lib::TabStates), dl);
+    app.deskPad.nav.setLists(std::to_string(lib::TabStates), std::move(dl));
     g_df.scroll = app.deskPad.nav.takeScroll() && deskPadShown(app);   // consumed always, acted on only for the pad: the mouse's view stays put
     runDeskCommands(app, svc);
 }
@@ -903,10 +906,10 @@ void drawStatesTab(App& app, LibraryService& svc, const std::string& needle) {
         ImGui::PopID();
     }
     if (listed == 0) ImGui::TextDisabled("Nothing matches.");
-    // The confirmation lives outside the loops: deleting re-lists the states, and `games` with it.
+    // The confirmation lives outside the loops: deleting re-lists the states, and `games` with it.  Delete is a mouse
+    // button (the pad's Accept starts the shot): this modal is the mouse's, and the pad stays out of it (deskPadActive).
     if (g_del.ask) {
         ImGui::OpenPopup("Delete save state?");
-        if (deskPadShown(app)) app.deskPad.padPopup = true;   // asked with the pad's ring up: the pad answers it (as the tile menu)
         g_del.ask = false;
     }
     if (ImGui::BeginPopupModal("Delete save state?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -965,7 +968,7 @@ void drawGridBody(App& app, LibraryService& svc, const std::string& needle, int 
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float avail = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
     const int cols = std::max(1, (int)((avail + gap) / (cellW + gap)));
-    {
+    if (app.deskPad.active) {   // a mouse-only user builds none of this
         DeskLists dl;
         dl.gridCols = cols;
         for (const lib::Resolved& r : strips.fav) {
@@ -980,7 +983,7 @@ void drawGridBody(App& app, LibraryService& svc, const std::string& needle, int 
             dl.grid.push_back({r.entry->file.path, r.entry->title});
             g_df.grid.push_back(r.entry);
         }
-        app.deskPad.nav.setLists(std::to_string(tab), dl);
+        app.deskPad.nav.setLists(std::to_string(tab), std::move(dl));
         g_df.scroll = app.deskPad.nav.takeScroll() && deskPadShown(app);   // consumed always, acted on only for the pad
         runDeskCommands(app, svc);
         if (g_tileCmd.active) g_df.scroll = true;   // a command waits for its tile: make sure it gets drawn

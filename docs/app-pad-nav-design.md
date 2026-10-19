@@ -43,8 +43,9 @@ Desktop pad navigation is **active** when all of these hold:
   (my call: a running game always owns its pad);
 - the home library is showing (`App::homeVisible()`) or the Game library window is open;
 - no bind capture is in progress, and no other desktop window (Settings, States, Cheats, About, the
-  controls overlay) is open. A popup opened by the library itself (the tile menu, the BIOS popup, the
-  delete-state modal) does not count: it is driven as section 4 says.
+  controls overlay) is open. A popup the pad opened itself (the tile menu, the BIOS popup) does not
+  count: it is driven as section 4 says. Any other open popup (a right-click menu, a menu-bar menu, a
+  combo, the delete-state modal) takes the pad away from the library until it closes.
 
 **TV mode's Auto trigger wins (user decision).** With the TV setting Auto and its "when a controller
 is used" trigger on (phase 4, not built yet), a pad press in the desktop library turns TV mode on, as
@@ -96,7 +97,7 @@ disagree follows the type; the custom profile is the escape hatch.
 
 ## 4. Popups
 
-The tile menu, the BIOS popup and the delete-state modal are ImGui popups. Inside them the pad drives
+The tile menu and the BIOS popup are ImGui popups (the delete-state modal stays the mouse's). Inside them the pad drives
 ImGui's own navigation, which is fine for a vertical list (the TV spec's objections were to spatial
 nav across the grid): while a popup opened from pad focus is open, the app sets
 `ImGuiConfigFlags_NavEnableGamepad`, puts the SDL3 backend in `ImGui_ImplSDL3_GamepadMode_Manual` with

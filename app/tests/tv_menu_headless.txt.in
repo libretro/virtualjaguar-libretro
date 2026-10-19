@@ -18,11 +18,12 @@
 #   expect tv-owns-input=0|1  the TV shell has the pads and keys (0 while a desktop window covers the TV screens)
 #   expect home-visible=0|1   the desktop library is standing in for the game (never while TV mode is on)
 #   expect library-window=0|1 the desktop Game library window is open
-#   expect desk-pad=0|1       the desktop library owns the pads (#1021): TV off, no game running, no capture / desktop window
+#   expect desk-pad=0|1       the desktop library owns the pads (#1021): TV off, no game running, no capture / desktop window, no mouse-opened popup
+#                             (headless has no ImGui context, so that last part is covered by tv_ui_smoke)
 #   axis NAME VALUE       set an axis of the virtual pad (SDL axis name: righty, lefttrigger; -32768..32767)
 #   expect desk-scroll=0|1    the desktop nav holds a right-stick scroll (nonzero)
 #   expect desk-pending=N     commands the desktop nav has queued (headless nothing draws the library, so they stay queued)
-#   expect desk-popup=0|1     a library popup (tile menu, BIOS popup, delete modal) opened from the pad is open and driven by it
+#   expect desk-popup=0|1     a library popup (tile menu, BIOS popup) opened from the pad is open and driven by it
 #   saveconfig           App::saveConfig() (a headless run keeps its config in a private temp dir)
 #   expect cfg=KEY:VALUE  the config holds KEY = VALUE; KEY:absent = the config has no such key
 #   wait library         WINDOWED ONLY: block the script until the Library has scanned (not scanning, and at least one
@@ -408,8 +409,13 @@
 8280  pad tap dpup
 8320  expect capturing=0
 8320  expect cfg=input.padguid.{padguid}.nav.back:absent
-# Esc cancels a menu-button capture without writing anything.
-8320  capture nav:search
-8360  key tap Escape
+# So is the button that opens the controls overlay (the pad's C_HELP, the touchpad button), as the TV-menu button is.
+8320  capture nav:back
+8360  pad tap touchpad
 8400  expect capturing=0
-8400  expect cfg=input.padguid.{padguid}.nav.search:absent
+8400  expect cfg=input.padguid.{padguid}.nav.back:absent
+# Esc cancels a menu-button capture without writing anything.
+8400  capture nav:search
+8440  key tap Escape
+8480  expect capturing=0
+8480  expect cfg=input.padguid.{padguid}.nav.search:absent

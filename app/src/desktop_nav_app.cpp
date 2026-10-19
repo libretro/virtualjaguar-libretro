@@ -17,7 +17,10 @@ bool deskPadActive(App& app) {
     if (!(app.homeVisible() || app.library.show)) return false;
     // A running game owns its pad; the library window over a paused one is the exception.
     if (app.host.isLoaded() && !(app.paused && app.library.show)) return false;
-    return !(app.showSettings || app.showStates || app.showCheats || app.showAbout || app.input.overlay.open);
+    if (app.showSettings || app.showStates || app.showCheats || app.showAbout || app.input.overlay.open) return false;
+    // A popup the pad did not open (a right-click menu, a menu-bar menu, the Lists popup, a combo, a modal) is the mouse's:
+    // the pad must not launch a game behind it.  No ImGui context (headless) means no popup.
+    return !deskForeignPopupOpen(app.deskPad.padPopup);
 }
 
 bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {

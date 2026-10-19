@@ -8,8 +8,8 @@
 # Check by eye in the screenshots:
 #   pad_grid.png      the focus ring on the second tile of the second row, the hint line under the status ("A Play | hold A
 #                     Menu | Y Favorite | LB/RB Tabs"), the mouse hover outline untouched
-#   pad_menu.png      the tile menu open under the focused tile (a held A for 600 ms), its first row ("Play") highlighted
-#                     once a direction was pressed
+#   pad_menu.png      the tile menu open under the focused tile (a held A for 600 ms), its first row ("Play") highlighted at
+#                     once (the nav cursor is always visible while the pad's popup is up), before any direction is pressed
 #   pad_menu_row.png  one Down later: the next ENABLED row highlighted ("Load state" when the game has states, else "Add to
 #                     Favorites"), the menu still under the tile
 #   pad_menu_pick.png after A on that row: with states the "Load state" submenu is open; without, the favorite is toggled (the

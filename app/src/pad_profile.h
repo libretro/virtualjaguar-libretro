@@ -61,7 +61,7 @@ NavProfile resolveNavProfile(const Config& cfg, const std::string& guid, int sdl
 enum class NavSet { Ok, Swapped, Reserved };
 // Binds `in` to `b` for the model.  One button per intent and one intent per button: if another intent holds `b`, the
 // two swap.  Reserved (nothing written): a D-pad button, an axis other than a trigger pushed in (the sticks move
-// and scroll), a keyboard binding, a non-nav intent, or anything in `reserved` (the pad's C_TVMENU bindings; the
+// and scroll), a keyboard binding, a non-nav intent, or anything in `reserved` (the pad's C_TVMENU and C_HELP bindings; the
 // hold flag does not matter).  A key that ends up equal to the family default is erased, not written.
 NavSet setNavBinding(Config& cfg, const std::string& guid, int sdlGamepadType, tv::Intent in, const Binding& b,
                      const std::vector<Binding>& reserved);

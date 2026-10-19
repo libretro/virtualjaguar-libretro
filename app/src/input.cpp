@@ -438,13 +438,15 @@ void InputManager::resetNavBinding(const std::string& guid, tv::Intent in) {
     for (const Pad& p : pads_) {
         if (p.guid != guid) continue;
         const NavProfile def = familyNavProfile(p.nav.family);
-        applyNavBinding(guid, in, def.binds[(size_t)(std::find(std::begin(kNavIntents), std::end(kNavIntents), in) - std::begin(kNavIntents))]);
+        const auto at = std::find(std::begin(kNavIntents), std::end(kNavIntents), in);
+        if (at == std::end(kNavIntents)) return;   // not a rebindable menu intent: nothing to reset
+        applyNavBinding(guid, in, def.binds[(size_t)(at - std::begin(kNavIntents))]);
         return;
     }
 }
 
-// Binds `b` to menu intent `in` for the model: the pad's TV-menu bindings are reserved (the button that opens the TV menu
-// must not also be a library button).
+// Binds `b` to menu intent `in` for the model: the pad's TV-menu and help bindings are reserved (the button that opens the
+// TV menu, or the controls overlay, must not also be a library button).
 void InputManager::applyNavBinding(const std::string& guid, tv::Intent in, const Binding& b) {
     if (!cfg_) return;
     const Pad* pad = nullptr;
@@ -459,7 +461,8 @@ void InputManager::applyNavBinding(const std::string& guid, tv::Intent in, const
     r.guid = guid;
     r.intent = in;
     r.bound = b;
-    const std::vector<Binding> reserved = pad->profile.binds[C_TVMENU];
+    std::vector<Binding> reserved = pad->profile.binds[C_TVMENU];   // and the cheat-sheet button: both are the app's, not the library's
+    reserved.insert(reserved.end(), pad->profile.binds[C_HELP].begin(), pad->profile.binds[C_HELP].end());
     const NavProfile before = pad->nav;
     r.set = setNavBinding(*cfg_, guid, (int)SDL_GetGamepadType(pad->handle), in, b, reserved);
     if (r.set == NavSet::Swapped)

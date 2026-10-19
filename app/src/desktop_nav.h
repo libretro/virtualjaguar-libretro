@@ -52,7 +52,7 @@ public:
     // Offer this frame's lists for `tab`.  The focused item is followed by key when the list changes; if it is gone
     // the index is clamped inside the same region; if the region is empty focus moves to the nearest non-empty one
     // (the grid on a tie).  A different `tab` than last time lands on that tab's remembered focus.
-    void setLists(const std::string& tab, const DeskLists& lists);
+    void setLists(const std::string& tab, DeskLists lists);   // by value: the caller moves its freshly built lists in
 
     // Run the intents in order (moves change the focus, the rest become commands).  Back is always reported; the UI
     // decides whether it closes a popup, the window, or nothing.  Menu and None produce nothing.

@@ -1,6 +1,7 @@
 // TV mode (#991): everything a TV screen may touch of the app.  The shell and its screens talk to this interface
 // only (App implements it in tv_app_host.cpp; tests use a fake), so they never reach into the core or the other
-// services.  Pure interface: no SDL handles, no ImGui.
+// services.  Pure interface: no SDL handles (SDL_gamepad.h is included for its enums only: button / axis / type
+// numbers), no ImGui.
 #pragma once
 
 #include <SDL3/SDL_gamepad.h>
