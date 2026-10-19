@@ -62,13 +62,10 @@ struct AchCallbacks {
         Achievements* a = self(c);
         if (!a || !a->memoryReady_.load()) return 0;
         if (a->app_ && a->app_->emu.threaded() && !a->app_->emu.onEmuThread()) {
-            // Core RAM belongs to the emulation thread (#967).  pump() leaves rc_client_idle to that thread, so the only
-            // reader that runs here is a game load completed in the UI's HTTP pump, validating its addresses
-            // (rc_client_validate_addresses: only the count matters): answer from the memory map, without touching RAM.
-            // ASSUMPTION, pinned to rcheevos v12.5 (the version fetched in CMakeLists.txt): validate_addresses only
-            // checks the returned COUNT, never the bytes.  Re-read rc_client.c when bumping rcheevos.  The alternative
-            // that needs no assumption is rc_client_set_allow_background_memory_reads(client, 0): rc_client then runs
-            // these reads from the thread that drives rc_client_do_frame / rc_client_idle, i.e. the emulation thread.
+            // Replies from the UI pump run through coreCall, so game activation and its memory checks
+            // belong to the owner. Keep this defensive fallback for an unexpected background reader:
+            // rcheevos v12.5's validate_addresses checks the count, not these bytes. Any use of this
+            // path is diagnosed and rejected by ra_reply_owner_threaded; never read live RAM here.
             uint32_t avail = 0;
             if (!rc_libretro_memory_find_avail(&a->regions_, address, &avail) || avail == 0) return 0;
             const uint32_t n = avail < numBytes ? avail : numBytes;
@@ -104,7 +101,7 @@ struct AchCallbacks {
         char clause[96] = "";
         rc_client_get_user_agent_clause(c, clause, sizeof clause);
         hr.userAgent = std::string("VirtualJaguar/") + VJ_APP_VERSION + " " + clause;
-        a->http_.request(std::move(hr), [cb, cbdata](HttpResponse r) {
+        a->http_.request(std::move(hr), [a, cb, cbdata](HttpResponse r) {
             rc_api_server_response_t sr;
             std::memset(&sr, 0, sizeof sr);
             if (r.status == 0) {
@@ -117,7 +114,9 @@ struct AchCallbacks {
                 sr.body_length = r.body.size();
                 sr.http_status_code = r.status;
             }
-            cb(&sr, cbdata);
+            // Reply processing can activate/free the game do_frame is using. The UI waits
+            // for the owner, so both rc_client and its UI-facing completion callbacks are serialized.
+            a->coreCall([&] { cb(&sr, cbdata); });
         });
     }
 
@@ -864,7 +863,7 @@ void Achievements::mockDeliver() {
         sr.body = r.body.c_str();
         sr.body_length = r.body.size();
         sr.http_status_code = r.status;
-        r.cb(&sr, r.cbdata);
+        coreCall([&] { r.cb(&sr, r.cbdata); });
     }
 }
 

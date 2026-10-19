@@ -264,13 +264,15 @@ set_tests_properties(ra_cheat_saved_cleanup PROPERTIES
 set_tests_properties(ra_cheat_saved_cleanup_threaded PROPERTIES LABELS emu_thread
     FIXTURES_CLEANUP "ra_cheat_fresh_threaded;ra_cheat_saved_threaded;ra_cheat_hardcore_done_threaded")
 
-# The game load completes in the UI's HTTP pump and rc_client checks every address there: with the emulation thread
-# on, that check must be answered from the memory map, never by reading RAM off the emulation thread.
-add_test(NAME ra_offthread_validation_threaded
-    COMMAND virtualjaguar --headless --emu-thread on --frames 60 --ra-mock "${VJ_RA_FIX}" "${VJ_ROMS}/yarc.j64")
-set_tests_properties(ra_offthread_validation_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
-    PASS_REGULAR_EXPRESSION "address check off the emulation thread answered from the memory map"
-    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+# A reply must activate the game on the core owner, serialized with do_frame. A metadata-only
+# address fallback still means rc_client is being mutated off that owner and must fail this test.
+add_test(NAME ra_reply_owner_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 60 --ra-mock "${VJ_RA_FIX}"
+        --ra-expect-request login2
+        --ra-expect-request achievementsets --ra-expect-request startsession "${VJ_ROMS}/yarc.j64")
+set_tests_properties(ra_reply_owner_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "ra: OK"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer|address check off the emulation thread")
 
 # AchEvent: an rc_client event copied so it can cross threads (#967 phase 2).
 add_executable(vj_ach_event_test tests/ach_event_test.cpp src/ach_event.cpp)

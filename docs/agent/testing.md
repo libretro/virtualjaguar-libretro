@@ -320,8 +320,11 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
 - **RetroAchievements twins:** every RA test is registered through `vj_ra_test()` in `VJAchTests.cmake`, which adds
   `<name>` (inline) and `<name>_threaded` (same run with `--emu-thread on`, label `emu_thread`; fixture names and the
   saved-cheat data dir get a `_threaded` suffix so the chains never share state). A test with `PASS` is a control: its twin
-  fails only on `owner violation` or a TSan report. `ra_offthread_validation_threaded` is threaded-only: the game load
-  validates addresses on the UI thread, which must answer from the memory map.
+  fails only on `owner violation` or a TSan report. `ra_reply_owner_threaded` is threaded-only: login/game-load replies must run on the core owner,
+  serialized with frames. It requires the mock login/load/session requests and rejects off-thread address reads.
+- **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
+  test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
+  still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.
 - **Netplay:** `netplay_pair_threaded`, `netplay_pair_voicemodem_threaded`, `netplay_pair_mixed` (one threaded copy
   linked to one single-thread copy) and `netplay_no_partner_threaded` (a copy quitting with no peer exits 1, not 3).
   They are `RUN_SERIAL` and real-time: a "no link within 30s" under heavy host load is load, so re-run them alone

@@ -8,6 +8,11 @@
 #include "perf.h"
 #include "present_util.h"
 
+// The GL loader includes windows.h; keep its min/max macros out of the spinner maths.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 // Entry points come from the ImGui GL3 backend's own loader (declarations
 // only; the definitions live in imgui_impl_opengl3.cpp).
 #include "imgui_impl_opengl3_loader.h"
