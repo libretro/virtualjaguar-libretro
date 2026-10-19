@@ -312,15 +312,25 @@ int main(int argc, char** argv) {
         CHECK(emu.call([&] { return host.eventEpoch(); }) == e2);
     }
     {
-        // A reload drops what the previous game said but keeps the user's option writes.
+        // A reload drops what the previous game said (log lines, vj_events) but keeps the user's option writes.
         changed.clear();
+        std::vector<std::string> said;
+        host.onUiEvent = [&](const CoreEvent& e) {
+            if (e.kind == CoreEvent::Kind::Log) said.push_back(e.text);
+        };
         std::string lerr;
         emu.call([&] {
+            host.emitLogLine(RETRO_LOG_INFO, "stale-before-reload");   // said by the previous game, still queued
             host.setOptionValue(key, "disabled");
             return host.loadContent(rom, lerr);
         });
         host.pinSnapshot();
+        bool staleSeen = false;
+        for (const std::string& l : said) staleSeen = staleSeen || l == "stale-before-reload";
+        CHECK(!staleSeen);   // the load dropped it
+        CHECK(!said.empty());   // ... while what the new game says reaches the tap (the tap is wired)
         CHECK(changed.size() == 1 && changed[0] == std::string(key) + "=disabled");
+        host.onUiEvent = nullptr;
     }
 
     emu.call([&] { host.unloadContent(); });
