@@ -553,6 +553,7 @@ void App::liftFeatureLimits() {
 uint64_t App::displayPeriodNs() {
     if (!displayPeriodValid_) {
         displayPeriodNs_ = 0;
+        nextPresentNs_ = 0;   // a new refresh rate starts a new deadline grid
         if (window_) {
             const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
             if (m && m->refresh_rate > 1.0f) displayPeriodNs_ = (uint64_t)(1e9 / (double)m->refresh_rate);
@@ -815,6 +816,32 @@ void App::latchWait() {
         do {
             handleEvent(e, false);
             traceWaitEvents_++;
+        } while (!quit && SDL_PollEvent(&e));
+        publishInput();
+    }
+}
+
+// Threaded, vsync off (or a swap that did not block): sleep to the next point of a display-period grid instead of a
+// period after the swap, so the loop runs at the display rate whatever the build costs (LateLatch::advanceGridNs).
+// Events that arrive during the nap are handled and published at once, as in latchWait(): input is not delayed by the nap.
+// (SDL 3.4 has no nanosecond SDL_WaitEventTimeoutNS: the wait is in whole ms, the last 2 ms a precise sleep.)
+void App::presentNap() {
+    const uint64_t period = displayPeriodNs();
+    uint64_t now = SDL_GetTicksNS();
+    nextPresentNs_ = LateLatch::advanceGridNs(nextPresentNs_, now, period);
+    const uint64_t deadline = now + LateLatch::gridNapNs(now, nextPresentNs_, period);
+    for (;;) {
+        now = SDL_GetTicksNS();
+        if (now >= deadline || quit) return;
+        const uint64_t left = deadline - now;
+        if (left < 2000000) {
+            SDL_DelayPrecise(left);
+            return;
+        }
+        SDL_Event e;
+        if (!SDL_WaitEventTimeout(&e, (Sint32)((left - 1000000) / 1000000))) continue;
+        do {
+            handleEvent(e, false);
         } while (!quit && SDL_PollEvent(&e));
         publishInput();
     }
@@ -2118,7 +2145,7 @@ int App::runInteractive(const CliArgs& a) {
             // does not block): a short nap, so a new frame still shows within a few ms without spinning a core.
             if (vsync && lateLatchOn_ && swapNs >= LateLatch::kBlockedNs) latchWait();
             else if (!vsync || swapNs < LateLatch::kBlockedNs)
-                SDL_DelayNS(LateLatch::idleNapNs(SDL_GetTicksNS() - swap1, displayPeriodNs()));
+                presentNap();
             latchedAtNs_ = SDL_GetTicksNS();
             latch_.noteWaitEnd(latchedAtNs_);
         } else {

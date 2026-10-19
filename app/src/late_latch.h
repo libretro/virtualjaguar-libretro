@@ -33,6 +33,25 @@ public:
         const uint64_t left = sinceSwapNs < displayPeriodNs ? displayPeriodNs - sinceSwapNs : 0;
         return left < 1000000ull ? 1000000ull : left;
     }
+    // The same nap on a deadline grid (vsync off, or a swap that did not block).  Anchored at the swap end, the loop
+    // period was refresh + build + swap (~54-57 Hz on a 60 Hz display against a 60.05 Hz core: 3-7 dropped frames a
+    // second).  Here the next iteration is due one display period after the previous one was, whatever the build cost.
+    //   advanceGridNs: the next due time, right after a swap at `nowNs`.  First call (gridNs 0): one period from now.
+    //     More than a period behind (a stall): re-anchored at now, no burst of catch-up frames.  More than a period ahead
+    //     (iterations cut short by input): pulled back to one period from now.  0 when the refresh rate is unknown.
+    //   gridNapNs: how long to nap from `nowNs` to the grid point; at least 1 ms; the old flat 4 ms when unknown.
+    static uint64_t advanceGridNs(uint64_t gridNs, uint64_t nowNs, uint64_t periodNs) {
+        if (!periodNs) return 0;
+        uint64_t g = gridNs ? gridNs + periodNs : nowNs + periodNs;
+        if (nowNs > g + periodNs) g = nowNs;
+        if (g > nowNs + periodNs) g = nowNs + periodNs;
+        return g;
+    }
+    static uint64_t gridNapNs(uint64_t nowNs, uint64_t gridNs, uint64_t periodNs) {
+        if (!periodNs) return idleNapNs(0, 0);
+        const uint64_t left = gridNs > nowNs ? gridNs - nowNs : 0;
+        return left < 1000000ull ? 1000000ull : left;
+    }
     static constexpr unsigned kCalmRun = 120;           // on-time swaps before the pad shrinks one step
     static constexpr uint64_t kMinRoomNs = 1000000;     // a budget within this of a whole period: no wait
     static constexpr unsigned kBuilds = 60;             // build times remembered (one second at 60 Hz)

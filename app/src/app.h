@@ -370,6 +370,7 @@ private:
     uint64_t displayPeriodNs();                  // the window's display refresh period, cached; 0 when unknown
     uint64_t displayPeriodNs_ = 0;
     bool displayPeriodValid_ = false;            // cleared when the window moves to another display
+    uint64_t nextPresentNs_ = 0;                 // threaded, vsync off: when the next iteration is due (a deadline grid)
     SDL_GLContext gl_ = nullptr;
     bool imguiUp_ = false;
     float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)
@@ -406,6 +407,7 @@ private:
     unsigned latchChecks_ = 0;
     bool latchLogged_ = false;
     void latchWait();
+    void presentNap();
     void latchLog();
     void latchUpdatePeriod();
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
