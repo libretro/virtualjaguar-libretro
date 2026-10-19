@@ -141,6 +141,7 @@ jobs:
     # test's output only with --verbose; this is where a coarse-timer runner (MinGW) is visible (#967).
     - name: Emulation-thread timer report
       if: always()
+      continue-on-error: true
       run: ctest --test-dir app/build -C Release -R "^emu_thread_unit$" --verbose
 
     # Informational: the emulation speed of this build, taken from the app's own

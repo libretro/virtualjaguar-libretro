@@ -33,6 +33,14 @@ namespace vj {
 
 inline thread_local bool g_inWaitHook = false;   // EmuThread::call: the wait hook is running on this thread
 
+// Sets g_inWaitHook for the hook's duration: cleared again if the hook throws.
+struct WaitHookScope {
+    WaitHookScope() { g_inWaitHook = true; }
+    ~WaitHookScope() { g_inWaitHook = false; }
+    WaitHookScope(const WaitHookScope&) = delete;
+    WaitHookScope& operator=(const WaitHookScope&) = delete;
+};
+
 class EmuThread {
 public:
     // What the loop drives.  Every method runs on the emulation thread (on the caller, inline).
@@ -155,9 +163,8 @@ auto EmuThread::call(F&& fn) -> decltype(fn()) {
             break;
         if (abandoned()) return R();
         if (waitHook_ && !g_inWaitHook && std::chrono::steady_clock::now() - t0 >= kBusyAfter) {
-            g_inWaitHook = true;
+            WaitHookScope inHook;
             waitHook_(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), tick++);
-            g_inWaitHook = false;
         }
     }
     return done.get();

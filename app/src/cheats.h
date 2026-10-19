@@ -3,7 +3,8 @@
 // This file and cheats.cpp are deliberately free of SDL, ImGui and the core's
 // run-time state so the parsing, conversion and persistence logic can be unit
 // tested on its own (app/tests/cheats_test.cpp).  The core is reached through
-// two sinks (retro_cheat_reset / retro_cheat_set) wired up in cheats_core.cpp.
+// one commit sink (a CheatBatch: retro_cheat_reset then each retro_cheat_set, posted to the emulation thread) wired up
+// in cheats_core.cpp.
 //
 // Data flow
 //   *.cht files (libretro-database, "cht/Atari - Jaguar/")  --parse-->  ChtSet

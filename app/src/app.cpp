@@ -612,7 +612,11 @@ void App::startEmuThread() {
 void App::busyFrame(double waited, unsigned tick) {
     if (tick == 0) std::fprintf(stderr, "[emu] busy: a call has taken over 250 ms\n");
     if (!window_ || !imguiUp_) return;
-    host.setUiWaiting(true);
+    struct UiWaiting {   // cleared again on any exit
+        CoreHost& h;
+        explicit UiWaiting(CoreHost& host) : h(host) { h.setUiWaiting(true); }
+        ~UiWaiting() { h.setUiWaiting(false); }
+    } waiting(host);
     SDL_PumpEvents();
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(window_, &w, &h);
@@ -620,7 +624,6 @@ void App::busyFrame(double waited, unsigned tick) {
         video.drawBusy(w, h, waited);
         SDL_GL_SwapWindow(window_);
     }
-    host.setUiWaiting(false);
 }
 
 void App::stopEmuThread() {
@@ -1720,6 +1723,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         }
         break;
     case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+    case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:   // the same display switched its refresh rate
         displayPeriodValid_ = false;   // the next displayPeriodNs() reads the new display's refresh rate
         break;
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:

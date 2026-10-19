@@ -308,8 +308,12 @@ word-split `$OPTS`; the option is then silently not applied and the harness prin
 
 ## App emulation thread tests (#967)
 
-The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`) is what the ThreadSanitizer CI job runs:
-`ctest --test-dir app/build -C Release -L emu_thread`. Phase 2 added, on top of the phase 1 units and `smoke_*_threaded`:
+The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA twins and `ach_event_unit` in
+`VJAchTests.cmake`) is what the ThreadSanitizer CI job runs. Locally the label runs on the normal build:
+`ctest --test-dir app/build -C Release -L emu_thread`. The CI job (`tsan` in `.github/workflows/app.yml`) configures
+`app/build-tsan` with `-DVJ_APP_TSAN=ON -DVJ_APP_LTO=OFF` (clang, RelWithDebInfo) and runs
+`TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1 suppressions=app/tests/tsan.supp" ctest --test-dir app/build-tsan -C RelWithDebInfo -L emu_thread --output-on-failure`
+(Linux only; `sudo sysctl vm.mmap_rnd_bits=28` first on a new runner kernel). Phase 2 added, on top of the phase 1 units and `smoke_*_threaded`:
 
 - **Units:** `core_events_unit` (the core-event queue: order, bounded log lines, content switch, two threads) and
   `ach_event_unit` (`AchEvent`, an rc_client event copied across threads; in `app/cmake/VJAchTests.cmake`).

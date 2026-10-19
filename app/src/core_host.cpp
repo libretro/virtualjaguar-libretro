@@ -1285,7 +1285,14 @@ void CoreHost::publishSnapshot() {
 }
 
 void CoreHost::pinSnapshot() {
-    if (onOwner()) return;
+    if (onOwner()) {
+        // Inline (or after the emulation thread stopped) the UI thread is the owner: option events queued just before
+        // the thread went away still have to be applied.  (On the emulation thread itself this does nothing: the UI
+        // applies its own queue.)  Inline the queue is normally empty.
+        if (!threaded())
+            for (CoreEvent& e : uiEvents_.take()) applyUiEvent(e);
+        return;
+    }
     {
         std::lock_guard<std::mutex> l(snapMu_);
         ui_ = pub_;

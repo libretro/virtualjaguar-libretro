@@ -65,6 +65,10 @@ struct AchCallbacks {
             // Core RAM belongs to the emulation thread (#967).  pump() leaves rc_client_idle to that thread, so the only
             // reader that runs here is a game load completed in the UI's HTTP pump, validating its addresses
             // (rc_client_validate_addresses: only the count matters): answer from the memory map, without touching RAM.
+            // ASSUMPTION, pinned to rcheevos v12.5 (the version fetched in CMakeLists.txt): validate_addresses only
+            // checks the returned COUNT, never the bytes.  Re-read rc_client.c when bumping rcheevos.  The alternative
+            // that needs no assumption is rc_client_set_allow_background_memory_reads(client, 0): rc_client then runs
+            // these reads from the thread that drives rc_client_do_frame / rc_client_idle, i.e. the emulation thread.
             uint32_t avail = 0;
             if (!rc_libretro_memory_find_avail(&a->regions_, address, &avail) || avail == 0) return 0;
             const uint32_t n = avail < numBytes ? avail : numBytes;

@@ -16,7 +16,7 @@
 //              (setAddressViaOption(false)).
 //   status     the core's private event channel (src/core/vj_frontend_ext.h): link UP / DOWN,
 //              wire speed, the link stats every 5 s while traffic flows.  Without that
-//              channel, the "[NETLINK] ..." log lines tapped in CoreHost::onLog say the same.
+//              channel, the "[NETLINK] ..." log lines tapped through CoreHost::onUiEvent say the same.
 //   discovery  the core finds LAN hosts itself (UDP beacon, jlink_discover.c) and splices
 //              them into the host option's value list with a second
 //              SET_CORE_OPTIONS_V2; CoreHost re-captures it, we read it back.
@@ -125,15 +125,15 @@ public:
     // in Join or Host mode).
     std::vector<DiscoveredHost> discovered() const;
 
-    // ---- what the core tells us (CoreHost::onLog / CoreHost::onEvent) --------------
+    // ---- what the core tells us (CoreHost::onUiEvent: log lines and vj_events) -----
+    // The app's tap (CoreHost::onUiEvent, on the UI thread): drops what the core said before the last start() /
+    // stop() / bounce (its epoch), then reads each log line with onCoreLog and each vj_event with onCoreEvent.
     // The core's private event channel is authoritative when the core said HELLO (the app's CoreHost
-    // answers it); the log tap then only handles the lines that have no event (open errors, discovery
-    // trouble).  A core that never said HELLO is read the old way, entirely from its log text.
+    // answers it); the log lines then only handle what has no event (open errors, discovery trouble).  A core
+    // that never said HELLO is read the old way, entirely from its log text.
+    void onUiEvent(const CoreEvent& e);
     void onCoreLog(int level, const char* text);
     void onCoreEvent(const vj_event& e);
-    // The app's tap (CoreHost::onUiEvent, on the UI thread): drops what the core said before the last start() /
-    // stop() / bounce (its epoch), then reads it like onCoreLog / onCoreEvent.
-    void onUiEvent(const CoreEvent& e);
     // How a typed address reaches the core.  true (default): the host option takes it.  false: the core's
     // own "From file" route, <system dir>/vj_netlink.txt (the fallback for a core whose host option is a
     // closed list).  That file is ONE file per system directory, shared by every copy of the app on a data
