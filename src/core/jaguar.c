@@ -1350,8 +1350,8 @@ void HalflineCallback(void)
    gpuPCSample[m68kPCSampleIdx & 0x1FFF] = GPUGetPC();
    m68kPCSampleIdx++;
 #endif
-   uint16_t vp           = TOMReadWord(0xF0003E, JAGUAR) + 1;
-   uint16_t vi           = TOMReadWord(0xF0004E, JAGUAR);
+   uint16_t vp           = TOMGetVP() + 1;
+   uint16_t vi           = TOMGetVI();
 
    vc++;
 

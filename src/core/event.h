@@ -31,6 +31,8 @@ void SetCallbackTime(void (* callback)(void), double time, int type);
 void RemoveCallback(void (* callback)(void));
 void AdjustCallbackTime(void (* callback)(void), double time);
 double GetTimeToNextEvent(int type);
+/* Remaining scheduler time, or -1 if this callback is not queued. */
+double GetCallbackTime(void (* callback)(void), int type);
 void HandleNextEvent(int type);
 void SubtractEventTimes(double elapsed, int type);
 

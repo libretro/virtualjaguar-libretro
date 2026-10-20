@@ -41,9 +41,11 @@ MIN_WRAPS       equ     3                       ; check across >=3 frames
 entry:
                 ACID_INIT
 
-                ;; d7 = VP register value (masked) -- expected pre-wrap VC.
-                move.w  TOM_VP,d7
-                and.w   #VC_MASK,d7
+                ;; VP is write-only: program a known period, do not read
+                ;; MEMCON1 from its bus address (#1045).  This ROM owns
+                ;; the machine, so no previous video period needs restoring.
+                move.w  #523,TOM_VP
+                move.w  #523,d7
 
                 ;; d6 = wrap-event counter
                 moveq   #0,d6
