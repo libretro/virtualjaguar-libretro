@@ -790,7 +790,8 @@ void App::notePresented(uint64_t swapEndNs) {
 }
 
 // Threaded + vsync (#967, the late latch): wait until shortly before the next vblank and hand every input event to the
-// emulation thread the moment it arrives, so the next emulated frame polls it wherever in the period that frame starts.
+// emulation thread while the event wait is active, so the next emulated frame can poll it. The final <4 ms use a
+// precise sleep to absorb the event wait's usual overshoot; input arriving in that tail is polled next iteration.
 // The iteration then takes the newest finished frame, builds the UI and swaps just in time.  While the latch does not
 // know where the vblanks are (late_latch.h), it returns at once: the unlatched loop.
 void App::latchWait() {
@@ -809,13 +810,13 @@ void App::latchWait() {
         const uint64_t t = SDL_GetTicksNS();
         if (t >= wake || quit) return;
         const uint64_t left = wake - t;
-        if (left < 2000000) {   // SDL_WaitEventTimeout counts whole ms: the last stretch is a precise sleep
+        const Sint32 ms = (Sint32)LateLatch::eventWaitMs(left);
+        if (!ms) {
             SDL_DelayPrecise(left);
             over(wake, 2);
             return;
         }
         SDL_Event e;
-        const Sint32 ms = (Sint32)((left - 1000000) / 1000000);
         if (!SDL_WaitEventTimeout(&e, ms)) {
             over(t + (uint64_t)ms * 1000000ull, 1);
             continue;

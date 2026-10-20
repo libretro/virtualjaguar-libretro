@@ -126,6 +126,45 @@ void testMissGrowsPad() {
     CHECK(l.padNs() == LateLatch::kPadMinNs, "the pad shrinks back to 1 ms (%llu)", (unsigned long long)l.padNs());
 }
 
+// A compositor needs the submission 1.45 ms before vblank even when the CPU build takes exactly 2 ms.
+// Repeatedly probing below that learned deadline turns otherwise calm playback into periodic repeated frames (#1026).
+void testCompositorDeadline() {
+    LateLatch l;
+    l.setPeriodNs(kP60);
+    uint64_t end = 0;
+    runGrid(l, kP60, 60, end);
+    for (unsigned k = 0; k < 3600; k++) {
+        const uint64_t wake = l.wakeAt(end + 200000);
+        const uint64_t target = l.targetNs();
+        CHECK(target != 0, "compositor model stays latched");
+        if (!target) break;
+        const uint64_t submit = wake + 2 * kMs;
+        end = target + (submit + 1450000 > target ? kP60 : 0) + 50000;
+        l.noteWaitEnd(wake);
+        l.noteBuild(2 * kMs);
+        l.onSwap(submit, end);
+    }
+    std::printf("compositor deadline: %u missed vblanks in 3600 iterations\n", l.misses());
+    CHECK(l.misses() <= 2, "at most two deadline probes per minute after learning the compositor (%u)", l.misses());
+    CHECK(l.locked() && l.released() == 0, "a stable compositor keeps its latch");
+}
+
+void testEventWaitHeadroom() {
+    unsigned eventWaits = 0;
+    for (uint64_t left = 0; left <= 20 * kMs; left += 100000) {
+        const uint64_t timeout = LateLatch::eventWaitMs(left);
+        if (timeout) {
+            eventWaits++;
+            // A whole-ms event wait may overshoot by 2 ms; it must still leave time for the precise tail.
+            CHECK(timeout * kMs + 2 * kMs <= left, "event wait overruns wake with 2 ms overshoot (%llu ns left)",
+                  (unsigned long long)left);
+        } else {
+            CHECK(left < 4 * kMs, "only the last few ms stop waiting for events (%llu ns)", (unsigned long long)left);
+        }
+    }
+    CHECK(eventWaits > 100, "long waits continue handling input events");
+}
+
 void testPersistentMissReleases() {
     // A build whose GPU work finishes past the aimed vblank every time (the CPU-side budget cannot see it, and the pad is
     // capped): every wait misses by one period.  The latch must give up rather than present a vblank late forever.
@@ -258,6 +297,7 @@ void testOffNominal() {
 
 struct Iter {
     uint64_t now;    // the wait starts (after the swap and the end-of-iteration work)
+    uint64_t precise; // event wait ends; input in the precise-sleep tail is published at take
     uint64_t take;   // the wait ends: pump the rest, publish, take the newest frame
     uint64_t present;
 };
@@ -292,7 +332,14 @@ Result model(uint64_t frameNs) {
             const uint64_t n = (begin - kV0 + kP60 - 1) / kP60;   // the first vblank at or after the swap call
             l.noteBuild(begin - w);
             l.onSwap(begin, kV0 + n * kP60 + kEnd);
-            it.push_back({now, take, kV0 + n * kP60});
+            uint64_t precise = now;
+            // No event-wait overshoot in this model: the longest precise tail, including ms rounding.
+            for (;;) {
+                const uint64_t ms = LateLatch::eventWaitMs(w - precise);
+                if (!ms) break;
+                precise += ms * kMs;
+            }
+            it.push_back({now, precise, take, kV0 + n * kP60});
             m = n;
         }
         if (latched) {
@@ -307,9 +354,10 @@ Result model(uint64_t frameNs) {
         for (uint64_t e0 = kV0 + 120 * kP60; e0 + 120 * kP60 < it.back().present; e0 += kP60) {
             const uint64_t e = e0 + (uint64_t)(unit() * (double)kP60);
             while (k + 1 < it.size() && it[k + 1].now <= e) k++;
-            // Published at once while the UI waits; otherwise when the next wait starts (latched) or the next
-            // iteration starts (unlatched, where take == now + pump).
-            const uint64_t pub = (latched && e >= it[k].now && e < it[k].take) ? e : it[k + 1].now;
+            // The event wait publishes immediately; the precise tail defers events until the next pump/take.
+            // Outside the wait, publication is at the next wait/iteration start (as in the unlatched loop).
+            const uint64_t pub = (latched && e >= it[k].now && e < it[k].take)
+                                     ? (e < it[k].precise ? e : it[k].take) : it[k + 1].now;
             const double jf = (double)pub - T0 > 0 ? ((double)pub - T0) / E : 0;
             uint64_t j = (uint64_t)jf;
             if ((double)j < jf) j++;
@@ -429,6 +477,8 @@ int main() {
     testModel();
     testIdleNap();
     testPresentGrid();
+    testCompositorDeadline();
+    testEventWaitHeadroom();
     std::printf(g_fail ? "late_latch_test: %d FAILED\n" : "late_latch_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }
