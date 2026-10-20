@@ -778,13 +778,24 @@ exit 77 means no window-server session (ssh) or not macOS.
 version (`v1.92.8-docking`; pinned in `CMakeLists.txt` and the Flatpak manifest), used only for its multi-viewport
 mode: Settings > Interface > Desktop > "Let windows move outside the main window" lets a Settings / Achievements /
 Cheats / Netplay / debug-tool window dragged past the edge of the main window become an OS window of its own
-(real title bar, no Dock / taskbar entry, positions kept in `imgui.ini`). Default on for macOS and Windows, off on
+(real title bar, no Dock / taskbar entry, positions kept in `imgui.ini`). Breakout windows use only native title-bar
+controls; the duplicate ImGui title/collapse/close bar returns when they move back inside. Default on for macOS and Windows, off on
 Linux; it is forced off on Wayland (a client cannot position its own extra windows there; X11 and XWayland are
 fine), while the window is fullscreen, and in headless runs (`src/platform/viewports.*`, unit-tested in
 `platform_unit`). Docking is left off: it would put tab bars and drop targets on windows people already arranged.
 The coordinates of the main window are screen coordinates while this is on, so code that mixes them with SDL's
 window-relative pointer events subtracts `GetMainViewport()->Pos`. On macOS, "Show the menu bar inside the window"
 (`ui.menubar_in_window`, off by default; F1 flips it) keeps the ImGui menu bar as well as the native one.
+
+"Auto-hide the menu bar in fullscreen" (`ui.fullscreen_autohide_menu`, off by default) unpins the in-window menu
+on entering fullscreen, including the macOS green-button route. Move the pointer to the top edge to reveal it,
+or press F1 to pin it. Leaving fullscreen restores the earlier pin state; a temporary F1 reveal on macOS does
+not change the windowed menu preference. The setting also belongs to Interface's reset group.
+
+`VJ_WINDOWED_OK=1 bash app/tests/fullscreen_menu_windowed_check.sh <app> <rom> <out-dir>` checks the default and enabled
+cases on the dedicated display host: fullscreen entry/exit, top-edge hover, F1, saved preference and screenshots.
+`window_chrome_unit` drives real ImGui viewports with a fake platform backend to check native close, collapsing,
+reattachment and decoration-less backends without opening a window.
 
 ## Discord
 

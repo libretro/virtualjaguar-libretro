@@ -216,6 +216,8 @@ void drawDesktopSettings(App& app) {
         ui::hint("Keep the menu bar at the top of the window as well as the one at the top of the screen. Both work "
                  "the same. Off by default; F1 flips it too.");
     }
+    ImGui::Checkbox("Auto-hide the menu bar in fullscreen", &app.fullscreenAutoHideMenu);
+    ui::hint("Move the pointer to the top edge to reveal it, or press F1 to pin it open. Off by default.");
     ImGui::Checkbox("Let windows move outside the main window", &app.windowsOutside);
     ui::hint("Settings, Achievements, Cheats and the tools can be dragged out of the main window and become windows of "
              "their own, for example on a second monitor. Drag one past the edge of the window, or back in to put it back. "

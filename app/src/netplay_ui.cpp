@@ -9,6 +9,7 @@
 
 #include "app.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 #include "imgui.h"
 #include "netplay.h"
 #include "typed_ui.h"
@@ -339,7 +340,7 @@ void drawNetplayMenu(App& app) {
 void drawNetplay(App& app) {
     initUi(app);
     ui::nextWindow(34.0f, 36.0f, 24.0f, 16.0f);
-    bool open = ImGui::Begin("Netplay", &app.showNetplay);
+    bool open = ui::beginWindow("Netplay", &app.showNetplay);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();

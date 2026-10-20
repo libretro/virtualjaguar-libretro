@@ -205,6 +205,7 @@ void App::applySettingsFromConfig() {
     keepAwake = cfg.getBool("ui.keep_awake", true);
     windowsOutside = cfg.getBool("ui.viewports", viewports::defaultEnabled());
     showInWindowMenu = cfg.getBool("ui.menubar_in_window", false);
+    fullscreenAutoHideMenu = cfg.getBool("ui.fullscreen_autohide_menu", false);
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     emuThreadPref = cfg.has("ui.emu_thread") ? (cfg.getBool("ui.emu_thread", false) ? 1 : 0) : -1;
@@ -244,6 +245,7 @@ void App::saveConfig() {
     cfg.setBool("ui.keep_awake", keepAwake);
     cfg.setBool("ui.viewports", windowsOutside);
     cfg.setBool("ui.menubar_in_window", showInWindowMenu);
+    cfg.setBool("ui.fullscreen_autohide_menu", fullscreenAutoHideMenu);
     if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen (Phase 3's default)
     else cfg.erase("ui.emu_thread");
     cfg.setInt("saves.resume", resumeMode);
@@ -1034,7 +1036,7 @@ void App::newWindow() {
     toast("Opening another window...", 2.0);
 }
 
-bool App::inWindowMenuBar() const { return platform::nativeMenuActive() ? showInWindowMenu : true; }
+bool App::inWindowMenuBar() const { return menuBarDrawn; }
 
 void App::toggleLibrary() {
     if (homeVisible()) library.focusSearch = true;   // already showing: put the cursor in the search box
@@ -1043,6 +1045,7 @@ void App::toggleLibrary() {
 
 void App::setFullscreen(bool fs) {
     fullscreen = fs;
+    fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
     if (window_) SDL_SetWindowFullscreen(window_, fs);
 }
 
@@ -1634,7 +1637,10 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (fullscreen) setFullscreen(false);
         break;
     case SDLK_F1:
-        if (platform::nativeMenuActive()) showInWindowMenu = !showInWindowMenu;   // reach anything the native menu lacks
+        if (fullscreen && fullscreenAutoHideMenu) {
+            fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
+            fullscreenMenu.togglePin(menuPinned);   // a temporary reveal never changes ui.menubar_in_window
+        } else if (platform::nativeMenuActive()) showInWindowMenu = !showInWindowMenu;   // reach anything the native menu lacks
         else menuPinned = !menuPinned;
         break;
     case SDLK_F5: saveState(stateSlot); break;
@@ -1733,9 +1739,11 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         break;
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
         fullscreen = true;    // also the green button / Ctrl+Cmd+F on macOS, which never go through setFullscreen()
+        fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
         break;
     case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
         fullscreen = false;
+        fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
         break;
     case SDL_EVENT_USER: {
         platform::Cmd ncmd = platform::Cmd::None;

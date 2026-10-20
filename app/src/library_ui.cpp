@@ -10,6 +10,7 @@
 #include "imgui.h"
 #include "library_service.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 namespace vj {
 
@@ -1154,7 +1155,7 @@ void drawLibrary(App& app) {
     if (!svc.show || app.homeVisible()) return;   // the home screen already is the library
 
     ui::nextWindow(120.0f, 80.0f, 30.0f, 16.0f);
-    bool open = ImGui::Begin("Game library", &svc.show);
+    bool open = ui::beginWindow("Game library", &svc.show);
     ui::keepOnScreen();
     if (!open) {
         app.deskPad.pending.clear();   // collapsed: no grid to run the pad's commands

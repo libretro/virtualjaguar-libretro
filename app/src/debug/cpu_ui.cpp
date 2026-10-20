@@ -3,6 +3,7 @@
 #include "cpu_view.h"
 #include "debug_session.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
@@ -543,7 +544,7 @@ void drawNav(DebugSession& s) {
 
 void drawWindow(DebugSession& s) {
     ui::nextWindow(74, 46, 54, 30);
-    if (!ImGui::Begin("CPU debugger", &g.open)) {
+    if (!ui::beginWindow("CPU debugger", &g.open)) {
         ui::keepOnScreen();
         ImGui::End();
         return;

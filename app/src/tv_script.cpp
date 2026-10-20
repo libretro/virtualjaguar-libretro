@@ -256,6 +256,12 @@ int App::tvScriptStep() {
             SDL_UpdateJoysticks();
             tvScriptDrain();
             tick();
+        } else if (verb == "mouse") {
+            if (!run.windowed || !window_) return fail(l, "mouse is windowed only");
+            char* endX = nullptr; char* endY = nullptr;
+            const float x = std::strtof(arg1.c_str(), &endX), y = std::strtof(arg2.c_str(), &endY);
+            if (arg1.empty() || arg2.empty() || *endX || *endY) return fail(l, "mouse wants X Y");
+            SDL_WarpMouseInWindow(window_, x, y);
         } else if (verb == "focus") {
             SDL_Event ev;
             SDL_zero(ev);
@@ -314,7 +320,10 @@ int App::tvScriptStep() {
             run.expects++;
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
             std::string got;
-            if (name == "menu-open") got = flag(tvShell().menuOpen());
+            if (name == "fullscreen") got = flag(fullscreen);
+            else if (name == "menu-visible") got = flag(inWindowMenuBar());
+            else if (name == "menu-pinned") got = flag(menuPinned);
+            else if (name == "menu-open") got = flag(tvShell().menuOpen());
             else if (name == "tv") got = flag(tvMode.active());
             else if (name == "tv-screen") got = tvShell().screenId();
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens

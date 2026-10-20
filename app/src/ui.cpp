@@ -12,6 +12,7 @@
 #include "tv/tv_shell.h"
 #include "typed_ui.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include <algorithm>
 #include <cctype>
@@ -343,7 +344,7 @@ void drawDiscordTab(App& app) {
 
 void drawSettings(App& app) {
     ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
-    bool open = ImGui::Begin("Settings", &app.showSettings);
+    bool open = ui::beginWindow("Settings", &app.showSettings);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
@@ -377,7 +378,7 @@ void drawSettings(App& app) {
 
 void drawStates(App& app) {
     ui::nextWindow(44.0f, 30.0f, 22.0f, 14.0f);
-    bool open = ImGui::Begin("Save states", &app.showStates);
+    bool open = ui::beginWindow("Save states", &app.showStates);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
@@ -466,7 +467,7 @@ void drawResumePrompt(App& app) {
 
 void drawAbout(App& app) {
     ui::nextWindow(30.0f, 0.0f, 0.0f, 0.0f, ui::WinFit::FixedWidth);
-    bool open = ImGui::Begin("About Virtual Jaguar", &app.showAbout, ImGuiWindowFlags_AlwaysAutoResize);
+    bool open = ui::beginWindow("About Virtual Jaguar", &app.showAbout, ImGuiWindowFlags_AlwaysAutoResize);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
@@ -491,7 +492,8 @@ void drawAbout(App& app) {
     ImGui::Text("Dear ImGui: %s", ImGui::GetVersion());
     ImGui::Separator();
     const char* const keys[][2] = {
-        {"F1", platform::nativeMenuActive() ? "show the in-window menu bar as well" : "show or pin the menu bar (fullscreen)"},
+        {"F1", app.fullscreen && app.fullscreenAutoHideMenu ? "show or pin the menu bar" :
+                   (platform::nativeMenuActive() ? "show the in-window menu bar as well" : "show or pin the menu bar (fullscreen)")},
         {"F5 / F7", "save / load state"},
         {"F6", "next state slot (Shift: previous)"},
         {"F8", "pause"},
@@ -677,7 +679,10 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     // A native menu bar (macOS) replaces this one; every item here has a twin in platform/commands.cpp.
     // TV mode's Base layer is a couch screen: its menu bar behaves as in fullscreen.
     const bool tvBase = app.tvShell().baseActive();
-    bool showMenu = platform::nativeMenuActive() ? app.showInWindowMenu : (!(app.fullscreen || tvBase) || app.menuPinned || menuHot);
+    app.fullscreenMenu.update(app.fullscreen, app.fullscreenAutoHideMenu, app.menuPinned);
+    const bool showMenu = app.fullscreenMenu.visible(platform::nativeMenuActive(), app.showInWindowMenu,
+                                                    app.fullscreen, tvBase, app.menuPinned, menuHot);
+    app.menuBarDrawn = showMenu;
     float menuH = 0;
     if (showMenu) {
         drawMenuBar(app);

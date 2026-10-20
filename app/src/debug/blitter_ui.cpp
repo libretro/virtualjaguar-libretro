@@ -4,6 +4,7 @@
 #include "blitter_log.h"
 #include "debug_session.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
@@ -201,7 +202,7 @@ void blitterToolDraw() {
     if (!g.open) return;
 
     ui::nextWindow(84.0f, 42.0f, 40.0f, 20.0f);
-    bool shown = ImGui::Begin("Blitter log", &g.open);
+    bool shown = ui::beginWindow("Blitter log", &g.open);
     ui::keepOnScreen();
     if (shown) {
         ui::hint("The blitter launches the game made, newest first. The core keeps the last %d; launches that scroll "

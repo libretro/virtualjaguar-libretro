@@ -15,6 +15,7 @@
 #include "ra_images.h"
 #include "secret_store.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 #include "rc_client.h"
 
 namespace vj {
@@ -27,7 +28,7 @@ void drawLogin(App& app) {
     Achievements& a = app.ach;
     ui::nextWindow(28.0f, 0.0f, 0.0f, 0.0f, ui::WinFit::FixedWidth);   // fixed width, height follows the text
     bool open = true;
-    bool shown = ImGui::Begin("Sign in to RetroAchievements", &open, ImGuiWindowFlags_AlwaysAutoResize);
+    bool shown = ui::beginWindow("Sign in to RetroAchievements", &open, ImGuiWindowFlags_AlwaysAutoResize);
     ui::keepOnScreen();
     if (!shown) {
         ImGui::End();
@@ -394,7 +395,7 @@ void drawProfile(App& app) {
 void drawList(App& app) {
     Achievements& a = app.ach;
     ui::nextWindow(42.0f, 36.0f, 26.0f, 18.0f);
-    bool shown = ImGui::Begin("Achievements", &a.showList);
+    bool shown = ui::beginWindow("Achievements", &a.showList);
     ui::keepOnScreen();
     if (!shown) {
         ImGui::End();
