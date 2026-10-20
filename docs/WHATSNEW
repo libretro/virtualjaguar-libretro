@@ -1,3 +1,39 @@
+Virtual Jaguar v3.10.0 libretro
+------------------------------
+
+TV mode, controller navigation, optional emulation threading and AI players.
+Full notes: docs/RELEASE_NOTES_v3.10.0.md
+
+The emulation core is unchanged from v3.9.1. Options and v17 savestates
+carry over. Emulation threading remains experimental and OFF by default.
+
+== Desktop app ==
+* TV mode: Home, Library, Game details and paused in-game menu;
+  TV-menu hold action and Ctrl/Cmd+Shift+T toggle (#995, #999, #1024).
+* Controller navigation of the desktop library; per-family and custom
+  profiles (#1030). Pro Controller X/Y/Z/L/R controls (#1019).
+* Optional fullscreen menu auto-hide; native chrome for detached tools
+  without duplicate in-app window controls (#1034).
+* Optional emulation thread, audio-clock pacing, RetroAchievements and
+  link play on the core owner, busy indicator (#1000, #1031).
+* Precise wakes, presentation pacing, late-latch deadline/event-wait
+  headroom and slower pad decay (#1018, #1023, #1035).
+* Queued commands apply before frame advances (#1033).
+* .m3u playlists and disc-menu fixes; disc swaps update content identity
+  while saves stay owned by the initially opened disc (#1006, #1009,
+  #1011, #1012).
+* Achievement browser skips games without a set (#1015).
+* CD mirror artwork misses retried after restart (#998); website CD
+  artwork collection available as one ZIP (#1016).
+* Opt-in Neuro game API: AI Player 1, custom game profiles, held-input
+  release on disconnect, bounded stop, hardcore guard (#1001, #1027).
+
+== Known issues ==
+* Emulation thread disables Tools/debugger and GDB; rare host scheduling
+  stalls and display-locked pacing remain follow-up work.
+* TV settings, overlays, achievements screens and Auto mode are pending.
+* Core timing limitations, including Doom's attract demo, remain.
+
 Virtual Jaguar v3.9.1 libretro
 ------------------------------
 
