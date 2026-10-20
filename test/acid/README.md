@@ -526,3 +526,25 @@ Future:
 - Issue #131 -- Doom game logic / demos run 1.5-2x too fast. Will
   be reproduced + bisected once `timing/` and `irq/` tests cover the
   surface.
+
+## Greater-than Z-buffer report (#1046)
+
+`tests/blitter/zmode_gt.s` is an original, bootable test inferred from the
+AtariAge report and the JTRM v8 p.74 inhibit truth table. It checks unsigned
+source Z `$8000` against `$7FFF/$8000/$8001/$FFFF`, verifying both colour and
+Z writes across twelve pixel/phrase, BKGWREN, GOURZ and DSTA2 cases. Pixel
+cases use BKGWREN to avoid the known silicon comparator erratum. It polls
+IDLE with a bounded timeout and reports the failing case/word through the
+standard RAM signature. It is not the reporter's missing reproducer.
+
+```bash
+make -C test/acid tests/blitter/zmode_gt.jag acid_run
+ACID_FAST_BLITTER=disabled test/acid/acid_run ./virtualjaguar_libretro.dylib test/acid/tests/blitter/zmode_gt.jag
+ACID_FAST_BLITTER=enabled test/acid/acid_run ./virtualjaguar_libretro.dylib test/acid/tests/blitter/zmode_gt.jag
+```
+
+`ACID_FAST_BLITTER` defaults to `disabled` (accurate), preserving ordinary
+suite behavior. The core's `test_blitter_cmd` separately covers all eight
+ZMODE combinations in both engines. The current public JaguarDemos pin
+`36afa55` has related Z-buffer sources in `jag_ball/rotatez5.js` and
+`rot5z_mm.js`; those select **less-than** (`1 << 18`), not GT (`1 << 20`).
