@@ -115,11 +115,16 @@ bool EmuThread::advance(unsigned n) {
         return true;
     }
     if (onEmuThread()) return false;   // a command cannot wait for frames that only run after it
+    // Publish the budget through the command queue too. A UI-side increment can land after drain() but before
+    // the loop reads its budget, letting a frame overtake an earlier posted option/input change.
+    // Count only budgeted frames, including any requests already queued ahead of this one.
+    const uint64_t target = call([this, n] {
+        const uint64_t end = advanceDone_.load() + advanceLeft_.load() + n;
+        advanceLeft_.fetch_add(n);
+        return end;
+    });
+    if (!target) return false;   // call() was abandoned before accepting the request
     std::unique_lock<std::mutex> l(mu_);
-    // Count budgeted frames only: a frame already in flight (it read a budget of 0) must not satisfy this request.
-    const uint64_t target = advanceDone_.load() + n;
-    advanceLeft_.fetch_add(n);
-    cmds_.notify();
     advanceCv_.wait(l, [&] {
         return advanceDone_.load() >= target || advanceLeft_.load() == 0 || finished_ ||
                state_.load() == State::Abandoned;

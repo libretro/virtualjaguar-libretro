@@ -25,6 +25,18 @@
 #include <mmsystem.h>   // timeBeginPeriod: see main()
 #endif
 
+namespace vj {
+struct EmuThreadTestAccess {
+    static bool advancePublished(EmuThread& e) {
+        // The owner is gated after drain: old code publishes the budget directly, fixed code queues it
+        // behind the one pending mutation. Neither can be consumed until the test releases the gate.
+        if (e.advanceLeft_.load() != 0) return true;
+        std::lock_guard<std::mutex> lock(e.cmds_.mu_);
+        return e.cmds_.q_.size() >= 2;
+    }
+};
+}  // namespace vj
+
 using vj::EmuThread;
 using Clock = std::chrono::steady_clock;
 
@@ -351,6 +363,41 @@ void testPendingCallAbandoned() {
     for (int i = 0; i < 1000 && !ranBody->load(); i++) sleepMs(1);   // the queued body still runs once the thread is free
 }
 
+// A batch can finish draining just before the UI queues an option/input change plus advance().
+// The requested frame must not start until that earlier command has been applied (#967).
+void testAdvanceSeesPostsAfterDrain() {
+    struct GatedClient : FakeClient {
+        std::atomic<bool> holdBatch{true}, batchHeld{false}, commandApplied{false};
+        std::atomic<bool> frameSawCommand{false};
+        void afterCommands() override {
+            if (holdBatch.load()) {
+                batchHeld = true;
+                while (holdBatch.load()) sleepMs(1);
+            }
+        }
+        void runFrame() override {
+            frameSawCommand = commandApplied.load();
+            FakeClient::runFrame();
+        }
+    } c;
+    EmuThread e;
+    e.setPaused(true);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    e.post([] {});
+    for (int i = 0; i < 2000 && !c.batchHeld.load(); ++i) sleepMs(1);
+    CHECK(c.batchHeld.load(), "owner held after draining a command batch");
+    e.post([&] { c.commandApplied = true; });   // queued after that drain
+    std::atomic<bool> ok{false};
+    std::thread caller([&] { ok = e.advance(1); });
+    for (int i = 0; i < 2000 && !vj::EmuThreadTestAccess::advancePublished(e); ++i) sleepMs(1);
+    CHECK(vj::EmuThreadTestAccess::advancePublished(e), "advance request published while the owner is held");
+    c.holdBatch = false;
+    caller.join();
+    CHECK(ok.load() && c.frames == 1, "advance runs exactly one requested frame");
+    CHECK(c.frameSawCommand.load(), "advance frame sees every earlier queued command");
+    CHECK(e.stop(), "stop");
+}
+
 // advance(n) must wait for n frames run for it, not be satisfied by a frame already in flight.
 void testAdvanceExact() {
     EmuThread e;
@@ -440,6 +487,7 @@ int main() {
     testCallDuringShutdown();
     testCommandErrors();
     testAdvanceExact();
+    testAdvanceSeesPostsAfterDrain();
     testJoinTimeout();
     testPendingCallAbandoned();
     testWaitHook();

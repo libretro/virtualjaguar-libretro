@@ -109,6 +109,7 @@ public:
     }
 
 private:
+    friend struct EmuThreadTestAccess;   // test-only inspection of the advance/queue publication boundary
     static void runOne(Fn& f, const ErrorFn& onError) {
         try {
             f();
