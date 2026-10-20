@@ -1176,6 +1176,51 @@ static bool write_stub_rom(void)
    return true;
 }
 
+/* #1046: JTRM v8 p.74 ZMODE is an OR of inhibit conditions.
+ * Four destination lanes exercise src>dst, src==dst and src<dst across
+ * the unsigned $7FFF/$8000 boundary.  Check memory, not just SIMD output,
+ * in pixel/phrase mode with both colour and Z writes enabled. */
+static void test_zmode_truth_table(void)
+{
+   static const unsigned write_mask[8] = {15,3,13,1,14,2,12,0};
+   static const uint16_t dest_z[4] = {0x7FFF,0x8000,0x8001,0xFFFF};
+   uint8_t expected[BLIT_MODES][WINDOW];
+   unsigned mode, phrase, lane;
+   char label[64];
+   for (phrase=0; phrase<2; phrase++)
+   {
+      for (mode=0; mode<8; mode++)
+      {
+         blit_regs_reset();
+         memset(p_jaguarMainRAM+DST_ADDR,0x11,WINDOW);
+         memset(expected,0x11,sizeof(expected));
+         for (lane=0; lane<4; lane++)
+         {
+            uint16_t colour = (write_mask[mode] & (1u<<lane)) ? 0xABCD : 0x1111;
+            uint16_t z = (write_mask[mode] & (1u<<lane)) ? 0x8000 : dest_z[lane];
+            p_jaguarMainRAM[DST_ADDR+8+lane*2] = dest_z[lane]>>8;
+            p_jaguarMainRAM[DST_ADDR+9+lane*2] = dest_z[lane]&255;
+            expected[blit_mode][lane*2] = colour>>8;
+            expected[blit_mode][lane*2+1] = colour&255;
+            expected[blit_mode][8+lane*2] = z>>8;
+            expected[blit_mode][9+lane*2] = z&255;
+         }
+         wreg(A1_BASE,DST_ADDR);
+         wreg(A1_FLAGS,FLAG_PITCH(1)|FLAG_PIXSIZE(4)|FLAG_ZOFFS(1)|
+            FLAG_WIDTH(WIDTH8_M,WIDTH8_E)|FLAG_XADD(phrase?XADD_PHRASE:XADD_PIXEL));
+         wreg(A2_FLAGS,FLAG_PIXSIZE(4)|FLAG_WIDTH(WIDTH8_M,WIDTH8_E)|
+            FLAG_XADD(phrase?XADD_PHRASE:XADD_PIXEL));
+         wreg(B_SRCZINT,0x80008000u); wreg(B_SRCZINT+4,0x80008000u);
+         wreg(B_DSTZ,0xFFFFFFFFu); wreg(B_DSTZ+4,0xFFFFFFFFu);
+         wreg(B_PATD,0xABCDABCDu); wreg(B_PATD+4,0xABCDABCDu);
+         wreg(PIXLINECOUNTER,0x00010004u);
+         fire(C_PATDSEL|C_DSTENZ|C_DSTWRZ|(mode<<18));
+         snprintf(label,sizeof(label),"zmode_%u_%s",mode,phrase?"phrase":"pixel");
+         check_window(label,DST_ADDR,expected,WINDOW);
+      }
+   }
+}
+
 /* ================================================================ */
 
 int main(int argc, char **argv)
@@ -1244,6 +1289,7 @@ int main(int argc, char **argv)
       test_pitch();
       test_gouraud_output();
       test_dstenz_without_dsten();
+      test_zmode_truth_table();
       test_z_clear_32bpp();
       test_gourz_seed_first();
       test_jtrm_gourz_strip();
