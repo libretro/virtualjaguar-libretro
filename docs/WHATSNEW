@@ -12,8 +12,9 @@ experimental and OFF by default.
   4 KB local RAM; fixes consecutive multiplies in the polygon demo (#1043).
 * TOM PIT exposes live counters; unreadable TOM I/O falls back to MEMCON1
   according to the original Atari netlists (#1044, #1045).
-* ZMODE regression coverage in both engines and a bootable GT acid ROM;
-  the separately reported GT defect remains unconfirmed (#1046).
+* Fast blitter computed Z and Gouraud gradients follow A2 destination
+  lanes with DSTA2; fixes incorrect GT writes, with a bootable reproducer
+  and regression coverage in both engines (#1046, #1051).
 
 == Desktop app ==
 * TV mode: Home, Library, Game details and paused in-game menu;
