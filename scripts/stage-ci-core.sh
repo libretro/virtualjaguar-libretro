@@ -11,7 +11,9 @@ esac
 [ "${TEST_EXPORTS:?explicit production ABI required}" = 0 ]
 [ "${RELEASE_DEBUG_INFO:?explicit release flags required}" = 1 ]
 [ -s "$source_file" ]
-[ "$(git rev-parse HEAD)" = "${GITHUB_SHA:?exact workflow SHA required}" ]
+# Container checkout ownership may differ from the SDK user. Trust only this
+# checkout for this read; do not change global Git configuration.
+[ "$(git -c safe.directory="$(pwd -P)" rev-parse HEAD)" = "${GITHUB_SHA:?exact workflow SHA required}" ]
 mkdir -p "$out"
 file=$(basename "$source_file")
 command cp -f "$source_file" "$out/$file"

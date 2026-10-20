@@ -67,6 +67,23 @@ test('real staging shell and download verifier preserve production bytes and exa
   for (const c of CORES)
     assert.deepEqual(fs.readFileSync(path.join(dir, c.platform, c.file)), fs.readFileSync(path.join(dir, `ci-core-${c.platform}`, c.file)));
 });
+test('staging verifies the exact commit in a container checkout with different ownership', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vj-core-owner-'));
+  const src = path.join(dir, 'virtualjaguar_libretro_vita.a');
+  fs.writeFileSync(src, 'fixture production archive');
+  const env = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1',
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: '',
+    GITHUB_SHA: head, TEST_EXPORTS: '0', RELEASE_DEBUG_INFO: '1' };
+  const baseline = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, env });
+  assert.notEqual(baseline.status, 0);
+  assert.match(baseline.stderr.toString(), /dubious ownership/);
+  execFileSync('bash', [path.join(root, 'scripts/stage-ci-core.sh'), 'vita', src, path.join(dir, 'out')],
+    { cwd: root, env });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'out/BUILD.json'))).head_sha, head);
+  const wrong = spawnSync('bash', [path.join(root, 'scripts/stage-ci-core.sh'), 'vita', src, path.join(dir, 'wrong')],
+    { cwd: root, env: { ...env, GITHUB_SHA: 'wrong' } });
+  assert.notEqual(wrong.status, 0);
+});
 test('wrong head, platform, filename, test ABI and build flags are rejected after download', () => {
   const dir = staged(), c = CORES[0], file = path.join(dir, `ci-core-${c.platform}`, 'BUILD.json');
   const meta = JSON.parse(fs.readFileSync(file));
