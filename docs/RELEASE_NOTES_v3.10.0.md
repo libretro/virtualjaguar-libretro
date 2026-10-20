@@ -58,10 +58,12 @@ pacing remain follow-up work; this release does not claim to eliminate every rep
   partial reprogramming remains future work.
   ([#1044](https://github.com/libretro/virtualjaguar-libretro/issues/1044),
   [#1045](https://github.com/libretro/virtualjaguar-libretro/issues/1045))
-- Expanded Z-buffer comparison tests cover both blitter engines, including a bootable
-  greater-than test ROM. These cases already passed before this release; the separate
-  reported GT defect remains unconfirmed and open.
-  ([#1046](https://github.com/libretro/virtualjaguar-libretro/issues/1046))
+- The fast blitter uses the **A2 destination lanes** for computed Z and Gouraud
+  gradients when DSTA2 is selected. A bootable greater-than Z test reproduces the
+  incorrect writes before the fix and passes afterward. Regression cases cover both
+  engines, mixed pixel/phrase modes, signed increments and phrase boundaries.
+  ([#1046](https://github.com/libretro/virtualjaguar-libretro/issues/1046),
+  [#1051](https://github.com/libretro/virtualjaguar-libretro/pull/1051))
 
 ## Jaguar CD and achievements
 
@@ -130,7 +132,13 @@ Fresh cartridge (155 titles, HLE/BIOS) and CD (28 title/mode rows) matrices show
 **zero backward moves, zero added/removed rows and no new watchdog signatures**
 against v3.9.1. Existing known failures remain recorded. The acid suite ran all
 151 cases: 148 pass, three known failures, **zero regressions**, zero missing tests.
-The new GT ROM also passes with the fast blitter.
+The original GT ROM also passes with the fast blitter.
+
+The subsequent #1051 backport adds a second GT ROM that reproduces the DSTA2
+computed-Z defect. Its source candidate passed all 93 blitter checks and all 152
+acid cases with zero regressions or missing tests (three established known failures).
+RetroArch showed the reproducer failing before the fix and passing afterward; the
+supplied polygon demo compared 202,616 blits with zero pixel differences or skips.
 
 The combined app passed all **159 CTest tests**, including 53 emulation-thread tests,
 with zero failures or skips. Playlist tests cover invalid entries, per-disc state
