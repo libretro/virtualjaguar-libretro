@@ -127,7 +127,11 @@ static bool environment_cb(unsigned cmd, void *data)
             return true;
          }
          if (strcmp(var->key, "virtualjaguar_usefastblitter") == 0)
-            { var->value = "disabled"; return true; } /* accurate by default */
+         {
+            const char *v = getenv("ACID_FAST_BLITTER");
+            var->value = (v && *v) ? v : "disabled";
+            return true;
+         } /* accurate by default; allow the same ROM to test both engines */
          var->value = NULL;
          return false;
       }
