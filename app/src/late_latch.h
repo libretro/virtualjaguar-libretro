@@ -26,6 +26,12 @@ public:
     static constexpr uint64_t kPadMinNs = 1000000, kPadMaxNs = 4000000;
     static constexpr uint64_t kPadUpNs = 500000, kPadDownNs = 100000;
 
+    // Stop the whole-ms event wait 3 ms before the wake time: SDL's Cocoa run-loop wait commonly overshoots
+    // by 0.5-2 ms (#1026). Zero hands the last <4 ms (including rounding) to SDL_DelayPrecise.
+    static uint64_t eventWaitMs(uint64_t leftNs) {
+        return leftNs < 4000000 ? 0 : (leftNs - 3000000) / 1000000;
+    }
+
     // The threaded loop's nap when vsync is off or the swap did not block: until the display's next refresh, at least
     // 1 ms; a flat 4 ms when the refresh rate is unknown (0).
     static uint64_t idleNapNs(uint64_t sinceSwapNs, uint64_t displayPeriodNs) {
@@ -52,7 +58,7 @@ public:
         const uint64_t left = gridNs > nowNs ? gridNs - nowNs : 0;
         return left < 1000000ull ? 1000000ull : left;
     }
-    static constexpr unsigned kCalmRun = 120;           // on-time swaps before the pad shrinks one step
+    static constexpr unsigned kCalmRun = 600;           // ten calm seconds at 60 Hz before probing a tighter pad (#1026)
     static constexpr uint64_t kMinRoomNs = 1000000;     // a budget within this of a whole period: no wait
     static constexpr unsigned kBuilds = 60;             // build times remembered (one second at 60 Hz)
     static constexpr unsigned kOutcomes = 60;           // waits whose outcome (made the vblank / missed) is remembered
