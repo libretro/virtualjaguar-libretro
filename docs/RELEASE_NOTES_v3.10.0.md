@@ -4,7 +4,8 @@
 and optional AI players.**
 
 This is a feature release for the standalone app on macOS, Windows and Linux.
-The emulation core is unchanged from v3.9.1: the core options and v17 savestates carry over.
+It also includes MMULT and TOM register-readback corrections from AtariAge reports.
+Core options and v17 savestates carry over.
 Experimental emulation threading remains **off by default**.
 
 ## Play from the couch
@@ -43,6 +44,24 @@ The setting is under **Settings > Interface > Performance > Emulation thread** a
 effect after restarting. Keep it off to use the Tools/debugger windows or GDB: those features
 still need to move across the thread boundary. Rare host scheduling stalls and display-rate
 pacing remain follow-up work; this release does not claim to eliminate every repeated frame.
+
+## Emulation corrections
+
+- GPU and DSP **MMULT** preserve the advanced matrix-address counter and wrap
+  coefficient reads within local RAM. Consecutive multiplies now render the supplied
+  polygon demo as a filled solid instead of a line. Row/column stepping, address wrap
+  and matrix-address savestate round trips have regression coverage.
+  ([#1043](https://github.com/libretro/virtualjaguar-libretro/issues/1043))
+- TOM PIT reads expose **live timer counters**. Unreadable TOM I/O registers fall back
+  to MEMCON1, following the original Atari netlists. Timer reads use the existing
+  scheduler and have scheduler-slice resolution; independent prescaler phase during
+  partial reprogramming remains future work.
+  ([#1044](https://github.com/libretro/virtualjaguar-libretro/issues/1044),
+  [#1045](https://github.com/libretro/virtualjaguar-libretro/issues/1045))
+- Expanded Z-buffer comparison tests cover both blitter engines, including a bootable
+  greater-than test ROM. These cases already passed before this release; the separate
+  reported GT defect remains unconfirmed and open.
+  ([#1046](https://github.com/libretro/virtualjaguar-libretro/issues/1046))
 
 ## Jaguar CD and achievements
 
@@ -101,17 +120,29 @@ Windows has portable and installer packages; Linux has AppImage and Debian packa
 
 ## Validation
 
-The candidate at `7e84cf22` passed the full core suite and C89 lint on Mac Studio,
-with the private corpus present. Fresh cartridge (155 titles, HLE/BIOS) and CD
-(28 title/mode rows) matrices show **zero backward moves, zero added/removed rows and no new
-crash signatures** against v3.9.1. Existing known failures remain recorded in the matrices.
-The acid suite ran all 150 cases: 147 pass, three known failures, **zero regressions**.
+Combined candidate `344dc0bc` passed the core build, C89 lint and full core suite on
+Mac Studio with the private corpus. Three checks skipped for missing optional
+Fountain live-abort, CHSE-capable chdman and one-session Red Book fixtures/tools.
+Host-sensitive network checks ran and passed. Explicit Skyhammer/Iron Soldier 2
+clipping and Iron Soldier 1 presence checks also passed.
 
-After the playlist review fixes, the app built and passed all 159 CTest tests on Studio,
-including the 53 emulation-thread tests. Regression coverage includes invalid playlist entries,
-per-disc ownership with identical slots, warm-cache state lookup, TV resume routing, and real
-playlist state-load events in both inline and threaded modes. Focused windowed checks passed for inline/threaded
-operation, paused/settings access and fullscreen menu hover/F1/restore/persistence. POSIX
-installer hermetic tests passed 208 checks. These do not replace clean-machine Windows
-installer qualification. GitHub release CI and published-artifact checks remain release gates;
-current status is recorded in [release tracker #1036](https://github.com/libretro/virtualjaguar-libretro/issues/1036).
+Fresh cartridge (155 titles, HLE/BIOS) and CD (28 title/mode rows) matrices show
+**zero backward moves, zero added/removed rows and no new watchdog signatures**
+against v3.9.1. Existing known failures remain recorded. The acid suite ran all
+151 cases: 148 pass, three known failures, **zero regressions**, zero missing tests.
+The new GT ROM also passes with the fast blitter.
+
+The combined app passed all **159 CTest tests**, including 53 emulation-thread tests,
+with zero failures or skips. Playlist tests cover invalid entries, per-disc state
+ownership with identical slots, warm-cache lookup, TV resume routing, and actual
+inline/threaded state-load events. Windows path expectations were corrected, and
+all three previously failing Windows app jobs passed on that fix.
+
+Independent review of the incoming core changes found no defects. Source-session
+RetroArch checks confirmed the polygon demo's filled geometry, changing PIT counter
+and matching MEMCON1 values. Earlier focused Studio windowed checks covered
+inline/threaded operation, settings, fullscreen hover/F1/restore/persistence and
+native-only chrome. POSIX installer hermetic tests passed 208 checks. Clean-machine
+Windows qualification remains separate. Fresh GitHub CI and published-artifact
+checks remain release gates; current status is in
+[release tracker #1036](https://github.com/libretro/virtualjaguar-libretro/issues/1036).

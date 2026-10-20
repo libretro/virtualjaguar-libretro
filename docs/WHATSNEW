@@ -4,8 +4,16 @@ Virtual Jaguar v3.10.0 libretro
 TV mode, controller navigation, optional emulation threading and AI players.
 Full notes: docs/RELEASE_NOTES_v3.10.0.md
 
-The emulation core is unchanged from v3.9.1. Options and v17 savestates
-carry over. Emulation threading remains experimental and OFF by default.
+Options and v17 savestates carry over. Emulation threading remains
+experimental and OFF by default.
+
+== Core ==
+* GPU/DSP MMULT preserves the live matrix address and wraps within low
+  4 KB local RAM; fixes consecutive multiplies in the polygon demo (#1043).
+* TOM PIT exposes live counters; unreadable TOM I/O falls back to MEMCON1
+  according to the original Atari netlists (#1044, #1045).
+* ZMODE regression coverage in both engines and a bootable GT acid ROM;
+  the separately reported GT defect remains unconfirmed (#1046).
 
 == Desktop app ==
 * TV mode: Home, Library, Game details and paused in-game menu;
