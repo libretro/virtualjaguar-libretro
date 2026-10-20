@@ -215,6 +215,19 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 }
 
 
+/* Query a particular timer without changing the next-event selection. */
+double GetCallbackTime(void (* callback)(void), int type)
+{
+   struct Event *list = type == EVENT_MAIN ? eventList : eventListJERRY;
+   unsigned count = type == EVENT_MAIN ? eventCount : eventCountJERRY;
+   unsigned i;
+   for (i = 0; i < count; i++)
+      if (list[i].timerCallback == callback)
+         return ClampDueEventTime(list[i].eventTime);
+   return -1.0;
+}
+
+
 // If a caller invokes HandleNextEvent() when the relevant list is already
 // empty (nothing left for the preceding GetTimeToNextEvent() to have
 // found), there is nothing to dispatch: return without touching the list

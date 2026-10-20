@@ -1901,8 +1901,8 @@ static void test_tom_int1_multi_pending_selective_clear(void)
  * Pin down the byte/word write decode for the TOM PIT prescaler ($F00050)
  * and divider ($F00052). The PIT is observable through the same register
  * pair: word reads return the full 16-bit value, byte reads return the
- * high or low byte respectively. Writing zero to either field disables
- * the PIT (TOMResetPIT removes the scheduled callback); rewriting a
+ * high or low byte respectively. Reads expose live counters (#1044).
+ * Writing zero to the prescaler disables the PIT; rewriting a
  * non-zero value re-arms it. We exercise the side effect by toggling
  * through several configurations and confirming the read-back register
  * state matches the write semantics in tom.c.
@@ -1932,7 +1932,7 @@ static void test_tom_pit_reload_semantics(void)
 
    v = p_TOMReadWord(0xF00052, WHO_M68K);
    if (v == 0x0000)
-      PASS("divider=0 disables PIT, read-back=$0000");
+      PASS("disabled PIT divider reads $0000");
    else
       FAIL("divider read-back after zero write = $%04X", v);
 
@@ -2021,10 +2021,10 @@ static void test_tom_pit_reload_semantics(void)
    else
       FAIL("prescaler after clear = $%04X", v);
    v = p_TOMReadWord(0xF00052, WHO_M68K);
-   if (v == 0xCAFE)
-      PASS("divider preserved while prescaler cleared");
+   if (v == 0)
+      PASS("disabled divider counter reads zero");
    else
-      FAIL("divider after prescaler clear = $%04X (want $CAFE)", v);
+      FAIL("disabled divider counter = $%04X (want $0000)", v);
 
    /* Re-arming via word write replaces the prescaler cleanly. */
    p_TOMWriteWord(0xF00050, 0x00FF, WHO_M68K);
@@ -2033,6 +2033,12 @@ static void test_tom_pit_reload_semantics(void)
       PASS("re-arming prescaler via word write yields $00FF");
    else
       FAIL("re-armed prescaler = $%04X (want $00FF)", v);
+
+   v = p_TOMReadWord(0xF00052, WHO_M68K);
+   if (v == 0xCAFE)
+      PASS("divider reload preserved through disable/rearm");
+   else
+      FAIL("rearmed divider = $%04X (want $CAFE)", v);
 
    /* Repeated reload writes do not corrupt the register state. */
    for (i = 0; i < 4; i++)
@@ -2060,7 +2066,7 @@ static void test_tom_pit_reload_semantics(void)
 }
 
 /* ================================================================
- * Test 10i: TOM Video Timing Register Symmetry
+ * Test 10i: TOM Video Timing Register Write Latches
  * Pin byte/word read/write behavior of the 11-bit TOM video timing
  * registers VP ($F0003E), VDB ($F00046), VDE ($F00048),
  * HDB1 ($F00038), HDB2 ($F0003A), HDE ($F0003C).
@@ -2070,7 +2076,9 @@ static void test_tom_pit_reload_semantics(void)
  *    before being decomposed into two TOMWriteByte calls.
  *  - Byte writes go straight to tomRam8 (no mask), so a byte write to
  *    the high byte CAN deposit bits 11-15.
- *  - Reads are unconditional fetches from tomRam8.
+ *  - Inspect tomRam8 to verify the write latch. Hardware bus reads of
+ *    these WO registers return MEMCON1 (#1045), covered separately by
+ *    test_tom_readback; they cannot recover a value for restoration.
  *
  * The test pins:
  *   1. Word write of an in-range pattern round-trips exactly.
@@ -2100,11 +2108,11 @@ static void test_tom_video_timing_symmetry(void)
    uint16_t v;
    uint8_t  bh, bl;
 
-   printf("\n=== Test 10i: TOM Video Timing Register Symmetry ===\n");
+   printf("\n=== Test 10i: TOM Video Timing Register Write Latches ===\n");
 
    /* Snapshot original values for restoration. */
    for (i = 0; i < 6; i++)
-      saved[i] = p_TOMReadWord(regs[i].addr, WHO_M68K);
+      saved[i] = tom_get16((uint16_t)(regs[i].addr - 0xF00000));
 
    /* (1) Word write of an in-range (11-bit) pattern round-trips exactly.
     * Use a different pattern per-register so no value gets lucky. */
@@ -2112,7 +2120,7 @@ static void test_tom_video_timing_symmetry(void)
    {
       pat = (uint16_t)(0x0500 + (i * 0x11));   /* all <= $07FF */
       p_TOMWriteWord(regs[i].addr, pat, WHO_M68K);
-      v = p_TOMReadWord(regs[i].addr, WHO_M68K);
+      v = tom_get16((uint16_t)(regs[i].addr - 0xF00000));
       if (v == pat)
          PASS("%s: word write $%04X round-trips", regs[i].name, pat);
       else
@@ -2123,7 +2131,7 @@ static void test_tom_video_timing_symmetry(void)
    /* (2) Word write of an out-of-range pattern is masked to 11 bits.
     * Pick one register (VP) to exercise the mask path. */
    p_TOMWriteWord(0xF0003E, 0xF234, WHO_M68K);
-   v = p_TOMReadWord(0xF0003E, WHO_M68K);
+   v = tom_get16((uint16_t)(0xF0003E - 0xF00000));
    if (v == (0xF234 & 0x07FF))
       PASS("VP: word write $F234 masked to $%04X", v);
    else
@@ -2135,7 +2143,7 @@ static void test_tom_video_timing_symmetry(void)
     * write $05 to the high byte and expect $0534 (byte writes are
     * not masked, so writing $05 lands cleanly). */
    p_TOMWriteByte(0xF0003E, 0x05, WHO_M68K);
-   v = p_TOMReadWord(0xF0003E, WHO_M68K);
+   v = tom_get16((uint16_t)(0xF0003E - 0xF00000));
    if (v == 0x0534)
       PASS("VP: byte write to high byte updates high half only");
    else
@@ -2143,7 +2151,7 @@ static void test_tom_video_timing_symmetry(void)
 
    /* (4) Byte write to the low byte updates the low half only. */
    p_TOMWriteByte(0xF0003F, 0xAB, WHO_M68K);
-   v = p_TOMReadWord(0xF0003E, WHO_M68K);
+   v = tom_get16((uint16_t)(0xF0003E - 0xF00000));
    if (v == 0x05AB)
       PASS("VP: byte write to low byte updates low half only");
    else
@@ -2156,9 +2164,9 @@ static void test_tom_video_timing_symmetry(void)
    {
       pat = (uint16_t)(0x0640 + (i * 0x07));   /* in 11-bit range */
       p_TOMWriteWord(regs[i].addr, pat, WHO_M68K);
-      v = p_TOMReadWord(regs[i].addr, WHO_M68K);
-      bh = p_TOMReadByte(regs[i].addr, WHO_M68K);
-      bl = p_TOMReadByte(regs[i].addr + 1, WHO_M68K);
+      v = tom_get16((uint16_t)(regs[i].addr - 0xF00000));
+      bh = p_tomRam8[regs[i].addr - 0xF00000];
+      bl = p_tomRam8[regs[i].addr + 1 - 0xF00000];
       if (bh == ((v >> 8) & 0xFF) && bl == (v & 0xFF))
          PASS("%s: byte reads mirror word halves ($%02X $%02X)",
             regs[i].name, bh, bl);
@@ -2217,7 +2225,7 @@ static void test_tom_vmode_bitfields(void)
    printf("\n=== Test 10l: TOM VMODE Bit-Field Read/Write ===\n");
 
    /* (1) Snapshot original VMODE so we can restore. */
-   saved = p_TOMReadWord(addr_w, WHO_M68K);
+   saved = tom_get16((uint16_t)(addr_w - 0xF00000));
    PASS("VMODE: snapshot original value $%04X", saved);
 
    /* (2) Word write: PWIDTH=4 (field=011 -> bits 11..9 = 0x0600),
@@ -2225,7 +2233,7 @@ static void test_tom_vmode_bitfields(void)
     *     Pattern: $0601. Verify exact round-trip (no masking). */
    pat = 0x0601;
    p_TOMWriteWord(addr_w, pat, WHO_M68K);
-   v = p_TOMReadWord(addr_w, WHO_M68K);
+   v = tom_get16((uint16_t)(addr_w - 0xF00000));
    if (v == pat)
       PASS("VMODE: word write $%04X (PWIDTH=4,CRY) round-trips", pat);
    else
@@ -2243,7 +2251,7 @@ static void test_tom_vmode_bitfields(void)
     *     (MODE bits 2..1 = 11 -> $0006), VIDEN=1. Pattern: $0207. */
    pat = 0x0207;
    p_TOMWriteWord(addr_w, pat, WHO_M68K);
-   v = p_TOMReadWord(addr_w, WHO_M68K);
+   v = tom_get16((uint16_t)(addr_w - 0xF00000));
    if (v == pat)
       PASS("VMODE: word write $%04X (PWIDTH=2,RGB16) round-trips", pat);
    else
@@ -2258,7 +2266,7 @@ static void test_tom_vmode_bitfields(void)
     *     low byte (MODE/VIDEN/etc.) untouched. Current word is
     *     $0207; write $08 to high byte -> expect $0807. */
    p_TOMWriteByte(addr_h, 0x08, WHO_M68K);
-   v = p_TOMReadWord(addr_w, WHO_M68K);
+   v = tom_get16((uint16_t)(addr_w - 0xF00000));
    if (v == 0x0807)
       PASS("VMODE: byte write to high byte updates only high half");
    else
@@ -2267,7 +2275,7 @@ static void test_tom_vmode_bitfields(void)
    /* (5) Byte write to low byte changes MODE/CRY-RGB bits;
     *     high byte (PWIDTH) untouched. Write $01 (CRY+VIDEN). */
    p_TOMWriteByte(addr_l, 0x01, WHO_M68K);
-   v = p_TOMReadWord(addr_w, WHO_M68K);
+   v = tom_get16((uint16_t)(addr_w - 0xF00000));
    if (v == 0x0801)
       PASS("VMODE: byte write to low byte updates only low half");
    else
@@ -2278,8 +2286,8 @@ static void test_tom_vmode_bitfields(void)
       FAIL("VMODE: MODE bits = $%04X (want $0000)", v & 0x0006);
 
    /* (6) Byte reads at $28/$29 mirror (word>>8)&FF / word&FF. */
-   bh = p_TOMReadByte(addr_h, WHO_M68K);
-   bl = p_TOMReadByte(addr_l, WHO_M68K);
+   bh = p_tomRam8[addr_h - 0xF00000];
+   bl = p_tomRam8[addr_l - 0xF00000];
    if (bh == ((v >> 8) & 0xFF) && bl == (v & 0xFF))
       PASS("VMODE: byte reads mirror word halves ($%02X $%02X)", bh, bl);
    else
@@ -2288,7 +2296,7 @@ static void test_tom_vmode_bitfields(void)
    /* (7) Restore original VMODE so the running render loop sees the
     *     same video mode it had before this test. */
    p_TOMWriteWord(addr_w, saved, WHO_M68K);
-   v = p_TOMReadWord(addr_w, WHO_M68K);
+   v = tom_get16((uint16_t)(addr_w - 0xF00000));
    if (v == saved)
       PASS("VMODE: restored to original $%04X", saved);
    else

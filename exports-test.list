@@ -127,3 +127,10 @@ _vjPerfActive
 # directly as well as through the private frontend channel.
 _VJDebug*
 _vjDebugFrame
+
+_InitializeEventList
+_SubtractEventTimes
+_GetTimeToNextEvent
+_HandleNextEvent
+_EventStateSave
+_EventStateLoad
