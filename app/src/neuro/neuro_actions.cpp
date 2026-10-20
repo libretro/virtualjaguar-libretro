@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 namespace vj {
 namespace neuro {
@@ -194,12 +196,22 @@ ControlSet InputQueue::frame() {
 namespace {
 
 bool parseHex(const Json& j, uint32_t& out) {
-    if (j.isNumber()) return (out = (uint32_t)j.asNumber(), j.asNumber() >= 0);
+    const auto max = std::numeric_limits<uint32_t>::max();
+    if (j.isNumber()) {
+        const double value = j.asNumber();
+        if (!std::isfinite(value) || value < 0 || value > max || value != std::floor(value)) return false;
+        out = (uint32_t)value;
+        return true;
+    }
     if (!j.isString()) return false;
+    const std::string& text = j.asString();
+    const size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || text[first] == '-') return false;
     char* end = nullptr;
-    const unsigned long v = std::strtoul(j.asString().c_str(), &end, 0);
-    if (!end || *end || j.asString().empty()) return false;
-    out = (uint32_t)v;
+    errno = 0;
+    const unsigned long long value = std::strtoull(text.c_str(), &end, 0);
+    if (end == text.c_str() || *end || errno == ERANGE || value > max) return false;
+    out = (uint32_t)value;
     return true;
 }
 
