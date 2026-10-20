@@ -413,7 +413,6 @@ void App::shutdown() {
 #ifdef VJ_HAVE_NEURO
     neuroShutdown(*this);
 #endif
-    ach.shutdown();
     // Unload (it flushes SRAM) where the core lives, then stop the thread.  A core stuck inside retro_run (it should
     // not happen in phase 1: the GDB stub is locked off) must not hang the quit: give up after 3 s and exit.
     if (host.isLoaded() && !emu.callFor(std::chrono::milliseconds(3000), [this] { host.unloadContent(); })) {
@@ -422,6 +421,9 @@ void App::shutdown() {
         std::_Exit(3);   // nonzero: a wedged quit must be visible
     }
     stopEmuThread();
+    // Only now: until the emulation thread is gone it may be inside rc_client_do_frame or a posted emuIdle.  Still before
+    // video.shutdown() -- images.stop() needs the GL context.
+    ach.shutdown();
     invalidateThumbs();
     shutdownDebugTools();    // the Textures / Object list windows hold GL textures
     video.shutdown();
@@ -522,9 +524,8 @@ void App::syncDebug() {
 }
 
 // #967 phase 1 runs the emulation on its own thread before these features are thread-safe: they are switched off
-// for the run rather than racing the core (docs/app-emulation-thread-plan-phase1.md, "Phase 1 boundary").
-//   * RetroAchievements: ach.init() is skipped, so available() is false and the menu is hidden.
-//   * Netplay: netplayInit / the Netplay menu (netplay_ui.cpp).
+// for the run rather than racing the core (docs/app-emulation-thread-plan-phase1.md, "Phase 1 boundary").  Only the
+// two below remain off, until phase 3; RetroAchievements and netplay work with the thread on.
 //   * The Tools windows: they read core memory from the UI thread, and a halt would run the UI on the emulation thread.
 //   * The GDB stub: a socket halt would park the emulation thread with every call() waiting behind it.
 void App::limitFeaturesForEmuThread() {
@@ -537,7 +538,31 @@ void App::limitFeaturesForEmuThread() {
         }
         return lockedCoreOptionFor(key, value, {{proPorts[0].load(), proPorts[1].load()}});   // as wireHost()'s
     };
-    std::fprintf(stderr, "[emu] RetroAchievements, netplay and the debugger tools are off while the emulation thread is on\n");
+    std::fprintf(stderr, "[emu] the debugger tools and the GDB stub are off while the emulation thread is on\n");
+}
+
+// The emulation thread did not start: the run is inline after all, so give back what limitFeaturesForEmuThread() took.
+void App::liftFeatureLimits() {
+    debug.setThreadBlocked(false);
+    host.announceDebug = true;
+    host.optionLock = [this](const std::string& k, std::string& v) {   // wireHost()'s rule
+        return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
+    };
+    std::fprintf(stderr, "[emu] the debugger tools and the GDB stub are back on (the emulation thread did not start)\n");
+}
+
+// UI thread: 1e9 / the refresh rate of the display the window is on, or 0 when there is no window or the rate is unknown.
+uint64_t App::displayPeriodNs() {
+    if (!displayPeriodValid_) {
+        displayPeriodNs_ = 0;
+        nextPresentNs_ = 0;   // a new refresh rate starts a new deadline grid
+        if (window_) {
+            const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+            if (m && m->refresh_rate > 1.0f) displayPeriodNs_ = (uint64_t)(1e9 / (double)m->refresh_rate);
+        }
+        displayPeriodValid_ = true;
+    }
+    return displayPeriodNs_;
 }
 
 void App::noteInputLatency(uint64_t eventNs) {
@@ -565,13 +590,42 @@ void App::perfSample() {
 void App::startEmuThread() {
     if (!emuClient_) emuClient_.reset(new EmuClient(*this));
     host.post = [this](std::function<void()> fn) { emu.post(std::move(fn)); };
-    if (!emu.start(EmuThread::Mode::Threaded, *emuClient_)) {
+    emu.setWaitHook([this](double waited, unsigned tick) { busyFrame(waited, tick); });
+    testSlowCallMs_ = 0;
+    if (const char* slow = SDL_getenv("VJ_TEST_SLOW_CALL_MS")) {
+        const long ms = std::strtol(slow, nullptr, 10);
+        testSlowCallMs_ = ms < 0 ? 0u : ms > 5000 ? 5000u : (unsigned)ms;
+    }
+    // VJ_TEST_EMU_START_FAIL: take the failure branch below as a real emu.start() failure does (emu_thread_start_fallback).
+    if (SDL_getenv("VJ_TEST_EMU_START_FAIL") || !emu.start(EmuThread::Mode::Threaded, *emuClient_)) {
         host.post = nullptr;
+        emuThreadThisRun_ = false;   // Settings offers "Restart the app to apply" again
+        liftFeatureLimits();
         std::fprintf(stderr, "[emu] could not start the emulation thread; running emulation on the UI thread\n");
         return;
     }
     syncEmuFlags();
     std::fprintf(stderr, "[emu] emulation thread on\n");
+}
+
+// The emulation thread is busy with a call() the UI waits on (#967): keep the window alive and say so.  Called by
+// EmuThread::call() on this thread -- possibly in the middle of an ImGui frame -- so: no ImGui, no call(), no event
+// dispatch (SDL_PumpEvents only queues them), no read of a field only a call() writes (CoreHost counts those).
+void App::busyFrame(double waited, unsigned tick) {
+    if (tick == 0) std::fprintf(stderr, "[emu] busy: a call has taken over 250 ms\n");
+    if (!window_ || !imguiUp_) return;
+    struct UiWaiting {   // cleared again on any exit
+        CoreHost& h;
+        explicit UiWaiting(CoreHost& host) : h(host) { h.setUiWaiting(true); }
+        ~UiWaiting() { h.setUiWaiting(false); }
+    } waiting(host);
+    SDL_PumpEvents();
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(window_, &w, &h);
+    if (w > 0 && h > 0) {
+        video.drawBusy(w, h, waited);
+        SDL_GL_SwapWindow(window_);
+    }
 }
 
 void App::stopEmuThread() {
@@ -598,6 +652,7 @@ void App::emuRunOneFrame() {
     host.runFrame();
     retroTicks_.fetch_add(SDL_GetPerformanceCounter() - r0, std::memory_order_relaxed);
     runFrames_.fetch_add(1, std::memory_order_relaxed);
+    ach.emuFrame();   // rc_client_do_frame: reads game RAM, so here
     if (audio.queuedMs() > 1000.0f) audio.clear();   // a device that stopped pulling: keep the queue (and memory) bounded
     const Frame& f = host.frame();
     if (f.serial != lastSentSerial_ && f.width && f.height) {
@@ -685,6 +740,7 @@ void App::syncEmuFlags() {
 void App::threadedFrame() {
     publishInput();
     host.pinSnapshot();
+    netplay.afterFrame();   // completes an endpoint change once enough emulated frames have run
     const uint64_t fr = emu.framesRun();
     for (uint64_t k = emuFramesSeen_; k < fr; k++) perf.emulated();
     fpsWindowFrames_ += fr - emuFramesSeen_;
@@ -765,6 +821,32 @@ void App::latchWait() {
         do {
             handleEvent(e, false);
             traceWaitEvents_++;
+        } while (!quit && SDL_PollEvent(&e));
+        publishInput();
+    }
+}
+
+// Threaded, vsync off (or a swap that did not block): sleep to the next point of a display-period grid instead of a
+// period after the swap, so the loop runs at the display rate whatever the build costs (LateLatch::advanceGridNs).
+// Events that arrive during the nap are handled and published at once, as in latchWait(): input is not delayed by the nap.
+// (SDL 3.4 has no nanosecond SDL_WaitEventTimeoutNS: the wait is in whole ms, the last 2 ms a precise sleep.)
+void App::presentNap() {
+    const uint64_t period = displayPeriodNs();
+    uint64_t now = SDL_GetTicksNS();
+    nextPresentNs_ = LateLatch::advanceGridNs(nextPresentNs_, now, period);
+    const uint64_t deadline = now + LateLatch::gridNapNs(now, nextPresentNs_, period);
+    for (;;) {
+        now = SDL_GetTicksNS();
+        if (now >= deadline || quit) return;
+        const uint64_t left = deadline - now;
+        if (left < 2000000) {
+            SDL_DelayPrecise(left);
+            return;
+        }
+        SDL_Event e;
+        if (!SDL_WaitEventTimeout(&e, (Sint32)((left - 1000000) / 1000000))) continue;
+        do {
+            handleEvent(e, false);
         } while (!quit && SDL_PollEvent(&e));
         publishInput();
     }
@@ -1021,6 +1103,7 @@ bool App::openContent(const std::string& pathIn) {
 
 // The part of openContent that touches the core, and what feeds it (#967: the emulation thread runs it).
 bool App::openContentOnCore(const std::string& path, std::string& err, std::vector<std::string>& overrideErrors) {
+    if (testSlowCallMs_) SDL_Delay(testSlowCallMs_);   // VJ_TEST_SLOW_CALL_MS (smoke_busy_threaded)
     host.setDirectories(paths.system, paths.saves);
     applyBios();
     frames.clear();   // no frame of the previous game is shown after this
@@ -1181,9 +1264,12 @@ void App::reset() {
         return;
     }
     // A call, not a post: retro_reset can re-stage the CD BIOS, which the BIOS panel reads.
-    emu.call([this] { host.reset(); });
+    // ach.onReset() drives rc_client (rc_client_reset raises events): on the emulation thread, with do_frame.
+    emu.call([this] {
+        host.reset();
+        ach.onReset();
+    });
     debug.requestRefresh();
-    ach.onReset();
     toast("Reset");
 }
 
@@ -1641,6 +1727,10 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             handleDrop(path);
         }
         break;
+    case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+    case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:   // the same display switched its refresh rate
+        displayPeriodValid_ = false;   // the next displayPeriodNs() reads the new display's refresh rate
+        break;
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
         fullscreen = true;    // also the green button / Ctrl+Cmd+F on macOS, which never go through setFullscreen()
         break;
@@ -1852,7 +1942,7 @@ int App::run(const CliArgs& a) {
     }
     wireHost();
     if (emuThreadThisRun_) limitFeaturesForEmuThread();
-    else ach.init(*this, a);   // with the emulation thread on, RetroAchievements waits for #967 phase 2
+    ach.init(*this, a);   // with the emulation thread on, rc_client_do_frame runs there (Achievements::emuFrame)
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
     for (const auto& kv : a.options) host.overrideOption(kv.first, kv.second);
@@ -2064,7 +2154,8 @@ int App::runInteractive(const CliArgs& a) {
             // swap paces the rest.  Off, or a swap that returned at once with vsync on (a minimized or occluded window
             // does not block): a short nap, so a new frame still shows within a few ms without spinning a core.
             if (vsync && lateLatchOn_ && swapNs >= LateLatch::kBlockedNs) latchWait();
-            else if (!vsync || swapNs < LateLatch::kBlockedNs) SDL_DelayNS(4000000);
+            else if (!vsync || swapNs < LateLatch::kBlockedNs)
+                presentNap();
             latchedAtNs_ = SDL_GetTicksNS();
             latch_.noteWaitEnd(latchedAtNs_);
         } else {
@@ -2431,12 +2522,26 @@ int App::runHeadless(const CliArgs& a) {
         double hlCpu0 = Perf::cpuSeconds();
         if (threaded()) {
             retroTicks_.store(0);
-            for (unsigned i = 0; i < a.frames;) {
-                const unsigned n = std::min(16u, a.frames - i);   // the dummy device drains in real time: clear every 16
-                emu.advance(n);
-                i += n;
-                emu.call([this] { audio.clear(); });
-                for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+            if (ach.mockMode()) {
+                // RetroAchievements steps and pokes are frame-numbered: the same order as the inline loop below, one
+                // frame at a time (the steps, then the frame -- rc_client_do_frame runs after it, on the emulation
+                // thread -- then the UI's pump).
+                for (unsigned i = 0; i < a.frames; i++) {
+                    ach.headlessFrame(i);
+                    emu.advance(1);
+                    ach.pump();
+                    if ((i & 15) == 15) emu.call([this] { audio.clear(); });
+                    host.pinSnapshot();
+                    for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+                }
+            } else {
+                for (unsigned i = 0; i < a.frames;) {
+                    const unsigned n = std::min(16u, a.frames - i);   // the dummy device drains in real time: clear every 16
+                    emu.advance(n);
+                    i += n;
+                    emu.call([this] { audio.clear(); });
+                    for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+                }
             }
             hlRun = retroTicks_.exchange(0);
             host.pinSnapshot();
@@ -2465,7 +2570,7 @@ int App::runHeadless(const CliArgs& a) {
             if (hlCpu0 >= 0 && cpu > 0) std::snprintf(cpuTxt, sizeof cpuTxt, "%.3f s (%.1f fps)", cpu, a.frames / cpu);
             std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
                          a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, label.c_str());
-            int nr = threaded() ? 0 : netplayHeadlessCheck(*this, a);
+            int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;
         }

@@ -306,6 +306,39 @@ real thing (`iter_ms,emu_frames,swap_sync,underruns,input_lat_ms,present_lat_ms`
 iterations so the latency column has samples; `--emu-thread on|off` picks the loop, #967). `--option k=v` lists in an `ssh` command run under zsh must be built in `bash` (zsh does not
 word-split `$OPTS`; the option is then silently not applied and the harness prints no `option` line).
 
+## App emulation thread tests (#967)
+
+The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA twins and `ach_event_unit` in
+`VJAchTests.cmake`) is what the ThreadSanitizer CI job runs. Locally the label runs on the normal build:
+`ctest --test-dir app/build -C Release -L emu_thread`. The CI job (`tsan` in `.github/workflows/app.yml`) configures
+`app/build-tsan` with `-DVJ_APP_TSAN=ON -DVJ_APP_LTO=OFF` (clang, RelWithDebInfo) and runs
+`TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1 suppressions=app/tests/tsan.supp" ctest --test-dir app/build-tsan -C RelWithDebInfo -L emu_thread --output-on-failure`
+(Linux only; `sudo sysctl vm.mmap_rnd_bits=28` first on a new runner kernel). Phase 2 added, on top of the phase 1 units and `smoke_*_threaded`:
+
+- **Units:** `core_events_unit` (the core-event queue: order, bounded log lines, content switch, two threads) and
+  `ach_event_unit` (`AchEvent`, an rc_client event copied across threads; in `app/cmake/VJAchTests.cmake`).
+- **RetroAchievements twins:** every RA test is registered through `vj_ra_test()` in `VJAchTests.cmake`, which adds
+  `<name>` (inline) and `<name>_threaded` (same run with `--emu-thread on`, label `emu_thread`; fixture names and the
+  saved-cheat data dir get a `_threaded` suffix so the chains never share state). A test with `PASS` is a control: its twin
+  fails only on `owner violation` or a TSan report. `ra_reply_owner_threaded` is threaded-only: login/game-load replies must run on the core owner,
+  serialized with frames. It requires the mock login/load/session requests and rejects off-thread address reads.
+  `ra_ui_client_access` and its threaded twin overlap owner-side hardcore/reset/evaluation commands with copied
+  dashboard/profile/Discord snapshots, achievement rows, and image URLs (`--ra-step FRAME:ui:stress`). They also
+  exercise unofficial/enabled toggles and password sign-in, and retain copied UI data across signout. Without
+  the shared client lock, TSan reports a race between the hardcore getter and setter. UI code must never retain
+  rcheevos pointers: use `clientSnapshot()` or the copied rows/URLs.
+- **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
+  test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
+  still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.
+- **Netplay:** `netplay_pair_threaded`, `netplay_pair_voicemodem_threaded`, `netplay_pair_mixed` (one threaded copy
+  linked to one single-thread copy) and `netplay_no_partner_threaded` (a copy quitting with no peer exits 1, not 3).
+  They are `RUN_SERIAL` and real-time: a "no link within 30s" under heavy host load is load, so re-run them alone
+  before reading anything into it.
+- **Busy spinner:** `smoke_busy_threaded` runs with `VJ_TEST_SLOW_CALL_MS=400` (the load `call()` sleeps that long on
+  the emulation thread, max 5000) and expects `[emu] busy: a call has taken over 250 ms`.
+- **Failed start:** `emu_thread_start_fallback` runs with `VJ_TEST_EMU_START_FAIL=1`, which takes the real failure
+  branch of `App::startEmuThread`: the run falls back inline and the debugger and GDB limits are lifted.
+
 ## Headless framebuffer caveat
 
 The miniretro harness in `test/regression_test.sh` doesn't expose the same composited

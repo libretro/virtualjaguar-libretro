@@ -328,7 +328,8 @@ private:
     void shutdown();
     void loadConfig();
     void wireHost();
-    void limitFeaturesForEmuThread();   // #967 phase 1: RetroAchievements, netplay, the debugger tools, the GDB stub
+    void limitFeaturesForEmuThread();   // #967: the debugger tools and the GDB stub are off while the thread is on
+    void liftFeatureLimits();           // undoes it when the thread did not start (nothing is loaded yet)
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
@@ -372,6 +373,10 @@ private:
     bool badOverride_ = false;   // a --option key/value the loaded core does not accept
     bool sdlUp_ = false;
     SDL_Window* window_ = nullptr;
+    uint64_t displayPeriodNs();                  // the window's display refresh period, cached; 0 when unknown
+    uint64_t displayPeriodNs_ = 0;
+    bool displayPeriodValid_ = false;            // cleared when the window moves to another display
+    uint64_t nextPresentNs_ = 0;                 // threaded, vsync off: when the next iteration is due (a deadline grid)
     SDL_GLContext gl_ = nullptr;
     bool imguiUp_ = false;
     float dropX_ = 0.0f, dropY_ = 0.0f;   // last SDL_EVENT_DROP_POSITION (window coordinates)
@@ -408,6 +413,7 @@ private:
     unsigned latchChecks_ = 0;
     bool latchLogged_ = false;
     void latchWait();
+    void presentNap();
     void latchLog();
     void latchUpdatePeriod();
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
@@ -424,6 +430,7 @@ private:
     struct EmuClient;                          // EmuThread::Client -> App (app.cpp)
     std::unique_ptr<EmuClient> emuClient_;
     void startEmuThread();                     // after the window and the audio device; stays inline if it cannot
+    void busyFrame(double waited, unsigned tick);   // EmuThread::call's wait hook (>= 250 ms): the spinner frame
     void stopEmuThread();                      // exits the process if the thread is stuck in the core
     void emuRunOneFrame();                     // emulation thread: one frame, then publish it
     double emuAudioQueuedMs() const;           // mode A's audio clock, or -1 for none
@@ -470,6 +477,7 @@ private:
     std::string dataDirArg_;          // --data-dir as given (forwarded to a New Window copy)
     std::string headlessTmp_;
     unsigned headlessLoads_ = 0;
+    unsigned testSlowCallMs_ = 0;     // VJ_TEST_SLOW_CALL_MS: the load call() sleeps this long (smoke_busy_threaded)
     std::string biosOnce_[3];         // a one-off BIOS boot's file per role (bootBios): beats everything, until the next load
     std::string biosCli_[3];          // --cart-bios / --cd-bios: beats the saved choice for the whole run
     unsigned bootTarget_ = 0;         // what a no-content boot enters (VJ_BOOT_*)

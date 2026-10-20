@@ -16,13 +16,13 @@
 //              (setAddressViaOption(false)).
 //   status     the core's private event channel (src/core/vj_frontend_ext.h): link UP / DOWN,
 //              wire speed, the link stats every 5 s while traffic flows.  Without that
-//              channel, the "[NETLINK] ..." log lines tapped in CoreHost::onLog say the same.
+//              channel, the "[NETLINK] ..." log lines tapped through CoreHost::onUiEvent say the same.
 //   discovery  the core finds LAN hosts itself (UDP beacon, jlink_discover.c) and splices
 //              them into the host option's value list with a second
 //              SET_CORE_OPTIONS_V2; CoreHost re-captures it, we read it back.
 // Nothing from the core's JLink* internals is called.
 //
-// Single-threaded: every method runs on the thread that drives CoreHost.
+// Every method runs on the UI thread.
 #pragma once
 
 #include <chrono>
@@ -100,7 +100,8 @@ public:
     // (the core re-reads them every frame); the check keeps the window correct if one ever is.
     bool start(const NetSettings& s, std::string& err, std::vector<std::string>* restartKeys = nullptr);
     void stop();
-    // Call once per emulated frame (after CoreHost::runFrame).
+    // Call on the UI thread, once per emulated frame or once per UI iteration.  It completes an endpoint change once
+    // the core has read "disabled" for long enough, counted in emulated frames.
     void afterFrame();
 
     // ---- state -------------------------------------------------------------
@@ -124,10 +125,13 @@ public:
     // in Join or Host mode).
     std::vector<DiscoveredHost> discovered() const;
 
-    // ---- what the core tells us (CoreHost::onLog / CoreHost::onEvent) --------------
+    // ---- what the core tells us (CoreHost::onUiEvent: log lines and vj_events) -----
+    // The app's tap (CoreHost::onUiEvent, on the UI thread): drops what the core said before the last start() /
+    // stop() / bounce (its epoch), then reads each log line with onCoreLog and each vj_event with onCoreEvent.
     // The core's private event channel is authoritative when the core said HELLO (the app's CoreHost
-    // answers it); the log tap then only handles the lines that have no event (open errors, discovery
-    // trouble).  A core that never said HELLO is read the old way, entirely from its log text.
+    // answers it); the log lines then only handle what has no event (open errors, discovery trouble).  A core
+    // that never said HELLO is read the old way, entirely from its log text.
+    void onUiEvent(const CoreEvent& e);
     void onCoreLog(int level, const char* text);
     void onCoreEvent(const vj_event& e);
     // How a typed address reaches the core.  true (default): the host option takes it.  false: the core's
@@ -167,7 +171,9 @@ private:
     // (UARTSetLinkMode only acts on a mode change), so such a change bounces through
     // "disabled" for a couple of frames first.
     bool bouncing_ = false;
-    int bounceFrames_ = 0;
+    uint64_t bounceFrom_ = 0;   // CoreHost::frameCount() when the bounce began
+    unsigned bounceNeed_ = 2;   // emulated frames "disabled" must be read for
+    uint32_t minEpoch_ = 0;     // core lines and events from before this epoch are stale
     NetSettings bounceTarget_;
 
     LinkState state_ = LinkState::Off;

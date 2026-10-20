@@ -3,6 +3,7 @@
 //
 //   vj_emu_thread_test
 #include "emu_thread.h"
+#include "precise_sleep.h"
 
 #include <algorithm>
 #include <atomic>
@@ -160,13 +161,23 @@ void testPauseAdvance() {
 // 4x a 10 ms period needs ~2.5 ms waits; on a host whose sleeps or clock are much coarser than that, the ratio check
 // below measures the platform, not EmuThread, so it is reported instead of asserted.
 struct TimerCaps {
-    double sleepMs = 0, clockStepMs = 0;
+    double sleepMs = 0, clockStepMs = 0, preciseMs = 0, preciseMinMs = 0;
 };
 TimerCaps measureTimers() {
     TimerCaps t;
     const Clock::time_point s0 = Clock::now();
     for (int i = 0; i < 20; i++) sleepMs(1);
     t.sleepMs = since(s0) * 1000.0 / 20.0;
+    // Mean and shortest of 20 waits: a starved host still has some on-time wakes, a platform whose timers are coarse
+    // (every wake ~15.6 ms) has none, so the check below asserts on the shortest.
+    const Clock::time_point p0 = Clock::now();
+    t.preciseMinMs = 1e9;
+    for (int i = 0; i < 20; i++) {
+        const Clock::time_point w0 = Clock::now();
+        vj::preciseSleepNs(1000000);
+        t.preciseMinMs = std::min(t.preciseMinMs, since(w0) * 1000.0);
+    }
+    t.preciseMs = since(p0) * 1000.0 / 20.0;
     double step = 1e9;
     for (int i = 0; i < 50; i++) {
         const Clock::time_point a = Clock::now();
@@ -206,8 +217,11 @@ void testPacingWallClock() {
     const double dtf = since(t0);
     const bool ffOk = ff / dtf > 1.5 * normalRate;
     const TimerCaps caps = measureTimers();
-    std::printf("note: timers here: sleep_for(1 ms) takes %.2f ms, steady_clock steps %.4f ms; fast-forward %.1f vs "
-                "normal %.1f frames/s\n", caps.sleepMs, caps.clockStepMs, ff / dtf, normalRate);
+    std::printf("note: timers here: sleep_for(1 ms) takes %.2f ms, preciseSleepNs(1 ms) takes %.2f ms (min %.2f), "
+                "steady_clock steps %.4f ms; fast-forward %.1f vs normal %.1f frames/s\n", caps.sleepMs, caps.preciseMs,
+                caps.preciseMinMs, caps.clockStepMs, ff / dtf, normalRate);
+    CHECK(caps.preciseMinMs < 4.0, "preciseSleepNs(1 ms) takes at least %.2f ms (mean %.2f ms)", caps.preciseMinMs,
+          caps.preciseMs);
     if (!ffOk && (caps.sleepMs > 6.0 || caps.clockStepMs > 1.0)) {
         std::printf("note: fast-forward not checked: this host's timers are too coarse to pace 2.5 ms frames\n");
     } else if (!ffOk && n < expect * 0.6) {   // the host could not even sustain real time: no headroom to show
@@ -373,6 +387,42 @@ void testAdvanceExact() {
     CHECK(e.stop(), "stop");
 }
 
+// #967 phase 2: a call() slower than 250 ms runs the wait hook on the caller (the UI draws a spinner there); a fast
+// one never does; the hook is never re-entered and never runs on the emulation thread.
+void testWaitHook() {
+    EmuThread e;
+    FakeClient c;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    std::atomic<int> calls{0};
+    std::atomic<int> firstTicks{0};
+    std::atomic<bool> onEmu{false};
+    std::atomic<bool> nested{false};
+    std::atomic<int> depth{0};
+    e.setWaitHook([&](double waited, unsigned tick) {
+        if (depth.fetch_add(1) != 0) nested = true;
+        if (e.onEmuThread()) onEmu = true;
+        if (tick == 0) firstTicks++;
+        if (waited < 0.24) nested = true;   // (abuse the flag: never before 250 ms)
+        calls++;
+        depth--;
+    });
+    e.call([] { return 0; });
+    CHECK(calls.load() == 0, "a fast call runs no hook (%d)", calls.load());
+    e.call([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(450));
+        return 0;
+    });
+    CHECK(calls.load() >= 3, "a 450 ms call runs the hook repeatedly from 250 ms (%d)", calls.load());
+    CHECK(firstTicks.load() == 1, "tick 0 once per call (%d)", firstTicks.load());
+    CHECK(!onEmu.load(), "never on the emulation thread");
+    CHECK(!nested.load(), "never re-entered, never before 250 ms");
+    const int before = calls.load();
+    e.post([] { std::this_thread::sleep_for(std::chrono::milliseconds(400)); });   // a slow post: nobody waits on it
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    CHECK(calls.load() == before, "posts never run the hook");
+    CHECK(e.stop(), "stop");
+}
+
 }  // namespace
 
 int main() {
@@ -392,6 +442,7 @@ int main() {
     testAdvanceExact();
     testJoinTimeout();
     testPendingCallAbandoned();
+    testWaitHook();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

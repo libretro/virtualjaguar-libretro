@@ -470,8 +470,12 @@ static void testActions() {
 
         CheatManager cm;
         std::vector<std::string> sent;
-        cm.resetSink = [&] { sent.push_back("reset"); };
-        cm.setSink = [&](unsigned, bool on, const char* code) { sent.push_back(std::string(on ? "on " : "off ") + code); };
+        cm.commit = [&](CheatBatch b) {
+            for (const CheatOp& o : b) {
+                if (o.reset) sent.push_back("reset");
+                else sent.push_back(std::string(o.enabled ? "on " : "off ") + o.code);
+            }
+        };
         bool hardcore = false;
         cm.blocked = [&] { return hardcore; };
         cm.setStateDir(tmp.string() + "/");

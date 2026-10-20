@@ -10,6 +10,7 @@
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 #   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
 #   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock
+#   core_events_unit      CoreEventQueue: order, bounded log lines, content switch, two threads
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
@@ -18,7 +19,9 @@
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
-#   *_threaded limits     RetroAchievements, netplay, the debugger and the GDB stub are off while threaded
+#   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
+#   emu_thread_start_fallback  a failed thread start lifts the debugger/GDB limits and runs inline
+#   *_threaded limits     the debugger and the GDB stub are off while threaded
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
 function(vj_emu_thread_warnings target)
@@ -130,6 +133,15 @@ set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threa
     PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
 
+# A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline and the
+# debugger tools and the GDB stub come back on.
+add_test(NAME emu_thread_start_fallback
+    COMMAND ${CMAKE_COMMAND} -E env VJ_TEST_EMU_START_FAIL=1
+            $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_start_fallback PROPERTIES TIMEOUT 120 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are back on .the emulation thread did not start."
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
 # The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the
 # staged-BIOS record), and the menus read the disc list from the pinned snapshot.
 add_test(NAME smoke_disc_swap_threaded
@@ -182,12 +194,7 @@ set_tests_properties(smoke_m3u_playlist_threaded PROPERTIES TIMEOUT 300 LABELS e
 add_test(NAME emu_thread_limits
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "RetroAchievements, netplay and the debugger tools are off while the emulation thread is on"
-    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
-add_test(NAME netplay_refused_threaded
-    COMMAND virtualjaguar --headless --emu-thread on --netplay host --frames 5 "${VJ_ROMS}/yarc.j64")
-set_tests_properties(netplay_refused_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "netplay: not available while the emulation thread is on"
+    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are off while the emulation thread is on"
     FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 add_test(NAME gdb_locked_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
@@ -202,6 +209,13 @@ vj_emu_thread_warnings(vj_late_latch_test)
 add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
 set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
+add_executable(vj_core_events_test tests/core_events_test.cpp)
+target_include_directories(vj_core_events_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(vj_core_events_test PRIVATE Threads::Threads)
+vj_emu_thread_warnings(vj_core_events_test)
+add_test(NAME core_events_unit COMMAND vj_core_events_test)
+set_tests_properties(core_events_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
 if(VJ_APP_TSAN)
     add_executable(vj_tsan_canary tests/tsan_canary.cpp)
     target_link_libraries(vj_tsan_canary PRIVATE Threads::Threads)
@@ -211,3 +225,12 @@ if(VJ_APP_TSAN)
         COMMAND ${CMAKE_COMMAND} -E env TSAN_OPTIONS=halt_on_error=1:abort_on_error=0 $<TARGET_FILE:vj_tsan_canary>)
     set_tests_properties(tsan_canary PROPERTIES WILL_FAIL TRUE LABELS emu_thread TIMEOUT 60)
 endif()
+
+# A load call slower than 250 ms (VJ_TEST_SLOW_CALL_MS stalls it on the emulation thread) runs the wait hook on the UI
+# thread; headless, that logs once (windowed, it swaps the spinner frame).
+add_test(NAME smoke_busy_threaded
+    COMMAND ${CMAKE_COMMAND} -E env VJ_TEST_SLOW_CALL_MS=400
+            $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 30 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_busy_threaded PROPERTIES TIMEOUT 120 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "\\[emu\\] busy: a call has taken over 250 ms"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")

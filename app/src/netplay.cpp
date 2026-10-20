@@ -220,6 +220,7 @@ bool Netplay::applyNow(const NetSettings& s, std::string& err, std::vector<std::
     haveStats_ = false;
     openError_.clear();
     discoveryError_.clear();
+    minEpoch_ = host_.eventEpochBump();
     return true;
 }
 
@@ -249,7 +250,9 @@ bool Netplay::start(const NetSettings& s, std::string& err, std::vector<std::str
         // connected link to another would never report the new one.
         setOverride(kModeKey, modeValue(NetRole::Off), nullptr);
         bouncing_ = true;
-        bounceFrames_ = 2;
+        minEpoch_ = host_.eventEpochBump();
+        bounceFrom_ = host_.frameCount();
+        bounceNeed_ = host_.threaded() ? 3u : 2u;   // threaded: one more for a frame already running when the post was queued
         bounceTarget_ = s;
         want_ = s;
         state_ = LinkState::Waiting;
@@ -279,17 +282,18 @@ void Netplay::clearAll() {
     speedup_ = 1;
     openError_.clear();
     discoveryError_.clear();
+    minEpoch_ = host_.eventEpochBump();
 }
 
 void Netplay::stop() { clearAll(); }
 
 void Netplay::afterFrame() {
     if (!bouncing_) return;
-    if (--bounceFrames_ > 0) return;
+    const uint64_t f = host_.frameCount();
+    if (f >= bounceFrom_ && f - bounceFrom_ < bounceNeed_) return;   // (f < bounceFrom_: a reload restarted the count)
     bouncing_ = false;
     std::string err;
-    NetSettings t = bounceTarget_;
-    if (!applyNow(t, err, nullptr)) {
+    if (!applyNow(bounceTarget_, err, nullptr)) {
         openError_ = err;
         state_ = LinkState::Off;
     }
@@ -298,6 +302,19 @@ void Netplay::afterFrame() {
 // ---------------------------------------------------------------------------------
 // what the core says
 // ---------------------------------------------------------------------------------
+void Netplay::onUiEvent(const CoreEvent& e) {
+    if (e.epoch < minEpoch_) return;
+    if (e.kind == CoreEvent::Kind::Log) {
+        onCoreLog(e.level, e.text.c_str());
+    } else if (e.kind == CoreEvent::Kind::Event) {
+        vj_event v{};
+        v.type = e.type;
+        v.a = e.a, v.b = e.b, v.c = e.c, v.d = e.d;
+        v.s = e.text.empty() ? nullptr : e.text.c_str();
+        onCoreEvent(v);
+    }
+}
+
 void Netplay::onCoreLog(int /*level*/, const char* text) {
     if (!text) return;
     const char* tag = std::strstr(text, "[NETLINK] ");

@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 namespace vj {
@@ -13,12 +14,23 @@ class AudioRing {
 public:
     explicit AudioRing(size_t frames = 16384) : buf_(frames ? frames * 2 : 2, 0), cap_(frames ? frames : 1) {}
 
+    // push, latest, peak, clear and counters may be called across the audio/UI threads.
     // Interleaved L,R samples, `frames` pairs.  Only the newest `capacity()` frames are kept.
     void push(const int16_t* interleaved, size_t frames);
     size_t capacity() const { return cap_; }
-    size_t available() const { return filled_; }          // frames held now (<= capacity)
-    uint64_t totalFrames() const { return total_; }       // frames ever pushed
-    void clear() { head_ = filled_ = 0; total_ = 0; }
+    size_t available() const {   // frames held now (<= capacity)
+        std::lock_guard<std::mutex> lock(mu_);
+        return filled_;
+    }
+    uint64_t totalFrames() const {   // frames ever pushed
+        std::lock_guard<std::mutex> lock(mu_);
+        return total_;
+    }
+    void clear() {
+        std::lock_guard<std::mutex> lock(mu_);
+        head_ = filled_ = 0;
+        total_ = 0;
+    }
 
     // The newest min(n, available()) frames, oldest first.  Returns how many.
     size_t latest(size_t n, std::vector<int16_t>& left, std::vector<int16_t>& right) const;
@@ -29,6 +41,7 @@ public:
     Peak peak(size_t n) const;     // over the newest n frames
 
 private:
+    mutable std::mutex mu_;       // audio producer vs UI reads/clear; capacity is immutable
     std::vector<int16_t> buf_;     // interleaved
     size_t cap_;
     size_t head_ = 0;              // next write frame index

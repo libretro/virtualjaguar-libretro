@@ -115,14 +115,12 @@ void discordTick(App& app) {
         else if (ns.role == NetRole::Join) in.netplay = app.netplay.link() == LinkState::Up ? "joined" : "waiting";
 
         // RetroAchievements: progress and the game's page.
-        rc_client_t* c = app.ach.client();
-        const rc_client_game_t* g = c && rc_client_is_game_loaded(c) ? rc_client_get_game_info(c) : nullptr;
-        if (g && g->id != 0) {
-            in.raGameId = g->id;
+        const auto snapshot = app.ach.clientSnapshot();
+        if (snapshot.gameId != 0) {
+            in.raGameId = snapshot.gameId;
             in.hardcore = app.ach.hardcoreActive();
-            if (app.ach.signedIn()) {
-                rc_client_user_game_summary_t s;
-                rc_client_get_user_game_summary(c, &s);
+            if (snapshot.signedIn) {
+                const auto& s = snapshot.summary;
                 in.achTotal = s.num_core_achievements;
                 in.achUnlocked = s.num_unlocked_achievements;
             }

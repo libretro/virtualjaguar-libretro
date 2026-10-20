@@ -358,6 +358,60 @@ void testModel() {
     CHECK(b.misses * 100 <= b.iters, "at most 1%% missed vblanks (%u of %u)", b.misses, b.iters);
 }
 
+// #967 final-review minor 3: with vsync off (or a swap that did not block), the threaded loop naps until the display's
+// next refresh instead of a flat 4 ms (which presented at ~250 Hz for nothing).
+void testIdleNap() {
+    const uint64_t ms = 1000000ull;
+    const uint64_t p60 = 16666667ull;
+    CHECK(vj::LateLatch::idleNapNs(0, p60) == p60, "just swapped: a whole period");
+    CHECK(vj::LateLatch::idleNapNs(10 * ms, p60) == p60 - 10 * ms, "the rest of the period");
+    CHECK(vj::LateLatch::idleNapNs(16 * ms, p60) == 1 * ms, "never under 1 ms (do not spin)");
+    CHECK(vj::LateLatch::idleNapNs(40 * ms, p60) == 1 * ms, "late already: 1 ms");
+    CHECK(vj::LateLatch::idleNapNs(0, 0) == 4 * ms, "refresh unknown: the old 4 ms");
+}
+
+// The vsync-off loop presents on a deadline grid: the nap ends at the grid point, not a period after the swap, so
+// the loop period is the display period whatever the build costs (a 2 ms build used to make it period + 2 ms: 53 Hz).
+void testPresentGrid() {
+    const uint64_t ms = 1000000ull;
+    const uint64_t p60 = 16666667ull;
+    const auto run = [&](uint64_t buildNs, bool grid, unsigned iters) {   // returns the time of iteration `iters`
+        uint64_t t = 1000 * ms, g = 0;   // t = the iteration's start
+        for (unsigned i = 0; i < iters; i++) {
+            const uint64_t swapEnd = t + buildNs;
+            if (grid) {
+                g = vj::LateLatch::advanceGridNs(g, swapEnd, p60);
+                t = swapEnd + vj::LateLatch::gridNapNs(swapEnd, g, p60);
+            } else {
+                t = swapEnd + vj::LateLatch::idleNapNs(0, p60);
+            }
+        }
+        return t - 1000 * ms;
+    };
+    const uint64_t withGrid = run(2 * ms, true, 600);
+    const uint64_t flat = run(2 * ms, false, 600);
+    CHECK(withGrid > 600 * p60 - 2 * p60 && withGrid < 600 * p60 + 2 * p60, "grid: 600 iterations take 600 display periods");
+    CHECK(flat > 600 * (p60 + 2 * ms) - ms, "(the old nap: period + build per iteration)");
+
+    // First call anchors on the swap; a stall of more than a period re-anchors at now (no burst of catch-up frames).
+    uint64_t g = vj::LateLatch::advanceGridNs(0, 5000 * ms, p60);
+    CHECK(g == 5000 * ms + p60, "first call: one period after the swap");
+    g = vj::LateLatch::advanceGridNs(g, 5000 * ms + p60 + 3 * ms, p60);   // 3 ms behind: keep the grid, catch up
+    CHECK(g == 5000 * ms + 2 * p60, "slightly behind: the grid does not move");
+    g = vj::LateLatch::advanceGridNs(g, 5000 * ms + 400 * ms, p60);   // a 400 ms stall
+    CHECK(g == 5000 * ms + 400 * ms, "a stall: re-anchored at now");
+    // Ahead of the clock by more than a period (early wakes on input): pulled back to one period from now.
+    g = vj::LateLatch::advanceGridNs(6000 * ms + 10 * p60, 6000 * ms, p60);
+    CHECK(g == 6000 * ms + p60, "ahead: at most one period");
+
+    // The nap: until the grid point, 1 ms at least, the old 4 ms when the refresh rate is unknown.
+    CHECK(vj::LateLatch::gridNapNs(100 * ms, 110 * ms, p60) == 10 * ms, "the rest of the grid step");
+    CHECK(vj::LateLatch::gridNapNs(100 * ms, 100 * ms + 300000ull, p60) == 1 * ms, "never under 1 ms");
+    CHECK(vj::LateLatch::gridNapNs(100 * ms, 90 * ms, p60) == 1 * ms, "behind: 1 ms");
+    CHECK(vj::LateLatch::gridNapNs(100 * ms, 0, 0) == 4 * ms, "refresh unknown: 4 ms");
+    CHECK(vj::LateLatch::advanceGridNs(123, 456, 0) == 0, "refresh unknown: no grid");
+}
+
 }  // namespace
 
 int main() {
@@ -373,6 +427,8 @@ int main() {
     testLateStartsAreCapped();
     testOffNominal();
     testModel();
+    testIdleNap();
+    testPresentGrid();
     std::printf(g_fail ? "late_latch_test: %d FAILED\n" : "late_latch_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

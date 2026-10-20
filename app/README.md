@@ -545,9 +545,11 @@ the frames really shown and splits their timing. With the latch's vblank grid lo
 grid's phase once whenever frame ends would straddle the take point, so each 60.05-on-60 Hz crossing is one skip rather
 than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
 
-While it is on, this version switches off RetroAchievements, netplay, the Tools (debugger) windows and the GDB stub
-option. They move to the emulation thread in later phases. A log line `[core_host] owner violation: ...` means a UI
-path still called into the core directly: that is a bug, please report it.
+While it is on, this version switches off the Tools (debugger) windows and the GDB stub option; they move to the
+emulation thread in the next phase. RetroAchievements and netplay work as usual: achievements are checked on the
+emulation thread after every frame, and link play's peer waits block only that thread. A load or a state save that
+takes longer than a quarter of a second shows a spinner instead of freezing the window. A log line
+`[core_host] owner violation: ...` means a UI path still called into the core directly: that is a bug, please report it.
 
 ## Running several instances
 
@@ -1021,6 +1023,9 @@ The tests labelled `emu_thread` (`ctest -L emu_thread`) cover the emulation thre
 | `src/emu_thread.*`, `src/emu_commands.h` | the emulation thread (#967): its loop, `post` / `call` / `advance`, the ordered command queue |
 | `src/pacing_clock.h` | mode A pacing: the core's period trimmed by the audio queue (the sound card as master clock) |
 | `src/frame_exchange.h`, `src/frame.h` | finished frames from the emulation thread to the UI (triple buffer, content epochs) |
+| `src/emu_snapshot.h` | what the emulation thread publishes for the UI: the per-frame snapshot and the core-event stream (log lines, events, option writes) |
+| `src/ach_event.*` | an rc_client event copied, so it can be applied on the UI thread |
+| `src/precise_sleep.h` | short sleeps that honour sub-tick durations (a high-resolution waitable timer on Windows) |
 | `src/input_snapshot.h` | the newest input from the UI thread to the core's poll (pointer motion exactly once) |
 | `src/late_latch.h` | the late latch: when the threaded window loop stops waiting before a vblank (vblank tracking, UI build budget) |
 | `src/input.*` | keyboard and gamepad snapshots to libretro input |

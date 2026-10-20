@@ -28,71 +28,16 @@
 #include <vector>
 
 #include "libretro.h"
+#include "emu_snapshot.h"
 #include "frame.h"
 #include "vj_frontend_ext.h"   // the core's private event channel
 #include "vj_debug_iface.h"     // ...and its debug interface (docs/app-debug-tools.md)
 
 namespace vj {
 
-struct OptionValue {
-    std::string value;
-    std::string label;
-};
-
-struct OptionDef {
-    std::string key;
-    std::string desc;            // flat-menu title
-    std::string descCategorized; // title when shown under a category (may be empty)
-    std::string info;
-    std::string infoCategorized;
-    std::string categoryKey;
-    std::string defaultValue;
-    std::vector<OptionValue> values;
-};
-
-struct OptionCategory {
-    std::string key;
-    std::string desc;
-    std::string info;
-};
-
-struct OsdMessage {
-    std::string text;
-    uint32_t durationMs = 3000;
-    int level = RETRO_LOG_INFO;
-};
-
 struct ControllerType {
     std::string desc;
     unsigned id = 0;
-};
-
-struct DiscInfo {
-    bool available = false;   // a CD session: CD content, or the CD BIOS with no disc (count is then 0)
-    bool ejected = false;
-    unsigned count = 0;
-    unsigned index = 0;
-    std::vector<std::string> labels;
-};
-
-// What SET_CORE_OPTIONS_V2 / _DISPLAY last said, plus the app's locks: the part of the option state the core writes.
-struct OptionTable {
-    std::vector<OptionCategory> categories;
-    std::vector<OptionDef> defs;
-    std::map<std::string, bool> visibility;
-    std::map<std::string, std::string> locked;
-};
-
-// The per-frame state the emulation thread publishes for the UI thread (#967, design section 3).  Phase 1 holds what
-// the UI reads every frame; phase 2 adds events, achievements and debug views and moves it to its own file.
-struct EmuSnapshot {
-    std::shared_ptr<const OptionTable> options;   // replaced only when the table changed
-    unsigned optionPushes = 0;
-    double fps = 0, sampleRate = 0;
-    float aspect = 4.0f / 3.0f;
-    DiscInfo disc;
-    std::string contentPath, contentName;   // the disc in the tray (CoreHost::contentPath); with `disc`
-    unsigned discSwaps = 0;
 };
 
 class CoreHost {
@@ -119,9 +64,20 @@ public:
     bool announceExtensions = true;
     unsigned crashEvents() const { return crashEvents_.load(); }   // crash-watchdog events since the content loaded
     std::function<void(const vj_event&)> onEvent;   // string pointers are valid for the call only
+    // What the core says, for the UI thread (#967 phase 2): every log line and every event, in order.  Inline it is
+    // called right where the core says it; threaded, pinSnapshot() calls it on the UI thread.  Set before the first
+    // load.  onLog / onEvent stay synchronous on the core's thread (the --disc-insert check relies on that).
+    std::function<void(const CoreEvent&)> onUiEvent;
+    // A new epoch for what the core says from now on (UI thread).  The bump rides the command queue, so every line
+    // and event the core emits after the commands queued before it carries an epoch >= the returned value: a
+    // consumer that just changed the core's settings drops what came before (Netplay::onUiEvent).
+    uint32_t eventEpochBump();
+    uint32_t eventEpoch() const { return epoch_; }   // owner side
+    // The core's log tap for onUiEvent (logCb, which lives outside the class, calls it): queues or delivers one line.
+    void emitLogLine(int level, const std::string& line);
     // True once the core's HELLO was answered in the current session: the events are then authoritative
     // and the matching log lines need no parsing.
-    bool eventsActive() const { return helloSeen_; }
+    bool eventsActive() const { noteWaitingRead("eventsActive"); return helloSeen_; }
     uint64_t eventCount() const { return eventsSeen_; }
 
     // ---- BIOS selection (VJ_ENV_GET_BIOS_PATH / VJ_ENV_GET_BOOT_TARGET, vj_frontend_ext.h) ----
@@ -146,7 +102,9 @@ public:
         bool rejected = false;     // a file the app named was refused (VJ_EVT_BIOS_REJECTED)
         std::string rejectedPath;
     };
-    const StagedBios& stagedBios(unsigned role) const { return staged_[role >= 1 && role <= 2 ? role : 0]; }
+    const StagedBios& stagedBios(unsigned role) const {
+        noteWaitingRead("stagedBios");
+        return staged_[role >= 1 && role <= 2 ? role : 0]; }
 
     // ---- debug tools (VJ_CAP_DEBUG / VJ_ENV_SET_DEBUG_IFACE, vj_debug_iface.h) ----
     // The core hands over its debug interface once per session, right after the HELLO.  Off: the HELLO
@@ -154,7 +112,7 @@ public:
     bool announceDebug = true;
     // The interface of the current session, or null (before the first load, after an unload, or when the
     // core never sent it).  Valid until the next unload; every call through it is made on this thread.
-    const vj_debug_iface* debugIface() const { return debugIface_; }
+    const vj_debug_iface* debugIface() const { noteWaitingRead("debugIface"); return debugIface_; }
     // Called when the interface arrives (non-null) and just before it goes away on an unload (null).
     std::function<void(const vj_debug_iface*)> onDebugIface;
     // True while the core is inside retro_run().  A debugger halt parks the core there and runs the UI,
@@ -179,7 +137,7 @@ public:
     // Boot the console with an empty cartridge slot (SET_SUPPORT_NO_GAME).
     bool loadNoContent(std::string& err);
     void unloadContent();
-    bool isLoaded() const { return loaded_; }
+    bool isLoaded() const { noteWaitingRead("isLoaded"); return loaded_; }
     // What is running: the opened file (an .m3u: its first disc), or after a disc swap the disc in the tray (a swap moves it only once the new
     // disc has booted; an open tray or a failed insert leaves it alone).  Save states, achievements, cheats and the
     // window title follow it.
@@ -188,8 +146,8 @@ public:
     // What was opened, which a disc swap never changes.  The .srm is named after it: the core keeps its save RAM (the
     // EEPROM pair and the Memory Track, libretro.c) across an insert and never reloads it, so the file must stay the
     // one it was read from.  A restart reopens it too.  An .m3u playlist is what was opened: one .srm per set.
-    const std::string& loadedPath() const { return loadedPath_; }
-    const std::string& loadedName() const { return loadedName_; }
+    const std::string& loadedPath() const { noteWaitingRead("loadedPath"); return loadedPath_; }
+    const std::string& loadedName() const { noteWaitingRead("loadedName"); return loadedName_; }
     unsigned discSwaps() const { return onOwner() ? discSwaps_ : ui_.discSwaps; }   // counts moves of contentPath
     // An .m3u's discs, resolved against its folder.  False (with `err`) when it cannot be read, lists nothing, or an
     // entry is missing or not a CD image -- a disc that is not there would still register and fail only when picked.
@@ -291,7 +249,10 @@ public:
     std::string saveRamPath() const;
 
     // ---- controllers / discs ---------------------------------------------
-    const std::vector<std::vector<ControllerType>>& controllerPorts() const { return controllerPorts_; }
+    const std::vector<std::vector<ControllerType>>& controllerPorts() const {
+        noteWaitingRead("controllerPorts");
+        return controllerPorts_;
+    }
     void setControllerDevice(unsigned port, unsigned device);
     DiscInfo discInfo();
     void discSetEject(bool eject);
@@ -310,8 +271,10 @@ public:
     //     publishSnapshot()s after each frame and each command batch);
     //   * option values are mirrored: a write updates the UI's copy and calls onOptionChanged (config.ini) right
     //     there, and reaches the core's copy through `post` at the next frame boundary.  The UI's copy
-    //     (uiUser_ / uiSession_) is written only on the UI thread, plus -- inside an EmuThread::call(), while the
-    //     UI thread waits -- by the owner-side branch of the same method;
+    //     (uiUser_ / uiSession_) is written only on the UI thread: by the off-owner branches, and by pinSnapshot(),
+    //     which applies the option events the owner-side branches queued (a write made inside an EmuThread::call());
+    //     onOptionChanged is called there too, never on the emulation thread;
+    //   * what the core says (log lines, vj_events) reaches onUiEvent the same way, at the next pin;
     //   * setControllerDevice and sendKeyEvent are queued through `post`.  discSetEject / discSetIndex are queued
     //     too if called off the owner, but the app's callers wrap them in an EmuThread::call(): a disc insert can
     //     re-stage the CD BIOS, which writes stagedBios (see below).  discAppend is owner-only;
@@ -333,6 +296,9 @@ public:
     void publishSnapshot();   // emulation thread: after each frame and each command batch
     void pinSnapshot();       // UI thread, once per UI iteration; what the readers return stays valid until the next pin
     unsigned ownerViolations() const { return ownerViolations_.load(); }
+    // The UI thread is waiting in an EmuThread::call() and its wait hook is running (the busy spinner): the fields only
+    // a call() writes may be changing, so reading one off the owner now is a violation (noteWaitingRead).
+    void setUiWaiting(bool w) { uiWaiting_.store(w); }
 
 private:
     CoreHost() = default;
@@ -417,10 +383,17 @@ private:
     DiscInfo discInfoLive();
     int appendDiscImage(const std::string& path);   // discAppend without the loaded / owner checks (loadContent)
     const OptionTable& uiTable() const;
+    std::atomic<bool> uiWaiting_{false};
+    bool noteWaitingRead(const char* what) const;   // true (counted, logged once) for a call()-guarded read while the UI waits
     bool noteOffOwner(const char* what) const;   // true (counted, logged once) when called off the owner
     void queue(std::function<void()> fn);         // through `post`, or now when there is none
     void applyUserValue(const std::string& key, const std::string* value);   // null = erase; the core's copy only
     void applyOverride(const std::string& key, const std::string* value);    // null = clear; the core's copy only
+    void emitUi(CoreEvent e);           // the core's thread: queue for the UI (threaded) or deliver now (inline)
+    void applyUiEvent(CoreEvent& e);    // UI thread, from pinSnapshot()
+    CoreEventQueue uiEvents_;
+    uint32_t epoch_ = 0;     // owner side: stamped on every event
+    uint32_t uiEpoch_ = 0;   // UI side: the last epoch handed out
     std::atomic<std::thread::id> owner_{std::thread::id()};
     mutable std::atomic<unsigned> ownerViolations_{0};
     mutable std::mutex violationMu_;

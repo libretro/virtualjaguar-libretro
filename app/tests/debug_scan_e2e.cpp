@@ -139,8 +139,12 @@ int main(int argc, char** argv) {
     session.setContentLoaded(true);
     CheatManager cm;
     bool hardcore = false;
-    cm.resetSink = [] { retro_cheat_reset(); };
-    cm.setSink = [](unsigned index, bool enabled, const char* code) { retro_cheat_set(index, enabled, code); };
+    cm.commit = [](CheatBatch b) {
+        for (const CheatOp& o : b) {
+            if (o.reset) retro_cheat_reset();
+            else retro_cheat_set(o.index, o.enabled, o.code.c_str());
+        }
+    };
     cm.blocked = [&] { return hardcore; };
     cm.setStateDir(t + "cheats/");
     GameIdentity id;

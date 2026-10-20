@@ -8,6 +8,7 @@ namespace vj {
 
 void AudioRing::push(const int16_t* in, size_t frames) {
     if (!in || frames == 0) return;
+    std::lock_guard<std::mutex> lock(mu_);
     total_ += frames;
     if (frames >= cap_) {   // only the tail fits
         in += (frames - cap_) * 2;
@@ -24,6 +25,7 @@ void AudioRing::push(const int16_t* in, size_t frames) {
 }
 
 size_t AudioRing::latest(size_t n, std::vector<int16_t>& l, std::vector<int16_t>& r) const {
+    std::lock_guard<std::mutex> lock(mu_);
     n = std::min(n, filled_);
     l.resize(n);
     r.resize(n);
@@ -38,6 +40,7 @@ size_t AudioRing::latest(size_t n, std::vector<int16_t>& l, std::vector<int16_t>
 
 AudioRing::Peak AudioRing::peak(size_t n) const {
     Peak p;
+    std::lock_guard<std::mutex> lock(mu_);
     n = std::min(n, filled_);
     size_t start = (head_ + cap_ - n) % cap_;
     for (size_t i = 0; i < n; i++) {

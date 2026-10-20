@@ -137,6 +137,13 @@ jobs:
     - name: Smoke tests (headless, SDL dummy drivers)
       run: ctest --test-dir app/build -C Release --output-on-failure -E shaders_gl
 
+    # Informational: emu_thread_unit's timer notes (sleep precision, fast-forward rate).  ctest shows a passing
+    # test's output only with --verbose; this is where a coarse-timer runner (MinGW) is visible (#967).
+    - name: Emulation-thread timer report
+      if: always()
+      continue-on-error: true
+      run: ctest --test-dir app/build -C Release -R "^emu_thread_unit$" --verbose
+
     # Informational: the emulation speed of this build, taken from the app's own
     # timer (CPU seconds per frame over the run), so optimisation changes (LTO,
     # flags) can be compared across the five platforms from the job logs.

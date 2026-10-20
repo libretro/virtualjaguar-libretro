@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     fs::path tmp = fs::temp_directory_path(ec) / ("vj-core-host-thread-" + std::to_string((long long)std::time(nullptr)));
     fs::create_directories(tmp / "saves", ec);
     fs::create_directories(tmp / "system", ec);
+    const std::thread::id uiThread = std::this_thread::get_id();
     CoreHost& host = CoreHost::instance();
     host.setDirectories((tmp / "system").string() + "/", (tmp / "saves").string() + "/");
     host.inputPoll = [] {};
@@ -248,6 +249,88 @@ int main(int argc, char** argv) {
             host.optionLock = nullptr;
             host.inputState = [](unsigned, unsigned, unsigned, unsigned) -> int16_t { return 0; };
         });
+    }
+
+    // ---- phase 2: the core-event stream ----
+    {
+        std::vector<std::thread::id> logOn;
+        std::vector<std::string> lines;
+        host.onUiEvent = [&](const CoreEvent& e) {
+            if (e.kind != CoreEvent::Kind::Log) return;
+            logOn.push_back(std::this_thread::get_id());
+            lines.push_back(e.text);
+        };
+        std::string lerr;
+        CHECK(emu.call([&] { return host.loadContent(rom, lerr); }));   // the core logs while it loads
+        CHECK(lines.empty());                                           // nothing before the pin
+        host.pinSnapshot();
+        CHECK(!lines.empty());
+        bool allUi = true;
+        for (std::thread::id t : logOn) allUi = allUi && t == uiThread;
+        CHECK(allUi);                                                   // never on the emulation thread
+        host.onUiEvent = nullptr;
+    }
+    {
+        // An option write made on the owner (inside a call) reaches the mirror and the config on the UI thread, at
+        // the next pin -- never on the emulation thread.
+        changed.clear();
+        changedOn = std::thread::id();
+        emu.call([&] { host.setOptionValue(key, "disabled"); });
+        CHECK(changed.empty());
+        host.pinSnapshot();
+        CHECK(changed.size() == 1 && changed[0] == std::string(key) + "=disabled");
+        CHECK(changedOn == uiThread);
+        CHECK(host.userOptions().count(key) && host.userOptions().at(key) == "disabled");
+        emu.call([&] { host.resetOptionToDefault(key); });
+        host.pinSnapshot();
+        CHECK(changed.size() == 2 && changed[1] == std::string(key) + "=<erased>");
+        CHECK(host.userOptions().count(key) == 0);
+        emu.call([&] { host.overrideOption(key, "enabled"); });
+        host.pinSnapshot();
+        CHECK(host.optionOverridden(key));
+        emu.call([&] { host.clearOverride(key); });
+        host.pinSnapshot();
+        CHECK(!host.optionOverridden(key));
+    }
+    {
+        // While the UI waits in a call (the spinner's hook runs), the fields only a call() writes may be changing:
+        // reading one there is a bug, counted like any other owner violation.
+        const unsigned v0 = host.ownerViolations();
+        host.setUiWaiting(true);
+        (void)host.isLoaded();
+        (void)host.stagedBios(2);
+        host.setUiWaiting(false);
+        CHECK(host.ownerViolations() == v0 + 2);
+        (void)host.isLoaded();   // not waiting: a direct read is fine
+        CHECK(host.ownerViolations() == v0 + 2);
+    }
+    {
+        // The epoch rides the command queue: a call queued after the bump sees it.
+        const uint32_t e1 = host.eventEpochBump();
+        const uint32_t e2 = host.eventEpochBump();
+        CHECK(e2 > e1);
+        CHECK(emu.call([&] { return host.eventEpoch(); }) == e2);
+    }
+    {
+        // A reload drops what the previous game said (log lines, vj_events) but keeps the user's option writes.
+        changed.clear();
+        std::vector<std::string> said;
+        host.onUiEvent = [&](const CoreEvent& e) {
+            if (e.kind == CoreEvent::Kind::Log) said.push_back(e.text);
+        };
+        std::string lerr;
+        emu.call([&] {
+            host.emitLogLine(RETRO_LOG_INFO, "stale-before-reload");   // said by the previous game, still queued
+            host.setOptionValue(key, "disabled");
+            return host.loadContent(rom, lerr);
+        });
+        host.pinSnapshot();
+        bool staleSeen = false;
+        for (const std::string& l : said) staleSeen = staleSeen || l == "stale-before-reload";
+        CHECK(!staleSeen);   // the load dropped it
+        CHECK(!said.empty());   // ... while what the new game says reaches the tap (the tap is wired)
+        CHECK(changed.size() == 1 && changed[0] == std::string(key) + "=disabled");
+        host.onUiEvent = nullptr;
     }
 
     emu.call([&] { host.unloadContent(); });

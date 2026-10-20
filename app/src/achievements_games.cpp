@@ -84,6 +84,7 @@ struct AchGamesCallbacks {
 // ---- picture URLs -------------------------------------------------------------------------
 
 std::string Achievements::gameIconUrl() const {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     const rc_client_game_t* g = client_ ? rc_client_get_game_info(client_) : nullptr;
     if (!g || g->id == 0) return "";
     char buf[256];
@@ -91,6 +92,7 @@ std::string Achievements::gameIconUrl() const {
 }
 
 std::string Achievements::avatarUrl(std::string& version) const {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     version.clear();
     const rc_client_user_t* u = client_ ? rc_client_get_user_info(client_) : nullptr;
     if (!u) return "";
@@ -101,6 +103,7 @@ std::string Achievements::avatarUrl(std::string& version) const {
 }
 
 bool Achievements::achievementRows(std::vector<ra::AchRow>& rows) const {
+    std::lock_guard<std::recursive_mutex> lock(clientMu_);
     rows.clear();
     rc_client_t* c = client_;
     const rc_client_game_t* g = c ? rc_client_get_game_info(c) : nullptr;
@@ -185,15 +188,19 @@ void Achievements::refreshGames(bool manual) {
     gamesIncomingOk_.clear();
     gamesAutoTried_ = true;
     gamesPending_ = 2;
-    for (uint32_t console : {ra::kConsoleJaguar, ra::kConsoleJaguarCD})
-        rc_client_begin_fetch_game_list(client_, console, &AchGamesCallbacks::gameList, (void*)(uintptr_t)console);
+    coreCall([&] {
+        for (uint32_t console : {ra::kConsoleJaguar, ra::kConsoleJaguarCD})
+            rc_client_begin_fetch_game_list(client_, console, &AchGamesCallbacks::gameList, (void*)(uintptr_t)console);
+    });
     if (signedIn()) {
         progressAutoTried_ = true;
         progressOk_ = false;
         progress_.clear();
         progressPending_ = 2;
-        for (uint32_t console : {ra::kConsoleJaguar, ra::kConsoleJaguarCD})
-            rc_client_begin_fetch_all_user_progress(client_, console, &AchGamesCallbacks::allProgress, nullptr);
+        coreCall([&] {
+            for (uint32_t console : {ra::kConsoleJaguar, ra::kConsoleJaguarCD})
+                rc_client_begin_fetch_all_user_progress(client_, console, &AchGamesCallbacks::allProgress, nullptr);
+        });
     }
     (void)manual;
 }
@@ -270,8 +277,10 @@ void Achievements::gamesTabShown() {
         progressOk_ = false;
         progress_.clear();
         progressPending_ = 2;
-        for (uint32_t console : {ra::kConsoleJaguar, ra::kConsoleJaguarCD})
-            rc_client_begin_fetch_all_user_progress(client_, console, &AchGamesCallbacks::allProgress, nullptr);
+        coreCall([&] {
+            for (uint32_t console : {ra::kConsoleJaguar, ra::kConsoleJaguarCD})
+                rc_client_begin_fetch_all_user_progress(client_, console, &AchGamesCallbacks::allProgress, nullptr);
+        });
     }
 }
 

@@ -5,6 +5,8 @@
 #include "blitter_log.h"
 #include "debug_mock.h"
 
+#include <atomic>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -275,6 +277,40 @@ static void testAudioRing() {
     CHECK(peakDb(0) == -96.0f && std::fabs(peakDb(1) - (-90.309f)) < 1e-2f && peakDb(1, -80.0f) == -80.0f);
 }
 
+// The UI may inspect/clear the capture while the emulation thread delivers stereo blocks.
+// Removing capture synchronization must fail under TSan (and can corrupt the paired channels).
+static void testAudioRingConcurrent() {
+    AudioRing ring(128);
+    std::atomic<bool> start{false}, done{false};
+    std::thread producer([&] {
+        while (!start.load()) std::this_thread::yield();
+        for (int i = 1; i <= 20000; ++i) {
+            const int16_t samples[] = {(int16_t)i, (int16_t)-i};
+            ring.push(samples, 1);
+        }
+        done = true;
+    });
+    start = true;
+    bool paired = true, bounded = true;
+    std::vector<int16_t> left, right;
+    do {
+        ring.latest(128, left, right);
+        bounded = bounded && left.size() <= 128 && ring.available() <= 128;
+        for (size_t i = 0; i < left.size(); ++i)
+            paired = paired && left[i] == -right[i];
+        ring.peak(128);
+        ring.totalFrames();
+        ring.clear();
+    } while (!done.load());
+    producer.join();
+    CHECK(paired && bounded);
+    ring.clear();
+    const int16_t final[] = {123, -456};
+    ring.push(final, 1);
+    CHECK(ring.latest(1, left, right) == 1 && left[0] == 123 && right[0] == -456);
+    CHECK(ring.totalFrames() == 1);
+}
+
 static void testPeakMeter() {
     PeakMeter m;
     m.update(16384, 0.016f);                       // up at once
@@ -298,6 +334,7 @@ int main() {
     testTrackerRingWrap();
     testTrackerRestart();
     testAudioRing();
+    testAudioRingConcurrent();
     testPeakMeter();
     std::printf("debug_blitter_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

@@ -4,11 +4,11 @@
 //                                       window makes reach the core (loopback / host / join, device,
 //                                       a port outside the option's list, changing the endpoint while
 //                                       connected), and the log tap reports link UP / DOWN.
-//   vj_netplay_test pair EXE ROM [voicemodem]
+//   vj_netplay_test pair EXE ROM [DEVICE [HOST JOIN]]  (HOST / JOIN: --emu-thread on|off for that child, default off)
 //                                       two app processes on localhost, one Host and one Join through
 //                                       the command-line twin of the window; both must report the link UP.
 //                                       Does not use UDP broadcast: the client is given the address.
-//   vj_netplay_test control EXE ROM     the same with nobody to talk to: must FAIL (so the check can fail).
+//   vj_netplay_test control EXE ROM [THREAD]  the same with nobody to talk to: must FAIL (so the check can fail).
 //   vj_netplay_test discovery EXE ROM   a host and a client that must FIND it by LAN discovery and join
 //                                       it.  Exit 77 (ctest: skipped) when this machine does not deliver
 //                                       UDP broadcast to itself -- CI runners often do not.
@@ -262,6 +262,37 @@ static void testParsers() {
 }
 
 // ---- the real core ------------------------------------------------------------------------------
+// #967 phase 2: the app's tap is CoreHost::onUiEvent.  What the core said before the last start()/stop() is stale:
+// a LINK_UP from the previous session must not mark the new one up.
+static void testEpochFilter() {
+    vj::CoreHost& host = vj::CoreHost::instance();
+    vj::Netplay np(host);
+    np.setAddressViaOption(true);
+    vj::NetSettings s;
+    s.role = vj::NetRole::Host;
+    std::string err;
+    CHECK(np.start(s, err));   // nothing loaded: applied at once, with a new epoch
+    const uint32_t now = host.eventEpoch();
+    vj::CoreEvent up;
+    up.kind = vj::CoreEvent::Kind::Event;
+    up.type = VJ_EVT_LINK_UP;
+    up.text = "tcp_server";
+    up.epoch = now - 1;   // said before this start
+    np.onUiEvent(up);
+    CHECK(np.link() == vj::LinkState::Waiting);
+    up.epoch = now;
+    np.onUiEvent(up);
+    CHECK(np.link() == vj::LinkState::Up);
+    CHECK(np.linkUpEvents() == 1);
+    vj::CoreEvent line;
+    line.kind = vj::CoreEvent::Kind::Log;
+    line.text = "[NETLINK] failed to open the port";   // a line with no event: read even with the event channel on
+    line.epoch = now;
+    np.onUiEvent(line);
+    CHECK(!np.notices().empty());
+    np.stop();
+}
+
 static void testCore(const std::string& rom) {
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec) / ("vj-netplay-test-" + std::to_string((long long)std::time(nullptr)));
@@ -388,6 +419,25 @@ static void testCore(const std::string& rom) {
         CHECK(runUntil(host, np, [&] { return np.link() == LinkState::Up; }));
         CHECK_EQ(np.linkDevice(), "jaglink");
         if (partner != kBadSock) closeSock(partner);
+    }
+
+    // An endpoint change while content runs: "disabled" for at least 2 emulated frames, then the new endpoint --
+    // counted in frames, whenever afterFrame() is called.
+    {
+        NetSettings s2 = np.settings();
+        s2.port = s2.port + 1;
+        std::string err2;
+        CHECK(np.start(s2, err2));
+        CHECK(host.optionValueFor("virtualjaguar_netlink", "") == "disabled");
+        np.afterFrame();   // no frame has run yet
+        np.afterFrame();
+        CHECK(host.optionValueFor("virtualjaguar_netlink", "") == "disabled");
+        host.runFrame();
+        np.afterFrame();
+        CHECK(host.optionValueFor("virtualjaguar_netlink", "") == "disabled");
+        host.runFrame();
+        np.afterFrame();
+        CHECK(host.optionValueFor("virtualjaguar_netlink", "") != "disabled");
     }
 
     // ---- join: a typed address goes straight into the core's host option; the port too ------------
@@ -572,7 +622,8 @@ static bool waitBoth(Child& a, Child& b, int seconds) {
     return true;
 }
 
-static int runPair(const std::string& exe, const std::string& rom, const std::string& device) {
+static int runPair(const std::string& exe, const std::string& rom, const std::string& device,
+                   const std::string& hostThread = "off", const std::string& joinThread = "off") {
     const int port = pickFreePort();
     const int disc = pickFreePort(port);
     if (!port || !disc) {
@@ -581,11 +632,15 @@ static int runPair(const std::string& exe, const std::string& rom, const std::st
     }
     setEnv("VJ_DISC_PORT", std::to_string(disc));   // inherited by both children
     const std::string p = std::to_string(port);
-    Child host = spawn(appArgs(exe, rom, {"--netplay", "host", "--netplay-port", p, "--netplay-device", device,
-                                          "--netplay-expect-link", "30"}));
+    std::vector<std::string> hostX = {"--netplay", "host", "--netplay-port", p, "--netplay-device", device,
+                                      "--netplay-expect-link", "30"};
+    std::vector<std::string> joinX = {"--netplay", "join", "--netplay-addr", "127.0.0.1", "--netplay-port", p,
+                                      "--netplay-device", device, "--netplay-expect-link", "30"};
+    if (hostThread == "on") hostX.insert(hostX.end(), {"--emu-thread", "on"});
+    if (joinThread == "on") joinX.insert(joinX.end(), {"--emu-thread", "on"});
+    Child host = spawn(appArgs(exe, rom, hostX));
     SDL_Delay(300);
-    Child join = spawn(appArgs(exe, rom, {"--netplay", "join", "--netplay-addr", "127.0.0.1", "--netplay-port", p,
-                                          "--netplay-device", device, "--netplay-expect-link", "30"}));
+    Child join = spawn(appArgs(exe, rom, joinX));
     bool finished = waitBoth(host, join, 90);
     reap(host);
     reap(join);
@@ -651,22 +706,32 @@ static int runPairShared(const std::string& exe, const std::string& rom) {
     return g_fail ? 1 : 0;
 }
 
-static int runControl(const std::string& exe, const std::string& rom) {
+static int runControl(const std::string& exe, const std::string& rom, const std::string& thread = "off") {
     const int port = pickFreePort();
     const int disc = pickFreePort(port);
     setEnv("VJ_DISC_PORT", std::to_string(disc));
     const std::string p = std::to_string(port);
     // Nobody is listening on the port, and nobody joins the host: neither may claim a link.
-    Child join = spawn(appArgs(exe, rom, {"--netplay", "join", "--netplay-addr", "127.0.0.1", "--netplay-port", p,
-                                          "--netplay-expect-link", "3"}));
-    Child host = spawn(appArgs(exe, rom, {"--netplay", "host", "--netplay-port", std::to_string(pickFreePort(port)),
-                                          "--netplay-expect-link", "3"}));
+    std::vector<std::string> joinX = {"--netplay", "join", "--netplay-addr", "127.0.0.1", "--netplay-port", p,
+                                      "--netplay-expect-link", "3"};
+    std::vector<std::string> hostX = {"--netplay", "host", "--netplay-port", std::to_string(pickFreePort(port)),
+                                      "--netplay-expect-link", "3"};
+    if (thread == "on") {
+        joinX.insert(joinX.end(), {"--emu-thread", "on"});
+        hostX.insert(hostX.end(), {"--emu-thread", "on"});
+    }
+    Child join = spawn(appArgs(exe, rom, joinX));
+    Child host = spawn(appArgs(exe, rom, hostX));
     bool finished = waitBoth(host, join, 60);
     reap(host);
     reap(join);
     CHECK(finished);
     CHECK(join.code != 0 && join.code != -2);   // exited by itself, with a failure
     CHECK(host.code != 0 && host.code != -2);
+    if (thread == "on") {
+        CHECK(join.code == 1);   // 3 = the emulation thread did not stop within 3 s (a wedged quit)
+        CHECK(host.code == 1);
+    }
     return g_fail ? 1 : 0;
 }
 
@@ -706,7 +771,7 @@ static int runDiscovery(const std::string& exe, const std::string& rom) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: vj_netplay_test unit ROM | pair EXE ROM [voicemodem] | control EXE ROM | discovery EXE ROM\n");
+        std::fprintf(stderr, "usage: vj_netplay_test unit ROM | pair EXE ROM [DEVICE [HOST JOIN]] | control EXE ROM [THREAD] | discovery EXE ROM\n");
         return 2;
     }
     netInit();
@@ -714,14 +779,15 @@ int main(int argc, char** argv) {
     int rc = 0;
     if (mode == "unit" && argc >= 3) {
         testParsers();
+        testEpochFilter();
         testCore(argv[2]);
         rc = g_fail ? 1 : 0;
     } else if (mode == "pair" && argc >= 4) {
-        rc = runPair(argv[2], argv[3], argc >= 5 ? argv[4] : "jaglink");
+        rc = runPair(argv[2], argv[3], argc >= 5 ? argv[4] : "jaglink", argc >= 6 ? argv[5] : "off", argc >= 7 ? argv[6] : "off");
     } else if (mode == "pair-shared" && argc >= 4) {
         rc = runPairShared(argv[2], argv[3]);
     } else if (mode == "control" && argc >= 4) {
-        rc = runControl(argv[2], argv[3]);
+        rc = runControl(argv[2], argv[3], argc >= 5 ? argv[4] : "off");
     } else if (mode == "discovery" && argc >= 4) {
         rc = runDiscovery(argv[2], argv[3]);
     } else {
