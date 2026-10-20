@@ -51,6 +51,9 @@ struct ChtSet {
     std::string stem;        // file name without extension
     std::string path;
     std::vector<ChtCheat> cheats;
+    bool revisionBound = false;
+    uint32_t romCrc = 0;
+    std::string restriction; // malformed binding, or loaded cartridge does not match
 };
 
 // A set found in a library folder (not parsed until it is selected).

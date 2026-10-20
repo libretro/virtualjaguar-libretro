@@ -635,6 +635,13 @@ Database entries are RetroArch memory cheats (decimal address/value, width in
 `memory_search_size`); they become the core's hex codes, value little-endian in
 memory as RetroArch writes it. `cheatN_enable` is ignored: nothing starts on.
 
+For community-authored C cheat sources, the optional offline
+[source converter](../tools/cheat-import/README.md) can produce `.cht` freezes
+without an emulator binary or SDK. It reports unsupported operations, leaves
+every cheat disabled, and binds the set to the matching cartridge CRC32.
+The app blocks revision mismatches and malformed/duplicate guards; legacy
+unbound `.cht` files continue to work. No community script pack is bundled.
+
 ## RetroAchievements
 
 **Achievements > Sign in...** takes your RetroAchievements user name and password
