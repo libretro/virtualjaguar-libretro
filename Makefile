@@ -2714,6 +2714,11 @@ test/test_m68k_prefetch: test/test_m68k_prefetch.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_m68k_prefetch.c -ldl
 
+
+# TOM hardware readback regression (#1044, #1045).
+test/test_tom_readback: test/test_tom_readback.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) -o $@ $< -ldl
+
 test/test_gpu_ops: test/test_gpu_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_gpu_ops.c -ldl
@@ -3709,7 +3714,3 @@ jaguar-demos-baseline:
 
 print-%:
 	@echo '$*=$($*)'
-
-# TOM hardware readback regression (#1044, #1045).
-test/test_tom_readback: test/test_tom_readback.c test/test_framework.h
-	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) -o $@ $< -ldl
