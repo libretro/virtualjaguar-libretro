@@ -32,8 +32,9 @@ PRs targeting `master` directly trigger a friendly comment from `.github/workflo
   `test_audio_clipping` / `test_audio_presence` only if the ROMs are present and
   prints `SKIP` otherwise — and still exits 0, so on a machine without them a
   silencing regression passes unnoticed. Iron Soldier 1 presence should sit near
-  RMS 1175 (envelope 200–25000); Skyhammer and Iron Soldier 2 should still be
-  EXPECTED-FAIL on clipping, i.e. loud-broken rather than newly silent.
+  RMS 1175 (envelope 200–25000); Skyhammer and Iron Soldier 2 must pass
+  clipping cleanly (the old expected-failure guidance predates the MMULT fix);
+  retain the separate presence check so silence cannot pass as clean audio.
 - The acid gate is `python3 test/acid/scripts/check-baseline.py <results.log>
   test/acid/BASELINE.txt` reporting `Regressions: 0`. `make -C test/acid test`
   exits non-zero by design (it returns the FAIL count), so its exit status is

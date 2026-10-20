@@ -893,7 +893,7 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 - **Textures**: browse the core's texture dump, export a tile, replace its art with your own PNG.
 - **Audio scope**: waveforms and peak meters of the audio the core produces.
 - **F9** breaks into the game (continue when halted), **F10** steps while halted; a "HALTED" bar shows over the picture.
-  The CPU debugger window is still to come.
+  The CPU debugger covers the 68000, GPU and DSP, with registers, disassembly, breakpoints and step-over.
 
 Writes go to RAM freely; hardware registers need "Allow register writes"; the CD registers (`$DFFF00-$DFFFFF`) and
 `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD` are never written from here.  Everything greys out (and closes) while

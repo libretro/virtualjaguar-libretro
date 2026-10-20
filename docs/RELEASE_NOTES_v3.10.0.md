@@ -96,6 +96,15 @@ Windows has portable and installer packages; Linux has AppImage and Debian packa
 
 ## Validation
 
-Release-candidate validation is in progress. The release PR records the exact candidate,
-core/app tests, audio checks, acid baseline and fresh cartridge/CD boot-matrix comparisons.
-A tag is withheld until the release gates pass.
+The candidate at `7e84cf22` passed the full core suite and C89 lint on Mac Studio,
+with the private corpus present. Fresh cartridge (155 titles, HLE/BIOS) and CD
+(28 title/mode rows) matrices show **zero backward moves, zero added/removed rows and no new
+crash signatures** against v3.9.1. Existing known failures remain recorded in the matrices.
+The acid suite ran all 150 cases: 147 pass, three known failures, **zero regressions**.
+
+The app built and passed CTest on Studio (159 registered tests; network discovery skipped),
+including the 53 emulation-thread tests. Focused windowed checks passed for inline/threaded
+operation, paused/settings access and fullscreen menu hover/F1/restore/persistence. POSIX
+installer hermetic tests passed 208 checks. These do not replace clean-machine Windows
+installer qualification. GitHub release CI and published-artifact checks remain release gates;
+current status is recorded in [release tracker #1036](https://github.com/libretro/virtualjaguar-libretro/issues/1036).
