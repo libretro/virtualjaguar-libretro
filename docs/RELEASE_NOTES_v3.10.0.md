@@ -45,6 +45,16 @@ effect after restarting. Keep it off to use the Tools/debugger windows or GDB: t
 still need to move across the thread boundary. Rare host scheduling stalls and display-rate
 pacing remain follow-up work; this release does not claim to eliminate every repeated frame.
 
+## Community cheat conversion
+
+An optional offline source converter turns supported community-authored C memory
+freezes into `.cht` files, including grouped writes and bounded loops. Unsupported
+operations are reported for a manual port. Generated sets start disabled and the
+app checks the cartridge CRC32 before applying them. Pinned community sources are
+tested in CI; no community cheat pack, emulator binary, or SDK is bundled.
+([#1052](https://github.com/libretro/virtualjaguar-libretro/pull/1052),
+[conversion guide](https://github.com/libretro/virtualjaguar-libretro/blob/v3.10.0/tools/cheat-import/README.md))
+
 ## Emulation corrections
 
 - GPU and DSP **MMULT** preserve the advanced matrix-address counter and wrap
