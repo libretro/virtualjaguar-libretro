@@ -113,34 +113,34 @@ fresh dated section; do not retrofit old ones.
 
 | Title | Mode | Score | Stage | Watchdog | PC evidence |
 |---|---|---|---|---|---|
-| Baldies (USA) (Rev 1).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:75f7d1ed68d4 --> |
-| Baldies (USA) (Rev 1).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20303B unique_pcs=65 final_pc=$05FE88 <!-- build:75f7d1ed68d4 --> |
-| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=26709B unique_pcs=47 final_pc=$007794 <!-- build:75f7d1ed68d4 --> |
-| Battle Morph (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28474B unique_pcs=69 final_pc=$022052 <!-- build:75f7d1ed68d4 --> |
-| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17926B unique_pcs=51 final_pc=$004FD0 <!-- build:75f7d1ed68d4 --> |
-| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19577B unique_pcs=62 final_pc=$004FD2 <!-- build:75f7d1ed68d4 --> |
-| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18477B unique_pcs=74 final_pc=$00967A <!-- build:75f7d1ed68d4 --> |
-| Dragon's Lair (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20802B unique_pcs=79 final_pc=$004C10 <!-- build:75f7d1ed68d4 --> |
-| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21068B unique_pcs=52 final_pc=$009222 <!-- build:75f7d1ed68d4 --> |
-| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=16336B unique_pcs=69 final_pc=$0088DA <!-- build:75f7d1ed68d4 --> |
-| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=6150B unique_pcs=48 final_pc=$05DAA4 <!-- build:75f7d1ed68d4 --> |
-| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=15762B unique_pcs=74 final_pc=$05DAA6 <!-- build:75f7d1ed68d4 --> |
-| Iron Soldier 2 (USA) (Songbird).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29325B unique_pcs=23 final_pc=$00B542 <!-- build:75f7d1ed68d4 --> |
-| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29752B unique_pcs=41 final_pc=$00B542 <!-- build:75f7d1ed68d4 --> |
-| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28237B unique_pcs=97 final_pc=$00457A <!-- build:75f7d1ed68d4 --> |
-| Primal Rage (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25774B unique_pcs=75 final_pc=$01AFCE <!-- build:75f7d1ed68d4 --> |
-| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19041B unique_pcs=60 final_pc=$004D4E <!-- build:75f7d1ed68d4 --> |
-| Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20881B unique_pcs=78 final_pc=$00B87A <!-- build:75f7d1ed68d4 --> |
-| baldies.cdi | hle | 1/1 | GAME_CODE | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:75f7d1ed68d4 --> |
-| baldies.cdi | bios | 1/1 | GAME_CODE | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20303B unique_pcs=65 final_pc=$05FE88 <!-- build:75f7d1ed68d4 --> |
-| Myst (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=10988B unique_pcs=256+ final_pc=$0103FA <!-- build:75f7d1ed68d4 --> |
-| Myst (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=8123B unique_pcs=256+ final_pc=$00EF82 <!-- build:75f7d1ed68d4 --> |
-| Baldies (USA) (Rev 1).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:75f7d1ed68d4 --> |
-| Baldies (USA) (Rev 1).chd | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20303B unique_pcs=65 final_pc=$05FE88 <!-- build:75f7d1ed68d4 --> |
-| Myst (USA).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=10988B unique_pcs=256+ final_pc=$0103FA <!-- build:75f7d1ed68d4 --> |
-| Myst (USA).chd | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=8123B unique_pcs=256+ final_pc=$00EF82 <!-- build:75f7d1ed68d4 --> |
-| Frog Feast (USA) (Unl).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=7027B unique_pcs=119 final_pc=$006E92 <!-- build:75f7d1ed68d4 --> |
-| Frog Feast (USA) (Unl).chd | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=9667B unique_pcs=131 final_pc=$006E92 <!-- build:75f7d1ed68d4 --> |
+| Baldies (USA) (Rev 1).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:67acceb9dc39 --> |
+| Baldies (USA) (Rev 1).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20303B unique_pcs=65 final_pc=$05FE88 <!-- build:67acceb9dc39 --> |
+| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=26709B unique_pcs=47 final_pc=$007794 <!-- build:67acceb9dc39 --> |
+| Battle Morph (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28474B unique_pcs=69 final_pc=$022052 <!-- build:67acceb9dc39 --> |
+| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17926B unique_pcs=51 final_pc=$004FD0 <!-- build:67acceb9dc39 --> |
+| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19577B unique_pcs=62 final_pc=$004FD2 <!-- build:67acceb9dc39 --> |
+| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18477B unique_pcs=74 final_pc=$00967A <!-- build:67acceb9dc39 --> |
+| Dragon's Lair (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20802B unique_pcs=79 final_pc=$004C10 <!-- build:67acceb9dc39 --> |
+| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21068B unique_pcs=52 final_pc=$009222 <!-- build:67acceb9dc39 --> |
+| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=16336B unique_pcs=69 final_pc=$0088DA <!-- build:67acceb9dc39 --> |
+| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=6150B unique_pcs=48 final_pc=$05DAA4 <!-- build:67acceb9dc39 --> |
+| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=15762B unique_pcs=74 final_pc=$05DAA6 <!-- build:67acceb9dc39 --> |
+| Iron Soldier 2 (USA) (Songbird).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29325B unique_pcs=23 final_pc=$00B542 <!-- build:67acceb9dc39 --> |
+| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29752B unique_pcs=41 final_pc=$00B542 <!-- build:67acceb9dc39 --> |
+| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28237B unique_pcs=97 final_pc=$00457A <!-- build:67acceb9dc39 --> |
+| Primal Rage (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25774B unique_pcs=75 final_pc=$01AFCE <!-- build:67acceb9dc39 --> |
+| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19041B unique_pcs=60 final_pc=$004D4E <!-- build:67acceb9dc39 --> |
+| Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20881B unique_pcs=78 final_pc=$00B87A <!-- build:67acceb9dc39 --> |
+| baldies.cdi | hle | 1/1 | GAME_CODE | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:67acceb9dc39 --> |
+| baldies.cdi | bios | 1/1 | GAME_CODE | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20303B unique_pcs=65 final_pc=$05FE88 <!-- build:67acceb9dc39 --> |
+| Myst (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=10988B unique_pcs=256+ final_pc=$0103FA <!-- build:67acceb9dc39 --> |
+| Myst (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=8123B unique_pcs=256+ final_pc=$00EF82 <!-- build:67acceb9dc39 --> |
+| Baldies (USA) (Rev 1).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20409B unique_pcs=39 final_pc=$05FE8A <!-- build:67acceb9dc39 --> |
+| Baldies (USA) (Rev 1).chd | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20303B unique_pcs=65 final_pc=$05FE88 <!-- build:67acceb9dc39 --> |
+| Myst (USA).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=10988B unique_pcs=256+ final_pc=$0103FA <!-- build:67acceb9dc39 --> |
+| Myst (USA).chd | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Myst (USA).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=8123B unique_pcs=256+ final_pc=$00EF82 <!-- build:67acceb9dc39 --> |
+| Frog Feast (USA) (Unl).chd | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=7027B unique_pcs=119 final_pc=$006E92 <!-- build:67acceb9dc39 --> |
+| Frog Feast (USA) (Unl).chd | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Frog Feast (USA) (Unl).chd : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=9667B unique_pcs=131 final_pc=$006E92 <!-- build:67acceb9dc39 --> |
 
 Raw per-run logs are not committed; re-run the script to regenerate.
 
@@ -1143,4 +1143,4 @@ Deltas vs the previous table; no regressions:
 
 Raw per-run logs are not committed; re-run the script to regenerate.
 
-Raw per-run logs: /Users/jmattiello/vj-remote/validation/release-3.10.0-combined/cd (not committed; re-run to regenerate).
+Raw per-run logs: /Users/jmattiello/vj-remote/validation/release-3.10.0-final-b5e40090/cd (not committed; re-run to regenerate).

@@ -138,9 +138,12 @@ Fountain live-abort, CHSE-capable chdman and one-session Red Book fixtures/tools
 Host-sensitive network checks ran and passed. Explicit Skyhammer/Iron Soldier 2
 clipping and Iron Soldier 1 presence checks also passed.
 
-Fresh cartridge (155 titles, HLE/BIOS) and CD (28 title/mode rows) matrices show
-**zero backward moves, zero added/removed rows and no new watchdog signatures**
-against v3.9.1. Existing known failures remain recorded. The acid suite ran all
+Fresh Studio matrices on final-core candidate `b5e40090` cover 155 cartridge
+titles (HLE/BIOS) and 28 CD title/mode rows. Comparisons against both v3.9.1
+and the previous release candidate `24ae1bdb` show **zero backward moves, zero
+added/removed rows and no new watchdog signatures**. The three existing cartridge
+HLE/BIOS asymmetries are unchanged; no new asymmetries appeared. Matrix input
+identity: `67acceb9dc39`. Existing known failures remain recorded. The acid suite ran all
 151 cases: 148 pass, three known failures, **zero regressions**, zero missing tests.
 The original GT ROM also passes with the fast blitter.
 
