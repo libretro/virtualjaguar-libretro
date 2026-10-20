@@ -3414,7 +3414,7 @@ INLINE static void dsp_opcode_mmult(void)
    uint32_t res;
    unsigned i;
    int count	= dsp_matrix_control&0x0f;
-   uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
+   uint32_t addr = 0xF1B000 | (dsp_pointer_to_matrix & 0xFFC); // in the dsp ram
    int64_t accum = 0;
 
    /* Per JTRM ("Systolic Matrix Multiplies"), the packed vector operand
@@ -3439,7 +3439,7 @@ INLINE static void dsp_opcode_mmult(void)
             a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
-         addr += 4;
+         addr = 0xF1B000 | ((addr + 4) & 0xFFC);
       }
    }
    else
@@ -3455,9 +3455,12 @@ INLINE static void dsp_opcode_mmult(void)
             a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
-         addr += 4 * count;
+         addr = 0xF1B000 | ((addr + 4 * count) & 0xFFC);
       }
    }
+   /* SYSTOLIC.NET MACOUNT is the live ten-bit address counter,
+    * not a temporary copy: later MMULTs continue where it stopped. */
+   dsp_pointer_to_matrix = addr;
    RN = res = (int32_t)accum;
    // carry flag to do
    //NOTE: The flags are set based upon the last add/multiply done...
@@ -4183,7 +4186,7 @@ INLINE static void DSP_mmult(void)
 	uint32_t res;
    unsigned i;
 	int count	= dsp_matrix_control&0x0f;
-	uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
+	uint32_t addr = 0xF1B000 | (dsp_pointer_to_matrix & 0xFFC); // in the dsp ram
 	int64_t accum = 0;
 
 	/* Vector operand comes from the SECONDARY bank (bank 1) per JTRM —
@@ -4201,7 +4204,7 @@ INLINE static void DSP_mmult(void)
 				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
-			addr += 4;
+			addr = 0xF1B000 | ((addr + 4) & 0xFFC);
 		}
 	}
 	else
@@ -4217,10 +4220,13 @@ INLINE static void DSP_mmult(void)
 				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
-			addr += 4 * count;
+			addr = 0xF1B000 | ((addr + 4 * count) & 0xFFC);
 		}
 	}
 
+   /* SYSTOLIC.NET MACOUNT is the live ten-bit address counter,
+    * not a temporary copy: later MMULTs continue where it stopped. */
+   dsp_pointer_to_matrix = addr;
 	PRES = res = (int32_t)accum;
 	// carry flag to do
 //NOTE: The flags are set based upon the last add/multiply done...

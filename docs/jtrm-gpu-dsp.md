@@ -327,3 +327,17 @@ spacing and a ROM size of 8 KB; none of that is in the manual. Software Referenc
 5. **DMAEN (do not set)**: G_FLAGS/D_FLAGS bit 15 moves LOAD/STORE to DMA bus priority. v8 documents it as a feature (p.59, p.109) but v8's own bug list (TOM #24, p.138) says no master may outrank the Object Processor (stripes on screen), Software Reference v2.4 says it must not be set (GPU p.45 (PDF p.47), DSP p.81 (PDF p.83)), and Hardware Bugs & Warnings (26 Apr 1995) p.2 #4 says that on the DSP it makes an external LOAD/STORE hang the DSP. Not modeled. See `docs/jtrm-errata.md` (entry A3).
 6. **40-bit MAC (DSP only)**: The DSP accumulator is 40 bits. D_MACHI holds overflow bits. Truncating to 32 bits causes audio distortion in games that use long MAC chains.
 7. **External memory access timing**: LOAD/STORE to external memory takes many more cycles than local RAM. The exact timing depends on bus contention.
+
+### MMULT matrix-address advancement
+
+Source: original jag_sim `netlists/tom/SYSTOLIC.NET`, `MACOUNT` and
+`Macnten`; JERRY has the same address counter. JTRM v8 pp.42/59 describes
+row/column stepping but omits the persistence of this counter.
+
+The matrix address is a live ten-bit word counter, not a preserved base.
+Every coefficient read increments it by one word (row) or MWIDTH words
+(column), including the final read. Later MMULTs continue from that address
+unless MTXA is rewritten. Each increment wraps within local RAM's low 4 KB;
+DSP upper RAM cannot hold matrix coefficients. This behavior fixes the
+AtariAge `poly_mmu.cof` report (#1043). JagMCP commit `6c1dc1a` fixes a
+separate MMULT external-load classification bug in its cycle model.

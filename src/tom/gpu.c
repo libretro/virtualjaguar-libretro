@@ -1278,7 +1278,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             break;
          case 0x08:
             // This can only point to long aligned addresses
-            gpu_pointer_to_matrix = data & 0xFFFFFFFC;
+            gpu_pointer_to_matrix = 0xF03000 | (data & 0xFFC);
             break;
          case 0x0C:
             gpu_data_organization = data;
@@ -3826,7 +3826,7 @@ INLINE static void gpu_opcode_mmult(void)
 {
    unsigned i;
    int count	= gpu_matrix_control & 0x0F;	// Matrix width
-   uint32_t addr = gpu_pointer_to_matrix;		// In the GPU's RAM
+   uint32_t addr = 0xF03000 | (gpu_pointer_to_matrix & 0xFFC);		// In the GPU's RAM
    int64_t accum = 0;
    uint32_t res;
 
@@ -3847,7 +3847,7 @@ INLINE static void gpu_opcode_mmult(void)
 
          b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;
-         addr += 4 * count;
+         addr = 0xF03000 | ((addr + 4 * count) & 0xFFC);
       }
    }
    else										// Row stepping
@@ -3863,9 +3863,12 @@ INLINE static void gpu_opcode_mmult(void)
 
          b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;
-         addr += 4;
+         addr = 0xF03000 | ((addr + 4) & 0xFFC);
       }
    }
+   /* SYSTOLIC.NET MACOUNT is the live ten-bit address counter,
+    * not a temporary copy: later MMULTs continue where it stopped. */
+   gpu_pointer_to_matrix = addr;
    RN = res = (int32_t)accum;
    // carry flag to do (out of the last add)
    SET_ZN(res);
