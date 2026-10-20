@@ -22,13 +22,14 @@ async function plan({ github, context, core }) {
   const pr = context.payload.pull_request;
   const fullName = `${context.repo.owner}/${context.repo.repo}`;
   if (context.eventName !== 'pull_request' || pr?.head.repo?.full_name !== fullName ||
-      !pr.head.ref.startsWith('release/')) return;
+      !pr.head.ref.startsWith('release/')) return false;
   if (!await sameTree(github, context.repo, pr.head.sha, context.sha)) {
     core.info('The PR merge tree differs from the release head: keep independent PR package builds.');
-    return;
+    return false;
   }
   core.setOutput('reuse', 'true');
-  core.info(`Share Release push packages for ${pr.head.ref}@${pr.head.sha}; the PR merge tree is identical.`);
+  core.info(`Share Release push artifacts for ${pr.head.ref}@${pr.head.sha}; the PR merge tree is identical.`);
+  return true;
 }
 
 function selectRun(runs, pr, repo) {
@@ -58,7 +59,7 @@ async function assertCurrentMerge(github, repo, pr) {
 }
 
 async function waitForPackages({ github, context, core, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
-                                  now = Date.now, timeoutMs = 345 * 60000 }) {
+                                  now = Date.now, timeoutMs = 345 * 60000, checkStatus = packageStatus, subject = 'package' }) {
   const pr = context.payload.pull_request;
   const repo = context.repo, fullName = `${repo.owner}/${repo.repo}`;
   // Recheck independently: the workflow must never turn a fork or another branch into trusted Release artifacts.
@@ -77,26 +78,26 @@ async function waitForPackages({ github, context, core, sleep = ms => new Promis
         { ...repo, run_id: run.id, filter: 'latest', per_page: 100 });
       const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts,
         { ...repo, run_id: run.id, per_page: 100 });
-      if (packageStatus(jobs, artifacts)) {
+      if (checkStatus(jobs, artifacts)) {
         // A rerun can replace jobs while the API pages are being read. Never approve an older attempt's evidence.
         const { data: current } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: run.id });
         if (current.run_attempt === run.run_attempt && current.head_sha === pr.head.sha) {
           await assertCurrentMerge(github, repo, pr);
-          core.info(`All package checks and six artifact groups verified: ${run.html_url}`);
-          await core.summary.addRaw(`Shared Release packages: [run ${run.id}](${run.html_url}), head \`${pr.head.sha}\`.\n`).write();
+          core.info(`All ${subject} checks and required artifact groups verified: ${run.html_url}`);
+          await core.summary.addRaw(`Shared Release ${subject} artifacts: [run ${run.id}](${run.html_url}), head \`${pr.head.sha}\`.\n`).write();
           return;
         }
       } else if (run.status === 'completed') {
-        throw new Error(`Release run ${run.id} ended without all required package checks/artifacts.`);
+        throw new Error(`Release run ${run.id} ended without all required ${subject} checks/artifacts.`);
       }
     }
-    const status = run ? `Waiting for package checks in Release run ${run.id} (attempt ${run.run_attempt}).` :
+    const status = run ? `Waiting for ${subject} checks in Release run ${run.id} (attempt ${run.run_attempt}).` :
       `Waiting for the Release push run for ${pr.head.sha}.`;
     if (status !== previous) core.info(status);
     previous = status;
     await sleep(60000);
   }
-  throw new Error('Timed out waiting for this head\'s Release packages; no package check was bypassed.');
+  throw new Error(`Timed out waiting for this head's Release ${subject} artifacts; no check was bypassed.`);
 }
 
 module.exports = { ARTIFACTS, PACKAGE_JOBS, sameTree, plan, selectRun, packageStatus, waitForPackages };
