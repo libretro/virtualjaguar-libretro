@@ -79,7 +79,7 @@ jobs:
   # ------------------------------------------------------------------------------------------
   meta:
     name: Package metadata
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     outputs:
       run: ${{ steps.m.outputs.run }}
       label: ${{ steps.m.outputs.label }}
@@ -141,7 +141,7 @@ jobs:
     name: Package-manager templates
     needs: [meta]
     if: needs.meta.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - name: Render with placeholder checksums and parse every output

@@ -454,7 +454,7 @@ jobs:
 
   duplicated-lists-in-sync:
     name: duplicated lists in sync
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v7
 
@@ -687,7 +687,7 @@ jobs:
 
   editorconfig-lint:
     name: EditorConfig compliance check
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v7
 
@@ -824,7 +824,7 @@ jobs:
 
   cppcheck:
     name: cppcheck static analysis
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v7
 
@@ -858,7 +858,7 @@ jobs:
 
   c89-lint:
     name: C89 compliance check
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v7
 

@@ -140,3 +140,14 @@ stale. Responses carry `cache-control: max-age=600` — polling past ~10 min wit
 ## Roadmap
 
 Planning lives in GitHub milestones (pinned issue #371), never in md files.
+
+## Temporary CI runners
+
+`VJ_TEMP_RUNNERS` is an optional repository variable containing a JSON object with
+a `refs` allowlist and mappings from hosted labels to private runner labels.
+Only listed Git refs use those mappings in explicitly opted-in lightweight jobs;
+absent refs or labels keep their original GitHub-hosted runners. Leave the variable unset normally. A temporary release
+runner must use a unique custom label with default labels disabled, preserve the
+requested OS/architecture, and be removed together with the variable after its
+checks finish. Do not map Ubuntu 22.04 packaging jobs onto Ubuntu 24.04: that would
+change the supported glibc floor.
