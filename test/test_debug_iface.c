@@ -293,13 +293,21 @@ static void partBC(int argc, char **argv)
     }
     /* registers: refused without the flag, written with it; nothing partial */
     {
-        unsigned char before[4], after[4], w[2];
+        unsigned char before[4], after[4], w[2], saved[2], memcon[2];
+        unsigned char *tom = harness_dlsym(&cfg, "tomRam8");
+        CHECK(tom != NULL);
+        if (!tom) return;
+        memcpy(saved, tom + 0x2A, 2);
+        CHECK(g_if->peek(0xF00000, memcon, 2) == 2);
         w[0] = 0x12; w[1] = 0x34;
-        CHECK(g_if->peek(0xF0002A, before, 2) == 2);                     /* BG */
+        CHECK(g_if->peek(0xF0002A, before, 2) == 2);                     /* BORD1 (WO) */
         CHECK(g_if->poke(0xF0002A, w, 2, 0) == VJ_DBG_ERR_POLICY);
         CHECK(g_if->peek(0xF0002A, after, 2) == 2 && memcmp(before, after, 2) == 0);
+        CHECK(memcmp(saved, tom + 0x2A, 2) == 0);
         CHECK(g_if->poke(0xF0002A, w, 2, VJ_DBG_POKE_REGS) == 2);
-        CHECK(g_if->peek(0xF0002A, after, 2) == 2 && after[0] == 0x12 && after[1] == 0x34);
+        CHECK(tom[0x2A] == 0x12 && tom[0x2B] == 0x34);
+        /* Bus peeks of a WO register expose MEMCON1, not its latch (#1045). */
+        CHECK(g_if->peek(0xF0002A, after, 2) == 2 && memcmp(after, memcon, 2) == 0);
     }
     /* the side-effecting set needs the second flag; one byte of it is enough to be refused */
     {

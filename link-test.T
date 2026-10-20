@@ -39,6 +39,12 @@
       UART*;
       JLink*;
       VM*;
+      InitializeEventList;
+      SubtractEventTimes;
+      GetTimeToNextEvent;
+      HandleNextEvent;
+      EventStateSave;
+      EventStateLoad;
       TOM*;
       OP*;
       tomRam8;
