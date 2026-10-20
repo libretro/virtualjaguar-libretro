@@ -150,6 +150,8 @@ static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 #define C_UPDA1F    0x00000100u
 #define C_UPDA1     0x00000200u
 #define C_UPDA2     0x00000400u
+#define C_DSTA2     0x00000800u
+#define C_BKGWREN   0x10000000u
 #define C_GOURD     0x00001000u
 #define C_GOURZ     0x00002000u
 #define C_PATDSEL   0x00010000u
@@ -1221,6 +1223,72 @@ static void test_zmode_truth_table(void)
    }
 }
 
+/* A destination phrase owns the computed-Z lanes, even with DSTA2.
+ * Distinct seeds, mixed channel modes and a signed gradient expose both
+ * wrong lane selection and advancing at the source's phrase boundary. */
+static void test_zmode_destination_lanes(void)
+{
+   static const uint32_t seeds[4] = {0x40000000u,0x8000FFFFu,0x90000000u,0xC0000000u};
+   uint8_t expected[BLIT_MODES][WINDOW];
+   unsigned dsta2, dstphrase, srcphrase, negative, x, i, lane, offset;
+   uint32_t flags, z, advances;
+   int64_t computed, increment;
+   char label[80];
+   for (dsta2=0; dsta2<2; dsta2++)
+   for (dstphrase=0; dstphrase<2; dstphrase++)
+   for (srcphrase=0; srcphrase<2; srcphrase++)
+   for (negative=0; negative<2; negative++)
+   {
+      blit_regs_reset();
+      memset(p_jaguarMainRAM+DST_ADDR,0x11,WINDOW);
+      memset(expected,0x11,sizeof(expected));
+      for (x=0; x<8; x++)
+      {
+         offset=(x/4)*16+(x%4)*2+8;
+         p_jaguarMainRAM[DST_ADDR+offset]=0x90;
+         p_jaguarMainRAM[DST_ADDR+offset+1]=0;
+         expected[blit_mode][offset]=0x90;
+         expected[blit_mode][offset+1]=0;
+      }
+      increment=negative ? -0x10000000LL : 0x10000000LL;
+      for (i=0; i<7; i++)
+      {
+         x=1+i;
+         lane=dstphrase ? x%4 : 3;
+         advances=dstphrase ? x/4 : i;
+         computed=(int64_t)seeds[lane]+increment*advances;
+         if (computed<0) computed=0;
+         if (computed>0xFFFFFFFFLL) computed=0xFFFFFFFFLL;
+         z=(uint32_t)computed>>16;
+         if (z<=0x9000)
+         {
+            offset=(x/4)*16+(x%4)*2;
+            expected[blit_mode][offset]=0xAB;
+            expected[blit_mode][offset+1]=0xCD;
+            expected[blit_mode][offset+8]=z>>8;
+            expected[blit_mode][offset+9]=z&255;
+         }
+      }
+      flags=FLAG_PITCH(1)|FLAG_PIXSIZE(4)|FLAG_ZOFFS(1)|FLAG_WIDTH(WIDTH8_M,WIDTH8_E);
+      wreg(A1_BASE,dsta2?SRC_ADDR:DST_ADDR);
+      wreg(A2_BASE,dsta2?DST_ADDR:SRC_ADDR);
+      wreg(A1_FLAGS,flags|FLAG_XADD((dsta2?srcphrase:dstphrase)?XADD_PHRASE:XADD_PIXEL));
+      wreg(A2_FLAGS,flags|FLAG_XADD((dsta2?dstphrase:srcphrase)?XADD_PHRASE:XADD_PIXEL));
+      wreg(dsta2?A2_PIXEL:A1_PIXEL,1);
+      wreg(B_SRCZINT,0x9000C000u); wreg(B_SRCZINT+4,0x40008000u);
+      wreg(B_SRCZFRAC,0); wreg(B_SRCZFRAC+4,0x0000FFFFu);
+      wreg(B_ZINC,(uint32_t)increment);
+      wreg(B_PATD,0xABCDABCDu); wreg(B_PATD+4,0xABCDABCDu);
+      wreg(PIXLINECOUNTER,0x10007u);
+      fire(C_PATDSEL|C_GOURZ|C_ZMODE_GT|C_DSTEN|C_DSTENZ|C_DSTWRZ|
+           C_BKGWREN /* avoid pixel comparator erratum */|
+           (dsta2?C_DSTA2:0));
+      snprintf(label,sizeof(label),"gt_a%u_dst%s_src%s_%s",dsta2?2:1,
+         dstphrase?"phrase":"pixel",srcphrase?"phrase":"pixel",negative?"negative":"positive");
+      check_window(label,DST_ADDR,expected,WINDOW);
+   }
+}
+
 /* ================================================================ */
 
 int main(int argc, char **argv)
@@ -1290,6 +1358,7 @@ int main(int argc, char **argv)
       test_gouraud_output();
       test_dstenz_without_dsten();
       test_zmode_truth_table();
+      test_zmode_destination_lanes();
       test_z_clear_32bpp();
       test_gourz_seed_first();
       test_jtrm_gourz_strip();

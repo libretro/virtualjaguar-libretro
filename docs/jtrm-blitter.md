@@ -276,3 +276,15 @@ step of at most 64 px, because `BlitterMidsummer2` stops on the bit-15 crossing)
 7. **64-bit register writes**: All 64-bit registers (B_SRCD, B_DSTD, B_PATD, etc.) require two 32-bit writes. The order matters on some hardware (high word first, then low word). The emulator should accept either order.
 
 Source files: `src/tom/blitter.c`, `src/tom/blitter_simd_sse2.c`, `src/tom/blitter_simd_neon.c`, `test/tools/test_blitter_compare`
+
+### Computed lanes with DSTA2 (#1046)
+
+Source: JTRM Rev 8 pp.74,81-82 (DSTA2 roles and destination-aligned
+computed phrase example); original TOM `ACONTROL.NET` `Phrase_mode`
+(lines 251-257) and `Dstxp` (line 347). The destination channel selects
+phrase mode and destination X for write masks. Computed Z/intensity lanes
+therefore follow A2's mode and X when DSTA2 is set. Advancing the lanes
+once per destination phrase must likewise follow A2, even if A1 is in
+pixel mode or has a different phrase alignment. In pixel destination mode,
+use lane 0 and advance once per pixel. A2-source settings do not override
+A1-destination settings when DSTA2 is clear.
