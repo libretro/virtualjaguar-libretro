@@ -144,6 +144,12 @@ jobs:
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
+      - name: Ensure the Ruby manifest validator is available
+        run: |
+          if ! command -v ruby >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ruby
+          fi
       - name: Render with placeholder checksums and parse every output
         run: |
           set -eu
@@ -154,7 +160,7 @@ jobs:
           done > "$d/SHA256SUMS.txt"
           bash app/packaging/manifests/render.sh --version "$v" --sums "$d/SHA256SUMS.txt" --out "$RUNNER_TEMP/manifests"
           cd "$RUNNER_TEMP/manifests"
-          ruby -c homebrew/virtualjaguar.rb homebrew/virtualjaguar-formula.rb
+          for formula in homebrew/*.rb; do ruby -c "$formula"; done
           python3 -c 'import json,sys; json.load(open("scoop/virtualjaguar.json"))'
           for y in winget/*.yaml flatpak/*.yml; do ruby -ryaml -rdate -e 'YAML.safe_load_file(ARGV[0], permitted_classes: [Date])' "$y"; echo "ok $y"; done
 
