@@ -23,6 +23,7 @@
 #include "debug/debug_session.h"
 #include "desktop_nav_app.h"
 #include "fonts.h"
+#include "fullscreen_menu.h"
 #include "discord_presence.h"
 #ifdef VJ_HAVE_NEURO
 #include "neuro/neuro_agent.h"
@@ -193,6 +194,9 @@ public:
     bool quit = false;
     bool fullscreen = false;
     bool menuPinned = true;
+    bool fullscreenAutoHideMenu = false;   // ui.fullscreen_autohide_menu; preserves existing behavior by default
+    ui::FullscreenMenu fullscreenMenu;
+    bool menuBarDrawn = false;             // actual visibility this frame, for toast placement
     bool showInWindowMenu = false;    // macOS: also show the in-window menu bar under the native one (ui.menubar_in_window; F1 toggles)
     bool inWindowMenuBar() const;     // is an ImGui menu bar being drawn at all
     bool showSettings = false;

@@ -5,6 +5,8 @@
 #   load PATH            drop PATH on the window (the normal drop route)
 #   key down|up|tap NAME a key event (SDL scancode name: F4, Escape, F8; "ctrl+L", "ctrl+shift+T" = with those held)
 #   pad down|up|tap BTN  a button on the runner's virtual gamepad (SDL button name: a, b, dpdown, misc1)
+#   mouse X Y           windowed only: move the real pointer within the main window (menu hover tests)
+#   expect fullscreen=0|1 menu-pinned=0|1 menu-visible=0|1 (menu-visible needs a windowed rendered frame)
 #   focus lost|gained    the window loses / gets keyboard focus
 #   typing on|off        pretend a text box has focus (input.uiWantsKeyboard)
 #   capture help|tvmenu  begin binding that action on the keyboard (the next key becomes its binding)

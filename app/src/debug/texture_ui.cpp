@@ -6,6 +6,7 @@
 #include "paths.h"
 #include "texture_pack.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 #include "video.h"
 
 #include "imgui.h"
@@ -521,7 +522,7 @@ void textureToolDraw() {
     if (!g.open || !g.session) return;
     const double now = ImGui::GetTime();
     ui::nextWindow(52.0f, 40.0f, 30.0f, 22.0f);
-    bool shown = ImGui::Begin("Textures", &g.open);
+    bool shown = ui::beginWindow("Textures", &g.open);
     ui::keepOnScreen();
     if (shown) {
         if (g.session->enabled()) {

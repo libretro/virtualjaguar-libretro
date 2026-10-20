@@ -14,6 +14,7 @@
 #include "debug_session.h"
 #include "scanner_actions.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 #include "libretro.h"
@@ -449,7 +450,7 @@ void registerScannerTool(DebugSession& session) {
 void drawScanner(DebugSession& session, CheatManager& cheats, CoreHost& host) {
     if (!g.open) return;
     ui::nextWindow(46.0f, 34.0f, 30.0f, 18.0f);
-    bool shown = ImGui::Begin("Cheat scanner", &g.open);
+    bool shown = ui::beginWindow("Cheat scanner", &g.open);
     ui::keepOnScreen();
     if (!shown) {
         ImGui::End();

@@ -4,6 +4,7 @@
 #include "platform/commands.h"
 #include "platform/platform.h"
 #include "platform/viewports.h"
+#include "fullscreen_menu.h"
 
 #include <SDL3/SDL.h>
 
@@ -597,6 +598,45 @@ static void testViewports() {
 #endif
 }
 
+static void testFullscreenMenu() {
+    vj::ui::FullscreenMenu menu;
+    bool pinned = true;
+    menu.update(false, false, pinned);
+    CHECK(menu.visible(false, false, false, false, pinned, false));
+    menu.update(true, false, pinned);   // default preserves the current pinned menu
+    CHECK(pinned && menu.visible(false, false, true, false, pinned, false));
+    menu.update(true, true, pinned);    // enabling live in fullscreen hides it
+    CHECK(!pinned && !menu.visible(false, false, true, false, pinned, false));
+    CHECK(menu.visible(false, false, true, false, pinned, true));   // top edge / an open popup
+    CHECK(!menu.visible(true, true, true, false, pinned, false));   // optional macOS in-window bar too
+    CHECK(menu.visible(true, true, true, false, pinned, true));
+    CHECK(!menu.visible(true, false, true, false, pinned, true));   // native-only preference stays respected
+    menu.togglePin(pinned);   // F1 pins while fullscreen
+    menu.update(true, true, pinned);
+    CHECK(pinned && menu.visible(false, false, true, false, pinned, false));
+    pinned = false;
+    menu.update(false, true, pinned);
+    CHECK(pinned);   // restore the pin state from before fullscreen
+    menu.update(true, true, pinned);
+    CHECK(!menu.visible(true, false, true, false, pinned, false));
+    menu.togglePin(pinned);
+    CHECK(menu.visible(true, false, true, false, pinned, false));   // F1 temporarily reveals a native-only user's bar
+    menu.togglePin(pinned);
+    CHECK(!menu.visible(true, false, true, false, pinned, false));
+    menu.update(false, true, pinned);
+    CHECK(!menu.visible(true, false, false, false, pinned, false)); // windowed preference stays native-only
+    pinned = false;
+    menu.update(true, true, pinned);
+    pinned = true;
+    menu.update(false, true, pinned);
+    CHECK(!pinned);  // an unpinned window stays unpinned after leaving
+    menu.update(true, true, pinned);
+    menu.update(true, false, pinned);
+    CHECK(!pinned);  // disabling live restores the earlier preference
+    CHECK(menu.visible(true, true, true, false, pinned, false));  // old macOS behavior when off
+    CHECK(!menu.visible(false, false, false, true, pinned, false));  // TV base unchanged
+}
+
 int main() {
     testIdleModel();
     testStateReflected();
@@ -611,6 +651,7 @@ int main() {
     testLauncherArgs();
     testEventRoundTrip();
     testViewports();
+    testFullscreenMenu();
     std::printf("platform_test: %d checks, %d failures\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

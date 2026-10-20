@@ -5,6 +5,7 @@
 #include "libretro.h"
 #include "imgui.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include <cstdio>
 #include <cstring>
@@ -362,7 +363,7 @@ void drawKeypadOverlay(App& app) {
     const float gridW = sz.x * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
     ImGui::SetNextWindowSizeConstraints(ImVec2(gridW + ImGui::GetStyle().WindowPadding.x * 2.0f, 0.0f),
                                         ImVec2(vp->WorkSize.x * 0.95f, vp->WorkSize.y * 0.95f));
-    bool shown = ImGui::Begin("Jaguar keypad", &ov.open, wf);
+    bool shown = ui::beginWindow("Jaguar keypad", &ov.open, wf);
     ui::keepOnScreen();
     if (!shown) {
         ImGui::End();

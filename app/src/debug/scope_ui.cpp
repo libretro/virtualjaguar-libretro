@@ -5,6 +5,7 @@
 #include "core_host.h"
 #include "debug_session.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
@@ -116,7 +117,7 @@ void scopeToolDraw() {
     if (!g.open || !g.session) return;
     ui::nextWindow(46.0f, 40.0f, 26.0f, 24.0f);
     bool open = g.open.load();
-    bool shown = ImGui::Begin("Audio scope", &open);
+    bool shown = ui::beginWindow("Audio scope", &open);
     g.open = open;
     ui::keepOnScreen();
     if (shown) {
