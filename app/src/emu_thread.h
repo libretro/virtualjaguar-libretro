@@ -93,7 +93,7 @@ public:
     bool callFor(std::chrono::milliseconds timeout, F&& fn);
 
     void inlineStep();          // inline: one frame now
-    bool advance(unsigned n);   // n frames now, even while paused, ignoring pacing; returns once they ran
+    bool advance(unsigned n);   // after earlier commands: n frames now, even while paused, ignoring pacing; wait until done
 
     void setPaused(bool p) {
         if (paused_.exchange(p) != p) cmds_.notify();
@@ -117,6 +117,7 @@ public:
     uint64_t phaseSteps() const { return steers_.load(); }   // PacingClock::steers()
 
 private:
+    friend struct EmuThreadTestAccess;   // test-only inspection of the advance/queue publication boundary
     enum class State { Inline, Starting, Running, Stopping, Stopped, Abandoned };
     void loop();
     void waitFinished();   // the thread has left its loop for good (or was abandoned)
