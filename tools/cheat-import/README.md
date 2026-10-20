@@ -102,6 +102,38 @@ All committed tests use original synthetic inputs:
 python3 -m unittest discover -s tools/cheat-import -v
 ```
 
+CI also fetches **only the three reviewed C files** from the community commit
+above and verifies their SHA256 before parsing. The committed
+`community-cases.json` stores expected setting names, write counts, hashes of
+the converted codes, and unsupported-operation reasons, without distributing
+the scripts or a usable cheat pack. A changed value, missing grouped write,
+unexpected omission, or wrong-ROM activation fails the integration test.
+The input sources are held in memory, never executed or uploaded as artifacts.
+Network/checksum failures fail the job instead of silently skipping cases.
+
+Run the same test locally using a checkout of that exact revision:
+
+```sh
+python3 tools/cheat-import/community_test.py --source-dir /path/to/BigPEmu_Scripts
+# Or download just the three reviewed sources:
+python3 tools/cheat-import/community_test.py --fetch
+# Optional local identity check with the matching native cartridges:
+python3 tools/cheat-import/community_test.py --fetch --rom-dir /path/to/native-carts
+```
+
+Without `--rom-dir`, this checks conversion contracts using known ROM hashes;
+it does not test actual cartridge identity or gameplay. ROM mode requires every
+listed cartridge to exist and match, and fails on missing or mismatched inputs.
+Private ROMs are never required by CI. Updating the community pin or adding a
+source requires reviewing its author/credits, checksum and conversion contract.
+
+A future author-submitted repository catalog could build on this explicit
+source manifest: repository URL, author permission/license, reviewed source
+paths, pinned revision and checksums, and compatibility results submitted by PR.
+That catalog should remain separate from executable scripts and proprietary
+bundled content. This version provides test provenance rather than an app
+download/subscription registry.
+
 The app's `cheats_unit` test additionally checks the revision guard, saved
 toggles, legacy files, hardcore gating, and grouped byte/word/long replay through
 the core's real parser. This validates translation and application mechanics;

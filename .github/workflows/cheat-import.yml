@@ -25,3 +25,6 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -r tools/cheat-import/requirements.txt
       - run: python -m unittest discover -s tools/cheat-import -v
+      # Downloads only checksum-pinned, reviewed author sources. No compiled
+      # scripts, SDK, ROMs, source execution, caches, or source artifacts.
+      - run: python tools/cheat-import/community_test.py --fetch

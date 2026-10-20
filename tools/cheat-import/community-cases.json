@@ -1,0 +1,93 @@
+{
+  "format": 1,
+  "repository": "jguffer/BigPEmu_Scripts",
+  "commit": "24211503339a969f8494b8e189b8f2aa0cb9eba6",
+  "cases": [
+    {
+      "source": "scripts/cheat_kasumi_ninja.c",
+      "source_sha256": "d14e84b2816da8accab8f87781f94e091496a652ee291d9fe9b86ef3f29bdf4d",
+      "rom_fnv1a64": "392906008D83777E",
+      "rom_name": "Kasumi Ninja (World).j64",
+      "title": "Kasumi Ninja",
+      "expected": [
+        {
+          "name": "Infinite Health",
+          "writes": 1,
+          "code_sha256": "faafc7b2ac8c8a740df4139f1c5da10082103402cd45b99e91a75501462342dc"
+        }
+      ]
+    },
+    {
+      "source": "scripts/cheat_atari_karts.c",
+      "source_sha256": "5530c4e40a0f3ab2626842eff446607816c0371ab92224709dea5372c955751c",
+      "rom_fnv1a64": "D6821157BFC4A8B0",
+      "rom_name": "Atari Karts (1995).jag",
+      "title": "Atari Karts",
+      "expected": [
+        {
+          "name": "Always Deemed Winner",
+          "writes": 2,
+          "code_sha256": "9ab9e1deca58a08e447e03de7e848a670e624113e677b0b6e56100a8dfa2decb"
+        },
+        {
+          "name": "Infinite Continues",
+          "writes": 1,
+          "code_sha256": "c100b0d435cd8ec58a17d1eafbd8b76acd645fc058c07910f6df99fc59a9002c"
+        },
+        {
+          "name": "Unlock All Challenges, Cups, Racers",
+          "unsupported": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)"
+        }
+      ]
+    },
+    {
+      "source": "scripts/cheat_doom.c",
+      "source_sha256": "197cc6ffbbce120dd8332fa3416f30764ec07dd72a96a59c8a33ebc393280158",
+      "rom_fnv1a64": "75F2216BD4F54AC2",
+      "rom_name": "Doom - Evil Unleashed (1994).jag",
+      "title": "Doom",
+      "expected": [
+        {
+          "name": "Infinite Ammo",
+          "writes": 4,
+          "code_sha256": "63a7ac261b157bfe61db70941c5aee388d445043f796688ebbdb009d65c6e956"
+        },
+        {
+          "name": "Unlock All Levels",
+          "writes": 1,
+          "code_sha256": "01aff6b088609b94e9bc2c21b98f8f6942ee50ad49d951d170dd2a746455d4b2"
+        },
+        {
+          "name": "Unlock All Weapons",
+          "writes": 6,
+          "code_sha256": "630e24438c06b2faf7838ca894969d8f0da58f60ef7900b599b42b94c8a50599"
+        },
+        {
+          "name": "Unlock All Cards",
+          "writes": 6,
+          "code_sha256": "f4fa45ecd3d7de67b3637fda070a74ebb18f39c97f0ed1ede80d9f999d924415"
+        },
+        {
+          "name": "Invulnerable",
+          "writes": 1,
+          "code_sha256": "a85826f743f99bbec9e719a5541e81b734220ade448ca998d67922f4fad94e9c"
+        },
+        {
+          "name": "Iron Feet",
+          "writes": 1,
+          "code_sha256": "6b6e4dcdbc4665645f7c010951fcd02d2a47de08673a3949220ad609f4cf4987"
+        },
+        {
+          "name": "Strength",
+          "writes": 1,
+          "code_sha256": "857942aa485ea96dc81f2619b3c824fceeedac78c74eec72a98c4150498c17bf"
+        },
+        {
+          "name": "Full Map",
+          "writes": 1,
+          "code_sha256": "0f824350acc58a2873c4815d0a099e77349a07a086dafb32bf6d1762b600d55d"
+        }
+      ]
+    }
+  ]
+}
