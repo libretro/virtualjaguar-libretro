@@ -1807,6 +1807,7 @@ static void testM3u() {
 
 static void testPlaylistStateOwners() {
     const std::string root = g_tmp + "playlist-states/", games = root + "games/";
+    const std::string playlist = fs::u8path(games + "Game.m3u").lexically_normal().u8string();
     for (int disc = 1; disc <= 2; ++disc) {
         const std::string stem = disc == 1 ? "Game (Disc 1)" : "Game";
         writeBytes(games + stem + ".bin", noise(2352 * 8, 90 + disc));
@@ -1843,7 +1844,7 @@ static void testPlaylistStateOwners() {
                 CHECK(got == 1 && ev.user.code == 0x56414A50);
                 if (got == 1 && ev.user.code == 0x56414A50) {
                     std::unique_ptr<PlaylistStateLaunch> request((PlaylistStateLaunch*)ev.user.data1);
-                    CHECK_EQ(request->playlist, games + "Game.m3u");
+                    CHECK_EQ(request->playlist, playlist);
                     CHECK_EQ(request->disc, state.disc);
                     CHECK((int)(intptr_t)ev.user.data2 - 1000 == 0);
                 } else if (got == 1 && ev.user.code == 0x56414A53) SDL_free(ev.user.data1);
@@ -1855,7 +1856,7 @@ static void testPlaylistStateOwners() {
         CHECK(owner != nullptr);
         if (owner) {
             CHECK_EQ(pathStem(owner->file.path), group.stem);
-            CHECK_EQ(owner->statePlaylist, games + "Game.m3u");
+            CHECK_EQ(owner->statePlaylist, playlist);
             CHECK(svc.statesFor(*owner) != nullptr);
         }
     }
