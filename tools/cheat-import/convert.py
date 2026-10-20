@@ -1,0 +1,559 @@
+#!/usr/bin/env python3
+"""Statically translate a conservative subset of community cheat C sources.
+
+Does not compile, import, execute, preprocess includes, or download input code.
+No SDK or proprietary emulator implementation is used. See README.md.
+"""
+import argparse
+import ast
+import hashlib
+import itertools
+import json
+import re
+import sys
+import zlib
+from dataclasses import dataclass, replace
+from pathlib import Path
+
+from pycparser import c_ast as C, c_parser
+
+
+class Unsupported(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class Value:
+    n: int
+    deps: frozenset = frozenset()
+    bits: int = 32
+    unsigned: bool = False
+
+
+def integer(value, bits=32, unsigned=False):
+    number = value.n
+    if unsigned:
+        number &= (1 << bits)-1
+    elif not -(1 << (bits-1)) <= number < (1 << (bits-1)):
+        raise Unsupported("signed integer overflow/conversion requires manual review")
+    return Value(number, value.deps, bits, unsigned)
+
+
+def type_info(node):
+    if not isinstance(node, C.TypeDecl) or not isinstance(node.type, C.IdentifierType):
+        raise Unsupported("only scalar integer declarations are supported")
+    typ = " ".join(node.type.names)
+    match = re.fullmatch(r"(u?)int(8|16|32|64)_t", typ)
+    if match: return int(match[2]), bool(match[1])
+    if typ in ("int", "signed int", "bool"): return 32, False
+    if typ in ("unsigned", "unsigned int"): return 32, True
+    raise Unsupported("unsupported integer type " + typ)
+
+
+def promote(value):
+    return integer(value) if value.bits < 32 else value
+
+
+def common(left, right):
+    left, right = promote(left), promote(right)
+    bits = max(left.bits, right.bits)
+    unsigned = any(v.unsigned and v.bits == bits for v in (left, right))
+    return integer(left, bits, unsigned), integer(right, bits, unsigned)
+
+
+TYPES = """
+typedef unsigned char uint8_t; typedef unsigned short uint16_t;
+typedef unsigned int uint32_t; typedef unsigned long long uint64_t;
+typedef signed char int8_t; typedef short int16_t; typedef int int32_t;
+typedef long long int64_t; typedef unsigned int size_t; typedef int bool;
+"""
+
+
+def uncomment(text):
+    # Keep quoted strings/characters intact, including comment-looking text.
+    pattern = r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/'
+    return re.sub(pattern, lambda m: "\n" * m[0].count("\n") + " "
+                  if m[0].startswith(("//", "/*")) else m[0], text, flags=re.S)
+
+
+def fnv1a64(data):
+    value = 0xCBF29CE484222325
+    for byte in data:
+        value = ((value ^ byte) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
+def rom_bytes(path):
+    if path.suffix.lower() not in (".j64", ".jag", ".rom", ".bin"):
+        raise Unsupported("use an uncompressed raw cartridge (.j64/.jag/.rom/.bin)")
+    if not 0 < path.stat().st_size <= 16*1024*1024:
+        raise Unsupported("raw cartridge size must be 1 byte through 16 MiB")
+    data = path.read_bytes()
+    if not data or len(data) > 16 * 1024 * 1024:
+        raise Unsupported("raw cartridge size must be 1 byte through 16 MiB")
+    # Same header detection as src/core/file.c. Refuse instead of guessing which
+    # bytes a foreign script's hash referred to. The user supplies a native dump.
+    marker = b"\x04\x04\x04\x04"
+    if (len(data) >= 0x604 and len(data) % 0x100000 and data[0x600:0x604] == marker
+            and ((len(data)-512) % 0x100000 == 0
+                 or (len(data)-512 < 0x100000 and data[0x400:0x404] != marker))):
+        raise Unsupported("copier-headered ROM: supply the native cartridge payload")
+    return data
+
+
+class Runtime:
+    """Bounded abstract evaluation: integer constants and setting dependencies.
+
+    RAM reads and arbitrary calls have no implementation. A write can only be
+    emitted if its value/control depend solely on the one selected toggle.
+    """
+    def __init__(self, module, rom_hash, selected=None):
+        self.module = module
+        self.rom_hash = rom_hash
+        self.selected = selected
+        self.scopes = [{}]
+        self.types = [{}]
+        self.frame = False
+        self.path = frozenset()
+        self.writes = []
+        self.steps = 0
+        self.resolving = set()
+
+    def tick(self):
+        self.steps += 1
+        if self.steps > 20000:
+            raise Unsupported("evaluation/loop budget exceeded")
+
+    def get(self, name):
+        for scope in reversed(self.scopes):
+            if name in scope:
+                value = scope[name]
+                if value is None: raise Unsupported("read of uninitialised local " + name)
+                return value
+        if name in self.module.macros:
+            if name in self.resolving:
+                raise Unsupported("recursive macro " + name)
+            self.resolving.add(name)
+            try:
+                return self.expr(self.module.macros[name])
+            finally:
+                self.resolving.remove(name)
+        raise Unsupported("unknown identifier " + name)
+
+    def put(self, name, value, declare=False, typ=None):
+        if value is not None:
+            value = replace(value, deps=value.deps | self.path)
+        if declare:
+            self.types[-1][name] = typ or (32, False)
+            self.scopes[-1][name] = integer(value, *self.types[-1][name]) if value else None
+            return
+        for i in reversed(range(len(self.scopes))):
+            scope = self.scopes[i]
+            if name in scope:
+                if self.frame and i == 0:
+                    raise Unsupported("frame callback changes persistent state")
+                scope[name] = integer(value, *self.types[i][name])
+                return
+        raise Unsupported("assignment to unknown identifier " + name)
+
+    def expr(self, node):
+        self.tick()
+        if isinstance(node, C.Constant):
+            if node.type == "string":
+                raise Unsupported("string used as an integer")
+            if node.type == "char":
+                number = ord(ast.literal_eval(node.value))
+                if number > 127: raise Unsupported("non-ASCII character constant")
+                return Value(number)
+            token = re.sub(r"[uUlL]+$", "", node.value)
+            if node.value.lower().count("l") == 1:
+                raise Unsupported("platform-dependent long literal requires manual review")
+            try:
+                number = int(token, 8 if re.fullmatch(r"0[0-7]+", token) else 0)
+                unsigned = "u" in node.value.lower()
+                bits = 64 if "ll" in node.value.lower() else 32
+                if not unsigned and number >= 1 << (bits-1):
+                    if token.lower().startswith("0x"): unsigned = True
+                    else: bits = 64
+                if number >= 1 << bits: raise Unsupported("integer literal out of range")
+                return integer(Value(number), bits, unsigned)
+            except ValueError:
+                raise Unsupported("non-integer constant " + node.value)
+        if isinstance(node, C.ID):
+            return self.get(node.name)
+        if isinstance(node, C.Cast):
+            val = self.expr(node.expr)
+            return integer(val, *type_info(node.to_type.type))
+        if isinstance(node, C.UnaryOp):
+            if node.op in ("++", "p++", "--", "p--") and isinstance(node.expr, C.ID):
+                old = self.get(node.expr.name)
+                new = integer(replace(old, n=old.n + (1 if "+" in node.op else -1)), old.bits, old.unsigned)
+                self.put(node.expr.name, new)
+                return old if node.op.startswith("p") else new
+            val = promote(self.expr(node.expr))
+            if node.op == "+": return val
+            if node.op == "-": return integer(replace(val, n=-val.n), val.bits, val.unsigned)
+            if node.op == "!": return Value(int(not val.n), val.deps)
+            if node.op == "~": return integer(replace(val, n=~val.n), val.bits, val.unsigned)
+            raise Unsupported("unsupported unary operator " + node.op)
+        if isinstance(node, C.BinaryOp):
+            left = self.expr(node.left)
+            if node.op == "&&" and not left.n: return Value(0, left.deps)
+            if node.op == "||" and left.n: return Value(1, left.deps)
+            right = self.expr(node.right)
+            if node.op in ("<<", ">>"):
+                left, right = promote(left), promote(right)
+            else:
+                left, right = common(left, right)
+            a, b = left.n, right.n
+            ops = {"+": lambda: a+b, "-": lambda: a-b, "*": lambda: a*b,
+                   "&": lambda: a & b, "|": lambda: a | b, "^": lambda: a ^ b,
+                   "==": lambda: int(a == b), "!=": lambda: int(a != b),
+                   "<": lambda: int(a < b), ">": lambda: int(a > b),
+                   "<=": lambda: int(a <= b), ">=": lambda: int(a >= b),
+                   "&&": lambda: int(bool(a and b)), "||": lambda: int(bool(a or b))}
+            if node.op in ("<<", ">>"):
+                if not 0 <= b < left.bits or a < 0:
+                    raise Unsupported("unsupported shift")
+                number = a << b if node.op == "<<" else a >> b
+            elif node.op in ops:
+                number = ops[node.op]()
+            else:
+                raise Unsupported("unsupported binary operator " + node.op)
+            result = Value(number, left.deps | right.deps)
+            if node.op in ("==", "!=", "<", ">", "<=", ">=", "&&", "||"):
+                return result
+            return integer(result, left.bits, left.unsigned)
+        if isinstance(node, C.TernaryOp):
+            # C chooses a common type from both arms, even when only one runs.
+            raise Unsupported("conditional expression requires manual review")
+        if isinstance(node, C.FuncCall):
+            return self.call(node)
+        raise Unsupported("unsupported expression " + type(node).__name__)
+
+    def call(self, node):
+        name = getattr(node.name, "name", "")
+        args = node.args.exprs if node.args else []
+        if name == "bigpemu_get_loaded_fnv1a64" and not args:
+            return Value(self.rom_hash, frozenset(["rom"]), 64, True)
+        if name == "bigpemu_get_setting_value" and len(args) == 2:
+            ptr = args[0]
+            if not isinstance(ptr, C.UnaryOp) or ptr.op != "&" or not isinstance(ptr.expr, C.ID):
+                raise Unsupported("setting output must be a scalar local variable")
+            identifier = getattr(args[1], "name", None)
+            if identifier not in self.module.handles or any(identifier in scope for scope in self.scopes[1:]):
+                raise Unsupported("setting handle must be its registered global identifier")
+            handle = self.get(identifier).n
+            if handle != self.module.handles[identifier]:
+                raise Unsupported("setting handle was changed")
+            self.put(ptr.expr.name, Value(int(handle in (self.selected or ())), frozenset([handle])))
+            return Value(0)
+        write = re.fullmatch(r"bigpemu_jag_write(8|16|32)", name)
+        if write and len(args) == 2:
+            address, value = map(self.expr, args)
+            deps = self.path | address.deps | value.deps
+            if not self.selected or "rom" not in deps or not (deps - {"rom"}) or not deps <= self.selected | {"rom"}:
+                raise Unsupported("write needs a ROM-hash guard and exactly one independent setting")
+            if not address.deps <= self.path:
+                raise Unsupported("setting-dependent write address")
+            width = int(write[1]) // 8
+            if not 0 <= address.n <= 0x200000-width:
+                raise Unsupported("write outside 2 MiB main RAM")
+            if width > 1 and address.n % 2:
+                raise Unsupported("unaligned word/long write requires manual review")
+            if len(self.writes) >= 256:
+                raise Unsupported("cheat exceeds the core's 256-write limit")
+            self.writes.append((address.n, value.n & ((1 << (8*width))-1), width))
+            return Value(0)
+        raise Unsupported("unsupported call " + name + " (RAM-dependent operations are not constant cheats)")
+
+    def stmt(self, node):
+        if node is None: return
+        self.tick()
+        if isinstance(node, C.Compound):
+            self.scopes.append({})
+            self.types.append({})
+            try:
+                for child in node.block_items or []: self.stmt(child)
+            finally:
+                self.scopes.pop()
+                self.types.pop()
+        elif isinstance(node, C.Decl):
+            if isinstance(node.type, (C.PtrDecl, C.ArrayDecl)):
+                raise Unsupported("pointer/array declarations require manual review")
+            if "static" in node.storage and len(self.scopes) > 1:
+                raise Unsupported("static local state requires manual review")
+            value = self.expr(node.init) if node.init else (Value(0) if len(self.scopes) == 1 else None)
+            self.put(node.name, value, declare=True, typ=type_info(node.type))
+        elif isinstance(node, C.DeclList):
+            for child in node.decls: self.stmt(child)
+        elif isinstance(node, C.Assignment) and isinstance(node.lvalue, C.ID):
+            if node.op == "=": value = self.expr(node.rvalue)
+            else:
+                value = self.expr(C.BinaryOp(node.op[:-1], node.lvalue, node.rvalue))
+            self.put(node.lvalue.name, value)
+        elif isinstance(node, C.If):
+            cond = self.expr(node.cond)
+            old = self.path
+            self.path |= cond.deps
+            try: self.stmt(node.iftrue if cond.n else node.iffalse)
+            finally: self.path = old
+        elif isinstance(node, C.For):
+            self.scopes.append({})
+            self.types.append({})
+            try:
+                self.stmt(node.init)
+                while True:
+                    cond = self.expr(node.cond)
+                    if not cond.deps <= self.path:
+                        raise Unsupported("setting-dependent loop bound")
+                    if not cond.n: break
+                    self.stmt(node.stmt); self.stmt(node.next)
+            finally:
+                self.scopes.pop()
+                self.types.pop()
+        elif isinstance(node, (C.FuncCall, C.UnaryOp)):
+            self.expr(node)
+        elif isinstance(node, C.Return):
+            # Callbacks in this subset must end with a literal return 0. An early
+            # return changes execution and is deliberately not approximated.
+            raise Unsupported("early return requires manual review")
+        elif not isinstance(node, C.EmptyStatement):
+            raise Unsupported("unsupported statement " + type(node).__name__)
+
+    def run(self, name):
+        body = self.module.functions[name].body
+        statements = list(body.block_items or [])
+        if not statements or not isinstance(statements[-1], C.Return):
+            raise Unsupported("callback must end with return 0")
+        if not isinstance(statements[-1].expr, C.Constant) or statements[-1].expr.value != "0":
+            raise Unsupported("callback must return 0")
+        self.scopes.append({})
+        self.types.append({})
+        self.frame = name == self.module.events["bigpemu_register_event_emu_thread_frame"]
+        try:
+            for statement in statements[:-1]: self.stmt(statement)
+        finally:
+            self.scopes.pop()
+            self.types.pop()
+            self.frame = False
+
+
+class Module:
+    def __init__(self, source):
+        if len(source) > 1024*1024: raise Unsupported("source exceeds 1 MiB")
+        self.parser = c_parser.CParser()
+        self.macros = {}
+        clean = uncomment(source.replace("\\\n", ""))
+        lines = []
+        for line in clean.splitlines():
+            if not line.lstrip().startswith("#"):
+                lines.append(line); continue
+            define = re.fullmatch(r"\s*#\s*define\s+([A-Za-z_]\w*)\s+(.+)", line)
+            if define:
+                name, expr = define.groups()
+                tree = self.parser.parse(TYPES + "void value(void) { return (" + expr + "); }")
+                if name in self.macros: raise Unsupported("duplicate macro " + name)
+                self.macros[name] = tree.ext[-1].body.block_items[0].expr
+            elif not re.fullmatch(r'\s*#\s*include\s*["<]bigpcrt\.h[">]\s*', line):
+                raise Unsupported("unsupported preprocessor directive: " + line.strip())
+        tree = self.parser.parse(TYPES + "\n" + "\n".join(lines))
+        self.functions = {n.decl.name: n for n in tree.ext if isinstance(n, C.FuncDef)}
+        if len(self.functions) != sum(isinstance(n, C.FuncDef) for n in tree.ext):
+            raise Unsupported("duplicate function definition")
+        if "bigp_init" not in self.functions: raise Unsupported("missing bigp_init")
+        self.handles, self.settings, self.events = {}, [], {}
+        categories = []
+        registered = set()
+
+        class Registrations(C.NodeVisitor):
+            def visit_FuncCall(visitor, node):
+                name = getattr(node.name, "name", "")
+                if name not in {"bigpemu_get_module_handle", "bigpemu_set_module_usage_flags",
+                                "bigpemu_register_setting_category", "bigpemu_register_setting_bool",
+                                "bigpemu_register_setting_int", "bigpemu_register_event_sw_loaded",
+                                "bigpemu_register_event_emu_thread_frame"}:
+                    raise Unsupported("unsupported initialisation call " + name)
+                if name.startswith("bigpemu_register_") and id(node) not in registered:
+                    raise Unsupported("registration must assign a handle")
+                visitor.generic_visit(node)
+
+            def visit_If(visitor, node):
+                raise Unsupported("conditional initialisation requires manual review")
+
+            def visit_For(visitor, node):
+                raise Unsupported("initialisation loop requires manual review")
+
+            visit_While = visit_For
+            visit_DoWhile = visit_For
+            visit_Switch = visit_If
+
+            def visit_Return(visitor, node):
+                raise Unsupported("initialisation return requires manual review")
+
+            def visit_Decl(visitor, node):
+                if not isinstance(node.init, C.FuncCall):
+                    raise Unsupported("unsupported initialisation declaration")
+                scan(node.name, node.init)
+                visitor.generic_visit(node)
+
+            def visit_Assignment(visitor, node):
+                if not (node.op == "=" and isinstance(node.rvalue, C.FuncCall) and isinstance(node.lvalue, C.ID)):
+                    raise Unsupported("unsupported initialisation assignment")
+                scan(node.lvalue.name, node.rvalue)
+                visitor.generic_visit(node)
+
+        def scan(handle, call):
+            registered.add(id(call))
+            name = getattr(call.name, "name", "")
+            args = call.args.exprs if call.args else []
+            if name == "bigpemu_register_setting_category" and len(args) == 2:
+                categories.append(ast.literal_eval(args[1].value))
+            elif name.startswith("bigpemu_register_setting_") and len(args) >= 3:
+                if handle in self.handles: raise Unsupported("duplicate setting handle")
+                key = len(self.settings)+1
+                self.handles[handle] = key
+                self.settings.append((key, ast.literal_eval(args[1].value), name.endswith("_bool")))
+            elif name.startswith("bigpemu_register_event_") and len(args) == 2:
+                if name in self.events: raise Unsupported("duplicate event registration")
+                self.events[name] = args[-1].name
+
+        Registrations().visit(self.functions["bigp_init"].body)
+        required = {"bigpemu_register_event_sw_loaded", "bigpemu_register_event_emu_thread_frame"}
+        if set(self.events) != required or len(set(categories)) != 1 or not self.settings:
+            raise Unsupported("expected one title, settings, and load/frame callbacks only")
+        if any(name not in self.functions for name in self.events.values()):
+            raise Unsupported("missing registered callback body")
+        self.title = categories[0]
+        labels = [label for _, label, _ in self.settings]
+        if len(set(label.casefold() for label in labels)) != len(labels) or any(
+                re.search(r" \(part [0-9]+\)$", label, re.I) for label in labels):
+            raise Unsupported("setting labels would be ambiguous in the .cht frontend")
+        if len(self.settings) > 10:
+            raise Unsupported("at most 10 settings supported (exhaustive interaction check)")
+        self.globals = []
+        for node in tree.ext:
+            if isinstance(node, C.Decl) and not isinstance(node.type, C.FuncDecl):
+                if isinstance(getattr(node.type, "type", None), C.Enum):
+                    enum = node.type.type
+                elif isinstance(node.type, C.Enum): enum = node.type
+                else: enum = None
+                self.globals.append((node, enum))
+
+    def runtime(self, digest, selected):
+        runtime = Runtime(self, digest, selected)
+        for node, enum in self.globals:
+            if enum:
+                number = -1
+                for item in enum.values.enumerators:
+                    number = runtime.expr(item.value).n if item.value else number+1
+                    runtime.put(item.name, Value(number), declare=True)
+                if node.name: runtime.put(node.name, Value(0), declare=True)
+            else: runtime.stmt(node)
+        for name, handle in self.handles.items():
+            runtime.put(name, Value(handle))
+        runtime.run(self.events["bigpemu_register_event_sw_loaded"])
+        if runtime.writes: raise Unsupported("load-time memory changes are not frame cheats")
+        return runtime
+
+    def convert(self, digest):
+        baseline = self.runtime(digest, None)
+        baseline.run(self.events["bigpemu_register_event_emu_thread_frame"])
+        results = []
+        for key, label, boolean in self.settings:
+            result = {"name": label}
+            try:
+                if not boolean: raise Unsupported("parameter setting requires manual value selection")
+                runtime = self.runtime(digest, frozenset([key]))
+                runtime.run(self.events["bigpemu_register_event_emu_thread_frame"])
+                if not runtime.writes: raise Unsupported("no writes activated (check ROM revision/hash)")
+                result["code"] = "+".join(f"{a:08X}:{v:0{w*2}X}" for a, v, w in runtime.writes)
+                result["writes"] = len(runtime.writes)
+            except Unsupported as error:
+                result["unsupported"] = str(error)
+            results.append(result)
+        # Individual traces cannot prove independence: an extra write might be
+        # guarded by (A && B). Check every combination of exported toggles.
+        supported = [(key, result) for (key, _, _), result in zip(self.settings, results) if "code" in result]
+        def image(writes):
+            out = {}
+            for address, value, width in writes:
+                for i, byte in enumerate(value.to_bytes(width, "big")):
+                    out[address+i] = byte
+            return out
+        for count in range(2, len(supported)+1):
+            for combination in itertools.combinations(supported, count):
+                selected = frozenset(key for key, _ in combination)
+                runtime = self.runtime(digest, selected)
+                runtime.run(self.events["bigpemu_register_event_emu_thread_frame"])
+                expected = []
+                for _, result in combination:
+                    for segment in result["code"].split("+"):
+                        address, value = segment.split(":")
+                        expected.append((int(address, 16), int(value, 16), len(value)//2))
+                if image(runtime.writes) != image(expected):
+                    raise Unsupported("toggles interact; independent freezes cannot preserve combined behaviour")
+        return results
+
+
+def quoted(value):
+    if any(c in value for c in ('"', "\\")) or any(ord(c) < 32 for c in value):
+        raise Unsupported("quote, backslash or control character in metadata")
+    return '"' + value + '"'
+
+
+def cht_text(title, crc, entries, source_name, source_sha):
+    lines = ["# Locally converted community cheats; nothing is enabled automatically.",
+             "# Source: " + source_name.replace("\n", " ").replace("\r", " "),
+             "# Source SHA256: " + source_sha,
+             "# Cartridge revision guard is enforced by the Virtual Jaguar app.",
+             "vj_rom_crc32 = " + quoted(f"{crc:08X}"),
+             "cheats = " + str(len(entries)), ""]
+    for i, entry in enumerate(entries):
+        lines += [f"cheat{i}_desc = " + quoted(entry["name"]),
+                  f"cheat{i}_code = " + quoted(entry["code"]),
+                  f"cheat{i}_enable = false", ""]
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("source", type=Path, help="community-authored C source, never a compiled script")
+    parser.add_argument("--rom", type=Path, required=True, help="matching native cartridge dump")
+    parser.add_argument("--output", type=Path, required=True, help="new .cht file; existing files are refused")
+    parser.add_argument("--report", type=Path, required=True, help="new JSON conversion/provenance report")
+    parser.add_argument("--allow-partial", action="store_true", help="export complete supported toggles; report every omission")
+    args = parser.parse_args(argv)
+    try:
+        if args.output.exists() or args.report.exists() or args.output.resolve() == args.report.resolve():
+            raise Unsupported("output/report must be distinct new files")
+        if args.source.suffix.lower() != ".c": raise Unsupported("input must be a .c source file")
+        if args.source.stat().st_size > 1024*1024: raise Unsupported("source exceeds 1 MiB")
+        raw = args.source.read_bytes()
+        data = rom_bytes(args.rom)
+        module = Module(raw.decode("utf-8-sig"))
+        digest = fnv1a64(data)
+        entries = module.convert(digest)
+        supported = [entry for entry in entries if "code" in entry]
+        report = {"format": 1, "title": module.title, "source": str(args.source),
+                  "source_sha256": hashlib.sha256(raw).hexdigest(), "rom_crc32": f"{zlib.crc32(data):08X}",
+                  "rom_fnv1a64": f"{digest:016X}", "cheats": entries}
+        # Report before refusing an incomplete conversion, so omissions are reviewable.
+        with args.report.open("x", encoding="utf-8") as report_file:
+            report_file.write(json.dumps(report, indent=2)+"\n")
+        if not supported or (len(supported) != len(entries) and not args.allow_partial):
+            print("Incomplete conversion; no .cht written. See " + str(args.report), file=sys.stderr)
+            return 1
+        text = cht_text(module.title, zlib.crc32(data), supported, str(args.source), report["source_sha256"])
+        with args.output.open("x", encoding="utf-8") as output_file:
+            output_file.write(text)
+        print(f"Converted {len(supported)}/{len(entries)} toggles for {module.title}: {args.output}")
+        return 0
+    except (Unsupported, ValueError, OSError, RecursionError, KeyError, AttributeError, IndexError,
+            c_parser.ParseError) as error:
+        print("Cannot convert: " + str(error), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

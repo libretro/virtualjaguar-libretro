@@ -7,6 +7,7 @@ have.
 | I have… | Use | Doc |
 |---|---|---|
 | A hex code from a cheat site | **Cheats** | [below](#i-have-a-hex-code-from-a-cheat-site) |
+| Community-authored C memory-freeze cheats | **Offline source conversion** to `.cht` | [`tools/cheat-import`](../tools/cheat-import/README.md) |
 | An `.ips` / `.bps` / `.ups` file (translation, romhack) | **Soft patching** | [`rom-patches.md`](rom-patches.md) |
 | Specific bytes I want changed in one game | **Enhancement hooks** | [`enhancement-hooks.md`](enhancement-hooks.md) |
 | A game that needs different *emulator settings* | **Per-title defaults** — not a patch at all | [`enhancement-hooks.md`](enhancement-hooks.md#is-my-idea-a-hook) |
