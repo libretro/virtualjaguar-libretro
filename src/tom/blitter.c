@@ -620,6 +620,7 @@ static void blitter_generic(uint32_t cmd)
    uint32_t a2_flags = REG(A2_FLAGS);
    uint32_t bppSrc = (DSTA2 ? 1 << ((a1_flags >> 3) & 0x07) : 1 << ((a2_flags >> 3) & 0x07));
    int32_t px_phrase = 0;
+   bool dst_phrase_mode = DSTA2 ? a2_phrase_mode : a1_phrase_mode;
    int v;
 
    while (outer_loop--)
@@ -646,10 +647,11 @@ static void blitter_generic(uint32_t cmd)
           * Dec4 maps B_Z0-B_Z3 / B_I0-B_I3 to lanes 0-3), and z_i[v] /
           * gd_i[v] hold lane v.  This used to start every strip at lane 0
           * (the right-most) whatever its x. */
-         if (a1_phrase_mode && (GOURD || SRCSHADE || GOURZ))
+         if (dst_phrase_mode && (GOURD || SRCSHADE || GOURZ))
          {
-            colour_index = 3 - ((a1_x >> 16) & 3);
-            px_phrase = a1_x >> 18;
+            uint32_t dst_x = DSTA2 ? a2_x : a1_x;
+            colour_index = 3 - ((dst_x >> 16) & 3);
+            px_phrase = dst_x >> 18;
          }
 
          if (!DSTA2)							// Data movement: A1 <- A2
@@ -1149,9 +1151,10 @@ static void blitter_generic(uint32_t cmd)
              * so advance them together when this pixel ends its phrase --
              * the next pixel is in another phrase, or the strip is done.
              * Pixel mode keeps its single lane stepping every pixel. */
-            if (a1_phrase_mode)
+            if (dst_phrase_mode)
             {
-               if (inner_loop == 0 || (a1_x >> 18) != px_phrase)
+               uint32_t dst_x = DSTA2 ? a2_x : a1_x;
+               if (inner_loop == 0 || (dst_x >> 18) != px_phrase)
                {
                   for (v = 0; v < 4; v++)
                      gouraud_lane_advance(cmd, v);
