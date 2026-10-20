@@ -22,6 +22,9 @@ carry over. Emulation threading remains experimental and OFF by default.
 * .m3u playlists and disc-menu fixes; disc swaps update content identity
   while saves stay owned by the initially opened disc (#1006, #1009,
   #1011, #1012).
+* Invalid playlists keep their playable discs visible; playlist states
+  keep per-disc ownership in desktop and TV mode, even with equal slot
+  numbers; resume retains the full disc list and playlist save RAM (#1042).
 * Achievement browser skips games without a set (#1015).
 * CD mirror artwork misses retried after restart (#998); website CD
   artwork collection available as one ZIP (#1016).

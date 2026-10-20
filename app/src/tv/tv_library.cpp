@@ -356,7 +356,7 @@ private:
         if (!g || !host_.canLoadState()) return;
         const std::vector<StateRef> st = host_.states(*g);
         if (st.empty()) return;
-        host_.launchState(*g, st[0].slot);
+        host_.launchState(*g, st[0]);
         shell_.launched();
     }
 

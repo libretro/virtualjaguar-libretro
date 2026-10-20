@@ -48,6 +48,11 @@ pacing remain follow-up work; this release does not claim to eliminate every rep
 
 - Open **`.m3u` multi-disc playlists**; every disc appears under File > Disc.
   ([#1012](https://github.com/libretro/virtualjaguar-libretro/pull/1012))
+- Invalid playlists no longer hide otherwise playable discs. States from every playlist disc
+  remain available in the library and TV mode, including identical slot numbers on different
+  discs. Resuming mounts the state-owning disc while retaining the playlist's full disc list
+  and save-RAM ownership.
+  ([#1042](https://github.com/libretro/virtualjaguar-libretro/pull/1042))
 - The disc menu works after loading a CD and while booted into the CD BIOS without a disc.
   Swaps update the running content identity while keeping save ownership on the disc that
   opened the session.
@@ -102,8 +107,10 @@ with the private corpus present. Fresh cartridge (155 titles, HLE/BIOS) and CD
 crash signatures** against v3.9.1. Existing known failures remain recorded in the matrices.
 The acid suite ran all 150 cases: 147 pass, three known failures, **zero regressions**.
 
-The app built and passed CTest on Studio (159 registered tests; network discovery skipped),
-including the 53 emulation-thread tests. Focused windowed checks passed for inline/threaded
+After the playlist review fixes, the app built and passed all 159 CTest tests on Studio,
+including the 53 emulation-thread tests. Regression coverage includes invalid playlist entries,
+per-disc ownership with identical slots, warm-cache state lookup, TV resume routing, and real
+playlist state-load events in both inline and threaded modes. Focused windowed checks passed for inline/threaded
 operation, paused/settings access and fullscreen menu hover/F1/restore/persistence. POSIX
 installer hermetic tests passed 208 checks. These do not replace clean-machine Windows
 installer qualification. GitHub release CI and published-artifact checks remain release gates;

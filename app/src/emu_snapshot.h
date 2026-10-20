@@ -52,6 +52,7 @@ struct DiscInfo {
     unsigned count = 0;
     unsigned index = 0;
     std::vector<std::string> labels;
+    std::vector<std::string> paths; // current core disc list; may differ from an edited playlist file
 };
 
 // What SET_CORE_OPTIONS_V2 / _DISPLAY last said, plus the app's locks: the part of the option state the core writes.

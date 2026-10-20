@@ -68,6 +68,7 @@ private:
         std::string label, sub;
         int slot = -1;
         int64_t time = 0;
+        std::string disc{};
     };
     void refresh();
     void accept();

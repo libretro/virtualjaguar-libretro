@@ -45,9 +45,9 @@ public:
     std::vector<GameRef> games(List l) override;
     Art art(const GameRef& g) override;
     std::vector<StateRef> states(const GameRef& g) override;
-    Art stateThumb(const GameRef& g, int slot) override;
+    Art stateThumb(const GameRef& g, const StateRef& state) override;
     void launch(const GameRef& g) override;
-    void launchState(const GameRef& g, int slot) override;
+    void launchState(const GameRef& g, const StateRef& state) override;
     bool isFavorite(const GameRef& g) override;
     void setFavorite(const GameRef& g, bool on) override;
 

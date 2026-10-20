@@ -132,6 +132,7 @@ std::string biosInstallName(const BiosInfo& b, uint64_t size);
 // A scanned file plus what the dats say about it.
 struct Entry {
     ScanFile file;
+    std::string statePlaylist; // hidden disc owner: open this playlist before selecting file.path for a state
     Section section = Section::Cart;
     BiosInfo bios;         // when section == Bios
     std::string title;     // dat game name, or the cleaned file stem
@@ -159,6 +160,8 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
 
 bool isCartExt(const std::string& lowerExt);
 bool isDiscExt(const std::string& lowerExt);
+// All entries, normalized and checked against the host's supported disc formats/existence rules; empty if invalid.
+std::vector<std::string> playlistDiscs(const std::string& path);
 
 // Identification against the dats (either may be null/empty).
 Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs);

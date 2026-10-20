@@ -252,7 +252,7 @@ public:
     bool openContent(const std::string& path);
     bool autoSave();                  // write this game's auto-save when the policy allows (lib::shouldAutoSave)
     void offerResume();               // a game booted: load / ask / nothing, by the policy and the option
-    void openAndLoadState(const std::string& path, int slot);   // the library: open `path`, then load its state `slot`
+    void openAndLoadState(const std::string& path, int slot, const std::string& stateDisc = "");   // the library: open `path`, then load its state `slot`
     bool openNoContent();             // boots the console with no cartridge, through the BIOS bootBios() last chose
     // Boots a BIOS on its own (BIOS & system tab, File > Boot BIOS): a cartridge boot ROM runs against an empty
     // slot, the CD BIOS comes up with no disc.  `file` is used for this boot only ("" = the saved choice).

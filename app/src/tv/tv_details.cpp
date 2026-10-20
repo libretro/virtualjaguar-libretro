@@ -9,6 +9,7 @@
 #include <cstdlib>
 
 #include "theme.h"
+#include "paths.h"
 #include "tv/tv_screen.h"
 #include "tv/tv_shell.h"
 
@@ -42,7 +43,7 @@ void DetailsScreen::refresh() {
         if (host_.canLoadState())   // hardcore refuses state loads: no Resume rows at all
             for (const StateRef& s : host_.states(g_))
                 items_.push_back({Item::Resume, s.slot < 0 ? std::string("Resume: Auto-save") : "Resume: Slot " + std::to_string(s.slot),
-                                  widgets::formatDate(s.time), s.slot, s.time});
+                                  (s.disc.empty() ? "" : pathStem(s.disc) + " - ") + widgets::formatDate(s.time), s.slot, s.time, s.disc});
         items_.push_back({Item::Favorite, host_.isFavorite(g_) ? "Favorite: On" : "Favorite: Off", "", -1, 0});
     }
     focus_.clampTo((int)items_.size());
@@ -67,7 +68,7 @@ void DetailsScreen::accept() {
         shell_.launched();
         break;
     case Item::Resume:
-        host_.launchState(g_, it.slot);
+        host_.launchState(g_, {it.slot, it.time, it.disc});
         shell_.launched();
         break;
     case Item::Favorite: host_.setFavorite(g_, !host_.isFavorite(g_)); break;
@@ -153,7 +154,7 @@ void DetailsScreen::draw(const DrawCtx& c) {
         a.focus = (int)i == focus_.index ? tweens_.at((int)i, c.now) : 0.0f;
         if (it.kind == Item::Resume) {
             a.thumbBox = true;
-            const Art t = host_.stateThumb(g_, it.slot);
+            const Art t = host_.stateThumb(g_, {it.slot, it.time, it.disc});
             a.thumb = t.tex;
             a.thumbSrcW = t.w;
             a.thumbSrcH = t.h;

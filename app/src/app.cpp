@@ -1450,7 +1450,7 @@ void App::answerResume(bool resume, bool always) {
 
 // The library's save-state tab and tile menu: the game running already (same file) just loads the state;
 // anything else is opened first and the state loaded once it has run a couple of frames.
-void App::openAndLoadState(const std::string& pathIn, int slot) {
+void App::openAndLoadState(const std::string& pathIn, int slot, const std::string& stateDisc) {
     if (pathIn.empty() || slot < lib::kAutoSlot) return;
     const std::string path = absolutePath(pathIn);
     if (!ach.allowStateLoad()) {   // before leaving the running game for one whose state would be refused
@@ -1460,14 +1460,31 @@ void App::openAndLoadState(const std::string& pathIn, int slot) {
     if (slot >= 0) stateSlot = slot;
     // The running game: the disc in the tray, or what was opened (an .m3u, or the disc before a swap).
     auto running = [&] { return host.isLoaded() && (host.contentPath() == path || host.loadedPath() == path); };
+    // States remain named for their mounted disc. Reopen the playlist, then select that disc before loading one.
+    auto selectStateDisc = [&] {
+        if (stateDisc.empty() || host.contentPath() == stateDisc) return true;
+        emu.call([&] {
+            const auto discs = host.discInfo().paths;
+            auto it = std::find(discs.begin(), discs.end(), stateDisc);
+            if (it != discs.end()) {
+                host.discSetIndex((unsigned)(it - discs.begin()));
+                host.discSetEject(false);
+            }
+        });
+        host.pinSnapshot();
+        followDiscSwap();
+        if (host.contentPath() != stateDisc) { toast("Could not mount the state disc", 3.5, 2); return false; }
+        return true;
+    };
     if (running()) {
-        loadState(slot);
+        if (selectStateDisc()) loadState(slot);
         return;
     }
     suppressResume_ = true;   // the state asked for replaces the auto-save offer
     handleDrop(path);
     suppressResume_ = false;
-    if (running()) pendingStateSlot_ = slot;   // cleared if the open failed
+    if (running() && selectStateDisc()) pendingStateSlot_ = slot;   // cleared if the open / mount failed
+    pendingStateAt_ = emu.framesRun() + 2;
     pendingStateFrames_ = 2;   // (threaded: pendingStateAt_, set by openContentOnCore)
 }
 
@@ -1761,6 +1778,9 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
             openAndLoadState(p, (int)(intptr_t)e.user.data2 - 1000);
+        } else if (e.user.code == 0x56414A50 && e.user.data1) {   // 'VAJP': a playlist's disc-owned state
+            std::unique_ptr<PlaylistStateLaunch> request((PlaylistStateLaunch*)e.user.data1);
+            openAndLoadState(request->playlist, (int)(intptr_t)e.user.data2 - 1000, request->disc);
         } else if (e.user.code == 0x564A4441 && e.user.data1) {   // 'VJDA': File > Add disc image...
             std::string p = (const char*)e.user.data1;
             SDL_free(e.user.data1);
@@ -2452,6 +2472,37 @@ bool App::discListHeadlessCheck(unsigned want) {
         }
         if (!identity(want - 1, "after inserting the last disc")) return false;
         runHeadlessFrames(60);
+        if (d.paths != discs || !saveState(8, true)) {
+            std::fprintf(stderr, "headless: FAIL --expect-discs: disc paths / state save\n");
+            return false;
+        }
+        // Use the real library event in both running-session and fresh-open paths. The second disc owns slot 8.
+        for (bool reopen : {false, true}) {
+            if (reopen) closeContent();
+            else { emu.call([&] { host.discSetIndex(0); }); menuDisc(); }
+            lib::Entry owner;
+            owner.file.path = discs.back();
+            owner.statePlaylist = opened;
+            library.launchState(owner, 8);
+            SDL_PumpEvents();
+            SDL_Event event;
+            const int got = SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_USER, SDL_EVENT_USER);
+            if (got != 1 || event.user.code != 0x56414A50) {
+                std::fprintf(stderr, "headless: FAIL --expect-discs: missing playlist state event\n");
+                return false;
+            }
+            handleEvent(event, true);
+            for (int tries = 0; pendingStateSlot_ != kNoPendingSlot && tries < 8; ++tries) {
+                if (threaded()) { runHeadlessFrames(1); threadedFrame(); }
+                else { lastTick_ = now() - 0.02; stepEmulation(); }
+            }
+            d = menuDisc();
+            if (!identity(want - 1, "after playlist state resume") || d.count != want || d.index != want - 1 ||
+                osd_.empty() || osd_.back().text != "State loaded from " + lib::stateLabel(8)) {
+                std::fprintf(stderr, "headless: FAIL --expect-discs: %s playlist state resume\n", reopen ? "fresh" : "running");
+                return false;
+            }
+        }
     }
     std::printf("DISC list %u: %s; content %s -> %s, save RAM %s (%s)\n", d.count, names.c_str(),
                 pathStem(discs[0]).c_str(), host.contentName().c_str(), pathStem(host.saveRamPath()).c_str(),
