@@ -347,7 +347,7 @@ void DACPrepareFrame(int length)
     * actually run: JaguarExecuteNew ends the frame when VC wraps after
     * VP+1 halflines (HalflineCallback).  Clamp a garbage VP (boot-time
     * zero, mid-init writes) to the hardware default field. */
-   vp1 = (uint32_t)(TOMReadWord(0xF0003E, JAGUAR) & 0x7FF) + 1;
+   vp1 = (uint32_t)(TOMGetVP() & 0x7FF) + 1;
    if (vp1 < 200 || vp1 > 1200)
       vp1 = JaguarGetDefaultFieldHalflines();
    halfline_us = JaguarGetHalflinePeriodUs();

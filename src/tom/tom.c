@@ -726,6 +726,11 @@ uint16_t TOMGetVP(void)
    return GET16(tomRam8, VP);
 }
 
+uint16_t TOMGetVI(void)
+{
+   return GET16(tomRam8, VI);
+}
+
 uint16_t TOMGetMEMCON1(void)
 {
    return GET16(tomRam8, MEMCON1);
@@ -2022,6 +2027,42 @@ void TOMReset(void)
    tomHCReadPhase = 0;
 }
 
+void TOMPITCallback(void);
+
+/* MISC.NET Dtp/Dt drive the live prescaler/divider onto the read bus.
+ * Derive them from the already-serialized scheduled expiration, in full
+ * system clocks (JTRM v8 p.15).  Reads have scheduler-slice resolution;
+ * they must not advance time or reschedule the interrupt. */
+static uint16_t TOMReadPIT(int divider)
+{
+   double usecs = GetCallbackTime(TOMPITCallback, EVENT_MAIN);
+   double tick = vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC;
+   uint64_t clocks;
+   uint32_t period = tomTimerPrescaler + 1;
+   if (!tomTimerPrescaler || usecs < 0.0)
+      return 0;
+   clocks = (uint64_t)(usecs / tick + 0.5);
+   if (!clocks)
+      return 0;
+   return divider ? (uint16_t)((clocks - 1) / period)
+      : (uint16_t)((clocks - 1) % period);
+}
+
+/* IODEC.NET Float1-5 selects MEMCON1 unless a readable target is
+ * decoded.  GB1/GB2 select separate GPU bus windows at $2000 and
+ * above; preserve their existing handling here. Internal video timing
+ * uses accessors, not bus reads of write-only registers. */
+static bool TOMReadable(uint32_t offset)
+{
+   uint32_t word = offset & 0xFFFE;
+   if (word <= 0x000A || (word >= 0x0010 && word <= 0x0016)
+      || word == 0x0020 || word == 0x0022 || word == 0x0050
+      || word == 0x0052 || word == 0x00E0 || word == 0x0200)
+      return true;
+   return word >= 0x2000 || (word >= 0x0400 && word < 0x0800)
+      || (word >= 0x1000 && word < 0x2000);
+}
+
 uint8_t TOMReadByte(uint32_t offset, uint32_t who)
 {
    //???Is this needed???
@@ -2037,18 +2078,20 @@ uint8_t TOMReadByte(uint32_t offset, uint32_t who)
    else if ((offset >= 0xF02200) && (offset < 0xF022A0))
       return BlitterReadByte(offset, who);
    else if (offset == 0xF00050)
-      return tomTimerPrescaler >> 8;
+      return TOMReadPIT(0) >> 8;
    else if (offset == 0xF00051)
-      return tomTimerPrescaler & 0xFF;
+      return TOMReadPIT(0) & 0xFF;
    else if (offset == 0xF00052)
-      return tomTimerDivider >> 8;
+      return TOMReadPIT(1) >> 8;
    else if (offset == 0xF00053)
-      return tomTimerDivider & 0xFF;
+      return TOMReadPIT(1) & 0xFF;
    else if (offset == 0xF000E0)
       return 0;
    else if (offset == 0xF000E1)
       return TOMIRQControlReg() & 0xFF;
 
+   if (!TOMReadable(offset))
+      return tomRam8[MEMCON1 + (offset & 1)];
    return tomRam8[offset & 0x3FFF];
 }
 
@@ -2087,11 +2130,10 @@ uint16_t TOMReadWord(uint32_t offset, uint32_t who)
    else if ((offset >= 0xF02200) && (offset < 0xF022A0))
       return BlitterReadWord(offset, who);
    else if (offset == 0xF00050)
-      return tomTimerPrescaler;
+      return TOMReadPIT(0);
    else if (offset == 0xF00052)
-      return tomTimerDivider;
+      return TOMReadPIT(1);
 
-   offset &= 0x3FFF;
    return (TOMReadByte(offset, who) << 8) | TOMReadByte(offset + 1, who);
 }
 
