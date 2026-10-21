@@ -86,6 +86,10 @@ void drawMeter(const char* name, const PeakMeter& m, int peak) {
 
 }  // namespace
 
+namespace scope_test {
+size_t framesSeen() { return (size_t)g.ring.totalFrames(); }
+}  // namespace scope_test
+
 void scopeToolInit(DebugSession& session, CoreHost& host) {
     g.session = &session;
     g.host = &host;

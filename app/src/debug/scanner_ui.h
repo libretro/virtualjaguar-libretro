@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace vj {
@@ -33,6 +34,8 @@ void newSearch();
 size_t candidates();
 const std::string& message();                                  // the status line under the controls
 size_t shownRows();
+bool liveValue(size_t row, int64_t& v);                        // the live column's value for that row (false: no such row)
+unsigned liveReads();                                          // how many times the 2 MB Dram buffer was copied out
 void beginEdit(size_t row, const char* text);                  // as if the value of that row was double-clicked
 void openAdd(size_t row, const char* desc);                    // as if "Add as cheat" was pressed on that row
 }  // namespace scanner_test

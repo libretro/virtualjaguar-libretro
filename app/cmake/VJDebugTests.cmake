@@ -141,7 +141,7 @@ else()
     target_compile_options(vj_debug_scan_ui_smoke PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 add_test(NAME debug_scan_ui_smoke COMMAND vj_debug_scan_ui_smoke)
-set_tests_properties(debug_scan_ui_smoke PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+set_tests_properties(debug_scan_ui_smoke PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 #   debug_texture_unit   Textures window logic (texture_pack.*): manifest parse on a synthetic dump folder,
 #                        pack install path + size rules, the replace flow's reload call on the mock, thumbnail LRU.
@@ -255,8 +255,15 @@ target_link_libraries(vj_debug_cpu_ui_smoke PRIVATE vj_debug_cpu)
 vj_add_debug_ui_smoke(vj_debug_blitter_ui_smoke debug_blitter_ui_smoke tests/debug_blitter_ui_smoke.cpp
     src/debug/blitter_ui.cpp src/debug/blitter_feed.cpp src/debug/blitter_log.cpp src/debug/audio_ring.cpp)
 
+#   debug_scope_gate    the Audio scope with the emulation thread on (halt unavailable, the other tools live): the window
+#                        opens and draws while another thread delivers audio blocks, and the core is never reached.
+vj_add_debug_ui_smoke(vj_debug_scope_gate_test debug_scope_gate tests/debug_scope_gate_test.cpp
+    src/debug/scope_ui.cpp src/debug/audio_ring.cpp src/core_host.cpp)
+target_link_libraries(vj_debug_scope_gate_test PRIVATE vj_core Threads::Threads)
+
 # #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
-set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp)
+set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp
+    scanner_ui.cpp scanner_actions.cpp scope_ui.cpp)
 add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
          "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
 set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)

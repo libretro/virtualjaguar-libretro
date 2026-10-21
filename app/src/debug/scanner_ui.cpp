@@ -3,21 +3,20 @@
 // left; double-click a value to poke it, or "Add as cheat" to keep it in the Cheats window.
 //
 // All the logic is cheat_scan.* (the search) and scanner_actions.* (poke / cheat); this file is layout only.
-// Everything runs on the main thread between retro_run calls.  Disabled (with the reason) whenever the
-// debug tools are -- no core interface, no game, RetroAchievements hardcore -- and "Add as cheat" additionally
-// obeys the Cheats window's own hardcore block.
+// Runs on the UI thread and never touches the core: a scan pass is one DebugSession::snapshotDram (a callCore, so the
+// 2 MB peek runs on the emulation side and sees RAM as of one instant), and the live column reads a published Dram
+// request.  Disabled (with the reason) whenever the debug tools are -- no core interface, no game,
+// RetroAchievements hardcore -- and "Add as cheat" additionally obeys the Cheats window's own hardcore block.
 #include "scanner_ui.h"
 
 #include "cheat_scan.h"
 #include "cheats.h"
-#include "core_host.h"
 #include "debug_session.h"
 #include "scanner_actions.h"
 #include "ui_util.h"
 #include "window_chrome.h"
 
 #include "imgui.h"
-#include "libretro.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -54,7 +53,15 @@ struct ScannerState {
     bool rowsDirty = true;
     std::vector<int64_t> cur;              // live values of `rows`, refreshed at 10 Hz
     double lastLive = -1;
-    uint64_t lastSerial = 0;
+
+    // The live column's source: a Dram view request, and the last answer kept so a new result list re-reads nothing.
+    DebugSession* sess = nullptr;              // for forceClose, which is handed no session
+    DebugViews::Id dramId = DebugViews::kNoId;
+    ViewBuffer dram;                           // the last buffer read (2 MB: copied only when a newer fill is published)
+    bool dramOk = false;                       // `dram` answers the Dram request in full
+    uint64_t dramSerial = 0;                   // the serial of the last buffer read (0 = none)
+    uint64_t epochSeen = ~0ull;                // DebugViews::epoch() last adopted
+    unsigned liveReads = 0;                    // views().read calls made for `dram` (tests)
 
     // edit / add
     bool editing = false;
@@ -81,21 +88,35 @@ int clampIdx(int i, const ScanMode (&)[N]) {
     return std::max(0, std::min(i, (int)N - 1));
 }
 
-// The RAM to search: the core's own pointer (a bulk copy is all a scan makes of it), or, if the core would not
-// hand one out, the debug interface's side-effect-free peek.
-const uint8_t* ramNow(DebugSession& session, CoreHost& host, size_t& n, std::vector<uint8_t>& fallback) {
-    uint8_t* d = nullptr;
-    size_t sz = 0;
-    if (host.isLoaded() && host.memoryRegion(RETRO_MEMORY_SYSTEM_RAM, d, sz) && d && sz) {
-        n = sz;
-        return d;
-    }
-    if (session.snapshotDram(fallback)) {
-        n = fallback.size();
-        return fallback.data();
+// The RAM to search: one callCore peek of all 2 MB, run on the emulation side between frames (or in the halt pump), so a
+// pass sees RAM as of one instant.  Never a UI-thread peek.
+const uint8_t* scanRam(DebugSession& session, std::vector<uint8_t>& buf, size_t& n) {
+    if (session.snapshotDram(buf) && buf.size() == DebugSession::kDramSize) {
+        n = buf.size();
+        return buf.data();
     }
     n = 0;
     return nullptr;
+}
+
+// The Dram request: stated while the window is open and enabled, retired (behind any fill already queued) when it is not.
+void ensureLive(DebugSession& session) {
+    if (g.dramId != DebugViews::kNoId) return;
+    ViewRequest q;
+    q.kind = ViewRequest::Kind::Dram;
+    g.dramId = session.views().set(DebugViews::kNoId, q);
+}
+
+void releaseLive(DebugSession& session) {
+    if (g.dramId != DebugViews::kNoId) {
+        DebugViews* v = &session.views();
+        const DebugViews::Id id = g.dramId;
+        session.postCore([v, id] { v->clear(id); });
+    }
+    g.dramId = DebugViews::kNoId;
+    g.dramOk = false;
+    g.dramSerial = 0;
+    g.dram = ViewBuffer{};
 }
 
 void say(const std::string& m, bool error) {
@@ -116,6 +137,7 @@ void forceClose(const char*) {
     resetSearch();
     g.message.clear();
     g.open = false;
+    if (g.sess) releaseLive(*g.sess);
 }
 
 bool parseInto(const char* text, int64_t& out, const char* what) {
@@ -127,10 +149,10 @@ bool parseInto(const char* text, int64_t& out, const char* what) {
 }
 
 // Run the scan the controls describe: a first pass when no search is active, a narrowing otherwise.
-void doScan(DebugSession& session, CoreHost& host) {
+void doScan(DebugSession& session) {
     size_t n = 0;
     std::vector<uint8_t> fb;
-    const uint8_t* ram = ramNow(session, host, n, fb);
+    const uint8_t* ram = scanRam(session, fb, n);
     if (!ram) {
         say("No RAM to search.", true);
         return;
@@ -165,21 +187,34 @@ void doScan(DebugSession& session, CoreHost& host) {
     say(b, false);
 }
 
-void refreshRows(DebugSession& session, CoreHost& host, double now) {
+// The live column.  A fill is published at DebugSession::refreshSerial() changes, so the 2 MB buffer is copied out
+// only when the serial moved past the one last read and every request is filled at it (pending() asks first, and
+// costs a lock); a new result list is evaluated against the buffer already held.
+void refreshRows(DebugSession& session, double now) {
+    const uint64_t ep = session.views().epoch();
+    if (g.epochSeen != ep) {   // another core / content: the buffer held belongs to the old one, whatever its serial
+        g.epochSeen = ep;
+        g.dramOk = false;
+        g.dramSerial = 0;
+    }
+    bool derive = false;
     if (g.rowsDirty) {
         g.scan.results(0, kMaxRows, g.rows);
         g.rowsDirty = false;
-        g.lastLive = -1;    // read the values now
+        g.cur.assign(g.rows.size(), 0);
+        derive = true;
     }
-    if (g.lastLive < 0 || now - g.lastLive >= kLiveInterval || session.refreshSerial() != g.lastSerial) {
-        size_t n = 0;
-        std::vector<uint8_t> fb;
-        const uint8_t* ram = ramNow(session, host, n, fb);
-        g.cur.resize(g.rows.size());
-        for (size_t i = 0; i < g.rows.size(); i++) g.cur[i] = ram ? g.scan.valueIn(ram, n, g.rows[i]) : 0;
+    const uint64_t serial = session.refreshSerial();
+    if (serial != g.dramSerial && (g.lastLive < 0 || now - g.lastLive >= kLiveInterval) && !session.views().pending(serial) &&
+        session.views().read(g.dramId, g.dram)) {
+        g.liveReads++;
+        g.dramSerial = g.dram.serial;
+        g.dramOk = g.dram.req.kind == ViewRequest::Kind::Dram && g.dram.ok && g.dram.bytes.size() == DebugSession::kDramSize;
         g.lastLive = now;
-        g.lastSerial = session.refreshSerial();
+        derive = true;
     }
+    if (derive && g.dramOk)
+        for (size_t i = 0; i < g.rows.size(); i++) g.cur[i] = g.scan.valueIn(g.dram.bytes.data(), g.dram.bytes.size(), g.rows[i]);
 }
 
 std::string fmt(int64_t v, bool hex) {
@@ -196,7 +231,7 @@ bool parseEdit(const char* text, int64_t& v) {
     return v >= CheatScan::minValue(w, true) && v <= CheatScan::maxValue(w, false);
 }
 
-void drawControls(DebugSession& session, CoreHost& host) {
+void drawControls(DebugSession& session) {
     const bool active = g.scan.active();
 
     ImGui::BeginDisabled(active);
@@ -243,11 +278,11 @@ void drawControls(DebugSession& session, CoreHost& host) {
             ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 7.0f, 12.0f));
             enter = ImGui::InputTextWithHint("##v2", "high", g.val2, sizeof g.val2, ImGuiInputTextFlags_EnterReturnsTrue) || enter;
         }
-        if (enter) doScan(session, host);
+        if (enter) doScan(session);
     }
 
     ui::Flow flow;
-    if (ImGui::Button(active ? "Next scan" : "Start search")) doScan(session, host);
+    if (ImGui::Button(active ? "Next scan" : "Start search")) doScan(session);
     ImGui::BeginDisabled(!g.scan.canUndo());
     flow.next(ui::Flow::buttonW("Undo"));
     if (ImGui::Button("Undo")) {
@@ -307,11 +342,11 @@ void drawAddPopup(DebugSession& session, CheatManager& cheats) {
     ImGui::EndPopup();
 }
 
-void drawResults(DebugSession& session, CheatManager& cheats, CoreHost& host) {
+void drawResults(DebugSession& session, CheatManager& cheats) {
     if (!g.scan.active()) return;
     const unsigned w = g.scan.options().width;
     const size_t total = g.scan.count();
-    refreshRows(session, host, ImGui::GetTime());
+    refreshRows(session, ImGui::GetTime());
     if (total > g.rows.size())
         ui::hint("Showing the first %zu of %zu candidates (the rest are kept; narrow the search to see them).", g.rows.size(), total);
     else
@@ -406,7 +441,7 @@ void setValues(const char* v1, const char* v2) {
     std::snprintf(g.val1, sizeof g.val1, "%s", v1 ? v1 : "");
     std::snprintf(g.val2, sizeof g.val2, "%s", v2 ? v2 : "");
 }
-void scan(DebugSession& session, CoreHost& host) { doScan(session, host); }
+void scan(DebugSession& session, CoreHost&) { doScan(session); }
 void undo() {
     g.scan.undo();
     g.rowsDirty = true;
@@ -415,6 +450,12 @@ void newSearch() { resetSearch(); }
 size_t candidates() { return g.scan.count(); }
 const std::string& message() { return g.message; }
 size_t shownRows() { return g.rows.size(); }
+bool liveValue(size_t row, int64_t& v) {
+    if (row >= g.cur.size()) return false;
+    v = g.cur[row];
+    return true;
+}
+unsigned liveReads() { return g.liveReads; }
 void beginEdit(size_t row, const char* text) {
     if (row >= g.rows.size()) return;
     g.editing = true;
@@ -447,25 +488,33 @@ void registerScannerTool(DebugSession& session) {
     }
 }
 
-void drawScanner(DebugSession& session, CheatManager& cheats, CoreHost& host) {
-    if (!g.open) return;
+void drawScanner(DebugSession& session, CheatManager& cheats, CoreHost&) {
+    g.sess = &session;
+    if (!g.open) {
+        releaseLive(session);
+        return;
+    }
     ui::nextWindow(46.0f, 34.0f, 30.0f, 18.0f);
     bool shown = ui::beginWindow("Cheat scanner", &g.open);
     ui::keepOnScreen();
     if (!shown) {
+        releaseLive(session);   // collapsed: no draw, no request
         ImGui::End();
         return;
     }
     if (!session.enabled()) {
         // Greyed: nothing here may run (hardcore, no game, no core interface).
+        releaseLive(session);
         ui::coloredWrapped(ui::vec4(ui::pal().warning), session.disabledReason().c_str());
         if (g.scan.active()) resetSearch();
         ImGui::End();
         return;
     }
-    drawControls(session, host);
+    ensureLive(session);
+    session.wakeViews();   // the request is set: inline it is filled now, threaded one fill is posted
+    drawControls(session);
     ImGui::Separator();
-    drawResults(session, cheats, host);
+    drawResults(session, cheats);
     drawAddPopup(session, cheats);
     ImGui::End();
 }
