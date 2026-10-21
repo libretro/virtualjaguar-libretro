@@ -46,7 +46,12 @@ def snapshot(directory):
     return {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in directory.rglob('*') if p.is_file()}
 
-with urllib.request.urlopen('https://api.github.com/repos/libretro/virtualjaguar-libretro/releases/tags/'+args.tag, timeout=60) as response:
+headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'vj-package-qualification'}
+token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+if token:
+    headers['Authorization'] = 'Bearer '+token
+request = urllib.request.Request('https://api.github.com/repos/libretro/virtualjaguar-libretro/releases/tags/'+args.tag, headers=headers)
+with urllib.request.urlopen(request, timeout=60) as response:
     release = json.load(response)
 if release['target_commitish'] != args.sha:
     raise RuntimeError('Published release does not identify the requested candidate SHA')

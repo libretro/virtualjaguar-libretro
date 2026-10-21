@@ -30,6 +30,10 @@ on:
         description: 'Published candidate tag to install on disposable hosts (empty = hermetic tests only)'
         default: ''
         type: string
+      qualification_linux_only:
+        description: 'Run only the Linux published qualification lanes'
+        default: false
+        type: boolean
       qualification_intel_only:
         description: 'Run only clean Intel macOS qualification (other qualification runs already dispatched)'
         default: false
@@ -40,12 +44,12 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.qualification_intel_only && '-intel' || inputs.qualification_linux_only && '-linux' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   install-sh:
-    if: ${{ !inputs.qualification_intel_only }}
+    if: ${{ !inputs.qualification_intel_only && !inputs.qualification_linux_only }}
     name: install.sh (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -82,7 +86,7 @@ jobs:
       run: bash test/installer/test_install_sh.sh
 
   install-ps1:
-    if: ${{ !inputs.qualification_intel_only }}
+    if: ${{ !inputs.qualification_intel_only && !inputs.qualification_linux_only }}
     name: install.ps1 (${{ matrix.shell }})
     runs-on: windows-latest
     strategy:
@@ -129,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.qualification_intel_only && '[{"os":"macos-15-intel","ps":"pwsh"}]' || '[{"os":"windows-latest","ps":"powershell"},{"os":"windows-latest","ps":"pwsh"},{"os":"macos-latest","ps":"pwsh"},{"os":"macos-15-intel","ps":"pwsh"},{"os":"ubuntu-22.04","ps":"pwsh"},{"os":"ubuntu-24.04-arm","ps":"pwsh"}]') }}
+        include: ${{ fromJSON(inputs.qualification_linux_only && '[{"os":"ubuntu-22.04","ps":"pwsh"},{"os":"ubuntu-24.04-arm","ps":"pwsh"}]' || inputs.qualification_intel_only && '[{"os":"macos-15-intel","ps":"pwsh"}]' || '[{"os":"windows-latest","ps":"powershell"},{"os":"windows-latest","ps":"pwsh"},{"os":"macos-latest","ps":"pwsh"},{"os":"macos-15-intel","ps":"pwsh"},{"os":"ubuntu-22.04","ps":"pwsh"},{"os":"ubuntu-24.04-arm","ps":"pwsh"}]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -139,7 +143,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends retroarch libsdl2-2.0-0 libgl1 libegl1 libx11-6 libxcursor1 libxi6 libxrandr2 libasound2
+          audio=libasound2
+          if apt-cache show libasound2t64 >/dev/null 2>&1; then audio=libasound2t64; fi
+          sudo apt-get install -y --no-install-recommends retroarch libsdl2-2.0-0 libgl1 libegl1 libx11-6 libxcursor1 libxi6 libxrandr2 "$audio"
       - name: Real RetroArch frontend (Windows)
         if: runner.os == 'Windows'
         shell: powershell
@@ -149,6 +155,7 @@ jobs:
         run: brew install --cask retroarch
       - name: Install and update actual published packages
         env:
+          GH_TOKEN: ${{ github.token }}
           QUALIFICATION_TAG: ${{ inputs.qualification_tag }}
           QUALIFICATION_SHA: ${{ inputs.qualification_sha }}
           QUALIFICATION_PS: ${{ matrix.ps }}
