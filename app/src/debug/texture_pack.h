@@ -160,9 +160,22 @@ struct ReplaceOutcome {
 // <system>/vj_texpacks/<crc>/<hash>.png, ask the core to re-read the packs, and make sure the
 // replacement option is on.  The option is set AFTER the reload: a reload tears the pack state down
 // and the core re-latches the option on its next frame.
+// `reload` asks the core to re-read the packs: 1 active, 0 inactive, <0 not supported (DebugSession::texReplaceReload);
+// empty = no reload.  The window passes the session's marshalled call, so this never touches the interface itself.
+using ReloadFn = std::function<int()>;
+ReplaceOutcome replaceTile(const OptionIO& io, const ReloadFn& reload, const std::string& systemDir, uint32_t crc,
+                           const std::string& hash, unsigned tileW, unsigned tileH, unsigned tileBpp,
+                           const std::string& srcPng);
+// The same with the interface directly (tests, the mock): a thin wrapper that reloads through it when it supports that.
 ReplaceOutcome replaceTile(const OptionIO& io, const vj_debug_iface* iface, const std::string& systemDir,
                            uint32_t crc, const std::string& hash, unsigned tileW, unsigned tileH, unsigned tileBpp,
                            const std::string& srcPng);
+// The status line a "Reload packs" answer maps to.
+struct ReloadText {
+    std::string text;
+    bool error = false;
+};
+ReloadText reloadText(int r);   // 1 active, 0 inactive, <0 not supported
 
 // ---- a bounded set of cached thumbnails --------------------------------------------------------------
 // The window owns the textures; this only decides who gets evicted.  touch() marks a key most recently

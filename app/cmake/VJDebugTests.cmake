@@ -165,7 +165,22 @@ foreach(_t texture blitter)
     add_test(NAME debug_${_t}_unit COMMAND vj_debug_${_t}_test)
     set_tests_properties(debug_${_t}_unit PROPERTIES TIMEOUT 60)
 endforeach()
-set_tests_properties(debug_blitter_unit PROPERTIES LABELS emu_thread)
+set_tests_properties(debug_blitter_unit PROPERTIES LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_blitter_feed_unit  the Blitter log window's data feed (blitter_feed.*): the launch list and registers read from
+#                        view buffers over the mock, the log switched through marshalled calls, the stale-buffer guards.
+add_executable(vj_debug_blitter_feed_test
+    tests/debug_blitter_feed_test.cpp src/debug/blitter_feed.cpp src/debug/blitter_log.cpp ${VJ_DEBUG_SESSION_SRCS})
+target_include_directories(vj_debug_blitter_feed_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_blitter_feed_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_debug_blitter_feed_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_blitter_feed_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_blitter_feed_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_blitter_feed_unit COMMAND vj_debug_blitter_feed_test)
+set_tests_properties(debug_blitter_feed_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 #   debug_op_unit        Object list tool (app/src/debug/op_decode, op_render, op_view): the field decoder
 #                        against JTRM-layout fixtures and op_list_dump.c's formulas, the bitmap renderer
@@ -235,8 +250,13 @@ set_tests_properties(debug_core_job_unit PROPERTIES TIMEOUT 60 LABELS emu_thread
 vj_add_debug_ui_smoke(vj_debug_cpu_ui_smoke debug_cpu_ui_smoke tests/debug_cpu_ui_smoke.cpp src/debug/cpu_ui.cpp)
 target_link_libraries(vj_debug_cpu_ui_smoke PRIVATE vj_debug_cpu)
 
+#   debug_blitter_ui_smoke  the Blitter log window (blitter_ui.cpp) drawn headlessly over the mock: the core's log on
+#                        while it is open, the list and registers from published buffers, idle frames free of core calls.
+vj_add_debug_ui_smoke(vj_debug_blitter_ui_smoke debug_blitter_ui_smoke tests/debug_blitter_ui_smoke.cpp
+    src/debug/blitter_ui.cpp src/debug/blitter_feed.cpp src/debug/blitter_log.cpp src/debug/audio_ring.cpp)
+
 # #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
-set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp)
+set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp)
 add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
          "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
 set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)

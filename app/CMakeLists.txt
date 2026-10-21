@@ -354,6 +354,7 @@ set(VJ_APP_SOURCES
     src/debug/texture_pack.cpp
     src/debug/texture_ui.cpp
     src/debug/blitter_log.cpp
+    src/debug/blitter_feed.cpp
     src/debug/blitter_ui.cpp
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
