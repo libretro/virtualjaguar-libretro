@@ -419,19 +419,6 @@ static void testIfaceSwap() {
     CHECK(s.attach() && m2.attached());
 }
 
-static void testThreadBlocked() {
-    DebugSession s;
-    MockDebugIface m;
-    s.setIface(m.iface());
-    s.setContentLoaded(true);
-    CHECK(s.enabled());
-    s.setThreadBlocked(true);   // #967 phase 1: the emulation thread is on
-    CHECK(!s.enabled() && !s.attach());
-    CHECK(s.disabledReason().find("Emulation thread") != std::string::npos);
-    s.setThreadBlocked(false);
-    CHECK(s.enabled());
-}
-
 static void testCoreWrappers() {
     MockDebugIface m;
     DebugCore c;
@@ -608,7 +595,6 @@ static void testViewsFill() {
 
 int main() {
     testAvailability();
-    testThreadBlocked();
     testAttachAndBreakpoints();
     testHaltResume();
     testHardcoreWhileHalted();

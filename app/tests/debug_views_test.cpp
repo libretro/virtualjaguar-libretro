@@ -149,6 +149,21 @@ static void testSerialAndPending() {
     CHECK(v.fill(nullptr, 3) == 0 && v.pending(3), "a null iface fills nothing and stays pending");
 }
 
+static void testSerialOf() {
+    MockDebugIface m;
+    DebugViews v;
+    CHECK(v.serialOf(7) == 0, "an unknown id has no serial");
+    const Id a = v.set(DebugViews::kNoId, mem(0, 4));
+    CHECK(v.serialOf(a) == 0, "never filled: 0");
+    const Id b = v.set(DebugViews::kNoId, mem(8, 4));
+    v.fill(m.iface(), 5);
+    CHECK(v.serialOf(a) == 5 && v.serialOf(b) == 5, "the serial of the fill");
+    v.set(b, mem(0x20, 4));
+    CHECK(v.serialOf(a) == 5 && v.serialOf(b) == 0, "per slot: a changed set() clears only its own");
+    v.clear(a);
+    CHECK(v.serialOf(a) == 0, "a cleared id has no serial");
+}
+
 static void testSetInvalidates() {
     MockDebugIface m;
     DebugViews v;
@@ -233,6 +248,7 @@ int main() {
     testSetClampsAndIds();
     testFillKinds();
     testSerialAndPending();
+    testSerialOf();
     testSetInvalidates();
     testFillHoldsNoLock();
     testEpoch();

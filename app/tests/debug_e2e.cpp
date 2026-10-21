@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     // 2. announced: the interface is there, and so is the session.
     CHECK(host.loadContent(rom, err));
     CHECK(host.debugIface() != nullptr && dbg.hasCore());
-    CHECK(dbg.iface() == host.debugIface());
+    CHECK(dbg.core().iface() == host.debugIface());
     dbg.setContentLoaded(true);
     CHECK(dbg.enabled());
     for (int i = 0; i < 30; i++) host.runFrame();
@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
             std::vector<uint8_t> b;
             CHECK(dbg.read(0x7000, b, 4) && b[0] == 0xCA);
             vj_debug_regs r;
-            CHECK(dbg.iface()->get_regs(VJ_DBG_TARGET_M68K, &r) && r.pc == haltPc);
+            CHECK(dbg.core().iface()->get_regs(VJ_DBG_TARGET_M68K, &r) && r.pc == haltPc);
         }
         if (ui == 2) dbg.step();                      // single-step: a second halt follows at once
         if (ui == 4) dbg.resume();

@@ -59,8 +59,11 @@ void drawToolsMenu(App& app) {
     if (halted) {
         if (ImGui::MenuItem("Continue", "F9")) d.resume();
         if (ImGui::MenuItem("Step", "F10")) d.step();
-    } else if (ImGui::MenuItem("Break", "F9", false, on)) {
-        d.breakNow();
+    } else {
+        const bool canBreak = on && d.haltAvailable();
+        if (ImGui::MenuItem("Break", "F9", false, canBreak)) d.breakNow();
+        if (on && !canBreak && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", d.haltDisabledReason().c_str());
     }
     if (ImGui::MenuItem("Detach debugger", nullptr, false, d.attached())) d.detach();
     ImGui::EndMenu();

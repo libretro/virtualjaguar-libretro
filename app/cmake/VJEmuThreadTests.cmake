@@ -9,20 +9,22 @@
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 #   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
+#   perf_trace_unit       VJ_PERF_TRACE -emu.csv: fill_ns is the last column and never negative
 #   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock
 #   latch_waker_unit      LatchWaker (macOS): the UI thread's timed event waits end on its wake event, on time (#1026)
 #   core_events_unit      CoreEventQueue: order, bounded log lines, content switch, two threads
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
+#   debug_views_threaded  the Tools windows' data paths with the REAL core on the emulation thread
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
 #   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
-#   emu_thread_start_fallback  a failed thread start lifts the debugger/GDB limits and runs inline
-#   *_threaded limits     the debugger and the GDB stub are off while threaded
+#   emu_thread_start_fallback  a failed thread start lifts the halt/GDB limits and runs inline
+#   emu_thread_limits  the halt and the GDB stub are off while threaded; the Tools windows work
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
 function(vj_emu_thread_warnings target)
@@ -100,6 +102,20 @@ vj_emu_thread_warnings(vj_emu_thread_e2e)
 add_test(NAME emu_thread_e2e COMMAND vj_emu_thread_e2e "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_e2e PROPERTIES TIMEOUT 600 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# The Tools windows' data paths with the REAL core on the emulation thread (#967 phase 3a): the session wired as App wires it.
+add_executable(vj_debug_views_threaded tests/debug_views_threaded.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp
+               src/emu_thread.cpp src/paths.cpp)
+target_include_directories(vj_debug_views_threaded PRIVATE src)
+target_link_libraries(vj_debug_views_threaded PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_debug_views_threaded PRIVATE ws2_32 iphlpapi)
+endif()
+vj_emu_thread_warnings(vj_debug_views_threaded)
+add_test(NAME debug_views_threaded
+    COMMAND vj_debug_views_threaded "${VJ_ROMS}/yarc.j64" "${VJ_ROMS}/jagniccc.j64")
+set_tests_properties(debug_views_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+    FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
+
 add_test(NAME emu_thread_flag_rejects COMMAND virtualjaguar --headless --emu-thread maybe "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_REGULAR_EXPRESSION "--emu-thread wants on or off"
     FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
@@ -110,6 +126,12 @@ target_link_libraries(vj_perf_csv_test PRIVATE ${VJ_SDL3_TARGET})
 vj_emu_thread_warnings(vj_perf_csv_test)
 add_test(NAME perf_csv_unit COMMAND vj_perf_csv_test "${CMAKE_CURRENT_BINARY_DIR}")
 set_tests_properties(perf_csv_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_perf_trace_test tests/perf_trace_test.cpp)
+target_include_directories(vj_perf_trace_test PRIVATE src)
+vj_emu_thread_warnings(vj_perf_trace_test)
+add_test(NAME perf_trace_unit COMMAND vj_perf_trace_test "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(perf_trace_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 # The headless smoke tests (VJSmokeTests.cmake) again with --emu-thread on: the same hashes as inline, nothing on the
 # UI thread calling into the core, and the run really threaded (the OK line says so only then).
@@ -135,12 +157,12 @@ set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threa
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
 
 # A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline and the
-# debugger tools and the GDB stub come back on.
+# debugger halt and the GDB stub come back on.
 add_test(NAME emu_thread_start_fallback
     COMMAND ${CMAKE_COMMAND} -E env VJ_TEST_EMU_START_FAIL=1
             $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_start_fallback PROPERTIES TIMEOUT 120 LABELS emu_thread
-    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are back on .the emulation thread did not start."
+    PASS_REGULAR_EXPRESSION "the debugger halt and the GDB stub are back on .the emulation thread did not start."
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
 
 # The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the
@@ -195,7 +217,7 @@ set_tests_properties(smoke_m3u_playlist_threaded PROPERTIES TIMEOUT 300 LABELS e
 add_test(NAME emu_thread_limits
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "the debugger tools and the GDB stub are off while the emulation thread is on"
+    PASS_REGULAR_EXPRESSION "the debugger halt and the GDB stub are off while the emulation thread is on \\(the Tools windows work\\)"
     FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 add_test(NAME gdb_locked_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled

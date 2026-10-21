@@ -16,9 +16,10 @@ unsigned beWord(const uint8_t* b, unsigned at) { return ((unsigned)b[at] << 8) |
 }  // namespace
 
 OpStep opStepFor(const OpStepGate& g) {
-    if (!g.loaded || !g.paused || g.halted || g.netplay) return OpStep::None;
+    // `attached` refuses in both modes: EmuThread::advance() has no give-up, so it must not run where a halt is possible.
+    if (!g.loaded || !g.paused || g.halted || g.netplay || g.attached) return OpStep::None;
     if (g.threaded) return OpStep::Advance;
-    return !g.attached && !g.inFrame ? OpStep::Inline : OpStep::None;
+    return !g.inFrame ? OpStep::Inline : OpStep::None;
 }
 
 void OpViewModel::clear() {
@@ -251,7 +252,7 @@ bool OpViewModel::update(DebugSession& s, bool running) {
                 ViewRequest r = b.req;
                 r.addr = ++pollGen_;
                 snapId_ = s.views().set(snapId_, r);
-                s.wakeViews();
+                s.wakeViews();   // the model stays self-contained (testArmedEmptyAsksAgainOnlyWhileRunning); wakeViews() posts at most one fill
                 if (s.views().read(snapId_, b) && absorbable(b)) {
                     absorb(s, b);
                     changed = true;

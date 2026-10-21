@@ -8,7 +8,7 @@
 // emulation thread and lives in DebugCore (core()); every session method that must touch it goes through
 // coreCall (waits) or corePost (fire and forget), which App wires to the emulation thread's debug lane.  Both are
 // empty inline (headless, tests), and the action then runs right where it is called: same code, one thread.
-//   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_, threadBlocked_,
+//   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_,
 //                    haltAvailable_, the halt fields (halted_, queued_, ... inline-only until phase 3b), seenGen_,
 //                    hadCore_, and the public callbacks.  Exception: regions_ and lastPokeError_ may be written inside
 //                    a callCore lambda (regions() / poke() nested in a window's one-shot action) while the UI thread
@@ -81,7 +81,6 @@ public:
     void onCoreIface(const vj_debug_iface* i);
     void syncCore();
     void setIface(const vj_debug_iface* i);
-    const vj_debug_iface* iface() const { return core_.iface(); }   // until A9: the windows still call the core through it
     void setContentLoaded(bool loaded);
     // RetroAchievements hardcore: the tools are off.  Turning it on detaches, drops any halt and
     // tells the windows to close (onForcedClose).
@@ -100,11 +99,7 @@ public:
     // ---- can the tools be used? -----------------------------------------------------------
     bool hasCore() const { return core_.loaded(); }
     // The core supports it, content is loaded and hardcore is off.
-    bool enabled() const { return core_.loaded() && loaded_ && !hardcore_ && !threadBlocked_; }
-    // The emulation runs on its own thread (#967 phase 1): until the halt pump and the tool windows move there
-    // (phase 3) the tools are off.  Turning it on detaches and closes the windows, like hardcore does.
-    void setThreadBlocked(bool on);
-    bool threadBlocked() const { return threadBlocked_; }
+    bool enabled() const { return core_.loaded() && loaded_ && !hardcore_; }
     // Why not (for a tooltip / the greyed Tools menu); "" when enabled().
     std::string disabledReason() const;
     bool hardcore() const { return hardcore_; }
@@ -154,8 +149,9 @@ public:
     // ---- the view copier ---------------------------------------------------------------------------------------
     // fillViews() serves every pending request from the core (emulation thread; inline: the UI).  It has NO gate:
     // the Neuro watches depend on it in every state but "no core".  wakeViews() (UI thread, once per UI frame and
-    // after a window's set()s) makes sure a paused game still fills: inline it fills now, threaded it posts one
-    // fillViews() to the debug lane while a request is pending (one outstanding at a time).
+    // after a window's set()s) makes sure a paused game still fills: with no corePost (tests) it fills now; otherwise
+    // it posts one fillViews() while a request is pending (one outstanding at a time).  App always sets corePost; the
+    // post runs at once when EmuThread is not threaded (it runs jobs inline), at the next frame boundary when it is.
     size_t fillViews();
     void wakeViews();
 
@@ -212,7 +208,6 @@ private:
     DebugViews views_;
     bool loaded_ = false;
     bool hardcore_ = false;
-    bool threadBlocked_ = false;
     bool haltAvailable_ = true;
     uint64_t seenGen_ = 0;       // core_.ifaceGen() as syncCore() last adopted it
     bool hadCore_ = false;

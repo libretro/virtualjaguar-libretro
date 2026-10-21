@@ -92,7 +92,8 @@ public:
     // queued in Lane::Debug, drained at the next frame boundary (after the frame lane) or by the halt pump, whichever
     // comes first.  debugCall waits like call() (the same wait hook after kBusyAfter); captures must be by value when
     // the thread may be abandoned, as for call().  There is no ordering between the two lanes beyond "frame lane
-    // first at each boundary".
+    // first at each boundary".  The Tools windows rely on debugCall ALWAYS waiting, never giving up: DebugSession::attach,
+    // TempBreak::arm/disarm and CpuControl::stepOver capture locals by reference inside callCore.
     template <class F>
     auto debugCall(F&& fn) -> decltype(fn());
     void debugPost(std::function<void()> fn);

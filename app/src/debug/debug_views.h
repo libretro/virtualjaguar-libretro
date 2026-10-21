@@ -86,6 +86,7 @@ public:
     // nothing.  Fills run in id order.
     size_t fill(const vj_debug_iface* iface, uint64_t serial);
     bool pending(uint64_t serial) const;       // some request is not yet filled at `serial` (the pump asks this)
+    uint64_t serialOf(Id id) const;            // the serial of one slot's front buffer; 0 = unknown id or never filled
     void bumpEpoch();                          // a content switch: every buffer becomes unreadable until refilled
     uint64_t epoch() const;                    // atomic
 

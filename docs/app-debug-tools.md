@@ -16,13 +16,14 @@ of them changes how the game plays unless you press an edit button.
 | --- | --- |
 | the contract (C89, shared verbatim by core and app) | `src/debug/vj_debug_iface.h` |
 | core side | `src/debug/vjdebug.c` (+ the halt pump in `src/debug/gdbtarget.c`, OP snapshot in `src/tom/op.c`, blit log in `src/tom/blitter_mmio.c`, `TexReplaceReload` in `src/tom/texreplace.c`) |
-| app side, no ImGui | `app/src/debug/debug_session.{h,cpp}` |
+| app side, no ImGui | `app/src/debug/debug_session.{h,cpp}` (the UI thread's object: availability, breakpoints, the Tools registry) |
+| app side, the core's half | `app/src/debug/debug_core.{h,cpp}` (owns the core's debug interface and wraps every entry point; emulation thread) and `debug_views.{h,cpp}` (the windows' requests and the buffers the emulation thread fills) |
 | app side, ImGui | `app/src/debug/debug_ui.cpp` (Tools menu, halted bar, `addDebugTools`), one `*_ui.cpp` per tool, each with its pure logic beside it (`memory_view`, `cheat_scan`, `op_decode` / `op_view` / `op_render`, `texture_pack`, `blitter_log`, `audio_ring`) |
 | a fake core for tests | `app/tests/debug_mock.h` |
 
 ## Halt model
 
-All calls are made on the thread that runs `retro_run()`: between two `retro_run()` calls, or from inside the halt pump.
+All calls are made on the thread that runs `retro_run()` (the UI thread inline, the emulation thread when Settings > Interface > Emulation thread is on): between two `retro_run()` calls, or from inside the halt pump.
 
 1. A breakpoint (or **Break**, F9) makes the core call `GDBHalt()`, which blocks **in place**, deep inside `retro_run()`.
    Every processor is frozen exactly where it stopped.
@@ -62,10 +63,26 @@ Every window follows the same rules:
   keeps the `refreshSerial()` it last drew and re-reads when it changes; the serial also bumps after a state load, a
   reset, a content change, a halt and every poke, so a paused game costs nothing and a loaded state shows at once.
 - **Opaque, resizable windows** placed through `ui::nextWindow`, text that wraps rather than clips.
-- All core calls happen on the main thread, between `retro_run` calls or inside the halt pump.
+- Core calls follow the **Threading** rules below.
 
 Developers can open a window at start-up with `--show-window memory|palette|scanner|objects|blitter|textures|scope`
-(with `--screenshot PNG` for a picture).
+(with `--screenshot PNG` for a picture); it works with the emulation thread on too.
+
+### Threading
+
+Only the thread that runs `retro_run()` calls the core, and no window ever does.  Inline that is the UI thread and the
+rules below cost nothing; with the emulation thread on they are what keeps the windows off the core:
+
+- **Periodic readers** (Memory, Palette, the CPU window's registers and disassembly, the Object list, the Blitter log,
+  the scanner's live column) set a `DebugViews` request -- a memory range, a register set, a disassembly window -- and
+  read the buffer the emulation thread filled after the last frame.  A changed request, or a content switch (an epoch
+  that bumps when the core hands over a new interface), invalidates its buffer, so a window never draws the previous
+  game's bytes.  A paused game still fills: the UI's `wakeViews()` posts one fill to the emulation thread.
+- **One-shot actions** (poke, register edit, arm the OP snapshot, enable the blit log, texture pack reload, attach, the
+  scanner's 2 MB scan pass) go through `EmuThread::debugCall` and wait at most one frame.  Slower work whose result
+  the window picks up later (the CPU window's backwards disassembly walk) is posted (`CoreJob`) instead.
+- With the thread on, Break, Step and breakpoints are greyed (the tooltip says they are not available in this version)
+  and the GDB stub option stays locked to `disabled`; the halt pump moves to the emulation thread in a later phase.
 
 ## The tools
 
@@ -176,7 +193,10 @@ field, nothing the emulated machine can observe (the core test hashes the frame 
 
 ## Testing
 
-`debug_session_unit` (logic against the mock) and `debug_e2e` (real core); per tool, a unit test over the pure logic
+`debug_session_unit` (logic against the mock) and `debug_e2e` (real core); `debug_views_unit` (the request table, the buffers and
+the epoch, under ThreadSanitizer too) and `debug_views_threaded` (the real core on the emulation thread: the views equal
+a `debugCall` peek, a paused request fills with no frame run, the first read after a reload is the new ROM, inline and
+threaded give the same Dram view); per tool, a unit test over the pure logic
 (`debug_memory_unit`, `debug_scan_unit`, `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`), a headless ImGui smoke test
 of each window over the mock (`debug_memory_ui_smoke`, `debug_scan_ui_smoke`) and end-to-end runs on the public `yarc.j64`
 (`debug_scan_e2e`, `debug_op_e2e`: at least one bitmap object comes from the core's snapshot itself); and the core's

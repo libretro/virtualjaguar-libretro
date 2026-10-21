@@ -47,6 +47,9 @@ void DebugSession::syncCore() {
     const uint64_t gen = core_.ifaceGen();
     if (gen == seenGen_) return;
     seenGen_ = gen;
+    // A fill posted before the swap that never ran must not block the next one (a lost post is harmless: fills are
+    // idempotent per serial).
+    wakePosted_ = false;
     dropHalt();
     regions_.clear();
     bps_.clear();   // a breakpoint never lingers into the next core instance / game
@@ -83,16 +86,6 @@ void DebugSession::setHardcore(bool on) {
     serial_++;
 }
 
-void DebugSession::setThreadBlocked(bool on) {
-    if (on == threadBlocked_) return;
-    threadBlocked_ = on;
-    if (on) {
-        detach();
-        closeAllTools("thread");
-    }
-    serial_++;
-}
-
 void DebugSession::setHaltAvailable(bool on) {
     if (on == haltAvailable_) return;
     haltAvailable_ = on;
@@ -106,7 +99,6 @@ std::string DebugSession::haltDisabledReason() const {
 }
 
 std::string DebugSession::disabledReason() const {
-    if (threadBlocked_) return "Not available while Settings > Interface > Emulation thread is on (this version)";
     if (!core_.loaded()) return "This core build has no debug interface";
     if (hardcore_) return "Disabled while RetroAchievements hardcore mode is on";
     if (!loaded_) return "No game is running";

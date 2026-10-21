@@ -67,6 +67,12 @@ bool DebugViews::pending(uint64_t serial) const {
     return false;
 }
 
+uint64_t DebugViews::serialOf(Id id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = slots_.find(id);
+    return it == slots_.end() ? 0 : it->second.front.serial;
+}
+
 void DebugViews::bumpEpoch() { epoch_.fetch_add(1); }
 
 uint64_t DebugViews::epoch() const { return epoch_.load(); }

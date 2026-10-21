@@ -327,6 +327,13 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   exercise unofficial/enabled toggles and password sign-in, and retain copied UI data across signout. Without
   the shared client lock, TSan reports a race between the hardcore getter and setter. UI code must never retain
   rcheevos pointers: use `clientSnapshot()` or the copied rows/URLs.
+- **Phase 3a (the Tools windows on the emulation thread):** `debug_views_unit` (the request table, the buffers and the
+  epoch; concurrent set/fill/read under TSan), the lane cases in `emu_commands_unit` / `emu_thread_unit`,
+  `debug_views_threaded` (the REAL core on a threaded `EmuThread`, the session wired as `App` wires it: views equal a
+  `debugCall` peek, a paused request fills with no frame run, the first read after a reload is the new ROM, inline ==
+  threaded for the Dram view, hardcore detaches), and the reworded `emu_thread_limits` / `emu_thread_start_fallback`
+  ("the debugger halt and the GDB stub are off/back on"). Each window's smoke test draws from view buffers only and
+  pins zero core calls from the UI side (`app/tests/debug_ui_fixture.h`).
 - **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
   test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
   still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.

@@ -222,6 +222,25 @@ int main() {
     frames(session, cm, 10);
     CHECK(scanner_test::liveReads() == base + 3 && scanner_test::liveValue(0, v) && v == 0x66);
 
+    // Another window's request pending must not hold the scanner back: its own buffer is fresh at the new serial, so it
+    // is read at once (before the drain), whatever else waits for a fill.
+    mock.dram()[1] = 0x99;
+    session.requestRefresh();
+    frames(session, cm, 1);
+    CHECK(d.q.size() == 1);
+    d.drain();                                                // the scanner's buffer is now filled at the new serial
+    ViewRequest other;
+    other.kind = ViewRequest::Kind::Memory;
+    other.addr = 0x200;
+    other.len = 16;
+    const DebugViews::Id otherId = session.views().set(DebugViews::kNoId, other);   // pending at that same serial
+    CHECK(session.views().pending(session.refreshSerial()));
+    frames(session, cm, 10);
+    CHECK(d.q.size() == 1 && session.views().pending(session.refreshSerial()));     // still waiting for its fill
+    CHECK(scanner_test::liveReads() == base + 4 && scanner_test::liveValue(0, v) && v == 0x99);
+    session.views().clear(otherId);
+    d.drain();
+
     // Closed with a fill still queued: the request goes behind it, never in front.
     mock.dram()[1] = 0x77;
     session.requestRefresh();
@@ -239,7 +258,7 @@ int main() {
     CHECK(d.q.size() == 1 && session.views().count() == 1);
     d.drain();
     frames(session, cm, 10);
-    CHECK(scanner_test::liveReads() == base + 4 && scanner_test::liveValue(0, v) && v == 0x77);
+    CHECK(scanner_test::liveReads() == base + 5 && scanner_test::liveValue(0, v) && v == 0x77);
 
     // A search that lands while the held buffer is older than the pass: the rows carry the pass's own values (a live
     // column that flipped to the older buffer would show 119 for "Equal to 136").

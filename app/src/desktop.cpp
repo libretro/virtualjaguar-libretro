@@ -148,7 +148,10 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         }
         void debugBreakContinue() override {
             if (a.debug.halted()) a.debug.resume();
-            else if (a.debug.enabled()) a.debug.breakNow();
+            else if (a.debug.enabled()) {
+                if (a.debug.haltAvailable()) a.debug.breakNow();
+                else a.toast(a.debug.haltDisabledReason(), 3.0);
+            }
         }
         void debugStep() override {
             if (a.debug.halted()) a.debug.step();

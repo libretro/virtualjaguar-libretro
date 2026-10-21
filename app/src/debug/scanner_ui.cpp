@@ -208,8 +208,9 @@ void doScan(DebugSession& session) {
 }
 
 // The live column.  A fill is published at DebugSession::refreshSerial() changes, so the 2 MB buffer is copied out
-// only when the serial moved past the one last read and every request is filled at it (pending() asks first, and
-// costs a lock); a new result list is evaluated against the buffer already held.
+// only when the serial moved past the one last read and the scanner's own buffer carries a serial it has not read
+// (serialOf(); another window's pending request does not delay it); a new result list is evaluated against the buffer
+// already held.
 void refreshRows(DebugSession& session, double now) {
     const uint64_t ep = session.views().epoch();
     if (g.epochSeen != ep) {   // another core / content: the buffer held belongs to the old one, whatever its serial
@@ -227,8 +228,8 @@ void refreshRows(DebugSession& session, double now) {
         derive = true;
     }
     const uint64_t serial = session.refreshSerial();
-    if (serial != g.dramSerial && (g.lastLive < 0 || now - g.lastLive >= kLiveInterval) && !session.views().pending(serial) &&
-        session.views().read(g.dramId, g.dram)) {
+    if (serial != g.dramSerial && (g.lastLive < 0 || now - g.lastLive >= kLiveInterval) &&
+        session.views().serialOf(g.dramId) != g.dramSerial && session.views().read(g.dramId, g.dram)) {
         g.liveReads++;
         g.dramSerial = g.dram.serial;
         g.dramOk = g.dram.req.kind == ViewRequest::Kind::Dram && g.dram.ok && g.dram.bytes.size() == DebugSession::kDramSize;

@@ -116,6 +116,7 @@ void EmuThread::inlineStep() {
     frames_.fetch_add(1);
 }
 
+// No give-up: a caller must not use this while a halt is possible.
 bool EmuThread::advance(unsigned n) {
     if (n == 0) return true;
     if (abandoned() || !client_) return false;

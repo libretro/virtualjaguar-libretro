@@ -262,6 +262,8 @@ vj_add_debug_ui_smoke(vj_debug_scope_gate_test debug_scope_gate tests/debug_scop
 target_link_libraries(vj_debug_scope_gate_test PRIVATE vj_core Threads::Threads)
 
 # #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
+# cpu_view.cpp, op_view.cpp, memory_view.cpp, blitter_log.cpp and texture_pack.cpp are not listed: their core work
+# sits inside callCore/postCore lambdas, which the regex cannot tell apart from a direct call on the UI thread.
 set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp
     scanner_ui.cpp scanner_actions.cpp scope_ui.cpp)
 add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
