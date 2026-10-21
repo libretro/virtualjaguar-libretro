@@ -184,7 +184,11 @@ static DSP_NOINLINE void DSP_UNTIMED_NAME(int32_t cycles)
 		}
 #endif
 
-		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		/* `- 1`: the fetch reads off and off + 1, so the last byte of
+		 * local RAM (only reachable at an odd PC) goes through
+		 * DSPReadWord(), which aligns, instead of reading past
+		 * dsp_ram_8 (cppcheck arrayIndexOutOfBoundsCond). */
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000 - 1)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
 			opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];

@@ -2692,7 +2692,7 @@ INLINE static void dsp_opcode_jump(void)
 		 * PC before applying the branch target.  This replaces the old
 		 * recursive DSPExec(1) call, avoiding full function-call overhead,
 		 * redundant IRQ checks, and pipeline-state save/restore. */
-		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000 - 1)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
 			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
@@ -2739,7 +2739,7 @@ INLINE static void dsp_opcode_jr(void)
 		/* Inline delay-slot: fetch-decode-execute one instruction at current
 		 * PC before applying the branch target.  Same rationale as in
 		 * dsp_opcode_jump above. */
-		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000 - 1)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
 			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
@@ -4574,7 +4574,7 @@ static void dsp_opcode_jump_t(void)
 			dspFlagsRetireDelay = 0;
 			DSPUpdateRegisterBanks();
 		}
-		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000 - 1)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
 			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
@@ -4623,7 +4623,7 @@ static void dsp_opcode_jr_t(void)
 			dspFlagsRetireDelay = 0;
 			DSPUpdateRegisterBanks();
 		}
-		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000 - 1)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
 			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
@@ -4727,7 +4727,7 @@ static DSP_NOINLINE void DSPExecTimed(int32_t cycles)
 		}
 #endif
 
-		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000 - 1)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
 			opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];

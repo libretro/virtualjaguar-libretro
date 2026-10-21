@@ -811,8 +811,15 @@ jobs:
           # capability macros and includes). They are covered instead by
           # c89-lint's per-arch pass, which compiles them the way the
           # build does.
+          #
+          # src/jerry/dsp_exec_untimed.h is the same kind of fragment: a
+          # function body dsp.c includes twice, using dsp.c's statics.
+          # Standalone it is nothing but undeclared identifiers.  Its code
+          # is still linted, through dsp.c, because HeaderFilterRegex
+          # covers src/jerry.
           FILES=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- '*.c' '*.h' \
             | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/(tom|jerry)/[a-z0-9_]+_simd_(neon|sse2|scalar)\.(c|h)$)' \
+            | grep -v '^src/jerry/dsp_exec_untimed\.h$' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then
             echo "No relevant C files changed; skipping clang-tidy."
