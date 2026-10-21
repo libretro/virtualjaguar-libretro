@@ -5,7 +5,7 @@
 #                        resume / step through the nested pump, the breakpoint list, the poke policy,
 #                        the refresh cadence, the Tools registry.  No window, no core.
 add_executable(vj_debug_session_test
-    tests/debug_session_test.cpp src/debug/debug_session.cpp)
+    tests/debug_session_test.cpp ${VJ_DEBUG_SESSION_SRCS})
 target_include_directories(vj_debug_session_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
 if(MSVC)
     target_compile_options(vj_debug_session_test PRIVATE /W3 /utf-8)
@@ -23,7 +23,7 @@ set_tests_properties(debug_session_unit PROPERTIES TIMEOUT 60)
 #                        a breakpoint at a PC the game revisits; hardcore switched on from inside a halt
 #                        resumes and detaches; a second game loads cleanly afterwards.
 add_executable(vj_debug_e2e
-    tests/debug_e2e.cpp src/debug/debug_session.cpp src/core_host.cpp src/paths.cpp)
+    tests/debug_e2e.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp src/paths.cpp)
 target_include_directories(vj_debug_e2e PRIVATE src)
 target_link_libraries(vj_debug_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 if(MSVC)
@@ -39,7 +39,7 @@ set_tests_properties(debug_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "F
 #                        formatting, region clamps, go-to, change marks, incremental search, the write policy
 #                        (checked against what the interface really does), the CLUT mirror, CRY / RGB16 maths.
 add_executable(vj_debug_memory_test
-    tests/debug_memory_test.cpp src/debug/memory_view.cpp src/debug/debug_session.cpp)
+    tests/debug_memory_test.cpp src/debug/memory_view.cpp ${VJ_DEBUG_SESSION_SRCS})
 target_include_directories(vj_debug_memory_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
 if(MSVC)
     target_compile_options(vj_debug_memory_test PRIVATE /W3 /utf-8)
@@ -55,7 +55,7 @@ set_tests_properties(debug_memory_unit PROPERTIES TIMEOUT 60)
 #                          value reaches the interface, ROM / register / B_CMD edits are refused before it.
 add_executable(vj_debug_memory_ui_test
     tests/debug_memory_ui_test.cpp src/debug/memory_ui.cpp src/debug/clut_ui.cpp src/debug/memory_view.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/paths.cpp "${VJ_ROOT}/src/core/cheat.c"
+    ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/paths.cpp "${VJ_ROOT}/src/core/cheat.c"
     src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
 target_include_directories(vj_debug_memory_ui_test PRIVATE src src/debug tests "${VJ_ROOT}/src/debug"
     "${VJ_ROOT}/src/core" "${VJ_ROOT}/libretro-common/include")
@@ -75,7 +75,7 @@ set_tests_properties(debug_memory_ui_smoke PROPERTIES TIMEOUT 60)
 #                        cheat_parse_one / cheat_list_apply, hardcore keeping it out.  Mock core, no window.
 add_executable(vj_debug_scan_test
     tests/debug_scan_test.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/paths.cpp
+    ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/paths.cpp
     "${VJ_ROOT}/src/core/cheat.c")
 target_include_directories(vj_debug_scan_test PRIVATE src src/debug tests "${VJ_ROOT}/src/debug"
     "${VJ_ROOT}/src/core" "${VJ_ROOT}/libretro-common/include")
@@ -94,7 +94,7 @@ set_tests_properties(debug_scan_unit PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESS
 #                        through the Cheats window's CheatManager, and the core holds it; with no cheat, with
 #                        the cheat switched off, and under a hardcore block it keeps counting.
 add_executable(vj_debug_scan_e2e
-    tests/debug_scan_e2e.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp src/debug/debug_session.cpp
+    tests/debug_scan_e2e.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp ${VJ_DEBUG_SESSION_SRCS}
     src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp)
 target_include_directories(vj_debug_scan_e2e PRIVATE src src/debug tests "${VJ_ROOT}/src/debug")
 target_link_libraries(vj_debug_scan_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
@@ -112,7 +112,7 @@ set_tests_properties(debug_scan_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSI
 #                        narrowed, a value edited with Enter, the Add-as-cheat popup, undone, hardcore.
 add_executable(vj_debug_scan_ui_smoke
     tests/debug_scan_ui_smoke.cpp src/debug/scanner_ui.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp
+    ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp
     src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
 target_include_directories(vj_debug_scan_ui_smoke PRIVATE src src/debug tests "${VJ_ROOT}/src/debug")
 target_link_libraries(vj_debug_scan_ui_smoke PRIVATE vj_core vj_imgui ${VJ_SDL3_TARGET})
@@ -155,7 +155,7 @@ set_tests_properties(debug_blitter_unit PROPERTIES LABELS emu_thread)
 #                        bpp bitmaps, the snapshot lifecycle, the screen mapping, PNG export.
 add_executable(vj_debug_op_test
     tests/debug_op_test.cpp src/debug/op_decode.cpp src/debug/op_render.cpp src/debug/op_view.cpp
-    src/debug/debug_session.cpp)
+    ${VJ_DEBUG_SESSION_SRCS})
 target_include_directories(vj_debug_op_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
 target_link_libraries(vj_debug_op_test PRIVATE ${VJ_SDL3_TARGET})
 if(MSVC)
@@ -172,7 +172,7 @@ set_tests_properties(debug_op_unit PROPERTIES TIMEOUT 60)
 #                        drawable), render a bitmap from DRAM, export it as a PNG, paint a pixel and see it in RAM.
 add_executable(vj_debug_op_e2e
     tests/debug_op_e2e.cpp src/debug/op_decode.cpp src/debug/op_render.cpp src/debug/op_view.cpp
-    src/debug/debug_session.cpp src/core_host.cpp src/paths.cpp)
+    ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp src/paths.cpp)
 target_include_directories(vj_debug_op_e2e PRIVATE src)
 target_link_libraries(vj_debug_op_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 if(MSVC)

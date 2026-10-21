@@ -34,7 +34,7 @@ target_link_libraries(virtualjaguar PRIVATE vj_debug_cpu)
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
 
-    add_executable(vj_debug_cpu_test tests/debug_cpu_test.cpp src/debug/debug_session.cpp)
+    add_executable(vj_debug_cpu_test tests/debug_cpu_test.cpp ${VJ_DEBUG_SESSION_SRCS})
     target_include_directories(vj_debug_cpu_test PRIVATE tests)
     target_link_libraries(vj_debug_cpu_test PRIVATE vj_debug_cpu)
     if(MSVC)
@@ -47,7 +47,7 @@ if(VJ_APP_BUILD_TESTS)
     set_tests_properties(debug_cpu_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
     add_executable(vj_debug_cpu_e2e
-        tests/debug_cpu_e2e.cpp src/debug/debug_session.cpp src/core_host.cpp src/paths.cpp)
+        tests/debug_cpu_e2e.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp src/paths.cpp)
     target_include_directories(vj_debug_cpu_e2e PRIVATE src)
     target_link_libraries(vj_debug_cpu_e2e PRIVATE vj_core vj_debug_cpu ${VJ_SDL3_TARGET})
     if(MSVC)
