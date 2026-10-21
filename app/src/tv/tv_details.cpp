@@ -1,5 +1,6 @@
 // TV mode (#991): Game details -- the art and title of one game over a short list: Play, a Resume row for each save
-// state (newest first, with the state's picture), and the Favorite toggle.  Pushed by Start or a right-click on a tile of
+// state (newest first, with the state's picture), the Favorite toggle, and -- when RetroAchievements has a set the library
+// can run -- Achievements, which opens that section with the game's row focused.  Pushed by Start or a right-click on a tile of
 // Home or the Library; geometry is the spec's Game details sketch in design units (u = viewport height / 1080).
 //
 // The rows are fetched again on every draw and every intent, keyed by the GameRef's `key` (a file path), so a rescan or
@@ -37,6 +38,7 @@ static bool gameExists(Host& h, const std::string& key) {
 
 void DetailsScreen::refresh() {
     items_.clear();
+    achId_ = 0;
     if (gameExists(host_, g_.key)) {   // a game a rescan dropped has no rows
         items_.push_back({Item::Play, "Play", "", -1, 0});
         if (host_.canLoadState())   // hardcore refuses state loads: no Resume rows at all
@@ -44,6 +46,8 @@ void DetailsScreen::refresh() {
                 items_.push_back({Item::Resume, s.slot < 0 ? std::string("Resume: Auto-save") : "Resume: Slot " + std::to_string(s.slot),
                                   widgets::formatDate(s.time), s.slot, s.time});
         items_.push_back({Item::Favorite, host_.isFavorite(g_) ? "Favorite: On" : "Favorite: Off", "", -1, 0});
+        achId_ = host_.achGameId(g_);
+        if (achId_ != 0) items_.push_back({Item::Achievements, "Achievements", "", -1, 0});
     }
     focus_.clampTo((int)items_.size());
 }
@@ -71,6 +75,9 @@ void DetailsScreen::accept() {
         shell_.launched();
         break;
     case Item::Favorite: host_.setFavorite(g_, !host_.isFavorite(g_)); break;
+    case Item::Achievements:   // replaces the stack, this screen with it: nothing of ours is touched after the call
+        shell_.openSection(Section::Achievements, makeAchievementsScreen(host_, shell_, achId_));
+        break;
     }
 }
 

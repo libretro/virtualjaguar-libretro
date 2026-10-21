@@ -8,6 +8,7 @@
 
 #include "app.h"
 #include "aspect_choices.h"
+#include "ra_dash.h"
 #include "shaders_ui.h"
 #include "theme.h"
 #include "tv/tv_settings_model.h"
@@ -300,6 +301,115 @@ void AppHost::setSetting(const std::string& id, int index) {
 }
 
 void AppHost::openMoreSettings() { app_.showSettings = true; }
+
+// ---- achievements ------------------------------------------------------------------------------------------------------
+// All UI-thread calls into Achievements (the plan's "Threading" list): they take its client lock themselves.
+
+AchHeader AppHost::achHeader() {
+    Achievements& a = app_.ach;
+    AchHeader h;
+    h.available = a.available();
+    h.signedIn = a.signedIn();
+    if (!h.available || !h.signedIn) return h;
+    const Achievements::ClientSnapshot s = a.clientSnapshot();
+    h.hasGame = s.gameId != 0;
+    if (!h.hasGame) return h;
+    h.title = s.gameTitle;
+    h.iconUrl = a.gameIconUrl();
+    h.unlocked = s.summary.num_unlocked_achievements;
+    h.total = s.summary.num_core_achievements;
+    // modeChip's words (achievements_ui.cpp): hardcore, or softcore with what pauses it when hardcore is wanted.
+    if (s.hardcore) h.mode = "Hardcore";
+    else if (a.hardcoreWanted() && !a.hardcoreBlocker().empty()) h.mode = "Softcore (hardcore is paused: " + a.hardcoreBlocker() + ")";
+    else h.mode = "Softcore";
+    return h;
+}
+
+// The active leaderboard trackers, then the rows in the desktop list's default order (rc_client's buckets).
+std::vector<AchItem> AppHost::achItems() {
+    Achievements& a = app_.ach;
+    std::vector<AchItem> out;
+    if (a.clientSnapshot().gameId == 0) return out;
+    for (const auto& kv : a.trackers) {
+        AchItem t;
+        t.kind = AchItem::Tracker;
+        t.id = kv.first;
+        t.title = kv.second;
+        out.push_back(std::move(t));
+    }
+    std::vector<ra::AchRow> rows;
+    a.achievementRows(rows);
+    for (size_t i : ra::viewAchievements(rows, ra::AchFilter::All, ra::AchSort::Default, "")) {
+        const ra::AchRow& r = rows[i];
+        AchItem it;
+        it.id = r.id;
+        it.title = r.title;
+        it.status = ra::achStatusLine(r);
+        it.points = r.points;
+        it.unlocked = r.unlocked();
+        it.badgeUrl = r.unlocked() ? r.badgeUrl : r.badgeLockedUrl;
+        out.push_back(std::move(it));
+    }
+    return out;
+}
+
+// The games with a published set, by title (the desktop's default view); gamesTabShown() first, as the desktop tab does every
+// frame it shows: it loads the cached list, refreshes a stale one and fetches the player's progress.
+std::vector<AchGame> AppHost::achGames() {
+    Achievements& a = app_.ach;
+    a.gamesTabShown();
+    const std::vector<ra::GameEntry>& games = a.games();
+    std::vector<AchGame> out;
+    for (size_t i : ra::viewGames(games, ra::GameFilter::All, ra::GameSort::Title, "")) {
+        const ra::GameEntry& g = games[i];
+        AchGame r;
+        r.id = g.id;
+        r.title = g.title;
+        r.imageUrl = g.imageUrl;
+        r.achievements = g.achievements;
+        r.unlocked = std::max(g.unlocked, g.unlockedHardcore);
+        r.haveProgress = g.haveProgress;
+        r.inLibrary = g.libIndex >= 0;
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+Art AppHost::achImage(const std::string& url) {
+    Art a;
+    if (url.empty()) return a;
+    const ra::ImageView v = app_.ach.images.get(url);
+    if (v.state == ra::ImageView::Ready) {
+        a.tex = v.tex;
+        a.w = v.w;
+        a.h = v.h;
+    }
+    a.loading = v.state == ra::ImageView::Loading;
+    return a;
+}
+
+// Achievements::playGame minus the "Resume where you left off?" offer, which needs a mouse (launch() with `fresh`, as AppHost::launch).
+void AppHost::achPlay(uint32_t gameId) {
+    const std::vector<lib::Entry>& es = app_.library.entries();
+    for (const ra::GameEntry& g : app_.ach.games())
+        if (g.id == gameId && g.libIndex >= 0 && (size_t)g.libIndex < es.size()) {
+            app_.library.launch(es[(size_t)g.libIndex], /*fresh=*/true);
+            return;
+        }
+}
+
+// The list entry the library file runs.  Only while signed in (the row leads to a list that needs it), and asking for the list
+// like the screen does: nothing else loads it, so Game details would never see an entry before the first visit to Achievements.
+uint32_t AppHost::achGameId(const GameRef& g) {
+    if (!app_.ach.signedIn()) return 0;
+    const lib::Entry* e = entryFor(g);
+    if (!e) return 0;
+    app_.ach.gamesTabShown();
+    const int index = (int)(e - app_.library.entries().data());
+    for (const ra::GameEntry& r : app_.ach.games())
+        if (r.libIndex == index && r.achievements > 0) return r.id;
+    return 0;
+}
 
 void AppHost::noteInput(const SDL_Event& e) {
     switch (e.type) {

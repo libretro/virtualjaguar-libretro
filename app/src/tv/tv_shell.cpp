@@ -181,14 +181,23 @@ void Shell::draw(Layer layer, ImVec2 pos, ImVec2 size) {
 // ---- the Base layer -----------------------------------------------------------------------------------------------
 
 void Shell::setSection(Section s) {
+    std::unique_ptr<Screen> root;
+    switch (s) {
+    case Section::Home: root = makeHomeScreen(host_, *this); break;
+    case Section::Library: root = makeLibraryScreen(host_, *this); break;
+    case Section::Achievements: root = makeAchievementsScreen(host_, *this); break;
+    case Section::Settings: root = makeSettingsScreen(host_, *this); break;
+    }
+    openSection(s, std::move(root));
+}
+
+// The caller may be one of the screens it replaces (Game details opening Achievements): retire() keeps it alive to the next frame.
+void Shell::openSection(Section s, std::unique_ptr<Screen> root) {
+    if (!root) return;
     section_ = s;
     for (std::unique_ptr<Screen>& old : stack_) retire(std::move(old));
     stack_.clear();
-    switch (s) {
-    case Section::Home: stack_.push_back(makeHomeScreen(host_, *this)); break;
-    case Section::Library: stack_.push_back(makeLibraryScreen(host_, *this)); break;
-    case Section::Settings: stack_.push_back(makeSettingsScreen(host_, *this)); break;
-    }
+    stack_.push_back(std::move(root));
     stackGen_++;
 }
 

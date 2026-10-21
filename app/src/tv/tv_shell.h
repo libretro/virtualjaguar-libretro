@@ -64,6 +64,7 @@ public:
     bool baseActive() const;                    // host.tvActive() && !host.gameLoaded()
     Section section() const { return section_; }
     void setSection(Section s);                 // replaces the stack with that section's root screen (created fresh; focus via memory())
+    void openSection(Section s, std::unique_ptr<Screen> root);   // ... with a root the caller prepared (Game details -> Achievements on a game)
     void push(std::unique_ptr<Screen> s);
     void pop();                                 // never pops the root
     std::string screenId() const;               // the top screen's id(), "" when the stack is empty

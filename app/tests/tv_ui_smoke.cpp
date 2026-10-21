@@ -154,6 +154,22 @@ struct FakeHost : Host {
         if (id == "tv_mode" && index == 0) tv = false;   // Off: the app's configureTvMode() turns TV mode off
     }
     void openMoreSettings() override { moreOpened++; }
+    // TV Achievements (phase 3): the header, the loaded game's rows, the RA games list, the play it asked for, and which
+    // library games the list knows (GameRef::key -> list id).
+    AchHeader hdr;
+    std::vector<AchItem> items;
+    std::vector<AchGame> raGames;
+    uint32_t played = 0;
+    std::map<std::string, uint32_t> achIds;
+    AchHeader achHeader() override { return hdr; }
+    std::vector<AchItem> achItems() override { return hdr.hasGame ? items : std::vector<AchItem>(); }
+    std::vector<AchGame> achGames() override { return raGames; }
+    Art achImage(const std::string&) override { Art a; a.loading = true; return a; }
+    void achPlay(uint32_t id) override { played = id; }
+    uint32_t achGameId(const GameRef& g) override {
+        auto it = achIds.find(g.key);
+        return it == achIds.end() ? 0 : it->second;
+    }
 };
 
 // n games named "<prefix> 0" .. "<prefix> n-1", keyed by a path.
@@ -494,9 +510,13 @@ static void tvShellWalksSections() {
     rb(host, shell);
     CHECK(shell.screenId() == "library");
     rb(host, shell);
+    CHECK(shell.screenId() == "achievements" && shell.section() == Section::Achievements);
+    rb(host, shell);
     CHECK(shell.screenId() == "settings" && shell.section() == Section::Settings);
     rb(host, shell);   // no wrap
     CHECK(shell.screenId() == "settings");
+    lb(host, shell);
+    CHECK(shell.screenId() == "achievements");
     lb(host, shell);
     CHECK(shell.screenId() == "library");
     lb(host, shell);
@@ -504,7 +524,7 @@ static void tvShellWalksSections() {
     lb(host, shell);
     CHECK(shell.screenId() == "home");
     frames(host, shell, 120);
-    CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("Settings") && drew("8:42 PM"));
+    CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("Achievements") && drew("Settings") && drew("8:42 PM"));
     CHECK(drew("VIRTUAL JAGUAR"));
     rb(host, shell);
     frames(host, shell, 3);
@@ -2378,7 +2398,9 @@ static void settingsFocusRemembered() {
     rightN(host, shell, 1);
     down(host, shell, 2);                                // Theme
     lb(host, shell);
+    lb(host, shell);
     CHECK(shell.screenId() == "library");
+    rb(host, shell);
     rb(host, shell);
     CHECK(shell.screenId() == "settings");
     accept(host, shell);                                 // lands on the same row, in its list
@@ -2503,6 +2525,451 @@ static void settingsWalk120FramesNoAsserts() {
     CHECK(g_imguiErrors == errors);
 }
 
+// ---- TV Achievements (phase 3, Task 14) -----------------------------------------------------------------------------------
+
+static AchItem mkItem(uint32_t id, const char* title, const char* status, bool unlocked, unsigned points = 10) {
+    AchItem a;
+    a.id = id;
+    a.title = title;
+    a.status = status;
+    a.unlocked = unlocked;
+    a.points = points;
+    return a;
+}
+
+static AchItem mkTracker(uint32_t id, const char* text) {
+    AchItem a;
+    a.kind = AchItem::Tracker;
+    a.id = id;
+    a.title = text;
+    return a;
+}
+
+static AchGame mkAchGame(uint32_t id, const char* title, unsigned total, unsigned got, bool progress, bool inLibrary) {
+    AchGame g;
+    g.id = id;
+    g.title = title;
+    g.achievements = total;
+    g.unlocked = got;
+    g.haveProgress = progress;
+    g.inLibrary = inLibrary;
+    return g;
+}
+
+// Three games of the RA list: only "Beta" is in the library.
+static std::vector<AchGame> raFixture() {
+    return {mkAchGame(10, "Alpha", 12, 3, true, false), mkAchGame(11, "Beta", 8, 0, false, true), mkAchGame(12, "Gamma", 5, 5, true, false)};
+}
+
+// A signed-in TV host on the Achievements section (reached through the shell, not by counting RB presses), drawn once.
+static void achSetup(FakeHost& host, Shell& shell) {
+    host.tv = true;
+    host.loaded = false;
+    host.hdr.signedIn = true;
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    frames(host, shell, 2);
+    shell.setSection(Section::Achievements);
+    frames(host, shell, 2);
+}
+
+// How many times one frame draws `s` (the top bar's tab and a hint of the same word are two).
+static int countText(FakeHost& host, Shell& shell, const std::string& s) {
+    g_texts.clear();
+    frames(host, shell, 1);
+    int n = 0;
+    for (const std::string& t : g_texts)
+        if (t == s) n++;
+    return n;
+}
+
+// The loaded game of the rows tests: a tracker between two achievements.
+static void achLoadedGame(FakeHost& host) {
+    host.hdr.hasGame = true;
+    host.hdr.title = "Cybermorph";
+    host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_pal = enabled)";
+    host.hdr.unlocked = 1;
+    host.hdr.total = 2;
+    host.items = {mkItem(1, "First Blood", "Unlocked in hardcore  2026-10-16 21:04", true, 5), mkTracker(900, "Lap 2: 1:12.4"),
+                  mkItem(2, "Ring Master", "Locked  Progress: 5/10", false, 25)};
+}
+
+static void achNotSignedInLine() {
+    FakeHost host;
+    Shell shell(host);
+    host.tv = true;
+    host.loaded = false;
+    host.hdr.signedIn = false;
+    host.raGames = raFixture();   // a list the signed-out player must not see
+    frames(host, shell, 2);
+    shell.setSection(Section::Achievements);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(shell.screenId() == "achievements");
+    CHECK(drew("Sign in from Settings > Achievements in desktop mode"));
+    CHECK(!drew("Beta \xC2\xB7 8 achievements") && !drew("RetroAchievements is not available in this build"));
+    accept(host, shell);
+    down(host, shell);
+    CHECK(host.played == 0 && host.guardArmed == 0);
+    back(host, shell);
+    CHECK(shell.screenId() == "home");
+}
+
+static void achNotAvailableLine() {
+    FakeHost host;
+    Shell shell(host);
+    achSetup(host, shell);
+    host.hdr.available = false;
+    host.hdr.signedIn = false;   // no rc_client: nobody can be signed in
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("RetroAchievements is not available in this build"));
+    CHECK(!drew("Sign in from Settings > Achievements in desktop mode"));
+}
+
+static void achRowsForLoadedGame() {
+    FakeHost host;
+    Shell shell(host);
+    achLoadedGame(host);
+    achSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("First Blood") && drew("Ring Master") && drew("Lap 2: 1:12.4"));   // 3 rows
+    CHECK(drew("Unlocked in hardcore  2026-10-16 21:04") && drew("Locked  Progress: 5/10"));
+    CHECK(drew(host.hdr.mode) && drew("Cybermorph") && drew("1 of 2 achievements"));
+    CHECK(drew("5 pts") && drew("25 pts") && !drew("Sign in from Settings > Achievements in desktop mode"));
+    // The focus lives on achievements: Down from the first jumps over the tracker, Up comes back, the ends hold.
+    CHECK(shell.memory().get("achievements/rows") == 0);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 0);
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 0);
+    accept(host, shell);   // nothing to do on a row
+    CHECK(host.played == 0 && host.guardArmed == 0 && shell.screenId() == "achievements");
+    // Hints: just the way out.
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(countText(host, shell, "Home") == 2 && !drew("Play"));   // the tab and the Back hint
+    // Only trackers: nothing to focus, nothing breaks.
+    host.items = {mkTracker(900, "Lap 2: 1:12.4")};
+    down(host, shell);
+    up(host, shell);
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Lap 2: 1:12.4"));
+    // A game with no achievements says so.
+    host.items.clear();
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("This game has no achievements yet."));
+    CHECK(g_imguiErrors == 0);
+}
+
+// Trackers listed first (as the app lists them): the first achievement has the focus from the start, and Up stays there.
+static void achTrackersFirstFocusAchievement() {
+    FakeHost host;
+    Shell shell(host);
+    host.hdr.hasGame = true;
+    host.hdr.title = "Cybermorph";
+    host.hdr.mode = "Hardcore";
+    host.items = {mkTracker(900, "Lap 2: 1:12.4"), mkTracker(901, "Best: 1:09.0"), mkItem(1, "First Blood", "Locked", false),
+                  mkItem(2, "Ring Master", "Locked", false)};
+    achSetup(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 3);
+    // Away and back: the same achievement, even though the list changed under it.
+    shell.setSection(Section::Library);
+    frames(host, shell, 2);
+    host.items.insert(host.items.begin() + 2, mkItem(7, "Newcomer", "Locked", false));
+    shell.setSection(Section::Achievements);
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/rows") == 4);
+}
+
+static void achGamesListWithoutGame() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Alpha \xC2\xB7 3/12") && drew("Beta \xC2\xB7 8 achievements") && drew("Gamma \xC2\xB7 5/5"));
+    CHECK(!drew("Sign in from Settings > Achievements in desktop mode") && !drew("RetroAchievements is not available in this build"));
+    CHECK(shell.memory().get("achievements/games") == 0);
+    accept(host, shell);   // Alpha is not in the library
+    CHECK(host.played == 0 && host.guardArmed == 0);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 1);
+    accept(host, shell);   // Beta is
+    CHECK(host.played == 11 && host.guardArmed == 1 && host.holdsCleared == 1);
+    host.played = 0;
+    down(host, shell);
+    accept(host, shell);   // Gamma is not
+    CHECK(host.played == 0 && host.guardArmed == 1);
+    down(host, shell);     // the end holds
+    CHECK(shell.memory().get("achievements/games") == 2);
+    up(host, shell, 5);
+    CHECK(shell.memory().get("achievements/games") == 0);
+    CHECK(g_imguiErrors == 0);
+}
+
+static void achGamesHintsAndEmpty() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Play") && countText(host, shell, "Home") == 2);   // Alpha: not in the library, nothing to play
+    down(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Play") && countText(host, shell, "Home") == 2);    // Beta
+    host.raGames.clear();                   // no list (yet)
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(!drew("Play") && countText(host, shell, "Home") == 2 && drew("No Jaguar games to show yet."));
+    accept(host, shell);
+    down(host, shell);
+    up(host, shell);
+    CHECK(host.played == 0);
+}
+
+// The list follows the game, not its place: a rescan or a progress update that reorders it keeps the focus on the same game.
+static void achGamesFocusFollowsGame() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    down(host, shell, 2);   // Gamma
+    CHECK(shell.memory().get("achievements/games") == 2 && shell.memory().getItem("achievements/games") == "12");
+    host.raGames.insert(host.raGames.begin(), mkAchGame(9, "Aardvark", 3, 0, false, false));
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 3);
+    shell.setSection(Section::Settings);
+    frames(host, shell, 2);
+    shell.setSection(Section::Achievements);
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 3);
+}
+
+static void achGamesMouse() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    ImGuiIO& io = ImGui::GetIO();
+    // 1920x1080: the list from x 504 to 1824, rows 72 high, 86 apart from y 196.
+    io.AddMousePosEvent(900, 196 + 86 + 36);   // Beta
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 1 && host.played == 0);   // hovering focuses, it does not play
+    leftClick(host, shell);
+    CHECK(host.played == 11 && host.guardArmed == 1);
+    host.played = 0;
+    io.AddMousePosEvent(900, 196 + 36);        // Alpha: focused by the pointer, a click plays nothing
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 0 && host.played == 0 && host.guardArmed == 1);
+    io.AddMouseWheelEvent(0, -1.0f);
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 1);
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+static void achFocusGameOnOpen() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    host.raGames.push_back(mkAchGame(77, "Tempest 2000", 20, 4, true, true));
+    achSetup(host, shell);
+    shell.openSection(Section::Achievements, makeAchievementsScreen(host, shell, 77));
+    CHECK(shell.section() == Section::Achievements && shell.screenId() == "achievements");
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 3 && shell.memory().getItem("achievements/games") == "77");
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 3);   // the last row
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 2);
+    // A game the list does not have: the focus stays where it was remembered.
+    shell.openSection(Section::Achievements, makeAchievementsScreen(host, shell, 4242));
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 2);
+}
+
+// The list arrives after the screen opens (the cache loads on the first draw, a fetch later): the focus request waits for it.
+static void achFocusGameWaitsForList() {
+    FakeHost host;
+    Shell shell(host);
+    achSetup(host, shell);
+    shell.openSection(Section::Achievements, makeAchievementsScreen(host, shell, 11));
+    frames(host, shell, 2);
+    host.raGames = raFixture();
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 1);
+}
+
+static void homeYOpensAchievements() {
+    for (int keyboard = 0; keyboard < 2; keyboard++) {
+        FakeHost host;
+        host.keyboardLast = keyboard != 0;
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        Shell shell(host);
+        homeSetup(host, shell);
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(countText(host, shell, "Achievements") == (keyboard ? 1 : 2));   // the tab, and with a pad the Y hint
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);
+        CHECK(shell.screenId() == "achievements" && shell.section() == Section::Achievements);
+        CHECK(host.launches == 0);
+        back(host, shell);
+        CHECK(shell.screenId() == "home" && shell.section() == Section::Home);
+    }
+    FakeHost host;   // an empty library has no tiles, but Y still goes
+    Shell shell(host);
+    homeSetup(host, shell);
+    frames(host, shell, 2);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);
+    CHECK(shell.screenId() == "achievements");
+}
+
+static void detailsAchievementsRowWhenKnown() {
+    {
+        FakeHost host;
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        host.achIds[host.recent[0].key] = 77;
+        host.hdr.signedIn = true;
+        host.raGames = raFixture();
+        host.raGames.push_back(mkAchGame(77, "Recent 0", 9, 1, true, true));
+        Shell shell(host);
+        homeSetup(host, shell);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        CHECK(shell.screenId() == "details");
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(countText(host, shell, "Achievements") == 2);   // the tab and the row
+        down(host, shell, 2);                    // Play, Favorite, Achievements: no save states
+        accept(host, shell);
+        CHECK(shell.screenId() == "achievements" && shell.section() == Section::Achievements);
+        frames(host, shell, 2);
+        CHECK(shell.memory().get("achievements/games") == 3 && shell.memory().getItem("achievements/games") == "77");
+        CHECK(host.launches == 0 && host.played == 0);
+        back(host, shell);   // the Details screen is gone with the section's stack: Back is Home
+        CHECK(shell.screenId() == "home");
+    }
+    {
+        FakeHost host;   // a game the RA list does not know: no row
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        host.achIds[host.recent[1].key] = 77;
+        Shell shell(host);
+        homeSetup(host, shell);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        CHECK(shell.screenId() == "details");
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(countText(host, shell, "Achievements") == 1);   // the tab only
+        down(host, shell, 5);                    // the end is Favorite
+        accept(host, shell);
+        CHECK(shell.screenId() == "details" && host.favSet.count(host.recent[0].key) == 1);
+    }
+}
+
+// Both branches at every size: a long list, long titles and statuses, every direction and the pointer.
+static void achWalk120FramesNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (int branch = 0; branch < 2; branch++) {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.hdr.signedIn = true;
+        if (branch == 0) {
+            host.hdr.hasGame = true;
+            host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+            host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+            host.hdr.unlocked = 14;
+            host.hdr.total = 30;
+            host.items.push_back(mkTracker(900, "Lap 2: 1:12.4"));
+            for (uint32_t i = 1; i <= 30; i++)
+                host.items.push_back(mkItem(i, "An achievement whose title runs on and on and on and on past the badge",
+                                            "Unlocked in hardcore  2026-10-16 21:04  12.3% of players  [Missable]  [not supported by this version]",
+                                            i % 3 == 0, i * 5));
+            host.items.insert(host.items.begin() + 10, mkTracker(901, "Best: 1:09.0"));
+        } else {
+            for (uint32_t i = 1; i <= 40; i++)
+                host.raGames.push_back(mkAchGame(i, "A Jaguar game with a rather long title that does not fit in the row", 20 + i, i % 5, i % 2 == 0, i % 3 == 0));
+        }
+        Shell shell(host);
+        const int errors = g_imguiErrors;
+        shell.setSection(Section::Achievements);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 3);
+            for (int round = 0; round < 3; round++) {
+                for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+                                            SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_LEFT}) {
+                    for (int i = 0; i < 14; i++) tapButton(host, shell, b);
+                    frames(host, shell, 30);
+                }
+                for (int i = 0; i < 4; i++) accept(host, shell);
+            }
+            io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.5f);
+            io.AddMouseWheelEvent(0, -3.0f);
+            frames(host, shell, 20);
+            leftClick(host, shell);
+            io.AddMouseWheelEvent(0, 3.0f);
+            frames(host, shell, 20);
+            io.AddMousePosEvent(0, 0);
+            frames(host, shell, 3);
+            back(host, shell);   // Home
+            shell.setSection(Section::Achievements);
+        }
+        io.DisplaySize = ImVec2(1920, 1080);
+        CHECK(g_imguiErrors == errors);
+    }
+    // The two lines and the empty list too.
+    for (int line = 0; line < 3; line++) {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.hdr.signedIn = line == 2;
+        host.hdr.available = line != 0;
+        Shell shell(host);
+        const int errors = g_imguiErrors;
+        shell.setSection(Section::Achievements);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 5);
+            down(host, shell);
+            accept(host, shell);
+        }
+        io.DisplaySize = ImVec2(1920, 1080);
+        CHECK(g_imguiErrors == errors);
+    }
+}
+
+// The four tabs and both shoulder pills fit the top bar at 1280x720 with room left for the clock (the chrome's own sums:
+// the safe margin, the accent, the logo, the LB pill, each label at body size 40 apart, the RB pill).
+static void tabBarFitsAt720p() {
+    const float u = 720.0f / 1080.0f;
+    float x = 96 * u + (22 + 16) * u + measure(34 * u, "VIRTUAL JAGUAR") + 56 * u;
+    x += measure(24 * u, "LB") + 20 * u + 20 * u;
+    const char* labels[] = {"Home", "Library", "Achievements", "Settings"};
+    for (int i = 0; i < 4; i++) x += measure(30 * u, labels[i]) + (i < 3 ? 40 : 20) * u;
+    x += measure(24 * u, "RB") + 20 * u;
+    const float clockLeft = 1280 - 96 * u - measure(26 * u, "12:00 PM");
+    CHECK(x + 24 * u < clockLeft);
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -2600,6 +3067,20 @@ int main() {
     settingsMouse();
     settingsClickOnChevrons();
     settingsWalk120FramesNoAsserts();
+    achNotSignedInLine();
+    achNotAvailableLine();
+    achRowsForLoadedGame();
+    achTrackersFirstFocusAchievement();
+    achGamesListWithoutGame();
+    achGamesHintsAndEmpty();
+    achGamesFocusFollowsGame();
+    achGamesMouse();
+    achFocusGameOnOpen();
+    achFocusGameWaitsForList();
+    homeYOpensAchievements();
+    detailsAchievementsRowWhenKnown();
+    achWalk120FramesNoAsserts();
+    tabBarFitsAt720p();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;
@@ -2661,6 +3142,37 @@ int main() {
                     if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
             CHECK(inside);
             back(host, shell);
+        }
+        CHECK(g_imguiErrors == 0);
+    }
+    // The Achievements screen, a game's rows and the games list, inside the display at the same sizes (the header, the long
+    // title and the mode chip included).
+    for (int branch = 0; branch < 2; branch++) {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.hdr.signedIn = true;
+        if (branch == 0) {
+            host.hdr.hasGame = true;
+            host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+            host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+            host.items = {mkTracker(900, "Lap 2: 1:12.4"), mkItem(1, "First Blood", "Unlocked in hardcore  2026-10-16 21:04", true, 5),
+                          mkItem(2, "An achievement whose title runs on and on and on and on past the badge and the points", "Locked  Progress: 5/10", false, 250)};
+        } else {
+            host.raGames = raFixture();
+            host.raGames.push_back(mkAchGame(13, "A Jaguar game with a rather long title that does not fit in the row", 20, 4, true, true));
+        }
+        Shell shell(host);
+        shell.setSection(Section::Achievements);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 30);
+            ImDrawData* dd = ImGui::GetDrawData();
+            bool inside = dd->CmdListsCount > 0;
+            for (int l = 0; l < dd->CmdListsCount; l++)
+                for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
+                    if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
+            CHECK(inside);
         }
         CHECK(g_imguiErrors == 0);
     }

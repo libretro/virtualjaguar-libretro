@@ -53,6 +53,12 @@ public:
     std::vector<SettingRow> settingRows() override;
     void setSetting(const std::string& id, int index) override;
     void openMoreSettings() override;
+    AchHeader achHeader() override;
+    std::vector<AchItem> achItems() override;
+    std::vector<AchGame> achGames() override;
+    Art achImage(const std::string& url) override;
+    void achPlay(uint32_t gameId) override;
+    uint32_t achGameId(const GameRef& g) override;
 
     // Every SDL event, before anything can consume it (App::handleEvent): remembers which device was used last, so
     // glyph() follows what the player is actually pressing -- including the buttons the shell itself consumes, which

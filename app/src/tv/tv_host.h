@@ -59,6 +59,32 @@ struct SettingRow {
     int group = 0;                     // 0 Picture, 1 Speed, 2 Sound, 3 Interface
 };
 
+// One achievement of the loaded game, or one active leaderboard tracker (kind Tracker: read-only, no status).  AppHost fills them
+// from rc_client's rows, so the screen never sees rcheevos.
+struct AchItem {
+    enum Kind { Achievement, Tracker } kind = Achievement;
+    uint32_t id = 0;
+    std::string title, status;   // status: the desktop's line ("Unlocked in hardcore  2026-10-16 21:04", "Locked  Progress: 5/10 ...")
+    unsigned points = 0;
+    bool unlocked = false;
+    std::string badgeUrl;        // the one to show (earned or locked); "" = none
+};
+
+// One game of the RetroAchievements Jaguar list (only games with a published set).
+struct AchGame {
+    uint32_t id = 0;
+    std::string title, imageUrl;
+    unsigned achievements = 0, unlocked = 0;
+    bool haveProgress = false, inLibrary = false;
+};
+
+// What the Achievements screen's header says.  mode: "Hardcore" | "Softcore" | "Softcore (hardcore is paused: <blocker>)".
+struct AchHeader {
+    bool signedIn = false, available = true, hasGame = false;   // available: this build has rc_client at all
+    std::string title, mode, iconUrl;
+    unsigned unlocked = 0, total = 0;
+};
+
 class Host {
 public:
     virtual ~Host() = default;
@@ -119,6 +145,14 @@ public:
     virtual std::vector<SettingRow> settingRows() = 0;             // only the rows that exist in this build / session; fetched every frame
     virtual void setSetting(const std::string& id, int index) = 0; // applies and saves, as the desktop control would
     virtual void openMoreSettings() = 0;                           // the desktop Settings window
+
+    // ---- Achievements (phase 3) ------------------------------------------------------------------------------------
+    virtual AchHeader achHeader() = 0;                      // fetched every frame
+    virtual std::vector<AchItem> achItems() = 0;            // trackers first, then the rows in bucket order; empty with no tracked game
+    virtual std::vector<AchGame> achGames() = 0;            // the Jaguar list, title order; must be called every frame the list shows (it loads and fetches)
+    virtual Art achImage(const std::string& url) = 0;       // a badge or icon: tex only when ready; asked for only while it is on screen
+    virtual void achPlay(uint32_t gameId) = 0;              // opens the library file that runs that game (an event: the caller guards)
+    virtual uint32_t achGameId(const GameRef& g) = 0;       // the list entry whose library file is this game, else 0
 };
 
 }  // namespace vj::tv

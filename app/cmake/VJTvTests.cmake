@@ -98,7 +98,7 @@ set_tests_properties(tv_menu_headless PROPERTIES
 # keyboard capture while open), no Base window without TV mode or with a game running.
 add_executable(vj_tv_ui_smoke
     tests/tv_ui_smoke.cpp src/tv/tv_shell.cpp src/tv/tv_ingame.cpp src/tv/tv_chrome.cpp src/tv/tv_home.cpp src/tv/tv_library.cpp src/tv/tv_details.cpp
-    src/tv/tv_settings.cpp src/tv/tv_settings_model.cpp src/tv/tv_widgets.cpp src/tv/tv_focus.cpp src/tv/tv_mode.cpp src/tv/tv_nav.cpp src/tv/tv_style.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/config.cpp src/paths.cpp)
+    src/tv/tv_achievements.cpp src/tv/tv_settings.cpp src/tv/tv_settings_model.cpp src/tv/tv_widgets.cpp src/tv/tv_focus.cpp src/tv/tv_mode.cpp src/tv/tv_nav.cpp src/tv/tv_style.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/config.cpp src/paths.cpp)
 target_include_directories(vj_tv_ui_smoke PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(vj_tv_ui_smoke PRIVATE vj_imgui ${VJ_SDL3_TARGET})
 if(MSVC)
