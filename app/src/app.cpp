@@ -713,6 +713,7 @@ void App::traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swa
     u.waitEvents = traceWaitEvents_;
     u.waitOverNs = traceWaitOverNs_;
     u.waitOverBy = traceWaitOverBy_;
+    u.waitCpuNs = stall_.takeCpuNs();
     trace_.ui(u);
     traceWakeNs_ = traceTargetNs_ = traceWaitOverNs_ = 0;
     traceWaitEvents_ = 0;
@@ -812,12 +813,17 @@ void App::latchWait() {
         const uint64_t left = wake - t;
         const Sint32 ms = (Sint32)LateLatch::eventWaitMs(left);
         if (!ms) {
+            stall_.enter(wake, 2, trace_.uiRows());
             SDL_DelayPrecise(left);
+            stall_.leave();
             over(wake, 2);
             return;
         }
         SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, ms)) {
+        stall_.enter(t + (uint64_t)ms * 1000000ull, 1, trace_.uiRows());
+        const bool got = SDL_WaitEventTimeout(&e, ms);
+        stall_.leave();
+        if (!got) {
             over(t + (uint64_t)ms * 1000000ull, 1);
             continue;
         }
@@ -2045,6 +2051,7 @@ int App::runInteractive(const CliArgs& a) {
     lastSramFlush_ = now();
     perf.init(a.perfFrames, a.perfGpu);
     trace_.init(a.perfFrames);
+    if (trace_.enabled()) stall_.start(trace_.prefix);
     uint64_t traceSerial = 0;
     video.shader.reuseOutput = !a.perfNoReuse;
     perf.forceW = a.perfShaderW;
@@ -2071,6 +2078,7 @@ int App::runInteractive(const CliArgs& a) {
                 perf.note += std::string(", pace steering ") + (paceSteerOn_ ? "on" : "off") + " (" +
                              std::to_string(emu.phaseSteps()) + " steps)";
             perf.report(host.contentName().c_str());
+            stall_.stop();
             trace_.write();
             break;
         }

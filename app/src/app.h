@@ -40,6 +40,7 @@
 #include "paths.h"
 #include "perf.h"
 #include "perf_trace.h"
+#include "stall_probe.h"
 #include "platform/commands.h"
 #include "theme_custom.h"
 #include "tv/tv_mode.h"
@@ -454,6 +455,7 @@ private:
     uint64_t lastSentSerial_ = 0;              // emulation thread: the last frame handed to FrameExchange
     // VJ_PERF_TRACE (perf_trace.h, #967 evenness)
     PerfTrace trace_;
+    StallProbe stall_;                         // VJ_PERF_TRACE: the late latch's blocking calls that overran (#1026)
     PerfTrace::Emu tracePaced_{};              // emulation thread: the pacing of the frame about to run
     bool tracePacedSet_ = false;
     uint64_t traceWakeNs_ = 0, traceTargetNs_ = 0;   // UI thread: the late latch's last wait (0 = none)
