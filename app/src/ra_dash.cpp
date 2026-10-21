@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <set>
 
 #include "library.h"   // lib::normalizeDiscName
@@ -395,6 +396,36 @@ const char* achTypeLabel(int type) {
     case 3: return "Win condition";
     default: return "";
     }
+}
+
+std::string clockText(long long t) {
+    char when[48] = "";
+    std::tm tmv;
+    std::time_t tt = (std::time_t)t;
+#ifdef _WIN32
+    if (localtime_s(&tmv, &tt) == 0) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
+#else
+    if (localtime_r(&tt, &tmv)) std::strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
+#endif
+    return when;
+}
+
+std::string achStatusLine(const AchRow& r) {
+    std::string st;
+    if (r.unlockedHard) st = "Unlocked in hardcore";
+    else if (r.unlockedSoft) st = "Unlocked (softcore)";
+    else st = "Locked";
+    if (r.unlocked() && r.unlockTime) st += "  " + clockText(r.unlockTime);
+    if (!r.unlocked() && !r.progress.empty()) st += "  Progress: " + r.progress;
+    if (r.rarity > 0) {
+        char pct[48];
+        std::snprintf(pct, sizeof pct, "  %.1f%% of players", r.rarity);
+        st += pct;
+    }
+    if (const char* t = achTypeLabel(r.type); *t) st += std::string("  [") + t + "]";
+    if (r.unofficial) st += "  [unofficial]";
+    if (r.unsupported) st += "  [not supported by this version]";
+    return st;
 }
 
 std::vector<size_t> viewAchievements(const std::vector<AchRow>& rows, AchFilter f, AchSort s, const std::string& text) {

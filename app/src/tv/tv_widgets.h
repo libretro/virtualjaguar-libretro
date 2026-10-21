@@ -53,15 +53,19 @@ ImVec2 textSize(float px, const std::string& s, float wrapW = 0);
 // "16 Oct 2026": a date in the local time zone, from seconds since the epoch (English month names, whatever the locale).
 std::string formatDate(int64_t secs);
 
-// A list row: label (and an optional second line), `focus` 0..1 from FocusTweens.  A disabled row is drawn muted.
+// A list row: label (and optional lines under it), `focus` 0..1 from FocusTweens.  A disabled row is drawn muted.
 // `thumb` (an OpenGL texture, 0 = none) of thumbW x thumbH design units is a picture box at the row's left: slot rows.
+// `thumbSquare` makes the box a square (a badge, an icon) instead of 16:9.  `value` is right-aligned in the row's muted caption
+// text and takes its room from the label (the points of an achievement).
 struct RowArgs {
-    std::string label, sub;
+    std::string label, desc, sub;   // desc: a muted line between the label and `sub` (an achievement's description)
     bool enabled = true;
     float focus = 0;
     unsigned thumb = 0;
     int thumbSrcW = 0, thumbSrcH = 0;
     bool thumbBox = false;   // draw the picture box even without a picture (an empty slot)
+    bool thumbSquare = false;
+    std::string value;
 };
 Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs& a);
 

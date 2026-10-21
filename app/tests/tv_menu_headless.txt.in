@@ -1,5 +1,7 @@
 # tv_menu_headless: the TV in-game menu and its input ownership, through the real App (headless, no ImGui).
 # Run with:  virtualjaguar --headless --frames 30 --tv-test-script tv_menu_headless.txt
+# (VJ_LIBRASHADER must point at a missing path when this script is run by hand, as cmake/VJTvTests.cmake sets it for ctest: a
+# shader runtime would add a Picture row and the Down counts below would be off.)
 # One event per line:  <ms> <verb> <args>.  <ms> is a script time; the gap to the previous line is the least real time
 # that passes between the two (the hold arbiter reads the real clock).  Lines starting with # are comments.
 #   load PATH            drop PATH on the window (the normal drop route)
@@ -18,6 +20,8 @@
 #   expect tv=0|1         TV mode is on
 #   expect tv-screen=ID   the id of the TV screen on top (home, library, ...)
 #   expect tv-owns-input=0|1  the TV shell has the pads and keys (0 while a desktop window covers the TV screens)
+#   expect settings-open=0|1  the desktop Settings window is open
+#   expect tv-more=0|1        it was opened by "More settings..." in TV mode: the pads and the arrow keys are its own (tv_more_settings.h)
 #   expect home-visible=0|1   the desktop library is standing in for the game (never while TV mode is on)
 #   expect library-window=0|1 the desktop Game library window is open
 #   expect desk-pad=0|1       the desktop library owns the pads (#1021): TV off, no game running, no capture / desktop window, no mouse-opened popup
@@ -28,6 +32,7 @@
 #   expect desk-popup=0|1     a library popup (tile menu, BIOS popup) opened from the pad is open and driven by it
 #   saveconfig           App::saveConfig() (a headless run keeps its config in a private temp dir)
 #   expect cfg=KEY:VALUE  the config holds KEY = VALUE; KEY:absent = the config has no such key
+#   expect core-option=KEY:VALUE  the core option KEY reads VALUE (a session override, else the saved value: CoreHost::optionValueFor)
 #   wait library         WINDOWED ONLY: block the script until the Library has scanned (not scanning, and at least one
 #                        game); FAIL after 120 s.  The gaps of the lines after it count from the moment it is released.
 #   shot PATH            WINDOWED ONLY: save the window as a PNG at the end of the next UI frame (that frame's TV drawing
@@ -108,316 +113,534 @@
 1360  key tap F4
 1400  expect tv=0
 
+# "More settings..." from TV mode (#991): A on the last row of Interface opens the desktop Settings window and hands it the pad.
+# RB x3 reaches Settings (Home, Library, Achievements, Settings).  With no game this session the core rows are hidden and Speed
+# holds only its "Available once a game has run" line, so the rail is Picture, Speed, Sound, Interface (Down x3); Right enters the list: Show FPS, VSync, Theme, TV mode, More settings... (Down x4).
+# While the window is open the shell has stepped aside (tv-owns-input=0) and the pad is the window's: a shoulder button that
+# would change section does nothing, and B closes it (no popup, no active item), giving the pad back.
+1400  key tap F4
+1440  expect tv=1
+1440  pad tap rightshoulder
+1460  pad tap rightshoulder
+1480  pad tap rightshoulder
+1500  expect tv-screen=settings
+1500  pad tap dpdown
+1510  pad tap dpdown
+1520  pad tap dpdown
+1540  pad tap dpright
+1560  pad tap dpdown
+1580  pad tap dpdown
+1600  pad tap dpdown
+1620  pad tap dpdown
+1640  pad tap a
+1680  expect settings-open=1
+1680  expect tv-more=1
+1680  expect tv-owns-input=0
+1680  pad tap dpdown              # the window's, not the shell's
+1700  pad tap leftshoulder        # would step back to Achievements
+1720  expect tv-screen=settings
+1720  pad tap b
+1760  expect settings-open=0
+1760  expect tv-more=0
+1760  expect tv-owns-input=1
+# Esc closes it too (the focus is still on More settings...), and so does Ctrl+, -- which also ends the TV hand-off: the next
+# Ctrl+, opens the plain desktop window.
+1760  pad tap a
+1800  expect tv-more=1
+1800  key tap Escape
+1840  expect settings-open=0
+1840  expect tv-more=0
+1840  pad tap a
+1880  expect tv-more=1
+1880  key tap ctrl+,
+1920  expect settings-open=0
+1920  expect tv-more=0
+1920  key tap ctrl+,
+1960  expect settings-open=1
+1960  expect tv-more=0
+1960  key tap ctrl+,
+2000  expect settings-open=0
+2000  pad tap leftshoulder        # back to Home (the shell remembers the section across TV mode off / on)
+2010  pad tap leftshoulder
+2020  pad tap leftshoulder
+2040  expect tv-screen=home
+2040  key tap F4
+2080  expect tv=0
+
 # Desktop pad navigation (#1021): the desktop library owns the pads while TV mode is off, no game is running and the home
 # library shows.  A shoulder button is a mapped intent (SectionNext = next tab) and queues a command; TV mode on (or an edge of
 # any ownership input) hands the pad to the TV screens and clears what was queued.
-1400  expect desk-pad=1
-1400  pad tap rightshoulder
-1440  expect desk-pending=1
-1440  pad tap leftshoulder
-1480  expect desk-pending=2
-1480  key tap F4
-1520  expect tv=1
-1520  expect desk-pad=0
-1520  expect desk-pending=0      # the edge cleared the queue
-1520  pad tap leftshoulder        # TV's, not the desktop library's: nothing queues
-1560  expect desk-pending=0
-1560  key tap F4
-1600  expect tv=0
-1600  expect desk-pad=1
+2080  expect desk-pad=1
+2080  pad tap rightshoulder
+2120  expect desk-pending=1
+2120  pad tap leftshoulder
+2160  expect desk-pending=2
+2160  key tap F4
+2200  expect tv=1
+2200  expect desk-pad=0
+2200  expect desk-pending=0      # the edge cleared the queue
+2200  pad tap leftshoulder        # TV's, not the desktop library's: nothing queues
+2240  expect desk-pending=0
+2240  key tap F4
+2280  expect tv=0
+2280  expect desk-pad=1
 # A binding capture owns the pad.
-1600  capture help
-1640  expect capturing=1
-1640  expect desk-pad=0
-1640  key tap Return             # ends the capture
-1680  expect capturing=0
-1680  expect desk-pad=1
+2280  capture help
+2320  expect capturing=1
+2320  expect desk-pad=0
+2320  key tap Return             # ends the capture
+2360  expect capturing=0
+2360  expect desk-pad=1
 # Start (Menu) is not the library's: it stays the app's and queues nothing.
-1680  pad tap start
-1720  expect desk-pending=0
+2360  pad tap start
+2400  expect desk-pending=0
 
 # A right stick pushed while the library listens is a scroll; losing the pad (a desktop window opens, Settings here) or the
 # window's focus zeroes it, so a stick let go meanwhile cannot scroll on.  Settings takes the pad while open.
-1760  axis righty 30000
-1800  expect desk-scroll=1
-1800  key tap ctrl+,
-1840  expect desk-pad=0
-1840  expect desk-scroll=0
-1840  axis righty 0
-1880  key tap ctrl+,
-1920  expect desk-pad=1
-1920  expect desk-scroll=0
-1920  axis righty 30000
-1960  expect desk-scroll=1
-1960  focus lost
-2000  expect desk-scroll=0
-2000  axis righty 0
-2040  expect desk-scroll=0
+2440  axis righty 30000
+2480  expect desk-scroll=1
+2480  key tap ctrl+,
+2520  expect desk-pad=0
+2520  expect desk-scroll=0
+2520  axis righty 0
+2560  key tap ctrl+,
+2600  expect desk-pad=1
+2600  expect desk-scroll=0
+2600  axis righty 30000
+2640  expect desk-scroll=1
+2640  focus lost
+2680  expect desk-scroll=0
+2680  axis righty 0
+2720  expect desk-scroll=0
 
 # A game to play with.
-2080  load @VJ_ROMS@/yarc.j64
-2120  expect loaded=1
+2760  load @VJ_ROMS@/yarc.j64
+2800  expect loaded=1
 
 # F4 opens the menu (and pauses the game), F4 again closes it.
-2180   key tap F4
-2220   expect menu-open=1
-2220   expect paused=1
-2240   key tap F4
-2280   expect menu-open=0
-2280   expect paused=0
+2860   key tap F4
+2900   expect menu-open=1
+2900   expect paused=1
+2920   key tap F4
+2960   expect menu-open=0
+2960   expect paused=0
 
 # A pause the player made is theirs: the menu does not undo it.
-2300   key tap F8
-2320   expect paused=1
-2340   key tap F4
-2380   expect menu-open=1
-2400   key tap F4
-2440   expect menu-open=0
-2440   expect paused=1
-2460   key tap F8
-2480   expect paused=0
+2980   key tap F8
+3000   expect paused=1
+3020   key tap F4
+3060   expect menu-open=1
+3080   key tap F4
+3120   expect menu-open=0
+3120   expect paused=1
+3140   key tap F8
+3160   expect paused=0
 
 # F4 while a text box has the keyboard does nothing.
-2500   typing on
-2520   key tap F4
-2560   expect menu-open=0
-2560   typing off
+3180   typing on
+3200   key tap F4
+3240   expect menu-open=0
+3240   typing off
 
 # Esc is Back, and Back on the menu's first page is Resume.
-2580   key tap F4
-2620   expect menu-open=1
-2640   key tap Escape
-2680   expect menu-open=0
-2680   expect paused=0
+3260   key tap F4
+3300   expect menu-open=1
+3320   key tap Escape
+3360   expect menu-open=0
+3360   expect paused=0
 
 # A key let go while the menu is open still reaches the app (Tab is fast-forward and has to be let go of).
-2700   key down Tab
-2720   expect fast-forward=1
-2740   key tap F4
-2780   expect menu-open=1
-2800   key up Tab
-2840   expect fast-forward=0
-2860   key tap F4
-2900   expect menu-open=0
+3380   key down Tab
+3400   expect fast-forward=1
+3420   key tap F4
+3460   expect menu-open=1
+3480   key up Tab
+3520   expect fast-forward=0
+3540   key tap F4
+3580   expect menu-open=0
 
 # A Share tap is not a hold: no menu.
 # (`pad tap` presses and releases inside one line, so a stalled runner cannot stretch it into a hold.)
-2940   pad tap misc1
-3020   expect menu-open=0
+3620   pad tap misc1
+3700   expect menu-open=0
 
 # A Share hold of 600 ms opens the menu; letting go leaves it open.
-3040   pad down misc1
-3660  expect menu-open=1
-3660  expect paused=1
-3680  pad up misc1
-3720  expect menu-open=1
+3720   pad down misc1
+4340  expect menu-open=1
+4340  expect paused=1
+4360  pad up misc1
+4400  expect menu-open=1
 
 # A Share hold while it is open closes it (the edge reaches the arbiter before the shell).
-3740  pad down misc1
-4380  expect menu-open=0
-4380  expect paused=0
-4400  pad up misc1
-4440  expect menu-open=0
+4420  pad down misc1
+5060  expect menu-open=0
+5060  expect paused=0
+5080  pad up misc1
+5120  expect menu-open=0
 
 # Focus lost 200 ms into a Share hold: the hold is forgotten, so 700 ms later the menu is still closed.
-4460  pad down misc1
-4660  focus lost
-5360  expect menu-open=0
-5360  pad up misc1
-5400  expect menu-open=0
+5140  pad down misc1
+5340  focus lost
+6040  expect menu-open=0
+6040  pad up misc1
+6080  expect menu-open=0
 
 # The menu holds the pause: F8 under it is refused, and closing gives back the state from before the menu.
-5420  key tap F4
-5460  expect menu-open=1
-5460  expect paused=1
-5480  key tap F8
-5520  expect paused=1
-5520  expect menu-open=1
-5540  key tap F4
-5580  expect menu-open=0
-5580  expect paused=0
+6100  key tap F4
+6140  expect menu-open=1
+6140  expect paused=1
+6160  key tap F8
+6200  expect paused=1
+6200  expect menu-open=1
+6220  key tap F4
+6260  expect menu-open=0
+6260  expect paused=0
 
 # The menu owns the input: with it open the core reads neutral input (under netplay the menu cannot pause the game, and this is
 # what keeps it from playing under the menu); a button held across the close stays masked until released; with the menu closed it plays.
-5600  key tap F4
-5640  expect menu-open=1
-5660  pad down dpright
-5700  expect core-input=0
-5720  pad up dpright
-5740  pad down dpright
-5760  key tap F4
-5800  expect menu-open=0
-5800  expect core-input=0
-5820  pad up dpright
-5840  expect core-input=0
-5860  pad down dpright
-5900  expect core-input=1
-5920  pad up dpright
-5960  expect core-input=0
+6280  key tap F4
+6320  expect menu-open=1
+6340  pad down dpright
+6380  expect core-input=0
+6400  pad up dpright
+6420  pad down dpright
+6440  key tap F4
+6480  expect menu-open=0
+6480  expect core-input=0
+6500  pad up dpright
+6520  expect core-input=0
+6540  pad down dpright
+6580  expect core-input=1
+6600  pad up dpright
+6640  expect core-input=0
 
 # F4 while a binding is being captured binds F4 and does not open the menu.
-5980  capture help
-6000  key tap F4
-6040  expect capturing=0
-6040  expect menu-open=0
-6040  expect kb-bind=help:F4
+6660  capture help
+6680  key tap F4
+6720  expect capturing=0
+6720  expect menu-open=0
+6720  expect kb-bind=help:F4
 
-# Walk the menu with the pad (six rows down: the TV-mode row sits between Controls and Reset): down to Close game, ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
-6080  key tap F4
-6120  expect menu-open=1
-6140  pad tap dpdown
-6160  pad tap dpdown
-6180  pad tap dpdown
-6200  pad tap dpdown
-6220  pad tap dpdown
-6230  pad tap dpdown
-6240  pad tap a
-6260  pad tap a
-6300  expect menu-open=1
-6300  expect loaded=1
-6320  pad tap a
-6340  pad tap dpup
-6360  pad tap a
-6400  expect loaded=0
-6400  expect menu-open=0
+# Walk the menu with the pad (nine rows down: Save state, Load state, Achievements, Overlays, Settings, Controls, the TV-mode row, Reset, Close game): ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
+6760  key tap F4
+6800  expect menu-open=1
+6820  pad tap dpdown
+6830  pad tap dpdown
+6840  pad tap dpdown
+6850  pad tap dpdown
+6860  pad tap dpdown
+6870  pad tap dpdown
+6880  pad tap dpdown
+6900  pad tap dpdown
+6910  pad tap dpdown
+6920  pad tap a
+6940  pad tap a
+6980  expect menu-open=1
+6980  expect loaded=1
+7000  pad tap a
+7020  pad tap dpup
+7040  pad tap a
+7080  expect loaded=0
+7080  expect menu-open=0
 
 # TV mode survives a game: turn it on, walk to Library, start a game (the TV screen goes away under it), close the game
 # from the in-game menu -- and the TV screen the player left is back.
-6480  key tap F4
-6520  expect tv=1
-6520  expect tv-screen=home
-6540  pad tap rightshoulder
-6580  expect tv-screen=library
-6580  load @VJ_ROMS@/yarc.j64
-6620  expect loaded=1
-6620  expect tv=1
-6640  key tap F4
-6680  expect menu-open=1
-6680  expect tv=1
-6700  pad tap dpdown
-6720  pad tap dpdown
-6740  pad tap dpdown
-6760  pad tap dpdown
-6780  pad tap dpdown
-6790  pad tap dpdown
-6800  pad tap a
-6820  pad tap dpup
-6840  pad tap a
-6880  expect loaded=0
-6880  expect menu-open=0
-6880  expect tv-screen=library
-6900  key tap F4
-6940  expect tv=0
+7160  key tap F4
+7200  expect tv=1
+7200  expect tv-screen=home
+7220  pad tap rightshoulder
+7260  expect tv-screen=library
+7260  load @VJ_ROMS@/yarc.j64
+7300  expect loaded=1
+7300  expect tv=1
+7320  key tap F4
+7360  expect menu-open=1
+7360  expect tv=1
+7380  pad tap dpdown
+7390  pad tap dpdown
+7400  pad tap dpdown
+7410  pad tap dpdown
+7420  pad tap dpdown
+7430  pad tap dpdown
+7440  pad tap dpdown
+7460  pad tap dpdown
+7470  pad tap dpdown
+7480  pad tap a
+7500  pad tap dpup
+7520  pad tap a
+7560  expect loaded=0
+7560  expect menu-open=0
+7560  expect tv-screen=library
+7580  key tap F4
+7620  expect tv=0
 
 # A binding capture started with TV mode on keeps its input: the shoulder button that would switch sections (the screen
 # the player left is Library: LB would take it to Home) and the Return key that would be Accept go to the capture instead
 # of navigating.
-6980  key tap F4
-7020  expect tv=1
-7020  expect tv-screen=library
-7040  capture help
-7060  pad tap leftshoulder
-7100  expect tv-screen=library
-7120  key tap Return
-7160  expect capturing=0
-7160  expect tv-screen=library
-7160  expect kb-bind=help:Return
-7180  key tap F4
-7220  expect tv=0
+7660  key tap F4
+7700  expect tv=1
+7700  expect tv-screen=library
+7720  capture help
+7740  pad tap leftshoulder
+7780  expect tv-screen=library
+7800  key tap Return
+7840  expect capturing=0
+7840  expect tv-screen=library
+7840  expect kb-bind=help:Return
+7860  key tap F4
+7900  expect tv=0
 
 # Ctrl+Shift+T (Cmd+Shift+T on a Mac) toggles TV mode with or without a game, whatever F4 is bound to; a game keeps running
 # and the in-game menu stays shut.  It is ignored while a text box has the keyboard or a binding is being captured, and does
 # nothing when the TV-mode setting is Off.
-7240  key tap ctrl+shift+T
-7280  expect tv=1
-7280  expect menu-open=0
-7280  key tap ctrl+shift+T
-7320  expect tv=0
-7320  key tap ctrl+T
-7360  expect tv=0                # Ctrl alone is not the shortcut
-7360  key tap shift+T
-7400  expect tv=0
-7400  typing on
-7420  key tap ctrl+shift+T
-7460  expect tv=0
-7460  typing off
-7460  capture help
-7480  key tap ctrl+shift+T
-7520  expect tv=0
-7520  key tap Return             # ends the capture, if the shortcut did not already
-7560  expect capturing=0
-7560  tvsetting off
-7580  key tap ctrl+shift+T
-7620  expect tv=0
-7620  tvsetting manual
+7920  key tap ctrl+shift+T
+7960  expect tv=1
+7960  expect menu-open=0
+7960  key tap ctrl+shift+T
+8000  expect tv=0
+8000  key tap ctrl+T
+8040  expect tv=0                # Ctrl alone is not the shortcut
+8040  key tap shift+T
+8080  expect tv=0
+8080  typing on
+8100  key tap ctrl+shift+T
+8140  expect tv=0
+8140  typing off
+8140  capture help
+8160  key tap ctrl+shift+T
+8200  expect tv=0
+8200  key tap Return             # ends the capture, if the shortcut did not already
+8240  expect capturing=0
+8240  tvsetting off
+8260  key tap ctrl+shift+T
+8300  expect tv=0
+8300  tvsetting manual
 
 # With a game loaded: the shortcut turns TV mode on and off, the game stays loaded and running, no menu opens.
-7640  load @VJ_ROMS@/yarc.j64
-7680  expect loaded=1
-7680  key tap ctrl+shift+T
-7720  expect tv=1
-7720  expect loaded=1
-7720  expect menu-open=0
-7720  expect paused=0
-7720  key tap ctrl+shift+T
-7760  expect tv=0
-7760  expect loaded=1
-7760  expect menu-open=0
-7760  expect paused=0
-7760  key tap F4              # F4 with a game is still the menu, not the TV-mode toggle
-7800  expect menu-open=1
-7800  expect tv=0
-7800  key tap F4
-7840  expect menu-open=0
+8320  load @VJ_ROMS@/yarc.j64
+8360  expect loaded=1
+8360  key tap ctrl+shift+T
+8400  expect tv=1
+8400  expect loaded=1
+8400  expect menu-open=0
+8400  expect paused=0
+8400  key tap ctrl+shift+T
+8440  expect tv=0
+8440  expect loaded=1
+8440  expect menu-open=0
+8440  expect paused=0
+8440  key tap F4              # F4 with a game is still the menu, not the TV-mode toggle
+8480  expect menu-open=1
+8480  expect tv=0
+8480  key tap F4
+8520  expect menu-open=0
 
 # A running game owns its pad: the desktop library does not, whether or not its window is open.  Paused with the window open it
 # does again.
-7840  expect menu-open=0
-7840  expect desk-pad=0
-7840  key tap ctrl+L
-7880  expect library-window=1
-7880  expect desk-pad=0
-7880  key tap F8
-7920  expect paused=1
-7920  expect desk-pad=1
-7920  pad tap rightshoulder
-7960  expect desk-pending=1
-7960  key tap F8
-8000  expect paused=0
-8000  expect desk-pad=0
-8000  key tap F8
-8040  expect desk-pad=1
-8040  key tap ctrl+L
-8080  expect library-window=0
-8080  expect desk-pad=0
-8080  key tap F8
-8120  expect paused=0
+8520  expect menu-open=0
+8520  expect desk-pad=0
+8520  key tap ctrl+L
+8560  expect library-window=1
+8560  expect desk-pad=0
+8560  key tap F8
+8600  expect paused=1
+8600  expect desk-pad=1
+8600  pad tap rightshoulder
+8640  expect desk-pending=1
+8640  key tap F8
+8680  expect paused=0
+8680  expect desk-pad=0
+8680  key tap F8
+8720  expect desk-pad=1
+8720  key tap ctrl+L
+8760  expect library-window=0
+8760  expect desk-pad=0
+8760  key tap F8
+8800  expect paused=0
 
 # Menu buttons (#1021): Set captures the virtual pad's next button for a menu intent, and writes no game binding.  North (Y)
 # becomes Confirm; Y was Favorite's, so the two swap (Favorite takes Confirm's old button, South).
-8120  expect capturing=0
-8120  capture nav:confirm
-8160  expect capturing=1
-8160  pad tap y
-8200  expect capturing=0
-8200  expect cfg=input.padguid.{padguid}.nav.confirm:by
-8200  expect cfg=input.padguid.{padguid}.nav.favorite:ba
+8800  expect capturing=0
+8800  capture nav:confirm
+8840  expect capturing=1
+8840  pad tap y
+8880  expect capturing=0
+8880  expect cfg=input.padguid.{padguid}.nav.confirm:by
+8880  expect cfg=input.padguid.{padguid}.nav.favorite:ba
 # Default on one half of the swap puts both back: no two intents on one button, and no stray key.
-8200  navdefault confirm
-8240  expect cfg=input.padguid.{padguid}.nav.confirm:absent
-8240  expect cfg=input.padguid.{padguid}.nav.favorite:absent
+8880  navdefault confirm
+8920  expect cfg=input.padguid.{padguid}.nav.confirm:absent
+8920  expect cfg=input.padguid.{padguid}.nav.favorite:absent
 # A reserved button is refused and writes nothing: the D-pad moves, so it cannot be a menu button.
-8240  capture nav:back
-8280  pad tap dpup
-8320  expect capturing=0
-8320  expect cfg=input.padguid.{padguid}.nav.back:absent
+8920  capture nav:back
+8960  pad tap dpup
+9000  expect capturing=0
+9000  expect cfg=input.padguid.{padguid}.nav.back:absent
 # So is the button that opens the controls overlay (the pad's C_HELP, the touchpad button), as the TV-menu button is.
-8320  capture nav:back
-8360  pad tap touchpad
-8400  expect capturing=0
-8400  expect cfg=input.padguid.{padguid}.nav.back:absent
+9000  capture nav:back
+9040  pad tap touchpad
+9080  expect capturing=0
+9080  expect cfg=input.padguid.{padguid}.nav.back:absent
 # Esc cancels a menu-button capture without writing anything.
-8400  capture nav:search
-8440  key tap Escape
-8480  expect capturing=0
-8480  expect cfg=input.padguid.{padguid}.nav.search:absent
+9080  capture nav:search
+9120  key tap Escape
+9160  expect capturing=0
+9160  expect cfg=input.padguid.{padguid}.nav.search:absent
+
+# A core option changed inside the in-game menu reaches the core once the menu is closed.  Down x5 from Resume is Settings (Save state,
+# Load state, Achievements, Overlays, Settings), A opens the screen (the groups), Up x4 is Picture whatever group the Settings screen
+# was left on earlier in the script (the shell remembers it), A opens Picture (the shader row is absent: the test rules the
+# library out), Down x2 is Internal resolution (Integer scaling, Aspect ratio, then it), Right steps it from the core's
+# default (1x) to 2x; B x3 is rows -> groups -> the menu -> Resume.  The write is a posted command: the value is read after the menu
+# has closed and the paused core has had its boundary.
+9200   load @VJ_ROMS@/yarc.j64
+9240   expect loaded=1
+9240   expect core-option=virtualjaguar_internal_resolution:absent
+9240   key tap F4
+9280   expect menu-open=1
+9280   pad tap dpdown
+9290   pad tap dpdown
+9300   pad tap dpdown
+9310   pad tap dpdown
+9320   pad tap dpdown
+9340   pad tap a
+9345   pad tap dpup
+9350   pad tap dpup
+9355   pad tap dpup
+9358   pad tap dpup
+9360   pad tap a
+9380   pad tap dpdown
+9390   pad tap dpdown
+9410   pad tap dpright
+9430   pad tap b
+9450   pad tap b
+9470   pad tap b
+9510   expect menu-open=0
+9510   expect core-option=virtualjaguar_internal_resolution:2x
+
+# "More settings..." opened from the in-game menu keeps the menu underneath and hands the pad to the window only.  Down x5 is Settings,
+# A the groups, Down x4 lands on Interface (it clamps there, so the group the screen was left on does not matter), A its rows, Down x6
+# clamps on More settings..., A opens the window.  The window's pad presses never reach the menu: two Ups and a shoulder button go to
+# it, B closes it, and the menu is where it was -- the focus is still on More settings... (A opens the window again), and it takes
+# two more B to leave the Settings screen and one to Resume.  Esc closes the window the same way.
+9530   key tap F4
+9570   expect menu-open=1
+9570   pad tap dpdown
+9580   pad tap dpdown
+9590   pad tap dpdown
+9600   pad tap dpdown
+9610   pad tap dpdown
+9630   pad tap a
+9650   pad tap dpdown
+9660   pad tap dpdown
+9670   pad tap dpdown
+9680   pad tap dpdown
+9700   pad tap a
+9720   pad tap dpdown
+9730   pad tap dpdown
+9740   pad tap dpdown
+9750   pad tap dpdown
+9760   pad tap dpdown
+9770   pad tap dpdown
+9790   pad tap a
+9830   expect settings-open=1
+9830   expect tv-more=1
+9830   expect menu-open=1
+9830   expect paused=1
+9830   pad tap dpup
+9840   pad tap dpup
+9850   pad tap leftshoulder
+9890   expect menu-open=1
+9890   pad tap b
+9930   expect settings-open=0
+9930   expect tv-more=0
+9930   expect menu-open=1
+9930   expect paused=1
+9930   pad tap a                  # the focus did not move: More settings... again
+9970   expect settings-open=1
+9970   expect tv-more=1
+9970   key tap Escape
+10010  expect settings-open=0
+10010  expect tv-more=0
+10010  expect menu-open=1
+10010  pad tap b                  # rows -> groups
+10030  pad tap b                  # groups -> the menu
+10070  expect menu-open=1
+10070  pad tap b                  # Resume
+10110  expect menu-open=0
+10110  expect paused=0
+
+# A window that is no longer "live" is never left over a running game (its pad player could not close it, and the pads are the
+# game's): a Share hold closes the menu under "More settings..." (the game unpauses and polls its pad itself), and the window goes
+# with the hand-off.  Same walk as above to open the window, then the hold.
+10150  key tap F4
+10190  expect menu-open=1
+10190  pad tap dpdown
+10200  pad tap dpdown
+10210  pad tap dpdown
+10220  pad tap dpdown
+10230  pad tap dpdown
+10250  pad tap a
+10270  pad tap dpdown
+10280  pad tap dpdown
+10290  pad tap dpdown
+10300  pad tap dpdown
+10320  pad tap a
+10340  pad tap dpdown
+10350  pad tap dpdown
+10360  pad tap dpdown
+10370  pad tap dpdown
+10380  pad tap dpdown
+10390  pad tap dpdown
+10410  pad tap a
+10450  expect tv-more=1
+10450  expect menu-open=1
+10450  pad down misc1
+11070  expect menu-open=0
+11070  expect tv-more=0
+11070  expect settings-open=0
+11070  expect paused=0
+11090  pad up misc1
+11130  expect settings-open=0
+
+# A game dropped on the window while it is open from the Base layer: the game starts, the window goes (no game is left behind a TV-sized
+# desktop window).  Close the game from its menu (Down x9 is Close game, A asks, Up is Yes, A answers), TV mode on, Base layer to
+# Settings (LB x4 clamps on Home, RB x3), into the list and Down x6 clamps on More settings... whichever row the screen remembered.
+11200  key tap F4
+11240  expect menu-open=1
+11240  pad tap dpdown
+11250  pad tap dpdown
+11260  pad tap dpdown
+11270  pad tap dpdown
+11280  pad tap dpdown
+11290  pad tap dpdown
+11300  pad tap dpdown
+11310  pad tap dpdown
+11320  pad tap dpdown
+11340  pad tap a
+11360  pad tap dpup
+11380  pad tap a
+11420  expect loaded=0
+11420  key tap F4
+11460  expect tv=1
+11460  pad tap leftshoulder
+11470  pad tap leftshoulder
+11480  pad tap leftshoulder
+11490  pad tap leftshoulder
+11500  pad tap rightshoulder
+11510  pad tap rightshoulder
+11520  pad tap rightshoulder
+11540  expect tv-screen=settings
+11540  pad tap dpright
+11550  pad tap dpdown
+11560  pad tap dpdown
+11570  pad tap dpdown
+11580  pad tap dpdown
+11590  pad tap dpdown
+11600  pad tap dpdown
+11620  pad tap a
+11660  expect tv-more=1
+11660  load @VJ_ROMS@/yarc.j64
+11720  expect loaded=1
+11720  expect tv-more=0
+11720  expect settings-open=0

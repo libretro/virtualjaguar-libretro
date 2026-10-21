@@ -6,6 +6,7 @@
 #include "desktop_nav_popup.h"
 #include "imgui.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 
 namespace vj {
 
@@ -127,7 +128,9 @@ void deskPadFrame(App& app, uint64_t ms) {
 }
 
 void deskPadBeforeNewFrame(App& app) {
-    deskSetPopupNav(popupLive(app));
+    const bool more = tvMoreSettingsLive(app);   // "More settings" from TV mode: the pad drives its window like a popup, and the keyboard too
+    deskSetPopupNav(popupLive(app) || more);
+    deskSetKeyboardNav(more);
 }
 
 }  // namespace vj

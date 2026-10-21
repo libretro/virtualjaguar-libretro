@@ -34,6 +34,7 @@
 #include "devices_ui.h"
 #include "libretro.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 
 namespace vj {
 
@@ -327,6 +328,8 @@ int App::tvScriptStep() {
             else if (name == "tv") got = flag(tvMode.active());
             else if (name == "tv-screen") got = tvShell().screenId();
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
+            else if (name == "settings-open") got = flag(showSettings);             // the desktop Settings window
+            else if (name == "tv-more") got = flag(tvMoreSettingsLive(*this));      // ... opened by "More settings..." in TV mode: its pads are its own
             else if (name == "home-visible") got = flag(homeVisible());            // the desktop library standing in for the game
             else if (name == "library-window") got = flag(library.show);           // the desktop Game library window
             else if (name == "desk-pad") got = flag(deskPadActive(*this));          // the desktop library owns the pads (#1021)
@@ -346,6 +349,15 @@ int App::tvScriptStep() {
                 }
                 const std::string have = cfg.has(key) ? cfg.get(key) : std::string("absent");
                 if (have != val) rc = fail(l, "expected config " + key + "=" + val + ", got " + have);
+                if (rc) return rc;
+                continue;
+            }
+            else if (name == "core-option") {   // KEY:VALUE -- what the core will read for the option ("absent": nothing is set for it)
+                const size_t colon = want.find(':');
+                if (colon == std::string::npos) return fail(l, "core-option wants KEY:VALUE or KEY:absent");
+                const std::string key = want.substr(0, colon), val = want.substr(colon + 1);
+                const std::string have = host.optionValueFor(key, "absent");
+                if (have != val) rc = fail(l, "expected core option " + key + "=" + val + ", got " + have);
                 if (rc) return rc;
                 continue;
             }

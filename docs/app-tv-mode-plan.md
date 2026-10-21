@@ -1190,134 +1190,584 @@ New in this revision:
 
 ## Phase 3 — Settings, Overlays, Achievements, "More settings" (PR 3)
 
-### Task 12: the settings rows model and the TV Settings screen
+Revised 2026-10-20 against the code Phase 2 merged (#999) and what landed after it: the TV-mode hotkey (#1024), the
+desktop library's pad navigation (#1030), the emulation thread phases 1–2 (#1000, #1031), the Pro Controller (#1019),
+Neuro (#1001/#1027), disc control (#1006–#1012) and the community cheat import (#1052). Branch `feat/991-tv-phase3`,
+worktree `~/Workspace/Provenance/vj-wt/tv-phase3`, off `libretro/develop` abc9054e.
+
+### Phase 3 constraints (overlap with other work)
+
+- The v3.10.0 release PR (#1042, `release/v3.10.0` → `master`) is in flight and carries `app/src/app.cpp`,
+  `devices_ui.cpp`, `desktop_nav*`, `achievements*.cpp` and every workflow file. PR 3 targets `develop` as usual; expect a
+  back-merge of master into develop while PR 3 is open, and rebase on it before marking ready. Touch `app.cpp` and
+  `devices_ui.cpp` only where this phase says (a flag, two one-line hooks), so the rebase is trivial.
+- An #967 Phase 3 session edits `app.cpp`, `input.*`, `devices_ui.cpp` and `ui.cpp` too. Nothing in this phase changes
+  how input reaches the core or how the UI reads the core: every core-facing call stays inside `App` members that
+  already exist (see "Threading" below). Do not add `emu.call` / `emu.post` anywhere in `tv/`.
+- No `app/src/ui.cpp` edits beyond the two named in Task 15b (the aspect table lift and the "More settings" window
+  placement); no `shaders_ui.cpp` edits beyond the two functions moved out of its anonymous namespace (Task 12).
+
+### What Phase 2 left (read before any task)
+
+- **Sections.** `tv_screen.h`: `enum class Section { Home, Library }`; `Shell::setSection` builds the root screen with a
+  two-way conditional (`makeHomeScreen` / `makeLibraryScreen`); `Shell::stepSection` clamps at `Section::Library`;
+  `tv_chrome.cpp` draws `const Section sections[] = {Home, Library}` with `sectionLabel()`; `backAtRoot()` is "stack of one
+  and section Home". All five places change when sections are added (Task 14).
+- **`tv_host.h` is pure** (Phase 2 decision 3): no `lib::`, no `ra::`, no `OptionDef`, no App type. Phase 3 keeps it so.
+  The TV module gets its own value types (`SettingRow`, `ToggleRow`, `AchItem`, `AchGame`) filled by `AppHost`.
+- **The in-game menu** is Shell's row model (`Shell::Row::Kind {Resume, Save, Load, Controls, TvMode, Reset, Close, Slot,
+  No, Yes}`, `Shell::Page`, `buildRoot()`, `accept()`, `back()` in `tv_shell.cpp`); `tv_ingame.cpp` only draws it (rail = title
+  + page name, list = rows, hint bar). Root order today: Resume, Save state, Load state, Controls, Enter/Exit TV mode,
+  Reset, Close game. The TV-mode row sits before Reset, not last as spec §4 lists it.
+- **Input hand-off is already in place for "More settings".** `Shell::ownsInput()` is false on the Base layer whenever
+  `Host::desktopWindowOpen()` (= `App::desktopWindowOpen()`: Settings, States, Cheats, About, the library window, the keypad
+  overlay, any ImGui popup) is true, and `Shell::frame` resets the nav on that edge. With the in-game menu open the shell keeps
+  the input regardless (`open_`), so a window opened from the menu needs its own hand-off (Task 13).
+- **ImGui gamepad navigation already exists, fed by us.** `App::initImGui` clears `NavEnableKeyboard | NavEnableGamepad` and
+  sets `ImGui_ImplSDL3_SetGamepadMode(Manual, nullptr, 0)`: the backend submits no pad state, on purpose. The desktop
+  library's popups (#1030) turn nav on per frame with `deskSetPopupNav(bool)` (called from `deskPadBeforeNewFrame`, between
+  `ImGui_ImplSDL3_NewFrame` and `ImGui::NewFrame`) and press ImGui's gamepad keys from our intents with
+  `deskFeedPopupIntents(intents)` (`desktop_nav_popup.h`, header-only, smoke-tested in `tv_ui_smoke.cpp` `padPopupNav`).
+  "More settings" reuses both; it does not switch the backend's gamepad mode and does not use `input.padHandles()`.
+- **Pad ownership while a desktop window is open:** `deskPadActive()` is false with Settings open, so the desktop nav never
+  competes with "More settings". The shell's `handleEvent` runs before `deskPadHandleEvent` in `App::handleEvent`; a
+  "More settings" glue goes before both.
+- **Smoke harness** (`tests/tv_ui_smoke.cpp`): `FakeHost` (lists `all/favs/recent/disc`, `st`, `favSet`, `tv`, `tvOn`, `ra`,
+  `desktopOpen`, `switchPad`, `keyboardLast`), `frames(host, shell, n)`, `drew(text)`, `g_texts`, `g_imguiErrors` (not
+  `g_imguiAsserts`), `tapButton`, `down/up/accept/back/rb/lb/rightN/leftN`, `keyEvent(shell, scancode, key, down, mod)`,
+  `rightClick`, `pullTrigger`, `homeSetup/librarySetup/detailsSetup`, `focusedLabel(shell)`. It links no App file
+  (`VJTvTests.cmake` `vj_tv_ui_smoke`): new screen sources join its source list; `tv_app_host.cpp` never does.
+- **Script runner** (`tv_script.cpp`, `tests/tv_menu_headless.txt.in`): verbs `load, key, pad, axis, mouse, focus, typing,
+  capture, tvsetting, navdefault, saveconfig, wait, shot, quit`; expects `fullscreen, menu-visible, menu-pinned, menu-open,
+  tv, tv-screen, tv-owns-input, home-visible, library-window, desk-pad, desk-scroll, desk-pending, desk-popup, cfg, paused,
+  loaded, capturing, fast-forward, core-input, kb-bind`. `tvsetting` calls `App::configureTvMode()`. Headless runs have no
+  ImGui context: anything that reads `ImGui::GetIO()` must guard on `ImGui::GetCurrentContext()`.
+- **Config:** `App::saveConfig()` never writes `ui.tv_mode` (comment in `app.cpp`: a stored value would pin the default Task 16
+  moves). The TV Settings row that changes it writes the key itself, on change only, then `configureTvMode()`.
+- **Core options before the first load:** `host.optionDefs()` is empty until the core pushes its definitions
+  (`retro_load_game`); with no game run this session the three core rows have no `OptionDef` and are hidden by the
+  `def == nullptr` rule.
+- **Threading (#967, `docs/app-emulation-thread-design.md` §5).** What a TV screen needs is UI-thread safe through these
+  App-level entry points, all of which `AppHost` may call:
+  - actions that already wrap `emu.call()`: `App::saveState`, `loadState`, `reset`, `closeContent`, `menuPause`, `menuResume`,
+    `library.launch/launchState`;
+  - the CoreHost option table, which is the UI thread's channel by design (option writes are mirrored and `post`ed; readers
+    answer from the pinned snapshot): `host.optionDefs()`, `optionVisible(key)`, `optionLocked(key)`,
+    `optionOverridden(key)`, `optionValue(def)`, `setOptionValue(key, value)` — the same calls `drawOption` (`ui.cpp`) makes;
+  - app settings: `app.present`, `app.vsync` + `applyVsync()`, `app.volume` + `applyAudioSettings()`, `app.showFps`,
+    `setThemeChoice(key)`, `theme::choiceKey()`, `app.themeStore().list()`, `video.shader` (`ShaderChain`: main thread's);
+  - overlays: `input.overlay.open` (`KeypadOverlay`), `overlayEvent(input.controls, OverlayEvent::Toggle)` and
+    `input.controls.show` (`cheatsheet.h`), `app.debug.tools()` / `DebugTool::isOpen/toggle` / `debug.enabled()` (UI-side
+    registry; `enabled()` is also false while the emulation thread is on: `DebugSession::threadBlocked()`);
+  - achievements (UI thread, under `clientMu_`): `ach.signedIn()`, `hardcoreActive()`, `hardcoreBlocker()`,
+    `clientSnapshot()` (`gameId`, `gameTitle`, `summary`), `achievementRows(rows)`, `games()`, `gamesTabShown()`
+    (must run every frame the list shows: it loads the cache and fetches progress), `progressKnown()`, `playGame(entry)`,
+    `trackers` (a `std::map<unsigned, std::string>`), `images.get(url)` (`ra::ImageView {state, tex, w, h}`).
+  Nothing else of `app.host` is a TV call: `runFrame`, `frame()`, `inFrame()`, states, SRAM and memory are owner-thread only.
+
+### Phase 3 decisions (the approval list at the end repeats the ones that change the spec)
+
+1. **Sections become Home, Library, Achievements, Settings**, in that order (LB/RB). Overlays is not a section: with no game
+   running only "Show FPS" means anything. It is a screen reached from the in-game menu.
+2. **One screen class serves both layers.** `SettingsScreen`, `OverlaysScreen` and `AchievementsScreen` are `tv::Screen`s.
+   On the Base layer they are section roots (Settings, Achievements). In the in-game menu, a new `Row::Kind` per screen pushes
+   the screen into a new menu slot, `Shell::menuScreen_` (one `std::unique_ptr<Screen>`): while it is set, `drawMenu` draws the
+   screen in the panel's list area (a `DrawCtx` over that rectangle) and `Shell::intent` forwards everything but Back to it;
+   Back clears the slot and returns to the root row it came from. The menu's page model is untouched.
+3. **Settings is a rail-and-list** (the Library rail metrics): rail groups Picture, Speed, Sound, Interface; the list holds
+   that group's rows, plus "More settings…" as the last row of Interface. Left/Right change a row; Accept steps it forward
+   (wrapping) so a one-handed player can still change it; Accept on "More settings…" opens the desktop window.
+4. **The curated rows and their keys** (spec §5): `shader` (`video.shader`: "Off" + every preset the desktop list offers,
+   skipping presets `presetNeedsArraysOfArrays()` when `!glHasArraysOfArrays()`), `integer` (`present.integerScale`), `aspect`
+   (`present.aspectOverride`, the 4-entry table), `resolution` (`virtualjaguar_internal_resolution`), `risc_clock`
+   (`virtualjaguar_risc_clock_scale`), `idle_skip` (`virtualjaguar_risc_idle_skip`), `volume` (`app.volume` in 10 % steps),
+   `fps` (`app.showFps`), `vsync` (`app.vsync`), `theme` (System / Dark / Light / "Custom: <name>"), `tv_mode` (Off / Manual
+   / Auto; Auto still acts as Manual until Phase 4, which also adds the two Auto rows), `more`.
+5. **Overlays rows:** `fps`, `keypad`, `controls`, then one `tool:<DebugTool::id>` per registered tool with a `toggle`.
+   `fps` and the tool rows toggle in place and the menu stays open; `keypad` and `controls` show a mouse-driven window over
+   the game, so Accept on them closes the menu first (as the Controls row does today).
+6. **Achievements screen.** With a tracked game: a header (icon, title, "N of M achievements", the hardcore chip), the active
+   leaderboard trackers as read-only rows at the top, then one row per achievement in rc_client's bucket order (badge,
+   title + points, the status line `drawThisGame` builds). With no game: the RetroAchievements Jaguar list (`ach.games()` through
+   `ra::viewGames(All, Title, "")`, so games without a set are skipped), each row "title · unlocked/total" when progress is
+   known, and Accept on a game the library has (`libIndex >= 0`) launches it (`playGame`, then `Shell::launched()`). Not signed
+   in: the one line "Sign in from Settings > Achievements in desktop mode". Not available (no rc_client in this build):
+   the same line with "not available in this build".
+7. **Y (Aux) on Home opens the Achievements section** with its hint; the row "Achievements" in Game details is shown only when
+   `Host::achGameId(g) != 0` (the RA list has an entry whose `libIndex` resolves to this file) and opens the section with that
+   game focused.
+8. **"More settings…" in TV mode** (spec §5): `App::showSettings = true` plus a flag `App::tvMoreSettings_`. While the flag
+   and `showSettings` are both true: ImGui gamepad *and* keyboard navigation are on (through `deskSetPopupNav`, extended to
+   take a second reason), the pads drive ImGui through a `tv::NavInput` of its own fed to `deskFeedPopupIntents`, the Settings
+   window is centred at 80 % of the viewport with `ImGui::PushFont(nullptr, FontSizeBase × s)` where `s` makes the body text
+   `30u` tall, and B (`Intent::Back`) or Esc closes it when no popup is open and no item is active. The shell steps aside on
+   its own on the Base layer (`desktopWindowOpen()`); with the in-game menu open, the glue consumes the pad events before the
+   shell sees them, and the menu is still there when the window closes.
+9. **No new App members for settings beyond the flag.** Every write goes through the member or method the desktop control
+   uses, followed by `app.saveConfig()`; `ui.tv_mode` is written on change only (`cfg.set("ui.tv_mode", settingKey(...))`).
+10. **The pure parts get their own file** (`tv_settings_model.h/.cpp`): row building from plain inputs, unit-tested without
+    App or ImGui. `tv_app_host.cpp` only gathers the inputs.
+11. **Keep `app.cpp` edits to three lines** (#967 and the release both touch it): the flag, the hand-off call in
+    `handleEvent`, and the Esc rule in `handleHotkey`. The glue lives in `app/src/tv_more_settings.cpp`.
+
+### Screen geometry (design units, 1080 high)
+
+- **Settings / Achievements (Base layer):** the Library layout — rail at `x = safeX`, 344 wide, items 54 high, 8 apart; the
+  list from `x = safeX + 344 + 64` to `W − safeX`, `widgets::row` 72 high (112 for achievement rows with a badge
+  `thumbBox` 96×96), gap 14, scrolled with a `Tween` as Game details does; a caption line at `y = 150` at 26 `textMuted`.
+- **Inside the in-game menu:** the same list drawn in the menu panel's list area (`listX`, `listY`, `listW`, `listH` as
+  `drawMenu` computes them); the rail is the menu's own (title + page name), so the Settings groups become a first list level:
+  Accept on a group opens its rows, Back returns to the groups.
+- **A setting row:** the label at 30 `text` left; the value right-aligned at 30 with "‹" and "›" glyphs 24 apart when the row
+  can step that way; `note` under the value at 24 `textMuted` (read-only rows); a disabled row drawn muted (`RowArgs::enabled`).
+- **An overlay row:** the label left and "On" / "Off" right; disabled rows carry the note.
+- **The Achievements header** (game loaded): the icon 96×96 at `(listX, 150)`, the title at `titleSmall`, the count line at
+  28, the chip "Hardcore" / "Softcore" / "Softcore (hardcore is paused: <blocker>)" at 24; the list starts under it.
+
+---
+
+### Task 12: the settings model (pure) and the TV Settings screen
 
 **Files:**
-- Create `app/src/tv/tv_settings.cpp`.
-- Modify `tv_host.h`/`tv_app_host.cpp`.
-- Modify `shaders_ui.cpp`: expose `std::vector<std::string> shaderPresetChoices(App&)` (builtin + user folder)
-  and `void applyShaderPreset(App&, const std::string&)`, moving them out of the anonymous namespace.
-- Modify `ui.cpp`: lift the aspect table into `const AspectChoice kAspectChoices[4]` in `ui_util.h`.
-- Test: `tv_ui_smoke.cpp`, plus `tests/tv_settings_rows_test.cpp`, which links the adapter's pure row builder.
+- Create `app/src/tv/tv_settings_model.h/.cpp` (pure; includes `emu_snapshot.h` for `OptionDef`), `app/src/tv/tv_settings.cpp`
+  (`SettingsScreen`), `app/tests/tv_settings_model_test.cpp`.
+- Modify `tv_host.h`, `tv_app_host.h/.cpp`, `tv_screen.h` (the factory), `cmake/VJTvTests.cmake`, `app/CMakeLists.txt`.
+- Modify `shaders_ui.cpp`: move `applyPreset` and the two `Listing`s out of the anonymous namespace as
+  `std::vector<std::string> shaderPresetPaths(App&)` (built-in then user folder, full paths, `rescan` on first use and when the
+  folder changes, skipping presets that need arrays of arrays on a GL that lacks them) and `void applyShaderPreset(App&, const
+  std::string& path)`; declare both in `shaders_ui.h` (new, two lines) next to `drawShaderSettings`.
+- Modify `video.h`: `struct AspectChoice { const char* label; float value; }; extern const AspectChoice kAspectChoices[4];`
+  (defined in `video.cpp`), and `ui.cpp` `drawVideoTab` reads it instead of its two static arrays.
+- Test: `tv_settings_model_unit` (new), `tv_ui_smoke`.
 
 **Interfaces:**
 
 ```cpp
+// tv_host.h, added
+struct SettingRow {
+    std::string id, label;             // ids: shader integer aspect resolution risc_clock idle_skip volume fps vsync theme tv_mode more
+    std::vector<std::string> choices;  // empty for "more"
+    int index = 0;
+    bool readOnly = false;
+    std::string note;                  // shown under the value: why it is read-only
+    int group = 0;                     // 0 Picture, 1 Speed, 2 Sound, 3 Interface
+};
+virtual std::vector<SettingRow> settingRows() = 0;             // only the rows that exist in this build / session
+virtual void setSetting(const std::string& id, int index) = 0; // applies and saves, as the desktop control would
+virtual void openMoreSettings() = 0;                           // showSettings = true (+ the TV hand-off flag)
+
+// tv_settings_model.h (pure)
 namespace vj::tv {
-struct SettingRow { std::string id, label; std::vector<std::string> choices; int index = 0; bool readOnly = false; std::string note; };
-// Ids: shader integer aspect resolution risc_clock idle_skip volume fps vsync theme tv_mode more
-virtual std::vector<SettingRow> settingRows() = 0;   // Host
-virtual void setSetting(const std::string& id, int index) = 0;
-virtual void openMoreSettings() = 0;
-// Pure, in tv_app_host.cpp, unit-tested: the row for one core option
-SettingRow coreOptionRow(const std::string& id, const std::string& label, const OptionDef* def, const std::string& current,
-                         bool visible, bool locked, bool overridden, bool* hidden);
+const char* settingGroupLabel(int group);   // "Picture" "Speed" "Sound" "Interface"
+// One core option as a row.  hidden: no definition, not visible, or locked.  readOnly + note when overridden.  A current value
+// outside the list (a typed RISC clock) is appended as "<value> (custom)" and selected.
+SettingRow coreOptionRow(const std::string& id, const std::string& label, int group, const OptionDef* def,
+                         const std::string& current, bool visible, bool locked, bool overridden, bool* hidden);
+SettingRow onOffRow(const std::string& id, const std::string& label, int group, bool on);
+SettingRow volumeRow(float volume);                        // "0 %" .. "100 %", index = round(volume * 10)
+SettingRow aspectRow(float aspectOverride, const AspectChoice* table, int n);
+SettingRow themeRow(const std::string& choiceKey, const std::vector<std::string>& customNames);   // keys: system dark light custom:<name>
+std::string themeKeyAt(int index, const std::vector<std::string>& customNames);
+SettingRow tvModeRow(TvSetting stored);                     // Off / Manual / Auto
+SettingRow shaderRow(const std::string& currentPreset, bool enabled, const std::vector<std::string>& presetPaths);   // "Off" + file stems
+int stepIndex(const SettingRow& r, int delta, bool wrap);   // Left/Right: clamped; Accept: wraps
 }
 ```
 
-Rules:
-- A core-option row is hidden when `def == nullptr || !visible || locked`. It is `readOnly` with note "Set by
-  netplay or --option for this session" when `overridden`.
-- A change calls `host.setOptionValue(key, def->values[index].value)`, the same call `drawOption` makes, so
-  hardcore's disallowed-option handling is identical.
-- A current value outside the list (a typed RISC clock) shows as an extra choice "<value> (custom)".
-- The shader row is hidden when `!ShaderChain::builtWithHeaders() || !video.shader.libraryLoaded()`. Its first
-  choice is "Off" (`enabled = false`).
-- App settings apply through the same members the desktop controls use. `app.saveConfig()` runs after each change.
+Rules (`AppHost::settingRows`):
+- Order and group: shader, integer, aspect, resolution (Picture); risc_clock, idle_skip (Speed); volume (Sound); fps, vsync,
+  theme, tv_mode, more (Interface).
+- The shader row exists only when `ShaderChain::builtWithHeaders() && video.shader.libraryLoaded()`; `index 0` = "Off"
+  (`enabled = false`); any other index: `applyShaderPreset(app, path)`.
+- Core rows: `coreOptionRow(id, label, group, defFor(key), host.optionValue(*def), host.optionVisible(key),
+  host.optionLocked(key), host.optionOverridden(key), &hidden)` where `defFor` scans `host.optionDefs()`; `setSetting` calls
+  `host.setOptionValue(key, def->values[index].value)` (never for the "(custom)" index), the call `drawOption` makes, so the
+  hardcore disallowed-option handling (`Achievements::checkSettings`) is identical.
+- `setSetting("tv_mode", i)`: `tvSetting = (TvSetting)i; cfg.set("ui.tv_mode", settingKey(tvSetting)); configureTvMode();`
+  — choosing Off while TV mode is on turns it off (`configure` does); the screen is then gone, which is what the player asked.
+- Every `setSetting` ends with `app.saveConfig()`.
+
+`SettingsScreen` (`id() "settings"`, `makeSettingsScreen(Host&, Shell&)`):
+- Rows are fetched every draw (`settingRows()`), grouped by `group`; the rail is the groups that have rows; the list is the
+  focused group's rows. Rail focus and each group's row index are remembered under `settings/rail` and `settings/<group>`.
+- Intents: on the rail Up/Down pick a group, Right or Accept enter the list; in the list Up/Down move, a Left edge returns to
+  the rail, Left/Right `stepIndex(r, ∓1, false)` → `setSetting`, Accept `stepIndex(r, +1, true)` → `setSetting` (on `more`:
+  `openMoreSettings()`); read-only rows ignore Left/Right/Accept.
+- Mouse: hovering focuses; a click on the value's left/right half steps that way; the wheel moves the focus.
+- Hints: rail: glyph(Accept) "Open", glyph(Back) "Home"; list: glyph(Left)+" "+glyph(Right) "Change", glyph(Accept) "Next"
+  ("Open" on `more`), glyph(Back) "Groups".
+- In the menu slot (decision 2) the rail is the first list level: Accept on a group enters it, Back returns to the groups,
+  Back on the groups clears the slot.
 
 - [ ] **Step 1: Write the failing tests.**
 
 ```cpp
-// settings_rows_core_option_rules (Review focus 5)
-OptionDef d; d.values = {{"1x", "1x"}, {"2x", "2x"}}; bool hidden = false;
-SettingRow r = coreOptionRow("resolution", "Internal resolution", &d, "2x", true, false, false, &hidden);
-CHECK(!hidden && r.index == 1 && r.choices.size() == 2 && !r.readOnly);
-coreOptionRow("resolution", "x", &d, "2x", false, false, false, &hidden); CHECK(hidden);
-coreOptionRow("resolution", "x", &d, "2x", true, true, false, &hidden); CHECK(hidden);
-r = coreOptionRow("resolution", "x", &d, "2x", true, false, true, &hidden); CHECK(r.readOnly && !r.note.empty());
-r = coreOptionRow("risc_clock", "x", &d, "137%", true, false, false, &hidden); CHECK(r.choices.back() == "137% (custom)" && r.index == 2);
-coreOptionRow("resolution", "x", nullptr, "", true, false, false, &hidden); CHECK(hidden);
+// tv_settings_model_test.cpp: settings_rows_core_option_rules (Review focus 5)
+OptionDef d; d.key = "virtualjaguar_internal_resolution"; d.values = {{"1x", "1x"}, {"2x", "2x"}}; bool hidden = false;
+SettingRow r = coreOptionRow("resolution", "Internal resolution", 0, &d, "2x", true, false, false, &hidden);
+CHECK(!hidden && r.index == 1 && r.choices.size() == 2 && !r.readOnly && r.group == 0);
+coreOptionRow("resolution", "x", 0, &d, "2x", false, false, false, &hidden); CHECK(hidden);          // not visible
+coreOptionRow("resolution", "x", 0, &d, "2x", true, true, false, &hidden); CHECK(hidden);           // locked by the app
+r = coreOptionRow("resolution", "x", 0, &d, "2x", true, false, true, &hidden); CHECK(!hidden && r.readOnly && !r.note.empty());
+r = coreOptionRow("risc_clock", "x", 1, &d, "137%", true, false, false, &hidden); CHECK(r.choices.back() == "137% (custom)" && r.index == 2);
+coreOptionRow("resolution", "x", 0, nullptr, "", true, false, false, &hidden); CHECK(hidden);       // no definition yet
+// the app rows
+CHECK(volumeRow(0.75f).index == 8 && volumeRow(0.75f).choices.size() == 11 && volumeRow(1.0f).choices[10] == "100 %");
+CHECK(onOffRow("fps", "Show FPS", 3, true).index == 1 && onOffRow("fps", "x", 3, false).choices == std::vector<std::string>{"Off", "On"});
+SettingRow t = themeRow("custom:Amber", {"Amber", "Zed"}); CHECK(t.index == 4 && t.choices[3] == "Custom: Amber" && themeKeyAt(1, {}) == "dark");
+CHECK(tvModeRow(TvSetting::Auto).index == 2 && tvModeRow(TvSetting::Off).choices[1] == "Manual");
+SettingRow s = shaderRow("/p/crt-royale.slangp", true, {"/p/crt-royale.slangp", "/u/x/lcd.slangp"});
+CHECK(s.index == 1 && s.choices[0] == "Off" && s.choices[2] == "lcd"); CHECK(shaderRow("/p/crt-royale.slangp", false, {"/p/crt-royale.slangp"}).index == 0);
+CHECK(stepIndex(s, +1, false) == 2 && stepIndex(s, +1, true) == 2); s.index = 2; CHECK(stepIndex(s, +1, false) == 2 && stepIndex(s, +1, true) == 0 && stepIndex(s, -1, false) == 1);
 ```
 
-  Smoke tests:
-  - `settings_left_right_changes`: Right on the fps row → `host.setSetting("fps", 1)`.
-  - `settings_more_opens_desktop`
-  - `settings_walk_no_asserts`
-- [ ] **Step 2: Run** `ctest --test-dir app/build -R "tv_settings_rows_unit|tv_ui_smoke"`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-  - "More settings…" sets `showSettings = true`.
-  - While `tvActive && showSettings`:
-    - `io.ConfigFlags |= NavEnableGamepad | NavEnableKeyboard`, cleared otherwise;
-    - `ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, handles, n)` with
-      `input.padHandles()`, so the filtered pad drives it; AutoFirst comes back when it closes;
-    - the window is centred, with `ImGui::PushFont(nullptr, metrics.body)` around `drawSettings`.
-  - B (East) closes it when no popup is open and no item is active.
-- [ ] **Step 4: Run** the full suite. Expected: all PASS.
-- [ ] **Step 5: Commit** `feat(app): TV Settings with curated rows and More settings (#991)`.
+  Smoke tests (`FakeHost` gains `std::vector<SettingRow> rows`, `std::vector<std::pair<std::string,int>> set`, `int moreOpened`;
+  `settingsSetup` puts the fixture rows `fps` (Off/On, 0), `volume`, `aspect` and `more` in place and walks RB×3):
+  - `settings_rail_and_list`: `screenId() == "settings"`; `drew("Picture") && drew("Interface")` and `!drew("Speed")` (no
+    row has group 1); Down ×2 (Interface), Right (the list: "Show FPS" is its first row), Right → `set.back() == {"fps", 1}`;
+    Left → `{"fps", 0}`; Accept → `{"fps", 1}`; Accept → `{"fps", 0}` (wrap).
+  - `settings_tv_mode_off_leaves_cleanly` (Review focus 13): a `tv_mode` row at index 1; Accept-step it to Off → the fake's
+    `setSetting` sets `tv = false`; after a frame `ImGui::FindWindowByName(kBaseWindowName)` is gone,
+    `ImGui::GetMouseCursor() != ImGuiMouseCursor_None`, and a pad Down → `handleEvent` returns false.
+  - `settings_readonly_row_ignores_input`: a row with `readOnly = true` and a note → Right/Left/Accept leave `set` empty and
+    `drew(note)`.
+  - `settings_more_opens_desktop`: Down to "More settings…", Accept → `moreOpened == 1`; then `desktopOpen = true`, a pad Down
+    → `handleEvent` returns false (the shell stepped aside).
+  - `settings_hidden_rows_absent`: a fixture with no `shader` row → `!drew("Shader")`.
+  - `settings_focus_remembered`: list row 2 of Interface, LB (Library), RB (Settings) → the same row is focused (Accept hits it).
+  - `settings_mouse`: hover a row, click its right half → `set.back().second == 1`.
+  - `settings_walk_120_frames_no_asserts` at 720p, 1080p, 2160p.
+- [ ] **Step 2: Run** `ctest --test-dir app/build -R "tv_settings_model_unit|tv_ui_smoke"`. Expected: FAIL (does not build).
+- [ ] **Step 3: Implement** the model, the screen, the Host members, `AppHost`, the `shaders_ui` exposure and the aspect table.
+  Register `vj_tv_settings_model_test` in `VJTvTests.cmake` as `vj_hold_arbiter_test` is (it needs `vj_core`'s include dirs for
+  `emu_snapshot.h`); add `src/tv/tv_settings_model.cpp` and `src/tv/tv_settings.cpp` to `vj_tv_ui_smoke` and
+  `VJ_APP_SOURCES`.
+- [ ] **Step 4: Run** the full suite: `ctest --test-dir app/build -C Release --output-on-failure`. Expected: all PASS
+  (`shader_tests` and the video smoke cover the moved code).
+- [ ] **Step 5: Commit** `feat(app): TV Settings screen with the curated rows (#991)`.
 
-### Task 13: Overlays
+### Task 12a: layout fixes from the user's TV testing
 
-**Files:** Create `app/src/tv/tv_overlays.cpp`. Extend the Host:
+TBD: filled in from the user's report.
+
+### Task 13: "More settings" with ImGui navigation
+
+**Files:**
+- Create `app/src/tv_more_settings.h/.cpp` (App-side glue, next to `desktop_nav_app.cpp`).
+- Modify `desktop_nav_popup.h`: `deskSetPopupNav(bool on)` is unchanged; `deskPadBeforeNewFrame` (`desktop_nav_app.cpp`) passes
+  `popupLive(app) || tvMoreSettingsLive(app)`.
+- Modify `app.h/.cpp`: `bool tvMoreSettings_ = false;` (`bool tvMoreSettingsLive() const`), one call in `handleEvent`, one
+  rule in `handleHotkey`.
+- Modify `devices_ui.cpp` `tvInputFrame`: one call, `tvMoreSettingsFrame(app, ms)`.
+- Modify `ui.cpp` `drawSettings`: the placement and font push while live.
+- Modify `tv_app_host.cpp`: `openMoreSettings()`.
+- Test: `tv_menu_headless` (script), `tv_ui_smoke` (the nav-flag probe).
+
+**Interfaces:**
 
 ```cpp
-struct ToggleRow { std::string id, label; bool on = false, enabled = true; };
+// tv_more_settings.h
+namespace vj {
+bool tvMoreSettingsLive(App& app);                         // app.tvMoreSettings_ && app.showSettings && (tv on or the menu open)
+void tvMoreSettingsOpen(App& app);                         // showSettings = true; the flag; resets the glue's NavInput
+bool tvMoreSettingsHandleEvent(App& app, const SDL_Event& e, uint64_t ms);   // pad buttons / left stick / triggers while live; true = consumed
+void tvMoreSettingsFrame(App& app, uint64_t ms);           // intents -> deskFeedPopupIntents; Back closes when it may
+bool tvMoreSettingsClose(App& app);                        // false when a popup is open or an item is active (text box, slider)
+float tvMoreSettingsFontScale(App& app);                   // FontSizeBase x this = 30u at the viewport height; >= 1
+}
+```
+
+Rules:
+- `tvMoreSettingsOpen` is what `AppHost::openMoreSettings` calls. The flag is cleared whenever `showSettings` turns false
+  (the window's close box, Ctrl/Cmd+Comma, Settings > Reset), checked in `tvMoreSettingsFrame`.
+- `handleEvent` order: `feedHoldEdges` → `noteInput` → **`tvMoreSettingsHandleEvent` while live** → the shell → desktop nav →
+  `input.handleEvent`. The glue takes the pad's profile intents through `input.navProfile(which)` as the shell does; Start and
+  intents that are not TV's stay the app's; a release is fed but not consumed.
+- `tvMoreSettingsFrame`: `take(ms)`; `Back` → `tvMoreSettingsClose(app)` (consumed either way); the rest →
+  `deskFeedPopupIntents` (Up/Down/Left/Right/Accept; `Alt`/`Aux`/pages are dropped).
+- `handleHotkey` Esc: `if (tvMoreSettingsLive(*this) && tvMoreSettingsClose(*this)) break;` before the TV-shell check.
+- `drawSettings` while live: `SetNextWindowPos(centre, ImGuiCond_Always, {0.5, 0.5})`, `SetNextWindowSize(0.8 × WorkSize,
+  ImGuiCond_Always)`, `PushFont(nullptr, FontSizeBase × tvMoreSettingsFontScale(app))` around the tab bar, `PopFont` after;
+  `ui::nextWindow` is skipped so imgui.ini never learns the TV size.
+- Keyboard navigation is on too while live (approval item B): the arrow keys, Enter and Esc work in the window, and
+  `io.WantCaptureKeyboard` is true while it has focus, which gates F4 and Ctrl/Cmd+Shift+T as any text box does.
+- With a game loaded: the menu stays open underneath (it holds the pause); the game's picture is still dimmed by the menu.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `tv_menu_headless`, a new block after the TV-mode block (no game):
+    ```
+    1100  key tap F4
+    1140  expect tv=1
+    1140  pad tap rightshoulder
+    1160  pad tap rightshoulder
+    1180  pad tap rightshoulder
+    1200  expect tv-screen=settings
+    1200  pad tap dpdown              # Interface is the last group: Down x3 from Picture
+    1220  pad tap dpdown
+    1240  pad tap dpdown
+    1260  pad tap dpright             # the list: Show FPS, VSync, Theme, TV mode, More settings... (no wrap)
+    1270  pad tap dpdown
+    1280  pad tap dpdown
+    1290  pad tap dpdown
+    1295  pad tap dpdown
+    1300  pad tap a
+    1340  expect settings-open=1
+    1340  expect tv-more=1
+    1340  expect tv-owns-input=0
+    1340  pad tap dpdown              # goes to ImGui, not the shell
+    1360  expect tv-screen=settings
+    1360  pad tap b
+    1400  expect settings-open=0
+    1400  expect tv-more=0
+    1400  expect tv-owns-input=1
+    1400  key tap F4
+    1440  expect tv=0
+    ```
+    New expects in `tv_script.cpp`: `settings-open` (`showSettings`), `tv-more` (`tvMoreSettingsLive(*this)`). Shift the
+    later blocks' times.
+  - `tv_ui_smoke` `more_settings_nav_flags`: with the existing `PopupProbe`, `deskSetPopupNav(true)` then `deskFeedPopupIntents({Down,
+    Accept})` → the probe's selectable activates (this exists as `padPopupNav`; extend it with a second reason value: the
+    probe is the same code path, so one added CHECK that `deskSetPopupNav(false)` after a TV-reason frame clears
+    `ConfigNavCursorVisibleAlways`).
+  - `tv_ui_smoke` `menu_more_settings_keeps_menu`: with `loaded = true`, open the menu, Down to Settings, Accept, Down to
+    Interface, Accept, walk to "More settings…", Accept → `moreOpened == 1 && shell.menuOpen()`.
+- [ ] **Step 2: Run** `ctest --test-dir app/build -R "tv_menu_headless|tv_ui_smoke"`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the full suite. Expected: all PASS.
+- [ ] **Step 5: Commit** `feat(app): More settings from TV mode with ImGui pad navigation (#991)`.
+
+### Task 14: sections Achievements and Settings, Y on Home, the Achievements screen
+
+**Files:**
+- Create `app/src/tv/tv_achievements.cpp` (`AchievementsScreen`).
+- Modify `tv_screen.h` (`Section`, the factories), `tv_shell.cpp` (`setSection`, `stepSection`), `tv_chrome.cpp`
+  (`sections[]`, `sectionLabel`), `tv_home.cpp` (Aux), `tv_details.cpp` (the row), `tv_host.h`, `tv_app_host.cpp`.
+- Test: `tv_ui_smoke`.
+
+**Interfaces:**
+
+```cpp
+// tv_screen.h
+enum class Section { Home, Library, Achievements, Settings };
+std::unique_ptr<Screen> makeSettingsScreen(Host& h, Shell& s);        // Task 12
+std::unique_ptr<Screen> makeAchievementsScreen(Host& h, Shell& s, uint32_t focusGameId = 0);
+// tv_shell.h
+void openSection(Section s, std::unique_ptr<Screen> root);   // setSection with a prepared root (Details -> Achievements focused on a game)
+
+// tv_host.h, added
+struct AchItem {                 // one achievement of the loaded game, or one leaderboard tracker (kind Tracker)
+    enum Kind { Achievement, Tracker } kind = Achievement;
+    uint32_t id = 0;
+    std::string title, status;   // status: the desktop's line ("Unlocked in hardcore  16 Oct 2026", "Locked  Progress: 5/10 ...")
+    unsigned points = 0;
+    bool unlocked = false;
+    std::string badgeUrl;        // the one to show (earned or locked)
+};
+struct AchGame {                 // one game of the RetroAchievements Jaguar list
+    uint32_t id = 0;
+    std::string title, imageUrl;
+    unsigned achievements = 0, unlocked = 0;
+    bool haveProgress = false, inLibrary = false;
+};
+struct AchHeader { bool signedIn = false, available = true, hasGame = false; std::string title, mode, iconUrl; unsigned unlocked = 0, total = 0; };
+virtual AchHeader achHeader() = 0;                      // mode: "Hardcore" | "Softcore" | "Softcore (hardcore is paused: <blocker>)"
+virtual std::vector<AchItem> achItems() = 0;            // trackers first, then the rows in bucket order; empty with no tracked game
+virtual std::vector<AchGame> achGames() = 0;            // calls ach.gamesTabShown() first; games with a set only (ra::viewGames)
+virtual Art achImage(const std::string& url) = 0;       // ach.images.get(url): tex only when Ready
+virtual void achPlay(uint32_t gameId) = 0;              // ach.playGame(entry): a launch (the caller guards)
+virtual uint32_t achGameId(const GameRef& g) = 0;       // the list entry whose libIndex is this game, else 0
+```
+
+`AchievementsScreen` (`id() "achievements"`):
+- Draws `achHeader()` each frame: `!available` → the line "RetroAchievements is not available in this build"; `!signedIn` →
+  "Sign in from Settings > Achievements in desktop mode"; `hasGame` → the header and `achItems()` as rows (Tracker rows
+  are drawn muted and skipped by the focus); otherwise `achGames()` as rows ("<title> · <unlocked>/<achievements>" when
+  `haveProgress`, "<title> · <achievements> achievements" otherwise; rows with `!inLibrary` are drawn muted).
+- Intents: Up/Down; Accept on a game row with `inLibrary` → `achPlay(id)` + `shell.launched()`; nothing else.
+- `focusGameId`: the first draw focuses that game's row.
+- Focus remembered under `achievements/games`.
+- Hints: games list: glyph(Accept) "Play" (only when the focused row is in the library), glyph(Back) "Home"; rows: glyph(Back).
+- Badge pictures through `achImage(url)` with a placeholder box while loading.
+
+Wiring:
+- `stepSection` clamps at `Section::Settings`; `setSection` builds all four roots; `tv_chrome.cpp` lists four tabs
+  (the tab bar must still fit at 1280×720: section labels at body 30, 40 apart, measured in the walk test).
+- Home: `case Intent::Aux: shell_.setSection(Section::Achievements)`, hint glyph(Aux) "Achievements" (dropped on the keyboard
+  by `dropUnbound`).
+- Details: an item `Item::Achievements` ("Achievements") after Favorite when `achGameId(g_) != 0`; Accept →
+  `shell_.openSection(Section::Achievements, makeAchievementsScreen(host_, shell_, id))`.
+- `backAtRoot()` is unchanged (Home root only); Back on the Achievements or Settings root goes to Home, as Library does.
+
+- [ ] **Step 1: Write the failing tests** (`FakeHost` gains `AchHeader hdr`, `std::vector<AchItem> items`, `std::vector<AchGame>
+  raGames`, `uint32_t played = 0`, `std::map<std::string, uint32_t> achIds`):
+  - `sections_are_four`: from Home, RB ×3 → `screenId()` "library", "achievements", "settings"; RB again stays "settings";
+    LB ×3 → "home"; `drew("Achievements") && drew("Settings")`.
+  - `ach_not_signed_in_line`: `hdr.signedIn = false` → `drew("Sign in from Settings > Achievements in desktop mode")`.
+  - `ach_not_available_line`.
+  - `ach_rows_for_loaded_game`: `hdr.hasGame = true`, 2 items unlocked/locked + 1 tracker → 3 rows drawn, `drew("Unlocked in
+    hardcore")`, `drew(hdr.mode)`, and Down from row 0 skips the tracker.
+  - `ach_games_list_without_game`: 3 games, one `inLibrary` → Accept on it → `played == its id && guardArmed == 1`; Accept on
+    another → `played` unchanged.
+  - `home_y_opens_achievements`: on Home, Y → `screenId() == "achievements"`; Back → "home". The hint is glyph(Aux)
+    "Achievements", dropped on the keyboard by `dropUnbound` as the existing `hintsListOnlyWhatWorks` already proves for
+    Alt / Menu (count the "Achievements" texts: 2 with a pad, the tab and the hint; 1 with `keyboardLast = true`).
+  - `details_achievements_row_when_known`: `achIds[recent[0].key] = 77` → Details shows "Achievements"; Accept →
+    `screenId() == "achievements"` and the focused row is game 77; with no id → the row is absent.
+  - `ach_walk_no_asserts` at three sizes, both branches.
+  - `ingame_settings_slot` (decision 2, drawn by Task 15): see Task 15.
+- [ ] **Step 2: Run** `ctest --test-dir app/build -R tv_ui_smoke`. Expected: FAIL.
+- [ ] **Step 3: Implement.** `AppHost::achItems` builds the status line exactly as `drawThisGame` does (lift that block into
+  `std::string ra::achStatusLine(const AchRow&)` in `ra_dash.h/.cpp` so both use it; `achievements_ui.cpp` calls it).
+- [ ] **Step 4: Run** the full suite (the `ach_*` CTest targets cover `ra_dash`). Expected: all PASS.
+- [ ] **Step 5: Commit** `feat(app): TV Achievements screen and the Achievements and Settings sections (#991)`.
+
+### Task 15: Overlays, the in-game menu rows, screenshots, PR 3
+
+**Files:**
+- Create `app/src/tv/tv_overlays.cpp` (`OverlaysScreen`, `makeOverlaysScreen(Host&, Shell&)`).
+- Modify `tv_shell.h/.cpp` (`Row::Kind` gains `Achievements, Overlays, Settings`; `menuScreen_`; `buildRoot`; `accept`;
+  `back`; `intent`), `tv_ingame.cpp` (draw the slot), `tv_host.h`, `tv_app_host.cpp`.
+- Test: `tv_ui_smoke`.
+
+**Interfaces:**
+
+```cpp
+// tv_host.h, added
+struct ToggleRow { std::string id, label; bool on = false, enabled = true; std::string note; };
 virtual std::vector<ToggleRow> overlayRows() = 0;   // "fps", "keypad", "controls", "tool:<DebugTool::id>"
 virtual void toggleOverlay(const std::string& id) = 0;
+// tv_shell.h, added
+bool menuHasScreen() const;                 // the slot is set
+void menuPushScreen(std::unique_ptr<Screen> s, Row::Kind from);   // the slot; Back returns the focus to `from`
 ```
 
-The tool rows come from `debug.tools()` that have a `toggle`. The label is the tool's label with the trailing
-"..." dropped. Rows are disabled when `!debug.enabled()`, with the note "Debug windows are off (hardcore, or no
-game)". Debug windows are not pad-interactive (spec §4).
+Rules:
+- `overlayRows`: `fps` (`app.showFps`), `keypad` (`input.overlay.open`), `controls` (`input.controls.show`), then one row per
+  `debug.tools()` entry with a `toggle`, label = the tool's label without a trailing "...", `on` = `isOpen && isOpen()`,
+  `enabled = debug.toolAvailable(t)`, `note` when disabled: "Debug windows are off (hardcore, the emulation thread, or no
+  game)". `toggleOverlay("tool:<id>")` calls `t.toggle()` (as the Tools menu does); `keypad` flips `overlay.open`; `controls`
+  is `overlayEvent(controls, Toggle)`; `fps` flips `showFps` + `saveConfig()`.
+- `OverlaysScreen` (`id() "overlays"`): rows refetched each draw; Accept toggles; after `keypad` or `controls` the screen calls
+  `shell.closeMenu()` (decision 5). Hints: glyph(Accept) "Toggle", glyph(Back) "Menu".
+- Root rows in spec §4 order: Resume, Save state, Load state, **Achievements, Overlays, Settings**, Controls, Enter/Exit TV
+  mode, Reset, Close game. Accept on the three pushes the screen into the slot (`makeAchievementsScreen`, `makeOverlaysScreen`,
+  `makeSettingsScreen`); the slot screen gets every intent but Back; Back clears it and `enter(Page::Root, from)`.
+- `drawMenu` with the slot set: the rail's page name is the screen's id capitalised; the list area is handed to
+  `screen->draw(DrawCtx{…})` with `hovered = ImGui::IsWindowHovered()`; the hint bar is the screen's hints with Back "Menu"
+  appended by the shell.
 
-- [ ] **Step 1: Write the failing smoke tests.**
-  - `overlays_toggle_fps`
-  - `overlays_tool_rows_from_registry`
-  - `overlays_disabled_without_debug`
-- [ ] **Step 2: Run** `ctest --test-dir app/build -R tv_ui_smoke`. Expected: FAIL.
-- [ ] **Step 3: Implement** `tv_overlays.cpp`.
-- [ ] **Step 4: Run** the same command. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(app): TV Overlays screen (#991)`.
+- [ ] **Step 1: Write the failing smoke tests** (`FakeHost` gains `std::vector<ToggleRow> overlays`, `std::vector<std::string>
+  toggled`):
+  - `ingame_rows_full_order`: open the menu with `canLoad = true, tvOn = true` → the labels in order are exactly
+    `{"Resume", "Save state", "Load state", "Achievements", "Overlays", "Settings", "Controls", "Enter TV mode", "Reset",
+    "Close game"}`.
+  - `overlays_toggle_fps`: rows `fps` off, `keypad` → Down to Overlays, Accept, Accept on "Show FPS" → `toggled == {"fps"}`
+    and `shell.menuOpen()`.
+  - `overlays_keypad_closes_menu`: Accept on "Keypad overlay" → `toggled == {"keypad"} && !shell.menuOpen() && resumed == 1`.
+  - `overlays_tool_rows_from_registry`: rows `tool:memory` ("Memory viewer", on) and `tool:cpu` (disabled, note) →
+    `drew("Memory viewer") && drew(note)`; Accept on the disabled row toggles nothing.
+  - `ingame_slot_back_returns_to_row`: Settings, Accept, Back → the slot is gone and `focusedLabel(shell) == "Settings"`.
+  - `ingame_achievements_slot_draws`: `hdr.hasGame = true`, 2 items → Accept on Achievements → both titles drawn; Back.
+  - `menu_walk_with_slots_no_asserts`: every slot at three sizes.
+  - `tv_menu_headless` (Review focus 14), after the existing game block: `load`, F4, Down ×5 (Settings), `pad tap a`,
+    `pad tap a` (Picture), Down to "Internal resolution", `pad tap dpright`, `pad tap b` ×3, F4,
+    `expect core-option=virtualjaguar_internal_resolution:2x` (new expect: `host.optionValueFor(KEY, "")`; the value
+    after the first Right from the core's default — read it from `libretro_core_options.h` when writing the line).
+- [ ] **Step 2: Run** `ctest --test-dir app/build -R "tv_ui_smoke|tv_menu_headless"`. Expected: FAIL.
+- [ ] **Step 3: Implement.** Add `src/tv/tv_overlays.cpp`, `tv_achievements.cpp`, `tv_settings.cpp`, `tv_settings_model.cpp`
+  to `vj_tv_ui_smoke` and `VJ_APP_SOURCES` (if not done in Tasks 12–14).
+- [ ] **Step 4: Run** the full suite. Expected: all PASS.
+- [ ] **Step 5: Commit** `feat(app): TV Overlays screen and Achievements, Overlays and Settings in the in-game menu (#991)`.
+- [ ] **Step 6: Screenshots on the Studio** (`vjr.sh push` / `run` / `pull`; never locally). Extend
+  `~/Workspace/Provenance/vj-eval/tvshots/tv-shots.txt` with: `key tap Tab` ×2 → `shot achievements-nogame.png`; `key tap Tab`
+  → `shot settings.png`; `pad tap dpdown` ×3, `pad tap dpright`, `pad tap dpup`, `pad tap a` → `shot more-settings.png`,
+  `pad tap b`; then `load <a RA-known rom>`, a 3000 ms gap, `key tap F4` → `shot menu.png`; Down ×3, `pad tap a` →
+  `shot achievements-game.png`; `pad tap b`, Down, `pad tap a` → `shot overlays.png`; `pad tap b`, Down, `pad tap a` →
+  `shot menu-settings.png`; `quit`. Run with `--ra-mock app/tests/ra` (sign-in and a tracked game come from the canned
+  JSON) at 1280×720 and 1920×1080, and 1920×1080 with `--pixel-density 2`. Compare by eye with mockup B and attach.
+- [ ] **Step 7: Open PR 3** into `develop`: title `feat(app): TV Settings, Overlays, Achievements and More settings (TV mode
+  phase 3)`; body with `Refs #991`, the test summary, the screenshots and the approval items below as applied; bind it
+  (`ccd_pr`) and report CI. Rebase onto develop once the v3.10.0 back-merge lands.
 
-### Task 14: Achievements
+### Phase 3 review focus (added to the list above)
 
-**Files:** Create `app/src/tv/tv_achievements.cpp`. Extend the Host:
+11. **A pad press while "More settings" is open must never reach a TV tile or a game** (Task 13: the `tv-owns-input=0`
+    script case; `settings_more_opens_desktop`).
+12. **Closing "More settings" with B while a combo or a text box is active** must close the combo / leave the box, not the
+    window (Task 13 `tvMoreSettingsClose` refuses then; by hand on the Studio: Theme combo open, B, B).
+13. **Choosing Off in the TV-mode row while in TV mode** lands on the desktop with nothing stuck: no hidden cursor, no held
+    nav direction (Task 12: `settings_tv_mode_off_leaves_cleanly` — `tv` goes false, `ImGui::GetMouseCursor() != None` after a
+    frame, a later pad Down reaches nothing).
+14. **A core-option row changed with the menu open** reaches the core after the menu closes (the write is a `post`ed
+    command; the paused thread applies it at the next boundary): script case `load`, F4, Settings, Picture, Right on
+    Internal resolution, B ×3, `expect core-option=virtualjaguar_internal_resolution:2x` (new expect:
+    `host.optionValueFor(key, "")`).
+15. **The Achievements games list with no network** (cache only, `gamesFromCache()`): the screen draws the cached list and no
+    progress, without a spinner that never ends (Task 14: `raGames` with `haveProgress = false`).
+16. **Debug tool rows under the emulation thread** are disabled with the note, never a dead toggle (Task 15
+    `overlays_tool_rows_from_registry`; by hand with `--emu-thread on`).
 
-```cpp
-virtual bool achSignedIn() const = 0;
-virtual bool achHardcore() const = 0;
-virtual bool achRows(std::vector<ra::AchRow>& rows) = 0;      // the loaded game
-virtual const std::vector<ra::GameEntry>& achGames() = 0;     // no game loaded: progress per game
-virtual ra::ImageView achBadge(const std::string& url) = 0;   // the image cache achievements_ui.cpp uses
-virtual std::vector<std::string> achTrackers() = 0;           // active leaderboards, read-only
-```
+### Approval needed before Phase 3 starts (spec changes for phase 3)
 
-When not signed in, the screen shows one line: "Sign in from Settings > Achievements in desktop mode".
+The rows already in "Changes to the approved spec" that this phase uses: Y on Home opens Achievements (with no game the
+games list, with a game its rows); the Achievements row in Game details; Overlays and Settings reached from the in-game menu.
 
-Deferred here from phase 2 (decision A): append `Section::Achievements` and `Section::Settings` (Task 12) to the
-top bar, wire Y (Aux) on Home to the Achievements section with its hint, and add the Achievements row to Game details.
-
-- [ ] **Step 1: Write the failing smoke tests.**
-  - `ach_not_signed_in_line`
-  - `ach_rows_for_loaded_game`: locked/unlocked/progress drawn.
-  - `ach_games_list_without_game`
-  - `ach_walk_no_asserts`
-- [ ] **Step 2: Run** `ctest --test-dir app/build -R tv_ui_smoke`. Expected: FAIL.
-- [ ] **Step 3: Implement** `tv_achievements.cpp`.
-- [ ] **Step 4: Run** the same command. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(app): TV Achievements screen (#991)`.
-
-### Task 15: in-game menu rows, screenshots, PR 3
-
-- [ ] **Step 1:** Add Achievements, Overlays and Settings to `tv_ingame.cpp`, in the spec §4 order. Extend the
-  smoke test with `ingame_rows_full_order` and run it to PASS.
-- [ ] **Step 2:** Take Studio screenshots of Settings, Overlays and Achievements, using the RA mock
-  (`--ra-mock app/tests/ra/...`) at the three sizes. Compare them by eye.
-- [ ] **Step 3: Commit** `feat(app): Achievements, Overlays and Settings in the TV in-game menu (#991)`, then
-  open PR 3 with `Refs #991`.
+New in this revision:
+- **A.** Sections are Home, Library, Achievements, Settings. Overlays is not a section (with no game only "Show FPS" would do
+  anything): it is a screen of the in-game menu. This narrows Phase 2's approval C.
+- **B.** "More settings…" turns on ImGui's keyboard navigation as well as its gamepad navigation while the window is open in
+  TV mode (spec §5 names the gamepad flag only). A keyboard-only couch player can then use it; the cost is that F4 and
+  Ctrl/Cmd+Shift+T are gated while the window has focus, as they are over any text box.
+- **C.** The Achievements screen shows leaderboards as the active trackers only (the same text as the desktop's bottom-right
+  HUD), not a leaderboard list: rc_client exposes no per-game leaderboard list to the app today, and adding one is a
+  desktop feature first.
+- **D.** The Achievements row in Game details appears only for a game the RetroAchievements list knows (`libIndex`
+  resolves to it); other games get no row rather than a row that opens an unrelated list.
+- **E.** The "TV mode" row offers Off / Manual / Auto now, with Auto acting as Manual until Phase 4 (Phase 2 approval B
+  carries over); the two Auto checkbox rows come with Phase 4. Choosing Off from inside TV mode leaves TV mode at once.
+- **F.** The in-game menu keeps its Phase 1 placement of Enter/Exit TV mode (before Reset), while Achievements, Overlays and
+  Settings go where spec §4 puts them (after Load state). Spec §4 lists the TV-mode row last; moving it would put a
+  mode toggle under two destructive rows.
+- **G.** The "Internal resolution", "RISC overclock" and "Idle-loop skip" rows are hidden until the core has pushed its
+  option definitions, that is until a game has been loaded in this session; the Speed group then shows a one-line note
+  "Available once a game has run".
 
 ---
 
 ## Phase 4 — auto-switching, the hint, tuning (PR 4)
+
+### Phase 4 notes (to revise before Phase 4)
+
+Written 2026-10-20 while revising Phase 3; Tasks 16–17 below are as first planned and need these corrections.
+
+- **`release.yml`:** the v3.10.0 release (#1042) is in flight and edits the workflow files; do not touch `release.yml` until
+  that release is out and master is merged back into develop. Flagged only; the `-DVJ_TV_DEFAULT=manual` line and where it
+  goes are to be re-planned against the post-release workflow.
+- **`app.cpp` hooks already have their places:** `handleEvent` carries the comment "phase 4's Auto controller trigger,
+  `TvMode::onPadPress`, goes before this call" ahead of `deskPadHandleEvent` (the desktop nav must see a press only when it
+  did not switch TV on: `docs/app-pad-nav-design.md` §2). Fullscreen edges: hook `onFullscreen` where `fullscreen` changes
+  (`setFullscreen` and the SDL enter/leave events; #1034's `FullscreenMenu` reads the same flag). Nothing calls `onFullscreen`,
+  `onPadPress`, `onMouseMove` or `onNonNavKey` today; `TvMode` itself is complete and unit-tested.
+- **The manual toggle paths grew:** View > TV mode, Ctrl/Cmd+Shift+T (#1024, `handleHotkey` `SDLK_T`), `C_TVMENU` with no
+  game, the in-game menu row, and Phase 3's TV-mode Settings row (which also writes `ui.tv_mode`). All go through
+  `App::toggleTvMode` / `configureTvMode`; Task 16's "manual wins until the next edge" rule is already in `TvMode::toggle`.
+- **`ui.tv_mode` write rule:** `saveConfig()` deliberately never writes it; Phase 3's row writes it on change. Task 16's
+  Interface combo must do the same (write on change, then `configureTvMode()`), and `defaultSetting()` must apply only when the
+  key is absent (`cfg.has("ui.tv_mode")`), or the nightly default never moves for anyone who touched the row.
+- **`drawInterfaceTab` layout changed:** it is now sections (Overlays, Appearance, Font, Performance, Save states, Game
+  library, Desktop, library lists). The "TV mode" block goes after Overlays. The TV Settings rows `tv_auto_fs` / `tv_auto_pad`
+  join Phase 3's `tvModeRow` in `tv_settings_model` (ids as listed; shown only when the stored setting is Auto).
+- **`settings_reset_test`** already classifies the five `ui.tv_*` keys (Task 7 did it): drop that test from Task 16.
+- **`effectiveSetting()`** is the Phase 2 mapping and `tv_mode.h` has no `defaultSetting()` yet; `VJ_TV_DEFAULT` is not in
+  `app/CMakeLists.txt`. Task 16's description of both still holds. Phase 3's approval E (Auto acts as Manual) ends here.
+- **Task 17's hint:** the first pad press in the desktop library is seen in `deskPadHandleEvent` (#1030), which is where the
+  toast belongs; the glyph text is `padButtonLabel(g, input.navProfile(id), …)` for the pad's actual `C_TVMENU` binding
+  (`BindingStore::resolve` with its `PadCaps`), not a fixed "Share (hold)".
+- **Task 17's README:** `app/README.md` already documents the TV-menu action and Ctrl/Cmd+Shift+T (#1020/#1024); extend that
+  section rather than adding a second one.
+- **Headless script cases** for the Auto triggers need `focus`/`fullscreen` verbs the runner lacks (`fullscreen` exists only
+  as an expect); add `fullscreen on|off` (calls `setFullscreen`, headless: the flag only) and `mouse` is windowed-only, so the
+  "40 px mouse move turns it off" case is a smoke test on `TvMode` (already in `tv_mode_test`) plus a windowed Studio check.
 
 ### Task 16: Auto triggers, Interface settings, build default
 

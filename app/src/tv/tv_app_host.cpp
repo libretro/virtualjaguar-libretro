@@ -7,6 +7,12 @@
 #include <cstdio>
 
 #include "app.h"
+#include "aspect_choices.h"
+#include "ra_dash.h"
+#include "shaders_ui.h"
+#include "theme.h"
+#include "tv/tv_settings_model.h"
+#include "tv_more_settings.h"
 
 namespace vj::tv {
 
@@ -184,6 +190,289 @@ bool AppHost::isFavorite(const GameRef& g) {
 
 void AppHost::setFavorite(const GameRef& g, bool on) {
     if (const lib::Entry* e = entryFor(g)) app_.library.setFavorite(*e, on);
+}
+
+// ---- settings ----------------------------------------------------------------------------------------------------------
+
+namespace {
+
+// The three core options on the TV list: the row id, the option key, the label, the group.
+struct CoreRow {
+    const char* id;
+    const char* key;
+    const char* label;
+    int group;
+};
+const CoreRow kResolution = {"resolution", "virtualjaguar_internal_resolution", "Internal resolution", 0};
+const CoreRow kRiscClock = {"risc_clock", "virtualjaguar_risc_clock_scale", "RISC overclock", 1};
+const CoreRow kIdleSkip = {"idle_skip", "virtualjaguar_risc_idle_skip", "Idle-loop skip", 1};
+
+const OptionDef* defFor(const CoreHost& host, const char* key) {
+    for (const OptionDef& d : host.optionDefs())
+        if (d.key == key) return &d;
+    return nullptr;
+}
+
+}  // namespace
+
+// The custom themes the folder holds; read again once a second (Settings > Appearance does the same: a theme can be added by
+// hand or by another copy of the app), not on every frame the screen draws.
+const std::vector<std::string>& AppHost::themeNames() {
+    if (app_.now() - themeListedAt_ > 1.0) {
+        themeNames_.clear();
+        for (const theme::Custom& c : app_.themeStore().list()) themeNames_.push_back(c.name);
+        themeListedAt_ = app_.now();
+    }
+    return themeNames_;
+}
+
+// Only the rows that exist: no shader runtime, or no core option definitions yet (no game has run this session), or an
+// option the app locks, means no row -- never a greyed one.  The one exception is the Speed group before a game has run: its
+// only row is the read-only "Available once a game has run" line, so the group is there and says why.
+std::vector<SettingRow> AppHost::settingRows() {
+    CoreHost& host = app_.host;
+    ShaderChain& sc = app_.video.shader;
+    std::vector<SettingRow> rows;
+    auto core = [&](const CoreRow& cr) {
+        const OptionDef* def = defFor(host, cr.key);
+        bool hidden = false;
+        SettingRow r = coreOptionRow(cr.id, cr.label, cr.group, def, def ? host.optionValue(*def) : std::string(), host.optionVisible(cr.key),
+                                     host.optionLocked(cr.key), host.optionOverridden(cr.key), &hidden);
+        if (!hidden) rows.push_back(std::move(r));
+    };
+    sc.probeLibrary();   // cached after the first call (the desktop Shader section probes the same way)
+    if (ShaderChain::builtWithHeaders() && sc.libraryLoaded()) rows.push_back(shaderRow(sc.preset, sc.enabled, shaderPresetPaths(app_)));
+    rows.push_back(onOffRow("integer", "Integer scaling", 0, app_.present.integerScale));
+    rows.push_back(aspectRow(app_.present.aspectOverride, kAspectChoices, kAspectChoiceCount));
+    core(kResolution);
+    core(kRiscClock);
+    core(kIdleSkip);
+    if (!defFor(host, kRiscClock.key) && !defFor(host, kIdleSkip.key)) rows.push_back(speedNoteRow());   // no game has run: say why the group is empty
+    rows.push_back(volumeRow(app_.volume));
+    rows.push_back(onOffRow("fps", "Show FPS", 3, app_.showFps));
+    rows.push_back(onOffRow("vsync", "VSync", 3, app_.vsync));
+    rows.push_back(themeRow(theme::choiceKey(), themeNames()));
+    rows.push_back(tvModeRow(app_.tvSetting));
+    rows.push_back(moreRow());
+    return rows;
+}
+
+// What the desktop control does for each row, then the config is saved.  An index the row cannot have (the "(custom)" entry
+// of a typed option, a theme whose file is gone) changes nothing.
+void AppHost::setSetting(const std::string& id, int index) {
+    CoreHost& host = app_.host;
+    if (id == "shader") {
+        ShaderChain& sc = app_.video.shader;
+        const std::vector<std::string> paths = shaderPresetPaths(app_);
+        if (index == 0) {
+            sc.enabled = false;   // the "Use shader" checkbox
+            sc.retry();
+        } else if (index >= 1 && index <= (int)paths.size()) {
+            applyShaderPreset(app_, paths[(size_t)index - 1]);
+        }
+    } else if (id == "integer") {
+        app_.present.integerScale = index != 0;
+    } else if (id == "aspect") {
+        if (index >= 0 && index < kAspectChoiceCount) app_.present.aspectOverride = kAspectChoices[index].value;
+    } else if (id == "resolution" || id == "risc_clock" || id == "idle_skip") {
+        const CoreRow& cr = id == "resolution" ? kResolution : id == "risc_clock" ? kRiscClock : kIdleSkip;
+        const OptionDef* def = defFor(host, cr.key);
+        // The call drawOption makes: the app's own hardcore handling (Achievements::checkSettings) sees it as any other change.
+        if (def && !host.optionOverridden(cr.key) && index >= 0 && index < (int)def->values.size())
+            host.setOptionValue(cr.key, def->values[(size_t)index].value);
+    } else if (id == "volume") {
+        app_.volume = (float)std::clamp(index, 0, 10) / 10.0f;
+        app_.applyAudioSettings();
+    } else if (id == "fps") {
+        app_.showFps = index != 0;
+    } else if (id == "vsync") {
+        app_.vsync = index != 0;
+        app_.applyVsync();
+    } else if (id == "theme") {
+        const std::string key = themeKeyAt(index, themeNames());
+        if (!key.empty()) app_.setThemeChoice(key);
+    } else if (id == "tv_mode") {
+        if (index >= 0 && index <= (int)TvSetting::Auto) {
+            const bool wasOn = app_.tvMode.active();
+            app_.tvSetting = (TvSetting)index;
+            app_.cfg.set("ui.tv_mode", settingKey(app_.tvSetting));   // written on change only: saveConfig() leaves the default free to move
+            if (app_.tvSetting == TvSetting::Off) app_.cfg.setBool("ui.tv_manual_on", false);   // or a later Manual would switch TV on at once
+            app_.configureTvMode();   // starts from off ...
+            if (wasOn) app_.tvMode.setOn(true);   // ... so a Manual <-> Auto change stays in TV mode; Off stays off (setOn is a no-op then)
+        }
+    }
+    app_.saveConfig();
+}
+
+void AppHost::openMoreSettings() { tvMoreSettingsOpen(app_); }   // the window, with the pad handed to it (tv_more_settings.h)
+
+// ---- achievements ------------------------------------------------------------------------------------------------------
+// All UI-thread calls into Achievements (the plan's "Threading" list): they take its client lock themselves.
+
+AchHeader AppHost::achHeader() {
+    Achievements& a = app_.ach;
+    AchHeader h;
+    h.available = a.available();
+    h.signedIn = a.signedIn();
+    if (!h.available || !h.signedIn) return h;
+    const Achievements::ClientSnapshot s = a.clientSnapshot();
+    h.hasGame = s.gameId != 0;
+    if (!h.hasGame) return h;
+    h.title = s.gameTitle;
+    h.iconUrl = a.gameIconUrl();
+    h.unlocked = s.summary.num_unlocked_achievements;
+    h.total = s.summary.num_core_achievements;
+    // modeChip's words (achievements_ui.cpp): hardcore, or softcore with what pauses it when hardcore is wanted.
+    if (s.hardcore) h.mode = "Hardcore";
+    else if (a.hardcoreWanted() && !a.hardcoreBlocker().empty()) h.mode = "Softcore (hardcore is paused: " + a.hardcoreBlocker() + ")";
+    else h.mode = "Softcore";
+    return h;
+}
+
+// The active leaderboard trackers, then the rows in the desktop list's default order (rc_client's buckets).
+std::vector<AchItem> AppHost::achItems() {
+    Achievements& a = app_.ach;
+    std::vector<AchItem> out;
+    if (a.clientSnapshot().gameId == 0) return out;
+    for (const auto& kv : a.trackers) {
+        AchItem t;
+        t.kind = AchItem::Tracker;
+        t.id = kv.first;
+        t.title = kv.second;
+        out.push_back(std::move(t));
+    }
+    std::vector<ra::AchRow> rows;
+    a.achievementRows(rows);
+    for (size_t i : ra::viewAchievements(rows, ra::AchFilter::All, ra::AchSort::Default, "")) {
+        const ra::AchRow& r = rows[i];
+        AchItem it;
+        it.id = r.id;
+        it.title = r.title;
+        it.description = r.description;
+        it.status = ra::achStatusLine(r);
+        it.points = r.points;
+        it.unlocked = r.unlocked();
+        it.badgeUrl = r.unlocked() ? r.badgeUrl : r.badgeLockedUrl;
+        out.push_back(std::move(it));
+    }
+    return out;
+}
+
+// The games with a published set, by title (the desktop's default view); gamesTabShown() first, as the desktop tab does every
+// frame it shows: it loads the cached list, refreshes a stale one and fetches the player's progress.
+std::vector<AchGame> AppHost::achGames() {
+    Achievements& a = app_.ach;
+    a.gamesTabShown();
+    const std::vector<ra::GameEntry>& games = a.games();
+    std::vector<AchGame> out;
+    for (size_t i : ra::viewGames(games, ra::GameFilter::All, ra::GameSort::Title, "")) {
+        const ra::GameEntry& g = games[i];
+        AchGame r;
+        r.id = g.id;
+        r.title = g.title;
+        r.imageUrl = g.imageUrl;
+        r.achievements = g.achievements;
+        r.unlocked = std::max(g.unlocked, g.unlockedHardcore);
+        r.haveProgress = g.haveProgress;
+        r.inLibrary = g.libIndex >= 0;
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+Art AppHost::achImage(const std::string& url) {
+    Art a;
+    if (url.empty()) return a;
+    const ra::ImageView v = app_.ach.images.get(url);
+    if (v.state == ra::ImageView::Ready) {
+        a.tex = v.tex;
+        a.w = v.w;
+        a.h = v.h;
+    }
+    a.loading = v.state == ra::ImageView::Loading;
+    return a;
+}
+
+// Achievements::playGame minus the "Resume where you left off?" offer, which needs a mouse (launch() with `fresh`, as AppHost::launch).
+void AppHost::achPlay(uint32_t gameId) {
+    const std::vector<lib::Entry>& es = app_.library.entries();
+    for (const ra::GameEntry& g : app_.ach.games())
+        if (g.id == gameId && g.libIndex >= 0 && (size_t)g.libIndex < es.size()) {
+            app_.library.launch(es[(size_t)g.libIndex], /*fresh=*/true);
+            return;
+        }
+}
+
+// The list entry the library file runs.  Only while signed in (the row leads to a list that needs it), and asking for the list
+// like the screen does: nothing else loads it, so Game details would never see an entry before the first visit to Achievements.
+uint32_t AppHost::achGameId(const GameRef& g) {
+    if (!app_.ach.signedIn()) return 0;
+    const lib::Entry* e = entryFor(g);
+    if (!e) return 0;
+    app_.ach.gamesTabShown();
+    const int index = (int)(e - app_.library.entries().data());
+    for (const ra::GameEntry& r : app_.ach.games())
+        if (r.libIndex == index && r.achievements > 0) return r.id;
+    return 0;
+}
+
+// ---- overlays ----------------------------------------------------------------------------------------------------------
+// The members the View and Tools menus drive (desktop: ui.cpp, debug_ui.cpp), all UI-thread state.
+
+namespace {
+
+// "Memory viewer..." -> "Memory viewer" (the menu's ellipsis says "opens a window"; a row that toggles does not need it).
+std::string toolLabel(std::string s) {
+    for (const char* dots : {"...", "\xE2\x80\xA6"}) {
+        const size_t n = std::char_traits<char>::length(dots);
+        if (s.size() >= n && s.compare(s.size() - n, n, dots) == 0) s.erase(s.size() - n);
+    }
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s;
+}
+
+}  // namespace
+
+std::vector<ToggleRow> AppHost::overlayRows() {
+    std::vector<ToggleRow> rows;
+    auto add = [&](const char* id, const char* label, bool on) {
+        ToggleRow r;
+        r.id = id;
+        r.label = label;
+        r.on = on;
+        rows.push_back(std::move(r));
+    };
+    add("fps", "Show FPS", app_.showFps);
+    add("keypad", "Keypad overlay", app_.input.overlay.open);
+    add("controls", "Controls overlay", app_.input.controls.show);
+    const DebugSession& d = app_.debug;
+    for (const DebugTool& t : d.tools()) {
+        if (!t.toggle) continue;   // a greyed placeholder for a window that does not exist yet
+        ToggleRow r;
+        r.id = "tool:" + t.id;
+        r.label = toolLabel(t.label);
+        r.on = t.isOpen && t.isOpen();
+        r.enabled = d.toolAvailable(t);
+        if (!r.enabled)   // toolAvailable(): the tools are enabled, and a processor is halted when the window needs one
+            r.note = !d.enabled() ? "Debug windows are off (hardcore, the emulation thread, or no game)" : "Break into the game first (F9)";
+        rows.push_back(std::move(r));
+    }
+    return rows;
+}
+
+// What each row's menu item does.  A disabled tool stays a no-op, as the Tools menu leaves it.
+void AppHost::toggleOverlay(const std::string& id) {
+    if (id == "fps") {
+        app_.showFps = !app_.showFps;
+        app_.saveConfig();
+    } else if (id == "keypad") {
+        app_.input.overlay.open = !app_.input.overlay.open;
+    } else if (id == "controls") {
+        overlayEvent(app_.input.controls, OverlayEvent::Toggle);
+    } else if (id.rfind("tool:", 0) == 0) {
+        const DebugTool* t = app_.debug.findTool(id.substr(5));
+        if (t && app_.debug.toolAvailable(*t)) t->toggle();
+    }
 }
 
 void AppHost::noteInput(const SDL_Event& e) {

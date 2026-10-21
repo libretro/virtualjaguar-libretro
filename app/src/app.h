@@ -283,6 +283,7 @@ public:
     void menuResume();
     tv::Shell& tvShell();
     tv::TvMode tvMode;                           // TV mode (#991): when it is on
+    bool tvMoreSettings_ = false;                // the Settings window was opened by "More settings..." in TV mode (tv_more_settings.h)
     DesktopPad deskPad;                          // pad navigation of the desktop library (#1021, desktop_nav_app.h)
     tv::TvSetting tvSetting = tv::TvSetting::Manual;   // ui.tv_mode as stored; effectiveSetting() is what TvMode acts on
     void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off

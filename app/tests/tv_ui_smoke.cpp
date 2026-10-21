@@ -106,7 +106,9 @@ struct FakeHost : Host {
         case Intent::Accept: return "A";
         case Intent::Back: return "B";
         case Intent::Up:
-        case Intent::Down: return "D-pad";
+        case Intent::Down:
+        case Intent::Left:
+        case Intent::Right: return "D-pad";
         default: return "";
         }
     }
@@ -139,6 +141,43 @@ struct FakeHost : Host {
     void setFavorite(const GameRef& g, bool on) override {
         if (on) favSet.insert(g.key);
         else favSet.erase(g.key);
+    }
+    // TV Settings (phase 3): the rows the screen lists, every change it asked for, and the "More settings" presses.
+    std::vector<SettingRow> rows;
+    std::vector<std::pair<std::string, int>> set;
+    int moreOpened = 0;
+    std::vector<SettingRow> settingRows() override { return rows; }
+    void setSetting(const std::string& id, int index) override {
+        set.push_back({id, index});
+        for (SettingRow& r : rows)
+            if (r.id == id) r.index = index;
+        if (id == "tv_mode" && index == 0) tv = false;   // Off: the app's configureTvMode() turns TV mode off
+    }
+    void openMoreSettings() override { moreOpened++; }
+    // TV Achievements (phase 3): the header, the loaded game's rows, the RA games list, the play it asked for, and which
+    // library games the list knows (GameRef::key -> list id).
+    AchHeader hdr;
+    std::vector<AchItem> items;
+    std::vector<AchGame> raGames;
+    uint32_t played = 0;
+    std::map<std::string, uint32_t> achIds;
+    AchHeader achHeader() override { return hdr; }
+    std::vector<AchItem> achItems() override { return hdr.hasGame ? items : std::vector<AchItem>(); }
+    std::vector<AchGame> achGames() override { return raGames; }
+    Art achImage(const std::string&) override { Art a; a.loading = true; return a; }
+    void achPlay(uint32_t id) override { played = id; }
+    uint32_t achGameId(const GameRef& g) override {
+        auto it = achIds.find(g.key);
+        return it == achIds.end() ? 0 : it->second;
+    }
+    // Overlays (phase 3): the rows the screen lists and every id it asked to toggle (an enabled row flips, as the app's does).
+    std::vector<ToggleRow> overlays;
+    std::vector<std::string> toggled;
+    std::vector<ToggleRow> overlayRows() override { return overlays; }
+    void toggleOverlay(const std::string& id) override {
+        toggled.push_back(id);
+        for (ToggleRow& r : overlays)
+            if (r.id == id && r.enabled) r.on = !r.on;
     }
 };
 
@@ -215,9 +254,9 @@ static void menuOpensAndWalks() {
     shell.toggleMenu();
     CHECK(shell.menuOpen() && host.paused);
     frames(host, shell, 3);
-    down(host, shell, 8);   // runs off the end: focus never wraps
+    down(host, shell, 12);  // runs off the end: focus never wraps
     CHECK(std::string(focusedLabel(shell)) == "Close game");
-    up(host, shell, 8);
+    up(host, shell, 12);
     CHECK(std::string(focusedLabel(shell)) == "Resume");
     down(host, shell);      // Save state
     CHECK(std::string(focusedLabel(shell)) == "Save state");
@@ -235,7 +274,7 @@ static void menuOpensAndWalks() {
     CHECK(shell.menuPage() == Shell::Page::LoadSlots);
     frames(host, shell, 10);
     back(host, shell);
-    down(host, shell, 3);   // Controls, Enter TV mode, Reset
+    down(host, shell, 6);   // Achievements, Overlays, Settings, Controls, Enter TV mode, Reset
     accept(host, shell);
     CHECK(shell.menuPage() == Shell::Page::ConfirmReset);
     frames(host, shell, 10);
@@ -287,7 +326,7 @@ static void closeGameAsksFirst() {
     FakeHost host;
     Shell shell(host);
     shell.openMenu();
-    down(host, shell, 6);
+    down(host, shell, 9);
     CHECK(std::string(focusedLabel(shell)) == "Close game");
     accept(host, shell);                                // -> the confirm, focus on No
     CHECK(shell.menuPage() == Shell::Page::ConfirmClose && std::string(focusedLabel(shell)) == "No");
@@ -371,7 +410,7 @@ static void controlsRowShowsNeverHides() {
     Shell shell(host);
     shell.openMenu();
     frames(host, shell, 2);
-    down(host, shell, 3);   // Resume, Save state, Load state, Controls
+    down(host, shell, 6);   // Resume, Save state, Load state, Achievements, Overlays, Settings, Controls
     CHECK(std::string(focusedLabel(shell)) == "Controls");
     accept(host, shell);
     CHECK(host.controls == 1 && host.controlsShown && !shell.menuOpen());
@@ -479,14 +518,22 @@ static void tvShellWalksSections() {
     CHECK(shell.screenId() == "home" && shell.section() == Section::Home);
     rb(host, shell);
     CHECK(shell.screenId() == "library");
+    rb(host, shell);
+    CHECK(shell.screenId() == "achievements" && shell.section() == Section::Achievements);
+    rb(host, shell);
+    CHECK(shell.screenId() == "settings" && shell.section() == Section::Settings);
     rb(host, shell);   // no wrap
+    CHECK(shell.screenId() == "settings");
+    lb(host, shell);
+    CHECK(shell.screenId() == "achievements");
+    lb(host, shell);
     CHECK(shell.screenId() == "library");
     lb(host, shell);
     CHECK(shell.screenId() == "home");
     lb(host, shell);
     CHECK(shell.screenId() == "home");
     frames(host, shell, 120);
-    CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("8:42 PM"));
+    CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("Achievements") && drew("Settings") && drew("8:42 PM"));
     CHECK(drew("VIRTUAL JAGUAR"));
     rb(host, shell);
     frames(host, shell, 3);
@@ -602,6 +649,145 @@ static void padPopupNav() {
     io.ConfigFlags = savedFlags;
 }
 
+// "More settings" from TV mode (#991): the pad (deskSetPopupNav + our intents) and the keyboard (deskSetKeyboardNav) both drive a
+// plain ImGui window.  A focused probe with two buttons: Down moves from the first to the second, Accept presses it; the keyboard
+// is captured exactly while the window is live (F4 and Ctrl+Shift+T are gated on it), and both flags go with the window.
+static void moreSettingsNavFlags() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiConfigFlags savedFlags = io.ConfigFlags;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;   // as the app has it (initImGui)
+    int first = 0, second = 0;
+    auto frame = [&](bool live, bool focus) {
+        io.DeltaTime = 1.0f / 60.0f;
+        vj::deskSetPopupNav(live);
+        vj::deskSetKeyboardNav(live);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(40, 40));
+        ImGui::SetNextWindowSize(ImVec2(300, 200));
+        if (focus) ImGui::SetNextWindowFocus();
+        ImGui::Begin("moreprobe");
+        if (ImGui::Button("First")) first++;
+        if (ImGui::Button("Second")) second++;
+        ImGui::End();
+        ImGui::Render();
+    };
+    frame(false, true);
+    frame(false, false);
+    CHECK(!(io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) && !(io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad));
+    CHECK(!io.WantCaptureKeyboard);
+    for (int i = 0; i < 4; i++) frame(true, i == 0);
+    CHECK((io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) && (io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad));
+    CHECK(io.WantCaptureKeyboard);   // the keyboard is the window's while it is live
+    CHECK(io.ConfigNavCursorVisibleAlways && ImGui::GetCurrentContext()->NavId != 0);
+    vj::deskFeedPopupIntents({Intent::Down});
+    for (int i = 0; i < 4; i++) frame(true, false);
+    vj::deskFeedPopupIntents({Intent::Alt, Intent::Aux, Intent::SectionNext, Intent::Accept});   // only Accept means anything here
+    for (int i = 0; i < 4; i++) frame(true, false);
+    CHECK(first == 0 && second == 1);
+    CHECK(g_imguiErrors == 0);
+    // The window closes: both flags, the highlight and the capture go with it.
+    for (int i = 0; i < 3; i++) frame(false, false);
+    CHECK(!(io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) && !(io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad));
+    CHECK(!io.ConfigNavCursorVisibleAlways && !ImGui::GetCurrentContext()->NavCursorVisible && !io.WantCaptureKeyboard);
+    io.ConfigFlags = savedFlags;
+}
+
+// Review focus 12: a Back with a text box active or a combo open is ImGui's Cancel, and it leaves the item without closing anything else
+// (the glue's tvMoreSettingsClose refuses while either is up, so a pad that could not leave a text box would be stuck in it).
+static void moreSettingsBackLeavesItems() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiConfigFlags savedFlags = io.ConfigFlags;
+    char text[16] = "abc";
+    int choice = 0;
+    auto frame = [&](bool focus) {
+        io.DeltaTime = 1.0f / 60.0f;
+        vj::deskSetPopupNav(true);
+        vj::deskSetKeyboardNav(true);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(40, 40));
+        ImGui::SetNextWindowSize(ImVec2(400, 240));
+        if (focus) ImGui::SetNextWindowFocus();
+        ImGui::Begin("moreitems");
+        ImGui::InputText("##text", text, sizeof text);
+        ImGui::Combo("##combo", &choice, "One\0Two\0Three\0");
+        ImGui::End();
+        ImGui::Render();
+    };
+    auto settle = [&](int n) { for (int i = 0; i < n; i++) frame(false); };
+    auto popupOpen = [] { return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel); };
+    frame(true);
+    settle(4);
+    CHECK(!ImGui::IsAnyItemActive() && !popupOpen());
+    vj::deskFeedPopupIntents({Intent::Accept});   // the text box (the first item) takes the focus for typing
+    settle(4);
+    CHECK(ImGui::IsAnyItemActive() && io.WantTextInput);
+    vj::deskFeedPopupIntents({Intent::Back});
+    settle(4);
+    CHECK(!ImGui::IsAnyItemActive() && !io.WantTextInput);   // left, so the next Back may close the window
+    vj::deskFeedPopupIntents({Intent::Down});
+    settle(4);
+    vj::deskFeedPopupIntents({Intent::Accept});   // the combo opens
+    settle(4);
+    CHECK(popupOpen());
+    vj::deskFeedPopupIntents({Intent::Back});
+    settle(4);
+    CHECK(!popupOpen() && !ImGui::IsAnyItemActive() && choice == 0);
+    CHECK(g_imguiErrors == 0);
+    vj::deskSetPopupNav(false);
+    vj::deskSetKeyboardNav(false);
+    settle(3);
+    io.ConfigFlags = savedFlags;
+}
+
+// Where nav starts in the "More settings" window: the first item is the "Reset all settings..." button, which is out of the pad's and
+// keyboard's reach while the window is live (NoNav, settings_reset_ui.cpp), so the first A is a tab's and D-pad Right goes on to the next
+// tab, never to the button.  (The real window is App-side and not linked here: the probe is the same shape -- the flagged button, then
+// a tab bar whose first tab is empty, as Core options is before a game has run -- and what it observes is ImGui's nav with the flags.)
+static void moreSettingsDefaultFocusSkipsReset() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiConfigFlags savedFlags = io.ConfigFlags;
+    ImGuiID resetId = 0, tab1 = 0, tab2 = 0;
+    auto frame = [&](bool live, bool focus) {
+        io.DeltaTime = 1.0f / 60.0f;
+        vj::deskSetPopupNav(live);
+        vj::deskSetKeyboardNav(live);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(40, 40));
+        ImGui::SetNextWindowSize(ImVec2(400, 240));
+        if (focus) ImGui::SetNextWindowFocus();
+        ImGui::Begin("moredefault");
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+        ImGui::SmallButton("Reset all settings...");
+        resetId = ImGui::GetItemID();
+        ImGui::PopItemFlag();
+        ImGui::PopItemFlag();
+        if (ImGui::BeginTabBar("##tabs")) {
+            tab1 = ImGui::GetID("Core options");   // a tab's ID is its label hashed in the tab bar's scope
+            tab2 = ImGui::GetID("Video");
+            // (ImGui's tabs never take default focus themselves, and the button is out of reach: the selected tab asks for it)
+            if (ImGui::BeginTabItem("Core options")) { ImGui::SetItemDefaultFocus(); ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Video")) { ImGui::SetItemDefaultFocus(); ImGui::Button("Integer"); ImGui::EndTabItem(); }
+            ImGui::EndTabBar();
+        }
+        ImGui::End();
+        ImGui::Render();
+    };
+    for (int i = 0; i < 2; i++) frame(false, i == 0);
+    for (int i = 0; i < 4; i++) frame(true, false);
+    CHECK(resetId != 0 && tab1 != 0 && tab2 != 0);
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    CHECK(g.NavId != 0 && g.NavId != resetId && g.NavId == tab1);
+    vj::deskFeedPopupIntents({Intent::Right});
+    for (int i = 0; i < 4; i++) frame(true, false);
+    CHECK(g.NavId == tab2);
+    vj::deskFeedPopupIntents({Intent::Left, Intent::Left, Intent::Up, Intent::Up});
+    for (int i = 0; i < 6; i++) frame(true, false);
+    CHECK(g.NavId != resetId && g.NavId != 0);
+    for (int i = 0; i < 3; i++) frame(false, false);
+    io.ConfigFlags = savedFlags;
+}
+
 static void baseNeverCapturesKeyboard() {
     FakeHost host;
     host.tv = true;
@@ -639,6 +825,31 @@ static void padHidesCursor() {
     CHECK(!shell.handleEvent(e, g_ms));
     frames(host, shell, 1);
     CHECK(ImGui::GetMouseCursor() != ImGuiMouseCursor_None);
+}
+
+// A pad drove the Base layer and a desktop window then opened over it ("More settings"): the shell no longer owns the input, but the
+// pointer is still the player's the moment the mouse moves.
+static void padCursorReturnsOverDesktopWindow() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    down(host, shell);
+    frames(host, shell, 1);
+    CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_None);
+    host.desktopOpen = true;
+    frames(host, shell, 1);
+    CHECK(!shell.ownsInput());
+    // The app hands the shell no events now (App::handleEvent asks ownsInput() first): the pointer's return is seen in the draw, as the
+    // mouse position changes.
+    frames(host, shell, 2);
+    CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_None);
+    ImGui::GetIO().AddMousePosEvent(700, 400);
+    frames(host, shell, 2);
+    CHECK(ImGui::GetMouseCursor() != ImGuiMouseCursor_None);
+    ImGui::GetIO().AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
 }
 
 static void baseReturnsAfterGame() {
@@ -1838,7 +2049,7 @@ static void ingameTvToggleHiddenWhenOff() {
     g_texts.clear();
     frames(host, shell, 3);
     CHECK(drew("Enter TV mode") && !drew("Exit TV mode"));
-    down(host, shell, 4);                                      // Resume, Save state, Load state, Controls, Enter TV mode
+    down(host, shell, 7);                                      // ... Settings, Controls, Enter TV mode
     CHECK(std::string(focusedLabel(shell)) == "Enter TV mode");
     accept(host, shell);
     CHECK(host.tv && shell.menuOpen() && shell.menuPage() == Shell::Page::Root);
@@ -2111,6 +2322,1240 @@ static void desktopWindowTakesInputFromBase() {
     CHECK(menu.ownsInput());
 }
 
+// ---- TV Settings (phase 3, Task 12) -----------------------------------------------------------------------------------
+
+static SettingRow mkRow(const char* id, const char* label, int group, std::vector<std::string> choices, int index = 0) {
+    SettingRow r;
+    r.id = id;
+    r.label = label;
+    r.group = group;
+    r.choices = std::move(choices);
+    r.index = index;
+    return r;
+}
+
+// Picture: Aspect ratio; Sound: Volume; Interface: Show FPS, then More settings -- no Speed row, so no Speed group.
+static std::vector<SettingRow> settingsFixture() {
+    std::vector<std::string> pct;
+    for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
+    return {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3", "16:9", "8:7 (square pixels)"}),
+            mkRow("volume", "Volume", 2, pct, 5),
+            mkRow("fps", "Show FPS", 3, {"Off", "On"}),
+            mkRow("more", "More settings\xE2\x80\xA6", 3, {})};
+}
+
+// A TV host on the Settings section (reached through the shell, not by counting RB presses), drawn once.
+static void settingsSetup(FakeHost& host, Shell& shell, std::vector<SettingRow> rows = settingsFixture()) {
+    host.tv = true;
+    host.loaded = false;
+    host.rows = std::move(rows);
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    frames(host, shell, 2);
+    shell.setSection(Section::Settings);
+    frames(host, shell, 2);
+}
+
+static void leftClick(FakeHost& h, Shell& s) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMouseButtonEvent(0, true);
+    frames(h, s, 1);
+    io.AddMouseButtonEvent(0, false);
+    frames(h, s, 1);
+}
+
+static bool lastSet(const FakeHost& h, const char* id, int index) {
+    return !h.set.empty() && h.set.back().first == id && h.set.back().second == index;
+}
+
+static void settingsRailAndList() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "settings");
+    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && !drew("Speed"));
+    CHECK(drew("Aspect ratio") && !drew("Show FPS"));   // the list is the focused group's: Picture
+    down(host, shell, 2);                                // Picture, Sound, Interface
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Show FPS") && drew("More settings\xE2\x80\xA6") && !drew("Aspect ratio"));
+    rightN(host, shell, 1);                              // into the list
+    CHECK(host.set.empty());
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "fps", 1));
+    leftN(host, shell, 1);
+    CHECK(lastSet(host, "fps", 0));
+    accept(host, shell);
+    CHECK(lastSet(host, "fps", 1));
+    accept(host, shell);                                 // Accept wraps
+    CHECK(lastSet(host, "fps", 0) && host.set.size() == 4);
+    rightN(host, shell, 1);
+    rightN(host, shell, 1);                              // Right stops at the last choice
+    CHECK(host.set.size() == 5 && lastSet(host, "fps", 1));
+    CHECK(g_imguiErrors == 0);
+}
+
+// Back leaves the list for the rail, and the rail for Home; Left at the first choice is the same step as Back.
+static void settingsBackAndLeftEdge() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    down(host, shell, 2);
+    rightN(host, shell, 1);                              // Interface's list, on Show FPS (Off)
+    leftN(host, shell, 1);                               // Off cannot go further left: the rail
+    CHECK(host.set.empty());
+    rightN(host, shell, 1);                              // ... and into the list again
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "fps", 1));
+    back(host, shell);                                   // list -> rail: still on the Settings screen
+    CHECK(shell.screenId() == "settings" && shell.section() == Section::Settings);
+    rightN(host, shell, 1);
+    accept(host, shell);                                 // the list again, Accept steps (wrapping)
+    CHECK(lastSet(host, "fps", 0));
+    back(host, shell);
+    back(host, shell);                                   // the rail: Back is Home
+    CHECK(shell.section() == Section::Home && shell.screenId() == "home");
+}
+
+static void settingsHints() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Open") && !drew("Change") && !drew("Groups"));   // the rail
+    down(host, shell, 2);
+    rightN(host, shell, 1);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Change") && drew("Next") && drew("Groups") && !drew("Open"));
+    down(host, shell);                                   // More settings...
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Open") && drew("Groups") && !drew("Change") && !drew("Next"));
+    // A read-only row changes nothing, so the bar does not offer it.
+    FakeHost ro;
+    Shell roShell(ro);
+    SettingRow r = mkRow("fps", "Show FPS", 3, {"Off", "On"});
+    r.readOnly = true;
+    r.note = "Set for this session";
+    settingsSetup(ro, roShell, {r});
+    rightN(ro, roShell, 1);
+    g_texts.clear();
+    frames(ro, roShell, 2);
+    CHECK(drew("Groups") && !drew("Change") && !drew("Next"));
+}
+
+// Review focus 13: turning TV mode Off from its own row leaves the Base layer cleanly -- the window stops being drawn, the
+// pointer comes back, and the pad belongs to the app.
+static void settingsTvModeOffLeavesCleanly() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, 1)});
+    CHECK(shell.ownsInput() && baseWindow() && baseWindow()->WasActive);
+    rightN(host, shell, 1);                              // the list (only Interface exists)
+    accept(host, shell);                                 // Manual -> Auto
+    CHECK(lastSet(host, "tv_mode", 2) && host.tv);
+    accept(host, shell);                                 // Auto -> Off (Accept wraps)
+    CHECK(lastSet(host, "tv_mode", 0) && !host.tv);
+    frames(host, shell, 3);
+    CHECK(!baseWindow() || !baseWindow()->WasActive);
+    CHECK(ImGui::GetMouseCursor() != ImGuiMouseCursor_None);
+    CHECK(!shell.ownsInput());
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+    e.gbutton.down = true;
+    CHECK(!shell.handleEvent(e, g_ms));
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.down = false;
+    shell.handleEvent(e, g_ms);
+    frames(host, shell, 2);
+    CHECK(g_imguiErrors == 0);
+}
+
+static void settingsReadonlyRowIgnoresInput() {
+    FakeHost host;
+    Shell shell(host);
+    SettingRow r = mkRow("resolution", "Internal resolution", 0, {"1x", "2x"}, 1);
+    r.readOnly = true;
+    r.note = "Set for this session by Netplay";
+    settingsSetup(host, shell, {r});
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Set for this session by Netplay") && drew("Internal resolution") && drew("2x"));
+    rightN(host, shell, 1);                              // into the list
+    rightN(host, shell, 1);
+    leftN(host, shell, 1);                               // (back to the rail: nothing to step)
+    accept(host, shell);                                 // (into the list again)
+    accept(host, shell);
+    rightN(host, shell, 1);
+    CHECK(host.set.empty());
+    // The pointer is as inert: a click on either half of the value.
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(1810, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    io.AddMousePosEvent(1700, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(host.set.empty());
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+static void settingsMoreOpensDesktop() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    down(host, shell, 2);
+    rightN(host, shell, 1);
+    down(host, shell);                                   // More settings...
+    rightN(host, shell, 2);                              // nothing to step
+    leftN(host, shell, 1);                               // ... and Left is the rail
+    CHECK(host.moreOpened == 0 && host.set.empty());
+    rightN(host, shell, 1);
+    CHECK(host.moreOpened == 0);
+    accept(host, shell);
+    CHECK(host.moreOpened == 1 && host.set.empty());
+    host.desktopOpen = true;                             // what the app does next
+    frames(host, shell, 2);
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+    e.gbutton.down = true;
+    CHECK(!shell.handleEvent(e, g_ms));                  // the shell stepped aside
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.down = false;
+    shell.handleEvent(e, g_ms);
+    host.desktopOpen = false;
+    frames(host, shell, 2);
+    CHECK(shell.ownsInput());
+}
+
+// A row the build or the session does not have is not drawn at all; rows are fetched again every frame.
+static void settingsHiddenRowsAbsent() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Shader"));
+    SettingRow shader = mkRow("shader", "Shader", 0, {"Off", "crt-royale", "lcd"}, 1);
+    host.rows.insert(host.rows.begin(), shader);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Shader") && drew("crt-royale") && drew("Aspect ratio"));
+    host.rows.erase(host.rows.begin());                  // the library went away
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Shader") && drew("Aspect ratio"));
+    // A group whose rows all went has no rail item either.
+    host.rows.erase(host.rows.begin());                  // Aspect ratio: Picture is empty
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Picture") && drew("Sound") && drew("Interface") && drew("Volume"));
+    CHECK(g_imguiErrors == 0);
+}
+
+// A desktop window over the Base layer ("More settings") has the pads: the screens' hints (A Open, LB RB Sections, B ...) list buttons
+// that do nothing there, so none is drawn.
+static void baseHintsHiddenOverDesktopWindow() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Sections") && drew("Open"));
+    host.desktopOpen = true;
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(!drew("Sections") && !drew("Open") && !drew("Groups"));
+    host.desktopOpen = false;
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Sections"));
+    CHECK(g_imguiErrors == 0);
+}
+
+// Speed before a game has run (approved change G): the group is in the rail with its one line, which nothing steps; on the Base screen
+// and in the menu's groups level.
+static std::vector<SettingRow> speedNoteRows() {
+    SettingRow note = mkRow("speed_note", "Available once a game has run", 1, {});
+    note.readOnly = true;
+    std::vector<SettingRow> rows = settingsFixture();
+    rows.insert(rows.begin() + 1, note);                 // after the Picture row, before Sound
+    return rows;
+}
+
+static void settingsSpeedNoteBeforeAGame() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, speedNoteRows());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Speed"));                                // the rail item
+    down(host, shell);                                   // Speed
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Available once a game has run") && !drew("Aspect ratio"));
+    rightN(host, shell, 1);                              // into the list (it is the only row) ...
+    accept(host, shell);
+    rightN(host, shell, 2);
+    CHECK(host.set.empty() && host.moreOpened == 0);     // ... where nothing steps or opens
+    CHECK(g_imguiErrors == 0);
+}
+
+static void settingsFocusRemembered() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3"}),
+                                mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("vsync", "VSync", 3, {"Off", "On"}),
+                                mkRow("theme", "Theme", 3, {"System", "Dark", "Light"}), mkRow("more", "More settings", 3, {})});
+    down(host, shell);                                   // Interface
+    rightN(host, shell, 1);
+    down(host, shell, 2);                                // Theme
+    lb(host, shell);
+    lb(host, shell);
+    CHECK(shell.screenId() == "library");
+    rb(host, shell);
+    rb(host, shell);
+    CHECK(shell.screenId() == "settings");
+    accept(host, shell);                                 // lands on the same row, in its list
+    CHECK(lastSet(host, "theme", 1) && host.set.size() == 1);
+    // The row is followed by what it is, not by where it was: a row inserted above it does not move the focus.
+    host.rows.insert(host.rows.begin() + 1, mkRow("shader2", "Extra", 3, {"Off", "On"}));
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(lastSet(host, "theme", 2));
+}
+
+static void settingsMouse() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1),
+                                mkRow("vsync", "VSync", 3, {"Off", "On"}, 1)});
+    ImGuiIO& io = ImGui::GetIO();
+    // Interface is the second group: the rail item hovers into view.  1920x1080: the rail at x 96, 54 high, 62 apart; the
+    // list from x 504 to 1824, rows 72 high, 86 apart from y 196.
+    io.AddMousePosEvent(96 + 100, 150 + 62 + 27);
+    frames(host, shell, 2);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Show FPS") && !drew("Volume"));
+    io.AddMousePosEvent(1810, 196 + 36);    // right of the value's middle (the short value sits at the far right) of Show FPS
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "fps", 1));
+    io.AddMousePosEvent(1700, 196 + 36);    // ... left of it, still right of the row's middle
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "fps", 0));
+    io.AddMousePosEvent(504 + 200, 196 + 36);            // the label: Accept, one step on
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "fps", 1) && host.set.size() == 3);
+    leftClick(host, shell);                              // wraps
+    CHECK(lastSet(host, "fps", 0));
+    // The wheel moves the focus: one notch is one row (the pointer rests where it is, so it does not pull the focus back).
+    io.AddMouseWheelEvent(0, -1.0f);
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(lastSet(host, "vsync", 0));
+    io.AddMouseWheelEvent(0, 1.0f);
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(lastSet(host, "fps", 1));
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+// The value is right-aligned, so a short one ("50 %") has its chevrons far right of the row's middle: a click on each
+// chevron of the focused (grown) row steps that way -- the right one lies past the unscaled card's edge.
+static void settingsClickOnChevrons() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1)});
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(504 + 200, 196 + 36);            // focus the row and let it finish growing
+    frames(host, shell, 30);
+    // 1920x1080, the focused row (scale 1.08) spans 504 + 660 -+ 713; see SettingsScreen::drawRow.
+    const float k = 1.08f, inner = 504 + 660 + 1320 * k * 0.5f - 24 * (0.6f + 0.4f * k);
+    const float chevW = 9 * k, gap = 24 * k, valueRight = inner - chevW - gap;
+    const float leftChev = valueRight - measure(30 * k, "50 %") - gap - chevW * 0.5f, rightChev = inner - chevW * 0.5f;
+    CHECK(leftChev > 504 + 1320 * 0.75f && rightChev > 504 + 1320);   // a click map by quarters would miss both
+    io.AddMousePosEvent(leftChev, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "volume", 0) && host.set.size() == 1);
+    io.AddMousePosEvent(rightChev, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "volume", 1) && host.set.size() == 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "volume", 2) && host.set.size() == 3);
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+// Every size, long labels and notes, a full fixture (the list scrolls), every direction and the pointer.
+static void settingsWalk120FramesNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    std::vector<std::string> pct;
+    for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
+    host.rows = settingsFixture();
+    SettingRow ro = mkRow("resolution", "Internal resolution with a rather long label", 0, {"1x (native)", "2x"}, 1);
+    ro.readOnly = true;
+    ro.note = "Set for this session by the Netplay window (or --option); disconnect to change it here";
+    host.rows.push_back(ro);
+    host.rows.push_back(mkRow("risc_clock", "RISC overclock", 1, {"0.5x", "1x (stock)", "137% (custom)"}, 2));
+    host.rows.push_back(mkRow("idle_skip", "Idle-loop skip", 1, {"disabled", "enabled"}, 1));
+    for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 3, {"Off", "On"}));
+    host.rows.push_back(mkRow("theme", "Theme", 3, {"System", "Dark", "Light", "Custom: A very long theme name that does not fit"}, 3));
+    Shell shell(host);
+    const int errors = g_imguiErrors;
+    shell.setSection(Section::Settings);
+    for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        frames(host, shell, 3);
+        for (int round = 0; round < 3; round++) {
+            for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+                                        SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_LEFT}) {
+                for (int i = 0; i < 12; i++) tapButton(host, shell, b);
+                frames(host, shell, 40);
+            }
+            for (int i = 0; i < 6; i++) accept(host, shell);
+            back(host, shell);
+        }
+        io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.4f);
+        io.AddMouseWheelEvent(0, -3.0f);
+        frames(host, shell, 20);
+        leftClick(host, shell);
+        io.AddMouseWheelEvent(0, 3.0f);
+        frames(host, shell, 20);
+        io.AddMousePosEvent(0, 0);
+        frames(host, shell, 3);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == errors);
+}
+
+// ---- TV Achievements (phase 3, Task 14) -----------------------------------------------------------------------------------
+
+static AchItem mkItem(uint32_t id, const char* title, const char* status, bool unlocked, unsigned points = 10) {
+    AchItem a;
+    a.id = id;
+    a.title = title;
+    a.status = status;
+    a.unlocked = unlocked;
+    a.points = points;
+    return a;
+}
+
+static AchItem mkTracker(uint32_t id, const char* text) {
+    AchItem a;
+    a.kind = AchItem::Tracker;
+    a.id = id;
+    a.title = text;
+    return a;
+}
+
+static AchGame mkAchGame(uint32_t id, const char* title, unsigned total, unsigned got, bool progress, bool inLibrary) {
+    AchGame g;
+    g.id = id;
+    g.title = title;
+    g.achievements = total;
+    g.unlocked = got;
+    g.haveProgress = progress;
+    g.inLibrary = inLibrary;
+    return g;
+}
+
+// Three games of the RA list: only "Beta" is in the library.
+static std::vector<AchGame> raFixture() {
+    return {mkAchGame(10, "Alpha", 12, 3, true, false), mkAchGame(11, "Beta", 8, 0, false, true), mkAchGame(12, "Gamma", 5, 5, true, false)};
+}
+
+// A signed-in TV host on the Achievements section (reached through the shell, not by counting RB presses), drawn once.
+static void achSetup(FakeHost& host, Shell& shell) {
+    host.tv = true;
+    host.loaded = false;
+    host.hdr.signedIn = true;
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    frames(host, shell, 2);
+    shell.setSection(Section::Achievements);
+    frames(host, shell, 2);
+}
+
+// How many times one frame draws `s` (the top bar's tab and a hint of the same word are two).
+static int countText(FakeHost& host, Shell& shell, const std::string& s) {
+    g_texts.clear();
+    frames(host, shell, 1);
+    int n = 0;
+    for (const std::string& t : g_texts)
+        if (t == s) n++;
+    return n;
+}
+
+// The loaded game of the rows tests: a tracker between two achievements.
+static void achLoadedGame(FakeHost& host) {
+    host.hdr.hasGame = true;
+    host.hdr.title = "Cybermorph";
+    host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_pal = enabled)";
+    host.hdr.unlocked = 1;
+    host.hdr.total = 2;
+    host.items = {mkItem(1, "First Blood", "Unlocked in hardcore  2026-10-16 21:04", true, 5), mkTracker(900, "Lap 2: 1:12.4"),
+                  mkItem(2, "Ring Master", "Locked  Progress: 5/10", false, 25)};
+    host.items[0].description = "Defeat the first drone";
+}
+
+static void achNotSignedInLine() {
+    FakeHost host;
+    Shell shell(host);
+    host.tv = true;
+    host.loaded = false;
+    host.hdr.signedIn = false;
+    host.raGames = raFixture();   // a list the signed-out player must not see
+    frames(host, shell, 2);
+    shell.setSection(Section::Achievements);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(shell.screenId() == "achievements");
+    CHECK(drew("Sign in from Settings > Achievements in desktop mode"));
+    CHECK(!drew("Beta \xC2\xB7 8 achievements") && !drew("RetroAchievements is not available in this build"));
+    accept(host, shell);
+    down(host, shell);
+    CHECK(host.played == 0 && host.guardArmed == 0);
+    back(host, shell);
+    CHECK(shell.screenId() == "home");
+}
+
+static void achNotAvailableLine() {
+    FakeHost host;
+    Shell shell(host);
+    achSetup(host, shell);
+    host.hdr.available = false;
+    host.hdr.signedIn = false;   // no rc_client: nobody can be signed in
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("RetroAchievements is not available in this build"));
+    CHECK(!drew("Sign in from Settings > Achievements in desktop mode"));
+}
+
+static void achRowsForLoadedGame() {
+    FakeHost host;
+    Shell shell(host);
+    achLoadedGame(host);
+    achSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("First Blood") && drew("Ring Master") && drew("Lap 2: 1:12.4"));   // 3 rows
+    CHECK(drew("Unlocked in hardcore  2026-10-16 21:04") && drew("Locked  Progress: 5/10"));
+    CHECK(drew(host.hdr.mode) && drew("Cybermorph") && drew("1 of 2 achievements"));
+    CHECK(drew("5 pts") && drew("25 pts") && !drew("Sign in from Settings > Achievements in desktop mode"));
+    CHECK(drew("Defeat the first drone"));   // the description, a muted line between the title and the status
+    // The focus lives on achievements: Down from the first jumps over the tracker, Up comes back, the ends hold.
+    CHECK(shell.memory().get("achievements/rows") == 0);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 0);
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 0);
+    accept(host, shell);   // nothing to do on a row
+    CHECK(host.played == 0 && host.guardArmed == 0 && shell.screenId() == "achievements");
+    // Hints: just the way out.
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(countText(host, shell, "Home") == 2 && !drew("Play"));   // the tab and the Back hint
+    // Only trackers: nothing to focus, nothing breaks.
+    host.items = {mkTracker(900, "Lap 2: 1:12.4")};
+    down(host, shell);
+    up(host, shell);
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Lap 2: 1:12.4"));
+    // A game with no achievements says so.
+    host.items.clear();
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("This game has no achievements yet."));
+    CHECK(g_imguiErrors == 0);
+}
+
+// Trackers listed first (as the app lists them): the first achievement has the focus from the start, and Up stays there.
+static void achTrackersFirstFocusAchievement() {
+    FakeHost host;
+    Shell shell(host);
+    host.hdr.hasGame = true;
+    host.hdr.title = "Cybermorph";
+    host.hdr.mode = "Hardcore";
+    host.items = {mkTracker(900, "Lap 2: 1:12.4"), mkTracker(901, "Best: 1:09.0"), mkItem(1, "First Blood", "Locked", false),
+                  mkItem(2, "Ring Master", "Locked", false)};
+    achSetup(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 2);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/rows") == 3);
+    // Away and back: the same achievement, even though the list changed under it.
+    shell.setSection(Section::Library);
+    frames(host, shell, 2);
+    host.items.insert(host.items.begin() + 2, mkItem(7, "Newcomer", "Locked", false));
+    shell.setSection(Section::Achievements);
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/rows") == 4);
+}
+
+static void achGamesListWithoutGame() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Alpha \xC2\xB7 3/12") && drew("Beta \xC2\xB7 8 achievements") && drew("Gamma \xC2\xB7 5/5"));
+    CHECK(!drew("Sign in from Settings > Achievements in desktop mode") && !drew("RetroAchievements is not available in this build"));
+    CHECK(shell.memory().get("achievements/games") == 0);
+    accept(host, shell);   // Alpha is not in the library
+    CHECK(host.played == 0 && host.guardArmed == 0);
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 1);
+    accept(host, shell);   // Beta is
+    CHECK(host.played == 11 && host.guardArmed == 1 && host.holdsCleared == 1);
+    host.played = 0;
+    down(host, shell);
+    accept(host, shell);   // Gamma is not
+    CHECK(host.played == 0 && host.guardArmed == 1);
+    down(host, shell);     // the end holds
+    CHECK(shell.memory().get("achievements/games") == 2);
+    up(host, shell, 5);
+    CHECK(shell.memory().get("achievements/games") == 0);
+    CHECK(g_imguiErrors == 0);
+}
+
+static void achGamesHintsAndEmpty() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Play") && countText(host, shell, "Home") == 2);   // Alpha: not in the library, nothing to play
+    down(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Play") && countText(host, shell, "Home") == 2);    // Beta
+    host.raGames.clear();                   // no list (yet)
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(!drew("Play") && countText(host, shell, "Home") == 2 && drew("No Jaguar games to show yet."));
+    accept(host, shell);
+    down(host, shell);
+    up(host, shell);
+    CHECK(host.played == 0);
+}
+
+// The list follows the game, not its place: a rescan or a progress update that reorders it keeps the focus on the same game.
+static void achGamesFocusFollowsGame() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    down(host, shell, 2);   // Gamma
+    CHECK(shell.memory().get("achievements/games") == 2 && shell.memory().getItem("achievements/games") == "12");
+    host.raGames.insert(host.raGames.begin(), mkAchGame(9, "Aardvark", 3, 0, false, false));
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 3);
+    shell.setSection(Section::Settings);
+    frames(host, shell, 2);
+    shell.setSection(Section::Achievements);
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 3);
+}
+
+static void achGamesMouse() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    achSetup(host, shell);
+    ImGuiIO& io = ImGui::GetIO();
+    // 1920x1080: the list from x 504 to 1824, rows 72 high, 86 apart from y 196.
+    io.AddMousePosEvent(900, 196 + 86 + 36);   // Beta
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 1 && host.played == 0);   // hovering focuses, it does not play
+    leftClick(host, shell);
+    CHECK(host.played == 11 && host.guardArmed == 1);
+    host.played = 0;
+    io.AddMousePosEvent(900, 196 + 36);        // Alpha: focused by the pointer, a click plays nothing
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 0 && host.played == 0 && host.guardArmed == 1);
+    io.AddMouseWheelEvent(0, -1.0f);
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 1);
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+static void achFocusGameOnOpen() {
+    FakeHost host;
+    Shell shell(host);
+    host.raGames = raFixture();
+    host.raGames.push_back(mkAchGame(77, "Tempest 2000", 20, 4, true, true));
+    achSetup(host, shell);
+    shell.openSection(Section::Achievements, makeAchievementsScreen(host, shell, 77));
+    CHECK(shell.section() == Section::Achievements && shell.screenId() == "achievements");
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 3 && shell.memory().getItem("achievements/games") == "77");
+    down(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 3);   // the last row
+    up(host, shell);
+    CHECK(shell.memory().get("achievements/games") == 2);
+    // A game the list does not have: the focus stays where it was remembered.
+    shell.openSection(Section::Achievements, makeAchievementsScreen(host, shell, 4242));
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 2);
+}
+
+// The list arrives after the screen opens (the cache loads on the first draw, a fetch later): the focus request waits for it.
+static void achFocusGameWaitsForList() {
+    FakeHost host;
+    Shell shell(host);
+    achSetup(host, shell);
+    shell.openSection(Section::Achievements, makeAchievementsScreen(host, shell, 11));
+    frames(host, shell, 2);
+    host.raGames = raFixture();
+    frames(host, shell, 2);
+    CHECK(shell.memory().get("achievements/games") == 1);
+}
+
+static void homeYOpensAchievements() {
+    for (int keyboard = 0; keyboard < 2; keyboard++) {
+        FakeHost host;
+        host.keyboardLast = keyboard != 0;
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        Shell shell(host);
+        homeSetup(host, shell);
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(countText(host, shell, "Achievements") == (keyboard ? 1 : 2));   // the tab, and with a pad the Y hint
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);
+        CHECK(shell.screenId() == "achievements" && shell.section() == Section::Achievements);
+        CHECK(host.launches == 0);
+        back(host, shell);
+        CHECK(shell.screenId() == "home" && shell.section() == Section::Home);
+    }
+    FakeHost host;   // an empty library has no tiles, but Y still goes
+    Shell shell(host);
+    homeSetup(host, shell);
+    frames(host, shell, 2);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);
+    CHECK(shell.screenId() == "achievements");
+}
+
+static void detailsAchievementsRowWhenKnown() {
+    {
+        FakeHost host;
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        host.achIds[host.recent[0].key] = 77;
+        host.hdr.signedIn = true;
+        host.raGames = raFixture();
+        host.raGames.push_back(mkAchGame(77, "Recent 0", 9, 1, true, true));
+        Shell shell(host);
+        homeSetup(host, shell);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        CHECK(shell.screenId() == "details");
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(countText(host, shell, "Achievements") == 2);   // the tab and the row
+        down(host, shell, 2);                    // Play, Favorite, Achievements: no save states
+        accept(host, shell);
+        CHECK(shell.screenId() == "achievements" && shell.section() == Section::Achievements);
+        frames(host, shell, 2);
+        CHECK(shell.memory().get("achievements/games") == 3 && shell.memory().getItem("achievements/games") == "77");
+        CHECK(host.launches == 0 && host.played == 0);
+        back(host, shell);   // the Details screen is gone with the section's stack: Back is Home
+        CHECK(shell.screenId() == "home");
+    }
+    {
+        FakeHost host;   // a game the RA list does not know: no row
+        host.recent = mkGames("Recent", 3);
+        host.all = host.recent;
+        host.achIds[host.recent[1].key] = 77;
+        Shell shell(host);
+        homeSetup(host, shell);
+        tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+        CHECK(shell.screenId() == "details");
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(countText(host, shell, "Achievements") == 1);   // the tab only
+        down(host, shell, 5);                    // the end is Favorite
+        accept(host, shell);
+        CHECK(shell.screenId() == "details" && host.favSet.count(host.recent[0].key) == 1);
+    }
+}
+
+// Both branches at every size: a long list, long titles and statuses, every direction and the pointer.
+static void achWalk120FramesNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (int branch = 0; branch < 2; branch++) {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.hdr.signedIn = true;
+        if (branch == 0) {
+            host.hdr.hasGame = true;
+            host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+            host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+            host.hdr.unlocked = 14;
+            host.hdr.total = 30;
+            host.items.push_back(mkTracker(900, "Lap 2: 1:12.4"));
+            for (uint32_t i = 1; i <= 30; i++)
+                host.items.push_back(mkItem(i, "An achievement whose title runs on and on and on and on past the badge",
+                                            "Unlocked in hardcore  2026-10-16 21:04  12.3% of players  [Missable]  [not supported by this version]",
+                                            i % 3 == 0, i * 5));
+            host.items.insert(host.items.begin() + 10, mkTracker(901, "Best: 1:09.0"));
+        } else {
+            for (uint32_t i = 1; i <= 40; i++)
+                host.raGames.push_back(mkAchGame(i, "A Jaguar game with a rather long title that does not fit in the row", 20 + i, i % 5, i % 2 == 0, i % 3 == 0));
+        }
+        Shell shell(host);
+        const int errors = g_imguiErrors;
+        shell.setSection(Section::Achievements);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 3);
+            for (int round = 0; round < 3; round++) {
+                for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+                                            SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_LEFT}) {
+                    for (int i = 0; i < 14; i++) tapButton(host, shell, b);
+                    frames(host, shell, 30);
+                }
+                for (int i = 0; i < 4; i++) accept(host, shell);
+            }
+            io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.5f);
+            io.AddMouseWheelEvent(0, -3.0f);
+            frames(host, shell, 20);
+            leftClick(host, shell);
+            io.AddMouseWheelEvent(0, 3.0f);
+            frames(host, shell, 20);
+            io.AddMousePosEvent(0, 0);
+            frames(host, shell, 3);
+            back(host, shell);   // Home
+            shell.setSection(Section::Achievements);
+        }
+        io.DisplaySize = ImVec2(1920, 1080);
+        CHECK(g_imguiErrors == errors);
+    }
+    // The two lines and the empty list too.
+    for (int line = 0; line < 3; line++) {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.hdr.signedIn = line == 2;
+        host.hdr.available = line != 0;
+        Shell shell(host);
+        const int errors = g_imguiErrors;
+        shell.setSection(Section::Achievements);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 5);
+            down(host, shell);
+            accept(host, shell);
+        }
+        io.DisplaySize = ImVec2(1920, 1080);
+        CHECK(g_imguiErrors == errors);
+    }
+}
+
+
+// ---- Overlays, and Achievements / Overlays / Settings inside the in-game menu (phase 3, Task 15) ---------------------------
+
+static std::vector<ToggleRow> overlayFixture() {
+    ToggleRow fps, keypad, controls;
+    fps.id = "fps";
+    fps.label = "Show FPS";
+    keypad.id = "keypad";
+    keypad.label = "Keypad overlay";
+    controls.id = "controls";
+    controls.label = "Controls overlay";
+    return {fps, keypad, controls};
+}
+
+static const char* const kToolsOff = "Debug windows are off (hardcore, the emulation thread, or no game)";
+
+// The menu open on its root with the overlays fixture, drawn once.
+static void menuSetup(FakeHost& host, Shell& shell) {
+    host.overlays = overlayFixture();
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    shell.openMenu();
+    frames(host, shell, 2);
+}
+
+// Down to the root row labelled `label` (never past the end: focus does not wrap).
+static void menuTo(FakeHost& host, Shell& shell, const char* label) {
+    for (int i = 0; i < 12 && std::string(focusedLabel(shell)) != label; i++) down(host, shell);
+}
+
+static void ingameRowsFullOrder() {
+    FakeHost host;
+    host.canLoad = true;
+    host.tvOn = true;
+    Shell shell(host);
+    shell.openMenu();
+    std::vector<std::string> labels;
+    for (const Shell::Row& r : shell.menuRows()) labels.push_back(r.label);
+    const std::vector<std::string> want = {"Resume", "Save state", "Load state", "Achievements", "Overlays",
+                                           "Settings", "Controls", "Enter TV mode", "Reset", "Close game"};
+    CHECK(labels == want);
+    // Hardcore (no Load row) and TV mode Off drop only their own rows; the three screens stay.
+    FakeHost hard;
+    hard.canLoad = false;
+    hard.tvOn = false;
+    Shell hardShell(hard);
+    hardShell.openMenu();
+    labels.clear();
+    for (const Shell::Row& r : hardShell.menuRows()) labels.push_back(r.label);
+    CHECK((labels == std::vector<std::string>{"Resume", "Save state", "Achievements", "Overlays", "Settings", "Controls", "Reset", "Close game"}));
+}
+
+static void overlaysToggleFps() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Overlays");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen() && shell.menuOpen() && shell.menuPage() == Shell::Page::Root);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Show FPS") && drew("Keypad overlay") && drew("Controls overlay") && drew("Off") && !drew("On"));
+    accept(host, shell);                                 // the first row: Show FPS
+    CHECK((host.toggled == std::vector<std::string>{"fps"}) && shell.menuOpen() && shell.menuHasScreen());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("On"));                                   // the rows are fetched again every draw
+    CHECK(host.resumed == 0 && host.paused);             // the menu still holds the pause
+    CHECK(g_imguiErrors == 0);
+}
+
+static void overlaysKeypadAndControlsCloseTheMenu() {
+    for (int row = 1; row <= 2; row++) {
+        FakeHost host;
+        Shell shell(host);
+        menuSetup(host, shell);
+        menuTo(host, shell, "Overlays");
+        accept(host, shell);
+        down(host, shell, row);
+        accept(host, shell);
+        CHECK((host.toggled == std::vector<std::string>{row == 1 ? "keypad" : "controls"}));
+        CHECK(!shell.menuOpen() && host.resumed == 1 && !shell.menuHasScreen());
+        shell.openMenu();                                // the next menu starts on the root, with no screen in the slot
+        CHECK(!shell.menuHasScreen() && shell.menuPage() == Shell::Page::Root);
+    }
+}
+
+static void overlaysToolRowsFromRegistry() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    ToggleRow mem, cpu;
+    mem.id = "tool:memory";
+    mem.label = "Memory viewer";
+    mem.on = true;
+    cpu.id = "tool:cpu";
+    cpu.label = "CPU debugger";
+    cpu.enabled = false;
+    cpu.note = kToolsOff;
+    host.overlays = {mem, cpu};
+    menuTo(host, shell, "Overlays");
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Memory viewer") && drew("CPU debugger") && drew(kToolsOff) && drew("On"));
+    CHECK(drew("Toggle"));                               // the focused row can be toggled
+    accept(host, shell);                                 // Memory viewer: toggled in place, the menu stays
+    CHECK((host.toggled == std::vector<std::string>{"tool:memory"}) && shell.menuOpen());
+    down(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Toggle") && drew("Menu"));              // a disabled row offers nothing
+    accept(host, shell);
+    CHECK(host.toggled.size() == 1);                     // ... and Accept on it toggles nothing
+}
+
+static void overlaysHintsAndBack() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Overlays");
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Toggle") && drew("Menu") && !drew("Home"));
+    back(host, shell);                                   // Back leaves the screen for the menu, on its row
+    CHECK(!shell.menuHasScreen() && shell.menuOpen() && std::string(focusedLabel(shell)) == "Overlays");
+    CHECK(host.toggled.empty() && host.resumed == 0);
+}
+
+// The Settings groups are a first list level in the menu: Accept opens a group's rows, Back returns to the groups, Back on the
+// groups leaves for the menu row.
+static void ingameSettingsSlotLevels() {
+    FakeHost host;
+    host.rows = settingsFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Settings");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen() && shell.menuScreenId() == "settings");
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && !drew("Aspect ratio"));   // the groups, not their rows
+    CHECK(drew("Open") && drew("Menu"));
+    accept(host, shell);                                 // Picture
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Aspect ratio") && !drew("Sound") && drew("Groups"));
+    rightN(host, shell, 1);                              // a row changes in place
+    CHECK(lastSet(host, "aspect", 1));
+    back(host, shell);                                   // rows -> groups: still the screen
+    CHECK(shell.menuHasScreen() && shell.menuOpen());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Sound") && !drew("Aspect ratio"));
+    back(host, shell);                                   // groups -> the menu, on Settings
+    CHECK(!shell.menuHasScreen() && shell.menuOpen() && std::string(focusedLabel(shell)) == "Settings");
+    // Down on the groups moves between them, and the rows shown are the chosen group's.
+    accept(host, shell);
+    down(host, shell);                                   // Sound
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Volume") && !drew("Aspect ratio"));
+    CHECK(g_imguiErrors == 0);
+}
+
+// "More settings..." in the menu's Settings slot: Accept on it asks the app for the window, and the menu stays open underneath -- it
+// holds the pause and keeps the slot -- with the shell still the one that has the input (the app's glue takes the pads before it).
+static void menuMoreSettingsKeepsMenu() {
+    FakeHost host;
+    host.loaded = true;
+    host.rows = settingsFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Settings");
+    accept(host, shell);                                 // the groups: Picture, Sound, Interface
+    down(host, shell, 2);
+    accept(host, shell);                                 // Interface: Show FPS, More settings...
+    down(host, shell);
+    CHECK(host.moreOpened == 0);
+    accept(host, shell);
+    CHECK(host.moreOpened == 1);
+    host.desktopOpen = true;                             // what the app does next
+    frames(host, shell, 3);
+    CHECK(shell.menuOpen() && shell.menuHasScreen() && shell.menuScreenId() == "settings");
+    CHECK(host.paused && host.resumed == 0);             // still holding the pause
+    CHECK(shell.ownsInput());                            // (the glue, not the shell, steps aside)
+    g_texts.clear();                                     // the window has the pads: the menu's hints (Open, Groups) list nothing that works
+    frames(host, shell, 3);
+    CHECK(!drew("Groups") && !drew("Open") && !drew("Menu"));
+    host.desktopOpen = false;                            // the window closed: the menu is where it was
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Groups"));
+    CHECK(shell.menuOpen() && shell.menuScreenId() == "settings" && host.paused);
+    back(host, shell);                                   // rows -> groups
+    back(host, shell);                                   // groups -> the menu, on Settings
+    CHECK(!shell.menuHasScreen() && std::string(focusedLabel(shell)) == "Settings");
+    CHECK(g_imguiErrors == 0);
+}
+
+// ... and in the in-game menu's slot the groups level lists it too.
+static void ingameSpeedNoteBeforeAGame() {
+    FakeHost mh;
+    mh.rows = speedNoteRows();
+    Shell ms(mh);
+    menuSetup(mh, ms);
+    menuTo(mh, ms, "Settings");
+    accept(mh, ms);
+    g_texts.clear();
+    frames(mh, ms, 2);
+    CHECK(drew("Picture") && drew("Speed") && drew("Sound"));
+    down(mh, ms);
+    accept(mh, ms);
+    g_texts.clear();
+    frames(mh, ms, 2);
+    CHECK(drew("Available once a game has run"));
+    accept(mh, ms);
+    rightN(mh, ms, 2);
+    CHECK(mh.set.empty());
+    CHECK(g_imguiErrors == 0);
+}
+
+static void ingameSlotBackReturnsToRow() {
+    FakeHost host;
+    host.rows = settingsFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Settings");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen());
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && shell.menuOpen());
+    CHECK(std::string(focusedLabel(shell)) == "Settings");
+    back(host, shell);                                   // Back on the root is Resume, as before
+    CHECK(!shell.menuOpen() && host.resumed == 1);
+}
+
+static void ingameAchievementsSlotDraws() {
+    FakeHost host;
+    host.hdr.signedIn = true;
+    host.hdr.hasGame = true;
+    host.hdr.title = "Cybermorph";
+    host.hdr.mode = "Hardcore";
+    host.hdr.total = 2;
+    host.items = {mkItem(1, "First Blood", "Locked", false, 5), mkItem(2, "Ring Master", "Locked", false, 25)};
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Achievements");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen() && shell.menuScreenId() == "achievements");
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("First Blood") && drew("Ring Master") && drew("Cybermorph") && drew("0 of 2 achievements"));
+    CHECK(drew("Menu") && !drew("Home") && !drew("Play"));
+    down(host, shell);                                   // the list takes the intents
+    CHECK(shell.memory().get("achievements/rows") == 1);
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && std::string(focusedLabel(shell)) == "Achievements");
+    CHECK(host.played == 0);
+}
+
+// A game the RetroAchievements list does not track leaves the in-menu screen on the Jaguar list: nothing on it starts another game
+// from under the menu.
+static void ingameAchievementsGamesListIsReadOnly() {
+    FakeHost host;
+    host.hdr.signedIn = true;
+    host.raGames = raFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Achievements");
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Beta \xC2\xB7 8 achievements") && !drew("Play"));
+    down(host, shell);
+    accept(host, shell);                                 // Beta is in the library: on the Base layer this plays it
+    CHECK(host.played == 0 && host.guardArmed == 0 && shell.menuOpen() && shell.menuHasScreen());
+}
+
+static void ingameSlotLeavesMenuModelAlone() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Overlays");
+    const int focus = shell.menuFocus();
+    accept(host, shell);
+    CHECK(shell.menuPage() == Shell::Page::Root && shell.menuFocus() == focus);   // the slot sits beside the page model
+    down(host, shell, 2);
+    up(host, shell);
+    CHECK(shell.menuFocus() == focus);                   // the intents went to the screen, not to the rows
+    host.canLoad = false;                                // the root would rebuild without its Load row ...
+    frames(host, shell, 3);
+    CHECK(shell.menuHasScreen());                        // ... but not while the slot has the panel
+    back(host, shell);
+    CHECK(!shell.menuHasScreen());
+    for (const Shell::Row& r : shell.menuRows()) CHECK(r.label != "Load state");
+    CHECK(std::string(focusedLabel(shell)) == "Overlays");   // the focus came back to the row (by kind), not to its old place
+}
+
+// Every slot at three sizes, every direction, the pointer and the wheel: no ImGui error.
+static void menuWalkWithSlotsNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    const int errors = g_imguiErrors;
+    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+        FakeHost host;
+        host.rows = settingsFixture();
+        for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 0, {"Off", "On"}));
+        host.hdr.signedIn = true;
+        host.hdr.hasGame = true;
+        host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+        host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+        for (uint32_t i = 1; i <= 20; i++) {
+            host.items.push_back(mkItem(i, "An achievement whose title runs on and on and on and on past the badge",
+                                        "Unlocked in hardcore  2026-10-16 21:04  [Missable]", i % 3 == 0, i * 5));
+            host.items.back().description = "A description that is long enough to be cut by the end of the row on a small screen, really";
+        }
+        host.overlays = overlayFixture();
+        for (int i = 0; i < 10; i++) {
+            ToggleRow t;
+            t.id = "tool:" + std::to_string(i);
+            t.label = "A tool window " + std::to_string(i);
+            t.enabled = i % 2 == 0;
+            t.note = t.enabled ? "" : kToolsOff;
+            host.overlays.push_back(t);
+        }
+        Shell shell(host);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            shell.openMenu();
+            frames(host, shell, 3);
+            menuTo(host, shell, row);
+            accept(host, shell);
+            CHECK(shell.menuHasScreen());
+            for (int round = 0; round < 2; round++) {
+                for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+                                            SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_LEFT}) {
+                    for (int i = 0; i < 10; i++) {
+                        tapButton(host, shell, b);
+                        if (!shell.menuHasScreen()) break;
+                    }
+                    frames(host, shell, 20);
+                }
+                if (!shell.menuHasScreen()) break;
+            }
+            if (shell.menuHasScreen()) {
+                io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.4f);
+                io.AddMouseWheelEvent(0, -3.0f);
+                frames(host, shell, 20);
+                io.AddMouseWheelEvent(0, 3.0f);
+                frames(host, shell, 20);
+                io.AddMousePosEvent(0, 0);
+                frames(host, shell, 3);
+            }
+            if (!shell.menuOpen()) continue;             // an overlay row closed it: the next size opens it again
+            shell.closeMenu();
+        }
+        if (shell.menuOpen()) shell.closeMenu();
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == errors);
+}
+
+// The four tabs and both shoulder pills fit the top bar at 1280x720 with room left for the clock (the chrome's own sums:
+// the safe margin, the accent, the logo, the LB pill, each label at body size 40 apart, the RB pill).
+static void tabBarFitsAt720p() {
+    const float u = 720.0f / 1080.0f;
+    float x = 96 * u + (22 + 16) * u + measure(34 * u, "VIRTUAL JAGUAR") + 56 * u;
+    x += measure(24 * u, "LB") + 20 * u + 20 * u;
+    const char* labels[] = {"Home", "Library", "Achievements", "Settings"};
+    for (int i = 0; i < 4; i++) x += measure(30 * u, labels[i]) + (i < 3 ? 40 : 20) * u;
+    x += measure(24 * u, "RB") + 20 * u;
+    const float clockLeft = 1280 - 96 * u - measure(26 * u, "12:00 PM");
+    CHECK(x + 24 * u < clockLeft);
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -2141,6 +3586,8 @@ int main() {
     escBackThenRoot();
     baseNeverCapturesKeyboard();
     padHidesCursor();
+    padCursorReturnsOverDesktopWindow();
+    baseHintsHiddenOverDesktopWindow();
     baseReturnsAfterGame();
     raStatusHiddenWhenEmpty();
     screenStackRoutesInput();
@@ -2197,6 +3644,48 @@ int main() {
     homeSaysScanningWhileScanning();
     desktopWindowTakesInputFromBase();
     padPopupNav();
+    moreSettingsNavFlags();
+    moreSettingsBackLeavesItems();
+    moreSettingsDefaultFocusSkipsReset();
+    settingsRailAndList();
+    settingsBackAndLeftEdge();
+    settingsHints();
+    settingsTvModeOffLeavesCleanly();
+    settingsReadonlyRowIgnoresInput();
+    settingsMoreOpensDesktop();
+    settingsHiddenRowsAbsent();
+    settingsSpeedNoteBeforeAGame();
+    settingsFocusRemembered();
+    settingsMouse();
+    settingsClickOnChevrons();
+    settingsWalk120FramesNoAsserts();
+    achNotSignedInLine();
+    achNotAvailableLine();
+    achRowsForLoadedGame();
+    achTrackersFirstFocusAchievement();
+    achGamesListWithoutGame();
+    achGamesHintsAndEmpty();
+    achGamesFocusFollowsGame();
+    achGamesMouse();
+    achFocusGameOnOpen();
+    achFocusGameWaitsForList();
+    homeYOpensAchievements();
+    detailsAchievementsRowWhenKnown();
+    achWalk120FramesNoAsserts();
+    ingameRowsFullOrder();
+    overlaysToggleFps();
+    overlaysKeypadAndControlsCloseTheMenu();
+    overlaysToolRowsFromRegistry();
+    overlaysHintsAndBack();
+    ingameSettingsSlotLevels();
+    ingameSpeedNoteBeforeAGame();
+    menuMoreSettingsKeepsMenu();
+    ingameSlotBackReturnsToRow();
+    ingameAchievementsSlotDraws();
+    ingameAchievementsGamesListIsReadOnly();
+    ingameSlotLeavesMenuModelAlone();
+    menuWalkWithSlotsNoAsserts();
+    tabBarFitsAt720p();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;
@@ -2215,6 +3704,43 @@ int main() {
         }
         CHECK(g_imguiErrors == 0);
     }
+    // The three screens of the menu's slot at the same sizes, inside the display (the rows with a long reason, a tall header and a
+    // description included).
+    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+        FakeHost host;
+        host.rows = settingsFixture();
+        host.hdr.signedIn = true;
+        host.hdr.hasGame = true;
+        host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+        host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+        host.items = {mkTracker(900, "Lap 2: 1:12.4"), mkItem(1, "First Blood", "Unlocked in hardcore  2026-10-16 21:04", true, 5)};
+        host.items[1].description = "Defeat the first drone";
+        host.overlays = overlayFixture();
+        ToggleRow t;
+        t.id = "tool:cpu";
+        t.label = "CPU debugger";
+        t.enabled = false;
+        t.note = kToolsOff;
+        host.overlays.push_back(t);
+        Shell shell(host);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            shell.openMenu();
+            frames(host, shell, 3);
+            menuTo(host, shell, row);
+            accept(host, shell);
+            frames(host, shell, 30);
+            CHECK(shell.menuHasScreen());
+            ImDrawData* dd = ImGui::GetDrawData();
+            bool inside = dd->CmdListsCount > 0;
+            for (int l = 0; l < dd->CmdListsCount; l++)
+                for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
+                    if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
+            CHECK(inside);
+            shell.closeMenu();
+        }
+        CHECK(g_imguiErrors == 0);
+    }
     // The Base layer (chrome and the stub screens) at the same sizes, signed in to RetroAchievements (the longest top bar).
     {
         FakeHost host;
@@ -2225,6 +3751,64 @@ int main() {
         for (float hh : {720.0f, 1080.0f, 2160.0f}) {
             io.DisplaySize = ImVec2(hh * 16 / 9, hh);
             frames(host, shell, 3);
+            ImDrawData* dd = ImGui::GetDrawData();
+            bool inside = dd->CmdListsCount > 0;
+            for (int l = 0; l < dd->CmdListsCount; l++)
+                for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
+                    if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
+            CHECK(inside);
+        }
+        CHECK(g_imguiErrors == 0);
+    }
+    // The Settings screen (rows with values, chevrons and a note) inside the display at the same sizes, the list focused.
+    {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.rows = settingsFixture();
+        SettingRow ro = mkRow("resolution", "Internal resolution", 0, {"1x (native)", "2x"}, 1);
+        ro.readOnly = true;
+        ro.note = "Set for this session by Netplay or --option";
+        host.rows.push_back(ro);
+        Shell shell(host);
+        shell.setSection(Section::Settings);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 3);
+            rightN(host, shell, 1);
+            frames(host, shell, 30);
+            ImDrawData* dd = ImGui::GetDrawData();
+            bool inside = dd->CmdListsCount > 0;
+            for (int l = 0; l < dd->CmdListsCount; l++)
+                for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
+                    if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
+            CHECK(inside);
+            back(host, shell);
+        }
+        CHECK(g_imguiErrors == 0);
+    }
+    // The Achievements screen, a game's rows and the games list, inside the display at the same sizes (the header, the long
+    // title and the mode chip included).
+    for (int branch = 0; branch < 2; branch++) {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.hdr.signedIn = true;
+        if (branch == 0) {
+            host.hdr.hasGame = true;
+            host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+            host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+            host.items = {mkTracker(900, "Lap 2: 1:12.4"), mkItem(1, "First Blood", "Unlocked in hardcore  2026-10-16 21:04", true, 5),
+                          mkItem(2, "An achievement whose title runs on and on and on and on past the badge and the points", "Locked  Progress: 5/10", false, 250)};
+        } else {
+            host.raGames = raFixture();
+            host.raGames.push_back(mkAchGame(13, "A Jaguar game with a rather long title that does not fit in the row", 20, 4, true, true));
+        }
+        Shell shell(host);
+        shell.setSection(Section::Achievements);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 30);
             ImDrawData* dd = ImGui::GetDrawData();
             bool inside = dd->CmdListsCount > 0;
             for (int l = 0; l < dd->CmdListsCount; l++)

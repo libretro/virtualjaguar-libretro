@@ -10,6 +10,7 @@
 #include "settings_reset_ui.h"
 #include "shaders.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 #include "typed_ui.h"
 #include "ui_util.h"
 #include "window_chrome.h"
@@ -184,13 +185,12 @@ void drawVideoTab(App& app) {
     ImGui::Checkbox("Smooth (bilinear) filter", &p.linearFilter);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Has no effect while integer scaling is on.");
     ImGui::Checkbox("Stretch to window (ignore aspect ratio)", &p.stretch);
-    static const char* aspects[] = {"Core default", "4:3", "16:9", "8:7 (square pixels)"};
-    static const float vals[] = {0.0f, 4.0f / 3.0f, 16.0f / 9.0f, 8.0f / 7.0f};
     int sel = 0;
-    for (int i = 0; i < 4; i++)
-        if (std::abs(p.aspectOverride - vals[i]) < 1e-3f) sel = i;
+    for (int i = 0; i < kAspectChoiceCount; i++)
+        if (std::abs(p.aspectOverride - kAspectChoices[i].value) < 1e-3f) sel = i;
     ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 9.0f, 16.0f));
-    if (ImGui::Combo("Aspect ratio", &sel, aspects, 4)) p.aspectOverride = vals[sel];
+    auto aspectLabel = [](void*, int i) { return kAspectChoices[i].label; };
+    if (ImGui::Combo("Aspect ratio", &sel, aspectLabel, nullptr, kAspectChoiceCount)) p.aspectOverride = kAspectChoices[sel].value;
     if (ImGui::Checkbox("VSync", &app.vsync)) app.applyVsync();
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
@@ -343,11 +343,25 @@ void drawDiscordTab(App& app) {
 }
 
 void drawSettings(App& app) {
-    ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
-    bool open = ui::beginWindow("Settings", &app.showSettings);
+    // Opened by "More settings..." in TV mode: centred at 80 % of the viewport with TV-sized text, the pad and the keyboard driving it
+    // (tv_more_settings.h).  It is its own ImGui window ("###" keeps the title) with no saved settings: the desktop window's place
+    // and size in imgui.ini are never touched, and it comes back to them once this one is gone.
+    const bool tv = tvMoreSettingsLive(app);
+    if (tv) {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Always,
+                                ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.8f, vp->WorkSize.y * 0.8f), ImGuiCond_Always);
+    } else {
+        ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
+    }
+    // The font is pushed before Begin so the title bar and its close box are TV-sized too (the UNSCALED size: PushFont applies the DPI scale itself).
+    if (tv) ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * tvMoreSettingsFontScale(app));
+    bool open = ui::beginWindow(tv ? "Settings###vjtvmore" : "Settings", &app.showSettings, tv ? ImGuiWindowFlags_NoSavedSettings : 0);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
+        if (tv) ImGui::PopFont();
         return;
     }
     drawResetAllSettings(app);
@@ -358,20 +372,27 @@ void drawSettings(App& app) {
             app.devSelectTab.clear();
             return (ImGuiTabItemFlags)ImGuiTabItemFlags_SetSelected;
         };
-        if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video", nullptr, tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Audio", nullptr, tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("BIOS", nullptr, tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Interface", nullptr, tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
+        // The pad starts on the selected tab (live): ImGui's tabs never take default focus themselves, and the Reset button is out of reach.
+        auto tabItem = [&](const char* name, ImGuiTabItemFlags flags = 0) {
+            const bool shown = ImGui::BeginTabItem(name, nullptr, flags);
+            if (shown && tv) ImGui::SetItemDefaultFocus();
+            return shown;
+        };
+        if (tabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
+        if (tabItem("Video", tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Audio", tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Input", tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
+        if (tabItem("BIOS", tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
+        if (tabItem("Storage", tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Interface", tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Discord", tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
 #ifdef VJ_HAVE_NEURO
-        if (ImGui::BeginTabItem("Neuro", nullptr, tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Neuro", tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
 #endif
         ImGui::EndTabBar();
     }
     ImGui::End();
+    if (tv) ImGui::PopFont();
 }
 
 // ---- save-state manager --------------------------------------------------------------------

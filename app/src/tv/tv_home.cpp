@@ -48,6 +48,10 @@ public:
     const char* id() const override { return "home"; }
 
     void intent(Intent in) override {
+        if (in == Intent::Aux) {   // Y: the Achievements section, tile or no tile
+            shell_.setSection(Section::Achievements);
+            return;
+        }
         if (!built_) refresh();
         if (shelves_.empty()) return;
         LinearFocus& f = tile_[shelves_[(size_t)cur_].kind];
@@ -168,10 +172,13 @@ public:
     }
 
     std::vector<widgets::Hint> hints() const override {
-        if (shelves_.empty()) return {};   // Back on Home does nothing: no way out to hint
-        std::vector<widgets::Hint> h = {{host_.glyph(Intent::Accept), "Play"}};
-        if (resumeOk_) h.push_back({host_.glyph(Intent::Alt), "Resume state"});
-        h.push_back({host_.glyph(Intent::Menu), "Details"});
+        std::vector<widgets::Hint> h;   // Back on Home does nothing: no way out to hint
+        if (!shelves_.empty()) {
+            h.push_back({host_.glyph(Intent::Accept), "Play"});
+            if (resumeOk_) h.push_back({host_.glyph(Intent::Alt), "Resume state"});
+            h.push_back({host_.glyph(Intent::Menu), "Details"});
+        }
+        h.push_back({host_.glyph(Intent::Aux), "Achievements"});
         return h;
     }
 

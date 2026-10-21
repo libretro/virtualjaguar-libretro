@@ -17,6 +17,12 @@ Metrics metrics(float viewportH) {
     return m;
 }
 
+float bodyFontScale(float currentPx, float viewportH) {
+    if (currentPx <= 0) return 1.0f;
+    const float s = metrics(viewportH).body / currentPx;
+    return s > 1.0f ? s : 1.0f;
+}
+
 float easeOut(float t) {
     if (t <= 0) return 0;
     if (t >= 1) return 1;

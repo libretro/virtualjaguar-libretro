@@ -14,6 +14,10 @@ struct Metrics {
     float focusScale;             // focused tile scale: 1.08 (inside 1.05-1.10)
 };
 Metrics metrics(float viewportH);
+// The factor that makes text `currentPx` tall (the font size in force at scale 1, DPI included) as tall as the TV body text
+// (30u) at that viewport height; never below 1, so a window on a big screen grows and a small one is left alone.  0 or less
+// (no font yet) is 1.
+float bodyFontScale(float currentPx, float viewportH);
 
 float easeOut(float t);           // 0..1 -> 0..1, cubic
 

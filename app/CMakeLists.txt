@@ -293,6 +293,7 @@ set(VJ_APP_SOURCES
     src/emu_thread.cpp
     src/audio.cpp
     src/video.cpp
+    src/aspect_choices.cpp
     src/present_util.cpp
     src/shaders.cpp
     src/shaders_ui.cpp
@@ -301,6 +302,7 @@ set(VJ_APP_SOURCES
     src/desktop_nav.cpp
     src/desktop_nav_app.cpp
     src/desktop_nav_ui.cpp
+    src/tv_more_settings.cpp
     src/hold_arbiter.cpp
     src/remap.cpp
     src/remap_ui.cpp
@@ -376,6 +378,10 @@ set(VJ_APP_SOURCES
     src/tv/tv_home.cpp
     src/tv/tv_library.cpp
     src/tv/tv_details.cpp
+    src/tv/tv_achievements.cpp
+    src/tv/tv_overlays.cpp
+    src/tv/tv_settings.cpp
+    src/tv/tv_settings_model.cpp
     src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp

@@ -124,7 +124,7 @@ Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs
     const float pad = 24 * m.u * (0.6f + 0.4f * (sz.y / size.y));
     float x = p0.x + pad;
     if (a.thumbBox || a.thumb) {
-        const float th = sz.y - 2 * 16 * m.u, tw = th * 16.0f / 9.0f;
+        const float th = sz.y - 2 * (a.thumbSquare ? 8 : 16) * m.u, tw = a.thumbSquare ? th : th * 16.0f / 9.0f;
         const ImVec2 b0(x, p0.y + (sz.y - th) * 0.5f), b1(b0.x + tw, b0.y + th);
         dl->AddRectFilled(b0, b1, col(p.stateBg), 8 * m.u);
         if (a.thumb && a.thumbSrcW > 0 && a.thumbSrcH > 0) {   // the picture, fitted inside the box
@@ -137,15 +137,26 @@ Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs
         }
         x = b1.x + pad;
     }
-    const float maxW = p1.x - pad - x;
+    float maxW = p1.x - pad - x;
+    if (!a.value.empty()) {   // right-aligned; the label gives it room
+        const float vw = textWidth(m.caption, a.value);
+        text(dl, m.caption, ImVec2(p1.x - pad - vw, p0.y + (sz.y - m.caption) * 0.5f), col(p.textMuted), a.value);
+        maxW -= vw + pad;
+    }
     const float bodyPx = m.body * (1.0f + 0.08f * f);   // the spec's body size at rest, the focus scale when focused
-    if (a.sub.empty()) {
+    const int lines = (a.desc.empty() ? 0 : 1) + (a.sub.empty() ? 0 : 1);   // muted lines under the label, each at the 24 floor
+    if (lines == 0) {
         text(dl, bodyPx, ImVec2(x, p0.y + (sz.y - bodyPx) * 0.5f), tc, a.label, maxW);
     } else {
-        const float total = bodyPx + m.minText + 4 * m.u;
-        const float y = p0.y + (sz.y - total) * 0.5f;
+        const float total = bodyPx + lines * (m.minText + 4 * m.u);
+        float y = p0.y + (sz.y - total) * 0.5f;
         text(dl, bodyPx, ImVec2(x, y), tc, a.label, maxW);
-        text(dl, m.minText, ImVec2(x, y + bodyPx + 4 * m.u), col(p.textMuted), a.sub, maxW);
+        y += bodyPx + 4 * m.u;
+        for (const std::string* s : {&a.desc, &a.sub}) {
+            if (s->empty()) continue;
+            text(dl, m.minText, ImVec2(x, y), col(p.textMuted), *s, maxW);
+            y += m.minText + 4 * m.u;
+        }
     }
     return hit;
 }
