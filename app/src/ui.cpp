@@ -10,6 +10,7 @@
 #include "settings_reset_ui.h"
 #include "shaders.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 #include "typed_ui.h"
 #include "ui_util.h"
 #include "window_chrome.h"
@@ -342,13 +343,25 @@ void drawDiscordTab(App& app) {
 }
 
 void drawSettings(App& app) {
-    ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
-    bool open = ui::beginWindow("Settings", &app.showSettings);
+    // Opened by "More settings..." in TV mode: centred at 80 % of the viewport with TV-sized text, the pad and the keyboard driving it
+    // (tv_more_settings.h).  It is its own ImGui window ("###" keeps the title) with no saved settings: the desktop window's place
+    // and size in imgui.ini are never touched, and it comes back to them once this one is gone.
+    const bool tv = tvMoreSettingsLive(app);
+    if (tv) {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Always,
+                                ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.8f, vp->WorkSize.y * 0.8f), ImGuiCond_Always);
+    } else {
+        ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
+    }
+    bool open = ui::beginWindow(tv ? "Settings###vjtvmore" : "Settings", &app.showSettings, tv ? ImGuiWindowFlags_NoSavedSettings : 0);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
         return;
     }
+    if (tv) ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * tvMoreSettingsFontScale(app));   // the UNSCALED size: PushFont applies the DPI scale itself
     drawResetAllSettings(app);
     if (ImGui::BeginTabBar("##tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
         // dev: --show-window settings-video etc. selects a tab once
@@ -370,6 +383,7 @@ void drawSettings(App& app) {
 #endif
         ImGui::EndTabBar();
     }
+    if (tv) ImGui::PopFont();
     ImGui::End();
 }
 

@@ -649,6 +649,96 @@ static void padPopupNav() {
     io.ConfigFlags = savedFlags;
 }
 
+// "More settings" from TV mode (#991): the pad (deskSetPopupNav + our intents) and the keyboard (deskSetKeyboardNav) both drive a
+// plain ImGui window.  A focused probe with two buttons: Down moves from the first to the second, Accept presses it; the keyboard
+// is captured exactly while the window is live (F4 and Ctrl+Shift+T are gated on it), and both flags go with the window.
+static void moreSettingsNavFlags() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiConfigFlags savedFlags = io.ConfigFlags;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;   // as the app has it (initImGui)
+    int first = 0, second = 0;
+    auto frame = [&](bool live, bool focus) {
+        io.DeltaTime = 1.0f / 60.0f;
+        vj::deskSetPopupNav(live);
+        vj::deskSetKeyboardNav(live);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(40, 40));
+        ImGui::SetNextWindowSize(ImVec2(300, 200));
+        if (focus) ImGui::SetNextWindowFocus();
+        ImGui::Begin("moreprobe");
+        if (ImGui::Button("First")) first++;
+        if (ImGui::Button("Second")) second++;
+        ImGui::End();
+        ImGui::Render();
+    };
+    frame(false, true);
+    frame(false, false);
+    CHECK(!(io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) && !(io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad));
+    CHECK(!io.WantCaptureKeyboard);
+    for (int i = 0; i < 4; i++) frame(true, i == 0);
+    CHECK((io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) && (io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad));
+    CHECK(io.WantCaptureKeyboard);   // the keyboard is the window's while it is live
+    CHECK(io.ConfigNavCursorVisibleAlways && ImGui::GetCurrentContext()->NavId != 0);
+    vj::deskFeedPopupIntents({Intent::Down});
+    for (int i = 0; i < 4; i++) frame(true, false);
+    vj::deskFeedPopupIntents({Intent::Alt, Intent::Aux, Intent::SectionNext, Intent::Accept});   // only Accept means anything here
+    for (int i = 0; i < 4; i++) frame(true, false);
+    CHECK(first == 0 && second == 1);
+    CHECK(g_imguiErrors == 0);
+    // The window closes: both flags, the highlight and the capture go with it.
+    for (int i = 0; i < 3; i++) frame(false, false);
+    CHECK(!(io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) && !(io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad));
+    CHECK(!io.ConfigNavCursorVisibleAlways && !ImGui::GetCurrentContext()->NavCursorVisible && !io.WantCaptureKeyboard);
+    io.ConfigFlags = savedFlags;
+}
+
+// Review focus 12: a Back with a text box active or a combo open is ImGui's Cancel, and it leaves the item without closing anything else
+// (the glue's tvMoreSettingsClose refuses while either is up, so a pad that could not leave a text box would be stuck in it).
+static void moreSettingsBackLeavesItems() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiConfigFlags savedFlags = io.ConfigFlags;
+    char text[16] = "abc";
+    int choice = 0;
+    auto frame = [&](bool focus) {
+        io.DeltaTime = 1.0f / 60.0f;
+        vj::deskSetPopupNav(true);
+        vj::deskSetKeyboardNav(true);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(40, 40));
+        ImGui::SetNextWindowSize(ImVec2(400, 240));
+        if (focus) ImGui::SetNextWindowFocus();
+        ImGui::Begin("moreitems");
+        ImGui::InputText("##text", text, sizeof text);
+        ImGui::Combo("##combo", &choice, "One\0Two\0Three\0");
+        ImGui::End();
+        ImGui::Render();
+    };
+    auto settle = [&](int n) { for (int i = 0; i < n; i++) frame(false); };
+    auto popupOpen = [] { return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel); };
+    frame(true);
+    settle(4);
+    CHECK(!ImGui::IsAnyItemActive() && !popupOpen());
+    vj::deskFeedPopupIntents({Intent::Accept});   // the text box (the first item) takes the focus for typing
+    settle(4);
+    CHECK(ImGui::IsAnyItemActive() && io.WantTextInput);
+    vj::deskFeedPopupIntents({Intent::Back});
+    settle(4);
+    CHECK(!ImGui::IsAnyItemActive() && !io.WantTextInput);   // left, so the next Back may close the window
+    vj::deskFeedPopupIntents({Intent::Down});
+    settle(4);
+    vj::deskFeedPopupIntents({Intent::Accept});   // the combo opens
+    settle(4);
+    CHECK(popupOpen());
+    vj::deskFeedPopupIntents({Intent::Back});
+    settle(4);
+    CHECK(!popupOpen() && !ImGui::IsAnyItemActive() && choice == 0);
+    CHECK(g_imguiErrors == 0);
+    vj::deskSetPopupNav(false);
+    vj::deskSetKeyboardNav(false);
+    settle(3);
+    io.ConfigFlags = savedFlags;
+}
+
 static void baseNeverCapturesKeyboard() {
     FakeHost host;
     host.tv = true;
@@ -679,6 +769,29 @@ static void padHidesCursor() {
     down(host, shell);
     frames(host, shell, 1);
     CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_None);
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_MOUSE_MOTION;
+    e.motion.xrel = 5;
+    CHECK(!shell.handleEvent(e, g_ms));
+    frames(host, shell, 1);
+    CHECK(ImGui::GetMouseCursor() != ImGuiMouseCursor_None);
+}
+
+// A pad drove the Base layer and a desktop window then opened over it ("More settings"): the shell no longer owns the input, but the
+// pointer is still the player's the moment the mouse moves.
+static void padCursorReturnsOverDesktopWindow() {
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    Shell shell(host);
+    frames(host, shell, 2);
+    down(host, shell);
+    frames(host, shell, 1);
+    CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_None);
+    host.desktopOpen = true;
+    frames(host, shell, 1);
+    CHECK(!shell.ownsInput());
     SDL_Event e;
     SDL_zero(e);
     e.type = SDL_EVENT_MOUSE_MOTION;
@@ -3134,6 +3247,36 @@ static void ingameSettingsSlotLevels() {
     CHECK(g_imguiErrors == 0);
 }
 
+// "More settings..." in the menu's Settings slot: Accept on it asks the app for the window, and the menu stays open underneath -- it
+// holds the pause and keeps the slot -- with the shell still the one that has the input (the app's glue takes the pads before it).
+static void menuMoreSettingsKeepsMenu() {
+    FakeHost host;
+    host.loaded = true;
+    host.rows = settingsFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Settings");
+    accept(host, shell);                                 // the groups: Picture, Sound, Interface
+    down(host, shell, 2);
+    accept(host, shell);                                 // Interface: Show FPS, More settings...
+    down(host, shell);
+    CHECK(host.moreOpened == 0);
+    accept(host, shell);
+    CHECK(host.moreOpened == 1);
+    host.desktopOpen = true;                             // what the app does next
+    frames(host, shell, 3);
+    CHECK(shell.menuOpen() && shell.menuHasScreen() && shell.menuScreenId() == "settings");
+    CHECK(host.paused && host.resumed == 0);             // still holding the pause
+    CHECK(shell.ownsInput());                            // (the glue, not the shell, steps aside)
+    host.desktopOpen = false;                            // the window closed: the menu is where it was
+    frames(host, shell, 3);
+    CHECK(shell.menuOpen() && shell.menuScreenId() == "settings" && host.paused);
+    back(host, shell);                                   // rows -> groups
+    back(host, shell);                                   // groups -> the menu, on Settings
+    CHECK(!shell.menuHasScreen() && std::string(focusedLabel(shell)) == "Settings");
+    CHECK(g_imguiErrors == 0);
+}
+
 static void ingameSlotBackReturnsToRow() {
     FakeHost host;
     host.rows = settingsFixture();
@@ -3317,6 +3460,7 @@ int main() {
     escBackThenRoot();
     baseNeverCapturesKeyboard();
     padHidesCursor();
+    padCursorReturnsOverDesktopWindow();
     baseReturnsAfterGame();
     raStatusHiddenWhenEmpty();
     screenStackRoutesInput();
@@ -3373,6 +3517,8 @@ int main() {
     homeSaysScanningWhileScanning();
     desktopWindowTakesInputFromBase();
     padPopupNav();
+    moreSettingsNavFlags();
+    moreSettingsBackLeavesItems();
     settingsRailAndList();
     settingsBackAndLeftEdge();
     settingsHints();
@@ -3403,6 +3549,7 @@ int main() {
     overlaysToolRowsFromRegistry();
     overlaysHintsAndBack();
     ingameSettingsSlotLevels();
+    menuMoreSettingsKeepsMenu();
     ingameSlotBackReturnsToRow();
     ingameAchievementsSlotDraws();
     ingameAchievementsGamesListIsReadOnly();

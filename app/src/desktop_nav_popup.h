@@ -66,4 +66,14 @@ inline void deskSetPopupNav(bool on) {
     }
 }
 
+// Keyboard navigation on or off, beside deskSetPopupNav: "More settings" opened from TV mode (#991) is driven by the arrow keys,
+// Enter and Esc as well as the pad.  With it on, io.WantCaptureKeyboard is true while the window has the focus (ImGui's own
+// rule), which keeps F4 and Ctrl/Cmd+Shift+T out of the game's hands exactly as a text box does.  Off the rest of the time:
+// the UI is mouse-driven and the keyboard belongs to the game (app.cpp initImGui).  Call at the same place as deskSetPopupNav.
+inline void deskSetKeyboardNav(bool on) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (on) io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    else io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+}
+
 }  // namespace vj

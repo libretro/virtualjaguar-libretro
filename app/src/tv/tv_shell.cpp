@@ -72,7 +72,12 @@ void Shell::toggleMenu() {
 // ---- input --------------------------------------------------------------------------------------------------------
 
 bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
-    if (!ownsInput()) return false;
+    if (!ownsInput()) {
+        // A desktop window over the Base layer ("More settings", driven by a pad): the pointer is the player's again as soon as the
+        // mouse moves, or the window would have none until it closed.
+        if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) padDriven_ = false;
+        return false;
+    }
     const bool base = !open_;   // ownsInput() with the menu closed = the Base layer (TV on, no game)
     switch (e.type) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:

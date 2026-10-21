@@ -302,6 +302,7 @@ set(VJ_APP_SOURCES
     src/desktop_nav.cpp
     src/desktop_nav_app.cpp
     src/desktop_nav_ui.cpp
+    src/tv_more_settings.cpp
     src/hold_arbiter.cpp
     src/remap.cpp
     src/remap_ui.cpp

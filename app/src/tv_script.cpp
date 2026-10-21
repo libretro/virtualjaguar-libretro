@@ -34,6 +34,7 @@
 #include "devices_ui.h"
 #include "libretro.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 
 namespace vj {
 
@@ -327,6 +328,8 @@ int App::tvScriptStep() {
             else if (name == "tv") got = flag(tvMode.active());
             else if (name == "tv-screen") got = tvShell().screenId();
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
+            else if (name == "settings-open") got = flag(showSettings);             // the desktop Settings window
+            else if (name == "tv-more") got = flag(tvMoreSettingsLive(*this));      // ... opened by "More settings..." in TV mode: its pads are its own
             else if (name == "home-visible") got = flag(homeVisible());            // the desktop library standing in for the game
             else if (name == "library-window") got = flag(library.show);           // the desktop Game library window
             else if (name == "desk-pad") got = flag(deskPadActive(*this));          // the desktop library owns the pads (#1021)

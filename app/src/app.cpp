@@ -11,6 +11,7 @@
 #include "theme_style.h"
 #include "tv/tv_app_host.h"
 #include "tv/tv_shell.h"
+#include "tv_more_settings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -237,8 +238,8 @@ void App::saveConfig() {
     fonts::store(cfg, fontSettings);
     if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
-    // ui.tv_mode is read, never written (no UI changes it yet): a stored value would pin a default that is meant to move
-    // (Auto on nightlies, #991 Task 16) for everyone who ran this build.  The Settings combo will write it when it exists.
+    // ui.tv_mode is never written here: a stored value would pin a default that is meant to move (Auto on nightlies, #991
+    // Task 16) for everyone who ran this build.  Only the TV Settings row writes it, on change (AppHost::setSetting).
     if (tv::effectiveSetting(tvSetting) == tv::TvSetting::Manual && !tvFromCli_) cfg.setBool("ui.tv_manual_on", tvMode.active());
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("ui.tray", trayIcon);
@@ -1634,6 +1635,10 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (alt) setFullscreen(!fullscreen);
         break;
     case SDLK_ESCAPE:
+        if (tvMoreSettingsLive(*this)) {   // "More settings" opened from TV mode: Esc closes it, or is the combo's / text box's; never "leave fullscreen"
+            tvMoreSettingsClose(*this);
+            break;
+        }
         if (tvShell().ownsInput() && !tvShell().backAtRoot()) break;   // Back on a TV screen, not "leave fullscreen"
         if (fullscreen) setFullscreen(false);
         break;
@@ -1704,6 +1709,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     }
     input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
     tvHost_->noteInput(e);    // which device the hints should name (the shell consumes events InputManager never sees)
+    if (tvMoreSettingsHandleEvent(*this, e, SDL_GetTicks())) return;   // "More settings" is up: its window has the pads and keys, even over the in-game menu (tv_more_settings.h)
     if (tvShell().ownsInput() && !input.capturing() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys (not while a binding is being captured)
     // (phase 4's Auto controller trigger, TvMode::onPadPress, goes before this call: desktop nav sees a press only when it did not switch TV on)
     if (deskPadHandleEvent(*this, e, SDL_GetTicks())) return;   // the desktop library has the pad (desktop_nav_app.h)

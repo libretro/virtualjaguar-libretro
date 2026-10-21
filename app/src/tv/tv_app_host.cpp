@@ -12,6 +12,7 @@
 #include "shaders_ui.h"
 #include "theme.h"
 #include "tv/tv_settings_model.h"
+#include "tv_more_settings.h"
 
 namespace vj::tv {
 
@@ -300,7 +301,7 @@ void AppHost::setSetting(const std::string& id, int index) {
     app_.saveConfig();
 }
 
-void AppHost::openMoreSettings() { app_.showSettings = true; }
+void AppHost::openMoreSettings() { tvMoreSettingsOpen(app_); }   // the window, with the pad handed to it (tv_more_settings.h)
 
 // ---- achievements ------------------------------------------------------------------------------------------------------
 // All UI-thread calls into Achievements (the plan's "Threading" list): they take its client lock themselves.
