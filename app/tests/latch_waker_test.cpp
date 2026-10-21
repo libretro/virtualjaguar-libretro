@@ -1,16 +1,24 @@
 // LatchWaker (latch_waker.h, #1026): the UI thread's timed event waits end on a wake event pushed by a thread of its
 // own, not on SDL's timeout.  SDL events only (no window), real clock.  Without a video device SDL's wait polls, so the
-// wake is timed when it was pushed (its event timestamp), not when this thread saw it; the bounds allow a loaded
-// runner (a shared VM can stall a thread for milliseconds): every wake within 10 ms, all but 2 of 20 within 3 ms.  The
-// Studio traces (VJ_PERF_TRACE + the stall probe) measure the real Cocoa wait.  Runs on every platform (start(true)),
-// so the ThreadSanitizer job covers it; the app starts it on macOS only.
+// wake is timed when it was pushed (its event timestamp), not when this thread saw it.  Its lateness is judged against
+// the host's own timers: a thread at the waker's QoS sleeping to the same deadlines with SDL_DelayPrecise (a hosted
+// macOS VM oversleeps 3-8 ms; the Studio well under 1).  The waker may be at most 2 ms later at p90 and 10 ms at worst.
+// The Studio traces (VJ_PERF_TRACE + the stall probe) measure the real Cocoa wait.  Runs on every platform
+// (start(true)), so the ThreadSanitizer job covers it; the app starts it on macOS only.
 #include "latch_waker.h"
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <thread>
+#include <vector>
+
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
 
 namespace {
 
@@ -28,9 +36,16 @@ int g_fail = 0;
 using vj::LatchWaker;
 
 constexpr uint64_t kMs = 1000000;
-constexpr uint64_t kLateNs = 3 * kMs;    // on time, for all but kOutliers of the waits
-constexpr uint64_t kLostNs = 10 * kMs;   // a wake this late is a bug even on a loaded runner
-constexpr int kOutliers = 2;
+constexpr int kWaits = 20;
+constexpr uint64_t kP90SlackNs = 2 * kMs;   // the waker vs a precise sleep on the same host, at p90 ...
+constexpr uint64_t kMaxSlackNs = 10 * kMs;  // ... and at worst
+uint64_t g_refMaxNs = 0;                    // the reference sleep's worst lateness
+
+uint64_t dueAfter(int i) { return SDL_GetTicksNS() + 8 * kMs + (uint64_t)i * 300000; }
+uint64_t p90(std::vector<uint64_t> v) {
+    std::sort(v.begin(), v.end());
+    return v[v.size() * 9 / 10];
+}
 
 void drain() {
     SDL_Event e;
@@ -54,25 +69,46 @@ unsigned wakesWithin(Sint32 ms, uint64_t& firstNs) {
     }
 }
 
+// The host's timer lateness right now: SDL_DelayPrecise to a deadline like the waker's, on a thread at its QoS.
+uint64_t referenceLateness(int i) {
+    uint64_t late = 0;
+    std::thread t([&] {
+#ifdef __APPLE__
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+        const uint64_t due = dueAfter(i);
+        SDL_DelayPrecise(due - SDL_GetTicksNS());
+        const uint64_t at = SDL_GetTicksNS();
+        late = at > due ? at - due : 0;
+    });
+    t.join();
+    return late;
+}
+
+// Each wait is paired with a reference sleep just before it, so both see the same load.
 void wakesOnTime(LatchWaker& w) {
     drain();
-    int late = 0;
-    for (int i = 0; i < 20; i++) {
-        const uint64_t due = SDL_GetTicksNS() + 8 * kMs + (uint64_t)i * 300000;
+    std::vector<uint64_t> late, ref;
+    for (int i = 0; i < kWaits; i++) {
+        ref.push_back(referenceLateness(i));
+        const uint64_t due = dueAfter(i);
         w.arm(due);
         SDL_Event e;
-        const bool got = SDL_WaitEventTimeout(&e, 8 + i / 3 + LatchWaker::kBackstopMs + 20);
+        const bool got = SDL_WaitEventTimeout(&e, 8 + i / 3 + LatchWaker::kBackstopMs + 40);
         w.disarm();
         const uint64_t at = got ? e.common.timestamp : SDL_GetTicksNS();   // when the waker pushed it
-        CHECK(got && LatchWaker::isWake(e), "wait %d: no wake event (got %d, type 0x%x)", i, (int)got, got ? e.type : 0);
+        CHECK(got && LatchWaker::isWake(e), "wait %d: no wake event (got %d, type 0x%x)", i, (int)got,
+              got ? e.type : 0);
         CHECK(at + 200000 >= due, "wait %d: woke %.3f ms early", i, (double)(due - at) / 1e6);
-        CHECK(at <= due + kLostNs, "wait %d: woke %.3f ms late", i, (double)(at - due) / 1e6);
-        if (at > due + kLateNs) {
-            late++;
-            std::printf("note: wait %d woke %.3f ms late\n", i, (double)(at - due) / 1e6);
-        }
+        late.push_back(at > due ? at - due : 0);
     }
-    CHECK(late <= kOutliers, "%d of 20 wakes over %.0f ms late", late, (double)kLateNs / 1e6);
+    g_refMaxNs = *std::max_element(ref.begin(), ref.end());
+    const uint64_t wp = p90(late), rp = p90(ref), wm = *std::max_element(late.begin(), late.end());
+    std::printf("latch_waker: lateness p90 %.3f ms max %.3f ms; precise sleep p90 %.3f ms max %.3f ms\n", wp / 1e6,
+                wm / 1e6, rp / 1e6, g_refMaxNs / 1e6);
+    CHECK(wp <= rp + kP90SlackNs, "p90 lateness %.3f ms, a precise sleep's %.3f ms", wp / 1e6, rp / 1e6);
+    CHECK(wm <= g_refMaxNs + kMaxSlackNs, "worst lateness %.3f ms, a precise sleep's %.3f ms", wm / 1e6,
+          g_refMaxNs / 1e6);
 }
 
 void disarmedNeverWakes(LatchWaker& w) {
@@ -92,8 +128,8 @@ void rearmMovesTheWake(LatchWaker& w) {
     const unsigned n = wakesWithin(60, first);
     w.disarm();
     CHECK(n == 1, "%u wakes after a re-arm, want 1", n);
-    CHECK(first && first >= t + 10 * kMs - 200000 && first <= t + 10 * kMs + kLostNs, "re-armed wake at +%.3f ms, want +10",
-          first ? (double)(first - t) / 1e6 : -1.0);
+    CHECK(first && first >= t + 10 * kMs - 200000 && first <= t + 10 * kMs + g_refMaxNs + kMaxSlackNs,
+          "re-armed wake at +%.3f ms, want +10", first ? (double)(first - t) / 1e6 : -1.0);
 }
 
 void anEventEndsTheWaitFirst(LatchWaker& w) {

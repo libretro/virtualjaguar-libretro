@@ -1,20 +1,21 @@
 // The UI thread's timed event waits on macOS (#1026): the late latch's wait and the threaded loop's nap.
 //
 // SDL_WaitEventTimeout's timeout is the Cocoa run loop's own timeout, which Core Foundation delivers from a dispatch
-// worker on the global queue for qos_class_main(): the QoS the main thread was launched with, which raising the thread's
-// QoS later does not change (CFRunLoop.c __CFRunLoopRun; libpthread qos_class_main).  A LaunchServices launch gets
-// user-interactive; a launch from a terminal gets the default QoS, and under CPU load that worker runs 3-20 ms late
-// while the UI thread sleeps in the run loop past its deadline and misses the vblank.  (A CFRunLoopTimer on the main
-// run loop does not help there either: from a terminal launch it fired ~3 ms late, every time.)
+// worker on the global queue for qos_class_main(): the QoS the main thread was launched with, which raising the
+// thread's QoS later does not change (CFRunLoop.c __CFRunLoopRun; libpthread qos_class_main).  A LaunchServices launch
+// gets user-interactive; a launch from a terminal gets the default QoS, and under CPU load that worker runs 3-20 ms
+// late while the UI thread sleeps in the run loop past its deadline and misses the vblank.  (A CFRunLoopTimer on the
+// main run loop does not help there either: from a terminal launch it fired ~3 ms late, every time.)
 //
 // LatchWaker ends the wait from a thread of its own at user-interactive QoS instead: it sleeps precisely until the
-// deadline and pushes an SDL event, which wakes the UI thread's run loop at once.  SDL_WaitEventTimeout keeps a
-// later timeout as a backstop.  The sleep is 1 ms slices, as in SDL_DelayPrecise: one long timed condition wait got
-// 3-5 ms of timer coalescing outside an app launch.
+// deadline and pushes an SDL event, which wakes the UI thread's run loop at once.  SDL_WaitEventTimeout keeps a later
+// timeout as a backstop.  The sleep is 1 ms slices, then SDL_DelayPrecise for the last 3-4 ms: one long timed condition
+// wait got 3-5 ms of timer coalescing outside an app launch.
 //
-// UI thread: arm(deadline) before the wait, disarm() after it; isWake(e) is the wake event (a late one from an
-// earlier wait too, which callers drop).  The waker thread only pushes events.  It sees a new deadline between slices,
-// so a wait armed while it is mid-slice can end up to ~1 ms late (SDL's timeout was 3-20 ms).  macOS only: elsewhere
+// UI thread: arm(deadline) before the wait, disarm() after it; isWake(e) is the wake event (a late one from an earlier
+// wait too, which callers drop).  The waker thread only pushes events.  It sees a new deadline between slices, so a
+// wait armed while it is mid-slice or in its final precise sleep can end up to ~4 ms late (rare: a new wait follows an
+// event-ended one, and both end near the same latch wake time) (SDL's timeout was 3-20 ms).  macOS only: elsewhere
 // start() returns false and the plain wait is used.
 #pragma once
 
@@ -37,7 +38,10 @@ class LatchWaker {
 public:
     static constexpr Sint32 kCode = 0x564A4C57;   // 'VJLW': an SDL_EVENT_USER with this code is a wake
     static constexpr Sint32 kBackstopMs = 5;      // SDL_WaitEventTimeout's own timeout, this far past the deadline
-    static constexpr uint64_t kSliceNs = 1000000;   // the waker sleeps in slices this long, then SDL_DelayPrecise
+    static constexpr uint64_t kSliceNs = 1000000;     // the waker sleeps in slices this long ...
+    static constexpr uint64_t kPreciseNs = 4000000;   // ... until 3-4 ms are left for SDL_DelayPrecise, which learns
+                                                      // the host's oversleep from its own 1 ms sleeps (given < 2 ms it
+                                                      // cannot, and a macOS sub-ms sleep oversleeps ~0.5 ms)
 
     ~LatchWaker() { stop(); }
 
@@ -96,7 +100,7 @@ private:
             }
             const auto current = [&] { return gen_.load() == g && !quit_.load(); };
             uint64_t now = SDL_GetTicksNS();
-            while (current() && now + kSliceNs < at) {
+            while (current() && now + kPreciseNs < at) {
                 SDL_DelayNS(kSliceNs);
                 now = SDL_GetTicksNS();
             }
