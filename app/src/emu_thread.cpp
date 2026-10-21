@@ -90,6 +90,16 @@ void EmuThread::post(std::function<void()> fn) {
     fn();
 }
 
+void EmuThread::debugPost(std::function<void()> fn) {
+    if (abandoned()) return;
+    if (threaded() && !onEmuThread()) {
+        if (cmds_.post(std::move(fn), EmuCommands::Lane::Debug)) return;   // (post() leaves `fn` alone when it refuses it)
+        waitFinished();
+        if (abandoned()) return;
+    }
+    fn();
+}
+
 void EmuThread::waitFinished() {
     std::unique_lock<std::mutex> l(mu_);
     cv_.wait(l, [this] { return finished_ || state_.load() == State::Abandoned; });
@@ -151,7 +161,9 @@ void EmuThread::loop() {
     PacingClock clock;
     bool pacing = false;   // the clock was reset since frames last stopped (a pause is never owed time)
     while (!stop_.load()) {
-        if (cmds_.drain(onError) > 0) client_->afterCommands();
+        size_t ran = cmds_.drain(onError, EmuCommands::Lane::Frame);
+        ran += cmds_.drain(onError, EmuCommands::Lane::Debug);
+        if (ran > 0) client_->afterCommands();
         if (stop_.load()) break;
         const bool budget = advanceLeft_.load() > 0;
         const bool runnable = client_->canRun();

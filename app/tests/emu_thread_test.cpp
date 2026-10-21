@@ -330,6 +330,10 @@ void testJoinTimeout() {
         ran = true;
         return 1;
     }) == 0 && !ran, "after abandoning, call() runs nothing and returns a default value");
+    CHECK(e->debugCall([&ran] {
+        ran = true;
+        return 1;
+    }) == 0 && !ran, "after abandoning, debugCall() runs nothing and returns a default value");
     CHECK(!e->callFor(std::chrono::milliseconds(10), [&ran] { ran = true; }) && !ran, "nor callFor()");
     c->block = false;   // let the abandoned thread finish its frame and exit; it runs the queued callFor on the way out
     for (int i = 0; i < 1000 && !late->load(); i++) sleepMs(1);
@@ -483,6 +487,76 @@ void testWaitHook() {
     CHECK(e.stop(), "stop");
 }
 
+// #967 phase 3: the debug lane. Inline it runs at once; threaded it runs on the emulation thread, wakes a parked
+// (paused) loop, waits for a frame in progress and runs at the boundary BEFORE the next frame starts, and runs the
+// wait hook like call().
+void testDebugLane() {
+    {
+        EmuThread e;
+        FakeClient c;
+        CHECK(e.start(EmuThread::Mode::Inline, c), "inline start");
+        int x = 0;
+        e.debugPost([&x] { x = 1; });
+        CHECK(x == 1, "inline debugPost runs at once");
+        CHECK(e.debugCall([&x] { return x + 1; }) == 2, "inline debugCall runs at once");
+    }
+    EmuThread e;
+    FakeClient c;
+    e.setPaused(true);   // no frames: only a command can wake the loop
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "threaded start");
+    CHECK(e.debugCall([&e] { return e.onEmuThread(); }), "a debugCall runs on the emulation thread");
+    CHECK(e.debugCall([&e] { return e.debugCall([] { return 7; }); }) == 7,
+          "a debugCall made on the emulation thread runs inline");
+    std::atomic<bool> ran{false};
+    const Clock::time_point t0 = Clock::now();
+    e.debugPost([&ran] { ran = true; });
+    for (int i = 0; i < 400 && !ran.load(); i++) sleepMs(1);
+    CHECK(ran.load() && since(t0) < 0.2, "a debugPost runs on a paused thread well inside its 250 ms idle wait (%.3f s)", since(t0));
+    CHECK(c.frames == 0, "...without running a frame");
+    std::atomic<bool> late{false};
+    e.debugPost([&late] { late = true; });
+    CHECK(e.stop() && late.load(), "stop() drains the debug lane too");
+}
+
+void testDebugCallWaitsForTheFrame() {
+    EmuThread e;
+    FakeClient c;
+    c.holdAt = 1;   // the first frame counts itself, then holds
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && c.frames.load() < 1; i++) sleepMs(1);
+    std::atomic<int> framesWhenRun{-1};
+    std::atomic<bool> returned{false};
+    std::thread caller([&] {
+        e.debugCall([&] { framesWhenRun = c.frames.load(); });
+        returned = true;
+    });
+    sleepMs(80);
+    CHECK(!returned.load() && framesWhenRun.load() == -1, "a debugCall waits while a frame is in progress");
+    c.holdAt = -1;
+    caller.join();
+    CHECK(framesWhenRun.load() == 1, "it runs at the frame boundary, before the next frame starts (frames %d)",
+          framesWhenRun.load());
+    CHECK(e.stop(), "stop");
+}
+
+void testDebugCallWaitHook() {
+    EmuThread e;
+    FakeClient c;
+    std::atomic<int> calls{0};
+    e.setWaitHook([&](double, unsigned) { calls++; });
+    c.holdAt = 1;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && c.frames.load() < 1; i++) sleepMs(1);
+    std::thread release([&c] {
+        sleepMs(450);
+        c.holdAt = -1;
+    });
+    e.debugCall([] { return 0; });
+    release.join();
+    CHECK(calls.load() >= 3, "a debugCall behind a slow frame runs the wait hook like call() (%d)", calls.load());
+    CHECK(e.stop(), "stop");
+}
+
 }  // namespace
 
 int main() {
@@ -504,6 +578,9 @@ int main() {
     testJoinTimeout();
     testPendingCallAbandoned();
     testWaitHook();
+    testDebugLane();
+    testDebugCallWaitsForTheFrame();
+    testDebugCallWaitHook();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

@@ -3,9 +3,9 @@
 # these (ctest -L emu_thread).
 #
 #   frame_exchange_unit   FrameExchange: newest wins, the reader's slot is never written, no tearing, content epochs
-#   emu_commands_unit     EmuCommands: FIFO per producer, timed waits, close-and-drain, errors
+#   emu_commands_unit     EmuCommands: FIFO per producer, the frame and debug lanes, timed waits, close-and-drain, errors
 #   pacing_clock_unit     PacingClock mode A against a fake clock and a fake 512-frame-chunk audio device
-#   emu_thread_unit       EmuThread: inline vs threaded, call/post ordering, pause/advance, stop/join timeout, shutdown races
+#   emu_thread_unit       EmuThread: inline vs threaded, call/post/debugCall ordering, pause/advance, stop/join timeout, shutdown races
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
 #   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
