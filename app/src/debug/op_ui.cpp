@@ -484,15 +484,17 @@ void drawObjectsTool(App& app) {
                        app.netplay.configured()})) {
         case OpStep::Advance:
             ctx.stepFrame = [&app] {
-                app.debug.requestRefresh();   // the serial bump is what makes the armed snapshot refill after the frame
                 app.emu.advance(1);
+                // The bump comes AFTER the frame: a fill queued before it ran at the old serial and may have seen the
+                // snapshot still armed; the new serial makes the copier refill it.
+                app.debug.requestRefresh();
             };
             break;
         case OpStep::Inline:
             ctx.stepFrame = [&app] {
-                app.debug.requestRefresh();
                 app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
                 app.video.upload(app.host.frame());
+                app.debug.requestRefresh();          // after the frame, as above
                 app.debug.wakeViews();               // inline this runs the copier at once
             };
             break;

@@ -10,7 +10,9 @@
 // empty inline (headless, tests), and the action then runs right where it is called: same code, one thread.
 //   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_, threadBlocked_,
 //                    haltAvailable_, the halt fields (halted_, queued_, ... inline-only until phase 3b), seenGen_,
-//                    hadCore_, and the public callbacks.
+//                    hadCore_, and the public callbacks.  Exception: regions_ and lastPokeError_ may be written inside
+//                    a callCore lambda (regions() / poke() nested in a window's one-shot action) while the UI thread
+//                    waits in that call; the call's completion orders those writes before the UI reads them.
 //   any thread:      core() (its getters are atomics), views() (one mutex inside), refreshSerial() / requestRefresh().
 // The windows never touch the core: they set() a request on views(), call wakeViews() and read() the buffer.
 #pragma once

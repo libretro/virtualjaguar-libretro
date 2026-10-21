@@ -183,7 +183,7 @@ else()
     target_compile_options(vj_debug_op_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 add_test(NAME debug_op_unit COMMAND vj_debug_op_test)
-set_tests_properties(debug_op_unit PROPERTIES TIMEOUT 60)
+set_tests_properties(debug_op_unit PROPERTIES TIMEOUT 60 LABELS emu_thread)
 
 #   debug_op_e2e         the Object list tool against the REAL core on a public ROM (yarc): arm the snapshot,
 #                        run a frame, decode the list the OP walked (a stop object ends it, bitmap objects are

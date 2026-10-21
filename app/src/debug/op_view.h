@@ -7,9 +7,7 @@
 // thread (DebugSession::postCore / CoreJob), and the painter is one callCore.
 #pragma once
 
-#include <atomic>
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -133,8 +131,6 @@ private:
     bool imageDirty_ = true;
     DebugViews::Id snapId_ = DebugViews::kNoId, geomId_ = DebugViews::kNoId;
     uint64_t armGen_ = 0;   // bumps per arm; the snapshot request's `since` carries it, so only the answer to the newest arm is taken
-    std::shared_ptr<std::atomic<uint64_t>> armTok_ = std::make_shared<std::atomic<uint64_t>>(0);   // the posted arm checks it
-    std::vector<DebugViews::Id> retired_;   // snapshot request ids released since the last ensureViews()
     unsigned pollGen_ = 0;
     bool epochSet_ = false;
     uint64_t epochSeen_ = 0;

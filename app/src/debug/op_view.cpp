@@ -55,10 +55,6 @@ void OpViewModel::setObjects(std::vector<OpObject> objs) {
 
 void OpViewModel::ensureViews(DebugSession& s) {
     if (snapId_ == DebugViews::kNoId) {
-        // A posted arm that was between its check and its reset when the window closed may have re-created the old
-        // request; sweep the retired ids now (clearing an unknown id is a no-op).
-        for (DebugViews::Id id : retired_) s.views().clear(id);
-        retired_.clear();
         ViewRequest r;
         r.kind = ViewRequest::Kind::OpSnapshot;
         r.since = (unsigned)armGen_;
@@ -74,10 +70,12 @@ void OpViewModel::ensureViews(DebugSession& s) {
 }
 
 void OpViewModel::releaseViews(DebugSession& s) {
-    armTok_->store(0);   // an arm still queued must not re-create the request
     if (snapId_ != DebugViews::kNoId) {
-        s.views().clear(snapId_);
-        retired_.push_back(snapId_);
+        // Posted, not cleared here: an arm still queued would re-create the request after a clear from this thread.
+        // The lane is FIFO, so this lands behind it (inline it runs at once).  The views live in the session.
+        DebugViews* v = &s.views();
+        const DebugViews::Id id = snapId_;
+        s.postCore([v, id] { v->clear(id); });
     }
     if (geomId_ != DebugViews::kNoId) s.views().clear(geomId_);
     snapId_ = geomId_ = DebugViews::kNoId;
@@ -92,17 +90,14 @@ void OpViewModel::arm(DebugSession& s) {
     if (!s.enabled()) return;
     ensureViews(s);   // the posted lambda below must never allocate an id this model does not know
     const uint64_t gen = ++armGen_;
-    armTok_->store(gen);
     waiting_ = true;
     arms_++;
     // The buffer is reset AFTER the arm has applied on the emulation thread, so one filled before the arm can never
-    // be mistaken for its answer.  A newer arm (or a release) makes this one skip the reset.
+    // be mistaken for its answer.  Two arms queued together reset it twice; only the newer `since` is absorbed.
     DebugSession* sp = &s;
-    std::shared_ptr<std::atomic<uint64_t>> tok = armTok_;
     const DebugViews::Id id = snapId_;
-    s.postCore([sp, tok, id, gen] {
+    s.postCore([sp, id, gen] {
         sp->core().opSnapshotArm();
-        if (tok->load() != gen) return;
         ViewRequest r;
         r.kind = ViewRequest::Kind::OpSnapshot;
         r.since = (unsigned)gen;
@@ -174,6 +169,7 @@ bool OpViewModel::applyWalk(DebugSession& s) {
 }
 
 void OpViewModel::commit(std::vector<OpObject> objs, size_t count, unsigned halfline) {
+    walkGen_++;   // a fallback walk still on its way belongs to an older snapshot
     objs_ = std::move(objs);
     snapshotCount_ = count;
     halfline_ = halfline;
@@ -371,6 +367,7 @@ bool OpViewModel::paint(DebugSession& s, int x, int y, uint32_t value, std::stri
     std::snprintf(b, sizeof b, "wrote %u byte%s at %06X", p.n, p.n == 1 ? "" : "s", p.addr);
     status = b;
     imageDirty_ = true;   // the poke also bumped the session serial; redraw from DRAM
+    renderGen_++;         // a render posted before the poke shows the old pixels: drop it
     startRender(s);
     applyRender(s);       // inline the new pixels are already there
     return true;

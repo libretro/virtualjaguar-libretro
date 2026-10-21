@@ -1005,25 +1005,31 @@ static void testViewModelNeverTouchesTheCore() {
     vm.update(f.s);                                           // a live tick: one arm (post) and one fill, off-core zero
     CHECK(f.corePosts > m.corePosts && CountingIface::offCore() == 0);
 }
-static void testRenderLeavesTheUiThread() {
-    UiFixture f;
-    std::vector<std::function<void()>> q;                     // a deferred emulation thread
-    f.s.corePost = [&](std::function<void()> fn) { q.push_back(std::move(fn)); };
-    auto drain = [&] {                                        // what the emulation thread does at its next boundary
+// A deferred emulation thread over the fixture's session (what a threaded App does): posts queue, drain() runs them.
+struct DeferredCore {
+    std::vector<std::function<void()>> q;
+    explicit DeferredCore(UiFixture& f) {
+        f.s.corePost = [this](std::function<void()> fn) { q.push_back(std::move(fn)); };
+    }
+    void drain() {
         std::vector<std::function<void()>> work = std::move(q);
         q.clear();
         for (auto& fn : work) { CountingIface::OnCore g; fn(); }
-    };
+    }
+};
+static void testRenderLeavesTheUiThread() {
+    UiFixture f;
+    DeferredCore d(f);                                        // what the emulation thread does at its next boundary: drain()
     OpViewModel vm;
     vm.update(f.s);                                           // queues the fill (snapshot request not answered yet), then the arm
-    drain();                                                  // fill, then the arm applied (the request is reset after it)
+    d.drain();                                                // fill, then the arm applied (the request is reset after it)
     vm.update(f.s);                                           // a fill is pending again: queued
-    drain();                                                  // the snapshot is filled
+    d.drain();                                                // the snapshot is filled
     vm.update(f.s);                                           // absorbs; queues the first render
     const unsigned peeks = CountingIface::count(CountingIface::Peek);
     CHECK(vm.haveSnapshot() && vm.image() == nullptr);        // not rendered yet: nothing ran on this thread
     CHECK(CountingIface::offCore() == 0);
-    drain();
+    d.drain();
     CHECK(CountingIface::count(CountingIface::Peek) > peeks);
     vm.update(f.s);
     CHECK(vm.image() != nullptr && vm.image()->w == 16);
@@ -1038,18 +1044,6 @@ static void testPaintIsOneCoreCall() {
     CHECK(f.coreCalls == k + 1 && f.mock.dram()[MockDebugIface::kBitmapData + 35] == 200);
     CHECK(vm.image()->rawAt(3, 2) == 200 && CountingIface::offCore() == 0);
 }
-// A deferred emulation thread over the fixture's session (what a threaded App does): posts queue, drain() runs them.
-struct DeferredCore {
-    std::vector<std::function<void()>> q;
-    explicit DeferredCore(UiFixture& f) {
-        f.s.corePost = [this](std::function<void()> fn) { q.push_back(std::move(fn)); };
-    }
-    void drain() {
-        std::vector<std::function<void()>> work = std::move(q);
-        q.clear();
-        for (auto& fn : work) { CountingIface::OnCore g; fn(); }
-    }
-};
 static void testArmAnswerIsNeverThePreArmSnapshot() {
     UiFixture f;
     DeferredCore d(f);
@@ -1089,6 +1083,44 @@ static void testArmedEmptyAsksAgainOnlyWhileRunning() {
     vm.update(f.s, true);  d.drain();                         // asked again after the frame ran
     vm.update(f.s, true);
     CHECK(!vm.waiting() && vm.haveSnapshot());
+}
+static void testStepRefillsAfterTheFrame() {
+    // The window's "Step a frame" while paused (threaded): a fill queued before the frame runs at the pre-frame
+    // serial and sees the snapshot still armed; the serial bump AFTER the frame is what refills it.
+    UiFixture f;
+    DeferredCore d(f);
+    OpViewModel vm;
+    vm.update(f.s);  d.drain();  vm.update(f.s);  d.drain();  vm.update(f.s);  d.drain();   // first snapshot, rendered
+    vm.update(f.s);
+    CHECK(vm.haveSnapshot() && !vm.waiting());
+    vm.live = false;
+    f.mock.opReady = false;                                   // the walk has not happened: "armed"
+    vm.arm(f.s);  d.drain();                                  // the Arm snapshot button (the arm applies at once)
+    vm.update(f.s, false);                                    // paused: queues a fill at the current serial
+    CHECK(!d.q.empty());
+    f.s.requestRefresh();                                     // the OLD order: bump first...
+    d.drain();                                                // ...the queued fill runs before the frame: still armed
+    f.mock.opReady = true;                                    // the frame ran
+    vm.update(f.s, false);  d.drain();  vm.update(f.s, false);
+    CHECK(vm.waiting());                                      // nothing was stale at the new serial: stuck (what the fix avoids)
+    f.s.requestRefresh();                                     // the fix: bump AFTER the frame
+    vm.update(f.s, false);  d.drain();  vm.update(f.s, false);
+    CHECK(!vm.waiting() && vm.objects().size() == 4);
+}
+static void testReleaseWithAnArmQueuedLeavesNoRequest() {
+    UiFixture f;
+    DeferredCore d(f);
+    OpViewModel vm;
+    vm.update(f.s);                                           // queues the fill and the arm
+    CHECK(f.s.views().count() == 2);
+    vm.releaseViews(f.s);                                     // the window closes before the arm applied
+    d.drain();                                                // fill, arm (resets the request), then the posted clear
+    CHECK(f.s.views().count() == 0);
+    vm.releaseViews(f.s);  vm.releaseViews(f.s);              // closed windows call it every frame: nothing to do
+    CHECK(d.q.empty());
+    vm.update(f.s);  d.drain();  vm.update(f.s);  d.drain();  // reopening works from scratch
+    vm.update(f.s);
+    CHECK(vm.haveSnapshot() && f.s.views().count() == 2);
 }
 static void testStaleRenderDroppedAcrossACoreSwitch() {
     UiFixture f;
@@ -1186,6 +1218,8 @@ int main() {
     testArmAnswerIsNeverThePreArmSnapshot();
     testArmedEmptyAsksAgainOnlyWhileRunning();
     testStaleRenderDroppedAcrossACoreSwitch();
+    testStepRefillsAfterTheFrame();
+    testReleaseWithAnArmQueuedLeavesNoRequest();
     testPngExport();
     std::printf("debug_op_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
