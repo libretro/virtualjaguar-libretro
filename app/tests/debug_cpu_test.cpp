@@ -369,9 +369,10 @@ static void testCpuFeedReadsBuffersOnly() {
     // The same request restated changes nothing; a new refresh serial adopts a fresh buffer.
     feed.want(f.s, VJ_DBG_TARGET_GPU, 0xF03000, 4);
     CHECK(!feed.update(f.s));
+    const unsigned g0 = feed.rowsGen();
     f.s.requestRefresh();
     f.s.wakeViews();
-    CHECK(feed.update(f.s));
+    CHECK(feed.update(f.s) && feed.rowsGen() == g0 + 1);   // every adoption of rows is counted: an older copy is stale
     // A new core forgets what was adopted; releasing drops the requests.
     f.s.views().bumpEpoch();
     CHECK(feed.update(f.s) && !feed.answered() && !feed.haveRegs() && feed.regsTarget() == -1);
@@ -410,6 +411,65 @@ static void testDisasmNav() {
     CHECK(nav.take(a) && a == want);
 }
 
+// The stale-answer rules around the backwards walks, with a deferred queue standing in for the emulation thread.
+static void testNavTracker() {
+    UiFixture f;
+    std::vector<std::function<void()>> q;
+    f.s.corePost = [&](std::function<void()> fn) { q.push_back(std::move(fn)); };
+    auto drain = [&] {
+        std::vector<std::function<void()>> work = std::move(q);
+        q.clear();
+        for (auto& fn : work) {
+            CountingIface::OnCore g;
+            fn();
+        }
+    };
+    const unsigned want = backStart(f.mock.iface(), VJ_DBG_TARGET_M68K, 0x1010, 4);
+    unsigned gens[VJ_DBG_NUM_TARGETS] = {5, 7, 9};
+    NavTracker nav;
+    NavTracker::Applied a;
+    CHECK(nav.free());
+
+    // Outstanding: nothing to apply yet, the slot stays taken, the answer then applies to the tab it was posted for.
+    nav.back(f.s, VJ_DBG_TARGET_GPU, gens[1], 0x1010, 4);
+    CHECK(!nav.free() && nav.busyFor(VJ_DBG_TARGET_GPU) && !nav.busyFor(VJ_DBG_TARGET_M68K) && !nav.prevOutstanding(VJ_DBG_TARGET_GPU));
+    CHECK(!nav.apply(f.s, gens, a) && !nav.free());
+    drain();
+    CHECK(nav.apply(f.s, gens, a) && a.tab == VJ_DBG_TARGET_GPU && nav.free());   // (a tab switch does not matter: the walk knows its tab)
+    CHECK(!nav.apply(f.s, gens, a));                                              // never twice
+
+    // The tab jumped (Go to, PC, wheel: its generation moved) before the answer arrived: dropped, the slot frees.
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    gens[0]++;
+    drain();
+    CHECK(!nav.apply(f.s, gens, a) && nav.free());
+
+    // A fresh walk after that applies, with the address the walk computed.
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    drain();
+    CHECK(nav.apply(f.s, gens, a) && a.tab == VJ_DBG_TARGET_M68K && a.addr == want);
+
+    // A new core (epoch bump) while the walk is queued: the answer is dropped, not applied to the new core.
+    nav.prev(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 2);
+    CHECK(nav.prevOutstanding(VJ_DBG_TARGET_M68K));
+    f.s.views().bumpEpoch();
+    CHECK(!nav.free());                       // it simply finishes ...
+    drain();
+    CHECK(!nav.apply(f.s, gens, a) && nav.free());   // ... and is dropped
+    // ... and the next walk, posted for the new core, is not poisoned by the old one.
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    drain();
+    CHECK(nav.apply(f.s, gens, a) && a.addr == want);
+
+    // Inline (no queue): the answer is there as soon as the walk is posted.
+    f.s.corePost = [](std::function<void()> fn) {
+        CountingIface::OnCore g;
+        fn();
+    };
+    nav.back(f.s, VJ_DBG_TARGET_M68K, gens[0], 0x1010, 4);
+    CHECK(nav.apply(f.s, gens, a) && a.addr == want);
+}
+
 // #967 3a: the run controls reach the core only through callCore.
 static void testControlsMarshalled() {
     UiFixture f;
@@ -436,6 +496,7 @@ int main() {
     testControls();
     testCpuFeedReadsBuffersOnly();
     testDisasmNav();
+    testNavTracker();
     testControlsMarshalled();
     std::printf("debug_cpu_unit: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

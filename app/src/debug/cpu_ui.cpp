@@ -36,8 +36,7 @@ struct TabState {
     unsigned lastPc = ~0u;
     float wheel = 0;
     unsigned wheelUp = 0;             // wheel steps up not yet sent to the emulation thread (prevAddr walks)
-    bool navBusy = false;             // this tab has a DisasmNav job outstanding
-    bool rowsAtTop = false;           // t.rows answer the current top (as of the last drawn frame)
+    unsigned rowsGenSeen = 0;         // CpuFeed::rowsGen() of the rows copied into t.rows
     unsigned nRows = 24;              // rows the listing showed last (the request asks for this many)
     unsigned gen = 0;                 // bumped by a jump (Go to, a breakpoint click): an older nav answer is dropped
     unsigned followPc = ~0u;          // follow-PC already walked back for this pc and it still was not on screen
@@ -58,11 +57,7 @@ struct CpuState {
     TabState t[VJ_DBG_NUM_TARGETS];
     std::unique_ptr<CpuControl> ctl;
     CpuFeed feed;                     // the Regs / Disasm requests of the tab being looked at, and their answers
-    DisasmNav nav;                    // the backwards walks, on the emulation thread
-    bool navDraining = false;         // a walk from before a core switch is still queued
-    int navTab = -1;                  // the tab the outstanding nav job is for (one at a time)
-    unsigned navGen = 0;              // that tab's gen when it was submitted
-    bool fresh = false;               // the feed adopted something this frame
+    NavTracker nav;                   // the backwards walks, on the emulation thread (one outstanding, for one tab)
     uint64_t epochSeen = ~0ull;       // DebugViews::epoch() last adopted: a new core / content resets the window
     std::string status;
     bool statusErr = false;
@@ -94,13 +89,9 @@ void syncCore(DebugSession& s) {
         t.topValid = false;
         t.wheelUp = 0;
         t.followPc = ~0u;
-        t.gen++;
+        t.rowsGenSeen = 0;
+        t.gen++;   // (a walk of the old core still queued is dropped by the tracker: its epoch no longer matches)
     }
-    unsigned a;
-    while (g.nav.take(a)) {}
-    g.navTab = -1;
-    g.navDraining = g.nav.pending();   // a walk of the old core still queued: its answer is dropped, no new walk until then
-    for (TabState& t : g.t) t.navBusy = false;
 }
 
 // ---- registers ----------------------------------------------------------------------------------------------
@@ -295,37 +286,27 @@ void gotoAddr(TabState& t, unsigned a) {
     t.cursor = a;
     t.haveCursor = true;
     t.gen++;   // a walk still in flight for this tab no longer applies
+    t.wheelUp = 0;
 }
 
-// A finished walk moves its tab's top (unless the tab jumped elsewhere meanwhile).
-void pollNav(const DebugSession&) {
-    unsigned a = 0;
-    if (g.navDraining) {
-        if (g.nav.pending()) return;
-        while (g.nav.take(a)) {}
-        g.navDraining = false;
-        return;
-    }
-    if (!g.nav.take(a)) return;
-    const int tab = g.navTab;
-    g.navTab = -1;
-    if (tab < 0 || tab >= VJ_DBG_NUM_TARGETS) return;
-    TabState& t = g.t[tab];
-    t.navBusy = false;
-    if (t.gen != g.navGen) return;
-    t.top = a;
-    t.topValid = true;
+// A finished walk moves its tab's top (unless the tab jumped elsewhere, or the core changed, meanwhile).
+void pollNav(DebugSession& s) {
+    unsigned gens[VJ_DBG_NUM_TARGETS];
+    for (int i = 0; i < VJ_DBG_NUM_TARGETS; i++) gens[i] = g.t[i].gen;
+    NavTracker::Applied a;
+    if (!g.nav.apply(s, gens, a)) return;
+    g.t[a.tab].top = a.addr;
+    g.t[a.tab].topValid = true;
 }
 
-bool navFree() { return g.navTab < 0 && !g.navDraining; }
-
-void postNav(DebugSession& s, int target, TabState& t, bool back, unsigned addr, int count) {
-    g.navTab = target;
-    g.navGen = t.gen;
-    t.navBusy = true;
-    if (back) g.nav.back(s, target, addr, count);
-    else g.nav.prev(s, target, addr, count);
+void postBack(DebugSession& s, int target, TabState& t, unsigned pc, int lines) {
+    g.nav.back(s, target, t.gen, pc, lines);
     pollNav(s);   // inline the answer is already there; threaded it arrives on a later frame
+}
+
+void postPrev(DebugSession& s, int target, TabState& t, unsigned from, int steps) {
+    g.nav.prev(s, target, t.gen, from, steps);
+    pollNav(s);
 }
 
 void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
@@ -349,28 +330,37 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
         t.wheel -= (float)whole;
         if (whole != 0 && t.topValid) {
             t.follow = false;
-            if (whole > 0) t.wheelUp += (unsigned)whole;
-            else if (t.rowsAtTop && !t.rows.empty()) {   // only from rows that answer this top
+            if (whole > 0) {
+                t.wheelUp += (unsigned)whole;
+                if (!g.nav.prevOutstanding(target)) t.gen++;   // a follow-PC walk in flight must not jump the top back
+            } else if (!t.rows.empty() && t.rows[0].addr == t.top) {   // only from rows that answer this top
                 t.top = t.rows[std::min((size_t)-whole, t.rows.size() - 1)].addr;
                 t.gen++;   // a walk still in flight no longer applies
+                t.wheelUp = 0;
             }
         }
     }
-    if (t.wheelUp && t.topValid && !t.navBusy && navFree()) {
+    if (t.wheelUp && t.topValid && g.nav.free()) {
         const unsigned steps = t.wheelUp;
         t.wheelUp = 0;
-        postNav(s, target, t, false, t.top, (int)steps);
+        postPrev(s, target, t, t.top, (int)steps);
     }
-    if (!t.topValid && !t.navBusy && navFree()) postNav(s, target, t, true, pc, 4);   // draws no rows until it returns
+    if (!t.topValid && g.nav.free()) postBack(s, target, t, pc, 4);   // draws no rows until it returns
 
+    // Ask for the listing at the top and adopt the answer; true when t.rows answer exactly this top and size.
     t.nRows = (unsigned)n;
-    g.feed.want(s, target, t.top, t.topValid ? t.nRows : 0);
-    s.wakeViews();
-    if (g.feed.update(s)) g.fresh = true;
-    const bool current = t.topValid && g.feed.rowsFor(target, t.top, t.nRows);
-    if (current && g.fresh) t.rows = g.feed.rows();
-    t.rowsAtTop = current;
-    g.fresh = false;
+    auto syncRows = [&]() -> bool {
+        g.feed.want(s, target, t.top, t.topValid ? t.nRows : 0);
+        s.wakeViews();
+        g.feed.update(s);
+        const bool cur = t.topValid && g.feed.rowsFor(target, t.top, t.nRows);
+        if (cur && t.rowsGenSeen != g.feed.rowsGen()) {
+            t.rows = g.feed.rows();
+            t.rowsGenSeen = g.feed.rowsGen();
+        }
+        return cur;
+    };
+    bool current = syncRows();
 
     if (!t.follow) t.followPc = ~0u;
     if (t.follow && havePc && pc != ~0u && current) {
@@ -378,9 +368,10 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
         for (int i = 0; i < n - 1 && i < (int)t.rows.size(); i++)
             if (t.rows[(size_t)i].addr == pc) visible = true;
         if (visible) t.followPc = ~0u;
-        else if (t.followPc != pc && !t.navBusy && navFree()) {
+        else if (t.followPc != pc && g.nav.free()) {
             t.followPc = pc;   // once per pc: a pc the listing cannot show would otherwise walk every frame
-            postNav(s, target, t, true, pc, std::min(4, n / 4));
+            postBack(s, target, t, pc, std::min(4, n / 4));
+            syncRows();        // inline the new top is known now: the listing is current in this very frame
         }
     }
     t.lastPc = pc;
@@ -650,7 +641,7 @@ void drawWindow(DebugSession& s) {
     syncCore(s);
     g.feed.want(s, tab, t.top, t.topValid ? t.nRows : 0);
     s.wakeViews();   // the requests are set: inline they are filled now, threaded one fill is posted
-    if (g.feed.update(s)) g.fresh = true;
+    g.feed.update(s);
     const bool mine = g.feed.regsTarget() == tab;   // the adopted registers are this tab's
     if (mine) {
         t.haveRegs = g.feed.haveRegs();

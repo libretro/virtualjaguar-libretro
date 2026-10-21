@@ -77,9 +77,11 @@ public:
         return haveRows_ && rowsTarget_ == target && rowsTop_ == top && rowsN_ == rows;
     }
     const std::vector<DisasmLine>& rows() const { return rows_; }
+    unsigned rowsGen() const { return rowsGen_; }        // counts every adoption of rows: a copy of rows() older than this is stale
 
 private:
     void forget();
+    unsigned rowsGen_ = 0;
     DebugViews::Id regsId_ = DebugViews::kNoId, disId_ = DebugViews::kNoId;
     ViewRequest wantRegs_, wantDis_;
     bool stated_ = false;                                // wantRegs_ / wantDis_ hold what the views were last given
@@ -114,6 +116,55 @@ public:
 
 private:
     CoreJob<unsigned> job_;
+};
+
+// The bookkeeping around DisasmNav that keeps a late answer from landing where it no longer belongs (ImGui-free, so the
+// interleavings unit-test with a deferred queue).  One walk outstanding at a time, for one tab.  An answer is applied
+// only if the core is still the one the walk was posted for (the views' epoch) and the tab has not jumped elsewhere
+// since (its generation, which the caller bumps on Go to / PC / wheel).  Stale answers are dropped, and a walk
+// outstanding across a core switch simply finishes and is dropped: no draining state.
+class NavTracker {
+public:
+    struct Applied {
+        int tab = -1;
+        unsigned addr = 0;
+    };
+    bool free() const { return tab_ < 0; }                       // nothing outstanding: a walk may be posted
+    bool busyFor(int tab) const { return tab_ == tab; }
+    bool prevOutstanding(int tab) const { return tab_ == tab && prev_; }   // a wheel-up walk, whose steps must not be dropped
+    void back(DebugSession& s, int tab, unsigned gen, unsigned pc, int lines) {
+        begin(s, tab, gen, false);
+        nav_.back(s, tab, pc, lines);
+    }
+    void prev(DebugSession& s, int tab, unsigned gen, unsigned from, int count) {
+        begin(s, tab, gen, true);
+        nav_.prev(s, tab, from, count);
+    }
+    // UI thread, each frame (and right after a post: inline the answer is already there).  `gens` holds each tab's
+    // current generation.  True and `out` when a fresh answer arrived.
+    bool apply(DebugSession& s, const unsigned* gens, Applied& out) {
+        unsigned a = 0;
+        if (tab_ < 0 || !nav_.take(a)) return false;
+        const int tab = tab_;
+        tab_ = -1;
+        if (epoch_ != s.views().epoch() || gens[tab] != gen_) return false;
+        out.tab = tab;
+        out.addr = a;
+        return true;
+    }
+
+private:
+    void begin(DebugSession& s, int tab, unsigned gen, bool prev) {
+        tab_ = tab;
+        gen_ = gen;
+        prev_ = prev;
+        epoch_ = s.views().epoch();
+    }
+    DisasmNav nav_;
+    int tab_ = -1;
+    unsigned gen_ = 0;
+    bool prev_ = false;
+    uint64_t epoch_ = 0;
 };
 
 // ---- step over ----------------------------------------------------------------------------------------------------

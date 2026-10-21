@@ -297,6 +297,7 @@ bool CpuFeed::update(DebugSession& s) {
             rowsN_ = b.req.rows;
             rowsSerial_ = b.serial;
             rows_ = b.ok ? std::move(b.lines) : std::vector<DisasmLine>();
+            rowsGen_++;
             changed = true;
         }
     }
