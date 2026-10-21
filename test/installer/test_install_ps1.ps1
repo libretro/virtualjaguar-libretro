@@ -134,8 +134,19 @@ Check 'SHA-256 verified' ($r.Out -like '*SHA-256 matches SHA256SUMS.txt*') $r.Ou
 Check 'receipt written' (Test-Path (Join-Path $T 'localappdata/VirtualJaguar/install-receipt.txt')) ''
 $r = Invoke-Vj $New @('-What', 'app', '-Channel', 'nightly', '-Yes', '-AppDest', $AD, '-NoShortcut')
 Check 'second run: already up to date' ($r.Out -like '*already up to date*') $r.Out
+# Portable settings and user content live beside the exe, inside data/.
+$userFiles = @('config.ini', 'saves/game.sav', 'states/game.state', 'roms/user-owned.j64', '.hidden')
+foreach ($f in $userFiles) {
+  $p = Join-Path (Join-Path $AD 'data') $f
+  New-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null
+  [IO.File]::WriteAllText($p, "user sentinel: $f")
+}
 $r = Invoke-Vj $New @('-What', 'app', '-Channel', 'nightly', '-Yes', '-Force', '-AppDest', $AD, '-NoShortcut')
 Check '-Force reinstalls' ($r.Out -like '*reinstall*') $r.Out
+foreach ($f in $userFiles) {
+  $p = Join-Path (Join-Path $AD 'data') $f
+  Check "force reinstall preserves portable $f" ((Test-Path $p) -and [IO.File]::ReadAllText($p) -eq "user sentinel: $f") $r.Out
+}
 
 $New2 = Join-Path $T 'new2'
 Copy-Item -LiteralPath $New -Destination $New2 -Recurse
@@ -143,6 +154,10 @@ Remove-Item -LiteralPath "$New2/download/nightly" -Recurse -Force
 New-Release "$New2/download/nightly" 'nightly' 'nightly-two'
 $r = Invoke-Vj $New2 @('-What', 'app', '-Channel', 'nightly', '-Yes', '-AppDest', $AD, '-NoShortcut')
 Check 'new nightly is an update' ($r.Out -like '*update:*') $r.Out
+foreach ($f in $userFiles) {
+  $p = Join-Path (Join-Path $AD 'data') $f
+  Check "upgrade preserves portable $f" ((Test-Path $p) -and [IO.File]::ReadAllText($p) -eq "user sentinel: $f") $r.Out
+}
 Check 'previous app kept aside' (Test-Path "$AD.bak") $r.Out
 Check 'new exe in place' ((Get-Content -LiteralPath (Join-Path $AD 'virtualjaguar.exe')) -like '*nightly-two*') ''
 Check 'no doubled folder (zip has one top folder)' (-not (Test-Path (Join-Path $AD 'VirtualJaguar'))) ''
