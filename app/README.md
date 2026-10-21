@@ -549,8 +549,9 @@ than a burst of repeats and skips; `--pace-steer off` turns that off for a measu
 While it is on, every Tools window works (their data is copied by the emulation thread after each frame, and their edits
 run on it), but Break, Step, breakpoints and the GDB stub option are off until the next phase. RetroAchievements and
 netplay work as usual: achievements are checked on the emulation thread after every frame, and link play's peer waits
-block only that thread. A load or a state save that takes longer than a quarter of a second shows a spinner instead of
-freezing the window. A log line
+block only that thread. An action that has to reach the core, such as a Tools-window edit, a load or a state save, waits
+for the frame in progress to end, including that frame's peer wait, which link play bounds to about one frame. One that
+takes longer than a quarter of a second shows a spinner instead of freezing the window. A log line
 `[core_host] owner violation: ...` means a UI path still called into the core directly: that is a bug, please report it.
 
 ## Running several instances
