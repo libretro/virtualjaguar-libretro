@@ -74,9 +74,15 @@ if frontend is None:
     raise RuntimeError('Real RetroArch frontend is required for core-load qualification')
 env['VJ_INSTALL_RETROARCH'] = str(frontend)
 config = root/'retroarch-qualification.cfg'
-video = 'gl' if platform.system() == 'Darwin' else 'null'
+linux = platform.system() == 'Linux'
+video = 'gl' if platform.system() in ['Darwin', 'Linux'] else 'null'
+# Old distro RetroArch null-video paths can crash before running content.
+# Exercise the real GL frontend on a disposable virtual display instead.
+frontend_cmd = ['xvfb-run', '-a', str(frontend)] if linux else [str(frontend)]
+if linux:
+    env['LIBGL_ALWAYS_SOFTWARE'] = '1'
 config.write_text(f'video_driver = "{video}"\naudio_driver = "null"\ninput_driver = "null"\n'
-                  'menu_driver = "ozone"\npause_nonactive = "false"\n'
+                  'menu_driver = "rgui"\npause_nonactive = "false"\n'
                   'config_save_on_exit = "false"\nhistory_list_enable = "false"\n'
                   'microphone_enable = "false"\nmidi_driver = "null"\n'
                   f'playlist_directory = "{root.as_posix()}"\n'
@@ -138,7 +144,7 @@ for selection in ['core', 'app', 'both']:
         raise RuntimeError('Normal update did not replace the older published payload')
     if selection in ['core', 'both']:
         core = next(p for p in cores.iterdir() if p.suffix.lower() in ['.so', '.dylib', '.dll'])
-        output = run([frontend, '--verbose', '--log-file='+str(root/(selection+'-retroarch.log')), '--config', config, '--max-frames=30',
+        output = run(frontend_cmd+['--verbose', '--log-file='+str(root/(selection+'-retroarch.log')), '--config', config, '--max-frames=30',
                       '-L', core, repo/'test/roms/yarc.j64'], selection+'-retroarch-core-load')
         output += (root/(selection+'-retroarch.log')).read_text(errors='replace')
         if 'Failed to load' in output or 'Loading dynamic libretro core' not in output:

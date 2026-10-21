@@ -84,9 +84,9 @@ they are not evidence of a real version-to-version upgrade.
 These are actual published downloads, not hermetic fixture success. The evidence
 pins GitHub release id `376361064` and the exact source SHA above.
 
-Native Windows PowerShell 5.1/7 and additional clean hosted Mac/Linux checks are
-queued in [qualification run 39539281058](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39539281058).
-This is pending evidence, not a passed criterion.
+Initial hosted Windows PowerShell 5.1/7 and Mac/Linux published-download tests
+passed install/already-current/forced-update paths. Strengthened version-to-version
+qualification is pending fresh hosted results; earlier passes do not substitute for it.
 
 ## Strengthened real-upgrade evidence
 
@@ -103,6 +103,17 @@ name and authenticating release metadata requests. Hosted Intel Mac qualificatio
 reached the stapler check but Apple CloudKit returned an inconsistent/null response
 (error 68); it remains failed evidence pending a fresh strengthened run. No signing
 check is skipped to claim success.
+
+The fresh Ubuntu 22.04.5 ARM64 VM also passed all 21 strengthened checks: actual
+v3.9.1 upgrades of core/app/both, changed payload hashes, RetroArch core runs,
+post-update public-ROM app launches, user-data preservation, dry-run invariance and
+final release provenance. Its distro RetroArch 1.7.3 crashes in the null-video path;
+the same core runs successfully with software OpenGL under Xvfb. Linux qualification
+therefore uses the real GL frontend under a virtual display, with failure still fatal.
+
+The live website's POSIX and PowerShell copy/paste URLs and explicit `both` examples
+match the scripts. Both scripts expose explicit channel selection; qualification
+passes named baseline/candidate channels rather than relying on `latest`.
 
 ## Remaining distribution work
 

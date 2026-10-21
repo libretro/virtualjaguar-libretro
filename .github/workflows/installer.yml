@@ -152,7 +152,7 @@ jobs:
           sudo apt-get update -qq
           audio=libasound2
           if apt-cache show libasound2t64 >/dev/null 2>&1; then audio=libasound2t64; fi
-          sudo apt-get install -y --no-install-recommends retroarch libsdl2-2.0-0 libgl1 libegl1 libx11-6 libxcursor1 libxi6 libxrandr2 "$audio"
+          sudo apt-get install -y --no-install-recommends retroarch xvfb xauth libgl1-mesa-dri libsdl2-2.0-0 libgl1 libegl1 libx11-6 libxcursor1 libxi6 libxrandr2 "$audio"
       - name: Real RetroArch frontend (Windows)
         if: runner.os == 'Windows'
         shell: powershell
