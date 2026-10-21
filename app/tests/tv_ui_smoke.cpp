@@ -2302,10 +2302,10 @@ static void settingsReadonlyRowIgnoresInput() {
     CHECK(host.set.empty());
     // The pointer is as inert: a click on either half of the value.
     ImGuiIO& io = ImGui::GetIO();
-    io.AddMousePosEvent(504 + 1320 * 0.9f, 196 + 36);
+    io.AddMousePosEvent(1810, 196 + 36);
     frames(host, shell, 2);
     leftClick(host, shell);
-    io.AddMousePosEvent(504 + 1320 * 0.6f, 196 + 36);
+    io.AddMousePosEvent(1700, 196 + 36);
     frames(host, shell, 2);
     leftClick(host, shell);
     CHECK(host.set.empty());
@@ -2403,11 +2403,11 @@ static void settingsMouse() {
     g_texts.clear();
     frames(host, shell, 2);
     CHECK(drew("Show FPS") && !drew("Volume"));
-    io.AddMousePosEvent(504 + 1320 * 0.9f, 196 + 36);    // the right half of the value of Show FPS
+    io.AddMousePosEvent(1810, 196 + 36);    // right of the value's middle (the short value sits at the far right) of Show FPS
     frames(host, shell, 2);
     leftClick(host, shell);
     CHECK(lastSet(host, "fps", 1));
-    io.AddMousePosEvent(504 + 1320 * 0.6f, 196 + 36);    // ... the left half of the value
+    io.AddMousePosEvent(1700, 196 + 36);    // ... left of it, still right of the row's middle
     frames(host, shell, 2);
     leftClick(host, shell);
     CHECK(lastSet(host, "fps", 0));
@@ -2426,6 +2426,34 @@ static void settingsMouse() {
     frames(host, shell, 2);
     accept(host, shell);
     CHECK(lastSet(host, "fps", 1));
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+// The value is right-aligned, so a short one ("50 %") has its chevrons far right of the row's middle: a click on each
+// chevron of the focused (grown) row steps that way -- the right one lies past the unscaled card's edge.
+static void settingsClickOnChevrons() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1)});
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(504 + 200, 196 + 36);            // focus the row and let it finish growing
+    frames(host, shell, 30);
+    // 1920x1080, the focused row (scale 1.08) spans 504 + 660 -+ 713; see SettingsScreen::drawRow.
+    const float k = 1.08f, inner = 504 + 660 + 1320 * k * 0.5f - 24 * (0.6f + 0.4f * k);
+    const float chevW = 9 * k, gap = 24 * k, valueRight = inner - chevW - gap;
+    const float leftChev = valueRight - measure(30 * k, "50 %") - gap - chevW * 0.5f, rightChev = inner - chevW * 0.5f;
+    CHECK(leftChev > 504 + 1320 * 0.75f && rightChev > 504 + 1320);   // a click map by quarters would miss both
+    io.AddMousePosEvent(leftChev, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "volume", 0) && host.set.size() == 1);
+    io.AddMousePosEvent(rightChev, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "volume", 1) && host.set.size() == 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "volume", 2) && host.set.size() == 3);
     io.AddMousePosEvent(0, 0);
     frames(host, shell, 2);
 }
@@ -2570,6 +2598,7 @@ int main() {
     settingsHiddenRowsAbsent();
     settingsFocusRemembered();
     settingsMouse();
+    settingsClickOnChevrons();
     settingsWalk120FramesNoAsserts();
     // The menu at the other sizes the app runs at.
     {

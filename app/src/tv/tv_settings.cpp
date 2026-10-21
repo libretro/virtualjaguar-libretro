@@ -122,9 +122,13 @@ public:
             const float f = !onRail_ && i == list_.index ? tweens_.at(i, c.now) : 0.0f;
             widgets::RowArgs a;   // the card and the focus ring; the label and the value are drawn here
             a.focus = f;
-            const widgets::Hit hit = widgets::row(c.dl, m, ImVec2(lx, y), ImVec2(lw, rowH), a);
-            drawRow(c, rows_[(size_t)i], ImVec2(lx, y), ImVec2(lw, rowH), f);
-            if (hit.hovered && c.mouse.y >= rowsTop && c.mouse.y < viewBottom) hoverRow = i;   // not the part the clip hides
+            widgets::row(c.dl, m, ImVec2(lx, y), ImVec2(lw, rowH), a);
+            drawRow(c, i, ImVec2(lx, y), ImVec2(lw, rowH), f);
+            // The unscaled card, widened by what a focused row grows: its right chevron lies beyond the unscaled edge.
+            const float slack = (m.focusScale - 1.0f) * 0.5f * lw;
+            if (c.hovered && c.mouse.x >= lx - slack && c.mouse.x < lx + lw + slack && c.mouse.y >= y && c.mouse.y < y + rowH &&
+                c.mouse.y >= rowsTop && c.mouse.y < viewBottom)   // not the part the clip hides
+                hoverRow = i;
         }
         c.dl->PopClipRect();
         if (scroll > 0.5f) widgets::moreArrow(c.dl, m, ImVec2(lx + lw * 0.5f, rowsTop - 4 * u), true);
@@ -145,7 +149,7 @@ public:
             onRail_ = false;
         }
         remember();
-        if (hoverRow >= 0 && c.clicked) click((c.mouse.x - lx) / lw);
+        if (hoverRow >= 0 && c.clicked) click(c.mouse.x, lx, lw);
         else if (hoverItem >= 0 && c.clicked) intent(Intent::Accept);
     }
 
@@ -270,15 +274,18 @@ private:
         else step(r, 1, true);
     }
 
-    // A click on the focused row: `rel` is how far across it the pointer is.  The value sits in the right half: its left
-    // half steps back, its right half steps forward.  Anywhere else (and on a row with no value) is Accept.
-    void click(float rel) {
-        if (rel < 0.5f || focused().choices.empty()) accept();
-        else step(focused(), rel < 0.75f ? -1 : 1, false);
+    // A click on the focused row at pointer x.  The value is right-aligned, so its place is what drawRow recorded: right of
+    // the row's middle, a click left of the value's centre steps back and right of it steps forward (the chevrons lie
+    // either side).  Anywhere else (and on a row with no value) is Accept.
+    void click(float mouseX, float lx, float lw) {
+        const SettingRow& r = focused();
+        if (r.choices.empty() || mouseX < lx + lw * 0.5f) accept();
+        else step(r, mouseX < valueMid_[(size_t)list_.index] ? -1 : 1, false);
     }
 
     // The label, the value between its chevrons, and a read-only row's note under the value.
-    void drawRow(const DrawCtx& c, const SettingRow& r, ImVec2 pos, ImVec2 size, float f) const {
+    void drawRow(const DrawCtx& c, int index, ImVec2 pos, ImVec2 size, float f) {
+        const SettingRow& r = rows_[(size_t)index];
         const Metrics& m = c.m;
         const theme::Palette& pal = theme::pal();
         const float u = m.u, k = 1.0f + (m.focusScale - 1.0f) * f;   // the row grows about its centre (widgets::row)
@@ -288,6 +295,7 @@ private:
         const float px = m.body * (1.0f + 0.08f * f);
         const ImU32 tc = widgets::col(r.readOnly ? pal.textMuted : pal.text), mc = widgets::col(pal.textMuted);
         const bool hasNote = !r.note.empty();
+        valueMid_.resize(rows_.size(), p1.x);
         const float total = hasNote ? px + m.minText + 4 * u : px;
         const float y = p0.y + (p1.y - p0.y - total) * 0.5f;
         widgets::text(c.dl, px, ImVec2(p0.x + pad, p0.y + (p1.y - p0.y - px) * 0.5f), tc, r.label, half);
@@ -309,6 +317,7 @@ private:
         const float valueRight = inner - chevW - gap;
         const float vw = std::min(widgets::textWidth(px, value), half - chevW - gap);
         widgets::text(c.dl, px, ImVec2(valueRight - vw, y), tc, value, vw);
+        valueMid_[(size_t)index] = valueRight - vw * 0.5f;
         if (canStep(r, -1)) chevron(valueRight - vw - gap - chevW, false, mc);
         if (canStep(r, 1)) chevron(inner - chevW, true, mc);
         if (hasNote) {
@@ -322,6 +331,7 @@ private:
     std::vector<int> groups_;           // the groups that have rows, in order; the rail's items
     std::vector<SettingRow> rows_;      // the focused group's rows, from the last refresh()
     LinearFocus rail_, list_;
+    std::vector<float> valueMid_;       // per row of the last draw: x of the middle of its value (where a click turns from back to forward)
     int group_ = -1;                    // the focused group (settingGroupLabel); -1 when there are no rows
     int lastGroup_ = -1;
     bool built_ = false;
