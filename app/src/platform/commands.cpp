@@ -18,7 +18,7 @@ bool MenuState::operator==(const MenuState& o) const {
            usedSlots == o.usedSlots && mute == o.mute && integerScale == o.integerScale &&
            smoothFilter == o.smoothFilter && shader == o.shader && showFps == o.showFps &&
            keypadOverlay == o.keypadOverlay && controlsOverlay == o.controlsOverlay && vsync == o.vsync &&
-           homeLibrary == o.homeLibrary &&
+           homeLibrary == o.homeLibrary && tvMode == o.tvMode && tvAvailable == o.tvAvailable &&
            libraryOpen == o.libraryOpen && disc == o.disc && recents == o.recents &&
            achAvailable == o.achAvailable && achSignedIn == o.achSignedIn && achBusy == o.achBusy &&
            achEnabled == o.achEnabled && achHardcore == o.achHardcore && achUnofficial == o.achUnofficial &&
@@ -129,7 +129,9 @@ MenuBar buildMenuBar(const MenuState& s) {
         e.push_back(item(Cmd::Cheats, "Cheats" ELL, "", s.gameLoaded));
         if (s.disc.available) {
             e.push_back(sep());
-            e.push_back(item(Cmd::DiscTray, s.disc.ejected ? "Close Tray" : "Open Tray"));
+            if (s.disc.count > 0)   // the CD BIOS with no disc (#646): nothing to insert yet, only Add Disc Image
+                e.push_back(item(Cmd::DiscTray, s.disc.ejected ? "Close Tray" : "Open Tray"));
+            e.push_back(item(Cmd::DiscAdd, "Add Disc Image" ELL));
             if (s.disc.count > 1) {
                 std::vector<MenuItem> discs;
                 for (unsigned i = 0; i < s.disc.count; i++) {
@@ -158,6 +160,7 @@ MenuBar buildMenuBar(const MenuState& s) {
         v.push_back(item(Cmd::ControlsOverlay, "Controls Overlay", "", true, s.controlsOverlay));
         v.push_back(sep());
         v.push_back(item(Cmd::HomeLibrary, "Library on Home Screen", "", true, s.homeLibrary));
+        v.push_back(item(Cmd::TvMode, "TV Mode", "cmd+shift+t", s.tvAvailable, s.tvMode));
         v.push_back(item(Cmd::VSync, "VSync", "", true, s.vsync));
         bar.menus.push_back(submenu("View", std::move(v)));
     }
@@ -289,6 +292,7 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount, int 
         if (arg < 0 || arg >= discCount) return false;
         a.selectDisc(arg);
         return true;
+    case Cmd::DiscAdd: a.addDisc(); return true;
     case Cmd::Fullscreen: a.toggleFullscreen(); return true;
     case Cmd::IntegerScale: a.toggleIntegerScale(); return true;
     case Cmd::SmoothFilter: a.toggleSmoothFilter(); return true;
@@ -298,6 +302,7 @@ bool dispatch(Cmd cmd, int arg, Actions& a, int recentCount, int discCount, int 
     case Cmd::ControlsOverlay: a.toggleControlsOverlay(); return true;
     case Cmd::VSync: a.toggleVsync(); return true;
     case Cmd::HomeLibrary: a.toggleHomeLibrary(); return true;
+    case Cmd::TvMode: a.toggleTvMode(); return true;
     case Cmd::Settings: a.showSettings(); return true;
     case Cmd::Mute: a.toggleMute(); return true;
     case Cmd::About: a.showAbout(); return true;

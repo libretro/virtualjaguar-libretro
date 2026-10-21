@@ -65,9 +65,21 @@ endif()
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
 option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
 option(VJ_APP_FREETYPE "Rasterise UI fonts with FreeType (hinting + anti-aliasing choices; fetched, pinned, built static). Off: Dear ImGui's built-in stb_truetype" ON)
+option(VJ_APP_NEURO "Neuro API client (src/neuro/, docs/neuro.md): Neuro-sama or another AI can play as Player 1" ON)
 option(VJ_APP_BUNDLE_DB "Fetch the pinned libretro-database dat files at configure time and copy them next to the binary" ON)
 set(VJ_APP_LIBRETRO_DB_DIR "" CACHE PATH
     "Offline builds: a folder holding 'Atari - Jaguar.dat' and 'Atari - Jaguar CD.dat' to use instead of downloading them")
+
+# ThreadSanitizer over the app, the core and the tests (#967; the `tsan` job in .github/workflows/app.yml).  It must
+# come before any target (SDL, the core) is defined so everything is instrumented.  Clang or GCC only.
+option(VJ_APP_TSAN "Build with ThreadSanitizer (-fsanitize=thread)" OFF)
+if(VJ_APP_TSAN)
+    if(MSVC)
+        message(FATAL_ERROR "VJ_APP_TSAN needs Clang or GCC")
+    endif()
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
@@ -278,12 +290,18 @@ set(VJ_APP_SOURCES
     src/instance.cpp
     src/config.cpp
     src/core_host.cpp
+    src/emu_thread.cpp
     src/audio.cpp
     src/video.cpp
     src/present_util.cpp
     src/shaders.cpp
     src/shaders_ui.cpp
     src/input.cpp
+    src/pad_profile.cpp
+    src/desktop_nav.cpp
+    src/desktop_nav_app.cpp
+    src/desktop_nav_ui.cpp
+    src/hold_arbiter.cpp
     src/remap.cpp
     src/remap_ui.cpp
     src/devices.cpp
@@ -308,6 +326,7 @@ set(VJ_APP_SOURCES
     src/cheats_core.cpp
     src/cheats_ui.cpp
     src/achievements.cpp
+    src/ach_event.cpp
     src/achievements_ui.cpp
     src/achievements_games.cpp
     src/ra_dash.cpp
@@ -337,14 +356,34 @@ set(VJ_APP_SOURCES
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
     src/desktop.cpp
+    src/tv_script.cpp
     src/platform/commands.cpp
     src/platform/events.cpp
     src/platform/platform.cpp
     src/platform/tray.cpp
     src/platform/viewports.cpp
+    src/tv/tv_focus.cpp
+    src/tv/tv_nav.cpp
+    src/tv/tv_mode.cpp
+    src/tv/tv_style.cpp
+    src/tv/tv_shell.cpp
+    src/tv/tv_app_host.cpp
+    src/tv/tv_ingame.cpp
+    src/tv/tv_chrome.cpp
+    src/tv/tv_home.cpp
+    src/tv/tv_library.cpp
+    src/tv/tv_details.cpp
+    src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
     src/discord_app.cpp)
+
+# Neuro API client (docs/neuro.md): an AI plays as Player 1.  Off: no Settings > Neuro tab, no --neuro.
+set(VJ_NEURO_SOURCES src/neuro/neuro_json.cpp src/neuro/neuro_ws.cpp src/neuro/neuro_actions.cpp
+    src/neuro/neuro_profiles.cpp src/neuro/neuro_link.cpp src/neuro/neuro_agent.cpp)
+if(VJ_APP_NEURO)
+    list(APPEND VJ_APP_SOURCES ${VJ_NEURO_SOURCES} src/neuro/neuro_app.cpp)
+endif()
 
 # Native-OS integration (#833): one source per OS behind src/platform/platform_os.h.
 if(APPLE)
@@ -359,6 +398,28 @@ endif()
 
 # RetroAchievements (#836): rcheevos + HTTP transport.
 include(VJRcheevos)
+
+# macOS SDK libcurl: FindCURL sets CURL_INCLUDE_DIR to <SDK>/usr/include and CURL::libcurl passes
+# it as -isystem.  CMake drops that only when it matches the compiler's implicit include list; when
+# the list names another SDK (two Xcodes + a ccache-cached compiler probe), the C headers land ahead
+# of libc++'s and every C++ file that links curl fails in <cstring>.  The SDK's usr/include is on
+# the default search path anyway, so take it off the target.  Covers both find_package(CURL) calls
+# (vj_library above, VJRcheevos) -- they share this one imported target.
+if(APPLE AND TARGET CURL::libcurl)
+    get_target_property(_vj_curl_target CURL::libcurl ALIASED_TARGET)
+    if(NOT _vj_curl_target)
+        set(_vj_curl_target CURL::libcurl)
+    endif()
+    get_target_property(_vj_curl_inc ${_vj_curl_target} INTERFACE_INCLUDE_DIRECTORIES)
+    if(_vj_curl_inc)
+        set(_vj_curl_inc_kept ${_vj_curl_inc})
+        list(FILTER _vj_curl_inc_kept EXCLUDE REGEX "/SDKs/MacOSX[^/]*\\.sdk/usr/include/?$")
+        if(NOT _vj_curl_inc_kept STREQUAL _vj_curl_inc)
+            set_property(TARGET ${_vj_curl_target} PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${_vj_curl_inc_kept})
+            message(STATUS "libcurl: macOS SDK include dir left to the default search path")
+        endif()
+    endif()
+endif()
 
 # The login token's home (secret_store.cpp): macOS Keychain (Security.framework), Windows Credential
 # Manager (advapi32), Linux libsecret loaded with dlopen at run time (no build dependency).
@@ -382,6 +443,9 @@ vj_optimise(virtualjaguar)
 target_include_directories(virtualjaguar PRIVATE src src/debug "${VJ_ROOT}/src/debug")
 target_link_libraries(virtualjaguar PRIVATE vj_core vj_library vj_imgui vj_rcheevos ${VJ_SDL3_TARGET} ${VJ_ACH_LIBS} ${VJ_SECRET_LIBS})
 target_compile_definitions(virtualjaguar PRIVATE ${VJ_ACH_DEFS})
+if(VJ_APP_NEURO)
+    target_compile_definitions(virtualjaguar PRIVATE VJ_HAVE_NEURO=1)
+endif()
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
@@ -451,5 +515,10 @@ if(VJ_APP_BUILD_TESTS)
     include(VJDebugTests)
     include(VJPlatformTests)
     include(VJDiscordTests)
+    if(VJ_APP_NEURO)
+        include(VJNeuroTests)
+    endif()
     include(VJThemeTests)
+    include(VJEmuThreadTests)
+    include(VJTvTests)
 endif()

@@ -2,7 +2,8 @@
 // linked, through the retro_* API via CoreHost) -> what the emulated console sees.  For every device
 // libretro.c supports: the mouse and rotary quadrature state, the analog / driving / 6D values a
 // game would decode off $F14000, the paddle ADC at $F17C00, the light gun's aim point, the Team Tap
-// sockets' matrix slots, the Pro Controller keyboard layout, and the locked core options.
+// sockets' matrix slots, the Pro Controller (keyboard layout, and the device: a gamepad's Pro buttons
+// through the core's own Pro path), and the locked core options.
 //
 // Every device group has a NEGATIVE CONTROL: the same device, the same frames, but no host input (the
 // mapping has nothing to translate), which must read the rest value.  A group that passes both
@@ -11,6 +12,7 @@
 // usage: vj_devices_e2e <rom.j64>
 #include "core_host.h"
 #include "devices.h"
+#include "hold_arbiter.h"
 #include "router.h"
 
 #include "libretro.h"
@@ -52,7 +54,8 @@ static int g_fail = 0, g_checks = 0;
 static CoreInput g_in;
 static Router g_router;
 static RouterConfig g_cfg;
-static Profile g_kbp, g_padp;
+static Profile g_kbp, g_padp, g_padPro;
+static std::array<bool, 2> g_pro{{false, false}};   // App::proPorts: the option lock reads it
 static CoreHost* g_host;
 static std::string g_rom;
 
@@ -73,6 +76,7 @@ static void frame(const DeviceSnapshot& kb, const PointerInput& ptr = PointerInp
     for (const DeviceSnapshot& s : pads) {
         HostSource h;
         h.profile = &g_padp;
+        h.proProfile = &g_padPro;
         h.snap = s;
         ps.push_back(h);
     }
@@ -86,15 +90,18 @@ static void frames(int n, const DeviceSnapshot& kb, const PointerInput& ptr = Po
     for (int i = 0; i < n; i++) frame(kb, ptr, pads);
 }
 
-// Fresh content, the devices claimed with the core exactly as applyPortDevices() does.
-static bool load(DevKind p1, DevKind p2) {
+// Fresh content, the devices claimed with the core exactly as applyPortDevices() does.  `proLock` = false
+// leaves a Pro port's device option at auto (the negative control: what the core does without it).
+static bool load(DevKind p1, DevKind p2, bool proLock = true) {
     std::string err;
     if (!g_host->loadContent(g_rom, err)) {
         std::fprintf(stderr, "load failed: %s\n", err.c_str());
         return false;
     }
-    g_host->setControllerDevice(0, devLibretroId(p1));
-    g_host->setControllerDevice(1, devLibretroId(p2));
+    g_pro = {{proLock && p1 == DevKind::ProPad, proLock && p2 == DevKind::ProPad}};
+    g_host->refreshLocks();
+    g_host->setControllerDevice(0, coreClaimFor(devLibretroId(p1)));
+    g_host->setControllerDevice(1, coreClaimFor(devLibretroId(p2)));
     g_router = Router();
     g_cfg = RouterConfig();
     g_cfg.kind = {{p1, p2}};
@@ -479,6 +486,200 @@ static void testProKeyboard() {
     }
 }
 
+// ---- the Pro Controller device: Settings > Input's "Pro Controller (6-button)" ------------------------------------
+// A gamepad's LB / North / RB / LT / RT -> the Router's Pro X / Y / Z / L / R -> RetroPad X / L2 / R2 / L / R -> the
+// core's Pro path (pro_controller[], switched on only by virtualjaguar_pN_device = pad_pro, which the app's option
+// lock hands it) -> keypad 9 / 8 / 7 / 4 / 6 in the matrix.  Read back from the core's own button state.
+// How many of the twelve keypad slots (joystick.h: BUTTON_s .. BUTTON_3 are slots 4-15) are lit; `first` = the lowest.
+static int litDigits(const uint8_t* b, int* first) {
+    int n = 0;
+    *first = -1;
+    for (int i = BUTTON_s; i <= BUTTON_3; i++)
+        if (b[i]) {
+            n++;
+            if (*first < 0) *first = i;
+        }
+    return n;
+}
+
+static void testProPad() {
+    // pro: the Pro path.  std_: a standard pad (the app's keypad synthesis).  noOpt: the RetroPad bit the Router
+    // sends on a Pro port, read by the core's NON-Pro mapping (X L R L2 R2 = keypad 0 1 2 3 4).
+    struct { int btn; int axis; int pro; int std_; int noOpt; const char* what; } t[] = {
+        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, -1, BUTTON_9, BUTTON_1, BUTTON_0, "LB = Pro X"},
+        {SDL_GAMEPAD_BUTTON_NORTH, -1, BUTTON_8, BUTTON_0, BUTTON_3, "North = Pro Y"},
+        {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, -1, BUTTON_7, BUTTON_2, BUTTON_4, "RB = Pro Z"},
+        {-1, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, BUTTON_4, BUTTON_3, BUTTON_1, "LT = Pro L"},
+        {-1, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, BUTTON_6, BUTTON_4, BUTTON_2, "RT = Pro R"},
+    };
+    // mode 0: a Pro port.  1: a standard pad (today's mapping, unchanged).  2: a Pro port whose option never reached
+    // the core (negative control: RetroPad X / L / R / L2 / R2 are then keypad 0-4, so the lock is what turns it on).
+    for (unsigned port = 0; port < 2; port++) {
+        for (int mode = 0; mode < 3; mode++) {
+            std::printf("-- gamepad on port %u: %s\n", port + 1, mode == 0 ? "Pro Controller" : mode == 1 ? "Standard Joypad"
+                                                                                       : "Pro Controller, option not applied");
+            DevKind k = mode == 1 ? DevKind::Pad : DevKind::ProPad;
+            if (!load(port == 0 ? k : DevKind::Pad, port == 1 ? k : DevKind::Pad, mode != 2)) return;
+            g_cfg.routes.kb[0] = false;
+            g_cfg.routes.pad[port] = 0;
+            const uint8_t* b = port == 0 ? joypad0Buttons : joypad1Buttons;
+            const uint8_t* other = port == 0 ? joypad1Buttons : joypad0Buttons;
+            int first = -1;
+            frames(2, DeviceSnapshot(), PointerInput(), {DeviceSnapshot()});
+            CHECKF(litDigits(b, &first) == 0, "nothing pressed: keypad %d lit", first);   // negative control
+            for (const auto& c : t) {
+                DeviceSnapshot s;
+                if (c.btn >= 0) s.btn[(size_t)c.btn] = true;
+                else s.axis[(size_t)c.axis] = 32767;   // past kTriggerThreshold
+                frames(2, DeviceSnapshot(), PointerInput(), {s});
+                int n = litDigits(b, &first), on = 0;
+                litDigits(other, &on);
+                const int want = mode == 0 ? c.pro : mode == 1 ? c.std_ : c.noOpt;
+                CHECKF(n == 1 && first == want && on < 0, "%s (mode %d): %d digit(s), first %d, want %d, other port %d",
+                       c.what, mode, n, first, want, on);
+            }
+            // The rest of the pad is the pad: East = A, and keypad 5 (L3) still works on a Pro port.
+            DeviceSnapshot s;
+            s.btn[SDL_GAMEPAD_BUTTON_EAST] = s.btn[SDL_GAMEPAD_BUTTON_LEFT_STICK] = true;
+            frames(2, DeviceSnapshot(), PointerInput(), {s});
+            CHECK(b[BUTTON_A] != 0 && litDigits(b, &first) == 1 && first == BUTTON_5);
+        }
+    }
+    // Settings > Input switching a running game between the two, as applyPortDevices() does it (no reload): the new
+    // lock value reaches the core through GET_VARIABLE_UPDATE before the next frame reads the pad.
+    std::printf("-- Standard Joypad -> Pro Controller -> Standard Joypad, live\n");
+    if (!load(DevKind::Pad, DevKind::Pad)) return;
+    g_cfg.routes.kb[0] = false;
+    g_cfg.routes.pad[0] = 0;
+    DeviceSnapshot lb;
+    lb.btn[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER] = true;
+    int first = -1;
+    frames(2, DeviceSnapshot(), PointerInput(), {lb});
+    CHECK(litDigits(joypad0Buttons, &first) == 1 && first == BUTTON_1);
+    g_pro = {{true, false}};
+    g_host->refreshLocks();
+    g_host->setControllerDevice(0, coreClaimFor(devLibretroId(DevKind::ProPad)));
+    g_cfg.kind = {{DevKind::ProPad, DevKind::Pad}};
+    frame(DeviceSnapshot(), PointerInput(), {lb});   // ONE frame: the switch is in effect on the very next retro_run
+    CHECK(litDigits(joypad0Buttons, &first) == 1 && first == BUTTON_9);
+    g_pro = {{false, false}};
+    g_host->refreshLocks();
+    g_host->setControllerDevice(0, RETRO_DEVICE_JOYPAD);
+    g_cfg.kind = {{DevKind::Pad, DevKind::Pad}};
+    frame(DeviceSnapshot(), PointerInput(), {lb});
+    CHECK(litDigits(joypad0Buttons, &first) == 1 && first == BUTTON_1);
+    for (const OptionDef& d : g_host->optionDefs())
+        if (d.key == "virtualjaguar_p1_device") CHECK(g_host->optionValue(d) == "auto");
+}
+
+// ---- TV-mode dual-use buttons: HoldArbiter + ReleaseGuard + Router + the real core (#991) --------------------------
+// One pad (device 1) on a controller with no Share / Capture button, so Guide is both the keypad's # and the TV
+// menu's held button.  Per frame the order is poll()'s: HoldArbiter::apply -> ReleaseGuard::apply -> Router::route
+// -> HoldArbiter::frame.  The profile is this test's own; the shared g_padp stays what every other case ran with.
+static const uint32_t kPadDev = 1;
+
+static void holdFrame(HoldArbiter& arb, ReleaseGuard& guard, const Profile& prof, DeviceSnapshot snap) {
+    arb.apply(kPadDev, snap);
+    guard.apply(kPadDev, snap);
+    HostSource h;
+    h.profile = &prof;
+    h.snap = snap;
+    HostSource k;
+    k.isKeyboard = true;
+    k.profile = &g_kbp;
+    g_in.beginFrame();
+    g_router.route(g_cfg, {h}, &k, PointerInput(), nullptr, g_in);
+    g_host->runFrame();
+    arb.frame();
+}
+
+static std::vector<Binding> holdBindings(const Profile& p) {
+    std::vector<Binding> v;
+    for (int c = 0; c < C_COUNT; c++)
+        for (const Binding& b : p.binds[c])
+            if (b.hold) v.push_back(b);
+    return v;
+}
+
+static void testHoldButtons() {
+    std::printf("-- Guide: tap = keypad #, hold = menu, release guard\n");
+    if (!load(DevKind::Pad, DevKind::Pad)) return;
+    g_host->sendKeyEvent(false, 0, 0, 0);   // the keypad announcement, as finishLoad() makes
+    g_cfg.routes.kb[0] = false;
+    g_cfg.routes.pad[0] = 0;
+    const Profile prof = Profile::builtin(DeviceClass::Gamepad, PadCaps{false});
+    const Binding G = Binding::button(SDL_GAMEPAD_BUTTON_GUIDE);
+    DeviceSnapshot none, guideDown, eastDown;
+    guideDown.btn[SDL_GAMEPAD_BUTTON_GUIDE] = true;
+    eastDown.btn[SDL_GAMEPAD_BUTTON_EAST] = true;
+    auto hash = [&]() { return joypad0Buttons[BUTTON_d] != 0; };
+    auto east = [&]() { return joypad0Buttons[BUTTON_A] != 0; };
+    CHECK(holdBindings(prof).size() == 1);   // Guide is the hold input of this pad
+
+    // A tap: nothing while it is down, then # for exactly kPulseFrames emulated frames.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        for (int f = 0; f < 3; f++) { holdFrame(arb, guard, prof, none); CHECK(!hash()); }   // negative control
+        arb.press(kPadDev, G, 0);
+        for (int f = 0; f < 10; f++) { holdFrame(arb, guard, prof, guideDown); CHECK(!hash()); }
+        arb.release(kPadDev, G, 200);
+        int on = 0;
+        for (int f = 0; f < 8; f++) { holdFrame(arb, guard, prof, none); on += hash(); }
+        CHECKF(on == HoldArbiter::kPulseFrames, "# pulse lasted %d frames", on);
+    }
+    // A hold: fires once, and # never reaches the game, not even after the button comes up.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        arb.press(kPadDev, G, 0);
+        CHECK(arb.takeFires(600) == 1);
+        int on = 0;
+        for (int f = 0; f < 40; f++) { holdFrame(arb, guard, prof, guideDown); on += hash(); }
+        arb.release(kPadDev, G, 2000);
+        for (int f = 0; f < 8; f++) { holdFrame(arb, guard, prof, none); on += hash(); }
+        CHECKF(on == 0, "# reached the core %d times during a hold", on);
+    }
+    // The guard: East was already down when the menu closed; it must not be a fresh A press for the game.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        holdFrame(arb, guard, prof, eastDown);
+        CHECK(east());   // negative control: unguarded, East is A
+        holdFrame(arb, guard, prof, none);
+        guard.arm(kPadDev, eastDown);
+        int a = 0;
+        for (int f = 0; f < 10; f++) { holdFrame(arb, guard, prof, eastDown); a += east(); }
+        CHECKF(a == 0, "A reached the game %d times while guarded", a);
+        holdFrame(arb, guard, prof, none);
+        CHECK(!guard.armed());
+        holdFrame(arb, guard, prof, eastDown);
+        CHECK(east());
+    }
+    // held_guide_across_handoff_never_reaches_core: Guide went down before the menu closed onto the game.  The hand-off
+    // as InputManager::armReleaseGuard() does it: the guard takes the RAW state, then the arbiter forgets the hold.  Its
+    // release is then neither a tap (the negative control is the tap case above: the same release WITHOUT the hand-off
+    // pulses #) nor a hold.
+    {
+        HoldArbiter arb;
+        ReleaseGuard guard;
+        arb.setHoldInputs(kPadDev, holdBindings(prof));
+        arb.press(kPadDev, G, 0);
+        guard.arm(kPadDev, guideDown);
+        arb.clear();
+        int on = 0;
+        for (int f = 0; f < 10; f++) { holdFrame(arb, guard, prof, guideDown); on += hash(); }
+        arb.release(kPadDev, G, 200);   // a no-op for the arbiter
+        for (int f = 0; f < 8; f++) { holdFrame(arb, guard, prof, none); on += hash(); }
+        CHECKF(on == 0, "# reached the core %d times for a Guide held across the hand-off", on);
+        CHECK(arb.takeFires(5000) == 0);
+        CHECK(!guard.armed());
+    }
+}
+
 static void testLockedOptions() {
     std::printf("-- locked core options\n");
     if (!load(DevKind::Pad, DevKind::Pad)) return;
@@ -527,11 +728,12 @@ int main(int argc, char** argv) {
     g_kbp = Profile::builtin(DeviceClass::Keyboard);
     g_kbp.stickAsDpad = false;
     g_padp = Profile::builtin(DeviceClass::Gamepad);
+    g_padPro = Profile::builtin(DeviceClass::Gamepad, PadCaps(), true);
 
     CoreHost& host = CoreHost::instance();
     g_host = &host;
     host.setDirectories(sys, sav);
-    host.optionLock = &lockedCoreOption;   // as App::wireHost() does
+    host.optionLock = [](const std::string& k, std::string& v) { return lockedCoreOptionFor(k, v, g_pro); };   // as App::wireHost() does
     host.announceKeyboard = true;
     host.inputPoll = []() {};
     host.inputState = [](unsigned p, unsigned d, unsigned i, unsigned id) { return g_in.state(p, d, i, id); };
@@ -544,6 +746,8 @@ int main(int argc, char** argv) {
     testLightgun();
     testTeamTap();
     testProKeyboard();
+    testProPad();
+    testHoldButtons();
     testLockedOptions();
 
     host.unloadContent();

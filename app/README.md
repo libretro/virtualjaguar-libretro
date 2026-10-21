@@ -94,6 +94,7 @@ No `-std=gnu89` is forced: `make` passes no `-std` either, and gnu89 changes
 ```sh
 virtualjaguar game.j64            # cartridge (HLE boot, no BIOS needed)
 virtualjaguar disc.cue            # or .chd / .cdi
+virtualjaguar game.m3u            # a multi-disc set: every disc listed in File > Disc
 virtualjaguar --option virtualjaguar_usefastblitter=enabled game.j64
 virtualjaguar --help
 ```
@@ -109,6 +110,8 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
 | A S D, Q E | Jaguar Pro Controller X Y Z and left / right shoulder (keypad 9 8 7, 4 6) |
 | F2 | keypad overlay |
+| Ctrl/Cmd+Shift+T | toggle TV mode (View > TV mode), with or without a game; the game keeps running. Fixed, not rebindable |
+| F4, or a Share hold | the "TV menu / TV mode" action (rebindable): with a game it opens the in-game TV menu, without one it toggles TV mode |
 | F3 | controls overlay: a cheat sheet of your current bindings (also View menu) |
 | Esc / F10 | release the captured mouse; F10 or a click on the picture captures it again (see below) |
 | F5 / F7 / F6 | save state / load state / next slot (Shift+F6 previous) |
@@ -154,15 +157,43 @@ and **Devices & players** do all of that. Team Tap sockets read only the RetroPa
 there keypad 0-6 ride X, L, R, L2, R2, L3, R3 and keypad 7-9, `*`, `#` are unreachable
 (a limit of the core).
 
+### Controller in the desktop library
+
+With TV mode off and no game running (or a paused game with the Game library window open), a pad
+browses the library: a focus ring follows it over the grid, the Favorites and Recently played strips,
+and the BIOS and States tabs. Mouse and keyboard work as before.
+
+| Pad | Library |
+| --- | --- |
+| D-pad, left stick | move the focus |
+| A (tap) | play the focused game; open a BIOS tile's menu; load a state |
+| A (hold) or X | the tile's menu (D-pad moves, A picks, B closes) |
+| B | close the open menu, or the Game library window |
+| Y | favorite / unfavorite |
+| LB / RB | previous / next tab |
+| LT / RT | previous / next initial letter |
+| Right stick | scroll the grid |
+| View / Back | focus the search box |
+| Share or Guide, held | toggle TV mode |
+
+The buttons follow the controller family, detected automatically: Xbox, PlayStation, Nintendo Switch
+(A on the right confirms, B on the bottom goes back) and MFi / generic (Xbox layout). A custom layout
+is under **Settings > Input**: pick one controller in the device list, then **Menu buttons** (a Family
+choice, and **Set** / **Default** per button). **Reset menu buttons** clears that controller's overrides.
+
 ### Devices, players and the mouse
 
 **Settings > Input > Devices & players** (everywhere, or this game only; stored as
 `input.port.N` / `input.game.<id>.port.N`) picks the device in each Jaguar port from the
-core's own list and calls `retro_set_controller_port_device`:
+core's own list and calls `retro_set_controller_port_device`. The Pro Controller is not in
+that list (the core has it as the option value `virtualjaguar_pN_device = pad_pro` only): the
+app offers it after Standard Joypad, claims a standard pad and hands the core `pad_pro`, so the
+core's own Pro path turns the RetroPad X / L2 / R2 / L / R into keypad 9 / 8 / 7 / 4 / 6:
 
 | device | driven by (defaults, all rebindable under *Key / button bindings*) |
 | --- | --- |
-| Standard Joypad, Pro Controller | the pad and keypad bindings above |
+| Standard Joypad | the pad and keypad bindings above |
+| Pro Controller (6-button) | the pad bindings above, plus X / Y / Z = Left Shoulder / North / Right Shoulder and L / R = the triggers (rebindable as *X (Pro)* ... *R (Pro)*); keypad 0-4 move to the overlay on a gamepad, 5-9, `*`, `#` stay where they were; the keyboard keeps `A S D` / `Q E` |
 | ST / Amiga mouse (port 2) | the mouse or trackpad (captured); or the right stick / arrows; Z X or South East are the buttons |
 | Rotary (either port) | mouse left / right, or two keys (Left / Right), or the right stick; speed in *Tuning* |
 | Analog, driving, paddle | left stick or `A D W S`; driving: Right trigger / `E` accelerator, Left trigger / `Q` brake; D = North or `V` |
@@ -407,7 +438,12 @@ cartridge runs, and the Core options tab is empty before the first load).
    folders inside them are not followed) for the formats the core reads: cartridges
    `.j64 .jag .rom .abs .cof .prg .bin` and discs `.cue .chd .cdi`. A `.bin` that a `.cue`
    references is a disc track, not a cartridge, and so is any `.bin` over 8 MiB. Zip is not
-   scanned: the core cannot load it.
+   scanned: the core cannot load it. An `.m3u` multi-disc playlist (RetroArch's format: one
+   image per line, relative to the playlist or absolute; `#` lines and a `|label` suffix are
+   ignored) is listed in place of the discs it names, and is identified by its first disc.
+   Opening one boots the first disc and puts every disc in **File > Disc** (the core itself
+   reads no `.m3u`; the app does). Recents, Restart and the `.srm` (one per set) follow the
+   playlist; the window title, save states and achievements follow the disc in the tray.
 2. **Identification** by CRC32 against libretro-database (see licences below):
    - cartridges against the No-Intro "Atari - Jaguar" dat, using the whole file first and then
      the file minus a 512-byte copier header (the same rule as the core's
@@ -441,8 +477,9 @@ cartridge runs, and the Core options tab is empty before the first load).
    For Jaguar CD titles libretro-thumbnails is asked first and, on a miss, the project site's mirror
    (`jaguar.provenance-emu.com/thumbnails/Atari - Jaguar CD/...`, box art from TheGamesDB plus title screens and snaps
    made with this emulator, hosted until libretro-thumbnails has a Jaguar CD repository, issue #141 there); each
-   source has its own cache folder and miss markers (the mirror's expire after 7 days), so mirror art never hides
-   upstream art that appears later. Set `library.art_mirror` in `config.ini`
+   source has its own cache folder, so mirror art never hides upstream art that appears later. A libretro-thumbnails
+   miss is remembered for 30 days; a mirror miss only until the app quits, so art the site gains shows on the next
+   launch. Set `library.art_mirror` in `config.ini`
    to another base URL, or to an empty value to turn the mirror off.
    **Download box art** turns all downloading off.
    **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
@@ -482,6 +519,37 @@ data). They are not committed to this repository, only downloaded and shipped un
 beside the binary, with attribution here. The box art is the property of its owners; the app
 downloads it to the user's own machine on demand, as RetroArch does, and never redistributes
 it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library was added.
+
+## Emulation thread
+
+**Settings > Interface > Performance > Emulation thread** (`ui.emu_thread`) runs the emulation on its own thread
+(#967; design in `docs/app-emulation-thread-design.md`). The window then only presents. A slow emulated frame or a
+busy UI no longer stalls the picture. The game runs at the true Jaguar rate (60.05 Hz, PAL 50.08 Hz), paced by the
+sound card's clock, and the display shows the newest frame (on a 60 Hz panel the true-rate drift alone skips one frame about every 18 s; in this phase frames that finish
+close to the take point also repeat or skip more often than in the single-thread loop, roughly 1 to 2.5 a second as
+measured on a 60 Hz panel, which the display-locked mode planned for a later phase addresses: that is why the setting is
+off by default).
+The setting takes effect at the next start and is **off** by default (nightly builds will turn it on once nothing is
+switched off while it runs). `--emu-thread on|off` decides for one run; headless runs stay single-threaded unless it
+says `on`.
+
+With vsync, the window waits until just before each vblank, passing input to the emulation as it arrives, and then
+shows the newest frame (the late latch, `src/late_latch.h`). It stays off until it has found where the vblanks are,
+and lets go by itself if frames keep missing them; the log says `[emu] late latch locked` / `released`.
+`--late-latch off` turns it off for a measurement. For a dev measurement, `virtualjaguar --perf-frames N` with
+`VJ_PERF_CSV=path` writes one row per measured iteration when the run ends, with the `input_lat_ms` (event to the
+emulation's poll) and `present_lat_ms` (event to the swap that shows it) columns; `--perf-input` injects a key every
+30 iterations so they have samples. `VJ_PERF_TRACE=prefix` adds `prefix-emu.csv` (each emulated frame: due, start, end,
+trim, audio queue) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace_summary.py prefix` counts
+the frames really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
+grid's phase once whenever frame ends would straddle the take point, so each 60.05-on-60 Hz crossing is one skip rather
+than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
+
+While it is on, this version switches off the Tools (debugger) windows and the GDB stub option; they move to the
+emulation thread in the next phase. RetroAchievements and netplay work as usual: achievements are checked on the
+emulation thread after every frame, and link play's peer waits block only that thread. A load or a state save that
+takes longer than a quarter of a second shows a spinner instead of freezing the window. A log line
+`[core_host] owner violation: ...` means a UI path still called into the core directly: that is a bug, please report it.
 
 ## Running several instances
 
@@ -566,6 +634,13 @@ of Emucheats.
 Database entries are RetroArch memory cheats (decimal address/value, width in
 `memory_search_size`); they become the core's hex codes, value little-endian in
 memory as RetroArch writes it. `cheatN_enable` is ignored: nothing starts on.
+
+For community-authored C cheat sources, the optional offline
+[source converter](../tools/cheat-import/README.md) can produce `.cht` freezes
+without an emulator binary or SDK. It reports unsupported operations, leaves
+every cheat disabled, and binds the set to the matching cartridge CRC32.
+The app blocks revision mismatches and malformed/duplicate guards; legacy
+unbound `.cht` files continue to work. No community script pack is bundled.
 
 ## RetroAchievements
 
@@ -710,13 +785,24 @@ exit 77 means no window-server session (ssh) or not macOS.
 version (`v1.92.8-docking`; pinned in `CMakeLists.txt` and the Flatpak manifest), used only for its multi-viewport
 mode: Settings > Interface > Desktop > "Let windows move outside the main window" lets a Settings / Achievements /
 Cheats / Netplay / debug-tool window dragged past the edge of the main window become an OS window of its own
-(real title bar, no Dock / taskbar entry, positions kept in `imgui.ini`). Default on for macOS and Windows, off on
+(real title bar, no Dock / taskbar entry, positions kept in `imgui.ini`). Breakout windows use only native title-bar
+controls; the duplicate ImGui title/collapse/close bar returns when they move back inside. Default on for macOS and Windows, off on
 Linux; it is forced off on Wayland (a client cannot position its own extra windows there; X11 and XWayland are
 fine), while the window is fullscreen, and in headless runs (`src/platform/viewports.*`, unit-tested in
 `platform_unit`). Docking is left off: it would put tab bars and drop targets on windows people already arranged.
 The coordinates of the main window are screen coordinates while this is on, so code that mixes them with SDL's
 window-relative pointer events subtracts `GetMainViewport()->Pos`. On macOS, "Show the menu bar inside the window"
 (`ui.menubar_in_window`, off by default; F1 flips it) keeps the ImGui menu bar as well as the native one.
+
+"Auto-hide the menu bar in fullscreen" (`ui.fullscreen_autohide_menu`, off by default) unpins the in-window menu
+on entering fullscreen, including the macOS green-button route. Move the pointer to the top edge to reveal it,
+or press F1 to pin it. Leaving fullscreen restores the earlier pin state; a temporary F1 reveal on macOS does
+not change the windowed menu preference. The setting also belongs to Interface's reset group.
+
+`VJ_WINDOWED_OK=1 bash app/tests/fullscreen_menu_windowed_check.sh <app> <rom> <out-dir>` checks the default and enabled
+cases on the dedicated display host: fullscreen entry/exit, top-edge hover, F1, saved preference and screenshots.
+`window_chrome_unit` drives real ImGui viewports with a fake platform backend to check native close, collapsing,
+reattachment and decoration-less backends without opening a window.
 
 ## Discord
 
@@ -757,6 +843,21 @@ speaks Discord's local RPC protocol itself, no Discord SDK).
 3. CI: the repository variable `DISCORD_APP_ID` (Settings > Secrets and variables > Actions > Variables) overrides the
    CMake default in `app-package.yml`; leave it unset to use the default. An application ID is public, not a secret.
 4. Test from a second Discord account: buttons are hidden on your own profile.
+
+## Neuro API (AI players)
+
+**Settings > Neuro** connects the app to a [Neuro game API](https://github.com/VedalAI/neuro-sdk) server, so
+Neuro-sama, or any AI backend that speaks the API (the SDK's Randy, Tony and Gary included), can play as Player 1.
+The app registers the Jaguar controller as actions (`press_buttons`, `button_sequence`, `hold_buttons`,
+`release_all`), plus a game profile's own moves (Tempest 2000 is built in; more go in `<data folder>/neuro/*.json`),
+asks for the next move whenever the last one has played out, and presses the chosen buttons frame by frame.
+
+- `--neuro ws://HOST:PORT` turns it on for one run; the default server is `$NEURO_SDK_WS_URL`, else
+  `ws://localhost:8000` (Randy). Only `ws://`; no TLS.
+- Config keys `neuro.enabled`, `neuro.url`, `neuro.auto_force`, `neuro.force_interval`, `neuro.game_name`.
+- The socket lives on a background thread and reconnects by itself; the game never waits on it.
+- [docs/neuro.md](../docs/neuro.md) has the actions, the profile format and testing with Randy.
+- The code is in `src/neuro/`; `-DVJ_APP_NEURO=OFF` builds the app without it (no tab, no `--neuro`).
 
 Tests: `ctest -R discord` (frame encode/decode, JSON escaping, socket paths per OS, the rate limiter, the activity
 built from app state, and a loopback test against a fake Discord server on a Unix socket; skipped on Windows).
@@ -799,7 +900,7 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 - **Textures**: browse the core's texture dump, export a tile, replace its art with your own PNG.
 - **Audio scope**: waveforms and peak meters of the audio the core produces.
 - **F9** breaks into the game (continue when halted), **F10** steps while halted; a "HALTED" bar shows over the picture.
-  The CPU debugger window is still to come.
+  The CPU debugger covers the 68000, GPU and DSP, with registers, disassembly, breakpoints and step-over.
 
 Writes go to RAM freely; hardware registers need "Allow register writes"; the CD registers (`$DFFF00-$DFFFFF`) and
 `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD` are never written from here.  Everything greys out (and closes) while
@@ -919,6 +1020,9 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 `--show-window` takes `settings[-video|-input|-audio|-storage|-interface][:FILTER]`, `states`, `about`,
 `cheats`, `library`, `login`, `achievements`, `keypad` and `theme-editor`.
 
+The tests labelled `emu_thread` (`ctest -L emu_thread`) cover the emulation thread, including every
+`smoke_*_threaded` run with `--emu-thread on`; CI also runs them under ThreadSanitizer.
+
 ## Layout
 
 | file | job |
@@ -934,6 +1038,14 @@ virtualjaguar --data-dir /tmp/d --ui-scale 2 --screenshot out.png --screenshot-f
 | `shaders/` | first-party presets copied beside the executable |
 | `cmake/VJShaders.cmake` | pinned header fetch, optional prebuilt runtime, shader tests |
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
+| `src/emu_thread.*`, `src/emu_commands.h` | the emulation thread (#967): its loop, `post` / `call` / `advance`, the ordered command queue |
+| `src/pacing_clock.h` | mode A pacing: the core's period trimmed by the audio queue (the sound card as master clock) |
+| `src/frame_exchange.h`, `src/frame.h` | finished frames from the emulation thread to the UI (triple buffer, content epochs) |
+| `src/emu_snapshot.h` | what the emulation thread publishes for the UI: the per-frame snapshot and the core-event stream (log lines, events, option writes) |
+| `src/ach_event.*` | an rc_client event copied, so it can be applied on the UI thread |
+| `src/precise_sleep.h` | short sleeps that honour sub-tick durations (a high-resolution waitable timer on Windows) |
+| `src/input_snapshot.h` | the newest input from the UI thread to the core's poll (pointer motion exactly once) |
+| `src/late_latch.h` | the late latch: when the threaded window loop stops waiting before a vblank (vblank tracking, UI build budget) |
 | `src/input.*` | keyboard and gamepad snapshots to libretro input |
 | `src/remap.*`, `src/remap_ui.cpp` | profiles, per-game overrides, keypad delivery, overlay, bind capture, and their UI |
 | `src/devices.*` | device kinds, per-port / per-game selection, player slots (Team Tap), light-gun geometry, mouse-capture policy, locked core options |

@@ -9,6 +9,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <vector>
 
 namespace vj {
 
@@ -61,6 +63,14 @@ uint8_t* systemRam(size_t& size) {
     return (uint8_t*)retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
 }
 
+// On the emulation thread (or inline): the cheat list as one command.
+void applyCheatBatch(const CheatBatch& b) {
+    for (const CheatOp& o : b) {
+        if (o.reset) retro_cheat_reset();
+        else retro_cheat_set(o.index, o.enabled, o.code.c_str());
+    }
+}
+
 }  // namespace
 
 void cheatsInit(App& app, const CliArgs& a) {
@@ -72,8 +82,10 @@ void cheatsInit(App& app, const CliArgs& a) {
     g_cli.dir = a.cheatsDir;
 
     CheatManager& cm = app.cheats;
-    cm.resetSink = [] { retro_cheat_reset(); };
-    cm.setSink = [](unsigned index, bool enabled, const char* code) { retro_cheat_set(index, enabled, code); };
+    // The cheat list is one command: posted to the emulation thread, run at once when inline or already there.
+    cm.commit = [&app](CheatBatch b) {
+        app.emu.post([b = std::move(b)] { applyCheatBatch(b); });
+    };
     // RetroAchievements hardcore: no cheat may reach the core.  The saved selections
     // stay on disk untouched and go back in when hardcore ends (see the callback).
     cm.blocked = [&app] { return !app.ach.allowCheats(); };

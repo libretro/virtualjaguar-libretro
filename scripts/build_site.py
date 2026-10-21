@@ -8,7 +8,8 @@ Inputs (committed in this repo):
                            leading comments)
   site/style.css           the one stylesheet
   site/assets/*            images, copied verbatim
-  site/thumbnails/*        Jaguar CD artwork mirror, copied verbatim
+  site/thumbnails/*        Jaguar CD artwork mirror, copied verbatim, plus one
+                           drop-in zip per system (see write_thumbnail_zips)
   docs/cd-boot-matrix.md   parsed for the CD compatibility table
   Makefile                 CORE_BASE_VERSION -> JSON-LD softwareVersion
 
@@ -42,6 +43,7 @@ import json
 import re
 import shutil
 import struct
+import zipfile
 import subprocess
 import sys
 from pathlib import Path
@@ -153,6 +155,28 @@ def die(msg):
 
 
 # ------------------------------------------------------- repo-derived facts
+
+def write_thumbnail_zips(src, dest):
+    """Write <dest>/<System>.zip for each system folder in src.
+
+    The zip holds only <System>/Named_*/*.png, so it unpacks straight into
+    RetroArch's thumbnails directory (and is what libretro-thumbnails#141 is
+    offered).  Entries are sorted with a fixed timestamp, so the same images
+    always give the same bytes.
+    """
+    for system in sorted(p for p in src.iterdir() if p.is_dir()):
+        pngs = sorted(f for f in system.glob("Named_*/*.png") if f.is_file())
+        if not pngs:
+            continue
+        with zipfile.ZipFile(dest / (system.name + ".zip"), "w",
+                             zipfile.ZIP_DEFLATED) as zf:
+            for f in pngs:
+                info = zipfile.ZipInfo(f.relative_to(src).as_posix(),
+                                       (1996, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o644 << 16
+                zf.writestr(info, f.read_bytes())
+
 
 def read_core_version(makefile):
     """softwareVersion for the JSON-LD, straight from the Makefile.
@@ -1734,6 +1758,7 @@ def main():
     thumbs_src = SITE_SRC / "thumbnails"
     if thumbs_src.is_dir():
         shutil.copytree(thumbs_src, out / "thumbnails")
+        write_thumbnail_zips(thumbs_src, out / "thumbnails")
     (out / ".nojekyll").write_text("")
 
     nav_items = []

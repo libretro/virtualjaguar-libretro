@@ -72,7 +72,28 @@ void InputManager::reresolve() {
     if (!store_) return;
     if (cfg_) settings_ = DeviceSettings::load(*cfg_, content_);
     kbProfile_ = store_->resolve(DeviceClass::Keyboard, "", content_);
-    for (Pad& p : pads_) p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_);
+    syncHoldInputs(kKeyboardDev, kbProfile_);
+    for (Pad& p : pads_) {
+        p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps);
+        p.proProfile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps, true);
+        syncHoldInputs((uint32_t)p.id, p.profile);   // (the Pro variant has the same hold inputs)
+        if (cfg_) p.nav = resolveNavProfile(*cfg_, p.guid, (int)SDL_GetGamepadType(p.handle));
+    }
+}
+
+const NavProfile& InputManager::navProfile(uint32_t joystickId) const {
+    static const NavProfile kDefault = familyNavProfile(PadFamily::Xbox);
+    for (const Pad& p : pads_)
+        if ((uint32_t)p.id == joystickId) return p.nav;
+    return kDefault;
+}
+
+void InputManager::syncHoldInputs(uint32_t dev, const Profile& p) {
+    std::vector<Binding> v;
+    for (int c = 0; c < C_COUNT; c++)
+        for (const Binding& b : p.binds[(size_t)c])
+            if (b.hold) v.push_back(b);
+    holds_.setHoldInputs(dev, v);
 }
 
 bool InputManager::padAllowed(SDL_JoystickID id) const {
@@ -98,7 +119,13 @@ void InputManager::openPad(SDL_JoystickID id) {
     char buf[64] = {0};
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(p.id), buf, sizeof buf);
     p.guid = buf;
-    if (store_) p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_);
+    p.caps.hasMisc1 = SDL_GamepadHasButton(g, SDL_GAMEPAD_BUTTON_MISC1);
+    if (store_) {
+        p.profile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps);
+        p.proProfile = store_->resolve(DeviceClass::Gamepad, p.guid, content_, p.caps, true);
+        syncHoldInputs((uint32_t)p.id, p.profile);
+    }
+    if (cfg_) p.nav = resolveNavProfile(*cfg_, p.guid, (int)SDL_GetGamepadType(g));
     pads_.push_back(p);
 }
 
@@ -110,8 +137,11 @@ void InputManager::setPadFilter(int f) {
     if (padFilter_ > 0) SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     else SDL_ResetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS);
     // Re-open from scratch in enumeration order, so "controller 2" means the same pad every time.
-    for (Pad& p : pads_)
+    for (Pad& p : pads_) {
         if (p.handle) SDL_CloseGamepad(p.handle);
+        holds_.forget((uint32_t)p.id);
+        guard_.forget((uint32_t)p.id);
+    }
     pads_.clear();
     int n = 0;
     SDL_JoystickID* ids = SDL_GetGamepads(&n);
@@ -152,14 +182,21 @@ bool InputManager::handleEvent(const SDL_Event& e) {
         controls.lastInputWasPad = true;
         // The controls-overlay key / button: event driven, so it also works while paused.
         for (const Pad& p : pads_)
-            if (p.id == e.gbutton.which)
+            if (p.id == e.gbutton.which) {
+                // (hold bindings fire only through the HoldArbiter)
                 for (const Binding& b : p.profile.binds[C_HELP])
-                    if (b.kind == Binding::PadButton && b.code == (int)e.gbutton.button) helpToggle_ = true;
+                    if (b.kind == Binding::PadButton && !b.hold && b.code == (int)e.gbutton.button) helpToggle_ = true;
+                for (const Binding& b : p.profile.binds[C_TVMENU])
+                    if (b.kind == Binding::PadButton && !b.hold && b.code == (int)e.gbutton.button) tvMenu_ = true;
+            }
     } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
         controls.lastInputWasPad = false;
-        if (!uiWantsKeyboard && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)))
+        if (!uiWantsKeyboard && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) {
             for (const Binding& b : kbProfile_.binds[C_HELP])
-                if (b.kind == Binding::Key && b.code == (int)e.key.scancode) helpToggle_ = true;
+                if (b.kind == Binding::Key && !b.hold && b.code == (int)e.key.scancode) helpToggle_ = true;
+            for (const Binding& b : kbProfile_.binds[C_TVMENU])
+                if (b.kind == Binding::Key && !b.hold && b.code == (int)e.key.scancode) tvMenu_ = true;
+        }
     }
     // ---- hiding the controls overlay: a click / tap on it or the picture, or Esc -----------------
     // (a click on ImGui itself - a menu, a window - is the UI's, not ours).  The press that hides it must
@@ -211,6 +248,8 @@ bool InputManager::handleEvent(const SDL_Event& e) {
     if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
         for (size_t i = 0; i < pads_.size(); i++) {
             if (pads_[i].id == e.gdevice.which) {
+                holds_.forget((uint32_t)pads_[i].id);
+                guard_.forget((uint32_t)pads_[i].id);
                 SDL_CloseGamepad(pads_[i].handle);
                 pads_.erase(pads_.begin() + (long)i);
                 break;
@@ -219,6 +258,67 @@ bool InputManager::handleEvent(const SDL_Event& e) {
         return true;
     }
     return false;
+}
+
+void InputManager::feedHoldEdges(const SDL_Event& e) {
+    // Losing focus drops the key-up / button-up with it: nothing may stay held, and nothing fires.
+    if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        holds_.clear();
+        tvMenu_ = false;
+        return;
+    }
+    const uint64_t ms = SDL_GetTicks();   // one clock for both edges and tickHolds()
+    // Only DOWN edges are gated (by a bind capture: the press being bound is the binding's, not a hold); an UP edge
+    // is always fed, or an input pressed before the capture and let go during it would stay down forever.
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        if (!capture_.active()) holds_.press((uint32_t)e.gbutton.which, Binding::button((int)e.gbutton.button), ms);
+    } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+        holds_.release((uint32_t)e.gbutton.which, Binding::button((int)e.gbutton.button), ms);
+    } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+        if (!capture_.active() && !uiWantsKeyboard && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)))
+            holds_.press(kKeyboardDev, Binding::key((int)e.key.scancode), ms);
+    } else if (e.type == SDL_EVENT_KEY_UP) {
+        // Always: a key that went down before a text box or a chord took the keyboard must still come up.
+        holds_.release(kKeyboardDev, Binding::key((int)e.key.scancode), ms);
+    }
+}
+
+void InputManager::tickHolds(uint64_t ms, bool live) {
+    holds_.setLive(live);
+    if (holds_.takeFires(ms) > 0) tvMenu_ = true;
+}
+
+static void snapshotPad(SDL_Gamepad* g, DeviceSnapshot& s) {
+    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) s.btn[(size_t)b] = SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
+    for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++) s.axis[(size_t)a] = SDL_GetGamepadAxis(g, (SDL_GamepadAxis)a);
+}
+
+void InputManager::armReleaseGuard() {
+    DeviceSnapshot kb;
+    int n = 0;
+    const bool* ks = SDL_GetKeyboardState(&n);
+    for (int sc = 0; ks && sc < n && sc < (int)kb.key.size(); sc++) kb.key[(size_t)sc] = ks[sc];
+    guard_.arm(kKeyboardDev, kb);
+    for (const Pad& p : pads_) {
+        DeviceSnapshot s;
+        snapshotPad(p.handle, s);
+        guard_.arm((uint32_t)p.id, s);
+    }
+    // After the guard has the raw state: whatever is still down is the guard's now, so its release must not count
+    // as a tap or a hold for the arbiter.
+    holds_.clear();
+}
+
+void InputManager::clearHolds() {
+    holds_.clear();
+    tvMenu_ = false;
+    armReleaseGuard();
+}
+
+std::vector<SDL_Gamepad*> InputManager::padHandles() const {
+    std::vector<SDL_Gamepad*> v;
+    for (const Pad& p : pads_) v.push_back(p.handle);
+    return v;
 }
 
 std::vector<std::string> InputManager::gamepadNames() const {
@@ -237,6 +337,9 @@ std::vector<InputManager::PadInfo> InputManager::pads() const {
         const char* s = SDL_GetGamepadName(pads_[i].handle);
         pi.name = s ? s : "Gamepad";
         pi.guid = pads_[i].guid;
+        pi.hasMisc1 = pads_[i].caps.hasMisc1;
+        pi.detected = familyForType((int)SDL_GetGamepadType(pads_[i].handle));
+        pi.nav = pads_[i].nav;
         pi.port = (unsigned)i;
         for (size_t j = 0; j < i; j++)
             if (pads_[j].guid == pads_[i].guid) pi.instance++;
@@ -262,6 +365,16 @@ void InputManager::updateRoutes() {
     for (const Pad& p : pads_) guids.push_back(p.guid);
     unsigned kbSlot = store_ ? (unsigned)store_->keyboardPort() : 0u;
     routes_ = assignSlots(slotConfig(), activeSlots(kind_[0] == DevKind::TeamTap, kind_[1] == DevKind::TeamTap), guids, kbSlot);
+}
+
+bool InputManager::proPortFor(const std::string& guid) const {
+    if (guid.empty()) return kind_[0] == DevKind::ProPad || kind_[1] == DevKind::ProPad;
+    for (size_t i = 0; i < pads_.size(); i++) {
+        if (pads_[i].guid != guid) continue;
+        for (unsigned sl = 0; sl < kSlots; sl++)
+            if (routes_.pad[sl] == (int)i && slotSocket(sl) == 0 && kind_[slotJaguarPort(sl)] == DevKind::ProPad) return true;
+    }
+    return false;
 }
 
 void InputManager::setPortKinds(DevKind p1, DevKind p2) {
@@ -291,26 +404,105 @@ void InputManager::syncMouseCapture(SDL_Window* w, bool gameRunning, bool uiOpen
     if (want && notify) notify("Mouse captured (Esc or F10 releases it)");
 }
 
-void InputManager::beginCapture(const LayerId& layer, Ctl ctl, bool add) {
-    capLayer_ = layer;
-    capCtl_ = ctl;
-    capAdd_ = add;
-    capture_.begin(layer.cls);
+void InputManager::startCapture(DeviceClass cls) {
+    capture_.begin(cls);
     for (const Pad& p : pads_)
         for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++)
             capture_.setBaseline(p.id, a, SDL_GetGamepadAxis(p.handle, (SDL_GamepadAxis)a));
 }
 
-void InputManager::bindCaptured(const Binding& b) {
+void InputManager::beginCapture(const LayerId& layer, Ctl ctl, bool add, bool hold) {
+    capLayer_ = layer;
+    capCtl_ = ctl;
+    capAdd_ = add;
+    capHold_ = hold;
+    capNav_ = false;
+    startCapture(layer.cls);
+}
+
+void InputManager::beginNavCapture(const std::string& guid, tv::Intent in) {
+    capNav_ = true;
+    capNavGuid_ = guid;
+    capNavIntent_ = in;
+    capCtl_ = C_COUNT;   // no game binding is written: bindCaptured() would return, and the controls table shows no waiting row
+    navResult_ = NavResult();
+    startCapture(DeviceClass::Gamepad);
+}
+
+// A pad button (or trigger push) was captured for a menu intent.
+void InputManager::bindNavCaptured(const Binding& captured) { applyNavBinding(capNavGuid_, capNavIntent_, captured); }
+
+// Default on one intent: back to the family's button.  Through setNavBinding, so whoever swapped into that button gets the
+// intent's old one back and no two intents end up on one button.
+void InputManager::resetNavBinding(const std::string& guid, tv::Intent in) {
+    for (const Pad& p : pads_) {
+        if (p.guid != guid) continue;
+        const NavProfile def = familyNavProfile(p.nav.family);
+        const auto at = std::find(std::begin(kNavIntents), std::end(kNavIntents), in);
+        if (at == std::end(kNavIntents)) return;   // not a rebindable menu intent: nothing to reset
+        applyNavBinding(guid, in, def.binds[(size_t)(at - std::begin(kNavIntents))]);
+        return;
+    }
+}
+
+// Binds `b` to menu intent `in` for the model: the pad's TV-menu and help bindings are reserved (the button that opens the
+// TV menu, or the controls overlay, must not also be a library button).
+void InputManager::applyNavBinding(const std::string& guid, tv::Intent in, const Binding& b) {
+    if (!cfg_) return;
+    const Pad* pad = nullptr;
+    for (const Pad& p : pads_)
+        if (p.guid == guid) {
+            pad = &p;
+            break;
+        }
+    if (!pad) return;   // the model's last pad went away while the capture ran
+    NavResult r;
+    r.valid = true;
+    r.guid = guid;
+    r.intent = in;
+    r.bound = b;
+    std::vector<Binding> reserved = pad->profile.binds[C_TVMENU];   // and the cheat-sheet button: both are the app's, not the library's
+    reserved.insert(reserved.end(), pad->profile.binds[C_HELP].begin(), pad->profile.binds[C_HELP].end());
+    const NavProfile before = pad->nav;
+    r.set = setNavBinding(*cfg_, guid, (int)SDL_GetGamepadType(pad->handle), in, b, reserved);
+    if (r.set == NavSet::Swapped)
+        for (size_t i = 0; i < before.binds.size(); i++) {
+            // (setNavBinding compares kind / code / dir: a hold flag does not make two buttons different)
+            const Binding& o = before.binds[i];
+            if (kNavIntents[i] != in && o.kind == b.kind && o.code == b.code && o.dir == b.dir) r.other = kNavIntents[i];
+        }
+    navResult_ = r;
+    if (r.set != NavSet::Reserved) {
+        cfg_->save();
+        reresolve();
+    }
+}
+
+void InputManager::bindCaptured(const Binding& captured) {
+    if (capNav_) {
+        bindNavCaptured(captured);
+        return;
+    }
     if (!store_ || capCtl_ >= C_COUNT) return;
+    Binding b = captured;
+    if (capHold_ && (b.kind == Binding::Key || b.kind == Binding::PadButton)) b = b.withHold();   // axes cannot be held
     std::vector<Binding> v;
     if (capAdd_) {
         // Start from what is in effect now, so "add" extends rather than shadows.
         if (store_->defined(capLayer_, capCtl_)) {
             v = store_->get(capLayer_, capCtl_);
         } else {
-            std::string guid = capLayer_.guid;
-            v = store_->resolve(capLayer_.cls, guid, capLayer_.gameId).binds[capCtl_];
+            // A controller's own layer seeds from what that pad would get (the TV menu's Share default
+            // is Guide on a pad without Share); the shared layer seeds from the default caps and
+            // resolve() maps the Share default per pad.
+            PadCaps caps;
+            for (const Pad& p : pads_)
+                if (!capLayer_.guid.empty() && p.guid == capLayer_.guid) {
+                    caps = p.caps;
+                    break;
+                }
+            v = store_->resolve(capLayer_.cls, capLayer_.guid, capLayer_.gameId, caps,
+                                capLayer_.cls == DeviceClass::Gamepad && proPortFor(capLayer_.guid)).binds[capCtl_];
         }
     }
     if (std::find(v.begin(), v.end(), b) == v.end()) v.push_back(b);
@@ -319,12 +511,18 @@ void InputManager::bindCaptured(const Binding& b) {
     reresolve();
 }
 
-void InputManager::poll(bool captureKeyboard) {
+void InputManager::poll(bool captureKeyboard, unsigned overlayTicks) {
     core_.beginFrame();
-    overlay.tick();
+    for (unsigned i = 0; i < overlayTicks; i++) overlay.tick();
     // While a binding is being captured nothing reaches the core: the press being bound
     // must not also act in the game (binding Start would pause it, for one).
     if (capture_.active()) return;
+    // The TV menu has the input: the core sees neutral everything, and a relative-mouse delta gathered meanwhile does
+    // not arrive as one jump when the menu closes.
+    if (menuOwns_) {
+        accDx_ = accDy_ = 0;
+        return;
+    }
 
     // ---- keyboard ---------------------------------------------------------------------
     HostSource kb;
@@ -341,8 +539,10 @@ void InputManager::poll(bool captureKeyboard) {
                 if (!ks[sc]) continue;
                 kb.snap.key[(size_t)sc] = true;
                 unsigned rk = retroKey((SDL_Scancode)sc);
-                if (rk) core_.addRawKey(rk);   // truthful, except the keys only the keypad synthesis may press
+                if (rk && !holds_.withholds(kKeyboardDev, Binding::key(sc))) core_.addRawKey(rk);   // truthful, except the keys only the keypad synthesis may press and a hold input being timed
             }
+            holds_.apply(kKeyboardDev, kb.snap);
+            guard_.apply(kKeyboardDev, kb.snap);
         }
     }
     kbProfile_.stickAsDpad = false;
@@ -362,9 +562,12 @@ void InputManager::poll(bool captureKeyboard) {
             if (routes_.pad[sl] == (int)i && slotSocket(sl) == 0)
                 stickDpad = stickDrivesDpad(kind_[slotJaguarPort(sl)], stickDpad);
         p.profile.stickAsDpad = stickDpad;
+        p.proProfile.stickAsDpad = stickDpad;
         hs.profile = &p.profile;
-        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) hs.snap.btn[(size_t)b] = SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
-        for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++) hs.snap.axis[(size_t)a] = SDL_GetGamepadAxis(g, (SDL_GamepadAxis)a);
+        hs.proProfile = &p.proProfile;
+        snapshotPad(g, hs.snap);
+        holds_.apply((uint32_t)p.id, hs.snap);
+        guard_.apply((uint32_t)p.id, hs.snap);
     }
 
     // ---- who plays what ------------------------------------------------------------------
@@ -402,9 +605,11 @@ void InputManager::poll(bool captureKeyboard) {
     pi.y = my;
 
     router_.route(rc, padSrc, &kb, pi, &overlay, core_);   // (the controls-overlay key is handled in handleEvent)
+    for (unsigned i = 0; i < overlayTicks; i++) holds_.frame();   // tap pulses count emulated frames
 
     // Keys the overlay is holding down (a mouse click or a gamepad press in the overlay).
     core_.addControls(overlay.port > 1 ? 0u : overlay.port, overlay.held());
+    if (agentControls.any()) core_.addControls(0, agentControls);
 }
 
 int16_t InputManager::state(unsigned port, unsigned device, unsigned index, unsigned id) const {

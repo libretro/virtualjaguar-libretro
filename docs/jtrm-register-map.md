@@ -676,3 +676,24 @@ section C.
    p.47) -- that is a timing fact, not a bug. The actual divider bug is **consecutive divides** (v8 TOM #25,
    p.139; HBW p.3 #9): two divides separated by fewer than 16 clocks, the second taking the first's quotient
    as an operand with no scoreboard dependency in between, give a wrong second result.
+
+### TOM read decode and PIT readback (manual corrections)
+
+Source: original jag_sim `netlists/tom/IODEC.NET` read strobes and Float1-5,
+`netlists/tom/MISC.NET` Dtp/Dt. The JTRM v8 p.15 table marks PIT0/PIT1 WO;
+the actual chip exposes their **live down-counters** on reads at $F00050/52,
+not the programmed reload values. Both stages divide the full system clock
+by reload+1, with PIT0=0 disabling the timer.
+
+When no readable target drives TOM's internal register read bus, the decode
+selects MEMCON1. Thus INT2 ($F000E2), write-only video registers, and unmapped
+TOM I/O addresses below $F02000 return MEMCON1, not the last value written there.
+Readable MEMCON2, HC/VC, lightpen, OB, test registers, PIT, INT1, CLUT and
+line buffers have their own decode; GPU/blitter reads remain in their own
+subsystem handlers; the separate GB1/GB2 bus windows retain their previous
+handling, including unmodeled holes. See #1044/#1045 and `test/test_tom_readback.c`.
+
+The emulator derives PIT readback from the existing serialized event time.
+It has scheduler-slice resolution; instruction-by-instruction PIT phase and
+independent prescaler phase on partial timer reprogramming remain outside
+this correction. Reads never advance the clock or reschedule IRQs.

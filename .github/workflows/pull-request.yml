@@ -8,7 +8,7 @@ on:
 jobs:
   auto-pull-request:
     name: PullRequestAction
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - name: pull-request-action
         uses: vsoch/pull-request-action@master

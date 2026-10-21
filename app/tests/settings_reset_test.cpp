@@ -64,12 +64,14 @@ static void fill(Config& c) {
         "ui.controls.autoshow",
         // Storage + library display
         "saves.autosave", "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
-        "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window",
+        "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window", "ui.fullscreen_autohide_menu", "ui.emu_thread",
+        "ui.tv_mode", "ui.tv_auto_fullscreen", "ui.tv_auto_controller", "ui.tv_manual_on", "ui.tv_hint_shown",
         "library.favorites.show", "library.recents.show", "saves.resume",
         // Discord
         "discord.enabled", "discord.art", "discord.buttons",
         // Mappings
         "input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port", "input.stick_dpad",
+        "input.padguid.030000.nav.family", "input.padguid.030000.nav.confirm",   // a model's menu-button layer (#1021)
         "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C",
         // Per-game device choices
         "input.game.cart-1234.port.0", "input.game.cart-1234.slot.2", "input.game.disc-myst.dev.mouse_speed",
@@ -96,6 +98,10 @@ static void testClassify() {
     CHECK(classifyKey("ui.controls.autoshow") == KeyClass::Interface);
     CHECK(classifyKey("ui.home_library") == KeyClass::Interface && classifyKey("saves.resume") == KeyClass::Interface);
     CHECK(classifyKey("ui.tray") == KeyClass::Interface && classifyKey("ui.keep_awake") == KeyClass::Interface);
+    CHECK(classifyKey("ui.fullscreen_autohide_menu") == KeyClass::Interface);
+    CHECK(classifyKey("ui.emu_thread") == KeyClass::Interface);   // #967: Settings > Interface > Emulation thread
+    for (const char* k : {"ui.tv_mode", "ui.tv_auto_fullscreen", "ui.tv_auto_controller", "ui.tv_manual_on", "ui.tv_hint_shown"})
+        CHECK(classifyKey(k) == KeyClass::Interface);   // TV mode (#991): the Interface tab owns it
     CHECK(classifyKey("ui.font.family") == KeyClass::Keep && classifyKey("ui.scale") == KeyClass::Keep);
     CHECK(classifyKey("shader.preset") == KeyClass::Shader);
     CHECK(classifyKey("shader.folder") == KeyClass::Keep);   // a path the user picked
@@ -114,6 +120,8 @@ static void testClassify() {
     CHECK(classifyKey("input.pad.A") == KeyClass::Mapping);
     CHECK(classifyKey("input.pads.1") == KeyClass::Keep);
     CHECK(classifyKey("input.padguid.0300.A") == KeyClass::Mapping);
+    CHECK(classifyKey("input.padguid.0300.nav.family") == KeyClass::Mapping);    // the menu-button layer resets with the controls (#1021)
+    CHECK(classifyKey("input.padguid.0300.nav.pagenext") == KeyClass::Mapping);
     CHECK(classifyKey("input.kb.port") == KeyClass::Mapping);
     CHECK(classifyKey("input.game.cart-1.kb.A") == KeyClass::Mapping);
     CHECK(classifyKey("input.game.cart-1.padguid.03.A") == KeyClass::Mapping);
@@ -180,7 +188,7 @@ static void testResetAll() {
         "discord.app_id", "netplay.port", "netplay.join_addr", "cheats.dir", "user.count", "user.0.desc", "shader.folder",
         "opt.virtualjaguar_frameskip_max"};   // core options go through CoreHost, not Config
     const std::set<std::string> mappings = {"input.pad.A", "input.padguid.030000.B", "input.kb.A", "input.kb.port",
-        "input.stick_dpad", "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C"};
+        "input.stick_dpad", "input.padguid.030000.nav.family", "input.padguid.030000.nav.confirm", "input.game.disc-myst.pad.A", "input.game.cart-1234.kb.B", "input.game.cart-1234.padguid.0300.C"};
     const std::set<std::string> perGame = {"input.game.cart-1234.port.0", "input.game.cart-1234.slot.2",
                                            "input.game.disc-myst.dev.mouse_speed"};
     for (int variant = 0; variant < 4; variant++) {
@@ -200,8 +208,9 @@ static void testResetAll() {
                               "audio.mute", "input.port.0", "input.dev.deadzone", "port.0", "ui.controls.autoshow", "saves.autosave",
                               "ui.home_library", "library.art", "library.hide_on_launch", "library.size", "library.section",
                               "library.favorites.show", "library.recents.show", "saves.resume",
-                              "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window", "discord.enabled", "discord.art",
-                              "discord.buttons"})
+                              "ui.tray", "ui.keep_awake", "ui.viewports", "ui.menubar_in_window", "ui.fullscreen_autohide_menu", "ui.emu_thread", "discord.enabled", "discord.art",
+                              "discord.buttons", "ui.tv_mode", "ui.tv_auto_fullscreen", "ui.tv_auto_controller", "ui.tv_manual_on",
+                              "ui.tv_hint_shown"})
             CHECK(after.count(k) == 0);
         // Nothing but these three kinds of key is left.
         for (const std::string& k : after) {

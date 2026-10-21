@@ -13,6 +13,7 @@
 #include "imgui.h"
 #include "theme_custom.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 namespace vj {
 
@@ -128,7 +129,7 @@ void drawThemeEditor(App& app) {
     theme::Store store = app.themeStore();
     ui::nextWindow(34.0f, 46.0f, 24.0f, 24.0f);
     bool open = true;
-    if (!ImGui::Begin("Theme editor", &open)) {
+    if (!ui::beginWindow("Theme editor", &open)) {
         ImGui::End();
         if (!open) { app.showThemeEditor = false; app.themePreviewEnd(false); }
         return;

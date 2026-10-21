@@ -31,7 +31,12 @@ const Exact kExact[] = {
     {"ui.show_fps", KeyClass::Interface},     {"ui.theme", KeyClass::Interface},      {"ui.controls.autoshow", KeyClass::Interface},
     {"ui.home_library", KeyClass::Interface}, {"saves.resume", KeyClass::Interface},
     {"ui.tray", KeyClass::Interface},         {"ui.keep_awake", KeyClass::Interface},   // Interface > Desktop
+    {"ui.tv_mode", KeyClass::Interface},      {"ui.tv_auto_fullscreen", KeyClass::Interface},   // Interface > TV mode (#991)
+    {"ui.tv_auto_controller", KeyClass::Interface}, {"ui.tv_manual_on", KeyClass::Interface},
+    {"ui.tv_hint_shown", KeyClass::Interface},
+    {"ui.fullscreen_autohide_menu", KeyClass::Interface},
     {"ui.viewports", KeyClass::Interface},    {"ui.menubar_in_window", KeyClass::Interface},
+    {"ui.emu_thread", KeyClass::Interface},   // Interface > Performance > Emulation thread (#967)
     {"library.art", KeyClass::Interface},
     {"library.hide_on_launch", KeyClass::Interface}, {"library.size", KeyClass::Interface},
     {"library.section", KeyClass::Interface},

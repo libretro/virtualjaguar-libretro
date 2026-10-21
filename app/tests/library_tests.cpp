@@ -24,6 +24,7 @@
 #include "http.h"
 #include "library.h"
 #include "library_service.h"
+#include "m3u.h"
 #include "paths.h"
 
 #ifndef _WIN32
@@ -234,7 +235,7 @@ static void testThumbnailNames() {
         CHECK(s[0].base == "http://up/" && std::strcmp(s[0].system, "Atari - Jaguar") == 0);
         CHECK(s[1].base == "http://mirror/thumbs/" && std::strcmp(s[1].system, "Atari - Jaguar CD") == 0);
         CHECK(std::string(s[0].system) != std::string(s[1].system));   // cache and misses are kept per source
-        CHECK(s[1].missRetrySeconds < s[0].missRetrySeconds);                  // the mirror is looked at again sooner
+        CHECK(s[1].sessionMisses && !s[0].sessionMisses);   // the mirror's misses last one session (#997)
     }
     CHECK(lib::artSources(lib::Section::Disc, "http://up/", "").size() == 1);   // mirror off
     CHECK(lib::artSources(lib::Section::Bios, "http://up/", lib::kMirrorBase).size() == 1);
@@ -909,6 +910,31 @@ static void testServicePipeline() {
         if (got) SDL_free(ev.user.data1);
         CHECK(got);
         CHECK(!svc.show);   // "close on launch"
+        // ... a plain launch carries no marker; a fresh one (the TV screens: the resume prompt needs a mouse) marks the event
+        // so App::handleEvent opens the game without it (#991).
+        SDL_PumpEvents();
+        SDL_FlushEvents(SDL_EVENT_USER, SDL_EVENT_USER);
+        svc.launch(*a);
+        svc.launch(*a, /*fresh=*/true);
+        SDL_PumpEvents();
+        std::vector<SDL_Event> opens;   // the "open this path" events, in order
+        {
+            SDL_Event got[8];
+            const int n = SDL_PeepEvents(got, 8, SDL_GETEVENT, SDL_EVENT_USER, SDL_EVENT_USER);
+            for (int i = 0; i < n; i++)
+                if (got[i].user.code == 0x56414A47 && got[i].user.data1) opens.push_back(got[i]);
+        }
+        const bool gotPlain = opens.size() == 2, gotFresh = opens.size() == 2;
+        SDL_Event plain = opens.size() == 2 ? opens[0] : SDL_Event(), fresh = opens.size() == 2 ? opens[1] : SDL_Event();
+        CHECK(gotPlain && gotFresh);
+        if (gotPlain) {
+            CHECK(plain.user.data2 == nullptr);
+            SDL_free(plain.user.data1);
+        }
+        if (gotFresh) {
+            CHECK(fresh.user.data2 != nullptr && std::string((const char*)fresh.user.data1) == a->file.path);
+            SDL_free(fresh.user.data1);
+        }
 
         // database update: both dats downloaded, validated, written, re-identified
         svc.updateDatabase();
@@ -1088,7 +1114,8 @@ static void testCdMirror() {
         CHECK_EQ(logAt(before + 3), mirPath(kT, snapOnly.datName));
         CHECK_EQ(logAt(before + 4), upPath(kS, snapOnly.datName));
         CHECK_EQ(logAt(before + 5), mirPath(kS, snapOnly.datName));
-        CHECK(miss(kB, snapOnly.datName, lib::kThumbSystemCd) && miss(kT, snapOnly.datName, lib::kThumbSystemCd));
+        // the mirror's misses are remembered for this session only, never written as files (#997)
+        CHECK(!miss(kB, snapOnly.datName, lib::kThumbSystemCd) && !miss(kT, snapOnly.datName, lib::kThumbSystemCd));
         CHECK(exists(lib::thumbnailCachePath(root, kS, snapOnly.datName, lib::kThumbSystemCd)));
 
         // a cart: upstream only (3 types), the mirror untouched even though it has a file by that name
@@ -1097,11 +1124,11 @@ static void testCdMirror() {
         CHECK(logSize() == before + 3);
         for (size_t i = before; i < logSize(); i++) CHECK(logAt(i).rfind("/up/", 0) == 0);
 
-        // nothing anywhere: Missing, six markers, and it stays quiet afterwards
+        // nothing anywhere: Missing, three upstream markers and no mirror ones, and it stays quiet afterwards
         before = logSize();
         CHECK(waitState(svc, nothing, ArtView::Missing));
         CHECK(logSize() == before + 6);
-        for (const char* t : {kB, kT, kS}) CHECK(miss(t, nothing.datName, lib::kThumbSystem) && miss(t, nothing.datName, lib::kThumbSystemCd));
+        for (const char* t : {kB, kT, kS}) CHECK(miss(t, nothing.datName, lib::kThumbSystem) && !miss(t, nothing.datName, lib::kThumbSystemCd));
         size_t quiet = logSize();
         for (int i = 0; i < 20; i++) {
             svc.pump();
@@ -1112,17 +1139,18 @@ static void testCdMirror() {
         CHECK(logSize() == quiet);
     }, srv.url(MIR));
 
-    // New session, nothing changed: every miss still holds, the cached art needs no request.
+    // New session, nothing changed: upstream's misses still hold and cached art needs no request; the mirror is
+    // asked once more about the disc it had nothing for, because its misses last one session.
     size_t base0 = logSize();
     runSession([&](LibraryService& svc, Config&) {
         CHECK(waitState(svc, nothing, ArtView::Missing));
         CHECK(waitState(svc, onlyMirror, ArtView::Ready));
         CHECK(waitState(svc, cart, ArtView::Missing));
-        CHECK(logSize() == base0);
+        CHECK(logSize() == base0 + 3);
+        for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/mirror/", 0) == 0);
     }, srv.url(MIR));
 
-    // The mirror's misses expire after a week and only the mirror is asked again; upstream's 30-day marker holds.
-    for (const char* t : {kB, kT, kS}) ageFile(lib::thumbnailMissPath(root, t, nothing.datName, lib::kThumbSystemCd), 8);
+    // The mirror gains art: the next session finds it, with no week-long wait; upstream's 30-day marker holds.
     setHave(mirPath(kT, nothing.datName));   // the mirror gained the title screen meanwhile
     base0 = logSize();
     runSession([&](LibraryService& svc, Config&) {
@@ -1130,6 +1158,24 @@ static void testCdMirror() {
         CHECK(logSize() >= base0 + 2);
         for (size_t i = base0; i < logSize(); i++) CHECK(logAt(i).rfind("/mirror/", 0) == 0);   // upstream untouched
         CHECK_EQ(logAt(base0), mirPath(kB, nothing.datName));
+    }, srv.url(MIR));
+
+    // #997: mirror miss markers an older version wrote (fresh, so their week has not run out) are ignored and
+    // removed, and the mirror is asked: art the site gained after that miss shows on the next launch.
+    lib::Entry stale = mkEntry("Stale Marker (USA)", lib::Section::Disc);
+    for (const char* t : {kB, kT, kS}) {
+        std::string m = lib::thumbnailMissPath(root, t, stale.datName, lib::kThumbSystemCd);
+        fs::create_directories(fs::u8path(m.substr(0, m.find_last_of('/'))), ec);
+        std::ofstream(fs::u8path(m)).flush();
+        CHECK(exists(m));
+    }
+    setHave(mirPath(kB, stale.datName));
+    base0 = logSize();
+    runSession([&](LibraryService& svc, Config&) {
+        CHECK(waitState(svc, stale, ArtView::Ready));
+        CHECK(logSize() == base0 + 2);   // upstream's box art, then the mirror's
+        CHECK_EQ(logAt(base0 + 1), mirPath(kB, stale.datName));
+        CHECK(!miss(kB, stale.datName, lib::kThumbSystemCd));
     }, srv.url(MIR));
 
     // libretro-thumbnails gains the art later: its 30-day marker expires and upstream wins over the mirror's file.
@@ -1690,6 +1736,139 @@ static void testChdAndCdiChecksums() {
 }
 
 // ---- dev tool -------------------------------------------------------------------------------------------------------
+
+// .m3u multi-disc playlists (m3u.h): the parser, and the scan listing the playlist in place of its discs.
+static void testM3u() {
+    // parsing: comments, blank lines, a BOM, CRLF, "|label", Windows separators, absolute entries
+    std::vector<std::string> e = parseM3u("\xEF\xBB\xBF#EXTM3U\r\n\r\n#EXTINF:0,Disc 1\r\nGame (Disc 1).cue\r\n"
+                                          "  sub\\Game (Disc 2).chd|Second disc  \r\n/abs/Game (Disc 3).cdi\nC:/win/d4.chd\n# end",
+                                          "/set/");
+    CHECK(e.size() == 4);
+    if (e.size() == 4) {
+        CHECK_EQ(e[0], std::string("/set/Game (Disc 1).cue"));
+        CHECK_EQ(e[1], std::string("/set/sub/Game (Disc 2).chd"));
+        CHECK_EQ(e[2], std::string("/abs/Game (Disc 3).cdi"));
+        CHECK_EQ(e[3], std::string("C:/win/d4.chd"));
+    }
+    CHECK(parseM3u("", "/x/").empty() && parseM3u("#EXTM3U\n\n", "/x/").empty());
+    CHECK(lib::isDiscExt("m3u"));
+
+    // scanning: a cue set + a chd listed by one playlist, a chd-first playlist, and a loose chd no playlist names
+    std::string dir = g_tmp + "m3u/";
+    std::atomic<bool> noCancel{false};
+    std::vector<unsigned char> d1t1 = noise(2352 * 12, 71);
+    writeBytes(dir + "Set (Disc 1) (Track 1).bin", d1t1);
+    writeText(dir + "Set (Disc 1).cue", "FILE \"Set (Disc 1) (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+    std::vector<unsigned char> pcm = noise(2352 * 10, 72);
+    SynthTrack t;
+    t.type = "AUDIO";
+    t.frames = 10;
+    t.stored = swapWords(pcm);
+    writeSynthChd(dir + "discs/Set (Disc 2).chd", {t}, true);
+    writeText(dir + "Set.m3u", "#EXTM3U\nSet (Disc 1).cue\ndiscs\\Set (Disc 2).chd\n");
+    writeText(dir + "Chd First.m3u", "discs/Set (Disc 2).chd\n");
+    writeSynthChd(dir + "Loose.chd", {t}, true);
+    lib::ScanOptions opt;
+    opt.folders = {dir};
+    std::vector<lib::ScanFile> files = lib::scanFolders(opt, lib::ScanCache(), &noCancel, nullptr);
+    std::map<std::string, lib::ScanFile> by;
+    for (const lib::ScanFile& f : files) by[fs::path(f.path).filename().string()] = f;
+    CHECK(by.count("Set.m3u") && by["Set.m3u"].kind == lib::Kind::Disc);
+    CHECK_EQ(hex8(by["Set.m3u"].crcWhole), hex8(crcOf(d1t1)));   // identified by its first disc's track 1
+    CHECK(by.count("Chd First.m3u") && by["Chd First.m3u"].kind == lib::Kind::Disc);
+    CHECK_EQ(hex8(by["Chd First.m3u"].crcWhole), hex8(crcOf(pcm)));
+    CHECK(!by.count("Set (Disc 1).cue") && !by.count("Set (Disc 2).chd"));   // the playlists stand for them
+    CHECK(!by.count("Set (Disc 1) (Track 1).bin"));
+    CHECK(by.count("Loose.chd"));
+    CHECK(files.size() == 3);
+
+    // A playlist is all-or-nothing at load time. It must not claim playable files before every entry is validated.
+    const char* bad[] = {"Missing.chd", "Not a disc.j64", "Nested.m3u", "Directory.chd"};
+    for (size_t i = 0; i < 4; ++i) {
+        std::string broken = g_tmp + "invalid-playlist-" + std::to_string(i) + "/";
+        writeBytes(broken + "Keep.bin", d1t1);
+        writeText(broken + "Keep.cue", "FILE \"Keep.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n");
+        writeBytes(broken + "Not a disc.j64", noise(1024, 99));
+        fs::create_directories(fs::u8path(broken + "Directory.chd"));
+        // Only the nested-playlist case has another valid playlist: make that one invalid too.
+        writeText(broken + "Nested.m3u", "Missing.chd\n");
+        writeText(broken + "Broken.m3u", std::string("Keep.cue\n") + bad[i] + "\n");
+        opt.folders = {broken};
+        auto invalid = lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr);
+        bool keptDisc = false, keptCart = false;
+        for (const auto& f : invalid) {
+            if (pathStem(f.path) == "Keep") keptDisc = true;
+            if (pathStem(f.path) == "Not a disc") keptCart = true;
+        }
+        CHECK(keptDisc);
+        CHECK(keptCart);
+    }
+}
+
+static void testPlaylistStateOwners() {
+    const std::string root = g_tmp + "playlist-states/", games = root + "games/";
+    const std::string playlist = fs::u8path(games + "Game.m3u").lexically_normal().u8string();
+    for (int disc = 1; disc <= 2; ++disc) {
+        const std::string stem = disc == 1 ? "Game (Disc 1)" : "Game";
+        writeBytes(games + stem + ".bin", noise(2352 * 8, 90 + disc));
+        writeText(games + stem + ".cue", "FILE \"" + stem + ".bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n");
+        writeText(root + "states/" + stem + ".slot" + std::string("0.state"), "fixture");
+    }
+    writeText(games + "Game.m3u", "Game (Disc 1).cue\nGame.cue\n");
+    Paths paths;
+    paths.root = root;
+    paths.states = root + "states/";
+    Config cfg;
+    cfg.set("library.dir.0", games);
+    LibraryService svc;
+    svc.artBaseUrl = svc.artMirrorUrl = svc.dbBaseUrl = "http://127.0.0.1:1/";
+    svc.start(paths, cfg, false);
+    svc.setDownloadArt(false);
+    for (int i = 0; i < 400; ++i) {
+        svc.pump();
+        if (!svc.scanning() && svc.entries().size() == 1) break;
+        SDL_Delay(25);
+    }
+    CHECK(svc.entries().size() == 1); // disc aliases must not reappear as duplicate tiles
+    CHECK(svc.stateGames().size() == 2);
+    if (svc.entries().size() == 1) {
+        const auto* all = svc.statesFor(svc.entries()[0]);
+        CHECK(all != nullptr && all->states.size() == 2);
+        if (all) {
+            for (const auto& state : all->states) {
+                CHECK(!state.disc.empty() && state.slot == 0); // equal slots on different discs stay distinct
+                svc.launchState(svc.entries()[0], state.slot, state.disc);
+                SDL_PumpEvents();
+                SDL_Event ev;
+                const int got = SDL_PeepEvents(&ev, 1, SDL_GETEVENT, SDL_EVENT_USER, SDL_EVENT_USER);
+                CHECK(got == 1 && ev.user.code == 0x56414A50);
+                if (got == 1 && ev.user.code == 0x56414A50) {
+                    std::unique_ptr<PlaylistStateLaunch> request((PlaylistStateLaunch*)ev.user.data1);
+                    CHECK_EQ(request->playlist, playlist);
+                    CHECK_EQ(request->disc, state.disc);
+                    CHECK((int)(intptr_t)ev.user.data2 - 1000 == 0);
+                } else if (got == 1 && ev.user.code == 0x56414A53) SDL_free(ev.user.data1);
+            }
+        }
+    }
+    for (const auto& group : svc.stateGames()) {
+        const auto* owner = svc.entryForState(group);
+        CHECK(owner != nullptr);
+        if (owner) {
+            CHECK_EQ(pathStem(owner->file.path), group.stem);
+            CHECK_EQ(owner->statePlaylist, playlist);
+            CHECK(svc.statesFor(*owner) != nullptr);
+        }
+    }
+    svc.stop();
+    svc.start(paths, cfg, false); // warm hash cache: associations must exist before the next scan completes
+    CHECK(svc.entries().size() == 1);
+    if (svc.entries().size() == 1) {
+        const auto* all = svc.statesFor(svc.entries()[0]);
+        CHECK(all != nullptr && all->states.size() == 2);
+    }
+    svc.stop();
+}
 
 static int scanTool(const std::string& dir, const std::string& dbDir) {
     lib::Dat carts, discs;
@@ -2319,6 +2498,8 @@ int main(int argc, char** argv) {
     testCoverService();
     testLooseNames();
     testChdAndCdiChecksums();
+    testM3u();
+    testPlaylistStateOwners();
     testDisplayOptionsAndTabs();
     testPersonalListsLogic();
     testUserStoreAndInstances();

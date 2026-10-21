@@ -132,6 +132,7 @@ std::string biosInstallName(const BiosInfo& b, uint64_t size);
 // A scanned file plus what the dats say about it.
 struct Entry {
     ScanFile file;
+    std::string statePlaylist; // hidden disc owner: open this playlist before selecting file.path for a state
     Section section = Section::Cart;
     BiosInfo bios;         // when section == Bios
     std::string title;     // dat game name, or the cleaned file stem
@@ -159,6 +160,8 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
 
 bool isCartExt(const std::string& lowerExt);
 bool isDiscExt(const std::string& lowerExt);
+// All entries, normalized and checked against the host's supported disc formats/existence rules; empty if invalid.
+std::vector<std::string> playlistDiscs(const std::string& path);
 
 // Identification against the dats (either may be null/empty).
 Entry identify(const ScanFile& f, const Dat* carts, const Dat* discs);
@@ -208,11 +211,11 @@ std::string thumbnailUrl(const std::string& type, const std::string& title, cons
 // from the mirror can never stand in for upstream art that appears later.
 std::string thumbnailCachePath(const std::string& root, const std::string& type, const std::string& title,
                                const char* system = kThumbSystem);
-// Marker next to it recording "this source said 404" (retried after the source's missRetrySeconds).
+// Marker next to it recording "this source said 404" (retried after the source's missRetrySeconds).  Only
+// libretro-thumbnails gets markers: the site mirror's misses are kept for the session (ArtSource::sessionMisses).
 std::string thumbnailMissPath(const std::string& root, const std::string& type, const std::string& title,
                               const char* system = kThumbSystem);
-constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;        // libretro-thumbnails
-constexpr int64_t kMirrorMissRetrySeconds = 7LL * 24 * 3600;   // the site mirror: we publish it, so look again sooner
+constexpr int64_t kMissRetrySeconds = 30LL * 24 * 3600;   // libretro-thumbnails
 
 // Where art for one tile is fetched from, in order.  libretro-thumbnails first, always; for a disc the site
 // mirror follows (libretro-thumbnails has no Jaguar CD repository yet, libretro-thumbnails#141), so the
@@ -221,6 +224,9 @@ struct ArtSource {
     std::string base;           // URL prefix, ends with '/'
     const char* system;         // folder under base, and under <root>thumbnails/ for the cache and miss markers
     int64_t missRetrySeconds;   // how long a miss marker holds
+    // A 404 is remembered until the app quits, never written as a marker.  For the site mirror: we publish it, so
+    // a miss written while the site lacked a picture (or was mid-deploy) must not hide art it gains later (#997).
+    bool sessionMisses;
 };
 std::vector<ArtSource> artSources(Section section, const std::string& upstreamBase, const std::string& mirrorBase);
 

@@ -18,6 +18,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -55,6 +56,12 @@ struct ArtView {
     enum State { None, Loading, Ready, Missing } state = None;
     unsigned tex = 0;
     int w = 0, h = 0;
+};
+
+// A playlist state must reopen the full set and mount the state-owning disc, preserving its disc list and SRAM owner.
+struct PlaylistStateLaunch {
+    std::string playlist;
+    std::string disc;
 };
 
 class LibraryService {
@@ -112,7 +119,9 @@ public:
     void addFolderDialog(SDL_Window* parent);   // async; the choice arrives through pump()
     void rescan();
     void updateDatabase();                       // download newer dat files (user action)
-    void launch(const lib::Entry& e);            // asks the app to open it (a drop-style event)
+    // Asks the app to open it (a drop-style event).  `fresh`: no "Resume where you left off?" prompt (the TV screens, which
+    // cannot answer it with a pad; they resume through a state row instead).
+    void launch(const lib::Entry& e, bool fresh = false);
     void setDownloadArt(bool on);
     // Copies a BIOS found in a library folder into the core's system folder under the name the core
     // searches for (lib::biosInstallName), never over an existing file.  The result goes to status().
@@ -173,12 +182,12 @@ public:
     // after the library deletes one).
     const std::vector<lib::StateGame>& stateGames();
     const lib::StateGame* statesFor(const lib::Entry& e);   // by the file stem the states are named with
-    const lib::Entry* entryForState(const lib::StateGame& g) const { return lib::entryForStem(entries_, g.stem); }
-    void invalidateStates() { statesAt_ = -1000.0; }
+    const lib::Entry* entryForState(const lib::StateGame& g) const;
+    void invalidateStates() { statesAt_ = -1000.0; playlistStates_.clear(); }
     ArtView stateThumb(const lib::StateInfo& s);            // the screenshot saved with the state
     bool deleteState(const lib::StateInfo& s);
     // Boot `e` and load its state from `slot` (App handles the event: same game running = just load).
-    void launchState(const lib::Entry& e, int slot);
+    void launchState(const lib::Entry& e, int slot, const std::string& disc = "");
     // How many running copies this is (Paths::instance): shown in the settings help, nothing else changes.
     int instance = 1;
 
@@ -230,6 +239,7 @@ private:
     // state owned by the main thread
     std::vector<std::string> folders_;
     std::vector<lib::ScanFile> files_;
+    std::vector<lib::Entry> stateOwners_; // hidden playlist discs: state lookup only, never grid tiles
     std::vector<lib::Entry> entries_;
     lib::Dat carts_, discs_;
     size_t identified_ = 0;
@@ -247,6 +257,7 @@ private:
     std::string status_;
     uint64_t zoomSaveAt_ = 0;   // SDL ticks (ms) when to write library.size, 0 = nothing pending
     std::map<std::string, double> netFail_;   // "key|type|source" -> time of last transient failure
+    std::set<std::string> sessionMiss_;       // "key|type|source": 404s from a sessionMisses source (the mirror)
     std::atomic<bool> cancel_{false};
     std::atomic<bool> scanCancel_{false};
     std::atomic<bool> scanning_{false};
@@ -262,6 +273,7 @@ private:
     void resolveLists();
     // save states
     std::vector<lib::StateGame> stateGames_;
+    std::map<std::string, lib::StateGame> playlistStates_;
     double statesAt_ = -1000.0;
     struct ThumbSlot {
         ArtView::State state = ArtView::None;

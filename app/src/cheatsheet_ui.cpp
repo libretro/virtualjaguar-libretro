@@ -17,7 +17,8 @@ Sheet currentControlsSheet(App& app) {
     const int pad = in.routes().pad[0];
     std::vector<InputManager::PadInfo> pads = in.pads();
     const bool usePad = pad >= 0 && (size_t)pad < pads.size() && in.controls.lastInputWasPad;
-    const Profile& prof = usePad ? in.padProfile((size_t)pad) : in.keyboardProfile();
+    const bool pro = in.portKind(0) == DevKind::ProPad;
+    const Profile& prof = usePad ? (pro ? in.padProProfile((size_t)pad) : in.padProfile((size_t)pad)) : in.keyboardProfile();
     return buildSheet(prof, in.portKind(0), usePad ? SheetSource::Gamepad : SheetSource::Keyboard,
                       usePad ? pads[(size_t)pad].name : std::string());
 }

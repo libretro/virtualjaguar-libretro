@@ -3,6 +3,7 @@
 #include "app.h"
 #include "cheats.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
@@ -177,7 +178,7 @@ static void drawCheatLibrary(App& app) {
 
 void drawCheats(App& app) {
     ui::nextWindow(40.0f, 32.0f, 24.0f, 14.0f);
-    bool open = ImGui::Begin("Cheats", &app.showCheats);
+    bool open = ui::beginWindow("Cheats", &app.showCheats);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();

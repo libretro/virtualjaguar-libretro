@@ -5,6 +5,7 @@
 #include "cheats.h"
 #include "op_view.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
@@ -480,7 +481,8 @@ void drawObjectsTool(App& app) {
     ctx.emulationRunning = !app.paused && !app.debug.halted();
     // Only when the session is not attached: a frame run from inside this draw hook that then halts would
     // start a second ImGui frame (App::haltedFrame) inside the current one.
-    if (app.paused && !app.debug.attached() && !app.debug.halted() && !app.host.inFrame() && app.host.isLoaded() &&
+    if (!app.threaded() && app.paused && !app.debug.attached() && !app.debug.halted() && !app.host.inFrame() &&
+        app.host.isLoaded() &&
         !app.netplay.configured())
         ctx.stepFrame = [&app] {
             app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
@@ -506,7 +508,7 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
         return;
     }
     ui::nextWindow(84.0f, 54.0f, 36.0f, 24.0f);
-    bool vis = ImGui::Begin("Object list", &g.open);
+    bool vis = ui::beginWindow("Object list", &g.open);
     ui::keepOnScreen();
     if (!vis) {
         ImGui::End();

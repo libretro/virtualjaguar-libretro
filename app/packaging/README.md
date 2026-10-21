@@ -13,6 +13,24 @@ CI builds every installable package from one reusable workflow,
 
 `X.Y.Z` is the tag without `v`; nightlies use `nightly`, PRs `prNNN`, the `release/**` lane `prerelease`.
 
+Same-repository `release/**` PRs share the Release push workflow's package builds when the PR's
+synthetic merge tree is identical to its head tree. Ordinary PRs, forks, manual app builds, and
+release PRs whose merge adds different content keep their own package builds. Native app test
+matrices and ThreadSanitizer still run on the PR; Release still builds and tests every package.
+The PR's **Verify shared Release packages** check requires all twelve package/runtime jobs and
+all six nonempty, unexpired `app-package-*` artifact groups from the latest Release push run for
+that exact head, branch and repository. Pending, failed, cancelled, skipped or missing package
+checks cannot pass the shared gate. A changed PR head or merge tree also fails it.
+
+Shared packages retain their `prerelease` filenames, artifact names and 14-day retention in the
+Release run. The sticky PR comment links directly to those artifacts and reports the verifier's
+result; it does not rename, rebuild or copy the archives. Tag/nightly publication and checksum
+collection still consume the Release workflow's artifacts as before. The verification job uses
+a hosted runner, not an allowlisted temporary runner that Release metadata jobs may need, so
+waiting for those jobs cannot deadlock that runner. It times out red after 345 minutes rather
+than bypassing unfinished work. If it fails, fix or rerun the failing Release package job, then
+rerun the PR's shared-package verifier; no duplicate package dispatch is needed.
+
 | File | Notes |
 |---|---|
 | `VirtualJaguar-X.Y.Z-macos-universal.zip` | `Virtual Jaguar.app` (the zip's only top-level entry), arm64 + x86_64, macOS 11+; also the Homebrew cask's download. There is no DMG. |

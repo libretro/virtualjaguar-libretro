@@ -15,123 +15,151 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  core-plan:
+    name: Production core routing and safety tests
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    outputs:
+      reuse: ${{ steps.plan.outputs.reuse }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Ensure the workflow contract parser is available
+        run: |
+          if ! command -v ruby >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ruby
+          fi
+      - name: Verify compiler, SDK and production ABI contracts
+        run: ruby .github/scripts/tests/core-workflow-contract.rb
+      - run: node --test .github/scripts/tests/release-packages.test.cjs .github/scripts/tests/release-cores.test.cjs
+      - id: plan
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { planCores } = require('./.github/scripts/release-cores.cjs');
+            await planCores({ github, context, core });
+
+  core-reuse:
+    name: Verify and retain shared production cores
+    needs: [core-plan]
+    if: needs.core-plan.outputs.reuse == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Require all exact-head production jobs and artifacts
+        id: verify
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { waitForCores } = require('./.github/scripts/release-cores.cjs');
+            await waitForCores({ github, context, core });
+      - name: Download the unstripped production intermediates
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.verify.outputs.run_id }}
+          pattern: ci-core-*
+          path: shared-cores
+      - name: Verify exact commit, production ABI and binary checksums
+        env:
+          CORE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node -e 'require("./.github/scripts/release-cores.cjs").verifyDownloads("shared-cores", process.env.CORE_HEAD_SHA)'
+      - name: Retain macOS x86_64 (Clang, cross) artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'macOS x86_64 (Clang, cross)'
+          path: shared-cores/ci-core-macos-x86_64/virtualjaguar_libretro.dylib
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain Emscripten (WASM) artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'Emscripten (WASM)'
+          path: shared-cores/ci-core-emscripten-wasm/virtualjaguar_libretro_emscripten.bc
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain Android arm64-v8a artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'Android arm64-v8a'
+          path: shared-cores/ci-core-android-arm64-v8a/libretro.so
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain Android armeabi-v7a artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'Android armeabi-v7a'
+          path: shared-cores/ci-core-android-armeabi-v7a/libretro.so
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain Android x86_64 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'Android x86_64'
+          path: shared-cores/ci-core-android-x86_64/libretro.so
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain Android x86 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'Android x86'
+          path: shared-cores/ci-core-android-x86/libretro.so
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain iOS arm64 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'iOS arm64'
+          path: shared-cores/ci-core-ios-arm64/virtualjaguar_libretro_ios.dylib
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain tvOS arm64 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'tvOS arm64'
+          path: shared-cores/ci-core-tvos-arm64/virtualjaguar_libretro_tvos.dylib
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain PS Vita artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'PS Vita'
+          path: shared-cores/ci-core-vita/virtualjaguar_libretro_vita.a
+          if-no-files-found: error
+          overwrite: true
+      - name: Retain Nintendo Switch artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: 'Nintendo Switch'
+          path: shared-cores/ci-core-switch/virtualjaguar_libretro_libnx.a
+          if-no-files-found: error
+          overwrite: true
+
   build:
+    needs: [core-plan]
     strategy:
       fail-fast: false
       matrix:
-        config:
-          # Linux
-          - displayTargetName: 'Linux x86_64 (GCC)'
-            artifact: 'virtualjaguar_libretro.so'
-            os: ubuntu-latest
-            cc: 'gcc'
-            cxx: 'g++'
-
-          - displayTargetName: 'Linux x86_64 (Clang)'
-            artifact: 'virtualjaguar_libretro.so'
-            os: ubuntu-latest
-            cc: 'clang'
-            cxx: 'clang++'
-
-          - displayTargetName: 'Linux aarch64'
-            artifact: 'virtualjaguar_libretro.so'
-            os: ubuntu-24.04-arm
-            cc: 'gcc'
-            cxx: 'g++'
-
-          - displayTargetName: 'Linux i686'
-            artifact: 'virtualjaguar_libretro.so'
-            os: ubuntu-latest
-            cc: 'gcc -m32'
-            cxx: 'g++ -m32'
-            multilib: true
-
-          # macOS
-          - displayTargetName: 'macOS arm64 (Clang)'
-            artifact: 'virtualjaguar_libretro.dylib'
-            os: macos-latest
-            cc: 'clang'
-            cxx: 'clang++'
-
-          # Cross-compiled from macos-latest (arm64) -- avoids the
-          # scarce macos-13 Intel runner pool.  See release.yml for
-          # rationale.
-          - displayTargetName: 'macOS x86_64 (Clang, cross)'
-            artifact: 'virtualjaguar_libretro.dylib'
-            os: macos-latest
-            cc: 'clang -arch x86_64'
-            cxx: 'clang++ -arch x86_64'
-            make_extra: 'BLITTER_SIMD=sse2'
-            cross: true
-
-          # Windows (MinGW)
-          - displayTargetName: 'Windows x86_64 (MSYS2)'
-            artifact: 'virtualjaguar_libretro.dll'
-            os: windows-latest
-            cc: 'gcc'
-            cxx: 'g++'
-            shell: 'msys2 {0}'
-            msystem: 'MINGW64'
-            msys2_packages: 'mingw-w64-x86_64-gcc make'
-
-          - displayTargetName: 'Windows i686 (MSYS2)'
-            artifact: 'virtualjaguar_libretro.dll'
-            os: windows-latest
-            cc: 'gcc'
-            cxx: 'g++'
-            shell: 'msys2 {0}'
-            msystem: 'MINGW32'
-            msys2_packages: 'mingw-w64-i686-gcc make'
-
-          # Emscripten (WebAssembly)
-          - displayTargetName: 'Emscripten (WASM)'
-            artifact: 'virtualjaguar_libretro_emscripten.bc'
-            os: ubuntu-latest
-            emscripten: true
-
-          # Android NDK
-          - displayTargetName: 'Android arm64-v8a'
-            artifact: 'libs/arm64-v8a/libretro.so'
-            os: ubuntu-latest
-            android: true
-            android_abi: 'arm64-v8a'
-            android_simd: 'neon'
-
-          - displayTargetName: 'Android armeabi-v7a'
-            artifact: 'libs/armeabi-v7a/libretro.so'
-            os: ubuntu-latest
-            android: true
-            android_abi: 'armeabi-v7a'
-            android_simd: 'neon'
-
-          - displayTargetName: 'Android x86_64'
-            artifact: 'libs/x86_64/libretro.so'
-            os: ubuntu-latest
-            android: true
-            android_abi: 'x86_64'
-            android_simd: 'sse2'
-
-          - displayTargetName: 'Android x86'
-            artifact: 'libs/x86/libretro.so'
-            os: ubuntu-latest
-            android: true
-            android_abi: 'x86'
-            android_simd: 'sse2'
-
-          # iOS / tvOS
-          - displayTargetName: 'iOS arm64'
-            artifact: 'virtualjaguar_libretro_ios.dylib'
-            os: macos-latest
-            make_platform: 'ios-arm64'
-            cross: true
-
-          - displayTargetName: 'tvOS arm64'
-            artifact: 'virtualjaguar_libretro_tvos.dylib'
-            os: macos-latest
-            make_platform: 'tvos-arm64'
-            cross: true
+        config: ${{ fromJSON(needs.core-plan.outputs.matrix) }}
 
     name: build-${{ matrix.config.displayTargetName }}
+    env:
+      # Compile-only rows match Release's production configuration; native test mode switches stay unchanged.
+      RELEASE_DEBUG_INFO: ${{ matrix.config.release_platform && '1' || '0' }}
     runs-on: ${{ matrix.config.os }}
 
     defaults:
@@ -181,43 +209,7 @@ jobs:
 
     - name: Build (Android NDK)
       if: matrix.config.android
-      run: |
-        # ndk-build uses jni/Android.mk (not the project Makefile),
-        # so the parse-time version.h regen in Makefile doesn't run.
-        bash scripts/gen-version-h.sh
-
-        NDK="${{ steps.setup-ndk.outputs.ndk-path }}"
-        ABI="${{ matrix.config.android_abi }}"
-        SIMD="${{ matrix.config.android_simd }}"
-        UPPER=$(echo "$SIMD" | tr '[:lower:]' '[:upper:]')
-
-        # Dry run first, while nothing is built, so make actually prints
-        # the compile lines. blitter.c MUST carry -DBLITTER_SIMD_<ARCH>:
-        # without it blitter.c inlines the scalar ops and still links
-        # happily against the neon/sse2 vtable, so a missing define is a
-        # silent slow path that no build failure would reveal.
-        "$NDK/ndk-build" APP_ABI="$ABI" -n > ndk-dry.log 2>&1
-        BLIT_LINES=$(grep -c '[/ ]blitter\.c' ndk-dry.log || true)
-        if [ "$BLIT_LINES" = "0" ]; then
-          echo "::error::ndk-build -n printed no compile line for blitter.c; this check needs rework"
-          exit 1
-        fi
-        if ! grep '[/ ]blitter\.c' ndk-dry.log | grep -q -- "-DBLITTER_SIMD_${UPPER}"; then
-          echo "::error::blitter.c is not compiled with -DBLITTER_SIMD_${UPPER} on ${ABI}"
-          grep '[/ ]blitter\.c' ndk-dry.log | head -3
-          exit 1
-        fi
-        echo "==> ${ABI}: blitter.c carries -DBLITTER_SIMD_${UPPER}"
-
-        "$NDK/ndk-build" APP_ABI="$ABI" -j4
-
-        # And the arch .c that define has to agree with.
-        FOUND=$(find "obj/local/$ABI" -name 'blitter_simd_*.o' -exec basename {} \; | sort | tr '\n' ' ')
-        if [ "$FOUND" != "blitter_simd_${SIMD}.o " ]; then
-          echo "::error::expected blitter_simd_${SIMD}.o on ${ABI}, found: ${FOUND:-<none>}"
-          exit 1
-        fi
-        echo "==> ${ABI}: built ${FOUND}"
+      run: bash scripts/build-ndk-ci.sh "${{ steps.setup-ndk.outputs.ndk-path }}" "${{ matrix.config.android_abi }}" "${{ matrix.config.android_simd }}"
 
     # Mach-O symbol gating: production builds must export retro_* only.
     # Runs before the test step (which would relink with TEST_EXPORTS=1
@@ -452,9 +444,11 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
-  duplicated-lists-in-sync:
-    name: duplicated lists in sync
-    runs-on: ubuntu-latest
+  # Independent lightweight checks share one checkout and runner allocation.
+  # !cancelled() keeps later checks running after a failure; any failure still fails the job.
+  source-validation:
+    name: Source validation (lists, EditorConfig, cppcheck, C89)
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v7
 
@@ -471,6 +465,7 @@ jobs:
     # correct.  version-bump.yml updates both files on a release bump; this
     # catches a hand edit that touched only one.
     - name: CORE_BASE_VERSION matches the Makefile
+      if: ${{ !cancelled() }}
       run: |
         set -euo pipefail
         mk=$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)
@@ -489,6 +484,7 @@ jobs:
     # wrapper kept its own copy of this list and drifted by 27 files over seven
     # releases -- this is that lesson turned into a build failure.
     - name: Package.swift sources match Makefile.common
+      if: ${{ !cancelled() }}
       run: sh scripts/check-package-sources.sh
 
     # Same posture for the msvc-check job's inline source list, which rots the
@@ -496,7 +492,82 @@ jobs:
     # header on two jobs while ~35 others stay green (issue #679, and PR #662
     # is the case in point).
     - name: MSVC job sources match Makefile.common
+      if: ${{ !cancelled() }}
       run: sh scripts/check-msvc-sources.sh
+
+
+    - name: Install editorconfig-checker
+      if: ${{ !cancelled() }}
+      run: |
+        VERSION=v3.0.3
+        curl -fsSL "https://github.com/editorconfig-checker/editorconfig-checker/releases/download/${VERSION}/ec-linux-amd64.tar.gz" \
+          | tar -xz -C /tmp
+        sudo install -m 0755 /tmp/bin/ec-linux-amd64 /usr/local/bin/ec
+
+    - name: Run editorconfig-checker
+      if: ${{ !cancelled() }}
+      run: ec -verbose
+
+
+    - name: Install cppcheck
+      if: ${{ !cancelled() }}
+      run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+    - name: Run cppcheck
+      if: ${{ !cancelled() }}
+      run: |
+        # Scan in-tree sources only.  src/m68000 is machine-generated
+        # UAE 68K, src/bios/jag*.c are bin2c hex tables, and
+        # libretro-common is a vendored subtree -- all excluded.
+        #
+        # Suppressions live in cppcheck-suppressions.txt with rationale.
+        # cppcheck 2.13 (Ubuntu 24.04) doesn't accept comment lines in
+        # the suppressions file; strip them before passing.
+        bash scripts/gen-version-h.sh
+        # POSIX character class -- not GNU grep's \s extension.
+        grep -vE '^[[:space:]]*(#|$)' cppcheck-suppressions.txt > /tmp/cppcheck-suppressions.txt
+        cppcheck \
+          --enable=warning,performance,portability \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          --suppressions-list=/tmp/cppcheck-suppressions.txt \
+          --error-exitcode=1 \
+          -i src/m68000 -i src/bios -i libretro-common \
+          -I src -I src/core -I src/tom -I src/jerry -I src/cd \
+          -I src/bios -I src/m68000 -I libretro-common/include \
+          -DINLINE=inline -D__LIBRETRO__ \
+          --quiet \
+          src/ libretro.c
+
+
+    - name: Check for declaration-after-statement
+      if: ${{ !cancelled() }}
+      run: |
+        echo "==> Checking C89 compliance (catches MSVC C89 errors)..."
+        scripts/c89-lint.sh
+
+    - name: Verify .info display_version matches Makefile
+      if: ${{ !cancelled() }}
+      run: bash scripts/check-info-version.sh
+
+    - name: Check for stdbool.h usage (use boolean.h instead)
+      if: ${{ !cancelled() }}
+      run: |
+        echo "==> Checking for direct stdbool.h includes..."
+        FAILED=0
+        for f in libretro.c $(git ls-files 'src/**/*.c' 'src/**/*.h'); do
+          case "$f" in
+            src/core/boolean.h) continue ;;
+          esac
+          if grep -n '#include.*<stdbool\.h>' "$f" 2>/dev/null; then
+            echo "::error file=$f::Use <boolean.h> instead of <stdbool.h> (MSVC 2005/2010 compat)"
+            FAILED=1
+          fi
+        done
+        if [ "$FAILED" = "1" ]; then
+          exit 1
+        fi
+        echo "==> No direct stdbool.h includes found"
 
   spm-build:
     name: SwiftPM build (macOS arm64)
@@ -648,6 +719,8 @@ jobs:
           src\tom\blitter_simd_sse2.c
 
   vita-build:
+    needs: [core-plan]
+    if: needs.core-plan.outputs.reuse != 'true'
     name: build-PS Vita
     runs-on: ubuntu-latest
     container:
@@ -656,6 +729,8 @@ jobs:
     - uses: actions/checkout@v7
 
     - name: Build
+      env:
+        RELEASE_DEBUG_INFO: '1'
       run: make -j4 platform=vita
 
     - name: Upload artifact
@@ -666,6 +741,8 @@ jobs:
         if-no-files-found: error
 
   switch-build:
+    needs: [core-plan]
+    if: needs.core-plan.outputs.reuse != 'true'
     name: build-Nintendo Switch
     runs-on: ubuntu-latest
     container:
@@ -677,6 +754,7 @@ jobs:
       run: make -j4 platform=libnx
       env:
         DEVKITPRO: /opt/devkitpro
+        RELEASE_DEBUG_INFO: '1'
 
     - name: Upload artifact
       uses: actions/upload-artifact@v7
@@ -684,22 +762,6 @@ jobs:
         name: Nintendo Switch
         path: virtualjaguar_libretro_libnx.a
         if-no-files-found: error
-
-  editorconfig-lint:
-    name: EditorConfig compliance check
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Install editorconfig-checker
-      run: |
-        VERSION=v3.0.3
-        curl -fsSL "https://github.com/editorconfig-checker/editorconfig-checker/releases/download/${VERSION}/ec-linux-amd64.tar.gz" \
-          | tar -xz -C /tmp
-        sudo install -m 0755 /tmp/bin/ec-linux-amd64 /usr/local/bin/ec
-
-    - name: Run editorconfig-checker
-      run: ec -verbose
 
   coverage:
     name: Code coverage (gcov + codecov)
@@ -821,69 +883,3 @@ jobs:
           echo "==> Running clang-tidy on:"
           echo "$FILES"
           echo "$FILES" | xargs clang-tidy -p . --quiet --warnings-as-errors='*'
-
-  cppcheck:
-    name: cppcheck static analysis
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Install cppcheck
-      run: sudo apt-get update && sudo apt-get install -y cppcheck
-
-    - name: Run cppcheck
-      run: |
-        # Scan in-tree sources only.  src/m68000 is machine-generated
-        # UAE 68K, src/bios/jag*.c are bin2c hex tables, and
-        # libretro-common is a vendored subtree -- all excluded.
-        #
-        # Suppressions live in cppcheck-suppressions.txt with rationale.
-        # cppcheck 2.13 (Ubuntu 24.04) doesn't accept comment lines in
-        # the suppressions file; strip them before passing.
-        bash scripts/gen-version-h.sh
-        # POSIX character class -- not GNU grep's \s extension.
-        grep -vE '^[[:space:]]*(#|$)' cppcheck-suppressions.txt > /tmp/cppcheck-suppressions.txt
-        cppcheck \
-          --enable=warning,performance,portability \
-          --suppress=missingIncludeSystem \
-          --suppress=unusedFunction \
-          --suppressions-list=/tmp/cppcheck-suppressions.txt \
-          --error-exitcode=1 \
-          -i src/m68000 -i src/bios -i libretro-common \
-          -I src -I src/core -I src/tom -I src/jerry -I src/cd \
-          -I src/bios -I src/m68000 -I libretro-common/include \
-          -DINLINE=inline -D__LIBRETRO__ \
-          --quiet \
-          src/ libretro.c
-
-  c89-lint:
-    name: C89 compliance check
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Check for declaration-after-statement
-      run: |
-        echo "==> Checking C89 compliance (catches MSVC C89 errors)..."
-        scripts/c89-lint.sh
-
-    - name: Verify .info display_version matches Makefile
-      run: bash scripts/check-info-version.sh
-
-    - name: Check for stdbool.h usage (use boolean.h instead)
-      run: |
-        echo "==> Checking for direct stdbool.h includes..."
-        FAILED=0
-        for f in libretro.c $(git ls-files 'src/**/*.c' 'src/**/*.h'); do
-          case "$f" in
-            src/core/boolean.h) continue ;;
-          esac
-          if grep -n '#include.*<stdbool\.h>' "$f" 2>/dev/null; then
-            echo "::error file=$f::Use <boolean.h> instead of <stdbool.h> (MSVC 2005/2010 compat)"
-            FAILED=1
-          fi
-        done
-        if [ "$FAILED" = "1" ]; then
-          exit 1
-        fi
-        echo "==> No direct stdbool.h includes found"

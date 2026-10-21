@@ -340,11 +340,42 @@ bool parseCht(const std::string& textIn, std::vector<ChtCheat>& out) {
 }
 
 bool loadChtFile(const std::string& path, ChtSet& out) {
+    out = ChtSet();
     std::vector<unsigned char> bytes;
     if (!readFile(path, bytes)) return false;
     out.stem = pathStem(path);
     out.path = path;
-    return parseCht(std::string(bytes.begin(), bytes.end()), out.cheats);
+    std::string text(bytes.begin(), bytes.end());
+    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
+    // Optional exact-revision binding for locally converted script cheats.
+    // Scan independently of the permissive legacy entry parser: an invalid or
+    // duplicate guard must never degrade into an unbound set.
+    size_t start = 0;
+    bool seen = false;
+    while (start < text.size()) {
+        size_t end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        std::string line = trim(text.substr(start, end - start));
+        start = end + 1;
+        size_t eq = line.find('=');
+        std::string key = trim(line.substr(0, eq));
+        if (key != "vj_rom_crc32") continue;
+        out.revisionBound = true;
+        std::string value = eq == std::string::npos ? "" : unquote(line.substr(eq + 1));
+        uint32_t crc = 0;
+        bool valid = value.size() == 8;
+        for (unsigned char c : value) {
+            int digit = c >= '0' && c <= '9' ? c - '0' :
+                        c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+                        c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            if (digit < 0) { valid = false; break; }
+            crc = (crc << 4) | (uint32_t)digit;
+        }
+        if (!valid || seen) out.restriction = "Invalid or duplicate cartridge revision guard.";
+        out.romCrc = crc;
+        seen = true;
+    }
+    return parseCht(text, out.cheats);
 }
 
 // ---------------------------------------------------------------------------------
@@ -441,6 +472,18 @@ void CheatManager::loadSelectedSet() {
         if (r.stem != selected_) continue;
         setLoaded_ = loadChtFile(r.path, set_);
         if (!setLoaded_ && warn) warn("cheats: could not read " + r.path);
+        if (setLoaded_ && set_.revisionBound) {
+            if (set_.restriction.empty() && (!game_.crc || game_.crc != set_.romCrc))
+                set_.restriction = "Cheat set requires a different cartridge revision (CRC32).";
+            if (!set_.restriction.empty()) {
+                for (ChtCheat& cheat : set_.cheats) {
+                    cheat.supported = false;
+                    cheat.code.clear();
+                    cheat.segments = 0;
+                    cheat.note = set_.restriction;
+                }
+            }
+        }
         return;
     }
 }
@@ -471,6 +514,7 @@ void CheatManager::gameClosed() {
 }
 
 std::string CheatManager::setStatus() const {
+    if (setLoaded_ && !set_.restriction.empty()) return set_.restriction;
     if (library_.empty()) return "No cheat files found.";
     if (!selected_.empty() && !setLoaded_) return "The cheat set '" + selected_ + "' is not in the library.";
     if (selected_.empty() && matches_.size() > 1)
@@ -652,13 +696,17 @@ void CheatManager::setUserEnabled(size_t i, bool on) {
 // ---------------------------------------------------------------------------------
 void CheatManager::apply() {
     appliedSegments_ = 0;
-    if (resetSink) resetSink();
-    if (blockedNow()) return;   // hardcore: the core's list stays empty
+    CheatBatch b;
+    b.push_back(CheatOp{true, 0, false, std::string()});
+    if (blockedNow()) {   // hardcore: the core's list stays empty
+        if (commit) commit(std::move(b));
+        return;
+    }
     if (setLoaded_) {
         for (size_t i = 0; i < set_.cheats.size(); i++) {
             const ChtCheat& c = set_.cheats[i];
             if (!c.supported || !enabled_.count(c.id)) continue;
-            if (setSink) setSink((unsigned)i, true, c.code.c_str());
+            b.push_back(CheatOp{false, (unsigned)i, true, c.code});
             appliedSegments_ += c.segments;
         }
     }
@@ -666,9 +714,10 @@ void CheatManager::apply() {
         if (!user_[i].enabled) continue;
         unsigned segs = 0;
         validateCode(user_[i].code, &segs, nullptr);
-        if (setSink) setSink(kUserIndexBase + (unsigned)i, true, user_[i].code.c_str());
+        b.push_back(CheatOp{false, kUserIndexBase + (unsigned)i, true, user_[i].code});
         appliedSegments_ += segs;
     }
+    if (commit) commit(std::move(b));
     if (appliedSegments_ > kCoreLimit && warn)
         warn("cheats: " + std::to_string(appliedSegments_) + " writes exceed the core's limit of " +
              std::to_string(kCoreLimit) + "; the excess is ignored");

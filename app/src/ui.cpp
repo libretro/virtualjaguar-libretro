@@ -9,8 +9,10 @@
 #include "platform/platform.h"
 #include "settings_reset_ui.h"
 #include "shaders.h"
+#include "tv/tv_shell.h"
 #include "typed_ui.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include <algorithm>
 #include <cctype>
@@ -252,6 +254,17 @@ void drawInterfaceTab(App& app) {
     drawControlsOverlaySettings(app);
     drawAppearanceSettings(app);
     drawFontSettings(app);
+    ImGui::SeparatorText("Performance");
+    bool emuThread = app.emuThreadWanted();
+    if (ImGui::Checkbox("Emulation thread", &emuThread)) {
+        app.emuThreadPref = emuThread ? 1 : 0;
+        app.saveConfig();
+    }
+    ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
+             "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
+             "app starts. While it is on, this version turns off the Tools (debugger) menu and the GDB stub; they "
+             "come back in a later update. Off by default.");
+    if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");
     ImGui::SetNextItemWidth(ui::em(10.0f));
@@ -331,7 +344,7 @@ void drawDiscordTab(App& app) {
 
 void drawSettings(App& app) {
     ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
-    bool open = ImGui::Begin("Settings", &app.showSettings);
+    bool open = ui::beginWindow("Settings", &app.showSettings);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
@@ -353,6 +366,9 @@ void drawSettings(App& app) {
         if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Interface", nullptr, tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
+#ifdef VJ_HAVE_NEURO
+        if (ImGui::BeginTabItem("Neuro", nullptr, tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
+#endif
         ImGui::EndTabBar();
     }
     ImGui::End();
@@ -362,7 +378,7 @@ void drawSettings(App& app) {
 
 void drawStates(App& app) {
     ui::nextWindow(44.0f, 30.0f, 22.0f, 14.0f);
-    bool open = ImGui::Begin("Save states", &app.showStates);
+    bool open = ui::beginWindow("Save states", &app.showStates);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
@@ -451,7 +467,7 @@ void drawResumePrompt(App& app) {
 
 void drawAbout(App& app) {
     ui::nextWindow(30.0f, 0.0f, 0.0f, 0.0f, ui::WinFit::FixedWidth);
-    bool open = ImGui::Begin("About Virtual Jaguar", &app.showAbout, ImGuiWindowFlags_AlwaysAutoResize);
+    bool open = ui::beginWindow("About Virtual Jaguar", &app.showAbout, ImGuiWindowFlags_AlwaysAutoResize);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
@@ -476,7 +492,8 @@ void drawAbout(App& app) {
     ImGui::Text("Dear ImGui: %s", ImGui::GetVersion());
     ImGui::Separator();
     const char* const keys[][2] = {
-        {"F1", platform::nativeMenuActive() ? "show the in-window menu bar as well" : "show or pin the menu bar (fullscreen)"},
+        {"F1", app.fullscreen && app.fullscreenAutoHideMenu ? "show or pin the menu bar" :
+                   (platform::nativeMenuActive() ? "show the in-window menu bar as well" : "show or pin the menu bar (fullscreen)")},
         {"F5 / F7", "save / load state"},
         {"F6", "next state slot (Shift: previous)"},
         {"F8", "pause"},
@@ -534,13 +551,13 @@ void drawMenuBar(App& app) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !host.inFrame())) app.closeContent();
+        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !app.haltedNow())) app.closeContent();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) app.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-        bool loaded = host.isLoaded() && !host.inFrame();   // a debugger halt parks the core: nothing that re-enters it
+        bool loaded = host.isLoaded() && !app.haltedNow();   // a debugger halt parks the core: nothing that re-enters it
         if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, loaded)) app.togglePause();
         if (ImGui::MenuItem("Reset", "Ctrl+R", false, loaded)) app.reset();
         ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, loaded);
@@ -558,12 +575,20 @@ void drawMenuBar(App& app) {
         if (ImGui::MenuItem("Cheats...", nullptr, false, loaded)) app.showCheats = true;
         DiscInfo disc = host.discInfo();
         if (disc.available) {
+            // A disc command is a call(), not a post(): inserting a disc can re-stage the CD BIOS, which writes the
+            // staged-BIOS record the BIOS panel reads (#967).
             ImGui::Separator();
-            if (ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) host.discSetEject(!disc.ejected);
+            // The CD BIOS with no disc (#646) has an empty list: closing the tray would have nothing to insert, so
+            // only Add disc image... shows until a disc is in it.
+            if (disc.count > 0 && ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) {
+                const bool eject = !disc.ejected;
+                app.emu.call([&host, eject] { host.discSetEject(eject); });
+            }
+            if (ImGui::MenuItem("Add disc image...")) app.showDiscDialog();
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
                 for (unsigned i = 0; i < disc.count; i++) {
                     ImGui::PushID((int)i);   // a multi-disc set can repeat a label
-                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) host.discSetIndex(i);
+                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) app.emu.call([&host, i] { host.discSetIndex(i); });
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();
@@ -582,6 +607,8 @@ void drawMenuBar(App& app) {
             overlayEvent(app.input.controls, OverlayEvent::Toggle);
         }
         ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
+        if (ImGui::MenuItem("TV mode", "Ctrl+Shift+T", app.tvMode.active(), tv::effectiveSetting(app.tvSetting) != tv::TvSetting::Off))
+            app.toggleTvMode();
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();
     }
@@ -650,7 +677,12 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     bool nearTop = mouseY >= 0 && mouseY < (menuHot ? ImGui::GetFrameHeight() + 4 : 4);
     menuHot = nearTop || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     // A native menu bar (macOS) replaces this one; every item here has a twin in platform/commands.cpp.
-    bool showMenu = platform::nativeMenuActive() ? app.showInWindowMenu : (!app.fullscreen || app.menuPinned || menuHot);
+    // TV mode's Base layer is a couch screen: its menu bar behaves as in fullscreen.
+    const bool tvBase = app.tvShell().baseActive();
+    app.fullscreenMenu.update(app.fullscreen, app.fullscreenAutoHideMenu, app.menuPinned);
+    const bool showMenu = app.fullscreenMenu.visible(platform::nativeMenuActive(), app.showInWindowMenu,
+                                                    app.fullscreen, tvBase, app.menuPinned, menuHot);
+    app.menuBarDrawn = showMenu;
     float menuH = 0;
     if (showMenu) {
         drawMenuBar(app);
@@ -660,11 +692,13 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     ImVec2 areaPos(vp->Pos.x, vp->Pos.y + menuH);
     ImVec2 areaSize(vp->Size.x, vp->Size.y - menuH);
     if (app.host.isLoaded() && app.video.hasFrame()) {
-        ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.host.aspect(), app.present,
+        ImVec4 pic = app.video.draw(bg, areaPos, areaSize, app.pictureAspect(), app.present,
                                     io.DisplayFramebufferScale.x);
         app.input.setPicture(pic.x - vp->Pos.x, pic.y - vp->Pos.y, pic.z, pic.w);   // window-relative, like SDL's pointer events   // where the picture is, for the light gun
     } else if (!app.host.isLoaded()) {
-        if (app.homeLibrary) {
+        if (tvBase) {
+            app.tvShell().draw(tv::Layer::Base, vp->Pos, vp->Size);   // the TV screens stand in for the library / welcome screen
+        } else if (app.homeLibrary) {
             drawLibraryHome(app, areaPos.x, areaPos.y, areaSize.x, areaSize.y);   // the game library is the home screen
         } else {
             // The plain welcome screen (Settings > Interface turns the home-screen library off).
@@ -692,6 +726,10 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
         bg->AddText(at, ui::u32(ui::overlay().fpsText), buf);
     }
 
+#ifdef VJ_HAVE_NEURO
+    drawNeuroMarker(app, bg, areaPos.x, areaPos.y, areaSize.x);   // same list, same reason as the FPS chip
+#endif
+
     if (app.showSettings) drawSettings(app);
     if (app.showStates) drawStates(app);
     if (app.showCheats) drawCheats(app);
@@ -705,6 +743,7 @@ void drawUi(App& app, bool& wantCaptureKeyboard) {
     drawControlsOverlay(app, areaPos, areaSize);
     drawAchievementsUi(app);
     drawDebugWindows(app);
+    app.tvShell().draw(tv::Layer::Menu, vp->Pos, vp->Size);   // the in-game menu over everything but the OSD (no window while it is closed)
     drawOsd(app, areaPos, areaSize);
     drawDebugOverlay(app, areaPos.x, areaPos.y);
 

@@ -48,7 +48,7 @@ jobs:
   # ----------------------------------------------------------------
   guard:
     name: Check dispatch ref
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - name: Refuse a dispatch that would publish nothing
         if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
@@ -226,24 +226,28 @@ jobs:
             os: ubuntu-latest
             android: true
             android_abi: 'arm64-v8a'
+            android_simd: 'neon'
 
           - platform: android-armeabi-v7a
             artifact: libs/armeabi-v7a/libretro.so
             os: ubuntu-latest
             android: true
             android_abi: 'armeabi-v7a'
+            android_simd: 'neon'
 
           - platform: android-x86_64
             artifact: libs/x86_64/libretro.so
             os: ubuntu-latest
             android: true
             android_abi: 'x86_64'
+            android_simd: 'sse2'
 
           - platform: android-x86
             artifact: libs/x86/libretro.so
             os: ubuntu-latest
             android: true
             android_abi: 'x86'
+            android_simd: 'sse2'
 
           # iOS / tvOS
           - platform: ios-arm64
@@ -311,30 +315,56 @@ jobs:
         if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
         env:
           RELEASE_DEBUG_INFO: '1'
+          TEST_EXPORTS: '0'
         run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
       - name: Build (platform)
         if: matrix.config.make_platform
         env:
           RELEASE_DEBUG_INFO: '1'
+          TEST_EXPORTS: '0'
         run: make -j4 platform=${{ matrix.config.make_platform }}
 
       - name: Build (Emscripten)
         if: matrix.config.emscripten
         env:
           RELEASE_DEBUG_INFO: '1'
+          TEST_EXPORTS: '0'
         run: emmake make -j4 platform=emscripten
 
       - name: Build (Android NDK)
         if: matrix.config.android
         env:
           RELEASE_DEBUG_INFO: '1'
+          TEST_EXPORTS: '0'
+        run: bash scripts/build-ndk-ci.sh "${{ steps.setup-ndk.outputs.ndk-path }}" "${{ matrix.config.android_abi }}" "${{ matrix.config.android_simd }}"
+
+      - name: Verify compile-only Mach-O production exports
+        if: ${{ matrix.config.platform == 'macos-x86_64' || matrix.config.platform == 'ios-arm64' || matrix.config.platform == 'tvos-arm64' }}
         run: |
-          # ndk-build uses jni/Android.mk (not the project Makefile),
-          # so the parse-time version.h regen in Makefile doesn't run.
-          bash scripts/gen-version-h.sh
-          ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
-            APP_ABI=${{ matrix.config.android_abi }} -j4
+          LEAKS=$(nm -gU "${{ matrix.config.artifact }}" | grep -v ' _retro_' || true)
+          if [ -n "$LEAKS" ]; then
+            echo "::error::Production dylib leaked non-retro_* symbols:"
+            echo "$LEAKS"
+            exit 1
+          fi
+
+      - name: Preserve unstripped compile-only core for PR validation
+        if: ${{ matrix.config.emscripten || matrix.config.android || matrix.config.platform == 'macos-x86_64' || matrix.config.make_platform }}
+        env:
+          TEST_EXPORTS: '0'
+          RELEASE_DEBUG_INFO: '1'
+        run: bash scripts/stage-ci-core.sh "${{ matrix.config.platform }}" "${{ matrix.config.artifact }}" ci-core
+
+      - name: Upload production CI intermediate
+        if: ${{ matrix.config.emscripten || matrix.config.android || matrix.config.platform == 'macos-x86_64' || matrix.config.make_platform }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-core-${{ matrix.config.platform }}
+          overwrite: true
+          path: ci-core/
+          if-no-files-found: error
+          retention-days: 14
 
       # ----------------------------------------------------------------
       # Package: emit
@@ -510,7 +540,23 @@ jobs:
       - name: Build
         env:
           RELEASE_DEBUG_INFO: '1'
+          TEST_EXPORTS: '0'
         run: make -j4 platform=vita
+
+      - name: Preserve unstripped production core for PR validation
+        env:
+          TEST_EXPORTS: '0'
+          RELEASE_DEBUG_INFO: '1'
+        run: bash scripts/stage-ci-core.sh vita virtualjaguar_libretro_vita.a ci-core
+
+      - name: Upload production CI intermediate
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-core-vita
+          overwrite: true
+          path: ci-core/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Package
         run: |
@@ -549,7 +595,23 @@ jobs:
         env:
           DEVKITPRO: /opt/devkitpro
           RELEASE_DEBUG_INFO: '1'
+          TEST_EXPORTS: '0'
         run: make -j4 platform=libnx
+
+      - name: Preserve unstripped production core for PR validation
+        env:
+          TEST_EXPORTS: '0'
+          RELEASE_DEBUG_INFO: '1'
+        run: bash scripts/stage-ci-core.sh switch virtualjaguar_libretro_libnx.a ci-core
+
+      - name: Upload production CI intermediate
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-core-switch
+          overwrite: true
+          path: ci-core/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Package
         run: |
@@ -642,7 +704,7 @@ jobs:
           # binary + matching -debug.tar.gz; copy them all into release/.
           # librashader-<triple> are intermediates of the app packages (the shader runtime built
           # from source, librashader.yml): already inside the packages, not release assets.
-          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -exec cp {} release/ \;
+          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -not -path 'artifacts/ci-core-*' -exec cp {} release/ \;
           # Include the RetroArch core .info file so frontend maintainers
           # / users can drop it into RetroArch's info/ dir.  The same file
           # is what gets PR'd to libretro/libretro-super after the release.
@@ -788,7 +850,7 @@ jobs:
           set -e
           mkdir -p release
           # (librashader-<triple> are intermediates of the app packages, not release assets.)
-          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -exec cp {} release/ \;
+          find artifacts/ -mindepth 2 -type f -not -path 'artifacts/librashader-*' -not -path 'artifacts/ci-core-*' -exec cp {} release/ \;
           # The .info file's display_version names the last TAGGED release, so
           # shipping it verbatim would label a nightly "v2.3.2".  Rewrite it to
           # the build's actual identity — this also makes it obvious that a

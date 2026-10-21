@@ -38,7 +38,7 @@ achievements, and quit back to the library. TV mode adds no input latency to a g
 
 | State | Pads and keyboard drive |
 |---|---|
-| Desktop mode, no game | The desktop UI (mouse first; pads do nothing except the TV-menu action and the auto-switch trigger) |
+| Desktop mode, no game | The desktop UI (mouse first). Pads browse the desktop library (see `docs/app-pad-nav-design.md`), plus the TV-menu action and the auto-switch trigger, which wins under Auto (§2 of that design) |
 | Desktop mode, game running | The game. The TV-menu action opens the TV in-game menu over the desktop UI |
 | TV mode, no game | The TV UI, from every connected pad and from the keyboard (arrows, Enter, Esc, Backspace) |
 | TV mode, game running | The game, except the TV-menu action |
@@ -77,6 +77,11 @@ Default bindings for the standard gamepad layout:
 
 Every binding can be changed or removed in the controls screen, like any other action. Pads with a
 custom SDL mapping get the same defaults wherever those buttons exist.
+
+Separately from the action, **Ctrl+Shift+T** (**Cmd+Shift+T** on macOS) is a fixed, non-rebindable keyboard shortcut
+that toggles TV mode with or without a game (the game keeps running; the in-game menu does not open). It sits on View >
+TV mode like the other menu shortcuts and is ignored while a text field has the keyboard or a binding is being captured.
+The controls screen and the cheat sheet name the action "TV menu / TV mode" (#1020).
 
 ### 3.3 Hold bindings
 

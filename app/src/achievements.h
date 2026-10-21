@@ -33,6 +33,7 @@
 #include <thread>
 #include <vector>
 
+#include "ach_event.h"
 #include "ach_http.h"
 #include "ra_dash.h"
 #include "ra_images.h"
@@ -72,7 +73,17 @@ public:
     void onContentLoaded();      // a game/disc was just loaded into the core
     void onContentClosed();      // unloaded, failed to load, or no-content boot
     void onReset();              // the emulated machine was reset
-    void afterFrame();           // once per emulated frame, right after retro_run
+    void onDiscChanged();        // a disc swap booted another disc (host.contentPath() moved)
+    void afterFrame();           // once per emulated frame, right after retro_run (inline: also does emuFrame())
+    // The emulation-thread half of afterFrame (#967): rc_client_do_frame, which reads game memory, and the rich-presence
+    // line published every 60 frames.  Inline, afterFrame() calls it.
+    void emuFrame();
+    // The emulation thread's idle while no frame runs (paused, or no game identified): rc_client's pings and retries.
+    void emuIdle();
+    // The rich-presence line ("" = none), computed with the frame on the emulation thread; safe from the UI thread.
+    std::string richPresence() const;
+    // read_memory calls answered from the memory map instead of RAM because they ran off the emulation thread.
+    unsigned offThreadReads() const { return offThreadReads_.load(); }
     void pump();                 // once per UI-loop iteration, paused or not
 
     // ---- hardcore transitions -----------------------------------------------------
@@ -89,6 +100,10 @@ public:
     // hardcore wanted, no disallowed setting, and a game that is (or is being)
     // looked up.  Everything below is derived from it.
     bool hardcoreActive() const;
+    // Would hardcore apply to the next game that starts?  hardcoreActive() minus the "a game is (being) looked up" part:
+    // with no game running it is false whatever this says, so a screen that offers a state load before any game is
+    // up (TV Home's Resume) asks this instead.
+    bool hardcoreNextGame() const;
     bool allowStateLoad() const { return !hardcoreActive(); }
     bool allowCheats() const { return !hardcoreActive(); }
     bool allowRewind() const { return !hardcoreActive(); }
@@ -131,7 +146,15 @@ public:
     std::map<unsigned, std::string> challenges;     // achievement id -> title
     std::string progress;                           // transient progress indicator text
     double progressBorn = 0;
-    rc_client_t* client() const { return client_; }
+    // Copies only: rcheevos objects remain protected until their strings and counters are copied.
+    struct ClientSnapshot {
+        bool signedIn = false, hardcore = false;
+        uint32_t gameId = 0;
+        std::string gameTitle, displayName;
+        uint32_t score = 0, softcoreScore = 0, unreadMessages = 0;
+        rc_client_user_game_summary_t summary{};
+    };
+    ClientSnapshot clientSnapshot() const;
     App* app() const { return app_; }
 
     // ---- pictures and the dashboard (achievements_games.cpp, achievements_ui.cpp) ----------
@@ -183,13 +206,22 @@ private:
     void applyHardcore();                // push the effective hardcore flag into rc_client
     void checkSettings();                // disallowed core options
     void toast(const std::string& title, const std::string& body, int kind, double life = 5, const std::string& icon = "");
-    void handleEvent(const rc_client_event_t* e);
+    void handleEvent(const AchEvent& e);
+    void queueEvent(AchEvent e);
+    void drainEvents();
+    // The core belongs to the emulation thread (#967): run there (inline / already there: at once).
+    void coreCall(const std::function<void()>& fn);
+    void corePost(std::function<void()> fn);
     void persistLogin();
     uint32_t consoleId(const std::string& path) const;
     void setStatus(const std::string& s) { status_ = s; }
     void mockRespond(const std::string& post, rc_client_server_callback_t cb, void* cbdata);
 
     App* app_ = nullptr;
+    // Frame evaluation and UI snapshots share this lock. Mutations still dispatch to the core owner;
+    // acquire inside coreCall, never while the UI is waiting for an owner command. Recursive because
+    // rcheevos invokes our callbacks synchronously and those may query the client again.
+    mutable std::recursive_mutex clientMu_;
     rc_client_t* client_ = nullptr;
     AchHttp http_;
     bool enabled_ = true;
@@ -201,14 +233,16 @@ private:
     bool gameKnown_ = false;         // the current content has an achievement set
     bool resetPending_ = false;      // rc_client asked for a reset (hardcore just turned on)
     bool settingsOk_ = true;
-    bool memoryReady_ = false;
+    std::atomic<bool> memoryReady_{false};
     bool loadFailed_ = false;        // the last identify/load attempt did not produce a tracked game
     unsigned unlockedBeforePoke_ = 0;
     unsigned pokeIndex_ = 0;
     unsigned mockFrames_ = 0;
+    uint64_t framesSeen_ = 0;          // threaded: EmuThread::framesRun() at the last pump()
+    double lastIdlePost_ = 0;          // threaded: when pump() last posted emuIdle()
     unsigned hardcoreResets_ = 0;      // clean-start restarts performed (tests)
     unsigned loginAt_ = 0;             // headless: delay the mock sign-in to this frame
-    bool ranUnrestricted_ = false;     // frames ran (or states loaded) outside hardcore since boot/reset
+    std::atomic<bool> ranUnrestricted_{false};     // frames ran (or states loaded) outside hardcore since boot/reset
     double lastSettingsCheck_ = 0;
     std::string blocker_;
     std::string status_;
@@ -217,9 +251,22 @@ private:
     std::string loadedPath_;
     rc_libretro_memory_regions_t regions_{};   // address -> host pointers, from the core's memory map
 
+    // rc_client events, copied where they were raised and applied in pump() on the UI thread (#967).
+    std::mutex eventMu_;
+    std::vector<AchEvent> events_;
+    // Bumped by onContentLoaded / onContentClosed (inside call()s).  Events carry the generation they were queued in;
+    // drainEvents drops the stale transient ones (a tracker from game A must not outlive A).
+    std::atomic<uint32_t> eventGen_{0};
+    std::atomic<unsigned> offThreadReads_{0};
+    // The rich-presence line, evaluated on the emulation thread every 60 frames.
+    mutable std::mutex rpMu_;
+    std::string richPresence_;
+    unsigned rpFrames_ = 0;
+
     // headless / mock server
     std::string mockDir_;
     struct MockReply { rc_client_server_callback_t cb; void* cbdata; std::string body; int status; };
+    std::mutex mockMu_;                       // guards the four below: an award reaches serverCall from the emulation thread
     std::deque<MockReply> mockQueue_;
     void mockDeliver();
     std::vector<std::string> mockLog_;

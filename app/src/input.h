@@ -11,6 +11,8 @@
 //             Start=Option, d-pad / left stick = d-pad; keypad 0-6 on North,
 //             shoulders, triggers and stick clicks, 7/8/9/* on the right stick,
 //             # on Guide, the overlay on Share/Capture, the controls overlay on Touchpad.
+//             On a Pro Controller port: Left Shoulder / North / Right Shoulder = X / Y / Z,
+//             the triggers = L / R, keypad 0-4 only on the overlay.
 // How the keypad reaches the core (it has no RetroPad buttons for 7, 8, 9, *, #)
 // is documented in remap.h.  What each port's DEVICE reads (mouse, rotary, analog, light
 // gun, Team Tap ...) and which host controller plays which player is devices.h / router.h;
@@ -27,6 +29,8 @@
 #include "config.h"
 #include "cheatsheet.h"
 #include "devices.h"
+#include "hold_arbiter.h"
+#include "pad_profile.h"
 #include "remap.h"
 #include "router.h"
 
@@ -40,7 +44,14 @@ public:
     // Snapshot the devices once per emulated frame.  When `captureKeyboard`
     // is false (a text box has focus, or a modifier chord is held) the
     // keyboard contributes nothing.
-    void poll(bool captureKeyboard);
+    // `overlayTicks`: emulated frames since the last poll.  Inline that is always 1 (the core polls); threaded, the UI
+    // thread polls once per UI iteration and passes InputSnapshot::takenSince(), so the keypad overlay's press timing
+    // (and the HoldArbiter's tap pulses) stay per emulated frame.
+    void poll(bool captureKeyboard, unsigned overlayTicks = 1);
+    // The result of the last poll() (threaded: what the UI thread publishes to InputSnapshot).
+    const CoreInput& coreInput() const { return core_; }
+    // Added to Player 1 by every poll(): what the Neuro API client presses this frame (neuro_agent.h).
+    ControlSet agentControls;
     // retro_input_state_t for every device (joypad, keyboard, mouse, analog, light gun).
     int16_t state(unsigned port, unsigned device, unsigned index, unsigned id) const;
 
@@ -86,6 +97,30 @@ public:
     bool uiWantsKeyboard = false;   // a text box has focus (set once per UI frame)
     // The controls-overlay key / button was pressed since the last call.
     bool takeHelpToggle() { bool h = helpToggle_; helpToggle_ = false; return h; }
+    // The TV-menu button was pressed (plain binding) or held (a hold binding reached kHoldMs) since the last call.
+    bool takeTvMenuToggle() { bool t = tvMenu_; tvMenu_ = false; return t; }
+
+    // ---- dual-use buttons (hold_arbiter.h) -----------------------------------------------------
+    // Every UI frame, also while paused: the holds that reached the threshold fire the TV-menu toggle.  `live` = a
+    // game is running and owns the input (a tap then reaches it as a short pulse; otherwise it is dropped).
+    void tickHolds(uint64_t ms, bool live);
+    // The press / release half of the hold bindings.  App::handleEvent calls it once per event, before anything
+    // can consume the event, so a release is never lost.  handleEvent() itself does not feed the arbiter.
+    void feedHoldEdges(const SDL_Event& e);
+    // Input ownership changed (the TV menu closed onto a game): whatever is down now stays masked until released, and
+    // the arbiter forgets it (its later release is neither a tap nor a hold).  The guard reads the raw devices.
+    void armReleaseGuard();
+    // A game was opened or closed: no hold, pulse or unconsumed menu toggle survives into the next one, and what is
+    // physically down stays masked until released.
+    void clearHolds();
+    // The keyboard key is a hold input the arbiter is withholding (or has swallowed): the core must not see the raw key either.
+    bool withholdsKey(int scancode) const { return holds_.withholds(kKeyboardDev, Binding::key(scancode)); }
+    // The TV in-game menu is open (tv/tv_shell.h): it owns the pads, keyboard and pointer.  While set, poll() hands the
+    // core neutral input in every mode -- the menu pauses the game, but under netplay it cannot, and the game must not
+    // play under the menu.  Cleared BEFORE armReleaseGuard() so the guard sees what is held at the hand-back.
+    void setMenuOwnsInput(bool on) { menuOwns_ = on; }
+    bool menuOwnsInput() const { return menuOwns_; }
+    std::vector<SDL_Gamepad*> padHandles() const;
     // Mouse capture.  syncMouseCapture() runs once per UI frame: it turns SDL's relative mouse
     // mode on or off from wantRelativeMouse().  `uiOpen` = a menu, popup or window is open.
     void syncMouseCapture(SDL_Window* w, bool gameRunning, bool uiOpen, bool uiWantsMouse);
@@ -96,13 +131,29 @@ public:
     struct PadInfo {
         std::string name;
         std::string guid;
+        bool hasMisc1 = true;    // the pad has a Share / Capture button (the TV menu's hold default is Guide without)
         unsigned port = 0;       // connection order
         int instance = 0;        // which of several identical models (0 = first)
         int slot = -1;           // the player slot it drives right now, -1 none
+        PadFamily detected = PadFamily::Generic;   // the family SDL's gamepad type says (what "Auto" means in the menu-button editor)
+        NavProfile nav;          // its menu buttons in effect (family + the model's custom layer)
     };
     std::vector<PadInfo> pads() const;
     const Profile& keyboardProfile() const { return kbProfile_; }
     const Profile& padProfile(size_t i) const { return pads_[i].profile; }
+    // The menu-button profile of a pad by joystick id (#1021): its controller family plus the model's custom layer.  An id
+    // that is not open (unplugged, or never a gamepad) gets the Xbox family map.
+    const NavProfile& navProfile(uint32_t joystickId) const;
+    // The pad the player last pressed something on (the app notes it from the event stream, which the TV shell consumes
+    // before handleEvent sees it); lastPadFamily() is its family, Xbox before any press or once it is gone.
+    void notePadUsed(uint32_t joystickId) { lastPad_ = joystickId; }
+    PadFamily lastPadFamily() const { return navProfile(lastPad_).family; }
+    uint32_t lastPadId() const { return lastPad_; }
+    // What pad i plays on a Pro Controller port (Profile::builtin proPort; the keyboard has no such variant).
+    const Profile& padProProfile(size_t i) const { return pads_[i].proProfile; }
+    // The remap table's view of a layer: true when the controller(s) it covers drive a Pro Controller port now
+    // (`guid` "" = every gamepad: any port holds one).
+    bool proPortFor(const std::string& guid) const;
 
     KeypadOverlay overlay;
     ControlsOverlayState controls;   // the controls cheat sheet (cheatsheet.h)
@@ -111,10 +162,32 @@ public:
     void updateRoutes();
     // "Press a button to bind": the next key / pad button / axis push is stored into
     // `layer` for `ctl` (appended when `add`, replacing otherwise) and swallowed.
-    void beginCapture(const LayerId& layer, Ctl ctl, bool add);
+    // `hold`: the captured key / button is stored as a hold binding (fires after a long press, hold_arbiter.h).
+    void beginCapture(const LayerId& layer, Ctl ctl, bool add, bool hold = false);
     void cancelCapture() { capture_.cancel(); }
     bool capturing() const { return capture_.active(); }
-    Ctl captureTarget() const { return capCtl_; }
+    Ctl captureTarget() const { return capCtl_; }   // C_COUNT while a menu button is being captured (navCapturing())
+
+    // ---- menu buttons (#1021) ---------------------------------------------------------------------------------------
+    // Same capture path as beginCapture, but the next pad button / trigger push becomes the model's (`guid`) button for the
+    // menu intent `in` (setNavBinding): nothing is written to the game bindings.  The result -- stored, swapped with another
+    // intent, or refused as reserved -- is in lastNav(); the config is saved and every pad re-resolved.  Esc cancels.
+    void beginNavCapture(const std::string& guid, tv::Intent in);
+    // Default for one intent: the family's button again (swapping the partner back); saves and re-resolves like a capture.
+    void resetNavBinding(const std::string& guid, tv::Intent in);
+    bool navCapturing() const { return capture_.active() && capNav_; }
+    tv::Intent navCaptureIntent() const { return capNavIntent_; }
+    struct NavResult {
+        bool valid = false;
+        std::string guid;
+        tv::Intent intent = tv::Intent::None;   // the intent that was being set
+        tv::Intent other = tv::Intent::None;    // Swapped: the intent that held the button and now has the old one
+        Binding bound;                          // what was pressed
+        NavSet set = NavSet::Ok;
+    };
+    const NavResult& lastNav() const { return navResult_; }
+    NavSet lastNavSet() const { return navResult_.set; }
+    void clearNavResult() { navResult_ = NavResult(); }
     DeviceClass captureClass() const { return capLayer_.cls; }
     // True while any keypad key is being synthesised (diagnostics / UI).
     bool keypadSynthesised() const { return core_.keypadSynthesised(); }
@@ -125,13 +198,21 @@ private:
         SDL_JoystickID id = 0;
         std::string guid;
         Profile profile;
+        Profile proProfile;   // the same layers over the Pro Controller port defaults
+        NavProfile nav = familyNavProfile(PadFamily::Xbox);   // its menu buttons (pad_profile.h): the family map plus the model's custom layer
+        PadCaps caps;
     };
     void bindCaptured(const Binding& b);
+    void bindNavCaptured(const Binding& b);
+    void applyNavBinding(const std::string& guid, tv::Intent in, const Binding& b);
+    void startCapture(DeviceClass cls);   // arm capture_ with every pad's resting axes as the baseline
     DevKind mousePortKind() const;
 
     bool padAllowed(SDL_JoystickID id) const;
     void openPad(SDL_JoystickID id);
+    void syncHoldInputs(uint32_t dev, const Profile& p);   // tell the arbiter which inputs of `p` are hold inputs
     int padFilter_ = -1;
+    uint32_t lastPad_ = 0;
     std::vector<Pad> pads_;
     CoreInput core_;
     Router router_;
@@ -143,12 +224,21 @@ private:
     LayerId capLayer_;
     Ctl capCtl_ = C_COUNT;
     bool capAdd_ = false;
+    bool capHold_ = false;
+    bool capNav_ = false;                      // the capture in progress is a menu button, not a game binding
+    std::string capNavGuid_;
+    tv::Intent capNavIntent_ = tv::Intent::None;
+    NavResult navResult_;
 
     DevKind kind_[2] = {DevKind::Pad, DevKind::Pad};
     DeviceSettings settings_;
     Routes routes_;
     PicRect pic_;
     bool helpToggle_ = false;
+    bool tvMenu_ = false;
+    bool menuOwns_ = false;
+    HoldArbiter holds_;
+    ReleaseGuard guard_;
     bool swallowPointer_ = false;  // the click / tap that hid the controls overlay: not the game's until released
 
     // pointer

@@ -4,6 +4,7 @@
 #include "memory_ui.h"
 #include "memory_view.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
@@ -77,7 +78,7 @@ void drawClutWindow(DebugSession& s) {
     if (!clutWindowOpen()) return;
     ui::nextWindow(36.0f, 46.0f, 22.0f, 24.0f);
     bool open = true;
-    const bool shown = ImGui::Begin("Palette (CLUT)", &open);
+    const bool shown = ui::beginWindow("Palette (CLUT)", &open);
     ui::keepOnScreen();
     if (!open) clutWindowOpen() = false;
     if (!shown) {

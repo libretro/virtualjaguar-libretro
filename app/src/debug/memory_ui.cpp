@@ -4,6 +4,7 @@
 #include "debug_session.h"
 #include "memory_view.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
@@ -561,7 +562,7 @@ void drawMemoryWindow(DebugSession& s, CheatManager* cheats) {
     if (!m.open) return;
     ui::nextWindow(52.0f, 36.0f, 28.0f, 18.0f);
     bool open = true;
-    const bool shown = ImGui::Begin("Memory", &open);
+    const bool shown = ui::beginWindow("Memory", &open);
     ui::keepOnScreen();
     if (!open) m.open = false;
     if (!shown) {

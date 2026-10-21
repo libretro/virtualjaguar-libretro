@@ -1,0 +1,38 @@
+# pad_nav_windowed: controller navigation of the desktop library (#1021), WINDOWED only (it takes screenshots).
+# Run on the Mac Studio runner, never on the developer's Mac:
+#   virtualjaguar --tv-test-script pad_nav_windowed.txt            (a window at 1280x720; the library needs folders with games)
+# Format and verbs: tests/tv_menu_headless.txt.in.  <ms> is an ABSOLUTE script time and must strictly increase; `wait library`
+# resets the clock to the moment it is released, so the 6000 below is 6 s after the scan (box art needs a few seconds to load).
+# The `shot` names are bare: the runner substitutes its output directory.  The virtual pad is a generic type:
+# Confirm = A (south), Back = B (east).  No game is loaded, so this is the home library (Back there closes nothing).
+# Check by eye in the screenshots:
+#   pad_grid.png      the focus ring on the second tile of the second row, the hint line under the status ("A Play | hold A
+#                     Menu | Y Favorite | LB/RB Tabs"), the mouse hover outline untouched
+#   pad_menu.png      the tile menu open under the focused tile (a held A for 600 ms), its first row ("Play") highlighted at
+#                     once (the nav cursor is always visible while the pad's popup is up), before any direction is pressed
+#   pad_menu_row.png  one Down later: the next ENABLED row highlighted ("Load state" when the game has states, else "Add to
+#                     Favorites"), the menu still under the tile
+#   pad_menu_pick.png after A on that row: with states the "Load state" submenu is open; without, the favorite is toggled (the
+#                     tile gets its star; it stays toggled on the Studio) and the menu has closed
+#   pad_tab.png       the next tab (RB), the ring on that tab's first item
+# One Down (not two) because the row two below Play is "Set cover image..." on a game with no states, which opens a file
+# dialog that would stall the run.  The two B presses are for both cases: the first closes the submenu (or does nothing at
+# the grid), the second closes the menu.  `expect desk-popup` shows the pad's popup mode: 1 while a pad-opened popup is up.
+0      wait library
+6000   pad tap dpright
+6300   pad tap dpdown
+6900   shot pad_grid.png
+7800   pad down a
+8400   pad up a
+8900   expect desk-popup=1
+8900   shot pad_menu.png
+9500   pad tap dpdown
+10100  shot pad_menu_row.png
+10600  pad tap a
+11200  shot pad_menu_pick.png
+11700  pad tap b
+12200  pad tap b
+12700  expect desk-popup=0
+12700  pad tap rightshoulder
+13500  shot pad_tab.png
+14400  quit

@@ -526,3 +526,54 @@ Future:
 - Issue #131 -- Doom game logic / demos run 1.5-2x too fast. Will
   be reproduced + bisected once `timing/` and `irq/` tests cover the
   surface.
+
+## Greater-than Z-buffer report (#1046)
+
+`tests/blitter/zmode_gt.s` is an original, bootable test inferred from the
+AtariAge report and the JTRM v8 p.74 inhibit truth table. It checks unsigned
+source Z `$8000` against `$7FFF/$8000/$8001/$FFFF`, verifying both colour and
+Z writes across twelve pixel/phrase, BKGWREN, GOURZ and DSTA2 cases. Pixel
+cases use BKGWREN to avoid the known silicon comparator erratum. It polls
+IDLE with a bounded timeout and reports the failing case/word through the
+standard RAM signature. It is not the reporter's missing reproducer.
+
+```bash
+make -C test/acid tests/blitter/zmode_gt.jag acid_run
+ACID_FAST_BLITTER=disabled test/acid/acid_run ./virtualjaguar_libretro.dylib test/acid/tests/blitter/zmode_gt.jag
+ACID_FAST_BLITTER=enabled test/acid/acid_run ./virtualjaguar_libretro.dylib test/acid/tests/blitter/zmode_gt.jag
+```
+
+`ACID_FAST_BLITTER` defaults to `disabled` (accurate), preserving ordinary
+suite behavior. The core's `test_blitter_cmd` separately covers all eight
+ZMODE combinations in both engines. The current public JaguarDemos pin
+`36afa55` has related Z-buffer sources in `jag_ball/rotatez5.js` and
+`rot5z_mm.js`; those select **less-than** (`1 << 18`), not GT (`1 << 20`).
+
+### GT / DSTA2 reproduction (#1046)
+
+`tests/blitter/zmode_gt_dsta2.s` is a bootable, original reproducer for a
+confirmed fast-blitter defect. It uses A1 X=0, A2 destination X=1, phrase
+addressing, distinct computed-Z lanes `$4000,$8000,$A000,$C000`, and a
+destination Z of `$7000`. GT must reject all three pixels in the strip;
+the unused `$4000` seed belongs to the lane outside it. Before the fix the
+fast engine selected that seed using A1's X, drew an unwanted `$ABCD`
+pixel and reported `observed=$1111ABCD`, `expected=$11111111` at detail 1.
+The accurate engine passes before and after the fix.
+
+The screen is red on failure and green on success. RAM `$100000` retains
+the standard ACID result/detail/observed/expected signature. This ROM uses
+the normal acid header, so run with HLE/direct-cart boot, not retail BIOS
+authentication. No private ROM assets are required.
+
+```sh
+make -C test/acid tests/blitter/zmode_gt_dsta2.jag acid_run
+ACID_FAST_BLITTER=enabled test/acid/acid_run ./virtualjaguar_libretro.dylib test/acid/tests/blitter/zmode_gt_dsta2.jag
+ACID_FAST_BLITTER=disabled test/acid/acid_run ./virtualjaguar_libretro.dylib test/acid/tests/blitter/zmode_gt_dsta2.jag
+```
+
+`test_blitter_cmd` also checks distinct seeds with positive/negative ZINC,
+pixel/phrase destination and source modes, A1/A2 destinations, partial
+phrases and a crossed phrase boundary (32 engine/configuration cases).
+The original AtariAge report has no supplied GT ROM or register setup;
+this reproduces a concrete GT failure, not a verified match to that
+unknown setup.

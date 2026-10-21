@@ -4,6 +4,7 @@
 #include "platform/commands.h"
 #include "platform/platform.h"
 #include "platform/viewports.h"
+#include "fullscreen_menu.h"
 
 #include <SDL3/SDL.h>
 
@@ -94,8 +95,32 @@ static void testIdleModel() {
     CHECK(findCmd(bar, Cmd::RevealGame)->title == "Show in Finder");
     CHECK(findCmd(bar, Cmd::ShowDataFolder)->title == "Show Data Folder in Finder");
     CHECK(findCmd(bar, Cmd::DiscTray) == nullptr);   // no disc drive: no tray item
+    CHECK(findCmd(bar, Cmd::DiscAdd) == nullptr);    // nor a way to add a disc to it
     CHECK(findCmd(bar, Cmd::NetplayDisconnect) == nullptr);
     CHECK(findCmd(bar, Cmd::AchSignIn) == nullptr);
+}
+
+// View > TV Mode: greyed when the setting is Off, ticked while TV mode is on, and it runs the app's toggle.
+static void testTvModeItem() {
+    MenuState s = idle();
+    MenuBar bar = buildMenuBar(s);
+    const MenuItem* m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && !m->enabled && !m->checked);
+    CHECK(findTop(bar, "View") && findCmd(findTop(bar, "View")->sub, Cmd::TvMode, -1));
+    s.tvAvailable = true;
+    bar = buildMenuBar(s);
+    m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && m->enabled && !m->checked && m->title == "TV Mode");
+    s.tvMode = true;
+    bar = buildMenuBar(s);
+    m = findCmd(bar, Cmd::TvMode);
+    CHECK(m && m->enabled && m->checked);
+    MenuState a = idle(), b = idle();
+    b.tvMode = true;
+    CHECK(a != b);   // a change reaches the native menu
+    b = idle();
+    b.tvAvailable = true;
+    CHECK(a != b);
 }
 
 static void testStateReflected() {
@@ -138,6 +163,12 @@ static void testStateReflected() {
     s.disc.ejected = true;
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscTray)->title == "Close Tray");
     s.disc.count = 1;   // a single disc: no Disc submenu
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscSelect) == nullptr);
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscAdd) != nullptr);   // ...but a second one can be added
+    s.disc.count = 0;   // the CD BIOS with no disc (#646): a drive, but nothing to close the tray on
+    s.disc.labels.clear();
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscTray) == nullptr);
+    CHECK(findCmd(buildMenuBar(s), Cmd::DiscAdd) != nullptr);   // the way to put the first disc in
     CHECK(findCmd(buildMenuBar(s), Cmd::DiscSelect) == nullptr);
 
     // achievements
@@ -246,6 +277,7 @@ static void testShortcuts() {
     CHECK(findCmd(bar, Cmd::Quit)->key == "cmd+q");
     CHECK(findCmd(bar, Cmd::Reset)->key == "cmd+r");
     CHECK(findCmd(bar, Cmd::Fullscreen)->key == "cmd+ctrl+f");
+    CHECK(findCmd(bar, Cmd::TvMode)->key == "cmd+shift+t");   // fixed; the in-window hotkey and the ImGui View menu say Ctrl/Cmd+Shift+T
     // The tray and the Dock menu show no shortcuts.
     std::vector<std::string> tk;
     collectKeys(buildTrayMenu(maximal(false)), tk);
@@ -399,6 +431,7 @@ struct Recorder : Actions {
     void showCheats() override { rec("showCheats"); }
     void toggleDiscTray() override { rec("toggleDiscTray"); }
     void selectDisc(int i) override { rec("selectDisc", i); }
+    void addDisc() override { rec("addDisc"); }
     void toggleFullscreen() override { rec("toggleFullscreen"); }
     void toggleIntegerScale() override { rec("toggleIntegerScale"); }
     void toggleSmoothFilter() override { rec("toggleSmoothFilter"); }
@@ -408,6 +441,7 @@ struct Recorder : Actions {
     void toggleControlsOverlay() override { rec("toggleControlsOverlay"); }
     void toggleVsync() override { rec("toggleVsync"); }
     void toggleHomeLibrary() override { rec("toggleHomeLibrary"); }
+    void toggleTvMode() override { rec("toggleTvMode"); }
     void showSettings() override { rec("showSettings"); }
     void toggleMute() override { rec("toggleMute"); }
     void showAbout() override { rec("showAbout"); }
@@ -446,6 +480,7 @@ static void testDispatch() {
     CHECK(one(Cmd::DiscSelect, 2) == "selectDisc:2");
     CHECK(one(Cmd::DiscSelect, 3) == "rejected");        // only 3 discs now
     CHECK(one(Cmd::DiscSelect, 0, 5, 0) == "rejected");  // disc went away
+    CHECK(one(Cmd::DiscAdd, 0) == "addDisc");
     CHECK(one(Cmd::None, 0) == "rejected");
     CHECK(one(Cmd::Count_, 0) == "rejected");
     CHECK(one(Cmd::Website, 0) == std::string("openUrl:") + kWebsiteUrl);
@@ -459,6 +494,7 @@ static void testDispatch() {
     CHECK(one(Cmd::DebugDetach, 0) == "debugDetach");
     CHECK(one(Cmd::Quit, 0) == "quit");
     CHECK(one(Cmd::ShowWindow, 0) == "showWindow");
+    CHECK(one(Cmd::TvMode, 0) == "toggleTvMode");
 
     // Every command with a valid argument runs exactly one action, and no two commands run the same one.
     std::set<std::string> names;
@@ -562,9 +598,49 @@ static void testViewports() {
 #endif
 }
 
+static void testFullscreenMenu() {
+    vj::ui::FullscreenMenu menu;
+    bool pinned = true;
+    menu.update(false, false, pinned);
+    CHECK(menu.visible(false, false, false, false, pinned, false));
+    menu.update(true, false, pinned);   // default preserves the current pinned menu
+    CHECK(pinned && menu.visible(false, false, true, false, pinned, false));
+    menu.update(true, true, pinned);    // enabling live in fullscreen hides it
+    CHECK(!pinned && !menu.visible(false, false, true, false, pinned, false));
+    CHECK(menu.visible(false, false, true, false, pinned, true));   // top edge / an open popup
+    CHECK(!menu.visible(true, true, true, false, pinned, false));   // optional macOS in-window bar too
+    CHECK(menu.visible(true, true, true, false, pinned, true));
+    CHECK(!menu.visible(true, false, true, false, pinned, true));   // native-only preference stays respected
+    menu.togglePin(pinned);   // F1 pins while fullscreen
+    menu.update(true, true, pinned);
+    CHECK(pinned && menu.visible(false, false, true, false, pinned, false));
+    pinned = false;
+    menu.update(false, true, pinned);
+    CHECK(pinned);   // restore the pin state from before fullscreen
+    menu.update(true, true, pinned);
+    CHECK(!menu.visible(true, false, true, false, pinned, false));
+    menu.togglePin(pinned);
+    CHECK(menu.visible(true, false, true, false, pinned, false));   // F1 temporarily reveals a native-only user's bar
+    menu.togglePin(pinned);
+    CHECK(!menu.visible(true, false, true, false, pinned, false));
+    menu.update(false, true, pinned);
+    CHECK(!menu.visible(true, false, false, false, pinned, false)); // windowed preference stays native-only
+    pinned = false;
+    menu.update(true, true, pinned);
+    pinned = true;
+    menu.update(false, true, pinned);
+    CHECK(!pinned);  // an unpinned window stays unpinned after leaving
+    menu.update(true, true, pinned);
+    menu.update(true, false, pinned);
+    CHECK(!pinned);  // disabling live restores the earlier preference
+    CHECK(menu.visible(true, true, true, false, pinned, false));  // old macOS behavior when off
+    CHECK(!menu.visible(false, false, false, true, pinned, false));  // TV base unchanged
+}
+
 int main() {
     testIdleModel();
     testStateReflected();
+    testTvModeItem();
     testToolsMenu();
     testRecents();
     testCoverage();
@@ -575,6 +651,7 @@ int main() {
     testLauncherArgs();
     testEventRoundTrip();
     testViewports();
+    testFullscreenMenu();
     std::printf("platform_test: %d checks, %d failures\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

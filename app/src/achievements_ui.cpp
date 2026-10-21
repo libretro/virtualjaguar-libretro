@@ -15,6 +15,7 @@
 #include "ra_images.h"
 #include "secret_store.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 #include "rc_client.h"
 
 namespace vj {
@@ -27,7 +28,7 @@ void drawLogin(App& app) {
     Achievements& a = app.ach;
     ui::nextWindow(28.0f, 0.0f, 0.0f, 0.0f, ui::WinFit::FixedWidth);   // fixed width, height follows the text
     bool open = true;
-    bool shown = ImGui::Begin("Sign in to RetroAchievements", &open, ImGuiWindowFlags_AlwaysAutoResize);
+    bool shown = ui::beginWindow("Sign in to RetroAchievements", &open, ImGuiWindowFlags_AlwaysAutoResize);
     ui::keepOnScreen();
     if (!shown) {
         ImGui::End();
@@ -116,8 +117,7 @@ std::string day(long long t) {
 
 // One line saying which rule set is in force.  Hardcore is gold; wanted-but-blocked says what blocks it.
 void modeChip(Achievements& a) {
-    rc_client_t* c = a.client();
-    if (c && rc_client_get_hardcore_enabled(c)) {
+    if (a.clientSnapshot().hardcore) {
         ui::coloredWrapped(kGold(), "Hardcore: unlocks count for the hardcore ranking");
     } else if (a.hardcoreWanted() && !a.hardcoreBlocker().empty()) {
         char buf[200];
@@ -167,33 +167,28 @@ void signInPrompt(Achievements& a, const char* why) {
 
 void drawThisGame(App& app) {
     Achievements& a = app.ach;
-    rc_client_t* c = a.client();
-    const rc_client_game_t* g = c ? rc_client_get_game_info(c) : nullptr;
-    if (!c || !rc_client_is_game_loaded(c) || !g || g->id == 0) {
+    const auto snapshot = a.clientSnapshot();
+    if (snapshot.gameId == 0) {
         ImGui::TextWrapped("%s", a.statusLine().empty() ? "No tracked game is loaded." : a.statusLine().c_str());
         if (!a.signedIn()) signInPrompt(a, "Sign in to track achievements while you play.");
         ImGui::Spacing();
         ui::hint("The Jaguar games tab lists every game that has achievements, with your progress.");
         return;
     }
-    rc_client_user_game_summary_t s;
-    rc_client_get_user_game_summary(c, &s);
+    const auto& s = snapshot.summary;
     const float icon = ui::em(4.0f);
     picture(a, a.gameIconUrl(), icon);
     ImGui::SameLine();
     ImGui::BeginGroup();
-    ImGui::TextWrapped("%s", g->title ? g->title : "");
+    ImGui::TextWrapped("%s", snapshot.gameTitle.c_str());
     modeChip(a);
     ImGui::Text("%u of %u achievements   %u of %u points", s.num_unlocked_achievements, s.num_core_achievements, s.points_unlocked,
                 s.points_core);
     if (s.num_core_achievements)
         ImGui::ProgressBar((float)s.num_unlocked_achievements / (float)s.num_core_achievements, ImVec2(-1, 0));
     ImGui::EndGroup();
-    if (rc_client_has_rich_presence(c)) {
-        char rp[256];
-        rc_client_get_rich_presence_message(c, rp, sizeof rp);
-        ImGui::TextWrapped("Now: %s", rp);
-    }
+    const std::string rp = a.richPresence();   // computed on the emulation thread, published every 60 frames (#967)
+    if (!rp.empty()) ImGui::TextWrapped("Now: %s", rp.c_str());
     ImGui::Separator();
 
     const float w = ImGui::GetContentRegionAvail().x;
@@ -251,13 +246,12 @@ void drawGames(App& app) {
     Achievements& a = app.ach;
     const std::vector<ra::GameEntry>& games = a.games();
     size_t owned = 0;
-    for (const ra::GameEntry& g : games)
-        if (g.libIndex >= 0) owned++;
+    const size_t withSets = ra::countWithSets(games, owned);
     if (games.empty()) {
         ImGui::TextWrapped("%s", a.gamesBusy() ? "Loading the list of Atari Jaguar and Jaguar CD games on RetroAchievements..."
                                               : "No games list yet.");
     } else {
-        ImGui::Text("%zu games have achievements on RetroAchievements; %zu are in your library.", games.size(), owned);
+        ImGui::Text("%zu games have achievements on RetroAchievements; %zu are in your library.", withSets, owned);
     }
     if (a.gamesFetchedAt()) ImGui::TextDisabled("List updated %s%s", day(a.gamesFetchedAt()).c_str(), a.gamesFromCache() ? " (saved copy)" : "");
     if (!a.gamesError().empty()) ui::coloredWrapped(ui::vec4(ui::pal().error), a.gamesError().c_str());
@@ -278,9 +272,7 @@ void drawGames(App& app) {
     ImGui::InputTextWithHint("##gt", "Search games", a.gameText, sizeof a.gameText);
 
     const std::vector<size_t> view = ra::viewGames(games, a.gameFilter, a.gameSort, a.gameText);
-    rc_client_t* c = a.client();
-    const rc_client_game_t* cur = c ? rc_client_get_game_info(c) : nullptr;
-    const uint32_t curId = cur && c && rc_client_is_game_loaded(c) ? cur->id : 0;
+    const uint32_t curId = a.clientSnapshot().gameId;
 
     const float icon = ui::em(2.6f);
     const float rowH = icon + ImGui::GetStyle().CellPadding.y * 2;
@@ -352,9 +344,8 @@ void drawGames(App& app) {
 
 void drawProfile(App& app) {
     Achievements& a = app.ach;
-    rc_client_t* c = a.client();
-    const rc_client_user_t* u = c ? rc_client_get_user_info(c) : nullptr;
-    if (!u) {
+    const auto snapshot = a.clientSnapshot();
+    if (!snapshot.signedIn) {
         signInPrompt(a, "Sign in to see your RetroAchievements profile.");
     } else {
         std::string ver;
@@ -363,11 +354,11 @@ void drawProfile(App& app) {
         ImGui::SameLine();
         ImGui::BeginGroup();
         ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.4f);
-        ImGui::TextUnformatted(u->display_name ? u->display_name : "");
+        ImGui::TextUnformatted(snapshot.displayName.c_str());
         ImGui::PopFont();
-        ImGui::Text("Hardcore points: %u", u->score);
-        ImGui::Text("Softcore points: %u", u->score_softcore);
-        if (u->num_unread_messages) ImGui::TextColored(kAmber(), "%u unread message%s on retroachievements.org", u->num_unread_messages, u->num_unread_messages == 1 ? "" : "s");
+        ImGui::Text("Hardcore points: %u", snapshot.score);
+        ImGui::Text("Softcore points: %u", snapshot.softcoreScore);
+        if (snapshot.unreadMessages) ImGui::TextColored(kAmber(), "%u unread message%s on retroachievements.org", snapshot.unreadMessages, snapshot.unreadMessages == 1 ? "" : "s");
         modeChip(a);
         ImGui::EndGroup();
         ImGui::Spacing();
@@ -404,7 +395,7 @@ void drawProfile(App& app) {
 void drawList(App& app) {
     Achievements& a = app.ach;
     ui::nextWindow(42.0f, 36.0f, 26.0f, 18.0f);
-    bool shown = ImGui::Begin("Achievements", &a.showList);
+    bool shown = ui::beginWindow("Achievements", &a.showList);
     ui::keepOnScreen();
     if (!shown) {
         ImGui::End();

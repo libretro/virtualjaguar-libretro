@@ -5,9 +5,11 @@
 #include "libretro.h"
 #include "imgui.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 namespace vj {
 
@@ -19,6 +21,18 @@ std::string bindingsText(const std::vector<Binding>& v) {
     for (const Binding& b : v) {
         if (!s.empty()) s += ", ";
         s += b.display();
+    }
+    return s;
+}
+
+// The every-gamepad view of the TV menu row: the Share hold default also means Guide on pads without Share.
+std::string tvMenuText(const std::vector<Binding>& v) {
+    if (v.empty()) return "(unbound)";
+    const Binding share = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold();
+    std::string s;
+    for (const Binding& b : v) {
+        if (!s.empty()) s += ", ";
+        s += b == share ? std::string("Share (hold); Guide (hold) on pads without Share") : b.display();
     }
     return s;
 }
@@ -43,11 +57,117 @@ struct Section {
 const Section kSections[] = {
     {"Standard pad", C_UP, C_PAUSE},
     {"Keypad (the Pro Controller's X Y Z and shoulders are keypad 9 8 7 and 4 6)", C_K0, C_HASH},
+    {"Pro Controller (6-button): read on a Pro Controller port only", C_PRO_X, C_PRO_R},
     {"Analog, driving, 6D and paddle controllers", C_D, C_AX_R1},
     {"Pointer: mouse, rotary and light gun (motion is also taken from the mouse itself)", C_PT_L, C_GUN_RELOAD},
     {"App", C_OVERLAY, C_OVERLAY},
     {"App", C_HELP, C_HELP},
+    {"App", C_TVMENU, C_TVMENU},
 };
+
+
+// Rebinding the library / TV menu's pad buttons (#1021, pad_profile.h): the model's family and one button per intent.  All
+// of it is the GLOBAL per-model layer (`input.padguid.<guid>.nav.*`), so the "This game only" scope does not apply to it.
+// `pad` null = the every-gamepad view: the last-used pad's family table, read-only.
+void drawMenuButtons(App& app, const InputManager::PadInfo* pad, bool gameScope) {
+    InputManager& in = app.input;
+    if (!ImGui::CollapsingHeader("Menu buttons")) return;
+    const PadFamily fam = pad ? pad->nav.family : in.lastPadFamily();
+    const NavProfile shown = pad ? pad->nav : familyNavProfile(fam);
+    const std::string prefix = pad ? navKeyPrefix(pad->guid) : std::string();
+    if (!pad) {
+        ui::hint("Menu buttons are set per controller model: pick one in the Device list. This is the %s layout the last pad you "
+                 "used gets by default.",
+                 familyName(fam));
+    } else {
+        ui::hint("Which button does what in the library and the TV menu. The D-pad and left stick always move. Saved for this "
+                 "controller model, for every game.");
+        if (gameScope) ui::hint("Menu buttons are global: this edits the controller's layer, not just this game.");
+    }
+
+    bool dirty = false;
+    if (pad) {
+        // "Auto" follows what SDL says the pad is; a family choice also clears the model's per-button changes (setNavFamily),
+        // so it is applied only when the choice actually changes the effective family (or leaves an explicit choice for Auto)
+        // and the item says so.  Picking the family the pad already has changes nothing and keeps its changes.
+        PadFamily cur = pad->detected;
+        const bool overridden = pad->nav.familyOverridden;
+        if (overridden) cur = pad->nav.family;
+        const std::string autoLabel = std::string("Auto (") + familyName(pad->detected) + ")";
+        const PadFamily kFamilies[] = {PadFamily::Xbox, PadFamily::PlayStation, PadFamily::Switch, PadFamily::Generic};
+        const char* const kResets = "Resets this controller's menu buttons to the family's defaults";
+        ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 10.0f, 18.0f));
+        if (ImGui::BeginCombo("Family", overridden ? familyName(cur) : autoLabel.c_str())) {
+            if (ImGui::Selectable(autoLabel.c_str(), !overridden) && overridden) {
+                setNavFamily(app.cfg, pad->guid, "auto");
+                dirty = true;
+            }
+            if (overridden && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kResets);
+            for (PadFamily f : kFamilies) {
+                const bool same = f == cur;   // the effective family: Auto's pick while not overridden, else the explicit one
+                if (ImGui::Selectable(familyName(f), overridden && same) && !same) {
+                    setNavFamily(app.cfg, pad->guid, familyKey(f));
+                    dirty = true;
+                }
+                if (!same && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kResets);
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    if (ImGui::BeginTable("##menubtns", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Does", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 7.5f);
+        ImGui::TableSetupColumn("Button", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed,
+                                ui::Flow::buttonW("Set") + ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x +
+                                    ImGui::GetStyle().CellPadding.x);
+        for (size_t i = 0; i < std::size(kNavIntents); i++) {
+            const tv::Intent it = kNavIntents[i];
+            ImGui::PushID((int)i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(navIntentLabel(it));
+            ImGui::TableNextColumn();
+            if (in.navCapturing() && in.navCaptureIntent() == it) ImGui::TextDisabled("...waiting for input...");
+            else ImGui::TextUnformatted(navButtonName(fam, shown.binds[i]).c_str());
+            ImGui::TableNextColumn();
+            if (pad) {
+                const std::string key = prefix + navIntentKey(it);
+                if (ImGui::SmallButton("Set")) in.beginNavCapture(pad->guid, it);
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!app.cfg.has(key));
+                if (ImGui::SmallButton("Default")) in.resetNavBinding(pad->guid, it);   // saves and re-resolves
+                ImGui::EndDisabled();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    if (pad) {
+        ImGui::BeginDisabled(app.cfg.withPrefix(prefix).empty());
+        if (ImGui::SmallButton("Reset menu buttons")) {
+            clearNavProfile(app.cfg, pad->guid);
+            dirty = true;
+        }
+        ImGui::EndDisabled();
+        // What the last Set did (it names the model it was for: a Set on another controller is not news here).
+        const InputManager::NavResult& r = in.lastNav();
+        if (r.valid && r.guid == pad->guid) {
+            const std::string btn = navButtonName(fam, r.bound);
+            if (r.set == NavSet::Swapped)
+                ui::hint("Swapped with %s: it now has the button %s had.", navIntentLabel(r.other), navIntentLabel(r.intent));
+            else if (r.set == NavSet::Reserved)
+                ui::coloredWrapped(ui::vec4(ui::pal().warning),
+                                   (btn + " is reserved (D-pad, left stick, or the TV-menu or controls-overlay button).").c_str());
+        }
+    }
+    if (dirty) {
+        in.clearNavResult();
+        app.cfg.save();
+        in.reresolve();
+    }
+}
 
 }  // namespace
 
@@ -110,11 +230,30 @@ void drawControlsTab(App& app) {
     // ---- caveats the core imposes --------------------------------------------------------
     ui::hint("Keypad keys 7-9, * and # have no RetroPad button; the app presses them as keyboard keys the core reads.");
 
+    // ---- the menu buttons (the library / TV menu; per controller model, never per game) ----------------------------
+    if (device >= 1) drawMenuButtons(app, device >= 2 ? &pads[(size_t)device - 2] : nullptr, scope == 1);
+
     // ---- the table -----------------------------------------------------------------------------
-    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId);
+    // A specific controller shows what that pad gets (a pad without Share holds Guide for the TV menu); the
+    // every-gamepad view shows the Share default and says what pads without Share do.
+    PadCaps caps;
+    if (device >= 2) caps.hasMisc1 = pads[(size_t)device - 2].hasMisc1;
+    bool anyNoShare = false;
+    for (const InputManager::PadInfo& p : pads)
+        if (!p.hasMisc1) anyNoShare = true;
+    // A gamepad driving a Pro Controller port plays the Pro defaults (keypad 0-4 give their buttons to X Y Z L R).
+    const bool proView = layer.cls == DeviceClass::Gamepad && in.proPortFor(layer.guid);
+    Profile prof = st->resolve(layer.cls, layer.guid, layer.gameId, caps, proView);
+    if (proView)
+        ui::hint("Showing the Pro Controller port defaults: X / Y / Z = Left Shoulder / North / Right Shoulder, L / R = the "
+                 "triggers; keypad 0-4 are on the keypad overlay there.");
     bool dirty = false;
     ImGui::Separator();
-    if (in.capturing()) {
+    if (in.navCapturing()) {
+        char m[192];
+        std::snprintf(m, sizeof m, "Press a gamepad button for the menu's \"%s\"  (Esc cancels)", navIntentLabel(in.navCaptureIntent()));
+        ui::coloredWrapped(ui::vec4(ui::pal().success), m);
+    } else if (in.capturing()) {
         char m[192];
         std::snprintf(m, sizeof m, "Press %s for \"%s\"  (Esc cancels)",
                       layer.cls == DeviceClass::Keyboard ? "a key" : "a gamepad button or push a stick/trigger",
@@ -133,7 +272,8 @@ void drawControlsTab(App& app) {
                                   std::max(ImGui::GetFontSize() * 8.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFontSize() * 7.0f));
     // Fixed columns for the short things; "Bound to" stretches (its text wraps) and gives way first.
     const float btnsW = ui::Flow::buttonW("Set") + ui::Flow::buttonW("Add") + ui::Flow::buttonW("Unbind") +
-                        ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3;
+                        ui::Flow::buttonW("Default") + ImGui::GetStyle().ItemSpacing.x * 3 +
+                        ui::Flow::buttonW("Add hold") + ImGui::GetStyle().ItemSpacing.x;   // the TV menu row's extra button
     if (ImGui::BeginTable("##binds", 3, tf, ImVec2(0, tableH))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6.5f);
@@ -152,7 +292,19 @@ void drawControlsTab(App& app) {
                 ImGui::TextWrapped("%s", ctlLabel(c));
                 ImGui::TableNextColumn();
                 if (in.capturing() && in.captureTarget() == c) ImGui::TextDisabled("...waiting for input...");
+                else if (c == C_TVMENU && device == 1)
+                    ImGui::TextWrapped("%s", tvMenuText(prof.binds[(size_t)i]).c_str());
                 else ImGui::TextWrapped("%s", bindingsText(prof.binds[(size_t)i]).c_str());
+                if (c == C_TVMENU) {
+                    // Guide held opens the menu, and Guide is also the keypad's # (a tap): a chord that holds # collides.
+                    // In the every-gamepad view that is also the case on any connected pad without Share.
+                    bool guideHold = device == 1 && anyNoShare;
+                    for (const Binding& b : prof.binds[(size_t)c])
+                        if (b == Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold()) guideHold = true;
+                    if (guideHold)
+                        ui::hint("Guide (hold) opens the TV menu, so a keypad chord that holds # (such as * + #) needs the keypad "
+                                 "overlay, a pad with Share, or this binding removed.");
+                }
                 // Where the binding comes from sits under it (short form; the long one is the tooltip).
                 ImGui::TextDisabled("%s", sourceShort(prof.source[(size_t)i]));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sourceLabel(prof.source[(size_t)i]));
@@ -160,6 +312,10 @@ void drawControlsTab(App& app) {
                 if (ImGui::SmallButton("Set")) in.beginCapture(layer, c, false);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Add")) in.beginCapture(layer, c, true);
+                if (c == C_TVMENU) {   // the TV menu is also bound to a long press (a tap stays free for the button's other job)
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Add hold")) in.beginCapture(layer, c, true, true);
+                }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Unbind")) {
                     st->set(layer, c, {});
@@ -207,7 +363,7 @@ void drawKeypadOverlay(App& app) {
     const float gridW = sz.x * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
     ImGui::SetNextWindowSizeConstraints(ImVec2(gridW + ImGui::GetStyle().WindowPadding.x * 2.0f, 0.0f),
                                         ImVec2(vp->WorkSize.x * 0.95f, vp->WorkSize.y * 0.95f));
-    bool shown = ImGui::Begin("Jaguar keypad", &ov.open, wf);
+    bool shown = ui::beginWindow("Jaguar keypad", &ov.open, wf);
     ui::keepOnScreen();
     if (!shown) {
         ImGui::End();

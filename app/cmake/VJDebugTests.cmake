@@ -137,6 +137,7 @@ foreach(_t texture blitter)
     endif()
     add_executable(vj_debug_${_t}_test ${_srcs})
     target_include_directories(vj_debug_${_t}_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+    target_link_libraries(vj_debug_${_t}_test PRIVATE Threads::Threads)
     if(MSVC)
         target_compile_options(vj_debug_${_t}_test PRIVATE /W3 /utf-8)
         target_compile_definitions(vj_debug_${_t}_test PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -146,6 +147,7 @@ foreach(_t texture blitter)
     add_test(NAME debug_${_t}_unit COMMAND vj_debug_${_t}_test)
     set_tests_properties(debug_${_t}_unit PROPERTIES TIMEOUT 60)
 endforeach()
+set_tests_properties(debug_blitter_unit PROPERTIES LABELS emu_thread)
 
 #   debug_op_unit        Object list tool (app/src/debug/op_decode, op_render, op_view): the field decoder
 #                        against JTRM-layout fixtures and op_list_dump.c's formulas, the bitmap renderer

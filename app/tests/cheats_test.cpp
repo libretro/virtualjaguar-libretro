@@ -76,11 +76,15 @@ static void play(Ram& ram, const std::string& code) {
 struct Recorder {
     std::vector<std::string> log;
     void attach(CheatManager& m) {
-        m.resetSink = [this] { log.push_back("reset"); };
-        m.setSink = [this](unsigned i, bool on, const char* code) {
-            log.push_back("set " + std::to_string(i) + (on ? " on " : " off ") + code);
+        m.commit = [this](CheatBatch b) {
+            batches++;
+            for (const CheatOp& o : b) {
+                if (o.reset) log.push_back("reset");
+                else log.push_back("set " + std::to_string(o.index) + (o.enabled ? " on " : " off ") + o.code);
+            }
         };
     }
+    int batches = 0;
 };
 
 // ---------------------------------------------------------------------------------
@@ -515,6 +519,104 @@ static int corpus(const std::string& dir) {
     return g_fail ? 1 : 0;
 }
 
+// #967: one apply() is one command: the reset, then every set.
+static void testCommitBatch() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-commit";
+    fs::remove_all(tmp);
+    GameIdentity g;
+    g.key = "crc-deadbeef";
+    g.title = "Test Game";
+    g.fileStem = "Test Game (World)";
+    CheatManager m;
+    Recorder r;
+    r.attach(m);
+    m.setStateDir(tmp.string() + "/games/");
+    m.gameLoaded(g);
+    std::string err;
+    CHECK(m.addUser("My lives", "00001000:07", err));   // one enabled user cheat, so apply() has a set to send
+    r.log.clear();
+    r.batches = 0;
+    m.apply();
+    CHECK(r.batches == 1);                                  // one apply, one command
+    CHECK(r.log.size() == 2 && r.log[0] == "reset" && r.log[1].compare(0, 3, "set") == 0);
+    m.blocked = [] { return true; };
+    r.log.clear();
+    r.batches = 0;
+    m.apply();
+    CHECK(r.batches == 1 && r.log.size() == 1 && r.log[0] == "reset");   // blocked: the reset still goes
+    fs::remove_all(tmp);
+}
+
+// Imported freezes must never follow a matching title onto the wrong revision.
+static void testRevisionGuard() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-revision-guard";
+    fs::create_directories(tmp);
+    const std::string entries = "cheat0_desc = \"Imported freeze\"\n"
+        "cheat0_code = \"001F0000:AB+001F0002:1234+001F0004:89ABCDEF\"\n"
+        "cheat0_enable = true\n";
+    auto write = [&](const std::string& guard) {
+        std::ofstream(tmp / "Imported.cht", std::ios::binary) << guard << entries;
+    };
+    write("vj_rom_crc32 = \"1234ABCD\"\n");
+    GameIdentity g;
+    g.key = "crc-1234abcd";
+    g.fileStem = "Imported";
+    g.crc = 0x1234ABCD;
+    CheatManager m;
+    Recorder recorder;
+    recorder.attach(m);
+    m.setLibraryDirs({tmp.string()});
+    m.setStateDir((tmp / "games").string() + "/");
+    m.rescan();
+    m.gameLoaded(g);
+    CHECK(m.selectedSet() && m.selectedSet()->revisionBound);
+    CHECK(m.setStatus().empty());
+    CHECK(m.appliedSegments() == 0); // source defaults never auto-enable
+    CHECK(m.setEnabledByName("Imported freeze", true));
+    CHECK(m.appliedSegments() == 3);
+    Ram ram;
+    play(ram, m.selectedSet()->cheats[0].code);
+    CHECK(ram.b[0x1F0000] == 0xAB && ram.b[0x1F0002] == 0x12 && ram.b[0x1F0003] == 0x34);
+    CHECK(ram.b[0x1F0004] == 0x89 && ram.b[0x1F0007] == 0xEF);
+    m.blocked = [] { return true; };
+    m.apply();
+    CHECK(m.appliedSegments() == 0);
+    m.blocked = nullptr;
+
+    // Saved toggles cannot bypass the guard, even with the same saved key.
+    for (uint32_t crc : {0u, 0x87654321u}) {
+        g.crc = crc;
+        m.gameLoaded(g);
+        CHECK(m.selectedSet() && !m.selectedSet()->cheats[0].supported);
+        CHECK(m.selectedSet()->cheats[0].code.empty());
+        CHECK(!m.setStatus().empty());
+        CHECK(!m.setEnabledByName("Imported freeze", true));
+        CHECK(m.appliedSegments() == 0);
+    }
+    g.crc = 0x1234ABCD;
+    m.gameLoaded(g);
+    CHECK(m.appliedSegments() == 3); // switching back restores the saved toggle
+    for (const std::string& guard : {
+             "vj_rom_crc32\n", "vj_rom_crc32 = \"1234ABCG\"\n",
+             "vj_rom_crc32 = \"1234ABCD\"\nvj_rom_crc32 = \"1234ABCD\"\n",
+             "vj_rom_crc32 = \"0x1234ABCD\"\n", "vj_rom_crc32 = \"\"\n"}) {
+        write(guard);
+        m.gameLoaded(g);
+        CHECK(!m.setStatus().empty());
+        CHECK(m.appliedSegments() == 0);
+        CHECK(!m.setEnabledByName("Imported freeze", true));
+    }
+    write("\xEF\xBB\xBFvj_rom_crc32 = \"87654321\"\r\n");
+    m.gameLoaded(g);
+    CHECK(m.appliedSegments() == 0); // BOM must not hide the guard
+    write("");
+    g.crc = 0;
+    m.gameLoaded(g);
+    CHECK(m.setStatus().empty());
+    CHECK(m.appliedSegments() == 3); // legacy unbound .cht files remain usable
+    fs::remove_all(tmp);
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--corpus")) return corpus(argv[2]);
     testHelpers();
@@ -522,6 +624,8 @@ int main(int argc, char** argv) {
     testReplay();
     testLibraryMatching();
     testPersistence();
+    testCommitBatch();
+    testRevisionGuard();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

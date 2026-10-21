@@ -5,10 +5,12 @@
 #include "core_host.h"
 #include "debug_session.h"
 #include "ui_util.h"
+#include "window_chrome.h"
 
 #include "imgui.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -21,7 +23,7 @@ namespace {
 struct State {
     DebugSession* session = nullptr;
     CoreHost* host = nullptr;
-    bool open = false;
+    std::atomic<bool> open{false};
     bool tapped = false;
     AudioRing ring{16384};
     uint64_t lastTotal = 0;
@@ -99,7 +101,7 @@ void scopeToolInit(DebugSession& session, CoreHost& host) {
     DebugTool t;
     t.id = "scope";
     t.label = "Audio scope...";
-    t.isOpen = [] { return g.open; };
+    t.isOpen = [] { return g.open.load(); };
     t.toggle = [] {
         g.open = !g.open;
         g.ring.clear();
@@ -114,7 +116,9 @@ void scopeToolInit(DebugSession& session, CoreHost& host) {
 void scopeToolDraw() {
     if (!g.open || !g.session) return;
     ui::nextWindow(46.0f, 40.0f, 26.0f, 24.0f);
-    bool shown = ImGui::Begin("Audio scope", &g.open);
+    bool open = g.open.load();
+    bool shown = ui::beginWindow("Audio scope", &open);
+    g.open = open;
     ui::keepOnScreen();
     if (shown) {
         const double now = ImGui::GetTime();

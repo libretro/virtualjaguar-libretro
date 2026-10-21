@@ -5,7 +5,9 @@ libretro-thumbnails has an "Atari - Jaguar CD" repository (libretro-thumbnails/l
 The Virtual Jaguar desktop app falls back to this mirror for disc titles that libretro-thumbnails
 does not have, so upstream art wins as soon as it exists. URL layout is the same as
 thumbnails.libretro.com: `<base>/Atari - Jaguar CD/<Named_Boxarts|Named_Titles|Named_Snaps>/<name>.png`
-(spaces and punctuation URL-encoded). Not submitted to libretro-thumbnails.
+(spaces and punctuation URL-encoded). Offered to libretro-thumbnails in
+libretro-thumbnails/libretro-thumbnails#141; the site also serves every image as one zip,
+`<base>/Atari - Jaguar CD.zip`, built by `scripts/build_site.py`. It unzips to `Atari - Jaguar CD/Named_*/`.
 
 Layout follows libretro-thumbnails: `Named_Boxarts/`, `Named_Titles/`, `Named_Snaps/`, one PNG per
 game, named exactly after the game name in libretro-database
@@ -74,11 +76,21 @@ was used for the title and snap.
   Primal Rage, World Tour Racing. Better gameplay snaps for the rest would need a human at the pad.
 - Headless caveat from the repo docs applies: confirm in RetroArch if exact presentation matters.
 
-## Upstream status (checked 2026-10-13, read-only)
+## Upstream status (2026-10-17)
 
-- No `Atari_-_Jaguar_CD` repo exists, and libretro-thumbnails has no submodule for it.
-- libretro-thumbnails issue #141 "Missing repository" (opened 2024-07) is still open; a maintainer noted
-  there is no database for the system.
-- libretro-database ships `metadat/redump/Atari - Jaguar CD.dat` but no `rdb/Atari - Jaguar CD.rdb`, so
-  RetroArch cannot yet scan Jaguar CD discs into a matching playlist; the thumbnail repo name only
-  matters once that rdb exists.
+For RetroArch to show these without the mirror, four things have to land:
+
+1. **Thumbnail repo.** `libretro-thumbnails/Atari_-_Jaguar_CD` does not exist yet. Only an org
+   maintainer can create it; requested in libretro-thumbnails#141. After that, these files go in by
+   PR, and a submodule entry goes into libretro-thumbnails/libretro-thumbnails.
+2. **Database.** libretro-database already has `metadat/redump/Atari - Jaguar CD.dat` (one Track 1
+   CRC per game), but no `rdb/Atari - Jaguar CD.rdb`. The rdb is built by libretro-super's
+   `libretro-build-database.sh`, which needs a `build_libretro_database "Atari - Jaguar CD" "rom.crc"` line.
+3. **Core info.** `virtualjaguar_libretro.info` has to list the database:
+   `database = "Atari - Jaguar|Atari - Jaguar CD"`.
+4. **RetroArch scanner.** Every Jaguar CD track is `AUDIO` in the cue sheet. RetroArch's cue and CHD
+   CRC paths hash only data tracks, so a scan computes no CRC and an rdb alone matches nothing. The
+   fix has to hash Track 1.
+
+Until all four land, Manual Scan with the custom system name `Atari - Jaguar CD` labels Redump-named
+discs by file name, and that is enough for thumbnails, once the repo from item 1 exists.

@@ -119,6 +119,30 @@ int main() {
     vj::HttpResponse refused = vj::httpPerform(rq);
     check(refused.status == 0 && !refused.error.empty(), "a refused connection reports an error and no status");
 
+    // request() is called from two threads at once (the UI thread, and the emulation thread through rc_client's server
+    // calls), the first ones racing to start the worker: every callback is delivered by pump(), nothing crashes.
+    {
+        vj::AchHttp shared;
+        std::atomic<int> delivered{0};
+        std::atomic<bool> go{false};
+        auto fire = [&] {
+            while (!go) std::this_thread::yield();
+            for (int i = 0; i < 20; i++) {
+                shared.request(rq, [&](vj::HttpResponse) { delivered++; });
+            }
+        };
+        std::thread t1(fire), t2(fire);
+        go = true;
+        for (int i = 0; i < 1500 && delivered < 40; i++) {   // up to 15 s
+            shared.pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        t1.join();
+        t2.join();
+        check(delivered == 40, "40 requests from two threads were all delivered through pump");
+        shared.shutdown();
+    }
+
     return fails ? 1 : 0;
 }
 #endif

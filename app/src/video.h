@@ -28,11 +28,18 @@ public:
     void shutdown();
 
     void upload(const Frame& f);  // no-op if f.serial already uploaded
+    // Drops the picture: nothing is drawn (hasFrame() is false) until the next upload.  A content switch on the
+    // emulation thread uses it so the previous game's last frame does not stay on screen (#967).
+    void invalidate() { w_ = h_ = 0; serial_ = 0; }
     // Draw the frame into the given area using `dl`.  Returns the rectangle used.
     // `pixelScale` is framebuffer pixels per ImGui point (2 on a Retina display):
     // integer scaling and pixel snapping are done in framebuffer pixels.
     ImVec4 draw(ImDrawList* dl, ImVec2 areaPos, ImVec2 areaSize, float coreAspect,
                 const PresentOptions& opt, float pixelScale = 1.0f);
+    // A "busy" frame while a call() holds the core (#967): the window cleared dark, eight blocks in a ring, one lit and
+    // turning.  Scissored clears only (no shader, no texture), so it is safe in the middle of an ImGui frame; the GL
+    // state it touches is saved and restored.
+    void drawBusy(int fbWidth, int fbHeight, double seconds);
     bool hasFrame() const { return w_ > 0; }
     unsigned texture() const { return tex_; }
     unsigned frameWidth() const { return w_; }

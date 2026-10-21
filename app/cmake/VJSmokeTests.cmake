@@ -15,6 +15,10 @@
 #   smoke_bad_option  an --option key the core never registered must be REJECTED
 #                   (it would otherwise silently run the default).
 #   smoke_cd        the synthetic Jaguar CD image, path-loaded (no BIOS).
+#   smoke_disc_swap the disc menu commands on a loaded CD: add a second disc, swap to it and back.
+#   smoke_disc_insert_bios  the CD BIOS with no disc: the disc menu shows, Add disc image... inserts the first disc.
+#   smoke_disc_insert_cart_hidden  the negative control: the cartridge boot ROM has no CD unit, so no disc menu.
+#   smoke_m3u_playlist  an .m3u two-disc set: both discs in the disc list, the .srm and recents on the playlist, disc 2 boots.
 #   remap_unit      controller remapping logic (test/remap_test.cpp): binding
 #                   serialisation, profile / per-game override precedence, the
 #                   config round trip, keypad -> core-input translation, the
@@ -83,6 +87,27 @@ add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank
             "${VJ_ROMS}/synth_jagcd.chd")
 
+# File > Disc end to end: the loaded CD is in the disc list, Add disc image... swaps to a second one, then Open tray,
+# File > Disc > the first and Close tray boot the first again.  The PASS line names all three discs.  After each step
+# the content (and the state slot names) must name the disc in the tray while the .srm stays the opened disc's; a
+# state is saved on the second disc, so the run gets its own --data-dir.
+add_test(NAME smoke_disc_swap
+    COMMAND virtualjaguar --headless --frames 120 --allow-blank --data-dir "${CMAKE_CURRENT_BINARY_DIR}/disc_swap_data"
+            --disc-swap "${VJ_ROMS}/synth_jagcd_multi.chd" "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_swap PROPERTIES TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "DISC swap synth_jagcd\\.chd -> synth_jagcd_multi\\.chd -> synth_jagcd\\.chd \\(inline\\)"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
+
+# A multi-disc .m3u (app/src/m3u.h; the core reads none): its entries resolve against the playlist's folder, the first
+# disc boots, both are in the disc list File > Disc reads, and the second disc goes in.  The playlist is what was opened
+# (recents, Restart, the .srm), the disc in the tray the content (the title, the state slots), at boot and after.
+set(VJ_M3U_FIXTURE "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/synth_jagcd_set.m3u")
+add_test(NAME smoke_m3u_playlist
+    COMMAND virtualjaguar --headless --frames 120 --allow-blank --expect-discs 2 "${VJ_M3U_FIXTURE}")
+set_tests_properties(smoke_m3u_playlist PROPERTIES TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "DISC list 2: synth_jagcd\\.chd, synth_jagcd_multi\\.chd; content synth_jagcd -> synth_jagcd_multi, save RAM synth_jagcd_set \\(inline\\)"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
+
 # BIOS-only boots (#838, #833).  No BIOS file is needed: the core's built-in images run, so these work on CI.
 # Neither passes --allow-blank: the boot ROM's logo and the CD BIOS's logo and cube must actually draw (the hashes
 # are the final frame at 400 frames; like yarc's they are meant to be the same on every OS and CPU).
@@ -92,6 +117,20 @@ add_test(NAME smoke_boot_cart_rom
     COMMAND virtualjaguar --headless --frames 400 --boot-bios cart --expect-bios cart:builtin --expect-hash 3cc9c43e)
 set_tests_properties(smoke_boot_cd_bios PROPERTIES PASS_REGULAR_EXPRESSION "BIOS CD BIOS: built-in retail CD BIOS")
 set_tests_properties(smoke_boot_cart_rom PROPERTIES PASS_REGULAR_EXPRESSION "BIOS Cart boot ROM: built-in Series K boot ROM")
+
+# File > Boot BIOS > CD BIOS (no disc), then File > Add disc image... (#646): the disc menu must show with an empty
+# list, and the add must reach the core's insert.  The PASS line quotes the core's own "disk control: inserted" line.
+add_test(NAME smoke_disc_insert_bios
+    COMMAND virtualjaguar --headless --frames 120 --allow-blank --boot-bios cd --disc-insert "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_insert_bios PROPERTIES TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "DISC insert synth_jagcd\\.chd into the empty tray \\(inline\\): disk control: inserted '[^']*synth_jagcd\\.chd'"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation")
+# The cartridge boot ROM with an empty slot has no CD unit: the disc menu stays hidden (the core registers disk control
+# for it all the same).
+add_test(NAME smoke_disc_insert_cart_hidden
+    COMMAND virtualjaguar --headless --frames 30 --allow-blank --boot-bios cart --disc-insert "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_insert_cart_hidden PROPERTIES TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "headless: FAIL --disc-insert: the disc menu is hidden")
 
 set_tests_properties(smoke_yarc smoke_reload smoke_state smoke_cd smoke_boot_cd_bios smoke_boot_cart_rom PROPERTIES
     TIMEOUT 300
@@ -145,7 +184,7 @@ add_executable(vj_devices_test test/devices_test.cpp src/cheatsheet.cpp ${VJ_DEV
 target_include_directories(vj_devices_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(vj_devices_test PRIVATE ${VJ_SDL3_TARGET})
 
-add_executable(vj_devices_e2e test/devices_e2e.cpp src/core_host.cpp ${VJ_DEVICE_SOURCES})
+add_executable(vj_devices_e2e test/devices_e2e.cpp src/core_host.cpp src/hold_arbiter.cpp ${VJ_DEVICE_SOURCES})
 target_include_directories(vj_devices_e2e PRIVATE src)
 target_link_libraries(vj_devices_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 

@@ -299,11 +299,22 @@ void LibraryService::loadDats() {
 void LibraryService::reidentify() {
     entriesGen_++;
     entries_.clear();
+    stateOwners_.clear();
+    playlistStates_.clear();
     identified_ = 0;
     entries_.reserve(files_.size());
     for (const lib::ScanFile& f : files_) {
         entries_.push_back(lib::identify(f, &carts_, &discs_));
         if (entries_.back().match == lib::Match::Crc) identified_++;
+        if (pathExt(f.path) == "m3u") {
+            // Rebuild even from a warm hash cache: membership is current filesystem metadata, not a cached checksum.
+            for (const std::string& disc : lib::playlistDiscs(f.path)) {
+                lib::Entry owner = entries_.back();
+                owner.file.path = disc;
+                owner.statePlaylist = f.path;
+                stateOwners_.push_back(std::move(owner));
+            }
+        }
     }
     std::sort(entries_.begin(), entries_.end(), [](const lib::Entry& a, const lib::Entry& b) {
         std::string ta = lowerCopy(a.title), tb = lowerCopy(b.title);
@@ -478,13 +489,14 @@ void LibraryService::updateDatabase() {
 
 // ---- launching ---------------------------------------------------------------------------------------------------------
 
-void LibraryService::launch(const lib::Entry& e) {
+void LibraryService::launch(const lib::Entry& e, bool fresh) {
     // The same "open this path" event the file dialog posts; App::handleEvent turns it into openContent.
     SDL_Event ev;
     SDL_zero(ev);
     ev.type = SDL_EVENT_USER;
     ev.user.code = 0x56414A47;
     ev.user.data1 = SDL_strdup(e.file.path.c_str());
+    ev.user.data2 = fresh ? (void*)(intptr_t)1 : nullptr;   // 1 = open without the resume offer
     SDL_PushEvent(&ev);
     if (hideOnLaunch) show = false;
 }
@@ -693,7 +705,13 @@ void LibraryService::decodeJob(const ArtJob& job) {
                 if (sourceDown) continue;
                 int64_t missTime = 0;
                 std::string miss = lib::thumbnailMissPath(root_, type, key, src.system);
-                if (pathExists(miss, &missTime)) {
+                if (src.sessionMisses) {
+                    // The mirror: a 404 holds until the app quits.  A marker file here was written by an older
+                    // version and would hide art the site gained since (#997), so it goes.
+                    if (pathExists(miss)) SDL_RemovePath(miss.c_str());
+                    std::lock_guard<std::mutex> g(m_);
+                    if (sessionMiss_.count(key + "|" + type + "|" + std::to_string(si))) continue;
+                } else if (pathExists(miss, &missTime)) {
                     SDL_Time nowNs = 0;
                     SDL_GetCurrentTime(&nowNs);
                     if ((int64_t)(nowNs / 1000000000LL) - missTime < src.missRetrySeconds) continue;
@@ -747,8 +765,13 @@ void LibraryService::fetchJob(const ArtJob& job, const std::string& type, size_t
         SDL_CreateDirectory(dir.c_str());
         writeFileAtomic(cache, r.body.data(), r.body.size());
     } else if (ok && r.status == 404) {
-        SDL_CreateDirectory(dir.c_str());
-        writeFileAtomic(lib::thumbnailMissPath(root_, type, key, src.system), "", 0);
+        if (src.sessionMisses) {
+            std::lock_guard<std::mutex> g(m_);
+            sessionMiss_.insert(key + "|" + type + "|" + std::to_string(source));
+        } else {
+            SDL_CreateDirectory(dir.c_str());
+            writeFileAtomic(lib::thumbnailMissPath(root_, type, key, src.system), "", 0);
+        }
     } else {
         {
             std::lock_guard<std::mutex> g(m_);
@@ -823,15 +846,46 @@ const std::vector<lib::StateGame>& LibraryService::stateGames() {
     if (t - statesAt_ >= 1.0 && !statesDir_.empty()) {
         statesAt_ = t;
         stateGames_ = lib::listStatesFor(statesDir_, instance);
+        playlistStates_.clear();
     }
     return stateGames_;
 }
 
 const lib::StateGame* LibraryService::statesFor(const lib::Entry& e) {
+    const auto& groups = stateGames();
     const std::string stem = pathStem(e.file.path);
-    for (const lib::StateGame& g : stateGames())
-        if (g.stem == stem) return &g;
-    return nullptr;
+    if (pathExt(e.file.path) != "m3u") {
+        for (const auto& g : groups)
+            if (g.stem == stem) return &g;
+        return nullptr;
+    }
+    auto cached = playlistStates_.find(e.file.path);
+    if (cached == playlistStates_.end()) {
+        lib::StateGame merged;
+        merged.stem = stem;
+        for (const auto& g : groups) {
+            for (const auto& owner : stateOwners_) {
+                if (owner.statePlaylist != e.file.path || pathStem(owner.file.path) != g.stem) continue;
+                for (auto state : g.states) {
+                    state.disc = owner.file.path;
+                    merged.states.push_back(std::move(state));
+                }
+                merged.newest = std::max(merged.newest, g.newest);
+                break;
+            }
+        }
+        std::sort(merged.states.begin(), merged.states.end(), [](const auto& a, const auto& b) {
+            return a.mtimeNs != b.mtimeNs ? a.mtimeNs > b.mtimeNs : a.path < b.path;
+        });
+        cached = playlistStates_.emplace(e.file.path, std::move(merged)).first;
+    }
+    return cached->second.states.empty() ? nullptr : &cached->second;
+}
+
+const lib::Entry* LibraryService::entryForState(const lib::StateGame& g) const {
+    if (const lib::Entry* direct = lib::entryForStem(entries_, g.stem))
+        if (pathExt(direct->file.path) != "m3u") return direct;
+    return lib::entryForStem(stateOwners_, g.stem);
 }
 
 bool LibraryService::deleteState(const lib::StateInfo& s) {
@@ -894,14 +948,37 @@ ArtView LibraryService::stateThumb(const lib::StateInfo& s) {
     return v;
 }
 
-void LibraryService::launchState(const lib::Entry& e, int slot) {
+void LibraryService::launchState(const lib::Entry& e, int slot, const std::string& disc) {
     SDL_Event ev;
     SDL_zero(ev);
     ev.type = SDL_EVENT_USER;
-    ev.user.code = 0x56414A53;   // 'VAJS': open this path, then load a state slot (App::handleEvent)
-    ev.user.data1 = SDL_strdup(e.file.path.c_str());
+    const lib::Entry* owner = &e;
+    if (pathExt(e.file.path) == "m3u") {
+        std::string selected = disc;
+        if (selected.empty()) {
+            const lib::StateGame* group = statesFor(e);
+            if (!group) return;
+            for (const auto& state : group->states)
+                if (state.slot == slot) { selected = state.disc; break; }
+        }
+        owner = nullptr;
+        for (const auto& candidate : stateOwners_)
+            if (candidate.statePlaylist == e.file.path && candidate.file.path == selected) { owner = &candidate; break; }
+        if (!owner) return;
+    }
     ev.user.data2 = (void*)(intptr_t)(slot + 1000);
-    SDL_PushEvent(&ev);
+    if (!owner->statePlaylist.empty()) {
+        auto request = std::make_unique<PlaylistStateLaunch>();
+        request->playlist = owner->statePlaylist;
+        request->disc = owner->file.path;
+        ev.user.code = 0x56414A50; // 'VAJP': playlist + state-owning disc (App::handleEvent owns the request)
+        ev.user.data1 = request.get();
+        if (SDL_PushEvent(&ev)) request.release();
+    } else {
+        ev.user.code = 0x56414A53; // 'VAJS': ordinary path + state slot
+        ev.user.data1 = SDL_strdup(owner->file.path.c_str());
+        if (!SDL_PushEvent(&ev)) SDL_free(ev.user.data1);
+    }
     if (hideOnLaunch) show = false;
 }
 

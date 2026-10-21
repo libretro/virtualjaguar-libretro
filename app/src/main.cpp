@@ -16,15 +16,23 @@ static void usage(const char* argv0) {
         "usage: %s [options] [game.j64 | disc.cue | disc.chd ...]\n"
         "\n"
         "  --fullscreen          start in fullscreen\n"
+        "  --tv                  start with TV mode on (when the TV mode setting is not Off; not remembered)\n"
         "  --theme system|dark|light|custom:NAME   colour theme for this run (not saved; Settings > Interface > Appearance sets it)\n"
         "  --no-content          boot the console with no cartridge: the CD BIOS (use --boot-bios cart for the boot ROM)\n"
         "  --boot-bios cart|cd   boot a BIOS on its own: the cartridge boot ROM with an empty slot, or the CD BIOS with no disc\n"
         "  --cart-bios FILE      run the console boot ROM from FILE for this run (128 KiB; wins over the saved choice)\n"
         "  --cd-bios FILE        run the Jaguar CD BIOS from FILE for this run (256 KiB)\n"
         "  --option KEY=VALUE    set a core option for this run (not saved)\n"
+        "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
+        "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
+        "  --pace-steer on|off   dev: with the emulation thread and vsync, keep frame ends off the take point (default on)\n"
+        "  --emu-wake precise|plain  dev: the emulation thread's frame wake-ups (default precise)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
+#ifdef VJ_HAVE_NEURO
+        "  --neuro URL           let Neuro-sama (or any Neuro API server) play, this run: ws://HOST:PORT (docs/neuro.md)\n"
+#endif
         "  --version, --help\n"
         "\n"
         "netplay (the command-line twin of the Netplay window; link-cable play over the network):\n"
@@ -35,7 +43,7 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
-        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH]\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
@@ -48,11 +56,17 @@ static void usage(const char* argv0) {
         "  --frames N            frames per game (default 300)\n"
         "  --expect-hash HEX     fail unless the first game's final frame hashes to HEX\n"
         "  --state-roundtrip     save a state, run 60 frames, load it, run 60 again: hashes must match\n"
+        "  --disc-swap IMAGE     (CD content) add IMAGE as a second disc, swap to it, then back to the first\n"
+        "  --disc-insert IMAGE   (--boot-bios cd) put IMAGE in the CD BIOS's empty tray with Add disc image...\n"
+        "  --expect-discs N      fail unless the disc list holds N images (an .m3u's discs), then insert the last one\n"
         "  --allow-blank         a blank final frame is not a failure (synthetic test discs)\n"
         "  --expect-bios R:SRC   fail unless the core ran the cart|cd BIOS from builtin, system or file (the --cart-bios/--cd-bios file)\n"
         "  --print-controls      print Player 1's controls cheat sheet (the active bindings) after the load\n"
         "  --expect-controls-overlay shown|hidden   fail unless the controls overlay is (not) showing after the load\n"
         "  --dump-frame PATH     save each game's final frame as PATH.N.png\n"
+        "  --tv-test-script FILE replay FILE's key / pad / focus events against the TV menu (format: tests/tv_menu_headless.txt.in).\n"
+        "                        --headless: instead of running content, --frames N = settle for N frame times at the end.\n"
+        "                        Windowed: the lines run between frames, `expect` only prints a mismatch (for a --screenshot of the menu)\n"
         "\n"
         "cheats (the command-line twins of the Cheats window; also work headless):\n"
         "  --cheats-dir DIR      look for .cht files (libretro cheat database) in DIR too\n"
@@ -95,6 +109,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--version")) a.showVersion = true;
         else if (!std::strcmp(s, "--headless")) a.headless = true;
         else if (!std::strcmp(s, "--fullscreen")) a.fullscreen = true;
+        else if (!std::strcmp(s, "--tv")) a.tv = true;
         else if (!std::strcmp(s, "--theme")) {
             a.theme = need(s);
             if (a.theme != "system" && a.theme != "dark" && a.theme != "light" && a.theme.compare(0, 7, "custom:") != 0) {
@@ -165,6 +180,10 @@ int main(int argc, char** argv) {
             }
             a.expectControls = v == "shown" ? 1 : 0;
         }
+        else if (!std::strcmp(s, "--tv-test-script")) a.tvTestScript = need(s);
+#ifdef VJ_HAVE_NEURO
+        else if (!std::strcmp(s, "--neuro")) a.neuroUrl = need(s);
+#endif
         else if (!std::strcmp(s, "--netplay")) a.netplay.role = need(s);
         else if (!std::strcmp(s, "--netplay-addr")) a.netplay.address = need(s);
         else if (!std::strcmp(s, "--netplay-device")) a.netplay.device = need(s);
@@ -176,6 +195,39 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--perf-frames")) a.perfFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--perf-gpu")) a.perfGpu = true;
         else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;
+        else if (!std::strcmp(s, "--emu-thread")) {
+            const std::string v = need(s);
+            if (v != "on" && v != "off") {
+                std::fprintf(stderr, "--emu-thread wants on or off, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.emuThread = v == "on" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--perf-input")) a.perfInput = true;
+        else if (!std::strcmp(s, "--late-latch")) {
+            const std::string v = need(s);
+            if (v != "on" && v != "off") {
+                std::fprintf(stderr, "--late-latch wants on or off, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.lateLatch = v == "on" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--pace-steer")) {
+            const std::string v = need(s);
+            if (v != "on" && v != "off") {
+                std::fprintf(stderr, "--pace-steer wants on or off, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.paceSteer = v == "on" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--emu-wake")) {
+            const std::string v = need(s);
+            if (v != "precise" && v != "plain") {
+                std::fprintf(stderr, "--emu-wake wants precise or plain, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.emuWake = v == "precise" ? 1 : 0;
+        }
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {
             unsigned w = 0, h = 0;
@@ -195,6 +247,9 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--font")) a.font = need(s);
         else if (!std::strcmp(s, "--font-then")) a.fontThen = need(s);
         else if (!std::strcmp(s, "--state-roundtrip")) a.stateRoundtrip = true;
+        else if (!std::strcmp(s, "--disc-swap")) a.discSwap = need(s);
+        else if (!std::strcmp(s, "--disc-insert")) a.discInsert = need(s);
+        else if (!std::strcmp(s, "--expect-discs")) a.expectDiscs = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--allow-blank")) a.allowBlank = true;
         else if (!std::strcmp(s, "--dump-frame")) a.dumpFrame = need(s);
         else if (!std::strcmp(s, "--data-dir")) a.dataDir = need(s);

@@ -18,7 +18,8 @@ static const char* const kCtlId[] = {
     "up", "down", "left", "right", "a", "b", "c", "option", "pause",
     "k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "star", "hash", "overlay",
     "d", "e", "f", "ax_lx_n", "ax_lx_p", "ax_ly_n", "ax_ly_p", "ax_rx_n", "ax_rx_p", "ax_ry_n", "ax_ry_p",
-    "ax_l2", "ax_r2", "ax_l1", "ax_r1", "pt_l", "pt_r", "pt_u", "pt_d", "mb_l", "mb_r", "gun_reload", "help"};
+    "ax_l2", "ax_r2", "ax_l1", "ax_r1", "pt_l", "pt_r", "pt_u", "pt_d", "mb_l", "mb_r", "gun_reload", "help", "tvmenu",
+    "pro_x", "pro_y", "pro_z", "pro_l", "pro_r"};
 static const char* const kCtlLabel[] = {
     "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "A", "B", "C", "Option", "Pause",
     "Keypad 0", "Keypad 1", "Keypad 2", "Keypad 3", "Keypad 4 (Pro: L)", "Keypad 5", "Keypad 6 (Pro: R)",
@@ -28,7 +29,8 @@ static const char* const kCtlLabel[] = {
     "Stick 2 left (6D)", "Stick 2 right (6D)", "Stick 2 up (6D)", "Stick 2 down (6D)",
     "Left trigger (L2)", "Right trigger (R2)", "Left shoulder (L)", "Right shoulder (R)",
     "Pointer left", "Pointer right", "Pointer up", "Pointer down",
-    "Mouse button left", "Mouse button right", "Light gun reload (fire off-screen)", "Controls overlay"};
+    "Mouse button left", "Mouse button right", "Light gun reload (fire off-screen)", "Controls overlay", "TV menu / TV mode",
+    "X (Pro)", "Y (Pro)", "Z (Pro)", "L (Pro)", "R (Pro)"};
 static_assert(sizeof(kCtlId) / sizeof(kCtlId[0]) == C_COUNT, "one id per control");
 static_assert(sizeof(kCtlLabel) / sizeof(kCtlLabel[0]) == C_COUNT, "one label per control");
 
@@ -50,10 +52,10 @@ bool ctlFromId(const std::string& id, Ctl& out) {
 // ---------------------------------------------------------------------------------
 std::string Binding::serialize() const {
     switch (kind) {
-    case Key: return "k" + std::to_string(code);
+    case Key: return "k" + std::to_string(code) + (hold ? "~hold" : "");
     case PadButton: {
         const char* s = SDL_GetGamepadStringForButton((SDL_GamepadButton)code);
-        return s ? std::string("b") + s : std::string();
+        return s ? std::string("b") + s + (hold ? "~hold" : "") : std::string();
     }
     case PadAxis: {
         const char* s = SDL_GetGamepadStringForAxis((SDL_GamepadAxis)code);
@@ -63,19 +65,27 @@ std::string Binding::serialize() const {
     }
 }
 
-bool Binding::parse(const std::string& s, Binding& out) {
+bool Binding::parse(const std::string& str, Binding& out) {
+    // A trailing "~hold" marks a long-press binding; only keys and buttons have one.
+    static const char kHold[] = "~hold";
+    const size_t holdLen = sizeof(kHold) - 1;
+    const bool hold = str.size() > holdLen && str.compare(str.size() - holdLen, holdLen, kHold) == 0;
+    const std::string s = hold ? str.substr(0, str.size() - holdLen) : str;
+    if (hold && s[0] != 'k' && s[0] != 'b') return false;
     if (s.size() < 2) return false;
     if (s[0] == 'k') {
         char* end = nullptr;
         long v = std::strtol(s.c_str() + 1, &end, 10);
         if (!end || *end != '\0' || v <= 0 || v >= SDL_SCANCODE_COUNT) return false;
         out = Binding::key((int)v);
+        out.hold = hold;
         return true;
     }
     if (s[0] == 'b') {
         SDL_GamepadButton b = SDL_GetGamepadButtonFromString(s.c_str() + 1);
         if (b == SDL_GAMEPAD_BUTTON_INVALID) return false;
         out = Binding::button((int)b);
+        out.hold = hold;
         return true;
     }
     if (s[0] == 'a' && s.size() > 2 && (s[1] == '+' || s[1] == '-')) {
@@ -106,6 +116,10 @@ static const char* buttonLabel(int b) {
     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return "D-pad Right";
     case SDL_GAMEPAD_BUTTON_MISC1: return "Share / Capture";
     case SDL_GAMEPAD_BUTTON_TOUCHPAD: return "Touchpad";
+    case SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1: return "Paddle P1";
+    case SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2: return "Paddle P2";
+    case SDL_GAMEPAD_BUTTON_LEFT_PADDLE1: return "Paddle P3";
+    case SDL_GAMEPAD_BUTTON_LEFT_PADDLE2: return "Paddle P4";
     default: return nullptr;
     }
 }
@@ -123,21 +137,26 @@ static const char* axisLabel(int a, int dir) {
 }
 
 std::string Binding::display() const {
+    std::string s;
     switch (kind) {
     case Key: {
         const char* n = SDL_GetScancodeName((SDL_Scancode)code);
-        return (n && *n) ? n : "Key " + std::to_string(code);
+        s = (n && *n) ? n : "Key " + std::to_string(code);
+        break;
     }
     case PadButton: {
         const char* n = buttonLabel(code);
-        return n ? n : "Button " + std::to_string(code);
+        s = n ? n : "Button " + std::to_string(code);
+        break;
     }
     case PadAxis: {
         const char* n = axisLabel(code, dir);
-        return n ? n : "Axis " + std::to_string(code) + (dir < 0 ? "-" : "+");
+        s = n ? n : "Axis " + std::to_string(code) + (dir < 0 ? "-" : "+");
+        break;
     }
     default: return "";
     }
+    return hold ? s + " (hold)" : s;
 }
 
 std::string serializeBindings(const std::vector<Binding>& v) {
@@ -191,7 +210,7 @@ const char* sourceLabel(Source s) {
 
 static void add(Profile& p, Ctl c, Binding b) { p.binds[c].push_back(b); }
 
-Profile Profile::builtin(DeviceClass cls) {
+Profile Profile::builtin(DeviceClass cls, PadCaps caps, bool proPort) {
     Profile p;
     p.source.fill(SRC_DEFAULT);
     if (cls == DeviceClass::Keyboard) {
@@ -257,6 +276,7 @@ Profile Profile::builtin(DeviceClass cls) {
         add(p, C_GUN_RELOAD, Binding::key(SDL_SCANCODE_R));
         // F1 (menu bar) and F2 (keypad overlay) are taken; F3 is free.
         add(p, C_HELP, Binding::key(SDL_SCANCODE_F3));
+        add(p, C_TVMENU, Binding::key(SDL_SCANCODE_F4));
     } else {
         // SDL's standard gamepad layout.  Chosen so that every keypad key is on the pad
         // without opening the overlay: 0-6 sit where the core's own RetroPad defaults
@@ -272,11 +292,13 @@ Profile Profile::builtin(DeviceClass cls) {
         add(p, C_C, Binding::button(SDL_GAMEPAD_BUTTON_WEST));
         add(p, C_OPTION, Binding::button(SDL_GAMEPAD_BUTTON_START));
         add(p, C_PAUSE, Binding::button(SDL_GAMEPAD_BUTTON_BACK));
-        add(p, C_K0, Binding::button(SDL_GAMEPAD_BUTTON_NORTH));
-        add(p, C_K1, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
-        add(p, C_K2, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
-        add(p, C_K3, Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1));
-        add(p, C_K4, Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1));
+        if (!proPort) {   // a Pro port spends these five on X Y Z L R (below); keypad 0-4 are the overlay's there
+            add(p, C_K0, Binding::button(SDL_GAMEPAD_BUTTON_NORTH));
+            add(p, C_K1, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+            add(p, C_K2, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
+            add(p, C_K3, Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1));
+            add(p, C_K4, Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1));
+        }
         add(p, C_K5, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK));
         add(p, C_K6, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_STICK));
         add(p, C_K7, Binding::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1));
@@ -313,7 +335,26 @@ Profile Profile::builtin(DeviceClass cls) {
         // Back = Pause, Share = keypad overlay, Guide = # (and Back+Start is Tempest 2000's
         // unlock), so the cheat-sheet rides the touchpad button where there is one; rebindable.
         add(p, C_HELP, Binding::button(SDL_GAMEPAD_BUTTON_TOUCHPAD));
+        // The TV menu: a long press of Share (it is also the keypad overlay's plain press), or of
+        // Guide on a pad with no Share button (Guide keeps its plain # press); the back paddles
+        // are free of any other job, so a plain press there.
+        add(p, C_TVMENU, (caps.hasMisc1 ? Binding::button(SDL_GAMEPAD_BUTTON_MISC1)
+                                        : Binding::button(SDL_GAMEPAD_BUTTON_GUIDE)).withHold());
+        add(p, C_TVMENU, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1));
+        add(p, C_TVMENU, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_PADDLE1));
+        add(p, C_TVMENU, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2));
+        add(p, C_TVMENU, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_PADDLE2));
+        // The Pro Controller, Genesis 6-button style: X Y Z on Left Shoulder, North, Right Shoulder (the
+        // row above A B C) and its L / R shoulders on the triggers.  The Router reads these on a Pro port
+        // only (elsewhere the same RetroPad buttons are keypad 0-4), so they are bound in both variants.
+        add(p, C_PRO_X, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+        add(p, C_PRO_Y, Binding::button(SDL_GAMEPAD_BUTTON_NORTH));
+        add(p, C_PRO_Z, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
+        add(p, C_PRO_L, Binding::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1));
+        add(p, C_PRO_R, Binding::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1));
     }
+    // The keyboard leaves the Pro controls unbound: A S D / Q E already press keypad 9 8 7 / 4 6,
+    // which is what the Pro's X Y Z / L R are on the wire, on any port.
     return p;
 }
 
@@ -355,8 +396,9 @@ void BindingStore::clearLayer(const LayerId& l) {
 int BindingStore::keyboardPort() const { return cfg_->getInt("input.kb.port", 0) == 1 ? 1 : 0; }
 void BindingStore::setKeyboardPort(int p) { cfg_->setInt("input.kb.port", p == 1 ? 1 : 0); }
 
-Profile BindingStore::resolve(DeviceClass cls, const std::string& guid, const std::string& gameId) const {
-    Profile p = Profile::builtin(cls);
+Profile BindingStore::resolve(DeviceClass cls, const std::string& guid, const std::string& gameId, PadCaps caps,
+                              bool proPort) const {
+    Profile p = Profile::builtin(cls, caps, proPort);
     struct Cand { LayerId id; Source src; };
     std::vector<Cand> cands;
     const bool pad = cls == DeviceClass::Gamepad;
@@ -375,6 +417,19 @@ Profile BindingStore::resolve(DeviceClass cls, const std::string& guid, const st
             }
         }
     }
+    // A pad with no Share button reaches the TV menu on Guide instead, whatever layer the
+    // Share default came from (the shared layer's "Add" seeds from the default list).
+    if (pad && !caps.hasMisc1) {
+        const Binding share = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold();
+        const Binding guide = Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold();
+        std::vector<Binding>& v = p.binds[C_TVMENU];
+        std::vector<Binding> out;
+        for (const Binding& b : v) {
+            Binding m = b == share ? guide : b;
+            if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+        }
+        v.swap(out);
+    }
     return p;
 }
 
@@ -392,6 +447,7 @@ static int axisPartner(int a) {
 }
 
 static bool bindingDown(const Binding& b, const DeviceSnapshot& s, bool dominant) {
+    if (b.hold) return false;   // a long press is the HoldArbiter's to fire, never a plain press
     switch (b.kind) {
     case Binding::Key:
         return b.code > 0 && b.code < (int)s.key.size() && s.key[(size_t)b.code];
@@ -449,6 +505,7 @@ ControlSet evaluateExtra(const Profile& p, const DeviceSnapshot& s) {
 }
 
 static int bindingStrength(const Binding& b, const DeviceSnapshot& s, int dz) {
+    if (b.hold) return 0;   // see bindingDown
     switch (b.kind) {
     case Binding::Key:
         return (b.code > 0 && b.code < (int)s.key.size() && s.key[(size_t)b.code]) ? 32767 : 0;
@@ -550,6 +607,17 @@ void CoreInput::addMouse(unsigned port, int32_t dx, int32_t dy, unsigned buttons
     extra_[port].mouseDx += dx;
     extra_[port].mouseDy += dy;
     extra_[port].mouseButtons |= buttons;
+}
+
+void CoreInput::carryMotion(const CoreInput& older) {
+    for (size_t p = 0; p < extra_.size(); p++) {
+        extra_[p].mouseDx += older.extra_[p].mouseDx;
+        extra_[p].mouseDy += older.extra_[p].mouseDy;
+    }
+}
+
+void CoreInput::clearMotion() {
+    for (PortExtra& e : extra_) e.mouseDx = e.mouseDy = 0;
 }
 
 void CoreInput::setAnalog(unsigned port, unsigned index, unsigned id, int32_t value) {
@@ -829,7 +897,7 @@ static std::string slug(const std::string& s) {
 
 std::string contentIdentity(const std::string& path) {
     std::string ext = pathExt(path);
-    if (ext == "cue" || ext == "cdi" || ext == "chd") {
+    if (ext == "cue" || ext == "cdi" || ext == "chd" || ext == "m3u") {   // m3u: a multi-disc set, one identity
         std::string s = slug(pathStem(path));
         return s.empty() ? "" : "disc-" + s;
     }

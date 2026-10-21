@@ -30,6 +30,8 @@ platform::MenuState App::menuState() {
     s.controlsOverlay = input.controls.show;
     s.vsync = vsync;
     s.homeLibrary = homeLibrary;
+    s.tvMode = tvMode.active();
+    s.tvAvailable = tv::effectiveSetting(tvSetting) != tv::TvSetting::Off;
     s.libraryOpen = homeVisible() || library.show;
     if (s.gameLoaded) {
         DiscInfo d = host.discInfo();
@@ -97,9 +99,13 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void showCheats() override { a.showCheats = true; }
         void toggleDiscTray() override {
             DiscInfo d = a.host.discInfo();
-            if (d.available) a.host.discSetEject(!d.ejected);
+            if (d.available && d.count > 0) {   // an empty list (the CD BIOS with no disc) has nothing to insert
+                const bool eject = !d.ejected;
+                a.emu.call([&app = a, eject] { app.host.discSetEject(eject); });
+            }
         }
-        void selectDisc(int i) override { a.host.discSetIndex((unsigned)i); }
+        void selectDisc(int i) override { a.emu.call([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }); }
+        void addDisc() override { a.showDiscDialog(); }
         void toggleFullscreen() override { a.setFullscreen(!a.fullscreen); }
         void toggleIntegerScale() override { a.present.integerScale = !a.present.integerScale; }
         void toggleSmoothFilter() override { a.present.linearFilter = !a.present.linearFilter; }
@@ -117,6 +123,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             a.applyVsync();
         }
         void toggleHomeLibrary() override { a.homeLibrary = !a.homeLibrary; }
+        void toggleTvMode() override { a.toggleTvMode(); }
         void showSettings() override { a.showSettings = true; }
         void toggleMute() override {
             a.mute = !a.mute;
@@ -209,6 +216,8 @@ void drawDesktopSettings(App& app) {
         ui::hint("Keep the menu bar at the top of the window as well as the one at the top of the screen. Both work "
                  "the same. Off by default; F1 flips it too.");
     }
+    ImGui::Checkbox("Auto-hide the menu bar in fullscreen", &app.fullscreenAutoHideMenu);
+    ui::hint("Move the pointer to the top edge to reveal it, or press F1 to pin it open. Off by default.");
     ImGui::Checkbox("Let windows move outside the main window", &app.windowsOutside);
     ui::hint("Settings, Achievements, Cheats and the tools can be dragged out of the main window and become windows of "
              "their own, for example on a second monitor. Drag one past the edge of the window, or back in to put it back. "

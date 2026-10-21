@@ -196,6 +196,7 @@ HttpResponse httpPerform(const HttpRequest&) {
 // ---------------------------------------------------------------------------------
 AchHttp::~AchHttp() { shutdown(); }
 
+// Called with mu_ held (request() runs on the UI thread and, through rc_client's server calls, on the emulation thread).
 void AchHttp::ensureWorker() {
     if (started_) return;
     started_ = true;
@@ -214,9 +215,9 @@ void AchHttp::request(HttpRequest req, std::function<void(HttpResponse)> done) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (stop_) return;
+        ensureWorker();
         jobs_.push_back(Job{std::move(req), std::move(done)});
     }
-    ensureWorker();
     cv_.notify_one();
 }
 
@@ -252,15 +253,17 @@ void AchHttp::pump() {
 
 void AchHttp::shutdown() {
     g_abort = true;
+    std::thread worker;
     {
         std::lock_guard<std::mutex> lk(mu_);
         stop_ = true;
         jobs_.clear();
         results_.clear();
+        worker = std::move(thread_);   // joined below, outside the lock: the worker takes mu_ to leave
+        started_ = false;
     }
     cv_.notify_all();
-    if (thread_.joinable()) thread_.join();   // libcurl aborts at once; WinHTTP finishes (<= its 30 s timeout)
-    started_ = false;
+    if (worker.joinable()) worker.join();   // libcurl aborts at once; WinHTTP finishes (<= its 30 s timeout)
     g_abort = false;
 }
 
