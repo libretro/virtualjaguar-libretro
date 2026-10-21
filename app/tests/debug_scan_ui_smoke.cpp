@@ -167,6 +167,24 @@ int main() {
     CHECK(scanner_test::candidates() == 0);
     frames(session, cm, 2);
 
+    // Threaded openContent() on a running game: the emulation thread hands over null and the new interface inside one
+    // call, so the UI sees only the final non-null interface.  The search (candidates of the OLD game's RAM) must be
+    // void all the same, exactly as when the two swaps are seen apart.
+    scanner_test::setValues("", "");
+    scanner_test::setMode(0, 0);
+    scanner_test::scan(session, CoreHost::instance());
+    CHECK(scanner_test::candidates() > 0);
+    session.onCoreIface(nullptr);
+    session.onCoreIface(fx.counted.iface());
+    session.syncCore();                                       // the next syncDebug()
+    CHECK(session.enabled() && !scannerIsOpen() && scanner_test::candidates() == 0);   // voided, window closed
+    frames(session, cm, 2);
+    scannerSetOpen(true);                                     // reopen and let the window adopt the new epoch while a search is live
+    scanner_test::scan(session, CoreHost::instance());
+    frames(session, cm, 2);
+    scanner_test::newSearch();
+    frames(session, cm, 1);
+
     // Hardcore switches the tools off: the window closes itself and forgets the search.
     scanner_test::setValues("", "");
     scanner_test::setMode(0, 0);
@@ -300,20 +318,35 @@ int main() {
     frames(session, cm, 10);
     CHECK(scanner_test::liveValue(0, v) && v == 136);
 
-    // The core cannot be read: the column stays "--" for as long as that lasts, never zeros, and recovers.
-    static const auto badPeek = [](unsigned, unsigned char*, unsigned) -> int { return -1; };
-    vj_debug_iface bad = *fx.counted.iface();
-    bad.peek = badPeek;
-    session.setIface(&bad);                                   // another core: the epoch moves
+    // The core cannot be read: the column stays "--" for as long as that lasts, never zeros, and recovers.  (A different
+    // core voids the search, so this one is the same core that stops answering; the epoch move is what a reload does.)
+    static bool failPeek = false;
+    static const vj_debug_iface* realIface = fx.counted.iface();
+    static const auto flakyPeek = [](unsigned a, unsigned char* dst, unsigned n) -> int {
+        return failPeek ? -1 : realIface->peek(a, dst, n);
+    };
+    vj_debug_iface flaky = *fx.counted.iface();
+    flaky.peek = flakyPeek;
+    session.setIface(&flaky);                                 // another core: the search is void, the window closed
+    CHECK(scanner_test::candidates() == 0 && !scannerIsOpen());
+    scannerSetOpen(true);
+    scanner_test::scan(session, CoreHost::instance());
+    frames(session, cm, 1);
+    d.drain();
+    frames(session, cm, 10);
+    CHECK(scanner_test::liveValue(0, v));
+    failPeek = true;
+    session.views().bumpEpoch();                              // the buffer held belongs to the old core
     frames(session, cm, 1);
     d.drain();
     frames(session, cm, 10);
     CHECK(!scanner_test::liveValue(0, v) && !scanner_test::openAdd(0, "x"));
-    session.setIface(fx.counted.iface());
+    failPeek = false;
+    session.views().bumpEpoch();
     frames(session, cm, 1);
     d.drain();
     frames(session, cm, 10);
-    CHECK(scanner_test::liveValue(0, v) && v == 136);
+    CHECK(scanner_test::liveValue(0, v));
     CHECK(CountingIface::offCore() == 0);
 
     ImGui::DestroyContext();

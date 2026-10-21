@@ -54,7 +54,10 @@ void DebugSession::syncCore() {
     regions_.clear();
     bps_.clear();   // a breakpoint never lingers into the next core instance / game
     serial_++;
-    if (hadCore_ && !core_.loaded()) closeAllTools("no core");
+    // A core that went away, or was replaced: threaded, openContent() publishes null and the new interface inside one
+    // blocking call, so a still-loaded core here can be a different game.  Either way the tools close exactly as
+    // inline does (null seen, then the new interface), so the cheat scanner's candidates never meet the new game's RAM.
+    if (hadCore_) closeAllTools("no core");
     hadCore_ = core_.loaded();
 }
 

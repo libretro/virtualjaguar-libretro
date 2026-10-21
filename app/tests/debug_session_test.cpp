@@ -561,6 +561,53 @@ static void testCoreSyncSplit() {
     CHECK(s.enabled() && s.attach() && m.attached(), "a new core attaches");
 }
 
+static void testReplacedCoreClosesTools() {
+    // Threaded openContent() on a running game: the emulation thread publishes null and the new interface inside one
+    // blocking call, so the UI's syncCore() sees only the final non-null interface.  That must still end where the
+    // inline path does (null seen, then the new interface): the tools force-closed, the breakpoints and halt gone.
+    DebugSession s;
+    MockDebugIface m1, m2;
+    s.setIface(m1.iface());
+    s.setContentLoaded(true);
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
+    std::string why;
+    int closed = 0;
+    s.onForcedClose.push_back([&](const char* w) { why = w; closed++; });
+    s.onCoreIface(nullptr);              // both halves of the swap before the UI looks
+    s.onCoreIface(m2.iface());
+    CHECK(s.hasCore() && closed == 0, "the UI has not looked yet");
+    s.syncCore();
+    CHECK(closed == 1 && why == "no core", "a replaced core closes the tools like an unload");
+    CHECK(s.breakpoints().empty() && s.enabled() && !s.attached(), "and starts the new game clean");
+    s.syncCore();
+    CHECK(closed == 1, "once");
+    // The same interface pointer again (the core's struct is static): still a replacement.
+    s.onCoreIface(nullptr);
+    s.onCoreIface(m2.iface());
+    s.syncCore();
+    CHECK(closed == 2, "a reload of the same static struct too");
+    // A pointer swapped directly (no null in between) is a replacement as well.
+    s.onCoreIface(m1.iface());
+    s.syncCore();
+    CHECK(closed == 3, "so is a direct handover");
+    // Inline: the two halves run apart, and the count is the same.
+    DebugSession t;
+    t.setIface(m1.iface());
+    t.setContentLoaded(true);
+    int tclosed = 0;
+    t.onForcedClose.push_back([&](const char*) { tclosed++; });
+    t.setIface(nullptr);
+    t.setIface(m2.iface());
+    CHECK(tclosed == 1, "inline: one close for the same content switch");
+    // A first load (no previous core) closes nothing.
+    DebugSession u;
+    int uclosed = 0;
+    u.onForcedClose.push_back([&](const char*) { uclosed++; });
+    u.onCoreIface(m1.iface());
+    u.syncCore();
+    CHECK(uclosed == 0 && u.hasCore(), "the first core is not a replacement");
+}
+
 static void testViewsFill() {
     DebugSession s;
     MockDebugIface m;
@@ -607,6 +654,7 @@ int main() {
     testMarshalling();
     testHaltAvailable();
     testCoreSyncSplit();
+    testReplacedCoreClosesTools();
     testViewsFill();
     testIfaceSwap();
     std::printf("debug_session_test: %d checks, %d failed\n", g_checks, g_fail);
