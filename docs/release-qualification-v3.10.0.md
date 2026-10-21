@@ -62,6 +62,23 @@ The matrix covers Windows PowerShell 5.1 and 7, Apple Silicon macOS, Ubuntu 22.0
 x86_64 and Ubuntu 24.04 ARM64. Local supplemental Linux tests use a fresh Ubuntu
 22.04.5 ARM64 VM with no host-directory mounts.
 
+## Published installer evidence completed locally
+
+The repeatable published-package runner passed all 25 recorded command checks on the
+Apple Silicon Mac (macOS 26.6.2, isolated profile), including real core/app/both
+installation, normal and forced update, before/after dry-run byte comparisons,
+post-update launches and user-data sentinels. All bundled Mach-O files are universal
+and both slices have minimum macOS 11.0.
+
+A fresh Ubuntu 22.04.5 ARM64 VM (glibc 2.35, native virtualization, no host mounts)
+passed all 19 Linux command checks for the published AppImage/core installer flows.
+These are actual published downloads, not hermetic fixture success. The evidence
+pins GitHub release id `376361064` and the exact source SHA above.
+
+Native Windows PowerShell 5.1/7 and additional clean hosted Mac/Linux checks are
+queued in [qualification run 39539281058](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39539281058).
+This is pending evidence, not a passed criterion.
+
 ## Remaining distribution work
 
 - Complete the published-download jobs and resolve demonstrated failures before readiness.
