@@ -2846,7 +2846,7 @@ EOF
 
 **Interfaces:**
 - Consumes: everything B1-B4 produced; `CoreHost`, `EmuThread`, `DebugSession`/`DebugCore` as App wires them (the rig below mirrors `wireHost`/`startEmuThread`/`haltWait` exactly so the e2e pins App's policy without App).
-- Produces: `vj::g_signalQuit` (`app/src/app.h`: `extern std::atomic<bool> g_signalQuit;`), the handlers in `main.cpp` (`std::signal(SIGINT, h); std::signal(SIGTERM, h);` where `h` stores true; `<csignal>`), `bool App::quitRequested() const { return quit || g_signalQuit.load(); }`, `abortHalt = [this]{ return quitting_.load() || g_signalQuit.load(); }`.
+- Produces: `vj::g_signalQuit` (`app/src/app.h`: `extern std::atomic<bool> g_signalQuit;`), the handlers in `main.cpp`, installed **only for `--headless` runs** (`std::signal(SIGINT, h); std::signal(SIGTERM, h);` where `h` stores true; `<csignal>`; windowed runs keep SDL's own handlers, which turn the signal into `SDL_EVENT_QUIT`), `bool App::quitRequested() const { return quit || g_signalQuit.load(); }`, `abortHalt = [this]{ return quitting_.load() || g_signalQuit.load(); }`.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -3573,7 +3573,7 @@ Prove the script bites by running it on a copy of the pre-3a tree:
 
 ```bash
 S=$(mktemp -d) && git archive abc9054e app | tar -x -C "$S" \
-  && cp app/tests/no_threaded_limits.sh app/tests/threaded_branch_allowlist.txt "$S/app/tests/" \
+  && cp app& command cp app/tests/no_threaded_limits.sh app/tests/threaded_branch_allowlist.txt "$S/app/tests/" \
   && bash app/tests/no_threaded_limits.sh "$S"; echo "rc=$?"
 ```
 
