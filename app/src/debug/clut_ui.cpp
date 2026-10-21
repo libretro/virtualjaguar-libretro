@@ -28,6 +28,8 @@ struct ClutState {
     std::vector<unsigned> a, b;        // the 256 raw entries of table A and B
     uint64_t serial = 0;
     bool ok = false;
+    bool seen = false;                 // a buffer has been adopted (before that the table is "being read", not unreadable)
+    DebugViews::Id id = DebugViews::kNoId;   // the published view: both tables in one request
     float pick[3] = {0, 0, 0};          // the colour picker's own value while it is being dragged
     char rawBuf[8] = "";
     int rawFor = -1;
@@ -37,7 +39,7 @@ struct ClutState {
     unsigned pickRaw = 0;
     std::string status;
     bool statusErr = false;
-    const void* ifaceSeen = nullptr;
+    uint64_t epochSeen = ~0ull;        // DebugViews::epoch() last adopted
 };
 ClutState g_clut;
 
@@ -46,20 +48,48 @@ ImVec4 errCol() { return ui::vec4(ui::pal().error); }
 
 ImU32 rgbU32(uint32_t rgb) { return IM_COL32((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255); }
 
+// Both tables are one published request (table B is table A + 0x200).
+static_assert(kClutB == kClutA + kClutEntries * 2, "the CLUT tables are adjacent");
+constexpr unsigned kClutBytes = 2 * kClutEntries * 2;
+
+// A closed or disabled window holds no request; reopening adopts the next answer whatever its serial.
+void releaseView(DebugSession& s) {
+    ClutState& c = g_clut;
+    if (c.id == DebugViews::kNoId) return;
+    s.views().clear(c.id);
+    c.id = DebugViews::kNoId;
+    c.serial = 0;
+    c.ok = c.seen = false;
+}
+
 void refresh(DebugSession& s) {
     ClutState& c = g_clut;
-    const uint64_t ser = s.refreshSerial();
-    if (c.ok && ser == c.serial) return;
-    std::vector<uint8_t> ra, rb;
-    c.ok = s.read(kClutA, ra, kClutEntries * 2) && s.read(kClutB, rb, kClutEntries * 2);
-    c.serial = ser;
+    if (c.id == DebugViews::kNoId) {
+        ViewRequest q;
+        q.kind = ViewRequest::Kind::Memory;
+        q.addr = kClutA;
+        q.len = kClutBytes;
+        c.id = s.views().set(DebugViews::kNoId, q);
+    }
+    ViewBuffer b;
+    if (!s.views().read(c.id, b) || b.serial == c.serial) return;
+    c.serial = b.serial;
+    c.seen = true;
+    c.ok = b.ok && b.bytes.size() == kClutBytes;
     if (!c.ok) return;
     c.a.resize(kClutEntries);
     c.b.resize(kClutEntries);
     for (unsigned i = 0; i < kClutEntries; i++) {
-        c.a[i] = decodeBE(&ra[i * 2], 2);
-        c.b[i] = decodeBE(&rb[i * 2], 2);
+        c.a[i] = decodeBE(&b.bytes[i * 2], 2);
+        c.b[i] = decodeBE(&b.bytes[kClutEntries * 2 + i * 2], 2);
     }
+}
+
+// A write to either table lands in both (the core mirrors it), so the window shows it at once instead of waiting
+// for the next published buffer; that buffer then carries the same value.
+void showWritten(unsigned idx, unsigned raw) {
+    ClutState& c = g_clut;
+    if (c.ok && idx < kClutEntries) c.a[idx] = c.b[idx] = raw;
 }
 
 std::string describe(ColorMode m, unsigned raw) {
@@ -75,35 +105,42 @@ std::string describe(ColorMode m, unsigned raw) {
 
 void drawClutWindow(DebugSession& s) {
     ClutState& c = g_clut;
-    if (!clutWindowOpen()) return;
+    if (!clutWindowOpen()) {
+        releaseView(s);
+        return;
+    }
     ui::nextWindow(36.0f, 46.0f, 22.0f, 24.0f);
     bool open = true;
     const bool shown = ui::beginWindow("Palette (CLUT)", &open);
     ui::keepOnScreen();
     if (!open) clutWindowOpen() = false;
     if (!shown) {
+        releaseView(s);
         ImGui::End();
         return;
     }
     if (!s.enabled()) {
+        releaseView(s);
         ui::coloredWrapped(warnCol(), s.disabledReason().c_str());
         ImGui::End();
         return;
     }
-    if (c.ifaceSeen != (const void*)s.iface()) {
-        c.ifaceSeen = s.iface();
-        c.ok = false;
+    if (c.epochSeen != s.views().epoch()) {   // a new core / content: nothing remembered applies
+        c.epochSeen = s.views().epoch();
+        c.ok = c.seen = false;
+        c.serial = 0;
         c.haveSel = false;
         c.status.clear();
     }
     refresh(s);
+    s.wakeViews();   // the request is set: inline it is filled now, threaded one fill is posted
     if (!c.ok) {
-        ImGui::TextWrapped("The colour table could not be read.");
+        ImGui::TextWrapped(c.seen ? "The colour table could not be read." : "Reading the colour table...");
         ImGui::End();
         return;
     }
     // CRY needs the core's own colour table (once per core).
-    const bool cryOk = c.cry.build(s.iface());
+    const bool cryOk = c.cry.buildFrom(s);
     if (!cryOk && c.mode == ColorMode::Cry) c.mode = ColorMode::Rgb16;
 
     ImGui::TextUnformatted("Show entries as");
@@ -210,6 +247,7 @@ void drawClutWindow(DebugSession& s) {
             } else {
                 c.status.clear();
                 c.pickRaw = nraw;   // the table will read back as this: do not resync the picker to it
+                showWritten(idx, nraw);
             }
         }
     }
@@ -242,6 +280,7 @@ void drawClutWindow(DebugSession& s) {
         } else {
             c.status.clear();
             c.rawFor = -1;
+            showWritten(idx, v);
         }
     }
     if (!c.status.empty()) ui::coloredWrapped(c.statusErr ? errCol() : ImGui::GetStyleColorVec4(ImGuiCol_Text), c.status.c_str());

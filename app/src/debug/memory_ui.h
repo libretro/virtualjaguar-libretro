@@ -7,6 +7,8 @@
 // DebugSession::tick() must also run once per frame (it drives the 10 Hz refresh the windows follow).
 #pragma once
 
+#include <cstdint>
+
 namespace vj {
 
 class DebugSession;
@@ -29,5 +31,10 @@ bool& clutWindowOpen();
 
 // Opens the Memory viewer on `addr` (for other tools: "show this in memory", a register value, a pointer).
 void showMemoryAt(DebugSession& s, unsigned addr);
+
+// Test hook (debug_memory_ui_smoke): a byte of the window the grid last adopted from its published view.
+namespace memory_test {
+bool byteAt(unsigned addr, uint8_t& v);
+}
 
 }  // namespace vj

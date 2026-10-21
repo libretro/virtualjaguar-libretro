@@ -42,17 +42,22 @@ struct MemState {
     std::vector<unsigned> history;      // where "Back" goes
     std::string status;
     bool statusErr = false;
-    // the visible window, as read last frame
-    unsigned winStart = 0, winLen = 0;
+    // the visible window, as adopted from its published view
+    unsigned winStart = 0;
     uint64_t winSerial = 0;
     bool winOk = false;
     std::vector<uint8_t> win;
+    // what the window has asked the view copier for (DebugViews ids; kNoId = no request)
+    DebugViews::Id winId = DebugViews::kNoId;   // the visible rows plus a margin
+    DebugViews::Id selId = DebugViews::kNoId;   // the selected cell's 4 bytes (the footer)
+    unsigned reqStart = 0, reqLen = 0, reqPerRow = 0;
+    unsigned selReq = ~0u;
     ChangeTracker track{8};
     int firstRow = 0, visRows = 1;      // for keyboard scrolling
     unsigned perRow = 16;
     bool lastHit = false;
     unsigned lastHitAddr = 0, lastHitSel = 0;
-    const void* ifaceSeen = nullptr;    // region table changes with the core
+    uint64_t epochSeen = ~0ull;         // DebugViews::epoch() last adopted: a new core / content resets the window
 };
 MemState g_mem;
 
@@ -82,38 +87,69 @@ void selectAddr(DebugSession& s, unsigned addr, int regionIdx, bool pushHistory)
     m.pendingRow = (double)((m.sel - regs[(size_t)regionIdx].start) / (m.perRow ? m.perRow : 16));
 }
 
-// Reads the bytes behind the visible rows (cached until the session says the views should refresh).
-void fetchWindow(DebugSession& s, const vj_debug_region& r, unsigned start, unsigned len) {
+// A closed or disabled window holds no requests, so it costs the emulation thread nothing; reopening starts from
+// "nothing known" (the next answer is adopted whatever its serial).
+void releaseViews(DebugSession& s) {
     MemState& m = g_mem;
-    const uint64_t serial = s.refreshSerial();
-    if (m.winOk && m.winStart == start && m.winLen == len && m.winSerial == serial) return;
-    const bool refresh = serial != m.winSerial;
-    std::vector<uint8_t> buf;
-    unsigned n = clampToRegion(r, start, len);
-    if (n && s.read(start, buf, n)) {
-        m.win.swap(buf);
-        m.winOk = true;
-        m.track.update(start, m.win.data(), (unsigned)m.win.size(), refresh);
-    } else {
-        m.win.clear();
-        m.winOk = false;
-    }
-    m.winStart = start;
-    m.winLen = len;
-    m.winSerial = serial;
+    if (m.winId != DebugViews::kNoId) s.views().clear(m.winId);
+    if (m.selId != DebugViews::kNoId) s.views().clear(m.selId);
+    m.winId = m.selId = DebugViews::kNoId;
+    m.reqLen = 0;
+    m.selReq = ~0u;
+    m.winOk = false;
+    m.winSerial = 0;
 }
 
-// A new core (or none) invalidates everything the window remembers.
+// The bytes behind the visible rows come from a published view: ask for the visible rows plus kMarginRows each
+// side, and ask again only when scrolling (or a width change) leaves what was asked for.  Until the answer to a
+// new request arrives the previous window stays drawn (cells outside it show "?").
+constexpr unsigned kMarginRows = 16;
+
+void fetchWindow(DebugSession& s, const vj_debug_region& r, unsigned visStart, unsigned visLen) {
+    MemState& m = g_mem;
+    const unsigned visN = clampToRegion(r, visStart, visLen);
+    const bool covered = m.winId != DebugViews::kNoId && m.reqPerRow == m.perRow && visStart >= m.reqStart &&
+                         visStart + visN <= m.reqStart + m.reqLen;
+    if (!covered) {
+        const unsigned margin = kMarginRows * m.perRow;
+        const unsigned lo = visStart > r.start + margin ? visStart - margin : r.start;
+        ViewRequest q;
+        q.kind = ViewRequest::Kind::Memory;
+        q.addr = lo;
+        q.len = std::min(clampToRegion(r, lo, (visStart - lo) + visLen + margin), DebugViews::kMaxMemoryBytes);
+        m.winId = s.views().set(m.winId, q);
+        m.reqStart = q.addr;
+        m.reqLen = q.len;
+        m.reqPerRow = m.perRow;
+    }
+    ViewBuffer b;
+    if (!s.views().read(m.winId, b) || b.req.addr != m.reqStart) return;   // not answered yet
+    if (!b.ok) {
+        m.winOk = false;
+        return;
+    }
+    if (m.winOk && b.serial == m.winSerial && b.req.addr == m.winStart) return;   // already adopted
+    const bool refresh = b.serial != m.winSerial;
+    m.win = std::move(b.bytes);
+    m.winStart = b.req.addr;
+    m.winSerial = b.serial;
+    m.winOk = true;
+    m.track.update(m.winStart, m.win.data(), (unsigned)m.win.size(), refresh);
+}
+
+// A new core (or none), or new content, invalidates everything the window remembers.  Its requests stay: they are
+// refilled from the new core, and a buffer filled for the old one is unreadable (DebugViews' epoch).
 void syncCore(DebugSession& s) {
     MemState& m = g_mem;
-    if (m.ifaceSeen == (const void*)s.iface()) return;
-    m.ifaceSeen = s.iface();
+    if (m.epochSeen == s.views().epoch()) return;
+    m.epochSeen = s.views().epoch();
     m.region = 0;
     m.haveSel = false;
     m.editing = false;
     m.job.reset();
     m.history.clear();
     m.winOk = false;
+    m.winSerial = 0;
     m.track.reset();
     m.pendingRow = 0;
     m.lastHit = false;
@@ -503,13 +539,33 @@ void drawGrid(DebugSession& s, const vj_debug_region& r, float footerH) {
 void drawFooter(DebugSession& s, const std::vector<vj_debug_region>& regs, CheatManager* cheats) {
     MemState& m = g_mem;
     if (!m.haveSel) {
+        if (m.selId != DebugViews::kNoId) {
+            s.views().clear(m.selId);
+            m.selId = DebugViews::kNoId;
+            m.selReq = ~0u;
+        }
         ui::hint("Click a cell to select it; double-click or Enter edits it (hex). Arrow keys move.");
         return;
     }
+    // The selected cell's four bytes are a second published view (re-asked when the selection moves).
+    if (m.selId == DebugViews::kNoId || m.selReq != m.sel) {
+        ViewRequest q;
+        q.kind = ViewRequest::Kind::Memory;
+        q.addr = m.sel;
+        q.len = 4;
+        m.selId = s.views().set(m.selId, q);
+        m.selReq = m.sel;
+    }
     std::vector<uint8_t> b;
+    bool answered = false;
+    ViewBuffer sb;
+    if (s.views().read(m.selId, sb) && sb.req.addr == m.sel) {
+        answered = true;
+        if (sb.ok) b = std::move(sb.bytes);
+    }
     const int ri = regionIndexAt(regs, m.sel);
     std::string rname = ri >= 0 && regs[(size_t)ri].name ? regs[(size_t)ri].name : "?";
-    if (s.read(m.sel, b, 4)) {
+    if (b.size() >= 4) {
         ImGui::TextWrapped("$%06X (%s)   u8 $%02X = %u   u16 $%04X = %u   u32 $%08X = %u", m.sel, rname.c_str(), b[0],
                            (unsigned)b[0], decodeBE(b.data(), 2), decodeBE(b.data(), 2), decodeBE(b.data(), 4),
                            decodeBE(b.data(), 4));
@@ -517,8 +573,10 @@ void drawFooter(DebugSession& s, const std::vector<vj_debug_region>& regs, Cheat
         const int pi = regionIndexAt(regs, ptr);
         ui::hint("As a pointer: $%06X%s%s", ptr, pi >= 0 ? "  in " : "  (not mapped)",
                  pi >= 0 && regs[(size_t)pi].name ? regs[(size_t)pi].name : "");
-    } else {
+    } else if (answered) {
         ImGui::Text("$%06X (%s)  unreadable", m.sel, rname.c_str());
+    } else {
+        ImGui::Text("$%06X (%s)  reading...", m.sel, rname.c_str());
     }
 
     // Add as cheat: the cheat system patches main RAM only.
@@ -549,6 +607,15 @@ void drawFooter(DebugSession& s, const std::vector<vj_debug_region>& regs, Cheat
 bool& memoryWindowOpen() { return g_mem.open; }
 bool& clutWindowOpen() { return g_clutOpen; }
 
+namespace memory_test {
+bool byteAt(unsigned addr, uint8_t& v) {
+    const MemState& m = g_mem;
+    if (!m.winOk || addr < m.winStart || addr - m.winStart >= m.win.size()) return false;
+    v = m.win[addr - m.winStart];
+    return true;
+}
+}  // namespace memory_test
+
 void showMemoryAt(DebugSession& s, unsigned addr) {
     syncCore(s);
     g_mem.open = true;
@@ -559,23 +626,29 @@ void showMemoryAt(DebugSession& s, unsigned addr) {
 
 void drawMemoryWindow(DebugSession& s, CheatManager* cheats) {
     MemState& m = g_mem;
-    if (!m.open) return;
+    if (!m.open) {
+        releaseViews(s);
+        return;
+    }
     ui::nextWindow(52.0f, 36.0f, 28.0f, 18.0f);
     bool open = true;
     const bool shown = ui::beginWindow("Memory", &open);
     ui::keepOnScreen();
     if (!open) m.open = false;
     if (!shown) {
+        releaseViews(s);
         ImGui::End();
         return;
     }
     if (!s.enabled()) {
+        releaseViews(s);
         ui::coloredWrapped(warnCol(), s.disabledReason().c_str());
         ImGui::End();
         return;
     }
     const auto& regs = s.regions();
     if (regs.empty()) {
+        releaseViews(s);
         ImGui::TextWrapped("The core reported no memory regions.");
         ImGui::End();
         return;
@@ -587,6 +660,7 @@ void drawMemoryWindow(DebugSession& s, CheatManager* cheats) {
     const float footerH = ImGui::GetTextLineHeightWithSpacing() * 3.0f + ImGui::GetFrameHeightWithSpacing() + 4.0f;
     drawGrid(s, regs[(size_t)m.region], footerH);
     drawFooter(s, regs, cheats);
+    s.wakeViews();   // the requests above are set: inline they are filled now, threaded one fill is posted
     ImGui::End();
 }
 
@@ -608,11 +682,12 @@ void registerMemoryTools(DebugSession& s) {
     clut.isOpen = [] { return g_clutOpen; };
     clut.toggle = [] { g_clutOpen = !g_clutOpen; };
     s.registerTool(clut);
-    s.onForcedClose.push_back([](const char*) {
+    s.onForcedClose.push_back([&s](const char*) {
         g_mem.open = false;
         g_mem.editing = false;
         g_mem.job.reset();
         g_clutOpen = false;
+        releaseViews(s);   // (the Palette window releases its own on its next draw)
     });
 }
 

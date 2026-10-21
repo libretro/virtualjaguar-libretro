@@ -198,3 +198,9 @@ else()
 endif()
 add_test(NAME debug_views_unit COMMAND vj_debug_views_test)
 set_tests_properties(debug_views_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
+set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp)
+add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
+         "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
+set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)
