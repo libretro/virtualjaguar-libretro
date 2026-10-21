@@ -36,7 +36,7 @@ if(VJ_APP_BUILD_TESTS)
 
     add_executable(vj_debug_cpu_test tests/debug_cpu_test.cpp ${VJ_DEBUG_SESSION_SRCS})
     target_include_directories(vj_debug_cpu_test PRIVATE tests)
-    target_link_libraries(vj_debug_cpu_test PRIVATE vj_debug_cpu)
+    target_link_libraries(vj_debug_cpu_test PRIVATE vj_debug_cpu Threads::Threads)
     if(MSVC)
         target_compile_options(vj_debug_cpu_test PRIVATE /W3 /utf-8)
         target_compile_definitions(vj_debug_cpu_test PRIVATE _CRT_SECURE_NO_WARNINGS)

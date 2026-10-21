@@ -1,5 +1,23 @@
 # Debug-tools tests (#652 / #833).  All headless.
 #
+# #967 3a: a window smoke test = one ImGui frame loop over the mock core.  `target` / `test` name the executable and the
+# ctest entry; the remaining arguments are the test's own sources (the session, the cheat manager and the theme come along).
+function(vj_add_debug_ui_smoke target test)
+    add_executable(${target} ${ARGN} ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/paths.cpp
+        "${VJ_ROOT}/src/core/cheat.c" src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
+    target_include_directories(${target} PRIVATE src src/debug tests "${VJ_ROOT}/src/debug" "${VJ_ROOT}/src/core"
+        "${VJ_ROOT}/libretro-common/include")
+    target_link_libraries(${target} PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W3 /utf-8)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+    add_test(NAME ${test} COMMAND ${target})
+    set_tests_properties(${test} PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL " LABELS emu_thread)
+endfunction()
+
 #   debug_session_unit   DebugSession (app/src/debug) against the mock core interface
 #                        (app/tests/debug_mock.h): when the tools are available, attach / halt /
 #                        resume / step through the nested pump, the breakpoint list, the poke policy,
@@ -199,8 +217,26 @@ endif()
 add_test(NAME debug_views_unit COMMAND vj_debug_views_test)
 set_tests_properties(debug_views_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
+#   debug_core_job_unit  CoreJob (core_job.h): a job posted to the emulation thread, its result taken later (newest wins).
+add_executable(vj_debug_core_job_test tests/debug_core_job_test.cpp ${VJ_DEBUG_SESSION_SRCS})
+target_include_directories(vj_debug_core_job_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_core_job_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_debug_core_job_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_core_job_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_core_job_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_core_job_unit COMMAND vj_debug_core_job_test)
+set_tests_properties(debug_core_job_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_cpu_ui_smoke   the CPU window (cpu_ui.cpp) drawn headlessly over the mock: registers and listing from
+#                        published buffers, idle frames free of core calls, the Break/Step-greyed threaded state.
+vj_add_debug_ui_smoke(vj_debug_cpu_ui_smoke debug_cpu_ui_smoke tests/debug_cpu_ui_smoke.cpp src/debug/cpu_ui.cpp)
+target_link_libraries(vj_debug_cpu_ui_smoke PRIVATE vj_debug_cpu)
+
 # #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
-set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp)
+set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp)
 add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
          "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
 set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)

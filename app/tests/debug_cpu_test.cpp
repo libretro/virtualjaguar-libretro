@@ -4,9 +4,11 @@
 // step, step over, run to cursor and their temporary breakpoint).  No window, no GL, no core.
 #include "cpu_view.h"
 #include "debug_mock.h"
+#include "debug_ui_fixture.h"
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -344,7 +346,85 @@ static void testControls() {
     CHECK(!c.breakIn(VJ_DBG_TARGET_M68K) && !c.note().empty());
 }
 
+// #967 3a: the window's feed adopts published buffers and never reaches the core itself.
+static void testCpuFeedReadsBuffersOnly() {
+    UiFixture f;
+    f.s.views().setDisasm(&disasmRows);
+    CpuFeed feed;
+    feed.want(f.s, VJ_DBG_TARGET_M68K, 0x1000, 8);
+    f.s.wakeViews();                                     // inline: the copier runs now
+    const UiFixture::Mark m = f.mark();
+    CHECK(feed.update(f.s) && feed.haveRegs() && feed.regsTarget() == VJ_DBG_TARGET_M68K);
+    CHECK(feed.regs().pc == 0x4000 && feed.regs().d[3] == 0x1003);
+    CHECK(feed.rowsFor(VJ_DBG_TARGET_M68K, 0x1000, 8) && feed.rows().size() == 8);
+    CHECK(feed.rows()[0].addr == 0x1000 && !feed.rows()[0].bytes.empty());
+    for (size_t i = 1; i < 8; i++) CHECK(feed.rows()[i].addr == feed.rows()[i - 1].addr + feed.rows()[i - 1].len);
+    CHECK(!feed.update(f.s) && !feed.update(f.s));         // nothing new
+    CHECK(f.quietSince(m));                                // update() never reaches the core
+    feed.want(f.s, VJ_DBG_TARGET_GPU, 0xF03000, 4);        // a tab switch: the old answer is not the new one
+    CHECK(!feed.rowsFor(VJ_DBG_TARGET_GPU, 0xF03000, 4) && feed.regsTarget() == VJ_DBG_TARGET_M68K);
+    f.s.wakeViews();
+    CHECK(feed.update(f.s) && feed.regsTarget() == VJ_DBG_TARGET_GPU && feed.regs().risc_pc == 0xF03000);
+    CHECK(feed.rowsFor(VJ_DBG_TARGET_GPU, 0xF03000, 4) && feed.rows()[0].text.find("fake") == 0);
+    // The same request restated changes nothing; a new refresh serial adopts a fresh buffer.
+    feed.want(f.s, VJ_DBG_TARGET_GPU, 0xF03000, 4);
+    CHECK(!feed.update(f.s));
+    f.s.requestRefresh();
+    f.s.wakeViews();
+    CHECK(feed.update(f.s));
+    // A new core forgets what was adopted; releasing drops the requests.
+    f.s.views().bumpEpoch();
+    CHECK(feed.update(f.s) && !feed.answered() && !feed.haveRegs() && feed.regsTarget() == -1);
+    f.s.wakeViews();
+    CHECK(feed.update(f.s) && feed.answered() && feed.haveRegs());
+    feed.release(f.s);
+    CHECK(f.s.views().count() == 0 && !feed.answered() && !feed.rowsFor(VJ_DBG_TARGET_GPU, 0xF03000, 4));
+}
+
+static void testDisasmNav() {
+    UiFixture f;
+    std::vector<std::function<void()>> q;
+    f.s.corePost = [&](std::function<void()> fn) { q.push_back(std::move(fn)); };
+    DisasmNav nav;
+    nav.back(f.s, VJ_DBG_TARGET_M68K, 0x1010, 4);
+    unsigned a = 0;
+    CHECK(nav.pending() && !nav.take(a));
+    std::vector<std::function<void()>> work = std::move(q);
+    q.clear();
+    for (auto& fn : work) {
+        CountingIface::OnCore g;
+        fn();
+    }
+    CHECK(nav.take(a) && a == backStart(f.mock.iface(), VJ_DBG_TARGET_M68K, 0x1010, 4));
+    CHECK(!nav.pending());
+    // prev walks one instruction back `count` times.
+    nav.prev(f.s, VJ_DBG_TARGET_M68K, 0x1010, 3);
+    work = std::move(q);
+    q.clear();
+    for (auto& fn : work) {
+        CountingIface::OnCore g;
+        fn();
+    }
+    unsigned want = 0x1010;
+    for (int k = 0; k < 3; k++) want = prevAddr(f.mock.iface(), VJ_DBG_TARGET_M68K, want);
+    CHECK(nav.take(a) && a == want);
+}
+
+// #967 3a: the run controls reach the core only through callCore.
+static void testControlsMarshalled() {
+    UiFixture f;
+    CpuControl c(f.s);
+    TempBreak tb;
+    const UiFixture::Mark m = f.mark();
+    CHECK(tb.arm(f.s, VJ_DBG_TARGET_M68K, 0x5000) && f.mock.breakpoints.size() == 1);
+    CHECK(f.mark().coreCalls > m.coreCalls);
+    tb.disarm(f.s);
+    CHECK(f.mock.breakpoints.empty());
+    CHECK(CountingIface::offCore() == 0);
+}
+
 int main() {
+    CountingIface::reset();
     testMusashi();
     testRisc();
     testStrip();
@@ -354,6 +434,9 @@ int main() {
     testDecoders();
     testParse();
     testControls();
+    testCpuFeedReadsBuffersOnly();
+    testDisasmNav();
+    testControlsMarshalled();
     std::printf("debug_cpu_unit: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -11,6 +11,8 @@
 // Wiring (App owns the call site):  debug.addProvider({registerCpuTools, drawCpuTools});
 #pragma once
 
+#include <cstddef>
+
 namespace vj {
 
 class DebugSession;
@@ -21,6 +23,12 @@ void registerCpuTools(DebugSession& s);
 
 // Draws the window if it is open.  Also runs while the machine is halted (inside App::haltedFrame()).
 void drawCpuTools(DebugSession& s);
+
+// Test hooks: whether the tab being looked at has registers, and how many listing rows it holds.
+namespace cpu_test {
+bool haveRegs();
+size_t rowCount();
+}  // namespace cpu_test
 
 // Open state, for menu code that wants it directly.
 bool& cpuWindowOpen();

@@ -35,15 +35,16 @@ struct TabState {
     unsigned cursor = 0;              // the selected row: Run to cursor, the context menu
     unsigned lastPc = ~0u;
     float wheel = 0;
+    unsigned wheelUp = 0;             // wheel steps up not yet sent to the emulation thread (prevAddr walks)
+    bool navBusy = false;             // this tab has a DisasmNav job outstanding
+    bool rowsAtTop = false;           // t.rows answer the current top (as of the last drawn frame)
+    unsigned nRows = 24;              // rows the listing showed last (the request asks for this many)
+    unsigned gen = 0;                 // bumped by a jump (Go to, a breakpoint click): an older nav answer is dropped
+    unsigned followPc = ~0u;          // follow-PC already walked back for this pc and it still was not on screen
     char gotoBuf[16] = "";
-    std::vector<Line> rows;
-    uint64_t rowsSerial = 0;
-    unsigned rowsTop = ~0u;
-    int rowsN = 0;
-    const void* rowsIface = nullptr;
+    std::vector<DisasmLine> rows;     // the published rows of the last answered request for this tab
     vj_debug_regs regs, prev;         // the current registers, and what they were at the previous halt
     bool haveRegs = false, havePrev = false;
-    uint64_t regsSerial = 0;
     TabState() {
         std::memset(&regs, 0, sizeof regs);
         std::memset(&prev, 0, sizeof prev);
@@ -56,6 +57,13 @@ struct CpuState {
     int wantTab = -1;                 // select this tab next frame (a halt on that processor)
     TabState t[VJ_DBG_NUM_TARGETS];
     std::unique_ptr<CpuControl> ctl;
+    CpuFeed feed;                     // the Regs / Disasm requests of the tab being looked at, and their answers
+    DisasmNav nav;                    // the backwards walks, on the emulation thread
+    bool navDraining = false;         // a walk from before a core switch is still queued
+    int navTab = -1;                  // the tab the outstanding nav job is for (one at a time)
+    unsigned navGen = 0;              // that tab's gen when it was submitted
+    bool fresh = false;               // the feed adopted something this frame
+    uint64_t epochSeen = ~0ull;       // DebugViews::epoch() last adopted: a new core / content resets the window
     std::string status;
     bool statusErr = false;
     bool hooked = false;
@@ -71,16 +79,28 @@ unsigned pcOf(int target, const TabState& t) {
     return target == VJ_DBG_TARGET_M68K ? t.regs.pc : t.regs.risc_pc;
 }
 
-void refreshRegs(DebugSession& s, int target, TabState& t) {
-    // Halted: the machine cannot change under us, but a register edit or a poke elsewhere can -- reading is
-    // cheap, so read every frame.  Running: at the session's 10 Hz cadence.
-    if (t.haveRegs && !s.halted() && t.regsSerial == s.refreshSerial()) return;
-    vj_debug_regs r;
-    std::memset(&r, 0, sizeof r);
-    const vj_debug_iface* i = s.iface();
-    t.haveRegs = i && i->get_regs && i->get_regs(target, &r) != 0;
-    if (t.haveRegs) t.regs = r;
-    t.regsSerial = s.refreshSerial();
+// The registers come from the published Regs buffer (refreshed at the session's 10 Hz cadence while running, and on
+// every halt, register edit or poke: requestRefresh()).
+void releaseFeed(DebugSession& s) { g.feed.release(s); }
+
+// A new core (or none), or new content, invalidates everything the window remembers.  Its requests stay: they are
+// refilled from the new core, and a buffer filled for the old one is unreadable (DebugViews' epoch).
+void syncCore(DebugSession& s) {
+    if (g.epochSeen == s.views().epoch()) return;
+    g.epochSeen = s.views().epoch();
+    for (TabState& t : g.t) {
+        t.haveRegs = t.havePrev = false;
+        t.rows.clear();
+        t.topValid = false;
+        t.wheelUp = 0;
+        t.followPc = ~0u;
+        t.gen++;
+    }
+    unsigned a;
+    while (g.nav.take(a)) {}
+    g.navTab = -1;
+    g.navDraining = g.nav.pending();   // a walk of the old core still queued: its answer is dropped, no new walk until then
+    for (TabState& t : g.t) t.navBusy = false;
 }
 
 // ---- registers ----------------------------------------------------------------------------------------------
@@ -102,9 +122,8 @@ bool hexField(const char* id, unsigned v, int digits, bool editable, bool change
 }
 
 void setReg(DebugSession& s, int target, int reg, unsigned v, const char* name) {
-    const vj_debug_iface* i = s.iface();
-    if (!s.halted() || !i || !i->set_reg) return;
-    if (i->set_reg(target, reg, v)) {
+    if (!s.halted()) return;
+    if (s.setReg(target, reg, v)) {
         s.requestRefresh();
         setStatus(std::string(name) + " set", false);
     } else {
@@ -275,12 +294,43 @@ void gotoAddr(TabState& t, unsigned a) {
     t.follow = false;
     t.cursor = a;
     t.haveCursor = true;
+    t.gen++;   // a walk still in flight for this tab no longer applies
+}
+
+// A finished walk moves its tab's top (unless the tab jumped elsewhere meanwhile).
+void pollNav(const DebugSession&) {
+    unsigned a = 0;
+    if (g.navDraining) {
+        if (g.nav.pending()) return;
+        while (g.nav.take(a)) {}
+        g.navDraining = false;
+        return;
+    }
+    if (!g.nav.take(a)) return;
+    const int tab = g.navTab;
+    g.navTab = -1;
+    if (tab < 0 || tab >= VJ_DBG_NUM_TARGETS) return;
+    TabState& t = g.t[tab];
+    t.navBusy = false;
+    if (t.gen != g.navGen) return;
+    t.top = a;
+    t.topValid = true;
+}
+
+bool navFree() { return g.navTab < 0 && !g.navDraining; }
+
+void postNav(DebugSession& s, int target, TabState& t, bool back, unsigned addr, int count) {
+    g.navTab = target;
+    g.navGen = t.gen;
+    t.navBusy = true;
+    if (back) g.nav.back(s, target, addr, count);
+    else g.nav.prev(s, target, addr, count);
+    pollNav(s);   // inline the answer is already there; threaded it arrives on a later frame
 }
 
 void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
     ImGui::BeginChild("##dis", ImVec2(0, height), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    const vj_debug_iface* iface = s.iface();
     const float pitch = ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y;
     const float cw = ImGui::CalcTextSize("0").x;
     const float width = ImGui::GetContentRegionAvail().x;
@@ -288,8 +338,10 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
     n = std::max(n, 4);
     const bool havePc = t.haveRegs;
     const unsigned pc = havePc ? pcOf(target, t) : 0;
+    pollNav(s);
 
-    // Mouse wheel scrolls by instructions (variable-length code: walk, do not index).
+    // Mouse wheel scrolls by instructions (variable-length code: walk, do not index).  Down reads the published rows;
+    // up walks backwards on the emulation thread (one job at a time, the steps meanwhile add up).
     ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsWindowHovered() && io.MouseWheel != 0.0f) {
         t.wheel += io.MouseWheel * 3.0f;
@@ -297,32 +349,38 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
         t.wheel -= (float)whole;
         if (whole != 0 && t.topValid) {
             t.follow = false;
-            for (; whole > 0; whole--) t.top = prevAddr(iface, target, t.top);
-            for (; whole < 0; whole++) t.top = nextAddr(iface, target, t.top);
+            if (whole > 0) t.wheelUp += (unsigned)whole;
+            else if (t.rowsAtTop && !t.rows.empty()) {   // only from rows that answer this top
+                t.top = t.rows[std::min((size_t)-whole, t.rows.size() - 1)].addr;
+                t.gen++;   // a walk still in flight no longer applies
+            }
         }
     }
-    if (!t.topValid) {
-        t.top = havePc ? backStart(iface, target, pc, 4) : 0;
-        t.topValid = true;
+    if (t.wheelUp && t.topValid && !t.navBusy && navFree()) {
+        const unsigned steps = t.wheelUp;
+        t.wheelUp = 0;
+        postNav(s, target, t, false, t.top, (int)steps);
     }
+    if (!t.topValid && !t.navBusy && navFree()) postNav(s, target, t, true, pc, 4);   // draws no rows until it returns
 
-    auto fill = [&] {
-        if (t.rowsSerial != s.refreshSerial() || t.rowsTop != t.top || t.rowsN != n || t.rowsIface != iface || s.halted()) {
-            t.rows = disasmForward(iface, target, t.top, n);
-            t.rowsSerial = s.refreshSerial();
-            t.rowsTop = t.top;
-            t.rowsN = n;
-            t.rowsIface = iface;
-        }
-    };
-    fill();
-    if (t.follow && havePc && pc != ~0u) {
+    t.nRows = (unsigned)n;
+    g.feed.want(s, target, t.top, t.topValid ? t.nRows : 0);
+    s.wakeViews();
+    if (g.feed.update(s)) g.fresh = true;
+    const bool current = t.topValid && g.feed.rowsFor(target, t.top, t.nRows);
+    if (current && g.fresh) t.rows = g.feed.rows();
+    t.rowsAtTop = current;
+    g.fresh = false;
+
+    if (!t.follow) t.followPc = ~0u;
+    if (t.follow && havePc && pc != ~0u && current) {
         bool visible = false;
         for (int i = 0; i < n - 1 && i < (int)t.rows.size(); i++)
             if (t.rows[(size_t)i].addr == pc) visible = true;
-        if (!visible || (pc != t.lastPc && t.rows.size() && pc < t.rows[0].addr)) {
-            t.top = backStart(iface, target, pc, std::min(4, n / 4));
-            fill();
+        if (visible) t.followPc = ~0u;
+        else if (t.followPc != pc && !t.navBusy && navFree()) {
+            t.followPc = pc;   // once per pc: a pc the listing cannot show would otherwise walk every frame
+            postNav(s, target, t, true, pc, std::min(4, n / 4));
         }
     }
     t.lastPc = pc;
@@ -338,7 +396,7 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
     const bool temp = g.ctl && g.ctl->temp().active() && g.ctl->temp().target() == target;
 
     for (int i = 0; i < (int)t.rows.size(); i++) {
-        const Line& L = t.rows[(size_t)i];
+        const DisasmLine& L = t.rows[(size_t)i];
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const bool isPc = havePc && L.addr == pc;
         const bool sel = t.haveCursor && t.cursor == L.addr;
@@ -398,7 +456,7 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
         std::string bytes = L.bytes;
         if (bytes.size() > 14) bytes = bytes.substr(0, 14) + "..";
         dl->AddText(ImVec2(p.x + xBytes, p.y), colDim, bytes.c_str());
-        dl->AddText(ImVec2(p.x + xText, p.y), L.valid ? colText : colDim, L.text.c_str());
+        dl->AddText(ImVec2(p.x + xText, p.y), L.len != 0 ? colText : colDim, L.text.c_str());
     }
     ImGui::EndChild();
 }
@@ -471,7 +529,8 @@ void drawBanner(DebugSession& s) {
     }
     ImGui::TextColored(kGreen, "Running");
     ImGui::SameLine();
-    ui::hint("Registers refresh 10 times a second.  Break (F9) to inspect and edit.");
+    if (s.haltAvailable()) ui::hint("Registers refresh 10 times a second.  Break (F9) to inspect and edit.");
+    else ui::hint("Registers refresh 10 times a second.  %s.", s.haltDisabledReason().c_str());
     for (int i = 0; i < VJ_DBG_NUM_TARGETS; i++)
         if (g.ctl->pending(i)) {
             const TabState& t = g.t[i];
@@ -488,7 +547,10 @@ void drawToolbar(DebugSession& s) {
     const bool other = halted && s.haltedTarget() != tab;
     const bool risc = isRisc(tab);
     ui::Flow flow;
-    if (button("Break  F9", !halted, "Stop the machine at the next instruction of the processor on this tab.")) g.ctl->breakIn(tab);
+    const bool canHalt = s.haltAvailable();
+    const char* breakTip = canHalt ? "Stop the machine at the next instruction of the processor on this tab."
+                                   : "Halting is not available with the emulation thread yet.";
+    if (button("Break  F9", !halted && canHalt, breakTip)) g.ctl->breakIn(tab);
     flow.next(ui::Flow::buttonW("Continue  F9"));
     if (button("Continue  F9", halted, "Resume everything.")) g.ctl->cont();
     // F10 steps the processor that is halted; on another tab the button does something different, so it says so.
@@ -536,7 +598,9 @@ void drawNav(DebugSession& s) {
     if (ImGui::Button("PC")) {
         t.follow = true;
         t.lastPc = ~0u;
+        t.followPc = ~0u;
         t.topValid = false;
+        t.gen++;
     }
     if (ImGui::IsItemHovered()) ui::beginWrappedTooltip(), ImGui::TextUnformatted("Back to the program counter, and follow it."), ui::endWrappedTooltip();
     (void)s;
@@ -546,11 +610,13 @@ void drawWindow(DebugSession& s) {
     ui::nextWindow(74, 46, 54, 30);
     if (!ui::beginWindow("CPU debugger", &g.open)) {
         ui::keepOnScreen();
+        releaseFeed(s);   // collapsed: no requests, no cost
         ImGui::End();
         return;
     }
     ui::keepOnScreen();
     if (!s.enabled()) {
+        releaseFeed(s);
         ui::hint("%s", s.disabledReason().c_str());
         ImGui::End();
         return;
@@ -581,7 +647,20 @@ void drawWindow(DebugSession& s) {
 
     const int tab = g.tab;
     TabState& t = g.t[tab];
-    refreshRegs(s, tab, t);
+    syncCore(s);
+    g.feed.want(s, tab, t.top, t.topValid ? t.nRows : 0);
+    s.wakeViews();   // the requests are set: inline they are filled now, threaded one fill is posted
+    if (g.feed.update(s)) g.fresh = true;
+    const bool mine = g.feed.regsTarget() == tab;   // the adopted registers are this tab's
+    if (mine) {
+        t.haveRegs = g.feed.haveRegs();
+        if (t.haveRegs) t.regs = g.feed.regs();
+    }
+    if (!g.feed.answered() || (!mine && !t.haveRegs)) {
+        ui::hint("Reading registers...");   // the first answer (or this tab's) is on its way
+        ImGui::End();
+        return;
+    }
     if (!t.haveRegs) {
         ui::hint("The core did not return the %s registers.", targetName(tab));
         ImGui::End();
@@ -620,8 +699,14 @@ void drawWindow(DebugSession& s) {
 
 bool& cpuWindowOpen() { return g.open; }
 
-void showCpuAt(DebugSession&, int target, unsigned addr) {
+namespace cpu_test {
+bool haveRegs() { return g.t[g.tab].haveRegs; }
+size_t rowCount() { return g.t[g.tab].rows.size(); }
+}  // namespace cpu_test
+
+void showCpuAt(DebugSession& s, int target, unsigned addr) {
     if (target < 0 || target >= VJ_DBG_NUM_TARGETS) return;
+    syncCore(s);   // (a new core's reset must not undo the jump that follows)
     g.open = true;
     g.wantTab = target;
     g.tab = target;
@@ -636,6 +721,7 @@ void registerCpuTools(DebugSession& s) {
     cpu.isOpen = [] { return g.open; };
     cpu.toggle = [] { g.open = !g.open; };
     s.registerTool(cpu);
+    s.views().setDisasm(&disasmRows);   // the listing is built on the emulation thread (Musashi for the 68000)
     if (g.hooked) return;   // one session per process; the hooks are added once
     g.hooked = true;
     g.ctl = std::make_unique<CpuControl>(s);
@@ -645,8 +731,9 @@ void registerCpuTools(DebugSession& s) {
         for (TabState& t : g.t) {
             t.prev = t.regs;
             t.havePrev = t.haveRegs;
-            t.regsSerial = 0;
+            t.followPc = ~0u;
         }
+        s.requestRefresh();   // the registers changed: the window re-reads at once
         if (target < 0 || target >= VJ_DBG_NUM_TARGETS) return;
         g.wantTab = target;
         g.tab = target;
@@ -657,8 +744,9 @@ void registerCpuTools(DebugSession& s) {
         g.t[target].lastPc = ~0u;
         setStatus("", false);
     });
-    s.onForcedClose.push_back([](const char*) {
+    s.onForcedClose.push_back([&s](const char*) {
         g.open = false;
+        g.feed.release(s);
         if (g.ctl) g.ctl->forget();
         for (TabState& t : g.t) {
             t.haveRegs = t.havePrev = false;
@@ -703,7 +791,10 @@ void devHook(DebugSession& s) {
 
 void drawCpuTools(DebugSession& s) {
     devHook(s);
-    if (!g.open) return;
+    if (!g.open) {
+        releaseFeed(s);
+        return;
+    }
     drawWindow(s);
 }
 

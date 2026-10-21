@@ -3,14 +3,18 @@
 // control registers, the step-over decision, and the run controls (break / continue / step / step over /
 // run to cursor) on top of DebugSession.  cpu_ui.cpp draws it; debug_cpu_test.cpp tests it against the mock.
 //
-// Everything here runs on the emulation thread, between retro_run() calls or inside the halt pump.
+// The logic that reads the core (disasmForward, backStart, stepOverTarget, ...) takes the iface and runs on the
+// emulation thread, between retro_run() calls or inside the halt pump.  The window itself never calls it: it draws
+// from the published Regs / Disasm view buffers (CpuFeed) and asks for the few synchronous walks as jobs (DisasmNav).
 #pragma once
 
 #include <array>
 #include <string>
 #include <vector>
 
+#include "core_job.h"
 #include "debug_session.h"
+#include "debug_views.h"
 #include "vj_debug_iface.h"
 
 namespace vj {
@@ -49,6 +53,68 @@ unsigned nextAddr(const vj_debug_iface* iface, int target, unsigned addr);
 unsigned backStart(const vj_debug_iface* iface, int target, unsigned pc, int lines);
 // The instruction before `addr` (backStart with one line); `addr` itself when nothing fits.
 unsigned prevAddr(const vj_debug_iface* iface, int target, unsigned addr);
+// disasmForward mapped to the DebugViews' DisasmLine (len 0 for an invalid line).  This is the DisasmFn the CPU tool
+// installs with DebugViews::setDisasm, so the emulation thread builds the window's rows (Musashi for the 68000).
+std::vector<DisasmLine> disasmRows(const vj_debug_iface* iface, int target, unsigned addr, unsigned rows);
+
+// ---- what the window draws from ---------------------------------------------------------------------------------
+// The CPU window's two view requests (registers and listing of the tab being looked at) and the newest answers it has
+// adopted.  Published buffers only: nothing here reaches the core.  UI thread.
+class CpuFeed {
+public:
+    // States the wanted registers and listing (views().set for each, only when changed; windows re-state every draw).
+    void want(DebugSession& s, int target, unsigned top, unsigned rows);
+    // Adopts the newest buffers; true when the registers or the rows changed.  A new core (the views' epoch) forgets
+    // everything adopted first.
+    bool update(DebugSession& s);
+    void release(DebugSession& s);                       // the window closed: drop both requests and what was adopted
+    bool answered() const { return answered_; }          // some Regs buffer has been adopted (ok or not)
+    bool haveRegs() const { return haveRegs_; }          // ...and the core returned the registers
+    int regsTarget() const { return regsTarget_; }       // the processor the adopted registers belong to (-1: none yet)
+    const vj_debug_regs& regs() const { return regs_; }
+    // The adopted rows answer exactly this request.
+    bool rowsFor(int target, unsigned top, unsigned rows) const {
+        return haveRows_ && rowsTarget_ == target && rowsTop_ == top && rowsN_ == rows;
+    }
+    const std::vector<DisasmLine>& rows() const { return rows_; }
+
+private:
+    void forget();
+    DebugViews::Id regsId_ = DebugViews::kNoId, disId_ = DebugViews::kNoId;
+    ViewRequest wantRegs_, wantDis_;
+    bool stated_ = false;                                // wantRegs_ / wantDis_ hold what the views were last given
+    uint64_t epoch_ = 0;                                 // the views' epoch the adopted data belongs to
+    bool answered_ = false, haveRegs_ = false;
+    int regsTarget_ = -1;
+    uint64_t regsSerial_ = 0;
+    vj_debug_regs regs_{};
+    bool haveRows_ = false;
+    int rowsTarget_ = -1;
+    unsigned rowsTop_ = 0, rowsN_ = 0;
+    uint64_t rowsSerial_ = 0;
+    std::vector<DisasmLine> rows_;
+};
+
+// The synchronous walks (backStart / prevAddr) that used to run on the draw path, moved onto the emulation thread.
+// One result at a time: take() gives the newest address; pending() says one is still on its way.
+class DisasmNav {
+public:
+    void back(DebugSession& s, int target, unsigned pc, int lines) {   // result: backStart(iface, target, pc, lines)
+        job_.submit(s, [=](const vj_debug_iface* i) { return backStart(i, target, pc, lines); });
+    }
+    void prev(DebugSession& s, int target, unsigned from, int count) {   // result: prevAddr applied `count` times
+        job_.submit(s, [=](const vj_debug_iface* i) {
+            unsigned a = from;
+            for (int k = 0; k < count; k++) a = prevAddr(i, target, a);
+            return a;
+        });
+    }
+    bool take(unsigned& addr) { return job_.take(addr); }
+    bool pending() const { return job_.pending(); }
+
+private:
+    CoreJob<unsigned> job_;
+};
 
 // ---- step over ----------------------------------------------------------------------------------------------------
 // 68000: JSR, BSR and TRAP return to the next instruction, so "step over" runs to pc + length.  Anything else is a
