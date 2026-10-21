@@ -355,13 +355,15 @@ void drawSettings(App& app) {
     } else {
         ui::nextWindow(42.0f, 30.0f, 34.0f, 16.0f);
     }
+    // The font is pushed before Begin so the title bar and its close box are TV-sized too (the UNSCALED size: PushFont applies the DPI scale itself).
+    if (tv) ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * tvMoreSettingsFontScale(app));
     bool open = ui::beginWindow(tv ? "Settings###vjtvmore" : "Settings", &app.showSettings, tv ? ImGuiWindowFlags_NoSavedSettings : 0);
     ui::keepOnScreen();
     if (!open) {
         ImGui::End();
+        if (tv) ImGui::PopFont();
         return;
     }
-    if (tv) ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * tvMoreSettingsFontScale(app));   // the UNSCALED size: PushFont applies the DPI scale itself
     drawResetAllSettings(app);
     if (ImGui::BeginTabBar("##tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
         // dev: --show-window settings-video etc. selects a tab once
@@ -383,8 +385,8 @@ void drawSettings(App& app) {
 #endif
         ImGui::EndTabBar();
     }
-    if (tv) ImGui::PopFont();
     ImGui::End();
+    if (tv) ImGui::PopFont();
 }
 
 // ---- save-state manager --------------------------------------------------------------------

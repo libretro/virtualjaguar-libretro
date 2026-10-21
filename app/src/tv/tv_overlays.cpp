@@ -82,7 +82,9 @@ public:
         lastMouse_ = c.mouse;
 
         int hover = -1;
-        c.dl->PushClipRect(ImVec2(c.pos.x, rowsTop - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, viewBottom), true);
+        const bool moreBelow = scroll + viewH < total - 0.5f;
+        // The arrow has the room under the rows: a half-cut last row must not run into it.
+        c.dl->PushClipRect(ImVec2(c.pos.x, rowsTop - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, viewBottom - (moreBelow ? 24 * u : 0.0f)), true);
         for (size_t i = 0; i < rows_.size(); i++) {
             const float y = rowsTop + tops[i] - scroll;
             if (y + heights[i] < rowsTop - kRowsMargin * u || y > viewBottom) continue;
@@ -95,7 +97,7 @@ public:
         }
         c.dl->PopClipRect();
         if (scroll > 0.5f) widgets::moreArrow(c.dl, m, ImVec2(lx + lw * 0.5f, rowsTop - 4 * u), true);
-        if (scroll + viewH < total - 0.5f) widgets::moreArrow(c.dl, m, ImVec2(lx + lw * 0.5f, viewBottom - 10 * u), false);
+        if (moreBelow) widgets::moreArrow(c.dl, m, ImVec2(lx + lw * 0.5f, viewBottom - 10 * u), false);
 
         // ---- the pointer: hovering a row focuses it, a click toggles it, a notch is a row --------------------------------
         if (hover >= 0 && (moved || c.clicked)) focusRow(hover);

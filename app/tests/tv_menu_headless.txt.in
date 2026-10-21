@@ -570,9 +570,9 @@
 10110  expect menu-open=0
 10110  expect paused=0
 
-# A window that is no longer "live" is the plain desktop Settings window, never a pad-driven one over a running game: a Share hold
-# closes the menu under "More settings..." (the game unpauses and polls its pad itself), and the hand-off ends with it.  Same walk
-# as above to open the window, then the hold; Ctrl+Comma closes what is left.
+# A window that is no longer "live" is never left over a running game (its pad player could not close it, and the pads are the
+# game's): a Share hold closes the menu under "More settings..." (the game unpauses and polls its pad itself), and the window goes
+# with the hand-off.  Same walk as above to open the window, then the hold.
 10150  key tap F4
 10190  expect menu-open=1
 10190  pad tap dpdown
@@ -598,8 +598,49 @@
 10450  pad down misc1
 11070  expect menu-open=0
 11070  expect tv-more=0
-11070  expect settings-open=1
+11070  expect settings-open=0
 11070  expect paused=0
 11090  pad up misc1
-11130  key tap ctrl+,
-11170  expect settings-open=0
+11130  expect settings-open=0
+
+# A game dropped on the window while it is open from the Base layer: the game starts, the window goes (no game is left behind a TV-sized
+# desktop window).  Close the game from its menu (Down x9 is Close game, A asks, Up is Yes, A answers), TV mode on, Base layer to
+# Settings (LB x4 clamps on Home, RB x3), into the list and Down x6 clamps on More settings... whichever row the screen remembered.
+11200  key tap F4
+11240  expect menu-open=1
+11240  pad tap dpdown
+11250  pad tap dpdown
+11260  pad tap dpdown
+11270  pad tap dpdown
+11280  pad tap dpdown
+11290  pad tap dpdown
+11300  pad tap dpdown
+11310  pad tap dpdown
+11320  pad tap dpdown
+11340  pad tap a
+11360  pad tap dpup
+11380  pad tap a
+11420  expect loaded=0
+11420  key tap F4
+11460  expect tv=1
+11460  pad tap leftshoulder
+11470  pad tap leftshoulder
+11480  pad tap leftshoulder
+11490  pad tap leftshoulder
+11500  pad tap rightshoulder
+11510  pad tap rightshoulder
+11520  pad tap rightshoulder
+11540  expect tv-screen=settings
+11540  pad tap dpright
+11550  pad tap dpdown
+11560  pad tap dpdown
+11570  pad tap dpdown
+11580  pad tap dpdown
+11590  pad tap dpdown
+11600  pad tap dpdown
+11620  pad tap a
+11660  expect tv-more=1
+11660  load @VJ_ROMS@/yarc.j64
+11720  expect loaded=1
+11720  expect tv-more=0
+11720  expect settings-open=0

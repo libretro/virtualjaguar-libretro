@@ -153,7 +153,11 @@ void drawCoreGroupReset(App& app, const std::string& categoryKey, bool filterAct
 void drawResetAllSettings(App& app) {
     static const char* kTitle = "Reset all settings";
     static bool alsoMappings = false, alsoPerGame = false;
-    if (rightButton("Reset all settings...")) {
+    // Not where pad / keyboard navigation starts (More settings from TV mode): the first A would open this modal.
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+    const bool resetAll = rightButton("Reset all settings...");
+    ImGui::PopItemFlag();
+    if (resetAll) {
         alsoMappings = alsoPerGame = false;   // the destructive extras are never remembered between openings
         ImGui::OpenPopup(kTitle);
     }

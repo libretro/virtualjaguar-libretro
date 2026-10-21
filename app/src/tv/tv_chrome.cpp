@@ -151,11 +151,12 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     if (tabClicked >= 0 && sections[tabClicked] != section_) setSection(sections[tabClicked]);
 
     // ---- the hint bar: the top screen's hints, with the section hint ahead of the way out ----------------------------
+    // A desktop window over this layer ("More settings") has the pads: none of these buttons does anything, so none is listed.
     std::vector<widgets::Hint> hints;
-    if (Screen* t = top()) hints = t->hints();
+    if (Screen* t = top(); t && !host_.desktopWindowOpen()) hints = t->hints();
     widgets::dropUnbound(hints);   // a button this input device lacks (Menu / Alt / Aux on the keyboard) is not listed
     const widgets::Hint sections_hint{prev + " " + next, "Sections"};
-    hints.insert(hints.empty() ? hints.end() : hints.end() - 1, sections_hint);
+    if (!host_.desktopWindowOpen()) hints.insert(hints.empty() ? hints.end() : hints.end() - 1, sections_hint);
     widgets::hintBar(dl, m, ImVec2(pos.x + m.safeX, pos.y + kHintTop * u), size.x - 2 * m.safeX, hints);
     ImGui::End();
 }

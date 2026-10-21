@@ -739,6 +739,39 @@ static void moreSettingsBackLeavesItems() {
     io.ConfigFlags = savedFlags;
 }
 
+// Where nav starts in the "More settings" window: the first item is the "Reset all settings..." button, which carries
+// NoNavDefaultFocus (settings_reset_ui.cpp), so the first A is the second item's.  (The real window is App-side and not linked here: the
+// probe is the same shape, and what it observes is ImGui honouring the flag with the live nav flags on.)
+static void moreSettingsDefaultFocusSkipsReset() {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiConfigFlags savedFlags = io.ConfigFlags;
+    ImGuiID resetId = 0, tabId = 0;
+    auto frame = [&](bool live, bool focus) {
+        io.DeltaTime = 1.0f / 60.0f;
+        vj::deskSetPopupNav(live);
+        vj::deskSetKeyboardNav(live);
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(40, 40));
+        ImGui::SetNextWindowSize(ImVec2(400, 240));
+        if (focus) ImGui::SetNextWindowFocus();
+        ImGui::Begin("moredefault");
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+        ImGui::SmallButton("Reset all settings...");
+        resetId = ImGui::GetItemID();
+        ImGui::PopItemFlag();
+        ImGui::Button("Core options");
+        tabId = ImGui::GetItemID();
+        ImGui::End();
+        ImGui::Render();
+    };
+    for (int i = 0; i < 2; i++) frame(false, i == 0);
+    for (int i = 0; i < 4; i++) frame(true, false);
+    CHECK(resetId != 0 && tabId != 0 && resetId != tabId);
+    CHECK(ImGui::GetCurrentContext()->NavId == tabId);
+    for (int i = 0; i < 3; i++) frame(false, false);
+    io.ConfigFlags = savedFlags;
+}
+
 static void baseNeverCapturesKeyboard() {
     FakeHost host;
     host.tv = true;
@@ -2512,6 +2545,26 @@ static void settingsHiddenRowsAbsent() {
     CHECK(g_imguiErrors == 0);
 }
 
+// A desktop window over the Base layer ("More settings") has the pads: the screens' hints (A Open, LB RB Sections, B ...) list buttons
+// that do nothing there, so none is drawn.
+static void baseHintsHiddenOverDesktopWindow() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Sections") && drew("Open"));
+    host.desktopOpen = true;
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(!drew("Sections") && !drew("Open") && !drew("Groups"));
+    host.desktopOpen = false;
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Sections"));
+    CHECK(g_imguiErrors == 0);
+}
+
 // Speed before a game has run (approved change G): the group is in the rail with its one line, which nothing steps; on the Base screen
 // and in the menu's groups level.
 static std::vector<SettingRow> speedNoteRows() {
@@ -3513,6 +3566,7 @@ int main() {
     baseNeverCapturesKeyboard();
     padHidesCursor();
     padCursorReturnsOverDesktopWindow();
+    baseHintsHiddenOverDesktopWindow();
     baseReturnsAfterGame();
     raStatusHiddenWhenEmpty();
     screenStackRoutesInput();
@@ -3571,6 +3625,7 @@ int main() {
     padPopupNav();
     moreSettingsNavFlags();
     moreSettingsBackLeavesItems();
+    moreSettingsDefaultFocusSkipsReset();
     settingsRailAndList();
     settingsBackAndLeftEdge();
     settingsHints();

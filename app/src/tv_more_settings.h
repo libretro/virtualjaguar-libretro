@@ -5,7 +5,8 @@
 // The menu stays open underneath, holding the pause, and has the pad back the moment the window closes.
 //
 // "Live" = the window was opened from here (App::tvMoreSettings_), is still open, and the in-game menu is open or TV mode is on with no
-// game running.  When the menu closes under it (a Share hold) or a game starts (a drop), it is the plain desktop Settings window.  While
+// game running.  When the menu closes under it (a Share hold) or a game starts (a drop), the hand-off ends; with a game running
+// the window is closed too (a pad player could not close it), otherwise it is the plain desktop Settings window.  While
 // live: ImGui gamepad + keyboard navigation are on (desktop_nav_popup.h), the window is centred at 80 % of the viewport with
 // TV-sized text (ui.cpp drawSettings), and our own NavInput turns the pads into intents for ImGui's gamepad keys.
 #pragma once
@@ -18,7 +19,7 @@ namespace vj {
 
 class App;
 
-bool tvMoreSettingsLive(App& app);   // app.tvMoreSettings_ && app.showSettings && (TV mode on or the in-game menu open)
+bool tvMoreSettingsLive(App& app);   // app.tvMoreSettings_ && app.showSettings && (the in-game menu open, or TV mode on with no game running)
 void tvMoreSettingsOpen(App& app);   // AppHost::openMoreSettings(): showSettings = true, the flag, a fresh NavInput
 // One SDL event, before the shell.  True = consumed: a pad press, the left stick, a bound trigger, and (the menu open) the keys the
 // shell would take.  A release is fed but still reaches the app; Start and the intents that are not TV's stay the app's; nothing is

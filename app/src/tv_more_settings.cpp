@@ -99,6 +99,9 @@ void tvMoreSettingsFrame(App& app, uint64_t ms) {
     if (app.tvMoreSettings_ && !tvMoreSettingsLive(app)) {   // the window closed (its close box, Ctrl/Cmd+Comma, Settings > Reset), or TV mode and the menu are gone
         app.tvMoreSettings_ = false;
         n.reset();
+        // The menu closed under it (a Share hold) or a game started (a drop) and a game is running: a pad player cannot close a plain
+        // desktop window, and the pads are the game's again.
+        if (app.showSettings && app.host.isLoaded() && !app.tvShell().menuOpen()) app.showSettings = false;
     }
     if (!tvMoreSettingsLive(app)) return;
     if (app.input.capturing()) {   // its events bypass us: a direction that was down would never see its release
