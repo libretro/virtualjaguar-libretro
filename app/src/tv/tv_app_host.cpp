@@ -412,6 +412,65 @@ uint32_t AppHost::achGameId(const GameRef& g) {
     return 0;
 }
 
+// ---- overlays ----------------------------------------------------------------------------------------------------------
+// The members the View and Tools menus drive (desktop: ui.cpp, debug_ui.cpp), all UI-thread state.
+
+namespace {
+
+// "Memory viewer..." -> "Memory viewer" (the menu's ellipsis says "opens a window"; a row that toggles does not need it).
+std::string toolLabel(std::string s) {
+    for (const char* dots : {"...", "\xE2\x80\xA6"}) {
+        const size_t n = std::char_traits<char>::length(dots);
+        if (s.size() >= n && s.compare(s.size() - n, n, dots) == 0) s.erase(s.size() - n);
+    }
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s;
+}
+
+}  // namespace
+
+std::vector<ToggleRow> AppHost::overlayRows() {
+    std::vector<ToggleRow> rows;
+    auto add = [&](const char* id, const char* label, bool on) {
+        ToggleRow r;
+        r.id = id;
+        r.label = label;
+        r.on = on;
+        rows.push_back(std::move(r));
+    };
+    add("fps", "Show FPS", app_.showFps);
+    add("keypad", "Keypad overlay", app_.input.overlay.open);
+    add("controls", "Controls overlay", app_.input.controls.show);
+    const DebugSession& d = app_.debug;
+    for (const DebugTool& t : d.tools()) {
+        if (!t.toggle) continue;   // a greyed placeholder for a window that does not exist yet
+        ToggleRow r;
+        r.id = "tool:" + t.id;
+        r.label = toolLabel(t.label);
+        r.on = t.isOpen && t.isOpen();
+        r.enabled = d.toolAvailable(t);
+        if (!r.enabled)   // toolAvailable(): the tools are enabled, and a processor is halted when the window needs one
+            r.note = !d.enabled() ? "Debug windows are off (hardcore, the emulation thread, or no game)" : "Break into the game first (F9)";
+        rows.push_back(std::move(r));
+    }
+    return rows;
+}
+
+// What each row's menu item does.  A disabled tool stays a no-op, as the Tools menu leaves it.
+void AppHost::toggleOverlay(const std::string& id) {
+    if (id == "fps") {
+        app_.showFps = !app_.showFps;
+        app_.saveConfig();
+    } else if (id == "keypad") {
+        app_.input.overlay.open = !app_.input.overlay.open;
+    } else if (id == "controls") {
+        overlayEvent(app_.input.controls, OverlayEvent::Toggle);
+    } else if (id.rfind("tool:", 0) == 0) {
+        const DebugTool* t = app_.debug.findTool(id.substr(5));
+        if (t && app_.debug.toolAvailable(*t)) t->toggle();
+    }
+}
+
 void AppHost::noteInput(const SDL_Event& e) {
     switch (e.type) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:

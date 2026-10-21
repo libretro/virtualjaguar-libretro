@@ -88,8 +88,11 @@ set(VJ_TV_MENU_SCRIPT "${CMAKE_BINARY_DIR}/tv_menu_headless.txt")
 configure_file("${CMAKE_CURRENT_LIST_DIR}/../tests/tv_menu_headless.txt.in" "${VJ_TV_MENU_SCRIPT}" @ONLY)
 add_test(NAME tv_menu_headless
     COMMAND virtualjaguar --headless --frames 30 --tv-test-script "${VJ_TV_MENU_SCRIPT}")
+# VJ_LIBRASHADER names a library that is not there, which rules the shader runtime out: the TV Settings screen then has no
+# shader row, so the script's walk to Internal resolution is the same on every machine (a Homebrew librashader would add one).
 set_tests_properties(tv_menu_headless PROPERTIES
     TIMEOUT 180
+    ENVIRONMENT "VJ_LIBRASHADER=${CMAKE_BINARY_DIR}/no-librashader"
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
 
 # The in-game menu and the Base layer (sections, chrome, the screen stack) drawn headlessly (an ImGui context with no
@@ -98,7 +101,7 @@ set_tests_properties(tv_menu_headless PROPERTIES
 # keyboard capture while open), no Base window without TV mode or with a game running.
 add_executable(vj_tv_ui_smoke
     tests/tv_ui_smoke.cpp src/tv/tv_shell.cpp src/tv/tv_ingame.cpp src/tv/tv_chrome.cpp src/tv/tv_home.cpp src/tv/tv_library.cpp src/tv/tv_details.cpp
-    src/tv/tv_achievements.cpp src/tv/tv_settings.cpp src/tv/tv_settings_model.cpp src/tv/tv_widgets.cpp src/tv/tv_focus.cpp src/tv/tv_mode.cpp src/tv/tv_nav.cpp src/tv/tv_style.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/config.cpp src/paths.cpp)
+    src/tv/tv_achievements.cpp src/tv/tv_overlays.cpp src/tv/tv_settings.cpp src/tv/tv_settings_model.cpp src/tv/tv_widgets.cpp src/tv/tv_focus.cpp src/tv/tv_mode.cpp src/tv/tv_nav.cpp src/tv/tv_style.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/config.cpp src/paths.cpp)
 target_include_directories(vj_tv_ui_smoke PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(vj_tv_ui_smoke PRIVATE vj_imgui ${VJ_SDL3_TARGET})
 if(MSVC)

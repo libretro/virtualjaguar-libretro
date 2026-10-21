@@ -28,6 +28,7 @@
 #   expect desk-popup=0|1     a library popup (tile menu, BIOS popup) opened from the pad is open and driven by it
 #   saveconfig           App::saveConfig() (a headless run keeps its config in a private temp dir)
 #   expect cfg=KEY:VALUE  the config holds KEY = VALUE; KEY:absent = the config has no such key
+#   expect core-option=KEY:VALUE  the core option KEY reads VALUE (a session override, else the saved value: CoreHost::optionValueFor)
 #   wait library         WINDOWED ONLY: block the script until the Library has scanned (not scanning, and at least one
 #                        game); FAIL after 120 s.  The gaps of the lines after it count from the moment it is released.
 #   shot PATH            WINDOWED ONLY: save the window as a PNG at the end of the next UI frame (that frame's TV drawing
@@ -262,12 +263,15 @@
 6040  expect menu-open=0
 6040  expect kb-bind=help:F4
 
-# Walk the menu with the pad (six rows down: the TV-mode row sits between Controls and Reset): down to Close game, ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
+# Walk the menu with the pad (nine rows down: Save state, Load state, Achievements, Overlays, Settings, Controls, the TV-mode row, Reset, Close game): ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
 6080  key tap F4
 6120  expect menu-open=1
 6140  pad tap dpdown
+6150  pad tap dpdown
 6160  pad tap dpdown
+6170  pad tap dpdown
 6180  pad tap dpdown
+6190  pad tap dpdown
 6200  pad tap dpdown
 6220  pad tap dpdown
 6230  pad tap dpdown
@@ -295,8 +299,11 @@
 6680  expect menu-open=1
 6680  expect tv=1
 6700  pad tap dpdown
+6710  pad tap dpdown
 6720  pad tap dpdown
+6730  pad tap dpdown
 6740  pad tap dpdown
+6750  pad tap dpdown
 6760  pad tap dpdown
 6780  pad tap dpdown
 6790  pad tap dpdown
@@ -421,3 +428,29 @@
 8440  key tap Escape
 8480  expect capturing=0
 8480  expect cfg=input.padguid.{padguid}.nav.search:absent
+
+# A core option changed inside the in-game menu reaches the core once the menu is closed.  Down x5 from Resume is Settings (Save state,
+# Load state, Achievements, Overlays, Settings), A opens the screen (the groups), A opens Picture (the shader row is absent: the test
+# rules the library out), Down x2 is Internal resolution (Integer scaling, Aspect ratio, then it), Right steps it from the core's
+# default (1x) to 2x; B x3 is rows -> groups -> the menu -> Resume.  The write is a posted command: the value is read after the menu
+# has closed and the paused core has had its boundary.
+8520   load @VJ_ROMS@/yarc.j64
+8560   expect loaded=1
+8560   expect core-option=virtualjaguar_internal_resolution:absent
+8560   key tap F4
+8600   expect menu-open=1
+8600   pad tap dpdown
+8610   pad tap dpdown
+8620   pad tap dpdown
+8630   pad tap dpdown
+8640   pad tap dpdown
+8660   pad tap a
+8680   pad tap a
+8700   pad tap dpdown
+8710   pad tap dpdown
+8730   pad tap dpright
+8750   pad tap b
+8770   pad tap b
+8790   pad tap b
+8830   expect menu-open=0
+8830   expect core-option=virtualjaguar_internal_resolution:2x

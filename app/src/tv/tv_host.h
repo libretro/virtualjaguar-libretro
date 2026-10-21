@@ -85,6 +85,14 @@ struct AchHeader {
     unsigned unlocked = 0, total = 0;
 };
 
+// One row of the Overlays screen: a window or a drawing the player can switch on and off.  ids: "fps", "keypad", "controls" and
+// "tool:<DebugTool::id>" for each debug tool window.  A row that cannot be switched now (`enabled` false) says why in `note`.
+struct ToggleRow {
+    std::string id, label;
+    bool on = false, enabled = true;
+    std::string note;
+};
+
 class Host {
 public:
     virtual ~Host() = default;
@@ -153,6 +161,10 @@ public:
     virtual Art achImage(const std::string& url) = 0;       // a badge or icon: tex only when ready; asked for only while it is on screen
     virtual void achPlay(uint32_t gameId) = 0;              // opens the library file that runs that game (an event: the caller guards)
     virtual uint32_t achGameId(const GameRef& g) = 0;       // the list entry whose library file is this game, else 0
+
+    // ---- Overlays (phase 3) ----------------------------------------------------------------------------------------
+    virtual std::vector<ToggleRow> overlayRows() = 0;       // fetched every frame the screen shows
+    virtual void toggleOverlay(const std::string& id) = 0;  // flips that row (a no-op for an id that is not listed or not enabled)
 };
 
 }  // namespace vj::tv

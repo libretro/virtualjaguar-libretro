@@ -170,6 +170,15 @@ struct FakeHost : Host {
         auto it = achIds.find(g.key);
         return it == achIds.end() ? 0 : it->second;
     }
+    // Overlays (phase 3): the rows the screen lists and every id it asked to toggle (an enabled row flips, as the app's does).
+    std::vector<ToggleRow> overlays;
+    std::vector<std::string> toggled;
+    std::vector<ToggleRow> overlayRows() override { return overlays; }
+    void toggleOverlay(const std::string& id) override {
+        toggled.push_back(id);
+        for (ToggleRow& r : overlays)
+            if (r.id == id && r.enabled) r.on = !r.on;
+    }
 };
 
 // n games named "<prefix> 0" .. "<prefix> n-1", keyed by a path.
@@ -245,9 +254,9 @@ static void menuOpensAndWalks() {
     shell.toggleMenu();
     CHECK(shell.menuOpen() && host.paused);
     frames(host, shell, 3);
-    down(host, shell, 8);   // runs off the end: focus never wraps
+    down(host, shell, 12);  // runs off the end: focus never wraps
     CHECK(std::string(focusedLabel(shell)) == "Close game");
-    up(host, shell, 8);
+    up(host, shell, 12);
     CHECK(std::string(focusedLabel(shell)) == "Resume");
     down(host, shell);      // Save state
     CHECK(std::string(focusedLabel(shell)) == "Save state");
@@ -265,7 +274,7 @@ static void menuOpensAndWalks() {
     CHECK(shell.menuPage() == Shell::Page::LoadSlots);
     frames(host, shell, 10);
     back(host, shell);
-    down(host, shell, 3);   // Controls, Enter TV mode, Reset
+    down(host, shell, 6);   // Achievements, Overlays, Settings, Controls, Enter TV mode, Reset
     accept(host, shell);
     CHECK(shell.menuPage() == Shell::Page::ConfirmReset);
     frames(host, shell, 10);
@@ -317,7 +326,7 @@ static void closeGameAsksFirst() {
     FakeHost host;
     Shell shell(host);
     shell.openMenu();
-    down(host, shell, 6);
+    down(host, shell, 9);
     CHECK(std::string(focusedLabel(shell)) == "Close game");
     accept(host, shell);                                // -> the confirm, focus on No
     CHECK(shell.menuPage() == Shell::Page::ConfirmClose && std::string(focusedLabel(shell)) == "No");
@@ -401,7 +410,7 @@ static void controlsRowShowsNeverHides() {
     Shell shell(host);
     shell.openMenu();
     frames(host, shell, 2);
-    down(host, shell, 3);   // Resume, Save state, Load state, Controls
+    down(host, shell, 6);   // Resume, Save state, Load state, Achievements, Overlays, Settings, Controls
     CHECK(std::string(focusedLabel(shell)) == "Controls");
     accept(host, shell);
     CHECK(host.controls == 1 && host.controlsShown && !shell.menuOpen());
@@ -1876,7 +1885,7 @@ static void ingameTvToggleHiddenWhenOff() {
     g_texts.clear();
     frames(host, shell, 3);
     CHECK(drew("Enter TV mode") && !drew("Exit TV mode"));
-    down(host, shell, 4);                                      // Resume, Save state, Load state, Controls, Enter TV mode
+    down(host, shell, 7);                                      // ... Settings, Controls, Enter TV mode
     CHECK(std::string(focusedLabel(shell)) == "Enter TV mode");
     accept(host, shell);
     CHECK(host.tv && shell.menuOpen() && shell.menuPage() == Shell::Page::Root);
@@ -2959,6 +2968,312 @@ static void achWalk120FramesNoAsserts() {
     }
 }
 
+
+// ---- Overlays, and Achievements / Overlays / Settings inside the in-game menu (phase 3, Task 15) ---------------------------
+
+static std::vector<ToggleRow> overlayFixture() {
+    ToggleRow fps, keypad, controls;
+    fps.id = "fps";
+    fps.label = "Show FPS";
+    keypad.id = "keypad";
+    keypad.label = "Keypad overlay";
+    controls.id = "controls";
+    controls.label = "Controls overlay";
+    return {fps, keypad, controls};
+}
+
+static const char* const kToolsOff = "Debug windows are off (hardcore, the emulation thread, or no game)";
+
+// The menu open on its root with the overlays fixture, drawn once.
+static void menuSetup(FakeHost& host, Shell& shell) {
+    host.overlays = overlayFixture();
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    shell.openMenu();
+    frames(host, shell, 2);
+}
+
+// Down to the root row labelled `label` (never past the end: focus does not wrap).
+static void menuTo(FakeHost& host, Shell& shell, const char* label) {
+    for (int i = 0; i < 12 && std::string(focusedLabel(shell)) != label; i++) down(host, shell);
+}
+
+static void ingameRowsFullOrder() {
+    FakeHost host;
+    host.canLoad = true;
+    host.tvOn = true;
+    Shell shell(host);
+    shell.openMenu();
+    std::vector<std::string> labels;
+    for (const Shell::Row& r : shell.menuRows()) labels.push_back(r.label);
+    const std::vector<std::string> want = {"Resume", "Save state", "Load state", "Achievements", "Overlays",
+                                           "Settings", "Controls", "Enter TV mode", "Reset", "Close game"};
+    CHECK(labels == want);
+    // Hardcore (no Load row) and TV mode Off drop only their own rows; the three screens stay.
+    FakeHost hard;
+    hard.canLoad = false;
+    hard.tvOn = false;
+    Shell hardShell(hard);
+    hardShell.openMenu();
+    labels.clear();
+    for (const Shell::Row& r : hardShell.menuRows()) labels.push_back(r.label);
+    CHECK((labels == std::vector<std::string>{"Resume", "Save state", "Achievements", "Overlays", "Settings", "Controls", "Reset", "Close game"}));
+}
+
+static void overlaysToggleFps() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Overlays");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen() && shell.menuOpen() && shell.menuPage() == Shell::Page::Root);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Show FPS") && drew("Keypad overlay") && drew("Controls overlay") && drew("Off") && !drew("On"));
+    accept(host, shell);                                 // the first row: Show FPS
+    CHECK((host.toggled == std::vector<std::string>{"fps"}) && shell.menuOpen() && shell.menuHasScreen());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("On"));                                   // the rows are fetched again every draw
+    CHECK(host.resumed == 0 && host.paused);             // the menu still holds the pause
+    CHECK(g_imguiErrors == 0);
+}
+
+static void overlaysKeypadAndControlsCloseTheMenu() {
+    for (int row = 1; row <= 2; row++) {
+        FakeHost host;
+        Shell shell(host);
+        menuSetup(host, shell);
+        menuTo(host, shell, "Overlays");
+        accept(host, shell);
+        down(host, shell, row);
+        accept(host, shell);
+        CHECK((host.toggled == std::vector<std::string>{row == 1 ? "keypad" : "controls"}));
+        CHECK(!shell.menuOpen() && host.resumed == 1 && !shell.menuHasScreen());
+        shell.openMenu();                                // the next menu starts on the root, with no screen in the slot
+        CHECK(!shell.menuHasScreen() && shell.menuPage() == Shell::Page::Root);
+    }
+}
+
+static void overlaysToolRowsFromRegistry() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    ToggleRow mem, cpu;
+    mem.id = "tool:memory";
+    mem.label = "Memory viewer";
+    mem.on = true;
+    cpu.id = "tool:cpu";
+    cpu.label = "CPU debugger";
+    cpu.enabled = false;
+    cpu.note = kToolsOff;
+    host.overlays = {mem, cpu};
+    menuTo(host, shell, "Overlays");
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Memory viewer") && drew("CPU debugger") && drew(kToolsOff) && drew("On"));
+    CHECK(drew("Toggle"));                               // the focused row can be toggled
+    accept(host, shell);                                 // Memory viewer: toggled in place, the menu stays
+    CHECK((host.toggled == std::vector<std::string>{"tool:memory"}) && shell.menuOpen());
+    down(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Toggle") && drew("Menu"));              // a disabled row offers nothing
+    accept(host, shell);
+    CHECK(host.toggled.size() == 1);                     // ... and Accept on it toggles nothing
+}
+
+static void overlaysHintsAndBack() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Overlays");
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Toggle") && drew("Menu") && !drew("Home"));
+    back(host, shell);                                   // Back leaves the screen for the menu, on its row
+    CHECK(!shell.menuHasScreen() && shell.menuOpen() && std::string(focusedLabel(shell)) == "Overlays");
+    CHECK(host.toggled.empty() && host.resumed == 0);
+}
+
+// The Settings groups are a first list level in the menu: Accept opens a group's rows, Back returns to the groups, Back on the
+// groups leaves for the menu row.
+static void ingameSettingsSlotLevels() {
+    FakeHost host;
+    host.rows = settingsFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Settings");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen() && shell.menuScreenId() == "settings");
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && !drew("Aspect ratio"));   // the groups, not their rows
+    CHECK(drew("Open") && drew("Menu"));
+    accept(host, shell);                                 // Picture
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Aspect ratio") && !drew("Sound") && drew("Groups"));
+    rightN(host, shell, 1);                              // a row changes in place
+    CHECK(lastSet(host, "aspect", 1));
+    back(host, shell);                                   // rows -> groups: still the screen
+    CHECK(shell.menuHasScreen() && shell.menuOpen());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Sound") && !drew("Aspect ratio"));
+    back(host, shell);                                   // groups -> the menu, on Settings
+    CHECK(!shell.menuHasScreen() && shell.menuOpen() && std::string(focusedLabel(shell)) == "Settings");
+    // Down on the groups moves between them, and the rows shown are the chosen group's.
+    accept(host, shell);
+    down(host, shell);                                   // Sound
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Volume") && !drew("Aspect ratio"));
+    CHECK(g_imguiErrors == 0);
+}
+
+static void ingameSlotBackReturnsToRow() {
+    FakeHost host;
+    host.rows = settingsFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Settings");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen());
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && shell.menuOpen());
+    CHECK(std::string(focusedLabel(shell)) == "Settings");
+    back(host, shell);                                   // Back on the root is Resume, as before
+    CHECK(!shell.menuOpen() && host.resumed == 1);
+}
+
+static void ingameAchievementsSlotDraws() {
+    FakeHost host;
+    host.hdr.signedIn = true;
+    host.hdr.hasGame = true;
+    host.hdr.title = "Cybermorph";
+    host.hdr.mode = "Hardcore";
+    host.hdr.total = 2;
+    host.items = {mkItem(1, "First Blood", "Locked", false, 5), mkItem(2, "Ring Master", "Locked", false, 25)};
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Achievements");
+    accept(host, shell);
+    CHECK(shell.menuHasScreen() && shell.menuScreenId() == "achievements");
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("First Blood") && drew("Ring Master") && drew("Cybermorph") && drew("0 of 2 achievements"));
+    CHECK(drew("Menu") && !drew("Home") && !drew("Play"));
+    down(host, shell);                                   // the list takes the intents
+    CHECK(shell.memory().get("achievements/rows") == 1);
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && std::string(focusedLabel(shell)) == "Achievements");
+    CHECK(host.played == 0);
+}
+
+// A game the RetroAchievements list does not track leaves the in-menu screen on the Jaguar list: nothing on it starts another game
+// from under the menu.
+static void ingameAchievementsGamesListIsReadOnly() {
+    FakeHost host;
+    host.hdr.signedIn = true;
+    host.raGames = raFixture();
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Achievements");
+    accept(host, shell);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Beta \xC2\xB7 8 achievements") && !drew("Play"));
+    down(host, shell);
+    accept(host, shell);                                 // Beta is in the library: on the Base layer this plays it
+    CHECK(host.played == 0 && host.guardArmed == 0 && shell.menuOpen() && shell.menuHasScreen());
+}
+
+static void ingameSlotLeavesMenuModelAlone() {
+    FakeHost host;
+    Shell shell(host);
+    menuSetup(host, shell);
+    menuTo(host, shell, "Overlays");
+    const int focus = shell.menuFocus();
+    accept(host, shell);
+    CHECK(shell.menuPage() == Shell::Page::Root && shell.menuFocus() == focus);   // the slot sits beside the page model
+    down(host, shell, 2);
+    up(host, shell);
+    CHECK(shell.menuFocus() == focus);                   // the intents went to the screen, not to the rows
+    host.canLoad = false;                                // the root would rebuild without its Load row ...
+    frames(host, shell, 3);
+    CHECK(shell.menuHasScreen());                        // ... but not while the slot has the panel
+    back(host, shell);
+    CHECK(!shell.menuHasScreen());
+    for (const Shell::Row& r : shell.menuRows()) CHECK(r.label != "Load state");
+    CHECK(std::string(focusedLabel(shell)) == "Overlays");   // the focus came back to the row (by kind), not to its old place
+}
+
+// Every slot at three sizes, every direction, the pointer and the wheel: no ImGui error.
+static void menuWalkWithSlotsNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    const int errors = g_imguiErrors;
+    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+        FakeHost host;
+        host.rows = settingsFixture();
+        for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 0, {"Off", "On"}));
+        host.hdr.signedIn = true;
+        host.hdr.hasGame = true;
+        host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+        host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+        for (uint32_t i = 1; i <= 20; i++) {
+            host.items.push_back(mkItem(i, "An achievement whose title runs on and on and on and on past the badge",
+                                        "Unlocked in hardcore  2026-10-16 21:04  [Missable]", i % 3 == 0, i * 5));
+            host.items.back().description = "A description that is long enough to be cut by the end of the row on a small screen, really";
+        }
+        host.overlays = overlayFixture();
+        for (int i = 0; i < 10; i++) {
+            ToggleRow t;
+            t.id = "tool:" + std::to_string(i);
+            t.label = "A tool window " + std::to_string(i);
+            t.enabled = i % 2 == 0;
+            t.note = t.enabled ? "" : kToolsOff;
+            host.overlays.push_back(t);
+        }
+        Shell shell(host);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            shell.openMenu();
+            frames(host, shell, 3);
+            menuTo(host, shell, row);
+            accept(host, shell);
+            CHECK(shell.menuHasScreen());
+            for (int round = 0; round < 2; round++) {
+                for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+                                            SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_LEFT}) {
+                    for (int i = 0; i < 10; i++) {
+                        tapButton(host, shell, b);
+                        if (!shell.menuHasScreen()) break;
+                    }
+                    frames(host, shell, 20);
+                }
+                if (!shell.menuHasScreen()) break;
+            }
+            if (shell.menuHasScreen()) {
+                io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.4f);
+                io.AddMouseWheelEvent(0, -3.0f);
+                frames(host, shell, 20);
+                io.AddMouseWheelEvent(0, 3.0f);
+                frames(host, shell, 20);
+                io.AddMousePosEvent(0, 0);
+                frames(host, shell, 3);
+            }
+            if (!shell.menuOpen()) continue;             // an overlay row closed it: the next size opens it again
+            shell.closeMenu();
+        }
+        if (shell.menuOpen()) shell.closeMenu();
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == errors);
+}
+
 // The four tabs and both shoulder pills fit the top bar at 1280x720 with room left for the clock (the chrome's own sums:
 // the safe margin, the accent, the logo, the LB pill, each label at body size 40 apart, the RB pill).
 static void tabBarFitsAt720p() {
@@ -3082,6 +3397,17 @@ int main() {
     homeYOpensAchievements();
     detailsAchievementsRowWhenKnown();
     achWalk120FramesNoAsserts();
+    ingameRowsFullOrder();
+    overlaysToggleFps();
+    overlaysKeypadAndControlsCloseTheMenu();
+    overlaysToolRowsFromRegistry();
+    overlaysHintsAndBack();
+    ingameSettingsSlotLevels();
+    ingameSlotBackReturnsToRow();
+    ingameAchievementsSlotDraws();
+    ingameAchievementsGamesListIsReadOnly();
+    ingameSlotLeavesMenuModelAlone();
+    menuWalkWithSlotsNoAsserts();
     tabBarFitsAt720p();
     // The menu at the other sizes the app runs at.
     {
@@ -3098,6 +3424,43 @@ int main() {
                 for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
                     if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
             CHECK(inside);
+        }
+        CHECK(g_imguiErrors == 0);
+    }
+    // The three screens of the menu's slot at the same sizes, inside the display (the rows with a long reason, a tall header and a
+    // description included).
+    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+        FakeHost host;
+        host.rows = settingsFixture();
+        host.hdr.signedIn = true;
+        host.hdr.hasGame = true;
+        host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
+        host.hdr.mode = "Softcore (hardcore is paused: virtualjaguar_risc_clock_scale = a very long value)";
+        host.items = {mkTracker(900, "Lap 2: 1:12.4"), mkItem(1, "First Blood", "Unlocked in hardcore  2026-10-16 21:04", true, 5)};
+        host.items[1].description = "Defeat the first drone";
+        host.overlays = overlayFixture();
+        ToggleRow t;
+        t.id = "tool:cpu";
+        t.label = "CPU debugger";
+        t.enabled = false;
+        t.note = kToolsOff;
+        host.overlays.push_back(t);
+        Shell shell(host);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            shell.openMenu();
+            frames(host, shell, 3);
+            menuTo(host, shell, row);
+            accept(host, shell);
+            frames(host, shell, 30);
+            CHECK(shell.menuHasScreen());
+            ImDrawData* dd = ImGui::GetDrawData();
+            bool inside = dd->CmdListsCount > 0;
+            for (int l = 0; l < dd->CmdListsCount; l++)
+                for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
+                    if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
+            CHECK(inside);
+            shell.closeMenu();
         }
         CHECK(g_imguiErrors == 0);
     }

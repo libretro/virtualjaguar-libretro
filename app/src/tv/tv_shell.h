@@ -3,7 +3,8 @@
 // pads and keyboard belong to while either is up (spec 3.1).  Everything it needs of the app goes through tv::Host.
 //
 // The in-game menu is plain data here: pages of rows, a focus index, and what Accept / Back do on each.  Drawing it
-// (tv_ingame.cpp) only reads that model.  The Base layer is a stack of tv::Screen (tv_screen.h) with a section tab
+// (tv_ingame.cpp) only reads that model.  Beside the pages sits one slot for a tv::Screen (Achievements, Overlays, Settings): while
+// it is set the panel's list area is that screen's, it gets every intent but Back, and Back clears it onto the row it came from.  The Base layer is a stack of tv::Screen (tv_screen.h) with a section tab
 // per root screen; the chrome around it is tv_chrome.cpp.
 //
 // Input: while the shell owns the input handleEvent() feeds NavInput with the buttons / keys / axes that mean
@@ -41,7 +42,7 @@ public:
     // ---- the in-game menu model (read by tv_ingame.cpp) ---------------------------------------------------------
     enum class Page { Root, SaveSlots, LoadSlots, ConfirmReset, ConfirmClose };
     struct Row {
-        enum Kind { Resume, Save, Load, Controls, TvMode, Reset, Close, Slot, No, Yes };
+        enum Kind { Resume, Save, Load, Achievements, Overlays, Settings, Controls, TvMode, Reset, Close, Slot, No, Yes };
         Kind kind;
         std::string label;
         int slot = -1;         // Slot rows: the state slot
@@ -78,6 +79,10 @@ public:
     const std::vector<Row>& menuRows() const { return rows_; }
     int menuFocus() const { return focus_.index; }
     LinearFocus& menuFocusState() { return focus_; }   // the drawer scrolls it (scrollToShow)
+    bool menuHasScreen() const { return menuScreen_ != nullptr; }   // the slot is set
+    std::string menuScreenId() const { return menuScreen_ ? std::string(menuScreen_->id()) : std::string(); }
+    // Puts `s` in the slot (the menu must be open); Back returns the focus to the first row of kind `from`.  Takes the screen's embedded mode.
+    void menuPushScreen(std::unique_ptr<Screen> s, Row::Kind from);
     bool menuNetplay() const { return host_.netplayActive(); }   // the banner "Netplay: the game keeps running"
     void setMenuFocus(int index);    // the pointer hovered a row
     void intent(Intent in);          // one nav intent (frame() calls it; a click on a row is Accept after setMenuFocus)
@@ -88,6 +93,7 @@ private:
     int tvRowState() const;   // rootTvRow_ as the host says it is now
     void accept();
     void back();
+    void clearMenuScreen();   // the slot's Back: retire the screen and return to the root, focused on the row it came from
     void drawMenu(ImVec2 pos, ImVec2 size);   // tv_ingame.cpp: the menu model drawn over the dimmed game
     void drawBase(ImVec2 pos, ImVec2 size);   // tv_chrome.cpp: the Base window -- chrome, then the stack
     void baseIntent(Intent in);               // one nav intent on the Base layer: section step, Back, or the top screen's
@@ -106,6 +112,8 @@ private:
     float wheelAcc_ = 0;            // mouse-wheel notches not yet spent on a focus step (a trackpad sends fractions)
     bool focusWindow_ = false;      // the menu just opened: its window takes the focus once
     bool rootHasLoad_ = false;   // the Load-state row is in the root page (re-evaluated while it shows)
+    std::unique_ptr<Screen> menuScreen_;   // the slot; set only while open_ (closeMenu() and enter() retire it)
+    Row::Kind menuFrom_ = Row::Resume;     // the root row that opened it
     int rootTvRow_ = 0;          // the TV-mode row of the root page: 0 = none, 1 = "Enter TV mode", 2 = "Exit TV mode" (re-evaluated while it shows)
 
     // The Base layer.  The stack is kept while a game runs, so closing the game lands back where the player was.

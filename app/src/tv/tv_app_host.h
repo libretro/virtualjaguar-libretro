@@ -59,6 +59,8 @@ public:
     Art achImage(const std::string& url) override;
     void achPlay(uint32_t gameId) override;
     uint32_t achGameId(const GameRef& g) override;
+    std::vector<ToggleRow> overlayRows() override;
+    void toggleOverlay(const std::string& id) override;
 
     // Every SDL event, before anything can consume it (App::handleEvent): remembers which device was used last, so
     // glyph() follows what the player is actually pressing -- including the buttons the shell itself consumes, which

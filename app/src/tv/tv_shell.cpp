@@ -57,6 +57,7 @@ bool Shell::openMenu() {
 void Shell::closeMenu() {
     if (!open_) return;
     open_ = false;
+    retire(std::move(menuScreen_));   // the slot's screen may be the caller (Overlays closes the menu from its own Accept)
     nav_.reset();
     host_.menuResume();
     host_.armReleaseGuard();   // whatever is down now (the A that picked Resume) stays masked from the game
@@ -163,7 +164,8 @@ void Shell::frame(uint64_t ms) {
         for (Intent in : nav_.take(ms)) baseIntent(in);
         return;
     }
-    if (page_ == Page::Root && (host_.canLoadState() != rootHasLoad_ || tvRowState() != rootTvRow_))
+    // (Not under a slot screen: enter() would clear it.  Leaving the screen rebuilds the root anyway.)
+    if (!menuScreen_ && page_ == Page::Root && (host_.canLoadState() != rootHasLoad_ || tvRowState() != rootTvRow_))
         enter(Page::Root, rows_[(size_t)focus_.index].kind);
     for (Intent in : nav_.take(ms)) {
         intent(in);
@@ -267,6 +269,9 @@ void Shell::buildRoot() {
     rows_.push_back({Row::Save, "Save state"});
     rootHasLoad_ = host_.canLoadState();
     if (rootHasLoad_) rows_.push_back({Row::Load, "Load state"});   // hardcore refuses loads: no row at all
+    rows_.push_back({Row::Achievements, "Achievements"});   // spec 4's order; the three open a screen in the slot
+    rows_.push_back({Row::Overlays, "Overlays"});
+    rows_.push_back({Row::Settings, "Settings"});
     rows_.push_back({Row::Controls, "Controls"});
     rootTvRow_ = tvRowState();
     if (rootTvRow_) rows_.push_back({Row::TvMode, rootTvRow_ == 2 ? "Exit TV mode" : "Enter TV mode"});   // none when the setting is Off
@@ -275,6 +280,7 @@ void Shell::buildRoot() {
 }
 
 void Shell::enter(Page p, Row::Kind focusKind) {
+    retire(std::move(menuScreen_));   // a page replaces whatever the slot held
     page_ = p;
     switch (p) {
     case Page::Root: buildRoot(); break;
@@ -310,12 +316,30 @@ void Shell::enter(Page p, Row::Kind focusKind) {
         }
 }
 
+void Shell::menuPushScreen(std::unique_ptr<Screen> s, Row::Kind from) {
+    if (!open_ || !s) return;
+    s->setEmbedded(true);
+    retire(std::move(menuScreen_));
+    menuScreen_ = std::move(s);
+    menuFrom_ = from;
+}
+
+void Shell::clearMenuScreen() { enter(Page::Root, menuFrom_); }   // enter() retires the screen and builds the root
+
 void Shell::setMenuFocus(int index) {
     if (open_ && index >= 0 && index < focus_.count) focus_.index = index;
 }
 
 void Shell::intent(Intent in) {
     if (!open_) return;
+    if (menuScreen_) {   // the slot has the panel: Back is the screen's (a level of its own), then the shell's; the rest is the screen's
+        if (in == Intent::Back) {
+            if (!menuScreen_->back()) clearMenuScreen();
+        } else if (in != Intent::None) {
+            menuScreen_->intent(in);
+        }
+        return;
+    }
     switch (in) {
     case Intent::Up: focus_.move(-1); break;
     case Intent::Down: focus_.move(1); break;
@@ -333,6 +357,9 @@ void Shell::accept() {
     case Row::Resume: closeMenu(); break;
     case Row::Save: enter(Page::SaveSlots, Row::Slot); break;
     case Row::Load: enter(Page::LoadSlots, Row::Slot); break;
+    case Row::Achievements: menuPushScreen(makeAchievementsScreen(host_, *this), Row::Achievements); break;
+    case Row::Overlays: menuPushScreen(makeOverlaysScreen(host_, *this), Row::Overlays); break;
+    case Row::Settings: menuPushScreen(makeSettingsScreen(host_, *this), Row::Settings); break;
     case Row::Controls:
         closeMenu();   // the sheet is drawn over the game, so the game has to be showing
         host_.showControlsOverlay();

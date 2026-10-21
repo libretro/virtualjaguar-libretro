@@ -9,7 +9,8 @@
 // keeps the list loaded and its progress fetched, so it must run every frame the list shows).  Where the focus was lives in
 // Shell::memory(): the index and the row's own key under "achievements/rows" or "achievements/games", so a list that
 // changed while the player was away is followed by item, not by place.  The rail holds no focus (there is one view at a
-// time): it only names the view.
+// time): it only names the view.  The in-game menu's slot (Screen::setEmbedded) shows the same lists in the menu's list area, with
+// no rail (the menu names the page) and no Play: another game must not start under the paused one.
 #include <algorithm>
 #include <cfloat>
 #include <cstdlib>
@@ -55,14 +56,18 @@ public:
         const Metrics& m = c.m;
         const theme::Palette& pal = theme::pal();
         const float u = m.u;
-        const float x0 = c.pos.x + m.safeX, right = c.pos.x + c.size.x - m.safeX;
+        // In the in-game menu's slot the area is the menu's list area: no rail and no safe margin, only the room the focused row
+        // grows into (the menu's own inset).
+        const bool emb = embedded();
+        const float inset = emb ? 0.5f * (m.focusScale - 1.0f) * c.size.x + 2 * m.ring : 0.0f;
+        const float x0 = emb ? c.pos.x + inset : c.pos.x + m.safeX, right = emb ? c.pos.x + c.size.x - inset : c.pos.x + c.size.x - m.safeX;
         if (mode_ == Mode::Unavailable || mode_ == Mode::SignedOut) {
-            drawMessage(c, mode_ == Mode::Unavailable ? kNotAvailable : kSignIn);
+            drawMessage(c, mode_ == Mode::Unavailable ? kNotAvailable : kSignIn, emb);
             return;
         }
 
         // ---- the rail: which view this is (it holds no focus) ----------------------------------------------------------
-        {
+        if (!emb) {
             const ImVec2 p0(x0, c.pos.y), p1(x0 + kRailW * u, p0.y + kItemH * u);
             c.dl->AddRectFilled(p0, p1, widgets::col(pal.cardBgHover), 10 * u);
             widgets::text(c.dl, m.body, ImVec2(p0.x + 20 * u, p0.y + 12 * u), widgets::col(pal.text),
@@ -70,7 +75,7 @@ public:
         }
 
         // ---- the header (a tracked game) or the caption (the games list) ------------------------------------------------
-        const float lx = x0 + (kRailW + kRailGap) * u, lw = std::max(1.0f, right - lx);
+        const float lx = emb ? x0 : x0 + (kRailW + kRailGap) * u, lw = std::max(1.0f, right - lx);
         float rowsTop = c.pos.y;
         if (mode_ == Mode::Rows) {
             drawHeader(c, lx, lw);
@@ -164,8 +169,8 @@ public:
 
     std::vector<widgets::Hint> hints() const override {
         std::vector<widgets::Hint> h;
-        if (mode_ == Mode::Games && index_ >= 0 && rows_[(size_t)index_].inLibrary) h.push_back({host_.glyph(Intent::Accept), "Play"});
-        h.push_back({host_.glyph(Intent::Back), "Home"});
+        if (canPlay()) h.push_back({host_.glyph(Intent::Accept), "Play"});
+        h.push_back({host_.glyph(Intent::Back), embedded() ? "Menu" : "Home"});
         return h;
     }
 
@@ -260,9 +265,12 @@ private:
         if (j >= 0 && j < (int)rows_.size()) focusRow(j);
     }
 
+    // A on a game the library has plays it -- not from the in-game menu, where another game would start under the paused one.
+    bool canPlay() const { return !embedded() && mode_ == Mode::Games && index_ >= 0 && rows_[(size_t)index_].inLibrary; }
+
     // A on a game the library has: open it.  Nothing else on this screen acts.
     void accept() {
-        if (mode_ != Mode::Games || index_ < 0 || !rows_[(size_t)index_].inLibrary) return;
+        if (!canPlay()) return;
         host_.achPlay(rows_[(size_t)index_].id);
         shell_.launched();
     }
@@ -302,9 +310,9 @@ private:
     }
 
     // A line on a card in the middle of the content area (Home's empty-library card).
-    static void drawMessage(const DrawCtx& c, const char* msg) {
+    static void drawMessage(const DrawCtx& c, const char* msg, bool embedded) {
         const Metrics& m = c.m;
-        const float u = m.u, w = std::min(1100 * u, c.size.x - 2 * m.safeX), pad = 48 * u;
+        const float u = m.u, w = std::min(1100 * u, c.size.x - (embedded ? 0.0f : 2 * m.safeX)), pad = 48 * u;
         const ImVec2 ts = widgets::textSize(m.body, msg, w - 2 * pad);
         const ImVec2 size(w, ts.y + 2 * pad);
         const ImVec2 pos(c.pos.x + (c.size.x - size.x) * 0.5f, c.pos.y + (c.size.y - size.y) * 0.5f);

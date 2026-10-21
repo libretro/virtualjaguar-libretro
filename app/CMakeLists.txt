@@ -375,6 +375,7 @@ set(VJ_APP_SOURCES
     src/tv/tv_library.cpp
     src/tv/tv_details.cpp
     src/tv/tv_achievements.cpp
+    src/tv/tv_overlays.cpp
     src/tv/tv_settings.cpp
     src/tv/tv_settings_model.cpp
     src/tv/tv_widgets.cpp

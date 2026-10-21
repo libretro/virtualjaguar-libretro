@@ -349,6 +349,15 @@ int App::tvScriptStep() {
                 if (rc) return rc;
                 continue;
             }
+            else if (name == "core-option") {   // KEY:VALUE -- what the core will read for the option ("absent": nothing is set for it)
+                const size_t colon = want.find(':');
+                if (colon == std::string::npos) return fail(l, "core-option wants KEY:VALUE or KEY:absent");
+                const std::string key = want.substr(0, colon), val = want.substr(colon + 1);
+                const std::string have = host.optionValueFor(key, "absent");
+                if (have != val) rc = fail(l, "expected core option " + key + "=" + val + ", got " + have);
+                if (rc) return rc;
+                continue;
+            }
             else if (name == "paused") got = flag(paused);
             else if (name == "loaded") got = flag(host.isLoaded());
             else if (name == "capturing") got = flag(input.capturing());
