@@ -11,6 +11,7 @@ from qualification_support import verify_release_unchanged
 import subprocess
 import tempfile
 import urllib.request
+import urllib.parse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--tag', required=True)
@@ -58,7 +59,12 @@ if token:
 request = urllib.request.Request('https://api.github.com/repos/libretro/virtualjaguar-libretro/releases/tags/'+args.tag, headers=headers)
 with urllib.request.urlopen(request, timeout=60) as response:
     release = json.load(response)
-if release['target_commitish'] != args.sha:
+commit_request = urllib.request.Request(
+    'https://api.github.com/repos/libretro/virtualjaguar-libretro/commits/'+urllib.parse.quote(args.tag, safe=''),
+    headers=headers)
+with urllib.request.urlopen(commit_request, timeout=60) as response:
+    initial_tag_sha = json.load(response)['sha']
+if initial_tag_sha != args.sha:
     raise RuntimeError('Published release does not identify the requested candidate SHA')
 report['release_id'] = release['id']
 windows = platform.system() == 'Windows'
@@ -191,7 +197,10 @@ if windows:
         raise RuntimeError('Uninstall left the exe behind or removed user data')
 with urllib.request.urlopen(request, timeout=60) as response:
     final_release = json.load(response)
-verify_release_unchanged(release, final_release, args.sha)
+with urllib.request.urlopen(commit_request, timeout=60) as response:
+    final_tag_sha = json.load(response)['sha']
+verify_release_unchanged(release, final_release, args.sha, initial_tag_sha, final_tag_sha)
+report['resolved_tag_sha'] = final_tag_sha
 report['result'] = 'PASS'
 output = root/'qualification-result.json'
 output.write_text(json.dumps(report, indent=2)+'\n')

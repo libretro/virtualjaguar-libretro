@@ -17,6 +17,21 @@ class ProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'source changed'):
             verify_release_unchanged(self.release, after, 'expected')
 
+    def test_branch_target_uses_resolved_tag_commit(self):
+        self.release['target_commitish'] = 'master'
+        verify_release_unchanged(self.release, copy.deepcopy(self.release),
+                                 'expected', 'expected', 'expected')
+
+    def test_moved_tag_fails_even_when_release_metadata_is_unchanged(self):
+        with self.assertRaisesRegex(RuntimeError, 'source changed'):
+            verify_release_unchanged(self.release, copy.deepcopy(self.release),
+                                     'expected', 'expected', 'wrong')
+
+    def test_wrong_initial_tag_fails(self):
+        with self.assertRaisesRegex(RuntimeError, 'source changed'):
+            verify_release_unchanged(self.release, copy.deepcopy(self.release),
+                                     'expected', 'wrong', 'expected')
+
     def test_assets_replaced_even_on_same_commit_fail(self):
         for key, value in [('id', 3), ('size', 101), ('digest', 'sha256:new'), ('updated_at', 'new')]:
             after = copy.deepcopy(self.release)

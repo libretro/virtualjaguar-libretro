@@ -58,9 +58,10 @@ forced updates, public-ROM launch and user-data preservation in isolated profile
 Real upgrade tests first install published v3.9.1, then require replacement by the
 candidate (including changed payload hashes). Installed cores must load and run
 public content in RetroArch, with nonzero exit or failed load treated as fatal.
-The release SHA and asset fingerprint are checked again at the end to detect a
-rolling release being replaced mid-run. Three provenance regression tests cover
-unchanged, source-replaced and same-source asset-replaced snapshots.
+The tag is resolved to a commit before and after testing (release metadata may
+name a branch rather than a SHA). The resolved SHA and asset fingerprint must stay
+unchanged. Six provenance tests cover valid branch-target metadata, a wrong or moved
+tag, and replacement of the source or assets.
 
 They retain exact OS, candidate, outcomes and command logs as artifacts. A changed
 rolling-release source SHA fails the run instead of silently qualifying another build.
