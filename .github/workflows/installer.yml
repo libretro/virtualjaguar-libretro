@@ -25,6 +25,15 @@ on:
       - 'site/pages/index.html'
       - '.github/workflows/installer.yml'
   workflow_dispatch:
+    inputs:
+      qualification_tag:
+        description: 'Published candidate tag to install on disposable hosts (empty = hermetic tests only)'
+        default: ''
+        type: string
+      qualification_sha:
+        description: 'Expected published candidate SHA'
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -105,3 +114,53 @@ jobs:
       if: matrix.shell == 'pwsh'
       shell: pwsh
       run: pwsh -NoProfile -ExecutionPolicy Bypass -File test/installer/test_install_ps1.ps1
+
+  qualify-published:
+    if: github.event_name == 'workflow_dispatch' && inputs.qualification_tag != ''
+    name: Published install/update (${{ matrix.os }}, ${{ matrix.ps }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            ps: powershell
+          - os: windows-latest
+            ps: pwsh
+          - os: macos-latest
+            ps: pwsh
+          - os: ubuntu-22.04
+            ps: pwsh
+          - os: ubuntu-24.04-arm
+            ps: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends retroarch libsdl2-2.0-0 libgl1 libegl1 libx11-6 libxcursor1 libxi6 libxrandr2 libasound2
+      - name: Real RetroArch frontend (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: choco install retroarch --yes --no-progress
+      - name: Real RetroArch frontend (macOS)
+        if: runner.os == 'macOS'
+        run: brew install --cask retroarch
+      - name: Install and update actual published packages
+        env:
+          QUALIFICATION_TAG: ${{ inputs.qualification_tag }}
+          QUALIFICATION_SHA: ${{ inputs.qualification_sha }}
+          QUALIFICATION_PS: ${{ matrix.ps }}
+        shell: bash
+        run: python test/installer/qualify_published.py --tag "$QUALIFICATION_TAG" --sha "$QUALIFICATION_SHA" --powershell "$QUALIFICATION_PS"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qualification-${{ matrix.os }}-${{ matrix.ps }}
+          path: ${{ runner.temp }}/vj-published-qualification/
+          if-no-files-found: warn
