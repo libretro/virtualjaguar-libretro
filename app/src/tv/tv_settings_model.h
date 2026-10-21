@@ -32,6 +32,9 @@ SettingRow tvModeRow(TvSetting stored);                     // Off / Manual / Au
 // "Off" then each preset's file name without its extension.  The preset in force when it is in neither list (a file picked
 // in the desktop window) is appended as "<stem> (custom)".
 SettingRow shaderRow(const std::string& currentPreset, bool enabled, const std::vector<std::string>& presetPaths);
+// The Speed group's only row while no game has run this session (its core options are not known yet): a read-only line, never
+// steppable, saying why.
+SettingRow speedNoteRow();
 SettingRow moreRow();                                       // "More settings..." (opens the desktop window): no choices
 
 // Left / Right (wrap = false: stops at the ends) and Accept (wrap = true).  A row with no choices stays where it is.

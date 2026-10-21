@@ -124,6 +124,12 @@ SettingRow shaderRow(const std::string& currentPreset, bool enabled, const std::
     return r;
 }
 
+SettingRow speedNoteRow() {
+    SettingRow r = rowOf("speed_note", "Available once a game has run", 1, {}, 0);
+    r.readOnly = true;
+    return r;
+}
+
 SettingRow moreRow() { return rowOf("more", "More settings\xE2\x80\xA6", 3, {}, 0); }
 
 int stepIndex(const SettingRow& r, int delta, bool wrap) {

@@ -51,7 +51,7 @@ enum class List { All, Favorites, Recent, Disc };
 // One row of the TV Settings screen, by value (AppHost fills them from the app's settings and the core's options, so the
 // screen never sees either).  `choices` are what Left / Right / Accept step through; "more" has none.
 struct SettingRow {
-    std::string id, label;             // ids: shader integer aspect resolution risc_clock idle_skip volume fps vsync theme tv_mode more
+    std::string id, label;             // ids: shader integer aspect resolution risc_clock idle_skip speed_note volume fps vsync theme tv_mode more
     std::vector<std::string> choices;  // empty for "more"
     int index = 0;
     bool readOnly = false;

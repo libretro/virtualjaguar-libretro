@@ -227,7 +227,8 @@ const std::vector<std::string>& AppHost::themeNames() {
 }
 
 // Only the rows that exist: no shader runtime, or no core option definitions yet (no game has run this session), or an
-// option the app locks, means no row -- never a greyed one.
+// option the app locks, means no row -- never a greyed one.  The one exception is the Speed group before a game has run: its
+// only row is the read-only "Available once a game has run" line, so the group is there and says why.
 std::vector<SettingRow> AppHost::settingRows() {
     CoreHost& host = app_.host;
     ShaderChain& sc = app_.video.shader;
@@ -246,6 +247,7 @@ std::vector<SettingRow> AppHost::settingRows() {
     core(kResolution);
     core(kRiscClock);
     core(kIdleSkip);
+    if (!defFor(host, kRiscClock.key) && !defFor(host, kIdleSkip.key)) rows.push_back(speedNoteRow());   // no game has run: say why the group is empty
     rows.push_back(volumeRow(app_.volume));
     rows.push_back(onOffRow("fps", "Show FPS", 3, app_.showFps));
     rows.push_back(onOffRow("vsync", "VSync", 3, app_.vsync));

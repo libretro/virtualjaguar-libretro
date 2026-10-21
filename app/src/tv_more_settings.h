@@ -4,7 +4,8 @@
 // open it keeps the input, so while the window is up this takes the pad (and the arrow keys, Enter, Esc) before the shell sees them.
 // The menu stays open underneath, holding the pause, and has the pad back the moment the window closes.
 //
-// "Live" = the window was opened from here (App::tvMoreSettings_), is still open, and TV mode is on or the menu is open.  While
+// "Live" = the window was opened from here (App::tvMoreSettings_), is still open, and the in-game menu is open or TV mode is on with no
+// game running.  When the menu closes under it (a Share hold) or a game starts (a drop), it is the plain desktop Settings window.  While
 // live: ImGui gamepad + keyboard navigation are on (desktop_nav_popup.h), the window is centred at 80 % of the viewport with
 // TV-sized text (ui.cpp drawSettings), and our own NavInput turns the pads into intents for ImGui's gamepad keys.
 #pragma once

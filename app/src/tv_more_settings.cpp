@@ -36,7 +36,9 @@ bool popupOrItemActive() {
 }  // namespace
 
 bool tvMoreSettingsLive(App& app) {
-    return app.tvMoreSettings_ && app.showSettings && (app.tvMode.active() || app.tvShell().menuOpen());
+    // A running game with the menu closed is never live: the game reads the pads by polling (not from the events this takes), so a
+    // window driven by the pad would be played through.  The Base layer is TV mode with no game.
+    return app.tvMoreSettings_ && app.showSettings && (app.tvShell().menuOpen() || (app.tvMode.active() && !app.host.isLoaded()));
 }
 
 void tvMoreSettingsOpen(App& app) {

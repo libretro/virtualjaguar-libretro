@@ -1635,10 +1635,6 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (alt) setFullscreen(!fullscreen);
         break;
     case SDLK_ESCAPE:
-        if (tvMoreSettingsLive(*this)) {   // "More settings" opened from TV mode: Esc closes it, or is the combo's / text box's; never "leave fullscreen"
-            tvMoreSettingsClose(*this);
-            break;
-        }
         if (tvShell().ownsInput() && !tvShell().backAtRoot()) break;   // Back on a TV screen, not "leave fullscreen"
         if (fullscreen) setFullscreen(false);
         break;

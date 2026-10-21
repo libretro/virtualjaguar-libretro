@@ -65,6 +65,9 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     // Under every desktop window: ImGui puts a window it creates in front, and this one can appear (TV mode turned on) with
     // Settings or the state manager already open.
     ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
+    // With a desktop window over this layer ("More settings", driven by a pad) the shell is handed no events, so the pointer's return
+    // is seen here: the mouse moved.
+    if (padDriven_ && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) padDriven_ = false;
     if (padDriven_) ImGui::SetMouseCursor(ImGuiMouseCursor_None);   // a pad is driving: no pointer until the mouse moves
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImGuiIO& io = ImGui::GetIO();

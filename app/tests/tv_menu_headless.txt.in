@@ -114,8 +114,8 @@
 1400  expect tv=0
 
 # "More settings..." from TV mode (#991): A on the last row of Interface opens the desktop Settings window and hands it the pad.
-# RB x3 reaches Settings (Home, Library, Achievements, Settings).  With no game this session the core rows are hidden, so the
-# rail is Picture, Sound, Interface (Down x2); Right enters the list: Show FPS, VSync, Theme, TV mode, More settings... (Down x4).
+# RB x3 reaches Settings (Home, Library, Achievements, Settings).  With no game this session the core rows are hidden and Speed
+# holds only its "Available once a game has run" line, so the rail is Picture, Speed, Sound, Interface (Down x3); Right enters the list: Show FPS, VSync, Theme, TV mode, More settings... (Down x4).
 # While the window is open the shell has stepped aside (tv-owns-input=0) and the pad is the window's: a shoulder button that
 # would change section does nothing, and B closes it (no popup, no active item), giving the pad back.
 1400  key tap F4
@@ -125,6 +125,7 @@
 1480  pad tap rightshoulder
 1500  expect tv-screen=settings
 1500  pad tap dpdown
+1510  pad tap dpdown
 1520  pad tap dpdown
 1540  pad tap dpright
 1560  pad tap dpdown
@@ -568,3 +569,37 @@
 10070  pad tap b                  # Resume
 10110  expect menu-open=0
 10110  expect paused=0
+
+# A window that is no longer "live" is the plain desktop Settings window, never a pad-driven one over a running game: a Share hold
+# closes the menu under "More settings..." (the game unpauses and polls its pad itself), and the hand-off ends with it.  Same walk
+# as above to open the window, then the hold; Ctrl+Comma closes what is left.
+10150  key tap F4
+10190  expect menu-open=1
+10190  pad tap dpdown
+10200  pad tap dpdown
+10210  pad tap dpdown
+10220  pad tap dpdown
+10230  pad tap dpdown
+10250  pad tap a
+10270  pad tap dpdown
+10280  pad tap dpdown
+10290  pad tap dpdown
+10300  pad tap dpdown
+10320  pad tap a
+10340  pad tap dpdown
+10350  pad tap dpdown
+10360  pad tap dpdown
+10370  pad tap dpdown
+10380  pad tap dpdown
+10390  pad tap dpdown
+10410  pad tap a
+10450  expect tv-more=1
+10450  expect menu-open=1
+10450  pad down misc1
+11070  expect menu-open=0
+11070  expect tv-more=0
+11070  expect settings-open=1
+11070  expect paused=0
+11090  pad up misc1
+11130  key tap ctrl+,
+11170  expect settings-open=0

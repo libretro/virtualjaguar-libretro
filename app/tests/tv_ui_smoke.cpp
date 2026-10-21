@@ -792,13 +792,15 @@ static void padCursorReturnsOverDesktopWindow() {
     host.desktopOpen = true;
     frames(host, shell, 1);
     CHECK(!shell.ownsInput());
-    SDL_Event e;
-    SDL_zero(e);
-    e.type = SDL_EVENT_MOUSE_MOTION;
-    e.motion.xrel = 5;
-    CHECK(!shell.handleEvent(e, g_ms));
-    frames(host, shell, 1);
+    // The app hands the shell no events now (App::handleEvent asks ownsInput() first): the pointer's return is seen in the draw, as the
+    // mouse position changes.
+    frames(host, shell, 2);
+    CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_None);
+    ImGui::GetIO().AddMousePosEvent(700, 400);
+    frames(host, shell, 2);
     CHECK(ImGui::GetMouseCursor() != ImGuiMouseCursor_None);
+    ImGui::GetIO().AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
 }
 
 static void baseReturnsAfterGame() {
@@ -2510,6 +2512,34 @@ static void settingsHiddenRowsAbsent() {
     CHECK(g_imguiErrors == 0);
 }
 
+// Speed before a game has run (approved change G): the group is in the rail with its one line, which nothing steps; on the Base screen
+// and in the menu's groups level.
+static std::vector<SettingRow> speedNoteRows() {
+    SettingRow note = mkRow("speed_note", "Available once a game has run", 1, {});
+    note.readOnly = true;
+    std::vector<SettingRow> rows = settingsFixture();
+    rows.insert(rows.begin() + 1, note);                 // after the Picture row, before Sound
+    return rows;
+}
+
+static void settingsSpeedNoteBeforeAGame() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, speedNoteRows());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Speed"));                                // the rail item
+    down(host, shell);                                   // Speed
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Available once a game has run") && !drew("Aspect ratio"));
+    rightN(host, shell, 1);                              // into the list (it is the only row) ...
+    accept(host, shell);
+    rightN(host, shell, 2);
+    CHECK(host.set.empty() && host.moreOpened == 0);     // ... where nothing steps or opens
+    CHECK(g_imguiErrors == 0);
+}
+
 static void settingsFocusRemembered() {
     FakeHost host;
     Shell shell(host);
@@ -3277,6 +3307,28 @@ static void menuMoreSettingsKeepsMenu() {
     CHECK(g_imguiErrors == 0);
 }
 
+// ... and in the in-game menu's slot the groups level lists it too.
+static void ingameSpeedNoteBeforeAGame() {
+    FakeHost mh;
+    mh.rows = speedNoteRows();
+    Shell ms(mh);
+    menuSetup(mh, ms);
+    menuTo(mh, ms, "Settings");
+    accept(mh, ms);
+    g_texts.clear();
+    frames(mh, ms, 2);
+    CHECK(drew("Picture") && drew("Speed") && drew("Sound"));
+    down(mh, ms);
+    accept(mh, ms);
+    g_texts.clear();
+    frames(mh, ms, 2);
+    CHECK(drew("Available once a game has run"));
+    accept(mh, ms);
+    rightN(mh, ms, 2);
+    CHECK(mh.set.empty());
+    CHECK(g_imguiErrors == 0);
+}
+
 static void ingameSlotBackReturnsToRow() {
     FakeHost host;
     host.rows = settingsFixture();
@@ -3526,6 +3578,7 @@ int main() {
     settingsReadonlyRowIgnoresInput();
     settingsMoreOpensDesktop();
     settingsHiddenRowsAbsent();
+    settingsSpeedNoteBeforeAGame();
     settingsFocusRemembered();
     settingsMouse();
     settingsClickOnChevrons();
@@ -3549,6 +3602,7 @@ int main() {
     overlaysToolRowsFromRegistry();
     overlaysHintsAndBack();
     ingameSettingsSlotLevels();
+    ingameSpeedNoteBeforeAGame();
     menuMoreSettingsKeepsMenu();
     ingameSlotBackReturnsToRow();
     ingameAchievementsSlotDraws();

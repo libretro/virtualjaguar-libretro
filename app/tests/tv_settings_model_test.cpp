@@ -69,6 +69,9 @@ static void testAppRows() {
     CHECK(tvModeRow(TvSetting::Manual).index == 1 && tvModeRow(TvSetting::Off).id == "tv_mode" && tvModeRow(TvSetting::Off).group == 3);
     const SettingRow more = moreRow();
     CHECK(more.id == "more" && more.choices.empty() && more.group == 3 && !more.readOnly);
+    const SettingRow note = speedNoteRow();   // Speed before a game has run: a line, not a control
+    CHECK(note.id == "speed_note" && note.label == "Available once a game has run" && note.group == 1 && note.readOnly && note.choices.empty());
+    CHECK(stepIndex(note, +1, true) == 0);
 }
 
 static void testAspect() {

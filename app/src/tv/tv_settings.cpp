@@ -335,7 +335,8 @@ private:
         valueMid_.resize(rows_.size(), p1.x);
         const float total = hasNote ? px + m.minText + 4 * u : px;
         const float y = p0.y + (p1.y - p0.y - total) * 0.5f;
-        widgets::text(c.dl, px, ImVec2(p0.x + pad, p0.y + (p1.y - p0.y - px) * 0.5f), tc, r.label, half);
+        const bool line = r.choices.empty() && r.readOnly;   // a note ("Available once a game has run"): the whole row is its text
+        widgets::text(c.dl, px, ImVec2(p0.x + pad, p0.y + (p1.y - p0.y - px) * 0.5f), tc, r.label, line ? 2 * half : half);
 
         const float chevW = 9 * u * k, chevH = 18 * u * k, gap = 24 * u * k, thick = 3 * u;
         const float cy = y + px * 0.5f;
