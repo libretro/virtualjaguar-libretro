@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
+from qualification_support import verify_release_unchanged
 import subprocess
 import tempfile
 import urllib.request
@@ -14,6 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--tag', required=True)
 parser.add_argument('--sha', required=True)
 parser.add_argument('--powershell', default='pwsh')
+parser.add_argument('--baseline-tag', default='v3.9.1')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 root = Path(os.environ.get('RUNNER_TEMP', tempfile.gettempdir()))/'vj-published-qualification'
@@ -33,9 +36,11 @@ for key in ['VJ_INSTALL_BASE_URL', 'VJ_INSTALL_ALLOW_ANY_OS', 'VJ_INSTALL_RETROA
 
 def run(cmd, label):
     print(label, flush=True)
-    proc = subprocess.run([str(c) for c in cmd], env=env, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, timeout=600)
-    (root/(label+'.log')).write_bytes(proc.stdout)
+    log_path = root/(label+'.log')
+    with log_path.open('wb') as log:
+        proc = subprocess.run([str(c) for c in cmd], env=env, stdout=log,
+                              stderr=subprocess.STDOUT, timeout=600)
+    proc.stdout = log_path.read_bytes()
     if proc.returncode:
         print(proc.stdout.decode(errors='replace')[-6000:], flush=True)
         raise RuntimeError(f'{label}: exit {proc.returncode}')
@@ -57,6 +62,32 @@ if release['target_commitish'] != args.sha:
     raise RuntimeError('Published release does not identify the requested candidate SHA')
 report['release_id'] = release['id']
 windows = platform.system() == 'Windows'
+frontends = [shutil.which('retroarch.exe' if windows else 'retroarch')]
+if windows:
+    frontends += [r'C:\RetroArch-Win64\retroarch.exe', r'C:\RetroArch\retroarch.exe',
+                  r'C:\Program Files\RetroArch\retroarch.exe']
+    frontends += [str(p) for p in Path(r'C:\ProgramData\chocolatey\lib\retroarch').rglob('retroarch.exe')]
+else:
+    frontends += ['/Applications/RetroArch.app/Contents/MacOS/RetroArch']
+frontend = next((Path(p) for p in frontends if p and Path(p).is_file()), None)
+if frontend is None:
+    raise RuntimeError('Real RetroArch frontend is required for core-load qualification')
+env['VJ_INSTALL_RETROARCH'] = str(frontend)
+config = root/'retroarch-qualification.cfg'
+video = 'gl' if platform.system() == 'Darwin' else 'null'
+config.write_text(f'video_driver = "{video}"\naudio_driver = "null"\ninput_driver = "null"\n'
+                  'menu_driver = "ozone"\npause_nonactive = "false"\n'
+                  'config_save_on_exit = "false"\nhistory_list_enable = "false"\n'
+                  'microphone_enable = "false"\nmidi_driver = "null"\n'
+                  f'playlist_directory = "{root.as_posix()}"\n'
+                  f'core_options_path = "{(root/"core-options.cfg").as_posix()}"\n'
+                  f'rgui_config_directory = "{root.as_posix()}"\n'
+                  f'runtime_log_directory = "{root.as_posix()}"\n'
+                  f'content_history_path = "{(root/"history.lpl").as_posix()}"\n'
+                  f'savefile_directory = "{root.as_posix()}"\n'
+                  f'savestate_directory = "{root.as_posix()}"\n')
+report['retroarch'] = str(frontend)
+report['baseline_tag'] = args.baseline_tag
 for selection in ['core', 'app', 'both']:
     case = root/selection
     cores, apps = case/'cores', case/'apps'
@@ -72,7 +103,8 @@ for selection in ['core', 'app', 'both']:
     before = {str(d): snapshot(d) for d in [case, root/'home', root/'local', root/'roaming', root/'data', root/'config']}
     run(cmd+[dry], selection+'-dry-before')
     assert {str(d): snapshot(d) for d in [case, root/'home', root/'local', root/'roaming', root/'data', root/'config']} == before, 'dry-run changed install destinations'
-    run(cmd, selection+'-install')
+    baseline_cmd = [args.baseline_tag if str(c) == args.tag else c for c in cmd]
+    run(baseline_cmd, selection+'-baseline-install')
     if selection in ['core', 'both']:
         assert any(p.is_file() and p.stat().st_size > 100000 for p in cores.iterdir()), 'core missing'
     if selection in ['app', 'both']:
@@ -92,14 +124,25 @@ for selection in ['core', 'app', 'both']:
             user_data = Path(env['XDG_DATA_HOME'])/'VirtualJaguar'
             assert (Path(env['XDG_DATA_HOME'])/'applications/io.github.libretro.VirtualJaguar.desktop').is_file()
         assert exe.is_file(), 'app missing'
-        run([exe, '--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', repo/'test/roms/yarc.j64'], selection+'-launch')
+        run([exe, '--headless', '--frames', '300', repo/'test/roms/yarc.j64'], selection+'-baseline-launch')
         sentinels = [user_data/'config.ini', user_data/'saves/user.sav', user_data/'roms/user-owned.j64']
         for p in sentinels:
             p.parent.mkdir(parents=True, exist_ok=True); p.write_text('qualification user data')
     before = {str(d): snapshot(d) for d in [case, root/'home', root/'local', root/'roaming', root/'data', root/'config']}
     run(cmd+[dry], selection+'-dry-after')
     assert {str(d): snapshot(d) for d in [case, root/'home', root/'local', root/'roaming', root/'data', root/'config']} == before, 'dry-run changed installed files'
-    run(cmd, selection+'-update')
+    payload = next(p for p in cores.iterdir() if p.suffix.lower() in ['.so', '.dylib', '.dll']) if selection == 'core' else exe
+    baseline_hash = hashlib.sha256(payload.read_bytes()).hexdigest()
+    update_output = run(cmd, selection+'-update')
+    if 'already up to date' in update_output.lower() or hashlib.sha256(payload.read_bytes()).hexdigest() == baseline_hash:
+        raise RuntimeError('Normal update did not replace the older published payload')
+    if selection in ['core', 'both']:
+        core = next(p for p in cores.iterdir() if p.suffix.lower() in ['.so', '.dylib', '.dll'])
+        output = run([frontend, '--verbose', '--log-file='+str(root/(selection+'-retroarch.log')), '--config', config, '--max-frames=30',
+                      '-L', core, repo/'test/roms/yarc.j64'], selection+'-retroarch-core-load')
+        output += (root/(selection+'-retroarch.log')).read_text(errors='replace')
+        if 'Failed to load' in output or 'Loading dynamic libretro core' not in output:
+            raise RuntimeError('RetroArch did not confirm loading the installed core')
     run(cmd+[force], selection+'-force-update')
     if selection in ['app', 'both']:
         for p in sentinels:
@@ -140,6 +183,9 @@ if windows:
         time.sleep(1)
     if (installed/'virtualjaguar.exe').exists() or data.read_text() != 'preserve through setup lifecycle':
         raise RuntimeError('Uninstall left the exe behind or removed user data')
+with urllib.request.urlopen(request, timeout=60) as response:
+    final_release = json.load(response)
+verify_release_unchanged(release, final_release, args.sha)
 report['result'] = 'PASS'
 output = root/'qualification-result.json'
 output.write_text(json.dumps(report, indent=2)+'\n')

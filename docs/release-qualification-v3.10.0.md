@@ -55,6 +55,13 @@ Manually dispatch `Installer scripts` with `qualification_tag=prerelease` and
 The optional jobs install a real RetroArch frontend and exercise published core,
 app and both selections, no-TTY operation, dry-run invariance, normal updates,
 forced updates, public-ROM launch and user-data preservation in isolated profiles.
+Real upgrade tests first install published v3.9.1, then require replacement by the
+candidate (including changed payload hashes). Installed cores must load and run
+public content in RetroArch, with nonzero exit or failed load treated as fatal.
+The release SHA and asset fingerprint are checked again at the end to detect a
+rolling release being replaced mid-run. Three provenance regression tests cover
+unchanged, source-replaced and same-source asset-replaced snapshots.
+
 They retain exact OS, candidate, outcomes and command logs as artifacts. A changed
 rolling-release source SHA fails the run instead of silently qualifying another build.
 
@@ -72,12 +79,30 @@ and both slices have minimum macOS 11.0.
 
 A fresh Ubuntu 22.04.5 ARM64 VM (glibc 2.35, native virtualization, no host mounts)
 passed all 19 Linux command checks for the published AppImage/core installer flows.
+Those initial normal-update invocations detected an already-current installation;
+they are not evidence of a real version-to-version upgrade.
 These are actual published downloads, not hermetic fixture success. The evidence
 pins GitHub release id `376361064` and the exact source SHA above.
 
 Native Windows PowerShell 5.1/7 and additional clean hosted Mac/Linux checks are
 queued in [qualification run 39539281058](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39539281058).
 This is pending evidence, not a passed criterion.
+
+## Strengthened real-upgrade evidence
+
+After review identified the already-current path, the strengthened runner was
+executed locally on the Apple Silicon Mac. It installed published **v3.9.1** for
+each core/app/both selection, upgraded normally to the candidate, required changed
+payload hashes, then forced an update. All checks passed, including fatal RetroArch
+core-load/public-content runs, post-update app hashes, data sentinels and the final
+unchanged-release check. macOS RetroArch uses OpenGL: the local Cocoa frontend's
+null-video path crashes, while the OpenGL path runs and exits successfully.
+
+Hosted Linux qualification passed after correcting the Ubuntu 24.04 audio package
+name and authenticating release metadata requests. Hosted Intel Mac qualification
+reached the stapler check but Apple CloudKit returned an inconsistent/null response
+(error 68); it remains failed evidence pending a fresh strengthened run. No signing
+check is skipped to claim success.
 
 ## Remaining distribution work
 

@@ -75,6 +75,9 @@ jobs:
 
     # warning and above: the style-level SC2015 (A && B || C) hits idioms that are intentional
     # in this script (and in the original), and differs between shellcheck releases.
+    - name: Mutable-release provenance unit tests
+      run: python3 test/installer/test_qualification_support.py
+
     - name: shellcheck
       run: shellcheck -s sh -S warning tools/install.sh
 
