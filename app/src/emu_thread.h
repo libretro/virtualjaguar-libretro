@@ -88,6 +88,15 @@ public:
     // before the abandon may still run later on the detached thread, so captures must be by value (as callFor says).
     template <class F>
     auto call(F&& fn) -> decltype(fn());
+    // The debug lane (#967 phase 3): safe inside retro_run().  Inline, or on the emulation thread: runs now.  Threaded:
+    // queued in Lane::Debug, drained at the next frame boundary (after the frame lane) or by the halt pump, whichever
+    // comes first.  debugCall waits like call() (the same wait hook after kBusyAfter); captures must be by value when
+    // the thread may be abandoned, as for call().  There is no ordering between the two lanes beyond "frame lane
+    // first at each boundary".  The Tools windows rely on debugCall ALWAYS waiting, never giving up: DebugSession::attach,
+    // TempBreak::arm/disarm and CpuControl::stepOver capture locals by reference inside callCore.
+    template <class F>
+    auto debugCall(F&& fn) -> decltype(fn());
+    void debugPost(std::function<void()> fn);
     // call() for shutdown: gives up after `timeout`.  On false the command may still run later, so capture by value.
     template <class F>
     bool callFor(std::chrono::milliseconds timeout, F&& fn);
@@ -122,6 +131,8 @@ private:
     void loop();
     void waitFinished();   // the thread has left its loop for good (or was abandoned)
     void notifyFrame();
+    template <class F>
+    auto submit(F&& fn, EmuCommands::Lane lane) -> decltype(fn());   // call() / debugCall()
 
     Client* client_ = nullptr;
     std::function<void(double, unsigned)> waitHook_;   // set before start(); read only by call()'s waiter
@@ -143,12 +154,22 @@ private:
 
 template <class F>
 auto EmuThread::call(F&& fn) -> decltype(fn()) {
+    return submit(std::forward<F>(fn), EmuCommands::Lane::Frame);
+}
+
+template <class F>
+auto EmuThread::debugCall(F&& fn) -> decltype(fn()) {
+    return submit(std::forward<F>(fn), EmuCommands::Lane::Debug);
+}
+
+template <class F>
+auto EmuThread::submit(F&& fn, EmuCommands::Lane lane) -> decltype(fn()) {
     using R = decltype(fn());
     if (abandoned()) return R();
     if (!threaded() || onEmuThread()) return fn();
     auto task = std::make_shared<std::packaged_task<R()>>(std::forward<F>(fn));
     std::future<R> done = task->get_future();
-    if (!cmds_.post([task] { (*task)(); })) {   // the thread is finishing: run it here once it has gone
+    if (!cmds_.post([task] { (*task)(); }, lane)) {   // the thread is finishing: run it here once it has gone
         waitFinished();
         if (abandoned()) return R();
         (*task)();

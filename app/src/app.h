@@ -335,7 +335,7 @@ private:
     void shutdown();
     void loadConfig();
     void wireHost();
-    void limitFeaturesForEmuThread();   // #967: the debugger tools and the GDB stub are off while the thread is on
+    void limitFeaturesForEmuThread();   // #967: the debugger halt and the GDB stub are off while the thread is on
     void liftFeatureLimits();           // undoes it when the thread did not start (nothing is loaded yet)
 
     int runInteractive(const CliArgs& a);
@@ -365,6 +365,7 @@ private:
     void threadedFrame();             // UI thread, threaded: input out, frames / counters / messages in
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
+    void fillDebugViews();            // emulation thread (inline: the UI thread): debug.fillViews(), after each frame
     void frameUi();
     void updateTitle();
     uint32_t frameHash(const Frame& f) const;

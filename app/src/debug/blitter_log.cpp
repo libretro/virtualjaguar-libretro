@@ -215,5 +215,23 @@ size_t LogTracker::sync(const vj_debug_iface* iface) {
     return added;
 }
 
+size_t LogTracker::absorb(const ViewBuffer& b) {
+    if (!b.ok || b.req.kind != ViewRequest::Kind::BlitLog || b.req.since != next_) return 0;   // not the request we are on
+    if (b.blitHead < next_) {   // the log was switched off and on again: its numbering restarted
+        reset();
+        return 0;
+    }
+    lost_ += b.blitLost;
+    size_t added = 0;
+    for (const vj_debug_blit& e : b.blits) {
+        if (e.seq < next_) continue;
+        rows_.push_back(e);
+        added++;
+    }
+    next_ = b.blitHead;
+    while (rows_.size() > max_) rows_.pop_front();
+    return added;
+}
+
 }  // namespace blit
 }  // namespace vj

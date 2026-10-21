@@ -3,14 +3,18 @@
 // control registers, the step-over decision, and the run controls (break / continue / step / step over /
 // run to cursor) on top of DebugSession.  cpu_ui.cpp draws it; debug_cpu_test.cpp tests it against the mock.
 //
-// Everything here runs on the emulation thread, between retro_run() calls or inside the halt pump.
+// The logic that reads the core (disasmForward, backStart, stepOverTarget, ...) takes the iface and runs on the
+// emulation thread, between retro_run() calls or inside the halt pump.  The window itself never calls it: it draws
+// from the published Regs / Disasm view buffers (CpuFeed) and asks for the few synchronous walks as jobs (DisasmNav).
 #pragma once
 
 #include <array>
 #include <string>
 #include <vector>
 
+#include "core_job.h"
 #include "debug_session.h"
+#include "debug_views.h"
 #include "vj_debug_iface.h"
 
 namespace vj {
@@ -49,6 +53,119 @@ unsigned nextAddr(const vj_debug_iface* iface, int target, unsigned addr);
 unsigned backStart(const vj_debug_iface* iface, int target, unsigned pc, int lines);
 // The instruction before `addr` (backStart with one line); `addr` itself when nothing fits.
 unsigned prevAddr(const vj_debug_iface* iface, int target, unsigned addr);
+// disasmForward mapped to the DebugViews' DisasmLine (len 0 for an invalid line).  This is the DisasmFn the CPU tool
+// installs with DebugViews::setDisasm, so the emulation thread builds the window's rows (Musashi for the 68000).
+std::vector<DisasmLine> disasmRows(const vj_debug_iface* iface, int target, unsigned addr, unsigned rows);
+
+// ---- what the window draws from ---------------------------------------------------------------------------------
+// The CPU window's two view requests (registers and listing of the tab being looked at) and the newest answers it has
+// adopted.  Published buffers only: nothing here reaches the core.  UI thread.
+class CpuFeed {
+public:
+    // States the wanted registers and listing (views().set for each, only when changed; windows re-state every draw).
+    void want(DebugSession& s, int target, unsigned top, unsigned rows);
+    // Adopts the newest buffers; true when the registers or the rows changed.  A new core (the views' epoch) forgets
+    // everything adopted first.
+    bool update(DebugSession& s);
+    void release(DebugSession& s);                       // the window closed: drop both requests and what was adopted
+    bool answered() const { return answered_; }          // some Regs buffer has been adopted (ok or not)
+    bool haveRegs() const { return haveRegs_; }          // ...and the core returned the registers
+    int regsTarget() const { return regsTarget_; }       // the processor the adopted registers belong to (-1: none yet)
+    const vj_debug_regs& regs() const { return regs_; }
+    // The adopted rows answer exactly this request.
+    bool rowsFor(int target, unsigned top, unsigned rows) const {
+        return haveRows_ && rowsTarget_ == target && rowsTop_ == top && rowsN_ == rows;
+    }
+    const std::vector<DisasmLine>& rows() const { return rows_; }
+    unsigned rowsGen() const { return rowsGen_; }        // counts every adoption of rows: a copy of rows() older than this is stale
+
+private:
+    void forget();
+    unsigned rowsGen_ = 0;
+    DebugViews::Id regsId_ = DebugViews::kNoId, disId_ = DebugViews::kNoId;
+    ViewRequest wantRegs_, wantDis_;
+    bool stated_ = false;                                // wantRegs_ / wantDis_ hold what the views were last given
+    uint64_t epoch_ = 0;                                 // the views' epoch the adopted data belongs to
+    bool answered_ = false, haveRegs_ = false;
+    int regsTarget_ = -1;
+    uint64_t regsSerial_ = 0;
+    vj_debug_regs regs_{};
+    bool haveRows_ = false;
+    int rowsTarget_ = -1;
+    unsigned rowsTop_ = 0, rowsN_ = 0;
+    uint64_t rowsSerial_ = 0;
+    std::vector<DisasmLine> rows_;
+};
+
+// The synchronous walks (backStart / prevAddr) that used to run on the draw path, moved onto the emulation thread.
+// One result at a time: take() gives the newest address; pending() says one is still on its way.
+class DisasmNav {
+public:
+    void back(DebugSession& s, int target, unsigned pc, int lines) {   // result: backStart(iface, target, pc, lines)
+        job_.submit(s, [=](const vj_debug_iface* i) { return backStart(i, target, pc, lines); });
+    }
+    void prev(DebugSession& s, int target, unsigned from, int count) {   // result: prevAddr applied `count` times
+        job_.submit(s, [=](const vj_debug_iface* i) {
+            unsigned a = from;
+            for (int k = 0; k < count; k++) a = prevAddr(i, target, a);
+            return a;
+        });
+    }
+    bool take(unsigned& addr) { return job_.take(addr); }
+    bool pending() const { return job_.pending(); }
+
+private:
+    CoreJob<unsigned> job_;
+};
+
+// The bookkeeping around DisasmNav that keeps a late answer from landing where it no longer belongs (ImGui-free, so the
+// interleavings unit-test with a deferred queue).  One walk outstanding at a time, for one tab.  An answer is applied
+// only if the core is still the one the walk was posted for (the views' epoch) and the tab has not jumped elsewhere
+// since (its generation, which the caller bumps on Go to / PC / wheel).  Stale answers are dropped, and a walk
+// outstanding across a core switch simply finishes and is dropped: no draining state.
+class NavTracker {
+public:
+    struct Applied {
+        int tab = -1;
+        unsigned addr = 0;
+    };
+    bool free() const { return tab_ < 0; }                       // nothing outstanding: a walk may be posted
+    bool busyFor(int tab) const { return tab_ == tab; }
+    bool prevOutstanding(int tab) const { return tab_ == tab && prev_; }   // a wheel-up walk, whose steps must not be dropped
+    void back(DebugSession& s, int tab, unsigned gen, unsigned pc, int lines) {
+        begin(s, tab, gen, false);
+        nav_.back(s, tab, pc, lines);
+    }
+    void prev(DebugSession& s, int tab, unsigned gen, unsigned from, int count) {
+        begin(s, tab, gen, true);
+        nav_.prev(s, tab, from, count);
+    }
+    // UI thread, each frame (and right after a post: inline the answer is already there).  `gens` holds each tab's
+    // current generation.  True and `out` when a fresh answer arrived.
+    bool apply(DebugSession& s, const unsigned* gens, Applied& out) {
+        unsigned a = 0;
+        if (tab_ < 0 || !nav_.take(a)) return false;
+        const int tab = tab_;
+        tab_ = -1;
+        if (epoch_ != s.views().epoch() || gens[tab] != gen_) return false;
+        out.tab = tab;
+        out.addr = a;
+        return true;
+    }
+
+private:
+    void begin(DebugSession& s, int tab, unsigned gen, bool prev) {
+        tab_ = tab;
+        gen_ = gen;
+        prev_ = prev;
+        epoch_ = s.views().epoch();
+    }
+    DisasmNav nav_;
+    int tab_ = -1;
+    unsigned gen_ = 0;
+    bool prev_ = false;
+    uint64_t epoch_ = 0;
+};
 
 // ---- step over ----------------------------------------------------------------------------------------------------
 // 68000: JSR, BSR and TRAP return to the next instruction, so "step over" runs to pc + length.  Anything else is a

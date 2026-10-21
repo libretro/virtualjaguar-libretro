@@ -497,7 +497,17 @@ void App::wireHost() {
     host.setLogVerbose(false);
 
     // ---- debug tools (debug/debug_session.h) -----------------------------------------------------
-    host.onDebugIface = [this](const vj_debug_iface* i) { debug.setIface(i); };
+    // The core hands its interface over (and takes it back) inside a load / unload, which is the emulation thread's
+    // call when threaded: that side only swaps the pointer and the views' epoch.  The UI half (breakpoints, regions,
+    // closing the windows) is syncCore(), run by syncDebug() each UI frame; inline, there is no other thread, so now.
+    host.onDebugIface = [this](const vj_debug_iface* i) {
+        debug.onCoreIface(i);
+        if (!host.threaded()) debug.syncCore();
+    };
+    // The windows' one-shot actions reach the core through the emulation thread's debug lane (before EmuThread::start
+    // the thread is inline, so both run at once: headless and inline runs are unchanged).
+    debug.coreCall = [this](std::function<void()> f) { emu.debugCall(std::move(f)); };
+    debug.corePost = [this](std::function<void()> f) { emu.debugPost(std::move(f)); };
     debug.runUiFrame = [this] { haltedFrame(); };         // the core is parked in retro_run(): UI only
     debug.abortHalt = [this] { return quit; };            // closing the window while halted lets the core go
     debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
@@ -522,19 +532,24 @@ void App::wireHost() {
 }
 
 void App::syncDebug() {
+    debug.syncCore();   // the UI half of a core interface swap the emulation thread made (threaded)
     debug.setContentLoaded(host.isLoaded());
     debug.setHardcore(ach.hardcoreActive());
     debug.tick(now(), host.isLoaded() && !paused && !debug.halted());
+    debug.wakeViews();   // posts one fill to the debug lane: EmuThread runs it now when not threaded (a halted or paused window is current), else at the next boundary
 }
 
-// #967 phase 1 runs the emulation on its own thread before these features are thread-safe: they are switched off
-// for the run rather than racing the core (docs/app-emulation-thread-plan-phase1.md, "Phase 1 boundary").  Only the
-// two below remain off, until phase 3; RetroAchievements and netplay work with the thread on.
-//   * The Tools windows: they read core memory from the UI thread, and a halt would run the UI on the emulation thread.
+// Emulation thread (inline: the UI thread), after each emulated frame: serves every open window's request from the
+// core.  haltedFrame() has no call of its own: it runs syncDebug(), and wakeViews() posts a fill that EmuThread runs inline there.
+void App::fillDebugViews() { debug.fillViews(); }
+
+// #967: with the emulation thread on, a halt would run the UI on the emulation thread, so these two stay off for the
+// run until phase 3b moves the halt pump there (docs/app-emulation-thread-plan-phase3.md).  The Tools windows work
+// (phase 3a): the core hands its debug interface over, and every call into it is the emulation thread's.
+//   * Break, Step and breakpoints: DebugSession::setHaltAvailable(false) makes attach() refuse, so nothing can halt.
 //   * The GDB stub: a socket halt would park the emulation thread with every call() waiting behind it.
 void App::limitFeaturesForEmuThread() {
-    debug.setThreadBlocked(true);
-    host.announceDebug = false;   // the core never hands over its debug interface, so it never halts for the app
+    debug.setHaltAvailable(false);
     host.optionLock = [this](const std::string& key, std::string& value) {
         if (key == "virtualjaguar_gdb_stub") {
             value = "disabled";
@@ -542,17 +557,16 @@ void App::limitFeaturesForEmuThread() {
         }
         return lockedCoreOptionFor(key, value, {{proPorts[0].load(), proPorts[1].load()}});   // as wireHost()'s
     };
-    std::fprintf(stderr, "[emu] the debugger tools and the GDB stub are off while the emulation thread is on\n");
+    std::fprintf(stderr, "[emu] the debugger halt and the GDB stub are off while the emulation thread is on (the Tools windows work)\n");
 }
 
 // The emulation thread did not start: the run is inline after all, so give back what limitFeaturesForEmuThread() took.
 void App::liftFeatureLimits() {
-    debug.setThreadBlocked(false);
-    host.announceDebug = true;
+    debug.setHaltAvailable(true);
     host.optionLock = [this](const std::string& k, std::string& v) {   // wireHost()'s rule
         return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
     };
-    std::fprintf(stderr, "[emu] the debugger tools and the GDB stub are back on (the emulation thread did not start)\n");
+    std::fprintf(stderr, "[emu] the debugger halt and the GDB stub are back on (the emulation thread did not start)\n");
 }
 
 // UI thread: 1e9 / the refresh rate of the display the window is on, or 0 when there is no window or the rate is unknown.
@@ -673,9 +687,16 @@ void App::emuRunOneFrame() {
     if (trace_.enabled()) {
         te.endNs = SDL_GetTicksNS();
         te.serial = f.serial;
-        trace_.emu(te);
     }
     host.publishSnapshot();
+    // After the snapshot: the windows' buffers carry this frame's state.  endNs above is taken before the copy (the
+    // frame cost other measurements compare must not move), so the copy is timed on its own: the row's fill_ns.
+    const uint64_t fill0 = trace_.enabled() ? SDL_GetTicksNS() : 0;
+    fillDebugViews();
+    if (trace_.enabled()) {
+        te.fillNs = SDL_GetTicksNS() - fill0;
+        trace_.emu(te);
+    }
 }
 
 // Emulation thread (VJ_PERF_TRACE): the pacing of the frame emuRunOneFrame() runs next.
@@ -1677,7 +1698,10 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_F8: togglePause(); break;
     case SDLK_F9:   // debugger: continue when halted, otherwise break at the next instruction
         if (debug.halted()) debug.resume();
-        else if (debug.enabled()) debug.breakNow();
+        else if (debug.enabled()) {
+            if (debug.haltAvailable()) debug.breakNow();
+            else toast(debug.haltDisabledReason(), 3.0);
+        }
         break;
     case SDLK_O:
         if (mod) showOpenDialog();
@@ -1849,6 +1873,7 @@ void App::stepEmulation() {
     } else {
         frames = pacer_.plan(dt, period);
     }
+    PerfTrace::Emu teLast{};   // the last frame's row waits for the view copy below (its fill_ns)
     for (int i = 0; i < frames; i++) {
         host.wantVideo = (i == frames - 1);
         if (!fastForward) audio.update();
@@ -1861,7 +1886,8 @@ void App::stepEmulation() {
             te.serial = host.frame().serial;
             te.trim = 1.0f;
             te.filtQMs = te.queuedMs = audio.queuedMs();
-            trace_.emu(te);
+            if (i == frames - 1) teLast = te;
+            else trace_.emu(te);
         }
         if (r0) perf.add(Perf::Retro, 1000.0 * (double)(perf.tick() - r0) / (double)perf.freq);
         perf.emulated();
@@ -1869,6 +1895,15 @@ void App::stepEmulation() {
         netplay.afterFrame();
         fpsWindowFrames_++;
         runFrames_.fetch_add(1, std::memory_order_relaxed);   // emulated time of this game (paused time does not count)
+    }
+    if (frames > 0) {
+        // Once per UI frame, not per emulated frame (fast-forward runs four).
+        const uint64_t fill0 = trace_.enabled() ? SDL_GetTicksNS() : 0;
+        fillDebugViews();
+        if (trace_.enabled()) {
+            teLast.fillNs = SDL_GetTicksNS() - fill0;
+            trace_.emu(teLast);
+        }
     }
     host.wantVideo = true;
     if (!fastForward && frames > 0) {
@@ -2044,7 +2079,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "theme-editor") showThemeEditor = true;
     else if (a.showWindow == "controls") input.controls.show = true;
-    else if (!emuThreadThisRun_ && openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
+    else if (openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
     unsigned uiFrames = 0;
 
     std::string firstErr;

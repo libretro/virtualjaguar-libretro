@@ -2,7 +2,9 @@
 // perf window ends, on one clock (SDL_GetTicksNS):
 //
 //   <prefix>-emu.csv  one row per emulated frame: when it was due on the pacing grid, when it really started, when its
-//                     picture was handed over, the trim and audio queue it was paced with, and its frame serial;
+//                     picture was handed over, the trim and audio queue it was paced with, its frame serial, and (last
+//                     column, appended so older readers keep working) what the Tools windows' view copier cost after it
+//                     (fill_ns; end_ns is taken before that copy, so the frame cost end - start does not include it);
 //   <prefix>-ui.csv   one row per UI iteration: when the iteration took a frame, which serial it showed, and the swap
 //                     around it (its return is the vblank proxy), plus the late latch's wait (the events it handled,
 //                     and its worst overshoot of one blocking call: 1 = SDL_WaitEventTimeout, 2 = SDL_DelayPrecise,
@@ -25,7 +27,7 @@ namespace vj {
 
 struct PerfTrace {
     struct Emu {
-        uint64_t dueNs, startNs, endNs, serial;
+        uint64_t dueNs, startNs, endNs, serial, fillNs;
         float trim, filtQMs, queuedMs;
         unsigned char audio, refill;
     };
@@ -64,12 +66,13 @@ struct PerfTrace {
         if (!enabled()) return;
         const size_t n = emuN_.load(std::memory_order_acquire);
         if (FILE* f = std::fopen((prefix + "-emu.csv").c_str(), "w")) {
-            std::fprintf(f, "due_ns,start_ns,end_ns,serial,trim,filt_q_ms,queued_ms,audio,refill\n");
+            std::fprintf(f, "due_ns,start_ns,end_ns,serial,trim,filt_q_ms,queued_ms,audio,refill,fill_ns\n");
             for (size_t i = 0; i < n; i++) {
                 const Emu& e = emu_[i];
-                std::fprintf(f, "%llu,%llu,%llu,%llu,%.6f,%.3f,%.3f,%d,%d\n", (unsigned long long)e.dueNs,
+                std::fprintf(f, "%llu,%llu,%llu,%llu,%.6f,%.3f,%.3f,%d,%d,%llu\n", (unsigned long long)e.dueNs,
                              (unsigned long long)e.startNs, (unsigned long long)e.endNs, (unsigned long long)e.serial,
-                             (double)e.trim, (double)e.filtQMs, (double)e.queuedMs, (int)e.audio, (int)e.refill);
+                             (double)e.trim, (double)e.filtQMs, (double)e.queuedMs, (int)e.audio, (int)e.refill,
+                             (unsigned long long)e.fillNs);
             }
             std::fclose(f);
         }

@@ -294,8 +294,10 @@ void handlePending() {
         setStatus(r.ok ? "Exported to " + r.dest : "Export failed: " + r.error, !r.ok);
     } else if (kind == "replace") {
         const tex::Entry* e = g.index.manifest().find(hash);
-        tex::ReplaceOutcome o = tex::replaceTile(optionIO(), g.session->iface(), g.sysDir, g.crc, hash, e ? e->w : 0,
-                                                 e ? e->h : 0, e ? e->bpp : 0, path);
+        // The reload runs on the emulation thread (the session marshals it); the option write stays on this one.
+        DebugSession* s = g.session;
+        tex::ReplaceOutcome o = tex::replaceTile(optionIO(), tex::ReloadFn([s] { return s->texReplaceReload(); }), g.sysDir,
+                                                 g.crc, hash, e ? e->w : 0, e ? e->h : 0, e ? e->bpp : 0, path);
         setStatus(o.message, !o.ok);
         if (o.ok) {
             g.packed = tex::listPack(tex::packDir(g.sysDir, g.crc));
@@ -456,13 +458,8 @@ void drawBody(double now) {
 
     ui::Flow flow;
     if (ImGui::Button("Reload packs")) {
-        const vj_debug_iface* f = g.session->iface();
-        if (f && f->size >= offsetof(vj_debug_iface, texreplace_reload) + sizeof f->texreplace_reload && f->texreplace_reload) {
-            int active = f->texreplace_reload();
-            setStatus(active ? "Packs reloaded." : "Packs reloaded; replacement is off or the folder is empty.", false);
-        } else {
-            setStatus("This core cannot reload packs; restart the game.", true);
-        }
+        const tex::ReloadText t = tex::reloadText(g.session->texReplaceReload());
+        setStatus(t.text, t.error);
     }
     flow.next(ui::Flow::buttonW("Open pack folder"));
     if (ImGui::Button("Open pack folder")) openFolder(tex::packDir(g.sysDir, g.crc), true);

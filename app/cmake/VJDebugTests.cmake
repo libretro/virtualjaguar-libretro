@@ -1,11 +1,29 @@
 # Debug-tools tests (#652 / #833).  All headless.
 #
+# #967 3a: a window smoke test = one ImGui frame loop over the mock core.  `target` / `test` name the executable and the
+# ctest entry; the remaining arguments are the test's own sources (the session, the cheat manager and the theme come along).
+function(vj_add_debug_ui_smoke target test)
+    add_executable(${target} ${ARGN} ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/paths.cpp
+        "${VJ_ROOT}/src/core/cheat.c" src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
+    target_include_directories(${target} PRIVATE src src/debug tests "${VJ_ROOT}/src/debug" "${VJ_ROOT}/src/core"
+        "${VJ_ROOT}/libretro-common/include")
+    target_link_libraries(${target} PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W3 /utf-8)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+    add_test(NAME ${test} COMMAND ${target})
+    set_tests_properties(${test} PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL " LABELS emu_thread)
+endfunction()
+
 #   debug_session_unit   DebugSession (app/src/debug) against the mock core interface
 #                        (app/tests/debug_mock.h): when the tools are available, attach / halt /
 #                        resume / step through the nested pump, the breakpoint list, the poke policy,
 #                        the refresh cadence, the Tools registry.  No window, no core.
 add_executable(vj_debug_session_test
-    tests/debug_session_test.cpp src/debug/debug_session.cpp)
+    tests/debug_session_test.cpp ${VJ_DEBUG_SESSION_SRCS})
 target_include_directories(vj_debug_session_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
 if(MSVC)
     target_compile_options(vj_debug_session_test PRIVATE /W3 /utf-8)
@@ -23,7 +41,7 @@ set_tests_properties(debug_session_unit PROPERTIES TIMEOUT 60)
 #                        a breakpoint at a PC the game revisits; hardcore switched on from inside a halt
 #                        resumes and detaches; a second game loads cleanly afterwards.
 add_executable(vj_debug_e2e
-    tests/debug_e2e.cpp src/debug/debug_session.cpp src/core_host.cpp src/paths.cpp)
+    tests/debug_e2e.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp src/paths.cpp)
 target_include_directories(vj_debug_e2e PRIVATE src)
 target_link_libraries(vj_debug_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 if(MSVC)
@@ -39,7 +57,7 @@ set_tests_properties(debug_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "F
 #                        formatting, region clamps, go-to, change marks, incremental search, the write policy
 #                        (checked against what the interface really does), the CLUT mirror, CRY / RGB16 maths.
 add_executable(vj_debug_memory_test
-    tests/debug_memory_test.cpp src/debug/memory_view.cpp src/debug/debug_session.cpp)
+    tests/debug_memory_test.cpp src/debug/memory_view.cpp ${VJ_DEBUG_SESSION_SRCS})
 target_include_directories(vj_debug_memory_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
 if(MSVC)
     target_compile_options(vj_debug_memory_test PRIVATE /W3 /utf-8)
@@ -55,7 +73,7 @@ set_tests_properties(debug_memory_unit PROPERTIES TIMEOUT 60)
 #                          value reaches the interface, ROM / register / B_CMD edits are refused before it.
 add_executable(vj_debug_memory_ui_test
     tests/debug_memory_ui_test.cpp src/debug/memory_ui.cpp src/debug/clut_ui.cpp src/debug/memory_view.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/paths.cpp "${VJ_ROOT}/src/core/cheat.c"
+    ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/paths.cpp "${VJ_ROOT}/src/core/cheat.c"
     src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
 target_include_directories(vj_debug_memory_ui_test PRIVATE src src/debug tests "${VJ_ROOT}/src/debug"
     "${VJ_ROOT}/src/core" "${VJ_ROOT}/libretro-common/include")
@@ -75,7 +93,7 @@ set_tests_properties(debug_memory_ui_smoke PROPERTIES TIMEOUT 60)
 #                        cheat_parse_one / cheat_list_apply, hardcore keeping it out.  Mock core, no window.
 add_executable(vj_debug_scan_test
     tests/debug_scan_test.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/paths.cpp
+    ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/paths.cpp
     "${VJ_ROOT}/src/core/cheat.c")
 target_include_directories(vj_debug_scan_test PRIVATE src src/debug tests "${VJ_ROOT}/src/debug"
     "${VJ_ROOT}/src/core" "${VJ_ROOT}/libretro-common/include")
@@ -94,7 +112,7 @@ set_tests_properties(debug_scan_unit PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESS
 #                        through the Cheats window's CheatManager, and the core holds it; with no cheat, with
 #                        the cheat switched off, and under a hardcore block it keeps counting.
 add_executable(vj_debug_scan_e2e
-    tests/debug_scan_e2e.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp src/debug/debug_session.cpp
+    tests/debug_scan_e2e.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp ${VJ_DEBUG_SESSION_SRCS}
     src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp)
 target_include_directories(vj_debug_scan_e2e PRIVATE src src/debug tests "${VJ_ROOT}/src/debug")
 target_link_libraries(vj_debug_scan_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
@@ -112,7 +130,7 @@ set_tests_properties(debug_scan_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSI
 #                        narrowed, a value edited with Enter, the Add-as-cheat popup, undone, hardcore.
 add_executable(vj_debug_scan_ui_smoke
     tests/debug_scan_ui_smoke.cpp src/debug/scanner_ui.cpp src/debug/cheat_scan.cpp src/debug/scanner_actions.cpp
-    src/debug/debug_session.cpp src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp
+    ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/core_host.cpp src/paths.cpp
     src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
 target_include_directories(vj_debug_scan_ui_smoke PRIVATE src src/debug tests "${VJ_ROOT}/src/debug")
 target_link_libraries(vj_debug_scan_ui_smoke PRIVATE vj_core vj_imgui ${VJ_SDL3_TARGET})
@@ -123,7 +141,7 @@ else()
     target_compile_options(vj_debug_scan_ui_smoke PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 add_test(NAME debug_scan_ui_smoke COMMAND vj_debug_scan_ui_smoke)
-set_tests_properties(debug_scan_ui_smoke PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+set_tests_properties(debug_scan_ui_smoke PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 #   debug_texture_unit   Textures window logic (texture_pack.*): manifest parse on a synthetic dump folder,
 #                        pack install path + size rules, the replace flow's reload call on the mock, thumbnail LRU.
@@ -147,7 +165,22 @@ foreach(_t texture blitter)
     add_test(NAME debug_${_t}_unit COMMAND vj_debug_${_t}_test)
     set_tests_properties(debug_${_t}_unit PROPERTIES TIMEOUT 60)
 endforeach()
-set_tests_properties(debug_blitter_unit PROPERTIES LABELS emu_thread)
+set_tests_properties(debug_blitter_unit PROPERTIES LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_blitter_feed_unit  the Blitter log window's data feed (blitter_feed.*): the launch list and registers read from
+#                        view buffers over the mock, the log switched through marshalled calls, the stale-buffer guards.
+add_executable(vj_debug_blitter_feed_test
+    tests/debug_blitter_feed_test.cpp src/debug/blitter_feed.cpp src/debug/blitter_log.cpp ${VJ_DEBUG_SESSION_SRCS})
+target_include_directories(vj_debug_blitter_feed_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_blitter_feed_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_debug_blitter_feed_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_blitter_feed_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_blitter_feed_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_blitter_feed_unit COMMAND vj_debug_blitter_feed_test)
+set_tests_properties(debug_blitter_feed_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 #   debug_op_unit        Object list tool (app/src/debug/op_decode, op_render, op_view): the field decoder
 #                        against JTRM-layout fixtures and op_list_dump.c's formulas, the bitmap renderer
@@ -155,7 +188,7 @@ set_tests_properties(debug_blitter_unit PROPERTIES LABELS emu_thread)
 #                        bpp bitmaps, the snapshot lifecycle, the screen mapping, PNG export.
 add_executable(vj_debug_op_test
     tests/debug_op_test.cpp src/debug/op_decode.cpp src/debug/op_render.cpp src/debug/op_view.cpp
-    src/debug/debug_session.cpp)
+    ${VJ_DEBUG_SESSION_SRCS})
 target_include_directories(vj_debug_op_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
 target_link_libraries(vj_debug_op_test PRIVATE ${VJ_SDL3_TARGET})
 if(MSVC)
@@ -165,14 +198,14 @@ else()
     target_compile_options(vj_debug_op_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 add_test(NAME debug_op_unit COMMAND vj_debug_op_test)
-set_tests_properties(debug_op_unit PROPERTIES TIMEOUT 60)
+set_tests_properties(debug_op_unit PROPERTIES TIMEOUT 60 LABELS emu_thread)
 
 #   debug_op_e2e         the Object list tool against the REAL core on a public ROM (yarc): arm the snapshot,
 #                        run a frame, decode the list the OP walked (a stop object ends it, bitmap objects are
 #                        drawable), render a bitmap from DRAM, export it as a PNG, paint a pixel and see it in RAM.
 add_executable(vj_debug_op_e2e
     tests/debug_op_e2e.cpp src/debug/op_decode.cpp src/debug/op_render.cpp src/debug/op_view.cpp
-    src/debug/debug_session.cpp src/core_host.cpp src/paths.cpp)
+    ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp src/paths.cpp)
 target_include_directories(vj_debug_op_e2e PRIVATE src)
 target_link_libraries(vj_debug_op_e2e PRIVATE vj_core ${VJ_SDL3_TARGET})
 if(MSVC)
@@ -183,3 +216,56 @@ else()
 endif()
 add_test(NAME debug_op_e2e COMMAND vj_debug_op_e2e "${VJ_ROMS}/yarc.j64")
 set_tests_properties(debug_op_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_views_unit     DebugViews (debug_views.*): the request table and double buffers the emulation thread fills
+#                        and the windows read -- clamps, per-kind fills against the mock, serials, a changed request
+#                        invalidating its buffer, the epoch across a content switch, and a concurrent set/fill/read.
+add_executable(vj_debug_views_test tests/debug_views_test.cpp src/debug/debug_views.cpp)
+target_include_directories(vj_debug_views_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_views_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_debug_views_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_views_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_views_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_views_unit COMMAND vj_debug_views_test)
+set_tests_properties(debug_views_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_core_job_unit  CoreJob (core_job.h): a job posted to the emulation thread, its result taken later (newest wins).
+add_executable(vj_debug_core_job_test tests/debug_core_job_test.cpp ${VJ_DEBUG_SESSION_SRCS})
+target_include_directories(vj_debug_core_job_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_core_job_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_debug_core_job_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_core_job_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_core_job_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_core_job_unit COMMAND vj_debug_core_job_test)
+set_tests_properties(debug_core_job_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_cpu_ui_smoke   the CPU window (cpu_ui.cpp) drawn headlessly over the mock: registers and listing from
+#                        published buffers, idle frames free of core calls, the Break/Step-greyed threaded state.
+vj_add_debug_ui_smoke(vj_debug_cpu_ui_smoke debug_cpu_ui_smoke tests/debug_cpu_ui_smoke.cpp src/debug/cpu_ui.cpp)
+target_link_libraries(vj_debug_cpu_ui_smoke PRIVATE vj_debug_cpu)
+
+#   debug_blitter_ui_smoke  the Blitter log window (blitter_ui.cpp) drawn headlessly over the mock: the core's log on
+#                        while it is open, the list and registers from published buffers, idle frames free of core calls.
+vj_add_debug_ui_smoke(vj_debug_blitter_ui_smoke debug_blitter_ui_smoke tests/debug_blitter_ui_smoke.cpp
+    src/debug/blitter_ui.cpp src/debug/blitter_feed.cpp src/debug/blitter_log.cpp src/debug/audio_ring.cpp)
+
+#   debug_scope_gate    the Audio scope with the emulation thread on (halt unavailable, the other tools live): the window
+#                        opens and draws while another thread delivers audio blocks, and the core is never reached.
+vj_add_debug_ui_smoke(vj_debug_scope_gate_test debug_scope_gate tests/debug_scope_gate_test.cpp
+    src/debug/scope_ui.cpp src/debug/audio_ring.cpp src/core_host.cpp)
+target_link_libraries(vj_debug_scope_gate_test PRIVATE vj_core Threads::Threads)
+
+# #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
+# cpu_view.cpp, op_view.cpp, memory_view.cpp, blitter_log.cpp and texture_pack.cpp are not listed: their core work
+# sits inside callCore/postCore lambdas, which the regex cannot tell apart from a direct call on the UI thread.
+set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp
+    scanner_ui.cpp scanner_actions.cpp scope_ui.cpp)
+add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
+         "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
+set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)

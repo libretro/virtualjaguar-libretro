@@ -540,14 +540,17 @@ and lets go by itself if frames keep missing them; the log says `[emu] late latc
 `VJ_PERF_CSV=path` writes one row per measured iteration when the run ends, with the `input_lat_ms` (event to the
 emulation's poll) and `present_lat_ms` (event to the swap that shows it) columns; `--perf-input` injects a key every
 30 iterations so they have samples. `VJ_PERF_TRACE=prefix` adds `prefix-emu.csv` (each emulated frame: due, start, end,
-trim, audio queue) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace_summary.py prefix` counts
-the frames really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
+trim, audio queue, and last the `fill_ns` the Tools windows' view copy took after it; `end_ns` is taken before that
+copy) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace_summary.py prefix` counts the frames
+really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
 grid's phase once whenever frame ends would straddle the take point, so each 60.05-on-60 Hz crossing is one skip rather
 than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
 
-While it is on, this version switches off the Tools (debugger) windows and the GDB stub option; they move to the
-emulation thread in the next phase. RetroAchievements and netplay work as usual: achievements are checked on the
-emulation thread after every frame, and link play's peer waits block only that thread. A load or a state save that
+While it is on, every Tools window works (their data is copied by the emulation thread after each frame, and their edits
+run on it), but Break, Step, breakpoints and the GDB stub option are off until the next phase. RetroAchievements and
+netplay work as usual: achievements are checked on the emulation thread after every frame, and link play's peer waits
+block only that thread. An action that has to reach the core, such as a Tools-window edit, a load or a state save, waits
+for the frame in progress to end, including that frame's peer wait, which link play bounds to about one frame. One that
 takes longer than a quarter of a second shows a spinner instead of freezing the window. A log line
 `[core_host] owner violation: ...` means a UI path still called into the core directly: that is a bug, please report it.
 
@@ -1045,6 +1048,8 @@ The tests labelled `emu_thread` (`ctest -L emu_thread`) cover the emulation thre
 | `src/ach_event.*` | an rc_client event copied, so it can be applied on the UI thread |
 | `src/precise_sleep.h` | short sleeps that honour sub-tick durations (a high-resolution waitable timer on Windows) |
 | `src/input_snapshot.h` | the newest input from the UI thread to the core's poll (pointer motion exactly once) |
+| `src/debug/debug_core.*` | the emulation-thread half of the debug session: the debug interface's wrappers and, in the next phase, the halt |
+| `src/debug/debug_views.*` | the per-window requests (memory range, registers, disassembly, OP list, blit log) the emulation thread fills after each frame, and the buffers the windows read |
 | `src/late_latch.h` | the late latch: when the threaded window loop stops waiting before a vblank (vblank tracking, UI build budget) |
 | `src/input.*` | keyboard and gamepad snapshots to libretro input |
 | `src/remap.*`, `src/remap_ui.cpp` | profiles, per-game overrides, keypad delivery, overlay, bind capture, and their UI |

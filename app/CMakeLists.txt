@@ -338,6 +338,8 @@ set(VJ_APP_SOURCES
     src/netplay_ui.cpp
     # Debug tools (#652 / #833): the session, the Tools menu and one window (+ its pure logic) per tool.
     src/debug/debug_session.cpp
+    src/debug/debug_core.cpp
+    src/debug/debug_views.cpp
     src/debug/debug_ui.cpp
     src/debug/memory_view.cpp
     src/debug/memory_ui.cpp
@@ -352,6 +354,7 @@ set(VJ_APP_SOURCES
     src/debug/texture_pack.cpp
     src/debug/texture_ui.cpp
     src/debug/blitter_log.cpp
+    src/debug/blitter_feed.cpp
     src/debug/blitter_ui.cpp
     src/debug/audio_ring.cpp
     src/debug/scope_ui.cpp
@@ -497,6 +500,10 @@ endif()
 # Install layout: the executable in <prefix>/bin; data that belongs beside it (the
 # bundled cheat database, VJCheatData.cmake) goes to <prefix>/bin/cheats.
 install(TARGETS virtualjaguar RUNTIME DESTINATION bin)
+
+# The session's own sources (DebugSession marshals to DebugCore and fills DebugViews): every debug test that links
+# debug_session.cpp links all three.
+set(VJ_DEBUG_SESSION_SRCS src/debug/debug_session.cpp src/debug/debug_core.cpp src/debug/debug_views.cpp)
 
 # CPU debugger (debug tools WP4): vendored Musashi disassembler + cpu_view / cpu_ui + their tests.
 include(VJDebugCpu)

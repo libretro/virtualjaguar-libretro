@@ -100,7 +100,8 @@ class SearchJob {
 public:
     SearchJob(const DebugSession& s, const vj_debug_region& region, unsigned from, std::vector<uint8_t> needle,
               bool ignoreCase = false);
-    // Examines up to `budgetBytes` more bytes of the region.  Returns done().
+    // Examines up to `budgetBytes` more bytes of the region.  Returns done().  The whole budget runs inside ONE
+    // DebugSession::callCore (the reads nest on the emulation thread), not one wait per 64 KiB chunk.
     bool step(unsigned budgetBytes);
     bool done() const { return done_; }
     bool found() const { return found_; }
@@ -113,6 +114,7 @@ private:
         unsigned start, end;   // [start, end) bus addresses
     };
     bool matchAt(const uint8_t* p) const;
+    void stepOnCore(unsigned budgetBytes);
     const DebugSession& s_;
     std::vector<uint8_t> needle_;
     bool icase_;
@@ -176,7 +178,11 @@ unsigned rgb888ToRgb16(uint32_t rgb);
 class CryCodec {
 public:
     // (Re)builds the 65536-entry table when `iface` differs from the last build.  False without cry_to_rgb.
+    // Emulation-thread side (and debug_memory_unit); the windows use buildFrom().
     bool build(const vj_debug_iface* iface);
+    // The table through DebugSession::buildCryTable (one callCore), once per s.views().epoch(); a refusal is
+    // remembered for the epoch, so a core without cry_to_rgb does not retry every frame.
+    bool buildFrom(DebugSession& s);
     bool ready() const { return !table_.empty(); }
     uint32_t decode(unsigned v16) const { return table_.empty() ? 0 : table_[v16 & 0xFFFF]; }
     // The 16-bit CRY value whose colour is nearest to `rgb` (ties: the lowest value).  decode(encode(c))
@@ -186,6 +192,8 @@ public:
 private:
     const vj_debug_iface* built_ = nullptr;
     std::vector<uint32_t> table_;
+    uint64_t epoch_ = ~0ull;   // buildFrom(): the epoch the table (or the refusal) is for
+    bool refused_ = false;
 };
 
 // 0x00RRGGBB for a raw CLUT entry in the chosen mode.

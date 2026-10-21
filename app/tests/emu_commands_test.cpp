@@ -110,6 +110,47 @@ void testProducers() {
     CHECK(ordered, "every producer's commands run once each, in its own order (%zu ran)", got.size());
 }
 
+using Lane = EmuCommands::Lane;
+
+void testLanes() {
+    EmuCommands q;
+    std::string ran;
+    q.post([&ran] { ran += 'F'; });
+    q.post([&ran] { ran += 'D'; }, Lane::Debug);
+    CHECK(q.pending(Lane::Frame) && q.pending(Lane::Debug), "each lane holds its command");
+    CHECK(q.drain(nullptr, Lane::Debug) == 1 && ran == "D" && q.pending(Lane::Frame),
+          "drain(Lane::Debug) leaves the frame lane untouched and vice versa (debug first)");
+    q.post([&ran] { ran += 'd'; }, Lane::Debug);
+    CHECK(q.drain(nullptr, Lane::Frame) == 1 && ran == "DF" && q.pending(Lane::Debug),
+          "drain(Lane::Frame) leaves the debug lane untouched (frame first)");
+    CHECK(q.drain(nullptr) == 0, "the default lane is the frame lane: nothing left there");
+    CHECK(q.drain(nullptr, Lane::Debug) == 1 && ran == "DFd" && !q.pending(Lane::Debug), "the debug lane is FIFO");
+}
+
+void testDebugLaneWakesAndCloses() {
+    EmuCommands q;
+    Clock::time_point t0 = Clock::now();
+    std::thread poster([&q] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        q.post([] {}, Lane::Debug);
+    });
+    q.waitUntil(t0 + std::chrono::seconds(5));
+    CHECK(since(t0) < 1.0, "a debug-lane post wakes the wait early (%.3f s)", since(t0));
+    poster.join();
+    q.drain(nullptr, Lane::Debug);
+
+    std::string ran;
+    q.post([&ran] { ran += 'F'; });
+    q.post([&q, &ran] {   // a debug command that queues another one while the queue closes: it still runs
+        ran += 'D';
+        q.post([&ran] { ran += 'E'; }, Lane::Debug);
+    }, Lane::Debug);
+    CHECK(q.closeAndDrain(nullptr) == 3 && ran == "FDE", "closeAndDrain runs both lanes, frame then debug each round (%s)", ran.c_str());
+    CHECK(q.closed() && !q.post([] {}, Lane::Debug) && !q.post([] {}), "then both lanes refuse commands");
+    q.reopen();
+    CHECK(q.post([] {}, Lane::Debug) && q.pending(Lane::Debug), "reopen() takes debug commands again");
+}
+
 }  // namespace
 
 int main() {
@@ -118,6 +159,8 @@ int main() {
     testCloseAndDrain();
     testErrors();
     testProducers();
+    testLanes();
+    testDebugLaneWakesAndCloses();
     std::printf(g_fail ? "emu_commands_test: %d FAILED\n" : "emu_commands_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

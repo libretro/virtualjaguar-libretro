@@ -4,15 +4,28 @@
 // the Tools menu registry -- and none of the ImGui, so the logic unit-tests against the mock
 // (app/tests/debug_mock.h) with no window and no core.
 //
-// Threading: every call is on the emulation thread (the app's main thread), between retro_run
-// calls or inside the halt pump (docs/app-debug-tools.md).
+// Threading (#967 phase 3a): the session is the UI thread's object.  The core's debug interface belongs to the
+// emulation thread and lives in DebugCore (core()); every session method that must touch it goes through
+// coreCall (waits) or corePost (fire and forget), which App wires to the emulation thread's debug lane.  Both are
+// empty inline (headless, tests), and the action then runs right where it is called: same code, one thread.
+//   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_,
+//                    haltAvailable_, the halt fields (halted_, queued_, ... inline-only until phase 3b), seenGen_,
+//                    hadCore_, and the public callbacks.  Exception: regions_ and lastPokeError_ may be written inside
+//                    a callCore lambda (regions() / poke() nested in a window's one-shot action) while the UI thread
+//                    waits in that call; the call's completion orders those writes before the UI reads them.
+//   any thread:      core() (its getters are atomics), views() (one mutex inside), refreshSerial() / requestRefresh().
+// The windows never touch the core: they set() a request on views(), call wakeViews() and read() the buffer.
 #pragma once
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
 
+#include "debug_core.h"
+#include "debug_views.h"
 #include "vj_debug_iface.h"
 
 namespace vj {
@@ -53,10 +66,21 @@ public:
     DebugSession();
 
     // ---- wiring (App) --------------------------------------------------------------------
+    DebugCore& core() { return core_; }         // the emulation-thread half (App wires its hooks)
+    DebugViews& views() { return views_; }      // the request copier the windows use
+    // How a method that must touch the core reaches the emulation thread.  Empty (inline, tests): runs fn now.
+    std::function<void(std::function<void()>)> coreCall;   // waits (App: emu.debugCall<void>)
+    std::function<void(std::function<void()>)> corePost;   // fire and forget (App: emu.debugPost)
+    // The windows use these two, never the hooks directly.  Captures are by value, except a local the caller waits for.
+    void callCore(std::function<void()> fn) const;         // coreCall ? coreCall(fn) : fn()
+    void postCore(std::function<void()> fn);               // corePost ? corePost(fn) : fn()
     // The core's interface, from VJ_ENV_SET_DEBUG_IFACE (null until the core sends it, and again after
-    // the core is torn down).  Replacing it detaches from the old one.
+    // the core is torn down).  Replacing it detaches from the old one.  onCoreIface() is the emulation-thread half
+    // (core().setIface + the views' epoch; it touches no UI state), syncCore() the UI half; setIface() is both, in
+    // order (inline, tests).
+    void onCoreIface(const vj_debug_iface* i);
+    void syncCore();
     void setIface(const vj_debug_iface* i);
-    const vj_debug_iface* iface() const { return iface_; }
     void setContentLoaded(bool loaded);
     // RetroAchievements hardcore: the tools are off.  Turning it on detaches, drops any halt and
     // tells the windows to close (onForcedClose).
@@ -73,23 +97,25 @@ public:
     std::vector<std::function<void()>> onResume;
 
     // ---- can the tools be used? -----------------------------------------------------------
-    bool hasCore() const { return iface_ != nullptr; }
+    bool hasCore() const { return core_.loaded(); }
     // The core supports it, content is loaded and hardcore is off.
-    bool enabled() const { return iface_ != nullptr && loaded_ && !hardcore_ && !threadBlocked_; }
-    // The emulation runs on its own thread (#967 phase 1): until the halt pump and the tool windows move there
-    // (phase 3) the tools are off.  Turning it on detaches and closes the windows, like hardcore does.
-    void setThreadBlocked(bool on);
-    bool threadBlocked() const { return threadBlocked_; }
+    bool enabled() const { return core_.loaded() && loaded_ && !hardcore_; }
     // Why not (for a tooltip / the greyed Tools menu); "" when enabled().
     std::string disabledReason() const;
     bool hardcore() const { return hardcore_; }
+    // TRANSITIONAL (removed in phase 3b): while the halt pump cannot run on the emulation thread, a threaded run turns
+    // Break / Step / breakpoints off and keeps the windows live.  Off: attach() refuses, so does everything built on it;
+    // turning it off detaches.  It does not close the tools.
+    void setHaltAvailable(bool on);
+    bool haltAvailable() const { return haltAvailable_; }
+    std::string haltDisabledReason() const;   // "" when available
 
     // ---- attach / halt -----------------------------------------------------------------------
     // Registers the halt pump with the core and re-arms the breakpoint list.  Idempotent; false if the
     // tools are not enabled or the core refused.  Tool windows that only peek/poke need no attach.
     bool attach();
     void detach();                       // clears every breakpoint in the core, drops any halt
-    bool attached() const { return attached_; }
+    bool attached() const { return core_.attached(); }
     bool halted() const { return halted_; }
     int haltedTarget() const { return haltedTarget_; }
     unsigned haltedPc() const { return haltedPc_; }
@@ -118,11 +144,20 @@ public:
     // a halt, so a paused game costs nothing.
     void tick(double nowSeconds, bool live);
     // Bumps whenever the views should re-read.  A window keeps the value it last drew and compares.
-    uint64_t refreshSerial() const { return serial_; }
+    uint64_t refreshSerial() const { return serial_.load(); }
     void requestRefresh() { serial_++; }                     // after a poke / a register edit
+    // ---- the view copier ---------------------------------------------------------------------------------------
+    // fillViews() serves every pending request from the core (emulation thread; inline: the UI).  It has NO gate:
+    // the Neuro watches depend on it in every state but "no core".  wakeViews() (UI thread, once per UI frame and
+    // after a window's set()s) makes sure a paused game still fills: with no corePost (tests) it fills now; otherwise
+    // it posts one fillViews() while a request is pending (one outstanding at a time).  App always sets corePost; the
+    // post runs at once when EmuThread is not threaded (it runs jobs inline), at the next frame boundary when it is.
+    size_t fillViews();
+    void wakeViews();
 
     // ---- memory helpers (null-iface safe) ---------------------------------------------------------------
-    // Reads n bytes (the iface's side-effect-free byte path).  False on any error.
+    // Reads n bytes (the iface's side-effect-free byte path).  False on any error.  One-shot readers only (the
+    // scanner's scan pass): this is a callCore.  Periodic readers set() a view request instead.
     bool read(unsigned addr, std::vector<uint8_t>& out, unsigned n) const;
     bool readU(unsigned addr, unsigned bytes, unsigned& v) const;   // big-endian, 1/2/4 bytes
     // The 2 MB main-RAM image (a copy; what the scanner and the viewer diff against).
@@ -137,6 +172,13 @@ public:
     static const char* errorText(int vjDbgErr);
     // Region table, copied once per core (names are static in the core).
     const std::vector<vj_debug_region>& regions();
+    // One callCore each, for the windows' one-shot actions (edits, step-over, per-window tables).
+    bool getRegsNow(int target, vj_debug_regs& out) const;
+    bool setReg(int target, int reg, unsigned v);
+    bool buildCryTable(std::vector<uint32_t>& out) const;
+    void opSnapshotArm();
+    void blitLogEnable(bool on);
+    int texReplaceReload();                                  // 1 active, 0 inactive, -1 not supported
 
     // ---- Tools menu registry -------------------------------------------------------------------------------
     // Registers (or replaces, by id) a menu entry.  The menu itself is drawn by drawToolsMenu() (debug_ui.cpp).
@@ -145,7 +187,9 @@ public:
     DebugTool* findTool(const std::string& id);
     // Whether the menu entry is clickable: the tools are enabled, the window exists, and (CPU stepping) a processor is
     // halted when the entry needs one.  The in-window Tools menu and the native macOS one both ask this.
-    bool toolAvailable(const DebugTool& t) const { return enabled() && t.toggle && (!t.needsHalt || halted_); }
+    bool toolAvailable(const DebugTool& t) const {
+        return enabled() && t.toggle && (!t.needsHalt || (haltAvailable_ && halted_));
+    }
     // Greyed placeholders for the windows the later work packages add: Memory, CLUT, Cheat scanner, CPU,
     // Objects, Blitter, Textures, Audio scope.
     void registerPlaceholderTools();
@@ -157,17 +201,17 @@ public:
     void drawTools();
 
 private:
-    static int haltPumpThunk(void* user, int target, unsigned pc);
-    int pump(int target, unsigned pc);
-    void applyBreakpoints();
+    int pump(int target, unsigned pc);   // installed as core_.pumpHook
     void dropHalt();
 
-    const vj_debug_iface* iface_ = nullptr;
-    vj_debug_host host_{};
+    DebugCore core_;
+    DebugViews views_;
     bool loaded_ = false;
     bool hardcore_ = false;
-    bool threadBlocked_ = false;
-    bool attached_ = false;
+    bool haltAvailable_ = true;
+    uint64_t seenGen_ = 0;       // core_.ifaceGen() as syncCore() last adopted it
+    bool hadCore_ = false;
+    std::atomic<bool> wakePosted_{false};
     bool halted_ = false;
     int haltedTarget_ = -1;
     unsigned haltedPc_ = 0;
@@ -177,7 +221,7 @@ private:
     std::vector<DebugTool> tools_;
     std::vector<DebugProvider> providers_;
     std::vector<vj_debug_region> regions_;
-    uint64_t serial_ = 1;
+    std::atomic<uint64_t> serial_{1};
     double lastRefresh_ = -1;
     int lastPokeError_ = 0;
 };

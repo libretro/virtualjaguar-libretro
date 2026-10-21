@@ -92,7 +92,7 @@ public:
     vj_debug_regs regs(int target) {
         vj_debug_regs r;
         std::memset(&r, 0, sizeof r);
-        dbg.iface()->get_regs(target, &r);
+        dbg.core().iface()->get_regs(target, &r);
         return r;
     }
     // Runs frames until `done()` or the budget is spent.
@@ -122,7 +122,7 @@ std::vector<Step> traceFromBoot(Rig& rig, int n) {
     CHECK(rig.load());
     rig.onUi = [&] {
         vj_debug_regs r = rig.regs(VJ_DBG_TARGET_M68K);
-        Line l = disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_M68K, r.pc);
+        Line l = disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_M68K, r.pc);
         tr.push_back({r.pc, l.text, l.len, rig.dbg.haltReason()});
         if ((int)tr.size() < n) rig.ctl.stepIn(VJ_DBG_TARGET_M68K);
         else rig.dbg.detachAndResume();
@@ -257,7 +257,7 @@ int main(int argc, char** argv) {
             vj_debug_regs r = rig.regs(VJ_DBG_TARGET_M68K);
             halts.push_back({r.pc, "", 0, rig.dbg.haltReason()});
             if (halts.size() == 1) {
-                CHECK(stepOverTarget(rig.dbg.iface(), VJ_DBG_TARGET_M68K, r.pc).next == after);
+                CHECK(stepOverTarget(rig.dbg.core().iface(), VJ_DBG_TARGET_M68K, r.pc).next == after);
                 usedTemp = rig.ctl.stepOver(VJ_DBG_TARGET_M68K);
             } else {
                 rig.ctl.cont();
@@ -313,7 +313,7 @@ int main(int argc, char** argv) {
         std::vector<unsigned> isrPcs;
         rig.onUi = [&] {
             vj_debug_regs r = rig.regs(VJ_DBG_TARGET_GPU);
-            Line l = disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, r.risc_pc);
+            Line l = disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_GPU, r.risc_pc);
             CHECK(rig.dbg.haltedTarget() == VJ_DBG_TARGET_GPU && r.risc_pc == rig.dbg.haltedPc());
             if (gh.empty()) {
                 CHECK(rig.dbg.haltReason() == VJ_DBG_STOP_BREAKPOINT);
@@ -392,8 +392,8 @@ int main(int argc, char** argv) {
         CHECK(rig.load());
         for (int f = 0; f < 30; f++) rig.host.runFrame();
         const unsigned jumpAddr = 0xF0303C, jumpSlot = 0xF0303E, jrAddr = 0xF03062, jrSlot = 0xF03064, vec = 0xF03030;
-        CHECK(disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, jumpAddr).text.compare(0, 4, "jump") == 0);
-        CHECK(disasmOne(rig.dbg.iface(), VJ_DBG_TARGET_GPU, jrAddr).text.compare(0, 2, "jr") == 0);
+        CHECK(disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_GPU, jumpAddr).text.compare(0, 4, "jump") == 0);
+        CHECK(disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_GPU, jrAddr).text.compare(0, 2, "jr") == 0);
         const unsigned addrs[] = {vec, jumpAddr, jumpSlot, jrAddr, jrSlot};
         for (unsigned a : addrs) CHECK(rig.dbg.addBreakpoint(VJ_DBG_TARGET_GPU, a));
         std::map<unsigned, int> hits;

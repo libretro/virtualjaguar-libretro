@@ -3,8 +3,10 @@
 // when the tools are available, the attach / halt / resume protocol, the breakpoint list, the poke
 // policy as the user sees it, and the refresh cadence.
 #include "debug_mock.h"
+#include "debug_core.h"
 #include "debug_session.h"
 
+#include <cstdarg>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -12,12 +14,23 @@
 using namespace vj;
 
 static int g_fail = 0, g_checks = 0;
-#define CHECK(cond)                                                                \
+static void failNote(const char* fmt, ...) {
+    if (!*fmt) return;
+    va_list ap;
+    va_start(ap, fmt);
+    std::fprintf(stderr, "    ");
+    std::vfprintf(stderr, fmt, ap);
+    std::fprintf(stderr, "\n");
+    va_end(ap);
+}
+// CHECK(cond) or CHECK(cond, "what: %d", n).
+#define CHECK(cond, ...)                                                           \
     do {                                                                           \
         g_checks++;                                                                \
         if (!(cond)) {                                                             \
             g_fail++;                                                              \
             std::fprintf(stderr, "FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);   \
+            failNote("" __VA_ARGS__);                                              \
         }                                                                          \
     } while (0)
 
@@ -406,22 +419,229 @@ static void testIfaceSwap() {
     CHECK(s.attach() && m2.attached());
 }
 
-static void testThreadBlocked() {
+static void testCoreWrappers() {
+    MockDebugIface m;
+    DebugCore c;
+    uint8_t buf[4] = {};
+    vj_debug_regs none;
+    CHECK(c.peek(0, buf, 4) == VJ_DBG_ERR_STATE && !c.loaded() && !c.attach() && !c.getRegs(VJ_DBG_TARGET_M68K, none),
+          "a core with no interface: every wrapper returns its failure value");
+    c.setIface(m.iface());
+    CHECK(c.loaded() && c.iface() == m.iface() && c.ifaceGen() == 1, "setIface() stores the pointer and bumps the generation");
+    c.setIface(m.iface());
+    CHECK(c.ifaceGen() == 1, "the same pointer again is not a change");
+    CHECK(c.peek(0x10, buf, 4) == 4 && buf[0] == 0x10 && buf[3] == 0x13, "peek: the bus bytes");
+    const uint8_t w[2] = {0xAA, 0xBB};
+    CHECK(c.poke(0x7000, w, 2, 0) == 2 && c.poke(0x800000, w, 2, 0) == VJ_DBG_ERR_READONLY, "poke: the iface's own policy and result codes");
+    vj_debug_regs r;
+    CHECK(c.getRegs(VJ_DBG_TARGET_M68K, r) && r.d[3] == 0x1003 && c.setReg(VJ_DBG_TARGET_M68K, VJ_DBG_REG_68K_D0 + 3, 7) &&
+              c.getRegs(VJ_DBG_TARGET_M68K, r) && r.d[3] == 7, "registers read and write back");
+    std::string text;
+    unsigned len = 0;
+    CHECK(c.disasmRisc(VJ_DBG_TARGET_GPU, 0xF03006, text, len) && len == 6 && !text.empty() && !c.disasmRisc(VJ_DBG_TARGET_M68K, 0, text, len),
+          "disasmRisc: RISC only");
+    CHECK(c.attach() && c.attached() && m.attached() && c.attach(), "attach is idempotent");
+    CHECK(c.breakSet(VJ_DBG_TARGET_M68K, 0x4000) && m.breakpoints.size() == 1 && c.breakClear(VJ_DBG_TARGET_M68K, 0x4000), "break_set / break_clear");
+    c.detach();
+    CHECK(!c.attached() && !m.attached(), "detach() clears the core's side and ours");
+    std::vector<vj_debug_op_obj> objs;
+    unsigned hl = 0;
+    m.opReady = false;
+    CHECK(c.opSnapshotGet(objs, hl) == -1, "op snapshot: -1 while armed and not taken");
+    m.opReady = true;
+    c.opSnapshotArm();
+    CHECK(c.opSnapshotGet(objs, hl) == 4 && objs.size() == 4 && hl == 41, "op snapshot: four objects");
+    std::vector<uint32_t> cry;
+    CHECK(c.buildCryTable(cry) && cry.size() == 65536 && cry[0xFFFF] == 0xFFFFFFu && c.cryToRgb(0xFFFF) == 0xFFFFFFu, "the CRY table");
+    c.blitLogEnable(true);
+    vj_debug_blit b;
+    CHECK(m.blitLogOn && c.blitLogHead() == 5 && c.blitLogGet(4, b) && b.seq == 4 && !c.blitLogGet(5, b), "blit log");
+    CHECK(c.texReplaceReload() == 1 && m.texReloads == 1 && c.frameNumber() == 1234, "reload and frame number");
+    vj_debug_iface old = *m.iface();
+    old.texreplace_reload = nullptr;
+    DebugCore d;
+    d.setIface(&old);
+    CHECK(d.texReplaceReload() == -1, "texReplaceReload: -1 when the core does not offer it");
+    vj_debug_region reg;
+    CHECK(c.region(0, reg) && reg.name, "region");
+    c.setIface(nullptr);
+    CHECK(!c.loaded() && c.ifaceGen() == 2, "setIface(nullptr) drops the interface");
+}
+
+static void testMarshalling() {
+    DebugSession s;
+    MockDebugIface m;
+    int calls = 0, posts = 0;
+    s.coreCall = [&](std::function<void()> f) { calls++; f(); };
+    s.corePost = [&](std::function<void()> f) { posts++; f(); };
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    s.registerPlaceholderTools();
+    auto delta = [&](int dc, int dp, const char* what) {
+        CHECK(calls == dc && posts == dp, "%s: %d coreCall / %d corePost (wanted %d / %d)", what, calls, posts, dc, dp);
+        calls = posts = 0;
+    };
+    std::vector<uint8_t> out;
+    unsigned u = 0;
+    vj_debug_regs r;
+    std::vector<uint32_t> cry;
+    CHECK(s.read(0x10, out, 4) && out[0] == 0x10);       delta(1, 0, "read");
+    CHECK(s.readU(0x10, 2, u) && u == 0x1011);           delta(1, 0, "readU");
+    CHECK(s.pokeU(0x7000, 4, 0xCAFEF00D) == 4);          delta(1, 0, "poke");
+    CHECK(s.getRegsNow(VJ_DBG_TARGET_M68K, r));          delta(1, 0, "getRegsNow");
+    CHECK(s.setReg(VJ_DBG_TARGET_M68K, VJ_DBG_REG_68K_D0, 5)); delta(1, 0, "setReg");
+    CHECK(s.buildCryTable(cry));                         delta(1, 0, "buildCryTable");
+    s.opSnapshotArm();                                   delta(1, 0, "opSnapshotArm");
+    s.blitLogEnable(true);                               delta(1, 0, "blitLogEnable");
+    CHECK(s.texReplaceReload() == 1);                    delta(1, 0, "texReplaceReload");
+    CHECK(!s.regions().empty());                         delta(1, 0, "regions (once per core)");
+    s.regions();                                         delta(0, 0, "regions again: cached");
+    CHECK(s.attach());                                   delta(1, 0, "attach");
+    s.breakNow();                                        delta(0, 1, "breakNow when attached: only the halt_next post");
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));  delta(1, 0, "addBreakpoint");
+    s.removeBreakpoint(VJ_DBG_TARGET_M68K, 0x4000);      delta(0, 1, "removeBreakpoint");
+    s.detach();                                          delta(0, 1, "detach");
+    // What the windows use every frame costs the core nothing.
+    s.tick(1.0, true);
+    s.views().set(DebugViews::kNoId, ViewRequest());
+    (void)s.refreshSerial(); (void)s.breakpoints(); (void)s.toolAvailable(*s.findTool("memory")); (void)s.enabled(); (void)s.attached();
+    delta(0, 0, "tick / views / serial / enabled / attached: no core call");
+}
+
+static void testHaltAvailable() {
     DebugSession s;
     MockDebugIface m;
     s.setIface(m.iface());
     s.setContentLoaded(true);
-    CHECK(s.enabled());
-    s.setThreadBlocked(true);   // #967 phase 1: the emulation thread is on
-    CHECK(!s.enabled() && !s.attach());
-    CHECK(s.disabledReason().find("Emulation thread") != std::string::npos);
-    s.setThreadBlocked(false);
-    CHECK(s.enabled());
+    s.registerPlaceholderTools();
+    DebugTool memory = *s.findTool("memory");
+    memory.toggle = [] {};
+    s.registerTool(memory);
+    DebugTool step;
+    step.id = "step";
+    step.toggle = [] {};
+    step.needsHalt = true;
+    CHECK(s.attach() && s.attached() && s.haltAvailable() && s.haltDisabledReason().empty(), "available by default");
+    s.setHaltAvailable(false);
+    CHECK(!s.attached() && !m.attached(), "turning it off detaches");
+    CHECK(s.enabled() && s.toolAvailable(*s.findTool("memory")) && !s.toolAvailable(step),
+          "the windows stay live, a tool that needs a halt does not");
+    CHECK(!s.attach() && !m.attached(), "attach() refuses");
+    s.breakNow();
+    CHECK(!s.attached() && !m.attached(), "breakNow() refuses");
+    CHECK(!s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && !s.toggleBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && s.breakpoints().empty(),
+          "addBreakpoint() and toggleBreakpoint() refuse");
+    CHECK(!s.haltDisabledReason().empty(), "with a reason");
+    std::vector<uint8_t> out;
+    CHECK(s.read(0x10, out, 4) && s.pokeU(0x7000, 4, 1) == 4, "memory reads and writes still work");
+    s.setHaltAvailable(true);
+    CHECK(s.attach() && s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000), "and come back");
+}
+
+static void testCoreSyncSplit() {
+    // What the emulation thread does (onCoreIface) must not touch UI state; the UI adopts it in syncCore().
+    DebugSession s;
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
+    int closed = 0;
+    s.onForcedClose.push_back([&](const char*) { closed++; });
+    const uint64_t epoch = s.views().epoch();
+    s.onCoreIface(nullptr);
+    CHECK(!s.hasCore() && !s.enabled() && !s.attached(), "the atomics already say 'no core'");
+    CHECK(s.breakpoints().size() == 1 && closed == 0, "...but the UI-side list and callbacks are untouched until syncCore()");
+    CHECK(s.views().epoch() == epoch + 1, "the views' epoch moved on the emulation side");
+    s.syncCore();
+    CHECK(s.breakpoints().empty() && closed == 1, "syncCore() forgets the breakpoints and closes the tools once");
+    s.syncCore();
+    CHECK(closed == 1, "and is idempotent");
+    m.iface()->detach();     // a torn-down core forgets its host (the mock is the same object)
+    s.setIface(m.iface());   // the same static interface again, as a reload hands over
+    CHECK(s.enabled() && s.attach() && m.attached(), "a new core attaches");
+}
+
+static void testReplacedCoreClosesTools() {
+    // Threaded openContent() on a running game: the emulation thread publishes null and the new interface inside one
+    // blocking call, so the UI's syncCore() sees only the final non-null interface.  That must still end where the
+    // inline path does (null seen, then the new interface): the tools force-closed, the breakpoints and halt gone.
+    DebugSession s;
+    MockDebugIface m1, m2;
+    s.setIface(m1.iface());
+    s.setContentLoaded(true);
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
+    std::string why;
+    int closed = 0;
+    s.onForcedClose.push_back([&](const char* w) { why = w; closed++; });
+    s.onCoreIface(nullptr);              // both halves of the swap before the UI looks
+    s.onCoreIface(m2.iface());
+    CHECK(s.hasCore() && closed == 0, "the UI has not looked yet");
+    s.syncCore();
+    CHECK(closed == 1 && why == "no core", "a replaced core closes the tools like an unload");
+    CHECK(s.breakpoints().empty() && s.enabled() && !s.attached(), "and starts the new game clean");
+    s.syncCore();
+    CHECK(closed == 1, "once");
+    // The same interface pointer again (the core's struct is static): still a replacement.
+    s.onCoreIface(nullptr);
+    s.onCoreIface(m2.iface());
+    s.syncCore();
+    CHECK(closed == 2, "a reload of the same static struct too");
+    // A pointer swapped directly (no null in between) is a replacement as well.
+    s.onCoreIface(m1.iface());
+    s.syncCore();
+    CHECK(closed == 3, "so is a direct handover");
+    // Inline: the two halves run apart, and the count is the same.
+    DebugSession t;
+    t.setIface(m1.iface());
+    t.setContentLoaded(true);
+    int tclosed = 0;
+    t.onForcedClose.push_back([&](const char*) { tclosed++; });
+    t.setIface(nullptr);
+    t.setIface(m2.iface());
+    CHECK(tclosed == 1, "inline: one close for the same content switch");
+    // A first load (no previous core) closes nothing.
+    DebugSession u;
+    int uclosed = 0;
+    u.onForcedClose.push_back([&](const char*) { uclosed++; });
+    u.onCoreIface(m1.iface());
+    u.syncCore();
+    CHECK(uclosed == 0 && u.hasCore(), "the first core is not a replacement");
+}
+
+static void testViewsFill() {
+    DebugSession s;
+    MockDebugIface m;
+    std::vector<std::function<void()>> posted;
+    s.corePost = [&](std::function<void()> f) { posted.push_back(std::move(f)); };
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    ViewRequest r;
+    r.kind = ViewRequest::Kind::Memory;
+    r.addr = 0x1000;
+    r.len = 8;
+    const DebugViews::Id id = s.views().set(DebugViews::kNoId, r);
+    s.wakeViews();
+    s.wakeViews();
+    CHECK(posted.size() == 1, "wakeViews() posts one fill at a time (%zu)", posted.size());
+    posted[0]();
+    ViewBuffer b;
+    CHECK(s.views().read(id, b) && b.bytes[0] == 0x00 && b.serial == s.refreshSerial(), "the posted fill ran");
+    s.wakeViews();
+    CHECK(posted.size() == 1, "nothing pending: no post");
+    s.requestRefresh();
+    s.wakeViews();
+    CHECK(posted.size() == 2, "a new serial posts again");
+    posted[1]();
+    DebugSession t;   // inline (no corePost): wakeViews() fills right away
+    t.setIface(m.iface());
+    t.setContentLoaded(true);
+    const DebugViews::Id id2 = t.views().set(DebugViews::kNoId, r);
+    t.wakeViews();
+    CHECK(t.views().read(id2, b), "inline: filled on the spot");
 }
 
 int main() {
     testAvailability();
-    testThreadBlocked();
     testAttachAndBreakpoints();
     testHaltResume();
     testHardcoreWhileHalted();
@@ -430,6 +650,12 @@ int main() {
     testTools();
     testProviders();
     testMockContent();
+    testCoreWrappers();
+    testMarshalling();
+    testHaltAvailable();
+    testCoreSyncSplit();
+    testReplacedCoreClosesTools();
+    testViewsFill();
     testIfaceSwap();
     std::printf("debug_session_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

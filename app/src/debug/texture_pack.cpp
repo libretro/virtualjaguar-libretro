@@ -495,8 +495,8 @@ std::vector<std::pair<std::string, std::string>> sessionOverrides(int instance) 
     return o;
 }
 
-ReplaceOutcome replaceTile(const OptionIO& io, const vj_debug_iface* iface, const std::string& systemDir,
-                           uint32_t crc, const std::string& hash, unsigned tileW, unsigned tileH, unsigned tileBpp,
+ReplaceOutcome replaceTile(const OptionIO& io, const ReloadFn& reload, const std::string& systemDir, uint32_t crc,
+                           const std::string& hash, unsigned tileW, unsigned tileH, unsigned tileBpp,
                            const std::string& srcPng) {
     ReplaceOutcome o;
     o.verdict = checkPack(readPngHeader(srcPng), tileW, tileH, tileBpp);
@@ -510,16 +510,41 @@ ReplaceOutcome replaceTile(const OptionIO& io, const vj_debug_iface* iface, cons
         return o;
     }
     o.dest = ir.dest;
-    if (iface && iface->size >= offsetof(vj_debug_iface, texreplace_reload) + sizeof iface->texreplace_reload &&
-        iface->texreplace_reload) {
-        o.reloadActive = iface->texreplace_reload() != 0;
-        o.reloadCalled = true;
+    if (reload) {
+        const int r = reload();
+        if (r >= 0) {
+            o.reloadActive = r != 0;
+            o.reloadCalled = true;
+        }
     }
     if (io.set) io.set(kOptReplace, "enabled");
     o.ok = true;
     o.message = "Installed " + hash + ".png" + (o.verdict.warn ? "  (" + o.verdict.message + ")" : std::string()) +
                 (o.reloadCalled ? "" : "  (pack reload unavailable: restart the game)");
     return o;
+}
+
+ReplaceOutcome replaceTile(const OptionIO& io, const vj_debug_iface* iface, const std::string& systemDir,
+                           uint32_t crc, const std::string& hash, unsigned tileW, unsigned tileH, unsigned tileBpp,
+                           const std::string& srcPng) {
+    const ReloadFn reload = [iface]() -> int {
+        if (iface && iface->size >= offsetof(vj_debug_iface, texreplace_reload) + sizeof iface->texreplace_reload &&
+            iface->texreplace_reload)
+            return iface->texreplace_reload();
+        return -1;
+    };
+    return replaceTile(io, reload, systemDir, crc, hash, tileW, tileH, tileBpp, srcPng);
+}
+
+ReloadText reloadText(int r) {
+    ReloadText t;
+    if (r > 0) t.text = "Packs reloaded.";
+    else if (r == 0) t.text = "Packs reloaded; replacement is off or the folder is empty.";
+    else {
+        t.text = "This core cannot reload packs; restart the game.";
+        t.error = true;
+    }
+    return t;
 }
 
 // ---- LruKeys --------------------------------------------------------------------------------------------------------

@@ -141,12 +141,15 @@ Callbacks that write app state today change to:
 **Debug views.** Each open debug window registers a request: a memory range, registers, the object list, the blitter
 log head, textures, the scope. After each frame the emulation thread copies just those into that tool's double buffer.
 Closed windows cost nothing. The `g` singletons in `app/src/debug/*_ui.cpp` read only their published buffers.
-*Amended 2026-10-20 (phase 3): the debug lane and `DebugViews`.* The command queue gets a second lane,
+*Amended 2026-10-20 (phase 3a): the debug lane and `DebugViews`.* The command queue gets a second lane,
 `EmuCommands::Lane::Debug`, that the emulation thread drains at every frame boundary and from inside a halt; the
 frame lane is never drained while halted. `EmuThread::debugCall` / `debugPost` carry the one-shot actions (poke,
 set_reg, breakpoints, OP arm, blit-log enable, pack reload, attach/detach). The periodic reads are `ViewRequest`s
 (memory range, DRAM, registers, a disassembly window, the OP snapshot, the blit-log tail) in `DebugViews`
-(`app/src/debug/debug_views.h`): `fill()` runs after each frame at `DebugSession::kRefreshHz` while running, on every
+(`app/src/debug/debug_views.h`), keyed by an id the window keeps: `set()` with an equal request changes nothing (windows
+re-state theirs every draw), a different one clears that buffer and is pending at the same serial, and `fill(iface, serial)`
+serves every request whose buffer carries another serial, installing an answer only against the request revision it
+copied (a `set()` made during the fill wins). `fill()` runs after each frame at `DebugSession::kRefreshHz` while running, on every
 pump iteration whose serial changed while halted, and on the same thread inline, so the windows have one code path. A
 content switch bumps the views' epoch and every buffer is unreadable until refilled. `DebugCore`
 (`app/src/debug/debug_core.h`) is the emulation-thread owner of the interface; `DebugSession` stays the UI's object and

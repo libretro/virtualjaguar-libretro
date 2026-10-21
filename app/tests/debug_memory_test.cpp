@@ -2,6 +2,7 @@
 // core interface (debug_mock.h).  No window, no GL, no core.
 #include "debug_mock.h"
 #include "debug_session.h"
+#include "debug_ui_fixture.h"
 #include "memory_view.h"
 
 #include <cstdio>
@@ -484,6 +485,37 @@ static void testClutReadBack() {
     CHECK(r.s.readU(clutAddrA(3), 2, a) && r.s.readU(clutAddrB(3), 2, b) && a == 0xBEEF && b == 0xBEEF);
 }
 
+static void testCryBuildFrom() {
+    CountingIface::reset();
+    UiFixture f;
+    CryCodec c;
+    CHECK(c.buildFrom(f.s) && c.ready());
+    CHECK(CountingIface::count(CountingIface::CryToRgb) == 0x10000);
+    CHECK(c.decode(0xABCD) == (f.mock.iface()->cry_to_rgb(0xABCD) & 0xFFFFFF));
+    CHECK(c.buildFrom(f.s));                                  // same epoch: no rebuild
+    CHECK(CountingIface::count(CountingIface::CryToRgb) == 0x10000);
+    f.s.views().bumpEpoch();                                  // a new core / content
+    CHECK(c.buildFrom(f.s) && CountingIface::count(CountingIface::CryToRgb) == 2 * 0x10000);
+    vj_debug_iface noCry = *f.mock.iface();                   // a core without cry_to_rgb
+    noCry.cry_to_rgb = nullptr;
+    f.s.setIface(&noCry);                                     // (epoch bump)
+    CryCodec none;
+    CHECK(!none.buildFrom(f.s) && !none.ready());
+    const unsigned k = f.coreCalls;
+    CHECK(!none.buildFrom(f.s) && f.coreCalls == k);          // the refusal is remembered for the epoch
+}
+
+static void testSearchIsOneCoreCall() {
+    UiFixture f;
+    const std::vector<uint8_t> needle = {0xFA, 0xCE, 0xFE, 0xED};
+    for (size_t i = 0; i < needle.size(); i++) f.mock.dram()[0x180000 + i] = needle[i];
+    const vj_debug_region dram = f.s.regions()[0];
+    SearchJob j(f.s, dram, 0, needle);
+    const unsigned k = f.coreCalls;
+    CHECK(j.step(4u << 20) && j.found() && j.address() == 0x180000);
+    CHECK(f.coreCalls == k + 1);          // 4 MiB of 64 KiB chunks, one wait
+}
+
 int main() {
     testParsingAndFormatting();
     testRegionsAndClamps();
@@ -496,6 +528,8 @@ int main() {
     testClutMirrorsAndPlan();
     testColour();
     testClutReadBack();
+    testCryBuildFrom();
+    testSearchIsOneCoreCall();
     std::printf("debug_memory_unit: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }
