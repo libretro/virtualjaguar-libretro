@@ -5,7 +5,8 @@
 //                     picture was handed over, the trim and audio queue it was paced with, and its frame serial;
 //   <prefix>-ui.csv   one row per UI iteration: when the iteration took a frame, which serial it showed, and the swap
 //                     around it (its return is the vblank proxy), plus the late latch's wait (the events it handled,
-//                     and its worst overshoot of one blocking call: 1 = SDL_WaitEventTimeout, 2 = SDL_DelayPrecise).
+//                     and its worst overshoot of one blocking call: 1 = SDL_WaitEventTimeout, 2 = SDL_DelayPrecise,
+//                     and the UI thread's CPU time inside those calls: stall_probe.h, macOS only, else 0).
 //
 // Joining the two answers "where in the refresh period did each frame finish, and where did the UI take it", which the
 // per-iteration VJ_PERF_CSV cannot: it counts frames run between takes, not frames shown.  Nothing is recorded unless
@@ -29,7 +30,7 @@ struct PerfTrace {
         unsigned char audio, refill;
     };
     struct Ui {
-        uint64_t takeNs, serial, swap0Ns, swap1Ns, wakeNs, waitEndNs, budgetNs, targetNs, waitOverNs;
+        uint64_t takeNs, serial, swap0Ns, swap1Ns, wakeNs, waitEndNs, budgetNs, targetNs, waitOverNs, waitCpuNs;
         unsigned waitEvents;
         unsigned char locked, waitOverBy;
     };
@@ -58,6 +59,7 @@ struct PerfTrace {
     void ui(const Ui& u) {
         if (enabled() && ui_.size() < ui_.capacity()) ui_.push_back(u);
     }
+    size_t uiRows() const { return ui_.size(); }
     void write() const {
         if (!enabled()) return;
         const size_t n = emuN_.load(std::memory_order_acquire);
@@ -73,13 +75,14 @@ struct PerfTrace {
         }
         if (FILE* f = std::fopen((prefix + "-ui.csv").c_str(), "w")) {
             std::fprintf(f, "take_ns,serial,swap0_ns,swap1_ns,wake_ns,wait_end_ns,budget_ns,target_ns,locked,"
-                            "wait_events,wait_over_ns,wait_over_by\n");
+                            "wait_events,wait_over_ns,wait_over_by,wait_cpu_ns\n");
             for (const Ui& u : ui_)
-                std::fprintf(f, "%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%d,%u,%llu,%d\n", (unsigned long long)u.takeNs,
+                std::fprintf(f, "%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%d,%u,%llu,%d,%llu\n", (unsigned long long)u.takeNs,
                              (unsigned long long)u.serial, (unsigned long long)u.swap0Ns, (unsigned long long)u.swap1Ns,
                              (unsigned long long)u.wakeNs, (unsigned long long)u.waitEndNs,
                              (unsigned long long)u.budgetNs, (unsigned long long)u.targetNs, (int)u.locked,
-                             u.waitEvents, (unsigned long long)u.waitOverNs, (int)u.waitOverBy);
+                             u.waitEvents, (unsigned long long)u.waitOverNs, (int)u.waitOverBy,
+                             (unsigned long long)u.waitCpuNs);
             std::fclose(f);
         }
     }

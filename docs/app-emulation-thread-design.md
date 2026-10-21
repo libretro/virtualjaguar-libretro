@@ -90,6 +90,19 @@ The UI never waits on emulation.
   along the take grid (under 0.2 ms a frame: 60.05 Hz on 60, 120 or 59.94 Hz panels). At ratios like 50.08 Hz on 60 Hz,
   every few frames straddle a take point by construction (5:6 judder), and only mode B can change that.
   `--pace-steer off` turns steering off for A/B runs.
+- *Amended 2026-10-20 (#1026): the UI thread's wake-ups.* The late latch's wait must end on time, or the build starts
+  late and the swap misses its vblank. On macOS two things made it end late. First, a launch from a terminal (and every
+  ssh-run benchmark) starts the main thread at the default QoS rather than user-interactive, so any CPU load leaves it
+  runnable but not running. Second, `SDL_WaitEventTimeout`'s timeout is the Cocoa run loop's own timeout, which Core
+  Foundation delivers from a dispatch worker at `qos_class_main()`, the main thread's QoS at launch. Raising the thread
+  later does not change that worker, which runs 3-20 ms late under load while the UI thread sleeps past its deadline. So
+  the UI thread now runs at user-interactive QoS however it was launched (`platform_macos.mm`). Its timed event waits
+  (the latch's and the threaded nap's) end on a wake event that `LatchWaker` (`app/src/latch_waker.h`) pushes from its
+  own user-interactive thread, with SDL's timeout kept as a 5 ms backstop. A `CFRunLoopTimer` on the main run loop was
+  tried instead, and from a terminal launch it fired ~3 ms late every time. `--latch-wake plain` restores the old wait
+  for A/B runs (the QoS raise stays), and with `VJ_PERF_TRACE` the stall probe (`app/src/stall_probe.h`) writes every
+  wait that ends over 3 ms late to `<prefix>-stall.txt`, with the run state, CPU time, run-loop transitions and sampled
+  stacks.
 
 ### Mode B: display lock
 - The main thread sends a tick after each swap; the emulation thread runs one frame per tick (one per k ticks when the

@@ -376,7 +376,8 @@ set(VJ_APP_SOURCES
     src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp
-    src/discord_app.cpp)
+    src/discord_app.cpp
+    src/stall_probe.cpp)
 
 # Neuro API client (docs/neuro.md): an AI plays as Player 1.  Off: no Settings > Neuro tab, no --neuro.
 set(VJ_NEURO_SOURCES src/neuro/neuro_json.cpp src/neuro/neuro_ws.cpp src/neuro/neuro_actions.cpp

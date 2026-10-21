@@ -34,12 +34,14 @@
 #include "input.h"
 #include "instance.h"
 #include "late_latch.h"
+#include "latch_waker.h"
 #include "library_service.h"
 #include "netplay.h"
 #include "pacing.h"
 #include "paths.h"
 #include "perf.h"
 #include "perf_trace.h"
+#include "stall_probe.h"
 #include "platform/commands.h"
 #include "theme_custom.h"
 #include "tv/tv_mode.h"
@@ -107,6 +109,7 @@ struct CliArgs {
     int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
     int paceSteer = -1;             // dev: --pace-steer on|off, threaded + vsync only (default on; #967 evenness)
     int emuWake = -1;               // dev: --emu-wake precise|plain, the emulation thread's wake-ups (default precise)
+    int latchWake = -1;             // dev: --latch-wake timer|plain, how the UI thread's timed event waits end (default timer; #1026)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
     // (or authenticate against) the real service.
@@ -418,6 +421,7 @@ private:
     bool latchLogged_ = false;
     void latchWait();
     void presentNap();
+    bool waitEventUntil(SDL_Event& e, uint64_t dueNs, Sint32 ms);
     void latchLog();
     void latchUpdatePeriod();
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
@@ -454,6 +458,8 @@ private:
     uint64_t lastSentSerial_ = 0;              // emulation thread: the last frame handed to FrameExchange
     // VJ_PERF_TRACE (perf_trace.h, #967 evenness)
     PerfTrace trace_;
+    LatchWaker latchWaker_;                    // ends the latch's event wait on time (latch_waker.h, #1026)
+    StallProbe stall_;                         // VJ_PERF_TRACE: the late latch's blocking calls that overran (#1026)
     PerfTrace::Emu tracePaced_{};              // emulation thread: the pacing of the frame about to run
     bool tracePacedSet_ = false;
     uint64_t traceWakeNs_ = 0, traceTargetNs_ = 0;   // UI thread: the late latch's last wait (0 = none)

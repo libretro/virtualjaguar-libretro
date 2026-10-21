@@ -307,7 +307,7 @@ bool App::initSdl(const CliArgs& a) {
         return false;
     }
     sdlUp_ = true;
-    if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID) before any window exists
+    if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID), UI thread QoS (macOS)
     perfFreq_ = SDL_GetPerformanceFrequency();
     openDialogEvent_ = SDL_EVENT_USER;
     return true;
@@ -423,6 +423,8 @@ void App::shutdown() {
         std::_Exit(3);   // nonzero: a wedged quit must be visible
     }
     stopEmuThread();
+    latchWaker_.stop();   // (both normally stopped by runInteractive; idempotent) nothing may push events past SDL_Quit
+    stall_.stop();
     // Only now: until the emulation thread is gone it may be inside rc_client_do_frame or a posted emuIdle.  Still before
     // video.shutdown() -- images.stop() needs the GL context.
     ach.shutdown();
@@ -713,6 +715,7 @@ void App::traceUi(uint64_t takeNs, uint64_t serial, uint64_t swap0, uint64_t swa
     u.waitEvents = traceWaitEvents_;
     u.waitOverNs = traceWaitOverNs_;
     u.waitOverBy = traceWaitOverBy_;
+    u.waitCpuNs = stall_.takeCpuNs();
     trace_.ui(u);
     traceWakeNs_ = traceTargetNs_ = traceWaitOverNs_ = 0;
     traceWaitEvents_ = 0;
@@ -812,21 +815,41 @@ void App::latchWait() {
         const uint64_t left = wake - t;
         const Sint32 ms = (Sint32)LateLatch::eventWaitMs(left);
         if (!ms) {
+            stall_.enter(wake, 2, trace_.uiRows());
             SDL_DelayPrecise(left);
+            stall_.leave();
             over(wake, 2);
             return;
         }
         SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, ms)) {
-            over(t + (uint64_t)ms * 1000000ull, 1);
+        const uint64_t due = t + (uint64_t)ms * 1000000ull;
+        stall_.enter(due, 1, trace_.uiRows());
+        const bool got = waitEventUntil(e, due, ms);
+        stall_.leave();
+        if (!got) {
+            over(due, 1);
             continue;
         }
         do {
+            if (LatchWaker::isWake(e)) continue;
             handleEvent(e, false);
             traceWaitEvents_++;
         } while (!quit && SDL_PollEvent(&e));
         publishInput();
     }
+}
+
+// The UI thread's timed event wait: true with the first event before `dueNs` (SDL_GetTicksNS), false once it is due
+// (or, rarely, early on a wake left from the previous wait: callers re-check the time).
+// `ms` is the same deadline in whole ms from now, for SDL_WaitEventTimeout.  With the waker (macOS), its thread ends the
+// wait on time and SDL's timeout is only a backstop (latch_waker.h: SDL's own timeout can wake the UI thread 3-20 ms
+// late).
+bool App::waitEventUntil(SDL_Event& e, uint64_t dueNs, Sint32 ms) {
+    if (!latchWaker_.running()) return SDL_WaitEventTimeout(&e, ms);
+    latchWaker_.arm(dueNs);
+    const bool got = SDL_WaitEventTimeout(&e, ms + LatchWaker::kBackstopMs);
+    latchWaker_.disarm();
+    return got && !LatchWaker::isWake(e);
 }
 
 // Threaded, vsync off (or a swap that did not block): sleep to the next point of a display-period grid instead of a
@@ -847,9 +870,10 @@ void App::presentNap() {
             return;
         }
         SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, (Sint32)((left - 1000000) / 1000000))) continue;
+        const Sint32 ms = (Sint32)((left - 1000000) / 1000000);
+        if (!waitEventUntil(e, now + (uint64_t)ms * 1000000ull, ms)) continue;
         do {
-            handleEvent(e, false);
+            if (!LatchWaker::isWake(e)) handleEvent(e, false);
         } while (!quit && SDL_PollEvent(&e));
         publishInput();
     }
@@ -1693,6 +1717,7 @@ bool App::fromExtraWindow(const SDL_Event& e) const {
 }
 
 void App::handleEvent(const SDL_Event& e, bool headless) {
+    if (LatchWaker::isWake(e)) return;   // a late latch wake that arrived after its wait ended
     if (!headless && imguiUp_) ImGui_ImplSDL3_ProcessEvent(&e);
     if (fromExtraWindow(e)) return;   // ImGui has it; the game and the app's own window handling are about the main window
     if (isInputEvent(e.type) && !pendingEventNs_) pendingEventNs_ = e.common.timestamp;
@@ -1992,6 +2017,7 @@ int App::runInteractive(const CliArgs& a) {
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     lateLatchOn_ = a.lateLatch != 0;
     paceSteerOn_ = a.paceSteer != 0;
+    if (a.latchWake != 0 && !headless_) latchWaker_.start();   // macOS only (latch_waker.h)
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
     if (a.showWindow.rfind("settings", 0) == 0) {
@@ -2045,6 +2071,7 @@ int App::runInteractive(const CliArgs& a) {
     lastSramFlush_ = now();
     perf.init(a.perfFrames, a.perfGpu);
     trace_.init(a.perfFrames);
+    if (trace_.enabled()) stall_.start(trace_.prefix);
     uint64_t traceSerial = 0;
     video.shader.reuseOutput = !a.perfNoReuse;
     perf.forceW = a.perfShaderW;
@@ -2071,6 +2098,7 @@ int App::runInteractive(const CliArgs& a) {
                 perf.note += std::string(", pace steering ") + (paceSteerOn_ ? "on" : "off") + " (" +
                              std::to_string(emu.phaseSteps()) + " steps)";
             perf.report(host.contentName().c_str());
+            stall_.stop();
             trace_.write();
             break;
         }
@@ -2184,6 +2212,7 @@ int App::runInteractive(const CliArgs& a) {
                            (void*)(uintptr_t)SDL_GetWindowID(window_));
         perf.frameEnd();
     }
+    latchWaker_.stop();   // (it pushes SDL events: not after SDL is gone)
 
     int w = 0, h = 0;
     if (window_ && !fullscreen) {
