@@ -3573,7 +3573,7 @@ Prove the script bites by running it on a copy of the pre-3a tree:
 
 ```bash
 S=$(mktemp -d) && git archive abc9054e app | tar -x -C "$S" \
-  && cp app& command cp app/tests/no_threaded_limits.sh app/tests/threaded_branch_allowlist.txt "$S/app/tests/" \
+  && command cp app/tests/no_threaded_limits.sh app/tests/threaded_branch_allowlist.txt "$S/app/tests/" \
   && bash app/tests/no_threaded_limits.sh "$S"; echo "rc=$?"
 ```
 
