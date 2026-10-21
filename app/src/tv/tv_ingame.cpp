@@ -165,6 +165,7 @@ void Shell::drawMenu(ImVec2 pos, ImVec2 size) {
         }
         hints.push_back({host_.glyph(Intent::Back), root ? "Resume" : "Back"});
     }
+    if (host_.desktopWindowOpen()) hints.clear();   // a desktop window over the menu ("More settings") has the pads: these buttons do nothing now
     widgets::hintBar(dl, m, ImVec2(railX, hintY), ps.x - 2 * inset, hints);
 
     // ---- the pointer: hover moves the focus (only when it moved, so it does not fight a pad), a click picks ---------

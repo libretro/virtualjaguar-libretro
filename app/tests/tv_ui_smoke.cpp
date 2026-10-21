@@ -739,13 +739,14 @@ static void moreSettingsBackLeavesItems() {
     io.ConfigFlags = savedFlags;
 }
 
-// Where nav starts in the "More settings" window: the first item is the "Reset all settings..." button, which carries
-// NoNavDefaultFocus (settings_reset_ui.cpp), so the first A is the second item's.  (The real window is App-side and not linked here: the
-// probe is the same shape, and what it observes is ImGui honouring the flag with the live nav flags on.)
+// Where nav starts in the "More settings" window: the first item is the "Reset all settings..." button, which is out of the pad's and
+// keyboard's reach while the window is live (NoNav, settings_reset_ui.cpp), so the first A is a tab's and D-pad Right goes on to the next
+// tab, never to the button.  (The real window is App-side and not linked here: the probe is the same shape -- the flagged button, then
+// a tab bar whose first tab is empty, as Core options is before a game has run -- and what it observes is ImGui's nav with the flags.)
 static void moreSettingsDefaultFocusSkipsReset() {
     ImGuiIO& io = ImGui::GetIO();
     const ImGuiConfigFlags savedFlags = io.ConfigFlags;
-    ImGuiID resetId = 0, tabId = 0;
+    ImGuiID resetId = 0, tab1 = 0, tab2 = 0;
     auto frame = [&](bool live, bool focus) {
         io.DeltaTime = 1.0f / 60.0f;
         vj::deskSetPopupNav(live);
@@ -756,18 +757,33 @@ static void moreSettingsDefaultFocusSkipsReset() {
         if (focus) ImGui::SetNextWindowFocus();
         ImGui::Begin("moredefault");
         ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         ImGui::SmallButton("Reset all settings...");
         resetId = ImGui::GetItemID();
         ImGui::PopItemFlag();
-        ImGui::Button("Core options");
-        tabId = ImGui::GetItemID();
+        ImGui::PopItemFlag();
+        if (ImGui::BeginTabBar("##tabs")) {
+            tab1 = ImGui::GetID("Core options");   // a tab's ID is its label hashed in the tab bar's scope
+            tab2 = ImGui::GetID("Video");
+            // (ImGui's tabs never take default focus themselves, and the button is out of reach: the selected tab asks for it)
+            if (ImGui::BeginTabItem("Core options")) { ImGui::SetItemDefaultFocus(); ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Video")) { ImGui::SetItemDefaultFocus(); ImGui::Button("Integer"); ImGui::EndTabItem(); }
+            ImGui::EndTabBar();
+        }
         ImGui::End();
         ImGui::Render();
     };
     for (int i = 0; i < 2; i++) frame(false, i == 0);
     for (int i = 0; i < 4; i++) frame(true, false);
-    CHECK(resetId != 0 && tabId != 0 && resetId != tabId);
-    CHECK(ImGui::GetCurrentContext()->NavId == tabId);
+    CHECK(resetId != 0 && tab1 != 0 && tab2 != 0);
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    CHECK(g.NavId != 0 && g.NavId != resetId && g.NavId == tab1);
+    vj::deskFeedPopupIntents({Intent::Right});
+    for (int i = 0; i < 4; i++) frame(true, false);
+    CHECK(g.NavId == tab2);
+    vj::deskFeedPopupIntents({Intent::Left, Intent::Left, Intent::Up, Intent::Up});
+    for (int i = 0; i < 6; i++) frame(true, false);
+    CHECK(g.NavId != resetId && g.NavId != 0);
     for (int i = 0; i < 3; i++) frame(false, false);
     io.ConfigFlags = savedFlags;
 }
@@ -3351,8 +3367,13 @@ static void menuMoreSettingsKeepsMenu() {
     CHECK(shell.menuOpen() && shell.menuHasScreen() && shell.menuScreenId() == "settings");
     CHECK(host.paused && host.resumed == 0);             // still holding the pause
     CHECK(shell.ownsInput());                            // (the glue, not the shell, steps aside)
-    host.desktopOpen = false;                            // the window closed: the menu is where it was
+    g_texts.clear();                                     // the window has the pads: the menu's hints (Open, Groups) list nothing that works
     frames(host, shell, 3);
+    CHECK(!drew("Groups") && !drew("Open") && !drew("Menu"));
+    host.desktopOpen = false;                            // the window closed: the menu is where it was
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Groups"));
     CHECK(shell.menuOpen() && shell.menuScreenId() == "settings" && host.paused);
     back(host, shell);                                   // rows -> groups
     back(host, shell);                                   // groups -> the menu, on Settings

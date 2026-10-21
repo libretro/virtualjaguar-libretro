@@ -57,11 +57,14 @@ public:
             total += heights[i] + kRowGap * u;
         }
         total -= kRowGap * u;
+        // A list that scrolls leaves the room under its rows to the "more" arrow: a half-cut last row must not run into it, so the scroll
+        // target, the clip and the hit tests all stop 24u short of the area's bottom.
+        const float listBottom = viewBottom - (total > viewH ? 24 * u : 0.0f), listH = listBottom - rowsTop;
         float target = scrollTo_;
         const size_t f = (size_t)index_;
         if (tops[f] < target) target = tops[f];
-        else if (tops[f] + heights[f] > target + viewH) target = tops[f] + heights[f] - viewH;
-        target = std::clamp(target, 0.0f, std::max(0.0f, total - viewH));
+        else if (tops[f] + heights[f] > target + listH) target = tops[f] + heights[f] - listH;
+        target = std::clamp(target, 0.0f, std::max(0.0f, total - listH));
         scrollTo_ = target;
         if (!scrollInit_ || lastU_ != u) {
             scroll_.from = scroll_.to = target;
@@ -82,18 +85,17 @@ public:
         lastMouse_ = c.mouse;
 
         int hover = -1;
-        const bool moreBelow = scroll + viewH < total - 0.5f;
-        // The arrow has the room under the rows: a half-cut last row must not run into it.
-        c.dl->PushClipRect(ImVec2(c.pos.x, rowsTop - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, viewBottom - (moreBelow ? 24 * u : 0.0f)), true);
+        const bool moreBelow = scroll + listH < total - 0.5f;
+        c.dl->PushClipRect(ImVec2(c.pos.x, rowsTop - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, listBottom), true);
         for (size_t i = 0; i < rows_.size(); i++) {
             const float y = rowsTop + tops[i] - scroll;
-            if (y + heights[i] < rowsTop - kRowsMargin * u || y > viewBottom) continue;
+            if (y + heights[i] < rowsTop - kRowsMargin * u || y > listBottom) continue;
             const float fo = (int)i == index_ ? tweens_.at((int)i, c.now) : 0.0f;
             widgets::RowArgs a;   // the card and the focus ring; the label, the value and the reason are drawn here
             a.focus = fo;
             const widgets::Hit hit = widgets::row(c.dl, m, ImVec2(lx, y), ImVec2(lw, heights[i]), a);
             drawRow(c, rows_[i], ImVec2(lx, y), ImVec2(lw, heights[i]), fo);
-            if (hit.hovered && c.mouse.y >= rowsTop && c.mouse.y < viewBottom) hover = (int)i;   // not the part the clip hides
+            if (hit.hovered && c.mouse.y >= rowsTop && c.mouse.y < listBottom) hover = (int)i;   // not the part the clip hides
         }
         c.dl->PopClipRect();
         if (scroll > 0.5f) widgets::moreArrow(c.dl, m, ImVec2(lx + lw * 0.5f, rowsTop - 4 * u), true);
@@ -101,7 +103,7 @@ public:
 
         // ---- the pointer: hovering a row focuses it, a click toggles it, a notch is a row --------------------------------
         if (hover >= 0 && (moved || c.clicked)) focusRow(hover);
-        const bool overList = c.hovered && c.mouse.x >= lx && c.mouse.x < lx + lw && c.mouse.y >= rowsTop && c.mouse.y < viewBottom;
+        const bool overList = c.hovered && c.mouse.x >= lx && c.mouse.x < lx + lw && c.mouse.y >= rowsTop && c.mouse.y < listBottom;
         if (overList) wheel_ += c.wheel;
         const int steps = (int)wheel_;
         wheel_ -= (float)steps;

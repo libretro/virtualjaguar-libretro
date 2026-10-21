@@ -372,16 +372,22 @@ void drawSettings(App& app) {
             app.devSelectTab.clear();
             return (ImGuiTabItemFlags)ImGuiTabItemFlags_SetSelected;
         };
-        if (ImGui::BeginTabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Video", nullptr, tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Audio", nullptr, tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Input", nullptr, tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("BIOS", nullptr, tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Storage", nullptr, tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Interface", nullptr, tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Discord", nullptr, tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
+        // The pad starts on the selected tab (live): ImGui's tabs never take default focus themselves, and the Reset button is out of reach.
+        auto tabItem = [&](const char* name, ImGuiTabItemFlags flags = 0) {
+            const bool shown = ImGui::BeginTabItem(name, nullptr, flags);
+            if (shown && tv) ImGui::SetItemDefaultFocus();
+            return shown;
+        };
+        if (tabItem("Core options")) { drawCoreOptions(app); ImGui::EndTabItem(); }
+        if (tabItem("Video", tabFlag("Video"))) { drawVideoTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Audio", tabFlag("Audio"))) { drawAudioTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Input", tabFlag("Input"))) { drawInputTab(app); ImGui::EndTabItem(); }
+        if (tabItem("BIOS", tabFlag("BIOS"))) { drawBiosPanel(app); ImGui::EndTabItem(); }
+        if (tabItem("Storage", tabFlag("Storage"))) { drawStorageTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Interface", tabFlag("Interface"))) { drawInterfaceTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Discord", tabFlag("Discord"))) { drawDiscordTab(app); ImGui::EndTabItem(); }
 #ifdef VJ_HAVE_NEURO
-        if (ImGui::BeginTabItem("Neuro", nullptr, tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
+        if (tabItem("Neuro", tabFlag("Neuro"))) { drawNeuroTab(app); ImGui::EndTabItem(); }
 #endif
         ImGui::EndTabBar();
     }
