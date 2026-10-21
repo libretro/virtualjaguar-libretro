@@ -58,7 +58,7 @@ forced updates, public-ROM launch and user-data preservation in isolated profile
 They retain exact OS, candidate, outcomes and command logs as artifacts. A changed
 rolling-release source SHA fails the run instead of silently qualifying another build.
 
-The matrix covers Windows PowerShell 5.1 and 7, Apple Silicon macOS, Ubuntu 22.04
+The matrix covers Windows PowerShell 5.1 and 7, Apple Silicon and Intel macOS, Ubuntu 22.04
 x86_64 and Ubuntu 24.04 ARM64. Local supplemental Linux tests use a fresh Ubuntu
 22.04.5 ARM64 VM with no host-directory mounts.
 
@@ -82,7 +82,7 @@ This is pending evidence, not a passed criterion.
 ## Remaining distribution work
 
 - Complete the published-download jobs and resolve demonstrated failures before readiness.
-- Obtain clean Intel Mac install/upgrade evidence; Rosetta coverage is recorded separately.
+- Complete the clean hosted Intel Mac install/upgrade run; Rosetta coverage is recorded separately.
 - Windows signing remains an external service dependency; report unsigned assets honestly.
 - Final-tag filenames, checksums and package-manager manifests can only be verified against
   the actual final-tag artifacts after tagging. Do not submit templates with placeholder

@@ -30,6 +30,10 @@ on:
         description: 'Published candidate tag to install on disposable hosts (empty = hermetic tests only)'
         default: ''
         type: string
+      qualification_intel_only:
+        description: 'Run only clean Intel macOS qualification (other qualification runs already dispatched)'
+        default: false
+        type: boolean
       qualification_sha:
         description: 'Expected published candidate SHA'
         default: ''
@@ -41,6 +45,7 @@ concurrency:
 
 jobs:
   install-sh:
+    if: ${{ !inputs.qualification_intel_only }}
     name: install.sh (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -77,6 +82,7 @@ jobs:
       run: bash test/installer/test_install_sh.sh
 
   install-ps1:
+    if: ${{ !inputs.qualification_intel_only }}
     name: install.ps1 (${{ matrix.shell }})
     runs-on: windows-latest
     strategy:
@@ -123,17 +129,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            ps: powershell
-          - os: windows-latest
-            ps: pwsh
-          - os: macos-latest
-            ps: pwsh
-          - os: ubuntu-22.04
-            ps: pwsh
-          - os: ubuntu-24.04-arm
-            ps: pwsh
+        include: ${{ fromJSON(inputs.qualification_intel_only && '[{"os":"macos-15-intel","ps":"pwsh"}]' || '[{"os":"windows-latest","ps":"powershell"},{"os":"windows-latest","ps":"pwsh"},{"os":"macos-latest","ps":"pwsh"},{"os":"macos-15-intel","ps":"pwsh"},{"os":"ubuntu-22.04","ps":"pwsh"},{"os":"ubuntu-24.04-arm","ps":"pwsh"}]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
