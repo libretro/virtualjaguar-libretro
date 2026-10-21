@@ -34,10 +34,10 @@ void newSearch();
 size_t candidates();
 const std::string& message();                                  // the status line under the controls
 size_t shownRows();
-bool liveValue(size_t row, int64_t& v);                        // the live column's value for that row (false: no such row)
+bool liveValue(size_t row, int64_t& v);                        // the live column's value for that row (false: no such row, or "--")
 unsigned liveReads();                                          // how many times the 2 MB Dram buffer was copied out
-void beginEdit(size_t row, const char* text);                  // as if the value of that row was double-clicked
-void openAdd(size_t row, const char* desc);                    // as if "Add as cheat" was pressed on that row
+bool beginEdit(size_t row, const char* text);                  // as if the value of that row was double-clicked (false: no value read yet)
+bool openAdd(size_t row, const char* desc);                    // as if "Add as cheat" was pressed on that row (false: no value read yet)
 }  // namespace scanner_test
 
 }  // namespace vj

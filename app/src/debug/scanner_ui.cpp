@@ -52,6 +52,7 @@ struct ScannerState {
     std::vector<uint32_t> rows;            // the first kMaxRows candidates
     bool rowsDirty = true;
     std::vector<int64_t> cur;              // live values of `rows`, refreshed at 10 Hz
+    std::vector<uint8_t> curKnown;         // per row: `cur` holds a value read from RAM (else shown as "--", never acted on)
     double lastLive = -1;
 
     // The live column's source: a Dram view request, and the last answer kept so a new result list re-reads nothing.
@@ -107,7 +108,9 @@ void ensureLive(DebugSession& session) {
     g.dramId = session.views().set(DebugViews::kNoId, q);
 }
 
+// A closed, collapsed or disabled window holds no request and no values: reopening shows "--" until the next answer.
 void releaseLive(DebugSession& session) {
+    if (g.dramId == DebugViews::kNoId && !g.dramOk) return;   // a closed window calls this every frame
     if (g.dramId != DebugViews::kNoId) {
         DebugViews* v = &session.views();
         const DebugViews::Id id = g.dramId;
@@ -117,7 +120,18 @@ void releaseLive(DebugSession& session) {
     g.dramOk = false;
     g.dramSerial = 0;
     g.dram = ViewBuffer{};
+    std::fill(g.curKnown.begin(), g.curKnown.end(), 0);
 }
+
+// Row values from a 2 MB RAM image.
+void deriveCur(const uint8_t* ram, size_t n) {
+    for (size_t i = 0; i < g.rows.size() && i < g.cur.size(); i++) {
+        g.cur[i] = g.scan.valueIn(ram, n, g.rows[i]);
+        g.curKnown[i] = 1;
+    }
+}
+
+bool known(size_t row) { return row < g.cur.size() && row < g.curKnown.size() && g.curKnown[row]; }
 
 void say(const std::string& m, bool error) {
     g.message = m;
@@ -128,6 +142,7 @@ void resetSearch() {
     g.scan.reset();
     g.rows.clear();
     g.cur.clear();
+    g.curKnown.clear();
     g.rowsDirty = true;
     g.editing = false;
     g.addPopup = false;
@@ -179,7 +194,12 @@ void doScan(DebugSession& session) {
         say(err, true);
         return;
     }
-    g.rowsDirty = true;
+    // The new rows show what this pass saw (it is newer than any published buffer, so "Equal to 100" never lists 99).
+    g.scan.results(0, kMaxRows, g.rows);
+    g.rowsDirty = false;
+    g.cur.assign(g.rows.size(), 0);
+    g.curKnown.assign(g.rows.size(), 0);
+    deriveCur(ram, n);
     g.editing = false;
     char b[96];
     std::snprintf(b, sizeof b, "%zu candidate%s after %zu pass%s.", g.scan.count(), g.scan.count() == 1 ? "" : "s",
@@ -196,12 +216,14 @@ void refreshRows(DebugSession& session, double now) {
         g.epochSeen = ep;
         g.dramOk = false;
         g.dramSerial = 0;
+        std::fill(g.curKnown.begin(), g.curKnown.end(), 0);
     }
     bool derive = false;
     if (g.rowsDirty) {
         g.scan.results(0, kMaxRows, g.rows);
         g.rowsDirty = false;
         g.cur.assign(g.rows.size(), 0);
+        g.curKnown.assign(g.rows.size(), 0);
         derive = true;
     }
     const uint64_t serial = session.refreshSerial();
@@ -213,8 +235,7 @@ void refreshRows(DebugSession& session, double now) {
         g.lastLive = now;
         derive = true;
     }
-    if (derive && g.dramOk)
-        for (size_t i = 0; i < g.rows.size(); i++) g.cur[i] = g.scan.valueIn(g.dram.bytes.data(), g.dram.bytes.size(), g.rows[i]);
+    if (derive && g.dramOk) deriveCur(g.dram.bytes.data(), g.dram.bytes.size());
 }
 
 std::string fmt(int64_t v, bool hex) {
@@ -379,7 +400,7 @@ void drawResults(DebugSession& session, CheatManager& cheats) {
             std::snprintf(a, sizeof a, "%06X", (unsigned)addr);
             ImGui::Selectable(a, g.editing && g.editAddr == addr,
                               ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !g.editing) {
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !g.editing && known((size_t)i)) {
                 g.editing = true;
                 g.editAddr = addr;
                 g.editFocus = true;
@@ -406,12 +427,12 @@ void drawResults(DebugSession& session, CheatManager& cheats) {
                     g.editing = false;   // Escape, or the focus went elsewhere
                 }
             } else {
-                ImGui::TextUnformatted(fmt(g.cur[(size_t)i], g.hexView).c_str());
+                ImGui::TextUnformatted(known((size_t)i) ? fmt(g.cur[(size_t)i], g.hexView).c_str() : "--");
             }
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(fmt(g.scan.previous(addr), g.hexView).c_str());
             ImGui::TableSetColumnIndex(3);
-            ImGui::BeginDisabled(!canCheat);
+            ImGui::BeginDisabled(!canCheat || !known((size_t)i));   // no value read yet: nothing to hold
             if (ImGui::SmallButton("Add as cheat")) {
                 g.addPopup = true;
                 g.addAddr = addr;
@@ -451,24 +472,26 @@ size_t candidates() { return g.scan.count(); }
 const std::string& message() { return g.message; }
 size_t shownRows() { return g.rows.size(); }
 bool liveValue(size_t row, int64_t& v) {
-    if (row >= g.cur.size()) return false;
+    if (!known(row)) return false;
     v = g.cur[row];
     return true;
 }
 unsigned liveReads() { return g.liveReads; }
-void beginEdit(size_t row, const char* text) {
-    if (row >= g.rows.size()) return;
+bool beginEdit(size_t row, const char* text) {
+    if (row >= g.rows.size() || !known(row)) return false;
     g.editing = true;
     g.editAddr = g.rows[row];
     g.editFocus = true;
     std::snprintf(g.editBuf, sizeof g.editBuf, "%s", text);
+    return true;
 }
-void openAdd(size_t row, const char* desc) {
-    if (row >= g.rows.size() || row >= g.cur.size()) return;
+bool openAdd(size_t row, const char* desc) {
+    if (row >= g.rows.size() || !known(row)) return false;
     g.addPopup = true;
     g.addAddr = g.rows[row];
     std::snprintf(g.addDesc, sizeof g.addDesc, "%s", desc);
     std::snprintf(g.addVal, sizeof g.addVal, "%lld", (long long)g.cur[row]);
+    return true;
 }
 }  // namespace scanner_test
 

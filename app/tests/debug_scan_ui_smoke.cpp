@@ -193,7 +193,7 @@ int main() {
     frames(session, cm, 1);                                   // states the request and queues ONE fill
     int64_t v = -1;
     CHECK(d.q.size() == 1 && session.views().count() == 1);
-    CHECK(scanner_test::liveValue(0, v) && v == 0 && scanner_test::liveReads() == base + 0);   // nothing to show yet
+    CHECK(scanner_test::liveValue(0, v) && v == 1 && scanner_test::liveReads() == base + 0);   // the pass's own values, no answer yet
     frames(session, cm, 6);                                   // still outstanding: not queued again, nothing copied
     CHECK(d.q.size() == 1 && scanner_test::liveReads() == base + 0);
     d.drain();
@@ -213,11 +213,11 @@ int main() {
     CHECK(scanner_test::liveReads() == base + 2 && scanner_test::liveValue(0, v) && v == 0x55);
 
     // Another core / content (the epoch moves, the serial does not): the buffer held is dropped, so the refill at the
-    // SAME serial is adopted; until then the last values stay on screen.
+    // SAME serial is adopted; until then the column shows "--" (no value, none to act on), not the old game's numbers.
     mock.dram()[1] = 0x66;
     session.views().bumpEpoch();
     frames(session, cm, 4);
-    CHECK(d.q.size() == 1 && scanner_test::liveReads() == base + 2 && scanner_test::liveValue(0, v) && v == 0x55);
+    CHECK(d.q.size() == 1 && scanner_test::liveReads() == base + 2 && !scanner_test::liveValue(0, v));
     d.drain();
     frames(session, cm, 10);
     CHECK(scanner_test::liveReads() == base + 3 && scanner_test::liveValue(0, v) && v == 0x66);
@@ -240,6 +240,61 @@ int main() {
     d.drain();
     frames(session, cm, 10);
     CHECK(scanner_test::liveReads() == base + 4 && scanner_test::liveValue(0, v) && v == 0x77);
+
+    // A search that lands while the held buffer is older than the pass: the rows carry the pass's own values (a live
+    // column that flipped to the older buffer would show 119 for "Equal to 136").
+    mock.dram()[1] = 0x88;                                    // no requestRefresh: the buffer held still says $77
+    scanner_test::newSearch();
+    scanner_test::setMode(1, 0);                              // Equal
+    scanner_test::setValues("136", "");
+    scanner_test::scan(session, CoreHost::instance());
+    CHECK(scanner_test::candidates() == 1 && scanner_test::liveValue(0, v) && v == 136);
+    frames(session, cm, 3);
+    CHECK(scanner_test::liveValue(0, v) && v == 136);
+
+    // No answer yet (closed and reopened with a fill still to run): "--", and neither the edit prefill nor Add as cheat
+    // can start from a number nobody read.
+    scannerSetOpen(false);
+    frames(session, cm, 1);
+    d.drain();
+    scannerSetOpen(true);
+    frames(session, cm, 1);
+    CHECK(d.q.size() == 1 && !scanner_test::liveValue(0, v));
+    CHECK(!scanner_test::openAdd(0, "x") && !scanner_test::beginEdit(0, "1"));
+    d.drain();
+    frames(session, cm, 10);
+    CHECK(scanner_test::liveValue(0, v) && v == 136 && scanner_test::openAdd(0, "x"));
+    frames(session, cm, 3);                                   // the Add popup draws; close it by hand-free means below
+
+    // Collapsed: no draw, so no request and no values either.
+    ImGui::SetWindowCollapsed("Cheat scanner", true);
+    frames(session, cm, 1);
+    CHECK(d.q.size() == 1 && !scanner_test::liveValue(0, v));
+    d.drain();
+    CHECK(session.views().count() == 0);
+    frames(session, cm, 4);
+    CHECK(d.q.empty());
+    ImGui::SetWindowCollapsed("Cheat scanner", false);
+    frames(session, cm, 1);
+    CHECK(d.q.size() == 1 && !scanner_test::liveValue(0, v));
+    d.drain();
+    frames(session, cm, 10);
+    CHECK(scanner_test::liveValue(0, v) && v == 136);
+
+    // The core cannot be read: the column stays "--" for as long as that lasts, never zeros, and recovers.
+    static const auto badPeek = [](unsigned, unsigned char*, unsigned) -> int { return -1; };
+    vj_debug_iface bad = *fx.counted.iface();
+    bad.peek = badPeek;
+    session.setIface(&bad);                                   // another core: the epoch moves
+    frames(session, cm, 1);
+    d.drain();
+    frames(session, cm, 10);
+    CHECK(!scanner_test::liveValue(0, v) && !scanner_test::openAdd(0, "x"));
+    session.setIface(fx.counted.iface());
+    frames(session, cm, 1);
+    d.drain();
+    frames(session, cm, 10);
+    CHECK(scanner_test::liveValue(0, v) && v == 136);
     CHECK(CountingIface::offCore() == 0);
 
     ImGui::DestroyContext();
