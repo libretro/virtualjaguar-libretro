@@ -2,8 +2,10 @@
 // top one (tv_chrome.cpp) and hands it the nav intents; a screen is drawn on an ImDrawList and tests the pointer with
 // plain rectangles (see tv_widgets.h), so it never owns an ImGui item.
 //
-// A screen never sees Intent::Back, SectionPrev or SectionNext: those are the shell's (a pop, a step to the
-// neighbouring section).  What a screen needs of the app it asks of tv::Host.
+// A screen never sees SectionPrev or SectionNext: those are the shell's (a step to the neighbouring section).  Back is
+// the shell's too (a pop, or Home from a root), except that it asks the top screen first (Screen::back()): a screen with a
+// level of its own inside (Settings' list, under its rail) steps up there.  What a screen needs of the app it asks of
+// tv::Host.
 #pragma once
 
 #include <memory>
@@ -22,7 +24,7 @@ namespace vj::tv {
 
 class Shell;
 
-enum class Section { Home, Library };   // Phase 3 appends Achievements and Settings
+enum class Section { Home, Library, Settings };   // Phase 3 inserts Achievements before Settings
 
 // What a screen draws with, once per frame.  The pointer fields are false / zero unless the Base window itself is
 // hovered, so a click on a desktop window drawn above it never reaches a tile.
@@ -40,17 +42,19 @@ struct DrawCtx {
 class Screen {
 public:
     virtual ~Screen() = default;
-    virtual const char* id() const = 0;   // "home" | "library" | "letters" | "details": FocusMemory keys, tests
+    virtual const char* id() const = 0;   // "home" | "library" | "letters" | "details" | "settings": FocusMemory keys, tests
     virtual void intent(Intent in) = 0;
     virtual bool typed(char c) { return false; }   // 'a'..'z', '0'..'9', '\b'; true = used
+    virtual bool back() { return false; }          // Back: true = the screen stepped up inside itself; false = the shell's (pop / Home)
     virtual void draw(const DrawCtx& c) = 0;       // draws, and does hover-focus / click / wheel from c
     virtual std::vector<widgets::Hint> hints() const = 0;   // last = the way out
     virtual bool modal() const { return false; }   // drawn over the screen below it, which is drawn first
 };
 
-// The two root screens (tv_home.cpp, tv_library.cpp).
+// The root screens (tv_home.cpp, tv_library.cpp, tv_settings.cpp).
 std::unique_ptr<Screen> makeHomeScreen(Host& h, Shell& s);
 std::unique_ptr<Screen> makeLibraryScreen(Host& h, Shell& s);
+std::unique_ptr<Screen> makeSettingsScreen(Host& h, Shell& s);   // a rail of groups beside their rows (tv_settings_model.h)
 
 // Game details (tv_details.cpp): the art, the title and a list -- Play, one Resume row per save state, Favorite.  Pushed by
 // Start or a right-click on a tile of Home or the Library.  The list is fetched again every draw, keyed by `g.key`.

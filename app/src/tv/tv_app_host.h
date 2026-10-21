@@ -50,6 +50,9 @@ public:
     void launchState(const GameRef& g, int slot) override;
     bool isFavorite(const GameRef& g) override;
     void setFavorite(const GameRef& g, bool on) override;
+    std::vector<SettingRow> settingRows() override;
+    void setSetting(const std::string& id, int index) override;
+    void openMoreSettings() override;
 
     // Every SDL event, before anything can consume it (App::handleEvent): remembers which device was used last, so
     // glyph() follows what the player is actually pressing -- including the buttons the shell itself consumes, which
@@ -59,7 +62,11 @@ public:
 private:
     const lib::Entry* entryFor(const GameRef& g) const;
 
+    const std::vector<std::string>& themeNames();   // the saved custom themes, listed once a second (the folder is read)
+
     App& app_;
+    std::vector<std::string> themeNames_;
+    double themeListedAt_ = -100.0;
     bool lastWasPad_ = false;        // the last real input was a pad button / a pushed stick, not a key
     SDL_JoystickID lastPad_ = 0;     // ... on this pad
 };

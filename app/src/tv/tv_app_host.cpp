@@ -7,6 +7,10 @@
 #include <cstdio>
 
 #include "app.h"
+#include "aspect_choices.h"
+#include "shaders_ui.h"
+#include "theme.h"
+#include "tv/tv_settings_model.h"
 
 namespace vj::tv {
 
@@ -185,6 +189,117 @@ bool AppHost::isFavorite(const GameRef& g) {
 void AppHost::setFavorite(const GameRef& g, bool on) {
     if (const lib::Entry* e = entryFor(g)) app_.library.setFavorite(*e, on);
 }
+
+// ---- settings ----------------------------------------------------------------------------------------------------------
+
+namespace {
+
+// The three core options on the TV list: the row id, the option key, the label, the group.
+struct CoreRow {
+    const char* id;
+    const char* key;
+    const char* label;
+    int group;
+};
+const CoreRow kResolution = {"resolution", "virtualjaguar_internal_resolution", "Internal resolution", 0};
+const CoreRow kRiscClock = {"risc_clock", "virtualjaguar_risc_clock_scale", "RISC overclock", 1};
+const CoreRow kIdleSkip = {"idle_skip", "virtualjaguar_risc_idle_skip", "Idle-loop skip", 1};
+
+const OptionDef* defFor(const CoreHost& host, const char* key) {
+    for (const OptionDef& d : host.optionDefs())
+        if (d.key == key) return &d;
+    return nullptr;
+}
+
+}  // namespace
+
+// The custom themes the folder holds; read again once a second (Settings > Appearance does the same: a theme can be added by
+// hand or by another copy of the app), not on every frame the screen draws.
+const std::vector<std::string>& AppHost::themeNames() {
+    if (app_.now() - themeListedAt_ > 1.0) {
+        themeNames_.clear();
+        for (const theme::Custom& c : app_.themeStore().list()) themeNames_.push_back(c.name);
+        themeListedAt_ = app_.now();
+    }
+    return themeNames_;
+}
+
+// Only the rows that exist: no shader runtime, or no core option definitions yet (no game has run this session), or an
+// option the app locks, means no row -- never a greyed one.
+std::vector<SettingRow> AppHost::settingRows() {
+    CoreHost& host = app_.host;
+    ShaderChain& sc = app_.video.shader;
+    std::vector<SettingRow> rows;
+    auto core = [&](const CoreRow& cr) {
+        const OptionDef* def = defFor(host, cr.key);
+        bool hidden = false;
+        SettingRow r = coreOptionRow(cr.id, cr.label, cr.group, def, def ? host.optionValue(*def) : std::string(), host.optionVisible(cr.key),
+                                     host.optionLocked(cr.key), host.optionOverridden(cr.key), &hidden);
+        if (!hidden) rows.push_back(std::move(r));
+    };
+    sc.probeLibrary();   // cached after the first call (the desktop Shader section probes the same way)
+    if (ShaderChain::builtWithHeaders() && sc.libraryLoaded()) rows.push_back(shaderRow(sc.preset, sc.enabled, shaderPresetPaths(app_)));
+    rows.push_back(onOffRow("integer", "Integer scaling", 0, app_.present.integerScale));
+    rows.push_back(aspectRow(app_.present.aspectOverride, kAspectChoices, kAspectChoiceCount));
+    core(kResolution);
+    core(kRiscClock);
+    core(kIdleSkip);
+    rows.push_back(volumeRow(app_.volume));
+    rows.push_back(onOffRow("fps", "Show FPS", 3, app_.showFps));
+    rows.push_back(onOffRow("vsync", "VSync", 3, app_.vsync));
+    rows.push_back(themeRow(theme::choiceKey(), themeNames()));
+    rows.push_back(tvModeRow(app_.tvSetting));
+    rows.push_back(moreRow());
+    return rows;
+}
+
+// What the desktop control does for each row, then the config is saved.  An index the row cannot have (the "(custom)" entry
+// of a typed option, a theme whose file is gone) changes nothing.
+void AppHost::setSetting(const std::string& id, int index) {
+    CoreHost& host = app_.host;
+    if (id == "shader") {
+        ShaderChain& sc = app_.video.shader;
+        const std::vector<std::string> paths = shaderPresetPaths(app_);
+        if (index == 0) {
+            sc.enabled = false;   // the "Use shader" checkbox
+            sc.retry();
+        } else if (index >= 1 && index <= (int)paths.size()) {
+            applyShaderPreset(app_, paths[(size_t)index - 1]);
+        }
+    } else if (id == "integer") {
+        app_.present.integerScale = index != 0;
+    } else if (id == "aspect") {
+        if (index >= 0 && index < kAspectChoiceCount) app_.present.aspectOverride = kAspectChoices[index].value;
+    } else if (id == "resolution" || id == "risc_clock" || id == "idle_skip") {
+        const CoreRow& cr = id == "resolution" ? kResolution : id == "risc_clock" ? kRiscClock : kIdleSkip;
+        const OptionDef* def = defFor(host, cr.key);
+        // The call drawOption makes: the app's own hardcore handling (Achievements::checkSettings) sees it as any other change.
+        if (def && !host.optionOverridden(cr.key) && index >= 0 && index < (int)def->values.size())
+            host.setOptionValue(cr.key, def->values[(size_t)index].value);
+    } else if (id == "volume") {
+        app_.volume = (float)std::clamp(index, 0, 10) / 10.0f;
+        app_.applyAudioSettings();
+    } else if (id == "fps") {
+        app_.showFps = index != 0;
+    } else if (id == "vsync") {
+        app_.vsync = index != 0;
+        app_.applyVsync();
+    } else if (id == "theme") {
+        const std::string key = themeKeyAt(index, themeNames());
+        if (!key.empty()) app_.setThemeChoice(key);
+    } else if (id == "tv_mode") {
+        if (index >= 0 && index <= (int)TvSetting::Auto) {
+            const bool wasOn = app_.tvMode.active();
+            app_.tvSetting = (TvSetting)index;
+            app_.cfg.set("ui.tv_mode", settingKey(app_.tvSetting));   // written on change only: saveConfig() leaves the default free to move
+            app_.configureTvMode();   // starts from off ...
+            if (wasOn) app_.tvMode.setOn(true);   // ... so a Manual <-> Auto change stays in TV mode; Off stays off (setOn is a no-op then)
+        }
+    }
+    app_.saveConfig();
+}
+
+void AppHost::openMoreSettings() { app_.showSettings = true; }
 
 void AppHost::noteInput(const SDL_Event& e) {
     switch (e.type) {

@@ -20,6 +20,7 @@ const char* sectionLabel(Section s) {
     switch (s) {
     case Section::Home: return "Home";
     case Section::Library: return "Library";
+    case Section::Settings: return "Settings";
     }
     return "";
 }
@@ -86,7 +87,7 @@ void Shell::drawBase(ImVec2 pos, ImVec2 size) {
     if (prev.empty()) prev = "LB";
     if (next.empty()) next = "RB";
     x += keyPill(dl, m, x, barY, prev) + 20 * u;
-    const Section sections[] = {Section::Home, Section::Library};
+    const Section sections[] = {Section::Home, Section::Library, Section::Settings};
     for (size_t i = 0; i < sizeof sections / sizeof sections[0]; i++) {
         const Section s = sections[i];
         const bool active = s == section_;

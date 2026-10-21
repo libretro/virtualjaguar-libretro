@@ -184,7 +184,11 @@ void Shell::setSection(Section s) {
     section_ = s;
     for (std::unique_ptr<Screen>& old : stack_) retire(std::move(old));
     stack_.clear();
-    stack_.push_back(s == Section::Home ? makeHomeScreen(host_, *this) : makeLibraryScreen(host_, *this));
+    switch (s) {
+    case Section::Home: stack_.push_back(makeHomeScreen(host_, *this)); break;
+    case Section::Library: stack_.push_back(makeLibraryScreen(host_, *this)); break;
+    case Section::Settings: stack_.push_back(makeSettingsScreen(host_, *this)); break;
+    }
     stackGen_++;
 }
 
@@ -222,16 +226,17 @@ void Shell::launched() {
 
 void Shell::stepSection(int delta) {
     const int n = (int)section_ + delta;
-    if (n < (int)Section::Home || n > (int)Section::Library) return;   // no wrap
+    if (n < (int)Section::Home || n > (int)Section::Settings) return;   // no wrap
     setSection((Section)n);
 }
 
-// Back and the section steps are the shell's; everything else is the top screen's.
+// The section steps are the shell's, Back is the top screen's first and then the shell's; everything else is the top screen's.
 void Shell::baseIntent(Intent in) {
     switch (in) {
     case Intent::SectionPrev: stepSection(-1); break;
     case Intent::SectionNext: stepSection(1); break;
     case Intent::Back:
+        if (Screen* t = top(); t && t->back()) break;   // a level of the screen's own (Settings' list)
         if (stack_.size() > 1) pop();
         else if (section_ != Section::Home) setSection(Section::Home);
         break;

@@ -184,13 +184,12 @@ void drawVideoTab(App& app) {
     ImGui::Checkbox("Smooth (bilinear) filter", &p.linearFilter);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Has no effect while integer scaling is on.");
     ImGui::Checkbox("Stretch to window (ignore aspect ratio)", &p.stretch);
-    static const char* aspects[] = {"Core default", "4:3", "16:9", "8:7 (square pixels)"};
-    static const float vals[] = {0.0f, 4.0f / 3.0f, 16.0f / 9.0f, 8.0f / 7.0f};
     int sel = 0;
-    for (int i = 0; i < 4; i++)
-        if (std::abs(p.aspectOverride - vals[i]) < 1e-3f) sel = i;
+    for (int i = 0; i < kAspectChoiceCount; i++)
+        if (std::abs(p.aspectOverride - kAspectChoices[i].value) < 1e-3f) sel = i;
     ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 9.0f, 16.0f));
-    if (ImGui::Combo("Aspect ratio", &sel, aspects, 4)) p.aspectOverride = vals[sel];
+    auto aspectLabel = [](void*, int i) { return kAspectChoices[i].label; };
+    if (ImGui::Combo("Aspect ratio", &sel, aspectLabel, nullptr, kAspectChoiceCount)) p.aspectOverride = kAspectChoices[sel].value;
     if (ImGui::Checkbox("VSync", &app.vsync)) app.applyVsync();
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);

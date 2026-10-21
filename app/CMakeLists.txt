@@ -293,6 +293,7 @@ set(VJ_APP_SOURCES
     src/emu_thread.cpp
     src/audio.cpp
     src/video.cpp
+    src/aspect_choices.cpp
     src/present_util.cpp
     src/shaders.cpp
     src/shaders_ui.cpp
@@ -373,6 +374,8 @@ set(VJ_APP_SOURCES
     src/tv/tv_home.cpp
     src/tv/tv_library.cpp
     src/tv/tv_details.cpp
+    src/tv/tv_settings.cpp
+    src/tv/tv_settings_model.cpp
     src/tv/tv_widgets.cpp
     src/discord_ipc.cpp
     src/discord_presence.cpp

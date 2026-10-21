@@ -13,6 +13,20 @@ endif()
 add_test(NAME hold_arbiter_unit COMMAND vj_hold_arbiter_test)
 set_tests_properties(hold_arbiter_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# The TV Settings rows (tests/tv_settings_model_test.cpp): core options with the hide / read-only / custom-value rules, the
+# app's own rows, the step arithmetic.  Pure; needs vj_core's include dirs for emu_snapshot.h (OptionDef).
+add_executable(vj_tv_settings_model_test tests/tv_settings_model_test.cpp src/tv/tv_settings_model.cpp src/aspect_choices.cpp)
+target_include_directories(vj_tv_settings_model_test PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(vj_tv_settings_model_test PRIVATE ${VJ_SDL3_TARGET})   # tv_host.h's SDL_gamepad.h enums
+if(MSVC)
+    target_compile_options(vj_tv_settings_model_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_tv_settings_model_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_tv_settings_model_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME tv_settings_model_unit COMMAND vj_tv_settings_model_test)
+set_tests_properties(tv_settings_model_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 # Controller navigation (#1021): the pad-family menu-button profiles and the per-controller-model custom layer
 # (tests/pad_profile_test.cpp).  Pure; tv_nav.cpp is linked for the parity check against tv::intentForButton.
 add_executable(vj_pad_profile_test tests/pad_profile_test.cpp src/pad_profile.cpp src/tv/tv_nav.cpp src/remap.cpp src/config.cpp src/paths.cpp)
@@ -84,8 +98,8 @@ set_tests_properties(tv_menu_headless PROPERTIES
 # keyboard capture while open), no Base window without TV mode or with a game running.
 add_executable(vj_tv_ui_smoke
     tests/tv_ui_smoke.cpp src/tv/tv_shell.cpp src/tv/tv_ingame.cpp src/tv/tv_chrome.cpp src/tv/tv_home.cpp src/tv/tv_library.cpp src/tv/tv_details.cpp
-    src/tv/tv_widgets.cpp src/tv/tv_focus.cpp src/tv/tv_mode.cpp src/tv/tv_nav.cpp src/tv/tv_style.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/config.cpp src/paths.cpp)
-target_include_directories(vj_tv_ui_smoke PRIVATE src)
+    src/tv/tv_settings.cpp src/tv/tv_settings_model.cpp src/tv/tv_widgets.cpp src/tv/tv_focus.cpp src/tv/tv_mode.cpp src/tv/tv_nav.cpp src/tv/tv_style.cpp src/theme.cpp src/theme_style.cpp src/theme_custom.cpp src/config.cpp src/paths.cpp)
+target_include_directories(vj_tv_ui_smoke PRIVATE src $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(vj_tv_ui_smoke PRIVATE vj_imgui ${VJ_SDL3_TARGET})
 if(MSVC)
     target_compile_options(vj_tv_ui_smoke PRIVATE /W3 /utf-8)

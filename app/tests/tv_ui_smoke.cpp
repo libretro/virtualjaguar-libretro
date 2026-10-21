@@ -106,7 +106,9 @@ struct FakeHost : Host {
         case Intent::Accept: return "A";
         case Intent::Back: return "B";
         case Intent::Up:
-        case Intent::Down: return "D-pad";
+        case Intent::Down:
+        case Intent::Left:
+        case Intent::Right: return "D-pad";
         default: return "";
         }
     }
@@ -140,6 +142,18 @@ struct FakeHost : Host {
         if (on) favSet.insert(g.key);
         else favSet.erase(g.key);
     }
+    // TV Settings (phase 3): the rows the screen lists, every change it asked for, and the "More settings" presses.
+    std::vector<SettingRow> rows;
+    std::vector<std::pair<std::string, int>> set;
+    int moreOpened = 0;
+    std::vector<SettingRow> settingRows() override { return rows; }
+    void setSetting(const std::string& id, int index) override {
+        set.push_back({id, index});
+        for (SettingRow& r : rows)
+            if (r.id == id) r.index = index;
+        if (id == "tv_mode" && index == 0) tv = false;   // Off: the app's configureTvMode() turns TV mode off
+    }
+    void openMoreSettings() override { moreOpened++; }
 };
 
 // n games named "<prefix> 0" .. "<prefix> n-1", keyed by a path.
@@ -479,14 +493,18 @@ static void tvShellWalksSections() {
     CHECK(shell.screenId() == "home" && shell.section() == Section::Home);
     rb(host, shell);
     CHECK(shell.screenId() == "library");
+    rb(host, shell);
+    CHECK(shell.screenId() == "settings" && shell.section() == Section::Settings);
     rb(host, shell);   // no wrap
+    CHECK(shell.screenId() == "settings");
+    lb(host, shell);
     CHECK(shell.screenId() == "library");
     lb(host, shell);
     CHECK(shell.screenId() == "home");
     lb(host, shell);
     CHECK(shell.screenId() == "home");
     frames(host, shell, 120);
-    CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("8:42 PM"));
+    CHECK(g_imguiErrors == 0 && drew("Home") && drew("Library") && drew("Settings") && drew("8:42 PM"));
     CHECK(drew("VIRTUAL JAGUAR"));
     rb(host, shell);
     frames(host, shell, 3);
@@ -2111,6 +2129,352 @@ static void desktopWindowTakesInputFromBase() {
     CHECK(menu.ownsInput());
 }
 
+// ---- TV Settings (phase 3, Task 12) -----------------------------------------------------------------------------------
+
+static SettingRow mkRow(const char* id, const char* label, int group, std::vector<std::string> choices, int index = 0) {
+    SettingRow r;
+    r.id = id;
+    r.label = label;
+    r.group = group;
+    r.choices = std::move(choices);
+    r.index = index;
+    return r;
+}
+
+// Picture: Aspect ratio; Sound: Volume; Interface: Show FPS, then More settings -- no Speed row, so no Speed group.
+static std::vector<SettingRow> settingsFixture() {
+    std::vector<std::string> pct;
+    for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
+    return {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3", "16:9", "8:7 (square pixels)"}),
+            mkRow("volume", "Volume", 2, pct, 5),
+            mkRow("fps", "Show FPS", 3, {"Off", "On"}),
+            mkRow("more", "More settings\xE2\x80\xA6", 3, {})};
+}
+
+// A TV host on the Settings section (reached through the shell, not by counting RB presses), drawn once.
+static void settingsSetup(FakeHost& host, Shell& shell, std::vector<SettingRow> rows = settingsFixture()) {
+    host.tv = true;
+    host.loaded = false;
+    host.rows = std::move(rows);
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    frames(host, shell, 2);
+    shell.setSection(Section::Settings);
+    frames(host, shell, 2);
+}
+
+static void leftClick(FakeHost& h, Shell& s) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMouseButtonEvent(0, true);
+    frames(h, s, 1);
+    io.AddMouseButtonEvent(0, false);
+    frames(h, s, 1);
+}
+
+static bool lastSet(const FakeHost& h, const char* id, int index) {
+    return !h.set.empty() && h.set.back().first == id && h.set.back().second == index;
+}
+
+static void settingsRailAndList() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(shell.screenId() == "settings");
+    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && !drew("Speed"));
+    CHECK(drew("Aspect ratio") && !drew("Show FPS"));   // the list is the focused group's: Picture
+    down(host, shell, 2);                                // Picture, Sound, Interface
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Show FPS") && drew("More settings\xE2\x80\xA6") && !drew("Aspect ratio"));
+    rightN(host, shell, 1);                              // into the list
+    CHECK(host.set.empty());
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "fps", 1));
+    leftN(host, shell, 1);
+    CHECK(lastSet(host, "fps", 0));
+    accept(host, shell);
+    CHECK(lastSet(host, "fps", 1));
+    accept(host, shell);                                 // Accept wraps
+    CHECK(lastSet(host, "fps", 0) && host.set.size() == 4);
+    rightN(host, shell, 1);
+    rightN(host, shell, 1);                              // Right stops at the last choice
+    CHECK(host.set.size() == 5 && lastSet(host, "fps", 1));
+    CHECK(g_imguiErrors == 0);
+}
+
+// Back leaves the list for the rail, and the rail for Home; Left at the first choice is the same step as Back.
+static void settingsBackAndLeftEdge() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    down(host, shell, 2);
+    rightN(host, shell, 1);                              // Interface's list, on Show FPS (Off)
+    leftN(host, shell, 1);                               // Off cannot go further left: the rail
+    CHECK(host.set.empty());
+    rightN(host, shell, 1);                              // ... and into the list again
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "fps", 1));
+    back(host, shell);                                   // list -> rail: still on the Settings screen
+    CHECK(shell.screenId() == "settings" && shell.section() == Section::Settings);
+    rightN(host, shell, 1);
+    accept(host, shell);                                 // the list again, Accept steps (wrapping)
+    CHECK(lastSet(host, "fps", 0));
+    back(host, shell);
+    back(host, shell);                                   // the rail: Back is Home
+    CHECK(shell.section() == Section::Home && shell.screenId() == "home");
+}
+
+static void settingsHints() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Open") && !drew("Change") && !drew("Groups"));   // the rail
+    down(host, shell, 2);
+    rightN(host, shell, 1);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Change") && drew("Next") && drew("Groups") && !drew("Open"));
+    down(host, shell);                                   // More settings...
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Open") && drew("Groups") && !drew("Change") && !drew("Next"));
+    // A read-only row changes nothing, so the bar does not offer it.
+    FakeHost ro;
+    Shell roShell(ro);
+    SettingRow r = mkRow("fps", "Show FPS", 3, {"Off", "On"});
+    r.readOnly = true;
+    r.note = "Set for this session";
+    settingsSetup(ro, roShell, {r});
+    rightN(ro, roShell, 1);
+    g_texts.clear();
+    frames(ro, roShell, 2);
+    CHECK(drew("Groups") && !drew("Change") && !drew("Next"));
+}
+
+// Review focus 13: turning TV mode Off from its own row leaves the Base layer cleanly -- the window stops being drawn, the
+// pointer comes back, and the pad belongs to the app.
+static void settingsTvModeOffLeavesCleanly() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, 1)});
+    CHECK(shell.ownsInput() && baseWindow() && baseWindow()->WasActive);
+    rightN(host, shell, 1);                              // the list (only Interface exists)
+    accept(host, shell);                                 // Manual -> Auto
+    CHECK(lastSet(host, "tv_mode", 2) && host.tv);
+    accept(host, shell);                                 // Auto -> Off (Accept wraps)
+    CHECK(lastSet(host, "tv_mode", 0) && !host.tv);
+    frames(host, shell, 3);
+    CHECK(!baseWindow() || !baseWindow()->WasActive);
+    CHECK(ImGui::GetMouseCursor() != ImGuiMouseCursor_None);
+    CHECK(!shell.ownsInput());
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+    e.gbutton.down = true;
+    CHECK(!shell.handleEvent(e, g_ms));
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.down = false;
+    shell.handleEvent(e, g_ms);
+    frames(host, shell, 2);
+    CHECK(g_imguiErrors == 0);
+}
+
+static void settingsReadonlyRowIgnoresInput() {
+    FakeHost host;
+    Shell shell(host);
+    SettingRow r = mkRow("resolution", "Internal resolution", 0, {"1x", "2x"}, 1);
+    r.readOnly = true;
+    r.note = "Set for this session by Netplay";
+    settingsSetup(host, shell, {r});
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Set for this session by Netplay") && drew("Internal resolution") && drew("2x"));
+    rightN(host, shell, 1);                              // into the list
+    rightN(host, shell, 1);
+    leftN(host, shell, 1);                               // (back to the rail: nothing to step)
+    accept(host, shell);                                 // (into the list again)
+    accept(host, shell);
+    rightN(host, shell, 1);
+    CHECK(host.set.empty());
+    // The pointer is as inert: a click on either half of the value.
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(504 + 1320 * 0.9f, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    io.AddMousePosEvent(504 + 1320 * 0.6f, 196 + 36);
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(host.set.empty());
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+static void settingsMoreOpensDesktop() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    down(host, shell, 2);
+    rightN(host, shell, 1);
+    down(host, shell);                                   // More settings...
+    rightN(host, shell, 2);                              // nothing to step
+    leftN(host, shell, 1);                               // ... and Left is the rail
+    CHECK(host.moreOpened == 0 && host.set.empty());
+    rightN(host, shell, 1);
+    CHECK(host.moreOpened == 0);
+    accept(host, shell);
+    CHECK(host.moreOpened == 1 && host.set.empty());
+    host.desktopOpen = true;                             // what the app does next
+    frames(host, shell, 2);
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    e.gbutton.button = SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+    e.gbutton.down = true;
+    CHECK(!shell.handleEvent(e, g_ms));                  // the shell stepped aside
+    e.type = SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.down = false;
+    shell.handleEvent(e, g_ms);
+    host.desktopOpen = false;
+    frames(host, shell, 2);
+    CHECK(shell.ownsInput());
+}
+
+// A row the build or the session does not have is not drawn at all; rows are fetched again every frame.
+static void settingsHiddenRowsAbsent() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Shader"));
+    SettingRow shader = mkRow("shader", "Shader", 0, {"Off", "crt-royale", "lcd"}, 1);
+    host.rows.insert(host.rows.begin(), shader);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Shader") && drew("crt-royale") && drew("Aspect ratio"));
+    host.rows.erase(host.rows.begin());                  // the library went away
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Shader") && drew("Aspect ratio"));
+    // A group whose rows all went has no rail item either.
+    host.rows.erase(host.rows.begin());                  // Aspect ratio: Picture is empty
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Picture") && drew("Sound") && drew("Interface") && drew("Volume"));
+    CHECK(g_imguiErrors == 0);
+}
+
+static void settingsFocusRemembered() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3"}),
+                                mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("vsync", "VSync", 3, {"Off", "On"}),
+                                mkRow("theme", "Theme", 3, {"System", "Dark", "Light"}), mkRow("more", "More settings", 3, {})});
+    down(host, shell);                                   // Interface
+    rightN(host, shell, 1);
+    down(host, shell, 2);                                // Theme
+    lb(host, shell);
+    CHECK(shell.screenId() == "library");
+    rb(host, shell);
+    CHECK(shell.screenId() == "settings");
+    accept(host, shell);                                 // lands on the same row, in its list
+    CHECK(lastSet(host, "theme", 1) && host.set.size() == 1);
+    // The row is followed by what it is, not by where it was: a row inserted above it does not move the focus.
+    host.rows.insert(host.rows.begin() + 1, mkRow("shader2", "Extra", 3, {"Off", "On"}));
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(lastSet(host, "theme", 2));
+}
+
+static void settingsMouse() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1),
+                                mkRow("vsync", "VSync", 3, {"Off", "On"}, 1)});
+    ImGuiIO& io = ImGui::GetIO();
+    // Interface is the second group: the rail item hovers into view.  1920x1080: the rail at x 96, 54 high, 62 apart; the
+    // list from x 504 to 1824, rows 72 high, 86 apart from y 196.
+    io.AddMousePosEvent(96 + 100, 150 + 62 + 27);
+    frames(host, shell, 2);
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Show FPS") && !drew("Volume"));
+    io.AddMousePosEvent(504 + 1320 * 0.9f, 196 + 36);    // the right half of the value of Show FPS
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "fps", 1));
+    io.AddMousePosEvent(504 + 1320 * 0.6f, 196 + 36);    // ... the left half of the value
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "fps", 0));
+    io.AddMousePosEvent(504 + 200, 196 + 36);            // the label: Accept, one step on
+    frames(host, shell, 2);
+    leftClick(host, shell);
+    CHECK(lastSet(host, "fps", 1) && host.set.size() == 3);
+    leftClick(host, shell);                              // wraps
+    CHECK(lastSet(host, "fps", 0));
+    // The wheel moves the focus: one notch is one row (the pointer rests where it is, so it does not pull the focus back).
+    io.AddMouseWheelEvent(0, -1.0f);
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(lastSet(host, "vsync", 0));
+    io.AddMouseWheelEvent(0, 1.0f);
+    frames(host, shell, 2);
+    accept(host, shell);
+    CHECK(lastSet(host, "fps", 1));
+    io.AddMousePosEvent(0, 0);
+    frames(host, shell, 2);
+}
+
+// Every size, long labels and notes, a full fixture (the list scrolls), every direction and the pointer.
+static void settingsWalk120FramesNoAsserts() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    host.tv = true;
+    host.loaded = false;
+    std::vector<std::string> pct;
+    for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
+    host.rows = settingsFixture();
+    SettingRow ro = mkRow("resolution", "Internal resolution with a rather long label", 0, {"1x (native)", "2x"}, 1);
+    ro.readOnly = true;
+    ro.note = "Set for this session by the Netplay window (or --option); disconnect to change it here";
+    host.rows.push_back(ro);
+    host.rows.push_back(mkRow("risc_clock", "RISC overclock", 1, {"0.5x", "1x (stock)", "137% (custom)"}, 2));
+    host.rows.push_back(mkRow("idle_skip", "Idle-loop skip", 1, {"disabled", "enabled"}, 1));
+    for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 3, {"Off", "On"}));
+    host.rows.push_back(mkRow("theme", "Theme", 3, {"System", "Dark", "Light", "Custom: A very long theme name that does not fit"}, 3));
+    Shell shell(host);
+    const int errors = g_imguiErrors;
+    shell.setSection(Section::Settings);
+    for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        frames(host, shell, 3);
+        for (int round = 0; round < 3; round++) {
+            for (SDL_GamepadButton b : {SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+                                        SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_LEFT}) {
+                for (int i = 0; i < 12; i++) tapButton(host, shell, b);
+                frames(host, shell, 40);
+            }
+            for (int i = 0; i < 6; i++) accept(host, shell);
+            back(host, shell);
+        }
+        io.AddMousePosEvent(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.4f);
+        io.AddMouseWheelEvent(0, -3.0f);
+        frames(host, shell, 20);
+        leftClick(host, shell);
+        io.AddMouseWheelEvent(0, 3.0f);
+        frames(host, shell, 20);
+        io.AddMousePosEvent(0, 0);
+        frames(host, shell, 3);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == errors);
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -2197,6 +2561,16 @@ int main() {
     homeSaysScanningWhileScanning();
     desktopWindowTakesInputFromBase();
     padPopupNav();
+    settingsRailAndList();
+    settingsBackAndLeftEdge();
+    settingsHints();
+    settingsTvModeOffLeavesCleanly();
+    settingsReadonlyRowIgnoresInput();
+    settingsMoreOpensDesktop();
+    settingsHiddenRowsAbsent();
+    settingsFocusRemembered();
+    settingsMouse();
+    settingsWalk120FramesNoAsserts();
     // The menu at the other sizes the app runs at.
     {
         FakeHost host;
@@ -2231,6 +2605,33 @@ int main() {
                 for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
                     if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
             CHECK(inside);
+        }
+        CHECK(g_imguiErrors == 0);
+    }
+    // The Settings screen (rows with values, chevrons and a note) inside the display at the same sizes, the list focused.
+    {
+        FakeHost host;
+        host.tv = true;
+        host.loaded = false;
+        host.rows = settingsFixture();
+        SettingRow ro = mkRow("resolution", "Internal resolution", 0, {"1x (native)", "2x"}, 1);
+        ro.readOnly = true;
+        ro.note = "Set for this session by Netplay or --option";
+        host.rows.push_back(ro);
+        Shell shell(host);
+        shell.setSection(Section::Settings);
+        for (float hh : {720.0f, 1080.0f, 2160.0f}) {
+            io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+            frames(host, shell, 3);
+            rightN(host, shell, 1);
+            frames(host, shell, 30);
+            ImDrawData* dd = ImGui::GetDrawData();
+            bool inside = dd->CmdListsCount > 0;
+            for (int l = 0; l < dd->CmdListsCount; l++)
+                for (const ImDrawVert& v : dd->CmdLists[l]->VtxBuffer)
+                    if (v.pos.x < -0.5f || v.pos.y < -0.5f || v.pos.x > io.DisplaySize.x + 0.5f || v.pos.y > io.DisplaySize.y + 0.5f) inside = false;
+            CHECK(inside);
+            back(host, shell);
         }
         CHECK(g_imguiErrors == 0);
     }

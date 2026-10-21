@@ -48,6 +48,17 @@ struct StateRef {
 
 enum class List { All, Favorites, Recent, Disc };
 
+// One row of the TV Settings screen, by value (AppHost fills them from the app's settings and the core's options, so the
+// screen never sees either).  `choices` are what Left / Right / Accept step through; "more" has none.
+struct SettingRow {
+    std::string id, label;             // ids: shader integer aspect resolution risc_clock idle_skip volume fps vsync theme tv_mode more
+    std::vector<std::string> choices;  // empty for "more"
+    int index = 0;
+    bool readOnly = false;
+    std::string note;                  // shown under the value: why it is read-only
+    int group = 0;                     // 0 Picture, 1 Speed, 2 Sound, 3 Interface
+};
+
 class Host {
 public:
     virtual ~Host() = default;
@@ -103,6 +114,11 @@ public:
     virtual void launchState(const GameRef& g, int slot) = 0;    // opens the game and loads that state
     virtual bool isFavorite(const GameRef& g) = 0;               // library.isFavorite(entry); false when the game is gone
     virtual void setFavorite(const GameRef& g, bool on) = 0;     // library.setFavorite(entry, on); a no-op when the game is gone
+
+    // ---- Settings (phase 3) ----------------------------------------------------------------------------------------
+    virtual std::vector<SettingRow> settingRows() = 0;             // only the rows that exist in this build / session; fetched every frame
+    virtual void setSetting(const std::string& id, int index) = 0; // applies and saves, as the desktop control would
+    virtual void openMoreSettings() = 0;                           // the desktop Settings window
 };
 
 }  // namespace vj::tv
