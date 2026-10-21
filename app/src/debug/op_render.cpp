@@ -53,17 +53,33 @@ OpColorMode opResolveColorMode(const vj_debug_iface* iface, OpColorMode req) {
     return OpColorMode::Cry;
 }
 
+namespace {
+// tom.c TOMFillLookupTables: RRRRR BBBBB GGGGGG
+uint32_t rgb16ToRgb(unsigned x) {
+    return ((x & 0xF800u) << 8) | ((x & 0x003Fu) << 10) | ((x & 0x07C0u) >> 3);
+}
+}  // namespace
+
+uint32_t opColorToRgb(const std::vector<uint32_t>* cryTable, OpColorMode mode, unsigned v) {
+    v &= 0xFFFF;
+    auto cry = [&](unsigned x) -> uint32_t {
+        return cryTable && cryTable->size() == 0x10000 ? ((*cryTable)[x] & 0xFFFFFFu) : 0u;
+    };
+    switch (mode) {
+        case OpColorMode::Rgb16: return rgb16ToRgb(v);
+        case OpColorMode::Mixed: return (v & 1) ? rgb16ToRgb(v) : cry(v);
+        default: return cry(v);
+    }
+}
+
 uint32_t opColorToRgb(const vj_debug_iface* iface, OpColorMode mode, unsigned v) {
     v &= 0xFFFF;
-    auto rgb16 = [](unsigned x) -> uint32_t {   // tom.c TOMFillLookupTables: RRRRR BBBBB GGGGGG
-        return ((x & 0xF800u) << 8) | ((x & 0x003Fu) << 10) | ((x & 0x07C0u) >> 3);
-    };
     auto cry = [&](unsigned x) -> uint32_t {
         return iface && iface->cry_to_rgb ? (iface->cry_to_rgb(x) & 0xFFFFFFu) : 0u;
     };
     switch (mode) {
-        case OpColorMode::Rgb16: return rgb16(v);
-        case OpColorMode::Mixed: return (v & 1) ? rgb16(v) : cry(v);
+        case OpColorMode::Rgb16: return rgb16ToRgb(v);
+        case OpColorMode::Mixed: return (v & 1) ? rgb16ToRgb(v) : cry(v);
         default: return cry(v);
     }
 }

@@ -236,7 +236,7 @@ vj_add_debug_ui_smoke(vj_debug_cpu_ui_smoke debug_cpu_ui_smoke tests/debug_cpu_u
 target_link_libraries(vj_debug_cpu_ui_smoke PRIVATE vj_debug_cpu)
 
 # #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
-set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp)
+set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp)
 add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
          "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
 set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)

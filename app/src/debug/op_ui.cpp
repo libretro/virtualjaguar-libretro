@@ -40,9 +40,6 @@ struct UiState {
     int texZoom = -1;
     std::string status;
     std::string pinStatus;
-    OpScreenGeom geom;
-    uint64_t geomSerial = ~0ull;
-    unsigned geomFrameW = 0, geomFrameH = 0;
 };
 UiState g;
 
@@ -256,7 +253,7 @@ void drawFields(const OpObject& o) {
 }
 
 // ---- paint value controls ----------------------------------------------------------------------------------
-void drawPaintControls(const vj_debug_iface* iface, const OpObject& o, const OpImage& img) {
+void drawPaintControls(const std::vector<uint32_t>* cry, const OpObject& o, const OpImage& img) {
     OpViewModel& vm = g.vm;
     uint32_t mx = opPixelMax(o);
     if (g.paintValue > mx) g.paintValue = mx;
@@ -273,7 +270,7 @@ void drawPaintControls(const vj_debug_iface* iface, const OpObject& o, const OpI
         if (ImGui::SliderInt("Pixel value", &v, 0, (int)mx)) g.paintValue = (uint32_t)v;
         unsigned pal = (o.clutBase | g.paintValue) & 0xFF;
         unsigned w = pal < img.clut.size() ? img.clut[pal] : 0;
-        uint32_t rgb = opColorToRgb(iface, img.mode, w);
+        uint32_t rgb = opColorToRgb(cry, img.mode, w);
         ImGui::SameLine();
         ImGui::ColorButton("##palswatch", ImVec4(((rgb >> 16) & 255) / 255.0f, ((rgb >> 8) & 255) / 255.0f, (rgb & 255) / 255.0f, 1.0f),
                            ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
@@ -405,7 +402,7 @@ void drawPreview(DebugSession& s, const ObjectsContext& ctx, const OpObject& o) 
     ImGui::EndChild();
 
     // Footer: edit controls, export.
-    drawPaintControls(s.iface(), o, *img);
+    drawPaintControls(g.vm.cryTable(), o, *img);
     if (g.pinStatus == "pin") {
         g.pinStatus.clear();
         const OpViewModel::Edit& e = vm.lastEdit();
@@ -479,15 +476,28 @@ void drawObjectsTool(App& app) {
     ctx.frameW = app.video.frameWidth();
     ctx.frameH = app.video.frameHeight();
     ctx.emulationRunning = !app.paused && !app.debug.halted();
-    // Only when the session is not attached: a frame run from inside this draw hook that then halts would
-    // start a second ImGui frame (App::haltedFrame) inside the current one.
-    if (!app.threaded() && app.paused && !app.debug.attached() && !app.debug.halted() && !app.host.inFrame() &&
-        app.host.isLoaded() &&
-        !app.netplay.configured())
-        ctx.stepFrame = [&app] {
-            app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
-            app.video.upload(app.host.frame());
-        };
+    // Inline only when the session is not attached: a frame run from inside this draw hook that then halts would
+    // start a second ImGui frame (App::haltedFrame) inside the current one.  Threaded, the emulation thread runs the
+    // frame; no owner-only CoreHost call is made from here.
+    switch (opStepFor({app.threaded(), app.paused, app.debug.halted(), app.debug.attached(),
+                       /*inFrame*/ !app.threaded() && app.host.inFrame(), app.host.isLoaded(),
+                       app.netplay.configured()})) {
+        case OpStep::Advance:
+            ctx.stepFrame = [&app] {
+                app.debug.requestRefresh();   // the serial bump is what makes the armed snapshot refill after the frame
+                app.emu.advance(1);
+            };
+            break;
+        case OpStep::Inline:
+            ctx.stepFrame = [&app] {
+                app.debug.requestRefresh();
+                app.host.runFrame();                 // one frame, so a pending snapshot can finish while paused
+                app.video.upload(app.host.frame());
+                app.debug.wakeViews();               // inline this runs the copier at once
+            };
+            break;
+        case OpStep::None: break;
+    }
     ctx.createTexture = &VideoOut::createTextureRGBA;
     ctx.destroyTexture = &VideoOut::destroyTexture;
     ctx.cheats = &app.cheats;
@@ -504,6 +514,7 @@ void releaseObjectsTextures() { freeTexture(); }
 void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     OpViewModel& vm = g.vm;
     if (!g.open) {
+        vm.releaseViews(session);
         if (g.tex) freeTexture();
         return;
     }
@@ -511,17 +522,19 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
     bool vis = ui::beginWindow("Object list", &g.open);
     ui::keepOnScreen();
     if (!vis) {
+        vm.releaseViews(session);   // collapsed: no draw, no requests
         ImGui::End();
         return;
     }
     if (!session.enabled()) {
+        vm.releaseViews(session);
         ImGui::TextWrapped("%s", session.disabledReason().c_str());
         ImGui::End();
         if (g.tex) freeTexture();
         return;
     }
 
-    vm.update(session);
+    vm.update(session, ctx.emulationRunning);
     if (vm.selected() != g.lastSel) {
         g.lastSel = vm.selected();
         g.zoom = 0;
@@ -616,20 +629,15 @@ void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx) {
 
     // Outlines over the game picture.
     if (g.highlight && vm.haveSnapshot() && ctx.frameW && ctx.picW > 0) {
-        if (g.geomSerial != session.refreshSerial() || g.geomFrameW != ctx.frameW || g.geomFrameH != ctx.frameH) {
-            g.geom = vm.readGeom(session, ctx.frameW, ctx.frameH);
-            g.geomSerial = session.refreshSerial();
-            g.geomFrameW = ctx.frameW;
-            g.geomFrameH = ctx.frameH;
-        }
+        const OpScreenGeom geom = vm.readGeom(ctx.frameW, ctx.frameH);
         if (g.highlightAll)
             for (int i : rows) {
                 const OpObject& o = vm.objects()[(size_t)i];
-                if (o.drawable() && i != vm.selected()) drawOutline(o, ctx, g.geom, IM_COL32(80, 200, 255, 140), i, false);
+                if (o.drawable() && i != vm.selected()) drawOutline(o, ctx, geom, IM_COL32(80, 200, 255, 140), i, false);
             }
         if (g.hoverRow >= 0 && g.hoverRow != vm.selected() && g.hoverRow < (int)vm.objects().size())
-            drawOutline(vm.objects()[(size_t)g.hoverRow], ctx, g.geom, IM_COL32(255, 255, 255, 200), g.hoverRow, true);
-        if (const OpObject* o = vm.selectedObject()) drawOutline(*o, ctx, g.geom, IM_COL32(255, 230, 40, 255), vm.selected(), true);
+            drawOutline(vm.objects()[(size_t)g.hoverRow], ctx, geom, IM_COL32(255, 255, 255, 200), g.hoverRow, true);
+        if (const OpObject* o = vm.selectedObject()) drawOutline(*o, ctx, geom, IM_COL32(255, 230, 40, 255), vm.selected(), true);
     }
 }
 
