@@ -183,3 +183,18 @@ else()
 endif()
 add_test(NAME debug_op_e2e COMMAND vj_debug_op_e2e "${VJ_ROMS}/yarc.j64")
 set_tests_properties(debug_op_e2e PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+
+#   debug_views_unit     DebugViews (debug_views.*): the request table and double buffers the emulation thread fills
+#                        and the windows read -- clamps, per-kind fills against the mock, serials, a changed request
+#                        invalidating its buffer, the epoch across a content switch, and a concurrent set/fill/read.
+add_executable(vj_debug_views_test tests/debug_views_test.cpp src/debug/debug_views.cpp)
+target_include_directories(vj_debug_views_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_views_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(vj_debug_views_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_debug_views_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_debug_views_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME debug_views_unit COMMAND vj_debug_views_test)
+set_tests_properties(debug_views_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")

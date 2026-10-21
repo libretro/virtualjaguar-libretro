@@ -338,6 +338,7 @@ set(VJ_APP_SOURCES
     src/netplay_ui.cpp
     # Debug tools (#652 / #833): the session, the Tools menu and one window (+ its pure logic) per tool.
     src/debug/debug_session.cpp
+    src/debug/debug_views.cpp
     src/debug/debug_ui.cpp
     src/debug/memory_view.cpp
     src/debug/memory_ui.cpp
