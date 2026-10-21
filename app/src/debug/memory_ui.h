@@ -36,5 +36,8 @@ void showMemoryAt(DebugSession& s, unsigned addr);
 namespace memory_test {
 bool byteAt(unsigned addr, uint8_t& v);
 }
+namespace clut_test {
+bool entryA(unsigned index, unsigned& raw);   // table A's entry `index` as the Palette window last adopted it
+}
 
 }  // namespace vj

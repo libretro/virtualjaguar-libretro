@@ -103,6 +103,14 @@ std::string describe(ColorMode m, unsigned raw) {
 
 }  // namespace
 
+namespace clut_test {
+bool entryA(unsigned index, unsigned& raw) {
+    if (!g_clut.ok || index >= kClutEntries) return false;
+    raw = g_clut.a[index];
+    return true;
+}
+}  // namespace clut_test
+
 void drawClutWindow(DebugSession& s) {
     ClutState& c = g_clut;
     if (!clutWindowOpen()) {

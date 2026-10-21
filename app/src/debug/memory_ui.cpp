@@ -128,7 +128,8 @@ void fetchWindow(DebugSession& s, const vj_debug_region& r, unsigned visStart, u
         m.winOk = false;
         return;
     }
-    if (m.winOk && b.serial == m.winSerial && b.req.addr == m.winStart) return;   // already adopted
+    if (m.winOk && b.serial == m.winSerial && b.req.addr == m.winStart && b.bytes.size() == m.win.size())
+        return;   // already adopted (a wider request at the same address and serial is a new window)
     const bool refresh = b.serial != m.winSerial;
     m.win = std::move(b.bytes);
     m.winStart = b.req.addr;

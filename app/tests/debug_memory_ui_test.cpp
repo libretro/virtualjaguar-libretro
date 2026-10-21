@@ -175,9 +175,24 @@ int main() {
     mock.regwin()[0x400] = 0x12;
     s.requestRefresh();
     settle(s, 3);
+    CHECK(mock.regwin()[0x400] == 0x12);   // (the mock holds it; the window must too -- a quiet window proves nothing)
+    unsigned e0 = 0;
+    CHECK(clut_test::entryA(0, e0) && e0 == 0x12FF);   // entry 0 = bytes (0x12, 255)
     const UiFixture::Mark q2 = fx.mark();
     settle(s, 20);
     CHECK(fx.quietSince(q2));
+
+    // 12. A paused window that is resized (its bytes-per-row changes, the request's length with it) adopts the new
+    //     buffer although the serial and the start address are unchanged (the region top is where the viewer opens).
+    ImGui::SetWindowSize("Memory", ImVec2(300, 560));
+    settle(s, 3);
+    showMemoryAt(s, 0);
+    settle(s, 8);
+    CHECK(memory_test::byteAt(0x10, v) && v == 0x10);
+    CHECK(!memory_test::byteAt(0x200, v));                    // the narrow window asked for fewer bytes
+    ImGui::SetWindowSize("Memory", ImVec2(660, 560));
+    settle(s, 8);
+    CHECK(memory_test::byteAt(0x200, v) && v == 0x00);        // ...and the wide one's far end arrived with no refresh
 
     // 7. A core going away mid-session does not crash the windows.
     s.setIface(nullptr);
