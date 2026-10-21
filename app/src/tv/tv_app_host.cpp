@@ -344,6 +344,7 @@ std::vector<AchItem> AppHost::achItems() {
         AchItem it;
         it.id = r.id;
         it.title = r.title;
+        it.description = r.description;
         it.status = ra::achStatusLine(r);
         it.points = r.points;
         it.unlocked = r.unlocked();

@@ -2591,6 +2591,7 @@ static void achLoadedGame(FakeHost& host) {
     host.hdr.total = 2;
     host.items = {mkItem(1, "First Blood", "Unlocked in hardcore  2026-10-16 21:04", true, 5), mkTracker(900, "Lap 2: 1:12.4"),
                   mkItem(2, "Ring Master", "Locked  Progress: 5/10", false, 25)};
+    host.items[0].description = "Defeat the first drone";
 }
 
 static void achNotSignedInLine() {
@@ -2637,6 +2638,7 @@ static void achRowsForLoadedGame() {
     CHECK(drew("Unlocked in hardcore  2026-10-16 21:04") && drew("Locked  Progress: 5/10"));
     CHECK(drew(host.hdr.mode) && drew("Cybermorph") && drew("1 of 2 achievements"));
     CHECK(drew("5 pts") && drew("25 pts") && !drew("Sign in from Settings > Achievements in desktop mode"));
+    CHECK(drew("Defeat the first drone"));   // the description, a muted line between the title and the status
     // The focus lives on achievements: Down from the first jumps over the tracker, Up comes back, the ends hold.
     CHECK(shell.memory().get("achievements/rows") == 0);
     down(host, shell);

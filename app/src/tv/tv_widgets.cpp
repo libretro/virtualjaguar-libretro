@@ -144,13 +144,19 @@ Hit row(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const RowArgs
         maxW -= vw + pad;
     }
     const float bodyPx = m.body * (1.0f + 0.08f * f);   // the spec's body size at rest, the focus scale when focused
-    if (a.sub.empty()) {
+    const int lines = (a.desc.empty() ? 0 : 1) + (a.sub.empty() ? 0 : 1);   // muted lines under the label, each at the 24 floor
+    if (lines == 0) {
         text(dl, bodyPx, ImVec2(x, p0.y + (sz.y - bodyPx) * 0.5f), tc, a.label, maxW);
     } else {
-        const float total = bodyPx + m.minText + 4 * m.u;
-        const float y = p0.y + (sz.y - total) * 0.5f;
+        const float total = bodyPx + lines * (m.minText + 4 * m.u);
+        float y = p0.y + (sz.y - total) * 0.5f;
         text(dl, bodyPx, ImVec2(x, y), tc, a.label, maxW);
-        text(dl, m.minText, ImVec2(x, y + bodyPx + 4 * m.u), col(p.textMuted), a.sub, maxW);
+        y += bodyPx + 4 * m.u;
+        for (const std::string* s : {&a.desc, &a.sub}) {
+            if (s->empty()) continue;
+            text(dl, m.minText, ImVec2(x, y), col(p.textMuted), *s, maxW);
+            y += m.minText + 4 * m.u;
+        }
     }
     return hit;
 }

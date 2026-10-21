@@ -64,7 +64,7 @@ struct SettingRow {
 struct AchItem {
     enum Kind { Achievement, Tracker } kind = Achievement;
     uint32_t id = 0;
-    std::string title, status;   // status: the desktop's line ("Unlocked in hardcore  2026-10-16 21:04", "Locked  Progress: 5/10 ...")
+    std::string title, description, status;   // description: what to do, as the desktop's window shows it; status: the desktop's line ("Unlocked in hardcore  2026-10-16 21:04", "Locked  Progress: 5/10 ...")
     unsigned points = 0;
     bool unlocked = false;
     std::string badgeUrl;        // the one to show (earned or locked); "" = none

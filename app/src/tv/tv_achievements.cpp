@@ -133,6 +133,7 @@ public:
             const Row& r = rows_[i];
             widgets::RowArgs a;
             a.label = r.label;
+            a.desc = r.desc;
             a.sub = r.sub;
             a.value = r.value;
             a.enabled = !r.muted;
@@ -175,7 +176,7 @@ private:
     struct Row {
         std::string key;             // what the focus memory follows: "a<id>" / "t<id>" for rows, the game's id for games
         uint32_t id = 0;
-        std::string label, sub, value, badgeUrl;
+        std::string label, desc, sub, value, badgeUrl;
         bool focusable = true, muted = false, thumb = true, tall = true;
         bool inLibrary = false;      // games: A plays it
     };
@@ -197,6 +198,7 @@ private:
                 r.id = a.id;
                 r.key = (tracker ? "t" : "a") + std::to_string(a.id);
                 r.label = a.title;
+                r.desc = a.description;
                 r.sub = a.status;
                 r.badgeUrl = a.badgeUrl;
                 r.focusable = !tracker;
