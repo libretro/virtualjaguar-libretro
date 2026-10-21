@@ -307,7 +307,7 @@ bool App::initSdl(const CliArgs& a) {
         return false;
     }
     sdlUp_ = true;
-    if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID) before any window exists
+    if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID), UI thread QoS (macOS)
     perfFreq_ = SDL_GetPerformanceFrequency();
     openDialogEvent_ = SDL_EVENT_USER;
     return true;
@@ -423,6 +423,8 @@ void App::shutdown() {
         std::_Exit(3);   // nonzero: a wedged quit must be visible
     }
     stopEmuThread();
+    latchWaker_.stop();   // (both normally stopped by runInteractive; idempotent) nothing may push events past SDL_Quit
+    stall_.stop();
     // Only now: until the emulation thread is gone it may be inside rc_client_do_frame or a posted emuIdle.  Still before
     // video.shutdown() -- images.stop() needs the GL context.
     ach.shutdown();
@@ -837,7 +839,8 @@ void App::latchWait() {
     }
 }
 
-// The UI thread's timed event wait: true with the first event before `dueNs` (SDL_GetTicksNS), false once it is due.
+// The UI thread's timed event wait: true with the first event before `dueNs` (SDL_GetTicksNS), false once it is due
+// (or, rarely, early on a wake left from the previous wait: callers re-check the time).
 // `ms` is the same deadline in whole ms from now, for SDL_WaitEventTimeout.  With the waker (macOS), its thread ends the
 // wait on time and SDL's timeout is only a backstop (latch_waker.h: SDL's own timeout can wake the UI thread 3-20 ms
 // late).

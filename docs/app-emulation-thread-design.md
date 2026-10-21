@@ -95,13 +95,14 @@ The UI never waits on emulation.
   ssh-run benchmark) starts the main thread at the default QoS rather than user-interactive, so any CPU load leaves it
   runnable but not running. Second, `SDL_WaitEventTimeout`'s timeout is the Cocoa run loop's own timeout, which Core
   Foundation delivers from a dispatch worker at `qos_class_main()`, the main thread's QoS at launch. Raising the thread
-  later does not change that worker, which runs 3-20 ms late under load while the UI thread sleeps past its deadline.
-  So the UI thread now runs at user-interactive QoS however it was launched (`platform_macos.mm`). Its timed event
-  waits (the latch's and the threaded nap's) end on a wake event that `LatchWaker` (`app/src/latch_waker.h`) pushes
-  from its own user-interactive thread, with SDL's timeout kept as a 5 ms backstop. A `CFRunLoopTimer` on the main run
-  loop was tried instead, and from a terminal launch it fired ~3 ms late every time. `--latch-wake plain` restores the
-  old wait for A/B runs, and with `VJ_PERF_TRACE` the stall probe (`app/src/stall_probe.h`) writes every wait that ends
-  over 3 ms late to `<prefix>-stall.txt`, with the run state, CPU time, run-loop transitions and sampled stacks.
+  later does not change that worker, which runs 3-20 ms late under load while the UI thread sleeps past its deadline. So
+  the UI thread now runs at user-interactive QoS however it was launched (`platform_macos.mm`). Its timed event waits
+  (the latch's and the threaded nap's) end on a wake event that `LatchWaker` (`app/src/latch_waker.h`) pushes from its
+  own user-interactive thread, with SDL's timeout kept as a 5 ms backstop. A `CFRunLoopTimer` on the main run loop was
+  tried instead, and from a terminal launch it fired ~3 ms late every time. `--latch-wake plain` restores the old wait
+  for A/B runs (the QoS raise stays), and with `VJ_PERF_TRACE` the stall probe (`app/src/stall_probe.h`) writes every
+  wait that ends over 3 ms late to `<prefix>-stall.txt`, with the run state, CPU time, run-loop transitions and sampled
+  stacks.
 
 ### Mode B: display lock
 - The main thread sends a tick after each swap; the emulation thread runs one frame per tick (one per k ticks when the

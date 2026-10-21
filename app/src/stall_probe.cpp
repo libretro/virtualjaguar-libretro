@@ -120,7 +120,7 @@ struct StallProbe::Impl {
             s.cpuUsage = s.suspend = 0;
         }
         if (thread_suspend(main) != KERN_SUCCESS) return;
-        uintptr_t pc = 0, lr = 0, fp = 0;
+        uintptr_t pc = 0, lr = 0, fp = 0, sp = 0;
 #if defined(__arm64__)
         arm_thread_state64_t st{};
         mach_msg_type_number_t c = ARM_THREAD_STATE64_COUNT;
@@ -128,6 +128,7 @@ struct StallProbe::Impl {
             pc = (uintptr_t)arm_thread_state64_get_pc(st);
             lr = (uintptr_t)arm_thread_state64_get_lr(st) & kAddrMask;
             fp = (uintptr_t)arm_thread_state64_get_fp(st);
+            sp = (uintptr_t)arm_thread_state64_get_sp(st);
         }
 #elif defined(__x86_64__)
         x86_thread_state64_t st{};
@@ -135,11 +136,13 @@ struct StallProbe::Impl {
         if (thread_get_state(main, x86_THREAD_STATE64, (thread_state_t)&st, &c) == KERN_SUCCESS) {
             pc = (uintptr_t)st.__rip;
             fp = (uintptr_t)st.__rbp;
+            sp = (uintptr_t)st.__rsp;
         }
 #endif
         s.pc[s.depth++] = pc;
         s.pc[s.depth++] = lr;
-        while (s.depth < (unsigned)kDepth && fp >= stackLo && fp + 16 <= stackHi && !(fp & 7)) {
+        const uintptr_t lo = sp > stackLo ? sp : stackLo;   // only the stack above the live SP is mapped
+        while (s.depth < (unsigned)kDepth && fp >= lo && fp + 16 <= stackHi && !(fp & 7)) {
             const uintptr_t* f = reinterpret_cast<const uintptr_t*>(fp);
             const uintptr_t next = f[0], ret = f[1] & kAddrMask;
             if (!ret) break;
@@ -311,6 +314,7 @@ void StallProbe::stop() {
     CFRunLoopRemoveObserver(CFRunLoopGetMain(), p_->last, kCFRunLoopCommonModes);
     CFRelease(p_->first);
     CFRelease(p_->last);
+    mach_port_deallocate(mach_task_self(), p_->main);   // mach_thread_self() took a reference
     logPolicy("stop");
     std::fprintf(stderr, "[stall] %zu stalls in %llu calls -> %s-stall.txt\n", p_->stalls.size(),
                  (unsigned long long)p_->calls, p_->prefix.c_str());

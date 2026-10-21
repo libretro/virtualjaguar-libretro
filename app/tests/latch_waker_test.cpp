@@ -1,8 +1,9 @@
 // LatchWaker (latch_waker.h, #1026): the UI thread's timed event waits end on a wake event pushed by a thread of its
 // own, not on SDL's timeout.  SDL events only (no window), real clock.  Without a video device SDL's wait polls, so the
 // wake is timed when it was pushed (its event timestamp), not when this thread saw it; the bounds allow a loaded
-// runner.  The Studio traces (VJ_PERF_TRACE + the stall probe) measure the real Cocoa wait.  macOS only; elsewhere
-// start() is false.
+// runner (a shared VM can stall a thread for milliseconds): every wake within 10 ms, all but 2 of 20 within 3 ms.  The
+// Studio traces (VJ_PERF_TRACE + the stall probe) measure the real Cocoa wait.  Runs on every platform (start(true)),
+// so the ThreadSanitizer job covers it; the app starts it on macOS only.
 #include "latch_waker.h"
 
 #include <SDL3/SDL.h>
@@ -27,7 +28,9 @@ int g_fail = 0;
 using vj::LatchWaker;
 
 constexpr uint64_t kMs = 1000000;
-constexpr uint64_t kLateNs = 3 * kMs;   // generous: a loaded CI runner
+constexpr uint64_t kLateNs = 3 * kMs;    // on time, for all but kOutliers of the waits
+constexpr uint64_t kLostNs = 10 * kMs;   // a wake this late is a bug even on a loaded runner
+constexpr int kOutliers = 2;
 
 void drain() {
     SDL_Event e;
@@ -53,6 +56,7 @@ unsigned wakesWithin(Sint32 ms, uint64_t& firstNs) {
 
 void wakesOnTime(LatchWaker& w) {
     drain();
+    int late = 0;
     for (int i = 0; i < 20; i++) {
         const uint64_t due = SDL_GetTicksNS() + 8 * kMs + (uint64_t)i * 300000;
         w.arm(due);
@@ -62,8 +66,13 @@ void wakesOnTime(LatchWaker& w) {
         const uint64_t at = got ? e.common.timestamp : SDL_GetTicksNS();   // when the waker pushed it
         CHECK(got && LatchWaker::isWake(e), "wait %d: no wake event (got %d, type 0x%x)", i, (int)got, got ? e.type : 0);
         CHECK(at + 200000 >= due, "wait %d: woke %.3f ms early", i, (double)(due - at) / 1e6);
-        CHECK(at <= due + kLateNs, "wait %d: woke %.3f ms late", i, (double)(at - due) / 1e6);
+        CHECK(at <= due + kLostNs, "wait %d: woke %.3f ms late", i, (double)(at - due) / 1e6);
+        if (at > due + kLateNs) {
+            late++;
+            std::printf("note: wait %d woke %.3f ms late\n", i, (double)(at - due) / 1e6);
+        }
     }
+    CHECK(late <= kOutliers, "%d of 20 wakes over %.0f ms late", late, (double)kLateNs / 1e6);
 }
 
 void disarmedNeverWakes(LatchWaker& w) {
@@ -83,7 +92,7 @@ void rearmMovesTheWake(LatchWaker& w) {
     const unsigned n = wakesWithin(60, first);
     w.disarm();
     CHECK(n == 1, "%u wakes after a re-arm, want 1", n);
-    CHECK(first && first >= t + 10 * kMs - 200000 && first <= t + 10 * kMs + kLateNs, "re-armed wake at +%.3f ms, want +10",
+    CHECK(first && first >= t + 10 * kMs - 200000 && first <= t + 10 * kMs + kLostNs, "re-armed wake at +%.3f ms, want +10",
           first ? (double)(first - t) / 1e6 : -1.0);
 }
 
@@ -110,7 +119,7 @@ void anEventEndsTheWaitFirst(LatchWaker& w) {
 
 void stopWhileArmed() {
     LatchWaker w;
-    if (!w.start()) return;
+    w.start(true);
     w.arm(SDL_GetTicksNS() + 1000 * kMs);
     const uint64_t t = SDL_GetTicksNS();
     w.stop();
@@ -126,13 +135,10 @@ int main() {
         return 1;
     }
     LatchWaker w;
-    if (!w.start()) {
-        std::printf("latch_waker: not used on this platform\n");
-        CHECK(!w.running(), "running without start()");
-        SDL_Quit();
-        return g_fail ? 1 : 0;
-    }
-    CHECK(w.running(), "not running after start()");
+#ifndef __APPLE__
+    CHECK(!w.start() && !w.running(), "the app's start() runs the waker off macOS");
+#endif
+    CHECK(w.start(true) && w.running(), "not running after start()");
     wakesOnTime(w);
     disarmedNeverWakes(w);
     rearmMovesTheWake(w);

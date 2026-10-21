@@ -13,8 +13,9 @@
 // 3-5 ms of timer coalescing outside an app launch.
 //
 // UI thread: arm(deadline) before the wait, disarm() after it; isWake(e) is the wake event (a late one from an
-// earlier wait too, which callers drop).  The waker thread only pushes events.  macOS only: elsewhere start() returns
-// false and the plain wait is used.
+// earlier wait too, which callers drop).  The waker thread only pushes events.  It sees a new deadline between slices,
+// so a wait armed while it is mid-slice can end up to ~1 ms late (SDL's timeout was 3-20 ms).  macOS only: elsewhere
+// start() returns false and the plain wait is used.
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -40,16 +41,18 @@ public:
 
     ~LatchWaker() { stop(); }
 
-    bool start() {
+    // anyPlatform: the unit test runs it everywhere (the ThreadSanitizer job is Linux); the app uses it on macOS only.
+    bool start(bool anyPlatform = false) {
 #ifdef __APPLE__
+        (void)anyPlatform;
+#else
+        if (!anyPlatform) return false;
+#endif
         if (!thread_.joinable()) {
             quit_.store(false);
             thread_ = std::thread([this] { run(); });
         }
         return true;
-#else
-        return false;
-#endif
     }
     void stop() {
         if (!thread_.joinable()) return;
