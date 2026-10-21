@@ -3,7 +3,7 @@
 #   cmake -DDIR=<app/src/debug> "-DFILES=a.cpp;b.cpp" -P CheckNoDirectIface.cmake
 # It strips `//` comments from each file in FILES and fails on a call through the interface or the old direct
 # region accessor, or through the session's public DebugCore (`s.core().peek(`, camelCase and dot rather than the
-# iface's snake_case and arrow; core()'s atomic getters -- loaded(), attached(), ifaceGen(), haltSerial() -- stay legal).
+# iface's snake_case and arrow; core()'s atomic getters -- loaded(), attached(), ifaceGen() -- stay legal).
 # CMake regexes have no \b, so each pattern is anchored on the call's "(".
 if(NOT DEFINED DIR OR NOT DEFINED FILES)
     message(FATAL_ERROR "usage: cmake -DDIR=<dir> \"-DFILES=<a;b;...>\" -P CheckNoDirectIface.cmake")

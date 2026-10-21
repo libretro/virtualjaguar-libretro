@@ -476,9 +476,9 @@ void drawObjectsTool(App& app) {
     ctx.frameW = app.video.frameWidth();
     ctx.frameH = app.video.frameHeight();
     ctx.emulationRunning = !app.paused && !app.debug.halted();
-    // Inline only when the session is not attached: a frame run from inside this draw hook that then halts would
-    // start a second ImGui frame (App::haltedFrame) inside the current one.  Threaded, the emulation thread runs the
-    // frame; no owner-only CoreHost call is made from here.
+    // Never while the session is attached.  Inline, a frame run from inside this draw hook that then halts would
+    // start a second ImGui frame (App::haltedFrame) inside the current one; threaded, emu.advance() has no give-up.
+    // Threaded, the emulation thread runs the frame; no owner-only CoreHost call is made from here.
     switch (opStepFor({app.threaded(), app.paused, app.debug.halted(), app.debug.attached(),
                        /*inFrame*/ !app.threaded() && app.host.inFrame(), app.host.isLoaded(),
                        app.netplay.configured()})) {

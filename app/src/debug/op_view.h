@@ -24,8 +24,8 @@ enum class OpStep { None, Inline, Advance };
 struct OpStepGate {
     bool threaded, paused, halted, attached, inFrame, loaded, netplay;
 };
-// Advance: threaded && paused && !halted && loaded && !netplay (emu.advance(1); inFrame and the owner-only host
-// calls are never consulted).  Inline: !threaded && paused && !attached && !halted && !inFrame && loaded &&
+// Advance: threaded && paused && !attached && !halted && loaded && !netplay (emu.advance(1), which has no give-up,
+// so never while a halt is possible; inFrame and the owner-only host calls are never consulted).  Inline: !threaded && paused && !attached && !halted && !inFrame && loaded &&
 // !netplay (a frame run from inside the draw hook that then halts would start a second ImGui frame).  None otherwise.
 OpStep opStepFor(const OpStepGate& g);
 
