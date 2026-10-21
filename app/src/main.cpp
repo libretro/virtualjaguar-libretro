@@ -27,6 +27,7 @@ static void usage(const char* argv0) {
         "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
         "  --pace-steer on|off   dev: with the emulation thread and vsync, keep frame ends off the take point (default on)\n"
         "  --emu-wake precise|plain  dev: the emulation thread's frame wake-ups (default precise)\n"
+        "  --latch-wake timer|plain  dev: macOS, how the UI thread's timed event waits end (default timer)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
         "  --verbose             log the core's INFO messages\n"
@@ -227,6 +228,14 @@ int main(int argc, char** argv) {
                 return 2;
             }
             a.emuWake = v == "precise" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--latch-wake")) {
+            const std::string v = need(s);
+            if (v != "timer" && v != "plain") {
+                std::fprintf(stderr, "--latch-wake wants timer or plain, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.latchWake = v == "timer" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--perf-no-reuse")) a.perfNoReuse = true;
         else if (!std::strcmp(s, "--perf-shader-out")) {

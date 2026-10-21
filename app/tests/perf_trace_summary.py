@@ -10,6 +10,9 @@
 # every 5.31 ms, each followed to the first frame that polled it and the swap that first showed that frame (or a later
 # one).  An event is visible to the core at once if it arrives in the late latch's wait (swap return .. next take),
 # else at the swap return (threaded); at the next frame start (single-thread: events are polled right before it runs).
+# Also the UI vblank misses (a swap interval over 1.5 periods: one repeat + one skip each) and the late latch's waits
+# whose blocking call returned over 3 ms past its due time (wait_over_ns; the stall probe's -stall.txt has the detail,
+# #1026).
 import bisect, csv, sys
 def pct(v, p):
     v = sorted(v); return v[min(len(v)-1, int(p*len(v)))] if v else float('nan')
@@ -53,6 +56,11 @@ for pre in sys.argv[1:]:
     ph = 0; lo = hi = 0
     for x in trim:
         ph += (x - 1) * 16.6516; lo = min(lo, ph); hi = max(hi, ph)
+    # UI vblank misses and late waits (#1026)
+    sw = [int(u['swap1_ns']) for u in ui]
+    per = pct([b - a for a, b in zip(sw, sw[1:])], .5)
+    misses = sum(1 for a, b in zip(sw, sw[1:]) if b - a > 1.5 * per)
+    late_waits = sum(1 for u in ui if int(u['wait_over_ns']) > 3e6)
     # bursts: events separated by > 1 s
     ev_t = [int(ui[i+1]['take_ns']) for i, x in enumerate(d) if x != 1]
     bursts = 0; last = None
@@ -64,4 +72,5 @@ for pre in sys.argv[1:]:
           f"cost p1 {pct(cost,.01):.2f} p50 {pct(cost,.5):.2f} p99 {pct(cost,.99):.2f} | "
           f"end-due p1-p99 spread {pct(fin,.99)-pct(fin,.01):.2f} ms | take-after-vblank p1 {pct(tk,.01):.2f} p50 {pct(tk,.5):.2f} p99 {pct(tk,.99):.2f} | "
           f"trim [{min(trim):.4f},{max(trim):.4f}] phase wander {hi-lo:.2f} ms | "
+          f"ui-misses {misses} late-waits>3ms {late_waits} | "
           f"event->present exact avg {lat_avg:.2f} ms (n={lat_n})")

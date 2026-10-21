@@ -16,6 +16,8 @@
 //     main loop, never inside Cocoa's menu-tracking run loop.
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
+#include <pthread.h>
+#include <sys/qos.h>
 
 #include <cstdio>
 #include <cstring>
@@ -175,7 +177,10 @@ void hookDockMenu() {
 
 }  // namespace
 
-void beforeWindow() {}
+// The UI thread presents every frame on a vblank deadline: run it at user-interactive QoS however the app was
+// launched.  LaunchServices starts an app's main thread there; a launch from a terminal starts it at the default QoS,
+// where any CPU load delays it by milliseconds (#1026).  The emulation thread does the same (emu_thread.cpp).
+void beforeWindow() { pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0); }
 void windowCreated(SDL_Window*) {}
 void setDarkChrome(bool) {}   // the title bar follows the system appearance
 
