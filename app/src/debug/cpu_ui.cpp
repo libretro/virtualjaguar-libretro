@@ -271,8 +271,16 @@ BpInfo bpAt(DebugSession& s, int target, unsigned addr) {
     return b;
 }
 
+// Every control that can ADD a breakpoint (the margin, the context menu, "Add at cursor") is gated on this one
+// predicate: adding needs the halt machine, which the emulation thread does not have yet (3a).  Removing never does.
+bool canAddBp(const DebugSession& s) { return s.haltAvailable(); }
+
 void toggleBp(DebugSession& s, int target, unsigned addr) {
     bool had = s.hasBreakpoint(target, addr);
+    if (!had && !canAddBp(s)) {
+        setStatus(s.haltDisabledReason(), false);   // the reason, not "the table is full"; nothing reaches the core
+        return;
+    }
     bool now = s.toggleBreakpoint(target, addr);
     if (!had && !now) setStatus("Could not set the breakpoint (the core's table is full, or the debugger is not attached)", true);
     else setStatus(now ? "Breakpoint set" : "Breakpoint removed", false);
@@ -396,7 +404,7 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
         ImGui::PushID(i);
         ImGui::Selectable("##row", sel, ImGuiSelectableFlags_None, ImVec2(width, pitch - ImGui::GetStyle().ItemSpacing.y));
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-            if (io.MousePos.x < p.x + gutter) toggleBp(s, target, L.addr);
+            if (io.MousePos.x < p.x + gutter) toggleBp(s, target, L.addr);   // (says why, when it cannot add one)
             else {
                 t.cursor = L.addr;
                 t.haveCursor = true;
@@ -409,7 +417,9 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
         if (ImGui::BeginPopupContextItem("##ctx")) {
             ImGui::Text("$%06X", L.addr);
             ImGui::Separator();
-            if (ImGui::MenuItem(bp.set ? "Remove breakpoint" : "Set breakpoint")) toggleBp(s, target, L.addr);
+            const bool bpOk = bp.set || canAddBp(s);
+            if (ImGui::MenuItem(bp.set ? "Remove breakpoint" : "Set breakpoint", nullptr, false, bpOk)) toggleBp(s, target, L.addr);
+            if (!bpOk && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", s.haltDisabledReason().c_str());
             if (ImGui::MenuItem("Run to here", nullptr, false, s.halted())) g.ctl->runTo(target, L.addr);
             if (ImGui::MenuItem("Set PC here", nullptr, false, s.halted() && !isPc))
                 setReg(s, target, target == VJ_DBG_TARGET_M68K ? VJ_DBG_REG_68K_PC : VJ_DBG_REG_RISC_PC, L.addr, "PC");
@@ -421,7 +431,11 @@ void drawDisasm(DebugSession& s, int target, TabState& t, float height) {
             }
             ImGui::EndPopup();
         }
-        if (ImGui::IsItemHovered() && xText + ImGui::CalcTextSize(L.text.c_str()).x > width) {
+        if (ImGui::IsItemHovered() && !bp.set && !canAddBp(s) && io.MousePos.x < p.x + gutter) {
+            ui::beginWrappedTooltip();   // the margin would set a breakpoint: say why it will not
+            ImGui::TextUnformatted(s.haltDisabledReason().c_str());
+            ui::endWrappedTooltip();
+        } else if (ImGui::IsItemHovered() && xText + ImGui::CalcTextSize(L.text.c_str()).x > width) {
             ui::beginWrappedTooltip();
             ImGui::Text("$%06X  %s", L.addr, L.bytes.c_str());
             ImGui::TextUnformatted(L.text.c_str());
@@ -460,15 +474,21 @@ void drawBreakpoints(DebugSession& s, float height) {
     ImGui::SameLine();
     const int tab = g.tab;
     TabState& t = g.t[tab];
-    ImGui::BeginDisabled(!t.haveCursor);
-    if (ImGui::SmallButton("Add at cursor") && t.haveCursor) toggleBp(s, tab, t.cursor);
+    // (A breakpoint already at the cursor can still be removed with it.)
+    const bool addOk = t.haveCursor && (canAddBp(s) || s.hasBreakpoint(tab, t.cursor));
+    ImGui::BeginDisabled(!addOk);
+    if (ImGui::SmallButton("Add at cursor") && addOk) toggleBp(s, tab, t.cursor);
     ImGui::EndDisabled();
+    if (!canAddBp(s) && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", s.haltDisabledReason().c_str());
     ImGui::SameLine();
     ImGui::BeginDisabled(bps.empty());
     if (ImGui::SmallButton("Remove all")) s.clearBreakpoints();
     ImGui::EndDisabled();
     ImGui::BeginChild("##bps", ImVec2(0, height), ImGuiChildFlags_Borders);
-    if (bps.empty()) ui::hint("Click the margin beside an instruction, or right-click it.");
+    if (bps.empty()) {
+        if (canAddBp(s)) ui::hint("Click the margin beside an instruction, or right-click it.");
+        else ui::hint("%s.", s.haltDisabledReason().c_str());
+    }
     // The list can change under the loop (remove): walk a copy.
     std::vector<DebugBreakpoint> copy = bps;
     for (size_t i = 0; i < copy.size(); i++) {
@@ -539,9 +559,9 @@ void drawToolbar(DebugSession& s) {
     const bool risc = isRisc(tab);
     ui::Flow flow;
     const bool canHalt = s.haltAvailable();
-    const char* breakTip = canHalt ? "Stop the machine at the next instruction of the processor on this tab."
-                                   : "Halting is not available with the emulation thread yet.";
-    if (button("Break  F9", !halted && canHalt, breakTip)) g.ctl->breakIn(tab);
+    const std::string breakTip = canHalt ? std::string("Stop the machine at the next instruction of the processor on this tab.")
+                                         : s.haltDisabledReason();
+    if (button("Break  F9", !halted && canHalt, breakTip.c_str())) g.ctl->breakIn(tab);
     flow.next(ui::Flow::buttonW("Continue  F9"));
     if (button("Continue  F9", halted, "Resume everything.")) g.ctl->cont();
     // F10 steps the processor that is halted; on another tab the button does something different, so it says so.
@@ -693,6 +713,10 @@ bool& cpuWindowOpen() { return g.open; }
 namespace cpu_test {
 bool haveRegs() { return g.t[g.tab].haveRegs; }
 size_t rowCount() { return g.t[g.tab].rows.size(); }
+// What a margin click / the context menu's item / "Add at cursor" run (the greyed controls cannot be clicked headless).
+void toggleBreakpoint(DebugSession& s, int target, unsigned addr) { toggleBp(s, target, addr); }
+const std::string& status() { return g.status; }
+bool statusIsError() { return g.statusErr; }
 }  // namespace cpu_test
 
 void showCpuAt(DebugSession& s, int target, unsigned addr) {

@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 
 namespace vj {
 
@@ -28,6 +29,9 @@ void drawCpuTools(DebugSession& s);
 namespace cpu_test {
 bool haveRegs();
 size_t rowCount();
+void toggleBreakpoint(DebugSession& s, int target, unsigned addr);   // the action behind every breakpoint-adding control
+const std::string& status();                                         // the window's status line, and whether it is an error
+bool statusIsError();
 }  // namespace cpu_test
 
 // Open state, for menu code that wants it directly.

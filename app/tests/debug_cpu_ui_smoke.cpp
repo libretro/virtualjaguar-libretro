@@ -11,6 +11,7 @@
 
 #include <cstdio>
 #include <functional>
+#include <string>
 #include <vector>
 
 using namespace vj;
@@ -89,7 +90,25 @@ int main() {
     settle(s, 4);
     CHECK(cpu_test::haveRegs() && CountingIface::offCore() == 0);
 
+    // 4b. Every breakpoint-adding control (margin, context menu, "Add at cursor") runs toggleBp: with the halt unavailable
+    //     it adds nothing, makes no core call and says why -- not "the table is full".
+    {
+        const UiFixture::Mark before = fx.mark();
+        cpu_test::toggleBreakpoint(s, VJ_DBG_TARGET_GPU, 0xF03000);
+        CHECK(s.breakpoints().empty() && fx.quietSince(before) && CountingIface::offCore() == 0);
+        CHECK(cpu_test::status() == s.haltDisabledReason() && !s.haltDisabledReason().empty());
+        CHECK(cpu_test::status().find("table is full") == std::string::npos && !cpu_test::statusIsError());
+        settle(s, 2);                                // the greyed controls draw (and the tooltips) without a core call
+        CHECK(CountingIface::offCore() == 0);
+    }
+
     // 5. A new refresh serial re-reads (a changed register shows up), still on the emulation side only.
+    s.setHaltAvailable(true);
+    cpu_test::toggleBreakpoint(s, VJ_DBG_TARGET_GPU, 0xF03000);   // back on: the same control sets one
+    CHECK(s.breakpoints().size() == 1 && cpu_test::status() == "Breakpoint set");
+    s.setHaltAvailable(false);
+    cpu_test::toggleBreakpoint(s, VJ_DBG_TARGET_GPU, 0xF03000);   // removing never needs the halt machine
+    CHECK(s.breakpoints().empty() && cpu_test::status() == "Breakpoint removed");
     s.setHaltAvailable(true);
     s.requestRefresh();
     settle(s, 3);
