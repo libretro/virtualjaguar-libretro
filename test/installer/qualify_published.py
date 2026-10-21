@@ -105,6 +105,41 @@ for selection in ['core', 'app', 'both']:
         for p in sentinels:
             assert p.read_text() == 'qualification user data', f'update lost user data: {p}'
         run([exe, '--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', repo/'test/roms/yarc.j64'], selection+'-updated-launch')
+if windows:
+    # Exercise the downloaded Inno installer too, not just the portable updater.
+    asset_name = f'VirtualJaguar-{args.tag}-windows-x64-setup.exe'
+    asset = next(a for a in release['assets'] if a['name'] == asset_name)
+    setup = root/asset_name
+    urllib.request.urlretrieve(asset['browser_download_url'], setup)
+    with urllib.request.urlopen('https://github.com/libretro/virtualjaguar-libretro/releases/download/'+args.tag+'/SHA256SUMS.txt', timeout=60) as response:
+        sums = {row.split()[1].lstrip('*'): row.split()[0] for row in response.read().decode().splitlines()}
+    digest = hashlib.sha256(setup.read_bytes()).hexdigest()
+    if digest != sums[asset_name]:
+        raise RuntimeError('Published installer checksum mismatch')
+    report['installer_sha256'] = digest
+    env['QUALIFICATION_SETUP_FILE'] = str(setup)
+    report['installer_signature'] = run([args.powershell, '-NoProfile', '-Command',
+        '(Get-AuthenticodeSignature -LiteralPath $env:QUALIFICATION_SETUP_FILE).Status'], 'setup-signature').strip()
+    installed = root/'setup-app'
+    data = Path(env['APPDATA'])/'VirtualJaguar'/'saves'/'sentinel.sav'
+    data.parent.mkdir(parents=True, exist_ok=True); data.write_text('preserve through setup lifecycle')
+    setup_cmd = [setup, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/DIR='+str(installed)]
+    run(setup_cmd, 'setup-install')
+    run([installed/'virtualjaguar.exe', '--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', repo/'test/roms/yarc.j64'], 'setup-launch')
+    if (installed/'portable.txt').exists():
+        raise RuntimeError('Installed app unexpectedly enables portable mode')
+    run(setup_cmd, 'setup-update')
+    if data.read_text() != 'preserve through setup lifecycle':
+        raise RuntimeError('Setup update changed user data')
+    run([installed/'unins000.exe', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'], 'setup-uninstall')
+    # Inno uninstall may return before its final helper removes the exe.
+    import time
+    for _ in range(30):
+        if not (installed/'virtualjaguar.exe').exists():
+            break
+        time.sleep(1)
+    if (installed/'virtualjaguar.exe').exists() or data.read_text() != 'preserve through setup lifecycle':
+        raise RuntimeError('Uninstall left the exe behind or removed user data')
 report['result'] = 'PASS'
 output = root/'qualification-result.json'
 output.write_text(json.dumps(report, indent=2)+'\n')
