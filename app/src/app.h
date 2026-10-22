@@ -239,6 +239,8 @@ public:
     float uiScale_ = 1.0f;            // the scale the style was set up at (the display's content scale times ui.scale)
     std::string themeBeforePreview_;  // the choice to keep/restore while the theme editor previews an unsaved theme
     bool themePreviewing_ = false;
+    bool tvHintShownThisRun_ = false; // the one-time TV mode hint (ui.tv_hint_shown) was shown, or tried, in this run
+    unsigned toastCount_ = 0;         // toast() calls since start (the TV script counts them: osd_ is capped)
     bool tvFromCli_ = false;          // --tv was given: this run's TV state is not remembered (ui.tv_manual_on)
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;

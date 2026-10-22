@@ -16,6 +16,8 @@
 #                        pagenext search): the next pad button becomes it (#1021).  expect cfg=...{padguid}... is its GUID.
 #   tvsetting off|manual|auto  set the stored TV-mode setting and reconfigure (as Settings will); off = never, auto = also in fullscreen and on a pad press
 #   fullscreen on|off    enter / leave fullscreen (headless: the flag and the edge TV mode is told about, no window)
+#   hintreset            forget the one-time TV mode hint (ui.tv_hint_shown and this run's flag) and zero toast-count
+#   expect toast=TEXT    the text of the last toast (the rest of the line, spaces included);  expect toast-count=N  toasts shown since start
 #   expect tv-setting=off|manual|auto  the stored setting (a fresh config takes the build default: auto on a CTest build)
 #   navdefault INTENT    the Default button of that menu intent of the virtual pad (back to the family's button, partner swapped back)
 #   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
@@ -176,9 +178,17 @@
 # library shows.  A shoulder button is a mapped intent (SectionNext = next tab) and queues a command; TV mode on (or an edge of
 # any ownership input) hands the pad to the TV screens and clears what was queued.
 2080  expect desk-pad=1
+2080  expect cfg=ui.tv_hint_shown:absent
+2080  expect toast-count=0
 2080  pad tap rightshoulder
+# The first consumed press under Manual shows the one-time hint (6 s toast, wording from the pad's own TV-menu binding: the virtual
+# pad has Share, so its default is the Share hold), stored before it shows; a second press shows nothing more.
+2120  expect toast=Press Share (hold) or F4 for TV mode
+2120  expect cfg=ui.tv_hint_shown:1
+2120  expect toast-count=1
 2120  expect desk-pending=1
 2120  pad tap leftshoulder
+2160  expect toast-count=1
 2160  expect desk-pending=2
 2160  key tap F4
 2200  expect tv=1
@@ -228,6 +238,7 @@
 2800  expect tv-screen=home
 2800  expect loaded=0
 2800  expect desk-pending=0
+2800  expect toast-count=1            # no second hint (and the switching press takes the return before the hint site)
 2800  key tap Escape               # approval C: Esc, Enter and shortcuts are not "typing": a controller-started TV mode stays on
 2800  expect tv=1
 2800  key tap Return
@@ -349,6 +360,20 @@
 5090  expect tv-screen=home
 5090  key tap F4
 5130  expect tv=0
+
+# The hint never shows under Off or Auto, even with the key unset and the run's flag clear (hintreset: forget both, zero toast-count).
+5130  hintreset
+5130  tvsetting off
+5140  pad tap rightshoulder
+5160  expect toast-count=0
+5160  expect cfg=ui.tv_hint_shown:absent
+5160  tvsetting auto
+5170  pad tap a                      # Auto's switching press: consumed, no hint
+5180  expect tv=1
+5180  expect toast-count=0
+5180  expect cfg=ui.tv_hint_shown:absent
+5180  key tap F4
+5185  expect tv=0
 
 # A game to play with.
 5190  load @VJ_ROMS@/yarc.j64

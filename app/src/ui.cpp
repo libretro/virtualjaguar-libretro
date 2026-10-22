@@ -274,7 +274,7 @@ void drawTvModeSettings(App& app) {
     }
     ui::hint("A 10-foot look for a pad and a TV. Manual: View > TV mode, Ctrl/Cmd+Shift+T, or F4 / a Share hold with no game. "
              "Auto also turns it on in fullscreen and when a controller is used in the library (mouse movement or typing "
-             "turns it off again). Nightly builds start on Auto, releases on Manual.");
+             "turns it off again). Nightly and local builds start on Auto, releases on Manual.");
 }
 
 // Settings > Interface: how the app itself looks and behaves (as opposed to Video's picture and Storage's saves).

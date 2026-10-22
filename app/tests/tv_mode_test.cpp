@@ -191,6 +191,16 @@ static void testSettingKeys() {
           defaultSetting("bogus") == TvSetting::Auto && defaultSetting(nullptr) == TvSetting::Auto);   // the build default (VJ_TV_DEFAULT_SETTING)
 }
 
+// The one-time hint (decision 8): the pad's own TV-menu button and the keyboard's, or the fixed shortcut when fewer than two are known.
+static void testFirstUseHint() {
+    CHECK(firstUseHint("Share (hold)", "F4", false) == "Press Share (hold) or F4 for TV mode");
+    CHECK(firstUseHint("Share (hold)", "F4", true) == "Press Share (hold) or F4 for TV mode");          // two bindings: no shortcut needed
+    CHECK(firstUseHint("", "F4", false) == "Press F4 or Ctrl+Shift+T for TV mode");                      // a pad with no TV-menu button
+    CHECK(firstUseHint("", "", true) == "Press Cmd+Shift+T for TV mode");                                 // nothing bound: the fixed shortcut alone
+    CHECK(firstUseHint("", "", false) == "Press Ctrl+Shift+T for TV mode");
+    CHECK(firstUseHint("Paddle P1", "", true) == "Press Paddle P1 or Cmd+Shift+T for TV mode");           // the keyboard binding was removed
+}
+
 // Every spec 8 trigger order, as App feeds them: edges of fullscreen only, a mapped pad press, mouse travel, a printable key.
 // (testAutoTriggers, testMouseTravel and the two fullscreen tests above cover the single triggers; these are the sequences.)
 static void testTriggerOrders() {
@@ -287,6 +297,7 @@ int main() {
     testFullscreenHoldIsState();
     testFullscreenLeaveTurnsOff();
     testSettingKeys();
+    testFirstUseHint();
     testTriggerOrders();
     testInputOwner();
     std::printf("tv_mode_test: %d checks, %d failed\n", g_checks, g_fail);

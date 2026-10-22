@@ -318,6 +318,7 @@ void App::addRecent(const std::string& path) {
 }
 
 void App::toast(const std::string& text, double seconds, int level) {
+    toastCount_++;
     Osd o;
     o.text = text;
     o.born = now();

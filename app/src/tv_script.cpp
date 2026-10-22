@@ -281,6 +281,10 @@ int App::tvScriptStep() {
         } else if (verb == "fullscreen") {   // fullscreen on|off -- as F11 does (headless: the flag, and the edge TvMode is told)
             if (arg1 != "on" && arg1 != "off") return fail(l, "fullscreen wants on|off");
             setFullscreen(arg1 == "on");
+        } else if (verb == "hintreset") {   // the one-time TV mode hint is due again (a Settings > Reset of Interface); toast-count starts over
+            cfg.erase("ui.tv_hint_shown");
+            tvHintShownThisRun_ = false;
+            toastCount_ = 0;
         } else if (verb == "saveconfig") {   // App::saveConfig() (a headless run keeps its config in a private temp dir)
             saveConfig();
         } else if (verb == "wait" || verb == "shot" || verb == "quit") {   // windowed only
@@ -324,7 +328,7 @@ int App::tvScriptStep() {
             if (eq == std::string::npos) return fail(l, "expect wants name=value");
             const std::string name = arg1.substr(0, eq);
             std::string want = arg1.substr(eq + 1);
-            if (name == "tv-focus")   // a label with spaces: the rest of the line
+            if (name == "tv-focus" || name == "toast")   // a label or a sentence with spaces: the rest of the line
                 for (size_t i = 2; i < l.w.size(); i++) want += " " + l.w[i];
             run.expects++;
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
@@ -335,6 +339,8 @@ int App::tvScriptStep() {
             else if (name == "menu-pinned") got = flag(menuPinned);
             else if (name == "menu-open") got = flag(tvShell().menuOpen());
             else if (name == "tv") got = flag(tvMode.active());
+            else if (name == "toast") got = osd_.empty() ? std::string() : osd_.back().text;   // the last toast
+            else if (name == "toast-count") got = std::to_string(toastCount_);
             else if (name == "tv-screen") got = tvShell().screenId();
             else if (name == "tv-focus") got = tvShell().focusLabel();   // the focused group / row / tile label of the top TV screen ("" = none)
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens

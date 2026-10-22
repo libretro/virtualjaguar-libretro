@@ -18,6 +18,10 @@ bool settingFromKey(const std::string& k, TvSetting& out); // false (out untouch
 // Null or anything else is Auto.  Never written back, so a build can move its default under people who never chose.
 TvSetting defaultSetting(const char* buildDefault);
 
+// The one-time first-use hint (decision 8): "Press <the pad's TV-menu button> or <the keyboard's> for TV mode".  A missing half is
+// dropped, and the fixed shortcut (Ctrl+Shift+T, Cmd+Shift+T on macOS) stands in until there are two, so it is never empty.
+std::string firstUseHint(const std::string& padText, const std::string& keyText, bool macOS);
+
 struct TvConfig {
     TvSetting setting = TvSetting::Manual;
     bool autoFullscreen = true;   // Auto: entering fullscreen turns TV mode on, leaving turns it off
