@@ -21,6 +21,10 @@
 #   expect toast=TEXT    the text of the last toast (the rest of the line, spaces included);  expect toast-count=N  toasts shown since start
 #   expect tv-setting=off|manual|auto  the stored setting (a fresh config takes the build default: auto on a CTest build)
 #   navdefault INTENT    the Default button of that menu intent of the virtual pad (back to the family's button, partner swapped back)
+#   command settings|bios|library|tvmode  what the native macOS menu / tray click runs (App::runNativeCommand); a synthesized ctrl+, is
+#                        ignored in a real window, so this is the Mac path
+#   hardcore-pause deny|allow  allowPause() refuses (as hardcore does between pauses) / allows; the in-game menu then opens without pausing
+#   expect menu-owns-input=0|1  the in-game menu has the pads (open: paused, netplay or hardcore running on)
 #   expect menu-slot=ID|none  the screen in the in-game menu's slot (settings, overlays, achievements)
 #   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
 #   expect tv=0|1         TV mode is on
@@ -174,9 +178,15 @@
 1970  key tap ctrl+,
 2000  expect tv-screen=settings
 2000  expect settings-open=0
-2000  pad tap leftshoulder        # back to Home (the shell remembers the section across TV mode off / on)
-2010  pad tap leftshoulder
+# The native macOS menu / tray runs Cmd::Settings, not a key (a synthesized Ctrl+, is ignored in a real window): the same.
+2000  pad tap leftshoulder
+2005  expect tv-screen=achievements
+2005  command settings
+2010  expect tv-screen=settings
+2010  expect settings-open=0
+2010  pad tap leftshoulder        # back to Home (the shell remembers the section across TV mode off / on)
 2020  pad tap leftshoulder
+2030  pad tap leftshoulder
 2040  expect tv-screen=home
 2040  key tap F4
 2080  expect tv=0
@@ -867,3 +877,71 @@
 14570 expect menu-open=0
 14570 key tap ctrl+,
 14610 expect settings-open=0
+
+# The native menu path with a game and TV mode on (Cmd::Settings): the same menu with the Settings screen in the slot.  B leaves the
+# slot; Ctrl+, again from the menu root opens it; from the Save page it replaces the page.  Each B returns to the root, B there resumes.
+14650 key tap ctrl+shift+T
+14690 expect tv=1
+14690 command settings
+14730 expect menu-open=1
+14730 expect paused=1
+14730 expect settings-open=0
+14730 expect menu-slot=settings
+14730 pad tap b
+14770 expect menu-slot=none
+14770 key tap ctrl+,
+14810 expect menu-slot=settings
+14810 pad tap b
+14850 expect menu-slot=none
+14850 pad tap b
+14890 expect menu-open=0
+14890 key tap F4
+14930 expect menu-open=1
+14930 pad tap dpdown            # Save state
+14940 pad tap a
+14950 key tap ctrl+,
+14990 expect menu-slot=settings
+14990 expect settings-open=0
+14990 pad tap b
+15030 expect menu-slot=none
+15030 expect menu-open=1
+15030 pad tap b
+15070 expect menu-open=0
+15070 expect paused=0
+
+# "BIOS & boot settings" (Cmd::BiosSettings) in TV mode is the pad-driven window, over the in-game menu with a game: B closes it and
+# the menu is still there.
+15110 command bios
+15150 expect menu-open=1
+15150 expect settings-open=1
+15150 expect tv-more=1
+15150 pad tap b
+15190 expect settings-open=0
+15190 expect tv-more=0
+15190 expect menu-open=1
+15190 pad tap b
+15230 expect menu-open=0
+
+# Hardcore will not pause (allowPause refuses): the menu opens anyway, the game runs on under it with the menu owning the pads, Settings
+# is reachable, and closing hands the pads back.
+15270 hardcore-pause deny
+15270 key tap F4
+15310 expect menu-open=1
+15310 expect paused=0
+15310 expect menu-owns-input=1
+15310 pad tap b
+15350 expect menu-open=0
+15350 expect menu-owns-input=0
+15350 expect paused=0
+15350 command settings
+15390 expect menu-open=1
+15390 expect paused=0
+15390 expect menu-owns-input=1
+15390 expect menu-slot=settings
+15390 expect settings-open=0
+15390 pad tap b
+15430 pad tap b
+15470 expect menu-open=0
+15470 expect menu-owns-input=0
+15470 expect paused=0
+15470 hardcore-pause allow

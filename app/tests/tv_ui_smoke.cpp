@@ -37,6 +37,7 @@ static int g_fail = 0, g_checks = 0, g_imguiErrors = 0;
 // What the menu asked of the app, and the app state it reads.
 struct FakeHost : Host {
     bool loaded = true, paused = false, canLoad = true, netplay = false;
+    bool runsOn = false;   // menuPause() opens the menu over a running game (App: hardcore would not pause it)
     std::string refusePause;   // non-empty: menuPause() refuses with this reason (hardcore rationing)
     bool pausedBeforeMenu = false, heldPause = false;
     double clock = 0;
@@ -64,6 +65,7 @@ struct FakeHost : Host {
             return false;
         }
         if (netplay) return true;   // the link keeps running
+        if (runsOn) return true;    // hardcore: the game runs on under the menu
         pausedBeforeMenu = paused;
         paused = true;
         heldPause = true;
@@ -75,6 +77,7 @@ struct FakeHost : Host {
         heldPause = false;
     }
     bool netplayActive() const override { return netplay; }
+    bool menuRunsOn() const override { return runsOn; }
     bool canLoadState() const override { return canLoad; }
     std::vector<SlotInfo> slots() override {
         std::vector<SlotInfo> v;
@@ -356,6 +359,48 @@ static void netplayBanner() {
     g_texts.clear();
     frames(solo, shell2, 3);
     CHECK(!drew("Netplay: the game keeps running"));
+}
+
+// Hardcore refusing the pause (#991): the menu still opens, the game keeps running, and the banner says so.
+static void hardcoreBanner() {
+    FakeHost host;
+    host.runsOn = true;
+    Shell shell(host);
+    CHECK(shell.openMenu() && shell.menuOpen() && !host.paused);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Hardcore: the game keeps running"));
+    CHECK(!drew("Netplay: the game keeps running"));
+    CHECK(g_imguiErrors == 0);
+}
+
+// Shell::openSettings (#991): TV off -> refused; no game -> the Settings section; a game -> the menu with Settings in the slot,
+// from the root and from a page, and a second call changes nothing.
+static void openSettingsRoutes() {
+    FakeHost host;
+    host.tv = false;
+    host.loaded = false;
+    Shell shell(host);
+    CHECK(!shell.openSettings() && !shell.menuOpen());
+    host.tv = true;
+    CHECK(shell.openSettings() && shell.section() == Section::Settings && !shell.menuOpen());
+    frames(host, shell, 3);
+    host.loaded = true;
+    Shell inGame(host);
+    CHECK(inGame.openSettings() && inGame.menuOpen() && inGame.menuScreenId() == "settings");
+    frames(host, inGame, 3);
+    CHECK(inGame.openSettings() && inGame.menuScreenId() == "settings");
+    back(host, inGame);
+    CHECK(inGame.menuOpen() && !inGame.menuHasScreen() && std::string(focusedLabel(inGame)) == "Settings");
+    Shell paged(host);
+    paged.openMenu();
+    down(host, paged, 1);                               // Save state
+    accept(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::SaveSlots);
+    CHECK(paged.openSettings() && paged.menuScreenId() == "settings");
+    back(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::Root && std::string(focusedLabel(paged)) == "Settings");
+    CHECK(g_imguiErrors == 0);
 }
 
 static void hintBarShowsWhatWorks() {
@@ -3639,6 +3684,8 @@ int main() {
     menuKeepsUserPause();
     closeGameAsksFirst();
     netplayBanner();
+    hardcoreBanner();
+    openSettingsRoutes();
     hintBarShowsWhatWorks();
     pointerFreeWhilePlaying();
     controlsRowShowsNeverHides();
