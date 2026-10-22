@@ -68,7 +68,7 @@ void AppHost::clearHolds() { app_.input.clearHolds(); }
 void AppHost::toast(const std::string& text) { app_.toast(text, 2.5, 2); }
 
 bool AppHost::tvActive() const { return app_.tvMode.active(); }
-bool AppHost::tvAvailable() const { return effectiveSetting(app_.tvSetting) != TvSetting::Off; }
+bool AppHost::tvAvailable() const { return app_.tvSetting != TvSetting::Off; }
 
 void AppHost::setTvActive(bool on) {
     if (on != app_.tvMode.active()) app_.toggleTvMode();   // a no-op when the setting is Off
@@ -293,12 +293,7 @@ void AppHost::setSetting(const std::string& id, int index) {
         if (!key.empty()) app_.setThemeChoice(key);
     } else if (id == "tv_mode") {
         if (index >= 0 && index <= (int)TvSetting::Auto) {
-            const bool wasOn = app_.tvMode.active();
-            app_.tvSetting = (TvSetting)index;
-            app_.cfg.set("ui.tv_mode", settingKey(app_.tvSetting));   // written on change only: saveConfig() leaves the default free to move
-            if (app_.tvSetting == TvSetting::Off) app_.cfg.setBool("ui.tv_manual_on", false);   // or a later Manual would switch TV on at once
-            app_.configureTvMode();   // starts from off ...
-            if (wasOn) app_.tvMode.setOn(true);   // ... so a Manual <-> Auto change stays in TV mode; Off stays off (setOn is a no-op then)
+            app_.setTvSetting((TvSetting)index);   // writes ui.tv_mode on change only, stays in TV mode across Manual <-> Auto
         }
     }
     app_.saveConfig();

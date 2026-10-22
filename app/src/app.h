@@ -285,9 +285,16 @@ public:
     tv::TvMode tvMode;                           // TV mode (#991): when it is on
     bool tvMoreSettings_ = false;                // the Settings window was opened by "More settings..." in TV mode (tv_more_settings.h)
     DesktopPad deskPad;                          // pad navigation of the desktop library (#1021, desktop_nav_app.h)
-    tv::TvSetting tvSetting = tv::TvSetting::Manual;   // ui.tv_mode as stored; effectiveSetting() is what TvMode acts on
+    tv::TvSetting tvSetting = tv::TvSetting::Auto;     // ui.tv_mode as stored, else the build default (tv::defaultSetting); TvMode acts on it as is
     void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off
     void configureTvMode();                      // tvMode.configure() from tvSetting + the config (also when Settings changes it)
+    // The one way to change the TV-mode settings (Settings > Interface, the TV Settings rows): each writes its key, reconfigures,
+    // and keeps TV mode on if it was on.  Neither saves the config; the caller does.
+    void setTvSetting(tv::TvSetting s);          // ui.tv_mode, written on change only (saveConfig never writes it); Off clears ui.tv_manual_on
+    void setTvAuto(bool fullscreenTrigger, bool on);   // ui.tv_auto_fullscreen (true) / ui.tv_auto_controller (false)
+    bool tvAutoPadPress(const SDL_Event& e);     // the Auto controller trigger: true = this press turned TV mode on and is consumed
+    void tvFullscreenEdge();                     // tells TvMode `fullscreen` when it differs from tvNoteFsSeen_ (edges only)
+    bool tvNoteFsSeen_ = false;                  // the fullscreen state TvMode was last told
     void setFullscreen(bool fs);
     void applyVsync();
     void syncSwapInterval();

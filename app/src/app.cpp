@@ -23,6 +23,10 @@
 #include <filesystem>
 #include <thread>
 
+#ifndef VJ_TV_DEFAULT_SETTING
+#define VJ_TV_DEFAULT_SETTING "auto"   // CMake's VJ_TV_DEFAULT (#991): what a config with no ui.tv_mode starts from
+#endif
+
 namespace vj {
 
 namespace {
@@ -210,18 +214,60 @@ void App::applySettingsFromConfig() {
     resumeMode = lib::clampResumeMode(cfg.getInt("saves.resume", lib::kResumeDefault));
     input.stickAsDpad = cfg.getBool("input.stick_dpad", true);
     emuThreadPref = cfg.has("ui.emu_thread") ? (cfg.getBool("ui.emu_thread", false) ? 1 : 0) : -1;
-    tvSetting = tv::TvSetting::Manual;
-    tv::settingFromKey(cfg.get("ui.tv_mode", "manual"), tvSetting);   // an unknown value stays Manual
+    // No stored ui.tv_mode: the build's default (Auto unless the package says otherwise).  An unknown value does the same.
+    tvSetting = tv::defaultSetting(VJ_TV_DEFAULT_SETTING);
+    if (cfg.has("ui.tv_mode")) tv::settingFromKey(cfg.get("ui.tv_mode"), tvSetting);
     configureTvMode();
-    if (tv::effectiveSetting(tvSetting) == tv::TvSetting::Manual && cfg.getBool("ui.tv_manual_on", false)) tvMode.setOn(true);
+    if (tvSetting == tv::TvSetting::Manual && cfg.getBool("ui.tv_manual_on", false)) tvMode.setOn(true);
 }
 
 void App::configureTvMode() {
     tv::TvConfig c;
-    c.setting = tv::effectiveSetting(tvSetting);   // Auto acts as Manual until its triggers are wired up
+    c.setting = tvSetting;
     c.autoFullscreen = cfg.getBool("ui.tv_auto_fullscreen", true);
     c.autoController = cfg.getBool("ui.tv_auto_controller", true);
     tvMode.configure(c, fullscreen);
+    tvNoteFsSeen_ = fullscreen;   // what TvMode now knows: tvFullscreenEdge() feeds it changes only
+}
+
+void App::setTvSetting(tv::TvSetting s) {
+    const bool wasOn = tvMode.active();
+    if (s != tvSetting) cfg.set("ui.tv_mode", tv::settingKey(s));   // on change only: a default that was never chosen stays free to move
+    tvSetting = s;
+    if (s == tv::TvSetting::Off) cfg.setBool("ui.tv_manual_on", false);   // or a later Manual would switch TV mode on at once
+    configureTvMode();                    // starts from off ...
+    if (wasOn) tvMode.setOn(true);        // ... so a change of setting stays in TV mode; Off stays off (setOn is a no-op then)
+}
+
+void App::setTvAuto(bool fullscreenTrigger, bool on) {
+    const bool wasOn = tvMode.active();
+    cfg.setBool(fullscreenTrigger ? "ui.tv_auto_fullscreen" : "ui.tv_auto_controller", on);
+    configureTvMode();
+    if (wasOn) tvMode.setOn(true);
+}
+
+// The Auto controller trigger (spec 8, approvals A and B).  Only a button with a menu intent counts: Guide, Share, the
+// touchpad and the paddles carry app actions, and a stick or trigger drifts.  While TV mode is on the press is the TV UI's
+// (and a fresh mouse budget for a controller-started TV mode); while it is off and the desktop library owns the pad with no
+// game loaded, it turns TV mode on and is consumed, so it neither moves the desktop focus nor acts on the TV screen it
+// reveals.  TvMode itself checks Auto and the "when a controller is used" box.
+bool App::tvAutoPadPress(const SDL_Event& e) {
+    if (input.navProfile(e.gbutton.which).intentForButton(e.gbutton.button) == tv::Intent::None) return false;
+    if (tvMode.active()) {
+        tvMode.onPadPress(true);
+        return false;
+    }
+    const bool typing = imguiUp_ && ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
+    if (deskPadActive(*this) && !host.isLoaded() && !typing) tvMode.onPadPress(true);   // a paused game under the library window stays the desktop's
+    return tvMode.active();
+}
+
+// TvMode re-applies a repeated onFullscreen(true) (it turns TV mode back on after a manual off), and macOS sends enter events
+// for space and display changes: it is told of changes only.  setFullscreen() and the two SDL events all land here.
+void App::tvFullscreenEdge() {
+    if (fullscreen == tvNoteFsSeen_) return;
+    tvNoteFsSeen_ = fullscreen;
+    tvMode.onFullscreen(fullscreen);
 }
 
 void App::saveConfig() {
@@ -239,8 +285,8 @@ void App::saveConfig() {
     if (!themeFromCli_) cfg.set("ui.theme", themePreviewing_ ? themeBeforePreview_ : theme::choiceKey());
     cfg.setBool("ui.home_library", homeLibrary);
     // ui.tv_mode is never written here: a stored value would pin a default that is meant to move (Auto on nightlies, #991
-    // Task 16) for everyone who ran this build.  Only the TV Settings row writes it, on change (AppHost::setSetting).
-    if (tv::effectiveSetting(tvSetting) == tv::TvSetting::Manual && !tvFromCli_) cfg.setBool("ui.tv_manual_on", tvMode.active());
+    // Task 16) for everyone who ran this build.  Only setTvSetting() writes it, on change.
+    if (tvSetting == tv::TvSetting::Manual && !tvFromCli_) cfg.setBool("ui.tv_manual_on", tvMode.active());
     cfg.setBool("saves.autosave", autosaveSram);
     cfg.setBool("ui.tray", trayIcon);
     cfg.setBool("ui.keep_awake", keepAwake);
@@ -1094,6 +1140,7 @@ void App::setFullscreen(bool fs) {
     fullscreen = fs;
     fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
     if (window_) SDL_SetWindowFullscreen(window_, fs);
+    tvFullscreenEdge();
 }
 
 // ---------------------------------------------------------------------------------
@@ -1771,9 +1818,17 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     }
     input.feedHoldEdges(e);   // before anything can consume the event, so a release is never lost
     tvHost_->noteInput(e);    // which device the hints should name (the shell consumes events InputManager never sees)
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && tvAutoPadPress(e)) return;   // Auto: this press turned TV mode on, and is only that
     if (tvMoreSettingsHandleEvent(*this, e, SDL_GetTicks())) return;   // "More settings" is up: its window has the pads and keys, even over the in-game menu (tv_more_settings.h)
     if (tvShell().ownsInput() && !input.capturing() && tvShell().handleEvent(e, SDL_GetTicks())) return;   // the TV UI has the pads and keys (not while a binding is being captured)
-    // (phase 4's Auto controller trigger, TvMode::onPadPress, goes before this call: desktop nav sees a press only when it did not switch TV on)
+    // The Auto triggers (#991): the mouse and the keyboard hand a controller-started TV mode back (the pad's half, tvAutoPadPress, runs
+    // before the shell: its presses are the shell's).  Desktop nav below sees a press only when it did not switch TV mode on.
+    if (e.type == SDL_EVENT_MOUSE_MOTION && !input.mouseCaptured()) tvMode.onMouseMove(e.motion.xrel, e.motion.yrel);
+    if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) &&
+        !(imguiUp_ && ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureKeyboard)) {
+        const SDL_Keycode k = SDL_GetKeyFromScancode(e.key.scancode, SDL_KMOD_NONE, false);
+        if (k >= 0x20 && k <= 0x7E) tvMode.onNonNavKey();   // a printable key the TV UI did not use (F-keys, Esc and shortcuts never count)
+    }
     if (deskPadHandleEvent(*this, e, SDL_GetTicks())) return;   // the desktop library has the pad (desktop_nav_app.h)
     if (input.handleEvent(e)) return;
     switch (e.type) {
@@ -1809,10 +1864,12 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
         fullscreen = true;    // also the green button / Ctrl+Cmd+F on macOS, which never go through setFullscreen()
         fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
+        tvFullscreenEdge();
         break;
     case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
         fullscreen = false;
         fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
+        tvFullscreenEdge();
         break;
     case SDL_EVENT_USER: {
         platform::Cmd ncmd = platform::Cmd::None;

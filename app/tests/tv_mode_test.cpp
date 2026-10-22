@@ -187,8 +187,90 @@ static void testSettingKeys() {
     CHECK(!settingFromKey("", s) && !settingFromKey("Auto", s));
     CHECK(std::string(settingKey(TvSetting::Off)) == "off" && std::string(settingKey(TvSetting::Manual)) == "manual" &&
           std::string(settingKey(TvSetting::Auto)) == "auto");
-    CHECK(effectiveSetting(TvSetting::Auto) == TvSetting::Manual && effectiveSetting(TvSetting::Off) == TvSetting::Off);
-    CHECK(effectiveSetting(TvSetting::Manual) == TvSetting::Manual);
+    CHECK(defaultSetting("manual") == TvSetting::Manual && defaultSetting("off") == TvSetting::Off && defaultSetting("auto") == TvSetting::Auto &&
+          defaultSetting("bogus") == TvSetting::Auto && defaultSetting(nullptr) == TvSetting::Auto);   // the build default (VJ_TV_DEFAULT_SETTING)
+}
+
+// Every spec 8 trigger order, as App feeds them: edges of fullscreen only, a mapped pad press, mouse travel, a printable key.
+// (testAutoTriggers, testMouseTravel and the two fullscreen tests above cover the single triggers; these are the sequences.)
+static void testTriggerOrders() {
+    using C = TvMode::Cause;
+    TvMode m;
+
+    m.configure({TvSetting::Auto}, false);                                  // pad -> fullscreen enter -> fullscreen leave
+    m.onPadPress(true);
+    CHECK(m.active() && m.cause() == C::Controller);
+    m.onFullscreen(true);
+    CHECK(m.active() && m.cause() == C::Controller);                        // already on: it keeps its own cause
+    m.onFullscreen(false);
+    CHECK(!m.active() && m.cause() == C::None);                             // leaving ends it whatever the cause
+
+    m.configure({TvSetting::Auto}, false);                                  // fullscreen enter -> pad -> mouse 100 px -> leave
+    m.onFullscreen(true);
+    CHECK(m.active() && m.cause() == C::Fullscreen);
+    m.onPadPress(true);
+    CHECK(m.active() && m.cause() == C::Fullscreen);
+    m.onMouseMove(100, 0);
+    CHECK(m.active() && m.cause() == C::Fullscreen);                        // fullscreen holds it
+    m.onFullscreen(false);
+    CHECK(!m.active() && m.cause() == C::None);
+
+    m.configure({TvSetting::Auto}, false);                                  // pad -> manual toggle -> pad -> key
+    m.onPadPress(true);
+    CHECK(m.active() && m.cause() == C::Controller);
+    m.toggle();
+    CHECK(!m.active() && m.cause() == C::None);
+    m.onPadPress(true);
+    CHECK(m.active() && m.cause() == C::Controller);                        // a pad edge ends the manual override
+    m.onNonNavKey();
+    CHECK(!m.active() && m.cause() == C::None);
+
+    m.configure({TvSetting::Auto}, false);                                  // fullscreen enter -> toggle -> pad -> mouse 40 px -> leave
+    m.onFullscreen(true);
+    CHECK(m.active() && m.cause() == C::Fullscreen);
+    m.toggle();
+    CHECK(!m.active() && m.cause() == C::None);
+    m.onPadPress(true);
+    CHECK(m.active() && m.cause() == C::Controller);
+    m.onMouseMove(40, 0);
+    CHECK(m.active() && m.cause() == C::Controller);                        // fullscreen holds it
+    m.onFullscreen(false);
+    CHECK(!m.active() && m.cause() == C::None);
+
+    m.configure({TvSetting::Auto}, true);                                   // fullscreen at configure -> toggle -> a repeated enter
+    CHECK(m.active() && m.cause() == C::Fullscreen);
+    m.toggle();
+    CHECK(!m.active());
+    m.onFullscreen(true);
+    CHECK(m.active() && m.cause() == C::Fullscreen);                        // why App feeds edges only: a repeated enter undoes a manual off
+
+    TvMode off;                                                             // Off: every trigger is a no-op, and so is the toggle
+    off.configure({TvSetting::Off}, true);
+    CHECK(!off.active());
+    off.onFullscreen(true);
+    off.onPadPress(true);
+    off.onNonNavKey();
+    off.onMouseMove(100, 0);
+    off.toggle();
+    CHECK(!off.active() && off.cause() == C::None);
+
+    TvMode man;                                                             // Manual: the triggers do nothing, the toggle works
+    man.configure({TvSetting::Manual}, true);
+    CHECK(!man.active());
+    man.onFullscreen(true);
+    man.onPadPress(true);
+    man.onNonNavKey();
+    man.onMouseMove(100, 0);
+    CHECK(!man.active() && man.cause() == C::None);
+    man.toggle();
+    CHECK(man.active() && man.cause() == C::Manual);
+    man.onFullscreen(false);
+    man.onPadPress(true);
+    man.onNonNavKey();
+    man.onMouseMove(100, 0);
+    CHECK(man.active() && man.cause() == C::Manual);                        // none of them touches a Manual TV mode
+    man.toggle();
+    CHECK(!man.active() && man.cause() == C::None);
 }
 
 static void testInputOwner() {
@@ -205,6 +287,7 @@ int main() {
     testFullscreenHoldIsState();
     testFullscreenLeaveTurnsOff();
     testSettingKeys();
+    testTriggerOrders();
     testInputOwner();
     std::printf("tv_mode_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

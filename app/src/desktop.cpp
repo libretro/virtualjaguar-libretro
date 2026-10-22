@@ -31,7 +31,7 @@ platform::MenuState App::menuState() {
     s.vsync = vsync;
     s.homeLibrary = homeLibrary;
     s.tvMode = tvMode.active();
-    s.tvAvailable = tv::effectiveSetting(tvSetting) != tv::TvSetting::Off;
+    s.tvAvailable = tvSetting != tv::TvSetting::Off;
     s.libraryOpen = homeVisible() || library.show;
     if (s.gameLoaded) {
         DiscInfo d = host.discInfo();

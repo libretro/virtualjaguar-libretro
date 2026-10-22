@@ -21,8 +21,10 @@ bool settingFromKey(const std::string& k, TvSetting& out) {
     return true;
 }
 
-TvSetting effectiveSetting(TvSetting stored) {
-    return stored == TvSetting::Auto ? TvSetting::Manual : stored;
+TvSetting defaultSetting(const char* buildDefault) {
+    TvSetting s = TvSetting::Auto;
+    if (buildDefault) settingFromKey(buildDefault, s);   // an unknown value leaves Auto
+    return s;
 }
 
 void TvMode::turnOn(Cause c) {

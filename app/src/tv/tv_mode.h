@@ -3,8 +3,7 @@
 // whether TV mode is active.
 //
 // Three stored settings: Off (never), Manual (only the toggle), Auto (also on fullscreen and on a controller press).
-// TvMode itself acts on the setting it is given; mapping the stored setting to the effective one is
-// effectiveSetting()'s job (Auto is Manual until the Auto triggers are wired up).
+// TvMode itself acts on the setting it is given; defaultSetting() is what a config with no stored setting gets.
 #pragma once
 
 #include <string>
@@ -15,7 +14,9 @@ enum class TvSetting { Off, Manual, Auto };
 
 const char* settingKey(TvSetting s);                       // "off" | "manual" | "auto"
 bool settingFromKey(const std::string& k, TvSetting& out); // false (out untouched) on an unknown key
-TvSetting effectiveSetting(TvSetting stored);              // Auto -> Manual until the Auto triggers exist
+// The setting a config with no ui.tv_mode starts from: the build's (VJ_TV_DEFAULT_SETTING: "off" | "manual" | "auto").
+// Null or anything else is Auto.  Never written back, so a build can move its default under people who never chose.
+TvSetting defaultSetting(const char* buildDefault);
 
 struct TvConfig {
     TvSetting setting = TvSetting::Manual;

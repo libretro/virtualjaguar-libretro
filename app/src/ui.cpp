@@ -628,7 +628,7 @@ void drawMenuBar(App& app) {
             overlayEvent(app.input.controls, OverlayEvent::Toggle);
         }
         ImGui::MenuItem("Library on home screen", nullptr, &app.homeLibrary);
-        if (ImGui::MenuItem("TV mode", "Ctrl+Shift+T", app.tvMode.active(), tv::effectiveSetting(app.tvSetting) != tv::TvSetting::Off))
+        if (ImGui::MenuItem("TV mode", "Ctrl+Shift+T", app.tvMode.active(), app.tvSetting != tv::TvSetting::Off))
             app.toggleTvMode();
         if (ImGui::MenuItem("VSync", nullptr, &app.vsync)) app.applyVsync();
         ImGui::EndMenu();

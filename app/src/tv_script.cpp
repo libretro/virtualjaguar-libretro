@@ -15,6 +15,8 @@
 // InputManager through the ordinary SDL_EVENT_GAMEPAD_ADDED hot-plug path, exactly like a real pad.  If it does not
 // open there, the run FAILS: nothing here fakes GAMEPAD_* events for an unopened id.  Windowed runs attach it too.
 //
+// `fullscreen on|off` is F11 without the window: App::setFullscreen(), so TvMode hears the edge (the Auto fullscreen trigger).
+//
 // Windowed-only verbs (for screenshots of the TV screens): `wait library` blocks the script until the Library has
 // scanned (the LibraryService threads run only in a windowed run), `shot PATH` saves the window at the end of the
 // next UI frame (App::tvScriptFrameEnd, called after the UI is drawn and before the swap), `quit` ends the run through
@@ -276,6 +278,9 @@ int App::tvScriptStep() {
         } else if (verb == "tvsetting") {   // what Settings > Interface will do: store the setting, reconfigure TV mode
             if (!tv::settingFromKey(arg1, tvSetting)) return fail(l, "tvsetting wants off|manual|auto");
             configureTvMode();
+        } else if (verb == "fullscreen") {   // fullscreen on|off -- as F11 does (headless: the flag, and the edge TvMode is told)
+            if (arg1 != "on" && arg1 != "off") return fail(l, "fullscreen wants on|off");
+            setFullscreen(arg1 == "on");
         } else if (verb == "saveconfig") {   // App::saveConfig() (a headless run keeps its config in a private temp dir)
             saveConfig();
         } else if (verb == "wait" || verb == "shot" || verb == "quit") {   // windowed only
@@ -322,6 +327,7 @@ int App::tvScriptStep() {
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
             std::string got;
             if (name == "fullscreen") got = flag(fullscreen);
+            else if (name == "tv-setting") got = tv::settingKey(tvSetting);
             else if (name == "menu-visible") got = flag(inWindowMenuBar());
             else if (name == "menu-pinned") got = flag(menuPinned);
             else if (name == "menu-open") got = flag(tvShell().menuOpen());
