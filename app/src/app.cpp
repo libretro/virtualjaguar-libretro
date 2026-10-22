@@ -1418,8 +1418,10 @@ void App::closeContent() {
     resumeOffer.active = false;
     const std::function<bool()> giveUp = detachForCall();
     autoSave(giveUp);
+    bool ran = false;
     emu.call(
-        [this] {
+        [this, &ran] {
+            ran = true;
             host.unloadContent();
             ach.onContentClosed();
             cheatsOnClose(*this);
@@ -1429,6 +1431,10 @@ void App::closeContent() {
             host.publishSnapshot();
         },
         giveUp);
+    if (!ran) {   // the debugger halted the game again before the call could run: still loaded
+        toast(kHaltedToast, 2.5, 2);
+        return;
+    }
     host.pinSnapshot();
     if (threaded()) adoptFrameEpoch();
     debug.requestRefresh();
@@ -1619,16 +1625,23 @@ bool App::addDisc(const std::string& path) {
 void App::followDiscSwap() {
     const unsigned n = host.discSwaps();
     if (n == seenDiscSwaps_) return;
+    const unsigned prev = seenDiscSwaps_;
     seenDiscSwaps_ = n;
     if (!host.isLoaded()) return;
     pendingStateSlot_ = kNoPendingSlot;   // a state queued for the previous disc would be refused now
     resumeOffer.active = false;           // the offer was for the previous disc's auto-save
     // On the emulation thread, like the load-time hooks they mirror (openContentOnCore).
-    emuCall([this] {
+    bool ran = false;
+    emuCall([this, &ran] {
+        ran = true;
         ach.onDiscChanged();
         cheatsOnClose(*this);
         cheatsAfterLoad(*this);
     });
+    if (!ran) {   // gave up (a halt): the swap is still unfollowed; the UI loop calls this again next iteration
+        seenDiscSwaps_ = prev;
+        return;
+    }
     invalidateThumbs();
     debug.requestRefresh();
 }

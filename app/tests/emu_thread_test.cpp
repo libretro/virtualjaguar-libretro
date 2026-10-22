@@ -34,6 +34,10 @@ struct EmuThreadTestAccess {
         std::lock_guard<std::mutex> lock(e.cmds_.mu_);
         return !e.cmds_.dbg_.empty();
     }
+    static size_t debugQueued(EmuThread& e) {
+        std::lock_guard<std::mutex> lock(e.cmds_.mu_);
+        return e.cmds_.dbg_.size();
+    }
 };
 }  // namespace vj
 
@@ -677,26 +681,70 @@ void testAdvanceGivesUp() {
     CHECK(in.advance(2, [&] { consulted++; return true; }) && ic.frames.load() == 2 && consulted.load() == 0, "inline: runs, never asks");
 }
 
-// A smoke test for the give-up / drain pair on a live queue: a predicate that is true before the post (i % 3 == 0), after
-// the first slice or after the second.  Whatever happens, a call that returned its value ran, and a call that gave up left
-// nothing behind that writes its by-reference local later.  The deterministic guard tests are testCallGivesUp's cancelled
-// and started cases; the compare-and-swap interleave itself is too narrow to hit from here.
-void testCallGiveUpRace() {
+// The CAS-lost branch: the predicate turns true only AFTER the task has started (it spins until it has).  call() must then
+// wait for the task and return its value, never R(), and the by-reference local it wrote must be intact.
+void testCallGiveUpLosesToStart() {
     EmuThread e;
     FakeClient c;
-    c.period = 0.001;
+    c.block = true;                                  // the first frame parks: the task stays queued past the first slice
     CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
-    int bad = 0, gaveUp = 0, ranN = 0;
-    for (int i = 0; i < 300; i++) {
-        std::atomic<int> polls{0};
-        int local = 0;   // by reference: only touched by the task, and only if the call did not give up
-        const int r = e.call([&local] { local = 1; return 5; }, [&] { return polls++ >= (i % 3); });
-        if (r == 5) { ranN++; if (local != 1) bad++; }
-        else { gaveUp++; sleepMs(0); }
-    }
-    sleepMs(30);   // a (wrongly) surviving cancelled task would write a dead local now; TSan / ASan catch it
-    CHECK(bad == 0, "a call that returned its value ran (%d)", bad);
-    CHECK(gaveUp + ranN == 300, "every call returned one way or the other (%d + %d)", gaveUp, ranN);
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    std::atomic<bool> started{false};
+    std::atomic<int> polls{0};
+    int local = 0;
+    const int r = e.call(
+        [&] {
+            started = true;
+            sleepMs(30);
+            local = 1;
+            return 7;
+        },
+        [&] {
+            if (polls++ == 0) return false;          // the poll before the post
+            c.block = false;                         // the poll after the first slice: let the frame end ...
+            for (int i = 0; i < 2000 && !started.load(); i++) sleepMs(1);   // ... and answer true only once the task runs
+            return true;
+        });
+    CHECK(r == 7 && local == 1, "a predicate that turns true after the task started still gets its value (%d, %d)", r, local);
+    CHECK(polls.load() == 2, "polled before the post and once after a slice (%d)", polls.load());
+    CHECK(e.stop(), "stop");
+}
+
+// The loop's second frame-lane drain: advance()'s budget rides the debug lane, so a frame-lane post made while the debug
+// lane is draining (after the frame lane was) must still be applied before the frame the budget starts.  A debug command
+// queued ahead of the budget posts it from another thread, in the middle of that drain.
+void testAdvanceBudgetDoesNotOvertakeFramePost() {
+    struct GatedClient : FakeClient {
+        std::atomic<bool> holdBatch{true}, batchHeld{false}, commandApplied{false}, frameSawCommand{false};
+        void afterCommands() override {
+            if (holdBatch.load()) {
+                batchHeld = true;
+                while (holdBatch.load()) sleepMs(1);
+            }
+        }
+        void runFrame() override {
+            frameSawCommand = commandApplied.load();
+            FakeClient::runFrame();
+        }
+    } c;
+    EmuThread e;
+    e.setPaused(true);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    e.post([] {});
+    for (int i = 0; i < 2000 && !c.batchHeld.load(); ++i) sleepMs(1);
+    CHECK(c.batchHeld.load(), "owner held after a command batch");
+    e.debugPost([&] {                                // runs inside the debug drain, after the frame drain
+        std::thread t([&] { e.post([&] { c.commandApplied = true; }); });
+        t.join();                                    // queued on the frame lane before this command returns
+    });
+    std::atomic<bool> ok{false};
+    std::thread caller([&] { ok = e.advance(1); });  // the budget queues behind the command above
+    for (int i = 0; i < 2000 && vj::EmuThreadTestAccess::debugQueued(e) < 2; ++i) sleepMs(1);   // the command and the budget
+    CHECK(vj::EmuThreadTestAccess::debugQueued(e) == 2, "both debug commands are queued behind the held batch");
+    c.holdBatch = false;
+    caller.join();
+    CHECK(ok.load() && c.frames == 1, "advance ran its frame");
+    CHECK(c.frameSawCommand.load(), "the frame-lane post made during the debug drain was applied before the budgeted frame");
     CHECK(e.stop(), "stop");
 }
 
@@ -725,7 +773,8 @@ int main() {
     testServeDebugLane();
     testCallGivesUp();
     testAdvanceGivesUp();
-    testCallGiveUpRace();
+    testCallGiveUpLosesToStart();
+    testAdvanceBudgetDoesNotOvertakeFramePost();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif
