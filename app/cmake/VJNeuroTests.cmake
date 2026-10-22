@@ -6,8 +6,8 @@
 #                   the buttons played out frame by frame, reregister_all, and the reconnect.  Skipped (77)
 #                   on Windows.
 #   neuro_off_threaded  --emu-thread on: Neuro stays off for the run and says so.
-add_executable(vj_neuro_test tests/neuro_test.cpp ${VJ_NEURO_SOURCES})
-target_include_directories(vj_neuro_test PRIVATE src src/neuro)
+add_executable(vj_neuro_test tests/neuro_test.cpp src/remap.cpp src/config.cpp src/paths.cpp ${VJ_NEURO_SOURCES})
+target_include_directories(vj_neuro_test PRIVATE src src/neuro $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(vj_neuro_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
 if(WIN32)
     target_link_libraries(vj_neuro_test PRIVATE ws2_32)

@@ -7,6 +7,7 @@
 #include "libretro.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <thread>
 
@@ -137,6 +138,77 @@ void testConcurrentMotion() {
     CHECK(total == kMoves, "every movement reaches the core exactly once (%ld of %d)", total, kMoves);
 }
 
+ControlSet pad(Ctl c) {
+    ControlSet s;
+    s.set(c);
+    return s;
+}
+
+void testAgentChannel() {
+    InputSnapshot s;
+    AgentProgram p, got;
+    CHECK(!s.takeAgent(got), "nothing published: false");
+    p.gen = 1;
+    p.lineage = 1;
+    p.enabled = true;
+    p.steps = {{pad(C_B), 3}};
+    s.publishAgent(p);
+    CHECK(s.takeAgent(got) && got.gen == 1 && got.steps.size() == 1 && got.steps[0].frames == 3, "first take");
+    CHECK(!s.takeAgent(got), "same gen: false");
+    p.gen = 2;
+    s.publishAgent(p);
+    p.gen = 3;
+    p.hold = pad(C_A);
+    s.publishAgent(p);
+    CHECK(s.takeAgent(got) && got.gen == 3 && got.hold == pad(C_A), "two publishes between takes: the newest only");
+    AgentProgress r;
+    r.gen = 3;
+    r.lineage = 1;
+    r.played = 2;
+    r.pressed = pad(C_B);
+    s.reportAgent(r);
+    CHECK(s.agentProgress().played == 2 && s.agentProgress().pressed == pad(C_B), "progress round trip");
+}
+
+// The UI publishes programs whose fields are tied to the gen (steps.size() == gen % 7, hold.bits == gen); the emulation
+// thread must never see a torn mix of two publishes, and gen never goes backwards.
+void testAgentTear() {
+    InputSnapshot s;
+    const uint64_t kGens = 20000;
+    std::thread ui([&] {
+        for (uint64_t g = 1; g <= kGens; g++) {
+            AgentProgram p;
+            p.gen = g;
+            p.lineage = g % 3;
+            p.hold.bits = g;
+            p.steps.assign(g % 7, AgentStep{pad(C_B), (unsigned)(g % 5) + 1});
+            s.publishAgent(p);
+        }
+    });
+    uint64_t last = 0, takes = 0;
+    bool torn = false, backwards = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    AgentProgram got;
+    while (last < kGens && std::chrono::steady_clock::now() < deadline) {
+        if (s.takeAgent(got)) {
+            takes++;
+            if (got.steps.size() != got.gen % 7 || got.hold.bits != got.gen || got.lineage != got.gen % 3) torn = true;
+            if (got.gen < last) backwards = true;
+            last = got.gen;
+            AgentProgress r;
+            r.gen = got.gen;
+            r.played = (unsigned)takes;
+            s.reportAgent(r);
+        }
+    }
+    ui.join();
+    if (last < kGens && s.takeAgent(got)) last = got.gen;   // the final publish can land after the last poll
+    CHECK(!torn, "every taken program is internally consistent");
+    CHECK(!backwards, "gen never decreases");
+    CHECK(last == kGens, "the final take has the last gen (%llu)", (unsigned long long)last);
+    CHECK(s.agentProgress().gen <= kGens && s.agentProgress().played == takes, "progress is the last report");
+}
+
 }  // namespace
 
 int main() {
@@ -147,6 +219,8 @@ int main() {
     testTakenSince();
     testSequence();
     testConcurrentMotion();
+    testAgentChannel();
+    testAgentTear();
     std::printf(g_fail ? "input_snapshot_test: %d FAILED\n" : "input_snapshot_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

@@ -231,6 +231,118 @@ static void testQueue() {
     CHECK(!q.frame().any());
 }
 
+static void testQueueProgram() {
+    InputQueue q;
+    CHECK(q.version() == 0 && q.lineage() == 0);
+    CHECK(q.enqueue({{keys({C_B}), 3}, {keys({C_A}), 2}}));
+    CHECK(q.version() == 1);
+    q.setHold(keys({C_C}));
+    CHECK(q.version() == 2);
+    q.setHold(keys({C_C}));
+    CHECK(q.version() == 2);   // the same hold changes nothing
+    AgentProgram p = q.program(7, true);
+    CHECK(p.gen == 7 && p.enabled && p.hold == keys({C_C}) && p.steps.size() == 2 && p.steps[0].frames == 3);
+    CHECK(p.firstFrame == 0 && p.lineage == q.lineage());
+    q.trim(4);
+    CHECK(q.queuedFrames() == 1 && q.firstFrame() == 4);
+    p = q.program(8, true);
+    CHECK(p.steps.size() == 1 && p.firstFrame == 4);
+    CHECK(q.peek().test(C_A));
+    CHECK(q.version() == 2);   // trim is not a change the replica needs to hear about
+    q.trim(100);
+    CHECK(!q.busy() && q.firstFrame() == 5);
+    const uint64_t v = q.version();
+    q.clear();
+    CHECK(q.lineage() == 1 && q.firstFrame() == 0 && q.version() > v && !q.hold().any());
+}
+
+static AgentProgram prog(uint64_t gen, uint64_t lineage, uint64_t first, std::vector<AgentStep> steps,
+                         ControlSet hold = ControlSet(), bool enabled = true) {
+    AgentProgram p;
+    p.gen = gen;
+    p.lineage = lineage;
+    p.firstFrame = first;
+    p.enabled = enabled;
+    p.hold = hold;
+    p.steps = steps;
+    return p;
+}
+
+static std::string pat(AgentPlayer& pl, unsigned n, Ctl c) {   // one char per poll: '#' when c is pressed
+    std::string s;
+    for (unsigned i = 0; i < n; i++) s += pl.frame().test(c) ? '#' : '.';
+    return s;
+}
+
+static void testAgentPlayer() {
+    const ControlSet B = keys({C_B}), A = keys({C_A}), UP = keys({C_UP}), none;
+    const std::vector<AgentStep> three = {{B, 3}, {none, 3}, {B, 3}};
+    {   // 1: presses for exactly N polls
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 0, three));
+        CHECK(pat(pl, 12, C_B) == "###...###...");
+        AgentPlayer f;
+        f.load(prog(1, 1, 0, three));
+        pat(f, 3, C_B);
+        CHECK(f.progress().played == 3 && !f.progress().done);
+        pat(f, 6, C_B);
+        CHECK(f.progress().played == 9 && f.progress().done);
+    }
+    {   // 2: the hold persists after the steps run out
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 0, {{B, 2}}, A));
+        CHECK(pl.frame() == keys({C_A, C_B}) && pl.frame() == keys({C_A, C_B}));
+        for (int i = 0; i < 4; i++) CHECK(pl.frame() == A);
+        CHECK(pl.progress().pressed == A && pl.progress().played == 2 && pl.progress().done);
+        // 3: a reload with a new lineage replaces everything
+        pl.load(prog(9, 8, 0, {{A, 2}}));
+        CHECK(pl.frame() == A);
+        CHECK(pl.progress().played == 1 && pl.progress().lineage == 8 && pl.progress().gen == 9 && pl.gen() == 9);
+    }
+    {   // 4: appending and changing the hold mid-play equal one uninterrupted queue
+        InputQueue ref;
+        CHECK(ref.enqueue({{B, 6}, {UP, 2}, {none, 2}, {B, 1}}));
+        std::vector<ControlSet> want;
+        for (int i = 0; i < 11; i++) want.push_back(ref.frame());
+        AgentPlayer pl;
+        std::vector<ControlSet> got;
+        pl.load(prog(1, 7, 0, {{B, 6}}));
+        for (int i = 0; i < 2; i++) got.push_back(pl.frame());
+        pl.load(prog(2, 7, 0, {{B, 6}, {UP, 2}}));
+        for (int i = 0; i < 3; i++) got.push_back(pl.frame());
+        pl.load(prog(3, 7, 5, {{B, 1}, {UP, 2}, {none, 2}, {B, 1}}));   // the UI trimmed the 5 played frames
+        for (int i = 0; i < 6; i++) got.push_back(pl.frame());
+        CHECK(got == want);
+        CHECK(pl.progress().played == 11);
+        pl.load(prog(4, 7, 11, {}, keys({C_C})));
+        CHECK(pl.frame() == keys({C_C}) && pl.progress().played == 11);
+    }
+    {   // 5: disabled does not advance
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 0, {{B, 4}}));
+        pl.frame();
+        pl.load(prog(2, 1, 0, {{B, 4}}, ControlSet(), false));
+        for (int i = 0; i < 3; i++) CHECK(!pl.frame().any());
+        CHECK(pl.progress().played == 1);
+        pl.load(prog(3, 1, 0, {{B, 4}}));
+        CHECK(pat(pl, 3, C_B) == "###" && pl.progress().played == 4);
+    }
+    {   // 6: a firstFrame ahead of played is clamped up
+        AgentPlayer pl;
+        pl.load(prog(1, 1, 5, {{B, 3}}));
+        CHECK(pat(pl, 4, C_B) == "###." && pl.progress().played == 8);
+    }
+    {   // 7: pollAgent
+        InputSnapshot s;
+        AgentPlayer pl;
+        s.publishAgent(prog(1, 1, 0, {{B, 2}}));
+        CHECK(pollAgent(s, pl) == B);
+        CHECK(pollAgent(s, pl) == B);
+        CHECK(pollAgent(s, pl) == none);
+        CHECK(s.agentProgress().played == 2 && s.agentProgress().done && s.agentProgress().gen == 1);
+    }
+}
+
 static unsigned drain(InputQueue& q, Ctl c, unsigned limit = 5000) {
     unsigned n = 0;
     for (unsigned i = 0; i < limit && q.busy(); i++)
@@ -898,6 +1010,8 @@ int main(int argc, char** argv) {
     testWsUrls();
     testWsFrames();
     testQueue();
+    testQueueProgram();
+    testAgentPlayer();
     testButtons();
     testActions();
     testProfiles();
