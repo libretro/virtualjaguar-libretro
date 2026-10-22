@@ -33,11 +33,16 @@
 namespace vj {
 
 std::atomic<bool> g_signalQuit{false};
+static_assert(std::atomic<bool>::is_always_lock_free, "g_signalQuit is stored from a signal handler");
 
 namespace {
 
-// SIGINT / SIGTERM in a headless run (installed by App::initSdl): only an atomic store, which is async-signal-safe.
-void onSignalQuit(int) { g_signalQuit.store(true); }
+// SIGINT / SIGTERM in a headless run (installed by App::initSdl): an atomic store, then back to the default action, so a
+// second signal kills a run that is wedged inside retro_run().  Both calls are async-signal-safe.
+void onSignalQuit(int sig) {
+    g_signalQuit.store(true);
+    std::signal(sig, SIG_DFL);
+}
 
 bool isInputEvent(Uint32 type) {
     switch (type) {

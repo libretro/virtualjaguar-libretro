@@ -25,6 +25,15 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 using namespace vj;
 namespace fs = std::filesystem;
 
@@ -103,6 +112,36 @@ struct Rig : EmuThread::Client {
         return ok;
     }
 };
+
+// A free loopback TCP port (bind to 0, read it back, close), so parallel ctest runs do not collide on the gdb stub's port.
+// Fallback when that fails: a pid-derived port.
+std::string freePort() {
+    int port = 0;
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+    SOCKET fd = socket(AF_INET, SOCK_STREAM, 0);
+    const bool bad = fd == INVALID_SOCKET;
+#else
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    const bool bad = fd < 0;
+#endif
+    if (!bad) {
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        a.sin_port = 0;
+        socklen_t n = sizeof a;
+        if (bind(fd, (sockaddr*)&a, sizeof a) == 0 && getsockname(fd, (sockaddr*)&a, &n) == 0) port = ntohs(a.sin_port);
+#ifdef _WIN32
+        closesocket(fd);
+#else
+        close(fd);
+#endif
+    }
+    if (port <= 0) port = 40000 + (int)(std::clock() % 20000);
+    return std::to_string(port);
+}
 
 // Runs `fn` on this thread and checks it took under 50 ms.
 template <class F>
@@ -225,13 +264,19 @@ int main(int argc, char** argv) {
     ui("resume", [&] { r.dbg.resume(); });
     caller.join();
     CHECK(!saved && err4.empty() && tCall < 0.3);
-    CHECK(!fs::exists(stateFile));   // the cancelled task: never queued-and-run while the core is halted again
     CHECK(until(r, [&] { return r.dbg.halted() && r.dbg.haltSerial() != s4; }));
     CHECK(r.dbg.haltReason() == VJ_DBG_STOP_USER);
     ui("resume", [&] { r.dbg.resume(); });
     CHECK(until(r, [&] { return !r.dbg.halted(); }));
-    CHECK(r.emu.call([&] { return r.host.saveStateToFile(stateFile, err4); }, [&] { return r.dbg.core().halt().halted; }) &&
-          fs::exists(stateFile));   // no halt now: the save runs
+    // The cancelled task must never have run: a frame-lane task is held while the core is halted, so the proof is after the
+    // halt ended and frames ran (a stale task would have been drained and written the file by now).
+    const uint64_t f4 = r.host.frameCount();
+    CHECK(until(r, [&] { return r.host.frameCount() > f4 + 3; }));
+    CHECK(!fs::exists(stateFile) && err4.empty());
+    const std::string stateFile2 = t + "s4b.state";   // a different file: the final save is its own proof
+    CHECK(r.emu.call([&] { return r.host.saveStateToFile(stateFile2, err4); }, [&] { return r.dbg.core().halt().halted; }) &&
+          fs::exists(stateFile2));   // no halt now: the save runs
+    CHECK(!fs::exists(stateFile));
 
     // 5. Detach-first: a content call after detachAndResume() runs within one frame and nothing re-halts.
     CHECK(r.dbg.addBreakpoint(VJ_DBG_TARGET_M68K, pc1));
@@ -324,7 +369,7 @@ int main(int argc, char** argv) {
         q.host.setDirectories(t + "system/", t + "saves/");
         q.host.setOptionValue("virtualjaguar_gdb_stub", "enabled");
         q.host.setOptionValue("virtualjaguar_gdb_wait", "enabled");
-        q.host.setOptionValue("virtualjaguar_gdb_port", "23463");
+        q.host.setOptionValue("virtualjaguar_gdb_port", freePort());
         q.wire();
         CHECK(q.emu.start(EmuThread::Mode::Threaded, q));
         CHECK(q.loadAttached(rom, err));
@@ -353,7 +398,7 @@ int main(int argc, char** argv) {
         q.host.setDirectories(t + "system/", t + "saves/");
         q.host.setOptionValue("virtualjaguar_gdb_stub", "enabled");
         q.host.setOptionValue("virtualjaguar_gdb_wait", "enabled");
-        q.host.setOptionValue("virtualjaguar_gdb_port", "23465");
+        q.host.setOptionValue("virtualjaguar_gdb_port", freePort());
         q.wire();
         CHECK(q.emu.start(EmuThread::Mode::Threaded, q));
         CHECK(q.loadAttached(rom, err));

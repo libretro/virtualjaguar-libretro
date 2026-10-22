@@ -74,6 +74,9 @@ def cmd(sock, rxbuf: bytearray, payload: str, timeout=10.0) -> str:
         return reply
 
 
+LIVE = []   # every Child not yet finished: the watchdog kills them before it exits
+
+
 class Child:
     """The app, with a reader thread per stream collecting lines."""
 
@@ -98,6 +101,7 @@ class Child:
                         threading.Thread(target=self._pump, args=(self.proc.stderr, self.err), daemon=True)]
         for t in self.threads:
             t.start()
+        LIVE.append(self)
 
     @staticmethod
     def _pump(stream, sink):
@@ -125,6 +129,8 @@ class Child:
             pass
         for t in self.threads:
             t.join(timeout=2)
+        if self in LIVE:
+            LIVE.remove(self)
         if self.tmp:
             self.tmp.cleanup()
 
@@ -271,7 +277,17 @@ def main():
 
 if __name__ == "__main__":
     # A watchdog: this script as a whole never outlives 100 s (ctest's TIMEOUT is 120).
-    wd = threading.Timer(100.0, lambda: (print("FAIL: watchdog: the script ran over 100 s"), sys.stdout.flush(), os._exit(1)))
+    def watchdog():
+        print("FAIL: watchdog: the script ran over 100 s")
+        sys.stdout.flush()
+        for c in list(LIVE):   # no orphaned app left parked on its port
+            try:
+                c.proc.kill()
+            except OSError:
+                pass
+        os._exit(1)
+
+    wd = threading.Timer(100.0, watchdog)
     wd.daemon = True
     wd.start()
     sys.exit(main())

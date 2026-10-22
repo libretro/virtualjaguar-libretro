@@ -132,7 +132,8 @@ if(WIN32)
 endif()
 vj_emu_thread_warnings(vj_debug_e2e_threaded)
 add_test(NAME debug_e2e_threaded COMMAND vj_debug_e2e_threaded "${VJ_ROMS}/yarc.j64")
-set_tests_properties(debug_e2e_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL |owner violation")
+set_tests_properties(debug_e2e_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+                     FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
 
 # 3b: a gdb client finds the app halted at boot (gdb_wait) with the emulation thread on; the app's silent host saw it,
 # memory is served while halted, continue finishes the run, and a SIGTERM while gdb still holds the halt exits 0 within 3 s.
@@ -159,6 +160,9 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(gdb_inline_halt_hardcore PROPERTIES TIMEOUT 120
         PASS_REGULAR_EXPRESSION "^PASS: gdb halt on the UI thread \\(inline\\), continue, then the hardcore reload"
         FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
+else()
+    message(STATUS "Python3 interpreter not found: gdb_threaded_halt, gdb_inline_halt and gdb_inline_halt_hardcore are not registered "
+                   "(the headless SIGINT / SIGTERM handlers and the gdb-over-socket halt paths go untested)")
 endif()
 
 add_test(NAME emu_thread_flag_rejects COMMAND virtualjaguar --headless --emu-thread maybe "${VJ_ROMS}/yarc.j64")
