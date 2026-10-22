@@ -63,8 +63,8 @@ if(NOT VJ_DISCORD_APP_ID STREQUAL "" AND NOT VJ_DISCORD_APP_ID MATCHES "^[0-9]+$
     message(FATAL_ERROR "VJ_DISCORD_APP_ID must be the numeric application ID from the Discord developer portal (got '${VJ_DISCORD_APP_ID}')")
 endif()
 # TV mode (#991): the setting a fresh config starts from (a stored ui.tv_mode wins; the key is written only when the user
-# changes it, so this default can move between builds).  app-package.yml passes manual for release tags and prerelease,
-# nothing for nightlies and PR builds.
+# changes it, so this default can move between builds).  app-package.yml always passes it: manual for release tags and
+# prerelease, auto for nightlies, PR builds and dev; a plain configure gets the default below.
 set(VJ_TV_DEFAULT "auto" CACHE STRING "TV mode setting for a fresh config: auto (nightlies, PR builds) | manual (releases) | off")
 if(NOT VJ_TV_DEFAULT MATCHES "^(auto|manual|off)$")
     message(FATAL_ERROR "VJ_TV_DEFAULT must be auto, manual or off (got '${VJ_TV_DEFAULT}')")
