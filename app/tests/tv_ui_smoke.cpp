@@ -130,6 +130,7 @@ struct FakeHost : Host {
         }
         return {};
     }
+    bool hasGames() const override { return !all.empty(); }
     Art art(const GameRef&) override { return {}; }
     std::vector<StateRef> states(const GameRef& g) override {
         auto it = st.find(g.key);

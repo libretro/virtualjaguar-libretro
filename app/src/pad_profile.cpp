@@ -255,7 +255,11 @@ std::string tvMenuButtonName(PadFamily f, const Binding& b) {
     std::string s;
     if (b.kind == Binding::PadButton && b.code == SDL_GAMEPAD_BUTTON_MISC1) s = sw ? "Capture" : ps ? "Mic" : "Share";
     else if (b.kind == Binding::PadButton && b.code == SDL_GAMEPAD_BUTTON_GUIDE) s = sw ? "Home" : ps ? "PS" : "Guide";
-    else return b.hold ? navButtonName(f, b) + " (hold)" : navButtonName(f, b);
+    else {
+        Binding plain = b;   // (Binding::display(), navButtonName's fallback, appends " (hold)" itself: name it plain, suffix once)
+        plain.hold = false;
+        s = navButtonName(f, plain);
+    }
     return b.hold ? s + " (hold)" : s;
 }
 

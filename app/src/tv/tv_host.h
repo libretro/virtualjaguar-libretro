@@ -140,6 +140,7 @@ public:
     // All / Disc / Favorites: by title, case-insensitive; Recent: newest first.  Never BIOS.  Fetched fresh every frame.
     virtual bool libraryScanning() const = 0;                    // a scan is running (an empty library may still fill up)
     virtual std::vector<GameRef> games(List l) = 0;
+    virtual bool hasGames() const = 0;                           // the library lists at least one game (never BIOS); no copy, cheap enough for a frame
     virtual Art art(const GameRef& g) = 0;                       // starts the load on first use; tex 0 until it is ready
     virtual std::vector<StateRef> states(const GameRef& g) = 0;
     virtual Art stateThumb(const GameRef& g, const StateRef& state) = 0;

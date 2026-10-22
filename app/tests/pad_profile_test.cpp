@@ -366,6 +366,8 @@ static void testTvMenuButtonNames() {
     CHECK(tvMenuButtonName(PadFamily::Xbox, Binding::button(SDL_GAMEPAD_BUTTON_MISC1)) == "Share");   // a plain press: no suffix
     CHECK(tvMenuButtonName(PadFamily::Xbox, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1)) == "Paddle P1");   // everything else: navButtonName / display()
     CHECK(tvMenuButtonName(PadFamily::PlayStation, Binding::button(SDL_GAMEPAD_BUTTON_SOUTH).withHold()) == "Cross (hold)");
+    CHECK(tvMenuButtonName(PadFamily::Xbox, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1).withHold()) == "Paddle P1 (hold)");   // display() already says (hold): once
+    CHECK(tvMenuButtonName(PadFamily::Xbox, Binding::button(SDL_GAMEPAD_BUTTON_LEFT_STICK).withHold()) == "Left Stick Click (hold)");
 }
 
 static void testButtonNames() {

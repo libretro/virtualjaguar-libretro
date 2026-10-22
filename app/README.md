@@ -192,7 +192,8 @@ only changes which screen stands behind the game; the game keeps running.
 
 The **TV mode** setting has three values, under **Settings > Interface** (and **TV Settings > Interface** in TV mode itself):
 
-- **Off:** never. F4, the Share hold, Ctrl/Cmd+Shift+T and `--tv` do nothing.
+- **Off:** TV mode never turns on: F4, the Share hold, Ctrl/Cmd+Shift+T and `--tv` do nothing without a game. With a game running
+  the TV-menu button still opens the in-game menu.
 - **Manual:** only when you ask: View > TV mode, Ctrl/Cmd+Shift+T, the TV-menu button (F4, or a hold of the pad's Share / Capture / Mic button, or of Guide on a pad
   without one, with no game running) or `--tv`. The on/off state is remembered for the next start (`--tv` is not).
 - **Auto:** also on its own, with two checkboxes you can untick, **Turn on in fullscreen** and **Turn on when a controller is used**.

@@ -152,6 +152,12 @@ std::vector<GameRef> AppHost::games(List l) {
     return out;
 }
 
+bool AppHost::hasGames() const {
+    for (const lib::Entry& e : app_.library.entries())
+        if (e.section != lib::Section::Bios) return true;
+    return false;
+}
+
 Art AppHost::art(const GameRef& g) {
     const lib::Entry* e = entryFor(g);
     return e ? artOf(app_.library.art(*e)) : Art();

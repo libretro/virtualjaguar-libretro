@@ -280,7 +280,7 @@ private:
         // Games but no shelves (a new player: nothing played, no favorites, no discs) is not an empty library: the Library
         // section lists them.  Otherwise the first scan of a new install (or of an empty cache) may still be running.
         std::string msg;
-        if (!host_.games(List::All).empty()) {
+        if (host_.hasGames()) {
             std::string next = host_.glyph(Intent::SectionNext);   // the button the section bar shows
             if (next.empty()) next = "RB";
             msg = "Nothing to continue yet. Press " + next + " for your Library.";
