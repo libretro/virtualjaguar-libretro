@@ -1441,6 +1441,11 @@ void App::menuResume() {
 
 tv::Shell& App::tvShell() { return *tvShell_; }
 
+void App::openLibrary() {
+    if (tvMode.active()) tvShell().openLibrary();   // (as Settings: the in-game menu opens even when hardcore will not pause; a refused menu toasts and nothing opens)
+    else toggleLibrary();
+}
+
 void App::openSettings() {
     if (tvMode.active()) tvShell().openSettings();   // (the in-game menu opens even when hardcore will not pause: the game runs on under it)
     else showSettings = true;
@@ -1814,7 +1819,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         }
         break;
     case SDLK_L:
-        if (mod) toggleLibrary();
+        if (mod) openLibrary();
         break;
     case SDLK_N:
         if (mod) newWindow();

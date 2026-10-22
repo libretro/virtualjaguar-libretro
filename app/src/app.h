@@ -275,7 +275,8 @@ public:
     bool homeVisible() const { return homeLibrary && !host.isLoaded() && !tvMode.active(); }   // is the desktop library standing in for the game? (TV mode's screens stand in instead)
     bool desktopWindowOpen() const;   // Settings, States, Cheats, About, the library window, the keypad overlay or any popup / menu is open (devices_ui.cpp)
     void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
-    void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
+    void toggleLibrary();             // the desktop library window, or focus the home screen's search box (TV mode off)
+    void openLibrary();               // Ctrl/Cmd+L, File > Game library, Cmd::Library: the TV Library while TV mode is on (over the paused game, from the in-game menu, with one), else toggleLibrary() (#991)
     void reset();
     void togglePause();
     // The TV in-game menu's pause (tv/tv_app_host.cpp): like togglePause() but silent, and it remembers whether the

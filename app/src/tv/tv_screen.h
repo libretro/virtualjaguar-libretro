@@ -60,6 +60,9 @@ public:
     // a screen draws no rail of its own and no safe margin, and its way out is "Menu" (Back always leaves for the menu, after the
     // screen's own back()).
     void setEmbedded(bool on) { embedded_ = on; }
+    // An embedded screen that wants the whole panel (the Library: its own rail and grid) instead of the list area beside the menu's
+    // rail.  The menu then draws no rail, and DrawCtx::pos / size are the panel inside its inset.
+    virtual bool wide() const { return false; }
 
 protected:
     bool embedded() const { return embedded_; }

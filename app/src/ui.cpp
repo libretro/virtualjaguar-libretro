@@ -576,7 +576,7 @@ void drawMenuBar(App& app) {
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) app.showOpenDialog();
         if (ImGui::MenuItem("New window", "Ctrl+N")) app.newWindow();
-        if (ImGui::MenuItem("Game library...", "Ctrl+L", app.library.show && !app.homeVisible())) app.toggleLibrary();
+        if (ImGui::MenuItem("Game library...", "Ctrl+L", (app.library.show && !app.homeVisible()) || (app.tvMode.active() && app.tvShell().showingLibrary()))) app.openLibrary();
         if (ImGui::BeginMenu("Open recent", !app.recents.empty())) {
             std::vector<std::string> list = app.recents;  // opening reorders the list
             for (size_t i = 0; i < list.size(); i++) {

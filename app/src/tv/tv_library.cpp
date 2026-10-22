@@ -63,6 +63,7 @@ public:
     }
 
     const char* id() const override { return "library"; }
+    bool wide() const override { return embedded(); }   // in the in-game menu's slot the rail + grid take the whole panel
 
     void intent(Intent in) override {
         refresh();
@@ -115,7 +116,10 @@ public:
         const Metrics& m = c.m;
         const theme::Palette& pal = theme::pal();
         const float u = m.u;
-        const float x0 = c.pos.x + m.safeX, right = c.pos.x + c.size.x - m.safeX;
+        // In the in-game menu's slot the area is the menu's panel inside its inset: no safe margin, only the room the focused tile and its
+        // ring grow into.
+        const float edge = embedded() ? 12 * u : m.safeX;
+        const float x0 = c.pos.x + edge, right = c.pos.x + c.size.x - edge;
 
         if (!mouseSeen_) {   // a pointer already resting on a tile when the screen appears has not chosen it
             lastMouse_ = c.mouse;
@@ -124,7 +128,7 @@ public:
         const bool moved = c.mouse.x != lastMouse_.x || c.mouse.y != lastMouse_.y;
         lastMouse_ = c.mouse;
         // The letter picker is drawn over this screen with the same pointer: it is the one that gets it.
-        const bool live = c.hovered && shell_.screenId() == id();
+        const bool live = c.hovered && (embedded() || shell_.screenId() == id());   // (the slot's screen is not on the Base stack)
         const bool pick = live && (moved || c.clicked || c.rightClicked);
         const bool clicked = live && c.clicked, rightClicked = live && c.rightClicked;
 
@@ -232,15 +236,18 @@ public:
     }
 
     std::vector<widgets::Hint> hints() const override {
-        if (games_.empty()) return {{host_.glyph(Intent::Back), "Home"}};   // an empty grid: no game to open, play or jump in
-        if (onRail_) return {{host_.glyph(Intent::Accept), "Open"}, {host_.glyph(Intent::Back), "Home"}};
+        // In the menu's slot Back leaves for the menu, and Details / the letter picker (which push onto the Base stack, not shown under a
+        // game) are not offered.
+        const char* way = embedded() ? "Menu" : "Home";
+        if (games_.empty()) return {{host_.glyph(Intent::Back), way}};   // an empty grid: no game to open, play or jump in
+        if (onRail_) return {{host_.glyph(Intent::Accept), "Open"}, {host_.glyph(Intent::Back), way}};
         std::vector<widgets::Hint> h = {{host_.glyph(Intent::Accept), "Play"}};
         if (resumeOk_) h.push_back({host_.glyph(Intent::Alt), "Resume state"});
-        h.push_back({host_.glyph(Intent::Menu), "Details"});
-        h.push_back({host_.glyph(Intent::Aux), "Jump to letter"});
+        if (!embedded()) h.push_back({host_.glyph(Intent::Menu), "Details"});
+        if (!embedded()) h.push_back({host_.glyph(Intent::Aux), "Jump to letter"});
         const std::string lt = host_.glyph(Intent::PagePrev), rt = host_.glyph(Intent::PageNext);
         h.push_back({lt.empty() && rt.empty() ? std::string() : lt + " " + rt, "A\xE2\x80\x93Z"});
-        h.push_back({host_.glyph(Intent::Back), "Home"});
+        h.push_back({host_.glyph(Intent::Back), way});
         return h;
     }
 
@@ -322,10 +329,14 @@ private:
         case Intent::Down: grid_.move(0, 1); break;
         case Intent::Accept: play(); break;
         case Intent::Alt: resume(); break;
-        case Intent::Aux: openLetters(); break;
+        case Intent::Aux:
+            if (!embedded()) openLetters();   // (a screen pushed on the Base stack does not show under a game)
+            break;
         case Intent::PagePrev: grid_.index = jumpInitial(titles_, grid_.index, -1); break;
         case Intent::PageNext: grid_.index = jumpInitial(titles_, grid_.index, 1); break;
-        case Intent::Menu: details(); break;
+        case Intent::Menu:
+            if (!embedded()) details();
+            break;
         default: break;
         }
     }
@@ -339,8 +350,7 @@ private:
     void play() {
         const GameRef* g = focused();
         if (!g) return;
-        host_.launch(*g);
-        shell_.launched();
+        shell_.requestLaunch(*g, nullptr);   // asks first when a game is running (the menu's slot)
     }
 
     // Start / a right-click: Game details of the focused game.  Back from there lands on this tile again.
@@ -356,8 +366,8 @@ private:
         if (!g || !host_.canLoadState()) return;
         const std::vector<StateRef> st = host_.states(*g);
         if (st.empty()) return;
-        host_.launchState(*g, st[0]);
-        shell_.launched();
+        const StateRef newest = st[0];
+        shell_.requestLaunch(*g, &newest);
     }
 
     widgets::TileArgs tileArgs(const GameRef& g) {

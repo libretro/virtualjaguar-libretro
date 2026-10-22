@@ -142,8 +142,9 @@ struct FakeHost : Host {
         return it == st.end() ? std::vector<StateRef>() : it->second;
     }
     Art stateThumb(const GameRef&, const StateRef&) override { return {}; }
-    void launch(const GameRef& g) override { launchedKey = g.key; launches++; }
-    void launchState(const GameRef& g, const StateRef& state) override { launchedState = {g.key, state.slot}; launchedDisc = state.disc; }
+    // (A launch with a game running closes it, as the app's does: loaded is false after.)
+    void launch(const GameRef& g) override { launchedKey = g.key; launches++; loaded = false; }
+    void launchState(const GameRef& g, const StateRef& state) override { launchedState = {g.key, state.slot}; launchedDisc = state.disc; loaded = false; }
     bool isFavorite(const GameRef& g) override { return favSet.count(g.key) != 0; }
     void setFavorite(const GameRef& g, bool on) override {
         if (on) favSet.insert(g.key);
@@ -281,7 +282,7 @@ static void menuOpensAndWalks() {
     CHECK(shell.menuPage() == Shell::Page::LoadSlots);
     frames(host, shell, 10);
     back(host, shell);
-    down(host, shell, 6);   // Achievements, Overlays, Settings, Controls, Enter TV mode, Reset
+    down(host, shell, 7);   // Library, Achievements, Overlays, Settings, Controls, Enter TV mode, Reset
     accept(host, shell);
     CHECK(shell.menuPage() == Shell::Page::ConfirmReset);
     frames(host, shell, 10);
@@ -333,7 +334,7 @@ static void closeGameAsksFirst() {
     FakeHost host;
     Shell shell(host);
     shell.openMenu();
-    down(host, shell, 9);
+    down(host, shell, 10);
     CHECK(std::string(focusedLabel(shell)) == "Close game");
     accept(host, shell);                                // -> the confirm, focus on No
     CHECK(shell.menuPage() == Shell::Page::ConfirmClose && std::string(focusedLabel(shell)) == "No");
@@ -459,7 +460,7 @@ static void controlsRowShowsNeverHides() {
     Shell shell(host);
     shell.openMenu();
     frames(host, shell, 2);
-    down(host, shell, 6);   // Resume, Save state, Load state, Achievements, Overlays, Settings, Controls
+    down(host, shell, 7);   // Resume, Save state, Load state, Library, Achievements, Overlays, Settings, Controls
     CHECK(std::string(focusedLabel(shell)) == "Controls");
     accept(host, shell);
     CHECK(host.controls == 1 && host.controlsShown && !shell.menuOpen());
@@ -2135,9 +2136,11 @@ static void ingameTvToggleHiddenWhenOff() {
     shell.openMenu();
     g_texts.clear();
     frames(host, shell, 3);
-    CHECK(drew("Enter TV mode") && !drew("Exit TV mode"));
-    down(host, shell, 7);                                      // ... Settings, Controls, Enter TV mode
+    down(host, shell, 8);                                      // ... Settings, Controls, Enter TV mode (past the rows the list shows at first: it scrolls)
     CHECK(std::string(focusedLabel(shell)) == "Enter TV mode");
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Enter TV mode") && !drew("Exit TV mode"));
     accept(host, shell);
     CHECK(host.tv && shell.menuOpen() && shell.menuPage() == Shell::Page::Root);
     CHECK(std::string(focusedLabel(shell)) == "Exit TV mode");   // the focus stayed on the row, its label flipped
@@ -3611,7 +3614,7 @@ static void ingameRowsFullOrder() {
     shell.openMenu();
     std::vector<std::string> labels;
     for (const Shell::Row& r : shell.menuRows()) labels.push_back(r.label);
-    const std::vector<std::string> want = {"Resume", "Save state", "Load state", "Achievements", "Overlays",
+    const std::vector<std::string> want = {"Resume", "Save state", "Load state", "Library", "Achievements", "Overlays",
                                            "Settings", "Controls", "Enter TV mode", "Reset", "Close game"};
     CHECK(labels == want);
     // Hardcore (no Load row) and TV mode Off drop only their own rows; the three screens stay.
@@ -3622,7 +3625,7 @@ static void ingameRowsFullOrder() {
     hardShell.openMenu();
     labels.clear();
     for (const Shell::Row& r : hardShell.menuRows()) labels.push_back(r.label);
-    CHECK((labels == std::vector<std::string>{"Resume", "Save state", "Achievements", "Overlays", "Settings", "Controls", "Reset", "Close game"}));
+    CHECK((labels == std::vector<std::string>{"Resume", "Save state", "Library", "Achievements", "Overlays", "Settings", "Controls", "Reset", "Close game"}));
 }
 
 static void overlaysToggleFps() {
@@ -3918,8 +3921,9 @@ static void ingameSlotLeavesMenuModelAlone() {
 static void menuWalkWithSlotsNoAsserts() {
     ImGuiIO& io = ImGui::GetIO();
     const int errors = g_imguiErrors;
-    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+    for (const char* row : {"Achievements", "Overlays", "Settings", "Library"}) {
         FakeHost host;
+        host.all = mkGames("A long game title that wraps on its tile", 60);
         host.rows = settingsFixture();
         for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", "picture", "Picture", {"Off", "On"}));
         host.hdr.signedIn = true;
@@ -3979,6 +3983,212 @@ static void menuWalkWithSlotsNoAsserts() {
 
 // The four tabs and both shoulder pills fit the top bar at 1280x720 with room left for the clock (the chrome's own sums:
 // the safe margin, the accent, the logo, the LB pill, each label at body size 40 apart, the RB pill).
+// ---- the Library in TV mode (#991 Task 21): the in-game row, the slot, the launch confirm, the Base entry --------------------------
+
+// A game running, the menu open, the Library row accepted: the Library in the slot, drawn.
+static void libraryMenuSetup(FakeHost& host, Shell& shell) {
+    host.all = libraryFixture();
+    host.st[host.all[0].key] = {{-1, 1760000000}};   // the first game has an auto-save
+    host.tv = true;
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    shell.openMenu();
+    frames(host, shell, 2);
+    down(host, shell, 3);                                // Save state, Load state, Library
+    CHECK(std::string(focusedLabel(shell)) == "Library");
+    accept(host, shell);
+    frames(host, shell, 2);
+}
+
+// The Library row is in the root after Load state, and puts the Library in the slot with the whole panel: its rail and grid are
+// drawn, the menu's own rail (the game's title) is not.
+static void ingameLibrarySlotWide() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    CHECK(shell.menuScreenId() == "library" && shell.menuOpen() && host.loaded);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Alien vs Predator") && drew("All games \xC2\xB7 6 games") && drew("Favorites"));   // a tile, the caption, the Library's rail
+    CHECK(!drew(host.gameTitle()) && !drew("Paused") && !drew("Library"));                          // the menu's rail is not drawn
+    CHECK(g_imguiErrors == 0);
+}
+
+// A on a tile with a game running asks: No is the focus, No returns to the Library on the same tile, Yes (Down) launches.
+static void ingameLibraryLaunchAsks() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    rightN(host, shell, 2);                              // the third tile: Battlemorph
+    const std::string key = host.all[2].key;
+    accept(host, shell);
+    CHECK(shell.menuPage() == Shell::Page::ConfirmLaunch && std::string(focusedLabel(shell)) == "No");
+    CHECK(shell.menuTitle() == "Close " + host.gameTitle() + " and start Battlemorph?");
+    CHECK(host.launchedKey.empty() && host.launches == 0 && host.loaded && shell.menuOpen());
+    CHECK(shell.focusLabel() == "No");
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Yes") && drew("No") && drew("Close " + host.gameTitle() + " and start Battlemorph?"));
+    accept(host, shell);                                 // No
+    CHECK(shell.menuScreenId() == "library" && shell.menuPage() == Shell::Page::Root && host.launches == 0 && host.loaded);
+    accept(host, shell);                                 // the same tile is still focused
+    CHECK(shell.menuPage() == Shell::Page::ConfirmLaunch && shell.menuTitle().find("Battlemorph") != std::string::npos);
+    back(host, shell);                                   // Back is No too
+    CHECK(shell.menuScreenId() == "library" && host.launches == 0);
+    accept(host, shell);
+    down(host, shell);                                   // Yes
+    CHECK(std::string(focusedLabel(shell)) == "Yes");
+    const int armed = host.guardArmed;
+    accept(host, shell);
+    CHECK(host.launchedKey == key && host.launches == 1 && !host.loaded);
+    CHECK(host.guardArmed == armed + 1);                 // launched(): the A that said Yes must not reach the new game
+    CHECK(g_imguiErrors == 0);
+}
+
+// X on a tile with a state asks the same question; Yes starts that state.
+static void ingameLibraryResumeStateAsks() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_WEST);     // X (Alt): the first game's auto-save
+    CHECK(shell.menuPage() == Shell::Page::ConfirmLaunch && host.launchedState.first.empty() && host.loaded);
+    down(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedState.first == host.all[0].key && host.launchedState.second == -1 && !host.loaded);
+    // A tile with no state: X does nothing.
+    FakeHost none;
+    Shell s2(none);
+    libraryMenuSetup(none, s2);
+    none.st.clear();
+    tapButton(none, s2, SDL_GAMEPAD_BUTTON_WEST);
+    CHECK(s2.menuScreenId() == "library" && s2.menuPage() == Shell::Page::Root);
+}
+
+// Typing filters the slot's grid; Menu (Start) and Aux (Y) do nothing there (they push onto the Base stack, which is not shown).
+static void ingameLibraryTypedFilters() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    CHECK(keyEvent(shell, SDL_SCANCODE_D, SDLK_D));
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Filter: d") && drew("All games \xC2\xB7 2 games"));   // the titles with a d in them: Alien vs Predator, Doom
+    keyEvent(shell, SDL_SCANCODE_D, SDLK_D, false);
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE));    // drops the filter, it is not Back
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, false);
+    frames(host, shell, 2);
+    CHECK(shell.menuScreenId() == "library");
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);                  // Menu: Details on the Base layer
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);                  // Aux: the letter picker on the Base layer
+    CHECK(shell.menuScreenId() == "library" && shell.screenId() != "details" && shell.screenId() != "letters" && shell.menuOpen());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Jump to letter") && !drew("Details"));                // not offered
+    // A desktop window's text field has the keyboard.
+    host.desktopOpen = true;
+    ImGui::GetIO().WantTextInput = true;
+    CHECK(!keyEvent(shell, SDL_SCANCODE_Z, SDLK_Z));
+    ImGui::GetIO().WantTextInput = false;
+    host.desktopOpen = false;
+    CHECK(g_imguiErrors == 0);
+}
+
+// Back leaves the slot for the menu, on the Library row; Back again resumes.
+static void ingameLibraryBackReturnsToRow() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && shell.menuOpen() && std::string(focusedLabel(shell)) == "Library");
+    CHECK(shell.menuPage() == Shell::Page::Root);
+    // ... with the filter on, Back still leaves at once (the Library's own level is the grid).
+    accept(host, shell);
+    keyEvent(shell, SDL_SCANCODE_D, SDLK_D);
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && std::string(focusedLabel(shell)) == "Library");
+    back(host, shell);
+    CHECK(!shell.menuOpen() && host.resumed == 1);
+}
+
+// Shell::openLibrary: TV off -> refused; no game -> the Library section (again: unchanged); a game -> the menu with the Library in its
+// slot, from the root and from a page, and a second call changes nothing; a refused menu opens nothing.
+static void baseLibraryOpensFromApp() {
+    FakeHost host;
+    host.all = libraryFixture();
+    host.tv = false;
+    host.loaded = false;
+    Shell shell(host);
+    CHECK(!shell.openLibrary() && !shell.menuOpen() && !shell.showingLibrary());
+    host.tv = true;
+    CHECK(shell.openLibrary() && shell.screenId() == "library" && shell.section() == Section::Library && shell.showingLibrary());
+    frames(host, shell, 3);
+    keyEvent(shell, SDL_SCANCODE_D, SDLK_D);
+    CHECK(shell.openLibrary() && shell.screenId() == "library");        // again: the same screen (its filter is still on)
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Filter: d"));
+    shell.setSection(Section::Settings);
+    CHECK(!shell.showingLibrary());
+    host.loaded = true;
+    Shell inGame(host);
+    CHECK(inGame.openLibrary() && inGame.menuOpen() && inGame.menuScreenId() == "library" && inGame.showingLibrary() && host.paused);
+    frames(host, inGame, 3);
+    CHECK(inGame.openLibrary() && inGame.menuScreenId() == "library");
+    back(host, inGame);
+    CHECK(inGame.menuOpen() && !inGame.menuHasScreen() && std::string(focusedLabel(inGame)) == "Library" && !inGame.showingLibrary());
+    Shell paged(host);
+    paged.openMenu();
+    down(host, paged, 1);                                // Save state
+    accept(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::SaveSlots);
+    CHECK(paged.openLibrary() && paged.menuScreenId() == "library");
+    back(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::Root && std::string(focusedLabel(paged)) == "Library");
+    FakeHost hard;
+    hard.refusePause = "Hardcore: wait 20 s";
+    hard.tv = true;
+    Shell hs(hard);
+    CHECK(!hs.openLibrary() && !hs.menuOpen() && hard.lastToast == "Hardcore: wait 20 s");
+    // The Library opened while a launch question was up (Ctrl+L): the question is dropped, Back lands on the row.
+    Shell asking(host);
+    libraryMenuSetup(host, asking);
+    accept(host, asking);
+    CHECK(asking.menuPage() == Shell::Page::ConfirmLaunch);
+    CHECK(asking.openLibrary() && asking.menuScreenId() == "library");
+    back(host, asking);
+    CHECK(asking.menuPage() == Shell::Page::Root && std::string(focusedLabel(asking)) == "Library");
+    CHECK(g_imguiErrors == 0);
+}
+
+// Every launch with no game running is immediate (Home, Library, Details): requestLaunch asks only over a game.
+static void requestLaunchWithoutGameIsImmediate() {
+    FakeHost host;
+    host.all = libraryFixture();
+    host.st[host.all[1].key] = {{3, 1760000000}};
+    Shell shell(host);
+    librarySetup(host, shell);
+    accept(host, shell);                                 // the first tile (a library with games opens on its grid)
+    CHECK(host.launchedKey == host.all[0].key && shell.menuPage() == Shell::Page::Root && !shell.menuOpen());
+    host.loaded = false;
+    const int armed = host.guardArmed;
+    shell.requestLaunch(host.all[2], nullptr);
+    CHECK(host.launchedKey == host.all[2].key && host.guardArmed == armed + 1);
+    const StateRef st{3, 1760000000};
+    shell.requestLaunch(host.all[1], &st);
+    CHECK(host.launchedState.first == host.all[1].key && host.launchedState.second == 3 && host.guardArmed == armed + 2);
+    // A game running and no menu to ask in: the menu opens with the question; nothing launches unasked.
+    host.loaded = true;
+    host.launches = 0;
+    shell.requestLaunch(host.all[2], nullptr);
+    CHECK(host.launches == 0 && host.loaded && shell.menuOpen() && shell.menuPage() == Shell::Page::ConfirmLaunch);
+    frames(host, shell, 2);                              // (the Base layer just lost the input: the nav starts over once)
+    back(host, shell);
+    CHECK(shell.menuPage() == Shell::Page::Root && host.launches == 0);
+    shell.closeMenu();
+    host.refusePause = "Hardcore: wait 20 s";           // ... and where the menu is refused, nothing at all
+    shell.requestLaunch(host.all[2], nullptr);
+    CHECK(host.launches == 0 && !shell.menuOpen() && host.lastToast == "Hardcore: wait 20 s");
+}
+
 static void tabBarFitsAt720p() {
     const float u = 720.0f / 1080.0f;
     float x = 96 * u + (22 + 16) * u + measure(34 * u, "VIRTUAL JAGUAR") + 56 * u;
@@ -4131,6 +4341,13 @@ int main() {
     ingameAchievementsSlotDraws();
     ingameAchievementsGamesListIsReadOnly();
     ingameSlotLeavesMenuModelAlone();
+    ingameLibrarySlotWide();
+    ingameLibraryLaunchAsks();
+    ingameLibraryResumeStateAsks();
+    ingameLibraryTypedFilters();
+    ingameLibraryBackReturnsToRow();
+    baseLibraryOpensFromApp();
+    requestLaunchWithoutGameIsImmediate();
     menuWalkWithSlotsNoAsserts();
     tabBarFitsAt720p();
     // The menu at the other sizes the app runs at.
@@ -4153,8 +4370,9 @@ int main() {
     }
     // The three screens of the menu's slot at the same sizes, inside the display (the rows with a long reason, a tall header and a
     // description included).
-    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+    for (const char* row : {"Achievements", "Overlays", "Settings", "Library"}) {
         FakeHost host;
+        host.all = mkGames("A long game title that wraps on its tile", 60);
         host.rows = settingsFixture();
         host.hdr.signedIn = true;
         host.hdr.hasGame = true;

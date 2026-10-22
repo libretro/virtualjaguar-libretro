@@ -6,6 +6,7 @@
 #include "platform/platform.h"
 #include "platform/viewports.h"
 #include "theme.h"
+#include "tv/tv_shell.h"
 #include "ui_util.h"
 
 namespace vj {
@@ -32,7 +33,7 @@ platform::MenuState App::menuState() {
     s.homeLibrary = homeLibrary;
     s.tvMode = tvMode.active();
     s.tvAvailable = tvSetting != tv::TvSetting::Off;
-    s.libraryOpen = homeVisible() || library.show;
+    s.libraryOpen = homeVisible() || library.show || (tvMode.active() && tvShell().showingLibrary());
     if (s.gameLoaded) {
         DiscInfo d = host.discInfo();
         s.disc.available = d.available;
@@ -82,7 +83,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         void bootBiosCart() override { a.bootBios(bios::CartBoot); }
         void showBiosSettings() override { a.openBiosSettings(); }
         void newWindow() override { a.newWindow(); }
-        void toggleLibrary() override { a.toggleLibrary(); }
+        void toggleLibrary() override { a.openLibrary(); }   // (the TV Library while TV mode is on)
         void closeGame() override { a.closeContent(); }
         void revealGame() override { platform::revealFile(a.host.contentPath()); }
         void quit() override { a.quit = true; }

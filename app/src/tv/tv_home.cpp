@@ -242,8 +242,7 @@ private:
     void play() {
         const GameRef* g = focused();
         if (!g) return;
-        host_.launch(*g);
-        shell_.launched();
+        shell_.requestLaunch(*g, nullptr);
     }
 
     // Start / a right-click: Game details of the focused game.  Back from there lands on this tile again.
@@ -259,8 +258,8 @@ private:
         if (!g || !host_.canLoadState()) return;
         const std::vector<StateRef> st = host_.states(*g);
         if (st.empty()) return;
-        host_.launchState(*g, st[0]);
-        shell_.launched();
+        const StateRef newest = st[0];
+        shell_.requestLaunch(*g, &newest);
     }
 
     widgets::TileArgs tileArgs(const GameRef& g) {

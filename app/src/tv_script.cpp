@@ -377,6 +377,16 @@ int App::tvScriptStep() {
             else if (name == "toast-count") got = std::to_string(toastCount_);
             else if (name == "tv-screen") got = tvShell().screenId();
             else if (name == "menu-owns-input") got = flag(input.menuOwnsInput());   // the in-game menu has the pads (open, paused or running on)
+            else if (name == "menu-page") {   // the in-game menu's page: root | save | load | confirm-reset | confirm-close | confirm-launch
+                switch (tvShell().menuPage()) {
+                case tv::Shell::Page::Root: got = "root"; break;
+                case tv::Shell::Page::SaveSlots: got = "save"; break;
+                case tv::Shell::Page::LoadSlots: got = "load"; break;
+                case tv::Shell::Page::ConfirmReset: got = "confirm-reset"; break;
+                case tv::Shell::Page::ConfirmClose: got = "confirm-close"; break;
+                case tv::Shell::Page::ConfirmLaunch: got = "confirm-launch"; break;
+                }
+            }
             else if (name == "menu-slot") got = tvShell().menuHasScreen() ? tvShell().menuScreenId() : std::string("none");   // the screen in the in-game menu's slot
             else if (name == "tv-group") got = tvShell().focusGroup();   // the key of the group on the TV Settings rail (picture, sound, core:video ...)
             else if (name == "tv-focus") got = tvShell().focusLabel();   // the focused group / row / tile label of the top TV screen ("" = none)

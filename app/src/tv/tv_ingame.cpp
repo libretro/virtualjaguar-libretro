@@ -1,6 +1,7 @@
 // TV mode (#991): the in-game menu drawn over the dimmed game -- Shell's row model (tv_shell.h) as a rail and a list.
 // The rail names the game and the page; the list is the rows (a slot page shows each slot's picture) -- or, while a screen
-// sits in the menu's slot (Achievements, Overlays, Settings), that screen drawn in the list area; a hint bar at the
+// sits in the menu's slot (Achievements, Overlays, Settings), that screen drawn in the list area (the Library takes the whole panel, no
+// rail: Screen::wide()); a hint bar at the
 // bottom lists only what the focused row (or the screen) can do.  Hover and click are rectangle tests (no ImGui item), so this window
 // never holds ImGui's active item and never makes io.WantCaptureKeyboard true.
 #include <SDL3/SDL.h>
@@ -76,17 +77,20 @@ void Shell::drawMenu(ImVec2 pos, ImVec2 size) {
 
     // ---- the rail: the page, and the game -------------------------------------------------------------------------
     const bool screen = menuScreen_ != nullptr;   // a screen in the slot: its name is the page
+    const bool wide = screen && menuScreen_->wide();   // ... that takes the whole panel (the Library): no rail
     const bool root = page_ == Page::Root && !screen;
     const float railX = pp.x + inset;
-    float y = pp.y + inset;
-    const ImVec2 t1 = widgets::text(dl, m.titleSmall, ImVec2(railX, y), widgets::col(pal.text),
-                                    screen ? capitalised(menuScreen_->id()) : title_, 0, railW);
-    y += t1.y + 12 * m.u;
-    widgets::text(dl, m.caption, ImVec2(railX, y), widgets::col(pal.textMuted),
-                  root ? std::string(host_.netplayActive() || host_.menuRunsOn() ? "Menu" : "Paused") : host_.gameTitle(), railW);
+    if (!wide) {
+        float y = pp.y + inset;
+        const ImVec2 t1 = widgets::text(dl, m.titleSmall, ImVec2(railX, y), widgets::col(pal.text),
+                                        screen ? capitalised(menuScreen_->id()) : title_, 0, railW);
+        y += t1.y + 12 * m.u;
+        widgets::text(dl, m.caption, ImVec2(railX, y), widgets::col(pal.textMuted),
+                      root ? std::string(host_.netplayActive() || host_.menuRunsOn() ? "Menu" : "Paused") : host_.gameTitle(), railW);
+    }
 
     // ---- the list -------------------------------------------------------------------------------------------------
-    const float listX = railX + railW + inset;
+    const float listX = wide ? railX : railX + railW + inset;
     const float listW = pp.x + ps.x - inset - listX;
     float listY = pp.y + inset;
     if (host_.netplayActive()) listY += widgets::banner(dl, m, ImVec2(listX, listY), listW, "Netplay: the game keeps running") + 20 * m.u;
@@ -161,7 +165,7 @@ void Shell::drawMenu(ImVec2 pos, ImVec2 size) {
             const char* verb = "Select";
             if (page_ == Page::SaveSlots) verb = "Save";
             else if (page_ == Page::LoadSlots) verb = "Load";
-            else if (page_ == Page::ConfirmReset || page_ == Page::ConfirmClose) verb = "Choose";
+            else if (page_ == Page::ConfirmReset || page_ == Page::ConfirmClose || page_ == Page::ConfirmLaunch) verb = "Choose";
             hints.push_back({host_.glyph(Intent::Accept), verb});
         }
         hints.push_back({host_.glyph(Intent::Back), root ? "Resume" : "Back"});

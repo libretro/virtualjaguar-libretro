@@ -27,12 +27,13 @@
 #                        achievements discord neuro, or core:<category key>, e.g. core:video); the rail's length varies with the build and the session
 #   hardcore-pause deny|allow  allowPause() refuses (as hardcore does between pauses) / allows; the in-game menu then opens without pausing
 #   expect menu-owns-input=0|1  the in-game menu has the pads (open: paused, netplay or hardcore running on)
-#   expect menu-slot=ID|none  the screen in the in-game menu's slot (settings, overlays, achievements)
+#   expect menu-slot=ID|none  the screen in the in-game menu's slot (settings, overlays, achievements, library)
+#   expect menu-page=root|save|load|confirm-reset|confirm-close|confirm-launch  the in-game menu's page
 #   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
 #   expect tv=0|1         TV mode is on
 #   expect tv-screen=ID   the id of the TV screen on top (home, library, ...)
 #   expect tv-focus=LABEL the label of what has the focus on the top TV screen (Settings: the group on the rail, or the row in its list;
-#                         the rest of the line, spaces included); Screen::focusLabel()
+#                         the rest of the line, spaces included); Screen::focusLabel().  With the in-game menu open: the slot screen's, else the menu row's
 #   expect tv-group=KEY   the key of the group on the TV Settings rail (picture sound interface library ... core:video); Screen::focusGroup()
 #   expect tv-owns-input=0|1  the TV shell has the pads and keys (0 while a desktop window covers the TV screens)
 #   expect settings-open=0|1  the desktop Settings window is open
@@ -104,9 +105,9 @@
 1080  expect cfg=ui.tv_mode:absent
 1080  tvsetting manual
 
-# With TV mode on, Ctrl+L (File > Game library) opens the desktop library WINDOW (the home library is not showing: the TV
-# screens stand in for it); with it off the home library is showing, so Ctrl+L only focuses its search box.  While the window
-# covers the TV screens they take no pad input (RB would step to the Library section), and they get it back when it closes.
+# With TV mode on, Ctrl+L (File > Game library) is the TV Library, never the desktop library window (#991): the Library section, again
+# changes nothing, B goes Home.  With it off the home library is showing, so Ctrl+L only focuses its search box.  (The window the key
+# used to open is still reachable with `--show-window library`, a dev flag, not a user path.)
 1080  expect home-visible=1
 1080  key tap ctrl+L
 1120  expect library-window=0
@@ -114,14 +115,17 @@
 1160  expect tv=1
 1160  expect home-visible=0
 1160  expect tv-owns-input=1
+1160  expect tv-screen=home
 1160  key tap ctrl+L
-1200  expect library-window=1
-1200  expect tv-owns-input=0
-1200  pad tap rightshoulder
-1240  expect tv-screen=home
-1240  key tap ctrl+L
-1280  expect library-window=0
-1280  expect tv-owns-input=1
+1200  expect library-window=0
+1200  expect tv-screen=library
+1200  expect tv-owns-input=1
+1200  key tap ctrl+L
+1240  expect library-window=0
+1240  expect tv-screen=library
+1240  expect tv-owns-input=1
+1240  pad tap b
+1280  expect tv-screen=home
 1280  pad tap rightshoulder
 1320  expect tv-screen=library
 1320  pad tap leftshoulder
@@ -603,7 +607,7 @@
 9980  expect menu-open=0
 9980  expect kb-bind=help:F4
 
-# Walk the menu with the pad (nine rows down: Save state, Load state, Achievements, Overlays, Settings, Controls, the TV-mode row, Reset, Close game): ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
+# Walk the menu with the pad (ten rows down: Save state, Load state, Library, Achievements, Overlays, Settings, Controls, the TV-mode row, Reset, Close game): ask, answer No (back to the menu), ask again, Up to Yes (focus starts on No), answer Yes.
 10020  key tap F4
 10060  expect menu-open=1
 10080  pad tap dpdown
@@ -613,6 +617,7 @@
 10120  pad tap dpdown
 10130  pad tap dpdown
 10140  pad tap dpdown
+10150  pad tap dpdown            # (Library, the row after Load state, makes it ten rows down)
 10160  pad tap dpdown
 10170  pad tap dpdown
 10180  pad tap a
@@ -645,6 +650,7 @@
 10680  pad tap dpdown
 10690  pad tap dpdown
 10700  pad tap dpdown
+10710  pad tap dpdown
 10720  pad tap dpdown
 10730  pad tap dpdown
 10740  pad tap a
@@ -769,8 +775,8 @@
 12420  expect capturing=0
 12420  expect cfg=input.padguid.{padguid}.nav.search:absent
 
-# A core option changed inside the in-game menu reaches the core once the menu is closed.  Down x5 from Resume is Settings (Save state,
-# Load state, Achievements, Overlays, Settings), A opens the screen (the groups, on Video: `settings-group` puts the shell's memory
+# A core option changed inside the in-game menu reaches the core once the menu is closed.  Down x6 from Resume is Settings (Save state,
+# Load state, Library, Achievements, Overlays, Settings), A opens the screen (the groups, on Video: `settings-group` puts the shell's memory
 # there, so no count of rail items is needed), A opens Video (the core's category of that name: it is a TV Settings group like the app's),
 # Down x2 is Internal resolution (Fast blitter, True color, then it), Left steps it from 2x (the first TV Settings walk set it with no game) to 1x; B x3 is rows -> groups -> the menu -> Resume.  The write is a posted command: the value is read after the menu
 # has closed and the paused core has had its boundary.
@@ -785,6 +791,7 @@
 12560   pad tap dpdown
 12570   pad tap dpdown
 12580   pad tap dpdown
+12590   pad tap dpdown
 12600   pad tap a
 12620   pad tap a
 12640   pad tap dpdown
@@ -796,7 +803,7 @@
 12770   expect menu-open=0
 12770   expect core-option=virtualjaguar_internal_resolution:1x
 
-# "More settings..." opened from the in-game menu keeps the menu underneath and hands the pad to the window only.  Down x5 is Settings,
+# "More settings..." opened from the in-game menu keeps the menu underneath and hands the pad to the window only.  Down x6 is Settings,
 # A the groups (on Interface: `settings-group`), A its rows, Down x20 clamps on Desktop settings..., A opens the window.  The window's pad presses never reach the menu: two Ups and a shoulder button go to
 # it, B closes it, and the menu is where it was -- the focus is still on More settings... (A opens the window again), and it takes
 # two more B to leave the Settings screen and one to Resume.  Esc closes the window the same way.
@@ -808,6 +815,7 @@
 12850   pad tap dpdown
 12860   pad tap dpdown
 12870   pad tap dpdown
+12880   pad tap dpdown
 12890   pad tap a
 12960   pad tap a
 12980  pad tap dpdown
@@ -869,6 +877,7 @@
 13610  pad tap dpdown
 13620  pad tap dpdown
 13630  pad tap dpdown
+13640  pad tap dpdown
 13650  pad tap a
 13720  pad tap a
 13740  pad tap dpdown
@@ -903,7 +912,7 @@
 14670  expect settings-open=0
 
 # A game dropped on the window while it is open from the Base layer: the game starts, the window goes (no game is left behind a TV-sized
-# desktop window).  Close the game from its menu (Down x9 is Close game, A asks, Up is Yes, A answers), TV mode on, Base layer to
+# desktop window).  Close the game from its menu (Down x10 is Close game, A asks, Up is Yes, A answers), TV mode on, Base layer to
 # Settings (LB x4 clamps on Home, RB x3), into the list and Down x20 clamps on Desktop settings... whichever row the screen remembered.
 14740  key tap F4
 14780  expect menu-open=1
@@ -916,6 +925,7 @@
 14840  pad tap dpdown
 14850  pad tap dpdown
 14860  pad tap dpdown
+14870  pad tap dpdown
 14880  pad tap a
 14900  pad tap dpup
 14920  pad tap a
@@ -1054,3 +1064,66 @@
 16570 expect menu-owns-input=0
 16570 expect paused=0
 16570 hardcore-pause allow
+
+# Library while TV mode is on with a game (#991 Task 21): never the desktop library window.  Ctrl+L opens the in-game menu (paused, as F4
+# does) with the Library in its slot; a second press changes nothing; B leaves the slot for the menu root and B again resumes.  A headless
+# run has no scanned library (only a windowed run starts the scan), so the grid is empty and A launches nothing: the launch question
+# itself (A on a tile -> "Close <game> and start <title>?", focus on No, Yes starts it) is tv_ui_smoke's ingame_library_launch_asks.
+16610 expect menu-open=0
+16610 expect tv=1
+16610 key tap ctrl+L
+16650 expect menu-open=1
+16650 expect paused=1
+16650 expect library-window=0
+16650 expect menu-slot=library
+16650 expect menu-page=root
+16650 key tap ctrl+L
+16690 expect menu-open=1
+16690 expect menu-slot=library
+16690 expect library-window=0
+16690 pad tap a
+16730 expect loaded=1
+16730 expect menu-page=root
+16730 expect menu-slot=library
+16730 pad tap b
+16770 expect menu-open=1
+16770 expect menu-slot=none
+16770 expect tv-focus=Library
+16770 pad tap b
+16810 expect menu-open=0
+16810 expect paused=0
+
+# The native menu path (Cmd::Library, which a synthesized ctrl+L cannot reach on a Mac): the same menu with the Library in the slot.
+16850 command library
+16890 expect menu-open=1
+16890 expect paused=1
+16890 expect library-window=0
+16890 expect menu-slot=library
+16890 pad tap b
+16930 expect menu-slot=none
+16930 pad tap b
+16970 expect menu-open=0
+
+# Hardcore will not pause: the menu opens anyway over the running game, with the Library in the slot, and closing hands the pads back.
+17010 hardcore-pause deny
+17010 command library
+17050 expect menu-open=1
+17050 expect paused=0
+17050 expect menu-owns-input=1
+17050 expect menu-slot=library
+17050 expect library-window=0
+17050 pad tap b
+17090 pad tap b
+17130 expect menu-open=0
+17130 expect menu-owns-input=0
+17130 expect paused=0
+17130 hardcore-pause allow
+
+# With TV mode off the native Library command is the desktop window again (and toggles it).
+17170 key tap ctrl+shift+T
+17210 expect tv=0
+17210 command library
+17250 expect library-window=1
+17250 expect menu-open=0
+17250 command library
+17290 expect library-window=0
