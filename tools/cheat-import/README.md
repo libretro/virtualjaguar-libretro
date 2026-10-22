@@ -72,6 +72,16 @@ it cannot provide the omitted source features. Overlapping cheats still follow
 the app's normal application order. Test converted cheats in the game and
 keep save backups before relying on them.
 
+`bigpemu-api.json` maps every community API call the reviewed sources use to a
+status (`supported`, `setting-omitted`, `ignored`, `unsupported`) with our own
+description of what the call does and the follow-up needed. `load_api_map()`
+reads it; an unlisted call is `unmapped` and the refusal names it
+(`Unsupported.call`). Integer settings (`bigpemu_register_setting_int*`) are
+omitted toggles, not fatal. A `printf_notify("literal")` reached at load for the
+matching cartridge becomes `Module.messages` (at most four, 200 characters each);
+other uses are listed in `Module.dropped_messages`, and `printf` in
+`Module.ignored_calls`.
+
 Raw uncompressed `.j64`, `.jag`, `.rom`, and `.bin` cartridge inputs up to 16 MiB
 are accepted. Recognized copier headers are refused: provide the native payload
 so both the source hash and app CRC refer to the same bytes. Disc images and

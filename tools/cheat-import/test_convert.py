@@ -175,6 +175,103 @@ class ConversionTests(unittest.TestCase):
             converter.Module(source(SIMPLE).replace("void bigp_init(void) {",
                 "void bigp_init(void) { bigpemu_register_event_unhandled(module, frame);"))
 
+    def int_module(self, frame_body, load=None):
+        text = source(frame_body, load=load).replace('bigpemu_register_setting_bool(category, "Other freeze", 0)',
+            'bigpemu_register_setting_int_full(category, "Start At Level", -1, -1, 9, 1)')
+        return converter.Module(text)
+
+    def test_int_full_setting_is_omitted_not_fatal(self):
+        results = self.int_module(SIMPLE).convert(DIGEST)
+        self.assertEqual(len(results), 2)
+        self.assertIn("code", results[0])
+        self.assertEqual(results[1]["unsupported"], "parameter setting requires manual value selection")
+
+    def test_int_full_dependent_write_refused(self):
+        results = self.int_module("if (a) { bigpemu_jag_write8(0x1f0000, 1); if (b != -1) { bigpemu_jag_write8(0x1f0abc, 2); } }").convert(DIGEST)
+        self.assertEqual(len(results), 2)
+        self.assertIn("exactly one independent setting", results[0]["unsupported"])
+        self.assertTrue(all("1F0ABC" not in r.get("code", "") for r in results))
+
+    def test_printf_notify_load_message(self):
+        load = r'flag = 0; if (digest == MATCH_HASH) { printf_notify("Supported.\n"); flag = 1; }'
+        module = converter.Module(source(SIMPLE, load=load))
+        self.assertEqual(module.messages, [])
+        self.assertIn("code", module.convert(DIGEST)[0])
+        self.assertEqual(module.messages, ["Supported."])
+        module.convert(DIGEST ^ 1)
+        self.assertEqual(module.messages, [])
+
+    def test_printf_notify_frame_or_format(self):
+        load = r'flag = 0; if (digest == MATCH_HASH) { flag = 1; printf_notify("x %d", flag); printf_notify(MESSAGE_TEXT); printf_notify("ok\n"); }'
+        module = converter.Module(source(SIMPLE + ' printf_notify("frame note\\n"); printf("log\\n");', load=load, extra="int MESSAGE_TEXT;"))
+        self.assertIn("code", module.convert(DIGEST)[0])
+        self.assertEqual(module.messages, ["ok"])
+        self.assertEqual(module.dropped_messages, ["script message not shown: x %d", "script message not shown: dynamic",
+                                                   "script message not shown: frame note"])
+        self.assertEqual(module.ignored_calls, {"printf"})
+        module.convert(DIGEST ^ 1)
+        self.assertEqual((module.messages, module.dropped_messages, module.ignored_calls), ([], [], set()))
+
+    def test_printf_notify_limits(self):
+        load = 'flag = 1; ' + "".join('printf_notify("m%d\\n"); printf_notify("m%d");' % (i, i) for i in range(6)) + (
+            'printf_notify("%s");' % ("y"*300))
+        module = converter.Module(source(SIMPLE, load=load))
+        module.convert(DIGEST)
+        self.assertEqual(module.messages, ["m0", "m1", "m2", "m3"])
+        self.assertEqual(module.dropped_messages, ["script message not shown: m4", "script message not shown: m5",
+                                                   "script message not shown: " + "y"*60])
+        module = converter.Module(source(SIMPLE, load='flag = 1; printf_notify("%s");' % ("z"*300)))
+        module.convert(DIGEST)
+        self.assertEqual(module.messages, ["z"*200])
+
+    def test_unknown_call_names_call(self):
+        with self.assertRaises(converter.Unsupported) as caught:
+            self.convert(SIMPLE + "bigpemu_jag_foo();")
+        self.assertEqual(caught.exception.call, "bigpemu_jag_foo")
+        self.assertIsNone(converter.Unsupported("plain").call)
+        result = self.convert("if (a) { bigpemu_jag_read8(0x1f0000); } if (b) { bigpemu_jag_write8(0x1f1000, 1); }")
+        self.assertIn("unsupported call bigpemu_jag_read8", result[0]["unsupported"])
+        with self.assertRaises(converter.Unsupported) as caught:
+            converter.Module(source(SIMPLE).replace("bigpemu_get_module_handle()", "bigpemu_jag_bar()"))
+        self.assertEqual(caught.exception.call, "bigpemu_jag_bar")
+
+    def test_api_map_covers_converter(self):
+        calls = converter.load_api_map()
+        self.assertEqual(list(calls), sorted(calls))
+        self.assertTrue(converter.SPECIAL_CALLS)
+        for name, status in converter.SPECIAL_CALLS.items():
+            self.assertEqual(calls[name]["status"], status, name)
+        for name in ("bigpemu_jag_read8", "bigpemu_jag_sysmemwrite", "bigpemu_jag_m68k_bp_add"):
+            self.assertEqual(calls[name]["status"], "unsupported")
+        for name, row in calls.items():
+            self.assertEqual(set(row), {"status", "meaning", "ours", "todo"}, name)
+            self.assertTrue(row["meaning"] and row["ours"], name)
+
+    def test_api_map_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"map.json"
+            for text in ('{"format": 2, "calls": {}}', '{"format": 1, "calls": {"x": {"status": "maybe", "meaning": "", "ours": "", "todo": ""}}}'):
+                path.write_text(text)
+                with self.assertRaises(ValueError):
+                    converter.load_api_map(path)
+
+    def test_cht_text_unchanged(self):
+        entries = [{"name": "A one", "code": "001F0000:AB"}, {"name": "B two", "code": "001F0002:1234+001F0004:89ABCDEF"}]
+        expected = ('# Locally converted community cheats; nothing is enabled automatically.\n# Source: src/x.c\n'
+                    '# Source SHA256: ' + "ab"*32 + '\n# Cartridge revision guard is enforced by the Virtual Jaguar app.\n'
+                    'vj_rom_crc32 = "DEADBEEF"\ncheats = 2\n\ncheat0_desc = "A one"\ncheat0_code = "001F0000:AB"\n'
+                    'cheat0_enable = false\n\ncheat1_desc = "B two"\ncheat1_code = "001F0002:1234+001F0004:89ABCDEF"\n'
+                    'cheat1_enable = false\n')
+        self.assertEqual(converter.cht_text("T", 0xDEADBEEF, entries, "src/x.c", "ab"*32), expected)
+        comments = ["Locally converted community cheats; nothing is enabled automatically.", "Source: src/x.c",
+                    "Source SHA256: " + "ab"*32, "Cartridge revision guard is enforced by the Virtual Jaguar app."]
+        header = converter.cht_header(0xDEADBEEF, comments)
+        self.assertEqual(header[0], "# " + comments[0])
+        self.assertEqual(header[-1], 'vj_rom_crc32 = "DEADBEEF"')
+        self.assertFalse(any(line.startswith("cheats") for line in header))
+        self.assertEqual(converter.cht_entries(entries)[:2], ["cheats = 2", ""])
+        self.assertEqual("\n".join(header + converter.cht_entries(entries)), expected)
+
     def test_cli_strict_partial_provenance_and_no_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
