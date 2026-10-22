@@ -461,13 +461,14 @@ bool App::initImGui() {
 }
 
 void App::shutdown() {
+    beginQuit();   // a hosted halt ends within one pump wait; the auto-save and the unload below need the core out of it
     if (host.isLoaded()) autoSave();   // quitting: keep where the game was
     discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
 #ifdef VJ_HAVE_NEURO
     neuroShutdown(*this);
 #endif
-    // Unload (it flushes SRAM) where the core lives, then stop the thread.  A core stuck inside retro_run (it should
-    // not happen in phase 1: the GDB stub is locked off) must not hang the quit: give up after 3 s and exit.
+    // Unload (it flushes SRAM) where the core lives, then stop the thread.  A detach ends a halt within one pump wait
+    // (beginQuit); a core wedged elsewhere still must not hang the quit: give up after 3 s and exit.
     if (host.isLoaded() && !emu.callFor(std::chrono::milliseconds(3000), [this] { host.unloadContent(); })) {
         std::fprintf(stderr, "[emu] the emulation thread did not answer within 3 s (the core is blocked); exiting without unloading\n");
         std::fflush(stderr);
@@ -610,6 +611,24 @@ void App::syncDebug() {
 // core.  haltedFrame() has no call of its own: it runs syncDebug(), and wakeViews() posts a fill that EmuThread runs inline there.
 void App::fillDebugViews() { debug.fillViews(); }
 
+// Emulation thread, the halt pump's wait (DebugCore::waitVerdict): the core is parked in GDBHalt() inside retro_run().
+// Nothing here may call a host.* entry that inFrame() refuses, nor touch UI state.
+void App::haltWait() {
+    emu.serveDebugLane(DebugCore::kPumpWait);
+    if (debug.views().pending(debug.refreshSerial())) fillDebugViews();
+}
+
+// UI thread, idempotent.  A hosted halt is detached by the pump's next iteration (abortHalt reads quitting_); the poll is
+// a <= 200 ms bound on the quit path only, never in the UI loop.
+void App::beginQuit() {
+    quitting_.store(true);
+    if (threaded()) {
+        emu.debugPost([] {});
+        for (int i = 0; i < 100 && debug.core().halt().halted; i++) SDL_Delay(2);
+    }
+    debug.syncHalt();
+}
+
 // #967: with the emulation thread on, a halt would run the UI on the emulation thread, so these two stay off for the
 // run until phase 3b moves the halt pump there (docs/app-emulation-thread-plan-phase3.md).  The Tools windows work
 // (phase 3a): the core hands its debug interface over, and every call into it is the emulation thread's.
@@ -686,9 +705,11 @@ void App::startEmuThread() {
         host.post = nullptr;
         emuThreadThisRun_ = false;   // Settings offers "Restart the app to apply" again
         liftFeatureLimits();
+        debug.core().waitVerdict = nullptr;
         std::fprintf(stderr, "[emu] could not start the emulation thread; running emulation on the UI thread\n");
         return;
     }
+    debug.core().waitVerdict = [this] { haltWait(); };   // the halt pump's wait (emulation thread)
     syncEmuFlags();
     std::fprintf(stderr, "[emu] emulation thread on\n");
 }
@@ -735,6 +756,7 @@ void App::emuRunOneFrame() {
     }
     const uint64_t r0 = SDL_GetPerformanceCounter();
     host.runFrame();
+    debug.core().frameEnded();   // a halt gdb (or the halt timeout) ended inside this frame is closed on our side
     retroTicks_.fetch_add(SDL_GetPerformanceCounter() - r0, std::memory_order_relaxed);
     runFrames_.fetch_add(1, std::memory_order_relaxed);
     ach.emuFrame();   // rc_client_do_frame: reads game RAM, so here
@@ -1026,7 +1048,7 @@ double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0
 // while inFrame().
 void App::haltedFrame() {
     debug.syncHalt();   // first: the F9 / F10 below must meet the halt the core is parked in, not the one before it
-    if (!imguiUp_ || !window_ || emu.onEmuThread()) {   // inline only: threaded, DebugCore::waitVerdict replaces this frame
+    if (!imguiUp_ || !window_ || threaded()) {   // threaded, the pump runs haltWait(), never this frame; a headless inline run still releases the core
         debug.detachAndResume();   // no UI to release the core with: never leave it parked
         return;
     }
@@ -2261,7 +2283,7 @@ int App::runInteractive(const CliArgs& a) {
     perf.forceH = a.perfShaderH;
     video.perf = &perf;
 
-    while (!quit) {
+    while (!quitRequested()) {
         if (perf.frameBegin()) {
             int pw = 0, ph = 0;
             SDL_GetWindowSizeInPixels(window_, &pw, &ph);
@@ -2395,6 +2417,7 @@ int App::runInteractive(const CliArgs& a) {
                            (void*)(uintptr_t)SDL_GetWindowID(window_));
         perf.frameEnd();
     }
+    beginQuit();   // before anything below waits on the core: a hosted halt must be gone
     latchWaker_.stop();   // (it pushes SDL events: not after SDL is gone)
 
     int w = 0, h = 0;

@@ -56,7 +56,7 @@ void drawDebugOverlay(App& app, float areaX, float areaY) {
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##debug_halt_bar", nullptr, flags)) {
-        ImGui::TextColored(ui::vec4(ui::pal().warning), "HALTED");
+        ImGui::TextColored(ui::vec4(ui::pal().warning), d.haltByGdb() ? "HALTED by gdb" : "HALTED");
         ImGui::SameLine();
         ImGui::Text("%s at $%06X", dbgTargetName(d.haltedTarget()), d.haltedPc());
         const char* why = dbgReasonName(d.haltReason());

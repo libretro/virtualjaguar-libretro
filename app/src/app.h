@@ -198,7 +198,7 @@ public:
     bool paused = false;
     bool fastForward = false;
     bool quit = false;
-    std::atomic<bool> quitting_{false};   // DebugCore::abortHalt reads it (the pump may run off the UI thread): the app is quitting
+    std::atomic<bool> quitting_{false};   // what DebugCore::abortHalt reads (the pump detaches on its next iteration); `quit` stays the UI's flag
     bool fullscreen = false;
     bool menuPinned = true;
     bool fullscreenAutoHideMenu = false;   // ui.fullscreen_autohide_menu; preserves existing behavior by default
@@ -385,6 +385,9 @@ private:
     void threadedFrame();             // UI thread, threaded: input out, frames / counters / messages in
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
+    void haltWait();                  // emulation thread, inside retro_run() parked in the halt: serve the debug lane (<= kPumpWait), refill pending views
+    void beginQuit();                 // UI thread, idempotent: quitting_ = true; threaded: wake the pump and wait <= 200 ms for the detach; syncHalt
+    bool quitRequested() const { return quit; }   // the UI loop's test (B5 adds the signal flag)
     void fillDebugViews();            // emulation thread (inline: the UI thread): debug.fillViews(), after each frame
     void frameUi();
     void updateTitle();

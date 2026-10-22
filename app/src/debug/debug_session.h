@@ -120,6 +120,9 @@ public:
     int haltReason() const { return mirror_.reason; }
     uint64_t haltSerial() const { return mirror_.serial; }   // the mirrored HaltState serial (not refreshSerial())
     bool haltByGdb() const { return byGdb_; }   // set on the halt edge: a breakpoint we did not set, or a USER / STEP halt we did not ask for
+    // The app's own temporary breakpoints (run to cursor, step over a call) are armed in the core without being in the
+    // list; the CPU window answers whether one of them is armed at (target, pc), so a halt there is not "by gdb".  UI thread.
+    std::function<bool(int target, unsigned pc)> ownsBreakAt;
     // Registers the halt pump with the core and re-arms the breakpoint list.  Idempotent; false if the
     // tools are not enabled, the core refused, or a Detach is still in flight.  Decides inside the lane (a queued
     // detach is ordered before it).  Tool windows that only peek/poke need no attach.

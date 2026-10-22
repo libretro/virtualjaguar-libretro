@@ -111,7 +111,8 @@ void DebugSession::syncHalt() {
     mirror_ = h;
     detachPending_ = false;                   // the pump took (or the core ended) the halt a DETACH verdict was for
     if (h.halted) {
-        byGdb_ = h.reason == VJ_DBG_STOP_BREAKPOINT ? !hasBreakpoint(h.target, h.pc) : !userHaltPending_;
+        byGdb_ = h.reason == VJ_DBG_STOP_BREAKPOINT ? !hasBreakpoint(h.target, h.pc) && !(ownsBreakAt && ownsBreakAt(h.target, h.pc))
+                                                    : !userHaltPending_;
         userHaltPending_ = false;
         requestRefresh();   // the registers changed: the windows re-read at once
         auto cbs = onHaltUi;   // a callback may register another

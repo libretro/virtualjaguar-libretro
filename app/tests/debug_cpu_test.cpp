@@ -496,6 +496,57 @@ static void testControlsMarshalled() {
     CHECK(CountingIface::offCore() == 0);
 }
 
+// #967 3b: the app's own temporary breakpoints (run to cursor, step over a call) are not in the session's list, so a halt
+// at one must not be shown as "HALTED by gdb"; a halt at any other address still is.
+static void testTempBreakIsNotGdb() {
+    DebugSession s;
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.attach());
+    CpuControl c(s);
+    s.onHaltUi.push_back([&](int t, unsigned pc, int r) { c.onHalt(t, pc, r); });
+    s.ownsBreakAt = [&](int t, unsigned pc) { return c.ownsHaltAt(t, pc); };   // as registerCpuTools wires it
+    s.core().waitVerdict = [] {};   // threaded shape: the halt stays recorded until frameEnded()
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.halted() && !s.haltByGdb());
+
+    // Run to cursor: the halt at the cursor is ours.
+    CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x5000) && c.temp().active());
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(!s.halted() && c.temp().active());
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.halted() && !s.haltByGdb());
+    CHECK(!c.temp().active());   // the halt cleared it (CpuControl::onHalt)
+
+    // The same address again, now that the temp is gone: not ours, not in the list.
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());
+
+    // A temp is armed, but the halt is at another address (gdb's breakpoint) or on another processor: gdb's.
+    CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x7000) && c.temp().active());
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5002, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());
+    CHECK(!c.temp().active());   // any halt clears it
+    CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x7000) && c.ownsHaltAt(VJ_DBG_TARGET_M68K, 0x7000));
+    CHECK(!c.ownsHaltAt(VJ_DBG_TARGET_GPU, 0x7000) && !c.ownsHaltAt(VJ_DBG_TARGET_M68K, 0x7002));
+    s.core().frameEnded();
+    s.syncHalt();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_GPU, 0x7000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());
+}
+
 int main() {
     CountingIface::reset();
     testMusashi();
@@ -511,6 +562,7 @@ int main() {
     testDisasmNav();
     testNavTracker();
     testControlsMarshalled();
+    testTempBreakIsNotGdb();
     std::printf("debug_cpu_unit: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -740,6 +740,7 @@ void registerCpuTools(DebugSession& s) {
     if (g.hooked) return;   // one session per process; the hooks are added once
     g.hooked = true;
     g.ctl = std::make_unique<CpuControl>(s);
+    s.ownsBreakAt = [](int target, unsigned pc) { return g.ctl && g.ctl->ownsHaltAt(target, pc); };   // run to cursor / step over are ours, not gdb's
     s.onHaltUi.push_back([&s](int target, unsigned pc, int reason) {
         if (!g.ctl) g.ctl = std::make_unique<CpuControl>(s);
         g.ctl->onHalt(target, pc, reason);
