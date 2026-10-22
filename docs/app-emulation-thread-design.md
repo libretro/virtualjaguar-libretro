@@ -192,7 +192,7 @@ takes a give-up predicate so a call posted an instant before a halt returns inst
 pump drops one for any other halt; `frameEnded()` also closes a STEP the core never re-halted (`stepping_`), which would
 otherwise leave the mirror "halted" and wedge inline F9 / Detach. `EmuThread::advance()` has the same give-up as `call()`: its
 frame budget rides the debug lane, the wait ends when a halt begins, and `advance(0)` resumes the wait after Continue. `beginQuit()`
-is the shutdown entry: it sets `quitting_`, `abortHalt` answers DETACH within one pump wait, and only then does the app save,
+is the shutdown entry: it sets `quitting_`, `abortHalt` answers CONTINUE within one pump wait (the host stays attached, so a gdb breakpoint hit again before the frame ends comes back to the pump instead of parking with no host), and only then does the app save,
 flush and unload.
 
 **GDB TCP stub.** `GDBHalt`'s socket loop runs on the emulation thread, so a gdb session that holds the target halted no
@@ -201,7 +201,7 @@ verdict wins, as today. The halt timeout is unchanged.
 *Amended 2026-10-20 (phase 3): a host behind every halt.* Without an app host the app cannot see a gdb halt: a
 `call()` would block until gdb continues and quit would wait out the join. So the app attaches a silent host whenever
 `virtualjaguar_gdb_stub` is `enabled` and content is loaded (one stored pointer), the halt bar says "HALTED by gdb",
-and quit detaches (which clears gdb's breakpoints, as the inline app already does). `attach()` needs the tools enabled,
+and quit resumes the core with the host kept attached. `attach()` needs the tools enabled,
 so RetroAchievements hardcore locks the stub to `disabled`, as it does cheats. Both are proposed decisions (phase 3
 plan, "Decisions to confirm").
 *Amended 2026-10-22 (phase 3b): as shipped.* The silent host is attached on the core side (the emulation thread) inside the

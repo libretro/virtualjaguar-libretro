@@ -111,14 +111,18 @@ int DebugCore::pump(int target, unsigned pc) {
         for (auto& f : cbs)
             if (f) f(target, pc, reason);
     }
-    // Quitting wins over any verdict: a stale Continue must never overtake it.
-    int v = (abortHalt && abortHalt()) ? VJ_DBG_RESUME_DETACH : takeVerdict(serial);
+    // Quitting wins over any verdict: a stale Continue must never overtake it.  The answer is CONTINUE, never DETACH: a
+    // DETACH drops the app's host inside the core (VJDbgPump), and if a gdb client's breakpoint is still armed the core
+    // hits it again at once, with a socket open and no host to pump -- it parks in GDBHalt() waiting for the client, and
+    // everything that waits on the core (the quit's flush, the unload) waits forever.  Kept attached, every re-hit comes
+    // back here and is answered the same way until the frame ends; unloading the content drops the host (setIface).
+    int v = (abortHalt && abortHalt()) ? VJ_DBG_RESUME_CONTINUE : takeVerdict(serial);
     if (v == VJ_DBG_RESUME_NONE) {
         if (waitVerdict)
             waitVerdict();
         else if (runUiFrame)
             runUiFrame();
-        v = (abortHalt && abortHalt()) ? VJ_DBG_RESUME_DETACH : takeVerdict(serial);
+        v = (abortHalt && abortHalt()) ? VJ_DBG_RESUME_CONTINUE : takeVerdict(serial);
     }
     if (v == VJ_DBG_RESUME_NONE) return VJ_DBG_RESUME_NONE;
 

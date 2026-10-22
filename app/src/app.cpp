@@ -479,12 +479,17 @@ bool App::initImGui() {
 
 void App::shutdown() {
     beginQuit();   // a hosted halt ends within one pump wait; the auto-save and the unload below need the core out of it
-    if (host.isLoaded()) autoSave();   // quitting: keep where the game was
+    // Quitting: keep where the game was -- but never wait on a core that is still halted after beginQuit's bounded wait, and
+    // never past 1.5 s (the save's give-up polls the clock): the unload below and the join are the backstop.
+    if (host.isLoaded() && !debug.core().halt().halted) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        autoSave([this, end] { return debug.core().halt().halted || std::chrono::steady_clock::now() >= end; });
+    }
     discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
 #ifdef VJ_HAVE_NEURO
     neuroShutdown(*this);
 #endif
-    // Unload (it flushes SRAM) where the core lives, then stop the thread.  A detach ends a halt within one pump wait
+    // Unload (it flushes SRAM) where the core lives, then stop the thread.  A quit ends a halt within one pump wait
     // (beginQuit); a core wedged elsewhere still must not hang the quit: give up after 3 s and exit.
     if (host.isLoaded() && !emu.callFor(std::chrono::milliseconds(3000), [this] { host.unloadContent(); })) {
         std::fprintf(stderr, "[emu] the emulation thread did not answer within 3 s (the core is blocked); exiting without unloading\n");
@@ -642,7 +647,7 @@ void App::haltWait() {
     if (debug.views().pending(debug.refreshSerial())) fillDebugViews();
 }
 
-// UI thread, idempotent.  A hosted halt is detached by the pump's next iteration (abortHalt reads quitting_); the poll is
+// UI thread, idempotent.  A hosted halt is resumed (CONTINUE, host kept attached) by the pump's next iteration (abortHalt reads quitting_); the poll is
 // a <= 200 ms bound on the quit path only, never in the UI loop.
 void App::beginQuit() {
     quitting_.store(true);
@@ -1079,6 +1084,7 @@ void App::runHeadlessFrames(unsigned n) {
     }
     for (unsigned i = 0; i < n; i++) {
         audio.update();
+        attachGdbHostOnCore();   // a Detach (or the last frame) dropped the silent host: back before each frame
         host.runFrame();
         headlessAfterFrame();
     }
@@ -1105,13 +1111,14 @@ void App::haltedFrame() {
         // Headless inline: no UI to release the core with, so the app's own halts (a breakpoint or Break from a script)
         // and a quit are released at once.  A halt gdb caused stays: returning keeps the core's 2 ms socket loop serving
         // gdb, which is what gdb_wait and a breakpoint set from gdb ask for (the client continues it).
-        if (quitRequested() || !debug.haltByGdb()) debug.detachAndResume();
+        if (quitRequested()) quitting_.store(true);   // the pump's abortHalt answers CONTINUE (never DETACH: a gdb breakpoint may re-halt)
+        else if (!debug.haltByGdb()) debug.detachAndResume();
         return;
     }
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, false);
     if (quit) {
-        quitting_.store(true);   // the pump's abortHalt reads this: the core detaches when this frame returns
+        quitting_.store(true);   // the pump's abortHalt reads this: the core resumes when this frame returns
         return;
     }
     inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
@@ -2147,7 +2154,6 @@ void App::stepEmulation() {
         pacer_.reset();
         return;
     }
-    attachGdbHostOnCore();   // inline: a user Detach dropped the silent host; it is back before the next frame
     double period = 1.0 / std::max(1.0, host.fps());
     int frames = 0;
     if (fastForward) {
@@ -2163,6 +2169,7 @@ void App::stepEmulation() {
         uint64_t r0 = perf.on ? perf.tick() : 0;
         PerfTrace::Emu te{};
         if (trace_.enabled()) te.dueNs = te.startNs = SDL_GetTicksNS();
+        attachGdbHostOnCore();   // inline: a user Detach (or a frame of this loop) dropped the silent host; back before EACH frame
         host.runFrame();
         if (trace_.enabled()) {
             te.endNs = SDL_GetTicksNS();
@@ -2543,7 +2550,15 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.w", w);
         cfg.setInt("window.h", h);
     }
-    if (host.isLoaded()) emuCall([this] { host.flushSaveRam(true); });
+    if (host.isLoaded()) {
+        // Bounded: a core still halted after beginQuit's wait (or wedged elsewhere) is not waited for -- the unload in
+        // shutdown() and the join are the backstop, and they exit the process rather than hang.
+        if (!threaded()) host.flushSaveRam(true);
+        else if (debug.core().halt().halted)
+            std::fprintf(stderr, "[emu] the core is still halted at quit; not flushing the save RAM here\n");
+        else if (!emu.callFor(std::chrono::milliseconds(1000), [this] { host.flushSaveRam(true); }))
+            std::fprintf(stderr, "[emu] the save RAM flush did not complete within 1 s; going on\n");
+    }
     tvScriptEnd();
     desktopShutdown();
     library.stop();   // joins its threads and frees its textures while the GL context is still alive
@@ -2949,6 +2964,7 @@ int App::runHeadless(const CliArgs& a) {
 #endif
                 audio.update();
                 uint64_t hr0 = SDL_GetPerformanceCounter();
+                attachGdbHostOnCore();   // inline: the silent host is back before each frame
                 host.runFrame();
                 hlRun += SDL_GetPerformanceCounter() - hr0;
 #ifdef VJ_HAVE_NEURO

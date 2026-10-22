@@ -162,13 +162,14 @@ static void testHaltResume() {
     s.step();
     CHECK(s.core().pendingVerdict() == VJ_DBG_RESUME_NONE);
 
-    // Quit while halted: abortHalt turns into a detach.
+    // Quit while halted: abortHalt turns into a CONTINUE and the host STAYS attached (a detach would let the core re-hit a
+    // gdb client's armed breakpoint with no host to pump; unloading the content drops the host).
     bool quit = false;
     s.core().abortHalt = [&] { return quit; };
     s.core().runUiFrame = [&] { quit = true; };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
-    CHECK(v == VJ_DBG_RESUME_DETACH);
-    CHECK(!m.attached() && !s.attached());
+    CHECK(v == VJ_DBG_RESUME_CONTINUE);
+    CHECK(m.attached() && s.attached());
 }
 
 static void testHardcoreWhileHalted() {
@@ -713,14 +714,19 @@ static void testForeignStepIsNewHalt() {
     CHECK(halts == 2 && c.halt().pc == 0x4002 && c.halt().reason == VJ_DBG_STOP_STEP && c.haltSerial() == s1 + 1);
 }
 
-// Quit mid-halt: abortHalt wins over a pending CONTINUE and detaches the mock.
-static void testAbortHaltDetaches() {
+// Quit mid-halt: abortHalt wins over a pending verdict (a stale STEP or DETACH included) and answers CONTINUE with the
+// host still attached; it re-answers every re-halt the same way (a gdb breakpoint that is still armed fires again).
+static void testAbortHaltContinues() {
     MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
     bool quitting = false;
     c.abortHalt = [&] { return quitting; };
     c.waitVerdict = [&] { quitting = true; c.offerVerdict(VJ_DBG_RESUME_CONTINUE, c.haltSerial()); };
-    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_DETACH);
-    CHECK(!c.attached() && !m.attached() && !c.halt().halted);
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(c.attached() && m.attached() && !c.halt().halted);
+    c.waitVerdict = nullptr;
+    c.offerVerdict(VJ_DBG_RESUME_DETACH, c.haltSerial() + 1);   // stale verdict for the next halt's serial: quitting still wins
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_CONTINUE);   // the same breakpoint again
+    CHECK(c.attached() && m.attached() && !c.halt().halted);
 }
 
 // Inline: no waitVerdict; the pump runs runUiFrame once per call and takes the verdict that frame set (today's loop).
@@ -1021,7 +1027,7 @@ int main() {
     testStepSerialAndReason();
     testFrameEndedClosesForeignResume();
     testForeignStepIsNewHalt();
-    testAbortHaltDetaches();
+    testAbortHaltContinues();
     testInlinePumpRunsUiFrame();
     testPumpCallsHookOncePerIteration();
     testVerdictForAnotherSerialDropped();

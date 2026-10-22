@@ -36,17 +36,17 @@ All calls are made on the thread that runs `retro_run()` (the UI thread inline, 
    closed the same way.
 3. While parked, anything that would re-enter the core is held or refused.  Frame-lane commands (option changes, cheats,
    controller, SRAM autosave) wait in the queue and apply after Continue; the halt bar and the Core options tab say so.  Save/load
-   state and boot refuse with a toast.  Open, close, reset, disc changes and quit detach first (threaded) and then proceed;
+   state and boot refuse with a toast.  Open, close, reset and disc changes detach first (threaded) and then proceed (quit just resumes the core, below);
    inline they keep refusing.  Every UI call into the core (`EmuThread::call`, `advance`) gives up when a halt begins, so
    the window never waits on a parked core.  Audio is paused and cleared on the way out.  Closing the window while halted
-   resumes the core and detaches (`beginQuit()` ends the pump within one wait).
+   resumes the core (`beginQuit()` ends the pump within one wait; the pump answers CONTINUE and the host stays attached until the content unloads, so a gdb breakpoint that is still armed cannot re-park the core behind a socket with nobody to release it).
 4. Turning RetroAchievements **hardcore** on (from anywhere, including inside a halt) detaches, resumes and closes every
    tool; the Tools menu goes grey with the reason.
 
 Without an attached host and without the GDB socket `GDBHalt()` returns at once, so a stale "break" can never hang the
 core.  When the GDB TCP stub is on as well, either side may resume the machine; a TCP client disconnecting clears the
 breakpoint tables as before (the app re-applies its list on the next attach).  A headless run has no UI to release a halt:
-a halt gdb holds waits for the gdb client or a quit signal (below); a halt the app itself caused is released at once.
+a halt gdb holds waits for the gdb client or a quit signal (below); a halt the app itself caused is released at once (inline only: with the emulation thread on, the headless loop does not release it).
 
 ## Memory and the poke policy
 
@@ -201,7 +201,7 @@ attach).  With no app host and no GDB client attached, a halt returns at once an
 
 Whenever the stub is enabled the app keeps a **silent host** attached (logged as `[debug] gdb host attached (silent)`): it
 never halts anything by itself, it only makes a GDB halt visible -- the halt bar says "HALTED by gdb", F9 continues, calls
-into the core give up instead of hanging, and quitting detaches.  It is attached on the emulation thread inside the load,
+into the core give up instead of hanging, and quitting resumes the core.  It is attached on the emulation thread inside the load,
 before the first frame.  Two consequences:
 
 - **`virtualjaguar_gdb_wait`** parks the boot even before a GDB client connects; the UI stays
@@ -209,9 +209,13 @@ before the first frame.  Two consequences:
 - **Detach debugger** drops every app breakpoint and the host, and with the stub still enabled the silent host comes back
   one frame later (it re-attaches on the emulation thread before the next frame, so a gdb breakpoint is never missed).  Detach
   does not close the stub; turn the option off and reload for that.  Breakpoints you want after a Detach are set again.
-- **Quitting** detaches (which clears gdb's breakpoints too) and closes the socket.  A **headless** run that gdb holds halted
+- **Quitting** resumes the core with the host kept attached (a gdb breakpoint hit again on the way out is answered
+  at once), then closes the socket.  A **headless** run that gdb holds halted
   waits for the gdb client or a quit signal: SIGINT or SIGTERM ends it cleanly (exit 0, the socket closed); a second
   signal kills it at once, in case the core is wedged.
+- **Known limit (#967 follow-up):** while a gdb client holds a halt at a breakpoint it set with `Z0`, an app Detach (or
+  an open, close, reset or disc change, which detach first) drops the app's host, and the breakpoint can park the core
+  again with no host. The app then waits until gdb continues or disconnects. Continue or detach in gdb first.
 
 ## Cost when you are not looking
 

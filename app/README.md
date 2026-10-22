@@ -589,7 +589,7 @@ run on it), and so do Break, Step, breakpoints and the GDB stub. The halt is ser
 and the window mirrors it once per frame, so the UI keeps drawing while the game is parked (a gdb session holding a halt
 no longer freezes it); settings and cheats changed meanwhile apply after Continue, and anything that would reload or save
 the game detaches the debugger first or says why it cannot. With the stub enabled the app keeps a silent debugger host so a
-gdb halt shows as "HALTED by gdb"; `virtualjaguar_gdb_wait` parks the boot until gdb connects or F9 continues. RetroAchievements
+gdb halt shows as "HALTED by gdb"; `virtualjaguar_gdb_wait` parks the boot until the gdb client sends `c` (connecting alone does not continue it) or F9 continues. RetroAchievements
 hardcore locks the GDB stub to `disabled` at load, so turning hardcore on while the stub is enabled reloads the game. A
 headless run (`--headless`) ends cleanly on SIGINT or SIGTERM even while gdb holds a halt; a second signal kills it. RetroAchievements and
 netplay work as usual: achievements are checked on the emulation thread after every frame, and link play's peer waits

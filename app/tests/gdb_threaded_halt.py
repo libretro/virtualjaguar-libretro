@@ -11,6 +11,10 @@ emulation thread on (#967 phase 3b).
   4. A second run, same arguments: the client sees the halt, and SIGTERM arrives while gdb still holds it.  The signal
      handler (headless only) sets the quit flag, the pump's abortHalt reads it, and the app exits 0 within 3 s with the
      "quit requested" line and neither of the 3 s warnings (a thread that did not stop, a call that was not answered).
+  5. Third run: the client sets a persistent breakpoint (Z0) in a hot 68000 loop, continues, holds the halt it raises, and
+     SIGTERM arrives.  The breakpoint stays armed, so a core that merely detached the app's host would hit it again at once
+     and park behind the open socket with nobody to release it: the quit must still end within 3 s (the pump answers the
+     quit with CONTINUE and keeps the host attached).
 
 usage: gdb_threaded_halt.py <virtualjaguar> <rom> [on|off [<ra fixture dir>]]
 The optional third argument is the --emu-thread mode (default on); "off" runs the same four steps inline (the headless loop
@@ -168,6 +172,10 @@ def fail(step, why):
     return 1
 
 
+# A hot 68000 loop of yarc.j64 (hit hundreds of times within the first frames): a breakpoint here fires again and again.
+HOT_PC = "8021c4"
+
+
 def halted_client(app, rom, mode, ra_fix=None):
     """Launch, connect, qSupported, `?` -> S05.  Returns (child, sock, rxbuf, None) or (child, None, None, failure text)."""
     port = free_port()
@@ -234,7 +242,7 @@ def run(app, rom, mode, ra_fix=None):
     # ---- 6: SIGTERM while gdb holds the halt -------------------------------------------------------------
     if sys.platform == "win32":
         print("PASS: gdb halt on the " + ("emulation thread" if mode == "on" else "UI thread (inline)") +
-              ", memory while halted, continue (step 6, SIGTERM mid-halt, skipped on "
+              ", memory while halted, continue (steps 6-7, SIGTERM mid-halt, skipped on "
               "Windows: SIGTERM there is a hard kill)")
         return 0
     child, sock, rxbuf, bad = halted_client(app, rom, mode)
@@ -261,8 +269,51 @@ def run(app, rom, mode, ra_fix=None):
             sock.close()
         child.finish()
 
+    # ---- 7: SIGTERM while gdb holds a halt raised by a PERSISTENT breakpoint -------------------------------
+    child, sock, rxbuf, bad = halted_client(app, rom, mode)
+    try:
+        if bad:
+            return fail("third run: connect and '?'", bad)
+        r = cmd(sock, rxbuf, f"Z0,{HOT_PC},2")
+        if r != "OK":
+            return fail("persistent breakpoint", f"Z0 answered {r!r}")
+        sock.sendall(pack("c"))
+        try:
+            stop = recv_packet(sock, rxbuf, 15.0)
+        except (TimeoutError, RuntimeError, OSError) as e:
+            return fail("persistent breakpoint", f"no stop reply after `c`: {e}\n" + child.text("err")[-600:])
+        while stop.startswith("O"):   # a console note in front of the stop
+            stop = recv_packet(sock, rxbuf, 15.0)
+        if not stop.startswith("T05"):
+            return fail("persistent breakpoint", f"stop reply {stop!r}, want T05")
+        pc = cmd(sock, rxbuf, "g")[136:144]
+        if int(pc, 16) != int(HOT_PC, 16):
+            return fail("persistent breakpoint", f"halted at ${pc}, want ${HOT_PC}")
+        time.sleep(0.3)
+        child.proc.send_signal(signal.SIGTERM)
+        t0 = time.monotonic()
+        try:
+            rc = child.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            return fail("SIGTERM behind a persistent breakpoint",
+                        "the app was still running 3 s after SIGTERM (the breakpoint re-halted the core with nobody to release it)\n" +
+                        child.text("err")[-400:])
+        for t in child.threads:
+            t.join(timeout=2)
+        if rc != 0:
+            return fail("SIGTERM behind a persistent breakpoint", f"exit code {rc} after {time.monotonic() - t0:.2f} s\n" + child.text("err")[-600:])
+        if "headless: quit requested, exiting cleanly" not in child.text("out"):
+            return fail("SIGTERM behind a persistent breakpoint", "stdout lacks 'headless: quit requested, exiting cleanly': " + repr(child.text("out")[-300:]))
+        noisy = stderr_problem(child, ("did not stop within 3 s", "did not answer within 3 s"))
+        if noisy:
+            return fail("SIGTERM behind a persistent breakpoint", noisy)
+    finally:
+        if sock:
+            sock.close()
+        child.finish()
+
     print("PASS: gdb halt on the " + ("emulation thread" if mode == "on" else "UI thread (inline)") +
-          ", memory while halted, continue, quit mid-halt")
+          ", memory while halted, continue, quit mid-halt, quit behind a persistent breakpoint")
     return 0
 
 

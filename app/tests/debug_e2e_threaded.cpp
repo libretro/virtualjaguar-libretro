@@ -8,7 +8,10 @@
 //   4 a save state that gives up when a halt begins                         5 detach-first before a content call
 //   6 hardcore from the UI while halted                                      7 a halt during a debugCall from the UI
 //   8 a posted lane detach inside a live halt                                9 stop() while halted, abortHalt alone
-// then, each on a fresh rig: a gdb_wait boot halt with no client (10: Detach releases it; 11: stop() joins within 500 ms).
+// then, each on a fresh rig: a gdb_wait boot halt with no client (10: Detach releases it; 11: stop() joins within 500 ms),
+// and 12: a gdb CLIENT holds a halt raised by a persistent breakpoint while the app quits (the quit epilogue's flush, unload
+// and stop() must all complete: a core that only dropped the app's host would re-hit the breakpoint and park behind the
+// open socket for good).
 //
 // usage: vj_debug_e2e_threaded <rom.j64>
 #include "core_host.h"
@@ -167,6 +170,72 @@ bool until(Rig& r, F cond) {
         sleepMs(2);
     }
 }
+
+// A minimal gdb-remote client (blocking loopback socket + a reader thread that drains what the stub sends, so the stub never
+// meets a full socket): send() frames "$payload#cs".  The stub's replies are not parsed here: the halts are observed
+// through the app's own mirror.
+struct GdbClient {
+#ifdef _WIN32
+    SOCKET fd = INVALID_SOCKET;
+#else
+    int fd = -1;
+#endif
+    std::thread reader;
+    bool open() const {
+#ifdef _WIN32
+        return fd != INVALID_SOCKET;
+#else
+        return fd >= 0;
+#endif
+    }
+    bool connectTo(const std::string& port) {
+        for (int i = 0; i < 250 && !open(); i++) {
+            fd = (decltype(fd))socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            a.sin_port = htons((unsigned short)std::stoi(port));
+            if (connect(fd, (sockaddr*)&a, sizeof a) == 0) break;
+            closeFd();
+            sleepMs(20);
+        }
+        if (!open()) return false;
+        reader = std::thread([this] {
+            char buf[4096];
+            while (recv(fd, buf, sizeof buf, 0) > 0) {}
+        });
+        return true;
+    }
+    void send(const std::string& payload) {
+        unsigned sum = 0;
+        for (unsigned char c : payload) sum += c;
+        char tail[8];
+        std::snprintf(tail, sizeof tail, "#%02x", sum & 0xFF);
+        const std::string pkt = "$" + payload + tail;
+        (void)::send(fd, pkt.data(), (int)pkt.size(), 0);
+    }
+    void closeFd() {
+        if (!open()) return;
+#ifdef _WIN32
+        closesocket(fd);
+        fd = INVALID_SOCKET;
+#else
+        ::close(fd);
+        fd = -1;
+#endif
+    }
+    void close() {
+        if (open()) {
+#ifdef _WIN32
+            shutdown(fd, SD_BOTH);
+#else
+            shutdown(fd, SHUT_RDWR);
+#endif
+        }
+        if (reader.joinable()) reader.join();
+        closeFd();
+    }
+};
 
 }  // namespace
 
@@ -411,6 +480,51 @@ int main(int argc, char** argv) {
         CHECK(q.emu.stop());
         CHECK(since(t11) < 0.5);
         CHECK(!q.dbg.core().attached());
+        q.unwire();
+        q.host.resetOptionToDefault("virtualjaguar_gdb_stub");
+        q.host.resetOptionToDefault("virtualjaguar_gdb_wait");
+        q.host.resetOptionToDefault("virtualjaguar_gdb_port");
+    }
+
+    // 12. A gdb CLIENT holds a halt raised by a PERSISTENT breakpoint (a hot loop: it fires again and again) while the app
+    // quits.  The quit answers the pump with CONTINUE and keeps the host attached; a core that only dropped the host would
+    // hit the armed breakpoint again at once and park behind the open socket, and the epilogue's flush, unload and stop()
+    // would all wait on it.  The sequence is runInteractive's: beginQuit (quitting + wake + bounded poll), then a bounded
+    // flush, the unload and the join.
+    {
+        Rig q;
+        q.host.setDirectories(t + "system/", t + "saves/");
+        const std::string port = freePort();
+        q.host.setOptionValue("virtualjaguar_gdb_stub", "enabled");
+        q.host.setOptionValue("virtualjaguar_gdb_wait", "enabled");
+        q.host.setOptionValue("virtualjaguar_gdb_port", port);
+        q.wire();
+        CHECK(q.emu.start(EmuThread::Mode::Threaded, q));
+        CHECK(q.loadAttached(rom, err));
+        CHECK(until(q, [&] { return q.dbg.halted(); }));   // the gdb_wait boot halt
+        GdbClient gc;
+        CHECK(gc.connectTo(port));
+        gc.send("qSupported:multiprocess+");
+        sleepMs(50);
+        gc.send("Z0,8021c4,2");
+        sleepMs(50);
+        gc.send("c");
+        CHECK(until(q, [&] { return q.dbg.halted() && q.dbg.haltedPc() == 0x8021C4u; }));
+        CHECK(q.dbg.haltByGdb());
+        sleepMs(200);
+        CHECK(q.dbg.halted());   // held: nobody continues
+        // beginQuit
+        const auto t12 = Clock::now();
+        q.quitting = true;
+        q.emu.debugPost([] {});
+        for (int i = 0; i < 100 && q.dbg.core().halt().halted; i++) sleepMs(2);
+        // the epilogue: each wait bounded
+        CHECK(q.emu.callFor(std::chrono::milliseconds(1500), [&] { q.host.flushSaveRam(true); }));
+        CHECK(q.dbg.core().attached());   // the host was never dropped out from under the parked core
+        CHECK(q.emu.callFor(std::chrono::milliseconds(3000), [&] { q.host.unloadContent(); }));
+        CHECK(q.emu.stop(std::chrono::milliseconds(1500)));
+        CHECK(since(t12) < 2.0);
+        gc.close();
         q.unwire();
         q.host.resetOptionToDefault("virtualjaguar_gdb_stub");
         q.host.resetOptionToDefault("virtualjaguar_gdb_wait");

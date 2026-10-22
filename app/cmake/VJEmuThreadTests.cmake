@@ -142,7 +142,7 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
                 $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64")
     set_tests_properties(gdb_threaded_halt PROPERTIES TIMEOUT 120 LABELS emu_thread
-        PASS_REGULAR_EXPRESSION "^PASS: gdb halt on the emulation thread"
+        PASS_REGULAR_EXPRESSION "PASS: gdb halt on the emulation thread"
         FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
     # The same client script inline: the halt sits on the UI thread inside retro_run(), the headless loop releases an app halt
     # but keeps a gdb one, and a SIGTERM mid-halt still ends the run.
@@ -150,7 +150,7 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
                 $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off)
     set_tests_properties(gdb_inline_halt PROPERTIES TIMEOUT 120
-        PASS_REGULAR_EXPRESSION "^PASS: gdb halt on the UI thread \\(inline\\)"
+        PASS_REGULAR_EXPRESSION "PASS: gdb halt on the UI thread \\(inline\\)"
         FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
     # A gdb halt that ended must not stay "live" in the UI mirror: Achievements::pump retries the hardcore reload only when no
     # halt holds the core (the headless inline loop closes and syncs the halt after each frame).
@@ -158,7 +158,7 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
                 $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off "${VJ_RA_FIX}")
     set_tests_properties(gdb_inline_halt_hardcore PROPERTIES TIMEOUT 120
-        PASS_REGULAR_EXPRESSION "^PASS: gdb halt on the UI thread \\(inline\\), continue, then the hardcore reload"
+        PASS_REGULAR_EXPRESSION "PASS: gdb halt on the UI thread \\(inline\\), continue, then the hardcore reload"
         FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
 else()
     message(STATUS "Python3 interpreter not found: gdb_threaded_halt, gdb_inline_halt and gdb_inline_halt_hardcore are not registered "

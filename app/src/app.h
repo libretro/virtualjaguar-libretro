@@ -202,7 +202,7 @@ public:
     // ---- the GDB stub (#967 phase 3b) --------------------------------------------------------------------------
     // Whenever virtualjaguar_gdb_stub is enabled the app keeps a silent debugger host attached on the emulation thread
     // (at the end of every load, and again after any frame it is missing -- a user Detach drops it), so a gdb halt is
-    // always seen: the halt bar shows it, calls give up, quitting detaches.  RetroAchievements hardcore locks the stub
+    // always seen: the halt bar shows it, calls give up, quitting resumes the core (the host stays attached).  RetroAchievements hardcore locks the stub
     // to "disabled" at the next load (syncHardcoreLock, UI thread); a hardcore flip with the stub open reloads the game.
     void attachGdbHostOnCore();      // emulation thread (inline: the UI thread between frames)
     void syncHardcoreLock();         // UI thread: gdbLockedByHardcore_ = ach.hardcoreNextGame()
@@ -229,7 +229,7 @@ public:
     bool quit = false;
     std::atomic<bool> gdbStubOn_{false};            // emulation thread at load: the core opened the GDB stub (enabled, not locked)
     std::atomic<bool> gdbLockedByHardcore_{false};  // wireHost's optionLock forces virtualjaguar_gdb_stub=disabled while set
-    std::atomic<bool> quitting_{false};   // what DebugCore::abortHalt reads (the pump detaches on its next iteration); `quit` stays the UI's flag
+    std::atomic<bool> quitting_{false};   // what DebugCore::abortHalt reads (the pump answers CONTINUE on its next iteration); `quit` stays the UI's flag
     bool fullscreen = false;
     bool menuPinned = true;
     bool fullscreenAutoHideMenu = false;   // ui.fullscreen_autohide_menu; preserves existing behavior by default
@@ -419,7 +419,7 @@ private:
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
     void haltWait();                  // emulation thread, inside retro_run() parked in the halt: serve the debug lane (<= kPumpWait), refill pending views
-    void beginQuit();                 // UI thread, idempotent: quitting_ = true; threaded: wake the pump and wait <= 200 ms for the detach; syncHalt
+    void beginQuit();                 // UI thread, idempotent: quitting_ = true; threaded: wake the pump and wait <= 200 ms for the halt to end; syncHalt
     bool quitRequested() const { return quit || g_signalQuit.load(); }   // the UI loop's test; SIGINT / SIGTERM (headless) set the flag too
     void fillDebugViews();            // emulation thread (inline: the UI thread): debug.fillViews(), after each frame
     void frameUi();

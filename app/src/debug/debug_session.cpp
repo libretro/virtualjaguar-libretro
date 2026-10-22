@@ -207,7 +207,7 @@ bool DebugSession::hasBreakpoint(int target, unsigned addr) const {
 bool DebugSession::addBreakpoint(int target, unsigned addr) {
     if (target < 0 || target >= VJ_DBG_NUM_TARGETS) return false;
     if (hasBreakpoint(target, addr)) return false;
-    if (!attach()) return false;   // refuses while the tools are off (no core / no game / hardcore / no halt)
+    if (!attach()) return false;   // refuses while the tools are off (no core / no game / hardcore); a halt is not needed
     bool set = false;
     callCore([this, target, addr, &set] { set = core_.breakSet(target, addr); });
     if (!set) return false;   // the core's table is full

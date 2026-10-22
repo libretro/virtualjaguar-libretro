@@ -72,6 +72,8 @@ public:
     // no thread could be created (the caller stays inline).
     bool start(Mode mode, Client& client);
     // Runs what is queued, ends the loop, joins.  False when the thread did not finish within `joinTimeout`.
+    // Precondition: no halt is holding the core -- the caller ends it first (App calls beginQuit(): quitting_ makes the
+    // pump answer CONTINUE).  A core parked in the debugger's halt never returns to the loop, so stop() would only time out.
     bool stop(std::chrono::milliseconds joinTimeout = std::chrono::milliseconds(3000));
 
     bool threaded() const {

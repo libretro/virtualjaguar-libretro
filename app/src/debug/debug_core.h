@@ -89,7 +89,7 @@ public:
     std::function<void()> notifyVerdict;                 // App: emu.debugPost([]{})
     std::function<void()> waitVerdict;                   // threaded: App::haltWait (serve the lane <= kPumpWait); inline: empty
     std::function<void()> runUiFrame;                    // inline only: App::haltedFrame
-    std::function<bool()> abortHalt;                     // polled each iteration; true = DETACH (the app is quitting)
+    std::function<bool()> abortHalt;                     // polled each iteration; true = CONTINUE, host kept attached (the app is quitting; see pump)
     // Emulation thread, on every ENTRY into a halt (a step's re-halt included).  Walked on copies, outside the mutex.
     std::vector<std::function<void(int target, unsigned pc, int reason)>> onHalt;
     std::vector<std::function<void()>> onResume;         // emulation thread, on CONTINUE / DETACH / frameEnded() (not STEP)
