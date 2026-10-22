@@ -235,6 +235,21 @@ class ConversionTests(unittest.TestCase):
             converter.Module(source(SIMPLE).replace("bigpemu_get_module_handle()", "bigpemu_jag_bar()"))
         self.assertEqual(caught.exception.call, "bigpemu_jag_bar")
 
+    def test_printf_side_effect_refused(self):
+        for statement in ('printf_notify("x %d", n++);', 'printf("%d", f());', 'printf("%d", n = 3);', 'printf_notify("x", bigpemu_jag_write8(0x1f0000, 1));'):
+            with self.assertRaisesRegex(converter.Unsupported, "side effect"):
+                self.convert("int n = 0; " + statement + SIMPLE, extra="int f(void) { return 1; }")
+        self.convert('int n = 4; printf("%d", n + 1);' + SIMPLE)
+
+    def test_call_attribute_scope(self):
+        for statement, call in (("bigpemu_jag_write8(1);", None), ("abs(a);", None), ("bigpemu_jag_read8(0x1f0000);", "bigpemu_jag_read8"),
+                                ("bigpemu_jag_foo();", "bigpemu_jag_foo")):
+            with self.assertRaises(converter.Unsupported) as caught:
+                self.convert(statement + SIMPLE)
+            self.assertEqual(caught.exception.call, call, statement)
+        with self.assertRaisesRegex(converter.Unsupported, "unsupported use of bigpemu_jag_write8"):
+            self.convert("bigpemu_jag_write8(1);" + SIMPLE)
+
     def test_api_map_covers_converter(self):
         calls = converter.load_api_map()
         self.assertEqual(list(calls), sorted(calls))

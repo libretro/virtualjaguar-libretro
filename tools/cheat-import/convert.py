@@ -8,6 +8,7 @@ import argparse
 import ast
 import hashlib
 import itertools
+import functools
 import json
 import re
 import sys
@@ -37,6 +38,15 @@ SPECIAL_CALLS = {
 INIT_CALLS = frozenset(n for n in SPECIAL_CALLS if n.startswith(("bigpemu_register_", "bigpemu_get_module", "bigpemu_set_module")))
 API_STATUSES = ("supported", "setting-omitted", "ignored", "unsupported")
 MAX_MESSAGES, MAX_MESSAGE_CHARS, NOTE_CHARS = 4, 200, 60
+
+
+@functools.lru_cache(maxsize=None)
+def gap_call(name):
+    """name if it is an API-style call the map lists as unsupported or lacks (a worklist item), else None."""
+    if name.startswith("bigpemu_") or name in ("printf", "printf_notify", "memcpy"):
+        row = load_api_map().get(name)
+        if row is None or row["status"] == "unsupported": return name
+    return None
 
 
 def load_api_map(path=None):
@@ -78,6 +88,12 @@ def type_info(node):
     if typ in ("int", "signed int", "bool"): return 32, False
     if typ in ("unsigned", "unsigned int"): return 32, True
     raise Unsupported("unsupported integer type " + typ)
+
+
+def walk(node):
+    yield node
+    for _, child in node.children():
+        yield from walk(child)
 
 
 def promote(value):
@@ -265,7 +281,12 @@ class Runtime:
         name = getattr(node.name, "name", "")
         args = node.args.exprs if node.args else []
         if name in ("printf_notify", "printf"):
-            # Output only: arguments are never evaluated (no memory effect).
+            # Output only: arguments are never evaluated (no memory effect), so they must have no side effects.
+            for arg in args:
+                for sub in walk(arg):
+                    if isinstance(sub, (C.Assignment, C.FuncCall)) or (
+                            isinstance(sub, C.UnaryOp) and sub.op in ("++", "--", "p++", "p--")):
+                        raise Unsupported("side effect in message arguments requires manual review")
             if name == "printf":
                 self.module.ignored_calls.add(name)
             else:
@@ -302,7 +323,9 @@ class Runtime:
                 raise Unsupported("cheat exceeds the core's 256-write limit")
             self.writes.append((address.n, value.n & ((1 << (8*width))-1), width))
             return Value(0)
-        raise Unsupported("unsupported call " + name + " (RAM-dependent operations are not constant cheats)", name or None)
+        if name in SPECIAL_CALLS:
+            raise Unsupported("unsupported use of " + name)
+        raise Unsupported("unsupported call " + name + " (RAM-dependent operations are not constant cheats)", gap_call(name))
 
     def stmt(self, node):
         if node is None: return
@@ -408,7 +431,7 @@ class Module:
             def visit_FuncCall(visitor, node):
                 name = getattr(node.name, "name", "")
                 if name not in INIT_CALLS:
-                    raise Unsupported("unsupported initialisation call " + name, name or None)
+                    raise Unsupported("unsupported initialisation call " + name, gap_call(name))
                 if name.startswith("bigpemu_register_") and id(node) not in registered:
                     raise Unsupported("registration must assign a handle")
                 visitor.generic_visit(node)
