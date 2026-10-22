@@ -1135,7 +1135,7 @@
 17370 expect library-window=0
 
 # Hardcore's run-on menu (the game keeps running, its banner says so): F8 must not pause the game behind it.  The pause-decay countdown can
-# end while the menu is open, so the gate allows a pause by then -- F8 is still refused ("Close the menu to resume", as under a held pause).
+# end while the menu is open, so the gate allows a pause by then -- F8 is still refused (the menu has the controller; a menu-held pause says "Close the menu to resume").
 17410 hardcore-pause deny
 17410 key tap F4
 17450 expect menu-open=1
@@ -1145,7 +1145,7 @@
 17490 key tap F8
 17530 expect paused=0
 17530 expect menu-open=1
-17530 expect toast=Close the menu to resume
+17530 expect toast=The menu has the controller
 17530 pad tap b
 17570 expect menu-open=0
 17570 expect menu-owns-input=0
