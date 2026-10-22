@@ -301,6 +301,7 @@ public:
     void setTvAuto(bool fullscreenTrigger, bool on);   // ui.tv_auto_fullscreen (true) / ui.tv_auto_controller (false)
     bool tvAutoPadPress(const SDL_Event& e);     // the Auto controller trigger: true = this press turned TV mode on and is consumed
     void tvFullscreenEdge();                     // tells TvMode `fullscreen` when it differs from tvNoteFsSeen_ (edges only)
+    bool tvSeenOn_ = false;                      // tvMode.active() as tvInputFrame last saw it (the on edge closes the desktop library window)
     bool tvNoteFsSeen_ = false;                  // the fullscreen state TvMode was last told
     void setFullscreen(bool fs);
     void applyVsync();

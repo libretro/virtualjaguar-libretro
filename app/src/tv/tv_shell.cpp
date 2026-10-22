@@ -386,11 +386,11 @@ void Shell::enter(Page p, Row::Kind focusKind) {
         rows_.push_back({Row::Yes, "Yes"});
         rows_.push_back({Row::No, "No"});   // focus starts on the safe answer (enter() is given Row::No)
         break;
-    case Page::ConfirmLaunch:   // No first: the safe answer is the one the menu opens on, Down is Yes
+    case Page::ConfirmLaunch:   // as Reset and Close: Yes, No, the focus on No (every confirm is answered the same way)
         title_ = "Close " + host_.gameTitle() + " and start " + pending_.game.title + "?";
         rows_.clear();
-        rows_.push_back({Row::No, "No"});
         rows_.push_back({Row::Yes, "Yes"});
+        rows_.push_back({Row::No, "No"});
         break;
     }
     focus_ = LinearFocus();
@@ -477,7 +477,7 @@ void Shell::accept() {
             if (p.hasState) host_.launchState(p.game, p.state);
             else host_.launch(p.game);
             launched();
-            declineLaunch();
+            if (open_) declineLaunch();   // (a host that closed the menu on the way has nothing to come back to)
         } else if (page_ == Page::ConfirmReset) {
             host_.reset();
             closeMenu();

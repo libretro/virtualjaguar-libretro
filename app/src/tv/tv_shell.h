@@ -68,6 +68,7 @@ public:
     // A screen wants to start `g` (with `state` loaded when given; null = fresh).  No game running: it starts at once (host.launch /
     // launchState, then launched()).  A game running (the screen is the menu's slot): the menu asks first -- Page::ConfirmLaunch,
     // "Close <running> and start <g>?", focus on No.  Yes starts it (the app closes the menu on its way); No and Back return to the slot.
+    // Rows Yes, No with the focus on No, as the Reset and Close confirms.
     void requestLaunch(const GameRef& g, const StateRef* state);
     bool ownsInput() const;          // §3.1: inputOwner() == TvUi: the menu is open, or TV is active with no game running
     bool handleEvent(const SDL_Event& e, uint64_t ms);   // nav input while ownsInput(); true = consumed

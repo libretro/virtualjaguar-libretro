@@ -2219,7 +2219,7 @@ int App::runInteractive(const CliArgs& a) {
     ach.images.createTexture = &VideoOut::createTextureRGBA;   // RetroAchievements avatar / icons / badges
     ach.images.destroyTexture = &VideoOut::destroyTexture;
     // With the home-screen library the boot screen already is the library; the floating window is for in-game use.
-    library.start(paths, cfg, !host.isLoaded() && !homeLibrary);
+    library.start(paths, cfg, !host.isLoaded() && !homeLibrary && !tvMode.active());   // (TV mode's Library is the TV screen, never this window)
     if (a.showWindow == "library") library.show = true;
 
     // dev: drive the TV menu from a script (a screenshot of it).  A script that cannot start ends the run through the normal teardown.

@@ -1127,3 +1127,9 @@
 17250 expect menu-open=0
 17250 command library
 17290 expect library-window=0
+# The desktop library window does not stay open when TV mode comes on (any trigger): its Library is the TV screen now.
+17290 command library
+17330 expect library-window=1
+17330 key tap ctrl+shift+T
+17370 expect tv=1
+17370 expect library-window=0

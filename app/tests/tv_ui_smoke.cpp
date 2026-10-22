@@ -4035,7 +4035,7 @@ static void ingameLibraryLaunchAsks() {
     back(host, shell);                                   // Back is No too
     CHECK(shell.menuScreenId() == "library" && host.launches == 0);
     accept(host, shell);
-    down(host, shell);                                   // Yes
+    up(host, shell);                                     // Yes (as Reset and Close: Yes above No)
     CHECK(std::string(focusedLabel(shell)) == "Yes");
     const int armed = host.guardArmed;
     accept(host, shell);
@@ -4051,7 +4051,7 @@ static void ingameLibraryResumeStateAsks() {
     libraryMenuSetup(host, shell);
     tapButton(host, shell, SDL_GAMEPAD_BUTTON_WEST);     // X (Alt): the first game's auto-save
     CHECK(shell.menuPage() == Shell::Page::ConfirmLaunch && host.launchedState.first.empty() && host.loaded);
-    down(host, shell);
+    up(host, shell);
     accept(host, shell);
     CHECK(host.launchedState.first == host.all[0].key && host.launchedState.second == -1 && !host.loaded);
     // A tile with no state: X does nothing.
