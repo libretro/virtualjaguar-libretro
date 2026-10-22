@@ -38,11 +38,12 @@ void DebugCore::setIface(const vj_debug_iface* i) {
     attached_ = false;
     {
         std::lock_guard<std::mutex> l(haltMu_);
-        if (halt_.halted) {
+        if (halt_.halted || stepping_.load()) {
             closeHaltLocked();
             halt_.serial++;
             serial_ = halt_.serial;
         }
+        stepping_ = false;
         verdict_ = 0;
     }
     iface_ = i;
@@ -100,6 +101,7 @@ int DebugCore::pump(int target, unsigned pc) {
             halt_.serial++;
             serial_ = halt_.serial;
             halted_ = true;
+            stepping_ = false;   // the step (if that is what this is) landed
             entered = true;
         }
         serial = halt_.serial;
@@ -124,6 +126,7 @@ int DebugCore::pump(int target, unsigned pc) {
         std::lock_guard<std::mutex> l(haltMu_);
         closeHaltLocked();
         verdict_ = 0;
+        stepping_ = v == VJ_DBG_RESUME_STEP;
         if (v == VJ_DBG_RESUME_DETACH) attached_ = false;   // the core drops its side once this returns
         if (v != VJ_DBG_RESUME_STEP) {
             halt_.serial++;
@@ -139,10 +142,11 @@ int DebugCore::pump(int target, unsigned pc) {
 }
 
 void DebugCore::frameEnded() {
-    if (!halted_.load()) return;
+    if (!halted_.load() && !stepping_.load()) return;
     {
         std::lock_guard<std::mutex> l(haltMu_);
         closeHaltLocked();
+        stepping_ = false;
         halt_.serial++;
         serial_ = halt_.serial;
         verdict_ = 0;

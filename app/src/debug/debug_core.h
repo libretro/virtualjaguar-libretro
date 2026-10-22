@@ -97,7 +97,10 @@ public:
     // Emulation thread, right after every retro_run().  If the core left GDBHalt() without one of our verdicts (gdb
     // continued, the socket dropped, the timeout fired) the halt is still open here: closes it, bumps the serial,
     // drops a verdict written for it and fires onResume.  `attached` is untouched (a foreign continue is not a
-    // detach).  A no-op when not halted.
+    // detach).  The same for a STEP in flight: pump() returned STEP (no serial bump, the bar stays up) and the frame
+    // ended before the core re-halted (the stepped instruction ended it, or the target had stopped); the mirror would
+    // otherwise stay "halted" and, inline, stepEmulation() (gated on halted()) would never run the frame that re-halts.
+    // A no-op when neither.
     void frameEnded();
 
 private:
@@ -109,6 +112,7 @@ private:
     HaltState halt_;                                     // under haltMu_
     std::atomic<uint64_t> serial_{0};                    // mirrors halt_.serial
     std::atomic<bool> halted_{false};                    // mirrors halt_.halted (frameEnded's fast path)
+    std::atomic<bool> stepping_{false};                  // pump() returned STEP and the core has not re-halted yet
     std::atomic<uint64_t> verdict_{0};                   // (forSerial << 2) | v; 0 = none
 
     std::atomic<const vj_debug_iface*> iface_{nullptr};

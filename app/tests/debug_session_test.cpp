@@ -147,7 +147,7 @@ static void testHaltResume() {
     CHECK(v == VJ_DBG_RESUME_STEP && m.haltedStepTarget == VJ_DBG_TARGET_M68K);
     CHECK(halts == 2 && resumes == 1);   // halted again (onHalt), no onResume for a step
     s.syncHalt();
-    CHECK(s.halted());   // the STEP return keeps the serial: the bar stays up until the re-halt (or the next resume)
+    CHECK(s.halted());   // the STEP return keeps the serial: the bar stays up until the re-halt (or frameEnded(), see testStepWithoutRehaltClosesAtFrameEnd)
 
     // The reason comes from the core.
     s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
@@ -931,6 +931,42 @@ static void testAttachWhileDetachPending() {
     CHECK(s.attach() && s.attached() && m.attached() && m.attachCalls == 3);   // detach ran, then this attach
 }
 
+// A STEP the core did not answer with a re-halt before the frame ended (the stepped instruction ended it, or the target
+// had stopped) must not leave the mirror halted: inline, stepEmulation() is gated on halted(), so the frame that would
+// re-halt never ran.  frameEnded() closes a step in flight like a foreign resume; a step that did re-halt is not closed twice.
+static void testStepWithoutRehaltClosesAtFrameEnd() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    int resumes = 0, resumeUi = 0;
+    s.core().onResume.push_back([&] { resumes++; });
+    s.onResumeUi.push_back([&] { resumeUi++; });
+    s.core().waitVerdict = [&] { s.syncHalt(); s.step(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    s.syncHalt();
+    CHECK(s.halted() && resumes == 0);          // the bar stays up while the step is in flight
+    const uint64_t s1 = s.core().haltSerial();
+    s.core().frameEnded();                      // retro_run() returned without a re-halt
+    CHECK(!s.core().halt().halted && resumes == 1 && s.core().haltSerial() == s1 + 1);
+    s.syncHalt();
+    CHECK(!s.halted() && resumeUi == 1);        // the mirror lets the frame loop run again
+    s.core().frameEnded();
+    CHECK(resumes == 1 && s.core().haltSerial() == s1 + 1);   // once
+    // A step that re-halts in the same frame: the re-halt ends the step in flight; the frame end closes that halt once.
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    s.core().waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP, 1) == VJ_DBG_RESUME_NONE);
+    s.core().frameEnded();
+    CHECK(resumes == 2);
+    s.core().frameEnded();
+    CHECK(resumes == 2);
+    // A core swap forgets a step in flight too.
+    s.core().waitVerdict = [&] { s.syncHalt(); s.step(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4004, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    MockDebugIface m2;
+    s.core().setIface(m2.iface());
+    s.core().frameEnded();
+    CHECK(resumes == 2);                        // setIface() already forgot it (no onResume: the old core is gone)
+}
+
 int main() {
     testAvailability();
     testAttachAndBreakpoints();
@@ -952,6 +988,7 @@ int main() {
     testStaleVerdictDropped();
     testHardcoreGoesThroughTheLane();
     testAttachWhileDetachPending();
+    testStepWithoutRehaltClosesAtFrameEnd();
     testPokePolicy();
     testRefreshCadence();
     testTools();
