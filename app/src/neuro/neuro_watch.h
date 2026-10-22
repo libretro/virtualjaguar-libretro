@@ -24,11 +24,15 @@ public:
     // Keeps one request alive for [base, base + len) (Memory, or Dram when len > kMaxWatchSpan) and refreshes bytes().
     // want = false (Neuro off / not allowed / no content / no watches) releases the request.  A changed (kind, base,
     // len) releases the old id and sets a fresh one, so the old range's buffer can never be read as the new one.  The
-    // buffer is read at most every kReadInterval of `now` (at once while bytes() is empty) and adopted only when it
-    // is ok, current (read() fails across a content switch and before the first fill) and answers exactly this
-    // request; anything else leaves bytes() empty, which the state text shows as "?".
+    // buffer is read at most every kReadInterval of `now` (the first read of a request, or of a new epoch, is at once;
+    // a read whose buffer is then rejected waits too) and adopted only when it is ok, current (read() fails across a
+    // content switch and before the first fill) and answers exactly this request; anything else leaves bytes() empty,
+    // which the state text shows as "?".
     void update(DebugViews& v, bool want, uint32_t base, unsigned len, double now);
     void release(DebugViews& v);   // neuroShutdown; also what want = false does
+    // Drops bytes() when a content switch made them the previous game's.  update does this too; the caller lends
+    // bytes() to the state text BEFORE update runs, so it asks first.
+    void dropIfStale(const DebugViews& v);
 
     // What the state text reads: bytes() starts at address base() (0 for a Dram request).  Mutable so the caller can
     // lend the vector to GameState without a copy.
@@ -44,7 +48,7 @@ private:
     std::vector<uint8_t> bytes_;
     uint32_t base_ = 0;
     uint64_t epoch_ = 0;          // the epoch of the buffer bytes_ came from
-    double at_ = -1e9;            // when the buffer was last read
+    double at_ = -1e9;            // when the buffer was last read (a copy made); -1e9 = not yet for this key and epoch
 };
 
 }  // namespace neuro

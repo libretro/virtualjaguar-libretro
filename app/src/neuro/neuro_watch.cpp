@@ -8,12 +8,25 @@
 namespace vj {
 namespace neuro {
 
+namespace {
+constexpr double kNever = -1e9;   // WatchFeed::at_ before any read
+}
+
 void WatchFeed::release(DebugViews& v) {
     if (id_ != DebugViews::kNoId) v.clear(id_);
     id_ = DebugViews::kNoId;
     key_ = 0;
     bytes_.clear();
     base_ = 0;
+    at_ = kNever;
+}
+
+void WatchFeed::dropIfStale(const DebugViews& v) {
+    // A content switch makes the cached bytes the previous game's: gone at once, not at the next read.
+    if (!bytes_.empty() && v.epoch() != epoch_) {
+        bytes_.clear();
+        at_ = kNever;   // the new epoch's first read is not held back by the old one's
+    }
 }
 
 void WatchFeed::update(DebugViews& v, bool want, uint32_t base, unsigned len, double now) {
@@ -34,9 +47,8 @@ void WatchFeed::update(DebugViews& v, bool want, uint32_t base, unsigned len, do
         id_ = v.set(DebugViews::kNoId, req_);
         base_ = dram ? 0 : base;
     }
-    // A content switch makes the cached bytes the previous game's: gone at once, not at the next read.
-    if (!bytes_.empty() && v.epoch() != epoch_) bytes_.clear();
-    if (!bytes_.empty() && now - at_ < kReadInterval) return;
+    dropIfStale(v);
+    if (now - at_ < kReadInterval) return;   // the last copy was too recent (adopted or not)
     ViewBuffer vb;
     if (!v.read(id_, vb)) {   // never filled, or filled in an older epoch
         bytes_.clear();

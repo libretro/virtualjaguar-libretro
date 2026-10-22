@@ -123,6 +123,7 @@ void neuroTick(App& app) {
     app.neuroCfg.hardcore = app.ach.hardcoreActive();
     app.neuro.configure(app.neuroCfg);
     app.neuro.absorb(app.inputSnap.agentProgress());   // before tick(): an action accepted inside it sees a trimmed queue
+    app.neuroWatch.dropIfStale(app.debug.views());      // before the lend: a content switch's bytes are not the new game's
     neuro::GameState g = gameState(app);
     g.watchBase = app.neuroWatch.base();
     g.watchBytes = std::move(app.neuroWatch.bytes());   // lent for the tick, not copied (a Dram request is 2 MiB)
@@ -142,7 +143,7 @@ void neuroShutdown(App& app) {
 void neuroHeadlessReport(App& app) {   // --neuro --headless: what the run saw, for the tests
     app.neuro.absorb(app.inputSnap.agentProgress());
     std::fprintf(stderr, "[neuro] headless: %llu frames of input played\n", (unsigned long long)app.neuro.framesPlayed());
-    neuroWatches(app, app.now());   // read what the copier has by now, whatever the 4 Hz cadence last saw
+    neuroWatches(app, app.now() + neuro::WatchFeed::kReadInterval);   // a read now, whatever the 4 Hz cadence last saw
     neuro::GameState g = gameState(app);
     g.watchBase = app.neuroWatch.base();
     g.watchBytes = app.neuroWatch.bytes();

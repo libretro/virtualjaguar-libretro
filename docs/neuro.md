@@ -33,7 +33,8 @@ through the input snapshot; the core's input poll plays it one step per emulated
 three emulated frames at any display rate and under fast-forward, never three UI frames. Game profile values (`watch`)
 are copied from RAM by the emulation thread after each frame (about 10 times a second) and the state text reads that
 copy four times a second, so a value can be a third of a second old; a profile whose watches lie more than 64 KiB apart
-makes the app copy the whole 2 MB of RAM at that rate while Neuro is connected. Menus, a mouse on Player 1, hardcore and
+makes the emulation thread copy the whole 2 MiB of RAM about 10 times a second while Neuro is on (enabled, not
+hardcore, content loaded and the profile has watches), connected or not. Menus, a mouse on Player 1, hardcore and
 a dropped connection let go of every button within one UI frame (with the emulation thread on, the release reaches the
 core with the next publish, which under fast-forward can be a few emulated frames later).
 

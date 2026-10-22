@@ -543,9 +543,6 @@ static void testLinkProfileSwitch(Link& l, ActionSet& a, std::vector<Json>& sent
     CHECK(!l.connected() && !l.forcePending());
 }
 
-// The Agent against a link that is "connected" by hand (no socket): Player 1's buttons that cannot reach the game
-// (the in-game menu is open, P1 is a mouse) are refused with the reason and never queued, and what was queued is
-// dropped, so the server is not told "success" for input that would be thrown away.
 // ---------------------------------------------------------------------------------------------------------------
 // Watches read from the bytes of one DebugViews request (#967 phase 3c): watchValue with a base, Agent::watchRange,
 // stateText over GameState::watchBytes.
@@ -715,6 +712,16 @@ static void testWatchFeed() {
         v.fill(&iface, 2);
         f.update(v, true, 0x1000, 8, 2.3);
         CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        // dropIfStale: the caller (neuroTick) lends bytes() before update runs, so the check stands alone.
+        v.bumpEpoch();
+        CHECK(!f.bytes().empty());   // nothing looked yet
+        f.dropIfStale(v);
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 3);           // the new epoch is read at once: dropping reset the clock
+        f.update(v, true, 0x1000, 8, 2.31);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        f.dropIfStale(v);            // current bytes stay
+        CHECK(!f.bytes().empty());
     }
     {   // 4: the buffer is read at most every 0.25 s
         DebugViews v;
@@ -744,7 +751,11 @@ static void testWatchFeed() {
         FakeCore::fail = false;
         v.fill(&iface, 2);
         f.update(v, true, 0x1000, 8, 0.4);
-        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));   // a good fill is adopted again at once (the buffer was empty)
+        CHECK(f.bytes().empty());   // the rejected read set the clock: a copy is not made every UI frame
+        f.update(v, true, 0x1000, 8, 0.54);
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 0.55);   // 0.25 s after the read that was rejected
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
         // Another request behind the feed's back (the same id): other address, then another kind.
         ViewRequest other;
         other.kind = ViewRequest::Kind::Memory;
@@ -782,7 +793,8 @@ static void testWatchFeed() {
         CHECK(v.count() == 1);
         v.fill(&iface, 2);
         f.update(v, true, 0x100, 0x1EFF01, 1.3);
-        CHECK(f.bytes().size() == DebugSession::kDramSize && f.base() == 0 && f.bytes()[0x1F0000] == (uint8_t)(0x1F0000 ^ 0x5A));
+        CHECK(f.bytes().size() == DebugSession::kDramSize && f.base() == 0 &&
+              f.bytes()[0x1F0123] == (uint8_t)(0x1F0123 ^ 0x5A));   // a non-zero low byte: an all-salt buffer fails
         const DebugViews::Id dramId = f.id();
         f.update(v, true, 0x200, 0x1EFE01, 1.4);   // another wide range: still the same Dram request
         CHECK(f.id() == dramId && v.count() == 1 && !f.bytes().empty());
@@ -798,6 +810,9 @@ static void testWatchFeed() {
     }
 }
 
+// The Agent against a link that is "connected" by hand (no socket): Player 1's buttons that cannot reach the game
+// (the in-game menu is open, P1 is a mouse) are refused with the reason and never queued, and what was queued is
+// dropped, so the server is not told "success" for input that would be thrown away.
 static void testAgentGating() {
     Agent agent;
     Replica rep;
@@ -981,6 +996,18 @@ static void testAgentProgram() {
         CHECK(got == "BBBBBBUU");
         CHECK(a.framesPlayed() == 8);
         a.configure(AgentSettings());
+    }
+    {   // 6: progress from before a release_all (an older lineage) does not set pressedNow() again
+        agent.configure(s);
+        agent.tick(4.0, g);
+        agent.link().onConnected();
+        agent.link().onMessage(hold);
+        CHECK(rep.poll(agent).test(C_RIGHT));
+        const AgentProgress stale = rep.snap.agentProgress();
+        CHECK(stale.pressed.test(C_RIGHT));
+        agent.link().onMessage(release);   // bumps the lineage
+        agent.absorb(stale);
+        CHECK(!agent.pressedNow().any());
     }
     agent.configure(AgentSettings());
 }

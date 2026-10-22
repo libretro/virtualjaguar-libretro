@@ -2655,31 +2655,23 @@ int App::runHeadless(const CliArgs& a) {
         double hlCpu0 = Perf::cpuSeconds();
         if (threaded()) {
             retroTicks_.store(0);
-            if (ach.mockMode()) {
-                // RetroAchievements steps and pokes are frame-numbered: the same order as the inline loop below, one
-                // frame at a time (the steps, then the frame -- rc_client_do_frame runs after it, on the emulation
-                // thread -- then the UI's pump).
+            if (ach.mockMode() || !neuroCliUrl.empty()) {
+                // RetroAchievements steps and pokes are frame-numbered and Neuro plays in real time: one frame at a
+                // time, in the inline loop's order (the steps, Neuro's tick and wait, then the frame --
+                // rc_client_do_frame runs after it, on the emulation thread, and the replica runs in the core's poll
+                // -- then the UI's pump).
                 for (unsigned i = 0; i < a.frames; i++) {
                     ach.headlessFrame(i);
+#ifdef VJ_HAVE_NEURO
+                    if (!neuroCliUrl.empty()) headlessNeuroFrame(hlT0, i);   // neuroTick (+ syncDebug), then waits for i's time
+#endif
                     emu.advance(1);
                     ach.pump();
                     if ((i & 15) == 15) emu.call([this] { audio.clear(); });
                     host.pinSnapshot();
                     for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
                 }
-            }
-#ifdef VJ_HAVE_NEURO
-            else if (!neuroCliUrl.empty()) {
-                for (unsigned i = 0; i < a.frames; i++) {   // one frame at a time, in real time, like the inline --neuro loop
-                    headlessNeuroFrame(hlT0, i);            // neuroTick (+ syncDebug), then waits for frame i's time
-                    emu.advance(1);                         // the replica runs in the core's poll on the emulation thread
-                    if ((i & 15) == 15) emu.call([this] { audio.clear(); });
-                    host.pinSnapshot();
-                    for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
-                }
-            }
-#endif
-            else {
+            } else {
                 for (unsigned i = 0; i < a.frames;) {
                     const unsigned n = std::min(16u, a.frames - i);   // the dummy device drains in real time: clear every 16
                     emu.advance(n);
