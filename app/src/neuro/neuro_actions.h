@@ -135,8 +135,10 @@ const std::vector<std::string>& builtinProfileSources();   // the JSON of the pr
 // The first profile (in order) that matches the content; nullptr = none.
 const Profile* findProfile(const std::vector<Profile>& all, const std::string& title, uint32_t crc);
 
-// Formats a watch from RAM (`ram` = main RAM, `size` bytes); "?" when out of range.
-std::string watchValue(const Watch& w, const uint8_t* ram, size_t size);
+// Formats a watch from `bytes` (`size` of them, the first at address `base`); "?" when `bytes` is null or the watch
+// is not wholly inside them.  The 3-argument form is base 0: `ram` = main RAM.
+std::string watchValue(const Watch& w, const uint8_t* bytes, size_t size, uint32_t base);
+inline std::string watchValue(const Watch& w, const uint8_t* ram, size_t size) { return watchValue(w, ram, size, 0); }
 
 // ---- the action set of the current game ----
 struct ActionResult {

@@ -13,16 +13,12 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 
 #include "app.h"
 #include "discord_presence.h"
 #include "theme.h"
 #include "ui_util.h"
-
-extern "C" {
-void* retro_get_memory_data(unsigned);
-size_t retro_get_memory_size(unsigned);
-}
 
 namespace vj {
 
@@ -92,9 +88,16 @@ neuro::GameState gameState(App& app) {
     const lib::Entry* entry = libraryEntry(app, path);
     g.title = titleOf(app, path, entry);
     if (entry) g.crc = entry->file.crcStripped ? entry->file.crcStripped : entry->file.crcWhole;
-    g.ram = (const uint8_t*)retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-    g.ramSize = g.ram ? retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM) : 0;
-    return g;
+    return g;   // the watches' bytes are the feed's (neuroWatches), added by the caller
+}
+
+// The profile's RAM watches as one DebugViews request: the emulation thread's copier fills it after each frame, the
+// UI reads it back 4 times a second (neuro_watch.h).  Neuro never calls the core's peek itself.
+void neuroWatches(App& app, double t) {
+    uint32_t base = 0;
+    unsigned len = 0;
+    const bool want = app.neuro.allowed() && app.host.isLoaded() && app.neuro.watchRange(base, len);
+    app.neuroWatch.update(app.debug.views(), want, base, len, t);
 }
 
 }  // namespace
@@ -123,19 +126,33 @@ void neuroTick(App& app) {
     app.neuroCfg.hardcore = app.ach.hardcoreActive();
     app.neuro.configure(app.neuroCfg);
     app.neuro.absorb(app.inputSnap.agentProgress());   // before tick(): an action accepted inside it sees a trimmed queue
-    app.neuro.tick(t, gameState(app));
+    neuro::GameState g = gameState(app);
+    g.watchBase = app.neuroWatch.base();
+    g.watchBytes = std::move(app.neuroWatch.bytes());   // lent for the tick, not copied (a Dram request is 2 MiB)
+    app.neuro.tick(t, g);
+    app.neuroWatch.bytes() = std::move(g.watchBytes);
     app.neuro.publishTo(app.inputSnap);                // unconditionally: tick()'s early return must not hide a clear
+    neuroWatches(app, t);
 }
 
 void neuroShutdown(App& app) {
     app.neuro.notify = nullptr;   // closing, not a drop worth a toast
     app.neuro.configure(neuro::AgentSettings());
     app.neuro.publishTo(app.inputSnap);   // the replica lets go too (the snapshot outlives the Agent's link)
+    app.neuroWatch.release(app.debug.views());
 }
 
 void neuroHeadlessReport(App& app) {   // --neuro --headless: what the run saw, for the tests
     app.neuro.absorb(app.inputSnap.agentProgress());
     std::fprintf(stderr, "[neuro] headless: %llu frames of input played\n", (unsigned long long)app.neuro.framesPlayed());
+    neuroWatches(app, app.now());   // read what the copier has by now, whatever the 4 Hz cadence last saw
+    neuro::GameState g = gameState(app);
+    g.watchBase = app.neuroWatch.base();
+    g.watchBytes = app.neuroWatch.bytes();
+    std::string st = app.neuro.stateText(g);   // the builder neuroTick's force uses
+    for (char& c : st)
+        if (c == '\n') c = '|';
+    std::fprintf(stderr, "[neuro] state: %s\n", st.c_str());
 }
 
 void drawNeuroMarker(App& app, ImDrawList* bg, float areaX, float areaY, float areaW) {

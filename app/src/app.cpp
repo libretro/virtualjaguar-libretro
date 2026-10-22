@@ -153,6 +153,7 @@ double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)p
 // Headless with --neuro: the client runs as in the UI loop, and frame `i` waits for its time at 60 fps.
 void App::headlessNeuroFrame(uint64_t t0, unsigned i) {
     neuroTick(*this);
+    syncDebug();   // the 10 Hz refresh serial the watches' copier waits for, as the windowed loop moves it
     const double due = (double)t0 / (double)perfFreq_ + i / 60.0;
     const double wait = due - now();
     if (wait > 0) SDL_Delay((Uint32)(wait * 1000.0));
@@ -2687,6 +2688,9 @@ int App::runHeadless(const CliArgs& a) {
                 uint64_t hr0 = SDL_GetPerformanceCounter();
                 host.runFrame();
                 hlRun += SDL_GetPerformanceCounter() - hr0;
+#ifdef VJ_HAVE_NEURO
+                if (!neuroCliUrl.empty()) fillDebugViews();   // Neuro's watches: the copier, on this thread when inline
+#endif
                 ach.afterFrame();
                 ach.pump();
                 if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time

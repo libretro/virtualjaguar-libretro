@@ -375,10 +375,11 @@ const Profile* findProfile(const std::vector<Profile>& all, const std::string& t
     return nullptr;
 }
 
-std::string watchValue(const Watch& w, const uint8_t* ram, size_t size) {
-    if (!ram || (size_t)w.address + w.size > size) return "?";
+std::string watchValue(const Watch& w, const uint8_t* bytes, size_t size, uint32_t base) {
+    if (!bytes || w.address < base || (uint64_t)(w.address - base) + w.size > size) return "?";
+    const uint8_t* at = bytes + (w.address - base);
     uint32_t v = 0;
-    for (unsigned i = 0; i < w.size; i++) v = (v << 8) | ram[w.address + i];
+    for (unsigned i = 0; i < w.size; i++) v = (v << 8) | at[i];
     char buf[32];
     if (w.format == "hex") {
         std::snprintf(buf, sizeof buf, "0x%0*X", (int)(w.size * 2), (unsigned)v);

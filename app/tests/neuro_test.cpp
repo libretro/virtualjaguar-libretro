@@ -16,6 +16,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -25,7 +27,10 @@
 #include "neuro_agent.h"
 #include "neuro_json.h"
 #include "neuro_link.h"
+#include "neuro_watch.h"
 #include "neuro_ws.h"
+#include "debug_session.h"   // DebugSession::kDramSize
+#include "debug_views.h"
 
 #ifndef _WIN32
 #include <arpa/inet.h>
@@ -541,6 +546,258 @@ static void testLinkProfileSwitch(Link& l, ActionSet& a, std::vector<Json>& sent
 // The Agent against a link that is "connected" by hand (no socket): Player 1's buttons that cannot reach the game
 // (the in-game menu is open, P1 is a mouse) are refused with the reason and never queued, and what was queued is
 // dropped, so the server is not told "success" for input that would be thrown away.
+// ---------------------------------------------------------------------------------------------------------------
+// Watches read from the bytes of one DebugViews request (#967 phase 3c): watchValue with a base, Agent::watchRange,
+// stateText over GameState::watchBytes.
+static void writeFile(const std::filesystem::path& p, const std::string& text) {
+    std::ofstream f(p, std::ios::binary);
+    f << text;
+}
+
+static void testWatches() {
+    uint8_t b[4] = {0x12, 0x34, 0x00, 0x07};   // bytes of a request whose first address is 0x1F0000
+    Watch w;
+    w.address = 0x1F0000;
+    w.size = 2;
+    w.format = "bcd";
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "1234");
+    w.address = 0x1F0003;
+    w.size = 1;
+    w.format = "dec";
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "7");
+    w.address = 0x1F0004;
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "?");   // past the end
+    w.address = 0x1F0002;
+    w.size = 4;
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "?");   // starts inside, ends past the end
+    w.address = 0x1EFFFF;
+    w.size = 1;
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "?");   // before the base
+    CHECK(watchValue(w, nullptr, 0, 0) == "?");
+    w.address = 0x1F0000;
+    w.size = 2;
+    w.format = "hex";
+    CHECK(watchValue(w, b, sizeof b, 0x1F0000) == "0x1234");
+    CHECK(watchValue(w, b, sizeof b) == "?");   // the 3-argument form is base 0: 0x1F0000 is far past 4 bytes
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "vj-neuro-watch";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    // (A distinct title: the built-in Tempest 2000 profile comes first and would be the one picked.)
+    writeFile(dir / "t.json", "{\"game_name\":\"T\",\"titles\":[\"Watch Test\"],\"watch\":[{\"name\":\"score\",\"address\":\"0x100\","
+                              "\"size\":2,\"format\":\"bcd\"},{\"name\":\"lives\",\"address\":256,\"size\":1}]}");
+    writeFile(dir / "u.json", "{\"game_name\":\"U\",\"titles\":[\"Wide\"],\"watch\":[{\"name\":\"score\",\"address\":\"0x100\","
+                              "\"size\":2,\"format\":\"bcd\"},{\"name\":\"far\",\"address\":\"0x1F0000\",\"size\":1}]}");
+    writeFile(dir / "v.json", "{\"game_name\":\"V\",\"titles\":[\"Bare\"]}");
+    Agent agent;
+    for (const std::string& problem : agent.loadProfiles(dir.string())) {
+        std::printf("FAIL profile: %s\n", problem.c_str());
+        g_fail++;
+    }
+    uint32_t base = 77;
+    unsigned len = 77;
+    CHECK(!agent.watchRange(base, len));   // no profile yet
+    AgentSettings s;
+    s.enabled = true;
+    s.url = "ws://127.0.0.1:9";   // nothing listens; the worker just fails to connect
+    agent.configure(s);
+    GameState g;
+    g.loaded = true;
+    g.title = "Watch Test";
+    agent.tick(0.0, g);
+    CHECK(agent.watchRange(base, len) && base == 0x100 && len == 2);
+    g.watchBase = 0x100;
+    g.watchBytes = {0x12, 0x34};
+    std::string st = agent.stateText(g);
+    CHECK(st.find("- score: 1234") != std::string::npos);
+    CHECK(st.find("- lives: 18") != std::string::npos);
+    g.watchBytes.clear();
+    st = agent.stateText(g);
+    CHECK(st.find("- score: ?") != std::string::npos && st.find("- lives: ?") != std::string::npos);
+
+    g.title = "Wide";   // the second watch is 1 MiB away: the span is wider than one Memory request
+    agent.tick(0.1, g);
+    CHECK(agent.watchRange(base, len) && base == 0x100 && len == 0x1EFF01 && len > kMaxWatchSpan);
+    CHECK(kMaxWatchSpan == DebugViews::kMaxMemoryBytes);
+
+    g.title = "Bare";   // a profile without watches
+    agent.tick(0.2, g);
+    CHECK(!agent.watchRange(base, len));
+    g.loaded = false;
+    agent.tick(0.3, g);
+    CHECK(!agent.watchRange(base, len));
+    fs::remove_all(dir, ec);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// WatchFeed against a real DebugViews and a fake core whose byte at address a is (a ^ salt) & 0xFF.  Every guard of
+// the feed has a case here; the clock is passed in, so nothing waits.
+struct FakeCore {
+    static inline unsigned salt = 0;
+    static inline bool fail = false;
+    static int peek(unsigned addr, unsigned char* d, unsigned n) {
+        if (fail) return -1;
+        for (unsigned i = 0; i < n; i++) d[i] = (unsigned char)((addr + i) ^ salt);
+        return (int)n;
+    }
+    static unsigned frame() { return 3; }
+    static vj_debug_iface make() {
+        vj_debug_iface i{};
+        i.size = sizeof i;
+        i.version = VJ_DEBUG_IFACE_VERSION;
+        i.peek = &FakeCore::peek;
+        i.frame_number = &FakeCore::frame;
+        return i;
+    }
+};
+
+static std::vector<uint8_t> pattern(unsigned base, unsigned len, unsigned salt) {
+    std::vector<uint8_t> v(len);
+    for (unsigned i = 0; i < len; i++) v[i] = (uint8_t)((base + i) ^ salt);
+    return v;
+}
+
+static void testWatchFeed() {
+    const vj_debug_iface iface = FakeCore::make();
+    FakeCore::fail = false;
+    FakeCore::salt = 0x5A;
+
+    {   // 1: the first update sets a request; nothing to show before a fill; then the fake's bytes
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        CHECK(v.count() == 1 && f.id() != DebugViews::kNoId);
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 1.0);   // still not filled: "?"
+        CHECK(f.bytes().empty());
+        CHECK(v.fill(&iface, 1) == 1);
+        f.update(v, true, 0x1000, 8, 1.3);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A) && f.base() == 0x1000);
+        CHECK(v.count() == 1);   // an unchanged range does not set again
+    }
+    {   // 2: a range change never adopts the old range's bytes
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        const DebugViews::Id idA = f.id();
+        f.update(v, true, 0x2000, 16, 0.31);   // B, not filled yet
+        CHECK(f.id() != idA && v.count() == 1);
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x2000, 16, 5.0);    // the clock moves on, still no fill
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 2);
+        f.update(v, true, 0x2000, 16, 5.3);
+        CHECK(f.bytes() == pattern(0x2000, 16, 0x5A) && f.base() == 0x2000);
+        // The same start with a different length is another range too.
+        f.update(v, true, 0x2000, 24, 5.6);
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 3);
+        f.update(v, true, 0x2000, 24, 5.9);
+        CHECK(f.bytes() == pattern(0x2000, 24, 0x5A));
+    }
+    {   // 3: a content switch (epoch bump) turns the state text back to "?"
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(!f.bytes().empty());
+        v.bumpEpoch();
+        f.update(v, true, 0x1000, 8, 0.31);   // inside the read interval: the previous game's bytes still go at once
+        CHECK(f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 2.0);   // later: unreadable until the copier fills in the new epoch
+        CHECK(f.bytes().empty());
+        v.fill(&iface, 2);
+        f.update(v, true, 0x1000, 8, 2.3);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+    }
+    {   // 4: the buffer is read at most every 0.25 s
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.5);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        FakeCore::salt = 0x33;
+        v.fill(&iface, 2);   // a refill with different bytes
+        f.update(v, true, 0x1000, 8, 0.6);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));   // 0.1 s later: not read
+        f.update(v, true, 0x1000, 8, 0.74);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));
+        f.update(v, true, 0x1000, 8, 0.75);   // exactly 0.25 s
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x33));
+        FakeCore::salt = 0x5A;
+    }
+    {   // 5: a buffer that is not ok, or that answers some other request, is not adopted
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        FakeCore::fail = true;
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(f.bytes().empty());   // peek failed: ok = false
+        FakeCore::fail = false;
+        v.fill(&iface, 2);
+        f.update(v, true, 0x1000, 8, 0.4);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A));   // a good fill is adopted again at once (the buffer was empty)
+        // Another request behind the feed's back (the same id): other address, then another kind.
+        ViewRequest other;
+        other.kind = ViewRequest::Kind::Memory;
+        other.addr = 0x9000;
+        other.len = 8;
+        v.set(f.id(), other);
+        v.fill(&iface, 3);
+        f.update(v, true, 0x1000, 8, 1.0);
+        CHECK(f.bytes().empty());   // its request is not the one asked for
+        other.addr = 0x1000;
+        other.len = 4;   // right address, wrong length
+        v.set(f.id(), other);
+        v.fill(&iface, 4);
+        f.update(v, true, 0x1000, 8, 1.5);
+        CHECK(f.bytes().empty());
+        other.kind = ViewRequest::Kind::Dram;
+        v.set(f.id(), other);
+        v.fill(&iface, 5);
+        f.update(v, true, 0x1000, 8, 2.0);
+        CHECK(f.bytes().empty());   // 2 MiB of a Dram request, not 8 bytes of a Memory one
+    }
+    {   // 6: want = false releases; a wide range is a Dram request
+        DebugViews v;
+        WatchFeed f;
+        f.update(v, true, 0x1000, 8, 0.0);
+        v.fill(&iface, 1);
+        f.update(v, true, 0x1000, 8, 0.3);
+        CHECK(!f.bytes().empty() && v.count() == 1);
+        f.update(v, false, 0, 0, 0.4);
+        CHECK(v.count() == 0 && f.bytes().empty() && f.id() == DebugViews::kNoId);
+        f.update(v, false, 0, 0, 0.5);   // already released: nothing happens
+        CHECK(v.count() == 0);
+
+        f.update(v, true, 0x100, 0x1EFF01, 1.0);   // wider than kMaxWatchSpan
+        CHECK(v.count() == 1);
+        v.fill(&iface, 2);
+        f.update(v, true, 0x100, 0x1EFF01, 1.3);
+        CHECK(f.bytes().size() == DebugSession::kDramSize && f.base() == 0 && f.bytes()[0x1F0000] == (uint8_t)(0x1F0000 ^ 0x5A));
+        const DebugViews::Id dramId = f.id();
+        f.update(v, true, 0x200, 0x1EFE01, 1.4);   // another wide range: still the same Dram request
+        CHECK(f.id() == dramId && v.count() == 1 && !f.bytes().empty());
+        f.update(v, true, 0x1000, 8, 1.5);         // back to a narrow one: a fresh Memory request
+        CHECK(f.id() != dramId && v.count() == 1 && f.bytes().empty());
+        v.fill(&iface, 3);
+        f.update(v, true, 0x1000, 8, 2.0);
+        CHECK(f.bytes() == pattern(0x1000, 8, 0x5A) && f.base() == 0x1000);
+        f.release(v);   // neuroShutdown
+        CHECK(v.count() == 0 && f.bytes().empty());
+        f.release(v);
+        CHECK(v.count() == 0);
+    }
+}
+
 static void testAgentGating() {
     Agent agent;
     Replica rep;
@@ -1209,6 +1466,8 @@ int main(int argc, char** argv) {
     testActions();
     testProfiles();
     testLink();
+    testWatches();
+    testWatchFeed();
     testAgentGating();
     testAgentProgram();
     testStopIsPrompt();

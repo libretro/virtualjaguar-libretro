@@ -43,8 +43,10 @@ struct GameState {
     bool paused = false;
     std::string title;   // display title ("Tempest 2000")
     uint32_t crc = 0;    // the content's CRC-32 when the library knows it, else 0
-    const uint8_t* ram = nullptr;   // main RAM (2 MB), for the profile's watches
-    size_t ramSize = 0;
+    // The bytes of one DebugViews request covering the profile's watches (Agent::watchRange), starting at watchBase;
+    // empty = not known (no profile, not filled yet, a content switch): the state text then says "?".
+    std::vector<uint8_t> watchBytes;
+    uint32_t watchBase = 0;
     // Why Player 1's buttons are not reaching the game right now ("the in-game menu is open"), or null.  Points at a
     // string with static lifetime; compared by content.
     const char* inputBlock = nullptr;
@@ -85,6 +87,10 @@ public:
     Link& link() { return link_; }
     const Profile* profile() const { return actions_.profile(); }
     ControlSet pressedNow() const { return allowed() ? pressed_ : ControlSet(); }   // what the last emulated frame pressed
+    // The range of main RAM the current profile's watches cover (base = the lowest address, len = bytes up to the end of
+    // the highest); false without a profile or without watches.  The app asks the emulation thread for these bytes
+    // (neuro_watch.h) and hands them back in GameState::watchBytes.
+    bool watchRange(uint32_t& base, unsigned& len) const;
     // The state text sent with each force (also shown in Settings > Neuro).
     std::string stateText(const GameState& g) const;
     std::function<void(const std::string&)> log;

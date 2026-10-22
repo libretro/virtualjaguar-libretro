@@ -9,8 +9,10 @@
 #   neuro_core_e2e  the REAL core: the replica (AgentPlayer) presses exactly N polls per step, inline, on the emulation
 #                   thread in lock-step, and free-running at 600 Hz; a disabled program presses nothing.
 #   neuro_app_inline  the real app, headless, --neuro against a fake server: a 30-frame press is played and reported.
-add_executable(vj_neuro_test tests/neuro_test.cpp src/remap.cpp src/config.cpp src/paths.cpp ${VJ_NEURO_SOURCES})
-target_include_directories(vj_neuro_test PRIVATE src src/neuro $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
+add_executable(vj_neuro_test tests/neuro_test.cpp src/remap.cpp src/config.cpp src/paths.cpp src/debug/debug_views.cpp
+               ${VJ_NEURO_SOURCES})
+target_include_directories(vj_neuro_test PRIVATE src src/neuro src/debug "${VJ_ROOT}/src/debug"
+                           $<TARGET_PROPERTY:vj_core,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(vj_neuro_test PRIVATE ${VJ_SDL3_TARGET} Threads::Threads)
 if(WIN32)
     target_link_libraries(vj_neuro_test PRIVATE ws2_32)
@@ -56,3 +58,14 @@ add_dependencies(vj_neuro_test virtualjaguar)
 add_test(NAME neuro_app_inline COMMAND vj_neuro_test app $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off)
 set_tests_properties(neuro_app_inline PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE SKIP_RETURN_CODE 77
     FAIL_REGULAR_EXPRESSION "FAIL |ThreadSanitizer|owner violation")
+
+# #967 phase 3c: Neuro's RAM watches reach the state text through a DebugViews request.  The two watches are 1 MiB apart,
+# so this run takes the Kind::Dram path (span > 64 KiB), which also pins that no watch is dropped.  The profile
+# directory is written at configure time, like the pro_controller_option_* data dirs.
+set(_nw "${CMAKE_CURRENT_BINARY_DIR}/neuro-watch-data")
+file(MAKE_DIRECTORY "${_nw}/neuro")
+file(WRITE "${_nw}/neuro/yarc.json" "{\"game_name\":\"Yarc\",\"titles\":[\"yarc\"],\"watch\":[{\"name\":\"cheat byte\",\"address\":\"0x1F0000\",\"size\":1,\"format\":\"hex\"},{\"name\":\"far byte\",\"address\":\"0x100000\",\"size\":1}]}")
+add_test(NAME neuro_watch_inline COMMAND virtualjaguar --headless --emu-thread off --frames 90 --data-dir "${_nw}"
+    --cheat 001F0000:AB --neuro ws://127.0.0.1:9 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(neuro_watch_inline PROPERTIES TIMEOUT 120 PASS_REGULAR_EXPRESSION "\\[neuro\\] state: .*cheat byte: 0xAB"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")

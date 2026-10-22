@@ -27,6 +27,7 @@
 #include "discord_presence.h"
 #ifdef VJ_HAVE_NEURO
 #include "neuro/neuro_agent.h"
+#include "neuro/neuro_watch.h"
 #endif
 #include "emu_thread.h"
 #include "frame_exchange.h"
@@ -189,6 +190,7 @@ public:
     std::string neuroCliUrl;         // --neuro URL: on for this run, whatever the config says
     neuro::AgentSettings neuroCfg;   // the config as of neuroCfgAt (re-read 4 times a second, not every UI frame)
     neuro::AgentPlayer agentPlayer_;   // the replica of Neuro's queue: emulation thread only (the input poll)
+    neuro::WatchFeed neuroWatch;     // the profile's RAM watches as one DebugViews request (UI thread)
     double neuroCfgAt = -1e9;
 #endif
 

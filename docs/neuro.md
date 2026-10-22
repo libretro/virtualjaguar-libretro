@@ -103,7 +103,8 @@ a built-in profile. Problems are printed to the log at start-up as `[neuro] prof
 - `titles` match the start of the game's title, ignoring case; `crc32` matches the library's CRC of
   the file (the one without a copier header when it has one). A profile needs one or the other.
 - `watch` reads big-endian values from main RAM (0x000000-0x1FFFFF) into the state text: `size` 1, 2
-  or 4, `format` `dec`, `hex` or `bcd`. Tools > Cheat scanner finds the addresses.
+  or 4, `format` `dec`, `hex` or `bcd`. Tools > Cheat scanner finds the addresses. The values are read four
+  times a second, so one can be up to a quarter of a second old.
 - `actions` are button macros. Names are `lowercase_with_underscores` and need a description. With
   `max_times` above 1 the action takes `{"times": N}` and repeats the steps N times, with `gap` empty
   frames between repeats.
