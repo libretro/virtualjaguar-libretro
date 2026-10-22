@@ -928,6 +928,8 @@ static void testAttachWhileDetachPending() {
     s.coreCall = [&](std::function<void()> fn) { for (auto& f : lane) f(); lane.clear(); fn(); };
     s.detach();
     CHECK(!s.attached());                      // the mirror says so at once
+    s.syncHalt();                              // a UI frame lands between the detach and the attach: the queued detach keeps the mirror false
+    CHECK(!s.attached());
     CHECK(s.attach() && s.attached() && m.attached() && m.attachCalls == 3);   // detach ran, then this attach
 }
 
@@ -967,6 +969,61 @@ static void testStepWithoutRehaltClosesAtFrameEnd() {
     CHECK(resumes == 2);                        // setIface() already forgot it (no onResume: the old core is gone)
 }
 
+// Detach with a halt that is not the core's live halt: a STEP in flight (the serial is unchanged but the core is
+// running) or a mirror that lags a foreign resume.  A DETACH verdict would be dropped by the next halt's serial and leave
+// detachPending_ set, so the detach goes through the lane; and hardcore must really end up detached.
+static void testDetachWithoutLiveHalt() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    std::vector<std::function<void()>> lane;
+    s.corePost = [&](std::function<void()> fn) { lane.push_back(std::move(fn)); };
+    s.core().waitVerdict = [&] { s.syncHalt(); s.step(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    s.syncHalt();
+    CHECK(s.halted() && !s.core().halt().halted);   // STEP in flight: the mirror is up, the core is running
+    s.detach();
+    CHECK(lane.size() == 1 && s.core().pendingVerdict() == VJ_DBG_RESUME_NONE, "a lane post, no dead verdict");
+    CHECK(!s.attached());
+    for (auto& f : lane) f();
+    lane.clear();
+    CHECK(!s.core().attached());
+    // The step's re-halt arrives: the new halt is not blocked by a stale detachPending_.
+    s.core().waitVerdict = [] {};
+    m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP, 1);
+    s.syncHalt();
+    CHECK(s.halted());
+    s.core().frameEnded();
+
+    // Hardcore in the same window: the core ends detached.
+    DebugSession h; MockDebugIface m2; h.setIface(m2.iface()); h.setContentLoaded(true); CHECK(h.attach());
+    h.corePost = [&](std::function<void()> fn) { lane.push_back(std::move(fn)); };
+    h.core().waitVerdict = [&] { h.syncHalt(); h.step(); };
+    CHECK(m2.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    h.syncHalt();
+    h.setHardcore(true);
+    for (auto& f : lane) f();
+    lane.clear();
+    CHECK(!h.core().attached() && !m2.attached() && !h.attached());
+
+    // A stale mirror: gdb continued (the core's serial moved), the UI has not synced.  detach() posts, F9 does nothing.
+    DebugSession t; MockDebugIface m3; t.setIface(m3.iface()); t.setContentLoaded(true); CHECK(t.attach());
+    t.corePost = [&](std::function<void()> fn) { lane.push_back(std::move(fn)); };
+    t.core().waitVerdict = [] {};
+    CHECK(m3.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    t.syncHalt();
+    CHECK(t.halted());
+    t.core().frameEnded();
+    t.resume();
+    t.step();
+    CHECK(t.core().pendingVerdict() == VJ_DBG_RESUME_NONE);
+    t.detach();
+    CHECK(lane.size() == 1);
+    for (auto& f : lane) f();
+    lane.clear();
+    CHECK(!t.core().attached() && !m3.attached());
+    t.syncHalt();
+    CHECK(!t.halted() && t.attach() == true);   // and nothing is left pending
+}
+
 int main() {
     testAvailability();
     testAttachAndBreakpoints();
@@ -989,6 +1046,7 @@ int main() {
     testHardcoreGoesThroughTheLane();
     testAttachWhileDetachPending();
     testStepWithoutRehaltClosesAtFrameEnd();
+    testDetachWithoutLiveHalt();
     testPokePolicy();
     testRefreshCadence();
     testTools();

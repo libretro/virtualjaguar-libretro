@@ -102,8 +102,6 @@ std::string DebugSession::disabledReason() const {
     return std::string();
 }
 
-// ---- attach / halt -------------------------------------------------------------------------------------------
-
 void DebugSession::syncHalt() {
     // A detach we posted but the emulation thread has not run yet keeps the mirror false (attach() orders itself behind it).
     if (detachQueued_.load() == 0) attachedMirror_ = core_.attached();
@@ -148,18 +146,35 @@ bool DebugSession::attach() {
     return ok;
 }
 
-void DebugSession::detach() {
-    if (halted() && core_.haltSerial() == mirror_.serial) {
-        detachAndResume();   // the core is parked inside the pump: the DETACH verdict lets it go (never iface->detach from here)
-        return;
-    }
-    // Running, or the mirrored halt already ended: a lane post, unconditionally (it may follow a queued attach).
+// The mirrored halt is still the core's live halt: same serial AND the core is parked in the pump.  After a STEP verdict
+// the serial is unchanged but the core is running (halted == false) until it re-halts, so a verdict written then would
+// be dropped by the re-halt's new serial.
+bool DebugSession::haltLive() const {
+    if (!mirror_.halted) return false;
+    const HaltState h = core_.halt();
+    return h.halted && h.serial == mirror_.serial;
+}
+
+void DebugSession::postDetach() {
     detachQueued_++;
     postCore([this] {
         core_.detach();
         detachQueued_--;
+        // Run by the halt pump's lane service while a halt is live (a detach that raced a re-halt): the host is gone, so
+        // let the pump go too instead of leaving the core parked behind a detached debugger.
+        const HaltState h = core_.halt();
+        if (h.halted) core_.offerVerdict(VJ_DBG_RESUME_DETACH, h.serial);
     });
     attachedMirror_ = false;
+}
+
+void DebugSession::detach() {
+    if (haltLive()) {
+        detachAndResume();   // the core is parked inside the pump: the DETACH verdict lets it go (never iface->detach from here)
+        return;
+    }
+    // Running, a STEP in flight, or the mirrored halt already ended: a lane post, unconditionally (it may follow a queued attach).
+    postDetach();
 }
 
 void DebugSession::breakNow(int target) {
@@ -171,17 +186,21 @@ void DebugSession::breakNow(int target) {
 }
 
 void DebugSession::resume() {
-    if (halted() && !detachPending_ && core_.haltSerial() == haltSerial()) core_.offerVerdict(VJ_DBG_RESUME_CONTINUE, haltSerial());
+    if (!detachPending_ && haltLive()) core_.offerVerdict(VJ_DBG_RESUME_CONTINUE, haltSerial());
 }
 
 void DebugSession::step() {
-    if (!halted() || detachPending_ || core_.haltSerial() != haltSerial()) return;
+    if (detachPending_ || !haltLive()) return;
     userHaltPending_ = true;
     core_.offerVerdict(VJ_DBG_RESUME_STEP, haltSerial());
 }
 
 void DebugSession::detachAndResume() {
     if (!halted()) return;
+    if (!haltLive()) {   // a STEP in flight or a stale mirror: a verdict would be dropped; detach through the lane
+        postDetach();
+        return;
+    }
     detachPending_ = true;
     core_.offerVerdict(VJ_DBG_RESUME_DETACH, haltSerial());
 }

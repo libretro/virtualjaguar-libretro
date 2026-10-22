@@ -578,7 +578,7 @@ void App::wireHost() {
     });
     debug.core().onResume.push_back([this] {
         audio.clear();
-        audio.setPaused(emu.paused());
+        audio.setPaused(emu.paused() && !headless_);   // (headless: emu is paused for advance()-only frames; no audio to hold)
     });
     debug.onHaltUi.push_back([this](int target, unsigned pc, int reason) {   // the UI thread, from syncHalt()
         if (reason == VJ_DBG_STOP_STEP) return;
@@ -1025,8 +1025,8 @@ double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0
 // nothing here may re-enter the core -- CoreHost refuses state loads, resets, loads and option changes
 // while inFrame().
 void App::haltedFrame() {
+    debug.syncHalt();   // first: the F9 / F10 below must meet the halt the core is parked in, not the one before it
     if (!imguiUp_ || !window_ || emu.onEmuThread()) {   // inline only: threaded, DebugCore::waitVerdict replaces this frame
-        debug.syncHalt();
         debug.detachAndResume();   // no UI to release the core with: never leave it parked
         return;
     }
