@@ -17,6 +17,11 @@
 #   core_host_thread      CoreHost with an owner thread and the REAL core: snapshot reads, queued writes, refused calls
 #   emu_thread_e2e        the REAL core inline vs threaded: identical frames and joypad matrix for one input script
 #   debug_views_threaded  the Tools windows' data paths with the REAL core on the emulation thread
+#   debug_e2e_threaded    the debugger halt on the emulation thread, REAL core, rig wired as App: break / step / continue / detach /
+#                         hardcore / quit from a UI thread that never blocks over 50 ms; the 3 s join while halted
+#   gdb_threaded_halt     a gdb client finds the threaded headless app halted at boot, reads memory, continues; SIGTERM mid-halt exits 0
+#   gdb_inline_halt       the same four steps with the emulation thread off (the headless loop syncs the halt after each frame)
+#   gdb_inline_halt_hardcore  inline: the client continues a boot halt, then a hardcore sign-in reloads the game (needs the halt mirror synced)
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
 #   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
@@ -116,6 +121,45 @@ add_test(NAME debug_views_threaded
     COMMAND vj_debug_views_threaded "${VJ_ROMS}/yarc.j64" "${VJ_ROMS}/jagniccc.j64")
 set_tests_properties(debug_views_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
     FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
+
+# The debugger halt with the REAL core on the emulation thread (#967 phase 3b): the rig is wired the way App wires it.
+add_executable(vj_debug_e2e_threaded tests/debug_e2e_threaded.cpp ${VJ_DEBUG_SESSION_SRCS} src/core_host.cpp
+               src/emu_thread.cpp src/paths.cpp)
+target_include_directories(vj_debug_e2e_threaded PRIVATE src src/debug)
+target_link_libraries(vj_debug_e2e_threaded PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_debug_e2e_threaded PRIVATE ws2_32 iphlpapi)
+endif()
+vj_emu_thread_warnings(vj_debug_e2e_threaded)
+add_test(NAME debug_e2e_threaded COMMAND vj_debug_e2e_threaded "${VJ_ROMS}/yarc.j64")
+set_tests_properties(debug_e2e_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL |owner violation")
+
+# 3b: a gdb client finds the app halted at boot (gdb_wait) with the emulation thread on; the app's silent host saw it,
+# memory is served while halted, continue finishes the run, and a SIGTERM while gdb still holds the halt exits 0 within 3 s.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME gdb_threaded_halt
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_threaded_halt PROPERTIES TIMEOUT 120 LABELS emu_thread
+        PASS_REGULAR_EXPRESSION "^PASS: gdb halt on the emulation thread"
+        FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
+    # The same client script inline: the halt sits on the UI thread inside retro_run(), the headless loop releases an app halt
+    # but keeps a gdb one, and a SIGTERM mid-halt still ends the run.
+    add_test(NAME gdb_inline_halt
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off)
+    set_tests_properties(gdb_inline_halt PROPERTIES TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "^PASS: gdb halt on the UI thread \\(inline\\)"
+        FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
+    # A gdb halt that ended must not stay "live" in the UI mirror: Achievements::pump retries the hardcore reload only when no
+    # halt holds the core (the headless inline loop closes and syncs the halt after each frame).
+    add_test(NAME gdb_inline_halt_hardcore
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off "${VJ_RA_FIX}")
+    set_tests_properties(gdb_inline_halt_hardcore PROPERTIES TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "^PASS: gdb halt on the UI thread \\(inline\\), continue, then the hardcore reload"
+        FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
+endif()
 
 add_test(NAME emu_thread_flag_rejects COMMAND virtualjaguar --headless --emu-thread maybe "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_flag_rejects PROPERTIES LABELS emu_thread PASS_REGULAR_EXPRESSION "--emu-thread wants on or off"

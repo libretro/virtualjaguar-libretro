@@ -17,6 +17,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,7 +32,12 @@
 
 namespace vj {
 
+std::atomic<bool> g_signalQuit{false};
+
 namespace {
+
+// SIGINT / SIGTERM in a headless run (installed by App::initSdl): only an atomic store, which is async-signal-safe.
+void onSignalQuit(int) { g_signalQuit.store(true); }
 
 bool isInputEvent(Uint32 type) {
     switch (type) {
@@ -358,6 +364,12 @@ bool App::initSdl(const CliArgs& a) {
         return false;
     }
     sdlUp_ = true;
+    // Headless: a signal is a quit request.  Installed AFTER SDL_Init, so these replace whatever SDL did with the signals
+    // (SDL turns them into SDL_EVENT_QUIT, which nothing pumps in a headless run).  Windowed runs keep SDL's own.
+    if (headless_) {
+        std::signal(SIGINT, onSignalQuit);
+        std::signal(SIGTERM, onSignalQuit);
+    }
     if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID), UI thread QoS (macOS)
     perfFreq_ = SDL_GetPerformanceFrequency();
     openDialogEvent_ = SDL_EVENT_USER;
@@ -574,9 +586,9 @@ void App::wireHost() {
     debug.corePost = [this](std::function<void()> f) { emu.debugPost(std::move(f)); };
     // The halt lives in DebugCore (phase 3b).  Inline the core is parked in retro_run() on the UI thread, so the pump runs
     // one nested UI frame per iteration; the UI thread's mirror of the halt (DebugSession::syncHalt, from syncDebug)
-    // fires the UI-side hooks below.  abortHalt reads quitting_ only: closing the window while halted lets the core go.
+    // fires the UI-side hooks below.  abortHalt reads quitting_ (and the headless signal flag): closing the window while halted lets the core go.
     debug.core().runUiFrame = [this] { haltedFrame(); };   // the core is parked in retro_run(): UI only
-    debug.core().abortHalt = [this] { return quitting_.load(); };
+    debug.core().abortHalt = [this] { return quitting_.load() || g_signalQuit.load(); };
     debug.core().notifyVerdict = [this] { emu.debugPost([] {}); };   // wakes the pump's lane wait (a no-op inline, where it runs now)
     debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
     debug.core().onHalt.push_back([this](int target, unsigned pc, int reason) {   // the emulation thread (inline: the UI thread)
@@ -1063,7 +1075,17 @@ void App::runHeadlessFrames(unsigned n) {
     for (unsigned i = 0; i < n; i++) {
         audio.update();
         host.runFrame();
+        headlessAfterFrame();
     }
+}
+
+// Headless inline, after each host.runFrame(): the halt a gdb client held inside that frame (gdb_wait, a breakpoint, Break)
+// ended with its `continue`.  No syncDebug() runs here, so close it on the core's side and refresh the mirror, or
+// haltedNow() stays true after the client let go (it blocks the hardcore reload retry).  Same pair as the threaded
+// emuRunOneFrame / syncDebug.
+void App::headlessAfterFrame() {
+    debug.core().frameEnded();
+    debug.syncHalt();
 }
 
 double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0, host.fps()); }
@@ -2927,6 +2949,7 @@ int App::runHeadless(const CliArgs& a) {
 #ifdef VJ_HAVE_NEURO
                 if (!neuroCliUrl.empty()) fillDebugViews();   // Neuro's watches: the copier, on this thread when inline
 #endif
+                headlessAfterFrame();
                 ach.afterFrame();
                 ach.pump();
                 if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time

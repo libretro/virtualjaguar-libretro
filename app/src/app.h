@@ -145,6 +145,10 @@ struct SlotThumb {
     SDL_Time mtime = 0;
 };
 
+// Set by the SIGINT / SIGTERM handlers (App::initSdl, headless runs only): the headless loops and the halt pump read it
+// through App::quitRequested() / abortHalt, so a signal ends a run that a gdb client still holds halted.  Defined in app.cpp.
+extern std::atomic<bool> g_signalQuit;
+
 class App {
 public:
     App();
@@ -416,7 +420,7 @@ private:
     void syncDebug();                 // content loaded / hardcore -> the debug session
     void haltWait();                  // emulation thread, inside retro_run() parked in the halt: serve the debug lane (<= kPumpWait), refill pending views
     void beginQuit();                 // UI thread, idempotent: quitting_ = true; threaded: wake the pump and wait <= 200 ms for the detach; syncHalt
-    bool quitRequested() const { return quit; }   // the UI loop's test (B5 adds the signal flag)
+    bool quitRequested() const { return quit || g_signalQuit.load(); }   // the UI loop's test; SIGINT / SIGTERM (headless) set the flag too
     void fillDebugViews();            // emulation thread (inline: the UI thread): debug.fillViews(), after each frame
     void frameUi();
     void updateTitle();
@@ -500,6 +504,7 @@ private:
     void syncEmuFlags();                       // UI thread: pause / fast-forward / mute / audio target -> emulation side
     const Frame& shownFrame();                 // the newest finished frame (FrameExchange when threaded)
     void runHeadlessFrames(unsigned n);
+    void headlessAfterFrame();                 // headless inline, after host.runFrame(): frameEnded() + syncHalt() (a gdb halt ended inside the frame)
     // Threaded: n frames through EmuThread::advance, polled in 10 ms slices while a halt holds the core.  False only when
     // a quit was requested while a halt held it.
     bool headlessAdvance(unsigned n);

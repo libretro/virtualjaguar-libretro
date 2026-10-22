@@ -539,6 +539,7 @@ include(VJCheatData)
 # ---------------------------------------------------------------------------
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
+    find_package(Python3 COMPONENTS Interpreter)   # gdb_threaded_halt (VJEmuThreadTests.cmake) drives a gdb client from Python
     include(VJSmokeTests)
     include(VJAchTests)
     include(VJCheatTests)
