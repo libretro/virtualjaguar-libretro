@@ -68,13 +68,16 @@ if initial_tag_sha != args.sha:
     raise RuntimeError('Published release does not identify the requested candidate SHA')
 report['release_id'] = release['id']
 windows = platform.system() == 'Windows'
-frontends = [shutil.which('retroarch.exe' if windows else 'retroarch')]
+frontends = []
 if windows:
-    frontends += [r'C:\RetroArch-Win64\retroarch.exe', r'C:\RetroArch\retroarch.exe',
+    # Invoke the GUI executable directly: Chocolatey shims may return before
+    # their child finishes, losing process status and the qualification log.
+    frontends += [r'C:\tools\RetroArch-Win64\retroarch.exe',
+                  r'C:\RetroArch-Win64\retroarch.exe', r'C:\RetroArch\retroarch.exe',
                   r'C:\Program Files\RetroArch\retroarch.exe']
     frontends += [str(p) for p in Path(r'C:\ProgramData\chocolatey\lib\retroarch').rglob('retroarch.exe')]
 else:
-    frontends += ['/Applications/RetroArch.app/Contents/MacOS/RetroArch']
+    frontends += [shutil.which('retroarch'), '/Applications/RetroArch.app/Contents/MacOS/RetroArch']
 frontend = next((Path(p) for p in frontends if p and Path(p).is_file()), None)
 if frontend is None:
     raise RuntimeError('Real RetroArch frontend is required for core-load qualification')
