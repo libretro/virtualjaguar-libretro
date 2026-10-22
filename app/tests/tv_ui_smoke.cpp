@@ -2501,8 +2501,11 @@ static void settingsAutoRowsStep() {
     settingsSetup(host, shell,
                   {mkRow("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, 2), mkRow("tv_auto_fs", "Auto: in fullscreen", 3, {"Off", "On"}, 0),
                    mkRow("tv_auto_pad", "Auto: when a controller is used", 3, {"Off", "On"}, 1)});
+    CHECK(shell.focusLabel() == "Interface");            // on the rail: the group (the headless script's `expect tv-focus=`)
     rightN(host, shell, 1);                              // the list (only Interface exists)
+    CHECK(shell.focusLabel() == "TV mode");
     down(host, shell, 1);                                // Auto: in fullscreen
+    CHECK(shell.focusLabel() == "Auto: in fullscreen");
     rightN(host, shell, 1);
     CHECK(lastSet(host, "tv_auto_fs", 1));
     accept(host, shell);

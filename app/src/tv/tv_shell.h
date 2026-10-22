@@ -68,6 +68,7 @@ public:
     void openSection(Section s, std::unique_ptr<Screen> root);   // ... with a root the caller prepared (Game details -> Achievements on a game)
     void push(std::unique_ptr<Screen> s);
     void pop();                                 // never pops the root
+    std::string focusLabel();                   // the top screen's focusLabel(), "" when the stack is empty
     std::string screenId() const;               // the top screen's id(), "" when the stack is empty
     FocusMemory& memory() { return memory_; }
     void launched();                            // a game was started from a screen: armReleaseGuard() + clearHolds()

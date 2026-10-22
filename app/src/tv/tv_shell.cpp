@@ -220,6 +220,8 @@ void Shell::retire(std::unique_ptr<Screen> s) {
     if (s) retired_.push_back(std::move(s));
 }
 
+std::string Shell::focusLabel() { return stack_.empty() ? std::string() : stack_.back()->focusLabel(); }
+
 std::string Shell::screenId() const { return stack_.empty() ? std::string() : std::string(stack_.back()->id()); }
 
 // While a binding is being captured App::handleEvent keeps every event from the shell: a direction that was down when the

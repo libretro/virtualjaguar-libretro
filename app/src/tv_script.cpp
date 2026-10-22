@@ -322,7 +322,10 @@ int App::tvScriptStep() {
             tvScriptDrain();
             const size_t eq = arg1.find('=');
             if (eq == std::string::npos) return fail(l, "expect wants name=value");
-            const std::string name = arg1.substr(0, eq), want = arg1.substr(eq + 1);
+            const std::string name = arg1.substr(0, eq);
+            std::string want = arg1.substr(eq + 1);
+            if (name == "tv-focus")   // a label with spaces: the rest of the line
+                for (size_t i = 2; i < l.w.size(); i++) want += " " + l.w[i];
             run.expects++;
             auto flag = [&](bool v) { return std::string(v ? "1" : "0"); };
             std::string got;
@@ -333,6 +336,7 @@ int App::tvScriptStep() {
             else if (name == "menu-open") got = flag(tvShell().menuOpen());
             else if (name == "tv") got = flag(tvMode.active());
             else if (name == "tv-screen") got = tvShell().screenId();
+            else if (name == "tv-focus") got = tvShell().focusLabel();   // the focused group / row / tile label of the top TV screen ("" = none)
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
             else if (name == "settings-open") got = flag(showSettings);             // the desktop Settings window
             else if (name == "tv-more") got = flag(tvMoreSettingsLive(*this));      // ... opened by "More settings..." in TV mode: its pads are its own

@@ -39,6 +39,12 @@ public:
 
     const char* id() const override { return "settings"; }
 
+    std::string focusLabel() override {
+        refresh();
+        if (group_ < 0 || rows_.empty()) return {};
+        return onRail_ ? std::string(settingGroupLabel(group_)) : rows_[(size_t)list_.index].label;
+    }
+
     void intent(Intent in) override {
         refresh();
         if (onRail_) railIntent(in);
@@ -198,7 +204,7 @@ private:
         }
         if (!built_) {
             built_ = true;
-            onRail_ = embedded() || shell_.memory().get("settings/list") == 0;   // a fresh visit starts on the rail (the menu: the groups)
+            onRail_ = embedded() || shell_.memory().get("settings/list") == 0;   // the Base layer resumes the level it was left on (list or rail); the menu's slot always starts on the groups
         }
         rail_.count = (int)groups_.size();
         rail_.index = 0;

@@ -45,6 +45,9 @@ public:
     virtual const char* id() const = 0;   // "home" | "library" | "letters" | "details" | "achievements" | "settings" | "overlays": FocusMemory keys, tests
     virtual void intent(Intent in) = 0;
     virtual bool typed(char c) { return false; }   // 'a'..'z', '0'..'9', '\b'; true = used
+    // The label of what has the focus (Settings: the group on the rail, or the row in its list), "" when the screen has none to name.
+    // For tests and the headless script (`expect tv-focus=LABEL`); not drawn.  Not const: a screen may refresh its model first.
+    virtual std::string focusLabel() { return {}; }
     virtual bool back() { return false; }          // Back: true = the screen stepped up inside itself; false = the shell's (pop / Home)
     virtual void draw(const DrawCtx& c) = 0;       // draws, and does hover-focus / click / wheel from c
     virtual std::vector<widgets::Hint> hints() const = 0;   // last = the way out
