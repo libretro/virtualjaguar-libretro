@@ -14,7 +14,7 @@
 // (score, lives) into the state text Neuro is shown.  See docs/neuro.md.
 //
 // Everything here is pure: no sockets, no SDL, no core.  InputQueue turns accepted actions into one ControlSet per
-// emulated frame; the app ORs it into Player 1's controls (InputManager::agentControls).
+// emulated frame; the app ORs it into Player 1's controls (InputManager::addAgentControls).
 #pragma once
 
 #include <cstdint>

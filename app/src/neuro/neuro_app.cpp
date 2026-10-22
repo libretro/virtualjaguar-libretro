@@ -122,12 +122,20 @@ void neuroTick(App& app) {
     }
     app.neuroCfg.hardcore = app.ach.hardcoreActive();
     app.neuro.configure(app.neuroCfg);
+    app.neuro.absorb(app.inputSnap.agentProgress());   // before tick(): an action accepted inside it sees a trimmed queue
     app.neuro.tick(t, gameState(app));
+    app.neuro.publishTo(app.inputSnap);                // unconditionally: tick()'s early return must not hide a clear
 }
 
 void neuroShutdown(App& app) {
     app.neuro.notify = nullptr;   // closing, not a drop worth a toast
     app.neuro.configure(neuro::AgentSettings());
+    app.neuro.publishTo(app.inputSnap);   // the replica lets go too (the snapshot outlives the Agent's link)
+}
+
+void neuroHeadlessReport(App& app) {   // --neuro --headless: what the run saw, for the tests
+    app.neuro.absorb(app.inputSnap.agentProgress());
+    std::fprintf(stderr, "[neuro] headless: %llu frames of input played\n", (unsigned long long)app.neuro.framesPlayed());
 }
 
 void drawNeuroMarker(App& app, ImDrawList* bg, float areaX, float areaY, float areaW) {

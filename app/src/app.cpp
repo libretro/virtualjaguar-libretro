@@ -468,6 +468,12 @@ void App::wireHost() {
             const uint64_t ns = inputSnap.take(emuInput_, &seq);
             emuInputSeq_ = seq;   // stamped on the next frame this thread publishes
             if (ns) noteInputLatency(ns);
+#ifdef VJ_HAVE_NEURO
+            {   // Neuro's buttons for this emulated frame, replayed from the program the UI thread published
+                const ControlSet a = neuro::pollAgent(inputSnap, agentPlayer_);
+                if (a.any()) emuInput_.addControls(0, a);
+            }
+#endif
             return;
         }
         if (pendingEventNs_) {   // VJ_PERF_CSV: from the oldest unhandled input event to this poll
@@ -475,10 +481,10 @@ void App::wireHost() {
             if (!presentEventNs_) presentEventNs_ = pendingEventNs_;   // and to this iteration's swap
             pendingEventNs_ = 0;
         }
-#ifdef VJ_HAVE_NEURO
-        input.agentControls = neuro.frame();   // Neuro's buttons for this emulated frame (inline only: off when threaded)
-#endif
         input.poll(!inputCaptured_);
+#ifdef VJ_HAVE_NEURO
+        input.addAgentControls(neuro::pollAgent(inputSnap, agentPlayer_));   // Neuro's buttons for this emulated frame
+#endif
     };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
     // The app's own Controls / Devices tabs replace these core options.
@@ -2696,6 +2702,9 @@ int App::runHeadless(const CliArgs& a) {
             if (hlCpu0 >= 0 && cpu > 0) std::snprintf(cpuTxt, sizeof cpuTxt, "%.3f s (%.1f fps)", cpu, a.frames / cpu);
             std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
                          a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, label.c_str());
+#ifdef VJ_HAVE_NEURO
+            if (!neuroCliUrl.empty() && !emuThreadThisRun()) neuroHeadlessReport(*this);   // inline runs; the threaded run reports with Neuro on the emulation thread
+#endif
             int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;

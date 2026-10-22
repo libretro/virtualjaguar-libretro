@@ -9,6 +9,9 @@
 //                        it, and reconnects; hardcore blocks it (no connect, input released, connects again when
 //                        hardcore ends); a wrong Sec-WebSocket-Accept, an oversize / masked / reserved-bit frame
 //                        and a flood are handled.  Skipped (77) on Windows.
+//   neuro_test app <virtualjaguar> <rom> <on|off>
+//                        the real app, headless, against a fake server: a 30-frame press is played by the core's
+//                        input poll and counted in the run's report.  Skipped (77) on Windows.
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -274,6 +277,18 @@ static std::string pat(AgentPlayer& pl, unsigned n, Ctl c) {   // one char per p
     return s;
 }
 
+// What the app's input poll does, for a test with no core.
+struct Replica {
+    InputSnapshot snap;
+    AgentPlayer player;
+    ControlSet poll(Agent& a) {
+        a.publishTo(snap);
+        const ControlSet c = pollAgent(snap, player);
+        a.absorb(snap.agentProgress());
+        return c;
+    }
+};
+
 static void testAgentPlayer() {
     const ControlSet B = keys({C_B}), A = keys({C_A}), UP = keys({C_UP}), none;
     const std::vector<AgentStep> three = {{B, 3}, {none, 3}, {B, 3}};
@@ -528,6 +543,7 @@ static void testLinkProfileSwitch(Link& l, ActionSet& a, std::vector<Json>& sent
 // dropped, so the server is not told "success" for input that would be thrown away.
 static void testAgentGating() {
     Agent agent;
+    Replica rep;
     std::vector<Json> sent;
     agent.link().send = [&](const std::string& m) { sent.push_back(parsed(m)); };
     AgentSettings s;
@@ -544,20 +560,20 @@ static void testAgentGating() {
     const char* press = "{\"command\":\"action\",\"data\":{\"id\":\"1\",\"name\":\"press_buttons\",\"data\":\"{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":30}\"}}";
     agent.link().onMessage(press);
     CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool());
-    CHECK(agent.frame().test(C_B));   // playing
+    CHECK(rep.poll(agent).test(C_B));   // playing
 
     // The menu opens: what is queued goes, the AI is told, and nothing new is accepted.
     sent.clear();
     g.inputBlock = "the in-game menu is open";
     agent.tick(0.1, g);
-    CHECK(!agent.frame().any() && !agent.pressedNow().any());
+    CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
     CHECK(sent.size() == 1 && sent[0]["command"].asString() == "context" &&
           sent[0]["data"]["message"].asString().find("menu is open") != std::string::npos);
     sent.clear();
     agent.link().onMessage(press);
     CHECK(sent.size() == 1 && sent[0]["command"].asString() == "action/result" && !sent[0]["data"]["success"].asBool());
     CHECK(sent[0]["data"]["message"].asString().find("menu is open") != std::string::npos);
-    CHECK(!agent.frame().any() && !agent.pressedNow().any());   // nothing was queued behind the menu
+    CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());   // nothing was queued behind the menu
     sent.clear();
     agent.link().onMessage("{\"command\":\"action\",\"data\":{\"id\":\"2\",\"name\":\"release_all\"}}");
     CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool());   // letting go is always fine
@@ -569,7 +585,7 @@ static void testAgentGating() {
     CHECK(sent.size() == 1 && sent[0]["command"].asString() == "context");
     sent.clear();
     agent.link().onMessage(press);
-    CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool() && agent.frame().test(C_B));
+    CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool() && rep.poll(agent).test(C_B));
 
     // Player 1 is a mouse: the same refusal, with its own reason.
     sent.clear();
@@ -579,7 +595,7 @@ static void testAgentGating() {
     agent.link().onMessage(press);
     CHECK(sent.size() == 1 && !sent[0]["data"]["success"].asBool() &&
           sent[0]["data"]["message"].asString().find("mouse") != std::string::npos);
-    CHECK(!agent.frame().any());
+    CHECK(!rep.poll(agent).any());
 
     // No moves are asked for while the input is blocked.
     agent.link().forceInterval = 0;
@@ -598,11 +614,11 @@ static void testAgentGating() {
     std::vector<std::string> toasts;
     agent.notify = [&](const std::string& t) { toasts.push_back(t); };
     agent.link().onMessage(press);
-    CHECK(agent.frame().test(C_B));
+    CHECK(rep.poll(agent).test(C_B));
     s.hardcore = true;
     agent.configure(s);
     CHECK(agent.blockedByHardcore() && !agent.allowed() && !agent.driving());
-    CHECK(!agent.frame().any() && !agent.pressedNow().any() && !agent.link().connected());
+    CHECK(!rep.poll(agent).any() && !agent.pressedNow().any() && !agent.link().connected());
     CHECK(agent.statusText().find("hardcore") != std::string::npos);
     bool told = false;
     for (const std::string& t : toasts) told |= t.find("hardcore") != std::string::npos;
@@ -611,6 +627,105 @@ static void testAgentGating() {
     agent.configure(s);
     CHECK(agent.allowed() && !agent.blockedByHardcore());
     agent.configure(AgentSettings());   // closes the worker
+}
+
+// The Agent's side of the input snapshot: what it publishes, how progress trims the queue, and that every way input
+// must stop (release_all, hardcore, Neuro off) reaches the replica within one poll (#1025).
+static void testAgentProgram() {
+    Agent agent;
+    Replica rep;
+    std::vector<Json> sent;
+    agent.link().send = [&](const std::string& m) { sent.push_back(parsed(m)); };
+    AgentSettings s;
+    s.enabled = true;
+    s.url = "ws://127.0.0.1:9";
+    s.forceInterval = 0;
+    agent.configure(s);
+    GameState g;
+    g.loaded = true;
+    g.title = "Tempest 2000";
+    agent.tick(0.0, g);
+    agent.link().onConnected();
+    auto forces = [&] {
+        size_t n = 0;
+        for (const Json& j : sent) n += j["command"].asString() == "actions/force";
+        return n;
+    };
+    auto action = [](const char* id, const char* name, const char* data) {
+        return std::string("{\"command\":\"action\",\"data\":{\"id\":\"") + id + "\",\"name\":\"" + name + "\"" +
+               (*data ? std::string(",\"data\":\"") + data + "\"" : std::string()) + "}}";
+    };
+    const std::string hold = action("h", "hold_buttons", "{\\\"buttons\\\":[\\\"right\\\"]}");
+    const std::string press = action("p", "press_buttons", "{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":3}");
+    const std::string release = action("r", "release_all", "");
+    auto pad = [](const ControlSet& c) {   // one char per poll: B, U, R or '.', for the buttons this test uses
+        std::string o;
+        if (c.test(C_RIGHT)) o += 'R';
+        if (c.test(C_B)) o += 'B';
+        if (c.test(C_UP)) o += 'U';
+        return o.empty() ? std::string(".") : o;
+    };
+
+    {   // 1: busy covers progress from an older gen
+        sent.clear();
+        agent.link().onMessage(press);
+        CHECK(sent.size() == 1 && sent[0]["data"]["success"].asBool());
+        agent.publishTo(rep.snap);
+        agent.absorb(rep.snap.agentProgress());   // the default progress: gen 0, another lineage
+        agent.tick(1.0, g);
+        CHECK(forces() == 0);                      // still accepted-and-not-played: no force goes out
+        for (int i = 0; i < 3; i++) CHECK(rep.poll(agent).test(C_B));
+        agent.tick(2.0, g);
+        CHECK(forces() == 1 && agent.framesPlayed() == 3);
+    }
+    {   // 2: release_all drops queue and hold at the next poll
+        agent.link().onMessage(hold);
+        agent.link().onMessage(press);
+        CHECK(rep.poll(agent) == keys({C_RIGHT, C_B}) && rep.poll(agent) == keys({C_RIGHT, C_B}));
+        agent.link().onMessage(release);
+        CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+        for (int i = 0; i < 3; i++) CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+    }
+    {   // 3: hardcore clears the replica within one poll, even though tick() (which returns early) never runs
+        agent.link().onMessage(hold);
+        CHECK(rep.poll(agent).test(C_RIGHT) && agent.pressedNow().test(C_RIGHT));
+        s.hardcore = true;
+        agent.configure(s);
+        CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+        CHECK(!rep.player.progress().pressed.any() && !rep.snap.agentProgress().pressed.any());
+        for (int i = 0; i < 2; i++) CHECK(!rep.poll(agent).any());
+        s.hardcore = false;   // and it plays again once hardcore ends
+        agent.configure(s);
+        agent.tick(3.0, g);
+        agent.link().onConnected();
+        agent.link().onMessage(press);
+        CHECK(rep.poll(agent).test(C_B));
+        agent.link().onMessage(release);
+        CHECK(!rep.poll(agent).any());
+    }
+    {   // 4: turning Neuro off clears the replica (the neuroShutdown path)
+        agent.link().onMessage(hold);
+        CHECK(rep.poll(agent).test(C_RIGHT));
+        agent.configure(AgentSettings());
+        CHECK(!rep.poll(agent).any() && !agent.pressedNow().any());
+    }
+    {   // 5: an action appended mid-play neither replays nor drops frames
+        Agent a;
+        Replica r;
+        a.link().send = [](const std::string&) {};
+        a.configure(s);
+        a.tick(0.0, g);
+        a.link().onConnected();
+        a.link().onMessage(action("p6", "press_buttons", "{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":6}"));
+        std::string got;
+        for (int i = 0; i < 2; i++) got += pad(r.poll(a));
+        a.link().onMessage(action("pu", "press_buttons", "{\\\"buttons\\\":[\\\"up\\\"],\\\"frames\\\":2}"));
+        for (int i = 0; i < 6; i++) got += pad(r.poll(a));
+        CHECK(got == "BBBBBBUU");
+        CHECK(a.framesPlayed() == 8);
+        a.configure(AgentSettings());
+    }
+    agent.configure(AgentSettings());
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -861,9 +976,10 @@ static void loopbackHardcoreFirst() {
     agent.configure(AgentSettings());
 }
 
-static int loopback() {
-    loopbackHardcoreFirst();
-    loopbackHostile();
+// The Agent against a fake Neuro server, with the app's loop on its own thread.  `threadedPoll` is for the run whose
+// input poll is a second thread (Neuro on the emulation thread); only the single-thread, inline-shaped run exists so far.
+static int loopbackRun(bool threadedPoll) {
+    (void)threadedPoll;
     FakeServer srv;
     if (!srv.open()) {
         std::printf("FAIL cannot listen on 127.0.0.1\n");
@@ -889,17 +1005,26 @@ static int loopback() {
     std::atomic<bool> run{true}, hardcore{false};
     std::atomic<int> pressedB{0};
     std::atomic<bool> rightNow{false}, upNow{false};
+    // The frame-numbered record of the first three shots: from the first poll that presses B, one 0/1 per poll.  A run
+    // whose polls happen on the emulation thread must reproduce it.
+    std::mutex recMu;
+    std::vector<uint8_t> rec;
     // The app's loop, on its own thread: a UI tick and an emulated frame every ~5 ms.  The settings go through
     // configure() every iteration, as the app does.
     std::thread app([&] {
         double t = 0;
         AgentSettings cfg = s;
+        Replica rep;
         while (run) {
             cfg.hardcore = hardcore.load();
             agent.configure(cfg);
             agent.tick(t, g);
-            const ControlSet pressed = agent.frame();
+            const ControlSet pressed = rep.poll(agent);
             if (pressed.test(C_B)) pressedB++;
+            {
+                std::lock_guard<std::mutex> l(recMu);
+                if ((pressed.test(C_B) || !rec.empty()) && rec.size() < 15) rec.push_back(pressed.test(C_B) ? 1 : 0);
+            }
             rightNow = pressed.test(C_RIGHT);
             upNow = pressed.test(C_UP);
             t += 0.005;
@@ -932,6 +1057,10 @@ static int loopback() {
     Json force2 = waitFor(fd, rd, "actions/force", agent, &seen);   // the next move, once the shots played out
     CHECK(force2["command"].asString() == "actions/force");
     CHECK(pressedB.load() == 9);
+    {
+        std::lock_guard<std::mutex> l(recMu);   // three 3-frame shots with a 3-frame gap: the Tempest "fire" macro
+        CHECK((rec == std::vector<uint8_t>{1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1}));
+    }
 
     std::string rr = serverFrame("{\"command\":\"actions/reregister_all\"}");
     ::send(fd, rr.data(), rr.size(), 0);
@@ -992,6 +1121,58 @@ static int loopback() {
     std::printf("\n");
     return g_fail ? 1 : 0;
 }
+
+static int loopback() {
+    loopbackHardcoreFirst();
+    loopbackHostile();
+    return loopbackRun(false);
+}
+
+// The real app, headless, against a fake Neuro server: one press_buttons of 30 frames must be played out by the core's
+// input poll (`mode` is the --emu-thread value) and counted in the run's report.
+static int appRun(const std::string& exe, const std::string& rom, const std::string& mode) {
+    FakeServer srv;
+    if (!srv.open()) {
+        std::printf("FAIL cannot listen on 127.0.0.1\n");
+        return 1;
+    }
+    const std::string cmd = "\"" + exe + "\" --headless --emu-thread " + mode + " --neuro ws://127.0.0.1:" +
+                            std::to_string(srv.port) + " --frames 480 \"" + rom + "\" 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        std::printf("FAIL cannot start %s\n", exe.c_str());
+        return 1;
+    }
+    std::string out;
+    std::thread reader([&] {
+        char buf[4096];
+        while (fgets(buf, sizeof buf, pipe)) out += buf;
+    });
+    Agent unused;   // waitFor() takes one
+    int fd = srv.accept(10000);
+    CHECK(fd >= 0);
+    if (fd >= 0) {
+        FrameReader rd(true);
+        CHECK(waitFor(fd, rd, "startup", unused, nullptr, 10000)["command"].asString() == "startup");
+        CHECK(waitFor(fd, rd, "actions/register", unused, nullptr, 10000)["command"].asString() == "actions/register");
+        const std::string act = serverFrame("{\"command\":\"action\",\"data\":{\"id\":\"p1\",\"name\":\"press_buttons\","
+                                            "\"data\":\"{\\\"buttons\\\":[\\\"b\\\"],\\\"frames\\\":30}\"}}");
+        ::send(fd, act.data(), act.size(), 0);
+        Json res = waitFor(fd, rd, "action/result", unused, nullptr, 10000);
+        CHECK(res["data"]["id"].asString() == "p1" && res["data"]["success"].asBool());
+        waitFor(fd, rd, "never", unused, nullptr, 60000);   // until the app closes the link at the end of the run
+        ::close(fd);
+    }
+    reader.join();
+    const int status = pclose(pipe);
+    CHECK(status == 0);
+    CHECK(out.find("[neuro] headless: 30 frames of input played") != std::string::npos);
+    CHECK(out.find("owner violation") == std::string::npos && out.find("ThreadSanitizer") == std::string::npos);
+    if (mode == "on") CHECK(out.find("emulation thread)") != std::string::npos);
+    if (g_fail) std::printf("%s\n", out.c_str());
+    std::printf(g_fail ? "neuro app: FAILED\n" : "neuro app: ok\n");
+    return g_fail ? 1 : 0;
+}
 #endif
 
 int main(int argc, char** argv) {
@@ -1006,6 +1187,18 @@ int main(int argc, char** argv) {
         return rc;
 #endif
     }
+    if (mode == "app") {
+#ifdef _WIN32
+        std::printf("app: skipped on Windows\n");
+        return 77;
+#else
+        if (argc < 5) {
+            std::printf("usage: neuro_test app <virtualjaguar> <rom> <on|off>\n");
+            return 2;
+        }
+        return appRun(argv[2], argv[3], argv[4]);
+#endif
+    }
     testJson();
     testWsUrls();
     testWsFrames();
@@ -1017,6 +1210,7 @@ int main(int argc, char** argv) {
     testProfiles();
     testLink();
     testAgentGating();
+    testAgentProgram();
     testStopIsPrompt();
     std::printf(g_fail ? "neuro unit: %d FAILED\n" : "neuro unit: ok\n", g_fail);
     return g_fail ? 1 : 0;

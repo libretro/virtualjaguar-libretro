@@ -2,9 +2,11 @@
 // input they press (neuro_actions.h), and the game profiles.  No App, no ImGui: neuro_app.cpp feeds it the app's
 // state and draws Settings > Neuro.
 //
-// Threads: everything here is called on the UI thread, which is then also the emulation thread (the app turns Neuro
-// off when the emulation runs on its own thread, #967 phase 1; docs/neuro.md); only the WebSocket worker runs
-// elsewhere, behind WsClient's queues.
+// Threads: tick(), configure(), publishTo(), absorb() and the rest are the UI thread's; only the WebSocket worker runs
+// elsewhere, behind WsClient's queues.  The Agent never presses a button itself: it publishes what was accepted as an
+// AgentProgram (publishTo, into the InputSnapshot) and the core's input poll replays it one step per emulated frame
+// with an AgentPlayer (neuro_actions.h: pollAgent), inline and on the emulation thread alike; absorb() takes the
+// progress back (docs/neuro.md).
 #pragma once
 
 #include <cstdint>
@@ -67,15 +69,22 @@ public:
     const AgentSettings& settings() const { return s_; }
     // Once per UI frame: pumps the socket, follows the game (profile, name, context), forces the next move.
     void tick(double now, const GameState& g);
-    // Once per emulated frame (from the core's input poll): what Neuro presses in it.  Nothing while the app is not
-    // delivering Player 1's buttons (GameState::inputBlock): the queue does not advance behind the menu's back.
-    ControlSet frame() { return allowed() && actions_.blocked().empty() ? queue_.frame() : ControlSet(); }
+    // Once per UI iteration, after tick(): hands the accepted input to the emulation side as one AgentProgram (a no-op
+    // while nothing changed).  Disabled while Neuro is not allowed or the app is not delivering Player 1's buttons
+    // (GameState::inputBlock): the replica then presses nothing and does not advance behind the menu's back.  Called
+    // even when tick() returned early, so a clear made while !allowed() (hardcore, Neuro off) still reaches the core.
+    void publishTo(InputSnapshot& s);
+    // Once per UI iteration, before tick(): takes the replica's progress back.  Trims the queue by what was played, so
+    // busy() means "accepted and not yet seen played out" (a force never goes out the instant an action is accepted),
+    // and records what is being pressed for pressedNow().  Progress from an older lineage says nothing and is ignored.
+    void absorb(const AgentProgress& p);
+    uint64_t framesPlayed() const { return playedTotal_; }   // frames of input the replica played, over all lineages
 
     std::string statusText() const;
     const Link& link() const { return link_; }
     Link& link() { return link_; }
     const Profile* profile() const { return actions_.profile(); }
-    ControlSet pressedNow() const { return queue_.peek(); }
+    ControlSet pressedNow() const { return allowed() ? pressed_ : ControlSet(); }   // what the last emulated frame pressed
     // The state text sent with each force (also shown in Settings > Neuro).
     std::string stateText(const GameState& g) const;
     std::function<void(const std::string&)> log;
@@ -91,6 +100,12 @@ private:
     std::string gameKey_;    // title|crc of the game the link was set up for
     bool wasLoaded_ = false, wasPaused_ = false;
     bool startPending_ = false;
+    // publishTo / absorb
+    uint64_t programGen_ = 0;                          // monotonic: takeAgent delivers a gen it has not taken
+    uint64_t pubVersion_ = 0, pubLineage_ = 0;         // what was last published
+    bool pubEnabled_ = false;
+    uint64_t playedTotal_ = 0, lastLineage_ = ~0ull, lastPlayed_ = 0;
+    ControlSet pressed_;
 
     void setInputBlock(const char* why);
     void tellBlock();

@@ -165,6 +165,28 @@ void Agent::tick(double now, const GameState& g) {
     link_.tick(now, canForce, canForce && link_.connected() ? stateText(g) : std::string());
 }
 
+void Agent::publishTo(InputSnapshot& s) {
+    const bool en = allowed() && actions_.blocked().empty();
+    if (queue_.version() == pubVersion_ && queue_.lineage() == pubLineage_ && en == pubEnabled_) return;
+    s.publishAgent(queue_.program(++programGen_, en));
+    pubVersion_ = queue_.version();
+    pubLineage_ = queue_.lineage();
+    pubEnabled_ = en;
+}
+
+void Agent::absorb(const AgentProgress& p) {
+    if (p.lineage == lastLineage_) {
+        if (p.played > lastPlayed_) playedTotal_ += p.played - lastPlayed_;
+    } else {
+        playedTotal_ += p.played;
+    }
+    lastLineage_ = p.lineage;
+    lastPlayed_ = p.played;
+    const bool mine = p.lineage == queue_.lineage();   // an older lineage's progress says nothing about this queue
+    pressed_ = mine && allowed() ? p.pressed : ControlSet();
+    if (mine && p.played > queue_.firstFrame()) queue_.trim((unsigned)(p.played - queue_.firstFrame()));
+}
+
 std::string Agent::stateText(const GameState& g) const {
     if (!g.loaded) return "No game is running.";
     std::string s = "# " + (g.title.empty() ? std::string("Atari Jaguar game") : g.title) + "\n";
