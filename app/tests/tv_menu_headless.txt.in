@@ -1133,3 +1133,52 @@
 17330 key tap ctrl+shift+T
 17370 expect tv=1
 17370 expect library-window=0
+
+# Hardcore's run-on menu (the game keeps running, its banner says so): F8 must not pause the game behind it.  The pause-decay countdown can
+# end while the menu is open, so the gate allows a pause by then -- F8 is still refused ("Close the menu to resume", as under a held pause).
+17410 hardcore-pause deny
+17410 key tap F4
+17450 expect menu-open=1
+17450 expect paused=0
+17450 expect menu-owns-input=1
+17450 hardcore-pause allow
+17490 key tap F8
+17530 expect paused=0
+17530 expect menu-open=1
+17530 expect toast=Close the menu to resume
+17530 pad tap b
+17570 expect menu-open=0
+17570 expect menu-owns-input=0
+17570 expect paused=0
+
+# "BIOS & boot settings" (Cmd::BiosSettings) in TV mode with NO game: no in-game menu to open under it -- the pad-driven window opens
+# alone, and B closes it.  The game is closed from its menu first (Down clamps on Close game, A asks, Up is Yes, A answers).
+17610 key tap F4
+17650 expect menu-open=1
+17660 pad tap dpdown
+17670 pad tap dpdown
+17680 pad tap dpdown
+17690 pad tap dpdown
+17700 pad tap dpdown
+17710 pad tap dpdown
+17720 pad tap dpdown
+17730 pad tap dpdown
+17740 pad tap dpdown
+17750 pad tap dpdown
+17760 pad tap dpdown
+17770 pad tap dpdown
+17800 expect tv-focus=Close game
+17820 pad tap a
+17860 expect menu-page=confirm-close
+17880 pad tap dpup
+17900 pad tap a
+17960 expect loaded=0
+17960 expect menu-open=0
+18000 command bios
+18040 expect menu-open=0
+18040 expect settings-open=1
+18040 expect tv-more=1
+18040 pad tap b
+18080 expect settings-open=0
+18080 expect tv-more=0
+18080 expect menu-open=0
