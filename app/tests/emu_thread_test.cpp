@@ -547,8 +547,10 @@ void testDebugCallWaitHook() {
     c.holdAt = 1;
     CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
     for (int i = 0; i < 1000 && c.frames.load() < 1; i++) sleepMs(1);
-    std::thread release([&c] {
-        sleepMs(450);
+    // Hold the frame until the hook has run three times (kBusyAfter, then ~every 16 ms), not for a fixed 450 ms: a slow
+    // hosted VM can oversleep so much that three hooks do not fit (#967).  The 5 s bound keeps a broken hook from hanging.
+    std::thread release([&c, &calls] {
+        for (int i = 0; i < 5000 && calls.load() < 3; i++) sleepMs(1);
         c.holdAt = -1;
     });
     e.debugCall([] { return 0; });

@@ -259,13 +259,21 @@ if(VJ_APP_BUNDLE_DB)
             configure_file("${VJ_APP_LIBRETRO_DB_DIR}/${_n}" "${VJ_DB_DIR}/${_n}" COPYONLY)
             math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
         else()
+            # No EXPECTED_HASH: with it, a failed download is a configure error ("cannot compute hash on failed
+            # download") instead of the warning below.  The hash is checked by hand once the file is here.
             file(DOWNLOAD
                 "https://raw.githubusercontent.com/libretro/libretro-database/${VJ_DB_COMMIT}/metadat/${_p}"
                 "${VJ_DB_DIR}/${_n}"
-                EXPECTED_HASH SHA256=${_h}
                 TLS_VERIFY ON
                 STATUS _st)
             list(GET _st 0 _rc)
+            if(_rc EQUAL 0)
+                file(SHA256 "${VJ_DB_DIR}/${_n}" _got)
+                if(NOT _got STREQUAL _h)
+                    set(_rc 1)
+                    set(_st "1;\"SHA256 mismatch: ${_got}\"")
+                endif()
+            endif()
             if(_rc EQUAL 0)
                 math(EXPR _vj_db_ok "${_vj_db_ok} + 1")
             else()
