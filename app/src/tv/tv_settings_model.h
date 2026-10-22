@@ -26,8 +26,8 @@ struct SettingGroup {
 // categorized title (else the flat one), value = the choice's label (else its value).  The rules of decision 4:
 //   * not visible (the core's own gates and the app's locks both end in `visible`), or nothing to choose from: no row;
 //   * `overridden` (Netplay, --option): read-only, with the note that says so;
-//   * a typed key (typed_options.h) whose current value is not one of the core's presets: "<value> (custom)" is appended
-//     and selected -- every other option gets the same for a value outside its list;
+//   * a value that is not one of the core's presets (a typed RISC clock): "<value> (custom)" is selected, placed by
+//     coreCustomPos (between its numeric neighbours for an ordered typed number, else last);
 //   * a Host-kind typed key (the Network Link address) is read-only: it can only be typed, in the desktop window;
 //   * an option whose help says it needs a restart carries the note "Applies when the game next starts".
 // `current`, `visible`, `overridden` and `typed` are per option, so the model never sees CoreHost.
@@ -36,10 +36,16 @@ std::vector<SettingRow> coreOptionRows(const std::vector<OptionCategory>& cats, 
                                        const std::function<bool(const std::string&)>& visible,
                                        const std::function<bool(const std::string&)>& overridden,
                                        const std::function<const TypedOption*(const std::string&)>& typed);
+// Where the "(custom)" entry of an option row sits in its choices (and the row's index), or -1 when `current` is one of the
+// core's values or empty.  A typed numeric option whose presets run in numeric order gets it between its neighbours, so Left and
+// Right step to the nearest presets; any other (a text, an address, presets out of order) gets it last.  AppHost maps a stepped
+// index back to `def.values` with it.
+int coreCustomPos(const OptionDef& d, const std::string& current, const TypedOption* typed);
 SettingRow choiceRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
                      std::vector<std::string> choices, int index);
-// A slider as a stepped list: "lo", "lo+step", ... "hi" printed with fmt ("%.0f ms"); a value off the grid is appended as
-// "<value> (custom)" and selected.  stepValue() maps an index back (the "(custom)" index gives `current` unchanged).
+// A slider as a stepped list: "lo", "lo+step", ... "hi" printed with fmt ("%.0f ms"); a value off the grid is inserted between
+// its grid neighbours (last when beyond "hi") as "<value> (custom)" and selected, so Left / Right step to the nearest grid values.
+// stepValue() maps an index back (the "(custom)" index gives `current` unchanged).
 SettingRow sliderRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
                      float current, float lo, float hi, float step, const char* fmt);
 float stepValue(const SettingRow& r, int index, float lo, float step, float current);

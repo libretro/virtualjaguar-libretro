@@ -110,6 +110,16 @@ static void testCoreOptionCustomValue() {
     r.value["clock"] = "50%";
     rows = r.rows(cats, {clock});
     CHECK(rows.size() == 1 && rows[0].choices.size() == 2 && rows[0].index == 0);   // a preset is no custom value
+    // Presets in numeric order: the custom value sits between its neighbours, so Left / Right reach the nearest presets.
+    OptionDef wide = mkDef("clock", "RISC overclock", "speed", {{"50%", "0.5x"}, {"100%", "1x"}, {"200%", "2x"}}, "100%");
+    r.value["clock"] = "137%";
+    rows = r.rows(cats, {wide});
+    CHECK(rows.size() == 1 && rows[0].choices == std::vector<std::string>({"0.5x", "1x", "137% (custom)", "2x"}) && rows[0].index == 2);
+    CHECK(coreCustomPos(wide, "137%", &r.typed["clock"]) == 2 && coreCustomPos(wide, "100%", &r.typed["clock"]) == -1 &&
+          coreCustomPos(wide, "30%", &r.typed["clock"]) == 0 && coreCustomPos(wide, "", &r.typed["clock"]) == -1);
+    // Presets out of order, or no number at all: the custom entry stays last.
+    OptionDef jumbled = mkDef("clock", "RISC overclock", "speed", {{"200%", ""}, {"50%", ""}, {"100%", ""}}, "100%");
+    CHECK(coreCustomPos(jumbled, "137%", &r.typed["clock"]) == 3 && coreCustomPos(wide, "137%", nullptr) == 3);
 }
 
 // An override (Netplay, --option) pins the value: read-only with the reason.  A Host-kind typed key can only be typed.  A "restart"
@@ -139,25 +149,32 @@ static void testSliderRows() {
     SettingRow s = sliderRow("audio_buffer", "Audio buffer", "sound", "Sound", 80, 20, 200, 10, "%.0f ms");
     CHECK(s.choices.size() == 19 && s.index == 6 && s.choices[0] == "20 ms" && s.choices[6] == "80 ms" && s.choices.back() == "200 ms");
     CHECK(s.id == "audio_buffer" && s.label == "Audio buffer" && s.group == "sound" && s.groupLabel == "Sound" && !s.readOnly);
-    // A value off the grid is appended, selected, and what stepping off it does is the player's choice.
+    // A value off the grid is inserted between its neighbours and selected: Left and Right step to the nearest grid values.
     s = sliderRow("audio_buffer", "Audio buffer", "sound", "Sound", 85, 20, 200, 10, "%.0f ms");
-    CHECK(s.choices.size() == 20 && s.choices.back() == "85 (custom)" && s.index == 19);
-    CHECK(stepValue(s, 7, 20, 10, 85) == 90);
-    CHECK(stepValue(s, 0, 20, 10, 85) == 20 && stepValue(s, 18, 20, 10, 85) == 200);
-    CHECK(stepValue(s, 19, 20, 10, 85) == 85);                       // the "(custom)" entry changes nothing
+    CHECK(s.choices.size() == 20 && s.choices[6] == "80 ms" && s.choices[7] == "85 (custom)" && s.choices[8] == "90 ms" && s.index == 7);
+    CHECK(stepValue(s, 8, 20, 10, 85) == 90 && stepValue(s, 6, 20, 10, 85) == 80);
+    CHECK(stepValue(s, 0, 20, 10, 85) == 20 && stepValue(s, 19, 20, 10, 85) == 200);
+    CHECK(stepValue(s, 7, 20, 10, 85) == 85);                        // the "(custom)" entry changes nothing
     CHECK(stepValue(s, -1, 20, 10, 85) == 85 && stepValue(s, 20, 20, 10, 85) == 85);   // out of range too
-    // On the grid at either end; a value beyond the ends is custom, not clamped.
+    // The app's own default (64 ms) is off the grid: it sits between 60 and 70, and Left is 60, Right is 70.
+    s = sliderRow("audio_buffer", "Audio buffer", "sound", "Sound", 64, 20, 200, 10, "%.0f ms");
+    CHECK(s.choices.size() == 20 && s.index == 5 && s.choices[4] == "60 ms" && s.choices[5] == "64 (custom)" && s.choices[6] == "70 ms");
+    CHECK(stepValue(s, stepIndex(s, -1, false), 20, 10, 64) == 60 && stepValue(s, stepIndex(s, +1, false), 20, 10, 64) == 70);
+    // On the grid at either end; a value beyond the ends is custom, last (or first), not clamped.
     CHECK(sliderRow("x", "x", "g", "G", 20, 20, 200, 10, "%.0f").index == 0 && sliderRow("x", "x", "g", "G", 200, 20, 200, 10, "%.0f").index == 18);
     s = sliderRow("x", "x", "g", "G", 230, 20, 200, 10, "%.0f");
     CHECK(s.choices.size() == 20 && s.choices.back() == "230 (custom)" && s.index == 19);
+    CHECK(stepValue(s, 18, 20, 10, 230) == 200 && stepValue(s, 19, 20, 10, 230) == 230);
+    s = sliderRow("x", "x", "g", "G", 5, 20, 200, 10, "%.0f");
+    CHECK(s.choices.size() == 20 && s.choices[0] == "5 (custom)" && s.index == 0 && stepValue(s, 1, 20, 10, 5) == 20);
     CHECK(stepValue(sliderRow("x", "x", "g", "G", 80, 20, 200, 10, "%.0f"), 18, 20, 10, 80) == 200);   // no custom entry: the last index is a grid one
     // Fractions: the tile size (0.5 to 2.5 by 0.1) and the Neuro pause (0 to 10 by 0.5).
     s = sliderRow("tile_size", "Tile size", "library", "Library", 1.0f, 0.5f, 2.5f, 0.1f, "%.1fx");
     CHECK(s.choices.size() == 21 && s.choices[0] == "0.5x" && s.choices[5] == "1.0x" && s.index == 5 && s.choices.back() == "2.5x");
     CHECK(sliderRow("tile_size", "x", "g", "G", 1.3f, 0.5f, 2.5f, 0.1f, "%.1fx").index == 8);   // 1.3f is not exactly 0.5 + 8 * 0.1: still on the grid
     s = sliderRow("tile_size", "x", "g", "G", 1.25f, 0.5f, 2.5f, 0.1f, "%.1fx");
-    CHECK(s.choices.size() == 22 && s.choices.back() == "1.25 (custom)" && s.index == 21);
-    CHECK(std::fabs(stepValue(s, 8, 0.5f, 0.1f, 1.25f) - 1.3f) < 1e-4f);
+    CHECK(s.choices.size() == 22 && s.choices[8] == "1.25 (custom)" && s.index == 8);
+    CHECK(std::fabs(stepValue(s, 9, 0.5f, 0.1f, 1.25f) - 1.3f) < 1e-4f && std::fabs(stepValue(s, 7, 0.5f, 0.1f, 1.25f) - 1.2f) < 1e-4f);
     s = sliderRow("neuro_interval", "Pause", "neuro", "Neuro", 1.0f, 0, 10, 0.5f, "%.1f s");
     CHECK(s.choices.size() == 21 && s.choices[2] == "1.0 s" && s.index == 2 && s.choices[3] == "1.5 s");
     // Stepping uses the same arithmetic as every row.
@@ -183,10 +200,12 @@ static void testAppRows() {
     CHECK(volumeRow(0.7f).index == 7 && volumeRow(0.7f).choices.size() == 11 && volumeRow(1.0f).choices[10] == "100 %");
     CHECK(volumeRow(0.0f).index == 0 && volumeRow(0.0f).choices[0] == "0 %" && volumeRow(1.0f).index == 10);
     // The desktop slider is finer than the list: a volume between two steps is shown as it is, selected, and kept until stepped.
-    CHECK(volumeRow(0.75f).index == 11 && volumeRow(0.75f).choices.size() == 12 && volumeRow(0.75f).choices.back() == "75 (custom)");
+    CHECK(volumeRow(0.75f).index == 8 && volumeRow(0.75f).choices.size() == 12 && volumeRow(0.75f).choices[8] == "75 (custom)");
     CHECK(volumeRow(7.0f).index == 10 && volumeRow(-1.0f).index == 0);   // out of range: the ends
     CHECK(volumeRow(0.5f).group == "sound" && volumeRow(0.5f).groupLabel == "Sound" && volumeRow(0.5f).id == "volume");
-    CHECK(stepValue(volumeRow(0.75f), 8, 0.0f, 10.0f, 75.0f) == 80.0f && stepValue(volumeRow(0.75f), 11, 0.0f, 10.0f, 75.0f) == 75.0f);
+    CHECK(stepValue(volumeRow(0.75f), 9, 0.0f, 10.0f, 75.0f) == 80.0f && stepValue(volumeRow(0.75f), 7, 0.0f, 10.0f, 75.0f) == 70.0f &&
+          stepValue(volumeRow(0.75f), 8, 0.0f, 10.0f, 75.0f) == 75.0f);   // Left 70, Right 80, the custom entry itself changes nothing
+    CHECK(stepIndex(volumeRow(0.75f), -1, false) == 7 && stepIndex(volumeRow(0.75f), +1, false) == 9);
     CHECK(onOffRow("fps", "Show FPS", "interface", "Interface", true).index == 1 &&
           (onOffRow("fps", "x", "interface", "Interface", false).choices == std::vector<std::string>{"Off", "On"}));
     CHECK(onOffRow("fps", "Show FPS", "interface", "Interface", true).label == "Show FPS" &&

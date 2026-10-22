@@ -354,8 +354,12 @@ void AppHost::setSetting(const std::string& id, int index) {
         const std::string key = id.substr(5);
         const OptionDef* def = defFor(host, key);
         // The call drawOption makes: the app's own hardcore handling (Achievements::checkSettings) sees it as any other change.
-        if (def && host.optionVisible(key) && !host.optionOverridden(key) && index >= 0 && index < (int)def->values.size())
-            host.setOptionValue(key, def->values[(size_t)index].value);
+        if (def && host.optionVisible(key) && !host.optionOverridden(key) && index >= 0) {
+            // The row may carry a "(custom)" entry among the values (coreCustomPos): that index changes nothing, the ones after it shift.
+            const int custom = coreCustomPos(*def, host.optionValue(*def), typedOptionFor(key));
+            const int at = custom >= 0 && index > custom ? index - 1 : index;
+            if (index != custom && at < (int)def->values.size()) host.setOptionValue(key, def->values[(size_t)at].value);
+        }
     } else if (id == "shader") {
         ShaderChain& sc = app_.video.shader;
         const std::vector<std::string> paths = shaderPresetPaths(app_);

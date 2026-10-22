@@ -789,7 +789,9 @@ void CoreHost::probeOptions() {
     if (updateDisplayCb_) updateDisplayCb_();
     probing_ = false;
     retro_deinit();
-    updateDisplayCb_ = nullptr;   // belongs to the core instance that is about to go away, as in stopSession
+    // Dropped as in stopSession.  Until the first game loads a gating option (Network Link mode, voice chat...) therefore does not
+    // show or hide its dependent rows: keeping the callback would re-flip the latches retro_deinit just reset.
+    updateDisplayCb_ = nullptr;
 }
 
 bool CoreHost::startSession(std::string& err) {

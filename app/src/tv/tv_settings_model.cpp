@@ -56,6 +56,13 @@ std::string stemOf(const std::string& path) {
 
 namespace {
 
+// The number a typed option's value stands for ("200%", "8000"); false for a Host key or text that is not one.
+bool typedNumber(const TypedOption& t, const std::string& v, long& out) {
+    if (t.kind == OptKind::Percent) return parseTypedPercent(v, out);
+    if (t.kind == OptKind::Int) return parseTypedInt(v, out);
+    return false;
+}
+
 // One option as a row of `group`; empty (`ok` false) when it has no row.
 SettingRow coreRow(const OptionDef& d, const std::string& group, const std::string& groupLabel, const std::string& current,
                    bool overridden, const TypedOption* typed, bool* ok) {
@@ -68,9 +75,10 @@ SettingRow coreRow(const OptionDef& d, const std::string& group, const std::stri
         r.choices.push_back(v.label.empty() ? v.value : v.label);
         if (v.value == current) found = (int)i;
     }
-    if (found < 0 && !current.empty()) {   // a typed value the core's list does not have
-        r.choices.push_back(current + kCustomSuffix);
-        found = (int)r.choices.size() - 1;
+    const int custom = coreCustomPos(d, current, typed);
+    if (custom >= 0) {   // a value the core's list does not have (a typed RISC clock), where stepping from it goes both ways
+        r.choices.insert(r.choices.begin() + custom, current + kCustomSuffix);
+        found = custom;
     }
     r.index = std::max(found, 0);
     if (overridden) {   // the desktop row is disabled for the same reason (drawOption)
@@ -86,6 +94,24 @@ SettingRow coreRow(const OptionDef& d, const std::string& group, const std::stri
 }
 
 }  // namespace
+
+int coreCustomPos(const OptionDef& d, const std::string& current, const TypedOption* typed) {
+    if (current.empty()) return -1;
+    for (const OptionValue& v : d.values)
+        if (v.value == current) return -1;
+    const int last = (int)d.values.size();   // text, a Host key, or presets that are not in numeric order: the entry goes last
+    long cur = 0;
+    if (!typed || !typedNumber(*typed, current, cur)) return last;
+    long prev = 0;
+    int pos = last;
+    for (int i = 0; i < last; i++) {
+        long v = 0;
+        if (!typedNumber(*typed, d.values[(size_t)i].value, v) || (i > 0 && v < prev)) return last;
+        prev = v;
+        if (pos == last && v > cur) pos = i;
+    }
+    return pos;
+}
 
 std::vector<SettingRow> coreOptionRows(const std::vector<OptionCategory>& cats, const std::vector<OptionDef>& defs,
                                        const std::function<std::string(const OptionDef&)>& current,
@@ -130,17 +156,27 @@ SettingRow sliderRow(const std::string& id, const std::string& label, const std:
     const int at = step > 0 ? (int)std::lround((current - lo) / step) : 0;
     int index = -1;
     if (at >= 0 && at < n && std::fabs(current - (lo + (float)at * step)) <= step * 1e-3f) index = at;
-    if (index < 0) {   // off the grid (the desktop slider is finer): shown as it is, selected, kept until the player steps
-        labels.push_back(plainNumber(current) + kCustomSuffix);
-        index = (int)labels.size() - 1;
+    if (index < 0) {   // off the grid (the desktop slider is finer): shown as it is, between its neighbours, selected, kept until the player steps
+        int pos = n;
+        for (int i = 0; i < n; i++)
+            if (lo + (float)i * step > current) {
+                pos = i;
+                break;
+            }
+        labels.insert(labels.begin() + pos, plainNumber(current) + kCustomSuffix);
+        index = pos;
     }
     return rowOf(id, label, group, groupLabel, std::move(labels), index);
 }
 
 float stepValue(const SettingRow& r, int index, float lo, float step, float current) {
-    const int grid = (int)r.choices.size() - (!r.choices.empty() && endsWith(r.choices.back(), kCustomSuffix) ? 1 : 0);
-    if (index < 0 || index >= grid) return current;   // the "(custom)" entry: nothing to change
-    return lo + (float)index * step;
+    int custom = -1;   // where sliderRow put the "(custom)" entry, if it did
+    for (size_t i = 0; i < r.choices.size(); i++)
+        if (endsWith(r.choices[i], kCustomSuffix)) custom = (int)i;
+    const int grid = (int)r.choices.size() - (custom >= 0 ? 1 : 0);
+    if (index < 0 || index >= (int)r.choices.size() || index == custom) return current;   // the "(custom)" entry: nothing to change
+    const int g = custom >= 0 && index > custom ? index - 1 : index;
+    return g < grid ? lo + (float)g * step : current;
 }
 
 std::vector<SettingGroup> groupsOf(const std::vector<SettingRow>& rows) {
