@@ -559,7 +559,8 @@ jobs:
         run: |
           set -eu
           sed -i "s|- -DVJ_APP_BUILD_TESTS=OFF|&\n      - -DVJ_TV_DEFAULT=$TV_DEFAULT|" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
-          grep -n -B1 -A1 'VJ_TV_DEFAULT' app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+          # Fail here, not silently, if the sed did not match (the manifest's config-opts changed).
+          grep -qx "      - -DVJ_TV_DEFAULT=$TV_DEFAULT" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
 
       - name: Build the bundle
         # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
