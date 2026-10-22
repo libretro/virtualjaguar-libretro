@@ -598,10 +598,7 @@ void drawMenuBar(App& app) {
             if (ImGui::MenuItem("CD BIOS (no disc)")) app.bootBios(bios::Cd);
             if (ImGui::MenuItem("Cartridge boot ROM (empty slot)")) app.bootBios(bios::CartBoot);
             ImGui::Separator();
-            if (ImGui::MenuItem("BIOS & boot settings...")) {
-                app.showSettings = true;
-                app.devSelectTab = "BIOS";
-            }
+            if (ImGui::MenuItem("BIOS & boot settings...")) app.openBiosSettings();
             ImGui::EndMenu();
         }
         ImGui::Separator();

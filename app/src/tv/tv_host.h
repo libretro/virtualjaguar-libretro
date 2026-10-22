@@ -102,9 +102,10 @@ public:
     virtual double now() const = 0;
     virtual bool gameLoaded() const = 0;
     virtual std::string gameTitle() const = 0;
-    virtual bool menuPause(std::string& why) = 0;    // false = refused (hardcore rationing); netplay: true, not paused
+    virtual bool menuPause(std::string& why) = 0;    // App: always true -- netplay and hardcore's refusal open the menu over a game that keeps running
     virtual void menuResume() = 0;                   // restores the pause state from before the menu
     virtual bool netplayActive() const = 0;          // netplay.configured()
+    virtual bool menuRunsOn() const { return false; }   // the menu is over a running game because hardcore would not pause it (banner)
     virtual bool canLoadState() const = 0;           // ach.allowStateLoad()
     virtual std::vector<SlotInfo> slots() = 0;       // 0..9, thumbnails from App::slotThumb
     virtual bool saveState(int slot) = 0;

@@ -70,7 +70,7 @@ bool Shell::openSettings() {
         if (section_ != Section::Settings || stack_.empty()) setSection(Section::Settings);
         return true;
     }
-    if (!openMenu()) return false;   // already open: true
+    if (!openMenu()) return false;   // already open: true.  A sub-screen pushed on the slot's screen (or a deeper level of it) is left as is.
     if (menuScreenId() != "settings") menuPushScreen(makeSettingsScreen(host_, *this), Row::Settings);
     return true;
 }

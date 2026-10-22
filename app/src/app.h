@@ -281,13 +281,16 @@ public:
     // The TV in-game menu's pause (tv/tv_app_host.cpp): like togglePause() but silent, and it remembers whether the
     // game was already paused, so closing the menu gives back exactly that.  False = refused (hardcore rations pausing;
     // `why` says so).  Under netplay it returns true without pausing: the link keeps running.
-    bool menuPause(std::string& why);
+    bool menuPause(std::string& why);   // always true: hardcore's refusal (or netplay) opens the menu over a game that keeps running
+    bool menuRunsOn() const { return menuRunsOn_; }   // ... because hardcore would not let the menu pause it (the banner says so)
+    bool testDenyPause = false;                       // tv_script `hardcore-pause deny`: allowPause() refuses, as hardcore does between pauses
     void menuResume();
     tv::Shell& tvShell();
     tv::TvMode tvMode;                           // TV mode (#991): when it is on
     bool tvMoreSettings_ = false;                // the Settings window was opened by "More settings..." in TV mode (tv_more_settings.h)
     DesktopPad deskPad;                          // pad navigation of the desktop library (#1021, desktop_nav_app.h)
     tv::TvSetting tvSetting = tv::TvSetting::Auto;     // ui.tv_mode as stored, else the build default (tv::defaultSetting); TvMode acts on it as is
+    void openBiosSettings();                     // the desktop Settings on the BIOS tab; with TV mode on, the pad-driven "More settings" hand-off (the menu first with a game)
     void openSettings();                         // Settings: the TV Settings screen while TV mode is on (the in-game menu with a game), else the desktop window (#991)
     void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off
     void configureTvMode();                      // tvMode.configure() from tvSetting + the config (also when Settings changes it)
@@ -436,6 +439,8 @@ private:
     bool waitEventUntil(SDL_Event& e, uint64_t dueNs, Sint32 ms);
     void latchLog();
     void latchUpdatePeriod();
+    bool menuRunsOn_ = false;         // the menu is open over a running game because allowPause() refused (netplay is its own case)
+    bool pauseAllowed(std::string& why);   // ach.allowPause(), or the test seam
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App

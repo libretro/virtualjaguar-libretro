@@ -80,10 +80,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         }
         void bootBiosCd() override { a.bootBios(bios::Cd); }
         void bootBiosCart() override { a.bootBios(bios::CartBoot); }
-        void showBiosSettings() override {
-            a.showSettings = true;
-            a.devSelectTab = "BIOS";
-        }
+        void showBiosSettings() override { a.openBiosSettings(); }
         void newWindow() override { a.newWindow(); }
         void toggleLibrary() override { a.toggleLibrary(); }
         void closeGame() override { a.closeContent(); }

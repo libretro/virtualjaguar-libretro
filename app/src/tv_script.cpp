@@ -35,6 +35,7 @@
 #include "app.h"
 #include "devices_ui.h"
 #include "libretro.h"
+#include "platform/commands.h"
 #include "tv/tv_shell.h"
 #include "tv_more_settings.h"
 
@@ -300,6 +301,17 @@ int App::tvScriptStep() {
         } else if (verb == "fullscreen") {   // fullscreen on|off -- as F11 does (headless: the flag, and the edge TvMode is told)
             if (arg1 != "on" && arg1 != "off") return fail(l, "fullscreen wants on|off");
             setFullscreen(arg1 == "on");
+        } else if (verb == "command") {   // command settings|bios|library|tvmode -- what the native macOS menu / tray click runs (App::runNativeCommand)
+            platform::Cmd c = platform::Cmd::None;
+            if (arg1 == "settings") c = platform::Cmd::Settings;
+            else if (arg1 == "bios") c = platform::Cmd::BiosSettings;
+            else if (arg1 == "library") c = platform::Cmd::Library;
+            else if (arg1 == "tvmode") c = platform::Cmd::TvMode;
+            else return fail(l, "command wants settings|bios|library|tvmode");
+            runNativeCommand(c, 0);
+        } else if (verb == "hardcore-pause") {   // hardcore-pause deny|allow -- allowPause() refuses (rc_client_can_pause between pauses) or not
+            if (arg1 != "deny" && arg1 != "allow") return fail(l, "hardcore-pause wants deny|allow");
+            testDenyPause = arg1 == "deny";
         } else if (verb == "hintreset") {   // the one-time TV mode hint is due again (a Settings > Reset of Interface); toast-count starts over
             cfg.erase("ui.tv_hint_shown");
             tvHintShownThisRun_ = false;
@@ -361,6 +373,7 @@ int App::tvScriptStep() {
             else if (name == "toast") got = osd_.empty() ? std::string() : osd_.back().text;   // the last toast
             else if (name == "toast-count") got = std::to_string(toastCount_);
             else if (name == "tv-screen") got = tvShell().screenId();
+            else if (name == "menu-owns-input") got = flag(input.menuOwnsInput());   // the in-game menu has the pads (open, paused or running on)
             else if (name == "menu-slot") got = tvShell().menuHasScreen() ? tvShell().menuScreenId() : std::string("none");   // the screen in the in-game menu's slot
             else if (name == "tv-focus") got = tvShell().focusLabel();   // the focused group / row / tile label of the top TV screen ("" = none)
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens

@@ -22,6 +22,7 @@ std::string AppHost::gameTitle() const { return app_.host.contentName(); }
 bool AppHost::menuPause(std::string& why) { return app_.menuPause(why); }
 void AppHost::menuResume() { app_.menuResume(); }
 bool AppHost::netplayActive() const { return app_.netplay.configured(); }
+bool AppHost::menuRunsOn() const { return app_.menuRunsOn(); }
 // With a game running: what the achievements policy says.  With none, hardcoreActive() is always false (no game is being
 // looked up), so ask whether hardcore would apply to the next one: a state load started from Home is refused then.
 bool AppHost::canLoadState() const { return app_.host.isLoaded() ? app_.ach.allowStateLoad() : !app_.ach.hardcoreNextGame(); }

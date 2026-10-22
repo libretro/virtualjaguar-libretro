@@ -1381,7 +1381,7 @@ void App::togglePause() {
     if (!paused) {
         // Hardcore rations pausing (rc_client_can_pause); softcore never refuses.
         std::string why;
-        if (!ach.allowPause(why)) {
+        if (!pauseAllowed(why)) {
             toast(why, 2.5, 2);
             return;
         }
@@ -1394,15 +1394,29 @@ void App::togglePause() {
 
 // The TV in-game menu's pause: the same gate and the same pause as togglePause(), without its toast, and it keeps
 // what was true before so that a game the player had paused stays paused when the menu closes.  A netplay session
-// keeps running (a pause would stall the other side), so there the menu only lays over the picture.
+// keeps running (a pause would stall the other side), so there the menu only lays over the picture; hardcore's refusal to pause
+// (rc_client_can_pause) opens the menu the same way, so Settings stays reachable mid-game: the menu owns the pads, the game runs on, and
+// the menu's banner says so.  `why` (the pause-decay countdown) is left unset: nothing toasts it.
+bool App::pauseAllowed(std::string& why) {
+    if (testDenyPause) {
+        why = "Hardcore: pausing is available again in 3 s";
+        return false;
+    }
+    return ach.allowPause(why);
+}
+
 bool App::menuPause(std::string& why) {
-    if (menuHeldPause_) return true;   // already open
+    if (menuHeldPause_ || menuRunsOn_) return true;   // already open
     if (netplay.configured()) {
         input.setMenuOwnsInput(true);   // running on, but not for the pads: the menu has them
         return true;
     }
     if (!paused) {
-        if (!ach.allowPause(why)) return false;   // hardcore rations pausing (rc_client_can_pause)
+        if (!pauseAllowed(why)) {   // hardcore rations pausing (rc_client_can_pause): the menu opens anyway, over the running game
+            menuRunsOn_ = true;
+            input.setMenuOwnsInput(true);
+            return true;
+        }
         paused = true;
         audio.setPaused(true);
         pausedBeforeMenu_ = false;
@@ -1416,6 +1430,7 @@ bool App::menuPause(std::string& why) {
 
 void App::menuResume() {
     input.setMenuOwnsInput(false);   // before the caller arms the release guard
+    menuRunsOn_ = false;
     if (!menuHeldPause_) return;
     menuHeldPause_ = false;
     if (paused != pausedBeforeMenu_) {
@@ -1427,8 +1442,18 @@ void App::menuResume() {
 tv::Shell& App::tvShell() { return *tvShell_; }
 
 void App::openSettings() {
-    if (tvMode.active()) tvShell().openSettings();   // a refusal (hardcore pause) toasts its reason; the desktop window is not the fallback
+    if (tvMode.active()) tvShell().openSettings();   // (the in-game menu opens even when hardcore will not pause: the game runs on under it)
     else showSettings = true;
+}
+
+void App::openBiosSettings() {
+    devSelectTab = "BIOS";
+    if (tvMode.active()) {
+        if (host.isLoaded() && !tvShell().menuOpen() && !tvShell().openMenu()) return;   // the pads are the window's only over the menu
+        tvMoreSettingsOpen(*this);
+    } else {
+        showSettings = true;
+    }
 }
 
 void App::showOpenDialog() {

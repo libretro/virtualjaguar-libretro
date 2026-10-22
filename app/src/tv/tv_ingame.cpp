@@ -83,13 +83,14 @@ void Shell::drawMenu(ImVec2 pos, ImVec2 size) {
                                     screen ? capitalised(menuScreen_->id()) : title_, 0, railW);
     y += t1.y + 12 * m.u;
     widgets::text(dl, m.caption, ImVec2(railX, y), widgets::col(pal.textMuted),
-                  root ? std::string(host_.netplayActive() ? "Menu" : "Paused") : host_.gameTitle(), railW);
+                  root ? std::string(host_.netplayActive() || host_.menuRunsOn() ? "Menu" : "Paused") : host_.gameTitle(), railW);
 
     // ---- the list -------------------------------------------------------------------------------------------------
     const float listX = railX + railW + inset;
     const float listW = pp.x + ps.x - inset - listX;
     float listY = pp.y + inset;
     if (host_.netplayActive()) listY += widgets::banner(dl, m, ImVec2(listX, listY), listW, "Netplay: the game keeps running") + 20 * m.u;
+    else if (host_.menuRunsOn()) listY += widgets::banner(dl, m, ImVec2(listX, listY), listW, "Hardcore: the game keeps running") + 20 * m.u;
     const float rowH = (slotPage ? 124 : 88) * m.u, gap = 14 * m.u;
     const float listH = hintY - 24 * m.u - listY;
     const int visible = std::max(1, (int)((listH + gap) / (rowH + gap)));

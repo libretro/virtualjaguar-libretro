@@ -22,6 +22,7 @@ public:
     bool menuPause(std::string& why) override;
     void menuResume() override;
     bool netplayActive() const override;
+    bool menuRunsOn() const override;
     bool canLoadState() const override;
     std::vector<SlotInfo> slots() override;
     bool saveState(int slot) override;
