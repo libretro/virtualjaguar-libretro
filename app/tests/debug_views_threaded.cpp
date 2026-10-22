@@ -213,6 +213,7 @@ void cases(Rig& r, const std::string& romA, const std::string& romB) {
         dbg.setHaltAvailable(false);
         dbg.breakNow();
         emu.advance(5);
+        dbg.syncHalt();
         CHECK(!dbg.attached() && !dbg.halted(), "no halt is possible while it is gated");
     }
 

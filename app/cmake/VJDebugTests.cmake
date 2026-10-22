@@ -32,7 +32,7 @@ else()
     target_compile_options(vj_debug_session_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 add_test(NAME debug_session_unit COMMAND vj_debug_session_test)
-set_tests_properties(debug_session_unit PROPERTIES TIMEOUT 60)
+set_tests_properties(debug_session_unit PROPERTIES TIMEOUT 60 LABELS emu_thread)
 
 #   debug_e2e            the REAL core through CoreHost and DebugSession: the interface is handed over only
 #                        when VJ_CAP_DEBUG is announced; "break now" parks the 68000 inside retro_run() and the

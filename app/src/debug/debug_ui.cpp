@@ -13,28 +13,6 @@
 
 namespace vj {
 
-namespace {
-
-const char* targetName(int t) {
-    switch (t) {
-    case VJ_DBG_TARGET_M68K: return "68000";
-    case VJ_DBG_TARGET_GPU: return "GPU";
-    case VJ_DBG_TARGET_DSP: return "DSP";
-    default: return "?";
-    }
-}
-
-const char* reasonName(int r) {
-    switch (r) {
-    case VJ_DBG_STOP_BREAKPOINT: return "breakpoint";
-    case VJ_DBG_STOP_STEP: return "step";
-    case VJ_DBG_STOP_USER: return "break";
-    default: return "";
-    }
-}
-
-}  // namespace
-
 void drawToolsMenu(App& app) {
     DebugSession& d = app.debug;
     const bool halted = d.halted();
@@ -80,8 +58,8 @@ void drawDebugOverlay(App& app, float areaX, float areaY) {
     if (ImGui::Begin("##debug_halt_bar", nullptr, flags)) {
         ImGui::TextColored(ui::vec4(ui::pal().warning), "HALTED");
         ImGui::SameLine();
-        ImGui::Text("%s at $%06X", targetName(d.haltedTarget()), d.haltedPc());
-        const char* why = reasonName(d.haltReason());
+        ImGui::Text("%s at $%06X", dbgTargetName(d.haltedTarget()), d.haltedPc());
+        const char* why = dbgReasonName(d.haltReason());
         if (*why) {
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", why);

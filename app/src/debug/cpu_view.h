@@ -256,7 +256,7 @@ class CpuControl {
 public:
     explicit CpuControl(DebugSession& s) : s_(s) {}
 
-    // Registered with the session's onHalt / onResume / onForcedClose.
+    // Registered with the session's onHaltUi / onForcedClose.
     void onHalt(int target, unsigned pc, int reason);
     void forget();                                          // the tools were switched off
 

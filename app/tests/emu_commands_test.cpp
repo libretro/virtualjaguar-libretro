@@ -29,6 +29,7 @@ int g_fail = 0;
     } while (0)
 
 double since(Clock::time_point t0) { return std::chrono::duration<double>(Clock::now() - t0).count(); }
+void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 
 void testFifo() {
     EmuCommands q;
@@ -151,6 +152,28 @@ void testDebugLaneWakesAndCloses() {
     CHECK(q.post([] {}, Lane::Debug) && q.pending(Lane::Debug), "reopen() takes debug commands again");
 }
 
+// B1: the halt pump's wait listens to the debug lane only.  A frame-lane post must not end it (a halted core cannot
+// run frame commands, and the pump would otherwise spin); a debug post or notify() must.
+void testDebugLaneWait() {
+    EmuCommands q;
+    const auto t0 = Clock::now();
+    q.post([] {});                                             // frame lane
+    q.waitUntil(t0 + std::chrono::milliseconds(30), EmuCommands::Lane::Debug);
+    CHECK(since(t0) >= 0.025, "a frame-lane post does not wake the debug-lane wait (%.1f ms)", since(t0) * 1e3);
+    std::thread poster([&] { sleepMs(5); q.post([] {}, EmuCommands::Lane::Debug); });
+    const auto t1 = Clock::now();
+    q.waitUntil(t1 + std::chrono::seconds(5), EmuCommands::Lane::Debug);
+    CHECK(since(t1) < 1.0, "a debug-lane post wakes it (%.3f s)", since(t1));
+    poster.join();
+    std::thread notifier([&] { sleepMs(5); q.notify(); });
+    const auto t2 = Clock::now();
+    q.waitUntil(t2 + std::chrono::seconds(5), EmuCommands::Lane::Debug);
+    CHECK(since(t2) < 1.0, "notify() wakes it (%.3f s)", since(t2));
+    notifier.join();
+    // The pending debug post is still there for drain(); the frame post too.
+    CHECK(q.pending(EmuCommands::Lane::Debug) && q.pending(EmuCommands::Lane::Frame), "nothing was consumed by the wait");
+}
+
 }  // namespace
 
 int main() {
@@ -161,6 +184,7 @@ int main() {
     testProducers();
     testLanes();
     testDebugLaneWakesAndCloses();
+    testDebugLaneWait();
     std::printf(g_fail ? "emu_commands_test: %d FAILED\n" : "emu_commands_test: OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

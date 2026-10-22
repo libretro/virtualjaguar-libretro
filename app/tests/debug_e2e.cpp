@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     bool refusedWhileHalted = false;
     unsigned haltPc = 0;
     bool stepped = false;
-    dbg.onHalt.push_back([&](int target, unsigned pc, int reason) {
+    dbg.core().onHalt.push_back([&](int target, unsigned pc, int reason) {
         halts++;
         if (halts == 1) {
             CHECK(target == VJ_DBG_TARGET_M68K);
@@ -101,8 +101,9 @@ int main(int argc, char** argv) {
             haltPc = pc;
         }
     });
-    dbg.onResume.push_back([&] { resumes++; });
-    dbg.runUiFrame = [&] {
+    dbg.core().onResume.push_back([&] { resumes++; });
+    dbg.core().runUiFrame = [&] {
+        dbg.syncHalt();
         ui++;
         CHECK(dbg.halted() && host.inFrame());
         if (ui == 1) {
@@ -138,6 +139,7 @@ int main(int argc, char** argv) {
     CHECK(refusedWhileHalted);
     CHECK(ui >= 4 && halts >= 2);                     // the step halted again
     CHECK(resumes == 1);                              // only the final continue counts as a resume
+    dbg.syncHalt();
     CHECK(!dbg.halted() && !host.inFrame());
     stepped = halts >= 2;
     CHECK(stepped);
@@ -151,11 +153,11 @@ int main(int argc, char** argv) {
     CHECK(dbg.addBreakpoint(VJ_DBG_TARGET_M68K, bpPc));
     CHECK(!dbg.addBreakpoint(VJ_DBG_TARGET_M68K, bpPc));
     int bpHits = 0;
-    dbg.onHalt.clear();
-    dbg.onHalt.push_back([&](int target, unsigned pc, int reason) {
+    dbg.core().onHalt.clear();
+    dbg.core().onHalt.push_back([&](int target, unsigned pc, int reason) {
         if (target == VJ_DBG_TARGET_M68K && pc == bpPc && reason == VJ_DBG_STOP_BREAKPOINT) bpHits++;
     });
-    dbg.runUiFrame = [&] { dbg.resume(); };
+    dbg.core().runUiFrame = [&] { dbg.syncHalt(); dbg.resume(); };
     for (int i = 0; i < 90 && bpHits == 0; i++) host.runFrame();
     CHECK(bpHits >= 1);
     dbg.clearBreakpoints();
@@ -167,12 +169,15 @@ int main(int argc, char** argv) {
     std::string closed;
     dbg.onForcedClose.push_back([&](const char* why) { closed = why; });
     int ui5 = 0;
-    dbg.runUiFrame = [&] {
+    dbg.core().runUiFrame = [&] {
+        dbg.syncHalt();
         if (++ui5 == 2) dbg.setHardcore(true);        // what App::syncDebug does when ach.hardcoreActive() flips
     };
+    dbg.syncHalt();                                   // the mirror must see the last resume before breakNow() is allowed
     dbg.breakNow(VJ_DBG_TARGET_M68K);
     host.runFrame();
     CHECK(ui5 >= 2);
+    dbg.syncHalt();
     CHECK(!dbg.halted() && !dbg.attached() && !dbg.enabled());
     CHECK(closed == "hardcore");
     CHECK(!host.inFrame());

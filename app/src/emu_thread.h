@@ -101,6 +101,12 @@ public:
     template <class F>
     bool callFor(std::chrono::milliseconds timeout, F&& fn);
 
+    // Emulation thread only (#967 phase 3b): the halt pump's lane service.  Drains Lane::Debug now; if nothing was queued,
+    // waits up to `maxWait` on waitUntil(deadline, Lane::Debug) -- a frame-lane post does not end that wait -- then
+    // drains again.  Returns the number of commands run.  Inline: drains and returns at once.  Threaded and called off
+    // the emulation thread (or abandoned): returns 0 at once.
+    size_t serveDebugLane(std::chrono::milliseconds maxWait);
+
     void inlineStep();          // inline: one frame now
     bool advance(unsigned n);   // after earlier commands: n frames now, even while paused, ignoring pacing; wait until done
 

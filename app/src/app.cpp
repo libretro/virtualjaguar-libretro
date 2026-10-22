@@ -565,20 +565,28 @@ void App::wireHost() {
     // the thread is inline, so both run at once: headless and inline runs are unchanged).
     debug.coreCall = [this](std::function<void()> f) { emu.debugCall(std::move(f)); };
     debug.corePost = [this](std::function<void()> f) { emu.debugPost(std::move(f)); };
-    debug.runUiFrame = [this] { haltedFrame(); };         // the core is parked in retro_run(): UI only
-    debug.abortHalt = [this] { return quit; };            // closing the window while halted lets the core go
+    // The halt lives in DebugCore (phase 3b).  Inline the core is parked in retro_run() on the UI thread, so the pump runs
+    // one nested UI frame per iteration; the UI thread's mirror of the halt (DebugSession::syncHalt, from syncDebug)
+    // fires the UI-side hooks below.  abortHalt reads quitting_ only: closing the window while halted lets the core go.
+    debug.core().runUiFrame = [this] { haltedFrame(); };   // the core is parked in retro_run(): UI only
+    debug.core().abortHalt = [this] { return quitting_.load(); };
+    debug.core().notifyVerdict = [this] { emu.debugPost([] {}); };   // wakes the pump's lane wait (a no-op inline, where it runs now)
     debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
-    debug.onHalt.push_back([this](int target, unsigned pc, int reason) {
+    debug.core().onHalt.push_back([this](int target, unsigned pc, int reason) {   // the emulation thread (inline: the UI thread)
         audio.setPaused(true);                            // no stale buffer droning while the game is stopped
+        if (reason != VJ_DBG_STOP_STEP) std::fprintf(stderr, "[debug] halt: %s at $%06X (%s)\n", dbgTargetName(target), pc, dbgReasonName(reason));
+    });
+    debug.core().onResume.push_back([this] {
+        audio.clear();
+        audio.setPaused(emu.paused());
+    });
+    debug.onHaltUi.push_back([this](int target, unsigned pc, int reason) {   // the UI thread, from syncHalt()
         if (reason == VJ_DBG_STOP_STEP) return;
-        const char* who = target == VJ_DBG_TARGET_GPU ? "GPU" : target == VJ_DBG_TARGET_DSP ? "DSP" : "68000";
         char msg[96];
-        std::snprintf(msg, sizeof msg, "Halted: %s at $%06X - F9 continues, F10 steps", who, pc);
+        std::snprintf(msg, sizeof msg, "Halted: %s at $%06X - F9 continues, F10 steps", dbgTargetName(target), pc);
         toast(msg, 4.0);
     });
-    debug.onResume.push_back([this] {
-        audio.clear();
-        audio.setPaused(paused);
+    debug.onResumeUi.push_back([this] {
         pacer_.reset();
         lastTick_ = now();                                // the halt must not count as elapsed emulation time
     });
@@ -590,6 +598,8 @@ void App::wireHost() {
 
 void App::syncDebug() {
     debug.syncCore();   // the UI half of a core interface swap the emulation thread made (threaded)
+    if (!threaded() && !host.inFrame()) debug.core().frameEnded();   // inline: a halt the core left on gdb's say-so
+    debug.syncHalt();   // the mirror of the core's halt: the UI-side hooks fire here
     debug.setContentLoaded(host.isLoaded());
     debug.setHardcore(ach.hardcoreActive());
     debug.tick(now(), host.isLoaded() && !paused && !debug.halted());
@@ -1015,13 +1025,17 @@ double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0
 // nothing here may re-enter the core -- CoreHost refuses state loads, resets, loads and option changes
 // while inFrame().
 void App::haltedFrame() {
-    if (!imguiUp_ || !window_ || emu.onEmuThread()) {   // never run the UI on the emulation thread (#967 phase 3 moves the pump)
+    if (!imguiUp_ || !window_ || emu.onEmuThread()) {   // inline only: threaded, DebugCore::waitVerdict replaces this frame
+        debug.syncHalt();
         debug.detachAndResume();   // no UI to release the core with: never leave it parked
         return;
     }
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, false);
-    if (quit) return;
+    if (quit) {
+        quitting_.store(true);   // the pump's abortHalt reads this: the core detaches when this frame returns
+        return;
+    }
     inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
     inputFrame(*this);
     ach.pump();

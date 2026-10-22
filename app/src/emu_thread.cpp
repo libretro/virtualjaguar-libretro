@@ -100,6 +100,21 @@ void EmuThread::debugPost(std::function<void()> fn) {
     fn();
 }
 
+size_t EmuThread::serveDebugLane(std::chrono::milliseconds maxWait) {
+    const auto onError = [this](const std::string& what) {
+        if (client_) client_->commandFailed(what);
+    };
+    if (abandoned()) return 0;
+    if (!threaded()) return cmds_.drain(onError, EmuCommands::Lane::Debug);
+    if (!onEmuThread()) return 0;   // not the halt pump's thread: nothing here is ours to serve
+    size_t n = cmds_.drain(onError, EmuCommands::Lane::Debug);
+    if (n == 0) {
+        cmds_.waitUntil(Steady::now() + maxWait, EmuCommands::Lane::Debug);
+        n = cmds_.drain(onError, EmuCommands::Lane::Debug);
+    }
+    return n;
+}
+
 void EmuThread::waitFinished() {
     std::unique_lock<std::mutex> l(mu_);
     cv_.wait(l, [this] { return finished_ || state_.load() == State::Abandoned; });

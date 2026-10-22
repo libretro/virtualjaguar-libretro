@@ -8,8 +8,10 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -17,8 +19,23 @@
 
 namespace vj {
 
+const char* dbgTargetName(int target);   // "68000" / "GPU" / "DSP" / "?"
+const char* dbgReasonName(int reason);   // "breakpoint" / "step" / "break" / ""
+
+// What the core's halt looks like from outside.  The UI mirrors it once per frame (DebugSession::syncHalt).
+struct HaltState {
+    bool halted = false;
+    int target = -1;                 // VJ_DBG_TARGET_*
+    unsigned pc = 0;                 // kept after the halt ends (the bar's last value)
+    int reason = VJ_DBG_STOP_NONE;   // VJ_DBG_STOP_*
+    uint64_t serial = 0;             // bumps on every ENTRY into a halt (a step's re-halt included) and on CONTINUE /
+                                     // DETACH / a foreign resume; the STEP return itself does not bump it
+};
+
 class DebugCore {
 public:
+    static constexpr std::chrono::milliseconds kPumpWait{4};   // the pump's bounded wait per iteration
+
     DebugCore();                                         // fills host_ (size, user, halt_pump thunk)
     DebugCore(const DebugCore&) = delete;                // host_.user points at this
     DebugCore& operator=(const DebugCore&) = delete;
@@ -32,11 +49,7 @@ public:
     // across a reload: null in between is what the generation sees).
     uint64_t ifaceGen() const { return gen_.load(); }               // atomic
 
-    // 3a only: the session keeps today's halt machine and installs it here.  pump() returns pumpHook ? pumpHook(t, pc)
-    // : VJ_DBG_RESUME_DETACH.  Phase 3b (B1) moves the halt machine into this class and removes the hook.
-    std::function<int(int target, unsigned pc)> pumpHook;
-    void markDetached() { attached_ = false; }           // clears attached() without calling the core (the DETACH verdict path)
-    int pump(int target, unsigned pc);                   // the halt_pump thunk's target
+    void markDetached() { attached_ = false; }           // clears attached() without calling the core (content unloaded)
 
     // ---- iface wrappers: each returns the iface's own result; a missing iface or entry point returns the failure value --
     int peek(unsigned addr, uint8_t* dst, unsigned n) const;                 // VJ_DBG_ERR_STATE without one
@@ -61,8 +74,42 @@ public:
     unsigned frameNumber() const;
     bool region(int idx, vj_debug_region& out) const;
 
+    // ---- the halt (#967 phase 3b) -------------------------------------------------------------------------
+    // The pump runs on the emulation thread inside the core's GDBHalt() loop, which owns the socket service, the halt
+    // timeout and a 2 ms sleep.  So pump() never waits for a verdict itself: it calls waitVerdict (threaded) or
+    // runUiFrame (inline) once and returns VJ_DBG_RESUME_NONE when nothing is decided; the core calls it again.
+    HaltState halt() const;                              // any thread: a copy under a mutex
+    uint64_t haltSerial() const { return serial_.load(); }   // any thread: atomic, == halt().serial
+    // The UI's verdict (VJ_DBG_RESUME_CONTINUE / _STEP / _DETACH) for the halt whose serial is `forSerial` (the serial
+    // the UI mirrored).  Stored as one atomic word (forSerial << 2 | v), then notifyVerdict() if set.  The pump takes it
+    // only while the current halt's serial equals forSerial; otherwise it is dropped (a verdict for a dead halt never
+    // resumes the next one).  A later offer replaces an earlier one.  Any thread.
+    void offerVerdict(int v, uint64_t forSerial);
+    int pendingVerdict() const;                          // tests: the stored verdict's value, NONE when none
+    std::function<void()> notifyVerdict;                 // App: emu.debugPost([]{})
+    std::function<void()> waitVerdict;                   // threaded: App::haltWait (serve the lane <= kPumpWait); inline: empty
+    std::function<void()> runUiFrame;                    // inline only: App::haltedFrame
+    std::function<bool()> abortHalt;                     // polled each iteration; true = DETACH (the app is quitting)
+    // Emulation thread, on every ENTRY into a halt (a step's re-halt included).  Walked on copies, outside the mutex.
+    std::vector<std::function<void(int target, unsigned pc, int reason)>> onHalt;
+    std::vector<std::function<void()>> onResume;         // emulation thread, on CONTINUE / DETACH / frameEnded() (not STEP)
+    int pump(int target, unsigned pc);                   // the halt_pump thunk's target; returns the verdict or NONE
+    // Emulation thread, right after every retro_run().  If the core left GDBHalt() without one of our verdicts (gdb
+    // continued, the socket dropped, the timeout fired) the halt is still open here: closes it, bumps the serial,
+    // drops a verdict written for it and fires onResume.  `attached` is untouched (a foreign continue is not a
+    // detach).  A no-op when not halted.
+    void frameEnded();
+
 private:
     static int haltPumpThunk(void* user, int target, unsigned pc);
+    int takeVerdict(uint64_t serial);                    // exchange(0); NONE unless the stored serial == serial
+    void closeHaltLocked();                              // halted = false, target = -1, reason = NONE (pc kept); under haltMu_
+
+    mutable std::mutex haltMu_;
+    HaltState halt_;                                     // under haltMu_
+    std::atomic<uint64_t> serial_{0};                    // mirrors halt_.serial
+    std::atomic<bool> halted_{false};                    // mirrors halt_.halted (frameEnded's fast path)
+    std::atomic<uint64_t> verdict_{0};                   // (forSerial << 2) | v; 0 = none
 
     std::atomic<const vj_debug_iface*> iface_{nullptr};
     std::atomic<bool> attached_{false};

@@ -255,14 +255,15 @@ static void testControls() {
     s.setIface(m.iface());
     s.setContentLoaded(true);
     CpuControl c(s);
-    s.onHalt.push_back([&](int t, unsigned pc, int r) { c.onHalt(t, pc, r); });
+    s.onHaltUi.push_back([&](int t, unsigned pc, int r) { c.onHalt(t, pc, r); });
 
     // Break arms halt_next on that target and remembers it is pending until the halt.
     CHECK(c.breakIn(VJ_DBG_TARGET_GPU));
     CHECK(m.haltNexts.size() == 1 && m.haltNexts[0] == VJ_DBG_TARGET_GPU && c.pending(VJ_DBG_TARGET_GPU));
     CHECK(!c.pending(VJ_DBG_TARGET_M68K));
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_GPU, 0xF03000, VJ_DBG_STOP_USER);
+    s.syncHalt();
     CHECK(!c.pending(VJ_DBG_TARGET_GPU));
 
     // Not halted: step buttons do nothing and say so.
@@ -270,14 +271,15 @@ static void testControls() {
     CHECK(!c.cont() && !c.stepOver(VJ_DBG_TARGET_M68K) && !c.runTo(VJ_DBG_TARGET_M68K, 0x5000));
 
     // Step on the halted tab is a STEP verdict.
-    s.runUiFrame = [&] { CHECK(c.stepIn(VJ_DBG_TARGET_M68K)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.stepIn(VJ_DBG_TARGET_M68K)); };
     int v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
     CHECK(v == VJ_DBG_RESUME_STEP);
 
     // Step on another tab: the halted 68K resumes and the GPU is told to halt at its next instruction.
     m.haltNexts.clear();
-    s.runUiFrame = [&] { CHECK(c.stepIn(VJ_DBG_TARGET_GPU)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.stepIn(VJ_DBG_TARGET_GPU)); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE && m.haltNexts.size() == 1 && m.haltNexts[0] == VJ_DBG_TARGET_GPU);
     CHECK(c.pending(VJ_DBG_TARGET_GPU));
     c.forget();
@@ -286,7 +288,8 @@ static void testControls() {
     // Step over a JSR: temporary breakpoint at the next instruction, then a CONTINUE.
     put(m, 0x4000, {0x4E, 0xB9, 0x00, 0x00, 0x12, 0x34});
     m.breakpoints.clear();
-    s.runUiFrame = [&] {
+    s.core().runUiFrame = [&] {
+        s.syncHalt();
         CHECK(c.stepOver(VJ_DBG_TARGET_M68K));
         CHECK(c.temp().active() && c.temp().addr() == 0x4006);
         bool has = false;
@@ -295,50 +298,60 @@ static void testControls() {
         CHECK(s.breakpoints().empty());            // the session's list stays the user's
     };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE);
     // The next halt (here: the temp breakpoint being hit) clears it.
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4006, VJ_DBG_STOP_BREAKPOINT);
+    s.syncHalt();
     CHECK(!c.temp().active());
     CHECK(m.breakpoints.empty());
 
     // Step over a plain instruction is a plain step.
     put(m, 0x4000, {0x4E, 0x71});
-    s.runUiFrame = [&] { CHECK(!c.stepOver(VJ_DBG_TARGET_M68K)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(!c.stepOver(VJ_DBG_TARGET_M68K)); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_STEP && !c.temp().active());
     // ...and so is every GPU/DSP instruction.
-    s.runUiFrame = [&] { CHECK(!c.stepOver(VJ_DBG_TARGET_GPU)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(!c.stepOver(VJ_DBG_TARGET_GPU)); };
     v = m.simulateHalt(VJ_DBG_TARGET_GPU, 0xF03000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_STEP);
 
     // Run to cursor.
-    s.runUiFrame = [&] { CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x5000)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x5000)); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE && c.temp().active() && c.temp().addr() == 0x5000);
     CHECK(m.breakpoints.size() == 1);
     // Continue drops a pending run-to.
-    s.runUiFrame = [&] { CHECK(c.cont()); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.cont()); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002);
+    s.syncHalt();
     CHECK(v == VJ_DBG_RESUME_CONTINUE && !c.temp().active());
     CHECK(m.breakpoints.empty());
 
     // A temporary breakpoint where the user has an enabled one: theirs stays when the temp goes.
     CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x6000));
-    s.runUiFrame = [&] { CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(c.temp().active() && m.breakpoints.size() == 1);
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x6000);
+    s.syncHalt();
     CHECK(!c.temp().active() && m.breakpoints.size() == 1);
     // A disabled user breakpoint is not in the core: the temp owns the slot and clears it.
     s.setBreakpointEnabled(VJ_DBG_TARGET_M68K, 0x6000, false);
     CHECK(m.breakpoints.empty());
-    s.runUiFrame = [&] { CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
+    s.core().runUiFrame = [&] { s.syncHalt(); CHECK(c.runTo(VJ_DBG_TARGET_M68K, 0x6000)); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
+    s.syncHalt();
     CHECK(m.breakpoints.size() == 1);
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x6000);
+    s.syncHalt();
     CHECK(m.breakpoints.empty());
 
     // The tools off: Break explains why.

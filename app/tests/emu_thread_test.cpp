@@ -63,6 +63,8 @@ struct FakeClient : EmuThread::Client {
     std::atomic<bool> blocked{false};
     std::atomic<int> holdAt{-1};        // runFrame holds, after counting its frame, while frames == holdAt
     std::atomic<int> started{0}, stopping{0}, afterCmds{0};
+    std::atomic<int> serveNow{0};       // each count runs onBlocked once, on the emulation thread, inside the blocked frame
+    std::function<void()> onBlocked;    // set BEFORE start(), never reassigned while the thread runs
     std::thread::id startedOn;
     std::atomic<double> period{0.010};
     std::mutex errMu;
@@ -79,6 +81,10 @@ struct FakeClient : EmuThread::Client {
     void runFrame() override {
         while (block.load()) {
             blocked = true;
+            if (onBlocked && serveNow.load() > 0) {
+                serveNow--;
+                onBlocked();
+            }
             sleepMs(1);
         }
         frames++;
@@ -561,6 +567,44 @@ void testDebugCallWaitHook() {
 
 }  // namespace
 
+// B1: the halt pump's lane service.  Threaded, it drains the debug lane, waits at most maxWait for a DEBUG post, drains
+// again; a frame-lane post does not shorten the wait; inline it drains and returns at once.
+void testServeDebugLane() {
+    EmuThread e;
+    FakeClient c;
+    std::atomic<size_t> served{0};
+    std::atomic<double> waited{0};
+    c.onBlocked = [&] {                       // runs on the emulation thread, inside the blocked frame (the halt)
+        const auto t0 = Clock::now();
+        served = e.serveDebugLane(std::chrono::milliseconds(4));
+        waited = since(t0);
+    };
+    c.block = true;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    e.post([] {});                            // a frame-lane command queued behind the halted frame (the SRAM autosave)
+    c.serveNow = 1;
+    for (int i = 0; i < 1000 && c.serveNow.load() > 0; i++) sleepMs(1);
+    sleepMs(10);
+    CHECK(served.load() == 0, "nothing in the debug lane: 0 commands (%zu)", served.load());
+    CHECK(waited.load() >= 0.003 && waited.load() < 0.5, "and it waited about maxWait despite the frame post (%.1f ms)", waited.load() * 1e3);
+    std::atomic<int> ran{0};
+    e.debugPost([&] { ran++; });
+    c.serveNow = 1;
+    for (int i = 0; i < 1000 && (c.serveNow.load() > 0 || ran.load() == 0); i++) sleepMs(1);
+    CHECK(ran.load() == 1 && served.load() == 1, "a debug post is run by the lane service (%d, %zu)", ran.load(), served.load());
+    CHECK(e.serveDebugLane(std::chrono::milliseconds(50)) == 0, "off the emulation thread: 0, no wait");
+    c.block = false;
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline start");
+    int x = 0;
+    in.debugPost([&] { x = 1; });            // inline: ran at once
+    const auto t0 = Clock::now();
+    CHECK(in.serveDebugLane(std::chrono::milliseconds(50)) == 0 && since(t0) < 0.01 && x == 1, "inline: returns at once");
+}
+
 int main() {
 #ifdef _WIN32
     // The app runs EmuThread after SDL_Init, which sets the Windows timer resolution to 1 ms
@@ -583,6 +627,7 @@ int main() {
     testDebugLane();
     testDebugCallWaitsForTheFrame();
     testDebugCallWaitHook();
+    testServeDebugLane();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

@@ -6,9 +6,11 @@
 #include "debug_core.h"
 #include "debug_session.h"
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace vj;
@@ -117,11 +119,12 @@ static void testHaltResume() {
     int halts = 0, resumes = 0, uiFrames = 0;
     int lastTarget = -1, lastReason = -1;
     unsigned lastPc = 0;
-    s.onHalt.push_back([&](int t, unsigned pc, int r) { halts++; lastTarget = t; lastPc = pc; lastReason = r; });
-    s.onResume.push_back([&] { resumes++; });
+    s.core().onHalt.push_back([&](int t, unsigned pc, int r) { halts++; lastTarget = t; lastPc = pc; lastReason = r; });
+    s.core().onResume.push_back([&] { resumes++; });
 
     // Continue after three nested UI frames; halted() and the halt details are visible meanwhile.
-    s.runUiFrame = [&] {
+    s.core().runUiFrame = [&] {
+        s.syncHalt();
         uiFrames++;
         CHECK(s.halted());
         CHECK(s.haltedTarget() == VJ_DBG_TARGET_M68K && s.haltedPc() == 0x4000);
@@ -134,29 +137,33 @@ static void testHaltResume() {
     CHECK(uiFrames == 3 && pumps == 3);
     CHECK(halts == 1 && resumes == 1);
     CHECK(lastTarget == VJ_DBG_TARGET_M68K && lastPc == 0x4000 && lastReason == VJ_DBG_STOP_BREAKPOINT);
+    s.syncHalt();
     CHECK(!s.halted() && s.haltedTarget() == -1);
 
     // Step: the verdict is STEP, it is not reported as a resume, and a second halt follows on the next pump.
     uiFrames = 0;
-    s.runUiFrame = [&] { uiFrames++; s.step(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); uiFrames++; s.step(); };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT);
     CHECK(v == VJ_DBG_RESUME_STEP && m.haltedStepTarget == VJ_DBG_TARGET_M68K);
     CHECK(halts == 2 && resumes == 1);   // halted again (onHalt), no onResume for a step
-    CHECK(!s.halted());
+    s.syncHalt();
+    CHECK(s.halted());   // the STEP return keeps the serial: the bar stays up until the re-halt (or the next resume)
 
     // The reason comes from the core.
-    s.runUiFrame = [&] { s.resume(); };
+    s.core().runUiFrame = [&] { s.syncHalt(); s.resume(); };
     m.simulateHalt(VJ_DBG_TARGET_GPU, 0xF03004, VJ_DBG_STOP_USER);
     CHECK(lastTarget == VJ_DBG_TARGET_GPU && lastReason == VJ_DBG_STOP_USER);
 
     // resume()/step() outside a halt do nothing.
+    s.syncHalt();
     s.resume();
-    CHECK(!s.resumeQueued());
+    s.step();
+    CHECK(s.core().pendingVerdict() == VJ_DBG_RESUME_NONE);
 
     // Quit while halted: abortHalt turns into a detach.
     bool quit = false;
-    s.abortHalt = [&] { return quit; };
-    s.runUiFrame = [&] { quit = true; };
+    s.core().abortHalt = [&] { return quit; };
+    s.core().runUiFrame = [&] { quit = true; };
     v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000);
     CHECK(v == VJ_DBG_RESUME_DETACH);
     CHECK(!m.attached() && !s.attached());
@@ -170,9 +177,10 @@ static void testHardcoreWhileHalted() {
     CHECK(s.attach());
     std::string why;
     s.onForcedClose.push_back([&](const char* w) { why = w; });
-    s.runUiFrame = [&] { s.setHardcore(true); };   // the player turned hardcore on from inside the halt
+    s.core().runUiFrame = [&] { s.syncHalt(); s.setHardcore(true); };   // the player turned hardcore on from inside the halt
     int v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x1234);
     CHECK(v == VJ_DBG_RESUME_DETACH);
+    s.syncHalt();
     CHECK(!m.attached() && !s.attached() && !s.halted());
     CHECK(why == "hardcore");
     CHECK(!s.enabled());
@@ -640,11 +648,310 @@ static void testViewsFill() {
     CHECK(t.views().read(id2, b), "inline: filled on the spot");
 }
 
+// B1: the pump is bounded.  With nothing to say it calls waitVerdict once and returns NONE; the halt stays.
+static void testBoundedPumpReturnsNone() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int waits = 0, halts = 0, resumes = 0;
+    c.waitVerdict = [&] { waits++; };
+    c.onHalt.push_back([&](int, unsigned, int) { halts++; });
+    c.onResume.push_back([&] { resumes++; });
+    const uint64_t s0 = c.haltSerial();
+    CHECK(c.pump(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_NONE);
+    CHECK(waits == 1 && halts == 1 && resumes == 0);
+    CHECK(c.halt().halted && c.halt().target == VJ_DBG_TARGET_M68K && c.halt().pc == 0x4000);
+    CHECK(c.haltSerial() == s0 + 1);
+    CHECK(c.pump(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_NONE);   // the same halt: no second onHalt
+    CHECK(waits == 2 && halts == 1 && c.haltSerial() == s0 + 1);
+    c.offerVerdict(VJ_DBG_RESUME_CONTINUE, c.haltSerial());
+    CHECK(c.pump(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(waits == 2);                      // a pending verdict is taken before any wait
+    CHECK(!c.halt().halted && resumes == 1 && c.haltSerial() == s0 + 2);
+    CHECK(c.pendingVerdict() == VJ_DBG_RESUME_NONE);
+}
+
+// Review Focus 6: a detach verdict ends a bounded pump within one wait, through the mock's GDBHalt loop.
+static void testDetachEndsPumpWithinOneWait() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int waits = 0;
+    c.waitVerdict = [&] { if (++waits == 2) c.offerVerdict(VJ_DBG_RESUME_DETACH, c.haltSerial()); };
+    int pumps = 0;
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 100, &pumps) == VJ_DBG_RESUME_DETACH);
+    CHECK(pumps == 2 && waits == 2);         // pump 1: wait, NONE; pump 2: the verdict written inside its wait is taken
+    CHECK(!c.attached() && !m.attached() && !c.halt().halted);
+}
+
+// The serial moves on every entry (a step's re-halt too) and on CONTINUE / DETACH, not on the STEP return.
+static void testStepSerialAndReason() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int halts = 0, resumes = 0, lastReason = -1;
+    c.onHalt.push_back([&](int, unsigned, int r) { halts++; lastReason = r; });
+    c.onResume.push_back([&] { resumes++; });
+    c.waitVerdict = [&] { c.offerVerdict(VJ_DBG_RESUME_STEP, c.haltSerial()); };
+    const uint64_t s0 = c.haltSerial();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_STEP);
+    CHECK(halts == 1 && resumes == 0 && c.haltSerial() == s0 + 1 && !c.halt().halted);
+    c.waitVerdict = [&] { c.offerVerdict(VJ_DBG_RESUME_CONTINUE, c.haltSerial()); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(halts == 2 && lastReason == VJ_DBG_STOP_STEP && resumes == 1 && c.haltSerial() == s0 + 3);
+}
+
+// gdb continued (or the timeout fired): GDBHalt breaks without a verdict of ours.  frameEnded() ends the halt on our
+// side and drops a verdict written for it meanwhile.
+static void testFrameEndedClosesForeignResume() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int resumes = 0;
+    c.onResume.push_back([&] { resumes++; });
+    c.waitVerdict = [] {};
+    int pumps = 0;
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT, 1, &pumps) == VJ_DBG_RESUME_NONE);
+    CHECK(pumps == 1 && c.halt().halted);
+    const uint64_t s1 = c.haltSerial();
+    c.offerVerdict(VJ_DBG_RESUME_CONTINUE, s1);   // the UI pressed F9 against a halt gdb already ended
+    c.frameEnded();
+    CHECK(!c.halt().halted && resumes == 1 && c.haltSerial() == s1 + 1);
+    CHECK(c.pendingVerdict() == VJ_DBG_RESUME_NONE);
+    c.frameEnded();                            // not halted: a no-op
+    CHECK(resumes == 1 && c.haltSerial() == s1 + 1);
+    CHECK(c.attached());                       // a foreign continue is not a detach
+}
+
+// A gdb step re-halts at a new pc inside the same frame: a new halt (pc, onHalt, serial).
+static void testForeignStepIsNewHalt() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int halts = 0;
+    c.onHalt.push_back([&](int, unsigned, int) { halts++; });
+    c.waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    const uint64_t s1 = c.haltSerial();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP, 1) == VJ_DBG_RESUME_NONE);
+    CHECK(halts == 2 && c.halt().pc == 0x4002 && c.halt().reason == VJ_DBG_STOP_STEP && c.haltSerial() == s1 + 1);
+}
+
+// Quit mid-halt: abortHalt wins over a pending CONTINUE and detaches the mock.
+static void testAbortHaltDetaches() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    bool quitting = false;
+    c.abortHalt = [&] { return quitting; };
+    c.waitVerdict = [&] { quitting = true; c.offerVerdict(VJ_DBG_RESUME_CONTINUE, c.haltSerial()); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_DETACH);
+    CHECK(!c.attached() && !m.attached() && !c.halt().halted);
+}
+
+// Inline: no waitVerdict; the pump runs runUiFrame once per call and takes the verdict that frame set (today's loop).
+static void testInlinePumpRunsUiFrame() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int ui = 0;
+    c.runUiFrame = [&] { if (++ui == 3) c.offerVerdict(VJ_DBG_RESUME_CONTINUE, c.haltSerial()); };
+    int pumps = 0;
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT, 100, &pumps) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(ui == 3 && pumps == 3);
+}
+
+// The pump calls its wait hook exactly once per NONE iteration and never loops on its own (a pump that waited for a
+// verdict itself would hang here or over-count).
+static void testPumpCallsHookOncePerIteration() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int waits = 0;
+    c.waitVerdict = [&] { waits++; std::this_thread::sleep_for(DebugCore::kPumpWait); };
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10; i++) CHECK(c.pump(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_NONE);
+    CHECK(waits == 10);
+    CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
+    c.waitVerdict = nullptr;                   // no hook at all: NONE at once, nothing called
+    CHECK(c.pump(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_NONE && waits == 10);
+}
+
+// A verdict tagged with another halt's serial is dropped; one for the current serial is taken.
+static void testVerdictForAnotherSerialDropped() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    c.waitVerdict = [] {};
+    const uint64_t s0 = c.haltSerial();
+    c.offerVerdict(VJ_DBG_RESUME_CONTINUE, s0);                 // written before the halt (its serial is s0)
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);   // dropped
+    CHECK(c.halt().halted && c.pendingVerdict() == VJ_DBG_RESUME_NONE);
+    c.offerVerdict(VJ_DBG_RESUME_CONTINUE, c.haltSerial());
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(!c.halt().halted);
+    c.offerVerdict(VJ_DBG_RESUME_STEP, s0);                     // a stale STEP (double F10) against the next halt
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    CHECK(c.pendingVerdict() == VJ_DBG_RESUME_NONE);
+}
+
+// A core swap forgets a live halt and a pending verdict; the serial moves so a mirror never confuses the two cores.
+static void testSetIfaceDropsHaltAndVerdict() {
+    MockDebugIface m; DebugCore c; c.setIface(m.iface()); CHECK(c.attach());
+    int resumes = 0;
+    c.onResume.push_back([&] { resumes++; });
+    c.waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    const uint64_t s1 = c.haltSerial();
+    c.offerVerdict(VJ_DBG_RESUME_CONTINUE, s1);
+    MockDebugIface m2;
+    c.setIface(m2.iface());
+    CHECK(!c.halt().halted && !c.attached() && c.pendingVerdict() == VJ_DBG_RESUME_NONE);
+    CHECK(c.haltSerial() == s1 + 1 && resumes == 0);   // no callback: the old core is gone, not resumed
+}
+
+// The session's verdict methods tag core().offerVerdict with the mirrored serial and notify; outside a halt they do nothing.
+static void testSessionVerdictsReachCore() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    int notifies = 0;
+    s.core().notifyVerdict = [&] { notifies++; };
+    s.resume();
+    CHECK(s.core().pendingVerdict() == VJ_DBG_RESUME_NONE && notifies == 0);
+    s.core().waitVerdict = [&] { s.syncHalt(); s.step(); };   // the UI thread, one frame later
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_STEP);
+    CHECK(notifies == 1);
+    s.core().waitVerdict = [&] { s.syncHalt(); s.detach(); };   // Detach while halted = the DETACH verdict
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP) == VJ_DBG_RESUME_DETACH);
+    CHECK(notifies == 2 && !m.attached());
+    s.syncHalt();
+    CHECK(!s.attached() && !s.halted());
+}
+
+// The UI mirror.  syncHalt() fires onHaltUi once per halt serial and onResumeUi once per resume; a step's re-halt
+// fires onHaltUi again with reason STEP; a halt that came and went between two UI frames fires nothing.
+static void testSyncHaltEdges() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    int haltUi = 0, resumeUi = 0, lastReason = -1;
+    s.onHaltUi.push_back([&](int, unsigned, int r) { haltUi++; lastReason = r; });
+    s.onResumeUi.push_back([&] { resumeUi++; });
+    s.core().waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    CHECK(!s.halted());                        // not synced yet
+    s.syncHalt();
+    CHECK(s.halted() && s.haltedPc() == 0x4000 && haltUi == 1 && lastReason == VJ_DBG_STOP_USER);
+    const uint64_t rs = s.refreshSerial();
+    s.syncHalt();
+    CHECK(haltUi == 1 && s.refreshSerial() == rs);   // the same serial: no second edge, no refill
+    s.core().offerVerdict(VJ_DBG_RESUME_STEP, s.haltSerial());
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    s.syncHalt();
+    CHECK(s.halted());                         // the STEP return keeps the serial: the bar stays up until the re-halt
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.halted() && s.haltedPc() == 0x4002 && haltUi == 2 && lastReason == VJ_DBG_STOP_STEP && resumeUi == 0);
+    s.core().offerVerdict(VJ_DBG_RESUME_CONTINUE, s.haltSerial());
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP) == VJ_DBG_RESUME_CONTINUE);
+    s.syncHalt();
+    CHECK(!s.halted() && resumeUi == 1 && haltUi == 2);
+    // Halt and continue inside one UI frame: the serial moved by two, the state is "not halted": no edge.
+    s.core().waitVerdict = [&] { s.core().offerVerdict(VJ_DBG_RESUME_CONTINUE, s.core().haltSerial()); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_CONTINUE);
+    s.syncHalt();
+    CHECK(haltUi == 2 && resumeUi == 1 && !s.halted());
+}
+
+// "by gdb" = a breakpoint halt at an address not in our list, or a USER / STEP halt we did not ask for.
+static void testHaltByGdb() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
+    s.core().waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.halted() && !s.haltByGdb());
+    s.core().frameEnded();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());                      // not our breakpoint
+    s.core().frameEnded();
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5002, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());                      // a halt_next we did not issue (gdb_wait, or gdb's own interrupt)
+    s.core().frameEnded();
+    s.syncHalt();                              // the mirror must see the resume before breakNow() is allowed
+    s.breakNow();                              // ours: userHaltPending_
+    CHECK(m.haltNexts.size() == 1);
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5004, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(!s.haltByGdb());
+    // A pending "ours" that never halted is forgotten when the content closes.
+    s.core().frameEnded();
+    s.syncHalt();
+    s.breakNow();
+    s.setContentLoaded(false);
+    m.iface()->detach();                       // the core drops the host on unload (the mock does not know about content)
+    s.setContentLoaded(true);
+    CHECK(s.attach());
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5006, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.haltByGdb());
+}
+
+// A verdict for a halt that already ended is dropped (the mirror lags the core by one UI frame).
+static void testStaleVerdictDropped() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    s.core().waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(s.halted());
+    s.core().frameEnded();                     // gdb continued; the UI has not synced yet
+    s.resume();                                // F9 against the stale mirror
+    CHECK(s.core().pendingVerdict() == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    CHECK(!s.halted());
+}
+
+// Hardcore from the UI while halted: the DETACH verdict (never iface->detach on the UI thread); while running: a lane
+// post.  Inline (corePost empty) the post runs now.
+static void testHardcoreGoesThroughTheLane() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    int posts = 0;
+    s.corePost = [&](std::function<void()> fn) { posts++; fn(); };
+    s.setHardcore(true);
+    CHECK(posts == 1 && !m.attached() && !s.attached() && !s.enabled());
+    s.setHardcore(false);
+    CHECK(s.attach() && s.attached());
+    s.core().waitVerdict = [&] { s.syncHalt(); s.setHardcore(true); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_DETACH);
+    CHECK(posts == 1 && !m.attached() && !s.attached());   // the verdict, not a second post
+}
+
+// Carried from 3a: while a DETACH verdict is in flight, attach() and breakNow() refuse; once the halt serial moved
+// (the pump took the detach) they work again.  A detach posted while running is ordered before a later attach by the lane.
+static void testAttachWhileDetachPending() {
+    DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
+    s.core().waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
+    s.syncHalt();
+    s.detachAndResume();
+    CHECK(!s.attach());
+    s.breakNow();
+    CHECK(m.haltNexts.empty());
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_DETACH);
+    s.syncHalt();
+    CHECK(!s.halted() && !s.attached());
+    CHECK(s.attach() && s.attached() && m.attached());
+    // Running: a queued detach lands before the attach that follows it (both on the lane, in order).
+    std::vector<std::function<void()>> lane;
+    s.corePost = [&](std::function<void()> fn) { lane.push_back(std::move(fn)); };
+    s.coreCall = [&](std::function<void()> fn) { for (auto& f : lane) f(); lane.clear(); fn(); };
+    s.detach();
+    CHECK(!s.attached());                      // the mirror says so at once
+    CHECK(s.attach() && s.attached() && m.attached() && m.attachCalls == 3);   // detach ran, then this attach
+}
+
 int main() {
     testAvailability();
     testAttachAndBreakpoints();
     testHaltResume();
     testHardcoreWhileHalted();
+    testBoundedPumpReturnsNone();
+    testDetachEndsPumpWithinOneWait();
+    testStepSerialAndReason();
+    testFrameEndedClosesForeignResume();
+    testForeignStepIsNewHalt();
+    testAbortHaltDetaches();
+    testInlinePumpRunsUiFrame();
+    testPumpCallsHookOncePerIteration();
+    testVerdictForAnotherSerialDropped();
+    testSetIfaceDropsHaltAndVerdict();
+    testSessionVerdictsReachCore();
+    testSyncHaltEdges();
+    testHaltByGdb();
+    testStaleVerdictDropped();
+    testHardcoreGoesThroughTheLane();
+    testAttachWhileDetachPending();
     testPokePolicy();
     testRefreshCadence();
     testTools();

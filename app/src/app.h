@@ -198,6 +198,7 @@ public:
     bool paused = false;
     bool fastForward = false;
     bool quit = false;
+    std::atomic<bool> quitting_{false};   // DebugCore::abortHalt reads it (the pump may run off the UI thread): the app is quitting
     bool fullscreen = false;
     bool menuPinned = true;
     bool fullscreenAutoHideMenu = false;   // ui.fullscreen_autohide_menu; preserves existing behavior by default
