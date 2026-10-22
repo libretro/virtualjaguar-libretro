@@ -3000,6 +3000,9 @@ int App::runHeadless(const CliArgs& a) {
             }
         }
         if (quitRequested()) {   // a quit ended the loops above (a halt may still hold the core): leave before the checks
+#ifdef VJ_HAVE_NEURO
+            if (!neuroCliUrl.empty()) neuroHeadlessReport(*this);   // UI-thread state only: a signalled --neuro run still reports
+#endif
             beginQuit();
             std::printf("headless: quit requested, exiting cleanly\n");
             std::fflush(stdout);
