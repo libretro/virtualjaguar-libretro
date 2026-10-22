@@ -475,7 +475,9 @@ void Achievements::pump() {
         }
     }
     drainEvents();   // events raised by rc_client_idle and by completions delivered in this pump
-    if (resetPending_) {
+    // Inline and halted, the restart below is refused (the core is parked inside retro_run): keep it pending and retry
+    // after the halt ends, or a late hardcore sign-in would leave the stub open.
+    if (resetPending_ && !(app_ && app_->host.isLoaded() && app_->haltedNow() && !app_->threaded())) {
         resetPending_ = false;
         // Turning hardcore on mid-game restarts the game (rc_client's rule: the
         // run must start clean).  retro_cheat_reset: cheats may not outlive it.

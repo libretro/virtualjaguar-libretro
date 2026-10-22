@@ -208,6 +208,7 @@ public:
 
 private:
     bool haltLive() const;   // the mirrored halt is the core's live halt (same serial, core parked in the pump)
+    void clearBreakpointList();   // bps_.clear() + a refresh serial; Detach drops the list with the core's table
     void postDetach();       // detachQueued_++, lane post of core_.detach(), attachedMirror_ = false
     void dropHalt();   // mirror_ = {}; byGdb_ = userHaltPending_ = detachPending_ = attachedMirror_ = false
 

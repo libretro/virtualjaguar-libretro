@@ -228,13 +228,13 @@ add_test(NAME gdb_enabled
             --option virtualjaguar_gdb_port=23459 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(gdb_enabled PROPERTIES TIMEOUT 120
     PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*headless: OK"
-    FAIL_REGULAR_EXPRESSION "managed by the app|rejected by the core|failed to open port|headless: FAIL")
+    FAIL_REGULAR_EXPRESSION "locked by the app|rejected by the core|failed to open port|headless: FAIL")
 add_test(NAME gdb_enabled_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
             --option virtualjaguar_gdb_port=23457 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(gdb_enabled_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
     PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*${_vj_threaded_ok}"
-    FAIL_REGULAR_EXPRESSION "managed by the app|rejected by the core|failed to open port|headless: FAIL|ThreadSanitizer|owner violation")
+    FAIL_REGULAR_EXPRESSION "locked by the app|rejected by the core|failed to open port|headless: FAIL|ThreadSanitizer|owner violation")
 # Decision 2: RetroAchievements hardcore locks the stub to disabled at load.  A SAVED setting (config.ini), not --option:
 # an --option on a locked key is reported as an error by design (checkOverrides).
 foreach(_m off on)

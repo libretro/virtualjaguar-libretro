@@ -659,6 +659,8 @@ void App::syncHardcoreLock() { gdbLockedByHardcore_.store(ach.hardcoreNextGame()
 // makes a gdb halt visible to the app.  Attached inside the load call -- before any frame can run, so a gdb_wait boot halt
 // is seen -- and again after any frame it is missing (a user Detach drops it; the app's breakpoints go with it).
 void App::attachGdbHostOnCore() {
+    // Not hardcore-gated on purpose: the host never halts anything by itself, and the app's own attach() / breakNow() stay
+    // gated by DebugSession::enabled().
     if (!host.isLoaded() || !debug.core().loaded() || !gdbStubOn_.load() || debug.core().attached()) return;
     if (debug.core().attach()) std::fprintf(stderr, "[debug] gdb host attached (silent): halts are visible to the app\n");
 }
@@ -754,6 +756,9 @@ void App::stopEmuThread() {
 
 // One emulated frame on the emulation thread.  Inline mode keeps stepEmulation().
 void App::emuRunOneFrame() {
+    // The lanes were drained before this call: a Detach posted by the UI has run, so the silent host is missing now.  Put it
+    // back BEFORE the frame, or a gdb breakpoint firing in this frame would halt with no pump and no mirror.
+    attachGdbHostOnCore();
     if (!emuFastForward_.load(std::memory_order_relaxed)) audio.update(false);   // underruns only: mode A follows the audio clock
     host.wantVideo = true;
     PerfTrace::Emu te = tracePaced_;
@@ -765,7 +770,7 @@ void App::emuRunOneFrame() {
     const uint64_t r0 = SDL_GetPerformanceCounter();
     host.runFrame();
     debug.core().frameEnded();   // a halt gdb (or the halt timeout) ended inside this frame is closed on our side
-    attachGdbHostOnCore();       // a user Detach dropped the silent host: it comes back before the next frame
+    attachGdbHostOnCore();       // the frame itself (or a lane command run after the drain) dropped it: back before the next one
     retroTicks_.fetch_add(SDL_GetPerformanceCounter() - r0, std::memory_order_relaxed);
     runFrames_.fetch_add(1, std::memory_order_relaxed);
     ach.emuFrame();   // rc_client_do_frame: reads game RAM, so here
@@ -1069,8 +1074,11 @@ double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0
 // while inFrame().
 void App::haltedFrame() {
     debug.syncHalt();   // first: the F9 / F10 below must meet the halt the core is parked in, not the one before it
-    if (!imguiUp_ || !window_ || threaded()) {   // threaded, the pump runs haltWait(), never this frame; a headless inline run still releases the core
-        debug.detachAndResume();   // no UI to release the core with: never leave it parked
+    if (!imguiUp_ || !window_ || threaded()) {   // threaded, the pump runs haltWait(), never this frame
+        // Headless inline: no UI to release the core with, so the app's own halts (a breakpoint or Break from a script)
+        // and a quit are released at once.  A halt gdb caused stays: returning keeps the core's 2 ms socket loop serving
+        // gdb, which is what gdb_wait and a breakpoint set from gdb ask for (the client continues it).
+        if (quitRequested() || !debug.haltByGdb()) debug.detachAndResume();
         return;
     }
     SDL_Event e;

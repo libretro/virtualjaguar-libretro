@@ -290,8 +290,7 @@ void drawInterfaceTab(App& app) {
     }
     ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
              "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
-             "app starts. While it is on, Break, Step and breakpoints and the GDB stub are off for now; the Tools "
-             "windows work. Off by default.");
+             "app starts. Break, Step, breakpoints and the GDB stub work with it on. Off by default.");
     if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");

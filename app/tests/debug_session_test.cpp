@@ -80,13 +80,15 @@ static void testAttachAndBreakpoints() {
     s.setBreakpointEnabled(VJ_DBG_TARGET_M68K, 0x4000, true);
     CHECK(m.breakpoints.size() == 2);
 
-    // detach clears the core's table but the session list is the source of truth...
+    // Detach clears every breakpoint: the core's table AND the session list (a host that comes back -- the app's silent
+    // gdb host -- finds both empty, and the next attach() has nothing stale to replay or skip)...
     s.detach();
     CHECK(!s.attached() && !m.attached() && m.breakpoints.empty());
-    CHECK(s.breakpoints().size() == 2);
-    // ...and the next attach rebuilds it.
-    CHECK(s.attach());
-    CHECK(m.breakpoints.size() == 2);
+    CHECK(s.breakpoints().empty() && !s.hasBreakpoint(VJ_DBG_TARGET_M68K, 0x4000));
+    CHECK(s.attach() && m.breakpoints.empty());
+    // ...and a breakpoint set afterwards reaches the core.
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && m.breakpoints.size() == 1);
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_GPU, 0xF03000) && m.breakpoints.size() == 2);
 
     s.removeBreakpoint(VJ_DBG_TARGET_M68K, 0x4000);
     CHECK(m.breakpoints.size() == 1);
@@ -194,6 +196,20 @@ static void testHardcoreWhileHalted() {
     CHECK(s2.attach());
     s2.setHardcore(true);
     CHECK(!m2.attached() && !s2.attached());
+}
+
+// Detach from inside a halt (the DETACH verdict) also drops the session's breakpoint list.
+static void testDetachWhileHaltedClearsList() {
+    DebugSession s;
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && s.breakpoints().size() == 1);
+    s.core().runUiFrame = [&] { s.syncHalt(); s.detach(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_DETACH);
+    s.syncHalt();
+    CHECK(s.breakpoints().empty() && !s.attached() && m.breakpoints.empty());
+    CHECK(s.attach() && s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && m.breakpoints.size() == 1);   // and it can be set again
 }
 
 static void testPokePolicy() {
@@ -999,6 +1015,7 @@ int main() {
     testAttachAndBreakpoints();
     testHaltResume();
     testHardcoreWhileHalted();
+    testDetachWhileHaltedClearsList();
     testBoundedPumpReturnsNone();
     testDetachEndsPumpWithinOneWait();
     testStepSerialAndReason();

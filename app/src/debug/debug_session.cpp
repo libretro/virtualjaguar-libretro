@@ -158,6 +158,7 @@ void DebugSession::postDetach() {
 }
 
 void DebugSession::detach() {
+    clearBreakpointList();   // Detach clears every breakpoint (the core's table goes with the host)
     if (haltLive()) {
         detachAndResume();   // the core is parked inside the pump: the DETACH verdict lets it go (never iface->detach from here)
         return;
@@ -186,6 +187,7 @@ void DebugSession::step() {
 
 void DebugSession::detachAndResume() {
     if (!halted()) return;
+    clearBreakpointList();
     if (!haltLive()) {   // a STEP in flight or a stale mirror: a verdict would be dropped; detach through the lane
         postDetach();
         return;
@@ -245,6 +247,13 @@ void DebugSession::setBreakpointEnabled(int target, unsigned addr, bool on) {
         });
         return;
     }
+}
+
+// The UI-side list only: the core's table is cleared by its own detach.
+void DebugSession::clearBreakpointList() {
+    if (bps_.empty()) return;
+    bps_.clear();
+    serial_++;
 }
 
 void DebugSession::clearBreakpoints() {

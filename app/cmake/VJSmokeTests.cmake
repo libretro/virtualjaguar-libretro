@@ -81,7 +81,7 @@ add_test(NAME smoke_locked_option
     COMMAND virtualjaguar --headless --frames 5
             --option virtualjaguar_alt_inputs=enabled "${VJ_ROMS}/yarc.j64")
 set_tests_properties(smoke_locked_option PROPERTIES
-    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core")
+    PASS_REGULAR_EXPRESSION "locked by the app.*rejected by the core")
 
 add_test(NAME smoke_cd
     COMMAND virtualjaguar --headless --frames 120 --allow-blank

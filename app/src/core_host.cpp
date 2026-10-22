@@ -391,7 +391,7 @@ std::vector<std::string> CoreHost::checkOverrides(bool sessionOnly) const {
             // nothing" trap, so a value that differs is reported (an error for --option, a
             // warning for a stale saved one).
             if (kv.second != l->second)
-                out.push_back("'" + kv.first + "' is managed by the app (Settings > Input / Controls)" +
+                out.push_back("'" + kv.first + "' is locked by the app" +
                               (sessionOnly ? "; --option cannot change it" : "; the saved value is ignored"));
             continue;
         }
