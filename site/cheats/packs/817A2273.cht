@@ -1,0 +1,19 @@
+# Community cheats for Pitfall - The Mayan Adventure (Pitfall - The Mayan Adventure (1995)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_pitfall.c
+# Source SHA256: d8a8d0d0e6e52d3f3d33b3bcf4338d80d6bc23fde8ba87cf110307c097d7e5c9
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "817A2273"
+cheats = 3
+
+cheat0_desc = "Infinite Lives"
+cheat0_code = "00043FF5:05"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Health"
+cheat1_code = "000435E2:00"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Ammo"
+cheat2_code = "00043FF6:05+00043FF7:05+00043FF8:05"
+cheat2_enable = false

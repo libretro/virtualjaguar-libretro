@@ -1,0 +1,25 @@
+# Community cheats for Attack of the Mutant Penguins (Attack of the Mutant Penguins (1996)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_attack_mutant_penguins.c
+# Source SHA256: a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909
+# Omitted: "Minimum Number Orbs" (scripts/cheat_attack_mutant_penguins.c): parameter setting requires manual value selection
+# Omitted: "Unlock Levels" (scripts/cheat_attack_mutant_penguins.c): parameter setting requires manual value selection
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "CD5BF827"
+cheats = 4
+
+cheat0_desc = "Infinite Bombs"
+cheat0_code = "00038521:06"
+cheat0_enable = false
+
+cheat1_desc = "Start With Club"
+cheat1_code = "00038522:FFFF+00038524:FFFF+00038529:FF+0003852A:FF+0003852B:FF"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Use Of Club"
+cheat2_code = "00038408:BF+00038530:05+00038531:05"
+cheat2_enable = false
+
+cheat3_desc = "Infinite Ships For Penguin Attack"
+cheat3_code = "00038489:06"
+cheat3_enable = false

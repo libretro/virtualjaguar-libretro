@@ -1,0 +1,16 @@
+# Community cheats for Power Drive Rally (Power Drive Rally (1995) (TWI)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_power_drive_rally.c
+# Source SHA256: 56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd
+# Omitted: "Start Level" (scripts/cheat_power_drive_rally.c): parameter setting requires manual value selection
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "1660F070"
+cheats = 2
+
+cheat0_desc = "Infinite Time"
+cheat0_code = "00005ABE:08C8"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Money"
+cheat1_code = "0000D976:000186A0"
+cheat1_enable = false

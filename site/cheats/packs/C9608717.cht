@@ -1,0 +1,12 @@
+# Community cheats for Val D'Isere Skiing & Snowboarding (Val D'Isere Skiing & Snowboarding (1994)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_val_ski.c
+# Source SHA256: f15473fd1da001175dffe87915ab1b0fd17c16c2aaaf54a251e0a384b41f4ed3
+# Omitted: "Infinite Time" (scripts/cheat_val_ski.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "C9608717"
+cheats = 1
+
+cheat0_desc = "Invincible"
+cheat0_code = "001EBEDE:2040"
+cheat0_enable = false

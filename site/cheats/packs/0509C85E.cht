@@ -1,0 +1,30 @@
+# Community cheats for Raiden (Raiden (1994)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_raiden.c
+# Source SHA256: 32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456
+# Omitted: "P2 Stream Of Missiles As Gun" (scripts/cheat_raiden.c): no writes activated (check ROM revision/hash)
+# Omitted: "Start At Level" (scripts/cheat_raiden.c): parameter setting requires manual value selection
+# Overlap: cheat2 and cheat4 write the same bytes; later wins (app order).
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "0509C85E"
+cheats = 5
+
+cheat0_desc = "Infinite Lifes"
+cheat0_code = "00058276:09+000589E2:09"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Bombs"
+cheat1_code = "00058277:09+000589E3:09"
+cheat1_enable = false
+
+cheat2_desc = "Max Gun Level"
+cheat2_code = "00058280:07+000589EC:07"
+cheat2_enable = false
+
+cheat3_desc = "Max Missile Level"
+cheat3_code = "00058282:04+000589EE:04"
+cheat3_enable = false
+
+cheat4_desc = "P1 Stream Of Missiles As Gun"
+cheat4_code = "0005827F:02+00058280:02"
+cheat4_enable = false

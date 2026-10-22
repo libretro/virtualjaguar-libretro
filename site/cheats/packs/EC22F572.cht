@@ -1,0 +1,11 @@
+# Community cheats for Super Cross 3D (Super Cross 3D (1995) [a1]); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_supercross_3d.c
+# Source SHA256: 2ea5fc07f679193574f6eff820af68238eb6b24d0f43cd3bfeba021a62c4e4a3
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "EC22F572"
+cheats = 1
+
+cheat0_desc = "Always 1st Place"
+cheat0_code = "001B1601:00"
+cheat0_enable = false

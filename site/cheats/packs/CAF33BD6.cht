@@ -1,0 +1,15 @@
+# Community cheats for Towers II (Towers II (World)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_towers2.c
+# Source SHA256: d5e67051b89463585fde6e9d02bdf235e0f326029578964b2570da82f0ef4e4f
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "CAF33BD6"
+cheats = 2
+
+cheat0_desc = "Infinite Health"
+cheat0_code = "001ABAB0:01+001ABAB1:00+001ABAB2:01+001ABAB3:00"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Magic"
+cheat1_code = "001ABAAC:01+001ABAAD:00+001ABAAE:01+001ABAAF:00"
+cheat1_enable = false

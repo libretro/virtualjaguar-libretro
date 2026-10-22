@@ -1,0 +1,23 @@
+# Community cheats for Trevor McFur in the Crescent Galaxy (Trevor McFur in the Crescent Galaxy (1993)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_trevor_mcfur.c
+# Source SHA256: f1df49f17808901c137904e4ae8d5d5463b1c01a87f04a2707f159c09161f1de
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "1E451446"
+cheats = 4
+
+cheat0_desc = "Max Bomb"
+cheat0_code = "001FFACD:02"
+cheat0_enable = false
+
+cheat1_desc = "Infinite Lives"
+cheat1_code = "001FFD2B:09"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Ammo"
+cheat2_code = "001FFAD1:09+001FFAD3:09+001FFAD5:09+001FFAD7:09+001FFAD9:09+001FFADB:09+001FFADD:09+001FFAEF:09+001FFAE1:09"
+cheat2_enable = false
+
+cheat3_desc = "Max Primary Weapon"
+cheat3_code = "001FFD41:05"
+cheat3_enable = false

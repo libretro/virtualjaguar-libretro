@@ -1,0 +1,39 @@
+# Community cheats for Missile Command 3D (Missile Command 3D (1995)); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_mc3d_classic.c
+# Source SHA256: fece70fcb3b0d5f7b2408bef750ef9f1a8b7bef808490359151e31fdc0e31fc9
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_mc3d_virtual.c
+# Source SHA256: d4b622fb546089f0f590ec2ae054e12d70ae9de38b6b3bc1498cbe354ba516b5
+# Omitted: "Infinite Missiles" (scripts/cheat_mc3d_classic.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Omitted: "Invincible Launchers" (scripts/cheat_mc3d_classic.c): unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "DA9C4162"
+cheats = 7
+
+cheat0_desc = "Invincible Cities"
+cheat0_code = "00011AEB:3F"
+cheat0_enable = false
+
+cheat1_desc = "Infinite City Health"
+cheat1_code = "00059513:2E+000595A7:2E+0005963B:2E+000596CF:2E+00059763:2E+000597F7:2E"
+cheat1_enable = false
+
+cheat2_desc = "Infinite Launcher Health"
+cheat2_code = "0005988B:2E+0005988F:2E+00059917:2E+0005991B:2E+000599A3:2E+000599A7:2E"
+cheat2_enable = false
+
+cheat3_desc = "Infinite Smart Bombs"
+cheat3_code = "0005A02F:09"
+cheat3_enable = false
+
+cheat4_desc = "Infinite Lasers"
+cheat4_code = "000598A3:79+000598A7:79+0005992F:79+00059933:79+000599BB:79+000599BF:79"
+cheat4_enable = false
+
+cheat5_desc = "Infinite Missiles"
+cheat5_code = "0005989B:30+0005989F:30+00059927:30+0005992B:30+000599B3:30+000599B7:30"
+cheat5_enable = false
+
+cheat6_desc = "Max Laser Type"
+cheat6_code = "000598C3:03+0005994F:03+000599DB:03"
+cheat6_enable = false
