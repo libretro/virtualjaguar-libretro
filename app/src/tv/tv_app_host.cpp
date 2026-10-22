@@ -253,6 +253,9 @@ std::vector<SettingRow> AppHost::settingRows() {
     rows.push_back(onOffRow("vsync", "VSync", 3, app_.vsync));
     rows.push_back(themeRow(theme::choiceKey(), themeNames()));
     rows.push_back(tvModeRow(app_.tvSetting));
+    for (SettingRow& r : tvAutoRows(app_.tvSetting, app_.cfg.getBool("ui.tv_auto_fullscreen", true),
+                                    app_.cfg.getBool("ui.tv_auto_controller", true)))
+        rows.push_back(std::move(r));
     rows.push_back(moreRow());
     return rows;
 }
@@ -295,6 +298,10 @@ void AppHost::setSetting(const std::string& id, int index) {
         if (index >= 0 && index <= (int)TvSetting::Auto) {
             app_.setTvSetting((TvSetting)index);   // writes ui.tv_mode on change only, stays in TV mode across Manual <-> Auto
         }
+    } else if (id == "tv_auto_fs") {
+        app_.setTvAuto(true, index == 1);      // ui.tv_auto_fullscreen; a trigger-started TV mode stays on, as a Manual one
+    } else if (id == "tv_auto_pad") {
+        app_.setTvAuto(false, index == 1);     // ui.tv_auto_controller
     }
     app_.saveConfig();
 }

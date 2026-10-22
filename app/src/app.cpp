@@ -23,8 +23,10 @@
 #include <filesystem>
 #include <thread>
 
+// app/CMakeLists.txt's VJ_TV_DEFAULT defines this for the virtualjaguar target (the single source of the default).  The fallback
+// is for a build that compiles app.cpp outside CMake only; keep it equal to the option's default.
 #ifndef VJ_TV_DEFAULT_SETTING
-#define VJ_TV_DEFAULT_SETTING "auto"   // CMake's VJ_TV_DEFAULT (#991): what a config with no ui.tv_mode starts from
+#define VJ_TV_DEFAULT_SETTING "auto"
 #endif
 
 namespace vj {

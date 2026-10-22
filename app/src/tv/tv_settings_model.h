@@ -29,6 +29,9 @@ SettingRow aspectRow(float aspectOverride, const AspectChoice* table, int n);
 SettingRow themeRow(const std::string& choiceKey, const std::vector<std::string>& customNames);
 std::string themeKeyAt(int index, const std::vector<std::string>& customNames);   // "" when out of range
 SettingRow tvModeRow(TvSetting stored);                     // Off / Manual / Auto
+// The two "Auto: ..." On / Off rows (tv_auto_fs, tv_auto_pad; group 3) that follow the TV mode row: offered only while the
+// stored setting is Auto, since they decide nothing under Off or Manual.  Empty otherwise.
+std::vector<SettingRow> tvAutoRows(TvSetting stored, bool autoFullscreen, bool autoController);
 // "Off" then each preset's file name without its extension.  The preset in force when it is in neither list (a file picked
 // in the desktop window) is appended as "<stem> (custom)".
 SettingRow shaderRow(const std::string& currentPreset, bool enabled, const std::vector<std::string>& presetPaths);

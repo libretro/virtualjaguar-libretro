@@ -109,6 +109,12 @@ SettingRow tvModeRow(TvSetting stored) {
     return rowOf("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, (int)stored);
 }
 
+std::vector<SettingRow> tvAutoRows(TvSetting stored, bool autoFullscreen, bool autoController) {
+    if (stored != TvSetting::Auto) return {};
+    return {onOffRow("tv_auto_fs", "Auto: in fullscreen", 3, autoFullscreen),
+            onOffRow("tv_auto_pad", "Auto: when a controller is used", 3, autoController)};
+}
+
 SettingRow shaderRow(const std::string& currentPreset, bool enabled, const std::vector<std::string>& presetPaths) {
     SettingRow r = rowOf("shader", "Shader", 0, {"Off"}, 0);
     int sel = 0;

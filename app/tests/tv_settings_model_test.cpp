@@ -67,6 +67,12 @@ static void testAppRows() {
     CHECK(onOffRow("fps", "Show FPS", 3, true).label == "Show FPS" && onOffRow("fps", "x", 3, true).group == 3);
     CHECK(tvModeRow(TvSetting::Auto).index == 2 && tvModeRow(TvSetting::Off).choices[1] == "Manual");
     CHECK(tvModeRow(TvSetting::Manual).index == 1 && tvModeRow(TvSetting::Off).id == "tv_mode" && tvModeRow(TvSetting::Off).group == 3);
+    // The two Auto checkboxes exist only under Auto (#991 phase 4): under Off / Manual they have no effect, so they are not offered.
+    CHECK(tvAutoRows(TvSetting::Manual, true, true).empty() && tvAutoRows(TvSetting::Off, true, true).empty());
+    const std::vector<SettingRow> a = tvAutoRows(TvSetting::Auto, true, false);
+    CHECK((a.size() == 2 && a[0].id == "tv_auto_fs" && a[0].index == 1 && a[1].id == "tv_auto_pad" && a[1].index == 0 && a[0].group == 3 &&
+           a[1].choices == std::vector<std::string>{"Off", "On"}));   // (the braces' comma needs the extra parentheses)
+    CHECK(a.size() == 2 && a[0].label == "Auto: in fullscreen" && a[1].label == "Auto: when a controller is used" && a[1].group == 3);
     const SettingRow more = moreRow();
     CHECK(more.id == "more" && more.choices.empty() && more.group == 3 && !more.readOnly);
     const SettingRow note = speedNoteRow();   // Speed before a game has run: a line, not a control

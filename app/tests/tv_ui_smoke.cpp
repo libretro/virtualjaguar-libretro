@@ -2493,6 +2493,25 @@ static void settingsTvModeOffLeavesCleanly() {
     CHECK(g_imguiErrors == 0);
 }
 
+// The Auto rows (#991 phase 4): two On / Off rows after the TV mode row, steppable like any other (Right moves without wrapping,
+// Accept wraps over the two choices), each change handed to the host as (id, index).
+static void settingsAutoRowsStep() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell,
+                  {mkRow("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, 2), mkRow("tv_auto_fs", "Auto: in fullscreen", 3, {"Off", "On"}, 0),
+                   mkRow("tv_auto_pad", "Auto: when a controller is used", 3, {"Off", "On"}, 1)});
+    rightN(host, shell, 1);                              // the list (only Interface exists)
+    down(host, shell, 1);                                // Auto: in fullscreen
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "tv_auto_fs", 1));
+    accept(host, shell);
+    CHECK(lastSet(host, "tv_auto_fs", 0));               // Accept wraps over the two choices
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Auto: in fullscreen") && drew("Auto: when a controller is used"));
+}
+
 static void settingsReadonlyRowIgnoresInput() {
     FakeHost host;
     Shell shell(host);
@@ -3669,6 +3688,7 @@ int main() {
     settingsBackAndLeftEdge();
     settingsHints();
     settingsTvModeOffLeavesCleanly();
+    settingsAutoRowsStep();
     settingsReadonlyRowIgnoresInput();
     settingsMoreOpensDesktop();
     settingsHiddenRowsAbsent();

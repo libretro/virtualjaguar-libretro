@@ -245,6 +245,38 @@ void drawStorageTab(App& app) {
     ui::hint("SRAM, EEPROM and the Memory Track. HLE boot is the default, so no BIOS file is needed (Settings > BIOS).");
 }
 
+// TV mode (#991 phase 4): Off / Manual / Auto, and under Auto the two triggers.  Both setters reconfigure TvMode, which turns a
+// trigger-started TV mode into a Manual one (it stays on; mouse and key hand-back stops), and neither saves: this does.
+void drawTvModeSettings(App& app) {
+    ImGui::SeparatorText("TV mode");
+    static const char* const kLabels[] = {"Off", "Manual", "Auto"};   // tv::TvSetting order
+    int cur = (int)app.tvSetting;
+    ImGui::SetNextItemWidth(ui::em(10.0f));
+    if (ImGui::BeginCombo("##tv_mode", kLabels[cur])) {
+        for (int i = 0; i < 3; i++)
+            if (ImGui::Selectable(kLabels[i], cur == i) && i != cur) {
+                app.setTvSetting((tv::TvSetting)i);
+                app.saveConfig();
+            }
+        ImGui::EndCombo();
+    }
+    if (app.tvSetting == tv::TvSetting::Auto) {
+        bool fs = app.cfg.getBool("ui.tv_auto_fullscreen", true);
+        if (ImGui::Checkbox("Turn on in fullscreen", &fs)) {
+            app.setTvAuto(true, fs);
+            app.saveConfig();
+        }
+        bool pad = app.cfg.getBool("ui.tv_auto_controller", true);
+        if (ImGui::Checkbox("Turn on when a controller is used", &pad)) {
+            app.setTvAuto(false, pad);
+            app.saveConfig();
+        }
+    }
+    ui::hint("A 10-foot look for a pad and a TV. Manual: View > TV mode, Ctrl/Cmd+Shift+T, or F4 / a Share hold with no game. "
+             "Auto also turns it on in fullscreen and when a controller is used in the library (mouse movement or typing "
+             "turns it off again). Nightly builds start on Auto, releases on Manual.");
+}
+
 // Settings > Interface: how the app itself looks and behaves (as opposed to Video's picture and Storage's saves).
 // The config keys are the ones these controls always had (ui.*, saves.resume, library.*): nothing is renamed.
 void drawInterfaceTab(App& app) {
@@ -252,6 +284,7 @@ void drawInterfaceTab(App& app) {
     ImGui::SeparatorText("Overlays");
     ImGui::Checkbox("Show frame rate", &app.showFps);
     drawControlsOverlaySettings(app);
+    drawTvModeSettings(app);
     drawAppearanceSettings(app);
     drawFontSettings(app);
     ImGui::SeparatorText("Performance");
