@@ -30,6 +30,9 @@ ctest --test-dir app/build -C Release --output-on-failure   # headless smoke tes
 The binary is `app/build/virtualjaguar` (`app/build/Release/virtualjaguar.exe`
 with the Visual Studio generator).
 
+`-DVJ_TV_DEFAULT=auto|manual|off` (default `auto`) is the TV mode setting a fresh config starts on, so a local build starts on Auto
+while release packages are built with `manual` (see [TV mode](#tv-mode)).
+
 FreeType 2.14.1 is the default font rasteriser: it is fetched (pinned, SHA-256 checked), built static with every
 optional library off, so it needs no system libraries. `-DVJ_APP_FREETYPE=OFF` uses Dear ImGui's built-in
 stb_truetype instead (no hinting or anti-aliasing choices); offline builds use `-DFETCHCONTENT_SOURCE_DIR_FREETYPE=<dir>`.
@@ -110,7 +113,7 @@ Loading another game while one is running does a full unload, `retro_deinit`,
 | number row / numpad, `-` `=` | Jaguar keypad 0-9, `*`, `#` |
 | A S D, Q E | Jaguar Pro Controller X Y Z and left / right shoulder (keypad 9 8 7, 4 6) |
 | F2 | keypad overlay |
-| Ctrl/Cmd+Shift+T | toggle TV mode (View > TV mode), with or without a game; the game keeps running. Fixed, not rebindable |
+| Ctrl/Cmd+Shift+T | toggle TV mode (View > TV mode), with or without a game; the game keeps running. Fixed, not rebindable (see [TV mode](#tv-mode)) |
 | F4, or a Share hold | the "TV menu / TV mode" action (rebindable): with a game it opens the in-game TV menu, without one it toggles TV mode |
 | F3 | controls overlay: a cheat sheet of your current bindings (also View menu) |
 | Esc / F10 | release the captured mouse; F10 or a click on the picture captures it again (see below) |
@@ -174,12 +177,45 @@ and the BIOS and States tabs. Mouse and keyboard work as before.
 | LT / RT | previous / next initial letter |
 | Right stick | scroll the grid |
 | View / Back | focus the search box |
-| Share or Guide, held | toggle TV mode |
+| Share or Guide, held | toggle TV mode (see [TV mode](#tv-mode)) |
 
 The buttons follow the controller family, detected automatically: Xbox, PlayStation, Nintendo Switch
 (A on the right confirms, B on the bottom goes back) and MFi / generic (Xbox layout). A custom layout
 is under **Settings > Input**: pick one controller in the device list, then **Menu buttons** (a Family
 choice, and **Set** / **Default** per button). **Reset menu buttons** clears that controller's overrides.
+
+### TV mode
+
+TV mode is a 10-foot look for a pad and a TV: large tiles and text, one focus ring, and a pad-driven Home,
+Library, Achievements and Settings, plus an in-game menu (see the rows in the key table above). With a game running it
+only changes which screen stands behind the game; the game keeps running.
+
+The **TV mode** setting has three values, under **Settings > Interface** (and **TV Settings > Interface** in TV mode itself):
+
+- **Off:** never. F4, the Share hold, Ctrl/Cmd+Shift+T and `--tv` do nothing.
+- **Manual:** only when you ask: View > TV mode, Ctrl/Cmd+Shift+T, the TV-menu button (F4, or a hold of Share, or of Guide on a pad
+  without Share, with no game running) or `--tv`. The on/off state is remembered for the next start (`--tv` is not).
+- **Auto:** also on its own, with two checkboxes you can untick, **Turn on in fullscreen** and **Turn on when a controller is used**.
+
+Auto in one paragraph: entering fullscreen turns TV mode on and leaving it turns it off; a controller press on a navigation
+button (D-pad, face buttons, LB / RB, Start) in the library, with no game running, turns it on, and that press does nothing
+else. A TV mode the controller started is handed back to the desktop by 32 px of mouse movement or by typing (a printable key
+without Ctrl, Cmd or Alt; F-keys, Esc, Enter and shortcuts never count), unless fullscreen is holding it. Turning it on or off by
+hand wins until the next fullscreen change or controller press.
+
+**Build default.** A fresh config starts on the build's default, which is Auto for a local build (the CMake default) and for
+nightly builds and the other CI packages, and Manual for release packages; `-DVJ_TV_DEFAULT=auto|manual|off` sets it when
+configuring. Nothing is stored until you change the setting in the UI, so a build can move its default under people who never
+chose one; **Reset group** at the bottom of Settings > Interface returns to the build default.
+
+**First-use hint.** Under Manual, the first controller press in the desktop library shows a 6-second toast naming the buttons
+for this pad ("Press Share (hold) or F4 for TV mode"; "Guide (hold)" on a pad without Share). It shows once per install
+(`ui.tv_hint_shown`), never under Auto or Off, and that Reset group can show it once more.
+
+**Starting and the hold.** `--tv` starts with TV mode on (when the setting is not Off). The TV-menu button on a pad is a hold
+of 500 ms, so a short Share tap keeps opening the keypad overlay. Limit: Guide held opens the TV menu on a pad with no Share
+button, and Guide is also the keypad's `#`, so a keypad chord that holds `#` (such as `*` + `#`) needs the keypad overlay, a pad
+with Share, or that binding removed (the controls screen says so next to the binding).
 
 ### Devices, players and the mouse
 
