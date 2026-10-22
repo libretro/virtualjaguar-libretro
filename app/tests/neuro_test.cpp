@@ -333,6 +333,15 @@ static void testProfiles() {
     CHECK(watchValue(far, ram, sizeof ram) == "?");
     a.setProfile(&one[0]);
     CHECK(a.has("shoot") && !a.has("press_buttons"));
+    // Invalid addresses must not silently become another main-RAM watch after integer conversion.
+    for (const char* address : {"256.5", "4294967552", "1e100", "-1", "\"0x100000100\"", "\"-18446744073709551360\"",
+                                "\"184467440737095516160\""}) {
+        const std::string profile = std::string("{\"game_name\":\"X\",\"titles\":[\"X\"],\"watch\":[{\"name\":\"score\",\"address\":") + address + "}]}";
+        CHECK(!parseProfile(profile, p, err));
+    }
+    // CRC identity uses the same parser and must preserve all 32 bits without truncation.
+    CHECK(parseProfile("{\"game_name\":\"X\",\"crc32\":[4294967295]}", p, err) && p.crcs[0] == 0xFFFFFFFFu);
+    CHECK(!parseProfile("{\"game_name\":\"X\",\"crc32\":[4294967296]}", p, err));
     CHECK(!parseProfile("{\"titles\":[]}", p, err));
     CHECK(!parseProfile("{\"game_name\":\"X\",\"actions\":[{\"name\":\"Bad Name\",\"steps\":[]}]}", p, err));
 }

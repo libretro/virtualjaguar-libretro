@@ -1112,6 +1112,8 @@ DiscInfo CoreHost::discInfoLive() {
     d.ejected = disk_.get_eject_state ? disk_.get_eject_state() : false;
     d.index = disk_.get_image_index ? disk_.get_image_index() : 0;
     for (unsigned i = 0; i < d.count; i++) {
+        char image[4096] = {0};
+        d.paths.push_back(disk_.get_image_path && disk_.get_image_path(i, image, sizeof image) ? image : "");
         char label[256] = {0};
         std::string name;
         if (disk_.get_image_label && disk_.get_image_label(i, label, sizeof label) && label[0]) {

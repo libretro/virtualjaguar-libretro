@@ -1781,6 +1781,93 @@ static void testM3u() {
     CHECK(!by.count("Set (Disc 1) (Track 1).bin"));
     CHECK(by.count("Loose.chd"));
     CHECK(files.size() == 3);
+
+    // A playlist is all-or-nothing at load time. It must not claim playable files before every entry is validated.
+    const char* bad[] = {"Missing.chd", "Not a disc.j64", "Nested.m3u", "Directory.chd"};
+    for (size_t i = 0; i < 4; ++i) {
+        std::string broken = g_tmp + "invalid-playlist-" + std::to_string(i) + "/";
+        writeBytes(broken + "Keep.bin", d1t1);
+        writeText(broken + "Keep.cue", "FILE \"Keep.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n");
+        writeBytes(broken + "Not a disc.j64", noise(1024, 99));
+        fs::create_directories(fs::u8path(broken + "Directory.chd"));
+        // Only the nested-playlist case has another valid playlist: make that one invalid too.
+        writeText(broken + "Nested.m3u", "Missing.chd\n");
+        writeText(broken + "Broken.m3u", std::string("Keep.cue\n") + bad[i] + "\n");
+        opt.folders = {broken};
+        auto invalid = lib::scanFolders(opt, lib::ScanCache(), nullptr, nullptr);
+        bool keptDisc = false, keptCart = false;
+        for (const auto& f : invalid) {
+            if (pathStem(f.path) == "Keep") keptDisc = true;
+            if (pathStem(f.path) == "Not a disc") keptCart = true;
+        }
+        CHECK(keptDisc);
+        CHECK(keptCart);
+    }
+}
+
+static void testPlaylistStateOwners() {
+    const std::string root = g_tmp + "playlist-states/", games = root + "games/";
+    const std::string playlist = fs::u8path(games + "Game.m3u").lexically_normal().u8string();
+    for (int disc = 1; disc <= 2; ++disc) {
+        const std::string stem = disc == 1 ? "Game (Disc 1)" : "Game";
+        writeBytes(games + stem + ".bin", noise(2352 * 8, 90 + disc));
+        writeText(games + stem + ".cue", "FILE \"" + stem + ".bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n");
+        writeText(root + "states/" + stem + ".slot" + std::string("0.state"), "fixture");
+    }
+    writeText(games + "Game.m3u", "Game (Disc 1).cue\nGame.cue\n");
+    Paths paths;
+    paths.root = root;
+    paths.states = root + "states/";
+    Config cfg;
+    cfg.set("library.dir.0", games);
+    LibraryService svc;
+    svc.artBaseUrl = svc.artMirrorUrl = svc.dbBaseUrl = "http://127.0.0.1:1/";
+    svc.start(paths, cfg, false);
+    svc.setDownloadArt(false);
+    for (int i = 0; i < 400; ++i) {
+        svc.pump();
+        if (!svc.scanning() && svc.entries().size() == 1) break;
+        SDL_Delay(25);
+    }
+    CHECK(svc.entries().size() == 1); // disc aliases must not reappear as duplicate tiles
+    CHECK(svc.stateGames().size() == 2);
+    if (svc.entries().size() == 1) {
+        const auto* all = svc.statesFor(svc.entries()[0]);
+        CHECK(all != nullptr && all->states.size() == 2);
+        if (all) {
+            for (const auto& state : all->states) {
+                CHECK(!state.disc.empty() && state.slot == 0); // equal slots on different discs stay distinct
+                svc.launchState(svc.entries()[0], state.slot, state.disc);
+                SDL_PumpEvents();
+                SDL_Event ev;
+                const int got = SDL_PeepEvents(&ev, 1, SDL_GETEVENT, SDL_EVENT_USER, SDL_EVENT_USER);
+                CHECK(got == 1 && ev.user.code == 0x56414A50);
+                if (got == 1 && ev.user.code == 0x56414A50) {
+                    std::unique_ptr<PlaylistStateLaunch> request((PlaylistStateLaunch*)ev.user.data1);
+                    CHECK_EQ(request->playlist, playlist);
+                    CHECK_EQ(request->disc, state.disc);
+                    CHECK((int)(intptr_t)ev.user.data2 - 1000 == 0);
+                } else if (got == 1 && ev.user.code == 0x56414A53) SDL_free(ev.user.data1);
+            }
+        }
+    }
+    for (const auto& group : svc.stateGames()) {
+        const auto* owner = svc.entryForState(group);
+        CHECK(owner != nullptr);
+        if (owner) {
+            CHECK_EQ(pathStem(owner->file.path), group.stem);
+            CHECK_EQ(owner->statePlaylist, playlist);
+            CHECK(svc.statesFor(*owner) != nullptr);
+        }
+    }
+    svc.stop();
+    svc.start(paths, cfg, false); // warm hash cache: associations must exist before the next scan completes
+    CHECK(svc.entries().size() == 1);
+    if (svc.entries().size() == 1) {
+        const auto* all = svc.statesFor(svc.entries()[0]);
+        CHECK(all != nullptr && all->states.size() == 2);
+    }
+    svc.stop();
 }
 
 static int scanTool(const std::string& dir, const std::string& dbDir) {
@@ -2412,6 +2499,7 @@ int main(int argc, char** argv) {
     testLooseNames();
     testChdAndCdiChecksums();
     testM3u();
+    testPlaylistStateOwners();
     testDisplayOptionsAndTabs();
     testPersonalListsLogic();
     testUserStoreAndInstances();

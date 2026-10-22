@@ -1,0 +1,127 @@
+[
+  {
+    "displayTargetName": "Linux x86_64 (GCC)",
+    "artifact": "virtualjaguar_libretro.so",
+    "os": "ubuntu-latest",
+    "cc": "gcc",
+    "cxx": "g++"
+  },
+  {
+    "displayTargetName": "Linux x86_64 (Clang)",
+    "artifact": "virtualjaguar_libretro.so",
+    "os": "ubuntu-latest",
+    "cc": "clang",
+    "cxx": "clang++"
+  },
+  {
+    "displayTargetName": "Linux aarch64",
+    "artifact": "virtualjaguar_libretro.so",
+    "os": "ubuntu-24.04-arm",
+    "cc": "gcc",
+    "cxx": "g++"
+  },
+  {
+    "displayTargetName": "Linux i686",
+    "artifact": "virtualjaguar_libretro.so",
+    "os": "ubuntu-latest",
+    "cc": "gcc -m32",
+    "cxx": "g++ -m32",
+    "multilib": true
+  },
+  {
+    "displayTargetName": "macOS arm64 (Clang)",
+    "artifact": "virtualjaguar_libretro.dylib",
+    "os": "macos-latest",
+    "cc": "clang",
+    "cxx": "clang++"
+  },
+  {
+    "displayTargetName": "macOS x86_64 (Clang, cross)",
+    "artifact": "virtualjaguar_libretro.dylib",
+    "os": "macos-latest",
+    "cc": "clang -arch x86_64",
+    "cxx": "clang++ -arch x86_64",
+    "make_extra": "BLITTER_SIMD=sse2",
+    "cross": true,
+    "release_platform": "macos-x86_64"
+  },
+  {
+    "displayTargetName": "Windows x86_64 (MSYS2)",
+    "artifact": "virtualjaguar_libretro.dll",
+    "os": "windows-latest",
+    "cc": "gcc",
+    "cxx": "g++",
+    "shell": "msys2 {0}",
+    "msystem": "MINGW64",
+    "msys2_packages": "mingw-w64-x86_64-gcc make"
+  },
+  {
+    "displayTargetName": "Windows i686 (MSYS2)",
+    "artifact": "virtualjaguar_libretro.dll",
+    "os": "windows-latest",
+    "cc": "gcc",
+    "cxx": "g++",
+    "shell": "msys2 {0}",
+    "msystem": "MINGW32",
+    "msys2_packages": "mingw-w64-i686-gcc make"
+  },
+  {
+    "displayTargetName": "Emscripten (WASM)",
+    "artifact": "virtualjaguar_libretro_emscripten.bc",
+    "os": "ubuntu-latest",
+    "emscripten": true,
+    "release_platform": "emscripten-wasm"
+  },
+  {
+    "displayTargetName": "Android arm64-v8a",
+    "artifact": "libs/arm64-v8a/libretro.so",
+    "os": "ubuntu-latest",
+    "android": true,
+    "android_abi": "arm64-v8a",
+    "android_simd": "neon",
+    "release_platform": "android-arm64-v8a"
+  },
+  {
+    "displayTargetName": "Android armeabi-v7a",
+    "artifact": "libs/armeabi-v7a/libretro.so",
+    "os": "ubuntu-latest",
+    "android": true,
+    "android_abi": "armeabi-v7a",
+    "android_simd": "neon",
+    "release_platform": "android-armeabi-v7a"
+  },
+  {
+    "displayTargetName": "Android x86_64",
+    "artifact": "libs/x86_64/libretro.so",
+    "os": "ubuntu-latest",
+    "android": true,
+    "android_abi": "x86_64",
+    "android_simd": "sse2",
+    "release_platform": "android-x86_64"
+  },
+  {
+    "displayTargetName": "Android x86",
+    "artifact": "libs/x86/libretro.so",
+    "os": "ubuntu-latest",
+    "android": true,
+    "android_abi": "x86",
+    "android_simd": "sse2",
+    "release_platform": "android-x86"
+  },
+  {
+    "displayTargetName": "iOS arm64",
+    "artifact": "virtualjaguar_libretro_ios.dylib",
+    "os": "macos-latest",
+    "make_platform": "ios-arm64",
+    "cross": true,
+    "release_platform": "ios-arm64"
+  },
+  {
+    "displayTargetName": "tvOS arm64",
+    "artifact": "virtualjaguar_libretro_tvos.dylib",
+    "os": "macos-latest",
+    "make_platform": "tvos-arm64",
+    "cross": true,
+    "release_platform": "tvos-arm64"
+  }
+]

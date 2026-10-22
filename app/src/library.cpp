@@ -634,6 +634,25 @@ bool crcOfFile(const std::string& path, uint32_t& crc, const std::atomic<bool>* 
 
 }  // namespace
 
+std::vector<std::string> playlistDiscs(const std::string& path) {
+    size_t size = 0;
+    void* data = SDL_LoadFile(path.c_str(), &size);
+    if (!data) return {};
+    std::string text((const char*)data, size);
+    SDL_free(data);
+    std::vector<std::string> discs = vj::parseM3u(text, fromPath(toPath(path).parent_path()) + "/");
+    for (std::string& disc : discs) {
+        std::error_code ec;
+        disc = fromPath(fs::absolute(toPath(disc), ec).lexically_normal());
+        if (ec) return {};
+        const std::string ext = extOf(disc);
+        if (ext != "cue" && ext != "cdi" && ext != "chd" && ext != "iso") return {};
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(disc.c_str(), &info) || info.type != SDL_PATHTYPE_FILE) return {};
+    }
+    return discs;
+}
+
 std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache, const std::atomic<bool>* cancel,
                                   const std::function<void(size_t, size_t)>& progress) {
     std::vector<ScanFile> out;
@@ -670,11 +689,8 @@ std::vector<ScanFile> scanFolders(const ScanOptions& opt, const ScanCache& cache
             if (!statFile(p, c.size, c.mtime)) continue;
             if (e == "m3u") {
                 // The playlist stands for its discs: they leave the grid (step 2), and it is identified by its first.
-                size_t sz = 0;
-                void* data = SDL_LoadFile(p.c_str(), &sz);
-                std::string text = data ? std::string((const char*)data, std::min(sz, (size_t)(1u << 20))) : std::string();
-                SDL_free(data);
-                std::vector<std::string> discs = vj::parseM3u(text, p.substr(0, p.find_last_of("/\\") + 1));
+                // Match readPlaylist: one bad entry rejects the whole set, so no disc may be hidden until all pass.
+                std::vector<std::string> discs = playlistDiscs(p);
                 for (size_t i = 0; i < discs.size(); i++) {
                     std::string r = resolveCueFile("", discs[i]);   // the entry is already joined to the folder
                     if (r.empty()) continue;

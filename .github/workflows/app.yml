@@ -21,6 +21,8 @@ on:
       - '.github/workflows/app.yml'
       - '.github/workflows/app-package.yml'
       - '.github/workflows/librashader.yml'
+      - '.github/scripts/release-packages.cjs'
+      - '.github/scripts/tests/release-packages.test.cjs'
   pull_request:
     branches: [ develop, master, 'release/**' ]
     paths:
@@ -35,6 +37,8 @@ on:
       - '.github/workflows/app.yml'
       - '.github/workflows/app-package.yml'
       - '.github/workflows/librashader.yml'
+      - '.github/scripts/release-packages.cjs'
+      - '.github/scripts/tests/release-packages.test.cjs'
   workflow_dispatch:
 
 concurrency:
@@ -229,9 +233,55 @@ jobs:
   # PRs get the same Developer ID signing + notarization as a release (#989); a fork PR receives no
   # secrets, so its macOS package stays ad-hoc signed (and the log says so).
   # ------------------------------------------------------------------------------------------
+  package-plan:
+    name: Package routing and safety tests
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    outputs:
+      reuse: ${{ steps.plan.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Test exact-head routing, failures and artifact completeness
+        run: node --test .github/scripts/tests/release-packages.test.cjs
+      - name: Verify release head and PR merge tree
+        id: plan
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { plan } = require('./.github/scripts/release-packages.cjs');
+            await plan({ github, context, core });
+
+  package-reuse:
+    name: Verify shared Release packages
+    needs: [package-plan]
+    if: needs.package-plan.outputs.reuse == 'true'
+    # Do not hold the temporary runner: Release package metadata/manifest jobs need it too.
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      run_id: ${{ steps.verify.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check this head's package jobs and complete artifact set
+        id: verify
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { waitForPackages } = require('./.github/scripts/release-packages.cjs');
+            await waitForPackages({ github, context, core });
+
   package:
     name: Packages
-    if: github.event_name != 'push'
+    needs: [package-plan]
+    if: github.event_name != 'push' && needs.package-plan.outputs.reuse != 'true'
     permissions:
       contents: read
     uses: ./.github/workflows/app-package.yml
@@ -251,19 +301,22 @@ jobs:
   # their GITHUB_TOKEN is read-only.  (The step summary lists the same links for them.)
   package-comment:
     name: Link the packages on the PR
-    needs: [package]
+    needs: [package-plan, package, package-reuse]
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     permissions:
       actions: read
       pull-requests: write
     steps:
-      - name: List this run's packages
+      - name: List this run's packages or the shared Release packages
+        env:
+          PACKAGE_RUN_ID: ${{ needs.package-reuse.outputs.run_id }}
+          PACKAGE_REUSE_RESULT: ${{ needs.package-reuse.result }}
         id: list
         uses: actions/github-script@v9
         with:
           script: |
-            const run = context.runId;
+            const run = process.env.PACKAGE_RUN_ID ? Number(process.env.PACKAGE_RUN_ID) : context.runId;
             const base = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}`;
             const runUrl = `${base}/actions/runs/${run}`;
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
@@ -289,6 +342,7 @@ jobs:
               '### App packages',
               '',
               `Built from \`${sha.slice(0, 7)}\` ([workflow run](${runUrl})).`,
+              ...(process.env.PACKAGE_RUN_ID ? [`Shared release-candidate packages (\`prerelease\` filenames). Package verification: **${process.env.PACKAGE_REUSE_RESULT}**.`, ''] : []),
               '',
               '| Platform | Download | Size |',
               '|---|---|---|',

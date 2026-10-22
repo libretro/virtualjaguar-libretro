@@ -572,7 +572,7 @@ bool stateMenuRow(LibraryService& svc, const lib::StateInfo& st) {
     bool clicked = ImGui::Selectable("##state", false, ImGuiSelectableFlags_None, ImVec2(fs * 16.5f, rowH));
     ImDrawList* dl = ImGui::GetWindowDrawList();
     drawStateShot(dl, svc, st, ImVec2(p0.x + 2, p0.y + 2), box, false);
-    const std::string l1 = lib::stateLabel(st.slot);
+    const std::string l1 = (st.disc.empty() ? "" : pathStem(st.disc) + " - ") + lib::stateLabel(st.slot);
     dl->AddText(ImVec2(p0.x + box.x + 10, p0.y + rowH * 0.5f - fs - 1), ImGui::GetColorU32(ImGuiCol_Text), l1.c_str());
     dl->AddText(ImVec2(p0.x + box.x + 10, p0.y + rowH * 0.5f + 1), ImGui::GetColorU32(ImGuiCol_TextDisabled), stamp(st.mtime).c_str());
     return clicked;
@@ -587,8 +587,8 @@ void drawTileMenu(App& app, LibraryService& svc, const lib::Entry& e) {
         int shown = 0;
         for (const lib::StateInfo& st : sg->states) {   // newest first
             if (++shown > 10) break;
-            ImGui::PushID(st.slot + 1);
-            if (stateMenuRow(svc, st)) svc.launchState(e, st.slot);
+            ImGui::PushID(st.path.c_str());
+            if (stateMenuRow(svc, st)) svc.launchState(e, st.slot, st.disc);
             ImGui::PopID();
         }
         ImGui::EndMenu();

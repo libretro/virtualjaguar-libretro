@@ -58,6 +58,12 @@ struct ArtView {
     int w = 0, h = 0;
 };
 
+// A playlist state must reopen the full set and mount the state-owning disc, preserving its disc list and SRAM owner.
+struct PlaylistStateLaunch {
+    std::string playlist;
+    std::string disc;
+};
+
 class LibraryService {
 public:
     LibraryService();
@@ -176,12 +182,12 @@ public:
     // after the library deletes one).
     const std::vector<lib::StateGame>& stateGames();
     const lib::StateGame* statesFor(const lib::Entry& e);   // by the file stem the states are named with
-    const lib::Entry* entryForState(const lib::StateGame& g) const { return lib::entryForStem(entries_, g.stem); }
-    void invalidateStates() { statesAt_ = -1000.0; }
+    const lib::Entry* entryForState(const lib::StateGame& g) const;
+    void invalidateStates() { statesAt_ = -1000.0; playlistStates_.clear(); }
     ArtView stateThumb(const lib::StateInfo& s);            // the screenshot saved with the state
     bool deleteState(const lib::StateInfo& s);
     // Boot `e` and load its state from `slot` (App handles the event: same game running = just load).
-    void launchState(const lib::Entry& e, int slot);
+    void launchState(const lib::Entry& e, int slot, const std::string& disc = "");
     // How many running copies this is (Paths::instance): shown in the settings help, nothing else changes.
     int instance = 1;
 
@@ -233,6 +239,7 @@ private:
     // state owned by the main thread
     std::vector<std::string> folders_;
     std::vector<lib::ScanFile> files_;
+    std::vector<lib::Entry> stateOwners_; // hidden playlist discs: state lookup only, never grid tiles
     std::vector<lib::Entry> entries_;
     lib::Dat carts_, discs_;
     size_t identified_ = 0;
@@ -266,6 +273,7 @@ private:
     void resolveLists();
     // save states
     std::vector<lib::StateGame> stateGames_;
+    std::map<std::string, lib::StateGame> playlistStates_;
     double statesAt_ = -1000.0;
     struct ThumbSlot {
         ArtView::State state = ArtView::None;

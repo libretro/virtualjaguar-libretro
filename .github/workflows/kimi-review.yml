@@ -26,7 +26,7 @@ jobs:
     if: |
       github.event_name == 'pull_request' ||
       (github.event.issue.pull_request && contains(github.event.comment.body, '@kimi review'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # The script soft-fails on purpose, but that only covers failures the
     # script is alive to see.  Anything earlier -- checkout, a runner
     # hiccup, a missing secret -- used to red-X the PR, which is the one

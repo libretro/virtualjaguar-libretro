@@ -162,16 +162,16 @@ std::vector<StateRef> AppHost::states(const GameRef& g) {
     const lib::Entry* e = entryFor(g);
     const lib::StateGame* sg = e ? app_.library.statesFor(*e) : nullptr;
     if (sg)
-        for (const lib::StateInfo& s : sg->states) out.push_back({s.slot, s.mtime});
+        for (const lib::StateInfo& s : sg->states) out.push_back({s.slot, s.mtime, s.disc});
     return out;
 }
 
-Art AppHost::stateThumb(const GameRef& g, int slot) {
+Art AppHost::stateThumb(const GameRef& g, const StateRef& state) {
     const lib::Entry* e = entryFor(g);
     const lib::StateGame* sg = e ? app_.library.statesFor(*e) : nullptr;
     if (sg)
         for (const lib::StateInfo& s : sg->states)
-            if (s.slot == slot) return artOf(app_.library.stateThumb(s));
+            if (s.slot == state.slot && s.disc == state.disc) return artOf(app_.library.stateThumb(s));
     return Art();
 }
 
@@ -179,8 +179,8 @@ void AppHost::launch(const GameRef& g) {
     if (const lib::Entry* e = entryFor(g)) app_.library.launch(*e, /*fresh=*/true);   // the resume prompt needs a mouse: X / Details resume
 }
 
-void AppHost::launchState(const GameRef& g, int slot) {
-    if (const lib::Entry* e = entryFor(g)) app_.library.launchState(*e, slot);
+void AppHost::launchState(const GameRef& g, const StateRef& state) {
+    if (const lib::Entry* e = entryFor(g)) app_.library.launchState(*e, state.slot, state.disc);
 }
 
 bool AppHost::isFavorite(const GameRef& g) {

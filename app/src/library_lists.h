@@ -152,6 +152,7 @@ std::string autoStatesDir(const std::string& statesDir, int instance);
 
 struct StateInfo {
     int slot = 0;
+    std::string disc{};      // merged playlist rows: the disc this state belongs to, otherwise empty
     std::string path;        // the .state file
     std::string thumbPath;   // its screenshot, "" when there is none
     int64_t mtime = 0;       // seconds since the epoch

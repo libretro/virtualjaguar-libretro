@@ -50,6 +50,7 @@ struct FakeHost : Host {
     std::vector<GameRef> all, favs, recent, disc;
     std::map<std::string, std::vector<StateRef>> st;
     std::string launchedKey;
+    std::string launchedDisc;
     std::pair<std::string, int> launchedState{"", -99};
     int launches = 0;
     std::set<std::string> favSet;   // the keys marked favorite
@@ -134,9 +135,9 @@ struct FakeHost : Host {
         auto it = st.find(g.key);
         return it == st.end() ? std::vector<StateRef>() : it->second;
     }
-    Art stateThumb(const GameRef&, int) override { return {}; }
+    Art stateThumb(const GameRef&, const StateRef&) override { return {}; }
     void launch(const GameRef& g) override { launchedKey = g.key; launches++; }
-    void launchState(const GameRef& g, int slot) override { launchedState = {g.key, slot}; }
+    void launchState(const GameRef& g, const StateRef& state) override { launchedState = {g.key, state.slot}; launchedDisc = state.disc; }
     bool isFavorite(const GameRef& g) override { return favSet.count(g.key) != 0; }
     void setFavorite(const GameRef& g, bool on) override {
         if (on) favSet.insert(g.key);
@@ -1936,6 +1937,22 @@ static void detailsResumeLaunchesThatState() {
     CHECK(shell.screenId() == "details");                      // closing the game lands back here
 }
 
+static void detailsPlaylistSameSlotsLaunchCorrectDisc() {
+    FakeHost host;
+    host.recent = mkGames("Recent", 3);
+    host.all = host.recent;
+    host.st[host.recent[1].key] = {{3, 1792152000, "/set/Disc 1.cue"}, {3, 1792000000, "/set/Disc 2.cue"}};
+    Shell shell(host);
+    homeSetup(host, shell);
+    rightN(host, shell, 1);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);
+    down(host, shell, 2);                                      // Play, Disc 1 slot 3, Disc 2 slot 3
+    accept(host, shell);
+    CHECK(host.launchedState == std::make_pair(host.recent[1].key, 3) && host.guardArmed == 1 && host.launches == 0);
+    CHECK(host.launchedDisc == "/set/Disc 2.cue");
+    CHECK(shell.screenId() == "details");                      // closing the game lands back here
+}
+
 static void detailsFavoriteToggles() {
     FakeHost host;
     Shell shell(host);
@@ -3629,6 +3646,7 @@ int main() {
     detailsFromStartOnAnyTile();
     detailsResumeRowsMatchStates();
     detailsResumeLaunchesThatState();
+    detailsPlaylistSameSlotsLaunchCorrectDisc();
     detailsFavoriteToggles();
     detailsPlayLaunches();
     detailsSurvivesGameVanishing();

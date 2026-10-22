@@ -140,3 +140,45 @@ stale. Responses carry `cache-control: max-age=600` — polling past ~10 min wit
 ## Roadmap
 
 Planning lives in GitHub milestones (pinned issue #371), never in md files.
+
+## Temporary CI runners
+
+`VJ_TEMP_RUNNERS` is an optional repository variable containing a JSON object with
+a `refs` allowlist and mappings from hosted labels to private runner labels.
+Only listed Git refs use those mappings in explicitly opted-in lightweight jobs;
+absent refs or labels keep their original GitHub-hosted runners. Leave the variable unset normally. A temporary release
+runner must use a unique custom label with default labels disabled, preserve the
+requested OS/architecture, and be removed together with the variable after its
+checks finish. Do not map Ubuntu 22.04 packaging jobs onto Ubuntu 24.04: that would
+change the supported glibc floor.
+
+## Shared production core builds
+
+For same-repository `release/**` PRs with a merge tree identical to the release head,
+C/C++ CI shares ten compile-only production builds from the exact-head Release push run:
+macOS Intel, WASM, four Android ABIs, iOS, tvOS, Vita and Switch. Other PRs, forks,
+manual runs and integration-branch pushes keep the full compiler matrix. The configurations
+live in `.github/ci/core-matrix.json`; a Ruby workflow-contract check rejects mismatched
+compiler/SDK/architecture settings before any rows are omitted.
+
+The seven native C/C++ matrix rows, GCC/Clang differences, MSVC checks, coverage,
+ASan/UBSan, clang-tidy and production -> `TEST_EXPORTS=1` -> production mode-switch
+coverage stay independent. Compile-only fallback builds use the same `RELEASE_DEBUG_INFO=1`
+configuration as Release (adds debug information to the optimized production build).
+Android's compile-definition and selected-SIMD-object assertions run through
+`scripts/build-ndk-ci.sh` in both workflows. Compile-only Mach-O production exports are
+checked before Release uploads a shared binary.
+
+Release retains an unstripped `ci-core-<platform>` intermediate before packaging/signing.
+`BUILD.json` records the exact commit, platform, filename, production ABI setting and
+SHA-256. C/C++ CI requires successful production jobs, both raw and distributable artifact
+groups, and verifies the downloaded metadata/checksums before retaining all ten original
+C/C++ artifact names. Failed, cancelled, skipped, stale, missing or mismatched evidence
+cannot make the shared check green. The hosted waiting job does not occupy the temporary
+runner needed by Release metadata jobs.
+
+These intermediates have 14-day retention and are explicitly excluded by **both** release
+publishers' staging filters. Shipped binaries, split debug archives, their names and checksum
+collection remain unchanged. The C/C++ artifact aliases retain their normal artifact retention.
+The shared core verifier and shared app-package verifier must both pass before merging a
+release PR that uses these routes; a configured skip of duplicate build rows is not sufficient.
