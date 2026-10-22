@@ -2172,6 +2172,338 @@ New in this revision:
 
 ---
 
+## Phase 5 — TV mode owns Settings and Library, the full settings catalogue (more commits on PR 4)
+
+Written 2026-10-22 from the owner's test of PR 4 ("once you open a game, the tv mode isn't the mode for settings or library
+until you close the game"; "you can't even see the game core settings in tv mode"; "finish the settings at least in tv mode").
+Same branch and worktree as Phase 4 (`feat/991-tv-phase4`, `~/Workspace/Provenance/vj-wt/tv-phase4`); the work lands as more
+commits on PR #1067. Build and test on the Studio only: `~/Workspace/Provenance/vj-eval/remote/tvb.sh "<ctest regex>"`.
+
+### Task 18b (done separately, do not redo): Settings entry points
+
+`App::openSettings()` (`app.h:291`, `app.cpp:1429`) is what Ctrl/Cmd+, (`app.cpp:1788`), the Settings menu (`ui.cpp:671`),
+the native `Cmd::Settings` (`platform/commands.cpp:306` → `desktop.cpp:127`), the BIOS openers (`ui.cpp:602`, `desktop.cpp:84`,
+`library_ui.cpp:1102`) and `--show-window settings` call. While TV mode is on it calls `Shell::openSettings()`
+(`tv_shell.cpp:67`: the Settings section with no game; with a game `openMenu()` + the Settings screen in the slot, so the hardcore
+pause gate and its toast apply); otherwise the desktop window. New script expect `menu-slot`. Phase 5 builds on it.
+
+### What Phase 4 left (read before any task)
+
+- **Core options reach the app only through `CoreHost::startSession`** (`core_host.cpp:794` `retro_set_environment(envCb)` →
+  `libretro.c:1521` `libretro_set_core_options`), which `loadContent` / `loadNoContent` run for the first game. At startup `defs_`
+  is empty: `ui.cpp:126` prints "The core's options appear here once a game is loaded", `AppHost::settingRows`
+  (`tv_app_host.cpp:238`) hides the three curated core rows and shows `speedNoteRow()`. `captureOptions` (`core_host.cpp:196`)
+  reads a `retro_core_options_v2` into `OptionCategory` / `OptionDef` (`emu_snapshot.h:26-41`: `desc`, `descCategorized`,
+  `categoryKey`, `values[]` with labels), applies `optionLock` (`app.cpp:534`, `lockedCoreOptionFor`) and `optSerial_++`. The
+  table has 10 categories and 118 options (`libretro_core_options.h`: video, bios_boot, cdrom, network, input, input_p1,
+  input_p2, diagnostics, speed, accuracy); `update_option_visibility` (`libretro.c:1522`, installed through
+  `SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK`, `core_host.cpp:522`) hides gated rows by `SET_CORE_OPTIONS_DISPLAY`.
+- **Core options are readable without a game.** `retro_set_environment` (`libretro.c:1502-1535`) only stores the callback, asks
+  for the log interface, pushes the options and the display callback, and asks for VFS and the microphone; libretro allows it
+  before `retro_init`, and `startSession` repeats it for every game anyway (`stopSession` then `retro_set_environment` again).
+  So one call at startup, with `CoreHost::env` answering only the option commands (`GET_CORE_OPTIONS_VERSION`,
+  `SET_CORE_OPTIONS_V2[_INTL]`, `SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK`, `SET_CORE_OPTIONS_DISPLAY`, `GET_VARIABLE`) and
+  refusing the rest, fills `defs_` / `categories_` / `visibility_` exactly as a load does. It must run on the UI thread before
+  `startEmuThread()` (`app.cpp:2135`; the thread publishes the table at once, `core_host.cpp:1213`) and after
+  `loadUserOptions` (`app.cpp:189`) and `wireHost()` (the lock). A write with no game is `setOptionValue` → `userValues_` →
+  `onOptionChanged` → `opt.<key>` in the config (`app.cpp:544`), read by the core at the next load through `GET_VARIABLE`.
+  Rejected alternative: including `libretro_core_options.h` in a C++ TU (it has `extern "C"` guards, lines 60 and 2103) — a
+  second copy of the table that bypasses `captureOptions`' lock and visibility rules.
+- **Library entry points that open the desktop window today:** Ctrl/Cmd+L `app.cpp:1792` → `App::toggleLibrary` `app.cpp:1137`
+  (`library.show`, or the home search box); File > "Game library..." `ui.cpp:585`; native `Cmd::Library` `platform/commands.cpp:275`
+  → `desktop.cpp:88`; `--show-window library` `app.cpp:2188` (dev flag, stays). The native checkmark reads `s.libraryOpen`
+  (`desktop.cpp:35`). The script documents the current behaviour at `tv_menu_headless.txt.in:100-121` ("Ctrl+L opens the
+  desktop library WINDOW" with TV on): Phase 5 flips that block. `App::openContent` (`app.cpp:1160`) already closes the menu
+  (`:1166`) and auto-saves the running game (`:1171`), so a launch from the in-game Library keeps the running game's state.
+- **The in-game menu slot** (`Shell::menuPushScreen`, `tv_shell.cpp:332`) hands the slot screen the menu's list area only
+  (`tv_ingame.cpp:89-94`: a 1500u panel minus a 470u rail); `Shell::intent` (`:349-352`) forwards every intent but Back, and
+  `typed()` goes to the Base stack's top only (`tv_shell.cpp:129`), never to the slot. `LibraryScreen` launches with
+  `host_.launch(*g)` + `shell_.launched()` (`tv_library.cpp:342`), `launchState` (`:359`), pushes `DetailsScreen` on Start (`:350`)
+  and `LettersScreen` on Y (`:482`) onto the Base stack — none of which can show while a game runs.
+- **`NavInput` repeats held directions** (`tv_nav.h:30`, 350 ms then 80 ms, Left and Right included), so a held Right on a
+  settings row already steps every 80 ms; each step is a `setSetting` + `saveConfig()`.
+- **Settings groups are the four ints of `tv_settings_model.h`** (`kSettingGroups`, `settingGroupLabel`, `SettingRow::group`);
+  the rail is not scrollable (`tv_settings.cpp:88-96` draws every group at `kItemH + kItemGap`).
+- **App settings that are a choice, toggle or slider in the desktop tabs** (the catalogue Task 19 lists; everything else — folders,
+  BIOS files, the font file, RA sign-in, remapping, the per-device axis sliders `devices_ui.cpp:323`, the theme editor
+  `theme_ui.cpp:161`, the Discord app id, netplay host/port, cheats — stays desktop-only): Video `ui.cpp:184-196` (integer, smooth,
+  stretch, aspect, vsync, fullscreen), shader `shaders_ui.cpp:189`; Audio `ui.cpp:204-206` (volume, mute, buffer target);
+  Input `devices_ui.cpp:335-347` (stick dead zone, mouse drives, light gun aims with), `:362` (controls overlay at start);
+  Storage `ui.cpp:244` (flush saves); Interface `ui.cpp:285` (FPS), `:292` (emulation thread), `:304` (resume mode), `:315` (home
+  library), `desktop.cpp:201-230` (tray icon, in-window menu bar, auto-hide menu in fullscreen, windows outside, keep awake),
+  `theme_ui.cpp:111` (theme), `library_ui.cpp:237` (show as), `:284` (tile size), `:299` (download box art), `:312` (close on
+  launch); Achievements `achievements_ui.cpp:345` (download pictures); Discord `ui.cpp:332-337`; Neuro `neuro_app.cpp:178-197`.
+
+### Phase 5 decisions (lead's calls; told to the owner, no approval round)
+
+1. **While TV mode is on, Settings and Library are TV screens, never desktop windows** — with or without a game. Every opener
+   goes through `App::openSettings()` (Task 18b) or the new `App::openLibrary()`. The only desktop window TV mode still opens is
+   the one behind the single "Desktop settings…" row (folders, BIOS files, sign-in, remapping, text entry), which keeps Phase 3's
+   hand-off (`tv_more_settings.h`).
+2. **Core options are shown always**, read at startup by `CoreHost::probeOptions()` (the environment probe above). Phase 3
+   approval G (hidden until a game has run) and `speedNoteRow()` go. The three curated core rows (`resolution`, `risc_clock`,
+   `idle_skip`) go too: they are ordinary rows of the core's own Video and Speed categories.
+3. **Groups are the core's categories plus the app's tabs**, in this rail order: Picture, Sound, Interface, Library, Achievements,
+   Discord, Neuro (build-gated), then the core's categories in definition order (`General` for options with no category, as
+   `drawCoreOptions` does). Groups with no visible row are absent. `SettingRow::group` becomes a string key; the rail scrolls.
+4. **Every visible core option is a row**: label `descCategorized` (else `desc`), value `label` (else `value`), `info` is not shown
+   (no room; the desktop tooltip stays there). Hidden: `!optionVisible(key)` (covers the app's locks). Read-only with the note
+   "Set by Netplay or --option for this session": `optionOverridden(key)`. Typed keys (`typed_options.h`): the presets plus a
+   selected "<value> (custom)" when the current value is not a preset (Phase 3's rule, now for every typed key); `OptKind::Host`
+   (`virtualjaguar_netlink_host`) is read-only with the note "Type it in Desktop settings". Options whose `info` says "restart"
+   carry the note "Applies when the game next starts". No "reset" and no per-group reset in TV. Writes stay
+   `CoreHost::setOptionValue(key, def->values[i].value)` — the call `drawOption` makes, so `Achievements::checkSettings` and the
+   netplay / `--option` rules are unchanged.
+5. **Sliders become stepped lists**: volume 0–100 in 10 %, audio buffer 20–200 ms in 10 ms, stick dead zone 0–40 % in 5 %, tile
+   size `kTileScaleMin..kTileScaleMax` in 0.1, Neuro pause 0–10 s in 0.5. The desktop slider keeps its finer value: a current value
+   off the grid shows as "<value> (custom)" and is selected; stepping lands on the grid.
+6. **Long lists on a pad**: Up/Down clamp (no wrap) in both the rail and the list, as Phase 3; Left/Right clamp, Accept wraps; the
+   held-direction repeat of `NavInput` is the "many steps" path; the focus is remembered per group under
+   `settings/<groupKey>` (index + row id) and the rail under `settings/rail` (group key); the rail and the list both scroll to
+   show the focus with the Phase 3 tween; LT/RT (PagePrev/PageNext) jump the list a page. Each repeated step still saves the
+   config (12.5 Hz while held; `config.ini` is small — measured on the Studio in Task 20, step 4).
+7. **The in-game menu gains a "Library" row** after Load state (root order: Resume, Save state, Load state, Library,
+   Achievements, Overlays, Settings, Controls, Enter/Exit TV mode, Reset, Close game). It puts `LibraryScreen` in the slot;
+   a slot screen may ask for the whole panel (`Screen::wide()`), which the Library does, so the rail + cover grid draw unchanged
+   over the dimmed game. In the slot: A = launch (with the confirm below), LT/RT and typing work; Start (Details) and Y (letter
+   picker) do nothing (they push onto the Base stack, which does not show under a game); X (resume a state) asks the same confirm.
+8. **Launching from the in-game Library asks first**: a page `ConfirmLaunch` ("Close <running title> and start <title>?", rows
+   No / Yes, focus on No, as Reset and Close do). Yes → `host.launch(g)` / `launchState(g, st)` — `App::openContent`, which
+   auto-saves the running game and closes the menu — then `launched()`. The same confirm is used by `Shell::requestLaunch`
+   whenever a game is loaded; with no game it launches at once (Home, Library, Details, Achievements are unchanged).
+9. **`App::openLibrary()`** replaces every call of `toggleLibrary()` that is a user action: TV on and no game → the Library
+   section; TV on and a game → the menu (through `openMenu()`, hardcore gate and toast as Settings) with the Library in the slot;
+   TV off → `toggleLibrary()` as today. `desktop.cpp:35` `libraryOpen` is also true while the TV Library section or slot shows.
+10. **No `app.cpp` edits beyond**: `probeOptions()` in `run()` before `startEmuThread()`, `openLibrary()`, the Ctrl/Cmd+L line.
+    No `tv/` file calls `emu.call` / `emu.post`; the probe is a `CoreHost` member called from `App`.
+
+### Task 19: core options at startup, and the settings catalogue (model)
+
+**Files:**
+- Modify `core_host.h/.cpp`: `void probeOptions();` (UI thread, before the emulation thread exists) and `bool probing_ = false;`
+  checked at the top of `env()`: while set, only the option commands listed above are handled, everything else returns false.
+  After `retro_set_environment(envCb)` call `updateDisplayCb_()` once (the core's `update_option_visibility` reads its gates
+  through `GET_VARIABLE` and hides rows through `SET_CORE_OPTIONS_DISPLAY`, both allowed), then `probing_ = false`.
+  `startSession` is unchanged (it clears and re-pushes). `probeOptions` is a no-op when `initialized_`.
+- Modify `app.cpp` `run()`: `host.probeOptions();` after `netplayInit` and before the `runHeadless / runTvScript / runInteractive`
+  line (the thread starts inside `runInteractive`, `app.cpp:2135`; headless runs stay inline).
+- Modify `tv_host.h` `SettingRow`: `int group` → `std::string group` (key) + `std::string groupLabel`; `tv_settings_model.h/.cpp`:
+  drop `kSettingGroups`, `settingGroupLabel`, `speedNoteRow`; add the builders below; `tv_app_host.h/.cpp`: the catalogue.
+- Modify `ui.cpp` `drawCoreOptions`: drop the "appear here once a game is loaded" branch (the table is there); keep the rest.
+- Test: `tv_settings_model_unit`, new `vj_core_options_probe_test` (`app/tests/core_options_probe_test.cpp`, links `vj_core`
+  and `core_host.cpp` as `core_host_thread_test` does), `tv_ui_smoke`.
+
+**Interfaces:**
+
+```cpp
+// tv_settings_model.h (pure)
+struct SettingGroup { std::string key, label; };
+// Every visible core option as a row, in category order: uncategorised first under {"core:", "General"}, then each category
+// under {"core:" + cat.key, cat.desc}.  id = "core:" + key.  Rules of decision 4.  `visible`, `locked`, `overridden`, `current`
+// are per key (std::function), so the model never sees CoreHost.
+std::vector<SettingRow> coreOptionRows(const std::vector<OptionCategory>& cats, const std::vector<OptionDef>& defs,
+                                       const std::function<std::string(const OptionDef&)>& current,
+                                       const std::function<bool(const std::string&)>& visible,
+                                       const std::function<bool(const std::string&)>& overridden,
+                                       const std::function<const TypedOption*(const std::string&)>& typed);
+SettingRow choiceRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
+                     std::vector<std::string> choices, int index);
+// A slider as a stepped list: "lo", "lo+step", ... "hi" printed with fmt ("%.0f ms"); a value off the grid is appended as
+// "<value> (custom)" and selected.  stepValue() maps an index back (the "(custom)" index gives `current` unchanged).
+SettingRow sliderRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
+                     float current, float lo, float hi, float step, const char* fmt);
+float stepValue(const SettingRow& r, int index, float lo, float step, float current);
+std::vector<SettingGroup> groupsOf(const std::vector<SettingRow>& rows);   // first-seen order, keys unique
+// Existing builders keep their names; their `int group` parameter becomes (key, label); onOffRow(id, label, group, groupLabel, on).
+```
+
+Catalogue (`AppHost::settingRows`, in this order; ids in parentheses; every setter is the desktop control's member or method
+followed by `app.saveConfig()`, as Phase 3 decision 9):
+- **Picture** `picture`: shader (`shader`), integer (`integer`), smooth (`smooth`: `present.linearFilter`), stretch (`stretch`:
+  `present.stretch`), aspect (`aspect`), vsync (`vsync`, moved here from Interface), fullscreen (`fullscreen`: `setFullscreen`).
+- **Sound** `sound`: volume (`volume`), mute (`mute`: `app.mute` + `applyAudioSettings`), buffer (`audio_buffer`: `audioTargetMs`,
+  20–200 by 10, `"%.0f ms"` + `applyAudioSettings`).
+- **Interface** `interface`: fps, controls overlay at start (`controls_at_start`: what `devices_ui.cpp:362` writes), theme,
+  tv_mode, tv_auto_fs, tv_auto_pad, in-window menu bar (`menu_in_window`: `showInWindowMenu`; absent where `desktop.cpp` hides the
+  box), auto-hide menu in fullscreen (`menu_autohide`), windows outside (`windows_outside`), keep awake (`keep_awake`), tray icon
+  (`tray`, platform-gated as `desktop.cpp:210`), emulation thread (`emu_thread`: `emuThreadPref`; note "Restart the app to apply"
+  while `emuThreadWanted() != emuThreadThisRun()`), stick dead zone (`dead_zone`: 0–40 by 5, `"%.0f %%"`), mouse drives
+  (`mouse_port`), light gun aims with (`gun_source`), flush saves (`flush_saves`: `autosaveSram`).
+- **Library** `library`: resume mode (`resume`: `lib::resumeModeLabel` × `kResumeModeCount`), home library (`home_library`), show
+  as (`show_as`: `lib::showAsLabel`), tile size (`tile_size`: `cellScale`, `kTileScaleMin..Max` by 0.1, `"%.1fx"`), download box
+  art (`download_art`: `setDownloadArt`), close on launch (`close_on_launch`: what `library_ui.cpp:312` writes).
+- **Achievements** `achievements`: download pictures (`ra_images`: `ach.setImagesWanted`); row absent when `!achHeader().available`.
+- **Discord** `discord`: `discord_enabled`, `discord_art`, `discord_buttons` (`cfg.setBool` as `ui.cpp:332-337`).
+- **Neuro** `neuro` (`VJ_HAVE_NEURO`): `neuro_enabled`, `neuro_auto_force`, `neuro_interval` (0–10 by 0.5, `"%.1f s"`).
+- **The core's groups**: `coreOptionRows(host.optionCategories(), host.optionDefs(), …)`.
+- Last row of Interface: `moreRow()` relabelled **"Desktop settings…"** (id stays `more`).
+`setSetting("core:<key>", i)`: `defFor(key)`; not overridden, `i` within `def->values` (never the "(custom)" index) →
+`host.setOptionValue(key, def->values[i].value)`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `core_options_probe_test.cpp`: `CoreHost h; h.probeOptions(); CHECK(h.optionDefs().size() >= 100 && h.optionCategories().size() == 10);`
+    a def for `virtualjaguar_internal_resolution` exists with `categoryKey == "video"`; `h.optionVisible("virtualjaguar_netlink_host")`
+    is false (netlink off by default hides its host; read the gate in `libretro.c update_option_visibility` when writing the line
+    and pick a key it hides); `h.setOptionValue("virtualjaguar_internal_resolution", "2x")` with no game →
+    `h.optionValueFor(key, "") == "2x"` and `onOptionChanged` was called with (`key`, `"2x"`); `probeOptions()` twice is one push
+    (`optionPushes()` unchanged); `h.isLoaded()` stays false.
+  - `tv_settings_model_test.cpp`: `coreOptionRows` with two categories and three defs (one uncategorised, one typed with a custom
+    current, one hidden) → 2 rows in order General, then the category; `ids == {"core:a", "core:b"}`; the typed row's last choice
+    is `"137% (custom)"` and selected; the hidden one absent; an overridden one `readOnly` with the note; a `Host`-kind typed key
+    read-only with "Type it in Desktop settings"; a def whose `info` contains "restart" carries the restart note.
+    `sliderRow("audio_buffer", …, 80, 20, 200, 10, "%.0f ms")` → 19 choices, `index == 6`, `choices[0] == "20 ms"`;
+    `sliderRow(…, 85, …)` → 20 choices, last `"85 (custom)"` selected; `stepValue(r, 7, 20, 10, 85) == 90`; `stepValue(r, 19, …, 85) == 85`.
+    `groupsOf` keeps first-seen order and drops duplicates.
+  - `tv_ui_smoke` fixtures: `mkRow` takes a group key + label; the Phase 3 tests that walked `Down ×3` to Interface are rewritten
+    against the new fixture (`settingsFixture()`: picture, sound, interface, "core:video", "core:speed").
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "core_options_probe|tv_settings_model_unit|tv_ui_smoke"`. Expected: FAIL.
+- [ ] **Step 3: Implement** the probe, the model, the catalogue. Register `vj_core_options_probe_test` in `VJTvTests.cmake` the
+  way `core_host_thread_test` is registered.
+- [ ] **Step 4: Run** the full suite on the Studio. Expected: all PASS (`settings_reset_test` and `core_host_test` unchanged).
+- [ ] **Step 5: Commit** `feat(app): core options readable at startup; TV Settings catalogue of every core option and app choice (#991)`.
+
+### Task 20: the TV Settings screen for long grouped lists
+
+**Files:**
+- Modify `tv_settings.cpp` (`SettingsScreen`), `tv_widgets.h/.cpp` only if a helper is missing, `tests/tv_ui_smoke.cpp`,
+  `tests/tv_menu_headless.txt.in`, `tv_script.cpp` (expect `tv-group=KEY`: the focused group's key).
+- Test: `tv_ui_smoke`, `tv_menu_headless`.
+
+Rules:
+- `refresh()` builds `groups_` with `groupsOf(all)`; the rail is a `LinearFocus` over them with its own `Tween` scroll and
+  `moreArrow`s, clipped to the content height (the list's pattern at `tv_settings.cpp:110-150`); the focused group's item is kept
+  in view. Memory: `settings/rail` → `putItem(groupKey)`; `settings/<groupKey>` → index + row id; `settings/list` as before.
+- The list: as today, plus `PagePrev` / `PageNext` = `list_.move(∓visibleRows)`; the caption line is "<group> · N settings".
+- Left on the first choice of a row still returns to the rail (Phase 3); a read-only row ignores Left/Right/Accept and shows its note.
+- In the slot (embedded): the groups are the first level (as Phase 3) and that list scrolls the same way (17+ rows).
+- The "Desktop settings…" row hint is glyph(Accept) "Open".
+
+- [ ] **Step 1: Write the failing tests.**
+  - `settings_groups_in_row_order`: fixture groups picture, sound, interface, core:video, core:speed → the rail labels in that
+    order; a fixture with no `sound` row → `!drew("Sound")`.
+  - `settings_rail_scrolls_720p`: 20 fixture groups at 1280×720, Down ×19 → `focusLabel()` is the last group and its item is
+    drawn inside the content area (track the rail items' y in the test through `g_texts`).
+  - `settings_held_right_repeats`: a `core:x` row with 30 choices; press Right and hold through `frames(host, shell, 90)` (≈1.5 s
+    at the smoke clock) → `host.set.size() >= 10` and the last index is monotone; release → no further sets.
+  - `settings_page_jump`: 40 rows, RT → the focus moved by the visible count, LT back to 0.
+  - `settings_focus_memory_per_group_key`: row 3 of `core:video`, Up to the rail, Down to `core:speed`, Right, Back, Up, Right →
+    row 3 of `core:video` again.
+  - `settings_custom_value_row`: a slider row with "(custom)" selected: Right steps to the next grid value (`set.back().second`
+    = the grid index), Left to the previous; Accept wraps to 0.
+  - `settings_embedded_groups_scroll`: in the menu slot with 20 groups, Down ×19 keeps the focused group row inside the list area.
+  - `tv_menu_headless`: in the existing Settings block (no game), after `expect tv-screen=settings`: `expect tv-group=picture`;
+    Down ×7 → `expect tv-group=core:video` (Picture, Sound, Interface, Library, Achievements, Discord, [Neuro], General?, Video —
+    count the groups the headless build has when writing the line: Neuro is build-gated and General exists only if an option has
+    no category); Right; `expect tv-focus=Internal resolution` after the Downs that reach it; `pad tap dpright` →
+    `expect core-option=virtualjaguar_internal_resolution:2x` **with no game loaded** (decision 2); `saveconfig` →
+    `expect cfg=opt.virtualjaguar_internal_resolution:2x`; `pad tap dpleft` to restore. Shift the later blocks' times.
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "tv_ui_smoke|tv_menu_headless"`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the full suite on the Studio; then by hand on the Studio (`vjr.sh run`, windowed) hold Right on the RISC
+  overclock row for 3 s and read the frame time in the FPS overlay: no visible hitch from the per-step `saveConfig()`. If there
+  is one, coalesce: `AppHost::setSetting` sets `saveDue_ = now + 0.5 s` and `AppHost` saves at the first frame past it.
+- [ ] **Step 5: Commit** `feat(app): TV Settings scrolls its rail, pages its list, and shows every group (#991)`.
+
+### Task 21: Library in TV mode (every entry point, the in-game row, the launch confirm)
+
+**Files:**
+- Modify `app.h/.cpp` (`void openLibrary();`, the Ctrl/Cmd+L line `app.cpp:1792`), `ui.cpp:585`, `desktop.cpp:35` and `:88`,
+  `tv_shell.h/.cpp` (`openLibrary()`, `Row::Library`, `Page::ConfirmLaunch`, `requestLaunch`, `typed()` to the slot, `wide()`),
+  `tv_screen.h` (`virtual bool wide() const { return false; }`), `tv_ingame.cpp` (a wide slot takes the panel: no rail, the
+  hint bar still the shell's), `tv_library.cpp` (slot rules of decision 7, `shell_.requestLaunch`), `tv_home.cpp`,
+  `tv_details.cpp`, `tv_achievements.cpp` (`requestLaunch` instead of `host_.launch` — a no-op change with no game),
+  `tests/tv_ui_smoke.cpp`, `tests/tv_menu_headless.txt.in`, `tv_script.cpp` (expect `menu-page=root|save|load|confirm-reset|confirm-close|confirm-launch`).
+- Test: `tv_ui_smoke`, `tv_menu_headless`.
+
+**Interfaces:**
+
+```cpp
+// app.h
+void openLibrary();   // Ctrl/Cmd+L, File > Game library, Cmd::Library: the TV Library while TV mode is on (the in-game menu with a game), else toggleLibrary()
+// tv_shell.h
+bool openLibrary();                                            // as openSettings(), with makeLibraryScreen in the slot
+void requestLaunch(const GameRef& g, const StateRef* state);   // no game: launch now; a game running: Page::ConfirmLaunch first
+```
+
+Rules:
+- `Shell::requestLaunch`: `!host_.gameLoaded()` → `launch` / `launchState` + `launched()`. Otherwise `pendingLaunch_ = {g, state}`
+  and `enter(Page::ConfirmLaunch, Row::No)` with `title_ = "Close " + host_.gameTitle() + " and start " + g.title + "?"`; `Yes` →
+  the launch (the app closes the menu and arms the guard) and `launched()`; `No` → back to the Library in the slot, focus kept
+  (the slot screen is retired by `enter`, so `requestLaunch` keeps it aside and `No` puts it back: `menuPushScreen(std::move(kept), Row::Library)`).
+- `Shell::handleEvent` key path: `typed(c)` goes to `menuScreen_` when set, else the Base top.
+- `LibraryScreen` when `embedded()`: `Intent::Menu` and `Intent::Aux` ignored; `hints()` drop "Details" and "Jump to letter";
+  Accept → `shell_.requestLaunch(*g, nullptr)`; X → `requestLaunch(*g, &st[0])`; `wide()` true.
+- `drawMenu` with a wide slot: `DrawCtx::pos/size` = the panel inset (`pp + inset`, `ps − 2·inset`), the rail is not drawn, the
+  hint bar is the screen's hints + Back "Menu".
+- `App::openLibrary()`: `if (tvMode.active()) tvShell().openLibrary(); else toggleLibrary();` — a refused `openMenu()` toasts
+  (hardcore) and nothing opens. `ui.cpp:585` and `desktop.cpp:88` call it; the menu checkmark at `ui.cpp:585` is
+  `(library.show && !homeVisible()) || (tvMode.active() && tvShell().showingLibrary())` where `showingLibrary()` is the
+  Library section on the Base layer or `menuScreenId() == "library"`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `ingame_rows_full_order`: now `{"Resume", "Save state", "Load state", "Library", "Achievements", "Overlays", "Settings",
+    "Controls", "Enter TV mode", "Reset", "Close game"}`.
+  - `ingame_library_slot_wide`: `loaded = true`, open the menu, Down ×3, Accept → `menuScreenId() == "library"`, a tile title is
+    drawn, and the menu's rail text (the game title at `tv_ingame.cpp:86`) is not.
+  - `ingame_library_launch_asks`: Accept on a tile → `menuPage() == Page::ConfirmLaunch`, `focusedLabel(shell) == "No"`,
+    `launched.empty()`; Accept (No) → `menuScreenId() == "library"` and the same tile focused; Accept, Down, Accept (Yes) →
+    `launched == {tile.key}` and `guardArmed == 1` (the fake's `launch` sets `loaded = false` as the app's close does).
+  - `ingame_library_resume_state_asks`: X on a tile with a state → the confirm; Yes → `launchedState == {key, slot}`.
+  - `ingame_library_typed_filters`: `keyEvent` 'd' → the grid shows only titles with a 'd' initial (the Base Library's own test
+    pattern); `Intent::Aux` and `Intent::Menu` leave `screenId()`/`menuScreenId()` unchanged.
+  - `ingame_library_back_returns_to_row`: Back → the slot is gone and `focusedLabel(shell) == "Library"`.
+  - `base_library_opens_from_app`: `tvOn = true`, no game: `shell.openLibrary()` → `screenId() == "library"`; again → unchanged.
+  - `tv_menu_headless`: flip the Ctrl+L block (`:100-121`): with TV on, `key tap ctrl+L` → `expect library-window=0`,
+    `expect tv-screen=library`, `expect tv-owns-input=1`; again → unchanged; `pad tap b` → `tv-screen=home`. With TV off the block
+    keeps its first lines (the home search box). In the game block: `key tap ctrl+L` → `expect menu-open=1`, `expect menu-slot=library`,
+    `expect paused=1`; `pad tap a` → `expect menu-page=confirm-launch`, `expect tv-focus=No`, `expect loaded=1`; `pad tap b` →
+    `expect menu-slot=library`; `pad tap b` → `expect menu-slot=none`; `pad tap b` → `expect menu-open=0`. Hardcore: not scriptable
+    headless (no RA mock in this script); covered by `openMenu()`'s existing refusal test.
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "tv_ui_smoke|tv_menu_headless"`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the full suite on the Studio. Expected: all PASS.
+- [ ] **Step 5: Commit** `feat(app): Library is a TV screen while TV mode is on; in-game Library row with a launch confirm (#991)`.
+
+### Task 22: Studio screenshots, README, the PR
+
+- [ ] Extend `~/Workspace/Provenance/vj-eval/tvshots/tv-shots.txt`: Settings → `shot settings-rail.png`; Down to `core:video`,
+  Right → `shot settings-core-video.png`; Down to `core:speed`, Right, Down to the last row → `shot settings-core-speed-end.png`
+  (the list scrolled); `load <rom>`, `key tap ctrl+L` → `shot menu-library.png`; `pad tap a` → `shot confirm-launch.png`;
+  `pad tap b` ×3, `key tap ctrl+,` → `shot menu-settings-core.png`; `quit`. 1280×720 and 1920×1080, never locally.
+- [ ] README `### TV mode`: one paragraph — Settings and Library are TV screens whenever TV mode is on (Ctrl/Cmd+, and Ctrl/Cmd+L
+  included), every core option is there by the core's categories, the "Desktop settings…" row is for folders, BIOS files,
+  sign-in and remapping.
+- [ ] Commit `docs(app): TV mode screenshots and README for the full TV Settings and Library (#991)`; update the PR #1067 body
+  (the Phase 5 decisions as applied, the shots); report CI.
+
+### Phase 5 review focus (added to the list above)
+
+22. **No path still opens a desktop Settings or Library window while TV mode is on**: `grep -n 'showSettings = true\|library.show = \|toggleLibrary()' app/src`
+    must list only `App::openSettings` / `openLibrary`, `--show-window`, and `tvMoreSettingsOpen` (Task 21 script lines; by hand
+    on the Studio: the native File and Settings menus with TV on, with and without a game).
+23. **A hardcore-disallowed core option changed from TV Settings** (`Achievements::checkSettings`) behaves exactly as from the
+    desktop, with and without a game (Task 19 `setOptionValue` path unchanged; by hand with `--ra-mock app/tests/ra`, hardcore on,
+    change the RISC overclock from the TV Settings: the same refusal / downgrade as the desktop combo).
+24. **A core option changed mid-game reaches the core** after the menu closes (Phase 3 review focus 14, re-run against the new
+    row location in the script) and **one changed with no game reaches the next game** (Task 20 script: `opt.*` in the config,
+    then `load` → `expect core-option=…:2x`).
+25. **Launching from the in-game Library never loses the running game's state without the confirm**: `expect loaded=1` after the
+    first A; `openContent`'s auto-save runs on Yes (`app.cpp:1171`); the Phase 1 release guard masks the Yes press from the new
+    game (`guardArmed == 1`).
+26. **A typed / numeric option is usable on a pad**: a held Right steps every 80 ms and stops at the end (clamp); a "(custom)"
+    value is shown, kept until stepped, and never written back as a non-preset (`settings_custom_value_row`,
+    `settings_held_right_repeats`).
+27. **The startup probe must not change what a game sees**: `startSession` re-pushes the table (`core_host.cpp:775-795`), the
+    probe's `environ_cb` is replaced by the real one before `retro_init`, and no non-option environment command is answered while
+    probing (`core_options_probe_test`: `isLoaded()` false, `optionPushes()` counts one). With `--emu-thread on`, the UI reads the
+    published table from the first frame (`core_host.cpp:1213`): `tv_menu_headless` runs inline only (`VJTvTests.cmake:89`), so
+    add a `tv_menu_headless_threaded` twin with `--emu-thread on` the way `VJAchTests.cmake:41-56` registers `<name>_threaded`,
+    or at least run the no-game `core-option` block by hand on the Studio with the thread on.
+28. **The rail with 17+ groups on a 720p window**: every group reachable and visible when focused (`settings_rail_scrolls_720p`,
+    `settings-core-speed-end.png`).
+
+---
+
 ## Self-review notes
 
 - **Spec coverage:**
