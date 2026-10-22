@@ -2268,7 +2268,7 @@ pause gate and its toast apply); otherwise the desktop window. New script expect
    over the dimmed game. In the slot: A = launch (with the confirm below), LT/RT and typing work; Start (Details) and Y (letter
    picker) do nothing (they push onto the Base stack, which does not show under a game); X (resume a state) asks the same confirm.
 8. **Launching from the in-game Library asks first**: a page `ConfirmLaunch` ("Close <running title> and start <title>?", rows
-   No / Yes, focus on No, as Reset and Close do). Yes → `host.launch(g)` / `launchState(g, st)` — `App::openContent`, which
+   Yes / No, focus on No, as Reset and Close do). Yes → `host.launch(g)` / `launchState(g, st)` — `App::openContent`, which
    auto-saves the running game and closes the menu — then `launched()`. The same confirm is used by `Shell::requestLaunch`
    whenever a game is loaded; with no game it launches at once (Home, Library, Details, Achievements are unchanged).
 9. **`App::openLibrary()`** replaces every call of `toggleLibrary()` that is a user action: TV on and no game → the Library
@@ -2446,7 +2446,7 @@ Rules:
   - `ingame_library_slot_wide`: `loaded = true`, open the menu, Down ×3, Accept → `menuScreenId() == "library"`, a tile title is
     drawn, and the menu's rail text (the game title at `tv_ingame.cpp:86`) is not.
   - `ingame_library_launch_asks`: Accept on a tile → `menuPage() == Page::ConfirmLaunch`, `focusedLabel(shell) == "No"`,
-    `launched.empty()`; Accept (No) → `menuScreenId() == "library"` and the same tile focused; Accept, Down, Accept (Yes) →
+    `launched.empty()`; Accept (No) → `menuScreenId() == "library"` and the same tile focused; Accept, Up, Accept (Yes) →
     `launched == {tile.key}` and `guardArmed == 1` (the fake's `launch` sets `loaded = false` as the app's close does).
   - `ingame_library_resume_state_asks`: X on a tile with a state → the confirm; Yes → `launchedState == {key, slot}`.
   - `ingame_library_typed_filters`: `keyEvent` 'd' → the grid shows only titles with a 'd' initial (the Base Library's own test
