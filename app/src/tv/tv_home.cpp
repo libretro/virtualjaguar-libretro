@@ -277,10 +277,18 @@ private:
     void drawEmpty(const DrawCtx& c) {
         const Metrics& m = c.m;
         const float u = m.u, w = std::min(1100 * u, c.size.x - 2 * m.safeX), pad = 48 * u;
-        // The first scan of a new install (or of an empty cache) is still running: the library is not empty yet.
-        const std::string msg = host_.libraryScanning()
-                                    ? "Scanning your library..."
-                                    : "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+        // Games but no shelves (a new player: nothing played, no favorites, no discs) is not an empty library: the Library
+        // section lists them.  Otherwise the first scan of a new install (or of an empty cache) may still be running.
+        std::string msg;
+        if (!host_.games(List::All).empty()) {
+            std::string next = host_.glyph(Intent::SectionNext);   // the button the section bar shows
+            if (next.empty()) next = "RB";
+            msg = "Nothing to continue yet. Press " + next + " for your Library.";
+        } else {
+            msg = host_.libraryScanning()
+                      ? "Scanning your library..."
+                      : "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+        }
         const ImVec2 ts = widgets::textSize(m.body, msg, w - 2 * pad);
         const ImVec2 size(w, ts.y + 2 * pad);
         const ImVec2 pos(c.pos.x + (c.size.x - size.x) * 0.5f, c.pos.y + (c.size.y - size.y) * 0.5f);

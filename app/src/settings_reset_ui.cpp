@@ -28,7 +28,10 @@ void syncToConfig(App& app) { app.saveConfig(); }
 
 void applyAfterErase(App& app, const std::vector<KeyClass>& touched) {
     app.applySettingsFromConfig();
-    if (has(touched, KeyClass::Interface)) app.library.resetDisplaySettings();
+    if (has(touched, KeyClass::Interface)) {
+        app.library.resetDisplaySettings();
+        app.tvHintShownThisRun_ = false;   // ui.tv_hint_shown was erased with the group: the one-time TV mode hint may show again
+    }
     if (has(touched, KeyClass::Shader)) {
         app.video.shader.clearPreset();   // the shader switch and preset came back from the config; drop the loaded chain
         app.video.shader.retry();

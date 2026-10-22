@@ -1463,6 +1463,28 @@ static void homeEmptyLibraryCard() {
     CHECK(host.launches == 0 && host.launchedState.first.empty());
 }
 
+// Finding B: games in the library but nothing on Home's shelves is not "empty": it points at the Library section (RB).
+static void homeWithGamesButNoShelvesPointsAtLibrary() {
+    const char* empty = "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+    FakeHost host;
+    host.all = mkGames("Game", 20);   // 20 cartridges, nothing played, no favorites, no discs
+    Shell shell(host);
+    g_texts.clear();
+    homeSetup(host, shell);
+    frames(host, shell, 2);
+    CHECK(drew("Nothing to continue yet. Press RB for your Library.") && !drew(empty));
+    CHECK(!drew("Play") && !drew("Continue playing"));
+    host.scanning = true;                               // a rescan changes nothing for a library that has games
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Nothing to continue yet. Press RB for your Library.") && !drew("Scanning your library..."));
+    host.all.clear();                                   // and with none, the old wording is back (homeEmptyLibraryCard)
+    host.scanning = false;
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew(empty) && !drew("Nothing to continue yet. Press RB for your Library."));
+}
+
 static void formatDateIsEnglishDayMonthYear() {
 #ifndef _WIN32
     setenv("TZ", "UTC", 1);
@@ -3652,6 +3674,7 @@ int main() {
     homeSurvivesRescan();
     homeHeroShowsFocusedGame();
     homeEmptyLibraryCard();
+    homeWithGamesButNoShelvesPointsAtLibrary();
     formatDateIsEnglishDayMonthYear();
     homeWalk120FramesNoAsserts();
     libraryRailGridHandoff();

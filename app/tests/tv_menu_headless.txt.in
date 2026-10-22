@@ -7,7 +7,8 @@
 #   load PATH            drop PATH on the window (the normal drop route)
 #   key down|up|tap NAME a key event (SDL scancode name: F4, Escape, F8; "ctrl+L", "ctrl+shift+T" = with those held)
 #   pad down|up|tap BTN  a button on the runner's virtual gamepad (SDL button name: a, b, dpdown, misc1)
-#   mouse X Y           windowed only: move the real pointer within the main window (menu hover tests)
+#   mouse X Y           move the pointer to X,Y in the main window: a MOUSE_MOTION with the travel since the last `mouse` line as xrel / yrel
+#                       (windowed: the real pointer is warped there too, for hover tests; headless: only the event)
 #   expect fullscreen=0|1 menu-pinned=0|1 menu-visible=0|1 (menu-visible needs a windowed rendered frame)
 #   focus lost|gained    the window loses / gets keyboard focus
 #   typing on|off        pretend a text box has focus (input.uiWantsKeyboard)
@@ -364,16 +365,26 @@
 # The hint never shows under Off or Auto, even with the key unset and the run's flag clear (hintreset: forget both, zero toast-count).
 5130  hintreset
 5130  tvsetting off
+5130  expect desk-pad=1
+5130  expect desk-pending=0
 5140  pad tap rightshoulder
-5160  expect toast-count=0
+5160  expect desk-pending=1            # the desktop library took the press (so the hint site was reached) ...
+5160  expect toast-count=0             # ... and showed nothing
 5160  expect cfg=ui.tv_hint_shown:absent
 5160  tvsetting auto
+5160  mouse 100 100                  # (TV mode is off: the pointer's start is not travel)
 5170  pad tap a                      # Auto's switching press: consumed, no hint
 5180  expect tv=1
 5180  expect toast-count=0
 5180  expect cfg=ui.tv_hint_shown:absent
-5180  key tap F4
-5185  expect tv=0
+# The mouse path through App::handleEvent: 30 px of motion (3 x 10) leave a controller-started TV mode on, the 4th step (40 px) ends it.
+# (A warp reports xrel = 0, so `mouse` also pushes the motion event itself; the windowed check on the Studio sends the same.)
+5180  mouse 110 100
+5180  mouse 120 100
+5180  mouse 130 100
+5185  expect tv=1
+5185  mouse 140 100
+5190  expect tv=0
 
 # A game to play with.
 5190  load @VJ_ROMS@/yarc.j64

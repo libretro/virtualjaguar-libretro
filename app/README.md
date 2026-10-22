@@ -193,8 +193,8 @@ only changes which screen stands behind the game; the game keeps running.
 The **TV mode** setting has three values, under **Settings > Interface** (and **TV Settings > Interface** in TV mode itself):
 
 - **Off:** never. F4, the Share hold, Ctrl/Cmd+Shift+T and `--tv` do nothing.
-- **Manual:** only when you ask: View > TV mode, Ctrl/Cmd+Shift+T, the TV-menu button (F4, or a hold of Share, or of Guide on a pad
-  without Share, with no game running) or `--tv`. The on/off state is remembered for the next start (`--tv` is not).
+- **Manual:** only when you ask: View > TV mode, Ctrl/Cmd+Shift+T, the TV-menu button (F4, or a hold of the pad's Share / Capture / Mic button, or of Guide on a pad
+  without one, with no game running) or `--tv`. The on/off state is remembered for the next start (`--tv` is not).
 - **Auto:** also on its own, with two checkboxes you can untick, **Turn on in fullscreen** and **Turn on when a controller is used**.
 
 Auto in one paragraph: entering fullscreen turns TV mode on and leaving it turns it off; a controller press on a navigation
@@ -206,11 +206,12 @@ hand wins until the next fullscreen change or controller press.
 **Build default.** A fresh config starts on the build's default, which is Auto for a local build (the CMake default) and for
 nightly builds and the other CI packages, and Manual for release packages; `-DVJ_TV_DEFAULT=auto|manual|off` sets it when
 configuring. Nothing is stored until you change the setting in the UI, so a build can move its default under people who never
-chose one; **Reset group** at the bottom of Settings > Interface returns to the build default.
+chose one; **Reset group** at the top of Settings > Interface returns to the build default.
 
 **First-use hint.** Under Manual, the first controller press in the desktop library shows a 6-second toast naming the buttons
-for this pad ("Press Share (hold) or F4 for TV mode"; "Guide (hold)" on a pad without Share). It shows once per install
-(`ui.tv_hint_shown`), never under Auto or Off, and that Reset group can show it once more.
+for this pad, as the pad names the button ("Press Share (hold) or F4 for TV mode" on an Xbox pad; "Mic (hold)" on a DualSense,
+"Capture (hold)" on a Switch Pro Controller, "Guide (hold)" on a pad without Share). It shows once per install
+(`ui.tv_hint_shown`), never under Auto or Off, and **Reset group** on Settings > Interface shows it once more.
 
 **Starting and the hold.** `--tv` starts with TV mode on (when the setting is not Off). The TV-menu button on a pad is a hold
 of 500 ms, so a short Share tap keeps opening the keypad overlay. Limit: Guide held opens the TV menu on a pad with no Share

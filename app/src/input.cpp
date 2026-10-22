@@ -283,22 +283,13 @@ void InputManager::feedHoldEdges(const SDL_Event& e) {
     }
 }
 
-// The name a person knows the button by: Share / Capture and Guide / Home are one button on each pad that has it.
-static std::string tvMenuButtonText(const Binding& b) {
-    std::string s;
-    if (b.kind == Binding::PadButton && b.code == (int)SDL_GAMEPAD_BUTTON_MISC1) s = "Share";
-    else if (b.kind == Binding::PadButton && b.code == (int)SDL_GAMEPAD_BUTTON_GUIDE) s = "Guide";
-    else return b.display();
-    return b.hold ? s + " (hold)" : s;
-}
-
 std::string InputManager::tvMenuBindingText(SDL_JoystickID id) const {
     for (const Pad& p : pads_) {
         if (p.id != id) continue;
         const std::vector<Binding>& v = p.profile.binds[C_TVMENU];
         for (int pass = 0; pass < 2; pass++)   // hold bindings first: a hold is the one the default pad uses
             for (const Binding& b : v)
-                if (b.kind == Binding::PadButton && b.hold == (pass == 0)) return tvMenuButtonText(b);
+                if (b.kind == Binding::PadButton && b.hold == (pass == 0)) return tvMenuButtonName(navProfile(id).family, b);
         return "";
     }
     return "";

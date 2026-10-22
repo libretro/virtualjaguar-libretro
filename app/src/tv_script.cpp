@@ -106,6 +106,8 @@ struct App::TvScriptRun {
     uint64_t prevExec = 0, prevMs = 0;
     unsigned expects = 0;
     // windowed-only verbs
+    float mouseX = 0.0f, mouseY = 0.0f;   // where the last `mouse` line put the pointer (windowed: seeded from the real one)
+    bool mouseSeeded = false;
     bool waitLibrary = false;    // `wait library` is blocking the script
     uint64_t waitStart = 0;
     std::string shotPath;        // `shot PATH`: saved at the end of the next UI frame
@@ -260,11 +262,28 @@ int App::tvScriptStep() {
             tvScriptDrain();
             tick();
         } else if (verb == "mouse") {
-            if (!run.windowed || !window_) return fail(l, "mouse is windowed only");
             char* endX = nullptr; char* endY = nullptr;
             const float x = std::strtof(arg1.c_str(), &endX), y = std::strtof(arg2.c_str(), &endY);
             if (arg1.empty() || arg2.empty() || *endX || *endY) return fail(l, "mouse wants X Y");
-            SDL_WarpMouseInWindow(window_, x, y);
+            if (run.windowed && window_ && !run.mouseSeeded) SDL_GetMouseState(&run.mouseX, &run.mouseY);
+            run.mouseSeeded = true;
+            // A warp moves the pointer (hover tests) but SDL reports it with xrel = yrel = 0, which is nothing the TV mode's mouse
+            // budget can count.  So the move is also pushed the way the OS reports a real one: a MOUSE_MOTION with the travel in
+            // xrel / yrel.  (Headless has no pointer: only the event.)
+            if (run.windowed && window_) SDL_WarpMouseInWindow(window_, x, y);
+            SDL_Event ev;
+            SDL_zero(ev);
+            ev.type = SDL_EVENT_MOUSE_MOTION;
+            ev.motion.windowID = window_ ? SDL_GetWindowID(window_) : 0;
+            ev.motion.x = x;
+            ev.motion.y = y;
+            ev.motion.xrel = x - run.mouseX;
+            ev.motion.yrel = y - run.mouseY;
+            run.mouseX = x;
+            run.mouseY = y;
+            SDL_PushEvent(&ev);
+            tvScriptDrain();
+            tick();
         } else if (verb == "focus") {
             SDL_Event ev;
             SDL_zero(ev);

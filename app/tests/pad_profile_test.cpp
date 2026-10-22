@@ -356,6 +356,18 @@ static void testFamilyChangeClearsOverrides() {
     CHECK(keyCount(d, OTHER) == 1 && d.has("input.padguid." + GUID + ".A"));
 }
 
+// The first-use hint names the TV-menu button as that pad's family does: MISC1 is Share / Mic / Capture, Guide is Guide / PS / Home.
+static void testTvMenuButtonNames() {
+    const Binding misc = Binding::button(SDL_GAMEPAD_BUTTON_MISC1).withHold(), guide = Binding::button(SDL_GAMEPAD_BUTTON_GUIDE).withHold();
+    CHECK(tvMenuButtonName(PadFamily::Xbox, misc) == "Share (hold)" && tvMenuButtonName(PadFamily::Generic, misc) == "Share (hold)");
+    CHECK(tvMenuButtonName(PadFamily::PlayStation, misc) == "Mic (hold)" && tvMenuButtonName(PadFamily::Switch, misc) == "Capture (hold)");
+    CHECK(tvMenuButtonName(PadFamily::Xbox, guide) == "Guide (hold)" && tvMenuButtonName(PadFamily::Generic, guide) == "Guide (hold)");
+    CHECK(tvMenuButtonName(PadFamily::PlayStation, guide) == "PS (hold)" && tvMenuButtonName(PadFamily::Switch, guide) == "Home (hold)");
+    CHECK(tvMenuButtonName(PadFamily::Xbox, Binding::button(SDL_GAMEPAD_BUTTON_MISC1)) == "Share");   // a plain press: no suffix
+    CHECK(tvMenuButtonName(PadFamily::Xbox, Binding::button(SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1)) == "Paddle P1");   // everything else: navButtonName / display()
+    CHECK(tvMenuButtonName(PadFamily::PlayStation, Binding::button(SDL_GAMEPAD_BUTTON_SOUTH).withHold()) == "Cross (hold)");
+}
+
 static void testButtonNames() {
     CHECK(navButtonName(PadFamily::Switch, Binding::button(EAST)) == "A");
     CHECK(navButtonName(PadFamily::Switch, Binding::button(SOUTH)) == "B");
@@ -414,6 +426,7 @@ int main() {
     testRoundTrip();
     testFamilyChangeClearsOverrides();
     testButtonNames();
+    testTvMenuButtonNames();
     testButtonLabelNoHandle();
     std::printf("pad_profile: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
