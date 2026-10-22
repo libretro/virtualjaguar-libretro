@@ -859,6 +859,7 @@ asks for the next move whenever the last one has played out, and presses the cho
   `ws://localhost:8000` (Randy). Only `ws://`; no TLS.
 - Config keys `neuro.enabled`, `neuro.url`, `neuro.auto_force`, `neuro.force_interval`, `neuro.game_name`.
 - The socket lives on a background thread and reconnects by itself; the game never waits on it.
+- Works with the emulation thread on or off: the buttons are played on the thread that polls input (see docs/neuro.md).
 - [docs/neuro.md](../docs/neuro.md) has the actions, the profile format and testing with Randy.
 - The code is in `src/neuro/`; `-DVJ_APP_NEURO=OFF` builds the app without it (no tab, no `--neuro`).
 

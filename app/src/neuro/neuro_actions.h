@@ -13,8 +13,9 @@
 // game ("fire", "superzapper") as button macros, describes its controls to the model, and can read RAM values
 // (score, lives) into the state text Neuro is shown.  See docs/neuro.md.
 //
-// Everything here is pure: no sockets, no SDL, no core.  InputQueue turns accepted actions into one ControlSet per
-// emulated frame; the app ORs it into Player 1's controls (InputManager::addAgentControls).
+// Everything here is pure: no sockets, no SDL, no core.  InputQueue turns accepted actions into a program the app's
+// input poll plays one ControlSet per emulated frame (AgentPlayer, pollAgent) and ORs into Player 1
+// (InputManager::addAgentControls).
 #pragma once
 
 #include <cstdint>

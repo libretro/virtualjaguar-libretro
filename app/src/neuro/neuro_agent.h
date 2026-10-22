@@ -2,11 +2,10 @@
 // input they press (neuro_actions.h), and the game profiles.  No App, no ImGui: neuro_app.cpp feeds it the app's
 // state and draws Settings > Neuro.
 //
-// Threads: tick(), configure(), publishTo(), absorb() and the rest are the UI thread's; only the WebSocket worker runs
-// elsewhere, behind WsClient's queues.  The Agent never presses a button itself: it publishes what was accepted as an
-// AgentProgram (publishTo, into the InputSnapshot) and the core's input poll replays it one step per emulated frame
-// with an AgentPlayer (neuro_actions.h: pollAgent), inline and on the emulation thread alike; absorb() takes the
-// progress back (docs/neuro.md).
+// Threads: tick(), configure(), publishTo() and absorb() run on the UI thread; the buttons are played by an AgentPlayer
+// (neuro_actions.h: pollAgent) on the thread that polls input (the emulation thread when the app runs one), fed through
+// the InputSnapshot: the Agent publishes what was accepted as an AgentProgram and absorb() takes the progress back.  Only
+// the WebSocket worker runs elsewhere, behind WsClient's queues (docs/neuro.md).
 #pragma once
 
 #include <cstdint>

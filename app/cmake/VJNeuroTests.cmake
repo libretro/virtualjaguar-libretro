@@ -5,10 +5,16 @@
 #   neuro_loopback  a WebSocket server on a free 127.0.0.1 port: startup, register, force, action, result,
 #                   the buttons played out frame by frame, reregister_all, and the reconnect.  Skipped (77)
 #                   on Windows.
-#   neuro_off_threaded  --emu-thread on: Neuro stays off for the run and says so.
 #   neuro_core_e2e  the REAL core: the replica (AgentPlayer) presses exactly N polls per step, inline, on the emulation
 #                   thread in lock-step, and free-running at 600 Hz; a disabled program presses nothing.
 #   neuro_app_inline  the real app, headless, --neuro against a fake server: a 30-frame press is played and reported.
+#   neuro_watch_inline  a profile watch read back from RAM and printed in the run's state line.
+#   With the emulation thread on (#967 phase 3c) Neuro works; the twins of the three above carry LABELS emu_thread, so the
+#   ThreadSanitizer job runs them:
+#   neuro_loopback_threaded  the loopback run with the input poll on its own thread; the frame-numbered press record must
+#                   equal the inline run's, and a dropped link / hardcore must let go of every button.
+#   neuro_on_threaded  neuro_app_inline with --emu-thread on: the same 30 frames played.
+#   neuro_watch_threaded  neuro_watch_inline with --emu-thread on: the same cheat byte read back.
 add_executable(vj_neuro_test tests/neuro_test.cpp src/remap.cpp src/config.cpp src/paths.cpp src/debug/debug_views.cpp
                ${VJ_NEURO_SOURCES})
 target_include_directories(vj_neuro_test PRIVATE src src/neuro src/debug "${VJ_ROOT}/src/debug"
@@ -27,13 +33,6 @@ add_test(NAME neuro_unit COMMAND vj_neuro_test unit)
 add_test(NAME neuro_loopback COMMAND vj_neuro_test loopback)
 set_tests_properties(neuro_unit neuro_loopback PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 set_tests_properties(neuro_loopback PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
-
-# #967 phase 1: with the emulation thread on, Neuro stays off (the input poll and RAM are that thread's).
-add_test(NAME neuro_off_threaded
-    COMMAND virtualjaguar --headless --emu-thread on --neuro ws://127.0.0.1:9 --frames 5 "${VJ_ROMS}/yarc.j64")
-set_tests_properties(neuro_off_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "\\[neuro\\] off for this run: the emulation thread is on"
-    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
 
 # The replica against the REAL core (#967 phase 3c).  (VJEmuThreadTests.cmake, which defines vj_emu_thread_warnings, is
 # included after this file, so the same flags are set here.)
@@ -69,3 +68,14 @@ add_test(NAME neuro_watch_inline COMMAND virtualjaguar --headless --emu-thread o
     --cheat 001F0000:AB --neuro ws://127.0.0.1:9 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(neuro_watch_inline PROPERTIES TIMEOUT 120 PASS_REGULAR_EXPRESSION "\\[neuro\\] state: .*cheat byte: 0xAB"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+# #967 phase 3c: with the emulation thread on, Neuro works.  The twins of the inline tests above, frame for frame.
+add_test(NAME neuro_on_threaded COMMAND vj_neuro_test app $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" on)
+add_test(NAME neuro_watch_threaded COMMAND virtualjaguar --headless --emu-thread on --frames 90 --data-dir "${_nw}"
+    --cheat 001F0000:AB --neuro ws://127.0.0.1:9 "${VJ_ROMS}/yarc.j64")
+add_test(NAME neuro_loopback_threaded COMMAND vj_neuro_test loopback-threaded)
+set_tests_properties(neuro_on_threaded neuro_loopback_threaded PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE SKIP_RETURN_CODE 77)
+set_tests_properties(neuro_on_threaded neuro_watch_threaded neuro_loopback_threaded PROPERTIES LABELS emu_thread
+    FAIL_REGULAR_EXPRESSION "FAIL |headless: FAIL|owner violation|ThreadSanitizer|off for this run")
+set_tests_properties(neuro_watch_threaded PROPERTIES TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "\\[neuro\\] state: .*cheat byte: 0xAB")

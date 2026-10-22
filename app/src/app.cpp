@@ -2667,7 +2667,19 @@ int App::runHeadless(const CliArgs& a) {
                     host.pinSnapshot();
                     for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
                 }
-            } else {
+            }
+#ifdef VJ_HAVE_NEURO
+            else if (!neuroCliUrl.empty()) {
+                for (unsigned i = 0; i < a.frames; i++) {   // one frame at a time, in real time, like the inline --neuro loop
+                    headlessNeuroFrame(hlT0, i);            // neuroTick (+ syncDebug), then waits for frame i's time
+                    emu.advance(1);                         // the replica runs in the core's poll on the emulation thread
+                    if ((i & 15) == 15) emu.call([this] { audio.clear(); });
+                    host.pinSnapshot();
+                    for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
+                }
+            }
+#endif
+            else {
                 for (unsigned i = 0; i < a.frames;) {
                     const unsigned n = std::min(16u, a.frames - i);   // the dummy device drains in real time: clear every 16
                     emu.advance(n);
@@ -2707,7 +2719,7 @@ int App::runHeadless(const CliArgs& a) {
             std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
                          a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, label.c_str());
 #ifdef VJ_HAVE_NEURO
-            if (!neuroCliUrl.empty() && !emuThreadThisRun()) neuroHeadlessReport(*this);   // inline runs; the threaded run reports with Neuro on the emulation thread
+            if (!neuroCliUrl.empty()) neuroHeadlessReport(*this);
 #endif
             int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;

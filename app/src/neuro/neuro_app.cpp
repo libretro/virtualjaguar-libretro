@@ -36,7 +36,7 @@ std::string stemOf(const std::string& path) {
     return dot == std::string::npos ? f : f.substr(0, dot);
 }
 
-// Settings that are not the config's: hardcore (changes with the game), and the emulation thread.
+// Settings that are not the config's: hardcore (changes with the game).
 neuro::AgentSettings settingsFrom(const App& app) {
     neuro::AgentSettings s;
     s.enabled = app.neuroCliUrl.empty() ? app.cfg.getBool("neuro.enabled", false) : true;
@@ -45,7 +45,6 @@ neuro::AgentSettings settingsFrom(const App& app) {
     s.forceInterval = app.cfg.getFloat("neuro.force_interval", 1.0f);
     s.gameNameOverride = app.cfg.get("neuro.game_name", "");
     s.hardcore = app.ach.hardcoreActive();
-    if (app.emuThreadThisRun()) s.enabled = false;   // #967 phase 1: the input poll and RAM are the emulation thread's
     return s;
 }
 
@@ -111,8 +110,6 @@ void neuroInit(App& app, const CliArgs& a) {
     app.neuroCfg = settingsFrom(app);
     app.neuroCfgAt = app.now();
     app.neuro.configure(app.neuroCfg);
-    if (app.emuThreadThisRun() && (!a.neuroUrl.empty() || app.cfg.getBool("neuro.enabled", false)))
-        std::fprintf(stderr, "[neuro] off for this run: the emulation thread is on (Settings > Interface)\n");
 }
 
 void neuroTick(App& app) {
@@ -193,7 +190,6 @@ void drawNeuroTab(App& app) {
                        "API server, offers her the Jaguar controller as actions, and presses what she chooses as "
                        "Player 1 (your own controls keep working alongside).");
     ImGui::Spacing();
-    if (app.emuThreadThisRun()) ui::hint("Off while the emulation thread is on (Settings > Interface); turn it off and restart to play.");
     if (!app.neuroCliUrl.empty()) ui::hint("On for this run (--neuro); these settings take over next time.");
     if (app.ach.hardcoreActive())
         ui::coloredWrapped(ui::vec4(ui::pal().warning), "Blocked: RetroAchievements hardcore is on. An AI is not a human player, "

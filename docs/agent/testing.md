@@ -334,6 +334,11 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   threaded for the Dram view, hardcore detaches), and the reworded `emu_thread_limits` / `emu_thread_start_fallback`
   ("the debugger halt and the GDB stub are off/back on"). Each window's smoke test draws from view buffers only and
   pins zero core calls from the UI side (`app/tests/debug_ui_fixture.h`).
+- **Phase 3c (Neuro on the emulation thread):** Neuro runs threaded, pinned by `neuro_on_threaded`
+  (`vj_neuro_test app ... on`: a fake server, a 30-frame press, `30 frames of input played` and `emulation thread)`),
+  `neuro_watch_threaded` (a profile watch read through the `DebugViews` request, the cheat byte in the state line) and
+  `neuro_loopback_threaded` (the loopback run with the input poll on its own thread; its frame-numbered press vector must
+  equal the inline run's). `neuro_core_e2e` pins the replica against the real core inline, in lock-step and free-running.
 - **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
   test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
   still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.

@@ -1233,10 +1233,12 @@ static void loopbackHardcoreFirst() {
     agent.configure(AgentSettings());
 }
 
-// The Agent against a fake Neuro server, with the app's loop on its own thread.  `threadedPoll` is for the run whose
-// input poll is a second thread (Neuro on the emulation thread); only the single-thread, inline-shaped run exists so far.
-static int loopbackRun(bool threadedPoll) {
-    (void)threadedPoll;
+// The Agent against a fake Neuro server, with the app's loop on its own thread.  `threadedPoll` is the run whose input
+// poll is a second thread (Neuro on the emulation thread): the "UI" thread keeps configure / absorb / tick / publishTo
+// every 5 ms, and the poll thread runs pollAgent four times per tick (standing in for fast-forward).  They share only
+// the InputSnapshot's agent channel; the AgentPlayer is the poll thread's and the Agent the UI thread's.  `recOut` gets
+// the frame-numbered press record, for the threaded run to be compared with the inline one.
+static int loopbackRun(bool threadedPoll, std::vector<uint8_t>* recOut = nullptr) {
     FakeServer srv;
     if (!srv.open()) {
         std::printf("FAIL cannot listen on 127.0.0.1\n");
@@ -1266,24 +1268,46 @@ static int loopbackRun(bool threadedPoll) {
     // whose polls happen on the emulation thread must reproduce it.
     std::mutex recMu;
     std::vector<uint8_t> rec;
-    // The app's loop, on its own thread: a UI tick and an emulated frame every ~5 ms.  The settings go through
-    // configure() every iteration, as the app does.
+    // One emulated frame's worth of what the input poll sees: counts B, records the frame-numbered press vector and sets
+    // the direction flags.  Inline it runs on the app thread, threaded on the poll thread (atomics and recMu cover the
+    // other readers).
+    auto notePoll = [&](const ControlSet& pressed) {
+        if (pressed.test(C_B)) pressedB++;
+        {
+            std::lock_guard<std::mutex> l(recMu);
+            if ((pressed.test(C_B) || !rec.empty()) && rec.size() < 15) rec.push_back(pressed.test(C_B) ? 1 : 0);
+        }
+        rightNow = pressed.test(C_RIGHT);
+        upNow = pressed.test(C_UP);
+    };
+    // The app's loop, on its own thread: a UI tick every ~5 ms.  The settings go through configure() every iteration, as
+    // the app does.  Inline, the tick is followed by the one emulated frame (Replica); threaded, the UI thread does
+    // neuroTick's order (configure, absorb, tick, publishTo) and the poll thread plays on its own clock.
+    Replica rep;
+    std::thread poller;
+    if (threadedPoll) {
+        poller = std::thread([&] {
+            AgentPlayer player;   // the poll thread's alone
+            while (run) {
+                notePoll(pollAgent(rep.snap, player));
+                std::this_thread::sleep_for(std::chrono::microseconds(1250));
+            }
+        });
+    }
     std::thread app([&] {
         double t = 0;
         AgentSettings cfg = s;
-        Replica rep;
         while (run) {
             cfg.hardcore = hardcore.load();
             agent.configure(cfg);
-            agent.tick(t, g);
-            const ControlSet pressed = rep.poll(agent);
-            if (pressed.test(C_B)) pressedB++;
-            {
-                std::lock_guard<std::mutex> l(recMu);
-                if ((pressed.test(C_B) || !rec.empty()) && rec.size() < 15) rec.push_back(pressed.test(C_B) ? 1 : 0);
+            if (threadedPoll) {
+                agent.absorb(rep.snap.agentProgress());
+                agent.tick(t, g);
+                agent.publishTo(rep.snap);
+            } else {
+                agent.tick(t, g);
+                notePoll(rep.poll(agent));
             }
-            rightNow = pressed.test(C_RIGHT);
-            upNow = pressed.test(C_UP);
             t += 0.005;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -1313,10 +1337,22 @@ static int loopbackRun(bool threadedPoll) {
     CHECK(res["data"]["id"].asString() == "a1" && res["data"]["success"].asBool());
     Json force2 = waitFor(fd, rd, "actions/force", agent, &seen);   // the next move, once the shots played out
     CHECK(force2["command"].asString() == "actions/force");
+    {   // the last polls may still be counting on the poll thread when the next force arrives
+        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+        while (std::chrono::steady_clock::now() < end) {
+            {
+                std::lock_guard<std::mutex> l(recMu);
+                if (rec.size() >= 15) break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));   // and any extra press would show now
+    }
     CHECK(pressedB.load() == 9);
     {
         std::lock_guard<std::mutex> l(recMu);   // three 3-frame shots with a 3-frame gap: the Tempest "fire" macro
         CHECK((rec == std::vector<uint8_t>{1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1}));
+        if (recOut) *recOut = rec;
     }
 
     std::string rr = serverFrame("{\"command\":\"actions/reregister_all\"}");
@@ -1362,6 +1398,7 @@ static int loopbackRun(bool threadedPoll) {
     }
     run = false;
     app.join();
+    if (poller.joinable()) poller.join();
     {
         std::lock_guard<std::mutex> l(toastMu);
         bool conn = false, disc = false, hc = false;
@@ -1383,6 +1420,18 @@ static int loopback() {
     loopbackHardcoreFirst();
     loopbackHostile();
     return loopbackRun(false);
+}
+
+// The same run with the input poll on a second thread: the frame-numbered press record must equal the inline run's.
+// Both in this process, inline first.
+static int loopbackThreaded() {
+    std::vector<uint8_t> inl, thr;
+    int rc = loopbackRun(false, &inl);
+    if (rc) return rc;
+    rc = loopbackRun(true, &thr);
+    CHECK(thr == inl);
+    CHECK(thr.size() == 15);
+    return rc || g_fail ? 1 : 0;
 }
 
 // The real app, headless, against a fake Neuro server: one press_buttons of 30 frames must be played out by the core's
@@ -1441,6 +1490,16 @@ int main(int argc, char** argv) {
 #else
         int rc = loopback();
         std::printf(rc ? "neuro loopback: FAILED\n" : "neuro loopback: ok\n");
+        return rc;
+#endif
+    }
+    if (mode == "loopback-threaded") {
+#ifdef _WIN32
+        std::printf("loopback-threaded: skipped on Windows\n");
+        return 77;
+#else
+        int rc = loopbackThreaded();
+        std::printf(rc ? "neuro loopback-threaded: FAILED\n" : "neuro loopback-threaded: ok\n");
         return rc;
 #endif
     }
