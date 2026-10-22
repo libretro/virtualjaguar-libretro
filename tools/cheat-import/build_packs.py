@@ -9,6 +9,7 @@ import argparse
 import fnmatch
 import hashlib
 import html
+import http.client
 import importlib.util
 import io
 import json
@@ -37,6 +38,7 @@ scan_cartridges = _load("scan_cartridges", "scan_cartridges.py")
 MARKER = ".vj-cheat-packs"
 CODEL_URL = "https://codeload.github.com/{repo}/tar.gz/{commit}"
 FETCH_CAP, MEMBER_CAP, SCAN_CAP, FETCH_TIMEOUT = 32 << 20, 1 << 20, 256 << 20, 60
+MAX_MEMBERS, TAR_BLOCK = 20000, 512
 MANIFEST_CAP, CORE_LIMIT = 256 << 10, 256
 CALL_RE = re.compile(r"\b(bigpemu_\w+|printf_notify|printf|memcpy)\b")
 SOURCE_KEYS = {"id", "kind", "repo", "branch", "commit", "commit_date", "include", "exclude", "notes",
@@ -137,17 +139,18 @@ def fetch_github(repo, commit, include):
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "vj-cheat-packs"}),
                                     timeout=FETCH_TIMEOUT) as response:
             blob = response.read(FETCH_CAP + 1)
-    except (urllib.error.URLError, OSError, ValueError) as error:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
         raise FetchError(f"cannot fetch {url}: {error}") from error
     if len(blob) > FETCH_CAP:
         raise FetchError(f"{url}: archive exceeds {FETCH_CAP >> 20} MiB")
-    found, scanned = {}, 0
+    found, scanned, members = {}, 0, 0
     try:
         with tarfile.open(fileobj=io.BytesIO(blob), mode="r|gz") as archive:
             for member in archive:
-                scanned += max(member.size, 0)
-                if scanned > SCAN_CAP:
-                    raise FetchError(f"{url}: archive expands past {SCAN_CAP >> 20} MiB")
+                members += 1
+                scanned += TAR_BLOCK + max(member.size, 0)  # header block + payload, so empty members count
+                if scanned > SCAN_CAP or members > MAX_MEMBERS:
+                    raise FetchError(f"{url}: archive has too many members or expands past {SCAN_CAP >> 20} MiB")
                 parts = member.name.split("/", 1)  # drop codeload's <repo>-<sha>/ prefix
                 if not member.isfile() or len(parts) != 2 or ".." in parts[1].split("/") or not matches(parts[1], include):
                     continue
@@ -198,8 +201,8 @@ def byte_addresses(code):
 
 
 class Collector:
-    def __init__(self, cartridges):
-        self.table, self.packs, self.rows, self.usage = cartridges, {}, [], {}
+    def __init__(self, cartridges, api_map):
+        self.table, self.api, self.packs, self.rows, self.usage = cartridges, api_map, {}, [], {}
 
     def row(self, src, path, sha, stage, reason, crc32=None, setting=None, calls=()):
         self.rows.append({"source": src["id"], "path": path, "sha256": sha, "stage": stage, "crc32": crc32,
@@ -224,6 +227,9 @@ class Collector:
             reason = ("no known cartridge for literals [" + ", ".join("0x" + lit for lit in lits) + "]"
                       if lits else "no 64-bit literal found")
             return self.row(src, path, sha, "identity", reason)
+        misses = [lit for lit in lits if lit not in self.table]
+        if misses:  # a corpus gap next to a hit stays visible (spec section 7)
+            self.row(src, path, sha, "identity", "no known cartridge for literals [" + ", ".join("0x" + lit for lit in misses) + "]")
         try:
             module = convert.Module(text)
         except MODULE_ERRORS as error:
@@ -273,9 +279,8 @@ class Collector:
             pack["notes"].append({"source": src["id"], "path": path, "setting": r["name"], "reason": one_line(r["unsupported"])})
         for text in dropped:
             pack["notes"].append({"source": src["id"], "path": path, "setting": None, "reason": one_line(text)})
-        api = convert.load_api_map()
         for call in ignored:
-            ours = api.get(call, {}).get("ours", "").removeprefix("none: ")
+            ours = self.api.get(call, {}).get("ours", "").removeprefix("none: ")
             pack["notes"].append({"source": src["id"], "path": path, "setting": None,
                                   "reason": f"ignored call {call}" + (f" ({ours})" if ours else "")})
         for text in messages:
@@ -336,7 +341,7 @@ def build(sources, cartridges, fetched, provenance=None, api_map=None, max_pack_
     fetched: {source id: {path: bytes}}; provenance: sha256 strings for the manifest (the CLI computes them)."""
     srcs = check_sources(sources)
     api_map = convert.load_api_map() if api_map is None else api_map
-    collector = Collector(cartridges)
+    collector = Collector(cartridges, api_map)
     for src in srcs:
         if src["id"] not in fetched:
             raise BuildError("no files fetched for source " + src["id"])

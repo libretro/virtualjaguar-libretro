@@ -148,6 +148,14 @@ class PackTests(unittest.TestCase):
         self.assertEqual(rows["scripts/cheat_c.c"]["reason"], "no known cartridge for literals [0x1234567890ABCDEF]")
         self.assertEqual(len(load(files, "manifest.json")["packs"]), 1)
 
+    def test_unmatched_literal_beside_hit(self):
+        text = source(SIMPLE) + "\n#define OTHER_CART 0x962CCBEDFAAC5F28ULL\n"
+        files = make({"s": {"scripts/cheat_a.c": text}})
+        self.assertEqual(len(load(files, "manifest.json")["packs"]), 1)
+        (row,) = load(files, "unsupported.json")["entries"]
+        self.assertEqual((row["stage"], row["crc32"], row["reason"]),
+                         ("identity", None, "no known cartridge for literals [0x962CCBEDFAAC5F28]"))
+
     def test_module_error(self):
         files = make({"s": {"scripts/cheat_a.c": source(SIMPLE), "scripts/cheat_b.c": f"#define H 0x{DIGEST:016X}ULL\nint ;;; {{",
                             "scripts/cheat_c.c": source(SIMPLE) + "\nint *pointer;"}})
@@ -408,6 +416,22 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(sorted(got), ["scripts/cheat_a.c", "scripts/cheat_big.c"])
         self.assertEqual(got["scripts/cheat_a.c"], b"A")
         self.assertEqual(len(got["scripts/cheat_big.c"]), (1 << 20) + 1)  # one past the cap: the converter refuses it
+
+    def test_incomplete_read_is_fetch_error(self):
+        for error in (bp.http.client.IncompleteRead(b"x"), bp.http.client.BadStatusLine("x")):
+            with mock.patch.object(bp.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaises(bp.FetchError):
+                    bp.fetch_github("owner/repo", "a" * 40, ["scripts/cheat_*.c"])
+
+    def test_member_count_cap(self):
+        blob = self.tarball([(f"repo-aaa/scripts/e{i}.txt", b"") for i in range(20)])
+        with mock.patch.object(bp, "MAX_MEMBERS", 10):
+            with self.assertRaisesRegex(bp.FetchError, "too many members"):
+                self.fetch(blob)
+        self.assertEqual(self.fetch(blob), {})
+        with mock.patch.object(bp, "SCAN_CAP", 512 * 5):  # empty members still cost a header block each
+            with self.assertRaises(bp.FetchError):
+                self.fetch(blob)
 
     def test_archive_cap_and_garbage(self):
         with mock.patch.object(bp, "FETCH_CAP", 10):
