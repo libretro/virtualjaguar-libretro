@@ -12,6 +12,7 @@ namespace widgets {
 namespace {
 
 std::vector<std::string>* g_probe = nullptr;
+std::vector<TextAt>* g_posProbe = nullptr;
 
 // The UTF-8 string cut to the longest prefix (plus an ellipsis) that fits in maxW.
 std::string fit(float px, const std::string& s, float maxW) {
@@ -35,6 +36,7 @@ ImVec2 scaledAbout(ImVec2 pos, ImVec2 size, float k, ImVec2* outSize) {
 }  // namespace
 
 void setTextProbe(std::vector<std::string>* sink) { g_probe = sink; }
+void setTextPosProbe(std::vector<TextAt>* sink) { g_posProbe = sink; }
 
 void FocusTweens::update(int count, int focusIndex, int pageKey, double now) {
     if (pageKey != key || (int)t.size() != count) {
@@ -93,6 +95,7 @@ ImVec2 text(ImDrawList* dl, float px, ImVec2 pos, ImU32 c, const std::string& s,
     ImFont* f = ImGui::GetFont();
     const std::string shown = wrapW > 0 ? s : fit(px, s, maxW);
     if (g_probe) g_probe->push_back(shown);
+    if (g_posProbe) g_posProbe->push_back({shown, pos, px});
     dl->AddText(f, px, pos, c, shown.c_str(), shown.c_str() + shown.size(), wrapW);
     return f->CalcTextSizeA(px, FLT_MAX, wrapW, shown.c_str(), shown.c_str() + shown.size());
 }

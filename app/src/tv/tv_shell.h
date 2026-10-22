@@ -73,6 +73,9 @@ public:
     void push(std::unique_ptr<Screen> s);
     void pop();                                 // never pops the root
     std::string focusLabel();                   // the top screen's focusLabel(), "" when the stack is empty
+    std::string focusGroup();                   // the top screen's focusGroup() (Settings: the rail's group key)
+    // The intent being handled is a repeat of a held direction, not a press (NavInput's timer).  Only meaningful inside Screen::intent.
+    bool repeatIntent() const { return repeat_; }
     std::string screenId() const;               // the top screen's id(), "" when the stack is empty
     FocusMemory& memory() { return memory_; }
     void launched();                            // a game was started from a screen: armReleaseGuard() + clearHolds()
@@ -128,6 +131,7 @@ private:
     unsigned stackGen_ = 0;       // bumped on every push / pop / section change: drawBase stops when its list went stale
     FocusMemory memory_;
     bool capturing_ = false;
+    bool repeat_ = false;         // the intent in hand came from NavInput's repeat timer
     bool baseWas_ = false;        // baseActive() with no desktop window open over it, at the last frame(): a change resets the nav
     bool padDriven_ = false;      // the last input was a pad: the pointer is hidden until the mouse moves
 };

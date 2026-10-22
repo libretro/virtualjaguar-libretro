@@ -22,6 +22,14 @@ namespace widgets {
 
 // Tests: every string the widgets draw is also appended to `sink` (nullptr = off, the default).
 void setTextProbe(std::vector<std::string>* sink);
+// Tests: ... and where each one was drawn (the pen position, pixels).  Separate from the string probe so a test that wants places
+// switches it on alone (nullptr = off, the default).
+struct TextAt {
+    std::string s;
+    ImVec2 pos;
+    float px;
+};
+void setTextPosProbe(std::vector<TextAt>* sink);
 
 // One 0..1 "how focused" value per item of a list; moving the focus retargets two of them (the old item eases out,
 // the new one eases in).  A change of `key` (another page) or of the item count starts over with no animation.

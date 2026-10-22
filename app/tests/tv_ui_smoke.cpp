@@ -6,6 +6,7 @@
 #include "desktop_nav_popup.h"
 #include "tv/tv_screen.h"
 #include "tv/tv_shell.h"
+#include "tv/tv_settings_model.h"
 #include "tv/tv_widgets.h"
 
 #include "imgui.h"
@@ -13,6 +14,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -2862,6 +2864,282 @@ static void settingsWalk120FramesNoAsserts() {
     CHECK(g_imguiErrors == errors);
 }
 
+// ---- TV Settings for long grouped lists (phase 5, Task 20) ---------------------------------------------------------------------
+
+static std::vector<widgets::TextAt> g_at;   // where the widgets drew each string (the position probe, switched on by the Task 20 tests)
+
+static bool placeOf(const std::string& s, widgets::TextAt& out) {   // the last place `s` was drawn
+    bool found = false;
+    for (const widgets::TextAt& t : g_at)
+        if (t.s == s) {
+            out = t;
+            found = true;
+        }
+    return found;
+}
+
+// A drawn string lies wholly inside [top, bottom] (pixels).
+static bool within(const widgets::TextAt& t, float top, float bottom) { return t.pos.y >= top - 0.5f && t.pos.y + t.px <= bottom + 0.5f; }
+
+static void pressButton(FakeHost& host, Shell& shell, SDL_GamepadButton b, bool isDown) {
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = isDown ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.button = (Uint8)b;
+    e.gbutton.down = isDown;
+    shell.handleEvent(e, g_ms);
+}
+
+// n groups "g0".."g<n-1>" labelled "Group 0".., each with one row "Setting 0"..
+static std::vector<SettingRow> manyGroups(int n) {
+    std::vector<SettingRow> v;
+    for (int i = 0; i < n; i++)
+        v.push_back(mkRow(("s" + std::to_string(i)).c_str(), ("Setting " + std::to_string(i)).c_str(), ("g" + std::to_string(i)).c_str(),
+                          ("Group " + std::to_string(i)).c_str(), {"Off", "On"}));
+    return v;
+}
+
+// One group "core:x" ("X") of n rows "Row 0".., each Off / On.
+static std::vector<SettingRow> manyRows(int n) {
+    std::vector<SettingRow> v;
+    for (int i = 0; i < n; i++) v.push_back(mkRow(("r" + std::to_string(i)).c_str(), ("Row " + std::to_string(i)).c_str(), "core:x", "X", {"Off", "On"}));
+    return v;
+}
+
+// How many strings starting with `prefix` (and not a caption "... \xC2\xB7 N settings") the last frames drew.
+static int drewCount(const char* prefix) {
+    int n = 0;
+    for (const widgets::TextAt& t : g_at)
+        if (t.s.rfind(prefix, 0) == 0 && t.s.find("\xC2\xB7") == std::string::npos) n++;
+    return n;
+}
+
+static void settledFrames(FakeHost& host, Shell& shell) {
+    frames(host, shell, 30);   // the scroll's tween (120 ms) is done
+    g_at.clear();
+    frames(host, shell, 1);
+}
+
+// The rail lists the groups in the order the host gives them, and only those that have rows.
+static void settingsGroupsInRowOrder() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);                          // picture, sound, interface, core:video, core:speed
+    g_texts.clear();
+    frames(host, shell, 2);
+    auto at = [&](const char* s) { return (int)(std::find(g_texts.begin(), g_texts.end(), s) - g_texts.begin()); };
+    CHECK(drew("Picture") && at("Picture") < at("Sound") && at("Sound") < at("Interface") && at("Interface") < at("Video") && at("Video") < at("Speed"));
+    FakeHost noSound;
+    Shell s2(noSound);
+    std::vector<SettingRow> rows = settingsFixture();
+    rows.erase(rows.begin() + 1);                        // Volume was the only Sound row
+    settingsSetup(noSound, s2, rows);
+    g_texts.clear();
+    frames(noSound, s2, 2);
+    CHECK(drew("Picture") && drew("Interface") && !drew("Sound"));
+    CHECK(shell.focusGroup() == "picture");
+}
+
+// 20 groups at 1280x720: the rail follows the focus to the last group and it is drawn inside the content area; nothing is drawn
+// above it or below it, and the rail comes back to the top.
+static void settingsRailScrolls720p() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, manyGroups(20));
+    io.DisplaySize = ImVec2(1280, 720);
+    widgets::setTextPosProbe(&g_at);
+    frames(host, shell, 3);
+    const float u = 720.0f / 1080.0f, top = 150 * u, bottom = 968 * u;
+    CHECK(shell.focusLabel() == "Group 0");
+    down(host, shell, 19);
+    CHECK(shell.focusLabel() == "Group 19" && shell.focusGroup() == "g19");
+    settledFrames(host, shell);
+    widgets::TextAt at;
+    CHECK(placeOf("Group 19", at) && within(at, top, bottom));
+    int shown = 0;
+    bool allInside = true;
+    for (const widgets::TextAt& t : g_at)
+        if (t.s.rfind("Group ", 0) == 0 && t.s.find("\xC2\xB7") == std::string::npos) {
+            shown++;
+            if (!within(t, top, bottom)) allInside = false;
+        }
+    CHECK(shown >= 8 && shown < 20 && allInside);        // a window of the rail, whole items only
+    up(host, shell, 19);
+    settledFrames(host, shell);
+    CHECK(placeOf("Group 0", at) && within(at, top, bottom) && !placeOf("Group 19", at));
+    // The memory is a key: leaving and coming back lands on the last group, scrolled to show it at once (no tween from the top).
+    down(host, shell, 19);
+    lb(host, shell);
+    lb(host, shell);
+    rb(host, shell);
+    rb(host, shell);
+    g_at.clear();
+    frames(host, shell, 1);
+    CHECK(shell.focusLabel() == "Group 19" && placeOf("Group 19", at) && within(at, top, bottom));
+    widgets::setTextPosProbe(nullptr);
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == 0);
+}
+
+// A many-step value: Right held repeats (350 ms, then every 80 ms, the nav's own), the index only goes up, and letting go stops it.
+static void settingsHeldRightRepeats() {
+    FakeHost host;
+    Shell shell(host);
+    std::vector<std::string> choices;
+    for (int i = 0; i < 30; i++) choices.push_back("c" + std::to_string(i));
+    settingsSetup(host, shell, {mkRow("core:x", "Many steps", "core:x", "X", choices)});
+    rightN(host, shell, 1);                              // into the list
+    CHECK(host.set.empty() && shell.focusLabel() == "Many steps");
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+    frames(host, shell, 90);                             // ~1.4 s at the smoke clock
+    const size_t n = host.set.size();
+    CHECK(n >= 10);
+    bool monotone = true;
+    for (size_t i = 1; i < n; i++)
+        if (host.set[i].second != host.set[i - 1].second + 1) monotone = false;
+    CHECK(monotone && host.set.back().second == (int)n);
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
+    frames(host, shell, 30);
+    CHECK(host.set.size() == n);                         // released: no further sets
+    // Holding Right from the rail enters the list and then stops: the repeats of that press are not steps of the first row.
+    FakeHost rail;
+    Shell rs(rail);
+    settingsSetup(rail, rs, {mkRow("core:x", "Many steps", "core:x", "X", choices)});
+    pressButton(rail, rs, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+    frames(rail, rs, 90);
+    pressButton(rail, rs, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
+    frames(rail, rs, 2);
+    CHECK(rail.set.empty() && rs.focusLabel() == "Many steps");
+    rightN(rail, rs, 1);                                 // a new press steps again
+    CHECK(rail.set.size() == 1 && rail.set.back().second == 1);
+    CHECK(g_imguiErrors == 0);
+}
+
+// Left held down a many-step value stops at its first choice; only a new press leaves for the rail.
+static void settingsHeldLeftStopsAtFirstChoice() {
+    FakeHost host;
+    Shell shell(host);
+    std::vector<std::string> choices;
+    for (int i = 0; i < 30; i++) choices.push_back("c" + std::to_string(i));
+    settingsSetup(host, shell, {mkRow("core:x", "Many steps", "core:x", "X", choices, 10)});
+    rightN(host, shell, 1);
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_LEFT, true);
+    frames(host, shell, 150);                            // 10 steps take ~1.1 s; then the repeats go on pressing the edge
+    CHECK(host.set.size() == 10 && host.set.back().second == 0);
+    CHECK(shell.focusLabel() == "Many steps");           // still on the row, not the rail
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_LEFT, false);
+    frames(host, shell, 2);
+    leftN(host, shell, 1);                               // a press at the left edge is the rail
+    CHECK(shell.focusLabel() == "X" && host.set.size() == 10);
+}
+
+// LT / RT jump the list by the rows on screen, stop at the ends, and the focused row stays in view.
+static void settingsPageJump() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, manyRows(40));
+    io.DisplaySize = ImVec2(1280, 720);
+    widgets::setTextPosProbe(&g_at);
+    frames(host, shell, 3);
+    const float u = 720.0f / 1080.0f, top = (150 + 46) * u, bottom = 968 * u;
+    rightN(host, shell, 1);                              // into the list
+    settledFrames(host, shell);
+    const int visible = drewCount("Row ");
+    CHECK(visible >= 5 && visible < 40);
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row " + std::to_string(visible));
+    settledFrames(host, shell);
+    widgets::TextAt at;
+    CHECK(placeOf("Row " + std::to_string(visible), at) && within(at, top, bottom));
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row 0");
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);   // at the top it stays
+    CHECK(shell.focusLabel() == "Row 0");
+    for (int i = 0; i < 6; i++) pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);   // past the end it clamps to the last row
+    CHECK(shell.focusLabel() == "Row 39");
+    settledFrames(host, shell);
+    CHECK(placeOf("Row 39", at) && within(at, top, bottom));
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row 39");
+    for (int i = 0; i < 6; i++) pullTrigger(host, shell, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row 0");
+    // On the rail the triggers page the groups.
+    FakeHost g;
+    Shell gs(g);
+    settingsSetup(g, gs, manyGroups(30));
+    pullTrigger(g, gs, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(gs.focusLabel() != "Group 0" && gs.focusLabel() != "Group 1");
+    for (int i = 0; i < 6; i++) pullTrigger(g, gs, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(gs.focusLabel() == "Group 29");
+    widgets::setTextPosProbe(nullptr);
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == 0);
+}
+
+// Each group's place is remembered under its key: row 3 of Video survives a visit to Speed.
+static void settingsFocusMemoryPerGroupKey() {
+    FakeHost host;
+    Shell shell(host);
+    std::vector<SettingRow> rows;
+    for (int i = 0; i < 6; i++) rows.push_back(mkRow(("v" + std::to_string(i)).c_str(), ("Video row " + std::to_string(i)).c_str(), "core:video", "Video", {"Off", "On"}));
+    for (int i = 0; i < 3; i++) rows.push_back(mkRow(("p" + std::to_string(i)).c_str(), ("Speed row " + std::to_string(i)).c_str(), "core:speed", "Speed", {"Off", "On"}));
+    settingsSetup(host, shell, rows);
+    CHECK(shell.focusLabel() == "Video");
+    rightN(host, shell, 1);
+    down(host, shell, 3);
+    CHECK(shell.focusLabel() == "Video row 3");
+    back(host, shell);                                   // the rail
+    down(host, shell);
+    CHECK(shell.focusLabel() == "Speed" && shell.focusGroup() == "core:speed");
+    rightN(host, shell, 1);
+    CHECK(shell.focusLabel() == "Speed row 0");
+    down(host, shell);
+    back(host, shell);
+    up(host, shell);
+    CHECK(shell.focusLabel() == "Video");
+    rightN(host, shell, 1);
+    CHECK(shell.focusLabel() == "Video row 3");
+    back(host, shell);
+    down(host, shell);
+    rightN(host, shell, 1);
+    CHECK(shell.focusLabel() == "Speed row 1");
+    CHECK(g_imguiErrors == 0);
+}
+
+// A value between two grid values ("(custom)") steps to the grid neighbours, in either direction; one beyond the grid is the last
+// entry and Accept wraps from it to the first.
+static void settingsCustomValueRow() {
+    {
+        FakeHost host;
+        Shell shell(host);
+        const SettingRow r = sliderRow("volume", "Volume", "sound", "Sound", 25.0f, 0, 100, 10, "%.0f %%");
+        CHECK(r.choices[(size_t)r.index].find("(custom)") != std::string::npos && r.index == 3);
+        settingsSetup(host, shell, {r});
+        rightN(host, shell, 1);                          // into the list
+        rightN(host, shell, 1);
+        CHECK(lastSet(host, "volume", 4));               // 30 %
+        FakeHost left;
+        Shell ls(left);
+        settingsSetup(left, ls, {r});
+        rightN(left, ls, 1);
+        leftN(left, ls, 1);
+        CHECK(lastSet(left, "volume", 2));               // 20 %
+    }
+    FakeHost host;
+    Shell shell(host);
+    const SettingRow r = sliderRow("volume", "Volume", "sound", "Sound", 137.0f, 0, 100, 10, "%.0f %%");
+    CHECK(r.index == (int)r.choices.size() - 1 && r.choices.back().find("(custom)") != std::string::npos);
+    settingsSetup(host, shell, {r});
+    rightN(host, shell, 1);
+    rightN(host, shell, 1);                              // already the last entry
+    CHECK(host.set.empty());
+    accept(host, shell);                                 // wraps to the first
+    CHECK(lastSet(host, "volume", 0));
+    CHECK(g_imguiErrors == 0);
+}
+
 // ---- TV Achievements (phase 3, Task 14) -----------------------------------------------------------------------------------
 
 static AchItem mkItem(uint32_t id, const char* title, const char* status, bool unlocked, unsigned points = 10) {
@@ -3518,6 +3796,47 @@ static void ingameCoreGroupsLevel() {
     CHECK(g_imguiErrors == 0);
 }
 
+// The menu's slot has the same scrolling: 20 groups, then a group of 20 rows, at 1280x720 -- the focused group / row is drawn inside
+// the menu's list area.
+static void ingameSettingsSlotScrolls() {
+    ImGuiIO& io = ImGui::GetIO();
+    widgets::setTextPosProbe(&g_at);
+    for (int branch = 0; branch < 2; branch++) {
+        FakeHost host;
+        host.rows = branch == 0 ? manyGroups(20) : manyRows(20);
+        Shell shell(host);
+        menuSetup(host, shell);
+        io.DisplaySize = ImVec2(1280, 720);
+        menuTo(host, shell, "Settings");
+        accept(host, shell);
+        const Metrics m = metrics(720);
+        const float top = m.safeY + 48 * m.u;                                                   // the panel's list area (tv_ingame.cpp)
+        const float bottom = m.safeY + (720 - 2 * m.safeY) - 48 * m.u - (m.caption + 8 * m.u) - 24 * m.u;
+        if (branch == 1) accept(host, shell);            // the only group's rows
+        down(host, shell, 19);
+        const std::string want = branch == 0 ? "Group 19" : "Row 19";
+        CHECK(shell.menuHasScreen() && shell.menuScreenId() == "settings");
+        settledFrames(host, shell);
+        widgets::TextAt at;
+        CHECK(placeOf(want, at) && within(at, top, bottom));
+        bool allInside = true;
+        for (const widgets::TextAt& t : g_at)
+            if ((t.s.rfind("Group ", 0) == 0 || t.s.rfind("Row ", 0) == 0) && t.s.find("\xC2\xB7") == std::string::npos && !within(t, top, bottom)) allInside = false;
+        CHECK(allInside);
+        up(host, shell, 19);
+        settledFrames(host, shell);
+        CHECK(placeOf(branch == 0 ? "Group 0" : "Row 0", at) && within(at, top, bottom));
+        if (branch == 0) {                               // a page jump on the groups level
+            pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+            CHECK(shell.menuScreenId() == "settings");
+        }
+        shell.closeMenu();
+    }
+    widgets::setTextPosProbe(nullptr);
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == 0);
+}
+
 static void ingameSlotBackReturnsToRow() {
     FakeHost host;
     host.rows = settingsFixture();
@@ -3778,6 +4097,13 @@ int main() {
     settingsFocusRemembered();
     settingsMouse();
     settingsClickOnChevrons();
+    settingsGroupsInRowOrder();
+    settingsRailScrolls720p();
+    settingsHeldRightRepeats();
+    settingsHeldLeftStopsAtFirstChoice();
+    settingsPageJump();
+    settingsFocusMemoryPerGroupKey();
+    settingsCustomValueRow();
     settingsWalk120FramesNoAsserts();
     achNotSignedInLine();
     achNotAvailableLine();
@@ -3799,6 +4125,7 @@ int main() {
     overlaysHintsAndBack();
     ingameSettingsSlotLevels();
     ingameCoreGroupsLevel();
+    ingameSettingsSlotScrolls();
     menuMoreSettingsKeepsMenu();
     ingameSlotBackReturnsToRow();
     ingameAchievementsSlotDraws();

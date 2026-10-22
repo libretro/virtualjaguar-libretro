@@ -10,6 +10,11 @@
 // whether the list had the focus under "settings/list", so coming back lands there.  A group is its key (SettingRow::group), so
 // the memory survives groups that come and go.
 //
+// Both the rail and the list are long (the core's categories join the app's tabs; a category can hold a dozen rows), so each scrolls
+// a whole item at a time (Scroll: LinearFocus::first eased by the Phase 3 tween), keeps the focus in view, and shows an arrow where
+// there is more.  LT / RT (PagePrev / PageNext) jump a screenful, stopping at the ends.  A held direction repeats on the nav's own
+// timer; the screen only has to tell a repeat from a press (Shell::repeatIntent) where a press means more than the repeat does.
+//
 // In the in-game menu's slot (Screen::setEmbedded) the screen has no rail of its own -- the menu names the page -- so the groups
 // are a first list level in the menu's list area: Accept on a group opens its rows, Back returns to the groups, and Back on the
 // groups is the menu's.  Every visit starts on the groups.
@@ -30,9 +35,49 @@ constexpr float kRailW = 344, kRailGap = 64, kItemH = 54, kItemGap = 8;   // the
 constexpr float kListTop = 196 - 150;                                     // from the top of the content area (y = 150)
 constexpr float kRowH = 72, kRowGap = 14;
 constexpr float kRowsMargin = 12;                                         // room above the first row for a focused row's ring and shadow
+constexpr float kRailPitch = kItemH + kItemGap;
+constexpr float kArrowRoom = 20;                                          // under a list that scrolls: the "more" arrow's place
 constexpr const char* kMoreId = "more";
 
 std::string memoryKey(const std::string& group) { return "settings/" + group; }
+
+// How many whole items of `pitch` fit under `viewH` (the last one has no gap after it).  A run that does not fit whole keeps
+// `arrowRoom` free under its last item for the "more" arrow.
+int itemsThatFit(float viewH, float pitch, float gap, int count, float arrowRoom) {
+    const int all = std::max(1, (int)((viewH + gap) / pitch));
+    if (all >= count) return all;
+    return std::max(1, (int)((viewH - arrowRoom + gap) / pitch));
+}
+
+// A run of equal items scrolled a whole item at a time: LinearFocus::first is the first one showing and the pixel offset eases
+// to it, so at rest no item is cut by the edge of its view.  `restart`: another run took the place (start from the top, no easing).
+struct Scroll {
+    Tween tween;
+    bool init = false;
+    float lastU = 0;
+    float update(LinearFocus& f, int visible, float pitch, float u, bool restart, double now) {
+        if (restart) f.first = 0;
+        f.first = std::clamp(f.first, 0, std::max(0, f.count - visible));
+        f.scrollToShow(visible);
+        const float target = (float)f.first * pitch;
+        if (!init || lastU != u || restart) {
+            tween.from = tween.to = target;
+            tween.start = now;
+            init = true;
+            lastU = u;
+        } else if (target != tween.to) {
+            tween.retarget(target, now);
+        }
+        return tween.at(now);
+    }
+};
+
+// LT / RT: the focus and the window both move a screenful, and stop at the ends.
+void pageBy(LinearFocus& f, int visible, int dir) {
+    const int step = std::max(1, visible);
+    f.index = std::clamp(f.index + dir * step, 0, std::max(0, f.count - 1));
+    f.first = std::clamp(f.first + dir * step, 0, std::max(0, f.count - visible));
+}
 
 class SettingsScreen : public Screen {
 public:
@@ -46,8 +91,14 @@ public:
         return onRail_ ? groupLabel() : rows_[(size_t)list_.index].label;
     }
 
+    std::string focusGroup() override {
+        refresh();
+        return group_;
+    }
+
     void intent(Intent in) override {
         refresh();
+        if (!shell_.repeatIntent()) enteredByRight_ = false;   // a fresh press: whatever the last hold started is over
         if (onRail_) railIntent(in);
         else listIntent(in);
         remember();
@@ -80,16 +131,31 @@ public:
         lastMouse_ = c.mouse;
         const bool pick = c.hovered && (moved || c.clicked);
 
-        // ---- the rail --------------------------------------------------------------------------------------------------
+        // ---- the rail: the groups, a window of whole items that follows the focus ---------------------------------------
         int hoverItem = -1;
-        for (int i = 0; !emb && i < (int)groups_.size(); i++) {
-            const ImVec2 p0(x0, c.pos.y + (float)i * (kItemH + kItemGap) * u), p1(x0 + kRailW * u, p0.y + kItemH * u);
-            const bool sel = i == rail_.index;
-            if (sel) c.dl->AddRectFilled(p0, p1, widgets::col(pal.cardBgHover), 10 * u);
-            if (sel && onRail_) c.dl->AddRect(p0, p1, widgets::col(pal.text), 10 * u, 0, m.ring);
-            widgets::text(c.dl, m.body, ImVec2(p0.x + 20 * u, p0.y + 12 * u), widgets::col(sel ? pal.text : pal.textMuted),
-                          groups_[(size_t)i].label, (kRailW - 40) * u);
-            if (c.hovered && c.mouse.x >= p0.x && c.mouse.x < p1.x && c.mouse.y >= p0.y && c.mouse.y < p1.y) hoverItem = i;
+        if (!emb) {
+            const float pitch = kRailPitch * u, itemH = kItemH * u;
+            railVisible_ = itemsThatFit(c.size.y, pitch, kItemGap * u, (int)groups_.size(), kArrowRoom * u);
+            const float scroll = railScroll_.update(rail_, railVisible_, pitch, u, false, c.now);
+            const float winBottom = c.pos.y + (float)railVisible_ * pitch - kItemGap * u;   // the window's lower edge
+            const float ringRoom = m.ring;                                                  // the ring is drawn a little outside its item
+            c.dl->PushClipRect(ImVec2(c.pos.x, c.pos.y - ringRoom), ImVec2(c.pos.x + c.size.x, winBottom + ringRoom), true);
+            for (int i = 0; i < (int)groups_.size(); i++) {
+                const float y = c.pos.y + (float)i * pitch - scroll;
+                if (y + itemH <= c.pos.y - ringRoom || y >= winBottom) continue;   // wholly outside: not drawn at all
+                const ImVec2 p0(x0, y), p1(x0 + kRailW * u, y + itemH);
+                const bool sel = i == rail_.index;
+                if (sel) c.dl->AddRectFilled(p0, p1, widgets::col(pal.cardBgHover), 10 * u);
+                if (sel && onRail_) c.dl->AddRect(p0, p1, widgets::col(pal.text), 10 * u, 0, m.ring);
+                widgets::text(c.dl, m.body, ImVec2(p0.x + 20 * u, p0.y + 12 * u), widgets::col(sel ? pal.text : pal.textMuted),
+                              groups_[(size_t)i].label, (kRailW - 40) * u);
+                if (c.hovered && c.mouse.x >= p0.x && c.mouse.x < p1.x && c.mouse.y >= std::max(p0.y, c.pos.y) &&
+                    c.mouse.y < std::min(p1.y, winBottom))
+                    hoverItem = i;
+            }
+            c.dl->PopClipRect();
+            drawMoreArrows(c, x0 + kRailW * u * 0.5f, c.pos.y - 10 * u, winBottom + 10 * u, rail_.first > 0,
+                           rail_.first + railVisible_ < (int)groups_.size());
         }
         if (hoverItem >= 0 && pick) {   // hovering a group selects it: its rows show at once
             selectGroup(hoverItem);
@@ -104,39 +170,25 @@ public:
             return;
         }
 
-        // ---- the rows: scrolled so the focused one shows ---------------------------------------------------------------
+        // ---- the rows: a window of whole rows that follows the focus ----------------------------------------------------
         const float lx = emb ? x0 : x0 + (kRailW + kRailGap) * u, lw = std::max(1.0f, right - lx);
         const std::string count = std::to_string(rows_.size()) + (rows_.size() == 1 ? " setting" : " settings");
         widgets::text(c.dl, m.caption, ImVec2(lx, c.pos.y), widgets::col(pal.textMuted),
                       groupLabel() + " \xC2\xB7 " + count, lw);
 
-        const float rowsTop = c.pos.y + kListTop * u, viewBottom = c.pos.y + c.size.y, viewH = viewBottom - rowsTop;
+        const float rowsTop = c.pos.y + kListTop * u, viewBottom = c.pos.y + c.size.y, viewH = std::max(1.0f, viewBottom - rowsTop);
         const float pitch = (kRowH + kRowGap) * u, rowH = kRowH * u;
-        const float total = (float)rows_.size() * pitch - kRowGap * u;
-        const float focusTop = (float)list_.index * pitch;
-        float target = scrollTo_;
-        if (group_ != lastGroup_) target = 0;
-        if (focusTop < target) target = focusTop;
-        else if (focusTop + rowH > target + viewH) target = focusTop + rowH - viewH;
-        target = std::clamp(target, 0.0f, std::max(0.0f, total - viewH));
-        scrollTo_ = target;
-        if (!scrollInit_ || lastU_ != u || group_ != lastGroup_) {
-            scroll_.from = scroll_.to = target;
-            scroll_.start = c.now;
-            scrollInit_ = true;
-            lastU_ = u;
-            lastGroup_ = group_;
-        } else if (target != scroll_.to) {
-            scroll_.retarget(target, c.now);
-        }
-        const float scroll = scroll_.at(c.now);
+        listVisible_ = itemsThatFit(viewH, pitch, kRowGap * u, (int)rows_.size(), kArrowRoom * u);
+        const float scroll = listScroll_.update(list_, listVisible_, pitch, u, group_ != lastGroup_, c.now);
+        lastGroup_ = group_;
         tweens_.update((int)rows_.size(), list_.index, groupSerial_, c.now);
+        const float winBottom = rowsTop + (float)listVisible_ * pitch - kRowGap * u;   // the window's lower edge
 
         int hoverRow = -1;
-        c.dl->PushClipRect(ImVec2(c.pos.x, rowsTop - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, viewBottom), true);
+        c.dl->PushClipRect(ImVec2(c.pos.x, rowsTop - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, winBottom + 8 * u), true);
         for (int i = 0; i < (int)rows_.size(); i++) {
             const float y = rowsTop + (float)i * pitch - scroll;
-            if (y + rowH < rowsTop - kRowsMargin * u || y > viewBottom) continue;
+            if (y + rowH <= rowsTop - kRowsMargin * u || y >= winBottom) continue;   // wholly outside: not drawn at all
             const float f = !onRail_ && i == list_.index ? tweens_.at(i, c.now) : 0.0f;
             widgets::RowArgs a;   // the card and the focus ring; the label and the value are drawn here
             a.focus = f;
@@ -145,12 +197,11 @@ public:
             // The unscaled card, widened by what a focused row grows: its right chevron lies beyond the unscaled edge.
             const float slack = (m.focusScale - 1.0f) * 0.5f * lw;
             if (c.hovered && c.mouse.x >= lx - slack && c.mouse.x < lx + lw + slack && c.mouse.y >= y && c.mouse.y < y + rowH &&
-                c.mouse.y >= rowsTop && c.mouse.y < viewBottom)   // not the part the clip hides
+                c.mouse.y >= rowsTop && c.mouse.y < winBottom)   // not the part the clip hides
                 hoverRow = i;
         }
         c.dl->PopClipRect();
-        if (scroll > 0.5f) widgets::moreArrow(c.dl, m, ImVec2(lx + lw * 0.5f, rowsTop - 4 * u), true);
-        if (scroll + viewH < total - 0.5f) widgets::moreArrow(c.dl, m, ImVec2(lx + lw * 0.5f, viewBottom - 10 * u), false);
+        drawMoreArrows(c, lx + lw * 0.5f, rowsTop - 10 * u, winBottom + 10 * u, list_.first > 0, list_.first + listVisible_ < (int)rows_.size());
 
         // ---- the pointer: hovering a row focuses it, a click on the value's left / right half steps that way, a click
         // elsewhere on the row is Accept, a notch is a row --------------------------------------------------------------
@@ -185,6 +236,10 @@ public:
             const std::string l = host_.glyph(Intent::Left), rt = host_.glyph(Intent::Right);
             h.push_back({l.empty() ? rt : rt.empty() || l == rt ? l : l + " " + rt, "Change"});   // "D-pad" once, "Left Right" on a keyboard
             h.push_back({host_.glyph(Intent::Accept), "Next"});
+        }
+        if ((int)rows_.size() > listVisible_) {   // a list that scrolls: LT / RT page it
+            const std::string lt = host_.glyph(Intent::PagePrev), rt = host_.glyph(Intent::PageNext);
+            h.push_back({lt.empty() && rt.empty() ? std::string() : lt + " " + rt, "Page"});
         }
         h.push_back({host_.glyph(Intent::Back), "Groups"});
         return h;
@@ -250,9 +305,19 @@ private:
         case Intent::Down:
             if (f.move(1)) selectGroup(f.index);
             break;
+        case Intent::PagePrev:
+        case Intent::PageNext: {
+            pageBy(f, railVisible_, in == Intent::PageNext ? 1 : -1);
+            rail_.first = f.first;
+            selectGroup(f.index);
+            break;
+        }
         case Intent::Right:
         case Intent::Accept:
-            if (!rows_.empty()) onRail_ = false;   // to the list, at the remembered row
+            if (!rows_.empty()) {   // to the list, at the remembered row
+                onRail_ = false;
+                enteredByRight_ = in == Intent::Right;   // a Right still held repeats into the list: those repeats are not steps
+            }
             break;
         default: break;
         }
@@ -263,11 +328,15 @@ private:
         switch (in) {
         case Intent::Up: list_.move(-1); break;
         case Intent::Down: list_.move(1); break;
+        case Intent::PagePrev: pageBy(list_, listVisible_, -1); break;
+        case Intent::PageNext: pageBy(list_, listVisible_, 1); break;
         case Intent::Left:
             if (canStep(focused(), -1)) step(focused(), -1, false);
-            else onRail_ = true;   // the left edge of the row: the groups
+            else if (!shell_.repeatIntent()) onRail_ = true;   // the left edge of the row: the groups (a held Left stops there)
             break;
-        case Intent::Right: step(focused(), 1, false); break;
+        case Intent::Right:
+            if (!(shell_.repeatIntent() && enteredByRight_)) step(focused(), 1, false);
+            break;
         case Intent::Accept: accept(); break;
         default: break;
         }
@@ -303,21 +372,30 @@ private:
         else step(r, mouseX < valueMid_[(size_t)list_.index] ? -1 : 1, false);
     }
 
-    // The in-menu first level: one row per group with how many settings it holds.  Hovering one focuses it, a click opens it, a
-    // notch is a group.
+    // The in-menu first level: one row per group with how many settings it holds, a window of whole rows that follows the focus.
+    // Hovering one focuses it, a click opens it, a notch is a group.
     void drawGroups(const DrawCtx& c, float lx, float lw, bool pick) {
         const Metrics& m = c.m;
-        const float u = m.u, top = c.pos.y + kRowsMargin * u, pitch = (kRowH + kRowGap) * u;
+        const float u = m.u, top = c.pos.y + kRowsMargin * u, pitch = (kRowH + kRowGap) * u, rowH = kRowH * u;
+        railVisible_ = itemsThatFit(std::max(1.0f, c.pos.y + c.size.y - top), pitch, kRowGap * u, (int)groups_.size(), kArrowRoom * u);
+        const float scroll = railScroll_.update(rail_, railVisible_, pitch, u, false, c.now);
+        const float winBottom = top + (float)railVisible_ * pitch - kRowGap * u;
         groupTweens_.update((int)groups_.size(), rail_.index, 0, c.now);
         int hover = -1;
+        c.dl->PushClipRect(ImVec2(c.pos.x, top - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, winBottom + 8 * u), true);
         for (int i = 0; i < (int)groups_.size(); i++) {
+            const float y = top + (float)i * pitch - scroll;
+            if (y + rowH <= top - kRowsMargin * u || y >= winBottom) continue;   // wholly outside: not drawn at all
             const int n = groupCount_[(size_t)i];
             widgets::RowArgs a;
             a.label = groups_[(size_t)i].label;
             a.value = std::to_string(n) + (n == 1 ? " setting" : " settings");
             a.focus = i == rail_.index ? groupTweens_.at(i, c.now) : 0.0f;
-            if (widgets::row(c.dl, m, ImVec2(lx, top + (float)i * pitch), ImVec2(lw, kRowH * u), a).hovered) hover = i;
+            const bool h = widgets::row(c.dl, m, ImVec2(lx, y), ImVec2(lw, rowH), a).hovered;
+            if (h && c.mouse.y >= top && c.mouse.y < winBottom) hover = i;   // not the part the clip hides
         }
+        c.dl->PopClipRect();
+        drawMoreArrows(c, lx + lw * 0.5f, top - 10 * u, winBottom + 10 * u, rail_.first > 0, rail_.first + railVisible_ < (int)groups_.size());
         if (c.hovered && c.mouse.x >= lx && c.mouse.x < lx + lw && c.mouse.y >= c.pos.y && c.mouse.y < c.pos.y + c.size.y) wheel_ += c.wheel;
         const int steps = (int)wheel_;
         wheel_ -= (float)steps;
@@ -325,6 +403,12 @@ private:
         if (hover >= 0 && pick) selectGroup(hover);
         remember();
         if (hover >= 0 && c.clicked) intent(Intent::Accept);   // opens the group
+    }
+
+    // The two arrows of a scrolling run, centred on x: above its first item (y = `upY`) and below its last (`downY`).
+    static void drawMoreArrows(const DrawCtx& c, float x, float upY, float downY, bool up, bool down) {
+        if (up) widgets::moreArrow(c.dl, c.m, ImVec2(x, upY), true);
+        if (down) widgets::moreArrow(c.dl, c.m, ImVec2(x, downY), false);
     }
 
     // The label, the value between its chevrons, and a read-only row's note under the value.
@@ -384,10 +468,9 @@ private:
     int groupSerial_ = 0;               // moves with group_: what the row tweens restart on
     bool built_ = false;
     bool onRail_ = true;
-    Tween scroll_;                      // vertical scroll of the rows, in pixels
-    float scrollTo_ = 0;                // ... and where it is heading
-    bool scrollInit_ = false;
-    float lastU_ = 0;
+    Scroll railScroll_, listScroll_;    // the rail's window and the rows' (whole items; first is LinearFocus::first)
+    int railVisible_ = 8, listVisible_ = 8;   // how many items each window showed at the last draw (LT / RT page by them)
+    bool enteredByRight_ = false;       // the last move from the rail to the list was a Right: its repeats are not steps
     widgets::FocusTweens tweens_;
     ImVec2 lastMouse_{-FLT_MAX, -FLT_MAX};
     bool mouseSeen_ = false;

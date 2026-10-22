@@ -172,16 +172,24 @@ void Shell::frame(uint64_t ms) {
         if (!baseActive()) return;
         if (stack_.empty()) setSection(Section::Home);
         if (!live) return;   // a desktop window has the pads and keys: the screens wait
-        for (Intent in : nav_.take(ms)) baseIntent(in);
+        const std::vector<Intent> in = nav_.take(ms);
+        for (size_t i = 0; i < in.size(); i++) {
+            repeat_ = nav_.lastWasRepeat() && i + 1 == in.size();   // a repeat is the last intent of its call
+            baseIntent(in[i]);
+        }
+        repeat_ = false;
         return;
     }
     // (Not under a slot screen: enter() would clear it.  Leaving the screen rebuilds the root anyway.)
     if (!menuScreen_ && page_ == Page::Root && (host_.canLoadState() != rootHasLoad_ || tvRowState() != rootTvRow_))
         enter(Page::Root, rows_[(size_t)focus_.index].kind);
-    for (Intent in : nav_.take(ms)) {
-        intent(in);
+    const std::vector<Intent> in = nav_.take(ms);
+    for (size_t i = 0; i < in.size(); i++) {
+        repeat_ = nav_.lastWasRepeat() && i + 1 == in.size();
+        intent(in[i]);
         if (!open_) break;
     }
+    repeat_ = false;
 }
 
 void Shell::draw(Layer layer, ImVec2 pos, ImVec2 size) {
@@ -232,6 +240,8 @@ void Shell::retire(std::unique_ptr<Screen> s) {
 }
 
 std::string Shell::focusLabel() { return stack_.empty() ? std::string() : stack_.back()->focusLabel(); }
+
+std::string Shell::focusGroup() { return stack_.empty() ? std::string() : stack_.back()->focusGroup(); }
 
 std::string Shell::screenId() const { return stack_.empty() ? std::string() : std::string(stack_.back()->id()); }
 
