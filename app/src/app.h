@@ -288,6 +288,7 @@ public:
     bool tvMoreSettings_ = false;                // the Settings window was opened by "More settings..." in TV mode (tv_more_settings.h)
     DesktopPad deskPad;                          // pad navigation of the desktop library (#1021, desktop_nav_app.h)
     tv::TvSetting tvSetting = tv::TvSetting::Auto;     // ui.tv_mode as stored, else the build default (tv::defaultSetting); TvMode acts on it as is
+    void openSettings();                         // Settings: the TV Settings screen while TV mode is on (the in-game menu with a game), else the desktop window (#991)
     void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off
     void configureTvMode();                      // tvMode.configure() from tvSetting + the config (also when Settings changes it)
     // The one way to change the TV-mode settings (Settings > Interface, the TV Settings rows): each writes its key, reconfigures,

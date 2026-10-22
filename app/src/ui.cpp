@@ -668,7 +668,7 @@ void drawMenuBar(App& app) {
     }
     drawToolsMenu(app);
     if (ImGui::BeginMenu("Settings")) {
-        if (ImGui::MenuItem("Settings...", "Ctrl+,")) app.showSettings = true;
+        if (ImGui::MenuItem("Settings...", "Ctrl+,")) app.openSettings();
         if (ImGui::MenuItem("Mute", nullptr, &app.mute)) app.applyAudioSettings();
         ImGui::EndMenu();
     }

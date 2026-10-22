@@ -1426,6 +1426,11 @@ void App::menuResume() {
 
 tv::Shell& App::tvShell() { return *tvShell_; }
 
+void App::openSettings() {
+    if (tvMode.active()) tvShell().openSettings();   // a refusal (hardcore pause) toasts its reason; the desktop window is not the fallback
+    else showSettings = true;
+}
+
 void App::showOpenDialog() {
     if (!window_) return;
     g_filterPattern = joinExtensions(CoreHost::validExtensions()) + ";m3u";   // multi-disc playlists: the app reads them (m3u.h)
@@ -1778,7 +1783,10 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
         if (mod) reset();
         break;
     case SDLK_COMMA:
-        if (mod) showSettings = !showSettings;
+        if (mod) {   // a desktop window open (incl. "More settings...") closes; else Settings opens (TV mode: the TV screen, which a second press leaves be)
+            if (showSettings) showSettings = false;
+            else openSettings();
+        }
         break;
     case SDLK_L:
         if (mod) toggleLibrary();

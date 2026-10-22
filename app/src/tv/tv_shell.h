@@ -55,6 +55,10 @@ public:
     bool openMenu();                 // menuPause(); refused -> toast(why), false
     void closeMenu();                // menuResume(), armReleaseGuard(), clearHolds()
     void toggleMenu();
+    // Settings, wherever the shell is showing: TV mode on with no game -> the Settings section; with a game -> the in-game menu (opened
+    // the way C_TVMENU opens it, so the same pause / hardcore gate) with the Settings screen in its slot.  Idempotent (already there:
+    // nothing changes).  False = refused (hardcore will not pause; the toast says why) or TV mode is off.
+    bool openSettings();
     bool ownsInput() const;          // §3.1: inputOwner() == TvUi: the menu is open, or TV is active with no game running
     bool handleEvent(const SDL_Event& e, uint64_t ms);   // nav input while ownsInput(); true = consumed
     void frame(uint64_t ms);         // NavInput::take -> the top screen

@@ -21,6 +21,7 @@
 #   expect toast=TEXT    the text of the last toast (the rest of the line, spaces included);  expect toast-count=N  toasts shown since start
 #   expect tv-setting=off|manual|auto  the stored setting (a fresh config takes the build default: auto on a CTest build)
 #   navdefault INTENT    the Default button of that menu intent of the virtual pad (back to the family's button, partner swapped back)
+#   expect menu-slot=ID|none  the screen in the in-game menu's slot (settings, overlays, achievements)
 #   expect menu-open=0|1  paused=0|1  loaded=0|1  capturing=0|1  fast-forward=0|1  core-input=0|1  kb-bind=help|tvmenu:KEY
 #   expect tv=0|1         TV mode is on
 #   expect tv-screen=ID   the id of the TV screen on top (home, library, ...)
@@ -151,8 +152,9 @@
 1760  expect settings-open=0
 1760  expect tv-more=0
 1760  expect tv-owns-input=1
-# Esc closes it too (the focus is still on More settings...), and so does Ctrl+, -- which also ends the TV hand-off: the next
-# Ctrl+, opens the plain desktop window.
+# Esc closes it too (the focus is still on More settings...), and so does Ctrl+, -- which also ends the TV hand-off.  The next
+# Ctrl+, is the TV Settings screen, never the plain desktop window (#991): already there it changes nothing, from another section it
+# switches to Settings.
 1760  pad tap a
 1800  expect tv-more=1
 1800  key tap Escape
@@ -164,9 +166,13 @@
 1920  expect settings-open=0
 1920  expect tv-more=0
 1920  key tap ctrl+,
-1960  expect settings-open=1
+1960  expect settings-open=0
+1960  expect tv-screen=settings
 1960  expect tv-more=0
-1960  key tap ctrl+,
+1960  pad tap leftshoulder
+1970  expect tv-screen=achievements
+1970  key tap ctrl+,
+2000  expect tv-screen=settings
 2000  expect settings-open=0
 2000  pad tap leftshoulder        # back to Home (the shell remembers the section across TV mode off / on)
 2010  pad tap leftshoulder
@@ -833,3 +839,31 @@
 14290  expect loaded=1
 14290  expect tv-more=0
 14290  expect settings-open=0
+
+# Settings while TV mode is on (#991): never the desktop window.  A game is loaded and TV mode is on: Ctrl+, opens the in-game menu
+# (paused, as F4 does) with the Settings screen in its slot; a second press changes nothing; B leaves the slot for the menu root and
+# B again resumes.  With TV mode off Ctrl+, is the desktop window again (and toggles it).
+14330 expect menu-open=0
+14330 expect tv=1
+14330 key tap ctrl+,
+14370 expect menu-open=1
+14370 expect paused=1
+14370 expect settings-open=0
+14370 expect menu-slot=settings
+14370 key tap ctrl+,
+14410 expect menu-open=1
+14410 expect menu-slot=settings
+14410 expect settings-open=0
+14410 pad tap b
+14450 expect menu-open=1
+14450 expect menu-slot=none
+14450 pad tap b
+14490 expect menu-open=0
+14490 expect paused=0
+14490 key tap ctrl+shift+T
+14530 expect tv=0
+14530 key tap ctrl+,
+14570 expect settings-open=1
+14570 expect menu-open=0
+14570 key tap ctrl+,
+14610 expect settings-open=0

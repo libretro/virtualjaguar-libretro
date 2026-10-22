@@ -64,6 +64,17 @@ void Shell::closeMenu() {
     host_.clearHolds();        // ... and no hold or tap pulse in flight survives the hand-off
 }
 
+bool Shell::openSettings() {
+    if (!host_.tvActive()) return false;
+    if (!host_.gameLoaded()) {   // the Base layer
+        if (section_ != Section::Settings || stack_.empty()) setSection(Section::Settings);
+        return true;
+    }
+    if (!openMenu()) return false;   // already open: true
+    if (menuScreenId() != "settings") menuPushScreen(makeSettingsScreen(host_, *this), Row::Settings);
+    return true;
+}
+
 void Shell::toggleMenu() {
     if (open_) closeMenu();
     else openMenu();

@@ -124,7 +124,7 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
         }
         void toggleHomeLibrary() override { a.homeLibrary = !a.homeLibrary; }
         void toggleTvMode() override { a.toggleTvMode(); }
-        void showSettings() override { a.showSettings = true; }
+        void showSettings() override { a.openSettings(); }
         void toggleMute() override {
             a.mute = !a.mute;
             a.applyAudioSettings();

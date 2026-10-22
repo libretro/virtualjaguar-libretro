@@ -361,6 +361,7 @@ int App::tvScriptStep() {
             else if (name == "toast") got = osd_.empty() ? std::string() : osd_.back().text;   // the last toast
             else if (name == "toast-count") got = std::to_string(toastCount_);
             else if (name == "tv-screen") got = tvShell().screenId();
+            else if (name == "menu-slot") got = tvShell().menuHasScreen() ? tvShell().menuScreenId() : std::string("none");   // the screen in the in-game menu's slot
             else if (name == "tv-focus") got = tvShell().focusLabel();   // the focused group / row / tile label of the top TV screen ("" = none)
             else if (name == "tv-owns-input") got = flag(tvShell().ownsInput());   // 0 while a desktop window covers the TV screens
             else if (name == "settings-open") got = flag(showSettings);             // the desktop Settings window
