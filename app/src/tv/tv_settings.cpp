@@ -1,4 +1,4 @@
-// TV mode (#991): the Settings screen -- a rail of groups (Picture, Speed, Sound, Interface) beside the focused group's
+// TV mode (#991): the Settings screen -- a rail of groups (the app's tabs, then the core's categories) beside the focused group's
 // rows, each a label on the left and its value on the right between two chevrons.  Left / Right step a row, Accept steps it
 // forward and wraps (so a one-handed player can still change everything), and the last row of Interface opens the desktop
 // Settings window.  Geometry is the Library's rail and the plan's "Screen geometry", in design units (u = viewport
@@ -7,7 +7,8 @@
 // The rows come from Host::settingRows() on every draw and every intent: a row the build or the session does not have
 // is simply absent, and one that changed under the player is followed by its id.  Where focus was lives in
 // Shell::memory(): the group under "settings/rail", each group's row under "settings/<group>" (index and row id), and
-// whether the list had the focus under "settings/list", so coming back lands there.
+// whether the list had the focus under "settings/list", so coming back lands there.  A group is its key (SettingRow::group), so
+// the memory survives groups that come and go.
 //
 // In the in-game menu's slot (Screen::setEmbedded) the screen has no rail of its own -- the menu names the page -- so the groups
 // are a first list level in the menu's list area: Accept on a group opens its rows, Back returns to the groups, and Back on the
@@ -31,7 +32,7 @@ constexpr float kRowH = 72, kRowGap = 14;
 constexpr float kRowsMargin = 12;                                         // room above the first row for a focused row's ring and shadow
 constexpr const char* kMoreId = "more";
 
-std::string memoryKey(int group) { return "settings/" + std::to_string(group); }
+std::string memoryKey(const std::string& group) { return "settings/" + group; }
 
 class SettingsScreen : public Screen {
 public:
@@ -41,8 +42,8 @@ public:
 
     std::string focusLabel() override {
         refresh();
-        if (group_ < 0 || rows_.empty()) return {};
-        return onRail_ ? std::string(settingGroupLabel(group_)) : rows_[(size_t)list_.index].label;
+        if (group_.empty() || rows_.empty()) return {};
+        return onRail_ ? groupLabel() : rows_[(size_t)list_.index].label;
     }
 
     void intent(Intent in) override {
@@ -87,7 +88,7 @@ public:
             if (sel) c.dl->AddRectFilled(p0, p1, widgets::col(pal.cardBgHover), 10 * u);
             if (sel && onRail_) c.dl->AddRect(p0, p1, widgets::col(pal.text), 10 * u, 0, m.ring);
             widgets::text(c.dl, m.body, ImVec2(p0.x + 20 * u, p0.y + 12 * u), widgets::col(sel ? pal.text : pal.textMuted),
-                          settingGroupLabel(groups_[(size_t)i]), (kRailW - 40) * u);
+                          groups_[(size_t)i].label, (kRailW - 40) * u);
             if (c.hovered && c.mouse.x >= p0.x && c.mouse.x < p1.x && c.mouse.y >= p0.y && c.mouse.y < p1.y) hoverItem = i;
         }
         if (hoverItem >= 0 && pick) {   // hovering a group selects it: its rows show at once
@@ -107,7 +108,7 @@ public:
         const float lx = emb ? x0 : x0 + (kRailW + kRailGap) * u, lw = std::max(1.0f, right - lx);
         const std::string count = std::to_string(rows_.size()) + (rows_.size() == 1 ? " setting" : " settings");
         widgets::text(c.dl, m.caption, ImVec2(lx, c.pos.y), widgets::col(pal.textMuted),
-                      std::string(settingGroupLabel(group_)) + " \xC2\xB7 " + count, lw);
+                      groupLabel() + " \xC2\xB7 " + count, lw);
 
         const float rowsTop = c.pos.y + kListTop * u, viewBottom = c.pos.y + c.size.y, viewH = viewBottom - rowsTop;
         const float pitch = (kRowH + kRowGap) * u, rowH = kRowH * u;
@@ -129,7 +130,7 @@ public:
             scroll_.retarget(target, c.now);
         }
         const float scroll = scroll_.at(c.now);
-        tweens_.update((int)rows_.size(), list_.index, group_, c.now);
+        tweens_.update((int)rows_.size(), list_.index, groupSerial_, c.now);
 
         int hoverRow = -1;
         c.dl->PushClipRect(ImVec2(c.pos.x, rowsTop - kRowsMargin * u), ImVec2(c.pos.x + c.size.x, viewBottom), true);
@@ -190,28 +191,27 @@ public:
     }
 
 private:
-    // Fetches the rows, keeps the groups that have any, and settles the focus: the rail follows the group (not its
-    // position: Speed appears once the core's options are known) and the list follows the row's id.
+    // Fetches the rows, takes their groups in first-seen order (the host lists them in the rail's order), and settles the focus:
+    // the rail follows the group's key (not its position: groups come and go with the session) and the list follows the row's id.
     void refresh() {
         const std::vector<SettingRow> all = host_.settingRows();
-        int count[kSettingGroups] = {};
+        groups_ = groupsOf(all);
+        groupCount_.assign(groups_.size(), 0);
         for (const SettingRow& r : all)
-            if (r.group >= 0 && r.group < kSettingGroups) count[r.group]++;
-        groups_.clear();
-        for (int g = 0; g < kSettingGroups; g++) {
-            groupCount_[g] = count[g];
-            if (count[g] > 0) groups_.push_back(g);
-        }
+            for (size_t g = 0; g < groups_.size(); g++)
+                if (groups_[g].key == r.group) groupCount_[g]++;
         if (!built_) {
             built_ = true;
             onRail_ = embedded() || shell_.memory().get("settings/list") == 0;   // the Base layer resumes the level it was left on (list or rail); the menu's slot always starts on the groups
         }
         rail_.count = (int)groups_.size();
         rail_.index = 0;
-        const int wantGroup = shell_.memory().get("settings/rail", groups_.empty() ? 0 : groups_[0]);
+        const std::string wantGroup = shell_.memory().getItem("settings/rail");
         for (int i = 0; i < (int)groups_.size(); i++)
-            if (groups_[(size_t)i] == wantGroup) rail_.index = i;
-        group_ = groups_.empty() ? -1 : groups_[(size_t)rail_.index];
+            if (groups_[(size_t)i].key == wantGroup) rail_.index = i;
+        const std::string now = groups_.empty() ? std::string() : groups_[(size_t)rail_.index].key;
+        if (now != group_) groupSerial_++;
+        group_ = now;
         rows_.clear();
         for (const SettingRow& r : all)
             if (r.group == group_) rows_.push_back(r);
@@ -227,8 +227,8 @@ private:
 
     void remember() {
         if (!embedded()) shell_.memory().put("settings/list", onRail_ ? 0 : 1);   // the menu's visits always start on the groups
-        if (group_ < 0 || rows_.empty()) return;
-        shell_.memory().put("settings/rail", group_);
+        if (group_.empty() || rows_.empty()) return;
+        shell_.memory().putItem("settings/rail", group_);
         shell_.memory().put(memoryKey(group_), list_.index);
         shell_.memory().putItem(memoryKey(group_), rows_[(size_t)list_.index].id);
     }
@@ -237,7 +237,7 @@ private:
     void selectGroup(int k) {
         if (k < 0 || k >= (int)groups_.size() || k == rail_.index) return;
         remember();
-        shell_.memory().put("settings/rail", groups_[(size_t)k]);
+        shell_.memory().putItem("settings/rail", groups_[(size_t)k].key);
         refresh();
     }
 
@@ -274,6 +274,7 @@ private:
     }
 
     const SettingRow& focused() const { return rows_[(size_t)list_.index]; }
+    std::string groupLabel() const { return rail_.index >= 0 && rail_.index < (int)groups_.size() ? groups_[(size_t)rail_.index].label : std::string(); }
 
     static bool canStep(const SettingRow& r, int delta) {
         return !r.readOnly && !r.choices.empty() && r.index + delta >= 0 && r.index + delta < (int)r.choices.size();
@@ -310,9 +311,9 @@ private:
         groupTweens_.update((int)groups_.size(), rail_.index, 0, c.now);
         int hover = -1;
         for (int i = 0; i < (int)groups_.size(); i++) {
-            const int n = groupCount_[groups_[(size_t)i]];
+            const int n = groupCount_[(size_t)i];
             widgets::RowArgs a;
-            a.label = settingGroupLabel(groups_[(size_t)i]);
+            a.label = groups_[(size_t)i].label;
             a.value = std::to_string(n) + (n == 1 ? " setting" : " settings");
             a.focus = i == rail_.index ? groupTweens_.at(i, c.now) : 0.0f;
             if (widgets::row(c.dl, m, ImVec2(lx, top + (float)i * pitch), ImVec2(lw, kRowH * u), a).hovered) hover = i;
@@ -372,14 +373,15 @@ private:
 
     Host& host_;
     Shell& shell_;
-    std::vector<int> groups_;           // the groups that have rows, in order; the rail's items
-    int groupCount_[kSettingGroups] = {};   // how many rows each group has, from the last refresh()
+    std::vector<SettingGroup> groups_;  // the groups that have rows, in order; the rail's items
+    std::vector<int> groupCount_;       // how many rows each of them has, from the last refresh()
     widgets::FocusTweens groupTweens_;  // the menu's group rows
     std::vector<SettingRow> rows_;      // the focused group's rows, from the last refresh()
     LinearFocus rail_, list_;
     std::vector<float> valueMid_;       // per row of the last draw: x of the middle of its value (where a click turns from back to forward)
-    int group_ = -1;                    // the focused group (settingGroupLabel); -1 when there are no rows
-    int lastGroup_ = -1;
+    std::string group_;                 // the focused group's key; "" when there are no rows
+    std::string lastGroup_;
+    int groupSerial_ = 0;               // moves with group_: what the row tweens restart on
     bool built_ = false;
     bool onRail_ = true;
     Tween scroll_;                      // vertical scroll of the rows, in pixels

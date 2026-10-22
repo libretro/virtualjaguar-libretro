@@ -3,42 +3,63 @@
 // core's list is kept and shown as custom) are unit-tested on their own; AppHost only gathers the inputs.
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "aspect_choices.h"
-#include "emu_snapshot.h"   // OptionDef
+#include "emu_snapshot.h"   // OptionDef, OptionCategory
+#include "typed_options.h"
 #include "tv/tv_host.h"
 #include "tv/tv_mode.h"
 
 namespace vj::tv {
 
-constexpr int kSettingGroups = 4;
-const char* settingGroupLabel(int group);   // "Picture" "Speed" "Sound" "Interface"; "" outside 0..3
+// A rail item: its key (SettingRow::group) and what the rail shows (SettingRow::groupLabel).
+struct SettingGroup {
+    std::string key, label;
+};
 
-// One core option as a row.  hidden: no definition (no game has run yet), not visible, locked by the app, or nothing to
-// choose from.  readOnly + note when a session override (Netplay, --option) decides what the core reads.  A current value
-// outside the list (a typed RISC clock) is appended as "<value> (custom)" and selected.  `hidden` may be null.
-SettingRow coreOptionRow(const std::string& id, const std::string& label, int group, const OptionDef* def, const std::string& current,
-                         bool visible, bool locked, bool overridden, bool* hidden);
-SettingRow onOffRow(const std::string& id, const std::string& label, int group, bool on);
-SettingRow volumeRow(float volume);                         // "0 %" .. "100 %", index = round(volume * 10)
-SettingRow aspectRow(float aspectOverride, const AspectChoice* table, int n);
+// Every visible core option as a row, in category order: the options with no category first under {"core:", "General"}
+// (an option naming a category the core never defined counts as none), then each category in definition order under
+// {"core:" + cat.key, cat.desc}; a category with nothing to show makes no group.  id = "core:" + key, label = the
+// categorized title (else the flat one), value = the choice's label (else its value).  The rules of decision 4:
+//   * not visible (the core's own gates and the app's locks both end in `visible`), or nothing to choose from: no row;
+//   * `overridden` (Netplay, --option): read-only, with the note that says so;
+//   * a typed key (typed_options.h) whose current value is not one of the core's presets: "<value> (custom)" is appended
+//     and selected -- every other option gets the same for a value outside its list;
+//   * a Host-kind typed key (the Network Link address) is read-only: it can only be typed, in the desktop window;
+//   * an option whose help says it needs a restart carries the note "Applies when the game next starts".
+// `current`, `visible`, `overridden` and `typed` are per option, so the model never sees CoreHost.
+std::vector<SettingRow> coreOptionRows(const std::vector<OptionCategory>& cats, const std::vector<OptionDef>& defs,
+                                       const std::function<std::string(const OptionDef&)>& current,
+                                       const std::function<bool(const std::string&)>& visible,
+                                       const std::function<bool(const std::string&)>& overridden,
+                                       const std::function<const TypedOption*(const std::string&)>& typed);
+SettingRow choiceRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
+                     std::vector<std::string> choices, int index);
+// A slider as a stepped list: "lo", "lo+step", ... "hi" printed with fmt ("%.0f ms"); a value off the grid is appended as
+// "<value> (custom)" and selected.  stepValue() maps an index back (the "(custom)" index gives `current` unchanged).
+SettingRow sliderRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
+                     float current, float lo, float hi, float step, const char* fmt);
+float stepValue(const SettingRow& r, int index, float lo, float step, float current);
+std::vector<SettingGroup> groupsOf(const std::vector<SettingRow>& rows);   // first-seen order, keys unique
+
+SettingRow onOffRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel, bool on);
+SettingRow volumeRow(float volume);                         // Sound: "0 %" .. "100 %" in tens (a volume between two is shown as custom)
+SettingRow aspectRow(float aspectOverride, const AspectChoice* table, int n);   // Picture
 // keys: system dark light custom:<name>.  A custom theme that is no longer in the list is still the one in force: it is
 // appended and selected (and themeKeyAt() gives "" for it, so picking it changes nothing).
-SettingRow themeRow(const std::string& choiceKey, const std::vector<std::string>& customNames);
+SettingRow themeRow(const std::string& choiceKey, const std::vector<std::string>& customNames);   // Interface
 std::string themeKeyAt(int index, const std::vector<std::string>& customNames);   // "" when out of range
-SettingRow tvModeRow(TvSetting stored);                     // Off / Manual / Auto
-// The two "Auto: ..." On / Off rows (tv_auto_fs, tv_auto_pad; group 3) that follow the TV mode row: offered only while the
+SettingRow tvModeRow(TvSetting stored);                     // Interface: Off / Manual / Auto
+// The two "Auto: ..." On / Off rows (tv_auto_fs, tv_auto_pad; Interface) that follow the TV mode row: offered only while the
 // stored setting is Auto, since they decide nothing under Off or Manual.  Empty otherwise.
 std::vector<SettingRow> tvAutoRows(TvSetting stored, bool autoFullscreen, bool autoController);
 // "Off" then each preset's file name without its extension.  The preset in force when it is in neither list (a file picked
-// in the desktop window) is appended as "<stem> (custom)".
+// in the desktop window) is appended as "<stem> (custom)".  Picture.
 SettingRow shaderRow(const std::string& currentPreset, bool enabled, const std::vector<std::string>& presetPaths);
-// The Speed group's only row while no game has run this session (its core options are not known yet): a read-only line, never
-// steppable, saying why.
-SettingRow speedNoteRow();
-SettingRow moreRow();                                       // "More settings..." (opens the desktop window): no choices
+SettingRow moreRow();                                       // Interface: "Desktop settings..." (opens the desktop window): no choices
 
 // Left / Right (wrap = false: stops at the ends) and Accept (wrap = true).  A row with no choices stays where it is.
 int stepIndex(const SettingRow& r, int delta, bool wrap);

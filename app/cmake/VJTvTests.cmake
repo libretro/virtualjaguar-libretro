@@ -27,6 +27,23 @@ endif()
 add_test(NAME tv_settings_model_unit COMMAND vj_tv_settings_model_test)
 set_tests_properties(tv_settings_model_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
+# The core's option table without a game (tests/core_options_probe_test.cpp, #991): CoreHost::probeOptions() fills it before any
+# load, the display rules have run, and the first game after a probe sees the core as it would without one.  Links the real core.
+add_executable(vj_core_options_probe_test tests/core_options_probe_test.cpp src/core_host.cpp src/emu_thread.cpp src/paths.cpp)
+target_include_directories(vj_core_options_probe_test PRIVATE src)
+target_link_libraries(vj_core_options_probe_test PRIVATE vj_core ${VJ_SDL3_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(vj_core_options_probe_test PRIVATE ws2_32 iphlpapi)
+endif()
+if(MSVC)
+    target_compile_options(vj_core_options_probe_test PRIVATE /W3 /utf-8)
+    target_compile_definitions(vj_core_options_probe_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(vj_core_options_probe_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+add_test(NAME core_options_probe COMMAND vj_core_options_probe_test "${VJ_ROMS}/yarc.j64")
+set_tests_properties(core_options_probe PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL ")
+
 # Controller navigation (#1021): the pad-family menu-button profiles and the per-controller-model custom layer
 # (tests/pad_profile_test.cpp).  Pure; tv_nav.cpp is linked for the parity check against tv::intentForButton.
 add_executable(vj_pad_profile_test tests/pad_profile_test.cpp src/pad_profile.cpp src/tv/tv_nav.cpp src/remap.cpp src/config.cpp src/paths.cpp)

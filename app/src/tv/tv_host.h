@@ -52,12 +52,13 @@ enum class List { All, Favorites, Recent, Disc };
 // One row of the TV Settings screen, by value (AppHost fills them from the app's settings and the core's options, so the
 // screen never sees either).  `choices` are what Left / Right / Accept step through; "more" has none.
 struct SettingRow {
-    std::string id, label;             // ids: shader integer aspect resolution risc_clock idle_skip speed_note volume fps vsync theme tv_mode more
+    std::string id, label;             // app rows: shader integer smooth stretch aspect vsync fullscreen volume mute audio_buffer fps ... more; a core option: "core:" + its key
     std::vector<std::string> choices;  // empty for "more"
     int index = 0;
     bool readOnly = false;
-    std::string note;                  // shown under the value: why it is read-only
-    int group = 0;                     // 0 Picture, 1 Speed, 2 Sound, 3 Interface
+    std::string note;                  // shown under the value: why it is read-only, or what to know about it
+    std::string group;                 // the rail item's key: "picture" "sound" "interface" "library" "achievements" "discord" "neuro", "core:" + a category key ("core:" = no category)
+    std::string groupLabel;            // ... and what the rail shows for it
 };
 
 // One achievement of the loaded game, or one active leaderboard tracker (kind Tracker: read-only, no status).  AppHost fills them

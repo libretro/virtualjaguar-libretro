@@ -312,6 +312,9 @@ int App::tvScriptStep() {
         } else if (verb == "hardcore-pause") {   // hardcore-pause deny|allow -- allowPause() refuses (rc_client_can_pause between pauses) or not
             if (arg1 != "deny" && arg1 != "allow") return fail(l, "hardcore-pause wants deny|allow");
             testDenyPause = arg1 == "deny";
+        } else if (verb == "settings-group") {   // settings-group KEY -- the TV Settings rail will open on that group (interface, sound, core:video ...): the shell's focus memory, so a walk need not count rail items (the rail's length varies with the build and the session)
+            if (arg1.empty()) return fail(l, "settings-group wants a group key");
+            tvShell().memory().putItem("settings/rail", arg1);
         } else if (verb == "hintreset") {   // the one-time TV mode hint is due again (a Settings > Reset of Interface); toast-count starts over
             cfg.erase("ui.tv_hint_shown");
             tvHintShownThisRun_ = false;

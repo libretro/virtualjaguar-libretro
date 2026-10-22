@@ -2409,24 +2409,28 @@ static void desktopWindowTakesInputFromBase() {
 
 // ---- TV Settings (phase 3, Task 12) -----------------------------------------------------------------------------------
 
-static SettingRow mkRow(const char* id, const char* label, int group, std::vector<std::string> choices, int index = 0) {
+static SettingRow mkRow(const char* id, const char* label, const char* group, const char* groupLabel, std::vector<std::string> choices, int index = 0) {
     SettingRow r;
     r.id = id;
     r.label = label;
     r.group = group;
+    r.groupLabel = groupLabel;
     r.choices = std::move(choices);
     r.index = index;
     return r;
 }
 
-// Picture: Aspect ratio; Sound: Volume; Interface: Show FPS, then More settings -- no Speed row, so no Speed group.
+// The rail: Picture (Aspect ratio), Sound (Volume), Interface (Show FPS, then Desktop settings), then two of the core's categories,
+// Video (Internal resolution) and Speed (RISC overclock) -- the order the host lists them in (Phase 5: the app's tabs, then the core's).
 static std::vector<SettingRow> settingsFixture() {
     std::vector<std::string> pct;
     for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
-    return {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3", "16:9", "8:7 (square pixels)"}),
-            mkRow("volume", "Volume", 2, pct, 5),
-            mkRow("fps", "Show FPS", 3, {"Off", "On"}),
-            mkRow("more", "More settings\xE2\x80\xA6", 3, {})};
+    return {mkRow("aspect", "Aspect ratio", "picture", "Picture", {"Core default", "4:3", "16:9", "8:7 (square pixels)"}),
+            mkRow("volume", "Volume", "sound", "Sound", pct, 5),
+            mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"}),
+            mkRow("more", "More settings\xE2\x80\xA6", "interface", "Interface", {}),
+            mkRow("core:virtualjaguar_internal_resolution", "Internal resolution", "core:video", "Video", {"1x (native)", "2x"}),
+            mkRow("core:virtualjaguar_risc_clock_scale", "RISC overclock", "core:speed", "Speed", {"0.5x", "1x (stock)", "2x"}, 1)};
 }
 
 // A TV host on the Settings section (reached through the shell, not by counting RB presses), drawn once.
@@ -2459,8 +2463,8 @@ static void settingsRailAndList() {
     g_texts.clear();
     frames(host, shell, 2);
     CHECK(shell.screenId() == "settings");
-    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && !drew("Speed"));
-    CHECK(drew("Aspect ratio") && !drew("Show FPS"));   // the list is the focused group's: Picture
+    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && drew("Video") && drew("Speed"));   // the rail: the app's tabs, then the core's categories
+    CHECK(drew("Aspect ratio") && !drew("Show FPS") && !drew("Internal resolution"));   // the list is the focused group's: Picture
     down(host, shell, 2);                                // Picture, Sound, Interface
     g_texts.clear();
     frames(host, shell, 2);
@@ -2522,7 +2526,7 @@ static void settingsHints() {
     // A read-only row changes nothing, so the bar does not offer it.
     FakeHost ro;
     Shell roShell(ro);
-    SettingRow r = mkRow("fps", "Show FPS", 3, {"Off", "On"});
+    SettingRow r = mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"});
     r.readOnly = true;
     r.note = "Set for this session";
     settingsSetup(ro, roShell, {r});
@@ -2537,7 +2541,7 @@ static void settingsHints() {
 static void settingsTvModeOffLeavesCleanly() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, 1)});
+    settingsSetup(host, shell, {mkRow("tv_mode", "TV mode", "interface", "Interface", {"Off", "Manual", "Auto"}, 1)});
     CHECK(shell.ownsInput() && baseWindow() && baseWindow()->WasActive);
     rightN(host, shell, 1);                              // the list (only Interface exists)
     accept(host, shell);                                 // Manual -> Auto
@@ -2567,8 +2571,8 @@ static void settingsAutoRowsStep() {
     FakeHost host;
     Shell shell(host);
     settingsSetup(host, shell,
-                  {mkRow("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, 2), mkRow("tv_auto_fs", "Auto: in fullscreen", 3, {"Off", "On"}, 0),
-                   mkRow("tv_auto_pad", "Auto: when a controller is used", 3, {"Off", "On"}, 1)});
+                  {mkRow("tv_mode", "TV mode", "interface", "Interface", {"Off", "Manual", "Auto"}, 2), mkRow("tv_auto_fs", "Auto: in fullscreen", "interface", "Interface", {"Off", "On"}, 0),
+                   mkRow("tv_auto_pad", "Auto: when a controller is used", "interface", "Interface", {"Off", "On"}, 1)});
     CHECK(shell.focusLabel() == "Interface");            // on the rail: the group (the headless script's `expect tv-focus=`)
     rightN(host, shell, 1);                              // the list (only Interface exists)
     CHECK(shell.focusLabel() == "TV mode");
@@ -2586,7 +2590,7 @@ static void settingsAutoRowsStep() {
 static void settingsReadonlyRowIgnoresInput() {
     FakeHost host;
     Shell shell(host);
-    SettingRow r = mkRow("resolution", "Internal resolution", 0, {"1x", "2x"}, 1);
+    SettingRow r = mkRow("resolution", "Internal resolution", "picture", "Picture", {"1x", "2x"}, 1);
     r.readOnly = true;
     r.note = "Set for this session by Netplay";
     settingsSetup(host, shell, {r});
@@ -2651,7 +2655,7 @@ static void settingsHiddenRowsAbsent() {
     g_texts.clear();
     frames(host, shell, 2);
     CHECK(!drew("Shader"));
-    SettingRow shader = mkRow("shader", "Shader", 0, {"Off", "crt-royale", "lcd"}, 1);
+    SettingRow shader = mkRow("shader", "Shader", "picture", "Picture", {"Off", "crt-royale", "lcd"}, 1);
     host.rows.insert(host.rows.begin(), shader);
     g_texts.clear();
     frames(host, shell, 2);
@@ -2688,40 +2692,45 @@ static void baseHintsHiddenOverDesktopWindow() {
     CHECK(g_imguiErrors == 0);
 }
 
-// Speed before a game has run (approved change G): the group is in the rail with its one line, which nothing steps; on the Base screen
-// and in the menu's groups level.
-static std::vector<SettingRow> speedNoteRows() {
-    SettingRow note = mkRow("speed_note", "Available once a game has run", 1, {});
-    note.readOnly = true;
-    std::vector<SettingRow> rows = settingsFixture();
-    rows.insert(rows.begin() + 1, note);                 // after the Picture row, before Sound
-    return rows;
-}
-
-static void settingsSpeedNoteBeforeAGame() {
+// The core's categories are rail items after the app's (Phase 5 decision 3): their rows are the core options, each a row whose id
+// carries the option's key, stepped like any other; groups come and go with the rows, and the focus is remembered by the group's key.
+static void settingsCoreGroups() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, speedNoteRows());
+    settingsSetup(host, shell);
+    down(host, shell, 3);                                // Picture, Sound, Interface, Video
+    CHECK(shell.focusLabel() == "Video");
     g_texts.clear();
     frames(host, shell, 2);
-    CHECK(drew("Speed"));                                // the rail item
+    CHECK(drew("Internal resolution") && drew("1x (native)") && !drew("RISC overclock") && !drew("Aspect ratio"));
+    rightN(host, shell, 1);                              // into the list
+    CHECK(shell.focusLabel() == "Internal resolution");
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "core:virtualjaguar_internal_resolution", 1));
+    leftN(host, shell, 1);
+    CHECK(lastSet(host, "core:virtualjaguar_internal_resolution", 0));
+    leftN(host, shell, 1);                               // the left edge of the row: the rail
     down(host, shell);                                   // Speed
+    CHECK(shell.focusLabel() == "Speed");
     g_texts.clear();
     frames(host, shell, 2);
-    CHECK(drew("Available once a game has run") && !drew("Aspect ratio"));
-    rightN(host, shell, 1);                              // into the list (it is the only row) ...
-    accept(host, shell);
-    rightN(host, shell, 2);
-    CHECK(host.set.empty() && host.moreOpened == 0);     // ... where nothing steps or opens
+    CHECK(drew("RISC overclock") && drew("1x (stock)") && !drew("Internal resolution"));
+    down(host, shell);                                   // the last group: the rail clamps
+    CHECK(shell.focusLabel() == "Speed");
+    // The group the focus was on follows its key when an earlier group goes away: Speed stays Speed.
+    host.rows.erase(host.rows.begin() + 4);              // Internal resolution: Video is empty
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(shell.focusLabel() == "Speed" && !drew("Video"));
     CHECK(g_imguiErrors == 0);
 }
 
 static void settingsFocusRemembered() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3"}),
-                                mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("vsync", "VSync", 3, {"Off", "On"}),
-                                mkRow("theme", "Theme", 3, {"System", "Dark", "Light"}), mkRow("more", "More settings", 3, {})});
+    settingsSetup(host, shell, {mkRow("aspect", "Aspect ratio", "picture", "Picture", {"Core default", "4:3"}),
+                                mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"}), mkRow("vsync", "VSync", "interface", "Interface", {"Off", "On"}),
+                                mkRow("theme", "Theme", "interface", "Interface", {"System", "Dark", "Light"}), mkRow("more", "More settings", "interface", "Interface", {})});
     down(host, shell);                                   // Interface
     rightN(host, shell, 1);
     down(host, shell, 2);                                // Theme
@@ -2734,7 +2743,7 @@ static void settingsFocusRemembered() {
     accept(host, shell);                                 // lands on the same row, in its list
     CHECK(lastSet(host, "theme", 1) && host.set.size() == 1);
     // The row is followed by what it is, not by where it was: a row inserted above it does not move the focus.
-    host.rows.insert(host.rows.begin() + 1, mkRow("shader2", "Extra", 3, {"Off", "On"}));
+    host.rows.insert(host.rows.begin() + 1, mkRow("shader2", "Extra", "interface", "Interface", {"Off", "On"}));
     frames(host, shell, 2);
     accept(host, shell);
     CHECK(lastSet(host, "theme", 2));
@@ -2743,8 +2752,8 @@ static void settingsFocusRemembered() {
 static void settingsMouse() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1),
-                                mkRow("vsync", "VSync", 3, {"Off", "On"}, 1)});
+    settingsSetup(host, shell, {mkRow("volume", "Volume", "sound", "Sound", {"0 %", "50 %", "100 %"}, 1), mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"}),
+                                mkRow("vsync", "VSync", "interface", "Interface", {"Off", "On"}, 1)});
     ImGuiIO& io = ImGui::GetIO();
     // Interface is the second group: the rail item hovers into view.  1920x1080: the rail at x 96, 54 high, 62 apart; the
     // list from x 504 to 1824, rows 72 high, 86 apart from y 196.
@@ -2785,7 +2794,7 @@ static void settingsMouse() {
 static void settingsClickOnChevrons() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1)});
+    settingsSetup(host, shell, {mkRow("volume", "Volume", "sound", "Sound", {"0 %", "50 %", "100 %"}, 1)});
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(504 + 200, 196 + 36);            // focus the row and let it finish growing
     frames(host, shell, 30);
@@ -2817,14 +2826,14 @@ static void settingsWalk120FramesNoAsserts() {
     std::vector<std::string> pct;
     for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
     host.rows = settingsFixture();
-    SettingRow ro = mkRow("resolution", "Internal resolution with a rather long label", 0, {"1x (native)", "2x"}, 1);
+    SettingRow ro = mkRow("resolution", "Internal resolution with a rather long label", "picture", "Picture", {"1x (native)", "2x"}, 1);
     ro.readOnly = true;
     ro.note = "Set for this session by the Netplay window (or --option); disconnect to change it here";
     host.rows.push_back(ro);
-    host.rows.push_back(mkRow("risc_clock", "RISC overclock", 1, {"0.5x", "1x (stock)", "137% (custom)"}, 2));
-    host.rows.push_back(mkRow("idle_skip", "Idle-loop skip", 1, {"disabled", "enabled"}, 1));
-    for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 3, {"Off", "On"}));
-    host.rows.push_back(mkRow("theme", "Theme", 3, {"System", "Dark", "Light", "Custom: A very long theme name that does not fit"}, 3));
+    host.rows.push_back(mkRow("risc_clock", "RISC overclock", "core:speed", "Speed", {"0.5x", "1x (stock)", "137% (custom)"}, 2));
+    host.rows.push_back(mkRow("idle_skip", "Idle-loop skip", "core:speed", "Speed", {"disabled", "enabled"}, 1));
+    for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", "interface", "Interface", {"Off", "On"}));
+    host.rows.push_back(mkRow("theme", "Theme", "interface", "Interface", {"System", "Dark", "Light", "Custom: A very long theme name that does not fit"}, 3));
     Shell shell(host);
     const int errors = g_imguiErrors;
     shell.setSection(Section::Settings);
@@ -3488,25 +3497,24 @@ static void menuMoreSettingsKeepsMenu() {
     CHECK(g_imguiErrors == 0);
 }
 
-// ... and in the in-game menu's slot the groups level lists it too.
-static void ingameSpeedNoteBeforeAGame() {
+// ... and in the in-game menu's slot the groups level lists them too, a core group included.
+static void ingameCoreGroupsLevel() {
     FakeHost mh;
-    mh.rows = speedNoteRows();
+    mh.rows = settingsFixture();
     Shell ms(mh);
     menuSetup(mh, ms);
     menuTo(mh, ms, "Settings");
     accept(mh, ms);
     g_texts.clear();
     frames(mh, ms, 2);
-    CHECK(drew("Picture") && drew("Speed") && drew("Sound"));
-    down(mh, ms);
+    CHECK(drew("Picture") && drew("Video") && drew("Speed") && drew("Sound"));
+    down(mh, ms, 4);                                     // Speed
     accept(mh, ms);
     g_texts.clear();
     frames(mh, ms, 2);
-    CHECK(drew("Available once a game has run"));
-    accept(mh, ms);
-    rightN(mh, ms, 2);
-    CHECK(mh.set.empty());
+    CHECK(drew("RISC overclock") && !drew("Internal resolution"));
+    rightN(mh, ms, 1);
+    CHECK(lastSet(mh, "core:virtualjaguar_risc_clock_scale", 2));
     CHECK(g_imguiErrors == 0);
 }
 
@@ -3594,7 +3602,7 @@ static void menuWalkWithSlotsNoAsserts() {
     for (const char* row : {"Achievements", "Overlays", "Settings"}) {
         FakeHost host;
         host.rows = settingsFixture();
-        for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 0, {"Off", "On"}));
+        for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", "picture", "Picture", {"Off", "On"}));
         host.hdr.signedIn = true;
         host.hdr.hasGame = true;
         host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
@@ -3766,7 +3774,7 @@ int main() {
     settingsReadonlyRowIgnoresInput();
     settingsMoreOpensDesktop();
     settingsHiddenRowsAbsent();
-    settingsSpeedNoteBeforeAGame();
+    settingsCoreGroups();
     settingsFocusRemembered();
     settingsMouse();
     settingsClickOnChevrons();
@@ -3790,7 +3798,7 @@ int main() {
     overlaysToolRowsFromRegistry();
     overlaysHintsAndBack();
     ingameSettingsSlotLevels();
-    ingameSpeedNoteBeforeAGame();
+    ingameCoreGroupsLevel();
     menuMoreSettingsKeepsMenu();
     ingameSlotBackReturnsToRow();
     ingameAchievementsSlotDraws();
@@ -3878,7 +3886,7 @@ int main() {
         host.tv = true;
         host.loaded = false;
         host.rows = settingsFixture();
-        SettingRow ro = mkRow("resolution", "Internal resolution", 0, {"1x (native)", "2x"}, 1);
+        SettingRow ro = mkRow("resolution", "Internal resolution", "picture", "Picture", {"1x (native)", "2x"}, 1);
         ro.readOnly = true;
         ro.note = "Set for this session by Netplay or --option";
         host.rows.push_back(ro);

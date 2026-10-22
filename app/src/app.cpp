@@ -2138,6 +2138,11 @@ int App::run(const CliArgs& a) {
     neuroInit(*this, a);
 #endif
 
+    // The core's option table, before any game and before the emulation thread exists (it publishes the table at once):
+    // the TV Settings and the desktop Core tab show every option from the first frame (#991).  After loadUserOptions,
+    // wireHost (the lock) and the --option overrides, so the display rules read what the first game will.
+    host.probeOptions();
+
     int rc = a.headless ? (a.tvTestScript.empty() ? runHeadless(a) : runTvScript(a)) : runInteractive(a);
 
     saveConfig();

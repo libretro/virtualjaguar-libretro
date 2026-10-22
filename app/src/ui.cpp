@@ -123,13 +123,7 @@ bool matchesFilter(const OptionDef& d, const std::string& f) {
 
 void drawCoreOptions(App& app) {
     CoreHost& host = app.host;
-    if (!host.isLoaded() && host.optionDefs().empty()) {
-        ImGui::TextWrapped(
-            "The core's options appear here once a game is loaded (or the console is booted). "
-            "The menu is generated from the core's own option definitions.");
-        return;
-    }
-    if (host.isLoaded()) {
+    if (host.isLoaded()) {   // the table is there from startup (CoreHost::probeOptions), game or not
         if (ImGui::Button("Restart game to apply")) app.reloadContent();
         ui::hint("'Restart required' options apply on the next load.");
     }
