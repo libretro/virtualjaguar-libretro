@@ -340,6 +340,15 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   `neuro_watch_threaded` (a profile watch read through the `DebugViews` request, the cheat byte in the state line) and
   `neuro_loopback_threaded` (the loopback run with the input poll on its own thread; its frame-numbered press vector must
   equal the inline run's). `neuro_core_e2e` pins the replica against the real core inline, in lock-step and free-running.
+- **Phase 3b (the halt and the GDB stub on the emulation thread):** `debug_session_unit` (now label `emu_thread`: the verdict
+  serial, `frameEnded`/`stepping_`, detach and quit mid-halt, Detach and Attach ordered through the lane), `emu_thread_unit`
+  `testCallGivesUp` / `testAdvanceGivesUp` / `testServeDebugLane`, `emu_commands_unit` `testDebugLaneWait`, `debug_e2e_threaded`
+  (the REAL core on a threaded `EmuThread`, the rig wired as `App`: break / step / continue / detach / hardcore / quit mid-halt
+  from a UI thread that never blocks over 50 ms; it opens a free TCP port for the stub), `gdb_threaded_halt` (Python gdb
+  client: the threaded headless app halted at boot, `S05`, memory read, continue; SIGTERM mid-halt exits 0; needs Python3;
+  `gdb_inline_halt` / `gdb_inline_halt_hardcore` are the inline runs), `debug_on_threaded`, `gdb_enabled(_threaded)`,
+  `gdb_hardcore_locked_*` and `gdb_hardcore_flip_*`. `emu_thread_start_fallback` no longer expects anything to be "back on" (nothing
+  is switched off while threaded) and fails on "are back on" / "are off while".
 - **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
   test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
   still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.

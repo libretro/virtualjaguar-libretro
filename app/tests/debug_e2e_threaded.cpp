@@ -27,6 +27,7 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>   // socklen_t (MSVC defines it here, not in winsock2.h)
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
