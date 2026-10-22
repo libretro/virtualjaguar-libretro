@@ -314,7 +314,7 @@ public:
     void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
     void toggleLibrary();             // the desktop library window, or focus the home screen's search box (TV mode off)
     void openLibrary();               // Ctrl/Cmd+L, File > Game library, Cmd::Library: the TV Library while TV mode is on (over the paused game, from the in-game menu, with one), else toggleLibrary() (#991)
-    void reset();
+    bool reset();   // false: nothing reset (no game, halted, or the core halted again before the call ran)
     void togglePause();
     // The TV in-game menu's pause (tv/tv_app_host.cpp): like togglePause() but silent, and it remembers whether the
     // game was already paused, so closing the menu gives back exactly that.  False = refused (hardcore rations pausing;
@@ -550,6 +550,8 @@ private:
     std::string dataDirArg_;          // --data-dir as given (forwarded to a New Window copy)
     std::string headlessTmp_;
     unsigned headlessLoads_ = 0;
+    int testRestartGiveUps_ = -1;     // VJ_TEST_RESTART_GIVEUPS=N: the first N restarts (reset / reload) give up as a re-halt makes them (-1 = env not read yet)
+    bool testRestartGiveUp();
     unsigned testSlowCallMs_ = 0;     // VJ_TEST_SLOW_CALL_MS: the load call() sleeps this long (smoke_busy_threaded)
     std::string biosOnce_[3];         // a one-off BIOS boot's file per role (bootBios): beats everything, until the next load
     std::string biosCli_[3];          // --cart-bios / --cd-bios: beats the saved choice for the whole run

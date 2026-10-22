@@ -1443,10 +1443,26 @@ bool App::importBios(const std::string& path, bool trustSize) {
     return true;
 }
 
+// VJ_TEST_RESTART_GIVEUPS=N (achievements_hardcore_retry tests): the first N hardcore restarts report what a core that
+// halted again before the call ran reports (a gdb breakpoint still armed cannot be staged in a headless run).
+bool App::testRestartGiveUp() {
+    if (testRestartGiveUps_ < 0) {
+        const char* e = SDL_getenv("VJ_TEST_RESTART_GIVEUPS");
+        testRestartGiveUps_ = e ? (int)std::max(0L, std::strtol(e, nullptr, 10)) : 0;
+    }
+    if (testRestartGiveUps_ == 0) return false;
+    testRestartGiveUps_--;
+    return true;
+}
+
 bool App::reloadContent() {
     std::string p = host.loadedPath();   // after a disc swap too: the .srm and the disc list start from what was opened
     if (p.empty()) {
         if (host.isLoaded()) return openNoContent();
+        return false;
+    }
+    if (host.isLoaded() && testRestartGiveUp()) {
+        toast(kHaltedToast, 2.5, 2);
         return false;
     }
     reloading_ = true;   // a deliberate restart: neither keeps nor resumes an auto-save
@@ -1491,11 +1507,15 @@ void App::closeContent() {
     invalidateThumbs();
 }
 
-void App::reset() {
-    if (!host.isLoaded()) return;
+bool App::reset() {
+    if (!host.isLoaded()) return false;
     if (haltedNow() && !threaded()) {
         toast(kHaltedToast, 2.5, 2);
-        return;
+        return false;
+    }
+    if (testRestartGiveUp()) {
+        toast(kHaltedToast, 2.5, 2);
+        return false;
     }
     // A call, not a post: retro_reset can re-stage the CD BIOS, which the BIOS panel reads.
     // ach.onReset() drives rc_client (rc_client_reset raises events): on the emulation thread, with do_frame.
@@ -1510,6 +1530,7 @@ void App::reset() {
         detachForCall());
     debug.requestRefresh();
     toast(ran ? std::string("Reset") : std::string(kHaltedToast), ran ? 3.0 : 2.5, ran ? 1 : 2);   // not run: halted again
+    return ran;
 }
 
 void App::togglePause() {

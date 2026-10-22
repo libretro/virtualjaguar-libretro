@@ -232,6 +232,8 @@ private:
     bool loading_ = false;           // an identify/load request is in flight
     bool gameKnown_ = false;         // the current content has an achievement set
     bool resetPending_ = false;      // rc_client asked for a reset (hardcore just turned on)
+    bool restartTried_ = false;      // the pending restart was attempted already (cheat reset posted, reload line logged)
+    bool restartGaveUpLogged_ = false;
     bool settingsOk_ = true;
     std::atomic<bool> memoryReady_{false};
     bool loadFailed_ = false;        // the last identify/load attempt did not produce a tracked game

@@ -313,6 +313,36 @@ foreach(_m off on)
 endforeach()
 set_tests_properties(gdb_hardcore_locked_on gdb_hardcore_flip_on PROPERTIES LABELS emu_thread)
 
+# The hardcore restart that gives up (the core halted again: a gdb breakpoint still armed) must stay pending and retry, not be
+# dropped with hardcore on and the stub still open.  A headless run cannot stage that re-halt (the core only runs when the loop
+# advances it), so VJ_TEST_RESTART_GIVEUPS=2 makes the first two restarts report what a give-up reports.  Pinned: the retry
+# line once (not per pump), the reload line once, the stub closes in the end, and --ra-expect-reset 1 (one restart counted).
+foreach(_m off on)
+    set(_gg "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-giveup-${_m}")
+    file(MAKE_DIRECTORY "${_gg}")
+    if(_m STREQUAL "on")
+        file(WRITE "${_gg}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23462\n")
+    else()
+        file(WRITE "${_gg}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23463\n")
+    endif()
+    add_test(NAME gdb_hardcore_flip_giveup_${_m}
+        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 120 --verbose --data-dir "${_gg}"
+                --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40 --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_hardcore_flip_giveup_${_m} PROPERTIES TIMEOUT 180 ENVIRONMENT "VJ_TEST_RESTART_GIVEUPS=2"
+        PASS_REGULAR_EXPRESSION "gdb host attached \\(silent\\).*\\[ach\\] hardcore on: reloading the game to close the GDB stub.*\\[ach\\] hardcore on: the restart gave up \\(core halted\\), retrying.*\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|failed to open port|ThreadSanitizer|owner violation|close the GDB stub.*close the GDB stub|gave up \\(core halted\\), retrying.*gave up \\(core halted\\), retrying")
+endforeach()
+# The same without the stub: hardcore turns on late, the plain reset gives up twice, and the third try restarts the game once.
+foreach(_m off on)
+    add_test(NAME ra_hardcore_reset_giveup_${_m}
+        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 120 --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40
+                --ra-expect-hardcore --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(ra_hardcore_reset_giveup_${_m} PROPERTIES TIMEOUT 180 ENVIRONMENT "VJ_TEST_RESTART_GIVEUPS=2"
+        PASS_REGULAR_EXPRESSION "\\[ach\\] hardcore on: the restart gave up \\(core halted\\), retrying.*headless: OK"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|ThreadSanitizer|owner violation|close the GDB stub|gave up \\(core halted\\), retrying.*gave up \\(core halted\\), retrying")
+endforeach()
+set_tests_properties(gdb_hardcore_flip_giveup_on ra_hardcore_reset_giveup_on PROPERTIES LABELS emu_thread)
+
 add_executable(vj_late_latch_test tests/late_latch_test.cpp)
 target_include_directories(vj_late_latch_test PRIVATE src)
 vj_emu_thread_warnings(vj_late_latch_test)
