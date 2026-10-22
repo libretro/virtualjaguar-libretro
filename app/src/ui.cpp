@@ -122,6 +122,7 @@ bool matchesFilter(const OptionDef& d, const std::string& f) {
 }
 
 void drawCoreOptions(App& app) {
+    if (app.debug.halted()) ImGui::TextDisabled("Settings and cheats apply after Continue");   // frame-lane posts wait for the core to run
     CoreHost& host = app.host;
     if (host.isLoaded()) {   // the table is there from startup (CoreHost::probeOptions), game or not
         if (ImGui::Button("Restart game to apply")) app.reloadContent();
@@ -596,19 +597,32 @@ void drawMenuBar(App& app) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && !app.haltedNow())) app.closeContent();
+        // Threaded, a halted game closes too: closeContent() detaches the debugger first.  Inline, the call would run inside
+        // retro_run, so the item stays off.
+        if (ImGui::MenuItem("Close game", nullptr, false, host.isLoaded() && (app.threaded() || !app.haltedNow()))) app.closeContent();
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) app.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Emulation")) {
-        bool loaded = host.isLoaded() && !app.haltedNow();   // a debugger halt parks the core: nothing that re-enters it
-        if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, loaded)) app.togglePause();
-        if (ImGui::MenuItem("Reset", "Ctrl+R", false, loaded)) app.reset();
-        ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, loaded);
+        // A debugger halt parks the core.  Threaded, the commands that re-enter it detach the debugger first (canReenter);
+        // inline they would run inside retro_run, so they stay off.  A state needs the core at a frame boundary, so it
+        // waits for Continue in both modes.
+        const bool loaded = host.isLoaded();
+        const bool canReenter = loaded && (app.threaded() || !app.haltedNow());
+        const bool canState = loaded && !app.haltedNow();
+        const auto haltTip = [&app] {   // on a menu item the halt switched off
+            if (app.haltedNow() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Resume the debugger first (F9)");
+        };
+        if (ImGui::MenuItem(app.paused ? "Resume" : "Pause", "F8", false, canReenter)) app.togglePause();
+        if (ImGui::MenuItem("Reset", "Ctrl+R", false, canReenter)) app.reset();
+        ImGui::MenuItem("Fast-forward (hold Tab)", nullptr, &app.fastForward, canReenter);
         ImGui::Separator();
-        if (ImGui::MenuItem("Save state", "F5", false, loaded)) app.saveState(app.stateSlot);
-        if (ImGui::MenuItem("Load state", "F7", false, loaded && app.slotExists(app.stateSlot))) app.loadState(app.stateSlot);
+        if (ImGui::MenuItem("Save state", "F5", false, canState)) app.saveState(app.stateSlot);
+        if (!canState) haltTip();
+        if (ImGui::MenuItem("Load state", "F7", false, canState && app.slotExists(app.stateSlot))) app.loadState(app.stateSlot);
+        if (!canState) haltTip();
         if (ImGui::BeginMenu("Slot")) {
             for (int s = 0; s < 10; s++) {
                 std::string l = "Slot " + std::to_string(s) + (app.slotExists(s) ? "  (used)" : "");
@@ -616,8 +630,9 @@ void drawMenuBar(App& app) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("State manager...", nullptr, false, loaded)) app.showStates = true;
-        if (ImGui::MenuItem("Cheats...", nullptr, false, loaded)) app.showCheats = true;
+        if (ImGui::MenuItem("State manager...", nullptr, false, canState)) app.showStates = true;
+        if (!canState) haltTip();
+        if (ImGui::MenuItem("Cheats...", nullptr, false, canReenter)) app.showCheats = true;
         DiscInfo disc = host.discInfo();
         if (disc.available) {
             // A disc command is a call(), not a post(): inserting a disc can re-stage the CD BIOS, which writes the
@@ -625,15 +640,16 @@ void drawMenuBar(App& app) {
             ImGui::Separator();
             // The CD BIOS with no disc (#646) has an empty list: closing the tray would have nothing to insert, so
             // only Add disc image... shows until a disc is in it.
-            if (disc.count > 0 && ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false)) {
+            if (disc.count > 0 && ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false, canReenter)) {
                 const bool eject = !disc.ejected;
-                app.emu.call([&host, eject] { host.discSetEject(eject); });
+                app.emu.call([&host, eject] { host.discSetEject(eject); }, app.detachForCall());   // halted: detach first
             }
-            if (ImGui::MenuItem("Add disc image...")) app.showDiscDialog();
+            if (ImGui::MenuItem("Add disc image...", nullptr, false, canReenter)) app.showDiscDialog();
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
                 for (unsigned i = 0; i < disc.count; i++) {
                     ImGui::PushID((int)i);   // a multi-disc set can repeat a label
-                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i)) app.emu.call([&host, i] { host.discSetIndex(i); });
+                    if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i, canReenter))
+                        app.emu.call([&host, i] { host.discSetIndex(i); }, app.detachForCall());
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();

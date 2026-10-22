@@ -863,7 +863,7 @@ bool CoreHost::finishLoad(const std::string& label, std::string& err, const std:
 
 bool CoreHost::loadContent(const std::string& path, std::string& err) {
     if (noteOffOwner("loadContent")) { err = "called off the emulation thread"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     if (!startSession(err)) return false;
 
     // An .m3u: the core boots the first disc, and every disc goes in its disc list after the load.
@@ -953,7 +953,7 @@ bool CoreHost::readPlaylist(const std::string& m3uPath, std::vector<std::string>
 
 bool CoreHost::loadNoContent(std::string& err) {
     if (noteOffOwner("loadNoContent")) { err = "called off the emulation thread"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     if (!startSession(err)) return false;
     if (!supportsNoGame_) {
         err = "the core does not support booting without content";
@@ -1055,7 +1055,7 @@ void CoreHost::sendKeyEvent(bool down, unsigned retroKey, uint32_t character, ui
 bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
     if (noteOffOwner("saveStateToFile")) { err = "called off the emulation thread"; return false; }
     if (!loaded_) { err = "no game loaded"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     size_t size = retro_serialize_size();
     if (!size) { err = "the core cannot save states"; return false; }
     std::vector<unsigned char> buf(size);
@@ -1067,7 +1067,7 @@ bool CoreHost::saveStateToFile(const std::string& path, std::string& err) {
 bool CoreHost::loadStateFromFile(const std::string& path, std::string& err) {
     if (noteOffOwner("loadStateFromFile")) { err = "called off the emulation thread"; return false; }
     if (!loaded_) { err = "no game loaded"; return false; }
-    if (inFrame_) { err = "the debugger has the game halted (resume it first)"; return false; }
+    if (inFrame_) { err = "the debugger has the game halted (resume it first: F9)"; return false; }
     std::vector<unsigned char> buf;
     if (!readFile(path, buf) || buf.empty()) { err = "cannot read " + path; return false; }
     if (!retro_unserialize(buf.data(), buf.size())) { err = "the core rejected the state"; return false; }

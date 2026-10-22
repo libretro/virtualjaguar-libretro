@@ -28,11 +28,11 @@
 namespace vj {
 struct EmuThreadTestAccess {
     static bool advancePublished(EmuThread& e) {
-        // The owner is gated after drain: old code publishes the budget directly, fixed code queues it
-        // behind the one pending mutation. Neither can be consumed until the test releases the gate.
+        // The owner is gated after drain: old code publishes the budget directly, fixed code queues it (on the debug
+        // lane) behind the one pending mutation. Neither can be consumed until the test releases the gate.
         if (e.advanceLeft_.load() != 0) return true;
         std::lock_guard<std::mutex> lock(e.cmds_.mu_);
-        return e.cmds_.q_.size() >= 2;
+        return !e.cmds_.dbg_.empty();
     }
 };
 }  // namespace vj
@@ -591,7 +591,7 @@ void testServeDebugLane() {
     std::atomic<int> ran{0};
     e.debugPost([&] { ran++; });
     c.serveNow = 1;
-    for (int i = 0; i < 1000 && (c.serveNow.load() > 0 || ran.load() == 0); i++) sleepMs(1);
+    for (int i = 0; i < 1000 && (c.serveNow.load() > 0 || ran.load() == 0 || served.load() == 0); i++) sleepMs(1);   // `served` is stored after the lane service returns
     CHECK(ran.load() == 1 && served.load() == 1, "a debug post is run by the lane service (%d, %zu)", ran.load(), served.load());
     CHECK(e.serveDebugLane(std::chrono::milliseconds(50)) == 0, "off the emulation thread: 0, no wait");
     c.block = false;
@@ -603,6 +603,101 @@ void testServeDebugLane() {
     in.debugPost([&] { x = 1; });            // inline: ran at once
     const auto t0 = Clock::now();
     CHECK(in.serveDebugLane(std::chrono::milliseconds(50)) == 0 && since(t0) < 0.01 && x == 1, "inline: returns at once");
+}
+
+// Review Focus 1: a call posted an instant before the core halts.  With a give-up predicate it returns R() once the
+// predicate turns true, and the cancelled task never runs; a task that already started is waited for; a predicate that
+// is already true means nothing is queued at all.
+void testCallGivesUp() {
+    EmuThread e;
+    FakeClient c;
+    c.block = true;   // a frame that never ends: the halt
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    std::atomic<bool> halted{false};
+    std::atomic<int> polls{0};
+    auto ran = std::make_shared<std::atomic<bool>>(false);
+    std::thread flip([&] { sleepMs(60); halted = true; });
+    const Clock::time_point t0 = Clock::now();
+    const int r = e.call([ran] { *ran = true; return 42; }, [&] { polls++; return halted.load(); });
+    flip.join();
+    CHECK(r == 0, "the call returned R() (%d)", r);
+    CHECK(since(t0) < 0.3 && since(t0) >= 0.05, "once the predicate turned true, within 300 ms (%.3f s)", since(t0));
+    CHECK(polls.load() >= 2, "the predicate was polled before the post and after a slice (%d)", polls.load());
+    // Already halted when the call is made: nothing is queued, R() at once.
+    polls = 0;
+    auto ran2 = std::make_shared<std::atomic<bool>>(false);
+    const Clock::time_point t1 = Clock::now();
+    CHECK(e.call([ran2] { *ran2 = true; return 7; }, [&] { polls++; return halted.load(); }) == 0 && since(t1) < 0.01 && polls.load() == 1,
+          "a true predicate before the post returns at once (%.1f ms, %d polls)", since(t1) * 1e3, polls.load());
+    c.block = false;
+    sleepMs(100);                                   // the frame ends, the queue drains
+    CHECK(!ran->load() && !ran2->load(), "the cancelled task never ran, the refused one was never queued");
+    // A task that started before the predicate turned true runs to completion and returns its value.
+    halted = false;
+    const int r2 = e.call([&] { sleepMs(120); halted = true; sleepMs(30); return 7; }, [&] { return halted.load(); });
+    CHECK(r2 == 7, "a started task is waited for (%d)", r2);
+    // Never consulted inline or on the emulation thread.
+    std::atomic<int> consulted{0};
+    CHECK(e.call([&] { return e.call([] { return 1; }, [&] { consulted++; return true; }); }) == 1, "on the thread: runs");
+    CHECK(consulted.load() == 0, "predicate ignored on the emulation thread (%d)", consulted.load());
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline");
+    CHECK(in.call([] { return 3; }, [&] { consulted++; return true; }) == 3 && consulted.load() == 0, "inline: runs, never asks");
+}
+
+// Carried from 3a: advance() gives up like call().  The budget is registered on the debug lane even while a frame is
+// parked; the wait ends when the predicate turns true; advance(0) later waits for the frames still budgeted.
+void testAdvanceGivesUp() {
+    EmuThread e;
+    FakeClient c;
+    e.setPaused(true);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    c.block = true;                                 // the next frame parks: the halt
+    std::atomic<bool> halted{false};
+    std::thread flip([&] { sleepMs(80); halted = true; });
+    const Clock::time_point t0 = Clock::now();
+    const bool r = e.advance(2, [&] { return halted.load(); });
+    flip.join();
+    CHECK(!r && since(t0) >= 0.07 && since(t0) < 0.5, "gave up once the predicate turned true, not before (%.3f s)", since(t0));
+    CHECK(c.blocked.load(), "the budget was registered: the first frame started and parked");
+    halted = false;
+    c.block = false;
+    CHECK(e.advance(0, [&] { return halted.load(); }), "advance(0) waits for the frames still budgeted");
+    CHECK(c.frames.load() == 2, "both budgeted frames ran (%d)", c.frames.load());
+    const Clock::time_point t1 = Clock::now();
+    CHECK(e.advance(0) && since(t1) < 0.05, "nothing pending: true at once");
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline");
+    std::atomic<int> consulted{0};
+    CHECK(in.advance(2, [&] { consulted++; return true; }) && ic.frames.load() == 2 && consulted.load() == 0, "inline: runs, never asks");
+}
+
+// A smoke test for the give-up / drain pair on a live queue: a predicate that is true before the post (i % 3 == 0), after
+// the first slice or after the second.  Whatever happens, a call that returned its value ran, and a call that gave up left
+// nothing behind that writes its by-reference local later.  The deterministic guard tests are testCallGivesUp's cancelled
+// and started cases; the compare-and-swap interleave itself is too narrow to hit from here.
+void testCallGiveUpRace() {
+    EmuThread e;
+    FakeClient c;
+    c.period = 0.001;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    int bad = 0, gaveUp = 0, ranN = 0;
+    for (int i = 0; i < 300; i++) {
+        std::atomic<int> polls{0};
+        int local = 0;   // by reference: only touched by the task, and only if the call did not give up
+        const int r = e.call([&local] { local = 1; return 5; }, [&] { return polls++ >= (i % 3); });
+        if (r == 5) { ranN++; if (local != 1) bad++; }
+        else { gaveUp++; sleepMs(0); }
+    }
+    sleepMs(30);   // a (wrongly) surviving cancelled task would write a dead local now; TSan / ASan catch it
+    CHECK(bad == 0, "a call that returned its value ran (%d)", bad);
+    CHECK(gaveUp + ranN == 300, "every call returned one way or the other (%d + %d)", gaveUp, ranN);
+    CHECK(e.stop(), "stop");
 }
 
 int main() {
@@ -628,6 +723,9 @@ int main() {
     testDebugCallWaitsForTheFrame();
     testDebugCallWaitHook();
     testServeDebugLane();
+    testCallGivesUp();
+    testAdvanceGivesUp();
+    testCallGiveUpRace();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

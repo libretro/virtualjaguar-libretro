@@ -178,6 +178,23 @@ public:
     // is what every "may the UI re-enter the core?" check asks: CoreHost::inFrame() is the core's own view, and when
     // threaded it is true for the whole of every frame.
     bool haltedNow() const { return debug.halted(); }
+    // ---- calling into the emulation thread from the UI (#967 phase 3b) ---------------------------------------
+    // A frame-lane call waits for a frame boundary, and a halted core never reaches one.  Every UI-thread call passes a
+    // give-up (EmuThread::call): "not now", R(), as soon as the core is halted.  `emuCall` is the default; open / close /
+    // reset / disc swaps detach the debugger first (`detachForCall`) and proceed; save / load state and boot refuse.
+    // RetroAchievements replies ride the debug lane instead (Achievements::coreCall).
+    static constexpr const char* kHaltedToast = "The debugger has the game halted - resume it first (F9)";
+    std::function<bool()> haltGiveUp() const {
+        return [this] { return debug.core().halt().halted; };
+    }
+    // Threaded and halted: asks the pump to detach (the verdict for the halt we saw) and returns a predicate that turns
+    // true only if the core halts AGAIN afterwards (a new serial), so the call that follows waits out the resume.
+    // Otherwise haltGiveUp().
+    std::function<bool()> detachForCall();
+    template <class F>
+    auto emuCall(F&& fn) -> decltype(fn()) {
+        return emu.call(std::forward<F>(fn), haltGiveUp());
+    }
     discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
     struct DiscordState {        // what discordTick() remembers between calls
         double lastTick = -1;
@@ -259,7 +276,9 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
-    bool autoSave();                  // write this game's auto-save when the policy allows (lib::shouldAutoSave)
+    // Write this game's auto-save when the policy allows (lib::shouldAutoSave).  `giveUp`: detachForCall()'s predicate when
+    // the caller has just asked a halted debugger to detach -- the save then waits out the resume instead of refusing.
+    bool autoSave(const std::function<bool()>& giveUp = {});
     void offerResume();               // a game booted: load / ask / nothing, by the policy and the option
     void openAndLoadState(const std::string& path, int slot, const std::string& stateDisc = "");   // the library: open `path`, then load its state `slot`
     bool openNoContent();             // boots the console with no cartridge, through the BIOS bootBios() last chose
@@ -321,7 +340,9 @@ public:
 
     std::string statePath(int slot) const;
     std::string thumbPath(int slot) const;
-    bool saveState(int slot, bool quiet = false);   // slot lib::kAutoSlot = the auto-save
+    // slot lib::kAutoSlot = the auto-save.  Refused while the debugger has the game halted (quiet: silent) unless `giveUp`
+    // is given (see autoSave).
+    bool saveState(int slot, bool quiet = false, const std::function<bool()>& giveUp = {});
     bool loadState(int slot);
     bool slotExists(int slot) const;
     SDL_Time slotTime(int slot) const;
@@ -471,6 +492,9 @@ private:
     void syncEmuFlags();                       // UI thread: pause / fast-forward / mute / audio target -> emulation side
     const Frame& shownFrame();                 // the newest finished frame (FrameExchange when threaded)
     void runHeadlessFrames(unsigned n);
+    // Threaded: n frames through EmuThread::advance, polled in 10 ms slices while a halt holds the core.  False only when
+    // a quit was requested while a halt held it.
+    bool headlessAdvance(unsigned n);
     bool discSwapHeadlessCheck(const std::string& path);   // --disc-swap
     bool discInsertHeadlessCheck(const std::string& path);   // --disc-insert
     void followDiscSwap();                     // UI thread: a disc swap moved host.contentPath(); catch up with it

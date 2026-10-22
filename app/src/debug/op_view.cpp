@@ -16,10 +16,11 @@ unsigned beWord(const uint8_t* b, unsigned at) { return ((unsigned)b[at] << 8) |
 }  // namespace
 
 OpStep opStepFor(const OpStepGate& g) {
-    // `attached` refuses in both modes: EmuThread::advance() has no give-up, so it must not run where a halt is possible.
-    if (!g.loaded || !g.paused || g.halted || g.netplay || g.attached) return OpStep::None;
+    if (!g.loaded || !g.paused || g.halted || g.netplay) return OpStep::None;
+    // Threaded: EmuThread::advance() gives up when a halt begins, so an attached session is fine.  Inline, a frame run
+    // from the draw hook that then halts would start a second ImGui frame: attached and inFrame refuse.
     if (g.threaded) return OpStep::Advance;
-    return !g.inFrame ? OpStep::Inline : OpStep::None;
+    return !g.attached && !g.inFrame ? OpStep::Inline : OpStep::None;
 }
 
 void OpViewModel::clear() {

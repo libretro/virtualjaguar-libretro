@@ -69,6 +69,7 @@ public:
 
     // ---- wiring (App) --------------------------------------------------------------------
     DebugCore& core() { return core_; }         // the emulation-thread half (App wires its hooks)
+    const DebugCore& core() const { return core_; }
     DebugViews& views() { return views_; }      // the request copier the windows use
     // How a method that must touch the core reaches the emulation thread.  Empty (inline, tests): runs fn now.
     std::function<void(std::function<void()>)> coreCall;   // waits (App: emu.debugCall<void>)

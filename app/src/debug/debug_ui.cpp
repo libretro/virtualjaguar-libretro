@@ -69,6 +69,7 @@ void drawDebugOverlay(App& app, float areaX, float areaY) {
         if (ImGui::Button("Step  F10")) d.step();
         ImGui::SameLine();
         if (ImGui::Button("Detach")) d.detach();
+        ImGui::TextDisabled("Settings and cheats apply after Continue");   // frame-lane commands wait for the core to run
     }
     ImGui::End();
 }

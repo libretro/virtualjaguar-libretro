@@ -476,15 +476,15 @@ void drawObjectsTool(App& app) {
     ctx.frameW = app.video.frameWidth();
     ctx.frameH = app.video.frameHeight();
     ctx.emulationRunning = !app.paused && !app.debug.halted();
-    // Never while the session is attached.  Inline, a frame run from inside this draw hook that then halts would
-    // start a second ImGui frame (App::haltedFrame) inside the current one; threaded, emu.advance() has no give-up.
-    // Threaded, the emulation thread runs the frame; no owner-only CoreHost call is made from here.
+    // Inline, never while the session is attached: a frame run from inside this draw hook that then halts would start a
+    // second ImGui frame (App::haltedFrame) inside the current one.  Threaded, the emulation thread runs the frame and
+    // advance() gives up when a halt begins; no owner-only CoreHost call is made from here.
     switch (opStepFor({app.threaded(), app.paused, app.debug.halted(), app.debug.attached(),
                        /*inFrame*/ !app.threaded() && app.host.inFrame(), app.host.isLoaded(),
                        app.netplay.configured()})) {
         case OpStep::Advance:
             ctx.stepFrame = [&app] {
-                app.emu.advance(1);
+                app.emu.advance(1, app.haltGiveUp());
                 // The bump comes AFTER the frame: a fill queued before it ran at the old serial and may have seen the
                 // snapshot still armed; the new serial makes the copier refill it.
                 app.debug.requestRefresh();

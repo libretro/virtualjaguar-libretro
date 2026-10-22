@@ -131,30 +131,38 @@ void EmuThread::inlineStep() {
     frames_.fetch_add(1);
 }
 
-// No give-up: a caller must not use this while a halt is possible.
-bool EmuThread::advance(unsigned n) {
-    if (n == 0) return true;
+bool EmuThread::advance(unsigned n, std::function<bool()> giveUp) {
     if (abandoned() || !client_) return false;
     if (!threaded()) {
+        if (n == 0) return true;
         if (!client_->canRun()) return false;
         for (unsigned i = 0; i < n; i++) inlineStep();
         return true;
     }
     if (onEmuThread()) return false;   // a command cannot wait for frames that only run after it
-    // Publish the budget through the command queue too. A UI-side increment can land after drain() but before
-    // the loop reads its budget, letting a frame overtake an earlier posted option/input change.
+    // Publish the budget through the debug lane: an atomic increment that is safe inside a halt (the halt pump serves the
+    // lane), so it is always registered, and the drain order (frame lane first) keeps it behind every earlier post.
     // Count only budgeted frames, including any requests already queued ahead of this one.
-    const uint64_t target = call([this, n] {
+    const uint64_t target = debugCall([this, n] {
         const uint64_t end = advanceDone_.load() + advanceLeft_.load() + n;
         advanceLeft_.fetch_add(n);
         return end;
     });
-    if (!target) return false;   // call() was abandoned before accepting the request
+    if (abandoned()) return false;   // debugCall was abandoned before accepting the request
     std::unique_lock<std::mutex> l(mu_);
-    advanceCv_.wait(l, [&] {
+    const auto pred = [&] {
         return advanceDone_.load() >= target || advanceLeft_.load() == 0 || finished_ ||
                state_.load() == State::Abandoned;
-    });
+    };
+    for (;;) {
+        if (advanceCv_.wait_for(l, std::chrono::milliseconds(16), pred)) break;
+        if (giveUp) {   // outside mu_: the predicate may take any lock of its own
+            l.unlock();
+            const bool g = giveUp();
+            l.lock();
+            if (g) return false;
+        }
+    }
     return advanceDone_.load() >= target;
 }
 
@@ -179,6 +187,9 @@ void EmuThread::loop() {
     while (!stop_.load()) {
         size_t ran = cmds_.drain(onError, EmuCommands::Lane::Frame);
         ran += cmds_.drain(onError, EmuCommands::Lane::Debug);
+        // advance()'s budget rides the debug lane: a frame-lane post made before it may have landed between the two
+        // drains above, and must not be overtaken by the frame the budget starts.
+        if (advanceLeft_.load() > 0) ran += cmds_.drain(onError, EmuCommands::Lane::Frame);
         if (ran > 0) client_->afterCommands();
         if (stop_.load()) break;
         const bool budget = advanceLeft_.load() > 0;

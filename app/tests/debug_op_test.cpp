@@ -987,7 +987,7 @@ static void testOpStepGate() {
     g.attached = true;  CHECK(opStepFor(g) == OpStep::None);  g.attached = false;
     g.inFrame = true;   CHECK(opStepFor(g) == OpStep::None);  g.inFrame = false;
     g.threaded = true;  CHECK(opStepFor(g) == OpStep::Advance);   // inFrame is not consulted threaded
-    g.attached = true;  CHECK(opStepFor(g) == OpStep::None);      g.attached = false;   // advance() has no give-up
+    g.attached = true;  CHECK(opStepFor(g) == OpStep::Advance);   g.attached = false;   // advance() gives up on a halt (3b)
     g.inFrame = true;   CHECK(opStepFor(g) == OpStep::Advance);   g.inFrame = false;
     g.halted = true;    CHECK(opStepFor(g) == OpStep::None);      g.halted = false;
     g.netplay = true;   CHECK(opStepFor(g) == OpStep::None);      g.netplay = false;

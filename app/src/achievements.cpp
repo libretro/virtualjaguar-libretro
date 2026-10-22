@@ -211,7 +211,8 @@ void Achievements::coreCall(const std::function<void()>& fn) {
         std::lock_guard<std::recursive_mutex> lock(clientMu_);
         fn();
     };
-    if (app_) app_->emu.call(locked);
+    // The debug lane: served at a frame boundary or inside a halt, never cancelled (a reply callback must not be lost).
+    if (app_) app_->emu.debugCall(locked);
     else locked();
 }
 void Achievements::corePost(std::function<void()> fn) {

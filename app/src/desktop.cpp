@@ -99,10 +99,10 @@ void App::runNativeCommand(platform::Cmd cmd, int arg) {
             DiscInfo d = a.host.discInfo();
             if (d.available && d.count > 0) {   // an empty list (the CD BIOS with no disc) has nothing to insert
                 const bool eject = !d.ejected;
-                a.emu.call([&app = a, eject] { app.host.discSetEject(eject); });
+                a.emu.call([&app = a, eject] { app.host.discSetEject(eject); }, a.detachForCall());
             }
         }
-        void selectDisc(int i) override { a.emu.call([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }); }
+        void selectDisc(int i) override { a.emu.call([&app = a, idx = (unsigned)i] { app.host.discSetIndex(idx); }, a.detachForCall()); }
         void addDisc() override { a.showDiscDialog(); }
         void toggleFullscreen() override { a.setFullscreen(!a.fullscreen); }
         void toggleIntegerScale() override { a.present.integerScale = !a.present.integerScale; }

@@ -465,9 +465,9 @@ int netplayHeadlessCheck(App& app, const CliArgs& a) {
     unsigned frame = 0;
     auto step = [&]() {
         if (app.threaded()) {
-            app.emu.advance(1);
+            app.emu.advance(1, app.haltGiveUp());
             app.host.pinSnapshot();   // the core's link lines and events arrive here
-            if ((++frame & 15) == 15) app.emu.call([&app] { app.audio.clear(); });
+            if ((++frame & 15) == 15) app.emuCall([&app] { app.audio.clear(); });
         } else {
             app.audio.update();
             app.host.runFrame();
