@@ -1992,8 +1992,7 @@ Rules:
 
 ### Task 16a: layout fixes from the user's TV testing
 
-TBD: filled in from the user's report (the Phase 3 list the user still owes; one commit per screen, smoke cases where a
-fix changes a size or a position).
+Closed with no work: on 2026-10-22 the owner reported that no layout fixes are needed, so PR 4 closes #991.
 
 ### Task 17: the settings UI and the build default
 
