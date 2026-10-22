@@ -76,8 +76,8 @@ keep save backups before relying on them.
 status (`supported`, `setting-omitted`, `ignored`, `unsupported`) with our own
 description of what the call does and the follow-up needed. `load_api_map()`
 reads it; an unlisted call is `unmapped` and the refusal names it
-(`Unsupported.call`). Integer settings (`bigpemu_register_setting_int*`) are
-omitted toggles, not fatal. A `printf_notify("literal")` reached at load for the
+(`Unsupported.call`). Integer settings (`bigpemu_register_setting_int` and
+`bigpemu_register_setting_int_full`) are omitted toggles, not fatal. A `printf_notify("literal")` reached at load for the
 matching cartridge becomes `Module.messages` (at most four, 200 characters each);
 other uses are listed in `Module.dropped_messages`, and `printf` in
 `Module.ignored_calls`.
@@ -87,64 +87,86 @@ are accepted. Recognized copier headers are refused: provide the native payload
 so both the source hash and app CRC refer to the same bytes. Disc images and
 other software containers are outside this first version.
 
-## Provenance and validation
+## Community cheat packs
 
-This feature responds to [#1050](https://github.com/libretro/virtualjaguar-libretro/issues/1050),
-where the owner of `jguffer/BigPEmu_Scripts` says they generated those scripts
-and requests translation. That repository has no stated license. This project
-does not redistribute its sources or a converted cheat pack, and does not
-infer redistribution permission from the request.
+Packs are published at <https://jaguar.provenance-emu.com/cheats/>.
 
-Local conversion was checked against the author's `cheat_kasumi_ninja.c`,
-`cheat_atari_karts.c`, and `cheat_doom.c` at community repository commit
-`24211503339a969f8494b8e189b8f2aa0cb9eba6`, using matching private cartridges.
-Their hashes matched; one, two of three, and eight toggles respectively
-converted. Atari Karts' read/modify/write unlock setting was refused. An
-additional file credited values to a third-party bundled script and was
-excluded from conversion validation. No emulator binary, SDK header, compiled
-script, or proprietary bundled script was used to implement the converter.
-This is a statement of sources used, not a legal certification of a clean-room
-process. Community conversion output remains local and uncommitted.
+jguffer, the author of BigPEmu_Scripts and of
+[#1050](https://github.com/libretro/virtualjaguar-libretro/issues/1050), gave the
+maintainer permission to convert and use the scripts (see
+[#1071](https://github.com/libretro/virtualjaguar-libretro/issues/1071)). The
+repository has no license file, so the permission is the basis for redistribution
+and every pack credits him:
 
-All committed tests use original synthetic inputs:
+> Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+
+`scripts/cheat_aliens_vs_predator.c` is excluded: it credits values to a
+third-party script bundled with BigPEmu, and the permission covers only the
+author's own work. Disc titles are listed in the worklist but not converted; packs
+cover cartridges only.
+
+### Workflow
+
+`sources.json` (pinned commit per source, include globs, exclusions with reasons,
+permission and credit text) and `cartridges.json` (script FNV1a64 to the app's
+CRC32, hashes and titles only, no ROM bytes) feed `build_packs.py`, which writes
+the committed `site/cheats/` tree (`manifest.json`, `unsupported.json`,
+`index.html`, `README.md`, `packs/<CRC32>.cht`):
+
+```sh
+/tmp/vj-cheat-import-env/bin/python tools/cheat-import/build_packs.py \
+  --sources tools/cheat-import/sources.json \
+  --cartridges tools/cheat-import/cartridges.json --out site/cheats
+```
+
+Sources are fetched as one pinned tarball per source, parsed by `convert.py` and
+never compiled or executed (`--source-dir ID=PATH` uses a local checkout). Output
+is byte-for-byte reproducible. The generator fails if a converted script ever
+activates writes for a different cartridge hash. `unsupported.json` is the work
+list of scripts and settings the converter cannot express yet, with the BigPEmu
+API calls they use.
+
+`manifest.json` embeds the sha256 of `convert.py`, `build_packs.py` and
+`cartridges.json`, and CI regenerates `site/cheats` and diffs it. **Any edit to
+`convert.py`, `build_packs.py` or `cartridges.json` needs a `site/cheats`
+regeneration in the same commit.** `scripts/build_site.py` publishes the tree and
+`scripts/check_site.py` validates it (hashes, sizes, CRC guards, unlisted files,
+size limits).
+
+### Adding a source
+
+Open a PR that adds an entry to `sources.json` (repo, pinned commit, include
+globs, credit, and a `permission` note recording the author's permission; a source
+without it is not accepted), then regenerate `site/cheats`. If it needs cartridges
+not in `cartridges.json`, refresh the table from a directory of native dumps:
+
+```sh
+python3 tools/cheat-import/scan_cartridges.py --rom-dir /path/to/native-carts \
+  --merge tools/cheat-import/cartridges.json --output /tmp/cartridges.new.json
+```
+
+`--merge` keeps the curated titles; review the diff and replace the file. ROM bytes
+and paths are never written. Review the author's credits to other authors before
+including a file, and exclude it with a reason if the permission does not cover it.
+
+## Validation
+
+Local conversion was first checked against the author's `cheat_kasumi_ninja.c`,
+`cheat_atari_karts.c` and `cheat_doom.c` at community repository commit
+`24211503339a969f8494b8e189b8f2aa0cb9eba6`, using matching private cartridges. No
+emulator binary, SDK header, compiled script or proprietary bundled script was used
+to implement the converter. This is a statement of sources used, not a legal
+certification of a clean-room process.
+
+The committed packs plus the CI regeneration diff are the conversion contract: a
+changed value shows up as a diff in `site/cheats/packs/*.cht`. Unit tests use
+original synthetic inputs:
 
 ```sh
 python3 -m unittest discover -s tools/cheat-import -v
 ```
 
-CI also fetches **only the three reviewed C files** from the community commit
-above and verifies their SHA256 before parsing. The committed
-`community-cases.json` stores expected setting names, write counts, hashes of
-the converted codes, and unsupported-operation reasons, without distributing
-the scripts or a usable cheat pack. A changed value, missing grouped write,
-unexpected omission, or wrong-ROM activation fails the integration test.
-The input sources are held in memory, never executed or uploaded as artifacts.
-Network/checksum failures fail the job instead of silently skipping cases.
-
-Run the same test locally using a checkout of that exact revision:
-
-```sh
-python3 tools/cheat-import/community_test.py --source-dir /path/to/BigPEmu_Scripts
-# Or download just the three reviewed sources:
-python3 tools/cheat-import/community_test.py --fetch
-# Optional local identity check with the matching native cartridges:
-python3 tools/cheat-import/community_test.py --fetch --rom-dir /path/to/native-carts
-```
-
-Without `--rom-dir`, this checks conversion contracts using known ROM hashes;
-it does not test actual cartridge identity or gameplay. ROM mode requires every
-listed cartridge to exist and match, and fails on missing or mismatched inputs.
-Private ROMs are never required by CI. Updating the community pin or adding a
-source requires reviewing its author/credits, checksum and conversion contract.
-
-A future author-submitted repository catalog could build on this explicit
-source manifest: repository URL, author permission/license, reviewed source
-paths, pinned revision and checksums, and compatibility results submitted by PR.
-That catalog should remain separate from executable scripts and proprietary
-bundled content. This version provides test provenance rather than an app
-download/subscription registry.
-
 The app's `cheats_unit` test additionally checks the revision guard, saved
 toggles, legacy files, hardcore gating, and grouped byte/word/long replay through
-the core's real parser. This validates translation and application mechanics;
-it does not establish that a community author's cheat is correct in gameplay.
+the core's real parser. This validates translation and application mechanics; it
+does not establish that a community author's cheat is correct in gameplay.

@@ -13,6 +13,9 @@ on:
     branches: [develop]
     paths:
       - 'site/**'
+      # Committed community cheat packs are published verbatim under /cheats/.
+      - 'site/cheats/**'
+      - 'tools/cheat-import/**'
       - 'scripts/build_site.py'
       - 'scripts/check_site.py'
       - 'scripts/check_downloads.py'
