@@ -27,11 +27,16 @@ human player. While hardcore is active the app does not connect (or drops the li
 button), Settings > Neuro says why, and a toast appears when it gets blocked. When hardcore ends,
 Neuro connects again by itself if it is ticked.
 
-**Emulation thread:** like RetroAchievements and netplay, Neuro is off while Settings > Interface >
-*Emulation thread* is on, because the input poll and the RAM it reads are that thread's. Phase 3 of
-#967 makes the thread the default, which would turn Neuro off for everyone; carrying it onto the
-thread (it must press through the input snapshot the UI thread publishes, not `agentControls`, and read
-RAM there) is a prerequisite of phase 3 of #967 and has to land before that default flips.
+**Emulation thread:** Neuro works with Settings > Interface > *Emulation thread* on or off, and plays the same either
+way. The UI thread keeps the connection and the list of accepted moves and hands that program to the emulation thread
+through the input snapshot; the core's input poll plays it one step per emulated frame, so `press_buttons frames=3` is
+three emulated frames at any display rate and under fast-forward, never three UI frames. Game profile values (`watch`)
+are copied from RAM by the emulation thread after each frame (about 10 times a second) and the state text reads that
+copy four times a second, so a value can be a third of a second old; a profile whose watches lie more than 64 KiB apart
+makes the emulation thread copy the whole 2 MiB of RAM about 10 times a second while Neuro is on (enabled, not
+hardcore, content loaded and the profile has watches), connected or not. Menus, a mouse on Player 1, hardcore and
+a dropped connection let go of every button within one UI frame (with the emulation thread on, the release reaches the
+core with the next publish, which under fast-forward can be a few emulated frames later).
 
 You can tell the AI is playing: a toast on connect and disconnect, and while it is connected with a game
 running a small "AI plays P1" chip in the top right corner of the picture (menus and windows cover it,
@@ -103,7 +108,8 @@ a built-in profile. Problems are printed to the log at start-up as `[neuro] prof
 - `titles` match the start of the game's title, ignoring case; `crc32` matches the library's CRC of
   the file (the one without a copier header when it has one). A profile needs one or the other.
 - `watch` reads big-endian values from main RAM (0x000000-0x1FFFFF) into the state text: `size` 1, 2
-  or 4, `format` `dec`, `hex` or `bcd`. Tools > Cheat scanner finds the addresses.
+  or 4, `format` `dec`, `hex` or `bcd`. Tools > Cheat scanner finds the addresses. The values are read
+  four times a second (see the emulation thread note above for how old one can be).
 - `actions` are button macros. Names are `lowercase_with_underscores` and need a description. With
   `max_times` above 1 the action takes `{"times": N}` and repeats the steps N times, with `gap` empty
   frames between repeats.
@@ -127,8 +133,10 @@ virtualjaguar --neuro ws://localhost:8000 game.j64
 `--headless --frames N` works with `--neuro` too; the frames then run in real time so the server can
 keep up.
 
-The client is tested by `ctest -R neuro` (`neuro_unit`, and `neuro_loopback`, which runs a WebSocket
-server on 127.0.0.1).
+The client is tested by `ctest -R neuro`: `neuro_unit`, `neuro_loopback` and `neuro_loopback_threaded` (a WebSocket
+server on 127.0.0.1; the second polls the buttons from another thread), `neuro_core_e2e` (the real core's joypad matrix,
+inline and threaded), `neuro_app_inline` / `neuro_on_threaded` (the app headless against that server) and
+`neuro_watch_*` (a profile watch read back from RAM).
 
 The code is in `app/src/neuro/`. It is built by default; configure with `-DVJ_APP_NEURO=OFF` to leave it
 out (no Settings > Neuro tab, no `--neuro`, no `neuro_*` tests).

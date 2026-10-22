@@ -27,6 +27,7 @@
 #include "discord_presence.h"
 #ifdef VJ_HAVE_NEURO
 #include "neuro/neuro_agent.h"
+#include "neuro/neuro_watch.h"
 #endif
 #include "emu_thread.h"
 #include "frame_exchange.h"
@@ -188,6 +189,8 @@ public:
     neuro::Agent neuro;              // the Neuro API client (neuro/neuro_app.cpp): an AI plays as Player 1
     std::string neuroCliUrl;         // --neuro URL: on for this run, whatever the config says
     neuro::AgentSettings neuroCfg;   // the config as of neuroCfgAt (re-read 4 times a second, not every UI frame)
+    neuro::AgentPlayer agentPlayer_;   // the replica of Neuro's queue: emulation thread only (the input poll)
+    neuro::WatchFeed neuroWatch;     // the profile's RAM watches as one DebugViews request (UI thread)
     double neuroCfgAt = -1e9;
 #endif
 
@@ -546,6 +549,7 @@ std::string discordConfiguredAppId(const Config& cfg);   // config discord.app_i
 void neuroInit(App& app, const CliArgs& a);          // config, profiles; connects when enabled
 void neuroTick(App& app);                            // UI loop, every iteration: the socket, the game, the next force
 void neuroShutdown(App& app);                        // closes the connection
+void neuroHeadlessReport(App& app);                  // --neuro --headless, end of the run: "[neuro] headless: N frames of input played"
 void drawNeuroMarker(App& app, ImDrawList* bg, float areaX, float areaY, float areaW);   // the "AI plays P1" chip, top right of the picture area (background list)
 void drawNeuroTab(App& app);                         // Settings > Neuro
 #endif

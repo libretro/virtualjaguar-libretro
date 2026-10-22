@@ -153,6 +153,7 @@ double App::now() const { return (double)SDL_GetPerformanceCounter() / (double)p
 // Headless with --neuro: the client runs as in the UI loop, and frame `i` waits for its time at 60 fps.
 void App::headlessNeuroFrame(uint64_t t0, unsigned i) {
     neuroTick(*this);
+    syncDebug();   // the 10 Hz refresh serial the watches' copier waits for, as the windowed loop moves it
     const double due = (double)t0 / (double)perfFreq_ + i / 60.0;
     const double wait = due - now();
     if (wait > 0) SDL_Delay((Uint32)(wait * 1000.0));
@@ -468,6 +469,12 @@ void App::wireHost() {
             const uint64_t ns = inputSnap.take(emuInput_, &seq);
             emuInputSeq_ = seq;   // stamped on the next frame this thread publishes
             if (ns) noteInputLatency(ns);
+#ifdef VJ_HAVE_NEURO
+            {   // Neuro's buttons for this emulated frame, replayed from the program the UI thread published
+                const ControlSet a = neuro::pollAgent(inputSnap, agentPlayer_);
+                if (a.any()) emuInput_.addControls(0, a);
+            }
+#endif
             return;
         }
         if (pendingEventNs_) {   // VJ_PERF_CSV: from the oldest unhandled input event to this poll
@@ -475,10 +482,10 @@ void App::wireHost() {
             if (!presentEventNs_) presentEventNs_ = pendingEventNs_;   // and to this iteration's swap
             pendingEventNs_ = 0;
         }
-#ifdef VJ_HAVE_NEURO
-        input.agentControls = neuro.frame();   // Neuro's buttons for this emulated frame (inline only: off when threaded)
-#endif
         input.poll(!inputCaptured_);
+#ifdef VJ_HAVE_NEURO
+        input.addAgentControls(neuro::pollAgent(inputSnap, agentPlayer_));   // Neuro's buttons for this emulated frame
+#endif
     };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
     // The app's own Controls / Devices tabs replace these core options.
@@ -2648,12 +2655,16 @@ int App::runHeadless(const CliArgs& a) {
         double hlCpu0 = Perf::cpuSeconds();
         if (threaded()) {
             retroTicks_.store(0);
-            if (ach.mockMode()) {
-                // RetroAchievements steps and pokes are frame-numbered: the same order as the inline loop below, one
-                // frame at a time (the steps, then the frame -- rc_client_do_frame runs after it, on the emulation
-                // thread -- then the UI's pump).
+            if (ach.mockMode() || !neuroCliUrl.empty()) {
+                // RetroAchievements steps and pokes are frame-numbered and Neuro plays in real time: one frame at a
+                // time, in the inline loop's order (the steps, Neuro's tick and wait, then the frame --
+                // rc_client_do_frame runs after it, on the emulation thread, and the replica runs in the core's poll
+                // -- then the UI's pump).
                 for (unsigned i = 0; i < a.frames; i++) {
                     ach.headlessFrame(i);
+#ifdef VJ_HAVE_NEURO
+                    if (!neuroCliUrl.empty()) headlessNeuroFrame(hlT0, i);   // neuroTick (+ syncDebug), then waits for i's time
+#endif
                     emu.advance(1);
                     ach.pump();
                     if ((i & 15) == 15) emu.call([this] { audio.clear(); });
@@ -2681,6 +2692,9 @@ int App::runHeadless(const CliArgs& a) {
                 uint64_t hr0 = SDL_GetPerformanceCounter();
                 host.runFrame();
                 hlRun += SDL_GetPerformanceCounter() - hr0;
+#ifdef VJ_HAVE_NEURO
+                if (!neuroCliUrl.empty()) fillDebugViews();   // Neuro's watches: the copier, on this thread when inline
+#endif
                 ach.afterFrame();
                 ach.pump();
                 if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time
@@ -2696,6 +2710,9 @@ int App::runHeadless(const CliArgs& a) {
             if (hlCpu0 >= 0 && cpu > 0) std::snprintf(cpuTxt, sizeof cpuTxt, "%.3f s (%.1f fps)", cpu, a.frames / cpu);
             std::fprintf(stderr, "TIMING %u frames: loop %.3f s (%.1f fps), retro_run %.3f s (%.1f fps), cpu %s %s\n",
                          a.frames, wall, a.frames / wall, run, a.frames / run, cpuTxt, label.c_str());
+#ifdef VJ_HAVE_NEURO
+            if (!neuroCliUrl.empty()) neuroHeadlessReport(*this);
+#endif
             int nr = netplayHeadlessCheck(*this, a);
             if (nr == 1) rc = 1;
             else if (nr == 77 && rc == 0) rc = 77;

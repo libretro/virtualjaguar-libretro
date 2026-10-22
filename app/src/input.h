@@ -50,8 +50,9 @@ public:
     void poll(bool captureKeyboard, unsigned overlayTicks = 1);
     // The result of the last poll() (threaded: what the UI thread publishes to InputSnapshot).
     const CoreInput& coreInput() const { return core_; }
-    // Added to Player 1 by every poll(): what the Neuro API client presses this frame (neuro_agent.h).
-    ControlSet agentControls;
+    // Adds what the Neuro API client presses in this emulated frame to Player 1 (neuro_actions.h: pollAgent), after
+    // poll().  Nothing pressed leaves the result untouched.
+    void addAgentControls(ControlSet c);
     // retro_input_state_t for every device (joypad, keyboard, mouse, analog, light gun).
     int16_t state(unsigned port, unsigned device, unsigned index, unsigned id) const;
 

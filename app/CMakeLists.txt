@@ -398,7 +398,7 @@ set(VJ_APP_SOURCES
 
 # Neuro API client (docs/neuro.md): an AI plays as Player 1.  Off: no Settings > Neuro tab, no --neuro.
 set(VJ_NEURO_SOURCES src/neuro/neuro_json.cpp src/neuro/neuro_ws.cpp src/neuro/neuro_actions.cpp
-    src/neuro/neuro_profiles.cpp src/neuro/neuro_link.cpp src/neuro/neuro_agent.cpp)
+    src/neuro/neuro_profiles.cpp src/neuro/neuro_link.cpp src/neuro/neuro_agent.cpp src/neuro/neuro_watch.cpp)
 if(VJ_APP_NEURO)
     list(APPEND VJ_APP_SOURCES ${VJ_NEURO_SOURCES} src/neuro/neuro_app.cpp)
 endif()

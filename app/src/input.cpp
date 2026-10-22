@@ -609,7 +609,10 @@ void InputManager::poll(bool captureKeyboard, unsigned overlayTicks) {
 
     // Keys the overlay is holding down (a mouse click or a gamepad press in the overlay).
     core_.addControls(overlay.port > 1 ? 0u : overlay.port, overlay.held());
-    if (agentControls.any()) core_.addControls(0, agentControls);
+}
+
+void InputManager::addAgentControls(ControlSet c) {
+    if (c.any()) core_.addControls(0, c);
 }
 
 int16_t InputManager::state(unsigned port, unsigned device, unsigned index, unsigned id) const {
