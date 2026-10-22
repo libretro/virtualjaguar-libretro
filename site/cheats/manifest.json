@@ -3,13 +3,13 @@
     "cheats": 72,
     "packs": 23,
     "partial_packs": 9,
-    "unsupported_entries": 55
+    "unsupported_entries": 58
   },
   "format": 1,
   "generated_from": {
     "cartridges_sha256": "edebcd7566e15f2426cacf5181379fbdd7b47c697110ccf79bb831205f3e853a",
     "converter_sha256": "d3dff9ec5db1e5343b94935a7cd0dc122286493fdfa476f84aee150b7f3c80f9",
-    "generator_sha256": "4650a627e415debc98bf74731b926bd5e778497de371f13a977d5c51a2e6adbd",
+    "generator_sha256": "adf69fbdfb7bdbb8f9d5ecf96e730ee2c439101d6228e9c71699fe6fac2d3e69",
     "sources": [
       {
         "author": "jguffer",

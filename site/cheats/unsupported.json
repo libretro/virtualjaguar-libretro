@@ -935,6 +935,17 @@
     },
     {
       "calls": [],
+      "crc32": null,
+      "note": null,
+      "path": "scripts/cheat_cannon_fodder.c",
+      "reason": "no known cartridge for literals [0x000000000019058F, 0x000000000019059B]",
+      "setting": null,
+      "sha256": "51d8861db5daec89792ea6153657095fc794748b8b56d758a3a08fcf3ac09e39",
+      "source": "jguffer",
+      "stage": "identity"
+    },
+    {
+      "calls": [],
       "crc32": "BDA405C6",
       "note": null,
       "path": "scripts/cheat_cannon_fodder.c",
@@ -1167,6 +1178,17 @@
     },
     {
       "calls": [],
+      "crc32": null,
+      "note": null,
+      "path": "scripts/cheat_iron_soldier_2.c",
+      "reason": "no known cartridge for literals [0x962CCBEDFAAC5F28]",
+      "setting": null,
+      "sha256": "0ff5c1b360d69682eb0c7822f389f4ff20249c6fa1e6c0e23c5ae8ef02005f4e",
+      "source": "jguffer",
+      "stage": "identity"
+    },
+    {
+      "calls": [],
       "crc32": "D6C19E34",
       "note": null,
       "path": "scripts/cheat_iron_soldier_2.c",
@@ -1300,6 +1322,17 @@
       "reason": "no known cartridge for literals [0xE05E39C0E80BE8FD]",
       "setting": null,
       "sha256": "b13d1f0747dbce36cb9bbae7fbde32ffd09a82c5f26645929e9241d91c4eedb9",
+      "source": "jguffer",
+      "stage": "identity"
+    },
+    {
+      "calls": [],
+      "crc32": null,
+      "note": null,
+      "path": "scripts/cheat_supercross_3d.c",
+      "reason": "no known cartridge for literals [0x00000000001B1601]",
+      "setting": null,
+      "sha256": "2ea5fc07f679193574f6eff820af68238eb6b24d0f43cd3bfeba021a62c4e4a3",
       "source": "jguffer",
       "stage": "identity"
     },
