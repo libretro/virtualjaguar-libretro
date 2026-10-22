@@ -15,6 +15,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -104,8 +105,11 @@ struct FakeHost : Host {
         return intentForButton(b);
     }
     bool keyboardLast = false;   // the keyboard was used last: it has no key for Menu / Alt / Aux (as AppHost::glyph)
+    std::string pageLt, pageRt;  // the glyphs of PagePrev / PageNext ("" = the device has none, the default here)
     std::string glyph(Intent i) const override {
         switch (i) {
+        case Intent::PagePrev: return pageLt;
+        case Intent::PageNext: return pageRt;
         case Intent::Menu: return keyboardLast ? "" : "Start";
         case Intent::Alt: return keyboardLast ? "" : "X";
         case Intent::Aux: return keyboardLast ? "" : "Y";
@@ -4013,7 +4017,7 @@ static void ingameLibrarySlotWide() {
     CHECK(g_imguiErrors == 0);
 }
 
-// A on a tile with a game running asks: No is the focus, No returns to the Library on the same tile, Yes (Down) launches.
+// A on a tile with a game running asks: No is the focus, No returns to the Library on the same tile, Yes (Up: it is above No) launches.
 static void ingameLibraryLaunchAsks() {
     FakeHost host;
     Shell shell(host);
@@ -4200,6 +4204,268 @@ static void tabBarFitsAt720p() {
     CHECK(x + 24 * u < clockLeft);
 }
 
+// ---- long labels, wrapped notes and placeholder titles (phase 5 polish, #991) ----------------------------------------------------------
+
+static const char* const kLongDefaults = "Per-Title Enhancement Defaults: apply known-safe presets automatically for recognized games";
+static const char* const kLongHooks = "Per-Title Enhancement Hooks: apply per-game byte patches from the enhancement database to the cartridge";
+static const char* const kLongNote = "Applies when the game next starts: the new value is read at launch, never while it runs";
+
+// Two long labels with the same first words, a short one, and a long note.
+static std::vector<SettingRow> longLabelRows() {
+    SettingRow a = mkRow("core:a", kLongDefaults, "core:video", "Video", {"disabled", "enabled"});
+    SettingRow b = mkRow("core:b", kLongHooks, "core:video", "Video", {"disabled", "enabled"});
+    b.note = kLongNote;
+    return {a, b, mkRow("core:c", "Blitter", "core:video", "Video", {"Fast", "Accurate"})};
+}
+
+// A drawn string is part of `whole` (a line of a wrapped label or note).
+static bool partOf(const widgets::TextAt& t, const char* whole) { return t.s.size() >= 8 && std::string(whole).find(t.s) != std::string::npos; }
+
+// Every string drawn lies inside [left, right] horizontally and [top, bottom] vertically (pixels).
+static bool drawnInside(float left, float right, float top, float bottom) {
+    for (const widgets::TextAt& t : g_at) {
+        const float w = measure(t.px, t.s.c_str());
+        if (t.pos.x < left - 0.5f || t.pos.x + w > right + 0.5f || t.pos.y < top - 0.5f || t.pos.y + t.px > bottom + 0.5f) {
+            std::fprintf(stderr, "outside: \"%s\" at %.1f,%.1f w %.1f px %.1f\n", t.s.c_str(), t.pos.x, t.pos.y, w, t.px);
+            return false;
+        }
+    }
+    return true;
+}
+
+// A label that does not fit beside its value wraps to a second line instead of being cut: both long labels are drawn whole (the probe
+// has each once, in full), on two lines, and distinguishably; so is a long note.  Nothing leaves the content area / the safe area.
+static void settingsLongLabelsWrap() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (float hh : {720.0f, 1080.0f}) {
+        FakeHost host;
+        Shell shell(host);
+        settingsSetup(host, shell, longLabelRows());
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        widgets::setTextPosProbe(&g_at);
+        frames(host, shell, 3);
+        rightN(host, shell, 1);                          // into the list
+        frames(host, shell, 30);
+        g_texts.clear();
+        g_at.clear();
+        frames(host, shell, 1);
+        const Metrics m = metrics(hh);
+        CHECK(drew(kLongDefaults) && drew(kLongHooks) && drew(kLongNote));   // each in full, once
+        CHECK(std::string(kLongDefaults) != kLongHooks);
+        int a = 0, b = 0, n = 0;
+        bool oneLine = false;
+        for (const widgets::TextAt& t : g_at) {
+            a += partOf(t, kLongDefaults) && t.s != kLongDefaults;
+            b += partOf(t, kLongHooks) && t.s != kLongHooks;
+            n += partOf(t, kLongNote) && t.s != kLongNote && t.px < m.body;
+            oneLine = oneLine || t.s == kLongDefaults || t.s == kLongHooks || t.s == kLongNote;
+        }
+        CHECK(a == 2 && b == 2 && n == 2 && !oneLine);   // two lines each, never cut mid-word (the lines join to the whole text)
+        bool inside = true;
+        float firstA = 0, firstB = 0;
+        for (const widgets::TextAt& t : g_at) {          // the rows' text lies in the content area (150 u to 968 u) and the safe margins
+            if (!(partOf(t, kLongDefaults) || partOf(t, kLongHooks) || partOf(t, kLongNote))) continue;
+            const float w = measure(t.px, t.s.c_str());
+            inside = inside && within(t, 150 * m.u, 968 * m.u) && t.pos.x >= m.safeX && t.pos.x + w <= io.DisplaySize.x - m.safeX;
+            if (firstA == 0 && partOf(t, kLongDefaults)) firstA = t.pos.y;
+            if (firstB == 0 && partOf(t, kLongHooks)) firstB = t.pos.y;
+        }
+        CHECK(inside);
+        // The rows grew to fit: they are as tall as the tallest (two label lines, two note lines), so the next row is a whole row below.
+        CHECK(firstB - firstA >= 100 * m.u);
+        widgets::setTextPosProbe(nullptr);
+        CHECK(g_imguiErrors == 0);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+}
+
+// In the menu's slot Settings takes the whole panel (no rail of the menu's own), so labels that used to be cut fit on one line.
+static void ingameSettingsSlotIsWide() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (float hh : {720.0f, 1080.0f}) {
+        FakeHost host;
+        host.rows = {mkRow("core:a", "Per-Title Enhancement Defaults", "core:video", "Video", {"disabled", "enabled"}),
+                     mkRow("core:b", "Per-Title Enhancement Hooks", "core:video", "Video", {"disabled", "enabled"}),
+                     mkRow("core:c", "True Color (Gouraud Shading)", "core:video", "Video", {"disabled", "enabled"}),
+                     mkRow("core:d", "Internal Resolution (Restart)", "core:video", "Video", {"1x (native)", "2x"}),
+                     mkRow("aspect", "Aspect ratio", "picture", "Picture", {"Core default", "4:3"})};
+        host.rows[3].note = "Applies when the game next starts";
+        Shell shell(host);
+        menuSetup(host, shell);
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        menuTo(host, shell, "Settings");
+        widgets::setTextPosProbe(&g_at);
+        accept(host, shell);
+        frames(host, shell, 30);
+        g_texts.clear();
+        g_at.clear();
+        frames(host, shell, 1);
+        CHECK(shell.menuHasScreen() && drew("Settings \xC2\xB7 2 groups") && !drew("Paused") && !drew(host.gameTitle()));   // the screen names itself
+        accept(host, shell);                             // Video (the first group: the rows are listed in the host's order)
+        frames(host, shell, 30);
+        g_texts.clear();
+        g_at.clear();
+        frames(host, shell, 1);
+        const Metrics m = metrics(hh);
+        for (const char* label : {"Per-Title Enhancement Defaults", "Per-Title Enhancement Hooks", "True Color (Gouraud Shading)", "Internal Resolution (Restart)"}) {
+            widgets::TextAt at;
+            CHECK(drew(label) && placeOf(label, at));    // whole, on one line (a line of the same text)
+        }
+        CHECK(drew("Applies when the game next starts"));
+        const float panelW = std::min(io.DisplaySize.x - 2 * m.safeX, 1500 * m.u);
+        const float left = (io.DisplaySize.x - panelW) * 0.5f;
+        CHECK(drawnInside(left, left + panelW, m.safeY, io.DisplaySize.y - m.safeY));
+        shell.closeMenu();
+        widgets::setTextPosProbe(nullptr);
+        CHECK(g_imguiErrors == 0);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+}
+
+// The Page hint is listed on a rail (and the menu's groups level) that scrolls, with one glyph when the pad has one trigger, and not at all
+// without a glyph or when everything fits.
+static void settingsPageHintOnRail() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (int branch = 0; branch < 2; branch++) {   // 0: the Base rail, 1: the menu's groups level
+        FakeHost host;
+        host.pageLt = "LT";
+        host.pageRt = "RT";
+        Shell shell(host);
+        io.DisplaySize = ImVec2(1280, 720);
+        if (branch == 0) {
+            settingsSetup(host, shell, manyGroups(30));
+            io.DisplaySize = ImVec2(1280, 720);
+        } else {
+            host.rows = manyGroups(30);
+            menuSetup(host, shell);
+            io.DisplaySize = ImVec2(1280, 720);
+            menuTo(host, shell, "Settings");
+            accept(host, shell);
+        }
+        frames(host, shell, 30);
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Page") && drew("LT RT") && drew("Open"));
+        host.pageRt = "";
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Page") && drew("LT") && !drew("LT "));   // no stray space
+        host.pageLt = "";
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(!drew("Page"));
+        // Few groups: everything fits, nothing to page.
+        FakeHost few;
+        few.pageLt = "LT";
+        few.pageRt = "RT";
+        Shell fs(few);
+        settingsSetup(few, fs, settingsFixture());
+        g_texts.clear();
+        frames(few, fs, 2);
+        CHECK(!drew("Page"));
+        if (shell.menuOpen()) shell.closeMenu();
+        CHECK(g_imguiErrors == 0);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+}
+
+// A placeholder tile (no box art): the title wraps at words and the last line sits at the tile's foot; a title too long for the tile ends
+// in "..." on the last line that fits inside it, never below it.  Tiles of the menu's Library (158 u) and the screen's (190 u) at 1080p.
+static void tilePlaceholderWrapsAtWords() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1920, 1080);
+    const Metrics m = metrics(1080);
+    struct Case {
+        const char* title;
+        float w;
+    };
+    const Case cases[] = {{"Checkered Flag (World)", 158}, {"Cybermorph (World) (Rev A)", 158}, {"Defender 2000 (World)", 158},
+                          {"Skyhammer (World)", 158},       {"Trevor McFur in the Crescent Galaxy (World) (Rev A)", 158},
+                          {"Trevor McFur in the Crescent Galaxy (World) (Rev A)", 190}};
+    for (const Case& cs : cases) {
+        widgets::setTextPosProbe(&g_at);
+        g_at.clear();
+        g_texts.clear();
+        io.DeltaTime = 1.0f / 60.0f;
+        ImGui::NewFrame();
+        widgets::TileArgs a;
+        a.title = cs.title;
+        const ImVec2 pos(100, 100), size(cs.w, cs.w * 7 / 5);
+        widgets::tile(ImGui::GetForegroundDrawList(), m, pos, size, a);
+        ImGui::Render();
+        widgets::setTextPosProbe(nullptr);
+        CHECK(!g_at.empty());
+        bool inside = true;
+        float lastBottom = 0;
+        for (const widgets::TextAt& t : g_at) {
+            const float w = measure(t.px, t.s.c_str());
+            if (t.pos.x < pos.x || t.pos.x + w > pos.x + size.x || t.pos.y < pos.y || t.pos.y + t.px > pos.y + size.y) inside = false;
+            lastBottom = std::max(lastBottom, t.pos.y + t.px);
+            CHECK(t.px >= m.minText - 0.01f);            // never under the 24 u floor
+        }
+        CHECK(inside);
+        CHECK(std::fabs(lastBottom - (pos.y + size.y - 8 * m.u)) < 0.6f);   // the foot of the tile: the padding above its bottom edge
+        // Words are whole on their lines; the one cut a long title may take is the "..." on the last line.
+        const std::string title = cs.title;
+        const bool cut = !drew(title);
+        std::string last = g_at.back().s;
+        CHECK(cut == (last.size() >= 3 && last.compare(last.size() - 3, 3, "...") == 0));
+        size_t i = 0;
+        while (i < title.size()) {
+            size_t j = title.find(' ', i);
+            if (j == std::string::npos) j = title.size();
+            const std::string w = title.substr(i, j - i);
+            bool whole = false;
+            for (const widgets::TextAt& t : g_at) whole = whole || (" " + t.s + " ").find(" " + w + " ") != std::string::npos;
+            CHECK(whole || cut);                         // no word of an uncut title is split across lines
+            i = j + 1;
+        }
+    }
+    // The long title does not fit a narrow tile whole; the wide one fits all of it.
+    CHECK(g_imguiErrors == 0);
+}
+
+// In the menu's Library the placeholder titles of the reported shot ("Checkered Flag") keep their words whole at 720p (the smoke font is wider than
+// the app's, so "Cybermorph" -- a 10-letter word at the floor size -- is judged in the real shots, tilePlaceholderWrapsAtWords, not here).
+static void ingameLibraryPlaceholderWordsWhole() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    Shell shell(host);
+    for (const char* t : {"Checkered Flag (World)", "Cybermorph (World) (Rev A)", "Defender 2000 (World)", "Skyhammer (World)", "Power Drive Rally (World)",
+                          "Trevor McFur in the Crescent Galaxy (World) (Rev A)"}) {
+        GameRef g;
+        g.title = t;
+        g.key = std::string("/games/") + t + ".j64";
+        g.index = (int)host.all.size();
+        host.all.push_back(g);
+    }
+    host.tv = true;
+    io.DisplaySize = ImVec2(1920, 1080);
+    shell.openMenu();
+    frames(host, shell, 2);
+    down(host, shell, 3);                                // Save state, Load state, Library
+    accept(host, shell);
+    io.DisplaySize = ImVec2(1280, 720);
+    widgets::setTextPosProbe(&g_at);
+    frames(host, shell, 30);
+    g_at.clear();
+    frames(host, shell, 1);
+    for (const char* w : {"Checkered", "Skyhammer", "Defender", "Trevor", "Crescent", "Galaxy"}) {
+        bool whole = false;
+        for (const widgets::TextAt& t : g_at) whole = whole || (" " + t.s + " ").find(std::string(" ") + w + " ") != std::string::npos;
+        if (!whole) {
+            std::fprintf(stderr, "word split: %s; lines drawn:", w);
+            for (const widgets::TextAt& t : g_at) std::fprintf(stderr, " [%s @%.0f,%.0f px %.1f]", t.s.c_str(), t.pos.x, t.pos.y, t.px);
+            std::fprintf(stderr, "\n");
+        }
+        CHECK(whole);
+    }
+    widgets::setTextPosProbe(nullptr);
+    shell.closeMenu();
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == 0);
+}
+
 int main() {
     ImGuiContext* ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -4346,6 +4612,11 @@ int main() {
     ingameLibraryResumeStateAsks();
     ingameLibraryTypedFilters();
     ingameLibraryBackReturnsToRow();
+    settingsLongLabelsWrap();
+    ingameSettingsSlotIsWide();
+    settingsPageHintOnRail();
+    tilePlaceholderWrapsAtWords();
+    ingameLibraryPlaceholderWordsWhole();
     baseLibraryOpensFromApp();
     requestLaunchWithoutGameIsImmediate();
     menuWalkWithSlotsNoAsserts();

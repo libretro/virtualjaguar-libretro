@@ -15,9 +15,13 @@
 // there is more.  LT / RT (PagePrev / PageNext) jump a screenful, stopping at the ends.  A held direction repeats on the nav's own
 // timer; the screen only has to tell a repeat from a press (Shell::repeatIntent) where a press means more than the repeat does.
 //
-// In the in-game menu's slot (Screen::setEmbedded) the screen has no rail of its own -- the menu names the page -- so the groups
-// are a first list level in the menu's list area: Accept on a group opens its rows, Back returns to the groups, and Back on the
-// groups is the menu's.  Every visit starts on the groups.
+// In the in-game menu's slot (Screen::setEmbedded) the screen has no rail of its own, so the groups are a first list level: Accept on
+// a group opens its rows, Back returns to the groups, and Back on the groups is the menu's.  Every visit starts on the groups.  It takes
+// the whole panel (wide(), as the Library does: the menu's own rail is not drawn) so the labels have the room, and names itself in the
+// caption line above its list.
+//
+// A label that does not fit beside its value wraps at words to a second line (and a note under the value the same) instead of being cut;
+// every row of a group then has the height of the tallest, so the window still scrolls a whole row at a time.
 #include <algorithm>
 #include <cfloat>
 #include <cstdlib>
@@ -36,7 +40,10 @@ constexpr float kListTop = 196 - 150;                                     // fro
 constexpr float kRowH = 72, kRowGap = 14;
 constexpr float kRowsMargin = 12;                                         // room above the first row for a focused row's ring and shadow
 constexpr float kRailPitch = kItemH + kItemGap;
-constexpr float kArrowRoom = 20;                                          // under a list that scrolls: the "more" arrow's place
+constexpr float kArrowRoom = 26;                                          // under a list that scrolls: the "more" arrow's place
+constexpr float kArrowGap = 19;                                           // the arrow's centre, from a row list's first / last row (clear of its ring)
+constexpr float kRailArrowGap = 16;                                       // ... from the rail's first / last item (its ring does not grow)
+constexpr float kRowVPad = 7;                                             // above and below a row's text (72 u holds a label with a note line)
 constexpr const char* kMoreId = "more";
 
 std::string memoryKey(const std::string& group) { return "settings/" + group; }
@@ -54,17 +61,18 @@ int itemsThatFit(float viewH, float pitch, float gap, int count, float arrowRoom
 struct Scroll {
     Tween tween;
     bool init = false;
-    float lastU = 0;
+    float lastU = 0, lastPitch = 0;
     float update(LinearFocus& f, int visible, float pitch, float u, bool restart, double now) {
         if (restart) f.first = 0;
         f.first = std::clamp(f.first, 0, std::max(0, f.count - visible));
         f.scrollToShow(visible);
         const float target = (float)f.first * pitch;
-        if (!init || lastU != u || restart) {
+        if (!init || lastU != u || lastPitch != pitch || restart) {
             tween.from = tween.to = target;
             tween.start = now;
             init = true;
             lastU = u;
+            lastPitch = pitch;
         } else if (target != tween.to) {
             tween.retarget(target, now);
         }
@@ -84,6 +92,7 @@ public:
     SettingsScreen(Host& h, Shell& s) : host_(h), shell_(s) {}
 
     const char* id() const override { return "settings"; }
+    bool wide() const override { return embedded(); }   // in the in-game menu's slot the labels get the whole panel (the menu draws no rail)
 
     std::string focusLabel() override {
         refresh();
@@ -154,7 +163,7 @@ public:
                     hoverItem = i;
             }
             c.dl->PopClipRect();
-            drawMoreArrows(c, x0 + kRailW * u * 0.5f, c.pos.y - 10 * u, winBottom + 10 * u, rail_.first > 0,
+            drawMoreArrows(c, x0 + kRailW * u * 0.5f, c.pos.y - kRailArrowGap * u, winBottom + kRailArrowGap * u, rail_.first > 0,
                            rail_.first + railVisible_ < (int)groups_.size());
         }
         if (hoverItem >= 0 && pick) {   // hovering a group selects it: its rows show at once
@@ -176,8 +185,9 @@ public:
         widgets::text(c.dl, m.caption, ImVec2(lx, c.pos.y), widgets::col(pal.textMuted),
                       groupLabel() + " \xC2\xB7 " + count, lw);
 
+        layoutRows(m, lw);
         const float rowsTop = c.pos.y + kListTop * u, viewBottom = c.pos.y + c.size.y, viewH = std::max(1.0f, viewBottom - rowsTop);
-        const float pitch = (kRowH + kRowGap) * u, rowH = kRowH * u;
+        const float pitch = rowH_ + kRowGap * u, rowH = rowH_;
         listVisible_ = itemsThatFit(viewH, pitch, kRowGap * u, (int)rows_.size(), kArrowRoom * u);
         const float scroll = listScroll_.update(list_, listVisible_, pitch, u, group_ != lastGroup_, c.now);
         lastGroup_ = group_;
@@ -201,7 +211,8 @@ public:
                 hoverRow = i;
         }
         c.dl->PopClipRect();
-        drawMoreArrows(c, lx + lw * 0.5f, rowsTop - 10 * u, winBottom + 10 * u, list_.first > 0, list_.first + listVisible_ < (int)rows_.size());
+        drawMoreArrows(c, lx + lw * 0.5f, rowsTop - kArrowGap * u, winBottom + kArrowGap * u, list_.first > 0,
+                       list_.first + listVisible_ < (int)rows_.size());
 
         // ---- the pointer: hovering a row focuses it, a click on the value's left / right half steps that way, a click
         // elsewhere on the row is Accept, a notch is a row --------------------------------------------------------------
@@ -226,6 +237,7 @@ public:
         std::vector<widgets::Hint> h;
         if (onRail_ || rows_.empty()) {
             if (!rows_.empty()) h.push_back({host_.glyph(Intent::Accept), "Open"});
+            pageHint(h, (int)groups_.size() > railVisible_);   // a rail (or groups level) that scrolls
             h.push_back({host_.glyph(Intent::Back), embedded() ? "Menu" : "Home"});
             return h;
         }
@@ -237,15 +249,48 @@ public:
             h.push_back({l.empty() ? rt : rt.empty() || l == rt ? l : l + " " + rt, "Change"});   // "D-pad" once, "Left Right" on a keyboard
             h.push_back({host_.glyph(Intent::Accept), "Next"});
         }
-        if ((int)rows_.size() > listVisible_) {   // a list that scrolls: LT / RT page it
-            const std::string lt = host_.glyph(Intent::PagePrev), rt = host_.glyph(Intent::PageNext);
-            h.push_back({lt.empty() && rt.empty() ? std::string() : lt + " " + rt, "Page"});
-        }
+        pageHint(h, (int)rows_.size() > listVisible_);   // a list that scrolls
         h.push_back({host_.glyph(Intent::Back), "Groups"});
         return h;
     }
 
 private:
+    // "LT RT  Page" on a list that scrolls: one glyph if the other has none (or both are the same key), nothing if neither has.
+    void pageHint(std::vector<widgets::Hint>& h, bool scrolls) const {
+        if (!scrolls) return;
+        const std::string lt = host_.glyph(Intent::PagePrev), rt = host_.glyph(Intent::PageNext);
+        const std::string glyph = lt.empty() ? rt : rt.empty() || lt == rt ? lt : lt + " " + rt;
+        if (!glyph.empty()) h.push_back({glyph, "Page"});
+    }
+
+    // How each row of the focused group is laid out at rest (the label and the note broken into lines) and how tall its rows are: the
+    // tallest row's, never under kRowH.  The label gets the row's width less the value column, which is sized by the widest choice
+    // (not the one showing) so that stepping a value never rewraps the label; a note under the value is right-aligned in half a row.
+    void layoutRows(const Metrics& m, float lw) {
+        const float u = m.u, pad = 24 * u, inner = std::max(1.0f, lw - 2 * pad), half = inner * 0.5f;
+        const float chevW = 9 * u, gap = 24 * u;
+        lay_.assign(rows_.size(), RowLay());
+        rowH_ = kRowH * u;
+        for (size_t i = 0; i < rows_.size(); i++) {
+            const SettingRow& r = rows_[i];
+            RowLay& L = lay_[i];
+            float avail = inner;   // a note row ("Available once a game has run"): the whole row is its text
+            if (!r.choices.empty()) {
+                float widest = 0;
+                for (const std::string& ch : r.choices) widest = std::max(widest, widgets::textWidth(m.body, ch));
+                avail = inner - (std::min(widest, half - chevW - gap) + 2 * (chevW + gap)) - gap;
+            } else if (!r.readOnly) {
+                avail = inner - chevW - gap;   // "more": a chevron
+            }
+            L.label = widgets::wrapLines(m.body, r.label, std::max(avail, 0.4f * inner), 2);
+            if (!r.choices.empty() && !r.note.empty()) L.note = widgets::wrapLines(m.minText, r.note, half, 2);
+            const float n = (float)std::max<size_t>(1, L.label.size());
+            const float labelH = n * m.body + (n - 1) * 4 * u;
+            const float noteH = L.note.empty() ? 0.0f : 4 * u + (float)L.note.size() * m.minText + (float)(L.note.size() - 1) * 2 * u;
+            rowH_ = std::max(rowH_, std::max(labelH, m.body + noteH) + 2 * kRowVPad * u);
+        }
+    }
+
     // Fetches the rows, takes their groups in first-seen order (the host lists them in the rail's order), and settles the focus:
     // the rail follows the group's key (not its position: groups come and go with the session) and the list follows the row's id.
     void refresh() {
@@ -376,7 +421,9 @@ private:
     // Hovering one focuses it, a click opens it, a notch is a group.
     void drawGroups(const DrawCtx& c, float lx, float lw, bool pick) {
         const Metrics& m = c.m;
-        const float u = m.u, top = c.pos.y + kRowsMargin * u, pitch = (kRowH + kRowGap) * u, rowH = kRowH * u;
+        const float u = m.u, top = c.pos.y + kListTop * u, pitch = (kRowH + kRowGap) * u, rowH = kRowH * u;
+        widgets::text(c.dl, m.caption, ImVec2(lx, c.pos.y), widgets::col(theme::pal().textMuted),   // this level's name: the menu draws no rail
+                      "Settings \xC2\xB7 " + std::to_string(groups_.size()) + (groups_.size() == 1 ? " group" : " groups"), lw);
         railVisible_ = itemsThatFit(std::max(1.0f, c.pos.y + c.size.y - top), pitch, kRowGap * u, (int)groups_.size(), kArrowRoom * u);
         const float scroll = railScroll_.update(rail_, railVisible_, pitch, u, false, c.now);
         const float winBottom = top + (float)railVisible_ * pitch - kRowGap * u;
@@ -395,7 +442,8 @@ private:
             if (h && c.mouse.y >= top && c.mouse.y < winBottom) hover = i;   // not the part the clip hides
         }
         c.dl->PopClipRect();
-        drawMoreArrows(c, lx + lw * 0.5f, top - 10 * u, winBottom + 10 * u, rail_.first > 0, rail_.first + railVisible_ < (int)groups_.size());
+        drawMoreArrows(c, lx + lw * 0.5f, top - kArrowGap * u, winBottom + kArrowGap * u, rail_.first > 0,
+                       rail_.first + railVisible_ < (int)groups_.size());
         if (c.hovered && c.mouse.x >= lx && c.mouse.x < lx + lw && c.mouse.y >= c.pos.y && c.mouse.y < c.pos.y + c.size.y) wheel_ += c.wheel;
         const int steps = (int)wheel_;
         wheel_ -= (float)steps;
@@ -411,24 +459,27 @@ private:
         if (down) widgets::moreArrow(c.dl, c.m, ImVec2(x, downY), false);
     }
 
-    // The label, the value between its chevrons, and a read-only row's note under the value.
+    // The label (its lines from layoutRows), the value between its chevrons, and a note under the value.
     void drawRow(const DrawCtx& c, int index, ImVec2 pos, ImVec2 size, float f) {
         const SettingRow& r = rows_[(size_t)index];
+        const RowLay& L = lay_[(size_t)index];
         const Metrics& m = c.m;
         const theme::Palette& pal = theme::pal();
         const float u = m.u, k = 1.0f + (m.focusScale - 1.0f) * f;   // the row grows about its centre (widgets::row)
         const ImVec2 mid(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
         const ImVec2 p0(mid.x - size.x * k * 0.5f, mid.y - size.y * k * 0.5f), p1(mid.x + size.x * k * 0.5f, mid.y + size.y * k * 0.5f);
         const float pad = 24 * u * (0.6f + 0.4f * k), half = (p1.x - p0.x - 2 * pad) * 0.5f;
-        const float px = m.body * (1.0f + 0.08f * f);
+        const float px = m.body * (1.0f + 0.08f * f), notePx = m.minText * (1.0f + 0.08f * f);
         const ImU32 tc = widgets::col(r.readOnly ? pal.textMuted : pal.text), mc = widgets::col(pal.textMuted);
-        const bool hasNote = !r.note.empty();
+        const float hgt = p1.y - p0.y;
         valueMid_.resize(rows_.size(), p1.x);
-        const float total = hasNote ? px + m.minText + 4 * u : px;
-        const float y = p0.y + (p1.y - p0.y - total) * 0.5f;
-        const bool line = r.choices.empty() && r.readOnly;   // a note ("Available once a game has run"): the whole row is its text
-        widgets::text(c.dl, px, ImVec2(p0.x + pad, p0.y + (p1.y - p0.y - px) * 0.5f), tc, r.label, line ? 2 * half : half);
+        const float nL = (float)std::max<size_t>(1, L.label.size());
+        const float labelH = nL * px + (nL - 1) * 4 * u;
+        widgets::textLines(c.dl, px, ImVec2(p0.x + pad, p0.y + (hgt - labelH) * 0.5f), tc, L.label, 4 * u);
 
+        // The value's side: the value (and, under it, the note's lines), as one block centred in the row.
+        const float noteH = L.note.empty() ? 0.0f : 4 * u + (float)L.note.size() * notePx + (float)(L.note.size() - 1) * 2 * u;
+        const float y = p0.y + (hgt - (px + noteH)) * 0.5f;
         const float chevW = 9 * u * k, chevH = 18 * u * k, gap = 24 * u * k, thick = 3 * u;
         const float cy = y + px * 0.5f;
         auto chevron = [&](float x, bool toRight, ImU32 col) {   // an open "<" or ">" (a font may lack the glyphs)
@@ -449,10 +500,7 @@ private:
         valueMid_[(size_t)index] = valueRight - vw * 0.5f;
         if (canStep(r, -1)) chevron(valueRight - vw - gap - chevW, false, mc);
         if (canStep(r, 1)) chevron(inner - chevW, true, mc);
-        if (hasNote) {
-            const float nw = std::min(widgets::textWidth(m.minText, r.note), half);
-            widgets::text(c.dl, m.minText, ImVec2(inner - nw, y + px + 4 * u), mc, r.note, nw);
-        }
+        if (!L.note.empty()) widgets::textLines(c.dl, notePx, ImVec2(inner, y + px + 4 * u), mc, L.note, 2 * u, true);
     }
 
     Host& host_;
@@ -461,6 +509,11 @@ private:
     std::vector<int> groupCount_;       // how many rows each of them has, from the last refresh()
     widgets::FocusTweens groupTweens_;  // the menu's group rows
     std::vector<SettingRow> rows_;      // the focused group's rows, from the last refresh()
+    struct RowLay {
+        std::vector<std::string> label, note;   // the lines each is broken into (layoutRows)
+    };
+    std::vector<RowLay> lay_;           // per row of rows_, from the last draw
+    float rowH_ = 0;                    // the rows' height at the last draw, pixels
     LinearFocus rail_, list_;
     std::vector<float> valueMid_;       // per row of the last draw: x of the middle of its value (where a click turns from back to forward)
     std::string group_;                 // the focused group's key; "" when there are no rows

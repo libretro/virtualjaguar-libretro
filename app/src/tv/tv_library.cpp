@@ -27,7 +27,7 @@ constexpr int kCols = 6;
 constexpr float kRailW = 344, kRailGap = 64, kItemH = 54, kItemGap = 8;   // design units
 constexpr float kGridTop = 196 - 150;       // from the top of the content area (y = 150)
 constexpr float kRowExtra = 72;             // under each tile: room for the focused tile's caption
-constexpr float kColGap = 32;
+constexpr float kColGap = 32, kColGapMenu = 12;
 constexpr size_t kMaxFilter = 32;
 const char* const kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";   // the picker's cells, row by row
 constexpr int kLetterCount = 36;
@@ -151,7 +151,10 @@ public:
 
         // ---- the grid ------------------------------------------------------------------------------------------------
         const float gx = x0 + (kRailW + kRailGap) * u, gridW = right - gx;
-        const float tileW = std::max(1.0f, (gridW - (kCols - 1) * kColGap * u) / (float)kCols), tileH = tileW * 7 / 5;
+        // In the menu's slot the grid is narrower (the panel, not the screen): tighter columns keep a placeholder tile wide enough for a
+        // whole word of a title ("Cybermorph") at the 24 u floor.
+        const float colGap = (embedded() ? kColGapMenu : kColGap) * u;
+        const float tileW = std::max(1.0f, (gridW - (kCols - 1) * colGap) / (float)kCols), tileH = tileW * 7 / 5;
         const float pitch = tileH + kRowExtra * u;
         const float top = c.pos.y + kGridTop * u, bottom = c.pos.y + c.size.y;
         const int visibleRows = std::max(1, (int)((bottom - top + kRowExtra * u) / pitch));
@@ -196,10 +199,13 @@ public:
         for (int r = 0; r < grid_.rows(); r++) {
             const float y = top + (float)r * pitch - scroll;
             if (y + pitch <= clipTop || y >= bottom) continue;
+            // In the menu's slot a row the panel's foot would cut through (its title lies at the tile's foot) waits until it fits whole
+            // (while the rows scroll it may enter by the edge).
+            if (embedded() && scroll == scroll_.to && y + tileH > bottom + 0.5f) continue;
             for (int col = 0; col < kCols; col++) {
                 const int j = r * kCols + col;
                 if (j >= n) break;
-                const float tx = gx + (float)col * (tileW + kColGap * u);
+                const float tx = gx + (float)col * (tileW + colGap);
                 widgets::TileArgs a = tileArgs(games_[(size_t)j]);
                 a.focus = !onRail_ && j == grid_.index ? tweens_.at(j, c.now) : 0.0f;
                 const widgets::Hit hit = widgets::tile(c.dl, m, ImVec2(tx, y), ImVec2(tileW, tileH), a);
