@@ -585,7 +585,7 @@ grid's phase once whenever frame ends would straddle the take point, so each 60.
 than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
 
 While it is on, every Tools window works (their data is copied by the emulation thread after each frame, and their edits
-run on it), but Break, Step, breakpoints and the GDB stub option are off until the next phase. RetroAchievements and
+run on it), and so do Break, Step, breakpoints and the GDB stub. RetroAchievements and
 netplay work as usual: achievements are checked on the emulation thread after every frame, and link play's peer waits
 block only that thread. An action that has to reach the core, such as a Tools-window edit, a load or a state save, waits
 for the frame in progress to end, including that frame's peer wait, which link play bounds to about one frame. One that

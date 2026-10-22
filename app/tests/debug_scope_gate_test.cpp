@@ -53,7 +53,6 @@ int main() {
     UiFixture fx;
     scopeToolInit(fx.s, CoreHost::instance());
     DebugTool* t = fx.s.findTool("scope");
-    fx.s.setHaltAvailable(false);                          // the threaded 3a state
     CHECK(fx.s.enabled() && t && t->toggle && fx.s.toolAvailable(*t));
     const UiFixture::Mark m = fx.mark();
     t->toggle();                                           // open: the tap now fills the ring

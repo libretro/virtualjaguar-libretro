@@ -208,18 +208,8 @@ void cases(Rig& r, const std::string& romA, const std::string& romB) {
         dbg.views().clear(id);
     }
 
-    // 6. No halt is possible while the halt is gated.
-    {
-        dbg.setHaltAvailable(false);
-        dbg.breakNow();
-        emu.advance(5);
-        dbg.syncHalt();
-        CHECK(!dbg.attached() && !dbg.halted(), "no halt is possible while it is gated");
-    }
-
     // 7. Hardcore closes the tools and detaches, threaded.
     {
-        dbg.setHaltAvailable(true);
         CHECK(dbg.attach() && dbg.attached(), "the core is attached (so the hardcore detach has something to do)");
         dbg.setHardcore(true);
         CHECK(!dbg.enabled(), "hardcore closes the tools");
@@ -227,7 +217,6 @@ void cases(Rig& r, const std::string& romA, const std::string& romB) {
         CHECK(!dbg.attached(), "hardcore detaches the core on the emulation thread");
         dbg.setHardcore(false);
         CHECK(dbg.enabled(), "the tools come back with hardcore off");
-        dbg.setHaltAvailable(false);
     }
 
     // 8. A fill posted just before the thread stops is not lost: the stop drains the debug lane, and the next

@@ -195,6 +195,14 @@ public:
     auto emuCall(F&& fn) -> decltype(fn()) {
         return emu.call(std::forward<F>(fn), haltGiveUp());
     }
+    // ---- the GDB stub (#967 phase 3b) --------------------------------------------------------------------------
+    // Whenever virtualjaguar_gdb_stub is enabled the app keeps a silent debugger host attached on the emulation thread
+    // (at the end of every load, and again after any frame it is missing -- a user Detach drops it), so a gdb halt is
+    // always seen: the halt bar shows it, calls give up, quitting detaches.  RetroAchievements hardcore locks the stub
+    // to "disabled" at the next load (syncHardcoreLock, UI thread); a hardcore flip with the stub open reloads the game.
+    void attachGdbHostOnCore();      // emulation thread (inline: the UI thread between frames)
+    void syncHardcoreLock();         // UI thread: gdbLockedByHardcore_ = ach.hardcoreNextGame()
+    bool gdbStubOpen() const { return gdbStubOn_.load(); }   // the stub was enabled and unlocked at the last load
     discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
     struct DiscordState {        // what discordTick() remembers between calls
         double lastTick = -1;
@@ -215,6 +223,8 @@ public:
     bool paused = false;
     bool fastForward = false;
     bool quit = false;
+    std::atomic<bool> gdbStubOn_{false};            // emulation thread at load: the core opened the GDB stub (enabled, not locked)
+    std::atomic<bool> gdbLockedByHardcore_{false};  // wireHost's optionLock forces virtualjaguar_gdb_stub=disabled while set
     std::atomic<bool> quitting_{false};   // what DebugCore::abortHalt reads (the pump detaches on its next iteration); `quit` stays the UI's flag
     bool fullscreen = false;
     bool menuPinned = true;
@@ -376,8 +386,6 @@ private:
     void shutdown();
     void loadConfig();
     void wireHost();
-    void limitFeaturesForEmuThread();   // #967: the debugger halt and the GDB stub are off while the thread is on
-    void liftFeatureLimits();           // undoes it when the thread did not start (nothing is loaded yet)
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);

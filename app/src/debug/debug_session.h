@@ -9,7 +9,7 @@
 // coreCall (waits) or corePost (fire and forget), which App wires to the emulation thread's debug lane.  Both are
 // empty inline (headless, tests), and the action then runs right where it is called: same code, one thread.
 //   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_,
-//                    haltAvailable_, the halt mirror (mirror_, byGdb_, userHaltPending_, detachPending_,
+//                    the halt mirror (mirror_, byGdb_, userHaltPending_, detachPending_,
 //                    attachedMirror_), seenGen_, hadCore_, and the public callbacks.  Exception: regions_ and lastPokeError_ may be written inside
 //                    a callCore lambda (regions() / poke() nested in a window's one-shot action) while the UI thread
 //                    waits in that call; the call's completion orders those writes before the UI reads them.
@@ -103,12 +103,6 @@ public:
     // Why not (for a tooltip / the greyed Tools menu); "" when enabled().
     std::string disabledReason() const;
     bool hardcore() const { return hardcore_; }
-    // TRANSITIONAL (removed in phase 3b, task B4): while the halt cannot be served on the emulation thread, a threaded run turns
-    // Break / Step / breakpoints off and keeps the windows live.  Off: attach() refuses, so does everything built on it;
-    // turning it off detaches.  It does not close the tools.
-    void setHaltAvailable(bool on);
-    bool haltAvailable() const { return haltAvailable_; }
-    std::string haltDisabledReason() const;   // "" when available
 
     // ---- attach / halt -----------------------------------------------------------------------
     // The halt mirror.  syncHalt() runs once per UI frame (App::syncDebug): it copies core().halt() and attached(); when
@@ -200,7 +194,7 @@ public:
     // Whether the menu entry is clickable: the tools are enabled, the window exists, and (CPU stepping) a processor is
     // halted when the entry needs one.  The in-window Tools menu and the native macOS one both ask this.
     bool toolAvailable(const DebugTool& t) const {
-        return enabled() && t.toggle && (!t.needsHalt || (haltAvailable_ && halted()));
+        return enabled() && t.toggle && (!t.needsHalt || halted());
     }
     // Greyed placeholders for the windows the later work packages add: Memory, CLUT, Cheat scanner, CPU,
     // Objects, Blitter, Textures, Audio scope.
@@ -221,7 +215,6 @@ private:
     DebugViews views_;
     bool loaded_ = false;
     bool hardcore_ = false;
-    bool haltAvailable_ = true;
     uint64_t seenGen_ = 0;       // core_.ifaceGen() as syncCore() last adopted it
     bool hadCore_ = false;
     std::atomic<bool> wakePosted_{false};

@@ -83,18 +83,6 @@ void DebugSession::setHardcore(bool on) {
     serial_++;
 }
 
-void DebugSession::setHaltAvailable(bool on) {
-    if (on == haltAvailable_) return;
-    haltAvailable_ = on;
-    if (!on) detach();
-    serial_++;
-}
-
-std::string DebugSession::haltDisabledReason() const {
-    if (haltAvailable_) return std::string();
-    return "Break, Step and breakpoints are not available while Settings > Interface > Emulation thread is on (this version)";
-}
-
 std::string DebugSession::disabledReason() const {
     if (!core_.loaded()) return "This core build has no debug interface";
     if (hardcore_) return "Disabled while RetroAchievements hardcore mode is on";
@@ -128,7 +116,7 @@ void DebugSession::syncHalt() {
 // ---- attach / halt -------------------------------------------------------------------------------------------
 
 bool DebugSession::attach() {
-    if (!enabled() || !haltAvailable_ || detachPending_) return false;
+    if (!enabled() || detachPending_) return false;
     if (attachedMirror_ && detachQueued_.load() == 0 && core_.attached()) return true;
     // The core's table is rebuilt from the list on every attach: a by-value copy of the enabled entries.
     std::vector<DebugBreakpoint> bps;
@@ -179,7 +167,7 @@ void DebugSession::detach() {
 }
 
 void DebugSession::breakNow(int target) {
-    if (!enabled() || halted() || !haltAvailable_ || detachPending_) return;
+    if (!enabled() || halted() || detachPending_) return;
     if (target < 0 || target >= VJ_DBG_NUM_TARGETS) return;
     if (!attach()) return;
     userHaltPending_ = true;

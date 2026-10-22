@@ -516,36 +516,6 @@ static void testMarshalling() {
     delta(0, 0, "tick / views / serial / enabled / attached: no core call");
 }
 
-static void testHaltAvailable() {
-    DebugSession s;
-    MockDebugIface m;
-    s.setIface(m.iface());
-    s.setContentLoaded(true);
-    s.registerPlaceholderTools();
-    DebugTool memory = *s.findTool("memory");
-    memory.toggle = [] {};
-    s.registerTool(memory);
-    DebugTool step;
-    step.id = "step";
-    step.toggle = [] {};
-    step.needsHalt = true;
-    CHECK(s.attach() && s.attached() && s.haltAvailable() && s.haltDisabledReason().empty(), "available by default");
-    s.setHaltAvailable(false);
-    CHECK(!s.attached() && !m.attached(), "turning it off detaches");
-    CHECK(s.enabled() && s.toolAvailable(*s.findTool("memory")) && !s.toolAvailable(step),
-          "the windows stay live, a tool that needs a halt does not");
-    CHECK(!s.attach() && !m.attached(), "attach() refuses");
-    s.breakNow();
-    CHECK(!s.attached() && !m.attached(), "breakNow() refuses");
-    CHECK(!s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && !s.toggleBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && s.breakpoints().empty(),
-          "addBreakpoint() and toggleBreakpoint() refuse");
-    CHECK(!s.haltDisabledReason().empty(), "with a reason");
-    std::vector<uint8_t> out;
-    CHECK(s.read(0x10, out, 4) && s.pokeU(0x7000, 4, 1) == 4, "memory reads and writes still work");
-    s.setHaltAvailable(true);
-    CHECK(s.attach() && s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000), "and come back");
-}
-
 static void testCoreSyncSplit() {
     // What the emulation thread does (onCoreIface) must not touch UI state; the UI adopts it in syncCore().
     DebugSession s;
@@ -1054,7 +1024,6 @@ int main() {
     testMockContent();
     testCoreWrappers();
     testMarshalling();
-    testHaltAvailable();
     testCoreSyncSplit();
     testReplacedCoreClosesTools();
     testViewsFill();

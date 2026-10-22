@@ -23,8 +23,9 @@
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
-#   emu_thread_start_fallback  a failed thread start lifts the halt/GDB limits and runs inline
-#   emu_thread_limits  the halt and the GDB stub are off while threaded; the Tools windows work
+#   emu_thread_start_fallback  a failed thread start runs inline (nothing to lift any more)
+#   debug_on_threaded / gdb_enabled(_threaded)  nothing is off while threaded; the silent gdb host attaches at load
+#   gdb_hardcore_locked_* / gdb_hardcore_flip_*  hardcore locks the stub to disabled at load; a mid-game flip reloads to apply it
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
 function(vj_emu_thread_warnings target)
@@ -156,14 +157,14 @@ set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threa
     PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
 
-# A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline and the
-# debugger halt and the GDB stub come back on.
+# A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline.  Nothing
+# is switched off while threaded any more, so there is nothing to give back (the old "are back on" line must be gone).
 add_test(NAME emu_thread_start_fallback
     COMMAND ${CMAKE_COMMAND} -E env VJ_TEST_EMU_START_FAIL=1
             $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
 set_tests_properties(emu_thread_start_fallback PROPERTIES TIMEOUT 120 LABELS emu_thread
-    PASS_REGULAR_EXPRESSION "the debugger halt and the GDB stub are back on .the emulation thread did not start."
-    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+    PASS_REGULAR_EXPRESSION "could not start the emulation thread; running emulation on the UI thread.*headless: OK"
+    FAIL_REGULAR_EXPRESSION "are back on|are off while|headless: FAIL|ThreadSanitizer|owner violation")
 
 # The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the
 # staged-BIOS record), and the menus read the disc list from the pinned snapshot.
@@ -189,8 +190,7 @@ set_tests_properties(smoke_disc_insert_bios_threaded PROPERTIES TIMEOUT 300 LABE
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
 # The Pro Controller (#1017) through the app itself: a config naming it on Jaguar port 2 must hand the core
-# virtualjaguar_p2_device = pad_pro after the load, inline and threaded (on the emulation thread the option lock is
-# limitFeaturesForEmuThread()'s, and refreshLocks() runs on the owner).  The data dirs are written at configure time;
+# virtualjaguar_p2_device = pad_pro after the load, inline and threaded (on the emulation thread refreshLocks() runs on the owner).  The data dirs are written at configure time;
 # a headless run keeps input.port.1.
 foreach(_m on off)
     set(_pd "${CMAKE_CURRENT_BINARY_DIR}/pro-controller-${_m}")
@@ -214,17 +214,56 @@ set_tests_properties(smoke_m3u_playlist_threaded PROPERTIES TIMEOUT 300 LABELS e
     PASS_REGULAR_EXPRESSION "DISC list 2: synth_jagcd\\.chd, synth_jagcd_multi\\.chd; content synth_jagcd -> synth_jagcd_multi, save RAM synth_jagcd_set \\(emulation thread\\)"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|nothing to insert|insert failed|owner violation|ThreadSanitizer")
 
-add_test(NAME emu_thread_limits
+# 3b: nothing is switched off while threaded.  The old "are off" line must be gone, the thread on, the run OK.
+add_test(NAME debug_on_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 "${VJ_ROMS}/yarc.j64")
-set_tests_properties(emu_thread_limits PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "the debugger halt and the GDB stub are off while the emulation thread is on \\(the Tools windows work\\)"
-    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
-add_test(NAME gdb_locked_threaded
+set_tests_properties(debug_on_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "\\[emu\\] emulation thread on.*${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "are off while the emulation thread is on|ThreadSanitizer|owner violation")
+# Decision 3: whenever the stub is enabled the app attaches a silent host behind every halt, inline and threaded.  Fixed,
+# distinct ports: the typed option rejects 0, and a port the core cannot open disables the stub for the session (the FAIL
+# regex catches that, so a collision is a failure, not a vacuous pass).
+add_test(NAME gdb_enabled
+    COMMAND virtualjaguar --headless --emu-thread off --frames 5 --option virtualjaguar_gdb_stub=enabled
+            --option virtualjaguar_gdb_port=23459 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_enabled PROPERTIES TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*headless: OK"
+    FAIL_REGULAR_EXPRESSION "managed by the app|rejected by the core|failed to open port|headless: FAIL")
+add_test(NAME gdb_enabled_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
-            "${VJ_ROMS}/yarc.j64")
-set_tests_properties(gdb_locked_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
-    PASS_REGULAR_EXPRESSION "managed by the app.*rejected by the core"
-    FAIL_REGULAR_EXPRESSION "ThreadSanitizer|owner violation")
+            --option virtualjaguar_gdb_port=23457 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_enabled_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "managed by the app|rejected by the core|failed to open port|headless: FAIL|ThreadSanitizer|owner violation")
+# Decision 2: RetroAchievements hardcore locks the stub to disabled at load.  A SAVED setting (config.ini), not --option:
+# an --option on a locked key is reported as an error by design (checkOverrides).
+foreach(_m off on)
+    set(_gd "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-${_m}")
+    file(MAKE_DIRECTORY "${_gd}")
+    file(WRITE "${_gd}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\n")
+    add_test(NAME gdb_hardcore_locked_${_m}
+        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 10 --verbose --data-dir "${_gd}"
+                --ra-mock "${VJ_RA_FIX}" --ra-hardcore "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_hardcore_locked_${_m} PROPERTIES TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
+        FAIL_REGULAR_EXPRESSION "gdb host attached|headless: FAIL|ThreadSanitizer|owner violation")
+    # A hardcore flip mid-game (late sign-in at frame 40) with the stub OPEN: the app reloads so the lock reaches the core
+    # (it reads the stub options at load only).  The attach line proves the stub was open before the flip.
+    set(_gf "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-flip-${_m}")
+    file(MAKE_DIRECTORY "${_gf}")
+    if(_m STREQUAL "on")
+        file(WRITE "${_gf}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23458\n")
+    else()
+        file(WRITE "${_gf}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23461\n")
+    endif()
+    add_test(NAME gdb_hardcore_flip_${_m}
+        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 120 --verbose --data-dir "${_gf}"
+                --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40 --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(gdb_hardcore_flip_${_m} PROPERTIES TIMEOUT 180
+        PASS_REGULAR_EXPRESSION "gdb host attached \\(silent\\).*\\[ach\\] hardcore on: reloading the game to close the GDB stub.*\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|failed to open port|ThreadSanitizer|owner violation")
+endforeach()
+set_tests_properties(gdb_hardcore_locked_on gdb_hardcore_flip_on PROPERTIES LABELS emu_thread)
 
 add_executable(vj_late_latch_test tests/late_latch_test.cpp)
 target_include_directories(vj_late_latch_test PRIVATE src)

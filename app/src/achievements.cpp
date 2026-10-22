@@ -481,7 +481,16 @@ void Achievements::pump() {
         // run must start clean).  retro_cheat_reset: cheats may not outlive it.
         corePost([] { retro_cheat_reset(); });
         hardcoreResets_++;
-        if (app_ && app_->host.isLoaded()) app_->reset();
+        if (app_ && app_->host.isLoaded()) {
+            // The core reads the GDB stub options at load only: with the stub open, the restart is a reload, so the
+            // hardcore lock (App::syncHardcoreLock, current before the load) reaches the core and the socket closes.
+            if (app_->gdbStubOpen()) {
+                std::fprintf(stderr, "[ach] hardcore on: reloading the game to close the GDB stub\n");
+                app_->reloadContent();
+            } else {
+                app_->reset();
+            }
+        }
     }
     checkHardcoreTransition();
     if (app_) {

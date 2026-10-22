@@ -539,7 +539,13 @@ void App::wireHost() {
     };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
     // The app's own Controls / Devices tabs replace these core options.
+    // RetroAchievements hardcore also locks the GDB stub (it reads memory and halts the game): gdbLockedByHardcore_ is
+    // current before every load (syncHardcoreLock), which is when CoreHost settles which keys are locked.
     host.optionLock = [this](const std::string& k, std::string& v) {
+        if (k == "virtualjaguar_gdb_stub" && gdbLockedByHardcore_.load()) {
+            v = "disabled";
+            return true;
+        }
         return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
     };
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
@@ -602,6 +608,7 @@ void App::syncDebug() {
     if (!threaded() && !host.inFrame()) debug.core().frameEnded();   // inline: a halt the core left on gdb's say-so
     debug.syncHalt();   // the mirror of the core's halt: the UI-side hooks fire here
     debug.setContentLoaded(host.isLoaded());
+    syncHardcoreLock();
     debug.setHardcore(ach.hardcoreActive());
     debug.tick(now(), host.isLoaded() && !paused && !debug.halted());
     debug.wakeViews();   // posts one fill to the debug lane: EmuThread runs it now when not threaded (a halted or paused window is current), else at the next boundary
@@ -642,30 +649,18 @@ std::function<bool()> App::detachForCall() {
     };
 }
 
-// #967: with the emulation thread on, a halt would run the UI on the emulation thread, so these two stay off for the
-// run until phase 3b moves the halt pump there (docs/app-emulation-thread-plan-phase3.md).  The Tools windows work
-// (phase 3a): the core hands its debug interface over, and every call into it is the emulation thread's.
-//   * Break, Step and breakpoints: DebugSession::setHaltAvailable(false) makes attach() refuse, so nothing can halt.
-//   * The GDB stub: a socket halt would park the emulation thread with every call() waiting behind it.
-void App::limitFeaturesForEmuThread() {
-    debug.setHaltAvailable(false);
-    host.optionLock = [this](const std::string& key, std::string& value) {
-        if (key == "virtualjaguar_gdb_stub") {
-            value = "disabled";
-            return true;
-        }
-        return lockedCoreOptionFor(key, value, {{proPorts[0].load(), proPorts[1].load()}});   // as wireHost()'s
-    };
-    std::fprintf(stderr, "[emu] the debugger halt and the GDB stub are off while the emulation thread is on (the Tools windows work)\n");
-}
+// UI thread.  The lock turns on with hardcore being wanted (signed in or signing in), a step ahead of hardcoreActive().
+// CoreHost settles which keys are locked at the definitions push, i.e. at a load, so this must be current before every
+// load.  A lock that turns OFF mid-game leaves the stub disabled until the next load; one that turns ON needs a reload
+// (Achievements::pump).
+void App::syncHardcoreLock() { gdbLockedByHardcore_.store(ach.hardcoreNextGame()); }
 
-// The emulation thread did not start: the run is inline after all, so give back what limitFeaturesForEmuThread() took.
-void App::liftFeatureLimits() {
-    debug.setHaltAvailable(true);
-    host.optionLock = [this](const std::string& k, std::string& v) {   // wireHost()'s rule
-        return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
-    };
-    std::fprintf(stderr, "[emu] the debugger halt and the GDB stub are back on (the emulation thread did not start)\n");
+// Emulation thread (inline: the UI thread, between frames).  The silent debugger host: it never halts by itself, it only
+// makes a gdb halt visible to the app.  Attached inside the load call -- before any frame can run, so a gdb_wait boot halt
+// is seen -- and again after any frame it is missing (a user Detach drops it; the app's breakpoints go with it).
+void App::attachGdbHostOnCore() {
+    if (!host.isLoaded() || !debug.core().loaded() || !gdbStubOn_.load() || debug.core().attached()) return;
+    if (debug.core().attach()) std::fprintf(stderr, "[debug] gdb host attached (silent): halts are visible to the app\n");
 }
 
 // UI thread: 1e9 / the refresh rate of the display the window is on, or 0 when there is no window or the rate is unknown.
@@ -719,7 +714,6 @@ void App::startEmuThread() {
     if (SDL_getenv("VJ_TEST_EMU_START_FAIL") || !emu.start(EmuThread::Mode::Threaded, *emuClient_)) {
         host.post = nullptr;
         emuThreadThisRun_ = false;   // Settings offers "Restart the app to apply" again
-        liftFeatureLimits();
         debug.core().waitVerdict = nullptr;
         std::fprintf(stderr, "[emu] could not start the emulation thread; running emulation on the UI thread\n");
         return;
@@ -771,6 +765,7 @@ void App::emuRunOneFrame() {
     const uint64_t r0 = SDL_GetPerformanceCounter();
     host.runFrame();
     debug.core().frameEnded();   // a halt gdb (or the halt timeout) ended inside this frame is closed on our side
+    attachGdbHostOnCore();       // a user Detach dropped the silent host: it comes back before the next frame
     retroTicks_.fetch_add(SDL_GetPerformanceCounter() - r0, std::memory_order_relaxed);
     runFrames_.fetch_add(1, std::memory_order_relaxed);
     ach.emuFrame();   // rc_client_do_frame: reads game RAM, so here
@@ -1231,6 +1226,7 @@ bool App::openContent(const std::string& pathIn) {
         toast(kHaltedToast, 2.5, 2);
         return false;
     }
+    syncHardcoreLock();   // the load below settles which options are locked
     const std::string path = absolutePath(pathIn);
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
@@ -1284,6 +1280,7 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     // after the call returns.  A state load queued for this game (resume / library) waits for 2 of them.
     runFrames_.store(0);
     pendingStateAt_ = emu.framesRun() + 2;
+    gdbStubOn_.store(false);
     if (!host.loadContent(path, err)) {
         ach.onContentClosed();
         cheatsOnClose(*this);
@@ -1307,6 +1304,10 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     ach.onContentLoaded();                     // identify the game, look up its achievements
     cheatsAfterLoad(*this);                    // the core drops its cheat list on every unload
     host.publishSnapshot();
+    // optionValueFor ignores locks, so the lock is checked separately.
+    gdbStubOn_.store(!host.optionLocked("virtualjaguar_gdb_stub") &&
+                     host.optionValueFor("virtualjaguar_gdb_stub", "disabled") == "enabled");
+    attachGdbHostOnCore();   // before the call returns, so before any frame (a gdb_wait boot halt is seen)
     return true;
 }
 
@@ -1315,6 +1316,7 @@ bool App::openNoContent() {
         toast(kHaltedToast, 2.5, 2);
         return false;
     }
+    syncHardcoreLock();   // the load below settles which options are locked
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
@@ -1348,6 +1350,7 @@ bool App::openNoContentOnCore(std::string& err) {
     host.setDirectories(paths.system, paths.saves);
     applyBios();
     frames.clear();
+    gdbStubOn_.store(false);
     if (!host.loadNoContent(err)) {
         ach.onContentClosed();
         return false;
@@ -1360,6 +1363,10 @@ bool App::openNoContentOnCore(std::string& err) {
     input.setContent("");
     applyPortDevices(*this);
     host.publishSnapshot();
+    // optionValueFor ignores locks, so the lock is checked separately.
+    gdbStubOn_.store(!host.optionLocked("virtualjaguar_gdb_stub") &&
+                     host.optionValueFor("virtualjaguar_gdb_stub", "disabled") == "enabled");
+    attachGdbHostOnCore();   // before the call returns, so before any frame (a gdb_wait boot halt is seen)
     return true;
 }
 
@@ -1423,6 +1430,7 @@ void App::closeContent() {
         [this, &ran] {
             ran = true;
             host.unloadContent();
+            gdbStubOn_.store(false);
             ach.onContentClosed();
             cheatsOnClose(*this);
             audio.clear();
@@ -1923,10 +1931,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_F8: togglePause(); break;
     case SDLK_F9:   // debugger: continue when halted, otherwise break at the next instruction
         if (debug.halted()) debug.resume();
-        else if (debug.enabled()) {
-            if (debug.haltAvailable()) debug.breakNow();
-            else toast(debug.haltDisabledReason(), 3.0);
-        }
+        else if (debug.enabled()) debug.breakNow();
         break;
     case SDLK_O:
         if (mod) showOpenDialog();
@@ -2107,6 +2112,7 @@ void App::stepEmulation() {
         pacer_.reset();
         return;
     }
+    attachGdbHostOnCore();   // inline: a user Detach dropped the silent host; it is back before the next frame
     double period = 1.0 / std::max(1.0, host.fps());
     int frames = 0;
     if (fastForward) {
@@ -2252,7 +2258,6 @@ int App::run(const CliArgs& a) {
         std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());
     }
     wireHost();
-    if (emuThreadThisRun_) limitFeaturesForEmuThread();
     ach.init(*this, a);   // with the emulation thread on, rc_client_do_frame runs there (Achievements::emuFrame)
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);

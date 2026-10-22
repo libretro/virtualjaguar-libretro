@@ -81,8 +81,8 @@ rules below cost nothing; with the emulation thread on they are what keeps the w
 - **One-shot actions** (poke, register edit, arm the OP snapshot, enable the blit log, texture pack reload, attach, the
   scanner's 2 MB scan pass) go through `EmuThread::debugCall` and wait at most one frame.  Slower work whose result
   the window picks up later (the CPU window's backwards disassembly walk) is posted (`CoreJob`) instead.
-- With the thread on, Break, Step and breakpoints are greyed (the tooltip says they are not available in this version)
-  and the GDB stub option stays locked to `disabled`; the halt pump moves to the emulation thread in a later phase.
+- Break, Step, breakpoints and the GDB stub work with the thread on too: the halt pump runs on the emulation thread
+  (`DebugCore`), the UI mirrors the halt once per frame, and every UI call into the core gives up while the core is halted.
 
 ## The tools
 
@@ -171,6 +171,12 @@ Hardcore turns the whole Tools menu off: the entries grey out with "RetroAchieve
 closes, the session detaches and any halt resumes.  Turning hardcore on from inside a halt does the same.  The scanner's
 cheats are ordinary cheats, so the Cheats window's own hardcore block applies to them too.
 
+Hardcore also locks the GDB stub (`virtualjaguar_gdb_stub`) to `disabled`: the lock is applied at the next load, because the
+core reads the stub options only then.  **Turning hardcore on while the stub is enabled reloads the game** (a restart is
+what hardcore needs anyway, and the reload is the only way the lock reaches the core and the socket closes); the log says
+`[ach] hardcore on: reloading the game to close the GDB stub`.  If hardcore turns off mid-game the stub stays disabled until
+the next load.
+
 ## Several app instances
 
 Each process has its own session and windows.  The system folder (and with it `vj_texdump` / `vj_texpacks`) is shared between
@@ -183,6 +189,16 @@ The built-in debugger and the GDB TCP stub (`virtualjaguar_gdb`) share one set o
 `attach()` initialises the tables **without a socket**, so the app works with the option off; with it on, both can be used:
 either side may resume a halted machine, and a GDB client disconnecting clears the table (the app re-applies its list on the next
 attach).  With no app host and no GDB client attached, a halt returns at once and can never hang the core.
+
+Whenever the stub is enabled the app keeps a **silent host** attached (logged as `[debug] gdb host attached (silent)`): it
+never halts anything by itself, it only makes a GDB halt visible -- the halt bar says "HALTED by gdb", F9 continues, calls
+into the core give up instead of hanging, and quitting detaches.  It is attached on the emulation thread inside the load,
+before the first frame.  Two consequences:
+
+- **`virtualjaguar_gdb_wait`** parks the boot even before a GDB client connects; the UI stays
+  live, the halt bar shows it, and F9 (or **Detach**) continues.  A client that connects later asks `?` and gets `S05`.
+- **Detach debugger** drops the app's breakpoints and the host, and with the stub still enabled the silent host comes back
+  one frame later.  Detach does not close the stub; turn the option off and reload for that.
 
 ## Cost when you are not looking
 
