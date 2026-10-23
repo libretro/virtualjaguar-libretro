@@ -1126,6 +1126,7 @@ void App::haltedFrame() {
     inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
     inputFrame(*this);
     ach.pump();
+    cheatsPump(*this);   // community store installs/checks finish during a halt too
     syncDebug();
     video.upload(host.frame());
     applyViewports();

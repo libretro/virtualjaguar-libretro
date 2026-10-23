@@ -1523,6 +1523,51 @@ static void testRemove() {
     CHECK(r.cm.communitySet() && r.cm.enabledCount() == 0);
 }
 
+// A pack file that exists but does not parse (zero-byte, truncated, junk) must stay removable: the UI derives Remove (and
+// Update when offered) from state() alone, not from cm.communitySet().
+static void testUnreadablePack() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    {   // sidecar present, file emptied: EditedLocally, Update offered, Remove clears files and cp. toggles
+        Rig r("vj-store-unreadable");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.serve(storeFixture("manifest.json"), body);
+        r.open();
+        CHECK(r.installNow());
+        r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);
+        { std::ofstream f(r.cht(), std::ios::binary | std::ios::trunc); }
+        r.store.windowOpened(kStoreCrc, r.cfg);
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        CHECK(r.cm.communitySet() == nullptr);
+        CHECK(r.store.state(kStoreCrc) == PackState::EditedLocally && r.store.offered(kStoreCrc));
+        CHECK(r.store.remove(kStoreCrc, r.cm));
+        CHECK(!r.hasFiles() && r.store.state(kStoreCrc) == PackState::Offered);
+        CHECK(slurp(r.tmp / "games/crc-5e2cdbc0.ini").find("cp.") == std::string::npos);
+    }
+    {   // no sidecar, junk file, manifest loaded and still offering it: Update offered (UpdateAvailable), Remove works
+        Rig r("vj-store-unreadable-nosidecar");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.serve(storeFixture("manifest.json"), body);
+        r.open();
+        CHECK(r.installNow());
+        fs::remove(r.sidecar());
+        { std::ofstream f(r.cht(), std::ios::binary | std::ios::trunc); f << "junk\n"; }
+        r.store.windowOpened(kStoreCrc, r.cfg);
+        CHECK(r.store.state(kStoreCrc) == PackState::UpdateAvailable);
+        CHECK(r.store.remove(kStoreCrc, r.cm) && !r.hasFiles());
+    }
+    {   // no manifest at all and a junk file: Installed (nothing to compare against), Remove works
+        Rig r("vj-store-unreadable-offline");
+        r.downloads = false;
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.store.windowOpened(kStoreCrc, r.cfg);
+        fs::create_directories(fs::path(r.cht()).parent_path());
+        { std::ofstream f(r.cht(), std::ios::binary | std::ios::trunc); }
+        r.store.windowOpened(kStoreCrc, r.cfg);
+        CHECK(r.store.state(kStoreCrc) == PackState::Installed);
+        CHECK(r.store.remove(kStoreCrc, r.cm) && !r.hasFiles());
+    }
+}
+
 static void testMessagesOncePerLoad() {
     const std::string body = storeFixture("5E2CDBC0.cht");
     Rig r("vj-store-messages");
@@ -1832,6 +1877,7 @@ int main(int argc, char** argv) {
     testRetryGate();
     testOfflineAfterInstall();
     testRemove();
+    testUnreadablePack();
     testMessagesOncePerLoad();
     testAsyncHandoff();
     testFetchThrows();

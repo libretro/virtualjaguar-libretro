@@ -15,6 +15,7 @@
 #include <deque>
 #include <filesystem>
 #include <mutex>
+#include <set>
 
 namespace vj {
 
@@ -141,7 +142,7 @@ bool parseManifest(const std::string& text, std::vector<PackMeta>& out, std::str
         return false;
     }
     std::vector<PackMeta> packs;
-    std::map<std::string, bool> seen;
+    std::set<std::string> seen;
     for (const Json& o : doc["packs"].items()) {
         PackMeta m;
         Entry e = parseEntry(o, m);
@@ -150,7 +151,7 @@ bool parseManifest(const std::string& text, std::vector<PackMeta>& out, std::str
             return false;
         }
         if (e == Entry::Skip || seen.count(m.crc32)) continue;
-        seen[m.crc32] = true;
+        seen.insert(m.crc32);
         packs.push_back(std::move(m));
     }
     out = std::move(packs);
@@ -337,9 +338,15 @@ void CheatStore::startManifestFetch() {
         std::string body, err;
         try {
             bool ok = get && get(url, kCheatManifestMaxBytes, body, err);
-            if (ok && body.size() > kCheatManifestMaxBytes) ok = false, err = "response too large";
+            if (ok && body.size() > kCheatManifestMaxBytes) {
+                ok = false;
+                err = "response too large";
+            }
             if (!ok) r.error = unreachable(err);
-            else if (parseManifest(body, r.packs, r.error)) r.ok = true, r.raw = std::move(body);
+            else if (parseManifest(body, r.packs, r.error)) {
+                r.ok = true;
+                r.raw = std::move(body);
+            }
         } catch (...) {
             r = Shared::Result();
             r.error = unreachable("the request failed unexpectedly");
@@ -398,9 +405,15 @@ bool CheatStore::install(uint32_t crc) {
         std::string body, err;
         try {
             bool ok = get && get(url, kCheatPackMaxBytes, body, err);
-            if (ok && body.size() > kCheatPackMaxBytes) ok = false, err = "response too large";
+            if (ok && body.size() > kCheatPackMaxBytes) {
+                ok = false;
+                err = "response too large";
+            }
             if (!ok) r.error = unreachable(err);
-            else if (verifyPack(meta, crc, body, r.error)) r.ok = true, r.raw = std::move(body);
+            else if (verifyPack(meta, crc, body, r.error)) {
+                r.ok = true;
+                r.raw = std::move(body);
+            }
         } catch (...) {
             r.ok = false;
             r.raw.clear();

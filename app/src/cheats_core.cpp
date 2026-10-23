@@ -8,8 +8,8 @@
 #include "libretro.h"
 #include "titledb.h"   // TitleDBContentCRC / TitleDBTitleName: the identity the core logs at load
 
-#include <cstdio>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -154,6 +154,9 @@ void cheatsAfterLoad(App& app) {
         if (!g_cli.set.empty() || !g_cli.on.empty() || !g_cli.codes.empty())
             std::fprintf(stderr, "cheats: --cheat-set/--cheat-on/--cheat ignored: disabled in hardcore mode\n");
         const unsigned saved = cm.enabledCount();
+        // app.toast / app.ach.notice here (and the toast below) run on the emulation thread in threaded mode.  That is
+        // safe only because every caller is inside emu.call (the main thread is parked in busyFrame, which touches
+        // neither osd_ nor ImGui); posting loads via emu.post instead would break this.
         app.ach.notice("Cheats disabled in hardcore mode",
                        saved ? std::to_string(saved) + " saved cheat" + (saved == 1 ? " is" : "s are") + " not applied."
                              : std::string("RetroAchievements hardcore does not allow them."));
@@ -193,9 +196,9 @@ void cheatsOnClose(App& app) {
 }
 
 void cheatsPump(App& app) {
-    // Pending load / close first (inside pump), then finished requests.  Every frame, not only while the Cheats window is open: an install must finish (and its files be written) even
-    // if the window was closed meanwhile.  afterApply is latched and cheap; it covers a cheat turned on in the window
-    // and the end of a hardcore block.
+    // Pending load / close first (inside pump), then finished requests.  Every frame, not only while the Cheats
+    // window is open: an install must finish (and its files be written) even if the window was closed meanwhile.
+    // afterApply is latched and cheap; it covers a cheat turned on in the window and the end of a hardcore block.
     app.cheatStore.pump(app.cheats);
     app.cheatStore.afterApply(app.cheats);
 }

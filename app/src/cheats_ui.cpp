@@ -64,7 +64,17 @@ void drawSetPicker(App& app) {
         ImGui::EndCombo();
     }
     std::string st = cm.setStatus();
-    if (!st.empty()) ui::coloredWrapped(ui::vec4(ui::pal().warning), st.c_str());
+    if (!st.empty()) {
+        // "No set matches by name" is not a problem when the game's community pack already supplies cheats.
+        const ChtSet* pack = cm.communitySet();
+        const bool packCovers = pack && pack->restriction.empty() && !pack->cheats.empty();
+        if (packCovers && cm.selectedStem().empty() && cm.matches().empty() && !lib.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", st.c_str());
+            ImGui::PopStyleColor();
+        } else
+            ui::coloredWrapped(ui::vec4(ui::pal().warning), st.c_str());
+    }
 }
 
 // The cheat rows of one set: a checkbox, the wrapped description (clicking it toggles too) and a tooltip with the code
@@ -126,8 +136,12 @@ void drawCommunity(App& app, bool hardcore) {
     const ChtSet* set = cm.communitySet();
     const bool downloads = store.downloadsAllowed && store.downloadsAllowed();
     const bool busy = store.busy();
-    const bool havePack = set && (st == PackState::Installed || st == PackState::UpdateAvailable ||
-                                  st == PackState::NoLongerOffered || st == PackState::EditedLocally);
+    // A pack file is on disk: Remove (and Update when offered) follow from the store state alone, so a file that does
+    // not parse is never a dead end.  Only the cheat rows need the parsed `set`.
+    const bool packOnDisk = st == PackState::Installed || st == PackState::UpdateAvailable ||
+                            st == PackState::NoLongerOffered || st == PackState::EditedLocally;
+    const bool havePack = packOnDisk && set;
+    const bool updateOffered = st == PackState::UpdateAvailable || (st == PackState::EditedLocally && off);
 
     // ---- what the store knows about it ----
     if (m && st != PackState::NotOffered) {
@@ -157,8 +171,9 @@ void drawCommunity(App& app, bool hardcore) {
                 ImGui::TreePop();
             }
         }
-    } else if (havePack && !inst) {
-        ImGui::TextDisabled("Credits unavailable (no record of where this pack came from). Use Update to replace it.");
+    } else if (packOnDisk && !inst) {
+        ImGui::TextDisabled(updateOffered ? "Credits unavailable (no record of where this pack came from). Use Update to replace it."
+                                          : "Credits unavailable (no record of where this pack came from).");
     }
 
     // ---- state line ----
@@ -176,9 +191,10 @@ void drawCommunity(App& app, bool hardcore) {
             break;
         case PackState::UpdateAvailable:
             ui::coloredWrapped(ui::vec4(ui::pal().warning),
-                               off && !off->updated.empty()
-                                   ? ("Update available (pack changed " + off->updated + ").").c_str()
-                                   : "Update available.");
+                               ((off && !off->updated.empty() ? "Update available (pack changed " + off->updated + ")."
+                                                              : std::string("Update available.")) +
+                                (downloads ? "" : " (downloads are off)"))
+                                   .c_str());
             break;
         case PackState::NoLongerOffered:
             ImGui::TextDisabled("No longer offered by the store; installed copy kept.");
@@ -190,6 +206,9 @@ void drawCommunity(App& app, bool hardcore) {
         default:
             break;
     }
+    if (packOnDisk && (!set || !set->restriction.empty()))
+        ui::coloredWrapped(ui::vec4(ui::pal().warning),
+                           set ? set->restriction.c_str() : "This pack could not be read; Remove it, or Update if offered.");
     if (havePack && store.turnedOff() > 0) {
         char m[96];
         std::snprintf(m, sizeof m, "%u cheat%s changed in the update and %s turned off.", store.turnedOff(),
@@ -215,10 +234,12 @@ void drawCommunity(App& app, bool hardcore) {
     const bool canInstall = off && downloads && !busy;
     if (st == PackState::Offered && button("Install", canInstall, "Downloads this pack from the project's website."))
         store.install(crc);
-    if ((st == PackState::UpdateAvailable || (st == PackState::EditedLocally && off)) &&
-        button("Update", canInstall, "Replaces the installed pack. Cheats that changed come back off."))
+    if (updateOffered &&
+        button("Update", canInstall,
+               downloads ? "Replaces the installed pack. Cheats that changed come back off."
+                         : "Downloads are off (Library: Download art and cheat packs)."))
         store.install(crc);
-    if (havePack && button("Remove", !busy, "Deletes the pack and forgets which of its cheats were on."))
+    if (packOnDisk && button("Remove", !busy, "Deletes the pack and forgets which of its cheats were on."))
         store.remove(crc, cm);
     if (button("Check for updates", downloads && !busy && st != PackState::Checking,
                "Asks the project's website for its current list of packs."))
