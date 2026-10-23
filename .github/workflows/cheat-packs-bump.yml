@@ -216,7 +216,7 @@ jobs:
           # An identical tree already on the branch means nothing new to push.
           pushed=true
           if git fetch -q --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null \
-             && [ "$(git rev-parse "origin/$branch^{tree}")" = "$(git rev-parse 'HEAD^{tree}')" ]; then
+              && [ "$(git rev-parse "origin/$branch^{tree}")" = "$(git rev-parse 'HEAD^{tree}')" ]; then
             pushed=false
           fi
           if [ "$pushed" = true ]; then
