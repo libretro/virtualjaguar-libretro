@@ -299,6 +299,16 @@ universal file.
   executable by `cmake --install`; it is not a linked dependency (no rpath needed, the app `dlopen`s it by
   absolute path from `SDL_GetBasePath()`), so linuxdeploy and `dpkg-shlibdeps` leave it alone.
 
+## Build channel
+
+`-DVJ_BUILD_CHANNEL=` (`release` | `nightly` | `dev`, default `dev`) decides what Settings > Interface > Emulation thread
+starts as for a user who never chose (a stored choice always wins): `nightly` on, `release` and `dev` off. `dev` is everything
+else: pull-request artifacts, `prerelease`, local builds. `app-package.yml` derives `CHANNEL` from `release_tag` (`nightly` ->
+nightly, `v*` -> release, anything else -> dev) in its top-level `env:` beside `TV_DEFAULT`, and passes it to the macOS, Windows
+and Linux configures. The Flatpak manifest commits `-DVJ_BUILD_CHANNEL=release` (so the Flathub render is a release build);
+the flatpak job rewrites that line to `$CHANNEL` and fails if the rewrite matched nothing. About shows the channel and the start-up
+log prints `[emu] channel=...`.
+
 ## Flatpak notes
 
 * **Manifest:** [`flatpak/io.github.libretro.VirtualJaguar.yml`](flatpak/io.github.libretro.VirtualJaguar.yml),

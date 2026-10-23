@@ -74,6 +74,12 @@ jobs:
           - name: 'Linux x86_64'
             os: ubuntu-latest
 
+          # The nightly channel's On default is built and tested here, so it is exercised on every PR without waiting for a
+          # nightly (emu_thread_default_smoke_* derive their expectations from this configure; #967 3d).
+          - name: 'Linux x86_64 (nightly channel)'
+            os: ubuntu-latest
+            cmake_extra: '-DVJ_BUILD_CHANNEL=nightly'
+
           - name: 'Linux aarch64'
             os: ubuntu-24.04-arm
 

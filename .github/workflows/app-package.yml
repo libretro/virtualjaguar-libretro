@@ -75,6 +75,10 @@ env:
   # TV mode (#991): the setting a fresh config starts from.  Releases (vX.Y.Z, prerelease) start on Manual; nightly, prNNN and dev
   # builds on Auto.  Each configure below passes it as VJ_TV_DEFAULT, the Flatpak through its manifest.
   TV_DEFAULT: ${{ (startsWith(inputs.release_tag, 'v') || inputs.release_tag == 'prerelease') && 'manual' || 'auto' }}
+  # The build channel (#967 3d, design section 8): nightly builds default Settings > Interface > Emulation thread to On for users
+  # who never chose; releases (vX.Y.Z) and everything else (prerelease, prNNN, dev) default Off.  Each configure below passes it as
+  # VJ_BUILD_CHANNEL, the Flatpak through its manifest.
+  CHANNEL: ${{ inputs.release_tag == 'nightly' && 'nightly' || (startsWith(inputs.release_tag, 'v') && 'release' || 'dev') }}
 
 jobs:
   # ------------------------------------------------------------------------------------------
@@ -202,7 +206,7 @@ jobs:
             cmake -S app -B "build-$arch" -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_ARCHITECTURES="$arch" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS" \
               -DVJ_APP_FETCH_LIBRASHADER=OFF -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader-$triple/librashader.dylib" \
-              -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" \
+              -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
               ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
             cmake --build "build-$arch" --config Release -j4
             cmake --install "build-$arch" --prefix "$PWD/stage-$arch"
@@ -377,7 +381,7 @@ jobs:
         run: |
           set -eu
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
             ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"} \
             ${{ matrix.cmake_extra }}
           grep -E 'librashader|CMAKE_SYSTEM_PROCESSOR|CMAKE_C_COMPILER:' build/CMakeCache.txt | head
@@ -554,13 +558,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set the TV mode default in the manifest
+      - name: Set the TV mode default and the build channel in the manifest
         # The manifest itself stays on CMake's default (Auto); a release package gets Manual here, like the other packages.
         run: |
           set -eu
           sed -i "s|- -DVJ_APP_BUILD_TESTS=OFF|&\n      - -DVJ_TV_DEFAULT=$TV_DEFAULT|" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
           # Fail here, not silently, if the sed did not match (the manifest's config-opts changed).
           grep -qx "      - -DVJ_TV_DEFAULT=$TV_DEFAULT" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+          sed -i "s|^\(      - -DVJ_BUILD_CHANNEL=\)release$|\1$CHANNEL|" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+          grep -qx "      - -DVJ_BUILD_CHANNEL=$CHANNEL" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
 
       - name: Build the bundle
         # flatpak/flatpak-github-actions v6.8 (pinned by commit).  upload-artifact is OFF: its
@@ -652,7 +658,7 @@ jobs:
         run: |
           set -eu
           cat librashader/BUILD-INFO.txt
-          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" \
+          cmake -S app -B build -DCMAKE_BUILD_TYPE=Release -DVJ_PACKAGE_VERSION="$SHORT_VERSION" -DVJ_TV_DEFAULT="$TV_DEFAULT" -DVJ_BUILD_CHANNEL="$CHANNEL" \
             -DVJ_LIBRASHADER_LIB="$PWD/librashader/librashader.so" \
             ${DISCORD_APP_ID:+-DVJ_DISCORD_APP_ID="$DISCORD_APP_ID"}
           cmake --build build -j"$(nproc)"

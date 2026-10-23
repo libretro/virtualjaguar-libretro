@@ -349,6 +349,17 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   `gdb_inline_halt` / `gdb_inline_halt_hardcore` are the inline runs), `debug_on_threaded`, `gdb_enabled(_threaded)`,
   `gdb_hardcore_locked_*` and `gdb_hardcore_flip_*`. `emu_thread_start_fallback` no longer expects anything to be "back on" (nothing
   is switched off while threaded) and fails on "are back on" / "are off while".
+- **Phase 3d / Gate G1:** `no_threaded_limits` (static, `app/tests/no_threaded_limits.sh`: the six checks -- removed gates, "off while
+  threaded" texts, the old limit tests and their replacements, the GDB-stub lock keyed on hardcore only, the
+  `threaded_branch_allowlist.txt` counts, `tsan.supp` size; raise a count only together with the new line's reason),
+  `emu_thread_default_unit`, `emu_thread_default_smoke_{unset,false,true,flag}` (four because a headless run is inline, so the
+  stored-choice line pins the rule; `_flag` is the threaded one; expectations derive from the configured channel), the
+  `Linux x86_64 (nightly channel)` row in app.yml, and `emu_thread_gate_check.sh` (Studio only, `VJ_WINDOWED_OK=1`,
+  `--show-window tools`, `--perf-halt`, ports from the OS). Runs: A every tool open + F9 halt (rows 130-410 parked, the window
+  presents; Continue; a Neuro client answers presses), B a gdb halt at boot held 6 s (a parked run >= 200 rows, window presents,
+  frames resume), C the plain path (>= 250 of 600 UI frames show an emulated frame). Each run wakes the display first; a still-asleep
+  display skips the run ("display asleep, run skipped", exit 3), which is the environment, not a hang. `studio.sh -D...` args persist
+  in app/build's CMakeCache: follow a nightly/release configure with `-DVJ_BUILD_CHANNEL=dev`.
 - **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
   test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
   still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.
