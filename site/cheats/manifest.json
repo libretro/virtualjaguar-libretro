@@ -9,7 +9,7 @@
   "generated_from": {
     "cartridges_sha256": "edebcd7566e15f2426cacf5181379fbdd7b47c697110ccf79bb831205f3e853a",
     "converter_sha256": "d3dff9ec5db1e5343b94935a7cd0dc122286493fdfa476f84aee150b7f3c80f9",
-    "generator_sha256": "adf69fbdfb7bdbb8f9d5ecf96e730ee2c439101d6228e9c71699fe6fac2d3e69",
+    "generator_sha256": "452c26c2a6b8a38501545cfc7853c74a4d8a90cd5b75fda732f6e8020df314db",
     "sources": [
       {
         "author": "jguffer",
@@ -25,7 +25,7 @@
   },
   "packs": [
     {
-      "bytes": 1287,
+      "bytes": 1278,
       "cheats": 5,
       "crc32": "0509C85E",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -55,7 +55,7 @@
         ]
       ],
       "partial": true,
-      "sha256": "9dde3787372d8a29113e44c8ea6cbfe6824ef6ba5e8d86f5963fe92750f01408",
+      "sha256": "353a04403445ffcdee258283839e7cb02f5228c2d112daf195e16a2e336e44ec",
       "sources": [
         {
           "converted": 5,
@@ -70,7 +70,7 @@
       "writes": 10
     },
     {
-      "bytes": 913,
+      "bytes": 898,
       "cheats": 3,
       "crc32": "08F15576",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -84,7 +84,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "cd8273ba9478ef5280a4236c8f791ac7b336faa2af036fd474f5d9162c02460d",
+      "sha256": "65683b0f3be448f5bd662ceabb1262eadc7aad7b41b8446cb5fee574b8935b5d",
       "sources": [
         {
           "converted": 3,
@@ -99,7 +99,7 @@
       "writes": 9
     },
     {
-      "bytes": 813,
+      "bytes": 798,
       "cheats": 1,
       "crc32": "0957A072",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -111,7 +111,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "4b04f916f74fbcab0a347d5243f5fd040bee67454f0ae4f2b385c6fb0a5b5771",
+      "sha256": "4ee78c4bc8786a3f85d9104b1ad3aab78d2cc71f11b0d6088a107b79b9190345",
       "sources": [
         {
           "converted": 1,
@@ -133,7 +133,7 @@
       "writes": 1
     },
     {
-      "bytes": 611,
+      "bytes": 596,
       "cheats": 1,
       "crc32": "0F6A1C2C",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -145,7 +145,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "c0722f80ee1077ae945f5b71d0ff674743cfb989e4ad278385ff868cfa222d40",
+      "sha256": "9891cf4327b2389ba2758df4a5ad8c01d9f8c56ee74d220c84c2edbc8de61de7",
       "sources": [
         {
           "converted": 1,
@@ -160,7 +160,7 @@
       "writes": 1
     },
     {
-      "bytes": 830,
+      "bytes": 810,
       "cheats": 2,
       "crc32": "1660F070",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -179,7 +179,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "f3142654541195f90e69e66115264f44002e1e49ddc5f52436ce7989fd0b46bc",
+      "sha256": "7d5ddd40622c76af601d37254c5211809c1c6020a74e6e89d531e0ff730858c8",
       "sources": [
         {
           "converted": 2,
@@ -194,7 +194,7 @@
       "writes": 2
     },
     {
-      "bytes": 993,
+      "bytes": 955,
       "cheats": 4,
       "crc32": "1E451446",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -206,7 +206,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "b113d934c395aad51743b6698efef05d2334cab403cc1a25804de0c821424733",
+      "sha256": "ecf8ce20e2ab13c3334003138156748c224b428979626ac850f869d43a49c186",
       "sources": [
         {
           "converted": 4,
@@ -221,7 +221,7 @@
       "writes": 12
     },
     {
-      "bytes": 2230,
+      "bytes": 2214,
       "cheats": 7,
       "crc32": "27594C6A",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -270,7 +270,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "3a0a07f6897daf9bc388735f4329984b73a1f3196c238625cb4a96c3f034232e",
+      "sha256": "f0e4c87df5f63b8e67921eedd570d6cde867255ddb94b6a18b77f314d53791d7",
       "sources": [
         {
           "converted": 4,
@@ -292,7 +292,7 @@
       "writes": 7
     },
     {
-      "bytes": 629,
+      "bytes": 611,
       "cheats": 1,
       "crc32": "348E6449",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -304,7 +304,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "2239079d6522295e09ac00dca980bd5a699c655e178f5cc9bf6dcb84227567cb",
+      "sha256": "f1ab6dceecd4a450a4b8878c509c7f0c0403875cceea2362a2610a65569f5f67",
       "sources": [
         {
           "converted": 1,
@@ -319,7 +319,7 @@
       "writes": 1
     },
     {
-      "bytes": 865,
+      "bytes": 853,
       "cheats": 3,
       "crc32": "3C044941",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -331,7 +331,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "8f04df27feac652839f9b977b0942b5a6e558fddc137d662eceffa3ba6e6fb4d",
+      "sha256": "6a32e33259b65d893845b779234d8f85ad009036351be9ee5019c001c041db01",
       "sources": [
         {
           "converted": 3,
@@ -346,7 +346,7 @@
       "writes": 10
     },
     {
-      "bytes": 634,
+      "bytes": 621,
       "cheats": 1,
       "crc32": "47EBC158",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -358,7 +358,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "354dba7443301b6fd66f0a28782ca030deab2e283e128967adfb9dda06481134",
+      "sha256": "94c0ece5bd4690371ce8f6656d16240af9855ddb0f7a95d2213a2a9ff31d80d2",
       "sources": [
         {
           "converted": 1,
@@ -373,7 +373,7 @@
       "writes": 2
     },
     {
-      "bytes": 1156,
+      "bytes": 1141,
       "cheats": 5,
       "crc32": "4899628F",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -392,7 +392,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "c95d63c639ee77109607cb3f8aa37d9fe077cc29736ac87a53238a525ebeaf87",
+      "sha256": "0008c4f3e8f9cbf378ce79080f90cb815486825b2aba90e33b4a65112911cfee",
       "sources": [
         {
           "converted": 5,
@@ -407,7 +407,7 @@
       "writes": 13
     },
     {
-      "bytes": 1457,
+      "bytes": 1433,
       "cheats": 8,
       "crc32": "5E2CDBC0",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -419,7 +419,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "b30e11460c02a85ae66d6563cce6d419eb427fee3003a83bd9b5dd79b21dbcbb",
+      "sha256": "41cf0552375b5a7b4403f4e554ebb3d591d82903574d26596f8ea9c787195ddf",
       "sources": [
         {
           "converted": 8,
@@ -434,7 +434,7 @@
       "writes": 21
     },
     {
-      "bytes": 711,
+      "bytes": 696,
       "cheats": 2,
       "crc32": "6B2B95AD",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -446,7 +446,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "3eec811925577c72ac2f83d70e7b8a9e49ba28d68c22bb353296ad9deddbb495",
+      "sha256": "be059e632f1f4c6bd0e811ffe3e007c97e7bc20da8d8216335d22a25793d150b",
       "sources": [
         {
           "converted": 2,
@@ -461,7 +461,7 @@
       "writes": 2
     },
     {
-      "bytes": 620,
+      "bytes": 604,
       "cheats": 1,
       "crc32": "6F8B2547",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -473,7 +473,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "8b840a38fa7a03405eac3e44aeb01fbc0346cac5c826f0251143438917bf2173",
+      "sha256": "eacb205a3dbaff6b1b9bc3dd1dd5f784994e160df0db5b9b0468a93bc6a62be5",
       "sources": [
         {
           "converted": 1,
@@ -488,7 +488,7 @@
       "writes": 1
     },
     {
-      "bytes": 825,
+      "bytes": 793,
       "cheats": 3,
       "crc32": "817A2273",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -500,7 +500,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "8eb98c26e1ba386cf9606405a2ecf80ae15502b73185f400116d67f3f1823009",
+      "sha256": "bfc82722a1662b10a6fda4028264221a3c7b5beed3b92f00da71df4747cdad55",
       "sources": [
         {
           "converted": 3,
@@ -515,7 +515,7 @@
       "writes": 5
     },
     {
-      "bytes": 918,
+      "bytes": 909,
       "cheats": 4,
       "crc32": "A9F8A00E",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -527,7 +527,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "01f2f9feae131a518a37fcd9b25165a5b6e6c4e6b0131f0086a5d5de8711b816",
+      "sha256": "7c5a3ac88b5f0f7347ad090f40bce665b0f73cd3d80443be3c1fd6202e8668b8",
       "sources": [
         {
           "converted": 4,
@@ -542,7 +542,7 @@
       "writes": 8
     },
     {
-      "bytes": 783,
+      "bytes": 747,
       "cheats": 1,
       "crc32": "C9608717",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -561,7 +561,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "c91e48774e88ed1accaaed26dcad4d9cd947d80a16e9ce1f5fae2a387f994b17",
+      "sha256": "474d6f8049511d3c8646ebe09bd3b95689bcb7de5f48783c4abc8e7e94c4d600",
       "sources": [
         {
           "converted": 1,
@@ -576,7 +576,7 @@
       "writes": 1
     },
     {
-      "bytes": 753,
+      "bytes": 741,
       "cheats": 2,
       "crc32": "CAF33BD6",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -588,7 +588,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "b4b13f7f061aa6875cc3f5f9aa38696c9c2cd0c2fd79c85e0cd4acef1592b956",
+      "sha256": "ccd36752652d830c028f3e81b0d277b11894a8f969110d8c5b9eba13a232629d",
       "sources": [
         {
           "converted": 2,
@@ -603,7 +603,7 @@
       "writes": 8
     },
     {
-      "bytes": 1244,
+      "bytes": 1212,
       "cheats": 4,
       "crc32": "CD5BF827",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -628,7 +628,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "ec605c4d9c0cbdab9d9763b4eac7d9d17b33c8b091507f2665cbc945b2d81b57",
+      "sha256": "e7f1d3a6b101d941b263569284eb67c0dadab2e97a4c4397acf3357d198c57ea",
       "sources": [
         {
           "converted": 4,
@@ -643,7 +643,7 @@
       "writes": 10
     },
     {
-      "bytes": 1892,
+      "bytes": 1871,
       "cheats": 7,
       "crc32": "DA9C4162",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -668,7 +668,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "071a741cadcd1e092483e0329fb7b4a650833aa2b0627a9dc50788dd6938f887",
+      "sha256": "1838f0767ff2fe29805a66085fb0a66342e0d15829bcedbeba0989bb026f6fab",
       "sources": [
         {
           "converted": 1,
@@ -690,7 +690,7 @@
       "writes": 29
     },
     {
-      "bytes": 875,
+      "bytes": 861,
       "cheats": 2,
       "crc32": "E28756DE",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -709,7 +709,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "b6c0c2399f51e8a2d27e8571359c846ba5c51d7547f06b6b707f18568c4fef29",
+      "sha256": "658abe3d3dc2f3cb7a8903c2672be309ada3f9fc7bbe6dfa2d3c9defe8c5b990",
       "sources": [
         {
           "converted": 2,
@@ -724,7 +724,7 @@
       "writes": 3
     },
     {
-      "bytes": 1395,
+      "bytes": 1378,
       "cheats": 4,
       "crc32": "E91BD644",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -755,7 +755,7 @@
       ],
       "overlaps": [],
       "partial": true,
-      "sha256": "654a79cf2be90b11480b5d69f36c21c17be3caabc76fa09eaa623e6e8fe1d8c0",
+      "sha256": "72f51ceb4400b5a8fbad8bee85d12df34ff6dd6bf5a414c1f1a66d8933580905",
       "sources": [
         {
           "converted": 4,
@@ -770,7 +770,7 @@
       "writes": 10
     },
     {
-      "bytes": 620,
+      "bytes": 603,
       "cheats": 1,
       "crc32": "EC22F572",
       "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
@@ -782,7 +782,7 @@
       "notes": [],
       "overlaps": [],
       "partial": false,
-      "sha256": "52644419041ddb9a03a051c5c9d92c84efb3b9c54a482fbb8b69c6c9f56099f5",
+      "sha256": "ffd7dfa913a1c68ffaa921bec298efad354df1ff3d5b53f621fc0af7a7ff5e57",
       "sources": [
         {
           "converted": 1,
