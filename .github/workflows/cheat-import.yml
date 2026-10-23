@@ -1,8 +1,10 @@
 name: Community cheat converter
 
 on:
+  # develop is deliberately absent: it is reached through PRs that already ran
+  # this workflow (see c-cpp.yml for the full rationale).
   push:
-    branches: [develop, master]
+    branches: [master]
     paths: ['tools/cheat-import/**', '.github/workflows/cheat-import.yml']
   pull_request:
     branches: [develop, master, 'release/**']

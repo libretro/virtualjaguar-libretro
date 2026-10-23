@@ -7,8 +7,13 @@ name: Standalone App
 # sources (CMake, parsed from Makefile.common) and the app on top of it.
 
 on:
+  # No `develop` in the push list: every change reaches develop through a PR that
+  # already ran this workflow, so re-running it per merge mostly duplicated the PR
+  # run.  (Tests do not re-run on the merged tip; release.yml still compiles every
+  # develop tip for the nightly.)  To re-run on develop by hand, use
+  # workflow_dispatch with the branch picker on develop.
   push:
-    branches: [ master, develop ]
+    branches: [ master ]
     paths:
       - 'app/**'
       - 'src/**'
@@ -48,7 +53,10 @@ concurrency:
 jobs:
   app:
     name: App ${{ matrix.config.name }}
-    runs-on: ${{ matrix.config.os }}
+    # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
+    # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
+    # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.
+    runs-on: ${{ matrix.config.os == 'macos-latest' && vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || matrix.config.os }}
     # The MSVC row is the first time the whole core meets cl.exe (the msvc-check
     # job in c-cpp.yml deliberately skips ~31 sources, see scripts/check-msvc-sources.sh
     # and #679).  It reports but does not gate until it has gone green once.
@@ -163,8 +171,11 @@ jobs:
     # Developer ID sign + notarize the macOS binary people download from this artifact (#989).  The
     # app's own entitlements apply (it may load a user's librashader).  Fork PRs have no secrets: the
     # action then only warns and the binary keeps the linker's ad-hoc signature.
+    # Hosted runners only: the sign action imports the Developer ID key into a fixed-name
+    # keychain, which does not belong on the persistent Studio.  Signed packages come from
+    # app-package.yml (hosted).
     - name: Developer ID sign and notarize (macOS)
-      if: runner.os == 'macOS'
+      if: runner.os == 'macOS' && runner.environment == 'github-hosted'
       uses: ./.github/actions/macos-sign
       with:
         paths: app/build/virtualjaguar

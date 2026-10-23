@@ -9,8 +9,10 @@ name: JaguarDemos suite
 # upstream.  Local `make jaguar-demos-build` is the rebuild path.
 
 on:
+  # develop is deliberately absent: it is reached through PRs that already ran
+  # the smoke sweep (see c-cpp.yml for the full rationale).
   push:
-    branches: [develop, master]
+    branches: [master]
     tags: ['v*']
     paths:
       - 'src/**'

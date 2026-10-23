@@ -22,8 +22,10 @@ on:
       - 'Makefile'
       - 'Makefile.common'
       - '.github/workflows/microbench.yml'
+  # develop is deliberately absent: it is reached through PRs that already ran
+  # this workflow (see c-cpp.yml for the full rationale).
   push:
-    branches: [develop, master]
+    branches: [master]
     paths:
       - 'test/microbench/**'
       - 'test/tools/test_microbench_*'

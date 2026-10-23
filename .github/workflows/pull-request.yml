@@ -5,6 +5,8 @@ on:
       - staging
       - launchpad
       - production
+      # develop is the PR target, never a source; a push there only burned a runner.
+      - develop
 jobs:
   auto-pull-request:
     name: PullRequestAction
