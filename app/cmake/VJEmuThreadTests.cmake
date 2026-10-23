@@ -132,7 +132,7 @@ if(WIN32)
 endif()
 vj_emu_thread_warnings(vj_debug_e2e_threaded)
 add_test(NAME debug_e2e_threaded COMMAND vj_debug_e2e_threaded "${VJ_ROMS}/yarc.j64")
-set_tests_properties(debug_e2e_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+set_tests_properties(debug_e2e_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread RESOURCE_LOCK vj_gdb_port
                      FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
 
 # 3b: a gdb client finds the app halted at boot (gdb_wait) with the emulation thread on; the app's silent host saw it,
@@ -141,7 +141,7 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME gdb_threaded_halt
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
                 $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64")
-    set_tests_properties(gdb_threaded_halt PROPERTIES TIMEOUT 120 LABELS emu_thread
+    set_tests_properties(gdb_threaded_halt PROPERTIES TIMEOUT 120 LABELS emu_thread RESOURCE_LOCK vj_gdb_port
         PASS_REGULAR_EXPRESSION "PASS: gdb halt on the emulation thread"
         FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
     # The same client script inline: the halt sits on the UI thread inside retro_run(), the headless loop releases an app halt
@@ -149,7 +149,7 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME gdb_inline_halt
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
                 $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off)
-    set_tests_properties(gdb_inline_halt PROPERTIES TIMEOUT 120
+    set_tests_properties(gdb_inline_halt PROPERTIES TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
         PASS_REGULAR_EXPRESSION "PASS: gdb halt on the UI thread \\(inline\\)"
         FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer|did not stop within 3 s|did not answer within 3 s")
     # A gdb halt that ended must not stay "live" in the UI mirror: Achievements::pump retries the hardcore reload only when no
@@ -157,7 +157,7 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME gdb_inline_halt_hardcore
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/gdb_threaded_halt.py"
                 $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64" off "${VJ_RA_FIX}")
-    set_tests_properties(gdb_inline_halt_hardcore PROPERTIES TIMEOUT 120
+    set_tests_properties(gdb_inline_halt_hardcore PROPERTIES TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
         PASS_REGULAR_EXPRESSION "PASS: gdb halt on the UI thread \\(inline\\), continue, then the hardcore reload"
         FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
 else()
@@ -268,21 +268,29 @@ add_test(NAME debug_on_threaded
 set_tests_properties(debug_on_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
     PASS_REGULAR_EXPRESSION "\\[emu\\] emulation thread on.*${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "are off while the emulation thread is on|ThreadSanitizer|owner violation")
-# Decision 3: whenever the stub is enabled the app attaches a silent host behind every halt, inline and threaded.  Fixed,
-# distinct ports: the typed option rejects 0, and a port the core cannot open disables the stub for the session (the FAIL
-# regex catches that, so a collision is a failure, not a vacuous pass).
+# Decision 3: whenever the stub is enabled the app attaches a silent host behind every halt, inline and threaded.  The port
+# comes from the OS at run time (tests/with_free_port.py substitutes {PORT}): the typed option rejects 0, hard-coded ports
+# collided or sat in ranges hosted Windows runners reserve, and a port the core cannot open disables the stub for the session
+# (the FAIL regex catches that, so a failure is loud, not a vacuous pass).  RESOURCE_LOCK vj_gdb_port serialises the gdb
+# tests that bind one, closing the window between the wrapper's bind-0 probe and the core's own bind.
+if(Python3_Interpreter_FOUND)
+set(_vj_free_port ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/with_free_port.py")
 add_test(NAME gdb_enabled
-    COMMAND virtualjaguar --headless --emu-thread off --frames 5 --option virtualjaguar_gdb_stub=enabled
-            --option virtualjaguar_gdb_port=23459 "${VJ_ROMS}/yarc.j64")
-set_tests_properties(gdb_enabled PROPERTIES TIMEOUT 120
+    COMMAND ${_vj_free_port} -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread off --frames 5
+            --option virtualjaguar_gdb_stub=enabled --option virtualjaguar_gdb_port={PORT} "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_enabled PROPERTIES TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
     PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*headless: OK"
     FAIL_REGULAR_EXPRESSION "locked by the app|rejected by the core|failed to open port|headless: FAIL")
 add_test(NAME gdb_enabled_threaded
-    COMMAND virtualjaguar --headless --emu-thread on --frames 5 --option virtualjaguar_gdb_stub=enabled
-            --option virtualjaguar_gdb_port=23457 "${VJ_ROMS}/yarc.j64")
-set_tests_properties(gdb_enabled_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
+    COMMAND ${_vj_free_port} -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread on --frames 5
+            --option virtualjaguar_gdb_stub=enabled --option virtualjaguar_gdb_port={PORT} "${VJ_ROMS}/yarc.j64")
+set_tests_properties(gdb_enabled_threaded PROPERTIES LABELS emu_thread TIMEOUT 120 RESOURCE_LOCK vj_gdb_port
     PASS_REGULAR_EXPRESSION "\\[debug\\] gdb host attached \\(silent\\).*${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "locked by the app|rejected by the core|failed to open port|headless: FAIL|ThreadSanitizer|owner violation")
+else()
+    message(STATUS "Python3 interpreter not found: gdb_enabled, gdb_enabled_threaded and the gdb_hardcore_flip* tests are not "
+                   "registered (they need a run-time free port)")
+endif()
 # Decision 2: RetroAchievements hardcore locks the stub to disabled at load.  A SAVED setting (config.ini), not --option:
 # an --option on a locked key is reported as an error by design (checkOverrides).
 foreach(_m off on)
@@ -297,21 +305,22 @@ foreach(_m off on)
         FAIL_REGULAR_EXPRESSION "gdb host attached|headless: FAIL|ThreadSanitizer|owner violation")
     # A hardcore flip mid-game (late sign-in at frame 40) with the stub OPEN: the app reloads so the lock reaches the core
     # (it reads the stub options at load only).  The attach line proves the stub was open before the flip.
+    # The saved setting (config.ini) is written by tests/with_free_port.py at run time with a port from the OS.
     set(_gf "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-flip-${_m}")
-    file(MAKE_DIRECTORY "${_gf}")
-    if(_m STREQUAL "on")
-        file(WRITE "${_gf}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23458\n")
-    else()
-        file(WRITE "${_gf}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23461\n")
-    endif()
+    if(Python3_Interpreter_FOUND)
     add_test(NAME gdb_hardcore_flip_${_m}
-        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 120 --verbose --data-dir "${_gf}"
+        COMMAND ${_vj_free_port} --config-ini "${_gf}" -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread ${_m}
+                --frames 120 --verbose --data-dir "${_gf}"
                 --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40 --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
-    set_tests_properties(gdb_hardcore_flip_${_m} PROPERTIES TIMEOUT 180
+    set_tests_properties(gdb_hardcore_flip_${_m} PROPERTIES TIMEOUT 180 RESOURCE_LOCK vj_gdb_port
         PASS_REGULAR_EXPRESSION "gdb host attached \\(silent\\).*\\[ach\\] hardcore on: reloading the game to close the GDB stub.*\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
         FAIL_REGULAR_EXPRESSION "headless: FAIL|failed to open port|ThreadSanitizer|owner violation")
+    endif()
 endforeach()
-set_tests_properties(gdb_hardcore_locked_on gdb_hardcore_flip_on PROPERTIES LABELS emu_thread)
+set_tests_properties(gdb_hardcore_locked_on PROPERTIES LABELS emu_thread)
+if(Python3_Interpreter_FOUND)
+    set_tests_properties(gdb_hardcore_flip_on PROPERTIES LABELS emu_thread)
+endif()
 
 # The hardcore restart that gives up (the core halted again: a gdb breakpoint still armed) must stay pending and retry, not be
 # dropped with hardcore on and the stub still open.  A headless run cannot stage that re-halt (the core only runs when the loop
@@ -319,18 +328,16 @@ set_tests_properties(gdb_hardcore_locked_on gdb_hardcore_flip_on PROPERTIES LABE
 # line once (not per pump), the reload line once, the stub closes in the end, and --ra-expect-reset 1 (one restart counted).
 foreach(_m off on)
     set(_gg "${CMAKE_CURRENT_BINARY_DIR}/gdb-hardcore-giveup-${_m}")
-    file(MAKE_DIRECTORY "${_gg}")
-    if(_m STREQUAL "on")
-        file(WRITE "${_gg}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23462\n")
-    else()
-        file(WRITE "${_gg}/config.ini" "opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port=23463\n")
-    endif()
+    if(Python3_Interpreter_FOUND)
     add_test(NAME gdb_hardcore_flip_giveup_${_m}
-        COMMAND virtualjaguar --headless --emu-thread ${_m} --frames 120 --verbose --data-dir "${_gg}"
+        COMMAND ${_vj_free_port} --config-ini "${_gg}" -- $<TARGET_FILE:virtualjaguar> --headless --emu-thread ${_m}
+                --frames 120 --verbose --data-dir "${_gg}"
                 --ra-mock "${VJ_RA_FIX}" --ra-hardcore --ra-login-at 40 --ra-expect-reset 1 "${VJ_ROMS}/yarc.j64")
-    set_tests_properties(gdb_hardcore_flip_giveup_${_m} PROPERTIES TIMEOUT 180 ENVIRONMENT "VJ_TEST_RESTART_GIVEUPS=2"
+    set_tests_properties(gdb_hardcore_flip_giveup_${_m} PROPERTIES TIMEOUT 180 RESOURCE_LOCK vj_gdb_port
+        ENVIRONMENT "VJ_TEST_RESTART_GIVEUPS=2"
         PASS_REGULAR_EXPRESSION "gdb host attached \\(silent\\).*\\[ach\\] hardcore on: reloading the game to close the GDB stub.*\\[ach\\] hardcore on: the restart gave up \\(core halted\\), retrying.*\\[app\\] option virtualjaguar_gdb_stub=disabled \\(locked\\).*headless: OK"
         FAIL_REGULAR_EXPRESSION "headless: FAIL|failed to open port|ThreadSanitizer|owner violation|close the GDB stub.*close the GDB stub|gave up \\(core halted\\), retrying.*gave up \\(core halted\\), retrying")
+    endif()
 endforeach()
 # The same without the stub: hardcore turns on late, the plain reset gives up twice, and the third try restarts the game once.
 foreach(_m off on)
@@ -341,7 +348,10 @@ foreach(_m off on)
         PASS_REGULAR_EXPRESSION "\\[ach\\] hardcore on: the restart gave up \\(core halted\\), retrying.*headless: OK"
         FAIL_REGULAR_EXPRESSION "headless: FAIL|ThreadSanitizer|owner violation|close the GDB stub|gave up \\(core halted\\), retrying.*gave up \\(core halted\\), retrying")
 endforeach()
-set_tests_properties(gdb_hardcore_flip_giveup_on ra_hardcore_reset_giveup_on PROPERTIES LABELS emu_thread)
+set_tests_properties(ra_hardcore_reset_giveup_on PROPERTIES LABELS emu_thread)
+if(Python3_Interpreter_FOUND)
+    set_tests_properties(gdb_hardcore_flip_giveup_on PROPERTIES LABELS emu_thread)
+endif()
 
 add_executable(vj_late_latch_test tests/late_latch_test.cpp)
 target_include_directories(vj_late_latch_test PRIVATE src)
