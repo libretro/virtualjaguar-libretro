@@ -9,6 +9,7 @@
 
 #include "cheat.h"
 #include "paths.h"
+#include "sha256.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -617,6 +618,25 @@ static void testRevisionGuard() {
     fs::remove_all(tmp);
 }
 
+// FIPS 180-4 / NIST vectors.  The one-million-'a' message crosses many blocks; the 55/56/63/64/65-byte
+// lengths straddle the padding boundary (length field fits in the last block, or forces an extra one).
+static void testSha256() {
+    CHECK_EQ(sha256Hex(nullptr, 0), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK_EQ(sha256Hex("", 0), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK_EQ(sha256Hex("abc", 3), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    const std::string two = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    CHECK_EQ(sha256Hex(two.data(), two.size()), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    const std::string mil(1000000, 'a');
+    CHECK_EQ(sha256Hex(mil.data(), mil.size()), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    // Padding boundaries: 55 bytes = one block, 56 = length no longer fits, 64 = exactly one full block.
+    CHECK_EQ(sha256Hex(mil.data(), 55), "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318");
+    CHECK_EQ(sha256Hex(mil.data(), 56), "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a");
+    CHECK_EQ(sha256Hex(mil.data(), 64), "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb");
+    // Bytes above 0x7F must not be sign-extended.
+    const unsigned char hi[4] = {0xff, 0x80, 0x00, 0xfe};
+    CHECK_EQ(sha256Hex(hi, 4), "eadfaeb12caa89eba3075f360d3d47938bd2fa6863a01e86bbb3b61b92086ce5");
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--corpus")) return corpus(argv[2]);
     testHelpers();
@@ -626,6 +646,7 @@ int main(int argc, char** argv) {
     testPersistence();
     testCommitBatch();
     testRevisionGuard();
+    testSha256();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

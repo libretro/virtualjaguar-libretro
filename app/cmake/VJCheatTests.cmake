@@ -22,7 +22,7 @@ set(_fx "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures")
 get_filename_component(_fx "${_fx}" ABSOLUTE)
 
 add_executable(vj_cheats_test
-    tests/cheats_test.cpp src/cheats.cpp src/config.cpp src/paths.cpp
+    tests/cheats_test.cpp src/cheats.cpp src/config.cpp src/paths.cpp src/sha256.cpp
     "${VJ_ROOT}/src/core/cheat.c")
 target_include_directories(vj_cheats_test PRIVATE src "${VJ_ROOT}/src/core" "${VJ_ROOT}/libretro-common/include")
 target_link_libraries(vj_cheats_test PRIVATE ${VJ_SDL3_TARGET})
