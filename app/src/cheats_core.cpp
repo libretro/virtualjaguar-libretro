@@ -237,7 +237,9 @@ bool cheatsHeadlessCommunity(App& app, const CliArgs& a) {
     store.windowOpened(crc, app.cfg);
     if (!wait("manifest fetch")) return false;
     PackState st = store.state(crc);
-    if (st == PackState::Offered || st == PackState::UpdateAvailable) {
+    // EditedLocally too when the store offers the pack: the window's Update replaces a corrupt or hand-edited file.
+    if (st == PackState::Offered || st == PackState::UpdateAvailable ||
+        (st == PackState::EditedLocally && store.offered(crc))) {
         if (!store.install(crc) || !wait("install")) {
             std::fprintf(stderr, "headless: FAIL community install: %s\n", store.status().c_str());
             return false;

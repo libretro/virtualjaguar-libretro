@@ -6,6 +6,7 @@ usage: cheat_community_smoke.py VIRTUALJAGUAR SITE_CHEATS_DIR ROM CRC32 WORKDIR
 1. Serves SITE_CHEATS_DIR on 127.0.0.1 and runs `virtualjaguar --headless --cheats-community-install ROM` with
    cheats.community.url pointing at it: the pack must land in <data>/cheats/community/packs/<CRC>.cht with its sidecar,
    byte for byte what the server holds.
+   Then the installed file is edited by hand and the command run again: it must be replaced (as the window's Update).
 2. Stops the server and runs it again on the same data directory: the installed pack must still be found (offline).
 3. A fresh data directory with the server stopped must FAIL (nothing to install from).
 """
@@ -48,6 +49,14 @@ def main():
         print("FAIL pack or sidecar missing under", data); return 1
     if pack.read_bytes() != (site / "packs" / (crc + ".cht")).read_bytes():
         print("FAIL installed bytes differ from the served pack"); return 1
+
+    with pack.open("ab") as f:            # a hand edit: the file no longer matches its sidecar (EditedLocally)
+        f.write(b"# my tweak\n")
+    rc, out = run(exe, data, rom, url)
+    if rc != 0 or "COMMUNITY pack %s installed" % crc not in out:
+        print("FAIL reinstall over a locally edited pack (rc=%d)\n%s" % (rc, out)); return 1
+    if pack.read_bytes() != (site / "packs" / (crc + ".cht")).read_bytes():
+        print("FAIL the locally edited pack was not replaced"); return 1
 
     srv.shutdown(); srv.server_close()   # from here on nothing answers
     rc, out = run(exe, data, rom, url)
