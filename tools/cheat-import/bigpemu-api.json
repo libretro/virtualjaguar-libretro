@@ -1,0 +1,167 @@
+{
+  "format": 1,
+  "calls": {
+    "bigpemu_get_loaded_fnv1a64": {
+      "status": "supported",
+      "meaning": "Returns the FNV-1a 64 hash of the loaded cartridge; the sources compare it with known revisions before enabling writes.",
+      "ours": "vj_rom_crc32 guard, mapped through cartridges.json",
+      "todo": ""
+    },
+    "bigpemu_get_module_handle": {
+      "status": "supported",
+      "meaning": "Returns the handle identifying this script module; bigp_init passes it to every other registration call.",
+      "ours": "implicit: a pack is one module",
+      "todo": ""
+    },
+    "bigpemu_get_setting_value": {
+      "status": "supported",
+      "meaning": "Reads the current value of a registered setting into a local; for a bool setting it is 0 or 1.",
+      "ours": "whether the toggle is enabled",
+      "todo": ""
+    },
+    "bigpemu_jag_get_frame_count": {
+      "status": "unsupported",
+      "meaning": "Returns the number of emulated frames so far, used for timers.",
+      "ours": "none yet",
+      "todo": "needs frame-count state; not a constant freeze"
+    },
+    "bigpemu_jag_m68k_bp_add": {
+      "status": "unsupported",
+      "meaning": "Adds a 68000 instruction breakpoint at a program counter value that runs a script handler when hit.",
+      "ours": "none yet",
+      "todo": "68K breakpoint hook; candidate titlehook"
+    },
+    "bigpemu_jag_m68k_get_areg": {
+      "status": "unsupported",
+      "meaning": "Reads a 68000 address register, used inside a breakpoint handler to find data the game is touching.",
+      "ours": "none yet",
+      "todo": "68K breakpoint hook; candidate titlehook"
+    },
+    "bigpemu_jag_read16": {
+      "status": "unsupported",
+      "meaning": "Reads a 16-bit word of Jaguar memory; used for conditional or read-modify-write cheats.",
+      "ours": "none yet",
+      "todo": "conditional / read-modify-write cheats need core support in src/core/cheat.c"
+    },
+    "bigpemu_jag_read32": {
+      "status": "unsupported",
+      "meaning": "Reads a 32-bit long of Jaguar memory; used for conditional or read-modify-write cheats and score or password checks.",
+      "ours": "none yet",
+      "todo": "conditional / read-modify-write cheats need core support in src/core/cheat.c"
+    },
+    "bigpemu_jag_read8": {
+      "status": "unsupported",
+      "meaning": "Reads one byte of Jaguar memory; the sources use it for conditional, compare or read-modify-write cheats.",
+      "ours": "none yet",
+      "todo": "conditional / read-modify-write cheats need core support in src/core/cheat.c"
+    },
+    "bigpemu_jag_sysmemread": {
+      "status": "unsupported",
+      "meaning": "Copies a block of Jaguar memory into a script buffer (for example save-slot or ball data).",
+      "ours": "none yet",
+      "todo": "block copy / backup cheats need core support in src/core/cheat.c"
+    },
+    "bigpemu_jag_sysmemwrite": {
+      "status": "unsupported",
+      "meaning": "Copies a script buffer into a block of Jaguar memory (restoring data or duplicating objects).",
+      "ours": "none yet",
+      "todo": "block copy cheats need core support in src/core/cheat.c"
+    },
+    "bigpemu_jag_write": {
+      "status": "unsupported",
+      "meaning": "Memory write whose width is a parameter instead of fixed by the call name.",
+      "ours": "none yet",
+      "todo": "translate once the width is a constant; otherwise needs core support"
+    },
+    "bigpemu_jag_write16": {
+      "status": "supported",
+      "meaning": "Stores a 16-bit word into Jaguar main RAM at an even address.",
+      "ours": "ADDR:VVVV segment of a cheat code",
+      "todo": ""
+    },
+    "bigpemu_jag_write32": {
+      "status": "supported",
+      "meaning": "Stores a 32-bit long into Jaguar main RAM at an even address.",
+      "ours": "ADDR:VVVVVVVV segment of a cheat code",
+      "todo": ""
+    },
+    "bigpemu_jag_write8": {
+      "status": "supported",
+      "meaning": "Stores one byte into Jaguar main RAM at an address.",
+      "ours": "ADDR:VV segment of a cheat code",
+      "todo": ""
+    },
+    "bigpemu_register_event_emu_thread_frame": {
+      "status": "supported",
+      "meaning": "Registers the callback run every emulated frame; the sources apply their memory writes there.",
+      "ours": "a frozen write replayed each frame by the core",
+      "todo": ""
+    },
+    "bigpemu_register_event_input_frame": {
+      "status": "unsupported",
+      "meaning": "Registers a callback run once per input poll, used for joypad-sequence cheats.",
+      "ours": "none yet",
+      "todo": "needs an input hook in the core"
+    },
+    "bigpemu_register_event_sw_loaded": {
+      "status": "supported",
+      "meaning": "Registers the callback run when a cartridge is loaded; the sources compare the loaded hash there and arm the frame callback.",
+      "ours": "the vj_rom_crc32 guard in the pack header",
+      "todo": ""
+    },
+    "bigpemu_register_setting_bool": {
+      "status": "supported",
+      "meaning": "Registers an on/off setting with a label and default; each becomes one toggle.",
+      "ours": "one cheat entry (cheatN_desc/_code/_enable)",
+      "todo": ""
+    },
+    "bigpemu_register_setting_category": {
+      "status": "supported",
+      "meaning": "Names the settings group shown for the script; the sources use the game title as the category.",
+      "ours": "the pack title",
+      "todo": ""
+    },
+    "bigpemu_register_setting_int": {
+      "status": "setting-omitted",
+      "meaning": "Registers a numeric setting with a label, default and range; its value selects what the script writes.",
+      "ours": "none yet",
+      "todo": "expand a small value range into one toggle per value"
+    },
+    "bigpemu_register_setting_int_full": {
+      "status": "setting-omitted",
+      "meaning": "Numeric setting with explicit default, minimum, maximum and step (a start level or password index in the sources).",
+      "ours": "none yet",
+      "todo": "expand a small value range into one toggle per value"
+    },
+    "bigpemu_set_module_usage_flags": {
+      "status": "supported",
+      "meaning": "Sets module flags in bigp_init (the sources only pass a determinism-warning flag); no effect on memory.",
+      "ours": "none needed: flags are not translated",
+      "todo": ""
+    },
+    "bigpemu_unregister_event": {
+      "status": "ignored",
+      "meaning": "Removes the registered load and frame callbacks in the script's shutdown handler; only runs at unload.",
+      "ours": "none: nothing to tear down",
+      "todo": ""
+    },
+    "memcpy": {
+      "status": "unsupported",
+      "meaning": "Standard memory copy between script buffers, used to stage data for block writes.",
+      "ours": "none yet",
+      "todo": "block copy cheats need core support in src/core/cheat.c"
+    },
+    "printf": {
+      "status": "ignored",
+      "meaning": "Writes to the script log only; no memory or gameplay effect.",
+      "ours": "none: log output is not reproduced",
+      "todo": ""
+    },
+    "printf_notify": {
+      "status": "supported",
+      "meaning": "Shows an on-screen notification; the sources use it to tell the player whether the loaded cartridge revision is supported.",
+      "ours": "the app's App::toast, shown when the pack is applied for a game load",
+      "todo": ""
+    }
+  }
+}

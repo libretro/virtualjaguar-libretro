@@ -1,0 +1,23 @@
+# Community cheats for Rayman (1995) (UBI Soft); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_rayman.c
+# Source SHA256: 9880173955c7f4c9e9fe82fd21ab8cdbcf54edd4f8e751ad7a09f8c2afe39c8e
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "A9F8A00E"
+cheats = 4
+
+cheat0_desc = "Infinite Lives"
+cheat0_code = "00006C60:08"
+cheat0_enable = false
+
+cheat1_desc = "Invinite Health"
+cheat1_code = "00006C62:30"
+cheat1_enable = false
+
+cheat2_desc = "Unlock All Levels"
+cheat2_code = "00006C2B:FF+00006C31:FF+00006C37:FF+00006C3B:FF+00006C43:0F"
+cheat2_enable = false
+
+cheat3_desc = "Unlock Helicoptor and Throw Punch"
+cheat3_code = "00006C42:23"
+cheat3_enable = false

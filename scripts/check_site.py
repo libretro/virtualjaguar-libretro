@@ -24,6 +24,7 @@ site currently ships no script beyond JSON-LD; that allowance is the
 contract for future pages, not something in use.
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -296,6 +297,107 @@ def check_robots(out):
           "robots.txt has no absolute 'Sitemap:' line")
 
 
+CHEATS_MANIFEST_MAX = 256 * 1024
+CHEATS_TREE_MAX = 1024 * 1024
+CRC_RE = re.compile(r'^\s*vj_rom_crc32\s*=\s*"([0-9A-Fa-f]{8})"', re.M)
+
+
+def check_cheats(out):
+    """Validate the committed community cheat packs copied to <out>/cheats.
+
+    Returns the list of problems found; an absent cheats/ directory is not
+    an error.
+    """
+    root = out / "cheats"
+    if not root.is_dir():
+        return []
+    problems = []
+
+    def bad(msg):
+        problems.append("cheats: " + msg)
+
+    manifest = None
+    mpath = root / "manifest.json"
+    if not mpath.is_file():
+        bad("manifest.json is missing")
+    else:
+        if mpath.stat().st_size > CHEATS_MANIFEST_MAX:
+            bad("manifest.json is %d bytes, over the %d byte limit"
+                % (mpath.stat().st_size, CHEATS_MANIFEST_MAX))
+        try:
+            manifest = json.loads(mpath.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as e:
+            bad("manifest.json does not parse: %s" % e)
+    total = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
+    if total > CHEATS_TREE_MAX:
+        bad("cheats tree is %d bytes, over the %d byte limit"
+            % (total, CHEATS_TREE_MAX))
+
+    listed = set()
+    if isinstance(manifest, dict):
+        if manifest.get("format") != 1:
+            bad("manifest format is %r, expected 1" % (manifest.get("format"),))
+        packs = manifest.get("packs")
+        if not isinstance(packs, list):
+            bad("manifest has no packs list")
+            packs = []
+        for pk in packs:
+            rel = pk.get("file") if isinstance(pk, dict) else None
+            if not isinstance(rel, str) or not rel.startswith("packs/") \
+                    or ".." in rel.split("/"):
+                bad("pack entry has a bad file path: %r" % (rel,))
+                continue
+            listed.add(rel)
+            f = root / rel
+            if not f.is_file():
+                bad("%s is listed but missing" % rel)
+                continue
+            data = f.read_bytes()
+            if hashlib.sha256(data).hexdigest() != pk.get("sha256"):
+                bad("%s sha256 does not match the manifest" % rel)
+            if len(data) != pk.get("bytes"):
+                bad("%s is %d bytes, manifest says %r"
+                    % (rel, len(data), pk.get("bytes")))
+            m = CRC_RE.search(data.decode("utf-8", "replace"))
+            crc = m.group(1).upper() if m else None
+            if crc is None:
+                bad("%s has no vj_rom_crc32 guard" % rel)
+            elif crc != str(pk.get("crc32", "")).upper():
+                bad("%s vj_rom_crc32 %s != manifest crc32 %r"
+                    % (rel, crc, pk.get("crc32")))
+            msgs = pk.get("messages", [])
+            if not (isinstance(msgs, list)
+                    and all(isinstance(x, str) for x in msgs)):
+                bad("%s messages must be a list of strings" % rel)
+    pdir = root / "packs"
+    for f in sorted(pdir.glob("*.cht")) if pdir.is_dir() else []:
+        if "packs/" + f.name not in listed:
+            bad("packs/%s is not listed in the manifest" % f.name)
+
+    upath = root / "unsupported.json"
+    if not upath.is_file():
+        bad("unsupported.json is missing")
+    else:
+        try:
+            json.loads(upath.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as e:
+            bad("unsupported.json does not parse: %s" % e)
+
+    ipath = root / "index.html"
+    if not ipath.is_file():
+        bad("index.html is missing")
+    else:
+        pp = PageParser()
+        pp.feed(ipath.read_text(encoding="utf-8"))
+        for href in pp.links:
+            if not href or re.match(r"^(https?:|mailto:|#|data:)", href):
+                continue
+            target = urldefrag(href)[0]
+            if target and not (root / target).resolve().exists():
+                bad("index.html: local link %r resolves to nothing" % href)
+    return problems
+
+
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "_site").resolve()
     if not out.is_dir():
@@ -321,6 +423,8 @@ def main():
 
     check_sitemap(out)
     check_robots(out)
+    for problem in check_cheats(out):
+        check(False, problem)
 
     if FAILS:
         sys.stderr.write("\nFAIL: check_site.py found %d problem(s):\n"

@@ -8,6 +8,7 @@ import argparse
 import ast
 import hashlib
 import itertools
+import functools
 import json
 import re
 import sys
@@ -19,7 +20,46 @@ from pycparser import c_ast as C, c_parser
 
 
 class Unsupported(ValueError):
-    pass
+    def __init__(self, message="", call=None):
+        super().__init__(message)
+        self.call = call  # API call whose name caused the refusal, else None
+
+
+# Calls this converter handles itself -> the status bigpemu-api.json must give them.
+SPECIAL_CALLS = {
+    "bigpemu_get_module_handle": "supported", "bigpemu_set_module_usage_flags": "supported",
+    "bigpemu_register_setting_category": "supported", "bigpemu_register_setting_bool": "supported",
+    "bigpemu_register_setting_int": "setting-omitted", "bigpemu_register_setting_int_full": "setting-omitted",
+    "bigpemu_register_event_sw_loaded": "supported", "bigpemu_register_event_emu_thread_frame": "supported",
+    "bigpemu_get_loaded_fnv1a64": "supported", "bigpemu_get_setting_value": "supported",
+    "bigpemu_jag_write8": "supported", "bigpemu_jag_write16": "supported", "bigpemu_jag_write32": "supported",
+    "printf_notify": "supported", "printf": "ignored"}
+# bigp_init may only make these (the registration calls and handle/flag setup).
+INIT_CALLS = frozenset(n for n in SPECIAL_CALLS if n.startswith(("bigpemu_register_", "bigpemu_get_module", "bigpemu_set_module")))
+API_STATUSES = ("supported", "setting-omitted", "ignored", "unsupported")
+MAX_MESSAGES, MAX_MESSAGE_CHARS, NOTE_CHARS = 4, 200, 60
+
+
+@functools.lru_cache(maxsize=None)
+def gap_call(name):
+    """name if it is an API-style call the map lists as unsupported or lacks (a worklist item), else None."""
+    if name.startswith("bigpemu_") or name in ("printf", "printf_notify", "memcpy"):
+        row = load_api_map().get(name)
+        if row is None or row["status"] == "unsupported": return name
+    return None
+
+
+def load_api_map(path=None):
+    """The BigPEmu API call -> {status, meaning, ours, todo} map (bigpemu-api.json), validated."""
+    path = Path(path) if path else Path(__file__).with_name("bigpemu-api.json")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("format") != 1 or not isinstance(data.get("calls"), dict):
+        raise ValueError(f"{path}: expected {{\"format\": 1, \"calls\": {{...}}}}")
+    for name, row in data["calls"].items():
+        if (not isinstance(row, dict) or set(row) != {"status", "meaning", "ours", "todo"}
+                or row["status"] not in API_STATUSES or not all(isinstance(v, str) for v in row.values())):
+            raise ValueError(f"{path}: bad row for {name}")
+    return data["calls"]
 
 
 @dataclass(frozen=True)
@@ -48,6 +88,12 @@ def type_info(node):
     if typ in ("int", "signed int", "bool"): return 32, False
     if typ in ("unsigned", "unsigned int"): return 32, True
     raise Unsupported("unsupported integer type " + typ)
+
+
+def walk(node):
+    yield node
+    for _, child in node.children():
+        yield from walk(child)
 
 
 def promote(value):
@@ -234,6 +280,18 @@ class Runtime:
     def call(self, node):
         name = getattr(node.name, "name", "")
         args = node.args.exprs if node.args else []
+        if name in ("printf_notify", "printf"):
+            # Output only: arguments are never evaluated (no memory effect), so they must have no side effects.
+            for arg in args:
+                for sub in walk(arg):
+                    if isinstance(sub, (C.Assignment, C.FuncCall)) or (
+                            isinstance(sub, C.UnaryOp) and sub.op in ("++", "--", "p++", "p--")):
+                        raise Unsupported("side effect in message arguments requires manual review")
+            if name == "printf":
+                self.module.ignored_calls.add(name)
+            else:
+                self.module.notify(args, not self.frame and self.path <= {"rom"})
+            return Value(0)
         if name == "bigpemu_get_loaded_fnv1a64" and not args:
             return Value(self.rom_hash, frozenset(["rom"]), 64, True)
         if name == "bigpemu_get_setting_value" and len(args) == 2:
@@ -265,7 +323,9 @@ class Runtime:
                 raise Unsupported("cheat exceeds the core's 256-write limit")
             self.writes.append((address.n, value.n & ((1 << (8*width))-1), width))
             return Value(0)
-        raise Unsupported("unsupported call " + name + " (RAM-dependent operations are not constant cheats)")
+        if name in SPECIAL_CALLS:
+            raise Unsupported("unsupported use of " + name)
+        raise Unsupported("unsupported call " + name + " (RAM-dependent operations are not constant cheats)", gap_call(name))
 
     def stmt(self, node):
         if node is None: return
@@ -363,17 +423,15 @@ class Module:
             raise Unsupported("duplicate function definition")
         if "bigp_init" not in self.functions: raise Unsupported("missing bigp_init")
         self.handles, self.settings, self.events = {}, [], {}
+        self.messages, self.dropped_messages, self.ignored_calls = [], [], set()  # per convert()
         categories = []
         registered = set()
 
         class Registrations(C.NodeVisitor):
             def visit_FuncCall(visitor, node):
                 name = getattr(node.name, "name", "")
-                if name not in {"bigpemu_get_module_handle", "bigpemu_set_module_usage_flags",
-                                "bigpemu_register_setting_category", "bigpemu_register_setting_bool",
-                                "bigpemu_register_setting_int", "bigpemu_register_event_sw_loaded",
-                                "bigpemu_register_event_emu_thread_frame"}:
-                    raise Unsupported("unsupported initialisation call " + name)
+                if name not in INIT_CALLS:
+                    raise Unsupported("unsupported initialisation call " + name, gap_call(name))
                 if name.startswith("bigpemu_register_") and id(node) not in registered:
                     raise Unsupported("registration must assign a handle")
                 visitor.generic_visit(node)
@@ -440,6 +498,23 @@ class Module:
                 else: enum = None
                 self.globals.append((node, enum))
 
+    def notify(self, args, shown):
+        """printf_notify: a lone string literal reached at load for this cartridge becomes a toast message;
+        anything else (format arguments, frame callback, setting-dependent) is recorded as not shown."""
+        node = args[0] if args else None
+        text = None
+        if isinstance(node, C.Constant) and node.type == "string":
+            try: text = " ".join(re.sub(r"[\x00-\x1f]", " ", ast.literal_eval(node.value)).split())
+            except (ValueError, SyntaxError): pass
+        if shown and len(args) == 1 and text is not None:
+            text = text[:MAX_MESSAGE_CHARS]
+            if not text or text in self.messages: return
+            if len(self.messages) < MAX_MESSAGES:
+                self.messages.append(text)
+                return
+        note = "script message not shown: " + (text[:NOTE_CHARS] if text else "dynamic")
+        if note not in self.dropped_messages: self.dropped_messages.append(note)
+
     def runtime(self, digest, selected):
         runtime = Runtime(self, digest, selected)
         for node, enum in self.globals:
@@ -457,6 +532,7 @@ class Module:
         return runtime
 
     def convert(self, digest):
+        self.messages, self.dropped_messages, self.ignored_calls = [], [], set()
         baseline = self.runtime(digest, None)
         baseline.run(self.events["bigpemu_register_event_emu_thread_frame"])
         results = []
@@ -502,18 +578,26 @@ def quoted(value):
     return '"' + value + '"'
 
 
-def cht_text(title, crc, entries, source_name, source_sha):
-    lines = ["# Locally converted community cheats; nothing is enabled automatically.",
-             "# Source: " + source_name.replace("\n", " ").replace("\r", " "),
-             "# Source SHA256: " + source_sha,
-             "# Cartridge revision guard is enforced by the Virtual Jaguar app.",
-             "vj_rom_crc32 = " + quoted(f"{crc:08X}"),
-             "cheats = " + str(len(entries)), ""]
+def cht_header(crc, comment_lines):
+    """Comment lines (prefixed "# ") then the revision guard; no `cheats = N` (see cht_entries)."""
+    return ["# " + line for line in comment_lines] + ["vj_rom_crc32 = " + quoted(f"{crc:08X}")]
+
+
+def cht_entries(entries):
+    lines = ["cheats = " + str(len(entries)), ""]
     for i, entry in enumerate(entries):
         lines += [f"cheat{i}_desc = " + quoted(entry["name"]),
                   f"cheat{i}_code = " + quoted(entry["code"]),
                   f"cheat{i}_enable = false", ""]
-    return "\n".join(lines)
+    return lines
+
+
+def cht_text(title, crc, entries, source_name, source_sha):
+    return "\n".join(cht_header(crc, [
+        "Locally converted community cheats; nothing is enabled automatically.",
+        "Source: " + source_name.replace("\n", " ").replace("\r", " "),
+        "Source SHA256: " + source_sha,
+        "Cartridge revision guard is enforced by the Virtual Jaguar app."]) + cht_entries(entries))
 
 
 def main(argv=None):

@@ -1,0 +1,801 @@
+{
+  "counts": {
+    "cheats": 72,
+    "packs": 23,
+    "partial_packs": 9,
+    "unsupported_entries": 58
+  },
+  "format": 1,
+  "generated_from": {
+    "cartridges_sha256": "edebcd7566e15f2426cacf5181379fbdd7b47c697110ccf79bb831205f3e853a",
+    "converter_sha256": "d3dff9ec5db1e5343b94935a7cd0dc122286493fdfa476f84aee150b7f3c80f9",
+    "generator_sha256": "452c26c2a6b8a38501545cfc7853c74a4d8a90cd5b75fda732f6e8020df314db",
+    "sources": [
+      {
+        "author": "jguffer",
+        "commit": "24211503339a969f8494b8e189b8f2aa0cb9eba6",
+        "commit_date": "2026-04-15",
+        "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+        "id": "jguffer",
+        "permission": "jguffer, the author of BigPEmu_Scripts and of #1050, gave the maintainer permission to convert and use the scripts (see libretro/virtualjaguar-libretro#1071 and #1050). The repository has no license file.",
+        "repo": "jguffer/BigPEmu_Scripts",
+        "url": "https://github.com/jguffer/BigPEmu_Scripts/tree/24211503339a969f8494b8e189b8f2aa0cb9eba6"
+      }
+    ]
+  },
+  "packs": [
+    {
+      "bytes": 1278,
+      "cheats": 5,
+      "crc32": "0509C85E",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/0509C85E.cht",
+      "fnv1a64": "5FA30C19C9DCD87F",
+      "messages": [],
+      "name": "Raiden (1994)",
+      "notes": [
+        {
+          "path": "scripts/cheat_raiden.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "P2 Stream Of Missiles As Gun",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_raiden.c",
+          "reason": "parameter setting requires manual value selection",
+          "setting": "Start At Level",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [
+        [
+          2,
+          4
+        ]
+      ],
+      "partial": true,
+      "sha256": "353a04403445ffcdee258283839e7cb02f5228c2d112daf195e16a2e336e44ec",
+      "sources": [
+        {
+          "converted": 5,
+          "omitted": 2,
+          "path": "scripts/cheat_raiden.c",
+          "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Raiden",
+      "updated": "2026-04-15",
+      "writes": 10
+    },
+    {
+      "bytes": 898,
+      "cheats": 3,
+      "crc32": "08F15576",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/08F15576.cht",
+      "fnv1a64": "8429FDCFCDF35FA1",
+      "messages": [
+        "This version of Iron Soldier 1 IS supported."
+      ],
+      "name": "Iron Soldier (1994)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "65683b0f3be448f5bd662ceabb1262eadc7aad7b41b8446cb5fee574b8935b5d",
+      "sources": [
+        {
+          "converted": 3,
+          "omitted": 0,
+          "path": "scripts/cheat_iron_soldier_1.c",
+          "sha256": "be52fe2c76a1dec624a52feeb600888688f763d0ddeb0b7c44a97832bf287f98",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Iron Soldier",
+      "updated": "2026-04-15",
+      "writes": 9
+    },
+    {
+      "bytes": 798,
+      "cheats": 1,
+      "crc32": "0957A072",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/0957A072.cht",
+      "fnv1a64": "392906008D83777E",
+      "messages": [],
+      "name": "Kasumi Ninja (1994)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "4ee78c4bc8786a3f85d9104b1ad3aab78d2cc71f11b0d6088a107b79b9190345",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 0,
+          "path": "scripts/cheat_kasumi_ninja.c",
+          "sha256": "d14e84b2816da8accab8f87781f94e091496a652ee291d9fe9b86ef3f29bdf4d",
+          "source": "jguffer"
+        },
+        {
+          "converted": 1,
+          "omitted": 0,
+          "path": "scripts/cheat_kasumi_ninja_infinite_health.c",
+          "sha256": "8afc05df24ad4c2ec18f44786830f960bb13d8f4c64dcf196bc5f2b2f98c8830",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Kasumi Ninja",
+      "updated": "2026-04-15",
+      "writes": 1
+    },
+    {
+      "bytes": 596,
+      "cheats": 1,
+      "crc32": "0F6A1C2C",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/0F6A1C2C.cht",
+      "fnv1a64": "13773A13560CA917",
+      "messages": [],
+      "name": "Ultra Vortek (1995)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "9891cf4327b2389ba2758df4a5ad8c01d9f8c56ee74d220c84c2edbc8de61de7",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 0,
+          "path": "scripts/cheat_ultra_vortek.c",
+          "sha256": "fa5a8cfcdee39e29048c837bfdb0db530ee8cc602ca4c39a42d079297c710987",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Ultra Vortek",
+      "updated": "2026-04-15",
+      "writes": 1
+    },
+    {
+      "bytes": 810,
+      "cheats": 2,
+      "crc32": "1660F070",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/1660F070.cht",
+      "fnv1a64": "3381B57A63BBDBCB",
+      "messages": [],
+      "name": "Power Drive Rally (1995) (TWI)",
+      "notes": [
+        {
+          "path": "scripts/cheat_power_drive_rally.c",
+          "reason": "parameter setting requires manual value selection",
+          "setting": "Start Level",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "7d5ddd40622c76af601d37254c5211809c1c6020a74e6e89d531e0ff730858c8",
+      "sources": [
+        {
+          "converted": 2,
+          "omitted": 1,
+          "path": "scripts/cheat_power_drive_rally.c",
+          "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Power Drive Rally",
+      "updated": "2026-04-15",
+      "writes": 2
+    },
+    {
+      "bytes": 955,
+      "cheats": 4,
+      "crc32": "1E451446",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/1E451446.cht",
+      "fnv1a64": "68E321F5ECF43196",
+      "messages": [],
+      "name": "Trevor McFur in the Crescent Galaxy (1993)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "ecf8ce20e2ab13c3334003138156748c224b428979626ac850f869d43a49c186",
+      "sources": [
+        {
+          "converted": 4,
+          "omitted": 0,
+          "path": "scripts/cheat_trevor_mcfur.c",
+          "sha256": "f1df49f17808901c137904e4ae8d5d5463b1c01a87f04a2707f159c09161f1de",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Trevor McFur in the Crescent Galaxy",
+      "updated": "2026-04-15",
+      "writes": 12
+    },
+    {
+      "bytes": 2214,
+      "cheats": 7,
+      "crc32": "27594C6A",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/27594C6A.cht",
+      "fnv1a64": "6B591BA55B0BCBD7",
+      "messages": [],
+      "name": "Defender 2000 (1996)",
+      "notes": [
+        {
+          "path": "scripts/cheat_d2k_2000.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Enable Plasma Pong",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_d2k_2000.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Enable Flossie Plus Mode",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_d2k_2000.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Enable Beest Cheat (3 and 6 Keys)",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_d2k_2000.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Unlock Difficulty And Levels",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_d2k_2000.c",
+          "reason": "parameter setting requires manual value selection",
+          "setting": "Num Enemies For Orb Release",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_d2k_plus_n_classic.c",
+          "reason": "parameter setting requires manual value selection",
+          "setting": "Start At Level",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "f0e4c87df5f63b8e67921eedd570d6cde867255ddb94b6a18b77f314d53791d7",
+      "sources": [
+        {
+          "converted": 4,
+          "omitted": 5,
+          "path": "scripts/cheat_d2k_2000.c",
+          "sha256": "35ce0943e13eec6bfa6e3ec2647330fba8cb85fc01a0e2afd23fabf30ef53ba2",
+          "source": "jguffer"
+        },
+        {
+          "converted": 3,
+          "omitted": 1,
+          "path": "scripts/cheat_d2k_plus_n_classic.c",
+          "sha256": "7b1e664dbd279c03cdd2425e2960b927e25039e089d908c905fc38a0f5cf7995",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Defender 2000",
+      "updated": "2026-04-15",
+      "writes": 7
+    },
+    {
+      "bytes": 611,
+      "cheats": 1,
+      "crc32": "348E6449",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/348E6449.cht",
+      "fnv1a64": "CCA2530A5A110E60",
+      "messages": [],
+      "name": "Double Dragon V (1995) (Williams)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "f1ab6dceecd4a450a4b8878c509c7f0c0403875cceea2362a2610a65569f5f67",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 0,
+          "path": "scripts/cheat_double_dragon.c",
+          "sha256": "95f64f7607e880112ee69e673813cef533d6f9e728218765b4908a125c31028f",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Double Dragon V",
+      "updated": "2026-04-15",
+      "writes": 1
+    },
+    {
+      "bytes": 853,
+      "cheats": 3,
+      "crc32": "3C044941",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/3C044941.cht",
+      "fnv1a64": "C6A8442BCE267C50",
+      "messages": [],
+      "name": "Skyhammer (World)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "6a32e33259b65d893845b779234d8f85ad009036351be9ee5019c001c041db01",
+      "sources": [
+        {
+          "converted": 3,
+          "omitted": 0,
+          "path": "scripts/cheat_skyhammer.c",
+          "sha256": "d4fc6d187b9fda9ea32415760d7849396adb1f3d80d2d82bc3c97610765ae33f",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Skyhammer",
+      "updated": "2026-04-15",
+      "writes": 10
+    },
+    {
+      "bytes": 621,
+      "cheats": 1,
+      "crc32": "47EBC158",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/47EBC158.cht",
+      "fnv1a64": "75F4878C35A30A60",
+      "messages": [],
+      "name": "Theme Park (1995) (Ocean)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "94c0ece5bd4690371ce8f6656d16240af9855ddb0f7a95d2213a2a9ff31d80d2",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 0,
+          "path": "scripts/cheat_theme_park.c",
+          "sha256": "5ef03faa9897fcb76653624d573adffe5140a57252800921da0d65f63d59fc68",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Theme Park",
+      "updated": "2026-04-15",
+      "writes": 2
+    },
+    {
+      "bytes": 1141,
+      "cheats": 5,
+      "crc32": "4899628F",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/4899628F.cht",
+      "fnv1a64": "67C944EE0406FAD9",
+      "messages": [],
+      "name": "Hover Strike (1995)",
+      "notes": [
+        {
+          "path": "scripts/cheat_hoverstrike_cart.c",
+          "reason": "parameter setting requires manual value selection",
+          "setting": "Select Level",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "0008c4f3e8f9cbf378ce79080f90cb815486825b2aba90e33b4a65112911cfee",
+      "sources": [
+        {
+          "converted": 5,
+          "omitted": 1,
+          "path": "scripts/cheat_hoverstrike_cart.c",
+          "sha256": "8fc5b2dc395b67e58b281e017d2b171f2bde59be293fc1150bb701642bd28876",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Hover Strike",
+      "updated": "2026-04-15",
+      "writes": 13
+    },
+    {
+      "bytes": 1433,
+      "cheats": 8,
+      "crc32": "5E2CDBC0",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/5E2CDBC0.cht",
+      "fnv1a64": "75F2216BD4F54AC2",
+      "messages": [],
+      "name": "Doom - Evil Unleashed (1994)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "41cf0552375b5a7b4403f4e554ebb3d591d82903574d26596f8ea9c787195ddf",
+      "sources": [
+        {
+          "converted": 8,
+          "omitted": 0,
+          "path": "scripts/cheat_doom.c",
+          "sha256": "197cc6ffbbce120dd8332fa3416f30764ec07dd72a96a59c8a33ebc393280158",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Doom - Evil Unleashed",
+      "updated": "2026-04-15",
+      "writes": 21
+    },
+    {
+      "bytes": 696,
+      "cheats": 2,
+      "crc32": "6B2B95AD",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/6B2B95AD.cht",
+      "fnv1a64": "0030407D0269CE03",
+      "messages": [],
+      "name": "Tempest 2000 (1994)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "be059e632f1f4c6bd0e811ffe3e007c97e7bc20da8d8216335d22a25793d150b",
+      "sources": [
+        {
+          "converted": 2,
+          "omitted": 0,
+          "path": "scripts/cheat_t2k_infinite_lives_zapper.c",
+          "sha256": "f755d692aa043c2f929e8d9a94995a344e1ccb6738df935e56a6568ebb7aa6b7",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Tempest 2000",
+      "updated": "2026-04-15",
+      "writes": 2
+    },
+    {
+      "bytes": 604,
+      "cheats": 1,
+      "crc32": "6F8B2547",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/6F8B2547.cht",
+      "fnv1a64": "1D8C0621EB876398",
+      "messages": [],
+      "name": "Super Burnout (1995)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "eacb205a3dbaff6b1b9bc3dd1dd5f784994e160df0db5b9b0468a93bc6a62be5",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 0,
+          "path": "scripts/cheat_super_burnout.c",
+          "sha256": "d086b1e3013419d5f0b611b4f58e132275b04bddd59c1d3a8162444078b375ca",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Super Burnout",
+      "updated": "2026-04-15",
+      "writes": 1
+    },
+    {
+      "bytes": 793,
+      "cheats": 3,
+      "crc32": "817A2273",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/817A2273.cht",
+      "fnv1a64": "10B52759119EF17A",
+      "messages": [],
+      "name": "Pitfall - The Mayan Adventure (1995)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "bfc82722a1662b10a6fda4028264221a3c7b5beed3b92f00da71df4747cdad55",
+      "sources": [
+        {
+          "converted": 3,
+          "omitted": 0,
+          "path": "scripts/cheat_pitfall.c",
+          "sha256": "d8a8d0d0e6e52d3f3d33b3bcf4338d80d6bc23fde8ba87cf110307c097d7e5c9",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Pitfall - The Mayan Adventure",
+      "updated": "2026-04-15",
+      "writes": 5
+    },
+    {
+      "bytes": 909,
+      "cheats": 4,
+      "crc32": "A9F8A00E",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/A9F8A00E.cht",
+      "fnv1a64": "4F7E323A69447A71",
+      "messages": [],
+      "name": "Rayman (1995) (UBI Soft)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "7c5a3ac88b5f0f7347ad090f40bce665b0f73cd3d80443be3c1fd6202e8668b8",
+      "sources": [
+        {
+          "converted": 4,
+          "omitted": 0,
+          "path": "scripts/cheat_rayman.c",
+          "sha256": "9880173955c7f4c9e9fe82fd21ab8cdbcf54edd4f8e751ad7a09f8c2afe39c8e",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Rayman",
+      "updated": "2026-04-15",
+      "writes": 8
+    },
+    {
+      "bytes": 747,
+      "cheats": 1,
+      "crc32": "C9608717",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/C9608717.cht",
+      "fnv1a64": "8551C87570272A14",
+      "messages": [],
+      "name": "Val D'Isere Skiing & Snowboarding (1994)",
+      "notes": [
+        {
+          "path": "scripts/cheat_val_ski.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Infinite Time",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "474d6f8049511d3c8646ebe09bd3b95689bcb7de5f48783c4abc8e7e94c4d600",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 1,
+          "path": "scripts/cheat_val_ski.c",
+          "sha256": "f15473fd1da001175dffe87915ab1b0fd17c16c2aaaf54a251e0a384b41f4ed3",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Val D'Isere Skiing & Snowboarding",
+      "updated": "2026-04-15",
+      "writes": 1
+    },
+    {
+      "bytes": 741,
+      "cheats": 2,
+      "crc32": "CAF33BD6",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/CAF33BD6.cht",
+      "fnv1a64": "A922F55DCAABCDFF",
+      "messages": [],
+      "name": "Towers II (World)",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "ccd36752652d830c028f3e81b0d277b11894a8f969110d8c5b9eba13a232629d",
+      "sources": [
+        {
+          "converted": 2,
+          "omitted": 0,
+          "path": "scripts/cheat_towers2.c",
+          "sha256": "d5e67051b89463585fde6e9d02bdf235e0f326029578964b2570da82f0ef4e4f",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Towers II",
+      "updated": "2026-04-15",
+      "writes": 8
+    },
+    {
+      "bytes": 1212,
+      "cheats": 4,
+      "crc32": "CD5BF827",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/CD5BF827.cht",
+      "fnv1a64": "C1E15384328CDB32",
+      "messages": [],
+      "name": "Attack of the Mutant Penguins (1996)",
+      "notes": [
+        {
+          "path": "scripts/cheat_attack_mutant_penguins.c",
+          "reason": "parameter setting requires manual value selection",
+          "setting": "Minimum Number Orbs",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_attack_mutant_penguins.c",
+          "reason": "parameter setting requires manual value selection",
+          "setting": "Unlock Levels",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "e7f1d3a6b101d941b263569284eb67c0dadab2e97a4c4397acf3357d198c57ea",
+      "sources": [
+        {
+          "converted": 4,
+          "omitted": 2,
+          "path": "scripts/cheat_attack_mutant_penguins.c",
+          "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Attack of the Mutant Penguins",
+      "updated": "2026-04-15",
+      "writes": 10
+    },
+    {
+      "bytes": 1871,
+      "cheats": 7,
+      "crc32": "DA9C4162",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/DA9C4162.cht",
+      "fnv1a64": "8A324BEEC06140AB",
+      "messages": [],
+      "name": "Missile Command 3D (1995)",
+      "notes": [
+        {
+          "path": "scripts/cheat_mc3d_classic.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Infinite Missiles",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_mc3d_classic.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Invincible Launchers",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "1838f0767ff2fe29805a66085fb0a66342e0d15829bcedbeba0989bb026f6fab",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 2,
+          "path": "scripts/cheat_mc3d_classic.c",
+          "sha256": "fece70fcb3b0d5f7b2408bef750ef9f1a8b7bef808490359151e31fdc0e31fc9",
+          "source": "jguffer"
+        },
+        {
+          "converted": 6,
+          "omitted": 0,
+          "path": "scripts/cheat_mc3d_virtual.c",
+          "sha256": "d4b622fb546089f0f590ec2ae054e12d70ae9de38b6b3bc1498cbe354ba516b5",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Missile Command 3D",
+      "updated": "2026-04-15",
+      "writes": 29
+    },
+    {
+      "bytes": 861,
+      "cheats": 2,
+      "crc32": "E28756DE",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/E28756DE.cht",
+      "fnv1a64": "D6821157BFC4A8B0",
+      "messages": [],
+      "name": "Atari Karts (1995)",
+      "notes": [
+        {
+          "path": "scripts/cheat_atari_karts.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Unlock All Challenges, Cups, Racers",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "658abe3d3dc2f3cb7a8903c2672be309ada3f9fc7bbe6dfa2d3c9defe8c5b990",
+      "sources": [
+        {
+          "converted": 2,
+          "omitted": 1,
+          "path": "scripts/cheat_atari_karts.c",
+          "sha256": "5530c4e40a0f3ab2626842eff446607816c0371ab92224709dea5372c955751c",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Atari Karts",
+      "updated": "2026-04-15",
+      "writes": 3
+    },
+    {
+      "bytes": 1378,
+      "cheats": 4,
+      "crc32": "E91BD644",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/E91BD644.cht",
+      "fnv1a64": "F714BD1B17D9375D",
+      "messages": [],
+      "name": "Wolfenstein 3D (1994)",
+      "notes": [
+        {
+          "path": "scripts/cheat_wolfenstein.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Level Select: 1, 3, 7, 9 simul at main menu",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_wolfenstein.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Next Level: 4, 7, 8 then 6 during gameplay",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_wolfenstein.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Prev Level: 4, 6, 9, then 6 during gameplay",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "72f51ceb4400b5a8fbad8bee85d12df34ff6dd6bf5a414c1f1a66d8933580905",
+      "sources": [
+        {
+          "converted": 4,
+          "omitted": 3,
+          "path": "scripts/cheat_wolfenstein.c",
+          "sha256": "da236a46384620be84ea4abd608ad5b5e0b50e287e04faacd8ca94f0cbefe2c4",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Wolfenstein 3D",
+      "updated": "2026-04-15",
+      "writes": 10
+    },
+    {
+      "bytes": 603,
+      "cheats": 1,
+      "crc32": "EC22F572",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/EC22F572.cht",
+      "fnv1a64": "DE60AFAFCF4B2035",
+      "messages": [],
+      "name": "Super Cross 3D (1995) [a1]",
+      "notes": [],
+      "overlaps": [],
+      "partial": false,
+      "sha256": "ffd7dfa913a1c68ffaa921bec298efad354df1ff3d5b53f621fc0af7a7ff5e57",
+      "sources": [
+        {
+          "converted": 1,
+          "omitted": 0,
+          "path": "scripts/cheat_supercross_3d.c",
+          "sha256": "2ea5fc07f679193574f6eff820af68238eb6b24d0f43cd3bfeba021a62c4e4a3",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Super Cross 3D",
+      "updated": "2026-04-15",
+      "writes": 1
+    }
+  ],
+  "unsupported": "unsupported.json"
+}

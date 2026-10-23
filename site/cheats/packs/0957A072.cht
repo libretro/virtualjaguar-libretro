@@ -1,0 +1,13 @@
+# Community cheats for Kasumi Ninja (1994); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_kasumi_ninja.c
+# Source SHA256: d14e84b2816da8accab8f87781f94e091496a652ee291d9fe9b86ef3f29bdf4d
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_kasumi_ninja_infinite_health.c
+# Source SHA256: 8afc05df24ad4c2ec18f44786830f960bb13d8f4c64dcf196bc5f2b2f98c8830
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "0957A072"
+cheats = 1
+
+cheat0_desc = "Infinite Health"
+cheat0_code = "000060B6:FFFF"
+cheat0_enable = false
