@@ -1,7 +1,7 @@
 name: Acid test suite
 
 # Runs the synthetic-ROM acid-test suite against every PR and push to
-# main branches.  Builds vasm from source (cached), assembles the
+# master.  Builds vasm from source (cached), assembles the
 # tests, builds the core with TEST_EXPORTS=1 + BENCH_PROFILE=1, runs
 # the suite, and gates on `test/acid/BASELINE.txt` -- a PR is blocked
 # only if a previously-PASSing test now FAILs.  New failing tests are
@@ -15,8 +15,10 @@ on:
   # refs/pull/N/merge for the PR, so the duplicate was never deduplicated.
   # This matches c-cpp.yml and regression-test.yml, which push on the
   # integration branches only.
+  # develop is deliberately absent: its changes arrive via PRs that already ran
+  # this suite (see c-cpp.yml for the full rationale).
   push:
-    branches: [develop, master]
+    branches: [master]
   pull_request:
     branches: [develop, master]
     paths:
@@ -31,9 +33,8 @@ on:
 
 concurrency:
   group: acid-${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded PR runs, but let pushes to develop/master finish so
-  # there is always a green-or-red acid record on the integration branches
-  # (same rationale as c-cpp.yml).
+  # Cancel superseded PR runs, but let master pushes finish so there is
+  # always a green-or-red acid record on the release branch.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

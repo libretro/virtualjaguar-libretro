@@ -1,15 +1,20 @@
 name: C/C++ CI
 
 on:
+  # No `develop` in the push list: every change reaches develop through a PR that
+  # already ran this workflow, so re-running it per merge mostly duplicated the PR
+  # run.  (Tests do not re-run on the merged tip; release.yml still compiles every
+  # develop tip for the nightly.)  To re-run on develop by hand, use
+  # workflow_dispatch with the branch picker on develop.
   push:
-    branches: [ master, develop ]
+    branches: [ master ]
   pull_request:
     branches: [ develop, master ]
   workflow_dispatch:
 
 # Cancel in-progress runs when a new commit lands on the same PR.
-# Pushes to master/develop run to completion (no cancellation) so we
-# always have a green-or-red record on the integration branches.
+# Pushes to master run to completion (no cancellation) so we always have a
+# green-or-red record on the release branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -160,7 +165,10 @@ jobs:
     env:
       # Compile-only rows match Release's production configuration; native test mode switches stay unchanged.
       RELEASE_DEBUG_INFO: ${{ matrix.config.release_platform && '1' || '0' }}
-    runs-on: ${{ matrix.config.os }}
+    # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
+    # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
+    # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.
+    runs-on: ${{ matrix.config.os == 'macos-latest' && vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || matrix.config.os }}
 
     defaults:
       run:
@@ -571,7 +579,10 @@ jobs:
 
   spm-build:
     name: SwiftPM build (macOS arm64)
-    runs-on: macos-latest
+    # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
+    # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
+    # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.
+    runs-on: ${{ vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || 'macos-latest' }}
     steps:
     - uses: actions/checkout@v7
 

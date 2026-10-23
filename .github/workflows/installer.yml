@@ -8,8 +8,13 @@ name: Installer scripts
 # The app's path filter (app.yml) does not cover tools/, hence a workflow of its own.
 
 on:
+  # No `develop` in the push list: every change reaches develop through a PR that
+  # already ran this workflow, so re-running it per merge mostly duplicated the PR
+  # run.  (Tests do not re-run on the merged tip; release.yml still compiles every
+  # develop tip for the nightly.)  To re-run on develop by hand, use
+  # workflow_dispatch with the branch picker on develop.
   push:
-    branches: [ master, develop ]
+    branches: [ master ]
     paths:
       - 'tools/install.sh'
       - 'tools/install.ps1'

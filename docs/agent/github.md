@@ -74,9 +74,10 @@ commits, hotfix/release merges). PRs targeting `master` get auto-warned by
 
 Full detail in `docs/release-process.md`. Quick reference:
 
-**Nightlies:** every push to `develop` reruns `release.yml`'s 16-platform matrix and replaces the
-rolling `nightly` prerelease + its pinned tracking issue. Gated on *compiling*, not on the test
-suite — don't call nightlies "CI-verified". The `nightly` tag sits outside the `v*` filter so it
+**Nightlies:** a push to `develop` waits 10 minutes (debounce in `release.yml`'s `guard` job; a newer
+push cancels the sleeping run, so a burst of merges builds once), then runs the 16-platform matrix and
+replaces the rolling `nightly` prerelease + its pinned tracking issue. Gated on *compiling*, not on the
+test suite — don't call nightlies "CI-verified". The `nightly` tag sits outside the `v*` filter so it
 can't trigger a real release.
 
 Cutting a release:
@@ -140,6 +141,37 @@ stale. Responses carry `cache-control: max-age=600` — polling past ~10 min wit
 ## Roadmap
 
 Planning lives in GitHub milestones (pinned issue #371), never in md files.
+
+## What runs on a push to `develop`
+
+Only `release.yml` (the nightly), plus path-filtered publishers (`pages.yml`,
+`jaguar-toolchain-image.yml`, `crowdin_source_upload.yml`). C/C++ CI, App, Regression, Acid,
+Installer, JaguarDemos, Microbench, Jaguar toolchain and Cheat import run on PRs (into `develop`,
+`master`, or `release/**`) and on pushes to `master` / tags; they no longer re-run on the squash-merge
+commit because the PR already ran them. Consequence: two PRs that are each green but conflict
+semantically are caught by the next PR's CI (or by the nightly build, for compile errors), not by a
+post-merge run. To test a develop tip by hand, dispatch `c-cpp.yml` / `app.yml` / `acid-test.yml` /
+`regression-test.yml` / `jaguar-demos.yml` / `microbench.yml` / `jaguar-toolchain.yml` / `cheat-import.yml` with the branch set
+to `develop`. Cache note: caches written on a PR ref are not shared with other PRs; PRs restore from
+`develop` and `master`, so after this change the Tier-1 ROM / vasm / miniretro caches are only
+refreshed by master pushes or such a dispatch.
+
+## Mac Studio self-hosted runner
+
+A repo-level runner labelled `self-hosted, studio, vj` (macOS arm64, Xcode, Homebrew, non-admin
+user) takes the heavy macOS jobs: macOS rows of `c-cpp.yml` (incl. SwiftPM build), `app.yml`,
+`regression-test.yml`, and the unsigned iOS/tvOS rows of the develop nightly in `release.yml` (not `release/**`, not tags). It is used **only** when
+`github.event_name` is `push`, `schedule` or `workflow_dispatch`, or a `pull_request` whose
+`head.repo.full_name == github.repository` (same-repo PR). Fork PRs always use `macos-latest`, and
+no `pull_request_target` workflow may ever run there. Not routed (stay hosted): jobs that sign or
+notarize (`release.yml` macOS rows, `app-package.yml`, `chdman-tools.yml`; `app.yml` skips its
+sign step on the Studio via `runner.environment`), anything on a `v*` tag or `release/**` (whose compile-only cores C/C++ CI reuses), `installer.yml`,
+`librashader.yml`, Intel/Rosetta runners. Kill switch: set the repository variable
+`VJ_STUDIO_RUNNER` to `off` and all of it falls back to `macos-latest` with no code change. Runner `studio-virtualjaguar` (labels
+`self-hosted,macOS,ARM64,studio,vj`) is registered; the repo requires approval for all external
+contributors' workflows. Studio prerequisites: Xcode, cmake, ninja, imagemagick, swift. If the runner is
+offline, macOS jobs queue until it returns (or set the kill switch). It coexists with `VJ_TEMP_RUNNERS`,
+which only remaps lightweight ubuntu jobs.
 
 ## Temporary CI runners
 
