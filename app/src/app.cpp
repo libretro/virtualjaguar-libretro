@@ -369,6 +369,7 @@ bool App::initSdl(const CliArgs& a) {
         return false;
     }
     sdlUp_ = true;
+    platform::initNetworking();   // Windows: Winsock for the core's sockets (the GDB stub), headless runs included
     // Headless: a signal is a quit request.  Installed AFTER SDL_Init, so these replace whatever SDL did with the signals
     // (SDL turns them into SDL_EVENT_QUIT, which nothing pumps in a headless run).  Windowed runs keep SDL's own.
     if (headless_) {

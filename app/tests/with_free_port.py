@@ -5,8 +5,8 @@ with_free_port.py -- run a command with a TCP port the OS just handed out (#967 
 usage: with_free_port.py [--config-ini <data dir>] -- <command> [args...]
 
 Every "{PORT}" in the command's arguments becomes a free port: bind 127.0.0.1:0, read the port back, close.  Never a fixed
-number: hosted Windows runners reserve ranges (Hyper-V / winnat excluded ports) in which a bind fails, and tests that run in
-parallel must not collide.  --config-ini writes <data dir>/config.ini with the GDB stub enabled on that same port (a SAVED
+number: tests that run in parallel must not collide, and a fixed port can be taken or excluded on a shared runner.
+(The hosted-Windows "failed to open port" was NOT a port problem: the app never started Winsock; see platform::initNetworking.)  --config-ini writes <data dir>/config.ini with the GDB stub enabled on that same port (a SAVED
 setting, for the tests where the key is locked and an --option would be an error), rewritten on every run.
 
 The command's stdout and stderr are inherited, so ctest's PASS / FAIL regular expressions see the app's output unchanged,

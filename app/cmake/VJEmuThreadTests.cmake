@@ -270,7 +270,8 @@ set_tests_properties(debug_on_threaded PROPERTIES LABELS emu_thread TIMEOUT 120
     FAIL_REGULAR_EXPRESSION "are off while the emulation thread is on|ThreadSanitizer|owner violation")
 # Decision 3: whenever the stub is enabled the app attaches a silent host behind every halt, inline and threaded.  The port
 # comes from the OS at run time (tests/with_free_port.py substitutes {PORT}): the typed option rejects 0, hard-coded ports
-# collided or sat in ranges hosted Windows runners reserve, and a port the core cannot open disables the stub for the session
+# collide between parallel runs (a Windows "failed to open port" is not that: it was the app never starting Winsock,
+# platform::initNetworking), and a port the core cannot open disables the stub for the session
 # (the FAIL regex catches that, so a failure is loud, not a vacuous pass).  RESOURCE_LOCK vj_gdb_port serialises the gdb
 # tests that bind one, closing the window between the wrapper's bind-0 probe and the core's own bind.
 if(Python3_Interpreter_FOUND)
