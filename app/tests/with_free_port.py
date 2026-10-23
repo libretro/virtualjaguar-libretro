@@ -43,7 +43,12 @@ def main(argv) -> int:
         with open(os.path.join(data_dir, "config.ini"), "w") as f:
             f.write(f"opt.virtualjaguar_gdb_stub=enabled\nopt.virtualjaguar_gdb_port={port}\n")
     cmd = [a.replace("{PORT}", str(port)) for a in cmd]
-    proc = subprocess.Popen(cmd)
+    # Pass the standard handles explicitly.  Left to inheritance, Windows starts a GUI-subsystem child (the package
+    # job's VJ_APP_WIN32_GUI build) with no stdout, its console_attach.cpp then attaches the runner's console, and the
+    # output never reaches ctest's pipe, so every PASS regex misses.  Explicit handles keep it on the pipe everywhere.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr)
 
     def stop(signum, frame):
         proc.kill()
