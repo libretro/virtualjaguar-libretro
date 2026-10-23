@@ -578,24 +578,29 @@ void testServeDebugLane() {
     FakeClient c;
     std::atomic<size_t> served{0};
     std::atomic<double> waited{0};
+    std::atomic<int> rounds{0};               // onBlocked calls that have finished: the results above are valid once it counts them
     c.onBlocked = [&] {                       // runs on the emulation thread, inside the blocked frame (the halt)
+        // A thread descheduled between leaving the loop and serving, as on a loaded hosted VM (#967): the test must wait for
+        // the round to finish, never for a fixed sleep, or it reads `waited` before it is stored (the CI "0.0 ms").
+        sleepMs(30);
         const auto t0 = Clock::now();
         served = e.serveDebugLane(std::chrono::milliseconds(4));
         waited = since(t0);
+        rounds++;                             // last: it publishes `served` and `waited`
     };
     c.block = true;
     CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
     for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
     e.post([] {});                            // a frame-lane command queued behind the halted frame (the SRAM autosave)
     c.serveNow = 1;
-    for (int i = 0; i < 1000 && c.serveNow.load() > 0; i++) sleepMs(1);
-    sleepMs(10);
+    for (int i = 0; i < 5000 && rounds.load() < 1; i++) sleepMs(1);   // the 5 s bound only keeps a broken lane from hanging the test
+    CHECK(rounds.load() == 1, "the first lane service finished (%d)", rounds.load());
     CHECK(served.load() == 0, "nothing in the debug lane: 0 commands (%zu)", served.load());
-    CHECK(waited.load() >= 0.003 && waited.load() < 0.5, "and it waited about maxWait despite the frame post (%.1f ms)", waited.load() * 1e3);
+    CHECK(waited.load() >= 0.003 && waited.load() < 2.0, "and it waited about maxWait despite the frame post (%.1f ms)", waited.load() * 1e3);
     std::atomic<int> ran{0};
     e.debugPost([&] { ran++; });
     c.serveNow = 1;
-    for (int i = 0; i < 1000 && (c.serveNow.load() > 0 || ran.load() == 0 || served.load() == 0); i++) sleepMs(1);   // `served` is stored after the lane service returns
+    for (int i = 0; i < 5000 && rounds.load() < 2; i++) sleepMs(1);   // `served` is stored after the lane service returns
     CHECK(ran.load() == 1 && served.load() == 1, "a debug post is run by the lane service (%d, %zu)", ran.load(), served.load());
     CHECK(e.serveDebugLane(std::chrono::milliseconds(50)) == 0, "off the emulation thread: 0, no wait");
     c.block = false;
