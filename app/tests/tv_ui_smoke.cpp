@@ -3041,6 +3041,29 @@ static void settingsHeldLeftStopsAtFirstChoice() {
     CHECK(shell.focusLabel() == "X" && host.set.size() == 10);
 }
 
+// The Shader row's step parses and compiles a preset and saves the config (a broken one toasts for seconds): a held Right / Left
+// applies exactly one preset -- the press -- and the nav's 80 ms repeats after it do nothing.  A new press steps again.
+static void settingsShaderRowPressOnly() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, {mkRow("shader", "Shader", "picture", "Picture", {"Off", "a", "b", "c", "d", "e"})});
+    rightN(host, shell, 1);                              // into the list
+    CHECK(host.set.empty() && shell.focusLabel() == "Shader");
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+    frames(host, shell, 90);                             // ~1.4 s: a stepping row would have gone 10+ presets on
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
+    frames(host, shell, 30);
+    CHECK(host.set.size() == 1 && lastSet(host, "shader", 1));
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_LEFT, true);
+    frames(host, shell, 90);
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_LEFT, false);
+    frames(host, shell, 30);
+    CHECK(host.set.size() == 2 && lastSet(host, "shader", 0));
+    rightN(host, shell, 1);                              // a fresh press still steps
+    CHECK(host.set.size() == 3 && lastSet(host, "shader", 1));
+    CHECK(g_imguiErrors == 0);
+}
+
 // LT / RT jump the list by the rows on screen, stop at the ends, and the focused row stays in view.
 static void settingsPageJump() {
     ImGuiIO& io = ImGui::GetIO();
@@ -4577,6 +4600,7 @@ int main() {
     settingsRailScrolls720p();
     settingsHeldRightRepeats();
     settingsHeldLeftStopsAtFirstChoice();
+    settingsShaderRowPressOnly();
     settingsPageJump();
     settingsFocusMemoryPerGroupKey();
     settingsCustomValueRow();

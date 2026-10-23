@@ -376,16 +376,22 @@ private:
         case Intent::PagePrev: pageBy(list_, listVisible_, -1); break;
         case Intent::PageNext: pageBy(list_, listVisible_, 1); break;
         case Intent::Left:
+            if (pressOnly(focused())) break;
             if (canStep(focused(), -1)) step(focused(), -1, false);
             else if (!shell_.repeatIntent()) onRail_ = true;   // the left edge of the row: the groups (a held Left stops there)
             break;
         case Intent::Right:
+            if (pressOnly(focused())) break;
             if (!(shell_.repeatIntent() && enteredByRight_)) step(focused(), 1, false);
             break;
         case Intent::Accept: accept(); break;
         default: break;
         }
     }
+
+    // A row whose step is costly (the Shader row parses and compiles a preset and saves the config, and a broken one toasts for seconds)
+    // moves on a press only: a held Left / Right (the 80 ms repeat) is not another step.
+    bool pressOnly(const SettingRow& r) const { return shell_.repeatIntent() && r.id == "shader"; }
 
     const SettingRow& focused() const { return rows_[(size_t)list_.index]; }
     std::string groupLabel() const { return rail_.index >= 0 && rail_.index < (int)groups_.size() ? groups_[(size_t)rail_.index].label : std::string(); }

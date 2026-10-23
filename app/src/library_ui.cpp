@@ -1098,10 +1098,7 @@ void drawEmptyHome(App& app, LibraryService& svc) {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(f * 1.6f, f * 0.55f));
     if (ImGui::Button("Add folder...")) svc.addFolderDialog(app.window());
     ImGui::SameLine();
-    if (ImGui::Button("BIOS & boot...")) {
-        app.showSettings = true;
-        app.devSelectTab = "BIOS";
-    }
+    if (ImGui::Button("BIOS & boot...")) app.openBiosSettings();
     ImGui::PopStyleVar();
     ImGui::SetCursorPos(ImVec2(x0, y0 + titleH + gap + h1 + gap + btnH + gap * 1.5f));
     ImGui::PushTextWrapPos(x0 + bw);

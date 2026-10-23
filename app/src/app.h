@@ -287,7 +287,6 @@ public:
     // `why` says so).  Under netplay it returns true without pausing: the link keeps running.
     bool menuPause(std::string& why);   // always true: hardcore's refusal (or netplay) opens the menu over a game that keeps running
     bool menuRunsOn() const { return menuRunsOn_; }   // ... because hardcore would not let the menu pause it (the banner says so)
-    bool testDenyPause = false;                       // tv_script `hardcore-pause deny`: allowPause() refuses, as hardcore does between pauses
     void menuResume();
     tv::Shell& tvShell();
     tv::TvMode tvMode;                           // TV mode (#991): when it is on
@@ -446,6 +445,7 @@ private:
     void latchUpdatePeriod();
     bool menuRunsOn_ = false;         // the menu is open over a running game because allowPause() refused (netplay is its own case)
     bool pauseAllowed(std::string& why);   // ach.allowPause(), or the test seam
+    bool testDenyPause = false;       // tv_script `hardcore-pause deny` (App::tvScriptStep): allowPause() refuses, as hardcore does between pauses
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App

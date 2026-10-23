@@ -1384,7 +1384,7 @@ void App::togglePause() {
     if (menuHeldPause_ || menuRunsOn_) {   // the TV menu holds the pause: a toggle here would be overwritten when it closes
         // (Hardcore's run-on menu holds none, but its banner promises the game keeps running: a pause behind it would stall the game
         // the player cannot see, and the menu would resume it as it closes.)
-        toast("Close the menu to resume", 1.5);
+        toast(menuHeldPause_ ? "Close the menu to resume" : "The menu has the controller", 1.5);   // (nothing is paused behind a run-on menu)
         return;
     }
     if (!paused) {

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <utility>
 
@@ -41,6 +42,24 @@ std::string plainNumber(float v) {
     char b[32];
     std::snprintf(b, sizeof b, "%g", (double)v);
     return b;
+}
+
+// What follows the number in a slider's label format ("%.0f ms" -> " ms", "%.0f %%" -> " %", "%.1fx" -> "x"): the unit the grid labels
+// carry, so an off-grid value reads "55.5 % (custom)" beside "50 %", not a bare number.
+std::string unitOf(const char* fmt) {
+    std::string tail;
+    const char* p = fmt;
+    while (*p && !(p[0] == '%' && p[1] != '%')) p += (p[0] == '%') ? 2 : 1;   // the first real conversion
+    if (*p == '%') {
+        ++p;
+        while (*p && !std::strchr("fgeEdiu", *p)) ++p;   // its flags, width and precision
+        if (*p) ++p;
+    }
+    for (; *p; ++p) {
+        tail.push_back(*p);
+        if (p[0] == '%' && p[1] == '%') ++p;   // "%%" is one percent sign
+    }
+    return tail;
 }
 
 // The file name without its folders (either separator) and its extension.
@@ -163,7 +182,7 @@ SettingRow sliderRow(const std::string& id, const std::string& label, const std:
                 pos = i;
                 break;
             }
-        labels.insert(labels.begin() + pos, plainNumber(current) + kCustomSuffix);
+        labels.insert(labels.begin() + pos, plainNumber(current) + unitOf(fmt) + kCustomSuffix);
         index = pos;
     }
     return rowOf(id, label, group, groupLabel, std::move(labels), index);

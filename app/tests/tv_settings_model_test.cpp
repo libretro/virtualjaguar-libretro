@@ -151,14 +151,19 @@ static void testSliderRows() {
     CHECK(s.id == "audio_buffer" && s.label == "Audio buffer" && s.group == "sound" && s.groupLabel == "Sound" && !s.readOnly);
     // A value off the grid is inserted between its neighbours and selected: Left and Right step to the nearest grid values.
     s = sliderRow("audio_buffer", "Audio buffer", "sound", "Sound", 85, 20, 200, 10, "%.0f ms");
-    CHECK(s.choices.size() == 20 && s.choices[6] == "80 ms" && s.choices[7] == "85 (custom)" && s.choices[8] == "90 ms" && s.index == 7);
+    CHECK(s.choices.size() == 20 && s.choices[6] == "80 ms" && s.choices[7] == "85 ms (custom)" && s.choices[8] == "90 ms" && s.index == 7);
     CHECK(stepValue(s, 8, 20, 10, 85) == 90 && stepValue(s, 6, 20, 10, 85) == 80);
+    // The "(custom)" label keeps the unit the grid labels use ("%%" is one percent sign; "x" and " s" follow the number).
+    CHECK(sliderRow("volume", "Volume", "sound", "Sound", 55.5f, 0, 100, 10, "%.0f %%").choices[6] == "55.5 % (custom)");
+    CHECK(sliderRow("tile_size", "Tile size", "library", "Library", 1.25f, 0.5f, 2.0f, 0.5f, "%.1fx").choices[2] == "1.25x (custom)");
+    CHECK(sliderRow("neuro_interval", "Pause", "neuro", "Neuro", 1.25f, 0.5f, 2.0f, 0.5f, "%.1f s").choices[2] == "1.25 s (custom)");
+    CHECK(sliderRow("v", "V", "g", "G", 85, 20, 200, 10, "%.0f").choices[7] == "85 (custom)");   // no unit in the format, none in the label
     CHECK(stepValue(s, 0, 20, 10, 85) == 20 && stepValue(s, 19, 20, 10, 85) == 200);
     CHECK(stepValue(s, 7, 20, 10, 85) == 85);                        // the "(custom)" entry changes nothing
     CHECK(stepValue(s, -1, 20, 10, 85) == 85 && stepValue(s, 20, 20, 10, 85) == 85);   // out of range too
     // The app's own default (64 ms) is off the grid: it sits between 60 and 70, and Left is 60, Right is 70.
     s = sliderRow("audio_buffer", "Audio buffer", "sound", "Sound", 64, 20, 200, 10, "%.0f ms");
-    CHECK(s.choices.size() == 20 && s.index == 5 && s.choices[4] == "60 ms" && s.choices[5] == "64 (custom)" && s.choices[6] == "70 ms");
+    CHECK(s.choices.size() == 20 && s.index == 5 && s.choices[4] == "60 ms" && s.choices[5] == "64 ms (custom)" && s.choices[6] == "70 ms");
     CHECK(stepValue(s, stepIndex(s, -1, false), 20, 10, 64) == 60 && stepValue(s, stepIndex(s, +1, false), 20, 10, 64) == 70);
     // On the grid at either end; a value beyond the ends is custom, last (or first), not clamped.
     CHECK(sliderRow("x", "x", "g", "G", 20, 20, 200, 10, "%.0f").index == 0 && sliderRow("x", "x", "g", "G", 200, 20, 200, 10, "%.0f").index == 18);
@@ -173,7 +178,7 @@ static void testSliderRows() {
     CHECK(s.choices.size() == 21 && s.choices[0] == "0.5x" && s.choices[5] == "1.0x" && s.index == 5 && s.choices.back() == "2.5x");
     CHECK(sliderRow("tile_size", "x", "g", "G", 1.3f, 0.5f, 2.5f, 0.1f, "%.1fx").index == 8);   // 1.3f is not exactly 0.5 + 8 * 0.1: still on the grid
     s = sliderRow("tile_size", "x", "g", "G", 1.25f, 0.5f, 2.5f, 0.1f, "%.1fx");
-    CHECK(s.choices.size() == 22 && s.choices[8] == "1.25 (custom)" && s.index == 8);
+    CHECK(s.choices.size() == 22 && s.choices[8] == "1.25x (custom)" && s.index == 8);
     CHECK(std::fabs(stepValue(s, 9, 0.5f, 0.1f, 1.25f) - 1.3f) < 1e-4f && std::fabs(stepValue(s, 7, 0.5f, 0.1f, 1.25f) - 1.2f) < 1e-4f);
     s = sliderRow("neuro_interval", "Pause", "neuro", "Neuro", 1.0f, 0, 10, 0.5f, "%.1f s");
     CHECK(s.choices.size() == 21 && s.choices[2] == "1.0 s" && s.index == 2 && s.choices[3] == "1.5 s");
@@ -200,7 +205,7 @@ static void testAppRows() {
     CHECK(volumeRow(0.7f).index == 7 && volumeRow(0.7f).choices.size() == 11 && volumeRow(1.0f).choices[10] == "100 %");
     CHECK(volumeRow(0.0f).index == 0 && volumeRow(0.0f).choices[0] == "0 %" && volumeRow(1.0f).index == 10);
     // The desktop slider is finer than the list: a volume between two steps is shown as it is, selected, and kept until stepped.
-    CHECK(volumeRow(0.75f).index == 8 && volumeRow(0.75f).choices.size() == 12 && volumeRow(0.75f).choices[8] == "75 (custom)");
+    CHECK(volumeRow(0.75f).index == 8 && volumeRow(0.75f).choices.size() == 12 && volumeRow(0.75f).choices[8] == "75 % (custom)");
     CHECK(volumeRow(7.0f).index == 10 && volumeRow(-1.0f).index == 0);   // out of range: the ends
     CHECK(volumeRow(0.5f).group == "sound" && volumeRow(0.5f).groupLabel == "Sound" && volumeRow(0.5f).id == "volume");
     CHECK(stepValue(volumeRow(0.75f), 9, 0.0f, 10.0f, 75.0f) == 80.0f && stepValue(volumeRow(0.75f), 7, 0.0f, 10.0f, 75.0f) == 70.0f &&
