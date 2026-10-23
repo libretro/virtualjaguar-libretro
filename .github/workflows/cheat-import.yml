@@ -5,14 +5,18 @@ on:
   # this workflow (see c-cpp.yml for the full rationale).
   push:
     branches: [master]
-    paths: ['tools/cheat-import/**', '.github/workflows/cheat-import.yml']
+    paths: ['tools/cheat-import/**', 'site/cheats/**', '.github/workflows/cheat-import.yml']
   pull_request:
     branches: [develop, master, 'release/**']
-    paths: ['tools/cheat-import/**', '.github/workflows/cheat-import.yml']
+    paths: ['tools/cheat-import/**', 'site/cheats/**', '.github/workflows/cheat-import.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: cheat-import-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   converter:
@@ -26,7 +30,49 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -r tools/cheat-import/requirements.txt
+      # Includes the generator tests. The committed packs plus the packs job
+      # below are the conversion contract; there is no separate source fetch.
       - run: python -m unittest discover -s tools/cheat-import -v
-      # Downloads only checksum-pinned, reviewed author sources. No compiled
-      # scripts, SDK, ROMs, source execution, caches, or source artifacts.
-      - run: python tools/cheat-import/community_test.py --fetch
+
+  packs:
+    needs: converter
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r tools/cheat-import/requirements.txt
+      # Downloads only the pinned commit tarball of each reviewed source and
+      # keeps scripts/cheat_*.c in memory. No compiled scripts, SDK, ROMs,
+      # source execution, caches, or source artifacts.
+      - name: Regenerate packs twice
+        run: |
+          for run in a b; do
+            python tools/cheat-import/build_packs.py \
+              --sources tools/cheat-import/sources.json \
+              --cartridges tools/cheat-import/cartridges.json \
+              --out "$RUNNER_TEMP/$run"
+          done
+      - name: Flag unmapped BigPEmu calls
+        run: |
+          python - <<'PY'
+          import json, os
+          usage = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "a", "unsupported.json")))["api_usage"]
+          for call, row in sorted(usage.items()):
+              if row["status"] == "unmapped":
+                  print(f"::warning title=Unmapped BigPEmu call::{call} is used by {', '.join(row['sources'])} and has no row in tools/cheat-import/bigpemu-api.json")
+          PY
+      - name: Regeneration is deterministic
+        run: diff -r "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"
+      - name: Committed site/cheats matches the generator
+        run: |
+          diff -r "$RUNNER_TEMP/a" site/cheats || {
+            echo "::error::site/cheats is out of date: run tools/cheat-import/build_packs.py --sources tools/cheat-import/sources.json --cartridges tools/cheat-import/cartridges.json --out site/cheats and commit the result"
+            exit 1
+          }
+      - name: Site build accepts the packs
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_check_site*.py' -v
+          python3 scripts/build_site.py --releases scripts/testdata/releases.json --out "$RUNNER_TEMP/site"
+          python3 scripts/check_site.py "$RUNNER_TEMP/site"

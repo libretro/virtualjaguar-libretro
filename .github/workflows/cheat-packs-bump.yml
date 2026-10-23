@@ -1,0 +1,235 @@
+name: Community cheat pack bump
+
+# Weekly: if a pinned upstream cheat repository has moved, regenerate
+# site/cheats/ at the new commit and open (or refresh) a reviewable PR on the
+# fixed branch cheats/pin-bump. A maintainer merges it; nothing lands unreviewed.
+#
+# No PAT exists, so the PR is opened with GITHUB_TOKEN and pull_request
+# workflows do not fire for it. workflow_dispatch is the documented exception,
+# so cheat-import.yml is dispatched on the branch (needs actions: write).
+
+on:
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: cheat-packs-bump
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  bump:
+    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r tools/cheat-import/requirements.txt
+
+      # One tab-separated line per github source whose branch head differs from
+      # its pin: id, repo, old commit, new commit, new commit date.
+      - name: Poll upstream pins
+        id: poll
+        run: |
+          set -euo pipefail
+          bumps="$RUNNER_TEMP/bumps.tsv"
+          : > "$bumps"
+          jq -r '.sources[] | select(.kind == "github") | [.id, .repo, .branch, .commit] | @tsv' \
+            tools/cheat-import/sources.json > "$RUNNER_TEMP/pins.tsv"
+          while IFS=$'\t' read -r id repo branch commit; do
+            IFS=$'\t' read -r sha date < <(gh api "repos/$repo/commits/$branch" \
+              --jq '[.sha, .commit.committer.date] | @tsv')
+            date="${date:0:10}"
+            [[ "$sha" =~ ^[0-9a-f]{40}$ && "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+              echo "::error::unexpected API answer for $repo@$branch"
+              exit 1
+            }
+            if [ "$sha" = "$commit" ]; then
+              echo "$id: $repo@$branch still at ${commit:0:7}"
+            else
+              echo "$id: $repo@$branch moved ${commit:0:7} -> ${sha:0:7} ($date)"
+              printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$repo" "$commit" "$sha" "$date" >> "$bumps"
+            fi
+          done < "$RUNNER_TEMP/pins.tsv"
+          if [ -s "$bumps" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No pin moved; nothing to do."
+          fi
+
+      # --summary reads each pack's .cht from beside its manifest, so the old
+      # tree has to exist as files, not just as a manifest.
+      - name: Keep the current tree for the summary
+        if: steps.poll.outputs.changed == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/old"
+          git archive HEAD site/cheats | tar -x -C "$RUNNER_TEMP/old"
+
+      # Never exits non-zero for a validation failure: a red pin is surfaced in
+      # the PR body instead of being dropped or pushed silently.
+      - name: Bump pins, regenerate, validate
+        id: regen
+        if: steps.poll.outputs.changed == 'true'
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/validation.log"
+          results="$RUNNER_TEMP/validation.md"
+          : > "$log"; : > "$results"
+          failed=0
+          check() {
+            local name="$1"; shift
+            echo "### $name" >> "$log"
+            if "$@" >> "$log" 2>&1; then
+              echo "- PASS: $name" >> "$results"
+            else
+              echo "- FAIL: $name" >> "$results"
+              failed=1
+            fi
+          }
+          gen() {
+            python tools/cheat-import/build_packs.py \
+              --sources tools/cheat-import/sources.json \
+              --cartridges tools/cheat-import/cartridges.json \
+              --out "$1"
+          }
+          twice() {
+            rm -rf "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"
+            gen "$RUNNER_TEMP/a" && gen "$RUNNER_TEMP/b" && diff -r "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"
+          }
+          site() {
+            python3 scripts/build_site.py --releases scripts/testdata/releases.json --out "$RUNNER_TEMP/site" \
+              && python3 scripts/check_site.py "$RUNNER_TEMP/site"
+          }
+
+          while IFS=$'\t' read -r id _repo _old sha date; do
+            python tools/cheat-import/build_packs.py --sources tools/cheat-import/sources.json \
+              --bump "$id=$sha:$date" || exit 1
+          done < "$RUNNER_TEMP/bumps.tsv"
+
+          check "regenerate site/cheats at the new pin" gen site/cheats
+          check "converter and generator unit tests" python -m unittest discover -s tools/cheat-import
+          check "site check unit tests" python3 -m unittest discover -s scripts -p 'test_check_site*.py'
+          check "regeneration is deterministic (two runs)" twice
+          check "site/cheats holds exactly the generated files" diff -r "$RUNNER_TEMP/a" site/cheats
+          check "site build and check_site accept the packs" site
+
+          : > "$RUNNER_TEMP/unmapped.md"
+          if [ -f site/cheats/unsupported.json ]; then
+            python - >> "$RUNNER_TEMP/unmapped.md" <<'PY'
+          import json
+          usage = json.load(open("site/cheats/unsupported.json"))["api_usage"]
+          for call, row in sorted(usage.items()):
+              if row["status"] == "unmapped":
+                  print(f"- `{call}` in {', '.join(row['sources'])}")
+          PY
+          fi
+
+          if [ "$failed" = 0 ]; then
+            echo "validation=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "validation=failed" >> "$GITHUB_OUTPUT"
+            echo "::warning::validation failed; the PR will be headed VALIDATION FAILED"
+          fi
+          cat "$results"
+
+      - name: Commit, push, and open or refresh the PR
+        id: pr
+        if: steps.poll.outputs.changed == 'true'
+        env:
+          VALIDATION: ${{ steps.regen.outputs.validation }}
+        run: |
+          set -euo pipefail
+          branch=cheats/pin-bump
+
+          title=""; links=""
+          while IFS=$'\t' read -r _id repo old sha date; do
+            title="${title:+$title, }$repo to ${sha:0:7}"
+            links="$links- \`$repo\`: [${old:0:7} ... ${sha:0:7}](https://github.com/$repo/compare/$old...$sha) (upstream head dated $date)"$'\n'
+          done < "$RUNNER_TEMP/bumps.tsv"
+          title="data(cheats): bump $title"
+
+          python tools/cheat-import/build_packs.py --summary \
+            "$RUNNER_TEMP/old/site/cheats/manifest.json" site/cheats/manifest.json \
+            > "$RUNNER_TEMP/summary.md" || echo "(summary unavailable)" > "$RUNNER_TEMP/summary.md"
+
+          body="$RUNNER_TEMP/body.md"
+          {
+            if [ "$VALIDATION" != ok ]; then
+              echo "# VALIDATION FAILED"
+              echo
+              echo "At least one check failed against the new pin. Do not merge until it is understood."
+              echo
+            fi
+            cat "$RUNNER_TEMP/summary.md"
+            echo
+            echo "## Validation"
+            echo
+            cat "$RUNNER_TEMP/validation.md"
+            if [ "$VALIDATION" != ok ]; then
+              echo
+              echo "Log tail:"
+              echo
+              echo '`````'
+              tail -n 80 "$RUNNER_TEMP/validation.log" | tail -c 20000
+              echo '`````'
+            fi
+            if [ -s "$RUNNER_TEMP/unmapped.md" ]; then
+              echo
+              echo "## Unmapped BigPEmu calls (add rows to tools/cheat-import/bigpemu-api.json)"
+              echo
+              cat "$RUNNER_TEMP/unmapped.md"
+            fi
+            echo
+            echo "## Upstream"
+            echo
+            printf '%s' "$links"
+            echo
+            echo "Refs #1071"
+            echo
+            echo "Opened by Actions with GITHUB_TOKEN: \`pull_request\` workflows did not fire. The converter workflow was dispatched on this branch; to run the full PR suite, close and reopen the PR or push an empty commit."
+            echo
+            echo "Opened by the weekly cheat-packs-bump workflow."
+          } > "$body"
+
+          msg="$RUNNER_TEMP/commit-msg.txt"
+          printf '%s\n\nRefs #1071\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n' "$title" > "$msg"
+          git checkout -q -B "$branch"
+          git add tools/cheat-import/sources.json site/cheats
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -F "$msg"
+
+          # An identical tree already on the branch means nothing new to push.
+          pushed=true
+          if git fetch -q --depth=1 origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null \
+             && [ "$(git rev-parse "origin/$branch^{tree}")" = "$(git rev-parse 'HEAD^{tree}')" ]; then
+            pushed=false
+          fi
+          if [ "$pushed" = true ]; then
+            git push --force origin "HEAD:refs/heads/$branch"
+          fi
+
+          number="$(gh pr list --head "$branch" --base develop --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body-file "$body"
+          else
+            gh pr create --base develop --head "$branch" --title "$title" --body-file "$body"
+            pushed=true
+          fi
+          echo "pushed=$pushed" >> "$GITHUB_OUTPUT"
+
+      # workflow_dispatch is exempt from "GITHUB_TOKEN events create no runs".
+      - name: Dispatch the converter workflow on the bump branch
+        if: steps.poll.outputs.changed == 'true' && steps.pr.outputs.pushed == 'true'
+        run: gh workflow run cheat-import.yml --ref cheats/pin-bump

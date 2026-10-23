@@ -374,8 +374,10 @@ class CliTests(unittest.TestCase):
     def test_committed_sources(self):
         doc = json.loads((HERE / "sources.json").read_text())
         (entry,) = bp.check_sources(doc)
-        self.assertEqual((entry["repo"], entry["branch"], entry["commit"], entry["commit_date"]),
-                         ("jguffer/BigPEmu_Scripts", "main", "24211503339a969f8494b8e189b8f2aa0cb9eba6", "2026-04-15"))
+        # The pin itself moves with every cheat-packs-bump PR, so only its shape is asserted.
+        self.assertEqual((entry["repo"], entry["branch"]), ("jguffer/BigPEmu_Scripts", "main"))
+        self.assertRegex(entry["commit"], r"^[0-9a-f]{40}$")
+        self.assertRegex(entry["commit_date"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertEqual(entry["credit"], CREDIT)
         self.assertEqual(entry["include"], ["scripts/cheat_*.c"])
         self.assertEqual([e["path"] for e in entry["exclude"]], ["scripts/cheat_aliens_vs_predator.c"])
