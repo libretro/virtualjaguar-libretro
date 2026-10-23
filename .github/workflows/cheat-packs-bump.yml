@@ -27,6 +27,9 @@ env:
 
 jobs:
   bump:
+    # The Provenance-Emu fork runs crons too and must never open bump PRs.
+    if: github.repository == 'libretro/virtualjaguar-libretro'
+    timeout-minutes: 30
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -204,7 +207,7 @@ jobs:
           } > "$body"
 
           msg="$RUNNER_TEMP/commit-msg.txt"
-          printf '%s\n\nRefs #1071\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n' "$title" > "$msg"
+          printf '%s\n\nRefs #1071\n' "$title" > "$msg"
           git checkout -q -B "$branch"
           git add tools/cheat-import/sources.json site/cheats
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
