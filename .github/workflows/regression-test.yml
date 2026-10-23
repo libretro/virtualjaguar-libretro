@@ -72,14 +72,18 @@ jobs:
     - name: Build miniretro
       if: steps.cache-miniretro.outputs.cache-hit != 'true'
       run: |
-        git clone --depth 1 https://github.com/davidgfnet/miniretro.git /tmp/miniretro-src
+        # RUNNER_TEMP, not /tmp: the self-hosted Studio runner keeps /tmp between jobs, so a
+        # second run's clone would hit the first run's directory.
+        SRC="$RUNNER_TEMP/miniretro-src"
+        rm -rf "$SRC"
+        git clone --depth 1 https://github.com/davidgfnet/miniretro.git "$SRC"
         LDFLAGS="-ldl"
         if [ "$(uname -s)" = "Darwin" ]; then LDFLAGS=""; fi
         ${{ matrix.config.cxx }} -O2 -Wall -Wno-deprecated-declarations -Wno-unused-result \
           -o miniretro-bin \
-          /tmp/miniretro-src/miniretro.cc \
-          /tmp/miniretro-src/util.cc \
-          /tmp/miniretro-src/loader.cc \
+          "$SRC/miniretro.cc" \
+          "$SRC/util.cc" \
+          "$SRC/loader.cc" \
           $LDFLAGS
 
     - name: Build core
