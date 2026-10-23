@@ -2316,6 +2316,11 @@ int App::run(const CliArgs& a) {
         emuThreadThisRun_ = false;
         std::fprintf(stderr, "[emu] --emu-thread on is ignored with --headless --tv-test-script (the script runs the core inline)\n");
     }
+    // The build channel and the choice this run was made from (#967 3d): every start, headless included (the smokes read it).
+    std::fprintf(stderr, "[emu] channel=%s, emulation thread default %s, this run %s\n", kBuildChannel,
+                 kEmuThreadDefault ? "on" : "off", emuThreadThisRun_ ? "on" : "off");
+    std::fprintf(stderr, "[emu] ui.emu_thread %s -> wanted %s\n", emuThreadPref < 0 ? "unset" : emuThreadPref ? "on" : "off",
+                 emuThreadWanted() ? "on" : "off");
     if (a.tv) {
         tvFromCli_ = true;
         tvMode.setOn(true);   // after the config: a no-op when the setting is Off
