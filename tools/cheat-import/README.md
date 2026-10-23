@@ -10,6 +10,12 @@ Python 3.10, the oldest version CI runs). A `pycparser` bump is a deliberate PR:
 `site/cheats` with the new version and check the output stays byte-identical. 2.22, 2.23,
 3.0, 3.11 and 3.12 were verified to produce identical output.
 
+Packs built from this converter by CI are published at `jaguar.provenance-emu.com/cheats/`
+(`site/cheats/`) and installed from the app's Cheats window under "Community cheats": Install,
+Update and Remove work on the loaded cartridge's pack by CRC32 (the app verifies size, SHA-256 and the
+revision guard before keeping it). Using a `.cht` by hand, as described below, still works and is
+independent of the store.
+
 ## Use
 
 Use sources you have permission to translate and a matching native cartridge
