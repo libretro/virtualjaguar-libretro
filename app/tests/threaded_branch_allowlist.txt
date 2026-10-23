@@ -1,0 +1,14 @@
+# Files that may ask "am I threaded?" (emuThreadThisRun, emuThreadWanted(), x.threaded(), the bare threaded() inside App / CoreHost), with the exact
+# number of occurrences (grep -o) each (no_threaded_limits.sh, 5).  More fails (a new gate?); fewer fails (tighten this file).
+# Every hit selects HOW something runs on the emulation thread or the UI thread; none may disable, grey out, hide, refuse
+# or lock a feature because the thread is on (#967 Phase 3 bar).  Raise a count only together with the new line's reason.
+app/src/app.cpp            51   # emuThreadWanted() definition and its use in the one run() decision; inline-vs-threaded plumbing: wireHost ff/mute/input/syncCore; start/stop/quit/detach; shownFrame, pump, present/latch/pacing, perf notes, SRAM flush, headless loops and logs; openContent/openNoContent/closeContent/reset/addDisc refuse while halted INLINE only (threaded detaches first); run(): the one decision, headless --tv-test-script stays inline; the start-up "this run" report (emuThreadThisRun_, emuThreadWanted(): a log line, not a gate)
+app/src/app.h               8   # declarations: emu, threaded() x2, emuThreadWanted(), emuThreadThisRun(), emuThreadThisRun_, pictureAspect() source of the aspect
+app/src/core_host.cpp       7   # option events: queued to the UI when threaded, applied directly inline; snapshot publish and drain are threaded-only plumbing
+app/src/core_host.h         1   # the definition of threaded() (owner_ set)
+app/src/ui.cpp              5   # the Settings checkbox shows the choice (emuThreadWanted); "Restart the app to apply"; Close game / re-enter stay enabled threaded while halted (inline must resume first)
+app/src/achievements.cpp    3   # off-thread readMemory guard; pump mode; the hardcore restart retries threaded while halted
+app/src/debug/op_ui.cpp     2   # opStepFor inputs: threaded steps through emu.advance (inline needs !attached && !inFrame)
+app/src/netplay_ui.cpp      1   # headless self-test step: advance(1) + pinSnapshot instead of runFrame
+app/src/netplay.cpp         1   # bounce count: one more emulated frame when threaded
+app/src/tv/tv_app_host.cpp  3   # TV Settings: the row shows the choice (emuThreadWanted) and the "Restart the app to apply" note

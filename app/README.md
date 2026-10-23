@@ -565,10 +565,11 @@ it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library
 busy UI no longer stalls the picture. The game runs at the true Jaguar rate (60.05 Hz, PAL 50.08 Hz), paced by the
 sound card's clock, and the display shows the newest frame (on a 60 Hz panel the true-rate drift alone skips one frame about every 18 s; in this phase frames that finish
 close to the take point also repeat or skip more often than in the single-thread loop, roughly 1 to 2.5 a second as
-measured on a 60 Hz panel, which the display-locked mode planned for a later phase addresses: that is why the setting is
-off by default).
-The setting takes effect at the next start and is **off** by default (nightly builds will turn it on once nothing is
-switched off while it runs). `--emu-thread on|off` decides for one run; headless runs stay single-threaded unless it
+measured on a 60 Hz panel, which the display-locked mode planned for a later phase addresses).
+The setting takes effect at the next start. It is **on** by default in nightly builds and **off** in releases (the build
+channel; About shows it, and the log prints `[emu] channel=...`). A stored choice always wins in both directions; **Reset
+group** in Settings > Interface returns to the channel's default. `dev` builds (pull-request artifacts, local builds)
+default to off; `-DVJ_BUILD_CHANNEL=nightly` builds the nightly default from source. `--emu-thread on|off` decides for one run; headless runs stay single-threaded unless it
 says `on`.
 
 With vsync, the window waits until just before each vblank, passing input to the emulation as it arrives, and then

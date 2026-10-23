@@ -30,6 +30,9 @@
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
 #   emu_thread_start_fallback  a failed thread start runs inline (nothing to lift any more)
 #   debug_on_threaded / gdb_enabled(_threaded)  nothing is off while threaded; the silent gdb host attaches at load
+#   emu_thread_default_unit  build channel -> emulation-thread default; a stored choice always wins
+#   emu_thread_default_smoke_{unset,false,true,flag}  the stored choice vs the channel default through the real app (headless, inline; _flag threaded)
+#   no_threaded_limits    the Phase 3 bar, static: no threaded-only gate, text or limit test; "am I threaded?" only where allowed
 #   gdb_hardcore_locked_* / gdb_hardcore_flip_*  hardcore locks the stub to disabled at load; a mid-game flip reloads to apply it
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
@@ -214,6 +217,15 @@ set_tests_properties(emu_thread_start_fallback PROPERTIES TIMEOUT 120 LABELS emu
     PASS_REGULAR_EXPRESSION "could not start the emulation thread; running emulation on the UI thread.*headless: OK"
     FAIL_REGULAR_EXPRESSION "are back on|are off while|headless: FAIL|ThreadSanitizer|owner violation")
 
+# The Phase 3 bar (#967): turning the emulation thread on switches nothing off.  A static check over the tree
+# (tests/no_threaded_limits.sh), so it also keeps the bar from coming back (docs/agent/testing.md).  macOS and Linux only.
+find_program(VJ_BASH bash)
+if(VJ_BASH AND NOT WIN32)
+    add_test(NAME no_threaded_limits
+        COMMAND ${VJ_BASH} "${CMAKE_CURRENT_LIST_DIR}/../tests/no_threaded_limits.sh" "${VJ_ROOT}")
+    set_tests_properties(no_threaded_limits PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+endif()
+
 # The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the
 # staged-BIOS record), and the menus read the disc list from the pinned snapshot.
 add_test(NAME smoke_disc_swap_threaded
@@ -359,6 +371,55 @@ target_include_directories(vj_late_latch_test PRIVATE src)
 vj_emu_thread_warnings(vj_late_latch_test)
 add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
 set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The build channel's default rule (#967 phase 3d): a stored choice always wins; only "never chosen" follows the channel.
+# The target links vj_build_channel, so it sees the defines the app was configured with.
+add_executable(vj_emu_thread_default_test tests/emu_thread_default_test.cpp)
+target_include_directories(vj_emu_thread_default_test PRIVATE src)
+target_link_libraries(vj_emu_thread_default_test PRIVATE vj_build_channel)
+vj_emu_thread_warnings(vj_emu_thread_default_test)
+add_test(NAME emu_thread_default_unit COMMAND vj_emu_thread_default_test)
+set_tests_properties(emu_thread_default_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The default rule through the real app (Review Focus 4): the data dir's ui.emu_thread decides "wanted"; only an unset key
+# follows the configured channel.  Headless stays inline unless --emu-thread says otherwise, so "this run" is off; the
+# stored-choice line is what pins the rule.  One data dir per test (ctest -j runs them in parallel).
+set(_vj_chan_def off)
+if(VJ_BUILD_CHANNEL STREQUAL "nightly")
+    set(_vj_chan_def on)
+endif()
+foreach(_p unset false true)
+    set(_d "${CMAKE_CURRENT_BINARY_DIR}/emu-default-${_p}")
+    file(MAKE_DIRECTORY "${_d}")
+    file(REMOVE "${_d}/config.ini")
+    if(NOT _p STREQUAL "unset")
+        file(WRITE "${_d}/config.ini" "ui.emu_thread=${_p}\n")
+    endif()
+    if(_p STREQUAL "unset")
+        set(_w "${_vj_chan_def}")
+        set(_s unset)
+    elseif(_p STREQUAL "true")
+        set(_w on)
+        set(_s on)
+    else()
+        set(_w off)
+        set(_s off)
+    endif()
+    add_test(NAME emu_thread_default_smoke_${_p}
+        COMMAND virtualjaguar --headless --frames 5 --data-dir "${_d}" "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(emu_thread_default_smoke_${_p} PROPERTIES TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "\\[emu\\] channel=${VJ_BUILD_CHANNEL}, emulation thread default ${_vj_chan_def}, this run off.*\\[emu\\] ui\\.emu_thread ${_s} -> wanted ${_w}"
+        FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+endforeach()
+# --emu-thread on wins over the stored choice for one run; the stored choice itself is reported unchanged.
+set(_d "${CMAKE_CURRENT_BINARY_DIR}/emu-default-flag")
+file(MAKE_DIRECTORY "${_d}")
+file(WRITE "${_d}/config.ini" "ui.emu_thread=false\n")
+add_test(NAME emu_thread_default_smoke_flag
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5 --data-dir "${_d}" "${VJ_ROMS}/yarc.j64")
+set_tests_properties(emu_thread_default_smoke_flag PROPERTIES TIMEOUT 120 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "this run on.*\\[emu\\] ui\\.emu_thread off -> wanted off.*${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
 
 add_executable(vj_latch_waker_test tests/latch_waker_test.cpp)
 target_include_directories(vj_latch_waker_test PRIVATE src)

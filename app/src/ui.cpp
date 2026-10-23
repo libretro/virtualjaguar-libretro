@@ -2,6 +2,7 @@
 // options menu generated from the options v2 definitions), the save-state
 // manager, the on-screen messages.
 #include "app.h"
+#include "build_channel.h"
 #include "devices_ui.h"
 #include "fonts_ui.h"
 
@@ -290,7 +291,9 @@ void drawInterfaceTab(App& app) {
     }
     ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
              "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
-             "app starts. Break, Step, breakpoints and the GDB stub work with it on. Off by default.");
+             "app starts. Break, Step, breakpoints and the GDB stub work with it on. %s",
+             kEmuThreadDefault ? "This is a nightly build, where it is on unless you turn it off here. Release builds default to off."
+                               : "Off by default here; nightly builds default to on.");
     if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");
@@ -521,7 +524,7 @@ void drawAbout(App& app) {
         ImGui::End();
         return;
     }
-    ImGui::Text("Virtual Jaguar %s", VJ_APP_VERSION);
+    ImGui::Text("Virtual Jaguar %s (%s build)", VJ_APP_VERSION, kBuildChannel);
     ImGui::TextDisabled("Atari Jaguar emulator. GPLv3.");
     ImGui::Separator();
     ImGui::TextUnformatted("Authors");

@@ -141,6 +141,9 @@ Callbacks that write app state today change to:
 **Debug views.** Each open debug window registers a request: a memory range, registers, the object list, the blitter
 log head, textures, the scope. After each frame the emulation thread copies just those into that tool's double buffer.
 Closed windows cost nothing. The `g` singletons in `app/src/debug/*_ui.cpp` read only their published buffers.
+*Amended 2026-10-23 (phase 3d review): one exception.* Neuro's `watch` values are copied by the emulation thread after each
+frame with no window open: with Neuro on (enabled, not hardcore, content loaded, a profile with watches) and watches more than
+64 KiB apart, the copier reads the whole 2 MiB of RAM about 10 times a second, connected or not (`docs/neuro.md`).
 *Amended 2026-10-20 (phase 3a): the debug lane and `DebugViews`.* The command queue gets a second lane,
 `EmuCommands::Lane::Debug`, that the emulation thread drains at every frame boundary and from inside a halt; the
 frame lane is never drained while halted. `EmuThread::debugCall` / `debugPost` carry the one-shot actions (poke,
@@ -185,7 +188,8 @@ pause); the UI mirrors the `HaltState` once per frame (`DebugSession::syncHalt`)
 toast and the halt bar. `DebugCore::frameEnded()`, after every `retro_run`, closes a halt the core left without one of
 the app's verdicts (gdb continued, the socket dropped, the halt timeout), which today leaves the app "halted" for good. `App::haltedFrame` runs only
 inline, until phase 5 retires the old loop. Held commands: frame-lane posts wait in the queue by construction; save /
-load state, boot and frame advance refuse with a toast while halted; open / close / reset / disc insert / drop / quit
+load state and boot refuse with a toast while halted (the app has no frame-advance command; the Objects window's step is simply
+unavailable while halted, `opStepFor` in `app/src/debug/op_view.cpp`); open / close / reset / disc insert / drop / quit
 detach first (a detach clears every breakpoint, so the next frame cannot re-halt) and then proceed. `EmuThread::call`
 takes a give-up predicate so a call posted an instant before a halt returns instead of hanging the UI behind the spinner.
 *Amended 2026-10-22 (phase 3b): as shipped.* The verdict the UI writes is tagged with the halt serial it mirrored and the
@@ -194,6 +198,14 @@ otherwise leave the mirror "halted" and wedge inline F9 / Detach. `EmuThread::ad
 frame budget rides the debug lane, the wait ends when a halt begins, and `advance(0)` resumes the wait after Continue. `beginQuit()`
 is the shutdown entry: it sets `quitting_`, `abortHalt` answers CONTINUE within one pump wait (the host stays attached, so a gdb breakpoint hit again before the frame ends comes back to the pump instead of parking with no host), and only then does the app save,
 flush and unload.
+*Amended 2026-10-23 (phase 3d review): waits and bounds the text did not state.* The UI thread does wait on the emulation
+thread for one-shot debug actions: `EmuThread::debugCall` has no give-up, by design (`emu_thread.h`), because the Tools
+windows and `Achievements::coreCall` capture locals by reference or must not have a reply cancelled; only frame-lane `call()`
+and `advance()` carry the halt give-up. The bounds: the pump waits at most `kPumpWait` (4 ms) per iteration
+(`debug_core.h`); `beginQuit()` polls at most 200 ms (100 x 2 ms) for the core to leave a halt; after that every wait on the core is
+bounded (`autoSave` 1.5 s, the unload `callFor` 3 s, the `stop` join 3 s), and a wedge exits with status 3 (`std::_Exit(3)`) instead
+of hanging. The silent gdb host is not hardcore-gated (it never halts anything by itself; the app's own `attach()` and `breakNow()`
+stay gated by `DebugSession::enabled()`), and `attachGdbHostOnCore` re-attaches it before each frame it is missing.
 
 **GDB TCP stub.** `GDBHalt`'s socket loop runs on the emulation thread, so a gdb session that holds the target halted no
 longer freezes the window (fixes the freeze found in #936). If both gdb and the app debugger are attached, the first
@@ -250,6 +262,10 @@ reach the core as commands. The restart bounce that a mode change needs is count
   `config-opts`. The default applies only while `ui.emu_thread` is unwritten (`emuThreadEffective(pref, default)`):
   an explicit Off stays Off in nightlies and an explicit On stays On in releases. Headless runs stay inline whatever
   the default. It ships last, in its own PR, after nothing is switched off while threaded.
+  *Shipped (phase 3d, 2026-10):* as above; the default is `nightly` only, `dev` is Off, `prerelease` builds are `dev`. The channel
+  is a workflow env beside the TV default; the flatpak job rewrites the manifest's committed `-DVJ_BUILD_CHANNEL=release` because
+  its `config-opts` are committed. The bar that lets it ship is `no_threaded_limits` (static, in CI) plus the Studio gate
+  `app/tests/emu_thread_gate_check.sh`.
 - The old loop stays selectable until a release ships with the setting defaulting On and no regressions; then it is
   removed.
 
@@ -286,6 +302,7 @@ Each step is its own PR, with the setting Off by default:
    Tools window; halts still off); 3b the bounded halt pump, calls while halted, the gdb stub unlocked; 3c Neuro
    through the input snapshot's agent program and `DebugViews` watches; 3d `VJ_BUILD_CHANNEL` and the nightly
    default. 3b and 3c run in parallel after 3a; 3d merges last, after a Studio gate with every tool, gdb and Neuro on.
+   3d merged after a green Studio gate (tracking issue #1079).
 4. Mode B.
 5. Measure the nightly feedback; then default On in a release and remove the old loop.
 

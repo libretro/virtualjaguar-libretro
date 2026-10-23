@@ -44,13 +44,13 @@ static void usage(const char* argv0) {
         "  --netplay-expect-link SECS       headless: run until the link is UP, FAIL after SECS\n"
         "  --netplay-expect-discovery SECS  headless: join-discovered / browse; exit 77 (skip) if no host appears\n"
         "\n"
-        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
+        "dev: --perf-frames N [--perf-gpu] [--perf-pause] [--perf-halt] [--perf-no-reuse] [--perf-shader-out WxH] [--perf-input]\n"
         "     print where a UI frame's time goes over N frames (and the shader chain's GPU cost), then exit\n"
         "dev: --dump-native-menu   print and check the real macOS menu bar and Dock menu, then exit (77 = none on this OS)\n"
         "dev: --screenshot PNG [--screenshot-frame N] [--ui-scale X] [--low-dpi] [--pixel-density N]\n"
         "     [--font retro|system|mono[:SIZE]|custom:FILE] [--font-then SPEC]   (this run only; --font-then switches live after 60 frames)\n"
         "     [--show-window settings[-video|-input|-audio|-bios|-storage|-interface]|states|about|cheats|library|login|achievements|keypad|netplay|controls|theme-editor]\n"
-        "     [--show-window memory|palette|scanner|objects|blitter|textures|scope]   (Tools windows; needs a game)\n"
+        "     [--show-window memory|palette|scanner|cpu|objects|blitter|textures|scope|tools]   (Tools windows; needs a game; tools = all)\n"
         "\n"
         "headless (no window, no GL, SDL dummy audio/video drivers):\n"
         "  --headless            load each game as a drop event, run it, print a frame hash\n"
@@ -198,6 +198,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--perf-frames")) a.perfFrames = (unsigned)std::strtoul(need(s), nullptr, 10);
         else if (!std::strcmp(s, "--perf-gpu")) a.perfGpu = true;
         else if (!std::strcmp(s, "--perf-pause")) a.perfPause = true;
+        else if (!std::strcmp(s, "--perf-halt")) a.perfHalt = true;
         else if (!std::strcmp(s, "--emu-thread")) {
             const std::string v = need(s);
             if (v != "on" && v != "off") {

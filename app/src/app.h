@@ -107,6 +107,7 @@ struct CliArgs {
     unsigned perfShaderW = 0, perfShaderH = 0;   // dev: run the shader chain at this output size (4K cost on a 1080p display)
     bool perfNoReuse = false;       // dev: disable the shader output reuse (before/after comparison)
     bool perfPause = false;         // dev: pause after loading (idle-cost profile)
+    bool perfHalt = false;          // dev: with --perf-frames, F9's break at UI iteration warmup+120, tools re-opened at +240, continue at +420 (G1 gate)
     int emuThread = -1;             // --emu-thread on|off: the emulation on its own thread for this run (-1 = the setting; headless: off)
     bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
     int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
@@ -286,10 +287,10 @@ public:
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
     bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)
     bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
-    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen, 0 off, 1 on.  Never chosen is
-    // off in Phase 1 on every build; Phase 3 turns it on by default in nightlies.
+    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen, 0 off, 1 on.  Never chosen follows the
+    // build channel (build_channel.h: nightly on; release and dev off); a stored choice always wins.
     int emuThreadPref = -1;
-    bool emuThreadWanted() const;                                 // the choice (never chosen = off)
+    bool emuThreadWanted() const;                                 // the choice, or the channel default when never chosen
     bool emuThreadThisRun() const { return emuThreadThisRun_; }   // decided once at start-up
 
     // ---- actions ----------------------------------------------------------------

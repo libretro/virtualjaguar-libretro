@@ -1,4 +1,5 @@
 #include "app.h"
+#include "build_channel.h"
 #include "devices_ui.h"
 #include "fonts_imgui.h"
 #include "ui_scale.h"
@@ -307,7 +308,7 @@ void App::saveConfig() {
     cfg.setBool("ui.viewports", windowsOutside);
     cfg.setBool("ui.menubar_in_window", showInWindowMenu);
     cfg.setBool("ui.fullscreen_autohide_menu", fullscreenAutoHideMenu);
-    if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen (Phase 3's default)
+    if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen: the channel default applies (build_channel.h)
     else cfg.erase("ui.emu_thread");
     cfg.setInt("saves.resume", resumeMode);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
@@ -341,7 +342,7 @@ void App::toast(const std::string& text, double seconds, int level) {
     if (headless_) std::fprintf(stderr, "[osd] %s\n", text.c_str());
 }
 
-bool App::emuThreadWanted() const { return emuThreadPref == 1; }   // never chosen: off in Phase 1 (#967)
+bool App::emuThreadWanted() const { return emuThreadEffective(emuThreadPref, kEmuThreadDefault); }   // never chosen: the build channel (#967 3d)
 
 // ---------------------------------------------------------------------------------
 // init / shutdown
@@ -2315,6 +2316,11 @@ int App::run(const CliArgs& a) {
         emuThreadThisRun_ = false;
         std::fprintf(stderr, "[emu] --emu-thread on is ignored with --headless --tv-test-script (the script runs the core inline)\n");
     }
+    // The build channel and the choice this run was made from (#967 3d): every start, headless included (the smokes read it).
+    std::fprintf(stderr, "[emu] channel=%s, emulation thread default %s, this run %s\n", kBuildChannel,
+                 kEmuThreadDefault ? "on" : "off", emuThreadThisRun_ ? "on" : "off");
+    std::fprintf(stderr, "[emu] ui.emu_thread %s -> wanted %s\n", emuThreadPref < 0 ? "unset" : emuThreadPref ? "on" : "off",
+                 emuThreadWanted() ? "on" : "off");
     if (a.tv) {
         tvFromCli_ = true;
         tvMode.setOn(true);   // after the config: a no-op when the setting is Off
@@ -2373,6 +2379,15 @@ int App::runInteractive(const CliArgs& a) {
     if (a.latchWake != 0 && !headless_) latchWaker_.start();   // macOS only (latch_waker.h)
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
+    // G1 gate drivers (#967): --show-window tools opens every Tools window; --perf-halt re-opens them while halted.  The
+    // same open test as openDebugWindow (a second toggle would CLOSE the window).
+    auto openAllTools = [this](const char* suffix) {
+        for (const char* id : {"memory", "clut", "scanner", "cpu", "objects", "blitter", "textures", "scope"}) {
+            DebugTool* t = debug.findTool(id);
+            if (t && t->toggle && !(t->isOpen && t->isOpen())) t->toggle();
+            std::fprintf(stderr, "[app] tool %s open=%d%s\n", id, (t && t->isOpen && t->isOpen()) ? 1 : 0, suffix);
+        }
+    };
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
         if (a.showWindow.rfind("settings-video", 0) == 0) devSelectTab = "Video";
@@ -2397,6 +2412,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "theme-editor") showThemeEditor = true;
     else if (a.showWindow == "controls") input.controls.show = true;
+    else if (a.showWindow == "tools") openAllTools("");
     else if (openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
     unsigned uiFrames = 0;
 
@@ -2456,6 +2472,19 @@ int App::runInteractive(const CliArgs& a) {
             break;
         }
         if (a.perfPause && perf.seen == 30 && !paused && host.isLoaded()) togglePause();   // after a few real frames
+        if (a.perfHalt && perf.on && host.isLoaded()) {   // CSV row r = iteration warmup + r: rows ~130-410 are the halt
+            if (perf.seen == perf.warmup + 120) {
+                if (debug.enabled()) { debug.breakNow(); std::fprintf(stderr, "[perf] halt requested\n"); }
+                else std::fprintf(stderr, "[perf] halt unavailable\n");
+            } else if (perf.seen == perf.warmup + 240) {
+                openAllTools(" (halted)");
+                std::fprintf(stderr, "[perf] halted=%d\n", debug.halted() ? 1 : 0);
+            } else if (perf.seen == perf.warmup + 420) {
+                const bool was = debug.halted();
+                if (was) debug.resume();
+                std::fprintf(stderr, "[perf] resumed=%d\n", was ? 1 : 0);
+            }
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;
