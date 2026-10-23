@@ -6,8 +6,10 @@
 //   vj_cheats_test               the unit tests (fixtures are synthetic .cht files)
 //   vj_cheats_test --corpus DIR  parse every .cht in DIR (the downloaded libretro database)
 #include "cheats.h"
+#include "cheat_store.h"
 
 #include "cheat.h"
+#include "neuro/neuro_json.h"
 #include "paths.h"
 #include "sha256.h"
 
@@ -17,7 +19,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef VJ_TEST_FIXTURES
@@ -1046,6 +1050,566 @@ static void testSha256() {
     CHECK_EQ(sha256Hex(hi, 4), "eadfaeb12caa89eba3075f360d3d47938bd2fa6863a01e86bbb3b61b92086ce5");
 }
 
+// ---- community store (#1071) -----------------------------------------------------------------------
+static const uint32_t kStoreCrc = 0x5E2CDBC0;
+static std::string storeFixture(const char* name) { return slurp(fixture(std::string("community/") + name)); }
+
+// One manifest entry / a whole manifest, built by hand so a test can vary a single field.
+static std::string entryJson(const std::string& crc, const std::string& sha, size_t bytes, const std::string& file,
+                             const std::string& messages = "[]", const std::string& title = "Test Game") {
+    return "{\"bytes\":" + std::to_string(bytes) + ",\"cheats\":3,\"crc32\":\"" + crc + "\",\"credit\":\"Cheats by the test suite.\","
+           "\"exceeds_core_limit\":false,\"file\":\"" + file + "\",\"messages\":" + messages + ",\"name\":\"" + title +
+           " (1994)\",\"notes\":[{\"reason\":\"manual\",\"setting\":null}],\"partial\":false,\"sha256\":\"" + sha +
+           "\",\"title\":\"" + title + "\",\"updated\":\"2026-04-15\",\"writes\":4}";
+}
+static std::string manifestJson(const std::vector<std::string>& entries, const std::string& format = "1") {
+    std::string s = "{\"format\":" + format + ",\"packs\":[";
+    for (size_t i = 0; i < entries.size(); i++) s += (i ? "," : "") + entries[i];
+    return s + "]}";
+}
+static std::string entryFor(const std::string& body, const std::string& messages = "[]") {
+    return entryJson("5E2CDBC0", sha256Hex(body.data(), body.size()), body.size(), "packs/5E2CDBC0.cht", messages);
+}
+
+static void testManifestParse() {
+    const std::string good = storeFixture("manifest.json");
+    std::vector<PackMeta> v;
+    std::string err;
+    CHECK(parseManifest(good, v, err) && err.empty() && v.size() == 1);
+    if (v.size() == 1) {
+        const PackMeta& p = v[0];
+        CHECK_EQ(p.crc32, "5E2CDBC0");
+        CHECK_EQ(p.title, "Test Game");
+        CHECK_EQ(p.name, "Test Game (1994)");
+        CHECK_EQ(p.file, "packs/5E2CDBC0.cht");
+        CHECK(p.bytes == 350 && p.cheats == 3 && p.writes == 4 && p.partial && !p.exceedsCoreLimit);
+        CHECK(p.sha256.size() == 64);
+        CHECK(p.notes.size() == 2 && p.notes[0].first == "Start At Level" && p.notes[1].first.empty() &&
+              p.notes[1].second == "no writes activated");   // a null setting is kept as ""
+        CHECK(p.messages.size() == 2 && p.messages[1] == "Fixture message two.");
+        PackMeta back;
+        CHECK(!p.json.empty() && parsePackMeta(p.json, back) && back.sha256 == p.sha256 && back.messages == p.messages);
+    }
+    // The real shipped manifest, when the checkout has the site.
+    {
+        std::string real = slurp(fixture("../../../site/cheats/manifest.json"));
+        if (!real.empty()) {
+            CHECK(parseManifest(real, v, err) && !v.empty());
+            for (const PackMeta& p : v)
+                CHECK(p.crc32.size() == 8 && p.sha256.size() == 64 && p.file == "packs/" + p.crc32 + ".cht" && p.bytes > 0);
+        }
+    }
+    const std::string sha(64, 'a');
+    // format 2 and a missing format: whole manifest refused
+    v.assign(3, PackMeta());
+    CHECK(!parseManifest(manifestJson({entryJson("5E2CDBC0", sha, 10, "packs/x.cht")}, "2"), v, err));
+    CHECK(err.find("format 2") != std::string::npos && v.size() == 3);   // `out` untouched on failure
+    CHECK(!parseManifest("{\"packs\":[]}", v, err) && err.find("format ?") != std::string::npos);
+    // a bad sha hex skips that entry alone
+    {
+        std::string bad = entryJson("11111111", std::string(63, 'a') + "g", 10, "packs/11111111.cht");
+        CHECK(parseManifest(manifestJson({bad, entryJson("22222222", sha, 10, "packs/22222222.cht")}), v, err));
+        CHECK(v.size() == 1 && v[0].crc32 == "22222222");
+        std::string shortSha = entryJson("11111111", std::string(63, 'a'), 10, "packs/11111111.cht");
+        CHECK(parseManifest(manifestJson({shortSha}), v, err) && v.empty());
+    }
+    // a bad CRC, a zero / oversize / fractional byte count, and unsafe files skip the entry
+    for (const std::string& e : {entryJson("5E2CDBC", sha, 10, "packs/a.cht"), entryJson("5E2CDBCG", sha, 10, "packs/a.cht"),
+                                 entryJson("5E2CDBC0", sha, 0, "packs/a.cht"), entryJson("5E2CDBC0", sha, 65537, "packs/a.cht"),
+                                 entryJson("5E2CDBC0", sha, 10, "../packs/a.cht"), entryJson("5E2CDBC0", sha, 10, "packs/../../a.cht"),
+                                 entryJson("5E2CDBC0", sha, 10, "/etc/passwd"), entryJson("5E2CDBC0", sha, 10, "http://evil/a.cht"),
+                                 entryJson("5E2CDBC0", sha, 10, "packs\\\\a.cht"), entryJson("5E2CDBC0", sha, 10, "")}) {
+        CHECK(parseManifest(manifestJson({e}), v, err) && v.empty());
+    }
+    // upper-case sha / lower-case crc are accepted and normalised; a repeated CRC keeps the first
+    {
+        std::string up = entryJson("5e2cdbc0", std::string(64, 'A'), 10, "packs/5E2CDBC0.cht");
+        std::string dup = entryJson("5E2CDBC0", sha, 11, "packs/other.cht");
+        CHECK(parseManifest(manifestJson({up, dup}), v, err) && v.size() == 1);
+        CHECK(v.size() == 1 && v[0].crc32 == "5E2CDBC0" && v[0].sha256 == sha && v[0].bytes == 10);
+    }
+    // a required key missing (or the wrong type) is "not understood", not a skipped entry
+    CHECK(!parseManifest("{\"format\":1,\"packs\":[{\"crc32\":\"5E2CDBC0\",\"file\":\"packs/a.cht\",\"bytes\":10}]}", v, err));
+    CHECK(err.find("not understood") != std::string::npos);
+    CHECK(!parseManifest("{\"format\":1,\"packs\":[7]}", v, err));
+    CHECK(!parseManifest("{\"format\":1}", v, err));
+    // truncated / not JSON / not an object
+    CHECK(!parseManifest(good.substr(0, good.size() / 2), v, err) && !err.empty());
+    CHECK(!parseManifest("", v, err));
+    CHECK(!parseManifest("[1,2]", v, err));
+    CHECK(parseManifest("{\"format\":1,\"packs\":[]}", v, err) && v.empty());
+}
+
+static void testFixtureConsistent() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    std::vector<PackMeta> v;
+    std::string err;
+    CHECK(parseManifest(storeFixture("manifest.json"), v, err) && v.size() == 1);
+    if (v.empty()) return;
+    CHECK_EQ(sha256Hex(body.data(), body.size()), v[0].sha256);
+    CHECK(body.size() == v[0].bytes);
+    CHECK(verifyPack(v[0], kStoreCrc, body, err));
+    CHECK(!verifyPack(v[0], 0x12345678, body, err) && err.find("not bound") != std::string::npos);
+}
+
+// A fetch hook backed by a map; run is inline unless a test replaces it.
+struct Net {
+    std::map<std::string, std::string> bodies;
+    std::vector<std::string> calls;
+    bool offline = false;
+    bool get(const std::string& url, size_t maxBytes, std::string& body, std::string& err) {
+        calls.push_back(url);
+        if (offline) { err = "connection refused"; return false; }
+        auto it = bodies.find(url);
+        if (it == bodies.end()) { err = "HTTP 404"; return false; }
+        if (it->second.size() > maxBytes) { err = "response too large"; return false; }
+        body = it->second;
+        return true;
+    }
+};
+static const char* kBase = "https://store.test/cheats/";
+
+struct Rig {
+    fs::path tmp;
+    Config cfg;
+    CheatManager cm;
+    Recorder rec;
+    CheatStore store;
+    Net net;
+    int64_t t = 1700000000;
+    bool downloads = true;
+    std::vector<std::string> msgs;
+    explicit Rig(const char* name) {
+        tmp = fs::temp_directory_path() / name;
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        cfg.setPath((tmp / "config.ini").string());
+        wire(store);
+        store.setDir((tmp / "community").string());
+        cm.setStateDir(tmp.string() + "/games/");
+        cm.setCommunityDir(store.packsDir());
+        rec.attach(cm);
+    }
+    ~Rig() { store.stop(); fs::remove_all(tmp); }
+    void wire(CheatStore& s) {
+        s.fetch = [this](const std::string& u, size_t m, std::string& b, std::string& e) { return net.get(u, m, b, e); };
+        s.downloadsAllowed = [this] { return downloads; };
+        s.now = [this] { return t; };
+        s.message = [this](const std::string& m) { msgs.push_back(m); };
+        s.setBaseUrl(kBase);
+    }
+    void serve(const std::string& manifest, const std::string& pack = "") {
+        net.bodies[std::string(kBase) + "manifest.json"] = manifest;
+        if (!pack.empty()) net.bodies[std::string(kBase) + "packs/5E2CDBC0.cht"] = pack;
+    }
+    void open(uint32_t crc = kStoreCrc) { store.windowOpened(crc, cfg); store.pump(cm); }
+    bool installNow(uint32_t crc = kStoreCrc) { bool ok = store.install(crc); store.pump(cm); return ok; }
+    std::string cht() const { return (tmp / "community/packs/5E2CDBC0.cht").string(); }
+    std::string sidecar() const { return (tmp / "community/packs/5E2CDBC0.json").string(); }
+    bool hasFiles() const { return fs::exists(cht()) || fs::exists(sidecar()); }
+};
+
+static void testInstallVerify() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    {   // refusals: each leaves no .cht / .json, sets a matching status, and the pack stays offered
+        struct Case { const char* what; std::string served, manifestSha; size_t manifestBytes; bool notServed; const char* expect; } cases[] = {
+            {"sha mismatch", [&] { std::string b = body; b[b.size() / 2] ^= 1; return b; }(), sha256Hex(body.data(), body.size()), body.size(), false, "checksum"},
+            {"byte mismatch", body, sha256Hex(body.data(), body.size()), body.size() + 1, false, "size"},
+            {"served body shorter", body.substr(0, body.size() - 1), sha256Hex(body.data(), body.size()), body.size(), false, "size"},
+            {"guard for another CRC", "vj_rom_crc32 = \"11111111\"\ncheat0_desc = \"A\"\ncheat0_code = \"001F0000:AB\"\n", "", 0, false, "not bound"},
+            {"no guard", "cheat0_desc = \"A\"\ncheat0_code = \"001F0000:AB\"\n", "", 0, false, "not bound"},
+            {"malformed guard", "vj_rom_crc32 = \"5E2CDBCG\"\ncheat0_desc = \"A\"\ncheat0_code = \"001F0000:AB\"\n", "", 0, false, "not bound"},
+            {"no cheats", "vj_rom_crc32 = \"5E2CDBC0\"\n# nothing here\n", "", 0, false, "no cheats"},
+            {"HTTP 404", body, sha256Hex(body.data(), body.size()), body.size(), true, "HTTP 404"},
+            {"oversize", std::string(kCheatPackMaxBytes + 1, 'x'), std::string(64, 'b'), 100, false, "response too large"},
+        };
+        for (Case& c : cases) {
+            Rig r("vj-store-verify");
+            r.cm.gameLoaded(cartGame(kStoreCrc));
+            std::string sha = c.manifestSha.empty() ? sha256Hex(c.served.data(), c.served.size()) : c.manifestSha;
+            size_t bytes = c.manifestBytes ? c.manifestBytes : c.served.size();
+            r.serve(manifestJson({entryJson("5E2CDBC0", sha, bytes, "packs/5E2CDBC0.cht")}), c.notServed ? "" : c.served);
+            r.open();
+            CHECK(r.store.state(kStoreCrc) == PackState::Offered);
+            CHECK(r.installNow());   // it starts; the verdict arrives through pump
+            if (!r.hasFiles() && r.store.status().find(c.expect) != std::string::npos) {}
+            else std::fprintf(stderr, "  case '%s': status '%s'\n", c.what, r.store.status().c_str());
+            CHECK(!r.hasFiles());
+            CHECK(r.store.status().find(c.expect) != std::string::npos);
+            CHECK(r.store.state(kStoreCrc) == PackState::Offered);
+            CHECK(r.cm.communitySet() == nullptr);
+        }
+    }
+    {   // success: both files, the pack is loaded, every cheat off
+        Rig r("vj-store-verify-ok");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.serve(storeFixture("manifest.json"), body);
+        r.open();
+        CHECK(r.installNow());
+        CHECK(fs::exists(r.cht()) && fs::exists(r.sidecar()));
+        CHECK_EQ(slurp(r.cht()), body);   // bytes exactly as served
+        PackMeta side;
+        CHECK(parsePackMeta(slurp(r.sidecar()), side) && side.title == "Test Game" && side.messages.size() == 2);
+        CHECK(r.store.status().find("Installed Test Game") == 0);
+        const ChtSet* s = r.cm.communitySet();
+        CHECK(s && s->cheats.size() == 3 && s->restriction.empty() && r.cm.enabledCount() == 0);
+        CHECK(r.store.state(kStoreCrc) == PackState::Installed);
+        const PackMeta* in = r.store.installed(kStoreCrc);
+        CHECK(in && in->credit == "Cheats by the test suite.");
+        // no .tmp debris
+        size_t n = 0;
+        for (auto& e : fs::directory_iterator(r.tmp / "community/packs")) { (void)e; n++; }
+        CHECK(n == 2);
+    }
+    {   // a failed verification does not disturb the previous install
+        Rig r("vj-store-verify-keep");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.serve(storeFixture("manifest.json"), body);
+        r.open();
+        CHECK(r.installNow());
+        std::string tampered = body;
+        tampered[tampered.size() / 2] ^= 1;
+        r.net.bodies[std::string(kBase) + "packs/5E2CDBC0.cht"] = tampered;
+        CHECK(r.installNow());
+        CHECK_EQ(slurp(r.cht()), body);
+        CHECK(r.store.status().find("checksum") != std::string::npos);
+    }
+    {   // a fetch hook that ignores maxBytes cannot push an oversize body through
+        Rig r("vj-store-verify-limit");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.serve(manifestJson({entryFor(body)}), body);
+        r.open();
+        r.store.fetch = [&](const std::string& u, size_t, std::string& b, std::string&) {
+            b = u.find("manifest") != std::string::npos ? std::string(kCheatManifestMaxBytes + 1, ' ') : std::string(kCheatPackMaxBytes + 1, 'x');
+            return true;
+        };
+        CHECK(r.installNow() && !r.hasFiles() && r.store.status().find("response too large") != std::string::npos);
+        r.store.checkNow();
+        r.store.pump(r.cm);
+        CHECK(r.store.status().find("response too large") != std::string::npos && r.store.state(kStoreCrc) == PackState::Offered);
+    }
+    {   // an install for something the manifest does not list, or a disc, never starts
+        Rig r("vj-store-verify-refuse");
+        r.serve(storeFixture("manifest.json"), body);
+        r.open();
+        size_t calls = r.net.calls.size();
+        CHECK(!r.store.install(0x12345678) && !r.store.status().empty());
+        CHECK(!r.store.install(0));
+        CHECK(r.net.calls.size() == calls);
+    }
+}
+
+static void testStates() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    const std::string shaA = sha256Hex(body.data(), body.size());
+    {   // no game / disc / downloads off: no fetch, ever
+        Rig r("vj-store-states-off");
+        r.serve(storeFixture("manifest.json"), body);
+        CHECK(r.store.state(kStoreCrc) == PackState::NoGame);
+        r.store.checkNow();
+        r.open(0);
+        CHECK(r.store.state(0) == PackState::Disc);
+        r.store.checkNow();
+        CHECK(!r.store.install(0));
+        CHECK(r.net.calls.empty());
+        r.downloads = false;
+        r.open(kStoreCrc);
+        CHECK(r.store.state(kStoreCrc) == PackState::DownloadsOff);
+        r.store.checkNow();
+        CHECK(!r.store.install(kStoreCrc) && r.store.status().find("Downloads are off") != std::string::npos);
+        CHECK(r.net.calls.empty());
+        r.store.gameClosed();
+        CHECK(r.store.state(kStoreCrc) == PackState::NoGame);
+        // an unwired store (no downloadsAllowed hook) is off as well
+        CheatStore bare;
+        Config c;
+        bare.fetch = [&](const std::string&, size_t, std::string&, std::string&) { r.net.calls.push_back("bare"); return false; };
+        bare.setDir((r.tmp / "bare").string());
+        bare.windowOpened(kStoreCrc, c);
+        bare.checkNow();
+        CHECK(r.net.calls.empty() && bare.state(kStoreCrc) == PackState::DownloadsOff);
+    }
+    {   // the whole life of a pack
+        Rig r("vj-store-states");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.serve(manifestJson({entryFor(body)}), body);
+        r.store.windowOpened(kStoreCrc, r.cfg);
+        CHECK(r.store.state(kStoreCrc) == PackState::Checking && r.store.busy());
+        r.store.pump(r.cm);
+        CHECK(r.store.state(kStoreCrc) == PackState::Offered && !r.store.busy());
+        CHECK(r.store.offered(kStoreCrc) && r.store.installed(kStoreCrc) == nullptr);
+        CHECK(r.store.state(0x12345678) == PackState::NotOffered);
+        CHECK(r.installNow());
+        CHECK(r.store.state(kStoreCrc) == PackState::Installed);
+
+        // the store ships a new pack (same CRC, new bytes): Update available, Update installs it
+        std::string body2 = body + "\ncheat3_desc = \"Extra\"\ncheat3_code = \"001F0030:01\"\n";
+        r.serve(manifestJson({entryFor(body2)}), body2);
+        r.store.checkNow();
+        r.store.pump(r.cm);
+        CHECK(r.store.state(kStoreCrc) == PackState::UpdateAvailable);
+        CHECK(r.installNow());
+        CHECK(r.store.state(kStoreCrc) == PackState::Installed);
+        CHECK(r.cm.communitySet() && r.cm.communitySet()->cheats.size() == 4);
+
+        // the manifest drops it: the file stays, "no longer offered"
+        r.serve(manifestJson({}), "");
+        r.store.checkNow();
+        r.store.pump(r.cm);
+        CHECK(r.store.state(kStoreCrc) == PackState::NoLongerOffered && r.store.offered(kStoreCrc) == nullptr);
+        CHECK(fs::exists(r.cht()) && r.store.installed(kStoreCrc));
+        CHECK(!r.store.install(kStoreCrc));   // Update is not offered
+
+        // edited on disk: detected on the next window open; Update (when offered again) replaces it
+        r.serve(manifestJson({entryFor(body2)}), body2);
+        r.store.checkNow();
+        r.store.pump(r.cm);
+        CHECK(r.store.state(kStoreCrc) == PackState::Installed);
+        { std::ofstream f(r.cht(), std::ios::binary | std::ios::app); f << "# my tweak\n"; }
+        r.store.windowOpened(kStoreCrc, r.cfg);
+        CHECK(r.store.state(kStoreCrc) == PackState::EditedLocally);
+        r.store.pump(r.cm);
+        CHECK(r.installNow());
+        CHECK(r.store.state(kStoreCrc) == PackState::Installed && slurp(r.cht()) == body2);
+
+        // a hand-copied pack with no sidecar: still works, credits unavailable, Update offered
+        fs::remove(r.sidecar());
+        r.store.windowOpened(kStoreCrc, r.cfg);
+        CHECK(r.store.installed(kStoreCrc) == nullptr && r.store.state(kStoreCrc) == PackState::UpdateAvailable);
+    }
+    {   // hardcore: install is data-only; apply() still sends only the reset
+        Rig r("vj-store-states-hardcore");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.cm.blocked = [] { return true; };
+        r.serve(manifestJson({entryFor(body)}), body);
+        r.open();
+        CHECK(r.installNow());
+        CHECK(r.store.state(kStoreCrc) == PackState::Installed);
+        CHECK(r.cm.communitySet() && r.cm.communitySet()->cheats.size() == 3);
+        r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);
+        r.rec.log.clear();
+        r.cm.apply();
+        CHECK(r.rec.log.size() == 1 && r.rec.log[0] == "reset");
+    }
+    {   // an install for a pack that is not the loaded game's does not touch the loaded game
+        Rig r("vj-store-states-other");
+        r.cm.gameLoaded(cartGame(0x12345678));
+        r.serve(manifestJson({entryFor(body)}), body);
+        r.open(kStoreCrc);
+        int batches = r.rec.batches;
+        CHECK(r.installNow() && r.store.state(kStoreCrc) == PackState::Installed);
+        CHECK(r.rec.batches == batches && r.cm.communitySet() == nullptr);
+    }
+}
+
+static void testRetryGate() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-gate");
+    const std::string murl = std::string(kBase) + "manifest.json";
+    r.serve(manifestJson({entryFor(body)}), body);
+    r.open();
+    CHECK(r.net.calls.size() == 1 && r.net.calls[0] == murl);
+    CHECK_EQ(r.cfg.get("cheats.community.checked"), std::to_string(r.t));
+    CHECK(fs::exists(r.tmp / "community/manifest.json"));
+    // within 6 h: no fetch
+    r.t += 5 * 3600;
+    r.open();
+    CHECK(r.net.calls.size() == 1);
+    // the button forces it, and moves the check time
+    r.store.checkNow();
+    r.store.pump(r.cm);
+    CHECK(r.net.calls.size() == 2);
+    CHECK_EQ(r.cfg.get("cheats.community.checked"), std::to_string(r.t));
+    // 6 h later: due again
+    r.t += 6 * 3600;
+    r.open();
+    CHECK(r.net.calls.size() == 3);
+    // a failed fetch changes neither the check time nor the cache, and the next open retries
+    const std::string cachedBefore = slurp(r.tmp / "community/manifest.json");
+    const std::string checkedBefore = r.cfg.get("cheats.community.checked");
+    r.net.offline = true;
+    r.t += 7 * 3600;
+    r.open();
+    CHECK(r.net.calls.size() == 4);
+    CHECK(r.store.status().find("Could not reach the cheat store: connection refused") == 0);
+    CHECK(r.store.status().find("Installed packs still work.") != std::string::npos);
+    CHECK_EQ(r.cfg.get("cheats.community.checked"), checkedBefore);
+    CHECK_EQ(slurp(r.tmp / "community/manifest.json"), cachedBefore);
+    CHECK(r.store.state(kStoreCrc) == PackState::Offered);   // the cached manifest still answers
+    r.open();
+    CHECK(r.net.calls.size() == 5);
+    r.net.offline = false;
+    r.open();
+    CHECK(r.net.calls.size() == 6 && r.store.status().empty());
+    CHECK_EQ(r.cfg.get("cheats.community.checked"), std::to_string(r.t));
+    // a clock that went backwards (checked in the future) does not wedge the gate
+    r.t -= 100000;
+    r.open();
+    CHECK(r.net.calls.size() == 7);
+    // a manifest nobody can read (oversize, format 2, junk) keeps the cache and the check time
+    const std::string keep = slurp(r.tmp / "community/manifest.json");
+    const std::string keepChecked = r.cfg.get("cheats.community.checked");
+    r.net.bodies[murl] = std::string(kCheatManifestMaxBytes + 1, ' ');
+    r.store.checkNow(); r.store.pump(r.cm);
+    CHECK(r.store.status().find("response too large") != std::string::npos);
+    for (const std::string& bad : {manifestJson({}, "2"), std::string("{\"format\":1,\"packs\":[{"), std::string("<html>")}) {
+        r.net.bodies[murl] = bad;
+        r.store.checkNow(); r.store.pump(r.cm);
+        CHECK(r.store.status().find("not understood") != std::string::npos);
+    }
+    CHECK_EQ(slurp(r.tmp / "community/manifest.json"), keep);
+    CHECK_EQ(r.cfg.get("cheats.community.checked"), keepChecked);
+    CHECK(r.store.state(kStoreCrc) == PackState::Offered);
+}
+
+static void testOfflineAfterInstall() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-offline");
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.serve(storeFixture("manifest.json"), body);
+    r.open();
+    CHECK(r.installNow());
+    // "restart": a new store over the same directory, and a network that is down
+    CheatStore again;
+    Rig* rp = &r;
+    again.fetch = [rp](const std::string&, size_t, std::string&, std::string& e) { rp->net.calls.push_back("again"); e = "no route"; return false; };
+    again.downloadsAllowed = [] { return true; };
+    again.now = [rp] { return rp->t + 99 * 3600; };
+    again.setDir((r.tmp / "community").string());
+    Config cfg2;
+    again.windowOpened(kStoreCrc, cfg2);
+    again.pump(r.cm);
+    CHECK(again.status().find("Could not reach the cheat store: no route") == 0);
+    CHECK(again.state(kStoreCrc) == PackState::Installed);   // the cached manifest still says current
+    const PackMeta* in = again.installed(kStoreCrc);
+    CHECK(in && in->credit == "Cheats by the test suite." && in->title == "Test Game" && in->notes.size() == 2 && in->partial);
+    CHECK(r.cm.communitySet() && r.cm.communitySet()->cheats.size() == 3);
+    // no cached manifest either (first run, offline): the installed pack is still Installed
+    fs::remove(r.tmp / "community/manifest.json");
+    CheatStore cold;
+    cold.fetch = again.fetch;
+    cold.downloadsAllowed = [] { return true; };
+    cold.setDir((r.tmp / "community").string());
+    Config cfg3;
+    cold.windowOpened(kStoreCrc, cfg3);
+    cold.pump(r.cm);
+    CHECK(cold.state(kStoreCrc) == PackState::Installed && cold.installed(kStoreCrc) != nullptr);
+    CHECK(cold.state(0x12345678) == PackState::NotOffered);
+}
+
+static void testRemove() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-remove");
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.serve(storeFixture("manifest.json"), body);
+    r.open();
+    CHECK(r.installNow());
+    r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);
+    CHECK(r.cm.enabledCount() == 1);
+    CHECK(r.store.remove(kStoreCrc, r.cm));
+    CHECK(!r.hasFiles() && r.cm.communitySet() == nullptr && r.cm.enabledCount() == 0);
+    CHECK(r.store.state(kStoreCrc) == PackState::Offered && r.store.installed(kStoreCrc) == nullptr);
+    CHECK(!r.store.remove(kStoreCrc, r.cm));
+    CHECK(slurp(r.tmp / "games/crc-5e2cdbc0.ini").find("cp.") == std::string::npos);   // no community toggles left in the ini
+    // reinstall starts with everything off
+    CHECK(r.installNow());
+    CHECK(r.cm.communitySet() && r.cm.enabledCount() == 0);
+}
+
+static void testMessagesOncePerLoad() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-messages");
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.serve(storeFixture("manifest.json"), body);
+    r.open();
+    CHECK(r.installNow());
+    // nothing enabled: nothing said, at load or on later applies
+    r.store.gameLoaded(kStoreCrc, r.cm);
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.empty());
+    // enabling one later in the same load says the messages, once
+    r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.size() == 2 && r.msgs[0] == "Test Game: Fixture message one." && r.msgs[1] == "Test Game: Fixture message two.");
+    r.cm.setEnabled(r.cm.communitySet()->cheats[1], true, CheatOrigin::Community);   // a second apply in the same load
+    r.store.afterApply(r.cm);
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.size() == 2);
+    // a new load (the toggles are saved): again, once
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.store.gameLoaded(kStoreCrc, r.cm);
+    CHECK(r.msgs.size() == 4);
+    r.store.afterApply(r.cm);
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.size() == 4);
+    // hardcore: cheats cannot apply, so no messages; they come once it lifts
+    r.cm.blocked = [] { return true; };
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.store.gameLoaded(kStoreCrc, r.cm);
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.size() == 4);
+    r.cm.blocked = nullptr;
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.size() == 6);
+    // every cheat off again: a load says nothing
+    r.cm.disableAll();
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.store.gameLoaded(kStoreCrc, r.cm);
+    CHECK(r.msgs.size() == 6);
+    // a database cheat or a manual code does not count: only the community pack's own
+    std::string err;
+    CHECK(r.cm.addUser("manual", "001F0100:01", err));
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.size() == 6);
+    // another game, a pack without messages, a missing hook: silent
+    r.cm.gameLoaded(cartGame(0x12345678));
+    r.store.gameLoaded(0x12345678, r.cm);
+    r.store.afterApply(r.cm);
+    CHECK(r.msgs.size() == 6);
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);
+    r.store.message = nullptr;
+    r.store.gameLoaded(kStoreCrc, r.cm);
+    CHECK(r.msgs.size() == 6);
+    r.store.gameClosed();
+    CHECK(r.store.state(kStoreCrc) == PackState::NoGame);
+}
+
+static void testAsyncHandoff() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-async");
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.serve(manifestJson({entryFor(body)}), body);
+    std::vector<std::thread> threads;
+    r.store.run = [&](std::function<void()> job) { threads.emplace_back(std::move(job)); };
+    r.store.windowOpened(kStoreCrc, r.cfg);
+    CHECK(r.store.busy() && r.store.state(kStoreCrc) == PackState::Checking);
+    CHECK(!r.store.install(kStoreCrc));   // one request at a time
+    for (std::thread& t : threads) t.join();
+    threads.clear();
+    CHECK(r.store.state(kStoreCrc) == PackState::Checking);   // the result is not applied until pump()
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::Offered && !r.store.busy());
+    CHECK(r.store.install(kStoreCrc));
+    for (std::thread& t : threads) t.join();
+    threads.clear();
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::Installed && r.cm.communitySet());
+
+    // stop(): a closure that starts afterwards does nothing, and nothing is applied
+    std::vector<std::function<void()>> later;
+    r.store.run = [&](std::function<void()> job) { later.push_back(std::move(job)); };
+    r.net.calls.clear();
+    r.t += 7 * 3600;
+    r.store.windowOpened(kStoreCrc, r.cfg);
+    CHECK(later.size() == 1);
+    r.store.stop();
+    CHECK(r.store.cancelFlag() && !r.store.busy());
+    later[0]();
+    r.store.pump(r.cm);
+    CHECK(r.net.calls.empty());
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--corpus")) return corpus(argv[2]);
     testHelpers();
@@ -1062,6 +1626,15 @@ int main(int argc, char** argv) {
     testRemoveToggles();
     testSetEnabledByNameFallthrough();
     testSha256();
+    testManifestParse();
+    testFixtureConsistent();
+    testInstallVerify();
+    testStates();
+    testRetryGate();
+    testOfflineAfterInstall();
+    testRemove();
+    testMessagesOncePerLoad();
+    testAsyncHandoff();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

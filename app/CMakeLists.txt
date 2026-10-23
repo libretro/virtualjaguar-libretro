@@ -340,6 +340,7 @@ set(VJ_APP_SOURCES
     src/library_ui.cpp
     src/bios_ui.cpp
     src/cheats.cpp
+    src/cheat_store.cpp
     src/cheats_core.cpp
     src/cheats_ui.cpp
     src/sha256.cpp
@@ -409,6 +410,8 @@ set(VJ_NEURO_SOURCES src/neuro/neuro_json.cpp src/neuro/neuro_ws.cpp src/neuro/n
     src/neuro/neuro_profiles.cpp src/neuro/neuro_link.cpp src/neuro/neuro_agent.cpp src/neuro/neuro_watch.cpp)
 if(VJ_APP_NEURO)
     list(APPEND VJ_APP_SOURCES ${VJ_NEURO_SOURCES} src/neuro/neuro_app.cpp)
+else()
+    list(APPEND VJ_APP_SOURCES src/neuro/neuro_json.cpp)   # the cheat store reads its manifest with it
 endif()
 
 # Native-OS integration (#833): one source per OS behind src/platform/platform_os.h.
