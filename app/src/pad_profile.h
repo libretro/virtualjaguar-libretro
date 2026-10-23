@@ -75,6 +75,11 @@ void clearNavProfile(Config& cfg, const std::string& guid);   // erases every ke
 // label), shoulders, triggers, START and BACK.  Anything else is Binding::display().
 std::string navButtonName(PadFamily f, const Binding& b);
 
+// A TV-menu binding as the family's pad names the button, " (hold)" when it is a long press (the first-use hint): SDL's MISC1 is the
+// Xbox Share button, the DualSense microphone button and the Switch Pro Capture button; Guide is PS / Home on those two.
+// Anything else is navButtonName().
+std::string tvMenuButtonName(PadFamily f, const Binding& b);
+
 // The caption for the button `p` gives `in`: a face button as SDL labels it on the open pad `g` (an 8BitDo in Switch mode says
 // A/B/X/Y, a DualSense Cross/Circle/...), else navButtonName() for the family; "" when the profile leaves the intent unbound.
 // `g` may be null (the pad is gone, or no handle is known).

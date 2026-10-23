@@ -49,7 +49,7 @@ These follow from the code or from the spec's own fallback rules; they need no n
 | §12 "Recently added" | `LibraryService` does not expose it; `ScanFile.mtime` is the file's own date, not when the file joined the library. **The shelf is dropped**, as the spec's own fallback rule says. |
 | §12 netplay | The menu opens without pausing when `netplay.configured()` (the test the auto-save already uses for "during netplay"), and shows the banner "Netplay: the game keeps running". |
 | §8 "remembered for the next launch only in Manual" | New key `ui.tv_manual_on` (bool), written only while the setting is Manual. |
-| §9 nightly = Auto, first release = Manual | CMake option `VJ_TV_DEFAULT` (`auto` by default) becomes the compile definition `VJ_TV_DEFAULT_SETTING`. `release.yml` passes `-DVJ_TV_DEFAULT=manual` on every run that is not the `develop` nightly. |
+| §9 nightly = Auto, first release = Manual | CMake option `VJ_TV_DEFAULT` (`auto` by default) becomes the compile definition `VJ_TV_DEFAULT_SETTING`, read only when `ui.tv_mode` is absent. The packages are built by `app-package.yml` (Phase 4 revision): it passes `-DVJ_TV_DEFAULT=manual` when its `release_tag` is a `vX.Y.Z` tag or `prerelease`; `nightly`, `prNNN` and `dev` builds stay Auto. |
 | §9 one-time hint | New key `ui.tv_hint_shown`. |
 
 ## Changes to the approved spec (each needs the user's approval before its phase starts)
@@ -66,7 +66,7 @@ Reset / Close game row; the others apply from phase 2 on.
 | §4 Game details "Per-game settings" | Per-game settings exist only as control overrides for the *loaded* game, and Game details is reached only with no game running. **Row dropped**; the in-game menu's Settings > More settings covers it. |
 | Reset / Close game from a pad | Both ask first: a two-row Yes/No list with focus on No (one A press must not lose progress). |
 | §3.1 the TV-menu action with no game | With no game loaded and the setting not Off, `C_TVMENU` toggles TV mode (Task 7). The spec lists the action as live in that state without saying what it does; the §9 hint ("Press Share (hold) or F4 for TV mode") needs this meaning. |
-| §9 the default per build | `release.yml` gains `-DVJ_TV_DEFAULT=manual` (Task 16). Another session owns the release workflow: coordinate before PR 4 touches it. |
+| §9 the default per build | `app-package.yml` gains `-DVJ_TV_DEFAULT=manual` for tags and `prerelease` (Task 17; the packages moved out of `release.yml` after this plan was written). The v3.10.0 back-merge into develop carries the workflow files: that commit goes last and is rebased on it. |
 
 ## Review focus
 
@@ -1734,85 +1734,773 @@ New in this revision:
 
 ---
 
-## Phase 4 — auto-switching, the hint, tuning (PR 4)
+## Phase 4 — auto-switching, the hint, the build default, tuning (PR 4)
 
-### Phase 4 notes (to revise before Phase 4)
+Revised 2026-10-21 against the code Phase 3 merged (#1060) and what landed after it: the emulation thread phase 3a (#1061),
+the late-latch waker (#1058, #1062), the installer (#1059). Branch `feat/991-tv-phase4`, worktree
+`~/Workspace/Provenance/vj-wt/tv-phase4`, off `libretro/develop` cf036d74. **Build and test on the Mac Studio only:**
+`~/Workspace/Provenance/vj-eval/remote/tvb.sh "<ctest regex>"` (rsyncs the worktree, builds, runs the matching tests;
+`--build-only` to just build; the log is on the Studio at `~/vj-remote/out/tvp4.log`). Never build the app on the developer's
+Mac for this phase.
 
-Written 2026-10-20 while revising Phase 3; Tasks 16–17 below are as first planned and need these corrections.
+### Phase 4 constraints (overlap with other work)
 
-- **`release.yml`:** the v3.10.0 release (#1042) is in flight and edits the workflow files; do not touch `release.yml` until
-  that release is out and master is merged back into develop. Flagged only; the `-DVJ_TV_DEFAULT=manual` line and where it
-  goes are to be re-planned against the post-release workflow.
-- **`app.cpp` hooks already have their places:** `handleEvent` carries the comment "phase 4's Auto controller trigger,
-  `TvMode::onPadPress`, goes before this call" ahead of `deskPadHandleEvent` (the desktop nav must see a press only when it
-  did not switch TV on: `docs/app-pad-nav-design.md` §2). Fullscreen edges: hook `onFullscreen` where `fullscreen` changes
-  (`setFullscreen` and the SDL enter/leave events; #1034's `FullscreenMenu` reads the same flag). Nothing calls `onFullscreen`,
-  `onPadPress`, `onMouseMove` or `onNonNavKey` today; `TvMode` itself is complete and unit-tested.
-- **The manual toggle paths grew:** View > TV mode, Ctrl/Cmd+Shift+T (#1024, `handleHotkey` `SDLK_T`), `C_TVMENU` with no
-  game, the in-game menu row, and Phase 3's TV-mode Settings row (which also writes `ui.tv_mode`). All go through
-  `App::toggleTvMode` / `configureTvMode`; Task 16's "manual wins until the next edge" rule is already in `TvMode::toggle`.
-- **`ui.tv_mode` write rule:** `saveConfig()` deliberately never writes it; Phase 3's row writes it on change. Task 16's
-  Interface combo must do the same (write on change, then `configureTvMode()`), and `defaultSetting()` must apply only when the
-  key is absent (`cfg.has("ui.tv_mode")`), or the nightly default never moves for anyone who touched the row.
-- **`drawInterfaceTab` layout changed:** it is now sections (Overlays, Appearance, Font, Performance, Save states, Game
-  library, Desktop, library lists). The "TV mode" block goes after Overlays. The TV Settings rows `tv_auto_fs` / `tv_auto_pad`
-  join Phase 3's `tvModeRow` in `tv_settings_model` (ids as listed; shown only when the stored setting is Auto).
-- **`settings_reset_test`** already classifies the five `ui.tv_*` keys (Task 7 did it): drop that test from Task 16.
-- **`effectiveSetting()`** is the Phase 2 mapping and `tv_mode.h` has no `defaultSetting()` yet; `VJ_TV_DEFAULT` is not in
-  `app/CMakeLists.txt`. Task 16's description of both still holds. Phase 3's approval E (Auto acts as Manual) ends here.
-- **Task 17's hint:** the first pad press in the desktop library is seen in `deskPadHandleEvent` (#1030), which is where the
-  toast belongs; the glyph text is `padButtonLabel(g, input.navProfile(id), …)` for the pad's actual `C_TVMENU` binding
-  (`BindingStore::resolve` with its `PadCaps`), not a fixed "Share (hold)".
-- **Task 17's README:** `app/README.md` already documents the TV-menu action and Ctrl/Cmd+Shift+T (#1020/#1024); extend that
-  section rather than adding a second one.
-- **Headless script cases** for the Auto triggers need `focus`/`fullscreen` verbs the runner lacks (`fullscreen` exists only
-  as an expect); add `fullscreen on|off` (calls `setFullscreen`, headless: the flag only) and `mouse` is windowed-only, so the
-  "40 px mouse move turns it off" case is a smoke test on `TvMode` (already in `tv_mode_test`) plus a windowed Studio check.
+- v3.10.0 is on `master` (#1042 merged) and **not yet merged back into `develop`**; the back-merge carries every workflow file.
+  The `app-package.yml` change (Task 17) is its own commit, last on the branch, so the rebase after the back-merge is one
+  cherry-pick; check `git log libretro/master..libretro/develop -- .github/workflows/app-package.yml` is empty before editing.
+- An #967 phase 3b session edits `app.cpp` too. The Auto hooks go in **one** block of `handleEvent` plus one line in
+  `setFullscreen`, and no edit to how events reach `input.handleEvent` or the core.
+- No `tv/` file calls `emu.call` / `emu.post` (as before); the only new App members are `setTvSetting`, `setTvAuto`,
+  `tvAutoPadPress`, `tvFullscreenEdge`, `tvNoteFsSeen_`, `tvHintShownThisRun_`, `toastCount_`.
 
-### Task 16: Auto triggers, Interface settings, build default
+### What Phase 3 left (read before any task)
+
+- **`TvMode` is complete and unit-tested** (`tv_mode.h/.cpp`, `tv_mode_test.cpp`): `configure(TvConfig, fullscreenNow)`,
+  `toggle()`, `setOn(bool)`, `onFullscreen(bool)`, `onPadPress(bool desktopOwnsInput)`, `onMouseMove(dx, dy)` (summed path
+  length over `kMouseOffPx = 32`), `onNonNavKey()`, `cause()` (`None / Manual / Fullscreen / Controller`). **Nothing calls the
+  last four.** Two behaviours matter for the wiring: a repeated `onFullscreen(true)` re-applies (it turns TV back on after a
+  manual off; `testFullscreenHoldIsState` relies on it), so App must feed it *edges only*; and `configure()` always starts from
+  off, so every caller that reconfigures while TV is on must restore it (`AppHost::setSetting("tv_mode")` already does:
+  `wasOn → setOn(true)`, which makes the cause Manual).
+- **`effectiveSetting(stored)` is the Phase 2 mapping** (Auto → Manual). Five call sites: `app.cpp` `loadConfig` (×1 after
+  `configureTvMode`), `configureTvMode`, `saveConfig` (the `ui.tv_manual_on` rule); `tv_app_host.cpp` `tvAvailable()`;
+  `ui.cpp` the View > TV mode `MenuItem` enable. `tv_mode_test.cpp:190` checks `effectiveSetting(Auto) == Manual`.
+- **The stored setting:** `App::tvSetting` (`TvSetting`), read in `loadConfig` as `cfg.get("ui.tv_mode", "manual")`;
+  `saveConfig` never writes `ui.tv_mode` (comment there); `AppHost::setSetting("tv_mode", i)` writes it on change, clears
+  `ui.tv_manual_on` on Off, `configureTvMode()`, then `setOn(true)` if it was on. The script verb `tvsetting` sets
+  `tvSetting` and calls `configureTvMode()` without writing the key (the script's `expect cfg=ui.tv_mode:absent` lines rely on
+  that). `settings_reset.cpp` already classifies all five `ui.tv_*` keys as Interface, and `settings_reset_test` covers them.
+- **`App::handleEvent` order** (`app.cpp` ~1744): `LatchWaker::isWake` → `ImGui_ImplSDL3_ProcessEvent` → `fromExtraWindow` →
+  F10 step → `input.feedHoldEdges(e)` → `tvHost_->noteInput(e)` → `tvMoreSettingsHandleEvent` → `tvShell().handleEvent` (when
+  `ownsInput() && !input.capturing()`) → **the comment "phase 4's Auto controller trigger, TvMode::onPadPress, goes before this
+  call"** → `deskPadHandleEvent` → `input.handleEvent` → the `switch` (fullscreen events at `SDL_EVENT_WINDOW_ENTER/LEAVE_FULLSCREEN`
+  set `fullscreen` and call `fullscreenMenu.update(...)`; `SDL_EVENT_KEY_DOWN` calls `handleHotkey` unless ImGui wants the
+  keyboard). `App::setFullscreen(bool)` (~1093) sets the flag, updates `fullscreenMenu`, calls `SDL_SetWindowFullscreen` when
+  there is a window; the SDL event then arrives too (windowed), or never (headless). `main` runs `loadConfig()` before the window
+  exists (`fullscreen` is false then) and `setFullscreen(true)` for `--fullscreen` after it.
+- **Desktop pad navigation (#1030)**, `desktop_nav_app.cpp`: `deskPadActive(app)` is false when `tvMode.active()`, the menu is
+  open, a capture runs, no library shows, a game runs, or a desktop window / foreign popup is open. `deskPadHandleEvent` consumes a
+  mapped button *down* (`navProfile(which).intentForButton(b)` not `None` and not `Menu`), the left stick and mapped triggers;
+  releases are fed but not consumed. `deskPadFrame` resets the nav (`d.in.reset()`, `pending.clear()`) on any edge of
+  `deskPadActive`, so a press that turned TV on leaves nothing queued, and its release is a "press never seen" release
+  (`tv::NavInput`'s per-source latch, pad-nav design §10). The TV shell's `nav_` is the same class, so the release reaching the
+  shell after a switch does nothing either.
+- **The shell and keys** (`tv_shell.cpp` `handleEvent`): Esc at the root is not consumed; a typed character (`typedChar`:
+  letters, digits, Backspace) is offered to the top screen (`Screen::typed`; only `LibraryScreen` uses it) and consumed when used;
+  nav keys (`intentForKey`: arrows, Enter, Esc, Backspace, Tab, PageUp/Down) are consumed on down; **everything else returns
+  false** ("F4 and friends are the app's"). The hotkeys (`handleHotkey`, ~1671) are F1–F11, Esc, Tab, Ctrl/Cmd+letter.
+- **Script runner** (`tv_script.cpp`): verbs `load, key, pad, axis, mouse (windowed only), focus, typing, capture, capture nav:,
+  navdefault, tvsetting, saveconfig, wait, shot, quit`; expects as the header of `tests/tv_menu_headless.txt.in` lists them, plus
+  `cfg=KEY:VALUE|absent`, `core-option`, `desk-pad`, `desk-pending`. `expect` ticks two frames first. The runner is `App`
+  member code, so `osd_` is in reach. No `fullscreen` verb exists (`fullscreen` is an expect only). Headless: no ImGui context,
+  no window (`window_` is null: `setFullscreen` only flips the flag), the config lives in a private temp dir, the virtual pad is a
+  generic Xbox-layout gamepad (A/B/X/Y, D-pad, shoulders, `misc1`, `start`, `touchpad`).
+- **Toasts:** `App::toast(text, seconds = 3.0, level = 1)` pushes an `Osd {text, born, life, level}` onto `osd_` (last 6;
+  headless also prints `[osd] text`); `App::osd()` exposes the vector.
+- **Binding text:** `remap_ui.cpp` has a file-local `tvMenuText(const std::vector<Binding>&)` ("Share (hold); Guide (hold) on
+  pads without Share", else `Binding::display()`); `InputManager` exposes `keyboardProfile()`, `padProfile(size_t i)` (by index,
+  matching `pads()`), `navProfile(joystickId)`, `lastPadId()`, `pads()` (`PadInfo {name, guid, hasMisc1, …}`), but **no per-pad
+  profile lookup by joystick id** (`Pad` is private; `input.cpp` ~464 reads `pad->profile.binds[C_TVMENU]` internally).
+  `padButtonLabel(SDL_Gamepad*, const NavProfile&, Intent)` names *nav* intents, not app actions; the hint needs the action's
+  binding, so it goes through `Binding::display()` ("Share (hold)", "F4"). A pad's default `C_TVMENU` list can hold several
+  bindings (the Share or Guide hold plus any paddles SDL reports; the virtual pad reports them all).
+- **Settings UI:** `ui.cpp` `drawInterfaceTab` is `SeparatorText` sections: Overlays, (Appearance, Font via helpers), Performance,
+  Save states, Game library, then `drawDesktopSettings`, `drawLibraryListOptions`. `drawAppGroupReset(app, AppGroup::Interface)`
+  heads it. `tv_settings_model.cpp` has `tvModeRow(TvSetting)` (group 3, "Off / Manual / Auto") and `onOffRow(id, label, group,
+  on)`; `AppHost::settingRows` pushes `tvModeRow` right before `more`.
+- **Build default:** `app/CMakeLists.txt` has no `VJ_TV_DEFAULT`; `virtualjaguar`'s compile definitions are at ~467. The app
+  packages are built by `.github/workflows/app-package.yml` (a `workflow_call` with `inputs.release_tag`: `vX.Y.Z` from a tag,
+  `nightly` from a `develop` push, `prerelease` from `release/**`, `prNNN` / `dev` from `app.yml`), with three `cmake -S app`
+  invocations (macOS ~193, Windows ~370, Linux ~638) and a Flatpak built by `flatpak-builder` straight from
+  `app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml` (`config-opts`, ~80). `release.yml` only chooses the tag.
+- **README:** `app/README.md` "Running" has the Ctrl/Cmd+Shift+T and F4 rows (113–114); "Controller in the desktop library"
+  (160) ends with "Share or Guide, held | toggle TV mode". There is no TV-mode section, no `--tv`, no keypad-chord note.
+
+### Phase 4 decisions (the approval list at the end repeats the ones that change the spec)
+
+1. **The controller trigger beats desktop pad navigation, and the switching press is consumed.** Under Auto with "when a
+   controller is used" on, a mapped button down (`navProfile(which).intentForButton(b) != Intent::None`, Start included) while
+   the desktop library owns the pad (`deskPadActive(app)`: TV off, no capture, the home library or the library window showing,
+   no desktop window or foreign popup) **and no game is loaded** (a paused game under the library window stays the desktop's)
+   and `!io.WantTextInput` turns TV mode on and **returns**: it neither moves the desktop focus nor reaches the TV shell (A would
+   otherwise play the Home hero game blind). Its release goes through as usual (both navs' press-seen latches ignore it).
+   Desktop pad navigation therefore serves Off, Manual, and Auto with the trigger unticked, exactly as the pad-nav design §2
+   recorded the user's call. Buttons with no nav intent (Guide, Share, touchpad, paddles) are not triggers: they carry app
+   actions (`C_TVMENU` hold, keypad `#`, the keypad overlay on a Share tap, `C_HELP`), and a Share tap that also switched TV on
+   would be two actions on one press; sticks and triggers are not triggers either (a resting stick drifts).
+2. **"Mouse movement over 32 px" is the summed path of `SDL_EVENT_MOUSE_MOTION` `xrel/yrel` since TV mode went on** (or since
+   the last pad press while on), as `TvMode` already implements; it is fed only while `!input.mouseCaptured()` and from the main
+   window (`fromExtraWindow` already filters). No new threshold.
+3. **"A non-navigation key" is a printable key the TV UI did not use**: a `SDL_EVENT_KEY_DOWN` that reached `handleEvent` past
+   the shell (so a letter the Library's filter consumed does not count), with no Ctrl/Cmd/Alt held, not a repeat, not wanted
+   by ImGui (`io.WantCaptureKeyboard`: a text box, or "More settings" with its keyboard nav), and `SDL_GetKeyFromScancode` in
+   `0x20..0x7E`. F-keys, Esc, Tab, Enter, arrows and every Ctrl/Cmd shortcut are excluded: F4 and Ctrl/Cmd+Shift+T toggle TV
+   mode themselves, and "off by the key, then on again as Manual" would invert the toggle.
+4. **The fullscreen trigger applies with a game running** (spec §8 as written; `TvMode` already does it). The visible effect
+   is deferred: `inputOwner` keeps the game, nothing is drawn over it, and when the game closes the TV Home shows instead of the
+   desktop library. App feeds `onFullscreen` only on an **edge** of `fullscreen` (`tvFullscreenEdge()` compares with
+   `tvNoteFsSeen_`), from `setFullscreen` and from the two SDL events, so a repeated enter event cannot undo a manual off.
+5. **`effectiveSetting()` is removed**, not made the identity: its five call sites read `tvSetting` directly. Phase 3's
+   approval E ("Auto acts as Manual") ends.
+6. **One App entry point for every setting write:** `App::setTvSetting(TvSetting)` (writes `ui.tv_mode` on change only, clears
+   `ui.tv_manual_on` on Off, reconfigures, restores on) and `App::setTvAuto(bool fullscreen, bool on)` (writes
+   `ui.tv_auto_fullscreen` / `ui.tv_auto_controller`, reconfigures, restores on). `AppHost::setSetting`, the Interface tab and the
+   `tvsetting` verb all call them (the verb keeps writing nothing: it calls `configureTvMode()` only).
+7. **Build default:** `tv::defaultSetting(const char* buildDefault)` is pure (`"off" | "manual" | "auto"`, anything else and
+   null → Auto); `loadConfig` uses it when `!cfg.has("ui.tv_mode")`, else the stored key. CMake: `set(VJ_TV_DEFAULT "auto" CACHE
+   STRING ...)`, validated, passed as `VJ_TV_DEFAULT_SETTING="…"` to `virtualjaguar` only (the tests never see it). The packages
+   pass `-DVJ_TV_DEFAULT=manual` when `inputs.release_tag` starts with `v` or is `prerelease`; `nightly`, `prNNN` and `dev` stay
+   Auto. The Flatpak gets the same through one `sed` on the manifest's `config-opts` in the workflow before `flatpak-builder`
+   (the manifest itself stays Auto, like the CMake default).
+8. **The hint** fires at the first desktop-nav press this *install* while the setting is Manual: in `deskPadHandleEvent`, on the
+   consumed button down, when `app.tvSetting == Manual && !cfg.getBool("ui.tv_hint_shown") && !tvHintShownThisRun_`. Text:
+   `"Press " + <pad binding> + " or " + <keyboard binding> + " for TV mode"`, where the pad part is the `display()` of that
+   pad's **first `C_TVMENU` binding, hold bindings first** ("Share (hold)" on a pad with Share, "Guide (hold)" without, a
+   paddle's name when only a paddle is bound; never the whole list, which would name four paddles) and the keyboard part the
+   keyboard profile's first `C_TVMENU` key ("F4"); with no pad binding the text is "Press F4 or Ctrl+Shift+T for TV mode" (Cmd on
+   macOS), with no keyboard binding either "Press Ctrl+Shift+T for TV mode". Shown with `toast(text, 6.0)`; `ui.tv_hint_shown`
+   is set and `saveConfig()` called before the toast. Never under Auto (the press switched instead) or Off (nothing to hint). A
+   Settings > Reset of Interface clears the key and the hint may show once more; that is the documented meaning of a reset.
+9. **Interface tab:** a `SeparatorText("TV mode")` block after Overlays: a combo `Off / Manual / Auto` (→ `setTvSetting`), the
+   two checkboxes "Turn on in fullscreen" and "Turn on when a controller is used" shown only under Auto (→ `setTvAuto`), one
+   `ui::hint` naming the shortcuts and the build default. The TV Settings rows `tv_auto_fs` ("Auto: in fullscreen") and
+   `tv_auto_pad` ("Auto: when a controller is used") follow `tv_mode` in group 3 and exist only while the stored setting is Auto
+   (`tvAutoRows(stored, fs, pad)` in the model).
+10. **Motion and repeat stay at the spec's starting values** (`kRepeatDelayMs 350`, `kRepeatMs 80`, `kTweenSeconds 0.12`,
+    `focusScale 1.08`, all unchanged since Phase 2): agents cannot test on a TV. Tuning on a real TV with real pads is owed
+    to the user and listed in the PR body as open; a follow-up PR carries whatever values come back.
+11. **`--tv` under Auto** is unchanged (`setOn(true)` = Manual cause): a screenshot run stays in TV mode whatever the mouse does.
+12. **Phase 3's `ui.tv_manual_on`** stays Manual-only: under Auto the triggers decide at every launch.
+
+---
+
+### Task 16: the Auto triggers in App
 
 **Files:**
-- Modify:
-  - `app.cpp`:
-    - `SDL_EVENT_WINDOW_ENTER/LEAVE_FULLSCREEN` → `tvMode.onFullscreen`;
-    - pad button down → `onPadPress(owner == DesktopUi && !io.WantTextInput && !input.capturing())`;
-    - mouse motion → `onMouseMove`;
-    - a key down that is neither a nav key (`intentForKey == None`) nor a modifier → `onNonNavKey`.
-  - `ui.cpp` `drawInterfaceTab`: a "TV mode" section with an Off/Manual/Auto combo and the two Auto
-    checkboxes (shown only for Auto).
-  - The TV Settings rows for the Auto checkboxes: ids `tv_auto_fs`, `tv_auto_pad`.
-  - `app/CMakeLists.txt`: `set(VJ_TV_DEFAULT "auto" CACHE STRING "...")` →
-    `target_compile_definitions(virtualjaguar PRIVATE VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}")`.
-  - `.github/workflows/release.yml`: where the app is configured, add `-DVJ_TV_DEFAULT=manual` whenever
-    `github.ref != 'refs/heads/develop'`.
-- `tv_mode.h/.cpp`: add `TvSetting defaultSetting();` (`VJ_TV_DEFAULT_SETTING`, Auto when undefined; it
-  replaces the `manual` config default from Task 7), and make `effectiveSetting()` the identity (Phase 2 mapped
-  Auto to Manual).
-- Test: `tv_mode_test.cpp` (`defaultSetting()` under both definitions; compile a second tiny TU with the macro
-  set; flip the `effectiveSetting(Auto)` check to `== Auto`), plus `tv_menu_headless` script cases:
-  - fullscreen enter → TV on;
-  - pad press with a game running → stays off;
-  - a 40 px mouse move after a controller-on → off.
-- [ ] **Step 1:** Write the failing cases.
-- [ ] **Step 2:** Run `ctest --test-dir app/build -R "tv_mode_unit|tv_menu_headless"`. Expected: FAIL.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run the full suite. Expected: all PASS.
-- [ ] **Step 5: Commit** `feat(app): TV mode auto-switching on fullscreen and controller use (#991)`.
+- Modify `tv_mode.h/.cpp`: remove `effectiveSetting`; add `TvSetting defaultSetting(const char* buildDefault);`.
+- Modify `app.h/.cpp`: `loadConfig`, `configureTvMode`, `saveConfig`, `handleEvent`, `setFullscreen`; new members.
+- Modify `tv_app_host.cpp` (`tvAvailable`, `setSetting("tv_mode")` → `setTvSetting`), `ui.cpp` (the View menu enable),
+  `tv_script.cpp` (verb `fullscreen on|off`), `tests/tv_menu_headless.txt.in`, `tests/tv_mode_test.cpp`.
+- Test: `tv_mode_unit`, `tv_menu_headless`.
 
-### Task 17: first-use hint, tuning, PR 4
+**Interfaces:**
 
-- [ ] **Step 1:** The first pad press in the desktop library while the setting is Manual and
-  `ui.tv_hint_shown` is false shows the toast "Press Share (hold) or F4 for TV mode" and sets the key. The
-  glyph text comes from the pad's actual `C_TVMENU` binding. Add the smoke test `hint_once`.
-- [ ] **Step 2:** By hand on a real TV (Xbox, DualSense, Switch Pro, an 8BitDo; one machine where Steam takes
-  Guide): tune `kRepeatDelayMs`, `kRepeatMs`, `kTweenSeconds` and `focusScale` within the spec's ranges, and
-  record the final values and the pads tried in the PR body.
-- [ ] **Step 3:** Update `app/README.md`:
-  - a "TV mode" section with the defaults, the bindings and the hold rule;
-  - the keypad-chord limitation;
-  - `--tv`.
-- [ ] **Step 4: Commit** `feat(app): TV mode first-use hint and tuned motion (#991)`, then open PR 4 with
-  `Closes #991`.
+```cpp
+// tv_mode.h
+TvSetting defaultSetting(const char* buildDefault);   // "off" | "manual" | "auto" (VJ_TV_DEFAULT_SETTING); null or unknown -> Auto
+// (effectiveSetting is gone)
+
+// app.h
+void setTvSetting(tv::TvSetting s);          // ui.tv_mode written on change only; Off clears ui.tv_manual_on; reconfigure; stays on if it was
+void setTvAuto(bool fullscreenTrigger, bool on);   // ui.tv_auto_fullscreen / ui.tv_auto_controller; reconfigure; stays on if it was
+bool tvAutoPadPress(const SDL_Event& e);     // decision 1: true = the press turned TV mode on and is consumed
+void tvFullscreenEdge();                     // decision 4: tvMode.onFullscreen(fullscreen) when it differs from tvNoteFsSeen_
+bool tvNoteFsSeen_ = false;                  // the fullscreen state TvMode was last told
+```
+
+Rules:
+- `loadConfig`: `tvSetting = cfg.has("ui.tv_mode") ? parsed (unknown value → defaultSetting) : tv::defaultSetting(VJ_TV_DEFAULT_SETTING)`;
+  `configureTvMode()` passes `tvSetting` as is; `tvNoteFsSeen_ = fullscreen` after it. The `ui.tv_manual_on` restore and the
+  `saveConfig` write test `tvSetting == Manual`.
+- `handleEvent`, one block where the comment sits (after the shell, before `deskPadHandleEvent`):
+  ```cpp
+  if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && tvAutoPadPress(e)) return;
+  if (e.type == SDL_EVENT_MOUSE_MOTION && !input.mouseCaptured()) tvMode.onMouseMove(e.motion.xrel, e.motion.yrel);
+  if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) &&
+      !(imguiUp_ && ImGui::GetIO().WantCaptureKeyboard)) {
+      const SDL_Keycode k = SDL_GetKeyFromScancode(e.key.scancode, SDL_KMOD_NONE, false);
+      if (k >= 0x20 && k <= 0x7E) tvMode.onNonNavKey();   // decision 3: a printable key the TV UI did not use
+  }
+  ```
+  `tvAutoPadPress(e)`: `const Intent in = input.navProfile(e.gbutton.which).intentForButton(e.gbutton.button); if (in == None) return false;`
+  then, while TV is on, `tvMode.onPadPress(true)` (a fresh mouse budget under `Cause::Controller`) and `return false`; while off:
+  `if (deskPadActive(*this) && !host.isLoaded() && !(imguiUp_ && ImGui::GetIO().WantTextInput)) tvMode.onPadPress(true); return
+  tvMode.active();` (`TvMode` itself checks Auto and the trigger box; `deskPadActive` covers TV off, no capture, the library showing,
+  no desktop window). On a switch `input.armReleaseGuard()` is **not** needed: no game owns the input.
+- `setFullscreen` and the two SDL fullscreen cases end with `tvFullscreenEdge();`.
+- `tv_script.cpp`: verb `fullscreen on|off` → `setFullscreen(arg1 == "on")` (headless: the flag and the edge only); comment it in
+  the script header.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `tv_mode_test.cpp`: replace the `effectiveSetting` line with
+    `CHECK(defaultSetting("manual") == TvSetting::Manual && defaultSetting("off") == TvSetting::Off && defaultSetting("auto") == TvSetting::Auto && defaultSetting("bogus") == TvSetting::Auto && defaultSetting(nullptr) == TvSetting::Auto);`
+    and add `testTriggerOrders()` with every §8 order not yet covered (assert `active()` and `cause()` after each line):
+    pad → fullscreen enter → fullscreen leave (off, whatever the cause); fullscreen enter → pad (stays Fullscreen cause) → mouse
+    100 px (on) → leave (off); pad → manual toggle (off) → pad (on again, Controller) → key (off); fullscreen enter → toggle
+    (off) → pad (on, Controller: a pad edge ends the manual override) → mouse 40 px (stays on: fullscreen holds it) → leave
+    (off); `configure(Auto, fullscreenNow = true)` → toggle (off) → `onFullscreen(true)` repeated (on again: documents why App
+    feeds edges only); Off: every trigger is a no-op; Manual: every trigger is a no-op and `toggle` works.
+  - `tv_menu_headless.txt.in`, a new block before "A game to play with" (the setting is Manual there; shift later times):
+    ```
+    # Auto (#991 phase 4): a mapped pad press in the desktop library turns TV mode on and is consumed (nothing queued, nothing
+    # launched); a printable key turns a controller-started TV mode off; fullscreen holds it; leaving fullscreen ends it.
+    2760  tvsetting auto
+    2760  expect tv=0
+    2760  expect desk-pad=1
+    2760  pad tap a
+    2800  expect tv=1
+    2800  expect tv-screen=home
+    2800  expect loaded=0
+    2800  expect desk-pending=0
+    2800  key tap H
+    2840  expect tv=0
+    2840  pad tap dpdown
+    2880  expect tv=1
+    2880  fullscreen on
+    2900  expect fullscreen=1
+    2900  key tap H
+    2940  expect tv=1                 # fullscreen holds it
+    2940  fullscreen off
+    2980  expect tv=0
+    2980  fullscreen on
+    3020  expect tv=1                 # the fullscreen trigger on its own
+    3020  key tap ctrl+shift+T
+    3060  expect tv=0                 # manual wins ...
+    3060  key tap H
+    3100  expect tv=0
+    3100  fullscreen off
+    3100  fullscreen on
+    3140  expect tv=1                 # ... until the next edge
+    3140  fullscreen off
+    3180  expect tv=0
+    3180  pad tap touchpad            # no nav intent (C_HELP's button): not a trigger.  (Not misc1: a Share tap opens the keypad overlay)
+    3220  expect tv=0
+    3220  pad tap start
+    3260  expect tv=1                 # Start is a mapped intent: it switches
+    3260  key tap H
+    3300  expect tv=0
+    3300  key tap ctrl+,              # a desktop window takes the pad before the trigger sees it
+    3340  pad tap dpdown
+    3380  expect tv=0
+    3380  key tap ctrl+,
+    3420  tvsetting manual
+    3420  saveconfig
+    3420  expect cfg=ui.tv_mode:absent
+    ```
+    and, after the first `load` (the game runs): `tvsetting auto`, `pad tap dpdown` → `expect tv=0` (the game owns the pad),
+    `fullscreen on` → `expect tv=1`, `expect menu-open=0`, `expect paused=0`, `pad down dpright` → `expect core-input=1`,
+    `pad up dpright`, `fullscreen off` → `expect tv=0`, `tvsetting manual`. Also: the script's **first line becomes
+    `0 tvsetting manual`** (a fresh config now takes the build default, Auto on a CTest build), and the comment "acts as Manual
+    in phase 2" at line ~200 becomes "the toggle works under Auto too" (the `expect` values there are unchanged). New expect
+    `tv-setting=off|manual|auto` (`settingKey(tvSetting)`), used by hand in Step 3 of Task 17, not by the CTest script.
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "tv_mode_unit|tv_menu_headless"`. Expected: FAIL (does not build:
+  `effectiveSetting` gone, no `fullscreen` verb).
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh ""` (the full suite). Expected: all PASS; `tv_ui_smoke` and
+  `settings_reset` unchanged.
+- [ ] **Step 5: Commit** `feat(app): TV mode switches on in fullscreen and on a controller press (#991)`.
+
+### Task 16a: layout fixes from the user's TV testing
+
+Closed with no work: on 2026-10-22 the owner reported that no layout fixes are needed, so PR 4 closes #991.
+
+### Task 17: the settings UI and the build default
+
+**Files:**
+- Modify `ui.cpp` `drawInterfaceTab`, `tv_settings_model.h/.cpp`, `tv_app_host.cpp` (`settingRows`, `setSetting`),
+  `app/CMakeLists.txt`, `.github/workflows/app-package.yml` (own commit, see the constraints), `tests/tv_settings_model_test.cpp`,
+  `tests/tv_ui_smoke.cpp`, `tests/tv_menu_headless.txt.in`.
+- Test: `tv_settings_model_unit`, `tv_ui_smoke`, `tv_menu_headless`.
+
+**Interfaces:**
+
+```cpp
+// tv_settings_model.h
+std::vector<SettingRow> tvAutoRows(TvSetting stored, bool autoFullscreen, bool autoController);   // ids tv_auto_fs, tv_auto_pad; empty unless Auto
+```
+```cmake
+# app/CMakeLists.txt, next to VJ_DISCORD_APP_ID
+set(VJ_TV_DEFAULT "auto" CACHE STRING "TV mode setting for a fresh config: auto (nightlies, PR builds) | manual (releases) | off")
+if(NOT VJ_TV_DEFAULT MATCHES "^(auto|manual|off)$")
+    message(FATAL_ERROR "VJ_TV_DEFAULT must be auto, manual or off (got '${VJ_TV_DEFAULT}')")
+endif()
+# with the other virtualjaguar definitions (~467):  VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}"
+```
+```yaml
+# app-package.yml, env: (top level)
+TV_DEFAULT: ${{ (startsWith(inputs.release_tag, 'v') || inputs.release_tag == 'prerelease') && 'manual' || 'auto' }}
+# each of the three cmake -S app lines:  -DVJ_TV_DEFAULT="$TV_DEFAULT"
+# before the flatpak-builder step:  sed -i "s|- -DVJ_APP_BUILD_TESTS=OFF|&\n      - -DVJ_TV_DEFAULT=$TV_DEFAULT|" app/packaging/flatpak/io.github.libretro.VirtualJaguar.yml
+```
+
+Rules:
+- `drawInterfaceTab`, after the Overlays section: `SeparatorText("TV mode")`; combo `##tv_mode` over `settingKey`-ordered labels
+  "Off / Manual / Auto" → `app.setTvSetting((TvSetting)i)` on change; `if (app.tvSetting == Auto)` two `Checkbox`es bound to
+  `cfg.getBool(...)` copies → `app.setTvAuto(true|false, v)`; `ui::hint("A 10-foot look for a pad and a TV. Manual: View > TV mode,
+  Ctrl/Cmd+Shift+T, or F4 / a Share hold with no game. Auto also turns it on in fullscreen and when a controller is used in the
+  library (mouse movement or typing turns it off again). Nightly builds start on Auto, releases on Manual.")`.
+- `AppHost::settingRows`: after `tvModeRow`, append `tvAutoRows(app_.tvSetting, cfg.getBool("ui.tv_auto_fullscreen", true),
+  cfg.getBool("ui.tv_auto_controller", true))`. `setSetting("tv_auto_fs", i)` → `setTvAuto(true, i == 1)`; `"tv_auto_pad"` →
+  `setTvAuto(false, i == 1)`; `"tv_mode"` → `setTvSetting((TvSetting)index)` (the existing body moves into App).
+- `setTvAuto` while TV is on under Auto: `configure` restarts from off, so restore with `setOn(true)` (Manual cause) as
+  `setSetting("tv_mode")` does; the next trigger edge takes over.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `tv_settings_model_test.cpp`: `CHECK(tvAutoRows(TvSetting::Manual, true, true).empty() && tvAutoRows(TvSetting::Off, true, true).empty());`
+    `auto a = tvAutoRows(TvSetting::Auto, true, false); CHECK(a.size() == 2 && a[0].id == "tv_auto_fs" && a[0].index == 1 && a[1].id == "tv_auto_pad" && a[1].index == 0 && a[0].group == 3 && a[1].choices == std::vector<std::string>{"Off", "On"});`
+  - `tv_ui_smoke` `settingsAutoRowsStep`: fixture rows `tv_mode` (index 2) + the two auto rows; Right on "Auto: in fullscreen" →
+    `set.back() == {"tv_auto_fs", 1}`; Accept on it → `{"tv_auto_fs", 0}` (wrap over two choices); `drew("Auto: when a controller is used")`.
+  - `tv_menu_headless`, a block right after Task 16's Auto block (still before "A game to play with"; the only
+    `cfg=ui.tv_mode:absent` expects are earlier in the script, so the key this block writes disturbs nothing): `tvsetting auto`,
+    `key tap F4` → `expect tv=1`; RB ×3 → `expect tv-screen=settings`; Down ×3 (Interface), Right (the list at Show FPS), Down ×3
+    (VSync, Theme, TV mode), Down (Auto: in fullscreen; the Interface list is now Show FPS, VSync, Theme, TV mode, Auto: in
+    fullscreen, Auto: when a controller is used, More settings...); `pad tap dpleft` → `expect cfg=ui.tv_auto_fullscreen:0`,
+    `expect tv=1` (still on: Manual cause after the reconfigure); `pad tap dpright` → `expect cfg=ui.tv_auto_fullscreen:1`; Up,
+    `pad tap dpleft` (TV mode: Auto → Manual) → `expect cfg=ui.tv_mode:manual`, `expect tv=1`; Down (the row under it is now
+    More settings..., the Auto rows are gone), `pad tap a` → `expect tv-more=1`, `pad tap b` → `expect tv-more=0`; `key tap F4`
+    → `expect tv=0`. The config holds `ui.tv_mode=manual` from here on, which is what the rest of the script assumes anyway.
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "tv_settings_model_unit|tv_ui_smoke|tv_menu_headless"`. Expected: FAIL.
+- [ ] **Step 3: Implement** the model rows, `AppHost`, the Interface block, CMake. Check by hand on the Studio that the macro
+  reaches the binary: a one-line script `0 expect tv-setting=auto` run with `--headless --frames 1 --tv-test-script` (a headless
+  run has a fresh config) passes on the default configure and `0 expect tv-setting=manual` passes after
+  `cmake -S app -B app/build -DVJ_TV_DEFAULT=manual`; reconfigure back to `auto` afterwards. (The CTest script itself starts with
+  `tvsetting manual`, so it is the same on either build: release packages run the smoke tests too.)
+- [ ] **Step 4: Run** the full suite on the Studio. Expected: all PASS.
+- [ ] **Step 5: Commit** `feat(app): TV mode in Settings > Interface, the Auto rows in TV Settings, VJ_TV_DEFAULT (#991)`.
+- [ ] **Step 6: The workflow**, its own commit: `ci(app): release packages default TV mode to Manual, nightlies to Auto (#991)`.
+  Verify with `gh workflow run app-package.yml -f release_tag=v0.0.0-test` only if the user asks (it signs); otherwise rely on
+  the PR's own `app.yml` package job (`release_tag = prNNN` → Auto) and read the configure log for `VJ_TV_DEFAULT`.
+
+### Task 18: the first-use hint, README, Studio check, PR 4
+
+**Files:**
+- Modify `input.h/.cpp` (`tvMenuBindingText(SDL_JoystickID) const`, `tvMenuKeyText() const`), `desktop_nav_app.cpp`
+  (`deskPadHandleEvent` + a static `tvMaybeShowHint`), `app.h/.cpp` (`bool tvHintShownThisRun_ = false; unsigned toastCount_ = 0;`),
+  `tv_script.cpp` (expects `toast=TEXT`, `toast-count=N`), `app/README.md`, `tests/tv_menu_headless.txt.in`.
+- Test: `tv_menu_headless`.
+
+**Interfaces:**
+
+```cpp
+// input.h
+std::string tvMenuBindingText(SDL_JoystickID id) const;   // display() of that pad's first C_TVMENU binding, hold bindings first; "" when none / unknown pad
+std::string tvMenuKeyText() const;                        // display() of the keyboard profile's first plain C_TVMENU key ("F4"); "" when none
+// tv_mode.h (pure, so tv_mode_unit can pin the wording)
+std::string firstUseHint(const std::string& padText, const std::string& keyText, bool macOS);   // decision 8's wording
+```
+
+Rules:
+- In `deskPadHandleEvent`, at the `return down;` of a consumed mapped button: `if (down) tvMaybeShowHint(app, e.gbutton.which)`,
+  a static in `desktop_nav_app.cpp` that applies decision 8 (`tvSetting == Manual`, key unset, not shown this run → set the key,
+  `saveConfig()`, `toast(tv::firstUseHint(input.tvMenuBindingText(which), input.tvMenuKeyText(), <macOS>), 6.0)`,
+  `tvHintShownThisRun_ = true`).
+- README `## Running`: a new `### TV mode` after "Controller in the desktop library": what it is, the three settings and where
+  (Settings > Interface, TV Settings > Interface), the Auto rules in one paragraph (fullscreen; a controller press in the library;
+  32 px of mouse or typing ends a controller-started TV mode; a manual toggle wins until the next edge), the build default
+  (nightlies Auto, releases Manual, `-DVJ_TV_DEFAULT`), the hint, `--tv`, the hold rule (500 ms) and the keypad-chord limitation
+  (from the controls screen's hint text). Keep the existing rows at 113–114 and 177 and link them here.
+
+- [ ] **Step 1: Write the failing tests.** `tv_mode_test.cpp`: `CHECK(firstUseHint("Share (hold)", "F4", false) == "Press Share
+  (hold) or F4 for TV mode" && firstUseHint("", "F4", false) == "Press F4 or Ctrl+Shift+T for TV mode" && firstUseHint("", "", true)
+  == "Press Cmd+Shift+T for TV mode");`. In the script's existing desktop-pad block (the first consumed press under Manual, today
+  `2080 pad tap rightshoulder`): before it `expect cfg=ui.tv_hint_shown:absent`, `expect toast-count=0`; after it
+  `expect toast=Press Share (hold) or F4 for TV mode` (the virtual pad has `misc1`, so its default is the Share hold),
+  `expect cfg=ui.tv_hint_shown:1`, `expect toast-count=1`; after the next press (`pad tap leftshoulder`) `expect toast-count=1`.
+  In the Auto block: `expect toast-count=1` after the switching press (no hint under Auto). `toast-count` counts `App::toast`
+  calls since start (`toastCount_`, incremented in `toast`; `osd_` is capped at 6 so it cannot be the counter); `toast` is the
+  last text.
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh tv_menu_headless`. Expected: FAIL.
+- [ ] **Step 3: Implement**, then the README.
+- [ ] **Step 4: Run** the full suite on the Studio. Expected: all PASS.
+- [ ] **Step 5: Commit** `feat(app): one-time TV mode hint on the first controller press in the library (#991)` and
+  `docs(app): TV mode section in the README (#991)`.
+- [ ] **Step 6: Windowed check on the Studio** (`vjr.sh push` / `run` / `pull`, never locally), with the windowed script: Auto,
+  `mouse` moves of 10 px ×4 after a pad press → `expect tv=0` (the only place the real motion path is exercised); F11 with
+  `expect tv=1`; the hint toast in a `shot hint.png` at 1280×720. Attach the shot.
+- [ ] **Step 7: Open PR 4** into `develop`: title `feat(app): TV mode auto-switching, first-use hint and build default (TV mode
+  phase 4)`; body with the test summary, the shot, the approval items below as applied, the "owed to the user" list (below), and
+  `Closes #991` **only if Task 16a is done or the user has said the layout list is empty**; otherwise `Refs #991` and a comment on
+  #991 listing what remains. Bind it (`ccd_pr`), report CI, rebase after the v3.10.0 back-merge lands on develop.
+
+### What "complete" means for #991
+
+PR 4 closes #991 when every spec section has shipped or has a recorded decision: §3 (PR 1), §4–§5 (PRs 2–3, with the approved
+changes), §6 at the spec's starting values, §7, §8 and §9 (this PR), §10's CI tests, and Task 16a's layout list. It leaves
+these **owed to the user**, listed in the PR body and in a final comment on #991 rather than blocking the close:
+- tuning of `kRepeatDelayMs` / `kRepeatMs` / `kTweenSeconds` / `focusScale` (and whether 32 px is the right mouse budget) on a real
+  TV with Xbox, DualSense, Switch Pro and an 8BitDo pad, one machine where Steam or the OS takes Guide (spec §10 "by hand");
+- the §9 decision to make Auto the release default once nightly feedback is in (a one-line `app-package.yml` change);
+- the layout list for Task 16a, if it arrives after PR 4 (then a follow-up PR, `Refs #991`).
+
+### Phase 4 review focus (added to the list above)
+
+17. **TV mode flapping on and off.** A repeated `SDL_EVENT_WINDOW_ENTER_FULLSCREEN` (macOS sends them on space and display
+    changes) must not re-enable TV mode after a manual off (Task 16 `tvFullscreenEdge`, the `testTriggerOrders` repeated-enter
+    case documents why); a Share hold that toggles TV mode must not also count as the controller trigger (decision 1: no nav
+    intent; script `pad tap misc1 → tv=0`); F4 / Ctrl+Shift+T must not first count as a "non-navigation key" (decision 3; script
+    `ctrl+shift+T → tv=0` while controller-started).
+18. **A pad press that both switches and acts.** The switching press reaches neither the desktop library nor the TV shell
+    (script: `pad tap a → tv=1, loaded=0, desk-pending=0`); its release is ignored by both navs' press-seen latches (by hand on
+    the Studio: hold A, watch nothing launch on release).
+19. **Auto turning on mid-game.** The controller trigger never fires with a game loaded (script: `pad tap dpdown → tv=0` after
+    `load`); the fullscreen trigger does, and must leave the game running, unpaused, with its input (script: `menu-open=0,
+    paused=0, core-input=0`… then a held D-pad reads `core-input=1`).
+20. **A stored setting pinning the default.** `ui.tv_mode` is written only by `setTvSetting` on change (script:
+    `expect cfg=ui.tv_mode:absent` after `tvsetting` + `saveconfig`; `expect tv-setting=auto` first line proves the CMake default
+    reached the binary); a config from Phase 2/3 with no key picks up the nightly's Auto; Settings > Reset Interface returns to
+    the build default (`settings_reset_test`, already green).
+21. **The hint showing twice, or under Auto.** The key is set and saved before the toast, a per-run flag backs it, and Auto's
+    switching press takes the `return` before the hint site (script `toast-count` lines in both blocks).
+
+### Approval needed before Phase 4 starts (spec changes for phase 4)
+
+The rows already in "Changes to the approved spec" that this phase uses: `C_TVMENU` toggles TV mode with no game (the hint's
+wording relies on it); the build default through `VJ_TV_DEFAULT`, now in `app-package.yml` rather than `release.yml` (the
+packages moved there after the plan was written; the rule is the same: tags and `prerelease` Manual, everything else Auto).
+
+New in this revision:
+- **A.** The pad press that turns TV mode on under Auto is **consumed**: it does not also act in the desktop library or on the
+  TV screen it reveals. Spec §8 says the press "turns TV mode on" and no more; the pad-nav design §2 recorded that the trigger
+  wins, this fixes that the press does nothing else. Desktop pad navigation is therefore unreachable under Auto with the
+  controller trigger on (it serves Off, Manual, and Auto with that box unticked).
+- **B.** Only buttons with a navigation intent in the pad's profile (D-pad, the four face buttons, LB/RB, Start) are the
+  controller trigger. Guide, Share, touchpad, paddles, the sticks and the triggers are not (they carry app actions or drift).
+  Spec §8 says "a pad button".
+- **C.** "A non-navigation key" (§8) is read as a printable key the TV UI did not use, with no Ctrl/Cmd/Alt held. F-keys,
+  Esc, Tab, Enter and shortcuts never end TV mode by themselves (F4 and Ctrl/Cmd+Shift+T are toggles and would otherwise
+  invert).
+- **D.** The fullscreen trigger stays live with a game running (spec §8 as written, confirmed rather than changed): the only
+  visible effect is which home shows when the game closes. Flagged because the plan's old Task 16 did not test it.
+- **E.** The one-time hint's wording is "Press <this pad's TV-menu binding> or <the keyboard's> for TV mode" ("Press Share
+  (hold) or F4 for TV mode" on a pad with Share, "Guide (hold)" without, the paddle's name when only a paddle is bound), shown
+  as a 6 s toast at the first pad press in the desktop library, Manual only, once per install (a Settings > Reset of Interface
+  can show it once more). Spec §9 fixes the text to "Press Share (hold) or F4".
+- **F.** No motion or repeat tuning ships in PR 4; the spec's starting values stay and the real-TV pass is owed to the user
+  (spec §9 step 4 bundles "tuning … on a real TV" into this delivery step).
+- **G.** PR 4 may close #991 with Task 16a's layout list still outstanding only if the user says so; otherwise it stays
+  `Refs #991` and the layout PR closes it.
+
+---
+
+## Phase 5 — TV mode owns Settings and Library, the full settings catalogue (more commits on PR 4)
+
+Written 2026-10-22 from the owner's test of PR 4 ("once you open a game, the tv mode isn't the mode for settings or library
+until you close the game"; "you can't even see the game core settings in tv mode"; "finish the settings at least in tv mode").
+Same branch and worktree as Phase 4 (`feat/991-tv-phase4`, `~/Workspace/Provenance/vj-wt/tv-phase4`); the work lands as more
+commits on PR #1067. Build and test on the Studio only: `~/Workspace/Provenance/vj-eval/remote/tvb.sh "<ctest regex>"`.
+
+### Task 18b (done separately, do not redo): Settings entry points
+
+`App::openSettings()` (`app.h:291`, `app.cpp:1429`) is what Ctrl/Cmd+, (`app.cpp:1788`), the Settings menu (`ui.cpp:671`),
+the native `Cmd::Settings` (`platform/commands.cpp:306` → `desktop.cpp:127`), the BIOS openers (`ui.cpp:602`, `desktop.cpp:84`,
+`library_ui.cpp:1102`) and `--show-window settings` call. While TV mode is on it calls `Shell::openSettings()`
+(`tv_shell.cpp:67`: the Settings section with no game; with a game `openMenu()` + the Settings screen in the slot, so the hardcore
+pause gate and its toast apply); otherwise the desktop window. New script expect `menu-slot`. Phase 5 builds on it.
+
+### What Phase 4 left (read before any task)
+
+- **Core options reach the app only through `CoreHost::startSession`** (`core_host.cpp:794` `retro_set_environment(envCb)` →
+  `libretro.c:1521` `libretro_set_core_options`), which `loadContent` / `loadNoContent` run for the first game. At startup `defs_`
+  is empty: `ui.cpp:126` prints "The core's options appear here once a game is loaded", `AppHost::settingRows`
+  (`tv_app_host.cpp:238`) hides the three curated core rows and shows `speedNoteRow()`. `captureOptions` (`core_host.cpp:196`)
+  reads a `retro_core_options_v2` into `OptionCategory` / `OptionDef` (`emu_snapshot.h:26-41`: `desc`, `descCategorized`,
+  `categoryKey`, `values[]` with labels), applies `optionLock` (`app.cpp:534`, `lockedCoreOptionFor`) and `optSerial_++`. The
+  table has 10 categories and 118 options (`libretro_core_options.h`: video, bios_boot, cdrom, network, input, input_p1,
+  input_p2, diagnostics, speed, accuracy); `update_option_visibility` (`libretro.c:1522`, installed through
+  `SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK`, `core_host.cpp:522`) hides gated rows by `SET_CORE_OPTIONS_DISPLAY`.
+- **Core options are readable without a game.** `retro_set_environment` (`libretro.c:1502-1535`) only stores the callback, asks
+  for the log interface, pushes the options and the display callback, and asks for VFS and the microphone; libretro allows it
+  before `retro_init`, and `startSession` repeats it for every game anyway (`stopSession` then `retro_set_environment` again).
+  So one call at startup, with `CoreHost::env` answering only the option commands (`GET_CORE_OPTIONS_VERSION`,
+  `SET_CORE_OPTIONS_V2[_INTL]`, `SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK`, `SET_CORE_OPTIONS_DISPLAY`, `GET_VARIABLE`) and
+  refusing the rest, fills `defs_` / `categories_` / `visibility_` exactly as a load does. It must run on the UI thread before
+  `startEmuThread()` (`app.cpp:2135`; the thread publishes the table at once, `core_host.cpp:1213`) and after
+  `loadUserOptions` (`app.cpp:189`) and `wireHost()` (the lock). A write with no game is `setOptionValue` → `userValues_` →
+  `onOptionChanged` → `opt.<key>` in the config (`app.cpp:544`), read by the core at the next load through `GET_VARIABLE`.
+  Rejected alternative: including `libretro_core_options.h` in a C++ TU (it has `extern "C"` guards, lines 60 and 2103) — a
+  second copy of the table that bypasses `captureOptions`' lock and visibility rules.
+- **Library entry points that open the desktop window today:** Ctrl/Cmd+L `app.cpp:1792` → `App::toggleLibrary` `app.cpp:1137`
+  (`library.show`, or the home search box); File > "Game library..." `ui.cpp:585`; native `Cmd::Library` `platform/commands.cpp:275`
+  → `desktop.cpp:88`; `--show-window library` `app.cpp:2188` (dev flag, stays). The native checkmark reads `s.libraryOpen`
+  (`desktop.cpp:35`). The script documents the current behaviour at `tv_menu_headless.txt.in:100-121` ("Ctrl+L opens the
+  desktop library WINDOW" with TV on): Phase 5 flips that block. `App::openContent` (`app.cpp:1160`) already closes the menu
+  (`:1166`) and auto-saves the running game (`:1171`), so a launch from the in-game Library keeps the running game's state.
+- **The in-game menu slot** (`Shell::menuPushScreen`, `tv_shell.cpp:332`) hands the slot screen the menu's list area only
+  (`tv_ingame.cpp:89-94`: a 1500u panel minus a 470u rail); `Shell::intent` (`:349-352`) forwards every intent but Back, and
+  `typed()` goes to the Base stack's top only (`tv_shell.cpp:129`), never to the slot. `LibraryScreen` launches with
+  `host_.launch(*g)` + `shell_.launched()` (`tv_library.cpp:342`), `launchState` (`:359`), pushes `DetailsScreen` on Start (`:350`)
+  and `LettersScreen` on Y (`:482`) onto the Base stack — none of which can show while a game runs.
+- **`NavInput` repeats held directions** (`tv_nav.h:30`, 350 ms then 80 ms, Left and Right included), so a held Right on a
+  settings row already steps every 80 ms; each step is a `setSetting` + `saveConfig()`.
+- **Settings groups are the four ints of `tv_settings_model.h`** (`kSettingGroups`, `settingGroupLabel`, `SettingRow::group`);
+  the rail is not scrollable (`tv_settings.cpp:88-96` draws every group at `kItemH + kItemGap`).
+- **App settings that are a choice, toggle or slider in the desktop tabs** (the catalogue Task 19 lists; everything else — folders,
+  BIOS files, the font file, RA sign-in, remapping, the per-device axis sliders `devices_ui.cpp:323`, the theme editor
+  `theme_ui.cpp:161`, the Discord app id, netplay host/port, cheats — stays desktop-only): Video `ui.cpp:184-196` (integer, smooth,
+  stretch, aspect, vsync, fullscreen), shader `shaders_ui.cpp:189`; Audio `ui.cpp:204-206` (volume, mute, buffer target);
+  Input `devices_ui.cpp:335-347` (stick dead zone, mouse drives, light gun aims with), `:362` (controls overlay at start);
+  Storage `ui.cpp:244` (flush saves); Interface `ui.cpp:285` (FPS), `:292` (emulation thread), `:304` (resume mode), `:315` (home
+  library), `desktop.cpp:201-230` (tray icon, in-window menu bar, auto-hide menu in fullscreen, windows outside, keep awake),
+  `theme_ui.cpp:111` (theme), `library_ui.cpp:237` (show as), `:284` (tile size), `:299` (download box art), `:312` (close on
+  launch); Achievements `achievements_ui.cpp:345` (download pictures); Discord `ui.cpp:332-337`; Neuro `neuro_app.cpp:178-197`.
+
+### Phase 5 decisions (lead's calls; told to the owner, no approval round)
+
+1. **While TV mode is on, Settings and Library are TV screens, never desktop windows** — with or without a game. Every opener
+   goes through `App::openSettings()` (Task 18b) or the new `App::openLibrary()`. The only desktop window TV mode still opens is
+   the one behind the single "Desktop settings…" row (folders, BIOS files, sign-in, remapping, text entry), which keeps Phase 3's
+   hand-off (`tv_more_settings.h`).
+2. **Core options are shown always**, read at startup by `CoreHost::probeOptions()` (the environment probe above). Phase 3
+   approval G (hidden until a game has run) and `speedNoteRow()` go. The three curated core rows (`resolution`, `risc_clock`,
+   `idle_skip`) go too: they are ordinary rows of the core's own Video and Speed categories.
+3. **Groups are the core's categories plus the app's tabs**, in this rail order: Picture, Sound, Interface, Library, Achievements,
+   Discord, Neuro (build-gated), then the core's categories in definition order (`General` for options with no category, as
+   `drawCoreOptions` does). Groups with no visible row are absent. `SettingRow::group` becomes a string key; the rail scrolls.
+4. **Every visible core option is a row**: label `descCategorized` (else `desc`), value `label` (else `value`), `info` is not shown
+   (no room; the desktop tooltip stays there). Hidden: `!optionVisible(key)` (covers the app's locks). Read-only with the note
+   "Set by Netplay or --option for this session": `optionOverridden(key)`. Typed keys (`typed_options.h`): the presets plus a
+   selected "<value> (custom)" when the current value is not a preset (Phase 3's rule, now for every typed key); `OptKind::Host`
+   (`virtualjaguar_netlink_host`) is read-only with the note "Type it in Desktop settings". Options whose `info` says "restart"
+   carry the note "Applies when the game next starts". No "reset" and no per-group reset in TV. Writes stay
+   `CoreHost::setOptionValue(key, def->values[i].value)` — the call `drawOption` makes, so `Achievements::checkSettings` and the
+   netplay / `--option` rules are unchanged.
+5. **Sliders become stepped lists**: volume 0–100 in 10 %, audio buffer 20–200 ms in 10 ms, stick dead zone 0–40 % in 5 %, tile
+   size `kTileScaleMin..kTileScaleMax` in 0.1, Neuro pause 0–10 s in 0.5. The desktop slider keeps its finer value: a current value
+   off the grid shows as "<value> (custom)" and is selected; stepping lands on the grid.
+6. **Long lists on a pad**: Up/Down clamp (no wrap) in both the rail and the list, as Phase 3; Left/Right clamp, Accept wraps; the
+   held-direction repeat of `NavInput` is the "many steps" path; the focus is remembered per group under
+   `settings/<groupKey>` (index + row id) and the rail under `settings/rail` (group key); the rail and the list both scroll to
+   show the focus with the Phase 3 tween; LT/RT (PagePrev/PageNext) jump the list a page. Each repeated step still saves the
+   config (12.5 Hz while held; `config.ini` is small — measured on the Studio in Task 20, step 4).
+7. **The in-game menu gains a "Library" row** after Load state (root order: Resume, Save state, Load state, Library,
+   Achievements, Overlays, Settings, Controls, Enter/Exit TV mode, Reset, Close game). It puts `LibraryScreen` in the slot;
+   a slot screen may ask for the whole panel (`Screen::wide()`), which the Library does, so the rail + cover grid draw unchanged
+   over the dimmed game. In the slot: A = launch (with the confirm below), LT/RT and typing work; Start (Details) and Y (letter
+   picker) do nothing (they push onto the Base stack, which does not show under a game); X (resume a state) asks the same confirm.
+8. **Launching from the in-game Library asks first**: a page `ConfirmLaunch` ("Close <running title> and start <title>?", rows
+   Yes / No, focus on No, as Reset and Close do). Yes → `host.launch(g)` / `launchState(g, st)` — `App::openContent`, which
+   auto-saves the running game and closes the menu — then `launched()`. The same confirm is used by `Shell::requestLaunch`
+   whenever a game is loaded; with no game it launches at once (Home, Library, Details, Achievements are unchanged).
+9. **`App::openLibrary()`** replaces every call of `toggleLibrary()` that is a user action: TV on and no game → the Library
+   section; TV on and a game → the menu (through `openMenu()`, hardcore gate and toast as Settings) with the Library in the slot;
+   TV off → `toggleLibrary()` as today. `desktop.cpp:35` `libraryOpen` is also true while the TV Library section or slot shows.
+10. **No `app.cpp` edits beyond**: `probeOptions()` in `run()` before `startEmuThread()`, `openLibrary()`, the Ctrl/Cmd+L line.
+    No `tv/` file calls `emu.call` / `emu.post`; the probe is a `CoreHost` member called from `App`.
+
+### Task 19: core options at startup, and the settings catalogue (model)
+
+**Files:**
+- Modify `core_host.h/.cpp`: `void probeOptions();` (UI thread, before the emulation thread exists) and `bool probing_ = false;`
+  checked at the top of `env()`: while set, only the option commands listed above are handled, everything else returns false.
+  After `retro_set_environment(envCb)` call `updateDisplayCb_()` once (the core's `update_option_visibility` reads its gates
+  through `GET_VARIABLE` and hides rows through `SET_CORE_OPTIONS_DISPLAY`, both allowed), then `probing_ = false`.
+  `startSession` is unchanged (it clears and re-pushes). `probeOptions` is a no-op when `initialized_`.
+- Modify `app.cpp` `run()`: `host.probeOptions();` after `netplayInit` and before the `runHeadless / runTvScript / runInteractive`
+  line (the thread starts inside `runInteractive`, `app.cpp:2135`; headless runs stay inline).
+- Modify `tv_host.h` `SettingRow`: `int group` → `std::string group` (key) + `std::string groupLabel`; `tv_settings_model.h/.cpp`:
+  drop `kSettingGroups`, `settingGroupLabel`, `speedNoteRow`; add the builders below; `tv_app_host.h/.cpp`: the catalogue.
+- Modify `ui.cpp` `drawCoreOptions`: drop the "appear here once a game is loaded" branch (the table is there); keep the rest.
+- Test: `tv_settings_model_unit`, new `vj_core_options_probe_test` (`app/tests/core_options_probe_test.cpp`, links `vj_core`
+  and `core_host.cpp` as `core_host_thread_test` does), `tv_ui_smoke`.
+
+**Interfaces:**
+
+```cpp
+// tv_settings_model.h (pure)
+struct SettingGroup { std::string key, label; };
+// Every visible core option as a row, in category order: uncategorised first under {"core:", "General"}, then each category
+// under {"core:" + cat.key, cat.desc}.  id = "core:" + key.  Rules of decision 4.  `visible`, `locked`, `overridden`, `current`
+// are per key (std::function), so the model never sees CoreHost.
+std::vector<SettingRow> coreOptionRows(const std::vector<OptionCategory>& cats, const std::vector<OptionDef>& defs,
+                                       const std::function<std::string(const OptionDef&)>& current,
+                                       const std::function<bool(const std::string&)>& visible,
+                                       const std::function<bool(const std::string&)>& overridden,
+                                       const std::function<const TypedOption*(const std::string&)>& typed);
+SettingRow choiceRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
+                     std::vector<std::string> choices, int index);
+// A slider as a stepped list: "lo", "lo+step", ... "hi" printed with fmt ("%.0f ms"); a value off the grid is appended as
+// "<value> (custom)" and selected.  stepValue() maps an index back (the "(custom)" index gives `current` unchanged).
+SettingRow sliderRow(const std::string& id, const std::string& label, const std::string& group, const std::string& groupLabel,
+                     float current, float lo, float hi, float step, const char* fmt);
+float stepValue(const SettingRow& r, int index, float lo, float step, float current);
+std::vector<SettingGroup> groupsOf(const std::vector<SettingRow>& rows);   // first-seen order, keys unique
+// Existing builders keep their names; their `int group` parameter becomes (key, label); onOffRow(id, label, group, groupLabel, on).
+```
+
+Catalogue (`AppHost::settingRows`, in this order; ids in parentheses; every setter is the desktop control's member or method
+followed by `app.saveConfig()`, as Phase 3 decision 9):
+- **Picture** `picture`: shader (`shader`), integer (`integer`), smooth (`smooth`: `present.linearFilter`), stretch (`stretch`:
+  `present.stretch`), aspect (`aspect`), vsync (`vsync`, moved here from Interface), fullscreen (`fullscreen`: `setFullscreen`).
+- **Sound** `sound`: volume (`volume`), mute (`mute`: `app.mute` + `applyAudioSettings`), buffer (`audio_buffer`: `audioTargetMs`,
+  20–200 by 10, `"%.0f ms"` + `applyAudioSettings`).
+- **Interface** `interface`: fps, controls overlay at start (`controls_at_start`: what `devices_ui.cpp:362` writes), theme,
+  tv_mode, tv_auto_fs, tv_auto_pad, in-window menu bar (`menu_in_window`: `showInWindowMenu`; absent where `desktop.cpp` hides the
+  box), auto-hide menu in fullscreen (`menu_autohide`), windows outside (`windows_outside`), keep awake (`keep_awake`), tray icon
+  (`tray`, platform-gated as `desktop.cpp:210`), emulation thread (`emu_thread`: `emuThreadPref`; note "Restart the app to apply"
+  while `emuThreadWanted() != emuThreadThisRun()`), stick dead zone (`dead_zone`: 0–40 by 5, `"%.0f %%"`), mouse drives
+  (`mouse_port`), light gun aims with (`gun_source`), flush saves (`flush_saves`: `autosaveSram`).
+- **Library** `library`: resume mode (`resume`: `lib::resumeModeLabel` × `kResumeModeCount`), home library (`home_library`), show
+  as (`show_as`: `lib::showAsLabel`), tile size (`tile_size`: `cellScale`, `kTileScaleMin..Max` by 0.1, `"%.1fx"`), download box
+  art (`download_art`: `setDownloadArt`), close on launch (`close_on_launch`: what `library_ui.cpp:312` writes).
+- **Achievements** `achievements`: download pictures (`ra_images`: `ach.setImagesWanted`); row absent when `!achHeader().available`.
+- **Discord** `discord`: `discord_enabled`, `discord_art`, `discord_buttons` (`cfg.setBool` as `ui.cpp:332-337`).
+- **Neuro** `neuro` (`VJ_HAVE_NEURO`): `neuro_enabled`, `neuro_auto_force`, `neuro_interval` (0–10 by 0.5, `"%.1f s"`).
+- **The core's groups**: `coreOptionRows(host.optionCategories(), host.optionDefs(), …)`.
+- Last row of Interface: `moreRow()` relabelled **"Desktop settings…"** (id stays `more`).
+`setSetting("core:<key>", i)`: `defFor(key)`; not overridden, `i` within `def->values` (never the "(custom)" index) →
+`host.setOptionValue(key, def->values[i].value)`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `core_options_probe_test.cpp`: `CoreHost h; h.probeOptions(); CHECK(h.optionDefs().size() >= 100 && h.optionCategories().size() == 10);`
+    a def for `virtualjaguar_internal_resolution` exists with `categoryKey == "video"`; `h.optionVisible("virtualjaguar_netlink_host")`
+    is false (netlink off by default hides its host; read the gate in `libretro.c update_option_visibility` when writing the line
+    and pick a key it hides); `h.setOptionValue("virtualjaguar_internal_resolution", "2x")` with no game →
+    `h.optionValueFor(key, "") == "2x"` and `onOptionChanged` was called with (`key`, `"2x"`); `probeOptions()` twice is one push
+    (`optionPushes()` unchanged); `h.isLoaded()` stays false.
+  - `tv_settings_model_test.cpp`: `coreOptionRows` with two categories and three defs (one uncategorised, one typed with a custom
+    current, one hidden) → 2 rows in order General, then the category; `ids == {"core:a", "core:b"}`; the typed row's last choice
+    is `"137% (custom)"` and selected; the hidden one absent; an overridden one `readOnly` with the note; a `Host`-kind typed key
+    read-only with "Type it in Desktop settings"; a def whose `info` contains "restart" carries the restart note.
+    `sliderRow("audio_buffer", …, 80, 20, 200, 10, "%.0f ms")` → 19 choices, `index == 6`, `choices[0] == "20 ms"`;
+    `sliderRow(…, 85, …)` → 20 choices, last `"85 (custom)"` selected; `stepValue(r, 7, 20, 10, 85) == 90`; `stepValue(r, 19, …, 85) == 85`.
+    `groupsOf` keeps first-seen order and drops duplicates.
+  - `tv_ui_smoke` fixtures: `mkRow` takes a group key + label; the Phase 3 tests that walked `Down ×3` to Interface are rewritten
+    against the new fixture (`settingsFixture()`: picture, sound, interface, "core:video", "core:speed").
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "core_options_probe|tv_settings_model_unit|tv_ui_smoke"`. Expected: FAIL.
+- [ ] **Step 3: Implement** the probe, the model, the catalogue. Register `vj_core_options_probe_test` in `VJTvTests.cmake` the
+  way `core_host_thread_test` is registered.
+- [ ] **Step 4: Run** the full suite on the Studio. Expected: all PASS (`settings_reset_test` and `core_host_test` unchanged).
+- [ ] **Step 5: Commit** `feat(app): core options readable at startup; TV Settings catalogue of every core option and app choice (#991)`.
+
+### Task 20: the TV Settings screen for long grouped lists
+
+**Files:**
+- Modify `tv_settings.cpp` (`SettingsScreen`), `tv_widgets.h/.cpp` only if a helper is missing, `tests/tv_ui_smoke.cpp`,
+  `tests/tv_menu_headless.txt.in`, `tv_script.cpp` (expect `tv-group=KEY`: the focused group's key).
+- Test: `tv_ui_smoke`, `tv_menu_headless`.
+
+Rules:
+- `refresh()` builds `groups_` with `groupsOf(all)`; the rail is a `LinearFocus` over them with its own `Tween` scroll and
+  `moreArrow`s, clipped to the content height (the list's pattern at `tv_settings.cpp:110-150`); the focused group's item is kept
+  in view. Memory: `settings/rail` → `putItem(groupKey)`; `settings/<groupKey>` → index + row id; `settings/list` as before.
+- The list: as today, plus `PagePrev` / `PageNext` = `list_.move(∓visibleRows)`; the caption line is "<group> · N settings".
+- Left on the first choice of a row still returns to the rail (Phase 3); a read-only row ignores Left/Right/Accept and shows its note.
+- In the slot (embedded): the groups are the first level (as Phase 3) and that list scrolls the same way (17+ rows).
+- The "Desktop settings…" row hint is glyph(Accept) "Open".
+
+- [ ] **Step 1: Write the failing tests.**
+  - `settings_groups_in_row_order`: fixture groups picture, sound, interface, core:video, core:speed → the rail labels in that
+    order; a fixture with no `sound` row → `!drew("Sound")`.
+  - `settings_rail_scrolls_720p`: 20 fixture groups at 1280×720, Down ×19 → `focusLabel()` is the last group and its item is
+    drawn inside the content area (track the rail items' y in the test through `g_texts`).
+  - `settings_held_right_repeats`: a `core:x` row with 30 choices; press Right and hold through `frames(host, shell, 90)` (≈1.5 s
+    at the smoke clock) → `host.set.size() >= 10` and the last index is monotone; release → no further sets.
+  - `settings_page_jump`: 40 rows, RT → the focus moved by the visible count, LT back to 0.
+  - `settings_focus_memory_per_group_key`: row 3 of `core:video`, Up to the rail, Down to `core:speed`, Right, Back, Up, Right →
+    row 3 of `core:video` again.
+  - `settings_custom_value_row`: a slider row with "(custom)" selected: Right steps to the next grid value (`set.back().second`
+    = the grid index), Left to the previous; Accept wraps to 0.
+  - `settings_embedded_groups_scroll`: in the menu slot with 20 groups, Down ×19 keeps the focused group row inside the list area.
+  - `tv_menu_headless`: in the existing Settings block (no game), after `expect tv-screen=settings`: `expect tv-group=picture`;
+    Down ×7 → `expect tv-group=core:video` (Picture, Sound, Interface, Library, Achievements, Discord, [Neuro], General?, Video —
+    count the groups the headless build has when writing the line: Neuro is build-gated and General exists only if an option has
+    no category); Right; `expect tv-focus=Internal resolution` after the Downs that reach it; `pad tap dpright` →
+    `expect core-option=virtualjaguar_internal_resolution:2x` **with no game loaded** (decision 2); `saveconfig` →
+    `expect cfg=opt.virtualjaguar_internal_resolution:2x`; `pad tap dpleft` to restore. Shift the later blocks' times.
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "tv_ui_smoke|tv_menu_headless"`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the full suite on the Studio; then by hand on the Studio (`vjr.sh run`, windowed) hold Right on the RISC
+  overclock row for 3 s and read the frame time in the FPS overlay: no visible hitch from the per-step `saveConfig()`. If there
+  is one, coalesce: `AppHost::setSetting` sets `saveDue_ = now + 0.5 s` and `AppHost` saves at the first frame past it.
+- [ ] **Step 5: Commit** `feat(app): TV Settings scrolls its rail, pages its list, and shows every group (#991)`.
+
+### Task 21: Library in TV mode (every entry point, the in-game row, the launch confirm)
+
+**Files:**
+- Modify `app.h/.cpp` (`void openLibrary();`, the Ctrl/Cmd+L line `app.cpp:1792`), `ui.cpp:585`, `desktop.cpp:35` and `:88`,
+  `tv_shell.h/.cpp` (`openLibrary()`, `Row::Library`, `Page::ConfirmLaunch`, `requestLaunch`, `typed()` to the slot, `wide()`),
+  `tv_screen.h` (`virtual bool wide() const { return false; }`), `tv_ingame.cpp` (a wide slot takes the panel: no rail, the
+  hint bar still the shell's), `tv_library.cpp` (slot rules of decision 7, `shell_.requestLaunch`), `tv_home.cpp`,
+  `tv_details.cpp`, `tv_achievements.cpp` (`requestLaunch` instead of `host_.launch` — a no-op change with no game),
+  `tests/tv_ui_smoke.cpp`, `tests/tv_menu_headless.txt.in`, `tv_script.cpp` (expect `menu-page=root|save|load|confirm-reset|confirm-close|confirm-launch`).
+- Test: `tv_ui_smoke`, `tv_menu_headless`.
+
+**Interfaces:**
+
+```cpp
+// app.h
+void openLibrary();   // Ctrl/Cmd+L, File > Game library, Cmd::Library: the TV Library while TV mode is on (the in-game menu with a game), else toggleLibrary()
+// tv_shell.h
+bool openLibrary();                                            // as openSettings(), with makeLibraryScreen in the slot
+void requestLaunch(const GameRef& g, const StateRef* state);   // no game: launch now; a game running: Page::ConfirmLaunch first
+```
+
+Rules:
+- `Shell::requestLaunch`: `!host_.gameLoaded()` → `launch` / `launchState` + `launched()`. Otherwise `pendingLaunch_ = {g, state}`
+  and `enter(Page::ConfirmLaunch, Row::No)` with `title_ = "Close " + host_.gameTitle() + " and start " + g.title + "?"`; `Yes` →
+  the launch (the app closes the menu and arms the guard) and `launched()`; `No` → back to the Library in the slot, focus kept
+  (the slot screen is retired by `enter`, so `requestLaunch` keeps it aside and `No` puts it back: `menuPushScreen(std::move(kept), Row::Library)`).
+- `Shell::handleEvent` key path: `typed(c)` goes to `menuScreen_` when set, else the Base top.
+- `LibraryScreen` when `embedded()`: `Intent::Menu` and `Intent::Aux` ignored; `hints()` drop "Details" and "Jump to letter";
+  Accept → `shell_.requestLaunch(*g, nullptr)`; X → `requestLaunch(*g, &st[0])`; `wide()` true.
+- `drawMenu` with a wide slot: `DrawCtx::pos/size` = the panel inset (`pp + inset`, `ps − 2·inset`), the rail is not drawn, the
+  hint bar is the screen's hints + Back "Menu".
+- `App::openLibrary()`: `if (tvMode.active()) tvShell().openLibrary(); else toggleLibrary();` — a refused `openMenu()` toasts
+  (hardcore) and nothing opens. `ui.cpp:585` and `desktop.cpp:88` call it; the menu checkmark at `ui.cpp:585` is
+  `(library.show && !homeVisible()) || (tvMode.active() && tvShell().showingLibrary())` where `showingLibrary()` is the
+  Library section on the Base layer or `menuScreenId() == "library"`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `ingame_rows_full_order`: now `{"Resume", "Save state", "Load state", "Library", "Achievements", "Overlays", "Settings",
+    "Controls", "Enter TV mode", "Reset", "Close game"}`.
+  - `ingame_library_slot_wide`: `loaded = true`, open the menu, Down ×3, Accept → `menuScreenId() == "library"`, a tile title is
+    drawn, and the menu's rail text (the game title at `tv_ingame.cpp:86`) is not.
+  - `ingame_library_launch_asks`: Accept on a tile → `menuPage() == Page::ConfirmLaunch`, `focusedLabel(shell) == "No"`,
+    `launched.empty()`; Accept (No) → `menuScreenId() == "library"` and the same tile focused; Accept, Up, Accept (Yes) →
+    `launched == {tile.key}` and `guardArmed == 1` (the fake's `launch` sets `loaded = false` as the app's close does).
+  - `ingame_library_resume_state_asks`: X on a tile with a state → the confirm; Yes → `launchedState == {key, slot}`.
+  - `ingame_library_typed_filters`: `keyEvent` 'd' → the grid shows only titles with a 'd' initial (the Base Library's own test
+    pattern); `Intent::Aux` and `Intent::Menu` leave `screenId()`/`menuScreenId()` unchanged.
+  - `ingame_library_back_returns_to_row`: Back → the slot is gone and `focusedLabel(shell) == "Library"`.
+  - `base_library_opens_from_app`: `tvOn = true`, no game: `shell.openLibrary()` → `screenId() == "library"`; again → unchanged.
+  - `tv_menu_headless`: flip the Ctrl+L block (`:100-121`): with TV on, `key tap ctrl+L` → `expect library-window=0`,
+    `expect tv-screen=library`, `expect tv-owns-input=1`; again → unchanged; `pad tap b` → `tv-screen=home`. With TV off the block
+    keeps its first lines (the home search box). In the game block: `key tap ctrl+L` → `expect menu-open=1`, `expect menu-slot=library`,
+    `expect paused=1`; `pad tap a` → `expect menu-page=confirm-launch`, `expect tv-focus=No`, `expect loaded=1`; `pad tap b` →
+    `expect menu-slot=library`; `pad tap b` → `expect menu-slot=none`; `pad tap b` → `expect menu-open=0`. Hardcore: not scriptable
+    headless (no RA mock in this script); covered by `openMenu()`'s existing refusal test.
+- [ ] **Step 2: Run** `~/Workspace/Provenance/vj-eval/remote/tvb.sh "tv_ui_smoke|tv_menu_headless"`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the full suite on the Studio. Expected: all PASS.
+- [ ] **Step 5: Commit** `feat(app): Library is a TV screen while TV mode is on; in-game Library row with a launch confirm (#991)`.
+
+### Task 22: Studio screenshots, README, the PR
+
+- [ ] Extend `~/Workspace/Provenance/vj-eval/tvshots/tv-shots.txt`: Settings → `shot settings-rail.png`; Down to `core:video`,
+  Right → `shot settings-core-video.png`; Down to `core:speed`, Right, Down to the last row → `shot settings-core-speed-end.png`
+  (the list scrolled); `load <rom>`, `key tap ctrl+L` → `shot menu-library.png`; `pad tap a` → `shot confirm-launch.png`;
+  `pad tap b` ×3, `key tap ctrl+,` → `shot menu-settings-core.png`; `quit`. 1280×720 and 1920×1080, never locally.
+- [ ] README `### TV mode`: one paragraph — Settings and Library are TV screens whenever TV mode is on (Ctrl/Cmd+, and Ctrl/Cmd+L
+  included), every core option is there by the core's categories, the "Desktop settings…" row is for folders, BIOS files,
+  sign-in and remapping.
+- [ ] Commit `docs(app): TV mode screenshots and README for the full TV Settings and Library (#991)`; update the PR #1067 body
+  (the Phase 5 decisions as applied, the shots); report CI.
+
+### Phase 5 review focus (added to the list above)
+
+22. **No path still opens a desktop Settings or Library window while TV mode is on**: `grep -n 'showSettings = true\|library.show = \|toggleLibrary()' app/src`
+    must list only `App::openSettings` / `openLibrary`, `--show-window`, and `tvMoreSettingsOpen` (Task 21 script lines; by hand
+    on the Studio: the native File and Settings menus with TV on, with and without a game).
+23. **A hardcore-disallowed core option changed from TV Settings** (`Achievements::checkSettings`) behaves exactly as from the
+    desktop, with and without a game (Task 19 `setOptionValue` path unchanged; by hand with `--ra-mock app/tests/ra`, hardcore on,
+    change the RISC overclock from the TV Settings: the same refusal / downgrade as the desktop combo).
+24. **A core option changed mid-game reaches the core** after the menu closes (Phase 3 review focus 14, re-run against the new
+    row location in the script) and **one changed with no game reaches the next game** (Task 20 script: `opt.*` in the config,
+    then `load` → `expect core-option=…:2x`).
+25. **Launching from the in-game Library never loses the running game's state without the confirm**: `expect loaded=1` after the
+    first A; `openContent`'s auto-save runs on Yes (`app.cpp:1171`); the Phase 1 release guard masks the Yes press from the new
+    game (`guardArmed == 1`).
+26. **A typed / numeric option is usable on a pad**: a held Right steps every 80 ms and stops at the end (clamp); a "(custom)"
+    value is shown, kept until stepped, and never written back as a non-preset (`settings_custom_value_row`,
+    `settings_held_right_repeats`).
+27. **The startup probe must not change what a game sees**: `startSession` re-pushes the table (`core_host.cpp:775-795`), the
+    probe's `environ_cb` is replaced by the real one before `retro_init`, and no non-option environment command is answered while
+    probing (`core_options_probe_test`: `isLoaded()` false, `optionPushes()` counts one). With `--emu-thread on`, the UI reads the
+    published table from the first frame (`core_host.cpp:1213`): `tv_menu_headless` runs inline only (`VJTvTests.cmake:89`), so
+    add a `tv_menu_headless_threaded` twin with `--emu-thread on` the way `VJAchTests.cmake:41-56` registers `<name>_threaded`,
+    or at least run the no-game `core-option` block by hand on the Studio with the thread on.
+28. **The rail with 17+ groups on a 720p window**: every group reachable and visible when focused (`settings_rail_scrolls_720p`,
+    `settings-core-speed-end.png`).
 
 ---
 
@@ -1827,7 +2515,7 @@ Written 2026-10-20 while revising Phase 3; Tasks 16–17 below are as first plan
   - §6 → Task 4, plus every screen task;
   - §7 → the file lists;
   - §8 → Tasks 6, 7, 16;
-  - §9 → Tasks 16–17 and the phase order;
+  - §9 → Tasks 17–18 and the phase order;
   - §10 → the tests in every task, plus screenshots in Tasks 5, 11 and 15;
   - §11 → nothing here builds anything it excludes.
 - **Added beyond §7's hook list, because the code needs them:** `tv::Host` and its adapter (no test links

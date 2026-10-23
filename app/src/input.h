@@ -100,6 +100,11 @@ public:
     bool takeHelpToggle() { bool h = helpToggle_; helpToggle_ = false; return h; }
     // The TV-menu button was pressed (plain binding) or held (a hold binding reached kHoldMs) since the last call.
     bool takeTvMenuToggle() { bool t = tvMenu_; tvMenu_ = false; return t; }
+    // What to press for the TV menu, as a person reads it (the first-use hint): that pad's first C_TVMENU binding, hold bindings
+    // first ("Share (hold)", "Guide (hold)", "Paddle P1"), and the keyboard profile's first plain C_TVMENU key ("F4").  "" = none
+    // bound, or (the pad) an id that is not open.
+    std::string tvMenuBindingText(SDL_JoystickID id) const;
+    std::string tvMenuKeyText() const;
 
     // ---- dual-use buttons (hold_arbiter.h) -----------------------------------------------------
     // Every UI frame, also while paused: the holds that reached the threshold fire the TV-menu toggle.  `live` = a

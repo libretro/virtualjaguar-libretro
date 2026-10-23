@@ -250,6 +250,19 @@ std::string navButtonName(PadFamily f, const Binding& b) {
     return b.display();
 }
 
+std::string tvMenuButtonName(PadFamily f, const Binding& b) {
+    const bool ps = f == PadFamily::PlayStation, sw = f == PadFamily::Switch;
+    std::string s;
+    if (b.kind == Binding::PadButton && b.code == SDL_GAMEPAD_BUTTON_MISC1) s = sw ? "Capture" : ps ? "Mic" : "Share";
+    else if (b.kind == Binding::PadButton && b.code == SDL_GAMEPAD_BUTTON_GUIDE) s = sw ? "Home" : ps ? "PS" : "Guide";
+    else {
+        Binding plain = b;   // (Binding::display(), navButtonName's fallback, appends " (hold)" itself: name it plain, suffix once)
+        plain.hold = false;
+        s = navButtonName(f, plain);
+    }
+    return b.hold ? s + " (hold)" : s;
+}
+
 std::string padButtonLabel(SDL_Gamepad* g, const NavProfile& p, tv::Intent in) {
     const Binding bd = p.binding(in);
     if (bd.kind == Binding::None) return std::string();

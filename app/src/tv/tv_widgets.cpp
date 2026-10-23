@@ -12,6 +12,7 @@ namespace widgets {
 namespace {
 
 std::vector<std::string>* g_probe = nullptr;
+std::vector<TextAt>* g_posProbe = nullptr;
 
 // The UTF-8 string cut to the longest prefix (plus an ellipsis) that fits in maxW.
 std::string fit(float px, const std::string& s, float maxW) {
@@ -26,6 +27,29 @@ std::string fit(float px, const std::string& s, float maxW) {
     return dots;
 }
 
+// The UTF-8 string's longest prefix (at least one character) that fits in maxW at px.
+size_t prefixThatFits(float px, const std::string& s, float maxW) {
+    size_t best = 0, n = 0;
+    while (n < s.size()) {
+        n++;
+        while (n < s.size() && (static_cast<unsigned char>(s[n]) & 0xC0) == 0x80) n++;   // on to the next character boundary
+        if (best > 0 && textWidth(px, s.substr(0, n)) > maxW) break;
+        best = n;
+    }
+    return best;
+}
+
+// Every space-separated word of `s` is no wider than maxW at px.
+bool wordsFit(float px, const std::string& s, float maxW) {
+    for (size_t i = 0; i < s.size();) {
+        size_t j = s.find(' ', i);
+        if (j == std::string::npos) j = s.size();
+        if (j > i && textWidth(px, s.substr(i, j - i)) > maxW) return false;
+        i = j + 1;
+    }
+    return true;
+}
+
 ImVec2 scaledAbout(ImVec2 pos, ImVec2 size, float k, ImVec2* outSize) {
     const ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
     *outSize = ImVec2(size.x * k, size.y * k);
@@ -35,6 +59,7 @@ ImVec2 scaledAbout(ImVec2 pos, ImVec2 size, float k, ImVec2* outSize) {
 }  // namespace
 
 void setTextProbe(std::vector<std::string>* sink) { g_probe = sink; }
+void setTextPosProbe(std::vector<TextAt>* sink) { g_posProbe = sink; }
 
 void FocusTweens::update(int count, int focusIndex, int pageKey, double now) {
     if (pageKey != key || (int)t.size() != count) {
@@ -89,10 +114,82 @@ std::string formatDate(int64_t secs) {
     return std::to_string(tm.tm_mday) + " " + kMonths[tm.tm_mon % 12] + " " + std::to_string(tm.tm_year + 1900);
 }
 
+std::vector<std::string> wrapLines(float px, const std::string& s, float maxW, int maxLines) {
+    std::vector<std::string> words;
+    for (size_t i = 0; i < s.size();) {
+        while (i < s.size() && s[i] == ' ') i++;
+        size_t j = i;
+        while (j < s.size() && s[j] != ' ') j++;
+        if (j > i) words.push_back(s.substr(i, j - i));
+        i = j;
+    }
+    std::vector<std::string> lines;
+    if (words.empty()) return lines;
+    if (maxW <= 0) {
+        std::string one;
+        for (const std::string& w : words) one += (one.empty() ? "" : " ") + w;
+        return {one};
+    }
+    std::string line;
+    for (const std::string& w : words) {
+        const std::string joined = line.empty() ? w : line + " " + w;
+        if (textWidth(px, joined) <= maxW) {
+            line = joined;
+            continue;
+        }
+        if (!line.empty()) lines.push_back(line);
+        line = w;
+        while (textWidth(px, line) > maxW) {   // a word wider than the line: split where it must be
+            const size_t n = prefixThatFits(px, line, maxW);
+            if (n >= line.size()) break;
+            lines.push_back(line.substr(0, n));
+            line = line.substr(n);
+        }
+    }
+    lines.push_back(line);
+    if (maxLines > 0 && (int)lines.size() > maxLines) {   // the last line that fits ends in "...", cut at a word
+        lines.resize((size_t)maxLines);
+        std::string& last = lines.back();
+        const std::string dots = "...";
+        while (!last.empty() && textWidth(px, last + dots) > maxW) {
+            const size_t sp = last.rfind(' ');
+            if (sp != std::string::npos) {
+                last.resize(sp);
+                continue;
+            }
+            size_t n = last.size() - 1;   // one word left: cut it back to a character boundary
+            while (n > 0 && (static_cast<unsigned char>(last[n]) & 0xC0) == 0x80) n--;
+            last.resize(n);
+        }
+        last += dots;
+    }
+    return lines;
+}
+
+ImVec2 textLines(ImDrawList* dl, float px, ImVec2 pos, ImU32 c, const std::vector<std::string>& lines, float lineGap, bool alignRight) {
+    ImFont* f = ImGui::GetFont();
+    if (g_probe) {
+        std::string all;
+        for (const std::string& l : lines) all += (all.empty() ? "" : " ") + l;
+        g_probe->push_back(all);
+    }
+    float w = 0, y = pos.y;
+    for (const std::string& l : lines) {
+        const float lw = textWidth(px, l);
+        const ImVec2 at(alignRight ? pos.x - lw : pos.x, y);
+        if (g_posProbe) g_posProbe->push_back({l, at, px});
+        dl->AddText(f, px, at, c, l.c_str(), l.c_str() + l.size());
+        w = std::max(w, lw);
+        y += px + lineGap;
+    }
+    return ImVec2(w, lines.empty() ? 0.0f : y - pos.y - lineGap);
+}
+
 ImVec2 text(ImDrawList* dl, float px, ImVec2 pos, ImU32 c, const std::string& s, float maxW, float wrapW) {
     ImFont* f = ImGui::GetFont();
     const std::string shown = wrapW > 0 ? s : fit(px, s, maxW);
     if (g_probe) g_probe->push_back(shown);
+    if (g_posProbe) g_posProbe->push_back({shown, pos, px});
     dl->AddText(f, px, pos, c, shown.c_str(), shown.c_str() + shown.size(), wrapW);
     return f->CalcTextSizeA(px, FLT_MAX, wrapW, shown.c_str(), shown.c_str() + shown.size());
 }
@@ -188,10 +285,18 @@ Hit tile(ImDrawList* dl, const Metrics& m, ImVec2 pos, ImVec2 size, const TileAr
         const ImVec2 i0(p0.x + (sz.x - iw) * 0.5f, p0.y + (sz.y - ih) * 0.5f);
         dl->AddImageRounded((ImTextureID)(intptr_t)a.tex, i0, ImVec2(i0.x + iw, i0.y + ih), ImVec2(0, 0), ImVec2(1, 1),
                             IM_COL32_WHITE, round);
-    } else {   // no picture (yet): the title, wrapped inside the padding and sitting at the foot
-        const float pad = 18 * m.u * k, px = m.caption * k, wrap = sz.x - 2 * pad;
-        const ImVec2 ts = textSize(px, a.title, wrap);
-        text(dl, px, ImVec2(p0.x + pad, std::max(p0.y + pad, p1.y - pad - ts.y)), col(p.placeholderText), a.title, 0, wrap);
+    } else {   // no picture (yet): the title, wrapped at words inside the padding and sitting at the foot
+        // The lines are broken at the tile's size at rest and drawn at the focused size: both grow together, so focus never rewraps.
+        const float pad = 8 * m.u, wrap = size.x - 2 * pad;
+        float px0 = m.caption;
+        for (const float tryPx : {m.caption, m.minText}) {   // the caption size if the longest word fits the line, else the 24 u floor
+            px0 = tryPx;
+            if (wordsFit(tryPx, a.title, wrap)) break;
+        }
+        const int maxLines = std::max(1, (int)((size.y - 2 * pad) / px0));
+        const std::vector<std::string> lines = wrapLines(px0, a.title, wrap, maxLines);
+        const float px = px0 * k, h = (float)lines.size() * px;
+        textLines(dl, px, ImVec2(p0.x + pad * k, std::max(p0.y + pad * k, p1.y - pad * k - h)), col(p.placeholderText), lines);
     }
     if (a.disc) {
         const float px = m.minText * k, padX = 8 * m.u * k, padY = 3 * m.u * k;

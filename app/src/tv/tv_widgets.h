@@ -22,6 +22,14 @@ namespace widgets {
 
 // Tests: every string the widgets draw is also appended to `sink` (nullptr = off, the default).
 void setTextProbe(std::vector<std::string>* sink);
+// Tests: ... and where each one was drawn (the pen position, pixels).  Separate from the string probe so a test that wants places
+// switches it on alone (nullptr = off, the default).
+struct TextAt {
+    std::string s;
+    ImVec2 pos;
+    float px;
+};
+void setTextPosProbe(std::vector<TextAt>* sink);
 
 // One 0..1 "how focused" value per item of a list; moving the focus retargets two of them (the old item eases out,
 // the new one eases in).  A change of `key` (another page) or of the item count starts over with no animation.
@@ -50,6 +58,15 @@ ImVec2 text(ImDrawList* dl, float px, ImVec2 pos, ImU32 col, const std::string& 
 float textWidth(float px, const std::string& s);
 // The size `text` would draw `s` at, wrapped at wrapW (0 = no wrap).
 ImVec2 textSize(float px, const std::string& s, float wrapW = 0);
+// `s` broken into lines no wider than maxW, at spaces (never inside a word).  More than maxLines (0 = any number) and the last line
+// is cut at a word, plus "..."; a single word wider than maxW cannot be broken at a space, so it is split where it must (the only
+// time a word is cut), and the ellipsis does not apply to it.  UTF-8 safe.  maxW <= 0 = one line.
+std::vector<std::string> wrapLines(float px, const std::string& s, float maxW, int maxLines = 0);
+// Draws wrapLines' result one line under the other (`lineGap` between them), the left edge at pos.x, or -- `alignRight` -- every line
+// ending at pos.x.  The text probe gets the lines joined with spaces once (the whole text, as `text` would), the position probe each
+// line at its place.  Returns the block's size.
+ImVec2 textLines(ImDrawList* dl, float px, ImVec2 pos, ImU32 col, const std::vector<std::string>& lines, float lineGap = 0,
+                 bool alignRight = false);
 // "16 Oct 2026": a date in the local time zone, from seconds since the epoch (English month names, whatever the locale).
 std::string formatDate(int64_t secs);
 

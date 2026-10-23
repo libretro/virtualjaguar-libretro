@@ -22,6 +22,7 @@ public:
     bool menuPause(std::string& why) override;
     void menuResume() override;
     bool netplayActive() const override;
+    bool menuRunsOn() const override;
     bool canLoadState() const override;
     std::vector<SlotInfo> slots() override;
     bool saveState(int slot) override;
@@ -43,6 +44,7 @@ public:
     bool desktopWindowOpen() const override;
     bool libraryScanning() const override;
     std::vector<GameRef> games(List l) override;
+    bool hasGames() const override;
     Art art(const GameRef& g) override;
     std::vector<StateRef> states(const GameRef& g) override;
     Art stateThumb(const GameRef& g, const StateRef& state) override;

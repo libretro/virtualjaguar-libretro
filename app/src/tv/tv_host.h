@@ -52,12 +52,13 @@ enum class List { All, Favorites, Recent, Disc };
 // One row of the TV Settings screen, by value (AppHost fills them from the app's settings and the core's options, so the
 // screen never sees either).  `choices` are what Left / Right / Accept step through; "more" has none.
 struct SettingRow {
-    std::string id, label;             // ids: shader integer aspect resolution risc_clock idle_skip speed_note volume fps vsync theme tv_mode more
+    std::string id, label;             // app rows: shader integer smooth stretch aspect vsync fullscreen volume mute audio_buffer fps ... more; a core option: "core:" + its key
     std::vector<std::string> choices;  // empty for "more"
     int index = 0;
     bool readOnly = false;
-    std::string note;                  // shown under the value: why it is read-only
-    int group = 0;                     // 0 Picture, 1 Speed, 2 Sound, 3 Interface
+    std::string note;                  // shown under the value: why it is read-only, or what to know about it
+    std::string group;                 // the rail item's key: "picture" "sound" "interface" "library" "achievements" "discord" "neuro", "core:" + a category key ("core:" = no category)
+    std::string groupLabel;            // ... and what the rail shows for it
 };
 
 // One achievement of the loaded game, or one active leaderboard tracker (kind Tracker: read-only, no status).  AppHost fills them
@@ -102,9 +103,10 @@ public:
     virtual double now() const = 0;
     virtual bool gameLoaded() const = 0;
     virtual std::string gameTitle() const = 0;
-    virtual bool menuPause(std::string& why) = 0;    // false = refused (hardcore rationing); netplay: true, not paused
+    virtual bool menuPause(std::string& why) = 0;    // App: always true -- netplay and hardcore's refusal open the menu over a game that keeps running
     virtual void menuResume() = 0;                   // restores the pause state from before the menu
     virtual bool netplayActive() const = 0;          // netplay.configured()
+    virtual bool menuRunsOn() const { return false; }   // the menu is over a running game because hardcore would not pause it (banner)
     virtual bool canLoadState() const = 0;           // ach.allowStateLoad()
     virtual std::vector<SlotInfo> slots() = 0;       // 0..9, thumbnails from App::slotThumb
     virtual bool saveState(int slot) = 0;
@@ -140,6 +142,7 @@ public:
     // All / Disc / Favorites: by title, case-insensitive; Recent: newest first.  Never BIOS.  Fetched fresh every frame.
     virtual bool libraryScanning() const = 0;                    // a scan is running (an empty library may still fill up)
     virtual std::vector<GameRef> games(List l) = 0;
+    virtual bool hasGames() const = 0;                           // the library lists at least one game (never BIOS); no copy, cheap enough for a frame
     virtual Art art(const GameRef& g) = 0;                       // starts the load on first use; tex 0 until it is ready
     virtual std::vector<StateRef> states(const GameRef& g) = 0;
     virtual Art stateThumb(const GameRef& g, const StateRef& state) = 0;

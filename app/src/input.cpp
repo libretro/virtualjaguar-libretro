@@ -283,6 +283,24 @@ void InputManager::feedHoldEdges(const SDL_Event& e) {
     }
 }
 
+std::string InputManager::tvMenuBindingText(SDL_JoystickID id) const {
+    for (const Pad& p : pads_) {
+        if (p.id != id) continue;
+        const std::vector<Binding>& v = p.profile.binds[C_TVMENU];
+        for (int pass = 0; pass < 2; pass++)   // hold bindings first: a hold is the one the default pad uses
+            for (const Binding& b : v)
+                if (b.kind == Binding::PadButton && b.hold == (pass == 0)) return tvMenuButtonName(navProfile(id).family, b);
+        return "";
+    }
+    return "";
+}
+
+std::string InputManager::tvMenuKeyText() const {
+    for (const Binding& b : kbProfile_.binds[C_TVMENU])
+        if (b.kind == Binding::Key && !b.hold) return b.display();
+    return "";
+}
+
 void InputManager::tickHolds(uint64_t ms, bool live) {
     holds_.setLive(live);
     if (holds_.takeFires(ms) > 0) tvMenu_ = true;

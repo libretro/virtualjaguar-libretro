@@ -6,6 +6,7 @@
 #include "desktop_nav_popup.h"
 #include "tv/tv_screen.h"
 #include "tv/tv_shell.h"
+#include "tv/tv_settings_model.h"
 #include "tv/tv_widgets.h"
 
 #include "imgui.h"
@@ -13,6 +14,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -37,6 +40,7 @@ static int g_fail = 0, g_checks = 0, g_imguiErrors = 0;
 // What the menu asked of the app, and the app state it reads.
 struct FakeHost : Host {
     bool loaded = true, paused = false, canLoad = true, netplay = false;
+    bool runsOn = false;   // menuPause() opens the menu over a running game (App: hardcore would not pause it)
     std::string refusePause;   // non-empty: menuPause() refuses with this reason (hardcore rationing)
     bool pausedBeforeMenu = false, heldPause = false;
     double clock = 0;
@@ -64,6 +68,7 @@ struct FakeHost : Host {
             return false;
         }
         if (netplay) return true;   // the link keeps running
+        if (runsOn) return true;    // hardcore: the game runs on under the menu
         pausedBeforeMenu = paused;
         paused = true;
         heldPause = true;
@@ -75,6 +80,7 @@ struct FakeHost : Host {
         heldPause = false;
     }
     bool netplayActive() const override { return netplay; }
+    bool menuRunsOn() const override { return runsOn; }
     bool canLoadState() const override { return canLoad; }
     std::vector<SlotInfo> slots() override {
         std::vector<SlotInfo> v;
@@ -99,8 +105,11 @@ struct FakeHost : Host {
         return intentForButton(b);
     }
     bool keyboardLast = false;   // the keyboard was used last: it has no key for Menu / Alt / Aux (as AppHost::glyph)
+    std::string pageLt, pageRt;  // the glyphs of PagePrev / PageNext ("" = the device has none, the default here)
     std::string glyph(Intent i) const override {
         switch (i) {
+        case Intent::PagePrev: return pageLt;
+        case Intent::PageNext: return pageRt;
         case Intent::Menu: return keyboardLast ? "" : "Start";
         case Intent::Alt: return keyboardLast ? "" : "X";
         case Intent::Aux: return keyboardLast ? "" : "Y";
@@ -130,14 +139,16 @@ struct FakeHost : Host {
         }
         return {};
     }
+    bool hasGames() const override { return !all.empty(); }
     Art art(const GameRef&) override { return {}; }
     std::vector<StateRef> states(const GameRef& g) override {
         auto it = st.find(g.key);
         return it == st.end() ? std::vector<StateRef>() : it->second;
     }
     Art stateThumb(const GameRef&, const StateRef&) override { return {}; }
-    void launch(const GameRef& g) override { launchedKey = g.key; launches++; }
-    void launchState(const GameRef& g, const StateRef& state) override { launchedState = {g.key, state.slot}; launchedDisc = state.disc; }
+    // (A launch with a game running closes it, as the app's does: loaded is false after.)
+    void launch(const GameRef& g) override { launchedKey = g.key; launches++; loaded = false; }
+    void launchState(const GameRef& g, const StateRef& state) override { launchedState = {g.key, state.slot}; launchedDisc = state.disc; loaded = false; }
     bool isFavorite(const GameRef& g) override { return favSet.count(g.key) != 0; }
     void setFavorite(const GameRef& g, bool on) override {
         if (on) favSet.insert(g.key);
@@ -275,7 +286,7 @@ static void menuOpensAndWalks() {
     CHECK(shell.menuPage() == Shell::Page::LoadSlots);
     frames(host, shell, 10);
     back(host, shell);
-    down(host, shell, 6);   // Achievements, Overlays, Settings, Controls, Enter TV mode, Reset
+    down(host, shell, 7);   // Library, Achievements, Overlays, Settings, Controls, Enter TV mode, Reset
     accept(host, shell);
     CHECK(shell.menuPage() == Shell::Page::ConfirmReset);
     frames(host, shell, 10);
@@ -327,7 +338,7 @@ static void closeGameAsksFirst() {
     FakeHost host;
     Shell shell(host);
     shell.openMenu();
-    down(host, shell, 9);
+    down(host, shell, 10);
     CHECK(std::string(focusedLabel(shell)) == "Close game");
     accept(host, shell);                                // -> the confirm, focus on No
     CHECK(shell.menuPage() == Shell::Page::ConfirmClose && std::string(focusedLabel(shell)) == "No");
@@ -355,6 +366,48 @@ static void netplayBanner() {
     g_texts.clear();
     frames(solo, shell2, 3);
     CHECK(!drew("Netplay: the game keeps running"));
+}
+
+// Hardcore refusing the pause (#991): the menu still opens, the game keeps running, and the banner says so.
+static void hardcoreBanner() {
+    FakeHost host;
+    host.runsOn = true;
+    Shell shell(host);
+    CHECK(shell.openMenu() && shell.menuOpen() && !host.paused);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Hardcore: the game keeps running"));
+    CHECK(!drew("Netplay: the game keeps running"));
+    CHECK(g_imguiErrors == 0);
+}
+
+// Shell::openSettings (#991): TV off -> refused; no game -> the Settings section; a game -> the menu with Settings in the slot,
+// from the root and from a page, and a second call changes nothing.
+static void openSettingsRoutes() {
+    FakeHost host;
+    host.tv = false;
+    host.loaded = false;
+    Shell shell(host);
+    CHECK(!shell.openSettings() && !shell.menuOpen());
+    host.tv = true;
+    CHECK(shell.openSettings() && shell.section() == Section::Settings && !shell.menuOpen());
+    frames(host, shell, 3);
+    host.loaded = true;
+    Shell inGame(host);
+    CHECK(inGame.openSettings() && inGame.menuOpen() && inGame.menuScreenId() == "settings");
+    frames(host, inGame, 3);
+    CHECK(inGame.openSettings() && inGame.menuScreenId() == "settings");
+    back(host, inGame);
+    CHECK(inGame.menuOpen() && !inGame.menuHasScreen() && std::string(focusedLabel(inGame)) == "Settings");
+    Shell paged(host);
+    paged.openMenu();
+    down(host, paged, 1);                               // Save state
+    accept(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::SaveSlots);
+    CHECK(paged.openSettings() && paged.menuScreenId() == "settings");
+    back(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::Root && std::string(focusedLabel(paged)) == "Settings");
+    CHECK(g_imguiErrors == 0);
 }
 
 static void hintBarShowsWhatWorks() {
@@ -411,7 +464,7 @@ static void controlsRowShowsNeverHides() {
     Shell shell(host);
     shell.openMenu();
     frames(host, shell, 2);
-    down(host, shell, 6);   // Resume, Save state, Load state, Achievements, Overlays, Settings, Controls
+    down(host, shell, 7);   // Resume, Save state, Load state, Library, Achievements, Overlays, Settings, Controls
     CHECK(std::string(focusedLabel(shell)) == "Controls");
     accept(host, shell);
     CHECK(host.controls == 1 && host.controlsShown && !shell.menuOpen());
@@ -1463,6 +1516,28 @@ static void homeEmptyLibraryCard() {
     CHECK(host.launches == 0 && host.launchedState.first.empty());
 }
 
+// Finding B: games in the library but nothing on Home's shelves is not "empty": it points at the Library section (RB).
+static void homeWithGamesButNoShelvesPointsAtLibrary() {
+    const char* empty = "Your library is empty. Add game folders in desktop mode: View > TV mode turns TV mode off.";
+    FakeHost host;
+    host.all = mkGames("Game", 20);   // 20 cartridges, nothing played, no favorites, no discs
+    Shell shell(host);
+    g_texts.clear();
+    homeSetup(host, shell);
+    frames(host, shell, 2);
+    CHECK(drew("Nothing to continue yet. Press RB for your Library.") && !drew(empty));
+    CHECK(!drew("Play") && !drew("Continue playing"));
+    host.scanning = true;                               // a rescan changes nothing for a library that has games
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Nothing to continue yet. Press RB for your Library.") && !drew("Scanning your library..."));
+    host.all.clear();                                   // and with none, the old wording is back (homeEmptyLibraryCard)
+    host.scanning = false;
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew(empty) && !drew("Nothing to continue yet. Press RB for your Library."));
+}
+
 static void formatDateIsEnglishDayMonthYear() {
 #ifndef _WIN32
     setenv("TZ", "UTC", 1);
@@ -2065,9 +2140,11 @@ static void ingameTvToggleHiddenWhenOff() {
     shell.openMenu();
     g_texts.clear();
     frames(host, shell, 3);
-    CHECK(drew("Enter TV mode") && !drew("Exit TV mode"));
-    down(host, shell, 7);                                      // ... Settings, Controls, Enter TV mode
+    down(host, shell, 8);                                      // ... Settings, Controls, Enter TV mode (past the rows the list shows at first: it scrolls)
     CHECK(std::string(focusedLabel(shell)) == "Enter TV mode");
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Enter TV mode") && !drew("Exit TV mode"));
     accept(host, shell);
     CHECK(host.tv && shell.menuOpen() && shell.menuPage() == Shell::Page::Root);
     CHECK(std::string(focusedLabel(shell)) == "Exit TV mode");   // the focus stayed on the row, its label flipped
@@ -2341,24 +2418,28 @@ static void desktopWindowTakesInputFromBase() {
 
 // ---- TV Settings (phase 3, Task 12) -----------------------------------------------------------------------------------
 
-static SettingRow mkRow(const char* id, const char* label, int group, std::vector<std::string> choices, int index = 0) {
+static SettingRow mkRow(const char* id, const char* label, const char* group, const char* groupLabel, std::vector<std::string> choices, int index = 0) {
     SettingRow r;
     r.id = id;
     r.label = label;
     r.group = group;
+    r.groupLabel = groupLabel;
     r.choices = std::move(choices);
     r.index = index;
     return r;
 }
 
-// Picture: Aspect ratio; Sound: Volume; Interface: Show FPS, then More settings -- no Speed row, so no Speed group.
+// The rail: Picture (Aspect ratio), Sound (Volume), Interface (Show FPS, then Desktop settings), then two of the core's categories,
+// Video (Internal resolution) and Speed (RISC overclock) -- the order the host lists them in (Phase 5: the app's tabs, then the core's).
 static std::vector<SettingRow> settingsFixture() {
     std::vector<std::string> pct;
     for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
-    return {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3", "16:9", "8:7 (square pixels)"}),
-            mkRow("volume", "Volume", 2, pct, 5),
-            mkRow("fps", "Show FPS", 3, {"Off", "On"}),
-            mkRow("more", "More settings\xE2\x80\xA6", 3, {})};
+    return {mkRow("aspect", "Aspect ratio", "picture", "Picture", {"Core default", "4:3", "16:9", "8:7 (square pixels)"}),
+            mkRow("volume", "Volume", "sound", "Sound", pct, 5),
+            mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"}),
+            mkRow("more", "More settings\xE2\x80\xA6", "interface", "Interface", {}),
+            mkRow("core:virtualjaguar_internal_resolution", "Internal resolution", "core:video", "Video", {"1x (native)", "2x"}),
+            mkRow("core:virtualjaguar_risc_clock_scale", "RISC overclock", "core:speed", "Speed", {"0.5x", "1x (stock)", "2x"}, 1)};
 }
 
 // A TV host on the Settings section (reached through the shell, not by counting RB presses), drawn once.
@@ -2391,8 +2472,8 @@ static void settingsRailAndList() {
     g_texts.clear();
     frames(host, shell, 2);
     CHECK(shell.screenId() == "settings");
-    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && !drew("Speed"));
-    CHECK(drew("Aspect ratio") && !drew("Show FPS"));   // the list is the focused group's: Picture
+    CHECK(drew("Picture") && drew("Sound") && drew("Interface") && drew("Video") && drew("Speed"));   // the rail: the app's tabs, then the core's categories
+    CHECK(drew("Aspect ratio") && !drew("Show FPS") && !drew("Internal resolution"));   // the list is the focused group's: Picture
     down(host, shell, 2);                                // Picture, Sound, Interface
     g_texts.clear();
     frames(host, shell, 2);
@@ -2454,7 +2535,7 @@ static void settingsHints() {
     // A read-only row changes nothing, so the bar does not offer it.
     FakeHost ro;
     Shell roShell(ro);
-    SettingRow r = mkRow("fps", "Show FPS", 3, {"Off", "On"});
+    SettingRow r = mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"});
     r.readOnly = true;
     r.note = "Set for this session";
     settingsSetup(ro, roShell, {r});
@@ -2469,7 +2550,7 @@ static void settingsHints() {
 static void settingsTvModeOffLeavesCleanly() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("tv_mode", "TV mode", 3, {"Off", "Manual", "Auto"}, 1)});
+    settingsSetup(host, shell, {mkRow("tv_mode", "TV mode", "interface", "Interface", {"Off", "Manual", "Auto"}, 1)});
     CHECK(shell.ownsInput() && baseWindow() && baseWindow()->WasActive);
     rightN(host, shell, 1);                              // the list (only Interface exists)
     accept(host, shell);                                 // Manual -> Auto
@@ -2493,10 +2574,32 @@ static void settingsTvModeOffLeavesCleanly() {
     CHECK(g_imguiErrors == 0);
 }
 
+// The Auto rows (#991 phase 4): two On / Off rows after the TV mode row, steppable like any other (Right moves without wrapping,
+// Accept wraps over the two choices), each change handed to the host as (id, index).
+static void settingsAutoRowsStep() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell,
+                  {mkRow("tv_mode", "TV mode", "interface", "Interface", {"Off", "Manual", "Auto"}, 2), mkRow("tv_auto_fs", "Auto: in fullscreen", "interface", "Interface", {"Off", "On"}, 0),
+                   mkRow("tv_auto_pad", "Auto: when a controller is used", "interface", "Interface", {"Off", "On"}, 1)});
+    CHECK(shell.focusLabel() == "Interface");            // on the rail: the group (the headless script's `expect tv-focus=`)
+    rightN(host, shell, 1);                              // the list (only Interface exists)
+    CHECK(shell.focusLabel() == "TV mode");
+    down(host, shell, 1);                                // Auto: in fullscreen
+    CHECK(shell.focusLabel() == "Auto: in fullscreen");
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "tv_auto_fs", 1));
+    accept(host, shell);
+    CHECK(lastSet(host, "tv_auto_fs", 0));               // Accept wraps over the two choices
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Auto: in fullscreen") && drew("Auto: when a controller is used"));
+}
+
 static void settingsReadonlyRowIgnoresInput() {
     FakeHost host;
     Shell shell(host);
-    SettingRow r = mkRow("resolution", "Internal resolution", 0, {"1x", "2x"}, 1);
+    SettingRow r = mkRow("resolution", "Internal resolution", "picture", "Picture", {"1x", "2x"}, 1);
     r.readOnly = true;
     r.note = "Set for this session by Netplay";
     settingsSetup(host, shell, {r});
@@ -2561,7 +2664,7 @@ static void settingsHiddenRowsAbsent() {
     g_texts.clear();
     frames(host, shell, 2);
     CHECK(!drew("Shader"));
-    SettingRow shader = mkRow("shader", "Shader", 0, {"Off", "crt-royale", "lcd"}, 1);
+    SettingRow shader = mkRow("shader", "Shader", "picture", "Picture", {"Off", "crt-royale", "lcd"}, 1);
     host.rows.insert(host.rows.begin(), shader);
     g_texts.clear();
     frames(host, shell, 2);
@@ -2598,40 +2701,45 @@ static void baseHintsHiddenOverDesktopWindow() {
     CHECK(g_imguiErrors == 0);
 }
 
-// Speed before a game has run (approved change G): the group is in the rail with its one line, which nothing steps; on the Base screen
-// and in the menu's groups level.
-static std::vector<SettingRow> speedNoteRows() {
-    SettingRow note = mkRow("speed_note", "Available once a game has run", 1, {});
-    note.readOnly = true;
-    std::vector<SettingRow> rows = settingsFixture();
-    rows.insert(rows.begin() + 1, note);                 // after the Picture row, before Sound
-    return rows;
-}
-
-static void settingsSpeedNoteBeforeAGame() {
+// The core's categories are rail items after the app's (Phase 5 decision 3): their rows are the core options, each a row whose id
+// carries the option's key, stepped like any other; groups come and go with the rows, and the focus is remembered by the group's key.
+static void settingsCoreGroups() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, speedNoteRows());
+    settingsSetup(host, shell);
+    down(host, shell, 3);                                // Picture, Sound, Interface, Video
+    CHECK(shell.focusLabel() == "Video");
     g_texts.clear();
     frames(host, shell, 2);
-    CHECK(drew("Speed"));                                // the rail item
+    CHECK(drew("Internal resolution") && drew("1x (native)") && !drew("RISC overclock") && !drew("Aspect ratio"));
+    rightN(host, shell, 1);                              // into the list
+    CHECK(shell.focusLabel() == "Internal resolution");
+    rightN(host, shell, 1);
+    CHECK(lastSet(host, "core:virtualjaguar_internal_resolution", 1));
+    leftN(host, shell, 1);
+    CHECK(lastSet(host, "core:virtualjaguar_internal_resolution", 0));
+    leftN(host, shell, 1);                               // the left edge of the row: the rail
     down(host, shell);                                   // Speed
+    CHECK(shell.focusLabel() == "Speed");
     g_texts.clear();
     frames(host, shell, 2);
-    CHECK(drew("Available once a game has run") && !drew("Aspect ratio"));
-    rightN(host, shell, 1);                              // into the list (it is the only row) ...
-    accept(host, shell);
-    rightN(host, shell, 2);
-    CHECK(host.set.empty() && host.moreOpened == 0);     // ... where nothing steps or opens
+    CHECK(drew("RISC overclock") && drew("1x (stock)") && !drew("Internal resolution"));
+    down(host, shell);                                   // the last group: the rail clamps
+    CHECK(shell.focusLabel() == "Speed");
+    // The group the focus was on follows its key when an earlier group goes away: Speed stays Speed.
+    host.rows.erase(host.rows.begin() + 4);              // Internal resolution: Video is empty
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(shell.focusLabel() == "Speed" && !drew("Video"));
     CHECK(g_imguiErrors == 0);
 }
 
 static void settingsFocusRemembered() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("aspect", "Aspect ratio", 0, {"Core default", "4:3"}),
-                                mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("vsync", "VSync", 3, {"Off", "On"}),
-                                mkRow("theme", "Theme", 3, {"System", "Dark", "Light"}), mkRow("more", "More settings", 3, {})});
+    settingsSetup(host, shell, {mkRow("aspect", "Aspect ratio", "picture", "Picture", {"Core default", "4:3"}),
+                                mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"}), mkRow("vsync", "VSync", "interface", "Interface", {"Off", "On"}),
+                                mkRow("theme", "Theme", "interface", "Interface", {"System", "Dark", "Light"}), mkRow("more", "More settings", "interface", "Interface", {})});
     down(host, shell);                                   // Interface
     rightN(host, shell, 1);
     down(host, shell, 2);                                // Theme
@@ -2644,7 +2752,7 @@ static void settingsFocusRemembered() {
     accept(host, shell);                                 // lands on the same row, in its list
     CHECK(lastSet(host, "theme", 1) && host.set.size() == 1);
     // The row is followed by what it is, not by where it was: a row inserted above it does not move the focus.
-    host.rows.insert(host.rows.begin() + 1, mkRow("shader2", "Extra", 3, {"Off", "On"}));
+    host.rows.insert(host.rows.begin() + 1, mkRow("shader2", "Extra", "interface", "Interface", {"Off", "On"}));
     frames(host, shell, 2);
     accept(host, shell);
     CHECK(lastSet(host, "theme", 2));
@@ -2653,8 +2761,8 @@ static void settingsFocusRemembered() {
 static void settingsMouse() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("fps", "Show FPS", 3, {"Off", "On"}), mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1),
-                                mkRow("vsync", "VSync", 3, {"Off", "On"}, 1)});
+    settingsSetup(host, shell, {mkRow("volume", "Volume", "sound", "Sound", {"0 %", "50 %", "100 %"}, 1), mkRow("fps", "Show FPS", "interface", "Interface", {"Off", "On"}),
+                                mkRow("vsync", "VSync", "interface", "Interface", {"Off", "On"}, 1)});
     ImGuiIO& io = ImGui::GetIO();
     // Interface is the second group: the rail item hovers into view.  1920x1080: the rail at x 96, 54 high, 62 apart; the
     // list from x 504 to 1824, rows 72 high, 86 apart from y 196.
@@ -2695,7 +2803,7 @@ static void settingsMouse() {
 static void settingsClickOnChevrons() {
     FakeHost host;
     Shell shell(host);
-    settingsSetup(host, shell, {mkRow("volume", "Volume", 2, {"0 %", "50 %", "100 %"}, 1)});
+    settingsSetup(host, shell, {mkRow("volume", "Volume", "sound", "Sound", {"0 %", "50 %", "100 %"}, 1)});
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(504 + 200, 196 + 36);            // focus the row and let it finish growing
     frames(host, shell, 30);
@@ -2727,14 +2835,14 @@ static void settingsWalk120FramesNoAsserts() {
     std::vector<std::string> pct;
     for (int i = 0; i <= 10; i++) pct.push_back(std::to_string(i * 10) + " %");
     host.rows = settingsFixture();
-    SettingRow ro = mkRow("resolution", "Internal resolution with a rather long label", 0, {"1x (native)", "2x"}, 1);
+    SettingRow ro = mkRow("resolution", "Internal resolution with a rather long label", "picture", "Picture", {"1x (native)", "2x"}, 1);
     ro.readOnly = true;
     ro.note = "Set for this session by the Netplay window (or --option); disconnect to change it here";
     host.rows.push_back(ro);
-    host.rows.push_back(mkRow("risc_clock", "RISC overclock", 1, {"0.5x", "1x (stock)", "137% (custom)"}, 2));
-    host.rows.push_back(mkRow("idle_skip", "Idle-loop skip", 1, {"disabled", "enabled"}, 1));
-    for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 3, {"Off", "On"}));
-    host.rows.push_back(mkRow("theme", "Theme", 3, {"System", "Dark", "Light", "Custom: A very long theme name that does not fit"}, 3));
+    host.rows.push_back(mkRow("risc_clock", "RISC overclock", "core:speed", "Speed", {"0.5x", "1x (stock)", "137% (custom)"}, 2));
+    host.rows.push_back(mkRow("idle_skip", "Idle-loop skip", "core:speed", "Speed", {"disabled", "enabled"}, 1));
+    for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", "interface", "Interface", {"Off", "On"}));
+    host.rows.push_back(mkRow("theme", "Theme", "interface", "Interface", {"System", "Dark", "Light", "Custom: A very long theme name that does not fit"}, 3));
     Shell shell(host);
     const int errors = g_imguiErrors;
     shell.setSection(Section::Settings);
@@ -2761,6 +2869,282 @@ static void settingsWalk120FramesNoAsserts() {
     }
     io.DisplaySize = ImVec2(1920, 1080);
     CHECK(g_imguiErrors == errors);
+}
+
+// ---- TV Settings for long grouped lists (phase 5, Task 20) ---------------------------------------------------------------------
+
+static std::vector<widgets::TextAt> g_at;   // where the widgets drew each string (the position probe, switched on by the Task 20 tests)
+
+static bool placeOf(const std::string& s, widgets::TextAt& out) {   // the last place `s` was drawn
+    bool found = false;
+    for (const widgets::TextAt& t : g_at)
+        if (t.s == s) {
+            out = t;
+            found = true;
+        }
+    return found;
+}
+
+// A drawn string lies wholly inside [top, bottom] (pixels).
+static bool within(const widgets::TextAt& t, float top, float bottom) { return t.pos.y >= top - 0.5f && t.pos.y + t.px <= bottom + 0.5f; }
+
+static void pressButton(FakeHost& host, Shell& shell, SDL_GamepadButton b, bool isDown) {
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = isDown ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+    e.gbutton.button = (Uint8)b;
+    e.gbutton.down = isDown;
+    shell.handleEvent(e, g_ms);
+}
+
+// n groups "g0".."g<n-1>" labelled "Group 0".., each with one row "Setting 0"..
+static std::vector<SettingRow> manyGroups(int n) {
+    std::vector<SettingRow> v;
+    for (int i = 0; i < n; i++)
+        v.push_back(mkRow(("s" + std::to_string(i)).c_str(), ("Setting " + std::to_string(i)).c_str(), ("g" + std::to_string(i)).c_str(),
+                          ("Group " + std::to_string(i)).c_str(), {"Off", "On"}));
+    return v;
+}
+
+// One group "core:x" ("X") of n rows "Row 0".., each Off / On.
+static std::vector<SettingRow> manyRows(int n) {
+    std::vector<SettingRow> v;
+    for (int i = 0; i < n; i++) v.push_back(mkRow(("r" + std::to_string(i)).c_str(), ("Row " + std::to_string(i)).c_str(), "core:x", "X", {"Off", "On"}));
+    return v;
+}
+
+// How many strings starting with `prefix` (and not a caption "... \xC2\xB7 N settings") the last frames drew.
+static int drewCount(const char* prefix) {
+    int n = 0;
+    for (const widgets::TextAt& t : g_at)
+        if (t.s.rfind(prefix, 0) == 0 && t.s.find("\xC2\xB7") == std::string::npos) n++;
+    return n;
+}
+
+static void settledFrames(FakeHost& host, Shell& shell) {
+    frames(host, shell, 30);   // the scroll's tween (120 ms) is done
+    g_at.clear();
+    frames(host, shell, 1);
+}
+
+// The rail lists the groups in the order the host gives them, and only those that have rows.
+static void settingsGroupsInRowOrder() {
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell);                          // picture, sound, interface, core:video, core:speed
+    g_texts.clear();
+    frames(host, shell, 2);
+    auto at = [&](const char* s) { return (int)(std::find(g_texts.begin(), g_texts.end(), s) - g_texts.begin()); };
+    CHECK(drew("Picture") && at("Picture") < at("Sound") && at("Sound") < at("Interface") && at("Interface") < at("Video") && at("Video") < at("Speed"));
+    FakeHost noSound;
+    Shell s2(noSound);
+    std::vector<SettingRow> rows = settingsFixture();
+    rows.erase(rows.begin() + 1);                        // Volume was the only Sound row
+    settingsSetup(noSound, s2, rows);
+    g_texts.clear();
+    frames(noSound, s2, 2);
+    CHECK(drew("Picture") && drew("Interface") && !drew("Sound"));
+    CHECK(shell.focusGroup() == "picture");
+}
+
+// 20 groups at 1280x720: the rail follows the focus to the last group and it is drawn inside the content area; nothing is drawn
+// above it or below it, and the rail comes back to the top.
+static void settingsRailScrolls720p() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, manyGroups(20));
+    io.DisplaySize = ImVec2(1280, 720);
+    widgets::setTextPosProbe(&g_at);
+    frames(host, shell, 3);
+    const float u = 720.0f / 1080.0f, top = 150 * u, bottom = 968 * u;
+    CHECK(shell.focusLabel() == "Group 0");
+    down(host, shell, 19);
+    CHECK(shell.focusLabel() == "Group 19" && shell.focusGroup() == "g19");
+    settledFrames(host, shell);
+    widgets::TextAt at;
+    CHECK(placeOf("Group 19", at) && within(at, top, bottom));
+    int shown = 0;
+    bool allInside = true;
+    for (const widgets::TextAt& t : g_at)
+        if (t.s.rfind("Group ", 0) == 0 && t.s.find("\xC2\xB7") == std::string::npos) {
+            shown++;
+            if (!within(t, top, bottom)) allInside = false;
+        }
+    CHECK(shown >= 8 && shown < 20 && allInside);        // a window of the rail, whole items only
+    up(host, shell, 19);
+    settledFrames(host, shell);
+    CHECK(placeOf("Group 0", at) && within(at, top, bottom) && !placeOf("Group 19", at));
+    // The memory is a key: leaving and coming back lands on the last group, scrolled to show it at once (no tween from the top).
+    down(host, shell, 19);
+    lb(host, shell);
+    lb(host, shell);
+    rb(host, shell);
+    rb(host, shell);
+    g_at.clear();
+    frames(host, shell, 1);
+    CHECK(shell.focusLabel() == "Group 19" && placeOf("Group 19", at) && within(at, top, bottom));
+    widgets::setTextPosProbe(nullptr);
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == 0);
+}
+
+// A many-step value: Right held repeats (350 ms, then every 80 ms, the nav's own), the index only goes up, and letting go stops it.
+static void settingsHeldRightRepeats() {
+    FakeHost host;
+    Shell shell(host);
+    std::vector<std::string> choices;
+    for (int i = 0; i < 30; i++) choices.push_back("c" + std::to_string(i));
+    settingsSetup(host, shell, {mkRow("core:x", "Many steps", "core:x", "X", choices)});
+    rightN(host, shell, 1);                              // into the list
+    CHECK(host.set.empty() && shell.focusLabel() == "Many steps");
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+    frames(host, shell, 90);                             // ~1.4 s at the smoke clock
+    const size_t n = host.set.size();
+    CHECK(n >= 10);
+    bool monotone = true;
+    for (size_t i = 1; i < n; i++)
+        if (host.set[i].second != host.set[i - 1].second + 1) monotone = false;
+    CHECK(monotone && host.set.back().second == (int)n);
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
+    frames(host, shell, 30);
+    CHECK(host.set.size() == n);                         // released: no further sets
+    // Holding Right from the rail enters the list and then stops: the repeats of that press are not steps of the first row.
+    FakeHost rail;
+    Shell rs(rail);
+    settingsSetup(rail, rs, {mkRow("core:x", "Many steps", "core:x", "X", choices)});
+    pressButton(rail, rs, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+    frames(rail, rs, 90);
+    pressButton(rail, rs, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
+    frames(rail, rs, 2);
+    CHECK(rail.set.empty() && rs.focusLabel() == "Many steps");
+    rightN(rail, rs, 1);                                 // a new press steps again
+    CHECK(rail.set.size() == 1 && rail.set.back().second == 1);
+    CHECK(g_imguiErrors == 0);
+}
+
+// Left held down a many-step value stops at its first choice; only a new press leaves for the rail.
+static void settingsHeldLeftStopsAtFirstChoice() {
+    FakeHost host;
+    Shell shell(host);
+    std::vector<std::string> choices;
+    for (int i = 0; i < 30; i++) choices.push_back("c" + std::to_string(i));
+    settingsSetup(host, shell, {mkRow("core:x", "Many steps", "core:x", "X", choices, 10)});
+    rightN(host, shell, 1);
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_LEFT, true);
+    frames(host, shell, 150);                            // 10 steps take ~1.1 s; then the repeats go on pressing the edge
+    CHECK(host.set.size() == 10 && host.set.back().second == 0);
+    CHECK(shell.focusLabel() == "Many steps");           // still on the row, not the rail
+    pressButton(host, shell, SDL_GAMEPAD_BUTTON_DPAD_LEFT, false);
+    frames(host, shell, 2);
+    leftN(host, shell, 1);                               // a press at the left edge is the rail
+    CHECK(shell.focusLabel() == "X" && host.set.size() == 10);
+}
+
+// LT / RT jump the list by the rows on screen, stop at the ends, and the focused row stays in view.
+static void settingsPageJump() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    Shell shell(host);
+    settingsSetup(host, shell, manyRows(40));
+    io.DisplaySize = ImVec2(1280, 720);
+    widgets::setTextPosProbe(&g_at);
+    frames(host, shell, 3);
+    const float u = 720.0f / 1080.0f, top = (150 + 46) * u, bottom = 968 * u;
+    rightN(host, shell, 1);                              // into the list
+    settledFrames(host, shell);
+    const int visible = drewCount("Row ");
+    CHECK(visible >= 5 && visible < 40);
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row " + std::to_string(visible));
+    settledFrames(host, shell);
+    widgets::TextAt at;
+    CHECK(placeOf("Row " + std::to_string(visible), at) && within(at, top, bottom));
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row 0");
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);   // at the top it stays
+    CHECK(shell.focusLabel() == "Row 0");
+    for (int i = 0; i < 6; i++) pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);   // past the end it clamps to the last row
+    CHECK(shell.focusLabel() == "Row 39");
+    settledFrames(host, shell);
+    CHECK(placeOf("Row 39", at) && within(at, top, bottom));
+    pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row 39");
+    for (int i = 0; i < 6; i++) pullTrigger(host, shell, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+    CHECK(shell.focusLabel() == "Row 0");
+    // On the rail the triggers page the groups.
+    FakeHost g;
+    Shell gs(g);
+    settingsSetup(g, gs, manyGroups(30));
+    pullTrigger(g, gs, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(gs.focusLabel() != "Group 0" && gs.focusLabel() != "Group 1");
+    for (int i = 0; i < 6; i++) pullTrigger(g, gs, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    CHECK(gs.focusLabel() == "Group 29");
+    widgets::setTextPosProbe(nullptr);
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == 0);
+}
+
+// Each group's place is remembered under its key: row 3 of Video survives a visit to Speed.
+static void settingsFocusMemoryPerGroupKey() {
+    FakeHost host;
+    Shell shell(host);
+    std::vector<SettingRow> rows;
+    for (int i = 0; i < 6; i++) rows.push_back(mkRow(("v" + std::to_string(i)).c_str(), ("Video row " + std::to_string(i)).c_str(), "core:video", "Video", {"Off", "On"}));
+    for (int i = 0; i < 3; i++) rows.push_back(mkRow(("p" + std::to_string(i)).c_str(), ("Speed row " + std::to_string(i)).c_str(), "core:speed", "Speed", {"Off", "On"}));
+    settingsSetup(host, shell, rows);
+    CHECK(shell.focusLabel() == "Video");
+    rightN(host, shell, 1);
+    down(host, shell, 3);
+    CHECK(shell.focusLabel() == "Video row 3");
+    back(host, shell);                                   // the rail
+    down(host, shell);
+    CHECK(shell.focusLabel() == "Speed" && shell.focusGroup() == "core:speed");
+    rightN(host, shell, 1);
+    CHECK(shell.focusLabel() == "Speed row 0");
+    down(host, shell);
+    back(host, shell);
+    up(host, shell);
+    CHECK(shell.focusLabel() == "Video");
+    rightN(host, shell, 1);
+    CHECK(shell.focusLabel() == "Video row 3");
+    back(host, shell);
+    down(host, shell);
+    rightN(host, shell, 1);
+    CHECK(shell.focusLabel() == "Speed row 1");
+    CHECK(g_imguiErrors == 0);
+}
+
+// A value between two grid values ("(custom)") steps to the grid neighbours, in either direction; one beyond the grid is the last
+// entry and Accept wraps from it to the first.
+static void settingsCustomValueRow() {
+    {
+        FakeHost host;
+        Shell shell(host);
+        const SettingRow r = sliderRow("volume", "Volume", "sound", "Sound", 25.0f, 0, 100, 10, "%.0f %%");
+        CHECK(r.choices[(size_t)r.index].find("(custom)") != std::string::npos && r.index == 3);
+        settingsSetup(host, shell, {r});
+        rightN(host, shell, 1);                          // into the list
+        rightN(host, shell, 1);
+        CHECK(lastSet(host, "volume", 4));               // 30 %
+        FakeHost left;
+        Shell ls(left);
+        settingsSetup(left, ls, {r});
+        rightN(left, ls, 1);
+        leftN(left, ls, 1);
+        CHECK(lastSet(left, "volume", 2));               // 20 %
+    }
+    FakeHost host;
+    Shell shell(host);
+    const SettingRow r = sliderRow("volume", "Volume", "sound", "Sound", 137.0f, 0, 100, 10, "%.0f %%");
+    CHECK(r.index == (int)r.choices.size() - 1 && r.choices.back().find("(custom)") != std::string::npos);
+    settingsSetup(host, shell, {r});
+    rightN(host, shell, 1);
+    rightN(host, shell, 1);                              // already the last entry
+    CHECK(host.set.empty());
+    accept(host, shell);                                 // wraps to the first
+    CHECK(lastSet(host, "volume", 0));
+    CHECK(g_imguiErrors == 0);
 }
 
 // ---- TV Achievements (phase 3, Task 14) -----------------------------------------------------------------------------------
@@ -3234,7 +3618,7 @@ static void ingameRowsFullOrder() {
     shell.openMenu();
     std::vector<std::string> labels;
     for (const Shell::Row& r : shell.menuRows()) labels.push_back(r.label);
-    const std::vector<std::string> want = {"Resume", "Save state", "Load state", "Achievements", "Overlays",
+    const std::vector<std::string> want = {"Resume", "Save state", "Load state", "Library", "Achievements", "Overlays",
                                            "Settings", "Controls", "Enter TV mode", "Reset", "Close game"};
     CHECK(labels == want);
     // Hardcore (no Load row) and TV mode Off drop only their own rows; the three screens stay.
@@ -3245,7 +3629,7 @@ static void ingameRowsFullOrder() {
     hardShell.openMenu();
     labels.clear();
     for (const Shell::Row& r : hardShell.menuRows()) labels.push_back(r.label);
-    CHECK((labels == std::vector<std::string>{"Resume", "Save state", "Achievements", "Overlays", "Settings", "Controls", "Reset", "Close game"}));
+    CHECK((labels == std::vector<std::string>{"Resume", "Save state", "Library", "Achievements", "Overlays", "Settings", "Controls", "Reset", "Close game"}));
 }
 
 static void overlaysToggleFps() {
@@ -3398,25 +3782,65 @@ static void menuMoreSettingsKeepsMenu() {
     CHECK(g_imguiErrors == 0);
 }
 
-// ... and in the in-game menu's slot the groups level lists it too.
-static void ingameSpeedNoteBeforeAGame() {
+// ... and in the in-game menu's slot the groups level lists them too, a core group included.
+static void ingameCoreGroupsLevel() {
     FakeHost mh;
-    mh.rows = speedNoteRows();
+    mh.rows = settingsFixture();
     Shell ms(mh);
     menuSetup(mh, ms);
     menuTo(mh, ms, "Settings");
     accept(mh, ms);
     g_texts.clear();
     frames(mh, ms, 2);
-    CHECK(drew("Picture") && drew("Speed") && drew("Sound"));
-    down(mh, ms);
+    CHECK(drew("Picture") && drew("Video") && drew("Speed") && drew("Sound"));
+    down(mh, ms, 4);                                     // Speed
     accept(mh, ms);
     g_texts.clear();
     frames(mh, ms, 2);
-    CHECK(drew("Available once a game has run"));
-    accept(mh, ms);
-    rightN(mh, ms, 2);
-    CHECK(mh.set.empty());
+    CHECK(drew("RISC overclock") && !drew("Internal resolution"));
+    rightN(mh, ms, 1);
+    CHECK(lastSet(mh, "core:virtualjaguar_risc_clock_scale", 2));
+    CHECK(g_imguiErrors == 0);
+}
+
+// The menu's slot has the same scrolling: 20 groups, then a group of 20 rows, at 1280x720 -- the focused group / row is drawn inside
+// the menu's list area.
+static void ingameSettingsSlotScrolls() {
+    ImGuiIO& io = ImGui::GetIO();
+    widgets::setTextPosProbe(&g_at);
+    for (int branch = 0; branch < 2; branch++) {
+        FakeHost host;
+        host.rows = branch == 0 ? manyGroups(20) : manyRows(20);
+        Shell shell(host);
+        menuSetup(host, shell);
+        io.DisplaySize = ImVec2(1280, 720);
+        menuTo(host, shell, "Settings");
+        accept(host, shell);
+        const Metrics m = metrics(720);
+        const float top = m.safeY + 48 * m.u;                                                   // the panel's list area (tv_ingame.cpp)
+        const float bottom = m.safeY + (720 - 2 * m.safeY) - 48 * m.u - (m.caption + 8 * m.u) - 24 * m.u;
+        if (branch == 1) accept(host, shell);            // the only group's rows
+        down(host, shell, 19);
+        const std::string want = branch == 0 ? "Group 19" : "Row 19";
+        CHECK(shell.menuHasScreen() && shell.menuScreenId() == "settings");
+        settledFrames(host, shell);
+        widgets::TextAt at;
+        CHECK(placeOf(want, at) && within(at, top, bottom));
+        bool allInside = true;
+        for (const widgets::TextAt& t : g_at)
+            if ((t.s.rfind("Group ", 0) == 0 || t.s.rfind("Row ", 0) == 0) && t.s.find("\xC2\xB7") == std::string::npos && !within(t, top, bottom)) allInside = false;
+        CHECK(allInside);
+        up(host, shell, 19);
+        settledFrames(host, shell);
+        CHECK(placeOf(branch == 0 ? "Group 0" : "Row 0", at) && within(at, top, bottom));
+        if (branch == 0) {                               // a page jump on the groups level
+            pullTrigger(host, shell, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+            CHECK(shell.menuScreenId() == "settings");
+        }
+        shell.closeMenu();
+    }
+    widgets::setTextPosProbe(nullptr);
+    io.DisplaySize = ImVec2(1920, 1080);
     CHECK(g_imguiErrors == 0);
 }
 
@@ -3501,10 +3925,11 @@ static void ingameSlotLeavesMenuModelAlone() {
 static void menuWalkWithSlotsNoAsserts() {
     ImGuiIO& io = ImGui::GetIO();
     const int errors = g_imguiErrors;
-    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+    for (const char* row : {"Achievements", "Overlays", "Settings", "Library"}) {
         FakeHost host;
+        host.all = mkGames("A long game title that wraps on its tile", 60);
         host.rows = settingsFixture();
-        for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", 0, {"Off", "On"}));
+        for (int i = 0; i < 12; i++) host.rows.push_back(mkRow("extra", "An extra setting", "picture", "Picture", {"Off", "On"}));
         host.hdr.signedIn = true;
         host.hdr.hasGame = true;
         host.hdr.title = "A game with a title that is far too long to fit beside its icon on a small screen";
@@ -3562,6 +3987,212 @@ static void menuWalkWithSlotsNoAsserts() {
 
 // The four tabs and both shoulder pills fit the top bar at 1280x720 with room left for the clock (the chrome's own sums:
 // the safe margin, the accent, the logo, the LB pill, each label at body size 40 apart, the RB pill).
+// ---- the Library in TV mode (#991 Task 21): the in-game row, the slot, the launch confirm, the Base entry --------------------------
+
+// A game running, the menu open, the Library row accepted: the Library in the slot, drawn.
+static void libraryMenuSetup(FakeHost& host, Shell& shell) {
+    host.all = libraryFixture();
+    host.st[host.all[0].key] = {{-1, 1760000000}};   // the first game has an auto-save
+    host.tv = true;
+    ImGui::GetIO().DisplaySize = ImVec2(1920, 1080);
+    shell.openMenu();
+    frames(host, shell, 2);
+    down(host, shell, 3);                                // Save state, Load state, Library
+    CHECK(std::string(focusedLabel(shell)) == "Library");
+    accept(host, shell);
+    frames(host, shell, 2);
+}
+
+// The Library row is in the root after Load state, and puts the Library in the slot with the whole panel: its rail and grid are
+// drawn, the menu's own rail (the game's title) is not.
+static void ingameLibrarySlotWide() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    CHECK(shell.menuScreenId() == "library" && shell.menuOpen() && host.loaded);
+    g_texts.clear();
+    frames(host, shell, 3);
+    CHECK(drew("Alien vs Predator") && drew("All games \xC2\xB7 6 games") && drew("Favorites"));   // a tile, the caption, the Library's rail
+    CHECK(!drew(host.gameTitle()) && !drew("Paused") && !drew("Library"));                          // the menu's rail is not drawn
+    CHECK(g_imguiErrors == 0);
+}
+
+// A on a tile with a game running asks: No is the focus, No returns to the Library on the same tile, Yes (Up: it is above No) launches.
+static void ingameLibraryLaunchAsks() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    rightN(host, shell, 2);                              // the third tile: Battlemorph
+    const std::string key = host.all[2].key;
+    accept(host, shell);
+    CHECK(shell.menuPage() == Shell::Page::ConfirmLaunch && std::string(focusedLabel(shell)) == "No");
+    CHECK(shell.menuTitle() == "Close " + host.gameTitle() + " and start Battlemorph?");
+    CHECK(host.launchedKey.empty() && host.launches == 0 && host.loaded && shell.menuOpen());
+    CHECK(shell.focusLabel() == "No");
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Yes") && drew("No") && drew("Close " + host.gameTitle() + " and start Battlemorph?"));
+    accept(host, shell);                                 // No
+    CHECK(shell.menuScreenId() == "library" && shell.menuPage() == Shell::Page::Root && host.launches == 0 && host.loaded);
+    accept(host, shell);                                 // the same tile is still focused
+    CHECK(shell.menuPage() == Shell::Page::ConfirmLaunch && shell.menuTitle().find("Battlemorph") != std::string::npos);
+    back(host, shell);                                   // Back is No too
+    CHECK(shell.menuScreenId() == "library" && host.launches == 0);
+    accept(host, shell);
+    up(host, shell);                                     // Yes (as Reset and Close: Yes above No)
+    CHECK(std::string(focusedLabel(shell)) == "Yes");
+    const int armed = host.guardArmed;
+    accept(host, shell);
+    CHECK(host.launchedKey == key && host.launches == 1 && !host.loaded);
+    CHECK(host.guardArmed == armed + 1);                 // launched(): the A that said Yes must not reach the new game
+    CHECK(g_imguiErrors == 0);
+}
+
+// X on a tile with a state asks the same question; Yes starts that state.
+static void ingameLibraryResumeStateAsks() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_WEST);     // X (Alt): the first game's auto-save
+    CHECK(shell.menuPage() == Shell::Page::ConfirmLaunch && host.launchedState.first.empty() && host.loaded);
+    up(host, shell);
+    accept(host, shell);
+    CHECK(host.launchedState.first == host.all[0].key && host.launchedState.second == -1 && !host.loaded);
+    // A tile with no state: X does nothing.
+    FakeHost none;
+    Shell s2(none);
+    libraryMenuSetup(none, s2);
+    none.st.clear();
+    tapButton(none, s2, SDL_GAMEPAD_BUTTON_WEST);
+    CHECK(s2.menuScreenId() == "library" && s2.menuPage() == Shell::Page::Root);
+}
+
+// Typing filters the slot's grid; Menu (Start) and Aux (Y) do nothing there (they push onto the Base stack, which is not shown).
+static void ingameLibraryTypedFilters() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    CHECK(keyEvent(shell, SDL_SCANCODE_D, SDLK_D));
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Filter: d") && drew("All games \xC2\xB7 2 games"));   // the titles with a d in them: Alien vs Predator, Doom
+    keyEvent(shell, SDL_SCANCODE_D, SDLK_D, false);
+    CHECK(keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE));    // drops the filter, it is not Back
+    keyEvent(shell, SDL_SCANCODE_BACKSPACE, SDLK_BACKSPACE, false);
+    frames(host, shell, 2);
+    CHECK(shell.menuScreenId() == "library");
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_START);                  // Menu: Details on the Base layer
+    tapButton(host, shell, SDL_GAMEPAD_BUTTON_NORTH);                  // Aux: the letter picker on the Base layer
+    CHECK(shell.menuScreenId() == "library" && shell.screenId() != "details" && shell.screenId() != "letters" && shell.menuOpen());
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(!drew("Jump to letter") && !drew("Details"));                // not offered
+    // A desktop window's text field has the keyboard.
+    host.desktopOpen = true;
+    ImGui::GetIO().WantTextInput = true;
+    CHECK(!keyEvent(shell, SDL_SCANCODE_Z, SDLK_Z));
+    ImGui::GetIO().WantTextInput = false;
+    host.desktopOpen = false;
+    CHECK(g_imguiErrors == 0);
+}
+
+// Back leaves the slot for the menu, on the Library row; Back again resumes.
+static void ingameLibraryBackReturnsToRow() {
+    FakeHost host;
+    Shell shell(host);
+    libraryMenuSetup(host, shell);
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && shell.menuOpen() && std::string(focusedLabel(shell)) == "Library");
+    CHECK(shell.menuPage() == Shell::Page::Root);
+    // ... with the filter on, Back still leaves at once (the Library's own level is the grid).
+    accept(host, shell);
+    keyEvent(shell, SDL_SCANCODE_D, SDLK_D);
+    back(host, shell);
+    CHECK(!shell.menuHasScreen() && std::string(focusedLabel(shell)) == "Library");
+    back(host, shell);
+    CHECK(!shell.menuOpen() && host.resumed == 1);
+}
+
+// Shell::openLibrary: TV off -> refused; no game -> the Library section (again: unchanged); a game -> the menu with the Library in its
+// slot, from the root and from a page, and a second call changes nothing; a refused menu opens nothing.
+static void baseLibraryOpensFromApp() {
+    FakeHost host;
+    host.all = libraryFixture();
+    host.tv = false;
+    host.loaded = false;
+    Shell shell(host);
+    CHECK(!shell.openLibrary() && !shell.menuOpen() && !shell.showingLibrary());
+    host.tv = true;
+    CHECK(shell.openLibrary() && shell.screenId() == "library" && shell.section() == Section::Library && shell.showingLibrary());
+    frames(host, shell, 3);
+    keyEvent(shell, SDL_SCANCODE_D, SDLK_D);
+    CHECK(shell.openLibrary() && shell.screenId() == "library");        // again: the same screen (its filter is still on)
+    g_texts.clear();
+    frames(host, shell, 2);
+    CHECK(drew("Filter: d"));
+    shell.setSection(Section::Settings);
+    CHECK(!shell.showingLibrary());
+    host.loaded = true;
+    Shell inGame(host);
+    CHECK(inGame.openLibrary() && inGame.menuOpen() && inGame.menuScreenId() == "library" && inGame.showingLibrary() && host.paused);
+    frames(host, inGame, 3);
+    CHECK(inGame.openLibrary() && inGame.menuScreenId() == "library");
+    back(host, inGame);
+    CHECK(inGame.menuOpen() && !inGame.menuHasScreen() && std::string(focusedLabel(inGame)) == "Library" && !inGame.showingLibrary());
+    Shell paged(host);
+    paged.openMenu();
+    down(host, paged, 1);                                // Save state
+    accept(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::SaveSlots);
+    CHECK(paged.openLibrary() && paged.menuScreenId() == "library");
+    back(host, paged);
+    CHECK(paged.menuPage() == Shell::Page::Root && std::string(focusedLabel(paged)) == "Library");
+    FakeHost hard;
+    hard.refusePause = "Hardcore: wait 20 s";
+    hard.tv = true;
+    Shell hs(hard);
+    CHECK(!hs.openLibrary() && !hs.menuOpen() && hard.lastToast == "Hardcore: wait 20 s");
+    // The Library opened while a launch question was up (Ctrl+L): the question is dropped, Back lands on the row.
+    Shell asking(host);
+    libraryMenuSetup(host, asking);
+    accept(host, asking);
+    CHECK(asking.menuPage() == Shell::Page::ConfirmLaunch);
+    CHECK(asking.openLibrary() && asking.menuScreenId() == "library");
+    back(host, asking);
+    CHECK(asking.menuPage() == Shell::Page::Root && std::string(focusedLabel(asking)) == "Library");
+    CHECK(g_imguiErrors == 0);
+}
+
+// Every launch with no game running is immediate (Home, Library, Details): requestLaunch asks only over a game.
+static void requestLaunchWithoutGameIsImmediate() {
+    FakeHost host;
+    host.all = libraryFixture();
+    host.st[host.all[1].key] = {{3, 1760000000}};
+    Shell shell(host);
+    librarySetup(host, shell);
+    accept(host, shell);                                 // the first tile (a library with games opens on its grid)
+    CHECK(host.launchedKey == host.all[0].key && shell.menuPage() == Shell::Page::Root && !shell.menuOpen());
+    host.loaded = false;
+    const int armed = host.guardArmed;
+    shell.requestLaunch(host.all[2], nullptr);
+    CHECK(host.launchedKey == host.all[2].key && host.guardArmed == armed + 1);
+    const StateRef st{3, 1760000000};
+    shell.requestLaunch(host.all[1], &st);
+    CHECK(host.launchedState.first == host.all[1].key && host.launchedState.second == 3 && host.guardArmed == armed + 2);
+    // A game running and no menu to ask in: the menu opens with the question; nothing launches unasked.
+    host.loaded = true;
+    host.launches = 0;
+    shell.requestLaunch(host.all[2], nullptr);
+    CHECK(host.launches == 0 && host.loaded && shell.menuOpen() && shell.menuPage() == Shell::Page::ConfirmLaunch);
+    frames(host, shell, 2);                              // (the Base layer just lost the input: the nav starts over once)
+    back(host, shell);
+    CHECK(shell.menuPage() == Shell::Page::Root && host.launches == 0);
+    shell.closeMenu();
+    host.refusePause = "Hardcore: wait 20 s";           // ... and where the menu is refused, nothing at all
+    shell.requestLaunch(host.all[2], nullptr);
+    CHECK(host.launches == 0 && !shell.menuOpen() && host.lastToast == "Hardcore: wait 20 s");
+}
+
 static void tabBarFitsAt720p() {
     const float u = 720.0f / 1080.0f;
     float x = 96 * u + (22 + 16) * u + measure(34 * u, "VIRTUAL JAGUAR") + 56 * u;
@@ -3571,6 +4202,268 @@ static void tabBarFitsAt720p() {
     x += measure(24 * u, "RB") + 20 * u;
     const float clockLeft = 1280 - 96 * u - measure(26 * u, "12:00 PM");
     CHECK(x + 24 * u < clockLeft);
+}
+
+// ---- long labels, wrapped notes and placeholder titles (phase 5 polish, #991) ----------------------------------------------------------
+
+static const char* const kLongDefaults = "Per-Title Enhancement Defaults: apply known-safe presets automatically for recognized games";
+static const char* const kLongHooks = "Per-Title Enhancement Hooks: apply per-game byte patches from the enhancement database to the cartridge";
+static const char* const kLongNote = "Applies when the game next starts: the new value is read at launch, never while it runs";
+
+// Two long labels with the same first words, a short one, and a long note.
+static std::vector<SettingRow> longLabelRows() {
+    SettingRow a = mkRow("core:a", kLongDefaults, "core:video", "Video", {"disabled", "enabled"});
+    SettingRow b = mkRow("core:b", kLongHooks, "core:video", "Video", {"disabled", "enabled"});
+    b.note = kLongNote;
+    return {a, b, mkRow("core:c", "Blitter", "core:video", "Video", {"Fast", "Accurate"})};
+}
+
+// A drawn string is part of `whole` (a line of a wrapped label or note).
+static bool partOf(const widgets::TextAt& t, const char* whole) { return t.s.size() >= 8 && std::string(whole).find(t.s) != std::string::npos; }
+
+// Every string drawn lies inside [left, right] horizontally and [top, bottom] vertically (pixels).
+static bool drawnInside(float left, float right, float top, float bottom) {
+    for (const widgets::TextAt& t : g_at) {
+        const float w = measure(t.px, t.s.c_str());
+        if (t.pos.x < left - 0.5f || t.pos.x + w > right + 0.5f || t.pos.y < top - 0.5f || t.pos.y + t.px > bottom + 0.5f) {
+            std::fprintf(stderr, "outside: \"%s\" at %.1f,%.1f w %.1f px %.1f\n", t.s.c_str(), t.pos.x, t.pos.y, w, t.px);
+            return false;
+        }
+    }
+    return true;
+}
+
+// A label that does not fit beside its value wraps to a second line instead of being cut: both long labels are drawn whole (the probe
+// has each once, in full), on two lines, and distinguishably; so is a long note.  Nothing leaves the content area / the safe area.
+static void settingsLongLabelsWrap() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (float hh : {720.0f, 1080.0f}) {
+        FakeHost host;
+        Shell shell(host);
+        settingsSetup(host, shell, longLabelRows());
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        widgets::setTextPosProbe(&g_at);
+        frames(host, shell, 3);
+        rightN(host, shell, 1);                          // into the list
+        frames(host, shell, 30);
+        g_texts.clear();
+        g_at.clear();
+        frames(host, shell, 1);
+        const Metrics m = metrics(hh);
+        CHECK(drew(kLongDefaults) && drew(kLongHooks) && drew(kLongNote));   // each in full, once
+        CHECK(std::string(kLongDefaults) != kLongHooks);
+        int a = 0, b = 0, n = 0;
+        bool oneLine = false;
+        for (const widgets::TextAt& t : g_at) {
+            a += partOf(t, kLongDefaults) && t.s != kLongDefaults;
+            b += partOf(t, kLongHooks) && t.s != kLongHooks;
+            n += partOf(t, kLongNote) && t.s != kLongNote && t.px < m.body;
+            oneLine = oneLine || t.s == kLongDefaults || t.s == kLongHooks || t.s == kLongNote;
+        }
+        CHECK(a == 2 && b == 2 && n == 2 && !oneLine);   // two lines each, never cut mid-word (the lines join to the whole text)
+        bool inside = true;
+        float firstA = 0, firstB = 0;
+        for (const widgets::TextAt& t : g_at) {          // the rows' text lies in the content area (150 u to 968 u) and the safe margins
+            if (!(partOf(t, kLongDefaults) || partOf(t, kLongHooks) || partOf(t, kLongNote))) continue;
+            const float w = measure(t.px, t.s.c_str());
+            inside = inside && within(t, 150 * m.u, 968 * m.u) && t.pos.x >= m.safeX && t.pos.x + w <= io.DisplaySize.x - m.safeX;
+            if (firstA == 0 && partOf(t, kLongDefaults)) firstA = t.pos.y;
+            if (firstB == 0 && partOf(t, kLongHooks)) firstB = t.pos.y;
+        }
+        CHECK(inside);
+        // The rows grew to fit: they are as tall as the tallest (two label lines, two note lines), so the next row is a whole row below.
+        CHECK(firstB - firstA >= 100 * m.u);
+        widgets::setTextPosProbe(nullptr);
+        CHECK(g_imguiErrors == 0);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+}
+
+// In the menu's slot Settings takes the whole panel (no rail of the menu's own), so labels that used to be cut fit on one line.
+static void ingameSettingsSlotIsWide() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (float hh : {720.0f, 1080.0f}) {
+        FakeHost host;
+        host.rows = {mkRow("core:a", "Per-Title Enhancement Defaults", "core:video", "Video", {"disabled", "enabled"}),
+                     mkRow("core:b", "Per-Title Enhancement Hooks", "core:video", "Video", {"disabled", "enabled"}),
+                     mkRow("core:c", "True Color (Gouraud Shading)", "core:video", "Video", {"disabled", "enabled"}),
+                     mkRow("core:d", "Internal Resolution (Restart)", "core:video", "Video", {"1x (native)", "2x"}),
+                     mkRow("aspect", "Aspect ratio", "picture", "Picture", {"Core default", "4:3"})};
+        host.rows[3].note = "Applies when the game next starts";
+        Shell shell(host);
+        menuSetup(host, shell);
+        io.DisplaySize = ImVec2(hh * 16 / 9, hh);
+        menuTo(host, shell, "Settings");
+        widgets::setTextPosProbe(&g_at);
+        accept(host, shell);
+        frames(host, shell, 30);
+        g_texts.clear();
+        g_at.clear();
+        frames(host, shell, 1);
+        CHECK(shell.menuHasScreen() && drew("Settings \xC2\xB7 2 groups") && !drew("Paused") && !drew(host.gameTitle()));   // the screen names itself
+        accept(host, shell);                             // Video (the first group: the rows are listed in the host's order)
+        frames(host, shell, 30);
+        g_texts.clear();
+        g_at.clear();
+        frames(host, shell, 1);
+        const Metrics m = metrics(hh);
+        for (const char* label : {"Per-Title Enhancement Defaults", "Per-Title Enhancement Hooks", "True Color (Gouraud Shading)", "Internal Resolution (Restart)"}) {
+            widgets::TextAt at;
+            CHECK(drew(label) && placeOf(label, at));    // whole, on one line (a line of the same text)
+        }
+        CHECK(drew("Applies when the game next starts"));
+        const float panelW = std::min(io.DisplaySize.x - 2 * m.safeX, 1500 * m.u);
+        const float left = (io.DisplaySize.x - panelW) * 0.5f;
+        CHECK(drawnInside(left, left + panelW, m.safeY, io.DisplaySize.y - m.safeY));
+        shell.closeMenu();
+        widgets::setTextPosProbe(nullptr);
+        CHECK(g_imguiErrors == 0);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+}
+
+// The Page hint is listed on a rail (and the menu's groups level) that scrolls, with one glyph when the pad has one trigger, and not at all
+// without a glyph or when everything fits.
+static void settingsPageHintOnRail() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (int branch = 0; branch < 2; branch++) {   // 0: the Base rail, 1: the menu's groups level
+        FakeHost host;
+        host.pageLt = "LT";
+        host.pageRt = "RT";
+        Shell shell(host);
+        io.DisplaySize = ImVec2(1280, 720);
+        if (branch == 0) {
+            settingsSetup(host, shell, manyGroups(30));
+            io.DisplaySize = ImVec2(1280, 720);
+        } else {
+            host.rows = manyGroups(30);
+            menuSetup(host, shell);
+            io.DisplaySize = ImVec2(1280, 720);
+            menuTo(host, shell, "Settings");
+            accept(host, shell);
+        }
+        frames(host, shell, 30);
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Page") && drew("LT RT") && drew("Open"));
+        host.pageRt = "";
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(drew("Page") && drew("LT") && !drew("LT "));   // no stray space
+        host.pageLt = "";
+        g_texts.clear();
+        frames(host, shell, 2);
+        CHECK(!drew("Page"));
+        // Few groups: everything fits, nothing to page.
+        FakeHost few;
+        few.pageLt = "LT";
+        few.pageRt = "RT";
+        Shell fs(few);
+        settingsSetup(few, fs, settingsFixture());
+        g_texts.clear();
+        frames(few, fs, 2);
+        CHECK(!drew("Page"));
+        if (shell.menuOpen()) shell.closeMenu();
+        CHECK(g_imguiErrors == 0);
+    }
+    io.DisplaySize = ImVec2(1920, 1080);
+}
+
+// A placeholder tile (no box art): the title wraps at words and the last line sits at the tile's foot; a title too long for the tile ends
+// in "..." on the last line that fits inside it, never below it.  Tiles of the menu's Library (158 u) and the screen's (190 u) at 1080p.
+static void tilePlaceholderWrapsAtWords() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1920, 1080);
+    const Metrics m = metrics(1080);
+    struct Case {
+        const char* title;
+        float w;
+    };
+    const Case cases[] = {{"Checkered Flag (World)", 158}, {"Cybermorph (World) (Rev A)", 158}, {"Defender 2000 (World)", 158},
+                          {"Skyhammer (World)", 158},       {"Trevor McFur in the Crescent Galaxy (World) (Rev A)", 158},
+                          {"Trevor McFur in the Crescent Galaxy (World) (Rev A)", 190}};
+    for (const Case& cs : cases) {
+        widgets::setTextPosProbe(&g_at);
+        g_at.clear();
+        g_texts.clear();
+        io.DeltaTime = 1.0f / 60.0f;
+        ImGui::NewFrame();
+        widgets::TileArgs a;
+        a.title = cs.title;
+        const ImVec2 pos(100, 100), size(cs.w, cs.w * 7 / 5);
+        widgets::tile(ImGui::GetForegroundDrawList(), m, pos, size, a);
+        ImGui::Render();
+        widgets::setTextPosProbe(nullptr);
+        CHECK(!g_at.empty());
+        bool inside = true;
+        float lastBottom = 0;
+        for (const widgets::TextAt& t : g_at) {
+            const float w = measure(t.px, t.s.c_str());
+            if (t.pos.x < pos.x || t.pos.x + w > pos.x + size.x || t.pos.y < pos.y || t.pos.y + t.px > pos.y + size.y) inside = false;
+            lastBottom = std::max(lastBottom, t.pos.y + t.px);
+            CHECK(t.px >= m.minText - 0.01f);            // never under the 24 u floor
+        }
+        CHECK(inside);
+        CHECK(std::fabs(lastBottom - (pos.y + size.y - 8 * m.u)) < 0.6f);   // the foot of the tile: the padding above its bottom edge
+        // Words are whole on their lines; the one cut a long title may take is the "..." on the last line.
+        const std::string title = cs.title;
+        const bool cut = !drew(title);
+        std::string last = g_at.back().s;
+        CHECK(cut == (last.size() >= 3 && last.compare(last.size() - 3, 3, "...") == 0));
+        size_t i = 0;
+        while (i < title.size()) {
+            size_t j = title.find(' ', i);
+            if (j == std::string::npos) j = title.size();
+            const std::string w = title.substr(i, j - i);
+            bool whole = false;
+            for (const widgets::TextAt& t : g_at) whole = whole || (" " + t.s + " ").find(" " + w + " ") != std::string::npos;
+            CHECK(whole || cut);                         // no word of an uncut title is split across lines
+            i = j + 1;
+        }
+    }
+    // The long title does not fit a narrow tile whole; the wide one fits all of it.
+    CHECK(g_imguiErrors == 0);
+}
+
+// In the menu's Library the placeholder titles of the reported shot ("Checkered Flag") keep their words whole at 720p (the smoke font is wider than
+// the app's, so "Cybermorph" -- a 10-letter word at the floor size -- is judged in the real shots, tilePlaceholderWrapsAtWords, not here).
+static void ingameLibraryPlaceholderWordsWhole() {
+    ImGuiIO& io = ImGui::GetIO();
+    FakeHost host;
+    Shell shell(host);
+    for (const char* t : {"Checkered Flag (World)", "Cybermorph (World) (Rev A)", "Defender 2000 (World)", "Skyhammer (World)", "Power Drive Rally (World)",
+                          "Trevor McFur in the Crescent Galaxy (World) (Rev A)"}) {
+        GameRef g;
+        g.title = t;
+        g.key = std::string("/games/") + t + ".j64";
+        g.index = (int)host.all.size();
+        host.all.push_back(g);
+    }
+    host.tv = true;
+    io.DisplaySize = ImVec2(1920, 1080);
+    shell.openMenu();
+    frames(host, shell, 2);
+    down(host, shell, 3);                                // Save state, Load state, Library
+    accept(host, shell);
+    io.DisplaySize = ImVec2(1280, 720);
+    widgets::setTextPosProbe(&g_at);
+    frames(host, shell, 30);
+    g_at.clear();
+    frames(host, shell, 1);
+    for (const char* w : {"Checkered", "Skyhammer", "Defender", "Trevor", "Crescent", "Galaxy"}) {
+        bool whole = false;
+        for (const widgets::TextAt& t : g_at) whole = whole || (" " + t.s + " ").find(std::string(" ") + w + " ") != std::string::npos;
+        if (!whole) {
+            std::fprintf(stderr, "word split: %s; lines drawn:", w);
+            for (const widgets::TextAt& t : g_at) std::fprintf(stderr, " [%s @%.0f,%.0f px %.1f]", t.s.c_str(), t.pos.x, t.pos.y, t.px);
+            std::fprintf(stderr, "\n");
+        }
+        CHECK(whole);
+    }
+    widgets::setTextPosProbe(nullptr);
+    shell.closeMenu();
+    io.DisplaySize = ImVec2(1920, 1080);
+    CHECK(g_imguiErrors == 0);
 }
 
 int main() {
@@ -3594,6 +4487,8 @@ int main() {
     menuKeepsUserPause();
     closeGameAsksFirst();
     netplayBanner();
+    hardcoreBanner();
+    openSettingsRoutes();
     hintBarShowsWhatWorks();
     pointerFreeWhilePlaying();
     controlsRowShowsNeverHides();
@@ -3630,6 +4525,7 @@ int main() {
     homeSurvivesRescan();
     homeHeroShowsFocusedGame();
     homeEmptyLibraryCard();
+    homeWithGamesButNoShelvesPointsAtLibrary();
     formatDateIsEnglishDayMonthYear();
     homeWalk120FramesNoAsserts();
     libraryRailGridHandoff();
@@ -3669,13 +4565,21 @@ int main() {
     settingsBackAndLeftEdge();
     settingsHints();
     settingsTvModeOffLeavesCleanly();
+    settingsAutoRowsStep();
     settingsReadonlyRowIgnoresInput();
     settingsMoreOpensDesktop();
     settingsHiddenRowsAbsent();
-    settingsSpeedNoteBeforeAGame();
+    settingsCoreGroups();
     settingsFocusRemembered();
     settingsMouse();
     settingsClickOnChevrons();
+    settingsGroupsInRowOrder();
+    settingsRailScrolls720p();
+    settingsHeldRightRepeats();
+    settingsHeldLeftStopsAtFirstChoice();
+    settingsPageJump();
+    settingsFocusMemoryPerGroupKey();
+    settingsCustomValueRow();
     settingsWalk120FramesNoAsserts();
     achNotSignedInLine();
     achNotAvailableLine();
@@ -3696,12 +4600,25 @@ int main() {
     overlaysToolRowsFromRegistry();
     overlaysHintsAndBack();
     ingameSettingsSlotLevels();
-    ingameSpeedNoteBeforeAGame();
+    ingameCoreGroupsLevel();
+    ingameSettingsSlotScrolls();
     menuMoreSettingsKeepsMenu();
     ingameSlotBackReturnsToRow();
     ingameAchievementsSlotDraws();
     ingameAchievementsGamesListIsReadOnly();
     ingameSlotLeavesMenuModelAlone();
+    ingameLibrarySlotWide();
+    ingameLibraryLaunchAsks();
+    ingameLibraryResumeStateAsks();
+    ingameLibraryTypedFilters();
+    ingameLibraryBackReturnsToRow();
+    settingsLongLabelsWrap();
+    ingameSettingsSlotIsWide();
+    settingsPageHintOnRail();
+    tilePlaceholderWrapsAtWords();
+    ingameLibraryPlaceholderWordsWhole();
+    baseLibraryOpensFromApp();
+    requestLaunchWithoutGameIsImmediate();
     menuWalkWithSlotsNoAsserts();
     tabBarFitsAt720p();
     // The menu at the other sizes the app runs at.
@@ -3724,8 +4641,9 @@ int main() {
     }
     // The three screens of the menu's slot at the same sizes, inside the display (the rows with a long reason, a tall header and a
     // description included).
-    for (const char* row : {"Achievements", "Overlays", "Settings"}) {
+    for (const char* row : {"Achievements", "Overlays", "Settings", "Library"}) {
         FakeHost host;
+        host.all = mkGames("A long game title that wraps on its tile", 60);
         host.rows = settingsFixture();
         host.hdr.signedIn = true;
         host.hdr.hasGame = true;
@@ -3784,7 +4702,7 @@ int main() {
         host.tv = true;
         host.loaded = false;
         host.rows = settingsFixture();
-        SettingRow ro = mkRow("resolution", "Internal resolution", 0, {"1x (native)", "2x"}, 1);
+        SettingRow ro = mkRow("resolution", "Internal resolution", "picture", "Picture", {"1x (native)", "2x"}, 1);
         ro.readOnly = true;
         ro.note = "Set for this session by Netplay or --option";
         host.rows.push_back(ro);

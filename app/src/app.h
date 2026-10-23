@@ -242,6 +242,8 @@ public:
     float uiScale_ = 1.0f;            // the scale the style was set up at (the display's content scale times ui.scale)
     std::string themeBeforePreview_;  // the choice to keep/restore while the theme editor previews an unsaved theme
     bool themePreviewing_ = false;
+    bool tvHintShownThisRun_ = false; // the one-time TV mode hint (ui.tv_hint_shown) was shown, or tried, in this run
+    unsigned toastCount_ = 0;         // toast() calls since start (the TV script counts them: osd_ is capped)
     bool tvFromCli_ = false;          // --tv was given: this run's TV state is not remembered (ui.tv_manual_on)
     bool themeFromCli_ = false;       // --theme was given: this run's choice is not read from / written to config.ini (ui.theme)
     bool autosaveSram = true;
@@ -276,21 +278,34 @@ public:
     bool homeVisible() const { return homeLibrary && !host.isLoaded() && !tvMode.active(); }   // is the desktop library standing in for the game? (TV mode's screens stand in instead)
     bool desktopWindowOpen() const;   // Settings, States, Cheats, About, the library window, the keypad overlay or any popup / menu is open (devices_ui.cpp)
     void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
-    void toggleLibrary();             // Ctrl/Cmd+L: the library window, or focus the home screen's search box
+    void toggleLibrary();             // the desktop library window, or focus the home screen's search box (TV mode off)
+    void openLibrary();               // Ctrl/Cmd+L, File > Game library, Cmd::Library: the TV Library while TV mode is on (over the paused game, from the in-game menu, with one), else toggleLibrary() (#991)
     void reset();
     void togglePause();
     // The TV in-game menu's pause (tv/tv_app_host.cpp): like togglePause() but silent, and it remembers whether the
     // game was already paused, so closing the menu gives back exactly that.  False = refused (hardcore rations pausing;
     // `why` says so).  Under netplay it returns true without pausing: the link keeps running.
-    bool menuPause(std::string& why);
+    bool menuPause(std::string& why);   // always true: hardcore's refusal (or netplay) opens the menu over a game that keeps running
+    bool menuRunsOn() const { return menuRunsOn_; }   // ... because hardcore would not let the menu pause it (the banner says so)
+    bool testDenyPause = false;                       // tv_script `hardcore-pause deny`: allowPause() refuses, as hardcore does between pauses
     void menuResume();
     tv::Shell& tvShell();
     tv::TvMode tvMode;                           // TV mode (#991): when it is on
     bool tvMoreSettings_ = false;                // the Settings window was opened by "More settings..." in TV mode (tv_more_settings.h)
     DesktopPad deskPad;                          // pad navigation of the desktop library (#1021, desktop_nav_app.h)
-    tv::TvSetting tvSetting = tv::TvSetting::Manual;   // ui.tv_mode as stored; effectiveSetting() is what TvMode acts on
+    tv::TvSetting tvSetting = tv::TvSetting::Auto;     // ui.tv_mode as stored, else the build default (tv::defaultSetting); TvMode acts on it as is
+    void openBiosSettings();                     // the desktop Settings on the BIOS tab; with TV mode on, the pad-driven "More settings" hand-off (the menu first with a game)
+    void openSettings();                         // Settings: the TV Settings screen while TV mode is on (the in-game menu with a game), else the desktop window (#991)
     void toggleTvMode() { tvMode.toggle(); }     // View > TV Mode, F4 with no game; a no-op when the setting is Off
     void configureTvMode();                      // tvMode.configure() from tvSetting + the config (also when Settings changes it)
+    // The one way to change the TV-mode settings (Settings > Interface, the TV Settings rows): each writes its key, reconfigures,
+    // and keeps TV mode on if it was on.  Neither saves the config; the caller does.
+    void setTvSetting(tv::TvSetting s);          // ui.tv_mode, written on change only (saveConfig never writes it); Off clears ui.tv_manual_on
+    void setTvAuto(bool fullscreenTrigger, bool on);   // ui.tv_auto_fullscreen (true) / ui.tv_auto_controller (false)
+    bool tvAutoPadPress(const SDL_Event& e);     // the Auto controller trigger: true = this press turned TV mode on and is consumed
+    void tvFullscreenEdge();                     // tells TvMode `fullscreen` when it differs from tvNoteFsSeen_ (edges only)
+    bool tvSeenOn_ = false;                      // tvMode.active() as tvInputFrame last saw it (the on edge closes the desktop library window)
+    bool tvNoteFsSeen_ = false;                  // the fullscreen state TvMode was last told
     void setFullscreen(bool fs);
     void applyVsync();
     void syncSwapInterval();
@@ -429,6 +444,8 @@ private:
     bool waitEventUntil(SDL_Event& e, uint64_t dueNs, Sint32 ms);
     void latchLog();
     void latchUpdatePeriod();
+    bool menuRunsOn_ = false;         // the menu is open over a running game because allowPause() refused (netplay is its own case)
+    bool pauseAllowed(std::string& why);   // ach.allowPause(), or the test seam
     bool menuHeldPause_ = false;      // menuPause() took the game's pause (menuResume gives it back)
     bool pausedBeforeMenu_ = false;   // ... and the game was already paused by the user
     std::unique_ptr<tv::AppHost> tvHost_;   // the TV module's view of this App

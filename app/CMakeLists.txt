@@ -62,6 +62,13 @@ set(VJ_DISCORD_APP_ID "1559739062682787870" CACHE STRING "Discord application ID
 if(NOT VJ_DISCORD_APP_ID STREQUAL "" AND NOT VJ_DISCORD_APP_ID MATCHES "^[0-9]+$")
     message(FATAL_ERROR "VJ_DISCORD_APP_ID must be the numeric application ID from the Discord developer portal (got '${VJ_DISCORD_APP_ID}')")
 endif()
+# TV mode (#991): the setting a fresh config starts from (a stored ui.tv_mode wins; the key is written only when the user
+# changes it, so this default can move between builds).  app-package.yml always passes it: manual for release tags and
+# prerelease, auto for nightlies, PR builds and dev; a plain configure gets the default below.
+set(VJ_TV_DEFAULT "auto" CACHE STRING "TV mode setting for a fresh config: auto (nightlies, PR builds) | manual (releases) | off")
+if(NOT VJ_TV_DEFAULT MATCHES "^(auto|manual|off)$")
+    message(FATAL_ERROR "VJ_TV_DEFAULT must be auto, manual or off (got '${VJ_TV_DEFAULT}')")
+endif()
 option(VJ_APP_WERROR "Treat warnings in app/ sources as errors" OFF)
 option(VJ_APP_HTTP "Box art and database downloads (libcurl; WinHTTP on Windows). Off or missing: the library works from files and cached art" ON)
 option(VJ_APP_FREETYPE "Rasterise UI fonts with FreeType (hinting + anti-aliasing choices; fetched, pinned, built static). Off: Dear ImGui's built-in stb_truetype" ON)
@@ -465,6 +472,7 @@ if(VJ_APP_NEURO)
     target_compile_definitions(virtualjaguar PRIVATE VJ_HAVE_NEURO=1)
 endif()
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
+message(STATUS "TV mode default for a fresh config: ${VJ_TV_DEFAULT}")
 if(WIN32)
     target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
     target_link_libraries(virtualjaguar PRIVATE shell32)           # platform_windows.cpp: SHAddToRecentDocs, ShellExecuteW
@@ -474,7 +482,8 @@ if(APPLE)
 endif()
 target_compile_definitions(virtualjaguar PRIVATE
     VJ_APP_VERSION="${PROJECT_VERSION}"
-    VJ_DISCORD_APP_ID="${VJ_DISCORD_APP_ID}")
+    VJ_DISCORD_APP_ID="${VJ_DISCORD_APP_ID}"
+    VJ_TV_DEFAULT_SETTING="${VJ_TV_DEFAULT}")
 if(MSVC)
     target_compile_options(virtualjaguar PRIVATE /W3 /utf-8)
     target_compile_definitions(virtualjaguar PRIVATE _CRT_SECURE_NO_WARNINGS)

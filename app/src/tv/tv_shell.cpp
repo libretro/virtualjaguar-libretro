@@ -58,10 +58,61 @@ void Shell::closeMenu() {
     if (!open_) return;
     open_ = false;
     retire(std::move(menuScreen_));   // the slot's screen may be the caller (Overlays closes the menu from its own Accept)
+    retire(std::move(keptScreen_));   // ... and so may the one ConfirmLaunch was keeping (the Library's Yes)
     nav_.reset();
     host_.menuResume();
     host_.armReleaseGuard();   // whatever is down now (the A that picked Resume) stays masked from the game
     host_.clearHolds();        // ... and no hold or tap pulse in flight survives the hand-off
+}
+
+bool Shell::openSettings() {
+    if (!host_.tvActive()) return false;
+    if (!host_.gameLoaded()) {   // the Base layer
+        if (section_ != Section::Settings || stack_.empty()) setSection(Section::Settings);
+        return true;
+    }
+    if (!openMenu()) return false;   // already open: true.  A sub-screen pushed on the slot's screen (or a deeper level of it) is left as is.
+    if (menuScreenId() != "settings") menuPushScreen(makeSettingsScreen(host_, *this), Row::Settings);
+    return true;
+}
+
+bool Shell::openLibrary() {
+    if (!host_.tvActive()) return false;
+    if (!host_.gameLoaded()) {   // the Base layer
+        if (section_ != Section::Library || stack_.empty()) setSection(Section::Library);
+        return true;
+    }
+    if (!openMenu()) return false;   // as openSettings(): the hardcore gate and its toast
+    if (menuScreenId() != "library") menuPushScreen(makeLibraryScreen(host_, *this), Row::Library);
+    return true;
+}
+
+bool Shell::showingLibrary() const {
+    if (open_) return menuScreenId() == "library";   // (with a game the Base stack is kept but not shown)
+    return baseActive() && section_ == Section::Library;
+}
+
+void Shell::requestLaunch(const GameRef& g, const StateRef* state) {
+    if (!host_.gameLoaded()) {   // nothing to lose (the Base layer): start it now
+        if (state) host_.launchState(g, *state);
+        else host_.launch(g);
+        launched();
+        return;
+    }
+    if (!openMenu()) return;   // a game is running and the question has no menu to sit in (not reachable from a screen today): never launch over it unasked
+    pending_.game = g;
+    pending_.hasState = state != nullptr;
+    if (state) pending_.state = *state;
+    std::unique_ptr<Screen> kept = std::move(menuScreen_);   // enter() would retire the slot's screen: No wants it back
+    enter(Page::ConfirmLaunch, Row::No);
+    keptScreen_ = std::move(kept);
+}
+
+// ConfirmLaunch's No / Back: the root with the Library back in its slot (the screen kept aside, with its focus).
+void Shell::declineLaunch() {
+    std::unique_ptr<Screen> kept = std::move(keptScreen_);
+    enter(Page::Root, Row::Library);
+    if (kept) menuPushScreen(std::move(kept), Row::Library);
 }
 
 void Shell::toggleMenu() {
@@ -107,6 +158,11 @@ bool Shell::handleEvent(const SDL_Event& e, uint64_t ms) {
         // Alt+Enter and the like are hotkeys (a press only: a release always reaches the nav, or a repeat could stick).
         if (down && (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;
         const bool shift = (e.key.mod & SDL_KMOD_SHIFT) != 0;
+        // Typing goes to the slot's screen under the menu too (the Library's filter); a text field of a desktop window has the keyboard first.
+        if (!base && down && menuScreen_ && !host_.desktopWindowOpen() && !(ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) {
+            const char c = typedChar(e.key);
+            if (c && menuScreen_->typed(c)) return true;
+        }
         if (base && down) {
             // A text field of a desktop window has the keyboard: every key is the field's (Enter, Tab, Backspace, the
             // arrows, Esc too).  Key-ups still reach the nav below, so a repeat that began earlier can stop.
@@ -161,16 +217,24 @@ void Shell::frame(uint64_t ms) {
         if (!baseActive()) return;
         if (stack_.empty()) setSection(Section::Home);
         if (!live) return;   // a desktop window has the pads and keys: the screens wait
-        for (Intent in : nav_.take(ms)) baseIntent(in);
+        const std::vector<Intent> in = nav_.take(ms);
+        for (size_t i = 0; i < in.size(); i++) {
+            repeat_ = nav_.lastWasRepeat() && i + 1 == in.size();   // a repeat is the last intent of its call
+            baseIntent(in[i]);
+        }
+        repeat_ = false;
         return;
     }
     // (Not under a slot screen: enter() would clear it.  Leaving the screen rebuilds the root anyway.)
     if (!menuScreen_ && page_ == Page::Root && (host_.canLoadState() != rootHasLoad_ || tvRowState() != rootTvRow_))
         enter(Page::Root, rows_[(size_t)focus_.index].kind);
-    for (Intent in : nav_.take(ms)) {
-        intent(in);
+    const std::vector<Intent> in = nav_.take(ms);
+    for (size_t i = 0; i < in.size(); i++) {
+        repeat_ = nav_.lastWasRepeat() && i + 1 == in.size();
+        intent(in[i]);
         if (!open_) break;
     }
+    repeat_ = false;
 }
 
 void Shell::draw(Layer layer, ImVec2 pos, ImVec2 size) {
@@ -218,6 +282,20 @@ void Shell::pop() {
 
 void Shell::retire(std::unique_ptr<Screen> s) {
     if (s) retired_.push_back(std::move(s));
+}
+
+// With the in-game menu open it is the menu that has the focus (the Base stack is kept under the game, not shown): the slot's screen, or the row.
+std::string Shell::focusLabel() {
+    if (open_) {
+        if (menuScreen_) return menuScreen_->focusLabel();
+        return focus_.index >= 0 && focus_.index < (int)rows_.size() ? rows_[(size_t)focus_.index].label : std::string();
+    }
+    return stack_.empty() ? std::string() : stack_.back()->focusLabel();
+}
+
+std::string Shell::focusGroup() {
+    if (open_) return menuScreen_ ? menuScreen_->focusGroup() : std::string();
+    return stack_.empty() ? std::string() : stack_.back()->focusGroup();
 }
 
 std::string Shell::screenId() const { return stack_.empty() ? std::string() : std::string(stack_.back()->id()); }
@@ -269,6 +347,7 @@ void Shell::buildRoot() {
     rows_.push_back({Row::Save, "Save state"});
     rootHasLoad_ = host_.canLoadState();
     if (rootHasLoad_) rows_.push_back({Row::Load, "Load state"});   // hardcore refuses loads: no row at all
+    rows_.push_back({Row::Library, "Library"});             // the TV Library over the paused game (a launch from it asks first)
     rows_.push_back({Row::Achievements, "Achievements"});   // spec 4's order; the three open a screen in the slot
     rows_.push_back({Row::Overlays, "Overlays"});
     rows_.push_back({Row::Settings, "Settings"});
@@ -281,6 +360,7 @@ void Shell::buildRoot() {
 
 void Shell::enter(Page p, Row::Kind focusKind) {
     retire(std::move(menuScreen_));   // a page replaces whatever the slot held
+    retire(std::move(keptScreen_));   // (declineLaunch() and requestLaunch() move theirs out first)
     page_ = p;
     switch (p) {
     case Page::Root: buildRoot(); break;
@@ -306,6 +386,12 @@ void Shell::enter(Page p, Row::Kind focusKind) {
         rows_.push_back({Row::Yes, "Yes"});
         rows_.push_back({Row::No, "No"});   // focus starts on the safe answer (enter() is given Row::No)
         break;
+    case Page::ConfirmLaunch:   // as Reset and Close: Yes, No, the focus on No (every confirm is answered the same way)
+        title_ = "Close " + host_.gameTitle() + " and start " + pending_.game.title + "?";
+        rows_.clear();
+        rows_.push_back({Row::Yes, "Yes"});
+        rows_.push_back({Row::No, "No"});
+        break;
     }
     focus_ = LinearFocus();
     focus_.count = (int)rows_.size();
@@ -320,6 +406,7 @@ void Shell::menuPushScreen(std::unique_ptr<Screen> s, Row::Kind from) {
     if (!open_ || !s) return;
     s->setEmbedded(true);
     retire(std::move(menuScreen_));
+    retire(std::move(keptScreen_));   // (a Settings / Library opened over a pending launch)
     menuScreen_ = std::move(s);
     menuFrom_ = from;
 }
@@ -360,6 +447,7 @@ void Shell::accept() {
     case Row::Achievements: menuPushScreen(makeAchievementsScreen(host_, *this), Row::Achievements); break;
     case Row::Overlays: menuPushScreen(makeOverlaysScreen(host_, *this), Row::Overlays); break;
     case Row::Settings: menuPushScreen(makeSettingsScreen(host_, *this), Row::Settings); break;
+    case Row::Library: menuPushScreen(makeLibraryScreen(host_, *this), Row::Library); break;
     case Row::Controls:
         closeMenu();   // the sheet is drawn over the game, so the game has to be showing
         host_.showControlsOverlay();
@@ -377,9 +465,20 @@ void Shell::accept() {
             if (host_.loadState(r.slot)) closeMenu();
         }
         break;
-    case Row::No: enter(Page::Root, page_ == Page::ConfirmReset ? Row::Reset : Row::Close); break;
+    case Row::No:
+        if (page_ == Page::ConfirmLaunch) declineLaunch();
+        else enter(Page::Root, page_ == Page::ConfirmReset ? Row::Reset : Row::Close);
+        break;
     case Row::Yes:
-        if (page_ == Page::ConfirmReset) {
+        if (page_ == Page::ConfirmLaunch) {
+            // The app closes the running game's menu and auto-saves it on the way (App::openContent, a queued event); until it does the
+            // Library is what the menu shows again, so a refused launch (the debugger has the game halted) leaves the player somewhere.
+            const Pending p = pending_;
+            if (p.hasState) host_.launchState(p.game, p.state);
+            else host_.launch(p.game);
+            launched();
+            if (open_) declineLaunch();   // (a host that closed the menu on the way has nothing to come back to)
+        } else if (page_ == Page::ConfirmReset) {
             host_.reset();
             closeMenu();
         } else {
@@ -400,6 +499,7 @@ void Shell::back() {
     case Page::LoadSlots: enter(Page::Root, Row::Load); break;
     case Page::ConfirmReset: enter(Page::Root, Row::Reset); break;
     case Page::ConfirmClose: enter(Page::Root, Row::Close); break;
+    case Page::ConfirmLaunch: declineLaunch(); break;
     }
 }
 

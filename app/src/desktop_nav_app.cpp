@@ -24,6 +24,22 @@ bool deskPadActive(App& app) {
     return !deskForeignPopupOpen(app.deskPad.padPopup);
 }
 
+// The one-time TV mode hint (approval E): the first pad press the desktop library takes under Manual says how to reach TV mode,
+// in this pad's own words.  Stored before it shows, and flagged for the run, so it can never show twice; Auto and Off never see it
+// (Auto's switching press returned before getting here).  A Settings > Reset of Interface clears the key and it may show once more.
+static void tvMaybeShowHint(App& app, SDL_JoystickID pad) {
+    if (app.tvSetting != tv::TvSetting::Manual || app.tvHintShownThisRun_ || app.cfg.getBool("ui.tv_hint_shown", false)) return;
+    app.tvHintShownThisRun_ = true;
+    app.cfg.setBool("ui.tv_hint_shown", true);
+    app.saveConfig();
+#ifdef __APPLE__
+    const bool macOS = true;
+#else
+    const bool macOS = false;
+#endif
+    app.toast(tv::firstUseHint(app.input.tvMenuBindingText(pad), app.input.tvMenuKeyText(), macOS), 6.0);
+}
+
 bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
     DesktopPad& d = app.deskPad;
     switch (e.type) {
@@ -59,6 +75,7 @@ bool deskPadHandleEvent(App& app, const SDL_Event& e, uint64_t ms) {
             d.seq++;
         }
         d.in.padIntent(e.gbutton.which, e.gbutton.button, in, down, ms);
+        if (down) tvMaybeShowHint(app, e.gbutton.which);
         return down;   // a release is fed (it ends a repeat, or fires a tap) but still reaches the app
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:

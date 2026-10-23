@@ -68,13 +68,13 @@ void DetailsScreen::accept() {
     const Item it = items_[(size_t)focus_.index];
     switch (it.kind) {
     case Item::Play:
-        host_.launch(g_);
-        shell_.launched();
+        shell_.requestLaunch(g_, nullptr);
         break;
-    case Item::Resume:
-        host_.launchState(g_, {it.slot, it.time, it.disc});
-        shell_.launched();
+    case Item::Resume: {
+        const StateRef state{it.slot, it.time, it.disc};
+        shell_.requestLaunch(g_, &state);
         break;
+    }
     case Item::Favorite: host_.setFavorite(g_, !host_.isFavorite(g_)); break;
     case Item::Achievements:   // replaces the stack, this screen with it: nothing of ours is touched after the call
         shell_.openSection(Section::Achievements, makeAchievementsScreen(host_, shell_, achId_));
