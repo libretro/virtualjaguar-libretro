@@ -1,4 +1,5 @@
 #include "app.h"
+#include "build_channel.h"
 #include "devices_ui.h"
 #include "fonts_imgui.h"
 #include "ui_scale.h"
@@ -307,7 +308,7 @@ void App::saveConfig() {
     cfg.setBool("ui.viewports", windowsOutside);
     cfg.setBool("ui.menubar_in_window", showInWindowMenu);
     cfg.setBool("ui.fullscreen_autohide_menu", fullscreenAutoHideMenu);
-    if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen (Phase 3's default)
+    if (emuThreadPref >= 0) cfg.setBool("ui.emu_thread", emuThreadPref == 1);   // unwritten until chosen: the channel default applies (build_channel.h)
     else cfg.erase("ui.emu_thread");
     cfg.setInt("saves.resume", resumeMode);
     cfg.setBool("input.stick_dpad", input.stickAsDpad);
@@ -341,7 +342,7 @@ void App::toast(const std::string& text, double seconds, int level) {
     if (headless_) std::fprintf(stderr, "[osd] %s\n", text.c_str());
 }
 
-bool App::emuThreadWanted() const { return emuThreadPref == 1; }   // never chosen: off in Phase 1 (#967)
+bool App::emuThreadWanted() const { return emuThreadEffective(emuThreadPref, kEmuThreadDefault); }   // never chosen: the build channel (#967 3d)
 
 // ---------------------------------------------------------------------------------
 // init / shutdown

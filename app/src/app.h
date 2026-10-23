@@ -287,10 +287,10 @@ public:
     bool trayIcon = false;     // ui.tray: a tray / menu-bar icon (Settings > Interface)
     bool windowsOutside = false;   // ui.viewports: Settings / tool windows may become their own OS windows (viewports.h)
     bool keepAwake = true;     // ui.keep_awake: no screensaver / display sleep while a game runs
-    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen, 0 off, 1 on.  Never chosen is
-    // off in Phase 1 on every build; Phase 3 turns it on by default in nightlies.
+    // Settings > Interface > Emulation thread (ui.emu_thread, #967): -1 = never chosen, 0 off, 1 on.  Never chosen follows the
+    // build channel (build_channel.h: nightly on; release and dev off); a stored choice always wins.
     int emuThreadPref = -1;
-    bool emuThreadWanted() const;                                 // the choice (never chosen = off)
+    bool emuThreadWanted() const;                                 // the choice, or the channel default when never chosen
     bool emuThreadThisRun() const { return emuThreadThisRun_; }   // decided once at start-up
 
     // ---- actions ----------------------------------------------------------------

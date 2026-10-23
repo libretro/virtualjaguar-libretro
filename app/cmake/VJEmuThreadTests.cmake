@@ -30,6 +30,7 @@
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
 #   emu_thread_start_fallback  a failed thread start runs inline (nothing to lift any more)
 #   debug_on_threaded / gdb_enabled(_threaded)  nothing is off while threaded; the silent gdb host attaches at load
+#   emu_thread_default_unit  build channel -> emulation-thread default; a stored choice always wins
 #   no_threaded_limits    the Phase 3 bar, static: no threaded-only gate, text or limit test; "am I threaded?" only where allowed
 #   gdb_hardcore_locked_* / gdb_hardcore_flip_*  hardcore locks the stub to disabled at load; a mid-game flip reloads to apply it
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
@@ -369,6 +370,15 @@ target_include_directories(vj_late_latch_test PRIVATE src)
 vj_emu_thread_warnings(vj_late_latch_test)
 add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
 set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The build channel's default rule (#967 phase 3d): a stored choice always wins; only "never chosen" follows the channel.
+# The target links vj_build_channel, so it sees the defines the app was configured with.
+add_executable(vj_emu_thread_default_test tests/emu_thread_default_test.cpp)
+target_include_directories(vj_emu_thread_default_test PRIVATE src)
+target_link_libraries(vj_emu_thread_default_test PRIVATE vj_build_channel)
+vj_emu_thread_warnings(vj_emu_thread_default_test)
+add_test(NAME emu_thread_default_unit COMMAND vj_emu_thread_default_test)
+set_tests_properties(emu_thread_default_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 add_executable(vj_latch_waker_test tests/latch_waker_test.cpp)
 target_include_directories(vj_latch_waker_test PRIVATE src)
