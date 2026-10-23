@@ -130,6 +130,12 @@ def bump(doc, spec):
 
 # ---------------------------------------------------------------- fetching
 
+def reject_control(path, where, error=None):
+    """Fail closed on a path with a control character: names reach ::warning:: annotations and PR bodies."""
+    if any(ord(c) < 32 or ord(c) == 127 for c in path):
+        raise (error or FetchError)(f"{where}: refusing path with a control character: {path!r}")
+
+
 def fetch_github(repo, commit, include):
     """{path: bytes} for tarball members matching include (codeload, in memory, bounded)."""
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -151,6 +157,7 @@ def fetch_github(repo, commit, include):
                 scanned += TAR_BLOCK + max(member.size, 0)  # header block + payload, so empty members count
                 if scanned > SCAN_CAP or members > MAX_MEMBERS:
                     raise FetchError(f"{url}: archive has too many members or expands past {SCAN_CAP >> 20} MiB")
+                reject_control(member.name, url)
                 parts = member.name.split("/", 1)  # drop codeload's <repo>-<sha>/ prefix
                 if not member.isfile() or len(parts) != 2 or ".." in parts[1].split("/") or not matches(parts[1], include):
                     continue
@@ -168,6 +175,7 @@ def read_dir(root, include):
         for name in files:
             full = Path(base, name)
             rel = full.relative_to(root).as_posix()
+            reject_control(rel, str(root), ValueError)
             if full.is_symlink() or not full.is_file() or not matches(rel, include):
                 continue
             with full.open("rb") as handle:
@@ -310,7 +318,8 @@ def finish_pack(pack):
     credit = "; ".join(dict.fromkeys(src["credit"] for src in pack["src"]))
     updated = max(src["commit_date"] for src in pack["src"])
     notes_omitted = [n for n in pack["notes"] if n["setting"] is not None]
-    lines = [f"Community cheats for {cart['title']} ({cart['name']}); nothing is enabled automatically.", "Credit: " + credit]
+    label = cart["name"] if cart["name"].startswith(cart["title"]) else f"{cart['title']} ({cart['name']})"
+    lines = [f"Community cheats for {label}; nothing is enabled automatically.", "Credit: " + credit]
     srcs = {src["id"]: src for src in pack["src"]}
     for record in pack["sources"]:
         src = srcs[record["source"]]

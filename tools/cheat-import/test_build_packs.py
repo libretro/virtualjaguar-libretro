@@ -94,6 +94,18 @@ class PackTests(unittest.TestCase):
         self.assertEqual(manifest["counts"], {"packs": 1, "cheats": 2, "partial_packs": 0, "unsupported_entries": 0})
         self.assertEqual(sorted(files), [".vj-cheat-packs", "README.md", "index.html", "manifest.json", f"packs/{CRC}.cht", "unsupported.json"])
 
+    def test_header_title_not_duplicated(self):
+        def first(table):
+            files = make({"s": {"scripts/cheat_a.c": source(SIMPLE)}}, table=table)
+            return comments(files[f"packs/{CRC}.cht"])[0]
+        tail = "; nothing is enabled automatically."
+        for title, name, label in (("Synthetic Game", "Synthetic Game (Test)", "Synthetic Game (Test)"),
+                                   ("Synthetic Game", "Synthetic Game", "Synthetic Game"),
+                                   ("Synthetic", "Other Release (1994)", "Synthetic (Other Release (1994))")):
+            with self.subTest(title=title, name=name):
+                table = {f"{DIGEST:016X}": cart(title=title, name=name)}
+                self.assertEqual(first(table), "# Community cheats for " + label + tail)
+
     def test_partial_notes(self):
         text = variant('bigpemu_register_setting_bool(category, "Other freeze", 0)',
                        'bigpemu_register_setting_int_full(category, "Start At Level", -1, -1, 9, 1)')
@@ -441,6 +453,22 @@ class FetchTests(unittest.TestCase):
                 self.fetch(b"x" * 50)
         with self.assertRaises(bp.FetchError):
             self.fetch(b"not a tarball")
+
+    def test_control_character_paths_refused(self):
+        for bad in ("scripts/cheat_a\nb.c", "scripts/cheat_a\x1b[0m.c", "scripts/cheat_a\x7f.c", "scripts/\x1fx/note.txt"):
+            with self.subTest(path=bad):
+                with self.assertRaisesRegex(bp.FetchError, "control character"):
+                    self.fetch(self.tarball([("repo-aaa/scripts/cheat_ok.c", b"A"), ("repo-aaa/" + bad, b"B")]))
+
+    @unittest.skipIf(sys.platform == "win32", "control characters are not valid Windows file names")
+    def test_local_dir_control_character_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "scripts").mkdir()
+            (Path(directory) / "scripts" / "cheat_ok.c").write_bytes(b"A")
+            self.assertEqual(sorted(bp.read_dir(Path(directory), ["scripts/cheat_*.c"])), ["scripts/cheat_ok.c"])
+            (Path(directory) / "scripts" / "note\x1b[31m.txt").write_bytes(b"N")  # not matched by include, still refused
+            with self.assertRaisesRegex(ValueError, "control character"):
+                bp.read_dir(Path(directory), ["scripts/cheat_*.c"])
 
     def test_local_dir_matches_fetch(self):
         members = [("repo-aaa/scripts/cheat_a.c", b"A"), ("repo-aaa/scripts/note.txt", b"N"), ("repo-aaa/README.md", b"R")]
