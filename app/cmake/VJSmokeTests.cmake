@@ -258,7 +258,8 @@ else()
     target_compile_options(vj_fonts_system_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 add_test(NAME fonts_system_unit COMMAND vj_fonts_system_test)
-set_tests_properties(fonts_system_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+# 150 s: above the 120 s bound FONTS_STRICT=1 allows the real scan (fonts_system_test.cpp testMachine).
+set_tests_properties(fonts_system_unit PROPERTIES TIMEOUT 150 FAIL_REGULAR_EXPRESSION "FAIL ")
 
 # The Dear ImGui half of the fonts (fonts_imgui.cpp): the symbol fallback in every typeface incl. the Retro pixel font.
 add_executable(vj_fonts_imgui_test tests/fonts_imgui_test.cpp src/fonts.cpp src/fonts_system.cpp src/fonts_imgui.cpp src/paths.cpp src/config.cpp)
