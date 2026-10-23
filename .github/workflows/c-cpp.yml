@@ -643,13 +643,15 @@ jobs:
     - name: exactly one SIMD vtable, and it is not the scalar one
       run: |
         set -euo pipefail
-        B=$(find .build -type d -name 'virtualjaguar.build' | head -1)
-        [ -n "$B" ] || { echo "could not locate the build directory"; exit 1; }
+        # Layout-independent: Xcode 26's SwiftPM build system keeps objects under
+        # .build/out/Intermediates.noindex/.../Objects-normal/arm64/blitter_simd_<a>.o,
+        # older SwiftPM under .build/<triple>/debug/virtualjaguar.build/.../<a>.c.o.
+        # Find each object by name and fail loudly if one of the three is missing.
         total=0
         for a in neon sse2 scalar; do
-          o="$B/src/tom/blitter_simd_$a.c.o"
-          n=0
-          [ -f "$o" ] && n=$(nm "$o" | grep -c '_blitter_simd_ops' || true)
+          o=$(find .build -type f \( -name "blitter_simd_$a.o" -o -name "blitter_simd_$a.c.o" \) | head -1)
+          [ -n "$o" ] || { echo "could not locate blitter_simd_$a object under .build"; exit 1; }
+          n=$(nm "$o" | grep -c '_blitter_simd_ops' || true)
           echo "  blitter_simd_$a: $n"
           total=$((total + n))
         done
