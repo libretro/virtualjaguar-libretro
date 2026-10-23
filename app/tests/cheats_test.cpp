@@ -1,7 +1,7 @@
 // Unit tests for the cheat database parser, the conversion to the core's code
 // format and the per-game persistence.  Links only cheats.cpp, config.cpp,
-// paths.cpp and the core's own cheat.c (so every code we emit is run through the
-// real parser): no SDL window, no GL, no emulation.
+// paths.cpp, sha256.cpp and the core's own cheat.c (so every code we emit is run
+// through the real parser): no SDL window, no GL, no emulation.
 //
 //   vj_cheats_test               the unit tests (fixtures are synthetic .cht files)
 //   vj_cheats_test --corpus DIR  parse every .cht in DIR (the downloaded libretro database)
@@ -618,8 +618,380 @@ static void testRevisionGuard() {
     fs::remove_all(tmp);
 }
 
-// FIPS 180-4 / NIST vectors.  The one-million-'a' message crosses many blocks; the 55/56/63/64/65-byte
-// lengths straddle the padding boundary (length field fits in the last block, or forces an extra one).
+// ---- community pack (#1071) ----------------------------------------------------------------------
+struct PackCheat {
+    std::string desc, code;
+};
+// Write <dir>/<fileCrc>.cht: a revision-bound pack (guard `guardCrc`; "" = no guard line at all).
+static void writePack(const fs::path& dir, const std::string& fileCrc, const std::string& guardCrc,
+                      const std::vector<PackCheat>& cheats) {
+    fs::create_directories(dir);
+    std::ofstream f(dir / (fileCrc + ".cht"), std::ios::binary);
+    if (!guardCrc.empty()) f << "vj_rom_crc32 = \"" << guardCrc << "\"\n";
+    for (size_t i = 0; i < cheats.size(); i++)
+        f << "cheat" << i << "_desc = \"" << cheats[i].desc << "\"\ncheat" << i << "_code = \"" << cheats[i].code
+          << "\"\ncheat" << i << "_enable = true\n";
+}
+static std::string slurp(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+static const std::vector<PackCheat> kPack = {
+    {"Infinite lives", "001F0000:AB"}, {"Max score", "001F0010:1234"}, {"Gold", "001F0020:01+001F0021:02"}};
+static GameIdentity cartGame(uint32_t crc, const char* title = "Unmatched Cart") {
+    GameIdentity g;
+    char key[32];
+    std::snprintf(key, sizeof key, "crc-%08x", crc);
+    g.key = key;
+    g.title = title;
+    g.fileStem = title;
+    g.crc = crc;
+    return g;
+}
+
+static void testCommunityLoad() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-community-load";
+    fs::remove_all(tmp);
+    const fs::path packs = tmp / "packs";
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", kPack);
+    CheatManager m;
+    Recorder rec;
+    rec.attach(m);
+    m.setStateDir(tmp.string() + "/games/");
+    m.setLibraryDirs({VJ_TEST_FIXTURES});
+    m.setCommunityDir(packs.string());
+    m.rescan();
+
+    // Found by CRC alone: no library match, no selectSet.
+    m.gameLoaded(cartGame(0x5E2CDBC0));
+    CHECK(m.selectedSet() == nullptr);
+    const ChtSet* c = m.communitySet();
+    CHECK(c != nullptr);
+    if (!c) return;
+    CHECK(c->cheats.size() == 3 && c->restriction.empty() && c->revisionBound && c->romCrc == 0x5E2CDBC0);
+    CHECK(c->cheats[0].supported && c->cheats[2].supported && c->cheats[2].segments == 2);
+    CHECK(m.enabledCount() == 0 && m.appliedSegments() == 0);   // never auto-enabled
+    // Independent of the database set: choosing one leaves the pack alone.
+    CHECK(m.selectSet("Test Game"));
+    CHECK(m.communitySet() && m.communitySet()->cheats.size() == 3);
+    CHECK(m.selectSet(""));
+
+    // Another cartridge: no file, no pack.
+    m.gameLoaded(cartGame(0x12345678));
+    CHECK(m.communitySet() == nullptr);
+
+    // Closing the game forgets the pack.
+    m.gameLoaded(cartGame(0x5E2CDBC0));
+    CHECK(m.communitySet() != nullptr);
+    m.gameClosed();
+    CHECK(m.communitySet() == nullptr);
+
+    // A disc (crc 0) never loads a pack, even when a 00000000.cht is lying there.
+    writePack(packs, "00000000", "00000000", kPack);
+    GameIdentity disc;
+    disc.key = "title-some-disc";
+    disc.title = "Some Disc";
+    disc.fileStem = "Some Disc";
+    m.gameLoaded(disc);
+    CHECK(m.communitySet() == nullptr);
+
+    // Guard for another CRC: loaded, every cheat unsupported, restriction set, nothing applied.
+    writePack(packs, "5E2CDBC0", "11111111", kPack);
+    m.gameLoaded(cartGame(0x5E2CDBC0));
+    c = m.communitySet();
+    CHECK(c != nullptr && !c->restriction.empty());
+    if (c) {
+        for (const ChtCheat& k : c->cheats) CHECK(!k.supported && k.code.empty() && k.segments == 0 && !k.note.empty());
+        m.setEnabled(c->cheats[0], true, CheatOrigin::Community);   // refused: unsupported
+        CHECK(!m.isEnabled(c->cheats[0], CheatOrigin::Community));
+        CHECK(!m.setEnabledByName("Infinite lives", true));
+    }
+    CHECK(m.appliedSegments() == 0);
+    // Unbound pack (no guard line) and a malformed guard are restricted the same way.
+    for (const std::string& guard : {std::string(), std::string("5E2CDBCG")}) {
+        writePack(packs, "5E2CDBC0", guard, kPack);
+        m.gameLoaded(cartGame(0x5E2CDBC0));
+        c = m.communitySet();
+        CHECK(c != nullptr && !c->restriction.empty() && !c->cheats[0].supported);
+        CHECK(m.appliedSegments() == 0);
+    }
+    // The matching guard is back to normal.
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", kPack);
+    m.gameLoaded(cartGame(0x5E2CDBC0));
+    CHECK(m.communitySet() && m.communitySet()->restriction.empty() && m.communitySet()->cheats[0].supported);
+    // A file that holds no cheat at all is not a pack.
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", {});
+    m.gameLoaded(cartGame(0x5E2CDBC0));
+    CHECK(m.communitySet() == nullptr);
+    fs::remove_all(tmp);
+}
+
+static void testCommunityTogglesAcrossUpdate() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-community-toggles";
+    fs::remove_all(tmp);
+    const fs::path packs = tmp / "packs";
+    const std::string state = tmp.string() + "/games/";
+    const GameIdentity g = cartGame(0x5E2CDBC0);
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", kPack);
+    std::string livesId, scoreId;
+    {
+        CheatManager m;
+        Recorder rec;
+        rec.attach(m);
+        m.setStateDir(state);
+        m.setCommunityDir(packs.string());
+        m.gameLoaded(g);
+        const ChtSet* c = m.communitySet();
+        CHECK(c != nullptr);
+        if (!c) return;
+        livesId = c->cheats[0].id;
+        scoreId = c->cheats[1].id;
+        m.setEnabled(c->cheats[0], true, CheatOrigin::Community);
+        m.setEnabled(c->cheats[1], true, CheatOrigin::Community);
+        CHECK(m.isEnabled(c->cheats[0], CheatOrigin::Community) && m.isEnabled(c->cheats[1], CheatOrigin::Community));
+        CHECK(!m.isEnabled(c->cheats[2], CheatOrigin::Community));
+        // The database namespace is separate: same ids, other origin, still off.
+        CHECK(!m.isEnabled(c->cheats[0], CheatOrigin::Database));
+        CHECK(m.enabledCount() == 2 && m.appliedSegments() == 2);
+    }
+    const std::string ini = slurp(state + g.key + ".ini");
+    CHECK(ini.find("cp." + livesId) != std::string::npos && ini.find("cp." + scoreId) != std::string::npos);
+    CHECK(ini.find("on.") == std::string::npos);
+
+    // A fresh manager (restart) still has both on.
+    CheatManager m;
+    Recorder rec;
+    rec.attach(m);
+    m.setStateDir(state);
+    m.setCommunityDir(packs.string());
+    m.gameLoaded(g);
+    CHECK(m.communitySet() != nullptr && m.enabledCount() == 2);
+    CHECK(m.isEnabled(m.communitySet()->cheats[0], CheatOrigin::Community));
+    CHECK(rec.log.size() == 3 && rec.log[0] == "reset" && rec.log[1] == "set 5000 on 001F0000:AB" &&
+          rec.log[2] == "set 5001 on 001F0010:1234");
+
+    // The pack is updated: "Max score" has a new code, the others are untouched.
+    writePack(packs, "5E2CDBC0", "5E2CDBC0",
+              {kPack[0], {"Max score", "001F0010:5678"}, kPack[2]});
+    rec.log.clear();
+    m.reloadCommunity();
+    const ChtSet* c = m.communitySet();
+    CHECK(c != nullptr);
+    if (!c) return;
+    CHECK(c->cheats[0].id == livesId && c->cheats[1].id != scoreId);
+    CHECK(m.isEnabled(c->cheats[0], CheatOrigin::Community));
+    CHECK(!m.isEnabled(c->cheats[1], CheatOrigin::Community));   // changed: back off
+    CHECK(m.enabledCount() == 1 && m.appliedSegments() == 1);
+    CHECK(rec.log.size() == 2 && rec.log[0] == "reset" && rec.log[1] == "set 5000 on 001F0000:AB");
+    const std::string ini2 = slurp(state + g.key + ".ini");
+    CHECK(ini2.find("cp." + livesId) != std::string::npos);
+    CHECK(ini2.find("cp." + scoreId) == std::string::npos);   // no stale key
+    // ...and after a restart too.
+    CheatManager m2;
+    m2.setStateDir(state);
+    m2.setCommunityDir(packs.string());
+    m2.gameLoaded(g);
+    CHECK(m2.enabledCount() == 1 && m2.isEnabled(m2.communitySet()->cheats[0], CheatOrigin::Community));
+    CHECK(!m2.isEnabled(m2.communitySet()->cheats[1], CheatOrigin::Community));
+
+    // A stale cp. key (pack replaced while the app was closed) is pruned at load time.
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", {kPack[1]});
+    CheatManager m3;
+    m3.setStateDir(state);
+    m3.setCommunityDir(packs.string());
+    m3.gameLoaded(g);
+    CHECK(m3.enabledCount() == 0);
+    CHECK(slurp(state + g.key + ".ini").find("cp.") == std::string::npos);
+    fs::remove_all(tmp);
+}
+
+static void testApplyOrder() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-community-order";
+    fs::remove_all(tmp);
+    const fs::path packs = tmp / "packs";
+    GameIdentity g = cartGame(0x5E2CDBC0, "Test Game");
+    g.fileStem = "Test Game (World)";
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", kPack);
+    CheatManager m;
+    Recorder rec;
+    rec.attach(m);
+    std::vector<std::string> warns;
+    m.warn = [&](const std::string& w) { warns.push_back(w); };
+    m.setStateDir(tmp.string() + "/games/");
+    m.setLibraryDirs({VJ_TEST_FIXTURES});
+    m.setCommunityDir(packs.string());
+    m.rescan();
+    m.gameLoaded(g);
+    CHECK_EQ(m.selectedStem(), "Test Game");
+    const ChtSet* db = m.selectedSet();
+    const ChtSet* cp = m.communitySet();
+    CHECK(db && cp);
+    if (!db || !cp) return;
+    const ChtCheat* lives = find(*db, "Lives");
+    const ChtCheat* score = find(*db, "Score");
+    CHECK(lives && score);
+    if (!lives || !score) return;
+    std::string err;
+    // Enable in the "wrong" order: user first, then the pack, then the database.
+    CHECK(m.addUser("Mine", "00002000:11", err));
+    m.setEnabled(cp->cheats[2], true, CheatOrigin::Community);
+    m.setEnabled(cp->cheats[0], true, CheatOrigin::Community);
+    m.setEnabled(*score, true);
+    m.setEnabled(*lives, true);
+    const size_t livesIdx = size_t(lives - &db->cheats[0]), scoreIdx = size_t(score - &db->cheats[0]);
+    CHECK(livesIdx < scoreIdx);
+    rec.log.clear();
+    m.apply();
+    // reset, then database (set order), community (5000 + i), user (10000 + i).
+    const std::vector<std::string> want = {
+        "reset",
+        "set " + std::to_string(livesIdx) + " on " + lives->code,
+        "set " + std::to_string(scoreIdx) + " on " + score->code,
+        "set 5000 on 001F0000:AB",
+        "set 5002 on 001F0020:01+001F0021:02",
+        "set 10000 on 00002000:11"};
+    CHECK(rec.log.size() == want.size());
+    for (size_t i = 0; i < want.size() && i < rec.log.size(); i++) CHECK_EQ(rec.log[i], want[i]);
+    CHECK(m.appliedSegments() == lives->segments + score->segments + 1 + 2 + 1);
+    CHECK(m.enabledCount() == 5);
+    CHECK(warns.empty());
+
+    // Replay the batch through the core's own list: the writes all land.
+    Ram ram;
+    static cheat_list_t list;
+    cheat_list_reset(&list);
+    CHECK(rec.log.size() == want.size());
+    for (size_t i = 1; i < rec.log.size(); i++) {
+        const size_t sp1 = rec.log[i].find(' '), sp2 = rec.log[i].find(' ', sp1 + 1), sp3 = rec.log[i].find(' ', sp2 + 1);
+        cheat_list_set(&list, (uint32_t)std::strtoul(rec.log[i].substr(sp1 + 1, sp2 - sp1 - 1).c_str(), nullptr, 10), true,
+                       rec.log[i].substr(sp3 + 1).c_str());
+    }
+    cheat_list_apply(&list, ramWrite, &ram);
+    CHECK(ram.b[0x1F0000] == 0xAB && ram.b[0x1F0020] == 0x01 && ram.b[0x1F0021] == 0x02 && ram.b[0x2000] == 0x11);
+
+    // disableAll clears the pack too, and names reach the pack (after the database, before the manual codes).
+    m.disableAll();
+    CHECK(m.enabledCount() == 0 && m.appliedSegments() == 0);
+    CHECK(slurp(tmp / "games" / (g.key + ".ini")).find("cp.") == std::string::npos);
+    CHECK(m.setEnabledByName("max score", true));          // community desc, case-insensitive
+    CHECK(m.isEnabled(cp->cheats[1], CheatOrigin::Community) && !m.isEnabled(*score));
+    CHECK(m.setEnabledByName("Lives", true));              // database wins over nothing else here
+    CHECK(m.isEnabled(*lives) && !m.isEnabled(cp->cheats[0], CheatOrigin::Community));
+    CHECK(m.setEnabledByName("Mine", true));
+    CHECK(!m.setEnabledByName("No such cheat", true));
+    CHECK(m.setEnabledByName(cp->cheats[2].id, true));
+    CHECK(m.isEnabled(cp->cheats[2], CheatOrigin::Community));
+
+    // Above the core's limit: every segment is counted and the single warning fires.
+    m.disableAll();
+    std::vector<PackCheat> big;
+    for (int i = 0; i < 100; i++) {
+        char code[64];
+        std::snprintf(code, sizeof code, "%08X:01+%08X:02+%08X:03", 0x10000 + i * 4, 0x10001 + i * 4, 0x10002 + i * 4);
+        big.push_back({"Big " + std::to_string(i), code});
+    }
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", big);
+    m.reloadCommunity();
+    warns.clear();
+    for (const ChtCheat& k : m.communitySet()->cheats) m.setEnabled(k, true, CheatOrigin::Community);
+    CHECK(m.appliedSegments() == 300);
+    CHECK(!warns.empty() && warns.back().find("300") != std::string::npos);
+    fs::remove_all(tmp);
+}
+
+static void testCommunityHardcore() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-community-hardcore";
+    fs::remove_all(tmp);
+    const fs::path packs = tmp / "packs";
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", kPack);
+    CheatManager m;
+    Recorder rec;
+    rec.attach(m);
+    m.setStateDir(tmp.string() + "/games/");
+    m.setCommunityDir(packs.string());
+    m.gameLoaded(cartGame(0x5E2CDBC0));
+    const ChtSet* c = m.communitySet();
+    CHECK(c != nullptr);
+    if (!c) return;
+    m.setEnabled(c->cheats[0], true, CheatOrigin::Community);
+    CHECK(m.appliedSegments() == 1);
+    m.blocked = [] { return true; };
+    rec.log.clear();
+    m.apply();
+    CHECK(rec.log.size() == 1 && rec.log[0] == "reset");   // only the reset reaches the core
+    CHECK(m.appliedSegments() == 0);
+    // The saved selection is neither touched nor forgotten: it goes back in once the block lifts.
+    CHECK(m.isEnabled(c->cheats[0], CheatOrigin::Community) && m.enabledCount() == 1);
+    m.reloadCommunity();   // an install during hardcore is data-only
+    CHECK(rec.log.size() == 2 && rec.log[0] == "reset" && rec.log[1] == "reset");
+    m.blocked = nullptr;
+    rec.log.clear();
+    m.apply();
+    CHECK(rec.log.size() == 2 && rec.log[1] == "set 5000 on 001F0000:AB");
+    fs::remove_all(tmp);
+}
+
+static void testRemoveToggles() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-community-remove";
+    fs::remove_all(tmp);
+    const fs::path packs = tmp / "packs";
+    const std::string state = tmp.string() + "/games/";
+    GameIdentity g = cartGame(0x5E2CDBC0, "Test Game");
+    g.fileStem = "Test Game (World)";
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", kPack);
+    CheatManager m;
+    Recorder rec;
+    rec.attach(m);
+    m.setStateDir(state);
+    m.setLibraryDirs({VJ_TEST_FIXTURES});
+    m.setCommunityDir(packs.string());
+    m.rescan();
+    m.gameLoaded(g);
+    const ChtSet* db = m.selectedSet();
+    const ChtSet* cp = m.communitySet();
+    CHECK(db && cp);
+    if (!db || !cp) return;
+    const ChtCheat* lives = find(*db, "Lives");
+    CHECK(lives != nullptr);
+    if (!lives) return;
+    m.setEnabled(*lives, true);
+    m.setEnabled(cp->cheats[0], true, CheatOrigin::Community);
+    m.setEnabled(cp->cheats[1], true, CheatOrigin::Community);
+    CHECK(slurp(state + g.key + ".ini").find("cp.") != std::string::npos);
+
+    // The store deletes the pack, then asks the manager to forget it.
+    fs::remove(packs / "5E2CDBC0.cht");
+    m.reloadCommunity();
+    CHECK(m.communitySet() == nullptr);
+    rec.log.clear();
+    m.removeCommunityToggles();
+    CHECK(slurp(state + g.key + ".ini").find("cp.") == std::string::npos);
+    CHECK(slurp(state + g.key + ".ini").find("on.") != std::string::npos);   // the database toggle survives
+    CHECK(m.isEnabled(*lives) && m.enabledCount() == 1);
+    CHECK(rec.log.size() == 2 && rec.log[0] == "reset" && rec.log[1].compare(0, 5, "set 0") == 0);
+
+    // Reinstalling starts with everything off, also after a restart.
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", kPack);
+    CheatManager m2;
+    m2.setStateDir(state);
+    m2.setLibraryDirs({VJ_TEST_FIXTURES});
+    m2.setCommunityDir(packs.string());
+    m2.rescan();
+    m2.gameLoaded(g);
+    CHECK(m2.communitySet() != nullptr);
+    if (m2.communitySet())
+        for (const ChtCheat& k : m2.communitySet()->cheats) CHECK(!m2.isEnabled(k, CheatOrigin::Community));
+    // No game: nothing to do, no crash.
+    CheatManager idle;
+    idle.removeCommunityToggles();
+    idle.reloadCommunity();
+    CHECK(idle.communitySet() == nullptr);
+    fs::remove_all(tmp);
+}
+
+// FIPS 180-4 / NIST vectors.  The one-million-'a' message crosses many blocks; the 55/56/64-byte
+// lengths straddle the padding boundary (55: the length field still fits in the one block, 56: it forces an extra
+// block, 64: exactly one full block of data).
 static void testSha256() {
     CHECK_EQ(sha256Hex(nullptr, 0), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     CHECK_EQ(sha256Hex("", 0), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
@@ -646,6 +1018,11 @@ int main(int argc, char** argv) {
     testPersistence();
     testCommitBatch();
     testRevisionGuard();
+    testCommunityLoad();
+    testCommunityTogglesAcrossUpdate();
+    testApplyOrder();
+    testCommunityHardcore();
+    testRemoveToggles();
     testSha256();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

@@ -67,6 +67,9 @@ struct ChtRef {
 // Parse the text of a .cht file.  Never fails on malformed entries (they come
 // back unsupported); returns false only when the text holds no cheat at all.
 bool parseCht(const std::string& text, std::vector<ChtCheat>& out);
+// Parse the text of a whole .cht file (BOM, revision guard, entries) as if it had been read from `path`
+// (only used to fill ChtSet::stem / path).  loadChtFile reads the file and calls this.
+bool loadChtText(const std::string& text, const std::string& path, ChtSet& out);
 bool loadChtFile(const std::string& path, ChtSet& out);
 
 // `n` bytes at emulated address `addr`, in MEMORY order, as a core code string
@@ -111,6 +114,10 @@ struct CheatOp {
     std::string code;
 };
 using CheatBatch = std::vector<CheatOp>;
+
+// Which of the two cheat sets of a game a toggle belongs to.  Database = the filename/title-matched library set
+// (ini key on.<id>); Community = the CRC-keyed downloaded pack (ini key cp.<id>).
+enum class CheatOrigin { Database, Community };
 
 class CheatManager {
 public:
@@ -157,10 +164,25 @@ public:
     // When the saved set is gone from the library, or several sets match and none was chosen.
     std::string setStatus() const;
 
+    // ---- the community pack -----------------------------------------------------------------------
+    // A downloaded pack lives at <dir>/<CRC32 as %08X>.cht and is found by the cartridge's CRC alone, independent
+    // of the library, selectSet() and the name matching above.  It is revision-bound exactly like a database set:
+    // a pack whose vj_rom_crc32 guard is missing, malformed or for another CRC is loaded with every cheat
+    // unsupported and `restriction` set, never applied.  Discs (crc == 0) never load a pack.
+    void setCommunityDir(const std::string& dir) { communityDir_ = dir; }
+    // Re-read the pack for the current game (after the store installed, updated or removed it) and re-apply.
+    // Toggles follow the cheat ids: an unchanged cheat stays on, a changed one comes back off, and cp.<id> keys
+    // that match no cheat of the loaded pack are dropped from the ini.
+    void reloadCommunity();
+    const ChtSet* communitySet() const { return communityLoaded_ ? &community_ : nullptr; }
+    // Forget every community toggle of the current game (the pack was removed): erases each cp.<id> key, persists, applies.
+    void removeCommunityToggles();
+
     // ---- toggles (each persists and re-applies) --------------------------------------------
-    bool isEnabled(const ChtCheat& c) const { return enabled_.count(c.id) != 0; }
-    void setEnabled(const ChtCheat& c, bool on);
-    // For scripts / the command line: description (case-insensitive), id, or list position.
+    bool isEnabled(const ChtCheat& c, CheatOrigin origin = CheatOrigin::Database) const;
+    void setEnabled(const ChtCheat& c, bool on, CheatOrigin origin = CheatOrigin::Database);
+    // For scripts / the command line: description (case-insensitive), id, or list position, searched in the
+    // database set, then the community pack, then the manual codes.
     bool setEnabledByName(const std::string& name, bool on);
     void disableAll();
     unsigned enabledCount() const;
@@ -175,12 +197,15 @@ public:
     // ---- core sync ----------------------------------------------------------------------------------
     // Reset the core's list and set every enabled cheat, in a fixed order, so
     // overlapping writes ("Part 1" then "Part 2") always land the same way.
+    // The order is: database set (index i), community pack (kCommunityIndexBase + i), manual codes
+    // (kUserIndexBase + i).  The core writes in this batch order, so a later one wins on an overlapping address.
     // Called after every load (the core drops its list on unload) and after a
     // state load.
     void apply();
     unsigned appliedSegments() const { return appliedSegments_; }
     static constexpr unsigned kCoreLimit = 256;   // CHEAT_MAX_ENTRIES in src/core/cheat.h
 
+    static constexpr unsigned kCommunityIndexBase = 5000;
     static constexpr unsigned kUserIndexBase = 10000;
 
 private:
@@ -189,6 +214,7 @@ private:
     void touch();                 // writes the per-game file
     void pickSet();
     void loadSelectedSet();
+    void loadCommunity();
 
     std::vector<std::string> dirs_;
     std::vector<ChtRef> library_;
@@ -201,7 +227,10 @@ private:
     bool selectedSaved_ = false;  // selected_ came from (or was written to) the state file
     ChtSet set_;
     bool setLoaded_ = false;
-    std::map<std::string, bool> enabled_;     // cheat id -> on (only true entries)
+    std::string communityDir_;
+    ChtSet community_;
+    bool communityLoaded_ = false;
+    std::map<std::string, bool> enabled_;     // ini key ("on.<id>" / "cp.<id>") -> on (only true entries)
     std::vector<UserCheat> user_;
     unsigned appliedSegments_ = 0;
 };
