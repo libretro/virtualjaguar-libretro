@@ -503,6 +503,7 @@ void App::shutdown() {
     // Only now: until the emulation thread is gone it may be inside rc_client_do_frame or a posted emuIdle.  Still before
     // video.shutdown() -- images.stop() needs the GL context.
     ach.shutdown();
+    cheatsShutdown(*this);   // the community store's worker, before `cheats` is destroyed
     invalidateThumbs();
     shutdownDebugTools();    // the Textures / Object list windows hold GL textures
     video.shutdown();
@@ -2462,6 +2463,7 @@ int App::runInteractive(const CliArgs& a) {
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
+        cheatsPump(*this);   // community cheat store: finished requests, pack messages (also with the window closed)
         syncDebug();
         discordTick(*this);
 #ifdef VJ_HAVE_NEURO
@@ -3028,6 +3030,7 @@ int App::runHeadless(const CliArgs& a) {
         if (!a.discInsert.empty() && !discInsertHeadlessCheck(a.discInsert)) rc = 1;
         if (a.expectDiscs && !discListHeadlessCheck(a.expectDiscs)) rc = 1;
         if (!emuCall([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
+        if (!cheatsHeadlessCommunity(*this, a)) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = shownFrame();
         HeadlessResult r;

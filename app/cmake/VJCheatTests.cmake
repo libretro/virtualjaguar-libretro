@@ -119,3 +119,26 @@ if(VJ_CHEATS_DIR AND EXISTS "${VJ_CHEATS_DIR}/Tempest 2000.cht")
         message(STATUS "VJCheatTests: no private Tempest 2000 ROM; the database end-to-end test is not registered")
     endif()
 endif()
+
+# ---- the community cheat store, real HTTP over loopback (#1071) ----------------------------------
+# Serves site/cheats/ from a throwaway local server and installs Doom - Evil Unleashed's pack through the real binary.
+# Needs python3 and the private ROM, so it is not registered where either is missing.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+find_program(_vj_bash2 bash)
+if(Python3_Interpreter_FOUND AND _vj_bash2 AND EXISTS "${VJ_ROOT}/site/cheats/packs/5E2CDBC0.cht")
+    execute_process(COMMAND "${_vj_bash2}" scripts/find-rom.sh "Doom - Evil Unleashed*"
+                    WORKING_DIRECTORY "${VJ_ROOT}"
+                    OUTPUT_VARIABLE _evil OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _rc)
+    if(_rc EQUAL 0 AND _evil)
+        if(NOT IS_ABSOLUTE "${_evil}")
+            set(_evil "${VJ_ROOT}/${_evil}")
+        endif()
+        add_test(NAME cheat_community_install
+            COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_CURRENT_LIST_DIR}/../tests/cheat_community_smoke.py"
+                    "$<TARGET_FILE:virtualjaguar>" "${VJ_ROOT}/site/cheats" "${_evil}" 5E2CDBC0
+                    "${CMAKE_BINARY_DIR}/cheat-community-test")
+        set_tests_properties(cheat_community_install PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+    else()
+        message(STATUS "VJCheatTests: no private Doom - Evil Unleashed ROM; cheat_community_install is not registered")
+    endif()
+endif()
