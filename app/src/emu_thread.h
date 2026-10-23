@@ -72,6 +72,8 @@ public:
     // no thread could be created (the caller stays inline).
     bool start(Mode mode, Client& client);
     // Runs what is queued, ends the loop, joins.  False when the thread did not finish within `joinTimeout`.
+    // Precondition: no halt is holding the core -- the caller ends it first (App calls beginQuit(): quitting_ makes the
+    // pump answer CONTINUE).  A core parked in the debugger's halt never returns to the loop, so stop() would only time out.
     bool stop(std::chrono::milliseconds joinTimeout = std::chrono::milliseconds(3000));
 
     bool threaded() const {
@@ -86,14 +88,20 @@ public:
     // Runs `fn` on the emulation thread at the next frame boundary and returns its result (rethrowing what it threw).
     // Inline, or from the emulation thread itself: runs now.  Abandoned: returns R() and does not wait.  A call queued
     // before the abandon may still run later on the detached thread, so captures must be by value (as callFor says).
+    // `giveUp` (#967 phase 3b) is consulted once BEFORE the task is queued (true: returns R() at once, nothing queued)
+    // and then on the waiting thread after every wait slice (16-50 ms): true before the task has started marks it
+    // cancelled (skipped when drained) and call() returns R().  A task that started before the mark runs to completion
+    // and its value is returned (captures by value).  Never consulted inline, on the emulation thread, or after the task
+    // started.  The App passes "a halt is up" (App::haltGiveUp): a frame-lane command cannot run inside a halt.
     template <class F>
-    auto call(F&& fn) -> decltype(fn());
+    auto call(F&& fn, std::function<bool()> giveUp = {}) -> decltype(fn());
     // The debug lane (#967 phase 3): safe inside retro_run().  Inline, or on the emulation thread: runs now.  Threaded:
     // queued in Lane::Debug, drained at the next frame boundary (after the frame lane) or by the halt pump, whichever
     // comes first.  debugCall waits like call() (the same wait hook after kBusyAfter); captures must be by value when
     // the thread may be abandoned, as for call().  There is no ordering between the two lanes beyond "frame lane
     // first at each boundary".  The Tools windows rely on debugCall ALWAYS waiting, never giving up: DebugSession::attach,
-    // TempBreak::arm/disarm and CpuControl::stepOver capture locals by reference inside callCore.
+    // TempBreak::arm/disarm and CpuControl::stepOver capture locals by reference inside callCore.  Achievements::coreCall
+    // rides it too: a reply callback must never be cancelled.
     template <class F>
     auto debugCall(F&& fn) -> decltype(fn());
     void debugPost(std::function<void()> fn);
@@ -101,8 +109,19 @@ public:
     template <class F>
     bool callFor(std::chrono::milliseconds timeout, F&& fn);
 
+    // Emulation thread only (#967 phase 3b): the halt pump's lane service.  Drains Lane::Debug now; if nothing was queued,
+    // waits up to `maxWait` on waitUntil(deadline, Lane::Debug) -- a frame-lane post does not end that wait -- then
+    // drains again.  Returns the number of commands run.  Inline: drains and returns at once.  Threaded and called off
+    // the emulation thread (or abandoned): returns 0 at once.
+    size_t serveDebugLane(std::chrono::milliseconds maxWait);
+
     void inlineStep();          // inline: one frame now
-    bool advance(unsigned n);   // after earlier commands: n frames now, even while paused, ignoring pacing; wait until done
+    // After earlier frame-lane commands: n frames now, even while paused, ignoring pacing; waits until they ran.  The
+    // budget travels on the DEBUG lane (served at the next boundary or by the halt pump), so it is always registered.
+    // `giveUp` (#967 phase 3b), polled about every 16 ms while waiting: true ends the wait and advance() returns false;
+    // the frames already budgeted still run once the thread can (a halt ended).  advance(0, giveUp) waits for a budget
+    // still queued (true at once when none).  Never consulted inline or on the emulation thread.
+    bool advance(unsigned n, std::function<bool()> giveUp = {});
 
     void setPaused(bool p) {
         if (paused_.exchange(p) != p) cmds_.notify();
@@ -132,7 +151,7 @@ private:
     void waitFinished();   // the thread has left its loop for good (or was abandoned)
     void notifyFrame();
     template <class F>
-    auto submit(F&& fn, EmuCommands::Lane lane) -> decltype(fn());   // call() / debugCall()
+    auto submit(F&& fn, EmuCommands::Lane lane, std::function<bool()> giveUp) -> decltype(fn());   // call() / debugCall()
 
     Client* client_ = nullptr;
     std::function<void(double, unsigned)> waitHook_;   // set before start(); read only by call()'s waiter
@@ -153,23 +172,32 @@ private:
 };
 
 template <class F>
-auto EmuThread::call(F&& fn) -> decltype(fn()) {
-    return submit(std::forward<F>(fn), EmuCommands::Lane::Frame);
+auto EmuThread::call(F&& fn, std::function<bool()> giveUp) -> decltype(fn()) {
+    return submit(std::forward<F>(fn), EmuCommands::Lane::Frame, std::move(giveUp));
 }
 
 template <class F>
 auto EmuThread::debugCall(F&& fn) -> decltype(fn()) {
-    return submit(std::forward<F>(fn), EmuCommands::Lane::Debug);
+    return submit(std::forward<F>(fn), EmuCommands::Lane::Debug, {});
 }
 
 template <class F>
-auto EmuThread::submit(F&& fn, EmuCommands::Lane lane) -> decltype(fn()) {
+auto EmuThread::submit(F&& fn, EmuCommands::Lane lane, std::function<bool()> giveUp) -> decltype(fn()) {
     using R = decltype(fn());
     if (abandoned()) return R();
     if (!threaded() || onEmuThread()) return fn();
+    if (giveUp && giveUp()) return R();   // a halt is already up: nothing is queued
     auto task = std::make_shared<std::packaged_task<R()>>(std::forward<F>(fn));
+    // 0 = queued, 1 = started, 2 = cancelled: one compare-and-swap decides between the drain and a give-up, so a task is
+    // never both run and given up on (its captures may be dead once call() has returned R()).
+    auto state = std::make_shared<std::atomic<int>>(0);
     std::future<R> done = task->get_future();
-    if (!cmds_.post([task] { (*task)(); }, lane)) {   // the thread is finishing: run it here once it has gone
+    if (!cmds_.post(
+            [task, state] {
+                int queued = 0;
+                if (state->compare_exchange_strong(queued, 1)) (*task)();   // cancelled: skipped
+            },
+            lane)) {   // the thread is finishing: run it here once it has gone
         waitFinished();
         if (abandoned()) return R();
         (*task)();
@@ -184,6 +212,10 @@ auto EmuThread::submit(F&& fn, EmuCommands::Lane lane) -> decltype(fn()) {
             std::future_status::ready)
             break;
         if (abandoned()) return R();
+        if (giveUp && state->load() == 0 && giveUp()) {
+            int queued = 0;
+            if (state->compare_exchange_strong(queued, 2)) return R();   // else it started in between: wait for it
+        }
         if (waitHook_ && !g_inWaitHook && std::chrono::steady_clock::now() - t0 >= kBusyAfter) {
             WaitHookScope inHook;
             waitHook_(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), tick++);

@@ -37,6 +37,7 @@ public:
             if (closed_) return false;
             laneQ(lane).push_back(std::move(fn));
             wake_ = true;
+            if (lane == Lane::Debug) wakeDbg_ = true;
         }
         cv_.notify_one();
         return true;
@@ -77,10 +78,36 @@ public:
         wake_ = false;
     }
 
+    // The halt pump's wait: wakes only on a post to `lane` or notify(); a post to the other lane does not end it.
+    // Lane::Debug is what the pump waits on (a frame-lane post made while halted -- the SRAM autosave -- must not turn
+    // it into a spin).  Lane::Frame behaves like waitUntil(deadline).
+    void waitUntil(TimePoint deadline, Lane lane) {
+        if (lane == Lane::Frame) {
+            waitUntil(deadline);
+            return;
+        }
+        std::unique_lock<std::mutex> l(mu_);
+#if defined(__MINGW32__)
+        // The same coarse-then-poll shape as waitUntil(deadline) above.
+        const auto pending = [this] { return wakeDbg_ || !dbg_.empty(); };
+        const auto coarse = deadline - std::chrono::milliseconds(20);
+        if (std::chrono::steady_clock::now() < coarse) cv_.wait_until(l, coarse, pending);
+        while (!pending() && std::chrono::steady_clock::now() < deadline) {
+            l.unlock();
+            vj::preciseSleepNs(1000000);
+            l.lock();
+        }
+#else
+        cv_.wait_until(l, deadline, [this] { return wakeDbg_ || !dbg_.empty(); });
+#endif
+        wakeDbg_ = false;
+    }
+
     void notify() {
         {
             std::lock_guard<std::mutex> l(mu_);
             wake_ = true;
+            wakeDbg_ = true;
         }
         cv_.notify_one();
     }
@@ -108,6 +135,7 @@ public:
         std::lock_guard<std::mutex> l(mu_);
         closed_ = false;
         wake_ = false;
+        wakeDbg_ = false;
     }
 
     bool closed() const {
@@ -138,7 +166,8 @@ private:
     std::condition_variable cv_;
     std::deque<Fn> q_;     // Lane::Frame
     std::deque<Fn> dbg_;   // Lane::Debug
-    bool wake_ = false;
+    bool wake_ = false;      // notify(), or a post to either lane, since the last waitUntil(deadline)
+    bool wakeDbg_ = false;   // notify(), or a post to the debug lane, since the last waitUntil(deadline, Lane::Debug)
     bool closed_ = false;
 };
 

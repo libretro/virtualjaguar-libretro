@@ -17,6 +17,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,7 +32,17 @@
 
 namespace vj {
 
+std::atomic<bool> g_signalQuit{false};
+static_assert(std::atomic<bool>::is_always_lock_free, "g_signalQuit is stored from a signal handler");
+
 namespace {
+
+// SIGINT / SIGTERM in a headless run (installed by App::initSdl): an atomic store, then back to the default action, so a
+// second signal kills a run that is wedged inside retro_run().  Both calls are async-signal-safe.
+void onSignalQuit(int sig) {
+    g_signalQuit.store(true);
+    std::signal(sig, SIG_DFL);
+}
 
 bool isInputEvent(Uint32 type) {
     switch (type) {
@@ -358,6 +369,13 @@ bool App::initSdl(const CliArgs& a) {
         return false;
     }
     sdlUp_ = true;
+    platform::initNetworking();   // Windows: Winsock for the core's sockets (the GDB stub), headless runs included
+    // Headless: a signal is a quit request.  Installed AFTER SDL_Init, so these replace whatever SDL did with the signals
+    // (SDL turns them into SDL_EVENT_QUIT, which nothing pumps in a headless run).  Windowed runs keep SDL's own.
+    if (headless_) {
+        std::signal(SIGINT, onSignalQuit);
+        std::signal(SIGTERM, onSignalQuit);
+    }
     if (!headless_) platform::beforeWindow();   // process identity (Windows AppUserModelID), UI thread QoS (macOS)
     perfFreq_ = SDL_GetPerformanceFrequency();
     openDialogEvent_ = SDL_EVENT_USER;
@@ -461,13 +479,19 @@ bool App::initImGui() {
 }
 
 void App::shutdown() {
-    if (host.isLoaded()) autoSave();   // quitting: keep where the game was
+    beginQuit();   // a hosted halt ends within one pump wait; the auto-save and the unload below need the core out of it
+    // Quitting: keep where the game was -- but never wait on a core that is still halted after beginQuit's bounded wait, and
+    // never past 1.5 s (the save's give-up polls the clock): the unload below and the join are the backstop.
+    if (host.isLoaded() && !debug.core().halt().halted) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        autoSave([this, end] { return debug.core().halt().halted || std::chrono::steady_clock::now() >= end; });
+    }
     discordShutdown(*this);            // take the Discord status down (bounded: never waits long on Discord)
 #ifdef VJ_HAVE_NEURO
     neuroShutdown(*this);
 #endif
-    // Unload (it flushes SRAM) where the core lives, then stop the thread.  A core stuck inside retro_run (it should
-    // not happen in phase 1: the GDB stub is locked off) must not hang the quit: give up after 3 s and exit.
+    // Unload (it flushes SRAM) where the core lives, then stop the thread.  A quit ends a halt within one pump wait
+    // (beginQuit); a core wedged elsewhere still must not hang the quit: give up after 3 s and exit.
     if (host.isLoaded() && !emu.callFor(std::chrono::milliseconds(3000), [this] { host.unloadContent(); })) {
         std::fprintf(stderr, "[emu] the emulation thread did not answer within 3 s (the core is blocked); exiting without unloading\n");
         std::fflush(stderr);
@@ -538,7 +562,13 @@ void App::wireHost() {
     };
     input.notify = [this](const std::string& m) { toast(m, 3.0); };
     // The app's own Controls / Devices tabs replace these core options.
+    // RetroAchievements hardcore also locks the GDB stub (it reads memory and halts the game): gdbLockedByHardcore_ is
+    // current before every load (syncHardcoreLock), which is when CoreHost settles which keys are locked.
     host.optionLock = [this](const std::string& k, std::string& v) {
+        if (k == "virtualjaguar_gdb_stub" && gdbLockedByHardcore_.load()) {
+            v = "disabled";
+            return true;
+        }
         return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
     };
     host.inputState = [this](unsigned p, unsigned d, unsigned i, unsigned id) {
@@ -565,20 +595,28 @@ void App::wireHost() {
     // the thread is inline, so both run at once: headless and inline runs are unchanged).
     debug.coreCall = [this](std::function<void()> f) { emu.debugCall(std::move(f)); };
     debug.corePost = [this](std::function<void()> f) { emu.debugPost(std::move(f)); };
-    debug.runUiFrame = [this] { haltedFrame(); };         // the core is parked in retro_run(): UI only
-    debug.abortHalt = [this] { return quit; };            // closing the window while halted lets the core go
+    // The halt lives in DebugCore (phase 3b).  Inline the core is parked in retro_run() on the UI thread, so the pump runs
+    // one nested UI frame per iteration; the UI thread's mirror of the halt (DebugSession::syncHalt, from syncDebug)
+    // fires the UI-side hooks below.  abortHalt reads quitting_ (and the headless signal flag): closing the window while halted lets the core go.
+    debug.core().runUiFrame = [this] { haltedFrame(); };   // the core is parked in retro_run(): UI only
+    debug.core().abortHalt = [this] { return quitting_.load() || g_signalQuit.load(); };
+    debug.core().notifyVerdict = [this] { emu.debugPost([] {}); };   // wakes the pump's lane wait (a no-op inline, where it runs now)
     debug.registerPlaceholderTools();                     // fixes the Tools menu order; each provider below replaces its entries
-    debug.onHalt.push_back([this](int target, unsigned pc, int reason) {
+    debug.core().onHalt.push_back([this](int target, unsigned pc, int reason) {   // the emulation thread (inline: the UI thread)
         audio.setPaused(true);                            // no stale buffer droning while the game is stopped
+        if (reason != VJ_DBG_STOP_STEP) std::fprintf(stderr, "[debug] halt: %s at $%06X (%s)\n", dbgTargetName(target), pc, dbgReasonName(reason));
+    });
+    debug.core().onResume.push_back([this] {
+        audio.clear();
+        audio.setPaused(emu.paused() && !headless_);   // (headless: emu is paused for advance()-only frames; no audio to hold)
+    });
+    debug.onHaltUi.push_back([this](int target, unsigned pc, int reason) {   // the UI thread, from syncHalt()
         if (reason == VJ_DBG_STOP_STEP) return;
-        const char* who = target == VJ_DBG_TARGET_GPU ? "GPU" : target == VJ_DBG_TARGET_DSP ? "DSP" : "68000";
         char msg[96];
-        std::snprintf(msg, sizeof msg, "Halted: %s at $%06X - F9 continues, F10 steps", who, pc);
+        std::snprintf(msg, sizeof msg, "Halted: %s at $%06X - F9 continues, F10 steps", dbgTargetName(target), pc);
         toast(msg, 4.0);
     });
-    debug.onResume.push_back([this] {
-        audio.clear();
-        audio.setPaused(paused);
+    debug.onResumeUi.push_back([this] {
         pacer_.reset();
         lastTick_ = now();                                // the halt must not count as elapsed emulation time
     });
@@ -590,7 +628,10 @@ void App::wireHost() {
 
 void App::syncDebug() {
     debug.syncCore();   // the UI half of a core interface swap the emulation thread made (threaded)
+    if (!threaded() && !host.inFrame()) debug.core().frameEnded();   // inline: a halt the core left on gdb's say-so
+    debug.syncHalt();   // the mirror of the core's halt: the UI-side hooks fire here
     debug.setContentLoaded(host.isLoaded());
+    syncHardcoreLock();
     debug.setHardcore(ach.hardcoreActive());
     debug.tick(now(), host.isLoaded() && !paused && !debug.halted());
     debug.wakeViews();   // posts one fill to the debug lane: EmuThread runs it now when not threaded (a halted or paused window is current), else at the next boundary
@@ -600,30 +641,51 @@ void App::syncDebug() {
 // core.  haltedFrame() has no call of its own: it runs syncDebug(), and wakeViews() posts a fill that EmuThread runs inline there.
 void App::fillDebugViews() { debug.fillViews(); }
 
-// #967: with the emulation thread on, a halt would run the UI on the emulation thread, so these two stay off for the
-// run until phase 3b moves the halt pump there (docs/app-emulation-thread-plan-phase3.md).  The Tools windows work
-// (phase 3a): the core hands its debug interface over, and every call into it is the emulation thread's.
-//   * Break, Step and breakpoints: DebugSession::setHaltAvailable(false) makes attach() refuse, so nothing can halt.
-//   * The GDB stub: a socket halt would park the emulation thread with every call() waiting behind it.
-void App::limitFeaturesForEmuThread() {
-    debug.setHaltAvailable(false);
-    host.optionLock = [this](const std::string& key, std::string& value) {
-        if (key == "virtualjaguar_gdb_stub") {
-            value = "disabled";
-            return true;
-        }
-        return lockedCoreOptionFor(key, value, {{proPorts[0].load(), proPorts[1].load()}});   // as wireHost()'s
-    };
-    std::fprintf(stderr, "[emu] the debugger halt and the GDB stub are off while the emulation thread is on (the Tools windows work)\n");
+// Emulation thread, the halt pump's wait (DebugCore::waitVerdict): the core is parked in GDBHalt() inside retro_run().
+// Nothing here may call a host.* entry that inFrame() refuses, nor touch UI state.
+void App::haltWait() {
+    emu.serveDebugLane(DebugCore::kPumpWait);
+    if (debug.views().pending(debug.refreshSerial())) fillDebugViews();
 }
 
-// The emulation thread did not start: the run is inline after all, so give back what limitFeaturesForEmuThread() took.
-void App::liftFeatureLimits() {
-    debug.setHaltAvailable(true);
-    host.optionLock = [this](const std::string& k, std::string& v) {   // wireHost()'s rule
-        return lockedCoreOptionFor(k, v, {{proPorts[0].load(), proPorts[1].load()}});
+// UI thread, idempotent.  A hosted halt is resumed (CONTINUE, host kept attached) by the pump's next iteration (abortHalt reads quitting_); the poll is
+// a <= 200 ms bound on the quit path only, never in the UI loop.
+void App::beginQuit() {
+    quitting_.store(true);
+    if (threaded()) {
+        emu.debugPost([] {});
+        for (int i = 0; i < 100 && debug.core().halt().halted; i++) SDL_Delay(2);
+    }
+    debug.syncHalt();
+}
+
+// Threaded and halted: ask the pump to detach (the verdict for the halt the UI mirrors) and return the give-up for the call
+// that follows -- true only if the core halts AGAIN afterwards (a new serial), so that call waits out the resume.  The
+// halt serial is read before the verdict is offered.  Inline, or not halted: the plain halt predicate.
+std::function<bool()> App::detachForCall() {
+    if (!threaded() || !debug.halted()) return haltGiveUp();
+    const uint64_t s0 = debug.core().haltSerial();
+    debug.detachAndResume();
+    return [this, s0] {
+        const HaltState h = debug.core().halt();
+        return h.halted && h.serial != s0;
     };
-    std::fprintf(stderr, "[emu] the debugger halt and the GDB stub are back on (the emulation thread did not start)\n");
+}
+
+// UI thread.  The lock turns on with hardcore being wanted (signed in or signing in), a step ahead of hardcoreActive().
+// CoreHost settles which keys are locked at the definitions push, i.e. at a load, so this must be current before every
+// load.  A lock that turns OFF mid-game leaves the stub disabled until the next load; one that turns ON needs a reload
+// (Achievements::pump).
+void App::syncHardcoreLock() { gdbLockedByHardcore_.store(ach.hardcoreNextGame()); }
+
+// Emulation thread (inline: the UI thread, between frames).  The silent debugger host: it never halts by itself, it only
+// makes a gdb halt visible to the app.  Attached inside the load call -- before any frame can run, so a gdb_wait boot halt
+// is seen -- and again after any frame it is missing (a user Detach drops it; the app's breakpoints go with it).
+void App::attachGdbHostOnCore() {
+    // Not hardcore-gated on purpose: the host never halts anything by itself, and the app's own attach() / breakNow() stay
+    // gated by DebugSession::enabled().
+    if (!host.isLoaded() || !debug.core().loaded() || !gdbStubOn_.load() || debug.core().attached()) return;
+    if (debug.core().attach()) std::fprintf(stderr, "[debug] gdb host attached (silent): halts are visible to the app\n");
 }
 
 // UI thread: 1e9 / the refresh rate of the display the window is on, or 0 when there is no window or the rate is unknown.
@@ -671,11 +733,13 @@ void App::startEmuThread() {
         const long ms = std::strtol(slow, nullptr, 10);
         testSlowCallMs_ = ms < 0 ? 0u : ms > 5000 ? 5000u : (unsigned)ms;
     }
+    // Before the thread exists: a std::function assigned while the thread runs is a data race with the pump reading it.
+    debug.core().waitVerdict = [this] { haltWait(); };   // the halt pump's wait (emulation thread)
     // VJ_TEST_EMU_START_FAIL: take the failure branch below as a real emu.start() failure does (emu_thread_start_fallback).
     if (SDL_getenv("VJ_TEST_EMU_START_FAIL") || !emu.start(EmuThread::Mode::Threaded, *emuClient_)) {
         host.post = nullptr;
         emuThreadThisRun_ = false;   // Settings offers "Restart the app to apply" again
-        liftFeatureLimits();
+        debug.core().waitVerdict = nullptr;
         std::fprintf(stderr, "[emu] could not start the emulation thread; running emulation on the UI thread\n");
         return;
     }
@@ -715,6 +779,9 @@ void App::stopEmuThread() {
 
 // One emulated frame on the emulation thread.  Inline mode keeps stepEmulation().
 void App::emuRunOneFrame() {
+    // The lanes were drained before this call: a Detach posted by the UI has run, so the silent host is missing now.  Put it
+    // back BEFORE the frame, or a gdb breakpoint firing in this frame would halt with no pump and no mirror.
+    attachGdbHostOnCore();
     if (!emuFastForward_.load(std::memory_order_relaxed)) audio.update(false);   // underruns only: mode A follows the audio clock
     host.wantVideo = true;
     PerfTrace::Emu te = tracePaced_;
@@ -725,6 +792,8 @@ void App::emuRunOneFrame() {
     }
     const uint64_t r0 = SDL_GetPerformanceCounter();
     host.runFrame();
+    debug.core().frameEnded();   // a halt gdb (or the halt timeout) ended inside this frame is closed on our side
+    attachGdbHostOnCore();       // the frame itself (or a lane command run after the drain) dropped it: back before the next one
     retroTicks_.fetch_add(SDL_GetPerformanceCounter() - r0, std::memory_order_relaxed);
     runFrames_.fetch_add(1, std::memory_order_relaxed);
     ach.emuFrame();   // rc_client_do_frame: reads game RAM, so here
@@ -997,15 +1066,38 @@ const Frame& App::shownFrame() {
     return c ? c->frame : kNone;
 }
 
+// advance() gives up the moment a halt holds the core (the budget stays registered and runs after Continue); a headless
+// run has no UI to resume it, so it keeps asking in 10 ms slices -- a gdb client's `continue` ends the wait -- and stops
+// only when a quit was requested (SIGINT / SIGTERM, B5).
+bool App::headlessAdvance(unsigned n) {
+    bool done = emu.advance(n, haltGiveUp());
+    while (!done && !quitRequested() && !emu.abandoned()) {
+        SDL_Delay(10);
+        done = emu.advance(0, haltGiveUp());
+    }
+    return done;
+}
+
 void App::runHeadlessFrames(unsigned n) {
     if (threaded()) {
-        emu.advance(n);
+        headlessAdvance(n);
         return;
     }
     for (unsigned i = 0; i < n; i++) {
         audio.update();
+        attachGdbHostOnCore();   // a Detach (or the last frame) dropped the silent host: back before each frame
         host.runFrame();
+        headlessAfterFrame();
     }
+}
+
+// Headless inline, after each host.runFrame(): the halt a gdb client held inside that frame (gdb_wait, a breakpoint, Break)
+// ended with its `continue`.  No syncDebug() runs here, so close it on the core's side and refresh the mirror, or
+// haltedNow() stays true after the client let go (it blocks the hardcore reload retry).  Same pair as the threaded
+// emuRunOneFrame / syncDebug.
+void App::headlessAfterFrame() {
+    debug.core().frameEnded();
+    debug.syncHalt();
 }
 
 double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0, host.fps()); }
@@ -1015,13 +1107,21 @@ double App::runSeconds() const { return (double)runFrames_.load() / std::max(1.0
 // nothing here may re-enter the core -- CoreHost refuses state loads, resets, loads and option changes
 // while inFrame().
 void App::haltedFrame() {
-    if (!imguiUp_ || !window_ || emu.onEmuThread()) {   // never run the UI on the emulation thread (#967 phase 3 moves the pump)
-        debug.detachAndResume();   // no UI to release the core with: never leave it parked
+    debug.syncHalt();   // first: the F9 / F10 below must meet the halt the core is parked in, not the one before it
+    if (!imguiUp_ || !window_ || threaded()) {   // threaded, the pump runs haltWait(), never this frame
+        // Headless inline: no UI to release the core with, so the app's own halts (a breakpoint or Break from a script)
+        // and a quit are released at once.  A halt gdb caused stays: returning keeps the core's 2 ms socket loop serving
+        // gdb, which is what gdb_wait and a breakpoint set from gdb ask for (the client continues it).
+        if (quitRequested()) quitting_.store(true);   // the pump's abortHalt answers CONTINUE (never DETACH: a gdb breakpoint may re-halt)
+        else if (!debug.haltByGdb()) debug.detachAndResume();
         return;
     }
     SDL_Event e;
     while (SDL_PollEvent(&e)) handleEvent(e, false);
-    if (quit) return;
+    if (quit) {
+        quitting_.store(true);   // the pump's abortHalt reads this: the core resumes when this frame returns
+        return;
+    }
     inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
     inputFrame(*this);
     ach.pump();
@@ -1165,24 +1265,29 @@ void App::applyBios() {
 }
 
 bool App::openContent(const std::string& pathIn) {
-    if (haltedNow()) {
-        toast("The debugger has the game halted - resume it first", 2.5, 2);
+    if (haltedNow() && !threaded()) {   // inline, the call would run inside retro_run; threaded, it detaches first
+        toast(kHaltedToast, 2.5, 2);
         return false;
     }
+    syncHardcoreLock();   // the load below settles which options are locked
     const std::string path = absolutePath(pathIn);
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
     resumeOffer.active = false;
     const bool noResume = suppressResume_ || reloading_;
-    if (!reloading_) autoSave();          // leaving a running game for another: keep where it was
+    // Threaded and halted: detach first (the core resumes, breakpoints cleared), THEN save where the game was -- the
+    // auto-save waits out the resume instead of being skipped.
+    const std::function<bool()> giveUp = detachForCall();
+    if (!reloading_) autoSave(giveUp);    // leaving a running game for another: keep where it was
     for (std::string& f : biosOnce_) f.clear();   // a game is not a BIOS boot
     bootTarget_ = 0;
     std::string err;
     std::vector<std::string> overrideErrors;
     // Everything that touches the core runs where the core lives: on the emulation thread at a frame boundary when
     // threaded (this thread waits), right here otherwise.
-    const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors); });
+    const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors); }, giveUp);
+    if (!ok && err.empty()) err = "the debugger halted the game again";
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
@@ -1218,6 +1323,7 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     // after the call returns.  A state load queued for this game (resume / library) waits for 2 of them.
     runFrames_.store(0);
     pendingStateAt_ = emu.framesRun() + 2;
+    gdbStubOn_.store(false);
     if (!host.loadContent(path, err)) {
         ach.onContentClosed();
         cheatsOnClose(*this);
@@ -1241,21 +1347,28 @@ bool App::openContentOnCore(const std::string& path, std::string& err, std::vect
     ach.onContentLoaded();                     // identify the game, look up its achievements
     cheatsAfterLoad(*this);                    // the core drops its cheat list on every unload
     host.publishSnapshot();
+    // optionValueFor ignores locks, so the lock is checked separately.
+    gdbStubOn_.store(!host.optionLocked("virtualjaguar_gdb_stub") &&
+                     host.optionValueFor("virtualjaguar_gdb_stub", "disabled") == "enabled");
+    attachGdbHostOnCore();   // before the call returns, so before any frame (a gdb_wait boot halt is seen)
     return true;
 }
 
 bool App::openNoContent() {
-    if (haltedNow()) {
-        toast("The debugger has the game halted - resume it first", 2.5, 2);
+    if (haltedNow() && !threaded()) {
+        toast(kHaltedToast, 2.5, 2);
         return false;
     }
+    syncHardcoreLock();   // the load below settles which options are locked
     if (tvShell().menuOpen()) tvShell().closeMenu();   // the menu belongs to the game it was opened on
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
     resumeOffer.active = false;
-    autoSave();
+    const std::function<bool()> giveUp = detachForCall();
+    autoSave(giveUp);
     std::string err;
-    const bool ok = emu.call([&] { return openNoContentOnCore(err); });
+    const bool ok = emu.call([&] { return openNoContentOnCore(err); }, giveUp);
+    if (!ok && err.empty()) err = "the debugger halted the game again";
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
     if (threaded()) adoptFrameEpoch();
@@ -1280,6 +1393,7 @@ bool App::openNoContentOnCore(std::string& err) {
     host.setDirectories(paths.system, paths.saves);
     applyBios();
     frames.clear();
+    gdbStubOn_.store(false);
     if (!host.loadNoContent(err)) {
         ach.onContentClosed();
         return false;
@@ -1292,18 +1406,22 @@ bool App::openNoContentOnCore(std::string& err) {
     input.setContent("");
     applyPortDevices(*this);
     host.publishSnapshot();
+    // optionValueFor ignores locks, so the lock is checked separately.
+    gdbStubOn_.store(!host.optionLocked("virtualjaguar_gdb_stub") &&
+                     host.optionValueFor("virtualjaguar_gdb_stub", "disabled") == "enabled");
+    attachGdbHostOnCore();   // before the call returns, so before any frame (a gdb_wait boot halt is seen)
     return true;
 }
 
 bool App::bootBios(bios::Role role, const std::string& file) {
-    if (haltedNow()) {
-        toast("The debugger has the game halted - resume it first", 2.5, 2);
+    if (haltedNow()) {   // both modes: the flush below is a plain call, and the boot that follows should not surprise a debugging user
+        toast(kHaltedToast, 2.5, 2);
         return false;
     }
     for (std::string& f : biosOnce_) f.clear();
     if (role == bios::CartBoot || role == bios::Cd) biosOnce_[role] = file.empty() ? std::string() : absolutePath(file);
     bootTarget_ = role == bios::CartBoot ? VJ_BOOT_CART_BOOT_ROM : VJ_BOOT_CD_BIOS;
-    if (host.isLoaded()) emu.call([this] { host.flushSaveRam(); });
+    if (host.isLoaded()) emuCall([this] { host.flushSaveRam(); });
     return openNoContent();
 }
 
@@ -1312,7 +1430,7 @@ void App::setBiosChoice(bios::Role role, const std::string& path) {
     biosChoice.of(role) = path.empty() ? std::string() : absolutePath(path);
     bios::storeSelection(cfg, biosChoice);
     cfg.save();
-    emu.call([this] { applyBios(); });   // the core reads it at the next load; threaded: where the core lives
+    emuCall([this] { applyBios(); });   // the core reads it at the next load; threaded: where the core lives
 }
 
 bool App::importBios(const std::string& path, bool trustSize) {
@@ -1326,10 +1444,26 @@ bool App::importBios(const std::string& path, bool trustSize) {
     return true;
 }
 
+// VJ_TEST_RESTART_GIVEUPS=N (achievements_hardcore_retry tests): the first N hardcore restarts report what a core that
+// halted again before the call ran reports (a gdb breakpoint still armed cannot be staged in a headless run).
+bool App::testRestartGiveUp() {
+    if (testRestartGiveUps_ < 0) {
+        const char* e = SDL_getenv("VJ_TEST_RESTART_GIVEUPS");
+        testRestartGiveUps_ = e ? (int)std::max(0L, std::strtol(e, nullptr, 10)) : 0;
+    }
+    if (testRestartGiveUps_ == 0) return false;
+    testRestartGiveUps_--;
+    return true;
+}
+
 bool App::reloadContent() {
     std::string p = host.loadedPath();   // after a disc swap too: the .srm and the disc list start from what was opened
     if (p.empty()) {
         if (host.isLoaded()) return openNoContent();
+        return false;
+    }
+    if (host.isLoaded() && testRestartGiveUp()) {
+        toast(kHaltedToast, 2.5, 2);
         return false;
     }
     reloading_ = true;   // a deliberate restart: neither keeps nor resumes an auto-save
@@ -1340,44 +1474,64 @@ bool App::reloadContent() {
 
 void App::closeContent() {
     if (!host.isLoaded()) return;
-    if (haltedNow()) {
-        toast("The debugger has the game halted - resume it first", 2.5, 2);
+    if (haltedNow() && !threaded()) {
+        toast(kHaltedToast, 2.5, 2);
         return;
     }
     if (tvShell().menuOpen()) tvShell().closeMenu();   // gives the pause back before the game goes
     input.clearHolds();
     pendingStateSlot_ = kNoPendingSlot;
     resumeOffer.active = false;
-    autoSave();
-    emu.call([this] {
-        host.unloadContent();
-        ach.onContentClosed();
-        cheatsOnClose(*this);
-        audio.clear();
-        input.setContent("");
-        frames.clear();
-        host.publishSnapshot();
-    });
+    const std::function<bool()> giveUp = detachForCall();
+    autoSave(giveUp);
+    bool ran = false;
+    emu.call(
+        [this, &ran] {
+            ran = true;
+            host.unloadContent();
+            gdbStubOn_.store(false);
+            ach.onContentClosed();
+            cheatsOnClose(*this);
+            audio.clear();
+            input.setContent("");
+            frames.clear();
+            host.publishSnapshot();
+        },
+        giveUp);
+    if (!ran) {   // the debugger halted the game again before the call could run: still loaded
+        toast(kHaltedToast, 2.5, 2);
+        return;
+    }
     host.pinSnapshot();
     if (threaded()) adoptFrameEpoch();
     debug.requestRefresh();
     invalidateThumbs();
 }
 
-void App::reset() {
-    if (!host.isLoaded()) return;
-    if (haltedNow()) {
-        toast("The debugger has the game halted - resume it first", 2.5, 2);
-        return;
+bool App::reset() {
+    if (!host.isLoaded()) return false;
+    if (haltedNow() && !threaded()) {
+        toast(kHaltedToast, 2.5, 2);
+        return false;
+    }
+    if (testRestartGiveUp()) {
+        toast(kHaltedToast, 2.5, 2);
+        return false;
     }
     // A call, not a post: retro_reset can re-stage the CD BIOS, which the BIOS panel reads.
     // ach.onReset() drives rc_client (rc_client_reset raises events): on the emulation thread, with do_frame.
-    emu.call([this] {
-        host.reset();
-        ach.onReset();
-    });
+    // Threaded and halted: detach first (the reset runs once the core resumes).
+    bool ran = false;
+    emu.call(
+        [this, &ran] {
+            ran = true;
+            host.reset();
+            ach.onReset();
+        },
+        detachForCall());
     debug.requestRefresh();
-    toast("Reset");
+    toast(ran ? std::string("Reset") : std::string(kHaltedToast), ran ? 3.0 : 2.5, ran ? 1 : 2);   // not run: halted again
+    return ran;
 }
 
 void App::togglePause() {
@@ -1493,20 +1647,28 @@ void App::showDiscDialog() {
 
 bool App::addDisc(const std::string& path) {
     if (!host.isLoaded()) return false;
-    if (haltedNow()) {
-        toast("The debugger has the game halted - resume it first", 2.5, 2);
+    if (haltedNow() && !threaded()) {
+        toast(kHaltedToast, 2.5, 2);
         return false;
     }
     int idx = -1;
     bool wasEjected = false, nowEjected = false;
-    emu.call([&] {
-        wasEjected = host.discInfo().ejected;
-        idx = host.discAppend(path);
-        // The same as picking it in File > Disc: with the tray closed this swaps at once, with it open the disc goes in
-        // when the tray closes.
-        if (idx >= 0) host.discSetIndex((unsigned)idx);
-        nowEjected = host.discInfo().ejected;
-    });
+    bool ran = false;
+    emu.call(
+        [&] {
+            ran = true;
+            wasEjected = host.discInfo().ejected;
+            idx = host.discAppend(path);
+            // The same as picking it in File > Disc: with the tray closed this swaps at once, with it open the disc goes in
+            // when the tray closes.
+            if (idx >= 0) host.discSetIndex((unsigned)idx);
+            nowEjected = host.discInfo().ejected;
+        },
+        detachForCall());
+    if (!ran) {   // the debugger halted the game again before the call could run
+        toast(kHaltedToast, 2.5, 2);
+        return false;
+    }
     host.pinSnapshot();
     followDiscSwap();
     if (idx < 0) {
@@ -1535,16 +1697,23 @@ bool App::addDisc(const std::string& path) {
 void App::followDiscSwap() {
     const unsigned n = host.discSwaps();
     if (n == seenDiscSwaps_) return;
+    const unsigned prev = seenDiscSwaps_;
     seenDiscSwaps_ = n;
     if (!host.isLoaded()) return;
     pendingStateSlot_ = kNoPendingSlot;   // a state queued for the previous disc would be refused now
     resumeOffer.active = false;           // the offer was for the previous disc's auto-save
     // On the emulation thread, like the load-time hooks they mirror (openContentOnCore).
-    emu.call([this] {
+    bool ran = false;
+    emuCall([this, &ran] {
+        ran = true;
         ach.onDiscChanged();
         cheatsOnClose(*this);
         cheatsAfterLoad(*this);
     });
+    if (!ran) {   // gave up (a halt): the swap is still unfollowed; the UI loop calls this again next iteration
+        seenDiscSwaps_ = prev;
+        return;
+    }
     invalidateThumbs();
     debug.requestRefresh();
 }
@@ -1552,11 +1721,11 @@ void App::followDiscSwap() {
 // ---- resume where I left off ------------------------------------------------------------------------------------
 // Policy in library_lists.h (shouldAutoSave / resumeAction), tested in vj_library_tests.  The auto-save is its own
 // slot (lib::kAutoSlot): one file pair per game, always the latest, written like any state (temp file + rename).
-bool App::autoSave() {
+bool App::autoSave(const std::function<bool()>& giveUp) {
     if (headless_ || !host.isLoaded() || host.contentPath().empty()) return false;   // headless runs and BIOS-only boots never
     if (!lib::shouldAutoSave(resumeMode, !ach.allowStateLoad(), netplay.configured(), runSeconds(), host.crashEvents() > 0))
         return false;
-    return saveState(lib::kAutoSlot, true);
+    return saveState(lib::kAutoSlot, true, giveUp);
 }
 
 void App::offerResume() {
@@ -1603,7 +1772,7 @@ void App::openAndLoadState(const std::string& pathIn, int slot, const std::strin
     // States remain named for their mounted disc. Reopen the playlist, then select that disc before loading one.
     auto selectStateDisc = [&] {
         if (stateDisc.empty() || host.contentPath() == stateDisc) return true;
-        emu.call([&] {
+        emuCall([&] {
             const auto discs = host.discInfo().paths;
             auto it = std::find(discs.begin(), discs.end(), stateDisc);
             if (it != discs.end()) {
@@ -1644,7 +1813,7 @@ void App::handleDrop(const std::string& path) {
     }
     // Save the old game's SRAM first (openContent -> loadContent does too, but
     // an early flush keeps a failed open from losing anything).
-    if (host.isLoaded()) emu.call([this] { host.flushSaveRam(); });
+    if (host.isLoaded()) emuCall([this] { host.flushSaveRam(); });
     openContent(path);
 }
 
@@ -1668,10 +1837,20 @@ SDL_Time App::slotTime(int slot) const {
     return 0;
 }
 
-bool App::saveState(int slot, bool quiet) {
+bool App::saveState(int slot, bool quiet, const std::function<bool()>& giveUpIn) {
     if (!host.isLoaded()) {
         if (!quiet) toast("No game loaded");
         return false;
+    }
+    // A save needs the core at a frame boundary; a halted core is not at one.  Refuse, unless the caller has just asked
+    // the debugger to detach (detachForCall's predicate: the save then waits for the resume).
+    std::function<bool()> giveUp = giveUpIn;
+    if (!giveUp) {
+        if (debug.halted()) {
+            if (!quiet) toast(kHaltedToast, 2.5, 2);
+            return false;
+        }
+        giveUp = haltGiveUp();
     }
     if (slot == lib::kAutoSlot) SDL_CreateDirectory(lib::autoStatesDir(paths.states, paths.instance).c_str());
     const std::string path = statePath(slot);
@@ -1679,14 +1858,16 @@ bool App::saveState(int slot, bool quiet) {
     Frame thumb;
     // On the emulation thread: the state and the frame it was taken on.  Right after a load that frame is empty, so
     // there is no thumbnail -- never the previous game's picture.
-    const bool ok = emu.call([&] {
-        if (!host.saveStateToFile(path, err)) return false;   // written atomically (temp file + rename)
-        thumb = host.frame();
-        ach.onStateSaved(path);
-        return true;
-    });
+    const bool ok = emu.call(
+        [&] {
+            if (!host.saveStateToFile(path, err)) return false;   // written atomically (temp file + rename)
+            thumb = host.frame();
+            ach.onStateSaved(path);
+            return true;
+        },
+        giveUp);
     if (!ok) {
-        if (!quiet) toast("Save state failed: " + err, 4.0, 3);
+        if (!quiet) toast(err.empty() ? std::string(kHaltedToast) : "Save state failed: " + err, err.empty() ? 2.5 : 4.0, err.empty() ? 2 : 3);
         return false;
     }
     if (thumb.width && thumb.height) {
@@ -1715,6 +1896,10 @@ bool App::loadState(int slot) {
         toast("No game loaded");
         return false;
     }
+    if (debug.halted()) {
+        toast(kHaltedToast, 2.5, 2);
+        return false;
+    }
     if (!ach.allowStateLoad()) {
         toast("Hardcore mode: loading save states is disabled", 3.5, 2);
         return false;
@@ -1725,7 +1910,7 @@ bool App::loadState(int slot) {
     }
     const std::string path = statePath(slot);
     std::string err;
-    const bool ok = emu.call([&] {
+    const bool ok = emuCall([&] {
         if (!host.loadStateFromFile(path, err)) return false;
         audio.clear();
         cheatsAfterStateLoad(*this);
@@ -1733,7 +1918,7 @@ bool App::loadState(int slot) {
         return true;
     });
     if (!ok) {
-        toast("Load state failed: " + err, 4.0, 3);
+        toast(err.empty() ? std::string(kHaltedToast) : "Load state failed: " + err, err.empty() ? 2.5 : 4.0, err.empty() ? 2 : 3);
         return false;
     }
     debug.requestRefresh();
@@ -1810,10 +1995,7 @@ void App::handleHotkey(const SDL_KeyboardEvent& k) {
     case SDLK_F8: togglePause(); break;
     case SDLK_F9:   // debugger: continue when halted, otherwise break at the next instruction
         if (debug.halted()) debug.resume();
-        else if (debug.enabled()) {
-            if (debug.haltAvailable()) debug.breakNow();
-            else toast(debug.haltDisabledReason(), 3.0);
-        }
+        else if (debug.enabled()) debug.breakNow();
         break;
     case SDLK_O:
         if (mod) showOpenDialog();
@@ -2009,6 +2191,7 @@ void App::stepEmulation() {
         uint64_t r0 = perf.on ? perf.tick() : 0;
         PerfTrace::Emu te{};
         if (trace_.enabled()) te.dueNs = te.startNs = SDL_GetTicksNS();
+        attachGdbHostOnCore();   // inline: a user Detach (or a frame of this loop) dropped the silent host; back before EACH frame
         host.runFrame();
         if (trace_.enabled()) {
             te.endNs = SDL_GetTicksNS();
@@ -2139,7 +2322,6 @@ int App::run(const CliArgs& a) {
         std::fprintf(stderr, "[app] instance %d (saves in %s)\n", paths.instance, paths.saves.c_str());
     }
     wireHost();
-    if (emuThreadThisRun_) limitFeaturesForEmuThread();
     ach.init(*this, a);   // with the emulation thread on, rc_client_do_frame runs there (Achievements::emuFrame)
     cheatsInit(*this, a);
     host.setLogVerbose(a.verbose);
@@ -2247,7 +2429,7 @@ int App::runInteractive(const CliArgs& a) {
     perf.forceH = a.perfShaderH;
     video.perf = &perf;
 
-    while (!quit) {
+    while (!quitRequested()) {
         if (perf.frameBegin()) {
             int pw = 0, ph = 0;
             SDL_GetWindowSizeInPixels(window_, &pw, &ph);
@@ -2381,6 +2563,7 @@ int App::runInteractive(const CliArgs& a) {
                            (void*)(uintptr_t)SDL_GetWindowID(window_));
         perf.frameEnd();
     }
+    beginQuit();   // before anything below waits on the core: a hosted halt must be gone
     latchWaker_.stop();   // (it pushes SDL events: not after SDL is gone)
 
     int w = 0, h = 0;
@@ -2389,7 +2572,15 @@ int App::runInteractive(const CliArgs& a) {
         cfg.setInt("window.w", w);
         cfg.setInt("window.h", h);
     }
-    if (host.isLoaded()) emu.call([this] { host.flushSaveRam(true); });
+    if (host.isLoaded()) {
+        // Bounded: a core still halted after beginQuit's wait (or wedged elsewhere) is not waited for -- the unload in
+        // shutdown() and the join are the backstop, and they exit the process rather than hang.
+        if (!threaded()) host.flushSaveRam(true);
+        else if (debug.core().halt().halted)
+            std::fprintf(stderr, "[emu] the core is still halted at quit; not flushing the save RAM here\n");
+        else if (!emu.callFor(std::chrono::milliseconds(1000), [this] { host.flushSaveRam(true); }))
+            std::fprintf(stderr, "[emu] the save RAM flush did not complete within 1 s; going on\n");
+    }
     tvScriptEnd();
     desktopShutdown();
     library.stop();   // joins its threads and frees its textures while the GL context is still alive
@@ -2550,7 +2741,7 @@ bool App::discInsertHeadlessCheck(const std::string& path) {
     // The tap is set and cleared where the core lives, so it never changes under a running frame.
     std::string inserted;
     std::function<void(int, const char*)> prevLog;
-    emu.call([&] {
+    emuCall([&] {
         prevLog = host.onLog;
         host.onLog = [&inserted, &prevLog](int level, const char* text) {
             if (std::strstr(text, "disk control: inserted")) inserted = text;
@@ -2558,7 +2749,7 @@ bool App::discInsertHeadlessCheck(const std::string& path) {
         };
     });
     const bool added = addDisc(absolutePath(path));
-    emu.call([&] { host.onLog = prevLog; });
+    emuCall([&] { host.onLog = prevLog; });
     if (!added) {
         std::fprintf(stderr, "headless: FAIL --disc-insert: could not add and insert %s\n", path.c_str());
         return false;
@@ -2657,7 +2848,7 @@ bool App::discListHeadlessCheck(unsigned want) {
         // Use the real library event in both running-session and fresh-open paths. The second disc owns slot 8.
         for (bool reopen : {false, true}) {
             if (reopen) closeContent();
-            else { emu.call([&] { host.discSetIndex(0); }); menuDisc(); }
+            else { emuCall([&] { host.discSetIndex(0); }); menuDisc(); }
             lib::Entry owner;
             owner.file.path = discs.back();
             owner.statePlaylist = opened;
@@ -2765,47 +2956,58 @@ int App::runHeadless(const CliArgs& a) {
                 // time, in the inline loop's order (the steps, Neuro's tick and wait, then the frame --
                 // rc_client_do_frame runs after it, on the emulation thread, and the replica runs in the core's poll
                 // -- then the UI's pump).
-                for (unsigned i = 0; i < a.frames; i++) {
+                for (unsigned i = 0; i < a.frames && !quitRequested(); i++) {
                     ach.headlessFrame(i);
 #ifdef VJ_HAVE_NEURO
                     if (!neuroCliUrl.empty()) headlessNeuroFrame(hlT0, i);   // neuroTick (+ syncDebug), then waits for i's time
 #endif
-                    emu.advance(1);
+                    if (!headlessAdvance(1)) break;
                     ach.pump();
-                    if ((i & 15) == 15) emu.call([this] { audio.clear(); });
+                    if ((i & 15) == 15) emuCall([this] { audio.clear(); });
                     host.pinSnapshot();
                     for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
                 }
             } else {
-                for (unsigned i = 0; i < a.frames;) {
+                for (unsigned i = 0; i < a.frames && !quitRequested();) {
                     const unsigned n = std::min(16u, a.frames - i);   // the dummy device drains in real time: clear every 16
-                    emu.advance(n);
+                    if (!headlessAdvance(n)) break;
                     i += n;
-                    emu.call([this] { audio.clear(); });
+                    emuCall([this] { audio.clear(); });
                     for (const OsdMessage& m : host.takeMessages()) std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
                 }
             }
             hlRun = retroTicks_.exchange(0);
             host.pinSnapshot();
         } else {
-            for (unsigned i = 0; i < a.frames; i++) {
+            for (unsigned i = 0; i < a.frames && !quitRequested(); i++) {
                 ach.headlessFrame(i);
 #ifdef VJ_HAVE_NEURO
                 if (!neuroCliUrl.empty()) headlessNeuroFrame(hlT0, i);   // --neuro: real time, so she can keep up
 #endif
                 audio.update();
                 uint64_t hr0 = SDL_GetPerformanceCounter();
+                attachGdbHostOnCore();   // inline: the silent host is back before each frame
                 host.runFrame();
                 hlRun += SDL_GetPerformanceCounter() - hr0;
 #ifdef VJ_HAVE_NEURO
                 if (!neuroCliUrl.empty()) fillDebugViews();   // Neuro's watches: the copier, on this thread when inline
 #endif
+                headlessAfterFrame();
                 ach.afterFrame();
                 ach.pump();
                 if ((i & 15) == 15) audio.clear();   // the dummy device drains in real time
                 for (const OsdMessage& m : host.takeMessages())
                     std::fprintf(stderr, "[osd] %s\n", m.text.c_str());
             }
+        }
+        if (quitRequested()) {   // a quit ended the loops above (a halt may still hold the core): leave before the checks
+#ifdef VJ_HAVE_NEURO
+            if (!neuroCliUrl.empty()) neuroHeadlessReport(*this);   // UI-thread state only: a signalled --neuro run still reports
+#endif
+            beginQuit();
+            std::printf("headless: quit requested, exiting cleanly\n");
+            std::fflush(stdout);
+            return 0;
         }
         {
             double wall = (double)(SDL_GetPerformanceCounter() - hlT0) / (double)perfFreq_;
@@ -2825,7 +3027,7 @@ int App::runHeadless(const CliArgs& a) {
         if (!a.discSwap.empty() && !discSwapHeadlessCheck(a.discSwap)) rc = 1;
         if (!a.discInsert.empty() && !discInsertHeadlessCheck(a.discInsert)) rc = 1;
         if (a.expectDiscs && !discListHeadlessCheck(a.expectDiscs)) rc = 1;
-        if (!emu.call([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
+        if (!emuCall([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = shownFrame();
         HeadlessResult r;
@@ -2863,7 +3065,7 @@ int App::runHeadless(const CliArgs& a) {
             runHeadlessFrames(60);
             uint32_t h2 = frameHash(shownFrame());
             std::printf("STATE roundtrip %08x %08x\n", h1, h2);
-            if (!emu.call([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;   // the cheats must still hold after a restore
+            if (!emuCall([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;   // the cheats must still hold after a restore
             if (h1 != h2) {
                 std::fprintf(stderr, "headless: FAIL state restore diverged (%08x vs %08x)\n", h1, h2);
                 rc = 1;

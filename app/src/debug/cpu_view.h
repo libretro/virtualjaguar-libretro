@@ -256,7 +256,7 @@ class CpuControl {
 public:
     explicit CpuControl(DebugSession& s) : s_(s) {}
 
-    // Registered with the session's onHalt / onResume / onForcedClose.
+    // Registered with the session's onHaltUi / onForcedClose.
     void onHalt(int target, unsigned pc, int reason);
     void forget();                                          // the tools were switched off
 
@@ -276,6 +276,8 @@ public:
     bool runTo(int tab, unsigned addr);
 
     const TempBreak& temp() const { return temp_; }
+    // A halt at (target, pc) is at our armed temporary breakpoint (DebugSession::ownsBreakAt answers with this).
+    bool ownsHaltAt(int target, unsigned pc) const { return temp_.active() && temp_.target() == target && temp_.addr() == pc; }
     // The last button's outcome, for the status line ("" when fine).
     const std::string& note() const { return note_; }
 

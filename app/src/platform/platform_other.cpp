@@ -10,6 +10,7 @@ namespace vj {
 namespace platform {
 namespace os {
 
+void initNetworking() {}
 void beforeWindow() {}
 void windowCreated(SDL_Window*) {}
 void setDarkChrome(bool) {}

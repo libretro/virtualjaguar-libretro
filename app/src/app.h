@@ -145,6 +145,10 @@ struct SlotThumb {
     SDL_Time mtime = 0;
 };
 
+// Set by the SIGINT / SIGTERM handlers (App::initSdl, headless runs only): the headless loops and the halt pump read it
+// through App::quitRequested() / abortHalt, so a signal ends a run that a gdb client still holds halted.  Defined in app.cpp.
+extern std::atomic<bool> g_signalQuit;
+
 class App {
 public:
     App();
@@ -178,6 +182,31 @@ public:
     // is what every "may the UI re-enter the core?" check asks: CoreHost::inFrame() is the core's own view, and when
     // threaded it is true for the whole of every frame.
     bool haltedNow() const { return debug.halted(); }
+    // ---- calling into the emulation thread from the UI (#967 phase 3b) ---------------------------------------
+    // A frame-lane call waits for a frame boundary, and a halted core never reaches one.  Every UI-thread call passes a
+    // give-up (EmuThread::call): "not now", R(), as soon as the core is halted.  `emuCall` is the default; open / close /
+    // reset / disc swaps detach the debugger first (`detachForCall`) and proceed; save / load state and boot refuse.
+    // RetroAchievements replies ride the debug lane instead (Achievements::coreCall).
+    static constexpr const char* kHaltedToast = "The debugger has the game halted - resume it first (F9)";
+    std::function<bool()> haltGiveUp() const {
+        return [this] { return debug.core().halt().halted; };
+    }
+    // Threaded and halted: asks the pump to detach (the verdict for the halt we saw) and returns a predicate that turns
+    // true only if the core halts AGAIN afterwards (a new serial), so the call that follows waits out the resume.
+    // Otherwise haltGiveUp().
+    std::function<bool()> detachForCall();
+    template <class F>
+    auto emuCall(F&& fn) -> decltype(fn()) {
+        return emu.call(std::forward<F>(fn), haltGiveUp());
+    }
+    // ---- the GDB stub (#967 phase 3b) --------------------------------------------------------------------------
+    // Whenever virtualjaguar_gdb_stub is enabled the app keeps a silent debugger host attached on the emulation thread
+    // (at the end of every load, and again after any frame it is missing -- a user Detach drops it), so a gdb halt is
+    // always seen: the halt bar shows it, calls give up, quitting resumes the core (the host stays attached).  RetroAchievements hardcore locks the stub
+    // to "disabled" at the next load (syncHardcoreLock, UI thread); a hardcore flip with the stub open reloads the game.
+    void attachGdbHostOnCore();      // emulation thread (inline: the UI thread between frames)
+    void syncHardcoreLock();         // UI thread: gdbLockedByHardcore_ = ach.hardcoreNextGame()
+    bool gdbStubOpen() const { return gdbStubOn_.load(); }   // the stub was enabled and unlocked at the last load
     discord::Presence discordPresence;   // Discord Rich Presence (discord_app.cpp); idle without an application ID
     struct DiscordState {        // what discordTick() remembers between calls
         double lastTick = -1;
@@ -198,6 +227,9 @@ public:
     bool paused = false;
     bool fastForward = false;
     bool quit = false;
+    std::atomic<bool> gdbStubOn_{false};            // emulation thread at load: the core opened the GDB stub (enabled, not locked)
+    std::atomic<bool> gdbLockedByHardcore_{false};  // wireHost's optionLock forces virtualjaguar_gdb_stub=disabled while set
+    std::atomic<bool> quitting_{false};   // what DebugCore::abortHalt reads (the pump answers CONTINUE on its next iteration); `quit` stays the UI's flag
     bool fullscreen = false;
     bool menuPinned = true;
     bool fullscreenAutoHideMenu = false;   // ui.fullscreen_autohide_menu; preserves existing behavior by default
@@ -258,7 +290,9 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
-    bool autoSave();                  // write this game's auto-save when the policy allows (lib::shouldAutoSave)
+    // Write this game's auto-save when the policy allows (lib::shouldAutoSave).  `giveUp`: detachForCall()'s predicate when
+    // the caller has just asked a halted debugger to detach -- the save then waits out the resume instead of refusing.
+    bool autoSave(const std::function<bool()>& giveUp = {});
     void offerResume();               // a game booted: load / ask / nothing, by the policy and the option
     void openAndLoadState(const std::string& path, int slot, const std::string& stateDisc = "");   // the library: open `path`, then load its state `slot`
     bool openNoContent();             // boots the console with no cartridge, through the BIOS bootBios() last chose
@@ -280,7 +314,7 @@ public:
     void newWindow();                 // File > New Window (Ctrl/Cmd+N): another copy of the app (instance.h)
     void toggleLibrary();             // the desktop library window, or focus the home screen's search box (TV mode off)
     void openLibrary();               // Ctrl/Cmd+L, File > Game library, Cmd::Library: the TV Library while TV mode is on (over the paused game, from the in-game menu, with one), else toggleLibrary() (#991)
-    void reset();
+    bool reset();   // false: nothing reset (no game, halted, or the core halted again before the call ran)
     void togglePause();
     // The TV in-game menu's pause (tv/tv_app_host.cpp): like togglePause() but silent, and it remembers whether the
     // game was already paused, so closing the menu gives back exactly that.  False = refused (hardcore rations pausing;
@@ -319,7 +353,9 @@ public:
 
     std::string statePath(int slot) const;
     std::string thumbPath(int slot) const;
-    bool saveState(int slot, bool quiet = false);   // slot lib::kAutoSlot = the auto-save
+    // slot lib::kAutoSlot = the auto-save.  Refused while the debugger has the game halted (quiet: silent) unless `giveUp`
+    // is given (see autoSave).
+    bool saveState(int slot, bool quiet = false, const std::function<bool()>& giveUp = {});
     bool loadState(int slot);
     bool slotExists(int slot) const;
     SDL_Time slotTime(int slot) const;
@@ -353,8 +389,6 @@ private:
     void shutdown();
     void loadConfig();
     void wireHost();
-    void limitFeaturesForEmuThread();   // #967: the debugger halt and the GDB stub are off while the thread is on
-    void liftFeatureLimits();           // undoes it when the thread did not start (nothing is loaded yet)
 
     int runInteractive(const CliArgs& a);
     int runHeadless(const CliArgs& a);
@@ -383,6 +417,9 @@ private:
     void threadedFrame();             // UI thread, threaded: input out, frames / counters / messages in
     void haltedFrame();               // one UI frame WITHOUT stepping the emulation: the debugger's halt pump runs it
     void syncDebug();                 // content loaded / hardcore -> the debug session
+    void haltWait();                  // emulation thread, inside retro_run() parked in the halt: serve the debug lane (<= kPumpWait), refill pending views
+    void beginQuit();                 // UI thread, idempotent: quitting_ = true; threaded: wake the pump and wait <= 200 ms for the halt to end; syncHalt
+    bool quitRequested() const { return quit || g_signalQuit.load(); }   // the UI loop's test; SIGINT / SIGTERM (headless) set the flag too
     void fillDebugViews();            // emulation thread (inline: the UI thread): debug.fillViews(), after each frame
     void frameUi();
     void updateTitle();
@@ -467,6 +504,10 @@ private:
     void syncEmuFlags();                       // UI thread: pause / fast-forward / mute / audio target -> emulation side
     const Frame& shownFrame();                 // the newest finished frame (FrameExchange when threaded)
     void runHeadlessFrames(unsigned n);
+    void headlessAfterFrame();                 // headless inline, after host.runFrame(): frameEnded() + syncHalt() (a gdb halt ended inside the frame)
+    // Threaded: n frames through EmuThread::advance, polled in 10 ms slices while a halt holds the core.  False only when
+    // a quit was requested while a halt held it.
+    bool headlessAdvance(unsigned n);
     bool discSwapHeadlessCheck(const std::string& path);   // --disc-swap
     bool discInsertHeadlessCheck(const std::string& path);   // --disc-insert
     void followDiscSwap();                     // UI thread: a disc swap moved host.contentPath(); catch up with it
@@ -509,6 +550,8 @@ private:
     std::string dataDirArg_;          // --data-dir as given (forwarded to a New Window copy)
     std::string headlessTmp_;
     unsigned headlessLoads_ = 0;
+    int testRestartGiveUps_ = -1;     // VJ_TEST_RESTART_GIVEUPS=N: the first N restarts (reset / reload) give up as a re-halt makes them (-1 = env not read yet)
+    bool testRestartGiveUp();
     unsigned testSlowCallMs_ = 0;     // VJ_TEST_SLOW_CALL_MS: the load call() sleeps this long (smoke_busy_threaded)
     std::string biosOnce_[3];         // a one-off BIOS boot's file per role (bootBios): beats everything, until the next load
     std::string biosCli_[3];          // --cart-bios / --cd-bios: beats the saved choice for the whole run

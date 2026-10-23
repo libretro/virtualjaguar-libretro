@@ -13,6 +13,7 @@ namespace vj {
 namespace platform {
 namespace os {
 
+void initNetworking();                     // Windows: WSAStartup, once, before any core load
 void beforeWindow();
 void windowCreated(SDL_Window* w);
 void setDarkChrome(bool dark);             // Windows: the title bar follows the app theme

@@ -27,18 +27,26 @@ All calls are made on the thread that runs `retro_run()` (the UI thread inline, 
 
 1. A breakpoint (or **Break**, F9) makes the core call `GDBHalt()`, which blocks **in place**, deep inside `retro_run()`.
    Every processor is frozen exactly where it stopped.
-2. With an app host attached, `GDBHalt()` calls the host's `halt_pump` every iteration.  The app answers by running **one UI
-   frame** (`App::haltedFrame()`: events, ImGui, present -- no emulation step) and returning the verdict set by the
-   buttons: continue (F9), step (F10), detach.
-3. While parked, `CoreHost::inFrame()` is true and everything that would re-enter the core is refused: state save/load,
-   reset, loading or closing a game, option changes, controller and disc changes.  Audio is paused and cleared on the
-   way out.  Closing the window while halted resumes the core and detaches.
+2. With an app host attached, `GDBHalt()` calls the host's `halt_pump` every iteration.  Threaded, the pump
+   (`DebugCore::pump`) serves the debug lane, waits at most 4 ms and returns NONE, so the core's own loop keeps the gdb socket and
+   the halt timeout; the UI mirrors the halt once per frame (`DebugSession::syncHalt`) and its verdict (continue F9, step F10,
+   detach) is tagged with the halt serial it saw, so a verdict for a halt that is gone is dropped.  Inline the pump runs one UI
+   frame (`App::haltedFrame()`: events, ImGui, present -- no emulation step) as before.  A halt gdb or the halt timeout ends is
+   closed by `frameEnded()` after the frame, and a STEP the core never re-halted (the stepped instruction ended the frame) is
+   closed the same way.
+3. While parked, anything that would re-enter the core is held or refused.  Frame-lane commands (option changes, cheats,
+   controller, SRAM autosave) wait in the queue and apply after Continue; the halt bar and the Core options tab say so.  Save/load
+   state and boot refuse with a toast.  Open, close, reset and disc changes detach first (threaded) and then proceed (quit just resumes the core, below);
+   inline they keep refusing.  Every UI call into the core (`EmuThread::call`, `advance`) gives up when a halt begins, so
+   the window never waits on a parked core.  Audio is paused and cleared on the way out.  Closing the window while halted
+   resumes the core (`beginQuit()` ends the pump within one wait; the pump answers CONTINUE and the host stays attached until the content unloads, so a gdb breakpoint that is still armed cannot re-park the core behind a socket with nobody to release it).
 4. Turning RetroAchievements **hardcore** on (from anywhere, including inside a halt) detaches, resumes and closes every
    tool; the Tools menu goes grey with the reason.
 
 Without an attached host and without the GDB socket `GDBHalt()` returns at once, so a stale "break" can never hang the
 core.  When the GDB TCP stub is on as well, either side may resume the machine; a TCP client disconnecting clears the
-breakpoint tables as before (the app re-applies its list on the next attach).
+breakpoint tables as before (the app re-applies its list on the next attach).  A headless run has no UI to release a halt:
+a halt gdb holds waits for the gdb client or a quit signal (below); a halt the app itself caused is released at once (inline only: with the emulation thread on, the headless loop does not release it).
 
 ## Memory and the poke policy
 
@@ -81,8 +89,8 @@ rules below cost nothing; with the emulation thread on they are what keeps the w
 - **One-shot actions** (poke, register edit, arm the OP snapshot, enable the blit log, texture pack reload, attach, the
   scanner's 2 MB scan pass) go through `EmuThread::debugCall` and wait at most one frame.  Slower work whose result
   the window picks up later (the CPU window's backwards disassembly walk) is posted (`CoreJob`) instead.
-- With the thread on, Break, Step and breakpoints are greyed (the tooltip says they are not available in this version)
-  and the GDB stub option stays locked to `disabled`; the halt pump moves to the emulation thread in a later phase.
+- Break, Step, breakpoints and the GDB stub work with the thread on too: the halt pump runs on the emulation thread
+  (`DebugCore`), the UI mirrors the halt once per frame, and every UI call into the core gives up while the core is halted.
 
 ## The tools
 
@@ -161,7 +169,8 @@ App only: nothing is recorded and the core is not involved; while the window is 
 
 **F9** breaks into the game at the next instruction of the 68000 (or continues when already halted); **F10** steps one
 instruction while halted (it does nothing otherwise).  The Tools menu and a "HALTED" bar over the picture show the same
-actions plus **Detach debugger**, which clears every breakpoint and resumes.  While halted the tool windows keep drawing and
+actions plus **Detach debugger**, which clears every breakpoint and resumes (with the GDB stub enabled the silent host is back one frame
+later, see below).  While halted the tool windows keep drawing and
 refreshing, so you can read memory, palette and registers of the frozen machine.  Breakpoints are per game (they are dropped when
 a different game loads).
 
@@ -170,6 +179,12 @@ a different game loads).
 Hardcore turns the whole Tools menu off: the entries grey out with "RetroAchievements hardcore is on", every open window
 closes, the session detaches and any halt resumes.  Turning hardcore on from inside a halt does the same.  The scanner's
 cheats are ordinary cheats, so the Cheats window's own hardcore block applies to them too.
+
+Hardcore also locks the GDB stub (`virtualjaguar_gdb_stub`) to `disabled`: the lock is applied at the next load, because the
+core reads the stub options only then.  **Turning hardcore on while the stub is enabled reloads the game** (a restart is
+what hardcore needs anyway, and the reload is the only way the lock reaches the core and the socket closes); the log says
+`[ach] hardcore on: reloading the game to close the GDB stub`.  If hardcore turns off mid-game the stub stays disabled until
+the next load.
 
 ## Several app instances
 
@@ -184,6 +199,24 @@ The built-in debugger and the GDB TCP stub (`virtualjaguar_gdb`) share one set o
 either side may resume a halted machine, and a GDB client disconnecting clears the table (the app re-applies its list on the next
 attach).  With no app host and no GDB client attached, a halt returns at once and can never hang the core.
 
+Whenever the stub is enabled the app keeps a **silent host** attached (logged as `[debug] gdb host attached (silent)`): it
+never halts anything by itself, it only makes a GDB halt visible -- the halt bar says "HALTED by gdb", F9 continues, calls
+into the core give up instead of hanging, and quitting resumes the core.  It is attached on the emulation thread inside the load,
+before the first frame.  Two consequences:
+
+- **`virtualjaguar_gdb_wait`** parks the boot even before a GDB client connects; the UI stays
+  live, the halt bar shows it, and F9 (or **Detach**) continues.  A client that connects later asks `?` and gets `S05`.
+- **Detach debugger** drops every app breakpoint and the host, and with the stub still enabled the silent host comes back
+  one frame later (it re-attaches on the emulation thread before the next frame, so a gdb breakpoint is never missed).  Detach
+  does not close the stub; turn the option off and reload for that.  Breakpoints you want after a Detach are set again.
+- **Quitting** resumes the core with the host kept attached (a gdb breakpoint hit again on the way out is answered
+  at once), then closes the socket.  A **headless** run that gdb holds halted
+  waits for the gdb client or a quit signal: SIGINT or SIGTERM ends it cleanly (exit 0, the socket closed); a second
+  signal kills it at once, in case the core is wedged.
+- **Known limit (#967 follow-up):** while a gdb client holds a halt at a breakpoint it set with `Z0`, an app Detach (or
+  an open, close, reset or disc change, which detach first) drops the app's host, and the breakpoint can park the core
+  again with no host. The app then waits until gdb continues or disconnects. Continue or detach in gdb first.
+
 ## Cost when you are not looking
 
 Detached, nothing on a per-instruction or per-pixel path looks at the interface: attaching stores a pointer, and the
@@ -193,10 +226,21 @@ field, nothing the emulated machine can observe (the core test hashes the frame 
 
 ## Testing
 
-`debug_session_unit` (logic against the mock) and `debug_e2e` (real core); `debug_views_unit` (the request table, the buffers and
+`debug_session_unit` (logic against the mock; label `emu_thread`: the verdict serial, `frameEnded`, detach and quit mid-halt, the lane
+order of Detach and Attach) and `debug_e2e` (real core, inline); `debug_views_unit` (the request table, the buffers and
 the epoch, under ThreadSanitizer too) and `debug_views_threaded` (the real core on the emulation thread: the views equal
 a `debugCall` peek, a paused request fills with no frame run, the first read after a reload is the new ROM, inline and
-threaded give the same Dram view); per tool, a unit test over the pure logic
+threaded give the same Dram view).
+
+The halt on the emulation thread: `emu_thread_unit` (`testCallGivesUp`, `testAdvanceGivesUp`, `testServeDebugLane`),
+`emu_commands_unit` (`testDebugLaneWait`) and `debug_e2e_threaded` (the real core on a threaded `EmuThread`, wired as `App`
+wires it: break, step, continue, detach, hardcore and quit mid-halt, every UI operation within 50 ms while the core is parked, and
+the 3 s join).  The GDB stub: `gdb_threaded_halt` (a gdb client finds the headless app halted at boot, reads memory and
+continues; SIGTERM mid-halt exits cleanly; `gdb_inline_halt(_hardcore)` run the same inline), `debug_on_threaded`,
+`gdb_enabled(_threaded)` (the silent host attaches at load), `gdb_hardcore_locked_*` and `gdb_hardcore_flip_*` (hardcore locks the
+stub; a mid-game flip reloads).
+
+Per tool, a unit test over the pure logic
 (`debug_memory_unit`, `debug_scan_unit`, `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`), a headless ImGui smoke test
 of each window over the mock (`debug_memory_ui_smoke`, `debug_scan_ui_smoke`) and end-to-end runs on the public `yarc.j64`
 (`debug_scan_e2e`, `debug_op_e2e`: at least one bitmap object comes from the core's snapshot itself); and the core's

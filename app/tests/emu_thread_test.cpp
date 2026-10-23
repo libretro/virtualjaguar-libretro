@@ -28,11 +28,15 @@
 namespace vj {
 struct EmuThreadTestAccess {
     static bool advancePublished(EmuThread& e) {
-        // The owner is gated after drain: old code publishes the budget directly, fixed code queues it
-        // behind the one pending mutation. Neither can be consumed until the test releases the gate.
+        // The owner is gated after drain: old code publishes the budget directly, fixed code queues it (on the debug
+        // lane) behind the one pending mutation. Neither can be consumed until the test releases the gate.
         if (e.advanceLeft_.load() != 0) return true;
         std::lock_guard<std::mutex> lock(e.cmds_.mu_);
-        return e.cmds_.q_.size() >= 2;
+        return !e.cmds_.dbg_.empty();
+    }
+    static size_t debugQueued(EmuThread& e) {
+        std::lock_guard<std::mutex> lock(e.cmds_.mu_);
+        return e.cmds_.dbg_.size();
     }
 };
 }  // namespace vj
@@ -63,6 +67,8 @@ struct FakeClient : EmuThread::Client {
     std::atomic<bool> blocked{false};
     std::atomic<int> holdAt{-1};        // runFrame holds, after counting its frame, while frames == holdAt
     std::atomic<int> started{0}, stopping{0}, afterCmds{0};
+    std::atomic<int> serveNow{0};       // each count runs onBlocked once, on the emulation thread, inside the blocked frame
+    std::function<void()> onBlocked;    // set BEFORE start(), never reassigned while the thread runs
     std::thread::id startedOn;
     std::atomic<double> period{0.010};
     std::mutex errMu;
@@ -79,6 +85,10 @@ struct FakeClient : EmuThread::Client {
     void runFrame() override {
         while (block.load()) {
             blocked = true;
+            if (onBlocked && serveNow.load() > 0) {
+                serveNow--;
+                onBlocked();
+            }
             sleepMs(1);
         }
         frames++;
@@ -561,6 +571,183 @@ void testDebugCallWaitHook() {
 
 }  // namespace
 
+// B1: the halt pump's lane service.  Threaded, it drains the debug lane, waits at most maxWait for a DEBUG post, drains
+// again; a frame-lane post does not shorten the wait; inline it drains and returns at once.
+void testServeDebugLane() {
+    EmuThread e;
+    FakeClient c;
+    std::atomic<size_t> served{0};
+    std::atomic<double> waited{0};
+    c.onBlocked = [&] {                       // runs on the emulation thread, inside the blocked frame (the halt)
+        const auto t0 = Clock::now();
+        served = e.serveDebugLane(std::chrono::milliseconds(4));
+        waited = since(t0);
+    };
+    c.block = true;
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    e.post([] {});                            // a frame-lane command queued behind the halted frame (the SRAM autosave)
+    c.serveNow = 1;
+    for (int i = 0; i < 1000 && c.serveNow.load() > 0; i++) sleepMs(1);
+    sleepMs(10);
+    CHECK(served.load() == 0, "nothing in the debug lane: 0 commands (%zu)", served.load());
+    CHECK(waited.load() >= 0.003 && waited.load() < 0.5, "and it waited about maxWait despite the frame post (%.1f ms)", waited.load() * 1e3);
+    std::atomic<int> ran{0};
+    e.debugPost([&] { ran++; });
+    c.serveNow = 1;
+    for (int i = 0; i < 1000 && (c.serveNow.load() > 0 || ran.load() == 0 || served.load() == 0); i++) sleepMs(1);   // `served` is stored after the lane service returns
+    CHECK(ran.load() == 1 && served.load() == 1, "a debug post is run by the lane service (%d, %zu)", ran.load(), served.load());
+    CHECK(e.serveDebugLane(std::chrono::milliseconds(50)) == 0, "off the emulation thread: 0, no wait");
+    c.block = false;
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline start");
+    int x = 0;
+    in.debugPost([&] { x = 1; });            // inline: ran at once
+    const auto t0 = Clock::now();
+    CHECK(in.serveDebugLane(std::chrono::milliseconds(50)) == 0 && since(t0) < 0.01 && x == 1, "inline: returns at once");
+}
+
+// Review Focus 1: a call posted an instant before the core halts.  With a give-up predicate it returns R() once the
+// predicate turns true, and the cancelled task never runs; a task that already started is waited for; a predicate that
+// is already true means nothing is queued at all.
+void testCallGivesUp() {
+    EmuThread e;
+    FakeClient c;
+    c.block = true;   // a frame that never ends: the halt
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    std::atomic<bool> halted{false};
+    std::atomic<int> polls{0};
+    auto ran = std::make_shared<std::atomic<bool>>(false);
+    std::thread flip([&] { sleepMs(60); halted = true; });
+    const Clock::time_point t0 = Clock::now();
+    const int r = e.call([ran] { *ran = true; return 42; }, [&] { polls++; return halted.load(); });
+    flip.join();
+    CHECK(r == 0, "the call returned R() (%d)", r);
+    CHECK(since(t0) < 0.3 && since(t0) >= 0.05, "once the predicate turned true, within 300 ms (%.3f s)", since(t0));
+    CHECK(polls.load() >= 2, "the predicate was polled before the post and after a slice (%d)", polls.load());
+    // Already halted when the call is made: nothing is queued, R() at once.
+    polls = 0;
+    auto ran2 = std::make_shared<std::atomic<bool>>(false);
+    const Clock::time_point t1 = Clock::now();
+    CHECK(e.call([ran2] { *ran2 = true; return 7; }, [&] { polls++; return halted.load(); }) == 0 && since(t1) < 0.01 && polls.load() == 1,
+          "a true predicate before the post returns at once (%.1f ms, %d polls)", since(t1) * 1e3, polls.load());
+    c.block = false;
+    sleepMs(100);                                   // the frame ends, the queue drains
+    CHECK(!ran->load() && !ran2->load(), "the cancelled task never ran, the refused one was never queued");
+    // A task that started before the predicate turned true runs to completion and returns its value.
+    halted = false;
+    const int r2 = e.call([&] { sleepMs(120); halted = true; sleepMs(30); return 7; }, [&] { return halted.load(); });
+    CHECK(r2 == 7, "a started task is waited for (%d)", r2);
+    // Never consulted inline or on the emulation thread.
+    std::atomic<int> consulted{0};
+    CHECK(e.call([&] { return e.call([] { return 1; }, [&] { consulted++; return true; }); }) == 1, "on the thread: runs");
+    CHECK(consulted.load() == 0, "predicate ignored on the emulation thread (%d)", consulted.load());
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline");
+    CHECK(in.call([] { return 3; }, [&] { consulted++; return true; }) == 3 && consulted.load() == 0, "inline: runs, never asks");
+}
+
+// Carried from 3a: advance() gives up like call().  The budget is registered on the debug lane even while a frame is
+// parked; the wait ends when the predicate turns true; advance(0) later waits for the frames still budgeted.
+void testAdvanceGivesUp() {
+    EmuThread e;
+    FakeClient c;
+    e.setPaused(true);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    c.block = true;                                 // the next frame parks: the halt
+    std::atomic<bool> halted{false};
+    std::thread flip([&] { sleepMs(80); halted = true; });
+    const Clock::time_point t0 = Clock::now();
+    const bool r = e.advance(2, [&] { return halted.load(); });
+    flip.join();
+    CHECK(!r && since(t0) >= 0.07 && since(t0) < 0.5, "gave up once the predicate turned true, not before (%.3f s)", since(t0));
+    CHECK(c.blocked.load(), "the budget was registered: the first frame started and parked");
+    halted = false;
+    c.block = false;
+    CHECK(e.advance(0, [&] { return halted.load(); }), "advance(0) waits for the frames still budgeted");
+    CHECK(c.frames.load() == 2, "both budgeted frames ran (%d)", c.frames.load());
+    const Clock::time_point t1 = Clock::now();
+    CHECK(e.advance(0) && since(t1) < 0.05, "nothing pending: true at once");
+    CHECK(e.stop(), "stop");
+    EmuThread in;
+    FakeClient ic;
+    CHECK(in.start(EmuThread::Mode::Inline, ic), "inline");
+    std::atomic<int> consulted{0};
+    CHECK(in.advance(2, [&] { consulted++; return true; }) && ic.frames.load() == 2 && consulted.load() == 0, "inline: runs, never asks");
+}
+
+// The CAS-lost branch: the predicate turns true only AFTER the task has started (it spins until it has).  call() must then
+// wait for the task and return its value, never R(), and the by-reference local it wrote must be intact.
+void testCallGiveUpLosesToStart() {
+    EmuThread e;
+    FakeClient c;
+    c.block = true;                                  // the first frame parks: the task stays queued past the first slice
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    for (int i = 0; i < 1000 && !c.blocked.load(); i++) sleepMs(1);
+    std::atomic<bool> started{false};
+    std::atomic<int> polls{0};
+    int local = 0;
+    const int r = e.call(
+        [&] {
+            started = true;
+            sleepMs(30);
+            local = 1;
+            return 7;
+        },
+        [&] {
+            if (polls++ == 0) return false;          // the poll before the post
+            c.block = false;                         // the poll after the first slice: let the frame end ...
+            for (int i = 0; i < 2000 && !started.load(); i++) sleepMs(1);   // ... and answer true only once the task runs
+            return true;
+        });
+    CHECK(r == 7 && local == 1, "a predicate that turns true after the task started still gets its value (%d, %d)", r, local);
+    CHECK(polls.load() == 2, "polled before the post and once after a slice (%d)", polls.load());
+    CHECK(e.stop(), "stop");
+}
+
+// The loop's second frame-lane drain: advance()'s budget rides the debug lane, so a frame-lane post made while the debug
+// lane is draining (after the frame lane was) must still be applied before the frame the budget starts.  A debug command
+// queued ahead of the budget posts it from another thread, in the middle of that drain.
+void testAdvanceBudgetDoesNotOvertakeFramePost() {
+    struct GatedClient : FakeClient {
+        std::atomic<bool> holdBatch{true}, batchHeld{false}, commandApplied{false}, frameSawCommand{false};
+        void afterCommands() override {
+            if (holdBatch.load()) {
+                batchHeld = true;
+                while (holdBatch.load()) sleepMs(1);
+            }
+        }
+        void runFrame() override {
+            frameSawCommand = commandApplied.load();
+            FakeClient::runFrame();
+        }
+    } c;
+    EmuThread e;
+    e.setPaused(true);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    e.post([] {});
+    for (int i = 0; i < 2000 && !c.batchHeld.load(); ++i) sleepMs(1);
+    CHECK(c.batchHeld.load(), "owner held after a command batch");
+    e.debugPost([&] {                                // runs inside the debug drain, after the frame drain
+        std::thread t([&] { e.post([&] { c.commandApplied = true; }); });
+        t.join();                                    // queued on the frame lane before this command returns
+    });
+    std::atomic<bool> ok{false};
+    std::thread caller([&] { ok = e.advance(1); });  // the budget queues behind the command above
+    for (int i = 0; i < 2000 && vj::EmuThreadTestAccess::debugQueued(e) < 2; ++i) sleepMs(1);   // the command and the budget
+    CHECK(vj::EmuThreadTestAccess::debugQueued(e) == 2, "both debug commands are queued behind the held batch");
+    c.holdBatch = false;
+    caller.join();
+    CHECK(ok.load() && c.frames == 1, "advance ran its frame");
+    CHECK(c.frameSawCommand.load(), "the frame-lane post made during the debug drain was applied before the budgeted frame");
+    CHECK(e.stop(), "stop");
+}
+
 int main() {
 #ifdef _WIN32
     // The app runs EmuThread after SDL_Init, which sets the Windows timer resolution to 1 ms
@@ -583,6 +770,11 @@ int main() {
     testDebugLane();
     testDebugCallWaitsForTheFrame();
     testDebugCallWaitHook();
+    testServeDebugLane();
+    testCallGivesUp();
+    testAdvanceGivesUp();
+    testCallGiveUpLosesToStart();
+    testAdvanceBudgetDoesNotOvertakeFramePost();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

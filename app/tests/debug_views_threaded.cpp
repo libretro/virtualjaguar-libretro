@@ -11,6 +11,7 @@
 #include "debug/debug_session.h"
 #include "emu_thread.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -19,6 +20,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// The core's own entry (src/debug/gdbstub.h): what a breakpoint set over the GDB socket arms.  The debug interface's
+// halt_next is a no-op while no host is attached, which is exactly the state this test must reach.
+extern "C" void GDBTargetHaltNext(int target);
 
 using namespace vj;
 using Id = DebugViews::Id;
@@ -72,16 +77,25 @@ struct Rig : EmuThread::Client {
     DebugSession dbg;
     EmuThread emu;
     bool threaded;
+    bool gdbStubOn = false;   // = App::gdbStubOn_: the silent debugger host is wanted
 
     explicit Rig(bool thr) : threaded(thr) {}
+
+    // = App::attachGdbHostOnCore (emulation thread).
+    void attachSilentHost() {
+        if (gdbStubOn && host.isLoaded() && dbg.core().loaded() && !dbg.core().attached()) dbg.core().attach();
+    }
 
     void threadStarted() override { host.setOwner(std::this_thread::get_id()); }
     void threadStopping() override { host.setOwner(std::thread::id()); }
     bool canRun() override { return host.isLoaded(); }
     double framePeriod() override { return 1.0 / 600.0; }
     double audioQueuedMs() override { return -1.0; }
-    void runFrame() override {   // App::emuRunOneFrame's tail
+    void runFrame() override {   // App::emuRunOneFrame
+        attachSilentHost();      // a Detach posted before this frame ran at the lane drain: the host is back before the frame
         host.runFrame();
+        dbg.core().frameEnded();
+        attachSilentHost();
         host.publishSnapshot();
         dbg.fillViews();
     }
@@ -95,6 +109,10 @@ struct Rig : EmuThread::Client {
         dbg.coreCall = [this](std::function<void()> f) { emu.debugCall(std::move(f)); };
         if (threaded) dbg.corePost = [this](std::function<void()> f) { emu.debugPost(std::move(f)); };
         host.post = [this](std::function<void()> f) { emu.post(std::move(f)); };
+        if (threaded) {   // the halt pump's wait, set before the thread exists (as App::startEmuThread does)
+            dbg.core().waitVerdict = [this] { emu.serveDebugLane(DebugCore::kPumpWait); };
+            dbg.core().notifyVerdict = [this] { emu.debugPost([] {}); };
+        }
         emu.setPaused(true);   // frames only through advance()
     }
     void unwire() {
@@ -208,17 +226,8 @@ void cases(Rig& r, const std::string& romA, const std::string& romB) {
         dbg.views().clear(id);
     }
 
-    // 6. No halt is possible while the halt is gated.
-    {
-        dbg.setHaltAvailable(false);
-        dbg.breakNow();
-        emu.advance(5);
-        CHECK(!dbg.attached() && !dbg.halted(), "no halt is possible while it is gated");
-    }
-
     // 7. Hardcore closes the tools and detaches, threaded.
     {
-        dbg.setHaltAvailable(true);
         CHECK(dbg.attach() && dbg.attached(), "the core is attached (so the hardcore detach has something to do)");
         dbg.setHardcore(true);
         CHECK(!dbg.enabled(), "hardcore closes the tools");
@@ -226,7 +235,40 @@ void cases(Rig& r, const std::string& romA, const std::string& romB) {
         CHECK(!dbg.attached(), "hardcore detaches the core on the emulation thread");
         dbg.setHardcore(false);
         CHECK(dbg.enabled(), "the tools come back with hardcore off");
-        dbg.setHaltAvailable(false);
+    }
+
+    // 7b. A user Detach is a lane command: it runs at the drain BEFORE the next frame, so the silent gdb host has to be
+    //     put back before that frame, not after it.  A halt gdb causes inside that frame (armed as the GDB socket arms
+    //     it, not through the session) must reach the pump: the mirror sees it, and Continue ends it.
+    {
+        r.gdbStubOn = true;
+        CHECK(dbg.attach() && dbg.attached(), "the silent host is attached");
+        dbg.detach();   // running: posted to the debug lane
+        emu.debugPost([] { GDBTargetHaltNext(VJ_DBG_TARGET_M68K); });   // after the detach, as the lane is FIFO
+        std::atomic<bool> frameDone{false};
+        std::thread runner([&] {
+            emu.advance(1);
+            frameDone = true;
+        });
+        bool seen = false;
+        for (int i = 0; i < 1500 && !frameDone; i++) {   // up to ~3 s
+            dbg.syncHalt();
+            if (dbg.halted()) {
+                seen = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK(seen, "a halt in the frame right after a Detach is hosted: the mirror sees it");
+        CHECK(!seen || (dbg.haltByGdb() && !frameDone), "it is gdb's halt, and the frame is parked in the pump");
+        if (seen) dbg.resume();
+        runner.join();
+        CHECK(frameDone, "Continue ends the halt and the frame completes");
+        r.gdbStubOn = false;
+        dbg.detach();
+        emu.debugCall([] {});
+        dbg.syncHalt();
+        CHECK(!dbg.attached() && !dbg.halted(), "left detached and running");
     }
 
     // 8. A fill posted just before the thread stops is not lost: the stop drains the debug lane, and the next

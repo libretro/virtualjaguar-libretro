@@ -211,7 +211,8 @@ void Achievements::coreCall(const std::function<void()>& fn) {
         std::lock_guard<std::recursive_mutex> lock(clientMu_);
         fn();
     };
-    if (app_) app_->emu.call(locked);
+    // The debug lane: served at a frame boundary or inside a halt, never cancelled (a reply callback must not be lost).
+    if (app_) app_->emu.debugCall(locked);
     else locked();
 }
 void Achievements::corePost(std::function<void()> fn) {
@@ -474,13 +475,34 @@ void Achievements::pump() {
         }
     }
     drainEvents();   // events raised by rc_client_idle and by completions delivered in this pump
-    if (resetPending_) {
-        resetPending_ = false;
+    // Inline and halted, the restart below is refused (the core is parked inside retro_run): keep it pending and retry
+    // after the halt ends, or a late hardcore sign-in would leave the stub open.
+    if (resetPending_ && !(app_ && app_->host.isLoaded() && app_->haltedNow() && !app_->threaded())) {
         // Turning hardcore on mid-game restarts the game (rc_client's rule: the
-        // run must start clean).  retro_cheat_reset: cheats may not outlive it.
-        corePost([] { retro_cheat_reset(); });
-        hardcoreResets_++;
-        if (app_ && app_->host.isLoaded()) app_->reset();
+        // run must start clean).  retro_cheat_reset: cheats may not outlive it (posted once, not per retry).
+        if (!restartTried_) corePost([] { retro_cheat_reset(); });
+        bool restarted = true;
+        if (app_ && app_->host.isLoaded()) {
+            // The core reads the GDB stub options at load only: with the stub open, the restart is a reload, so the
+            // hardcore lock (App::syncHardcoreLock, current before the load) reaches the core and the socket closes.
+            const bool reload = app_->gdbStubOpen();
+            if (reload && !restartTried_) std::fprintf(stderr, "[ach] hardcore on: reloading the game to close the GDB stub\n");
+            restartTried_ = true;
+            const bool ok = reload ? app_->reloadContent() : app_->reset();
+            // Threaded, the restart can give up (the core halted again: a gdb breakpoint still armed): the game is still
+            // loaded, still on the old run, and the stub still open.  Keep it pending and retry at the next pump.  A game
+            // that is gone (or a stub that closed) means the load itself failed or took effect: nothing left to retry.
+            if (!ok && app_->host.isLoaded() && (!reload || app_->gdbStubOpen())) {
+                restarted = false;
+                if (!restartGaveUpLogged_) std::fprintf(stderr, "[ach] hardcore on: the restart gave up (core halted), retrying\n");
+                restartGaveUpLogged_ = true;
+            }
+        }
+        if (restarted) {
+            resetPending_ = false;
+            restartTried_ = restartGaveUpLogged_ = false;
+            hardcoreResets_++;   // one per restart that took (or had no game to restart)
+        }
     }
     checkHardcoreTransition();
     if (app_) {

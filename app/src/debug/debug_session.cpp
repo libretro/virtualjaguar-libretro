@@ -7,10 +7,7 @@
 
 namespace vj {
 
-DebugSession::DebugSession() {
-    // Phase 3a: the halt machine stays here (inline only); the core's host thunk reaches it through this hook.
-    core_.pumpHook = [this](int target, unsigned pc) { return pump(target, pc); };
-}
+DebugSession::DebugSession() {}
 
 void DebugSession::callCore(std::function<void()> fn) const {
     if (coreCall)
@@ -29,11 +26,8 @@ void DebugSession::postCore(std::function<void()> fn) {
 // ---- wiring ------------------------------------------------------------------------------------------
 
 void DebugSession::dropHalt() {
-    halted_ = false;
-    haltedTarget_ = -1;
-    haltedPc_ = 0;
-    haltReason_ = VJ_DBG_STOP_NONE;
-    queued_ = VJ_DBG_RESUME_NONE;
+    mirror_ = HaltState();
+    byGdb_ = userHaltPending_ = detachPending_ = attachedMirror_ = false;
 }
 
 void DebugSession::onCoreIface(const vj_debug_iface* i) {
@@ -89,18 +83,6 @@ void DebugSession::setHardcore(bool on) {
     serial_++;
 }
 
-void DebugSession::setHaltAvailable(bool on) {
-    if (on == haltAvailable_) return;
-    haltAvailable_ = on;
-    if (!on) detach();
-    serial_++;
-}
-
-std::string DebugSession::haltDisabledReason() const {
-    if (haltAvailable_) return std::string();
-    return "Break, Step and breakpoints are not available while Settings > Interface > Emulation thread is on (this version)";
-}
-
 std::string DebugSession::disabledReason() const {
     if (!core_.loaded()) return "This core build has no debug interface";
     if (hardcore_) return "Disabled while RetroAchievements hardcore mode is on";
@@ -108,86 +90,110 @@ std::string DebugSession::disabledReason() const {
     return std::string();
 }
 
+void DebugSession::syncHalt() {
+    // A detach we posted but the emulation thread has not run yet keeps the mirror false (attach() orders itself behind it).
+    if (detachQueued_.load() == 0) attachedMirror_ = core_.attached();
+    const HaltState h = core_.halt();
+    if (h.serial == mirror_.serial) return;   // current; a STEP in flight keeps the bar up (the serial does not move)
+    const bool was = mirror_.halted;
+    mirror_ = h;
+    detachPending_ = false;                   // the pump took (or the core ended) the halt a DETACH verdict was for
+    if (h.halted) {
+        byGdb_ = h.reason == VJ_DBG_STOP_BREAKPOINT ? !hasBreakpoint(h.target, h.pc) && !(ownsBreakAt && ownsBreakAt(h.target, h.pc))
+                                                    : !userHaltPending_;
+        userHaltPending_ = false;
+        requestRefresh();   // the registers changed: the windows re-read at once
+        auto cbs = onHaltUi;   // a callback may register another
+        for (auto& f : cbs)
+            if (f) f(h.target, h.pc, h.reason);
+    } else if (was) {
+        auto cbs = onResumeUi;
+        for (auto& f : cbs)
+            if (f) f();
+    }
+}
+
 // ---- attach / halt -------------------------------------------------------------------------------------------
 
 bool DebugSession::attach() {
-    if (!enabled() || !haltAvailable_) return false;
-    if (core_.attached()) return true;
+    if (!enabled() || detachPending_) return false;
+    if (attachedMirror_ && detachQueued_.load() == 0 && core_.attached()) return true;
     // The core's table is rebuilt from the list on every attach: a by-value copy of the enabled entries.
     std::vector<DebugBreakpoint> bps;
     for (const DebugBreakpoint& b : bps_)
         if (b.enabled) bps.push_back(b);
+    // Decided inside the lane lambda, so a detach queued before this call runs first (the lane is FIFO) and the table
+    // is rebuilt only when this call is the one that attached.
     bool ok = false;
     callCore([this, bps, &ok] {
+        const bool was = core_.attached();
         ok = core_.attach();
-        if (!ok) return;
+        if (!ok || was) return;
         for (const DebugBreakpoint& b : bps) core_.breakSet(b.target, b.addr);
     });
+    attachedMirror_ = ok;
     return ok;
 }
 
+// The mirrored halt is still the core's live halt: same serial AND the core is parked in the pump.  After a STEP verdict
+// the serial is unchanged but the core is running (halted == false) until it re-halts, so a verdict written then would
+// be dropped by the re-halt's new serial.
+bool DebugSession::haltLive() const {
+    if (!mirror_.halted) return false;
+    const HaltState h = core_.halt();
+    return h.halted && h.serial == mirror_.serial;
+}
+
+void DebugSession::postDetach() {
+    detachQueued_++;
+    postCore([this] {
+        core_.detach();
+        detachQueued_--;
+        // Run by the halt pump's lane service while a halt is live (a detach that raced a re-halt): the host is gone, so
+        // let the pump go too instead of leaving the core parked behind a detached debugger.
+        const HaltState h = core_.halt();
+        if (h.halted) core_.offerVerdict(VJ_DBG_RESUME_DETACH, h.serial);
+    });
+    attachedMirror_ = false;
+}
+
 void DebugSession::detach() {
-    if (halted_) {
-        detachAndResume();   // the core is parked inside the pump: let it resume first
+    clearBreakpointList();   // Detach clears every breakpoint (the core's table goes with the host)
+    if (haltLive()) {
+        detachAndResume();   // the core is parked inside the pump: the DETACH verdict lets it go (never iface->detach from here)
         return;
     }
-    if (core_.attached()) postCore([this] { core_.detach(); });
-    queued_ = VJ_DBG_RESUME_NONE;
+    // Running, a STEP in flight, or the mirrored halt already ended: a lane post, unconditionally (it may follow a queued attach).
+    postDetach();
 }
 
 void DebugSession::breakNow(int target) {
-    if (!enabled() || halted_ || !haltAvailable_) return;
+    if (!enabled() || halted() || detachPending_) return;
     if (target < 0 || target >= VJ_DBG_NUM_TARGETS) return;
     if (!attach()) return;
+    userHaltPending_ = true;
     postCore([this, target] { core_.haltNext(target); });
 }
 
 void DebugSession::resume() {
-    if (halted_) queued_ = VJ_DBG_RESUME_CONTINUE;
+    if (!detachPending_ && haltLive()) core_.offerVerdict(VJ_DBG_RESUME_CONTINUE, haltSerial());
 }
+
 void DebugSession::step() {
-    if (halted_) queued_ = VJ_DBG_RESUME_STEP;
+    if (detachPending_ || !haltLive()) return;
+    userHaltPending_ = true;
+    core_.offerVerdict(VJ_DBG_RESUME_STEP, haltSerial());
 }
+
 void DebugSession::detachAndResume() {
-    if (halted_) queued_ = VJ_DBG_RESUME_DETACH;
-}
-
-int DebugSession::pump(int target, unsigned pc) {
-    if (!halted_) {
-        halted_ = true;
-        haltedTarget_ = target;
-        haltedPc_ = pc;
-        haltReason_ = VJ_DBG_STOP_BREAKPOINT;
-        // halt_reason was appended after the first release of the struct: check `size` first.
-        const vj_debug_iface* ifc = core_.iface();
-        if (ifc && ifc->size >= offsetof(vj_debug_iface, halt_reason) + sizeof(ifc->halt_reason) && ifc->halt_reason)
-            haltReason_ = ifc->halt_reason();
-        serial_++;
-        auto cbs = onHalt;   // a callback may register another
-        for (auto& f : cbs)
-            if (f) f(target, pc, haltReason_);
+    if (!halted()) return;
+    clearBreakpointList();
+    if (!haltLive()) {   // a STEP in flight or a stale mirror: a verdict would be dropped; detach through the lane
+        postDetach();
+        return;
     }
-    int v = queued_;
-    if (v == VJ_DBG_RESUME_NONE && abortHalt && abortHalt()) v = VJ_DBG_RESUME_DETACH;
-    if (v == VJ_DBG_RESUME_NONE) {
-        if (runUiFrame) runUiFrame();
-        v = queued_;
-        if (v == VJ_DBG_RESUME_NONE && abortHalt && abortHalt()) v = VJ_DBG_RESUME_DETACH;
-    }
-    if (v == VJ_DBG_RESUME_NONE) return VJ_DBG_RESUME_NONE;
-
-    queued_ = VJ_DBG_RESUME_NONE;
-    halted_ = false;
-    haltedTarget_ = -1;
-    haltReason_ = VJ_DBG_STOP_NONE;
-    if (v == VJ_DBG_RESUME_DETACH) core_.markDetached();   // the core drops its side once this returns
-    if (v != VJ_DBG_RESUME_STEP) {
-        serial_++;
-        auto cbs = onResume;
-        for (auto& f : cbs)
-            if (f) f();
-    }
-    return v;
+    detachPending_ = true;
+    core_.offerVerdict(VJ_DBG_RESUME_DETACH, haltSerial());
 }
 
 // ---- breakpoints -------------------------------------------------------------------------------------------------
@@ -201,7 +207,7 @@ bool DebugSession::hasBreakpoint(int target, unsigned addr) const {
 bool DebugSession::addBreakpoint(int target, unsigned addr) {
     if (target < 0 || target >= VJ_DBG_NUM_TARGETS) return false;
     if (hasBreakpoint(target, addr)) return false;
-    if (!attach()) return false;   // refuses while the tools are off (no core / no game / hardcore / no halt)
+    if (!attach()) return false;   // refuses while the tools are off (no core / no game / hardcore); a halt is not needed
     bool set = false;
     callCore([this, target, addr, &set] { set = core_.breakSet(target, addr); });
     if (!set) return false;   // the core's table is full
@@ -243,6 +249,13 @@ void DebugSession::setBreakpointEnabled(int target, unsigned addr, bool on) {
     }
 }
 
+// The UI-side list only: the core's table is cleared by its own detach.
+void DebugSession::clearBreakpointList() {
+    if (bps_.empty()) return;
+    bps_.clear();
+    serial_++;
+}
+
 void DebugSession::clearBreakpoints() {
     if (core_.attached()) {
         std::vector<DebugBreakpoint> bps = bps_;
@@ -257,7 +270,7 @@ void DebugSession::clearBreakpoints() {
 // ---- refresh cadence -------------------------------------------------------------------------------------------------
 
 void DebugSession::tick(double now, bool live) {
-    if (!live || halted_) {
+    if (!live || halted()) {
         // Stopped: one last refresh when it stops, then only when something asks (an edit, a halt).
         if (lastRefresh_ >= 0) {
             serial_++;

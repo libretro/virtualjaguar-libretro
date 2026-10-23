@@ -28,6 +28,8 @@ bool active();
 void render(const std::vector<MenuItem>& items);
 }  // namespace tray
 
+void initNetworking() { os::initNetworking(); }
+
 void beforeWindow() { os::beforeWindow(); }
 
 void windowCreated(SDL_Window* w) {

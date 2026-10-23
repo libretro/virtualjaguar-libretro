@@ -474,7 +474,7 @@ endif()
 message(STATUS "Discord Rich Presence application ID: ${VJ_DISCORD_APP_ID}")
 message(STATUS "TV mode default for a fresh config: ${VJ_TV_DEFAULT}")
 if(WIN32)
-    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses
+    target_link_libraries(virtualjaguar PRIVATE iphlpapi ws2_32)   # netplay_addr.cpp: this machine's addresses; platform_windows.cpp: WSAStartup for the core
     target_link_libraries(virtualjaguar PRIVATE shell32)           # platform_windows.cpp: SHAddToRecentDocs, ShellExecuteW
 endif()
 if(APPLE)
@@ -539,6 +539,7 @@ include(VJCheatData)
 # ---------------------------------------------------------------------------
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
+    find_package(Python3 COMPONENTS Interpreter)   # gdb_threaded_halt (VJEmuThreadTests.cmake) drives a gdb client from Python
     include(VJSmokeTests)
     include(VJAchTests)
     include(VJCheatTests)

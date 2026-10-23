@@ -1,6 +1,6 @@
 // The app side of the core's debug interface (src/debug/vj_debug_iface.h): one DebugSession per
 // App.  It owns everything the tool windows share -- whether the tools may be used at all, the
-// attach / halt state, the nested halt pump, the 10 Hz refresh cadence, the breakpoint list and
+// attach / halt state (the UI's mirror of DebugCore's halt), the 10 Hz refresh cadence, the breakpoint list and
 // the Tools menu registry -- and none of the ImGui, so the logic unit-tests against the mock
 // (app/tests/debug_mock.h) with no window and no core.
 //
@@ -9,11 +9,13 @@
 // coreCall (waits) or corePost (fire and forget), which App wires to the emulation thread's debug lane.  Both are
 // empty inline (headless, tests), and the action then runs right where it is called: same code, one thread.
 //   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_,
-//                    haltAvailable_, the halt fields (halted_, queued_, ... inline-only until phase 3b), seenGen_,
-//                    hadCore_, and the public callbacks.  Exception: regions_ and lastPokeError_ may be written inside
+//                    the halt mirror (mirror_, byGdb_, userHaltPending_, detachPending_,
+//                    attachedMirror_), seenGen_, hadCore_, and the public callbacks.  Exception: regions_ and lastPokeError_ may be written inside
 //                    a callCore lambda (regions() / poke() nested in a window's one-shot action) while the UI thread
 //                    waits in that call; the call's completion orders those writes before the UI reads them.
 //   any thread:      core() (its getters are atomics), views() (one mutex inside), refreshSerial() / requestRefresh().
+// The halt itself lives in DebugCore (phase 3b): the emulation thread's pump decides, the UI mirrors it once per UI frame
+// (syncHalt) and answers with a verdict tagged by the halt serial it saw (resume / step / detachAndResume).
 // The windows never touch the core: they set() a request on views(), call wakeViews() and read() the buffer.
 #pragma once
 
@@ -67,6 +69,7 @@ public:
 
     // ---- wiring (App) --------------------------------------------------------------------
     DebugCore& core() { return core_; }         // the emulation-thread half (App wires its hooks)
+    const DebugCore& core() const { return core_; }
     DebugViews& views() { return views_; }      // the request copier the windows use
     // How a method that must touch the core reaches the emulation thread.  Empty (inline, tests): runs fn now.
     std::function<void(std::function<void()>)> coreCall;   // waits (App: emu.debugCall<void>)
@@ -85,16 +88,13 @@ public:
     // RetroAchievements hardcore: the tools are off.  Turning it on detaches, drops any halt and
     // tells the windows to close (onForcedClose).
     void setHardcore(bool on);
-    // One nested UI iteration (events -> ImGui frame -> present), WITHOUT stepping the emulation.
-    // Set by App; empty in tests, where the pump just returns the verdict a test queued.
-    std::function<void()> runUiFrame;
-    // Polled each pump: true makes the core resume and detach (the app is quitting).
-    std::function<bool()> abortHalt;
     // Fired (in order) when the tools get switched off from outside: "hardcore", "closed", "no core".
     std::vector<std::function<void(const char* why)>> onForcedClose;
-    // Fired when a processor halts / resumes (a step is not a resume: the next halt follows at once).
-    std::vector<std::function<void(int target, unsigned pc, int reason)>> onHalt;
-    std::vector<std::function<void()>> onResume;
+    // Fired on the UI thread by syncHalt(): a processor halted (every entry, a step's re-halt included) / the machine
+    // resumed (a step is not a resume: the re-halt follows).  A halt that came and went between two UI frames fires
+    // nothing.  The core-side hooks (audio, the log line) are DebugCore::onHalt / onResume.
+    std::vector<std::function<void(int target, unsigned pc, int reason)>> onHaltUi;
+    std::vector<std::function<void()>> onResumeUi;
 
     // ---- can the tools be used? -----------------------------------------------------------
     bool hasCore() const { return core_.loaded(); }
@@ -103,30 +103,36 @@ public:
     // Why not (for a tooltip / the greyed Tools menu); "" when enabled().
     std::string disabledReason() const;
     bool hardcore() const { return hardcore_; }
-    // TRANSITIONAL (removed in phase 3b): while the halt pump cannot run on the emulation thread, a threaded run turns
-    // Break / Step / breakpoints off and keeps the windows live.  Off: attach() refuses, so does everything built on it;
-    // turning it off detaches.  It does not close the tools.
-    void setHaltAvailable(bool on);
-    bool haltAvailable() const { return haltAvailable_; }
-    std::string haltDisabledReason() const;   // "" when available
 
     // ---- attach / halt -----------------------------------------------------------------------
+    // The halt mirror.  syncHalt() runs once per UI frame (App::syncDebug): it copies core().halt() and attached(); when
+    // the halt serial moved it fires onHaltUi (now halted) or onResumeUi (was halted, is not).  The mirror lags the core
+    // by one UI frame by design: halted() / haltedPc() / haltReason() are current only after syncHalt().
+    void syncHalt();
+    bool halted() const { return mirror_.halted; }
+    int haltedTarget() const { return mirror_.target; }
+    unsigned haltedPc() const { return mirror_.pc; }
+    int haltReason() const { return mirror_.reason; }
+    uint64_t haltSerial() const { return mirror_.serial; }   // the mirrored HaltState serial (not refreshSerial())
+    bool haltByGdb() const { return byGdb_; }   // set on the halt edge: a breakpoint we did not set, or a USER / STEP halt we did not ask for
+    // The app's own temporary breakpoints (run to cursor, step over a call) are armed in the core without being in the
+    // list; the CPU window answers whether one of them is armed at (target, pc), so a halt there is not "by gdb".  UI thread.
+    std::function<bool(int target, unsigned pc)> ownsBreakAt;
     // Registers the halt pump with the core and re-arms the breakpoint list.  Idempotent; false if the
-    // tools are not enabled or the core refused.  Tool windows that only peek/poke need no attach.
+    // tools are not enabled, the core refused, or a Detach is still in flight.  Decides inside the lane (a queued
+    // detach is ordered before it).  Tool windows that only peek/poke need no attach.
     bool attach();
-    void detach();                       // clears every breakpoint in the core, drops any halt
-    bool attached() const { return core_.attached(); }
-    bool halted() const { return halted_; }
-    int haltedTarget() const { return haltedTarget_; }
-    unsigned haltedPc() const { return haltedPc_; }
-    int haltReason() const { return haltReason_; }
+    void detach();                       // halted: detachAndResume(); else a lane post that clears every breakpoint in the core
+    // The core's host is attached and no detach of ours is queued.  Current right after attach() / detach(); otherwise
+    // refreshed by syncHalt().
+    bool attached() const { return attachedMirror_ && core_.attached(); }
     // F9 / F10 and the CPU window's buttons.  breakNow() is "stop at the next instruction"; while halted
-    // resume() / step() / detachAndResume() give the pump its verdict (honoured on the next pump call).
+    // resume() / step() / detachAndResume() write the verdict for the mirrored halt (honoured by the pump's next
+    // iteration; dropped when that halt already ended).
     void breakNow(int target = VJ_DBG_TARGET_M68K);
     void resume();
     void step();
     void detachAndResume();
-    bool resumeQueued() const { return queued_ != VJ_DBG_RESUME_NONE; }
 
     // ---- breakpoints ----------------------------------------------------------------------------
     // The list is the source of truth (the core's table is rebuilt from it on every attach).
@@ -188,7 +194,7 @@ public:
     // Whether the menu entry is clickable: the tools are enabled, the window exists, and (CPU stepping) a processor is
     // halted when the entry needs one.  The in-window Tools menu and the native macOS one both ask this.
     bool toolAvailable(const DebugTool& t) const {
-        return enabled() && t.toggle && (!t.needsHalt || (haltAvailable_ && halted_));
+        return enabled() && t.toggle && (!t.needsHalt || halted());
     }
     // Greyed placeholders for the windows the later work packages add: Memory, CLUT, Cheat scanner, CPU,
     // Objects, Blitter, Textures, Audio scope.
@@ -201,22 +207,24 @@ public:
     void drawTools();
 
 private:
-    int pump(int target, unsigned pc);   // installed as core_.pumpHook
-    void dropHalt();
+    bool haltLive() const;   // the mirrored halt is the core's live halt (same serial, core parked in the pump)
+    void clearBreakpointList();   // bps_.clear() + a refresh serial; Detach drops the list with the core's table
+    void postDetach();       // detachQueued_++, lane post of core_.detach(), attachedMirror_ = false
+    void dropHalt();   // mirror_ = {}; byGdb_ = userHaltPending_ = detachPending_ = attachedMirror_ = false
 
     DebugCore core_;
     DebugViews views_;
     bool loaded_ = false;
     bool hardcore_ = false;
-    bool haltAvailable_ = true;
     uint64_t seenGen_ = 0;       // core_.ifaceGen() as syncCore() last adopted it
     bool hadCore_ = false;
     std::atomic<bool> wakePosted_{false};
-    bool halted_ = false;
-    int haltedTarget_ = -1;
-    unsigned haltedPc_ = 0;
-    int haltReason_ = VJ_DBG_STOP_NONE;
-    int queued_ = VJ_DBG_RESUME_NONE;
+    HaltState mirror_;                   // core_.halt() as syncHalt() last copied it
+    bool attachedMirror_ = false;        // see attached()
+    bool byGdb_ = false;
+    bool userHaltPending_ = false;       // breakNow() / step() asked for a halt; the next halt edge consumes it
+    bool detachPending_ = false;         // a DETACH verdict is in flight: attach() / breakNow() refuse until the serial moves
+    std::atomic<int> detachQueued_{0};   // detach() posts not yet run on the emulation thread
     std::vector<DebugBreakpoint> bps_;
     std::vector<DebugTool> tools_;
     std::vector<DebugProvider> providers_;

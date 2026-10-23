@@ -331,14 +331,24 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
   epoch; concurrent set/fill/read under TSan), the lane cases in `emu_commands_unit` / `emu_thread_unit`,
   `debug_views_threaded` (the REAL core on a threaded `EmuThread`, the session wired as `App` wires it: views equal a
   `debugCall` peek, a paused request fills with no frame run, the first read after a reload is the new ROM, inline ==
-  threaded for the Dram view, hardcore detaches), and the reworded `emu_thread_limits` / `emu_thread_start_fallback`
-  ("the debugger halt and the GDB stub are off/back on"). Each window's smoke test draws from view buffers only and
+  threaded for the Dram view, hardcore detaches), `debug_on_threaded` / `gdb_enabled(_threaded)` (nothing is switched off
+  while threaded; the silent gdb host attaches at load) and `gdb_hardcore_locked_*` / `gdb_hardcore_flip_*` (hardcore locks
+  the stub; a mid-game flip reloads). Each window's smoke test draws from view buffers only and
   pins zero core calls from the UI side (`app/tests/debug_ui_fixture.h`).
 - **Phase 3c (Neuro on the emulation thread):** Neuro runs threaded, pinned by `neuro_on_threaded`
   (`vj_neuro_test app ... on`: a fake server, a 30-frame press, `30 frames of input played` and `emulation thread)`),
   `neuro_watch_threaded` (a profile watch read through the `DebugViews` request, the cheat byte in the state line) and
   `neuro_loopback_threaded` (the loopback run with the input poll on its own thread; its frame-numbered press vector must
   equal the inline run's). `neuro_core_e2e` pins the replica against the real core inline, in lock-step and free-running.
+- **Phase 3b (the halt and the GDB stub on the emulation thread):** `debug_session_unit` (now label `emu_thread`: the verdict
+  serial, `frameEnded`/`stepping_`, detach and quit mid-halt, Detach and Attach ordered through the lane), `emu_thread_unit`
+  `testCallGivesUp` / `testAdvanceGivesUp` / `testServeDebugLane`, `emu_commands_unit` `testDebugLaneWait`, `debug_e2e_threaded`
+  (the REAL core on a threaded `EmuThread`, the rig wired as `App`: break / step / continue / detach / hardcore / quit mid-halt
+  from a UI thread that never blocks over 50 ms; it opens a free TCP port for the stub), `gdb_threaded_halt` (Python gdb
+  client: the threaded headless app halted at boot, `S05`, memory read, continue; SIGTERM mid-halt exits 0; needs Python3;
+  `gdb_inline_halt` / `gdb_inline_halt_hardcore` are the inline runs), `debug_on_threaded`, `gdb_enabled(_threaded)`,
+  `gdb_hardcore_locked_*` and `gdb_hardcore_flip_*`. `emu_thread_start_fallback` no longer expects anything to be "back on" (nothing
+  is switched off while threaded) and fails on "are back on" / "are off while".
 - **Audio scope:** `debug_blitter_unit` also has the `emu_thread` label. Its concurrent producer/reader/clear
   test covers the sample ring under TSan; the UI open flag is atomic. Windowed TSan hardcore toggles are
   still required: they exercise the scope close callback and a freely running RA client while the UI pumps replies.
@@ -349,7 +359,7 @@ The CTest label `emu_thread` (`app/cmake/VJEmuThreadTests.cmake`, plus the RA tw
 - **Busy spinner:** `smoke_busy_threaded` runs with `VJ_TEST_SLOW_CALL_MS=400` (the load `call()` sleeps that long on
   the emulation thread, max 5000) and expects `[emu] busy: a call has taken over 250 ms`.
 - **Failed start:** `emu_thread_start_fallback` runs with `VJ_TEST_EMU_START_FAIL=1`, which takes the real failure
-  branch of `App::startEmuThread`: the run falls back inline and the debugger and GDB limits are lifted.
+  branch of `App::startEmuThread`: the run falls back inline.
 
 ## Headless framebuffer caveat
 

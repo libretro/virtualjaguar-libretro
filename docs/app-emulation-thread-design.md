@@ -188,6 +188,12 @@ inline, until phase 5 retires the old loop. Held commands: frame-lane posts wait
 load state, boot and frame advance refuse with a toast while halted; open / close / reset / disc insert / drop / quit
 detach first (a detach clears every breakpoint, so the next frame cannot re-halt) and then proceed. `EmuThread::call`
 takes a give-up predicate so a call posted an instant before a halt returns instead of hanging the UI behind the spinner.
+*Amended 2026-10-22 (phase 3b): as shipped.* The verdict the UI writes is tagged with the halt serial it mirrored and the
+pump drops one for any other halt; `frameEnded()` also closes a STEP the core never re-halted (`stepping_`), which would
+otherwise leave the mirror "halted" and wedge inline F9 / Detach. `EmuThread::advance()` has the same give-up as `call()`: its
+frame budget rides the debug lane, the wait ends when a halt begins, and `advance(0)` resumes the wait after Continue. `beginQuit()`
+is the shutdown entry: it sets `quitting_`, `abortHalt` answers CONTINUE within one pump wait (the host stays attached, so a gdb breakpoint hit again before the frame ends comes back to the pump instead of parking with no host), and only then does the app save,
+flush and unload.
 
 **GDB TCP stub.** `GDBHalt`'s socket loop runs on the emulation thread, so a gdb session that holds the target halted no
 longer freezes the window (fixes the freeze found in #936). If both gdb and the app debugger are attached, the first
@@ -195,9 +201,15 @@ verdict wins, as today. The halt timeout is unchanged.
 *Amended 2026-10-20 (phase 3): a host behind every halt.* Without an app host the app cannot see a gdb halt: a
 `call()` would block until gdb continues and quit would wait out the join. So the app attaches a silent host whenever
 `virtualjaguar_gdb_stub` is `enabled` and content is loaded (one stored pointer), the halt bar says "HALTED by gdb",
-and quit detaches (which clears gdb's breakpoints, as the inline app already does). `attach()` needs the tools enabled,
+and quit resumes the core with the host kept attached. `attach()` needs the tools enabled,
 so RetroAchievements hardcore locks the stub to `disabled`, as it does cheats. Both are proposed decisions (phase 3
 plan, "Decisions to confirm").
+*Amended 2026-10-22 (phase 3b): as shipped.* The silent host is attached on the core side (the emulation thread) inside the
+load call, before any frame runs, and again before each frame it is missing (a user Detach drops it; the lane runs a posted
+Detach before a later attach), so a gdb breakpoint is never halted without a pump; Detach also clears the app's breakpoints.
+`virtualjaguar_gdb_wait` parks the boot without a client (the UI live, F9 or Detach continues; a client that connects later asks
+`?`). Turning hardcore on while the stub is enabled reloads the game, the only way the lock reaches the core's socket. A headless
+run that gdb holds halted waits for the client or a quit signal, and SIGINT / SIGTERM end it cleanly (a second signal kills).
 
 **Link play.** The core's peer wait inside `retro_run` (`src/jerry/jlink.c`) now blocks only the emulation thread. Its
 frame budget assumes one `retro_run` per frontend period, which mode A provides. Its 3 ms frontend margin becomes

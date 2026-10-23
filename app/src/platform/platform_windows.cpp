@@ -7,6 +7,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <winsock2.h>
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -35,6 +36,15 @@ std::wstring widen(const std::string& s) {
 }
 
 }  // namespace
+
+void initNetworking() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    WSADATA wsa;
+    const int rc = WSAStartup(MAKEWORD(2, 2), &wsa);
+    if (rc != 0) std::fprintf(stderr, "[app] WSAStartup failed (%d): the core's sockets (GDB stub, netplay) will not open\n", rc);
+}
 
 void beforeWindow() {
     typedef HRESULT(WINAPI * SetAumidFn)(PCWSTR);
