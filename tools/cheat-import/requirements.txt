@@ -1,1 +1,1 @@
-pycparser>=2.22,<4
+pycparser==3.11

@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   converter:
+    timeout-minutes: 20
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     strategy:
       matrix:
@@ -36,6 +37,7 @@ jobs:
 
   packs:
     needs: converter
+    timeout-minutes: 20
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4

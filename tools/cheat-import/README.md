@@ -5,6 +5,10 @@ existing `.cht` memory freezes. This is an offline, static source converter:
 it does not execute or compile the input, follow includes, contact an emulator,
 or require an SDK. Python 3.10+ and `pycparser` are needed only for conversion;
 the app and libretro core gain no Python dependency or script VM.
+`requirements.txt` pins `pycparser` exactly (3.11, the newest release that supports
+Python 3.10, the oldest version CI runs). A `pycparser` bump is a deliberate PR: regenerate
+`site/cheats` with the new version and check the output stays byte-identical. 2.22, 2.23,
+3.0, 3.11 and 3.12 were verified to produce identical output.
 
 ## Use
 
