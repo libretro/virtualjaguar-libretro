@@ -3,13 +3,16 @@
 // loaded, the library folders, and the command-line hooks the headless tests use.
 #include "app.h"
 #include "cheats.h"
+#include "http.h"
 
 #include "libretro.h"
 #include "titledb.h"   // TitleDBContentCRC / TitleDBTitleName: the identity the core logs at load
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace vj {
@@ -103,6 +106,33 @@ void cheatsInit(App& app, const CliArgs& a) {
     };
     cm.setStateDir(app.paths.root + "cheats/games/");
     rebuildLibraryDirs(app);
+
+    // The community cheat store (#1071).  Packs live under <data>/cheats/community/packs/, which the library scan never
+    // looks into (it is not recursive), so a pack is only ever found by its cartridge's CRC.
+    CheatStore& store = app.cheatStore;
+    store.setDir(app.paths.root + "cheats/community/");
+    cm.setCommunityDir(store.packsDir());
+    store.setBaseUrl(app.cfg.get("cheats.community.url", ""));   // "" = the project site; a loopback server for tests
+    // The one downloads switch (Library: "Download art and cheat packs") and a backend that can do HTTP.
+    store.downloadsAllowed = [&app] { return app.library.downloadArt.load() && http::available(); };
+    // Runs on the worker thread: touches nothing but the cancel flag (stable for the store's life) and http.
+    const std::atomic<bool>* cancel = &store.cancelFlag();
+    store.fetch = [cancel](const std::string& url, size_t maxBytes, std::string& body, std::string& err) {
+        http::Response r;
+        if (!http::get(url, r, maxBytes, cancel)) {
+            err = r.error.empty() ? "request failed" : r.error;
+            return false;
+        }
+        if (r.status != 200) {   // a redirect that http::get did not follow, an error page: never a pack or a manifest
+            err = "HTTP " + std::to_string(r.status);
+            return false;
+        }
+        body.assign(r.body.begin(), r.body.end());
+        return true;
+    };
+    app.cheatNet.start();
+    store.run = [&app](std::function<void()> job) { app.cheatNet.post(std::move(job)); };
+    store.message = [&app](const std::string& text) { app.toast(text, 4.0); };   // a pack's on-load notes
 }
 
 void cheatsSetUserDir(App& app, const std::string& dir) {
@@ -114,6 +144,9 @@ void cheatsAfterLoad(App& app) {
     CheatManager& cm = app.cheats;
     cm.gameLoaded(identityOf(app.host));   // apply() inside sends nothing while hardcore blocks cheats
     if (!cm.active()) return;
+    // This runs on the emulation thread in threaded mode; the store is main-thread only, so the load is handed over and
+    // cheatsPump applies it (after the manager above: it reads the community set that load just made).
+    app.cheatStore.postGameLoaded(cm.game().crc);
 
     if (cm.blockedNow()) {
         // The command-line twins of the window's toggles are as disabled as the window:
@@ -121,6 +154,9 @@ void cheatsAfterLoad(App& app) {
         if (!g_cli.set.empty() || !g_cli.on.empty() || !g_cli.codes.empty())
             std::fprintf(stderr, "cheats: --cheat-set/--cheat-on/--cheat ignored: disabled in hardcore mode\n");
         const unsigned saved = cm.enabledCount();
+        // app.toast / app.ach.notice here (and the toast below) run on the emulation thread in threaded mode.  That is
+        // safe only because every caller is inside emu.call (the main thread is parked in busyFrame, which touches
+        // neither osd_ nor ImGui); posting loads via emu.post instead would break this.
         app.ach.notice("Cheats disabled in hardcore mode",
                        saved ? std::to_string(saved) + " saved cheat" + (saved == 1 ? " is" : "s are") + " not applied."
                              : std::string("RetroAchievements hardcore does not allow them."));
@@ -154,7 +190,71 @@ void cheatsAfterStateLoad(App& app) {
     app.cheats.apply();
 }
 
-void cheatsOnClose(App& app) { app.cheats.gameClosed(); }
+void cheatsOnClose(App& app) {
+    app.cheats.gameClosed();
+    app.cheatStore.postGameClosed();   // may be the emulation thread: applied by cheatsPump
+}
+
+void cheatsPump(App& app) {
+    // Pending load / close first (inside pump), then finished requests.  Every frame, not only while the Cheats
+    // window is open: an install must finish (and its files be written) even if the window was closed meanwhile.
+    // afterApply is latched and cheap; it covers a cheat turned on in the window and the end of a hardcore block.
+    app.cheatStore.pump(app.cheats);
+    app.cheatStore.afterApply(app.cheats);
+}
+
+void cheatsShutdown(App& app) {
+    // The store first: it raises the cancel flag, so a request inside http::get ends at once instead of after its
+    // timeouts; then the worker (drops anything queued, joins).  Both before `cheats` is destroyed.
+    app.cheatStore.stop();
+    app.cheatNet.stop();
+}
+
+// --cheats-community-install: what opening the Cheats window and pressing Install do, without a window (the headless
+// smoke test).  Needs a cartridge; the store's URL comes from cheats.community.url in the data dir's config.ini.
+bool cheatsHeadlessCommunity(App& app, const CliArgs& a) {
+    if (!a.cheatsCommunityInstall) return true;
+    CheatManager& cm = app.cheats;
+    CheatStore& store = app.cheatStore;
+    if (!cm.active() || cm.game().crc == 0) {
+        std::fprintf(stderr, "headless: FAIL --cheats-community-install needs a cartridge\n");
+        return false;
+    }
+    app.library.downloadArt = app.cfg.getBool("library.art", true);   // the library service is not started headless
+    const uint32_t crc = cm.game().crc;
+    auto wait = [&](const char* what) {
+        for (int i = 0; i < 600 && store.busy(); i++) {   // 30 s
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            store.pump(cm);
+        }
+        store.pump(cm);
+        if (store.busy()) {
+            std::fprintf(stderr, "headless: FAIL community %s did not finish\n", what);
+            return false;
+        }
+        return true;
+    };
+    store.windowOpened(crc, app.cfg);
+    if (!wait("manifest fetch")) return false;
+    PackState st = store.state(crc);
+    // EditedLocally too when the store offers the pack: the window's Update replaces a corrupt or hand-edited file.
+    if (st == PackState::Offered || st == PackState::UpdateAvailable ||
+        (st == PackState::EditedLocally && store.offered(crc))) {
+        if (!store.install(crc) || !wait("install")) {
+            std::fprintf(stderr, "headless: FAIL community install: %s\n", store.status().c_str());
+            return false;
+        }
+        st = store.state(crc);
+    }
+    const ChtSet* set = cm.communitySet();
+    if (st != PackState::Installed || !set || set->cheats.empty()) {
+        std::fprintf(stderr, "headless: FAIL community pack for %08X not installed (%s)\n", (unsigned)crc,
+                     store.status().c_str());
+        return false;
+    }
+    std::printf("COMMUNITY pack %08X installed: %zu cheats\n", (unsigned)crc, set->cheats.size());
+    return true;
+}
 
 bool cheatsHeadlessCheck(App& app, const CliArgs& a) {
     (void)app;

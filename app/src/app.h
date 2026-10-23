@@ -17,6 +17,7 @@
 #include "achievements.h"
 #include "audio.h"
 #include "bios.h"
+#include "cheat_store.h"
 #include "cheats.h"
 #include "config.h"
 #include "core_host.h"
@@ -92,6 +93,7 @@ struct CliArgs {
     std::string cheatSet;                     // select this cheat set (file stem) for the game
     std::vector<std::string> cheatOn;         // turn on these database cheats (description, id or position)
     std::vector<std::string> cheatCodes;      // add these manual codes
+    bool cheatsCommunityInstall = false;      // headless: fetch the community cheat store and install the loaded cartridge's pack (#1071)
     std::vector<std::pair<uint32_t, uint8_t>> expectRam;   // headless: main-RAM bytes that must hold at the end
     bool dumpNativeMenu = false;    // dev: print and check the real macOS menu tree, then exit (77 = no native menu here)
     bool printControls = false;     // headless: print Player 1's controls cheat sheet (devices_ui.h)
@@ -245,6 +247,8 @@ public:
     bool homeLibrary = true;          // no game loaded: the game library is the home screen (ui.home_library)
     bool showNetplay = false;
     CheatManager cheats;
+    Worker cheatNet;                  // the community cheat store's one background request at a time (cheats_core.cpp)
+    CheatStore cheatStore;            // declared after cheatNet and cheats: stopped in shutdown() before either goes
     std::string devSelectTab;         // dev: --show-window settings-video etc. opens Settings on that tab ("Video", "Input", ...)
     float uiScaleOverride = 0;        // dev: --ui-scale
     unsigned simDensity_ = 0;         // dev: --pixel-density (0 / 1 = off)
@@ -578,6 +582,9 @@ void cheatsInit(App& app, const CliArgs& a);        // wire the core sinks, find
 void cheatsAfterLoad(App& app);                     // a game was (re)loaded: its cheats go back in
 void cheatsAfterStateLoad(App& app);                // a state was restored
 void cheatsOnClose(App& app);                       // no game any more
+void cheatsPump(App& app);                          // once per UI frame: finished community store requests, pack messages
+void cheatsShutdown(App& app);                      // stop the community store's worker (before the cheat manager goes)
+bool cheatsHeadlessCommunity(App& app, const CliArgs& a);   // --cheats-community-install
 void cheatsSetUserDir(App& app, const std::string& dir);
 bool cheatsHeadlessCheck(App& app, const CliArgs& a);   // --expect-ram and rejected cheat options
 void drawCheats(App& app);

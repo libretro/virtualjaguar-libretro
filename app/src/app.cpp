@@ -503,6 +503,7 @@ void App::shutdown() {
     // Only now: until the emulation thread is gone it may be inside rc_client_do_frame or a posted emuIdle.  Still before
     // video.shutdown() -- images.stop() needs the GL context.
     ach.shutdown();
+    cheatsShutdown(*this);   // the community store's worker, before `cheats` is destroyed
     invalidateThumbs();
     shutdownDebugTools();    // the Textures / Object list windows hold GL textures
     video.shutdown();
@@ -1125,6 +1126,7 @@ void App::haltedFrame() {
     inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
     inputFrame(*this);
     ach.pump();
+    cheatsPump(*this);   // community store installs/checks finish during a halt too
     syncDebug();
     video.upload(host.frame());
     applyViewports();
@@ -2462,6 +2464,7 @@ int App::runInteractive(const CliArgs& a) {
         inputCaptured_ = ImGui::GetIO().WantCaptureKeyboard;
         inputFrame(*this);   // mouse capture, the controls-overlay key
         ach.pump();
+        cheatsPump(*this);   // community cheat store: finished requests, pack messages (also with the window closed)
         syncDebug();
         discordTick(*this);
 #ifdef VJ_HAVE_NEURO
@@ -2946,6 +2949,7 @@ int App::runHeadless(const CliArgs& a) {
                          input.controls.show ? "showing" : "hidden", a.expectControls ? "showing" : "hidden");
             return 1;
         }
+        cheatsPump(*this);   // the store learns of the load (and says a pack's messages for cheats the command line turned on)
         audioFramesSeen_ = 0;
         uint64_t hlT0 = SDL_GetPerformanceCounter(), hlRun = 0;
         double hlCpu0 = Perf::cpuSeconds();
@@ -3028,6 +3032,7 @@ int App::runHeadless(const CliArgs& a) {
         if (!a.discInsert.empty() && !discInsertHeadlessCheck(a.discInsert)) rc = 1;
         if (a.expectDiscs && !discListHeadlessCheck(a.expectDiscs)) rc = 1;
         if (!emuCall([&] { return cheatsHeadlessCheck(*this, a); })) rc = 1;
+        if (!cheatsHeadlessCommunity(*this, a)) rc = 1;
         if (!ach.headlessCheck(a)) rc = 1;
         const Frame& f = shownFrame();
         HeadlessResult r;

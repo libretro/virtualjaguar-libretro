@@ -519,7 +519,7 @@ cartridge runs, and the Core options tab is empty before the first load).
    miss is remembered for 30 days; a mirror miss only until the app quits, so art the site gains shows on the next
    launch. Set `library.art_mirror` in `config.ini`
    to another base URL, or to an empty value to turn the mirror off.
-   **Download box art** turns all downloading off.
+   **Download art and cheat packs** turns all downloading off.
    **Your own covers.** libretro-thumbnails has no Jaguar CD repository at all, so no disc gets
    downloaded art. A tile with no art is a drawn card with the game's title and a `CD` / `Cart`
    badge. Right-click a tile > **Set cover image...** (PNG) to give it one, or drop a PNG onto the
@@ -688,6 +688,21 @@ without an emulator binary or SDK. It reports unsupported operations, leaves
 every cheat disabled, and binds the set to the matching cartridge CRC32.
 The app blocks revision mismatches and malformed/duplicate guards; legacy
 unbound `.cht` files continue to work. No community script pack is bundled.
+
+**Community cheats.** The Cheats window has a "Community cheats" section for the
+packs the project publishes at `jaguar.provenance-emu.com/cheats/` (converted from
+[jguffer's BigPEmu scripts](https://github.com/jguffer/BigPEmu_Scripts), credited in the
+section). Opening the window with a cartridge loaded asks the site for its pack index
+(at most every 6 hours; **Check for updates** asks at once); **Install** downloads the pack
+named by the cartridge's CRC32, checks its size and SHA-256 and its revision guard, and only
+then writes it to `<data>/cheats/community/packs/<CRC32>.cht` (with a `.json` record
+beside it). Every cheat starts off, **Update** keeps the cheats whose text did not change,
+**Remove** deletes the pack. Packs cover cartridges only, are found by CRC32 alone (the
+database set above is independent) and are inert in RetroAchievements hardcore mode.
+Library > **Download art and cheat packs** is the single downloads switch (`library.art`);
+with it off the section shows only what is installed. `cheats.community.url` in `config.ini`
+points the store at another base URL (a local test server). Headless, `--cheats-community-install`
+does the same fetch and install for the loaded cartridge.
 
 ## RetroAchievements
 

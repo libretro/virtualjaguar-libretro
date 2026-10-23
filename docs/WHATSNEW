@@ -1,3 +1,12 @@
+Virtual Jaguar next (unreleased)
+--------------------------------
+
+== Desktop app ==
+* Cheats window: "Community cheats" installs the verified, CRC32-matched
+  pack for a cartridge from the project website (credited to jguffer,
+  cheats start off, Update/Remove, hardcore-safe); Library "Download box
+  art" is now "Download art and cheat packs" (#1071).
+
 Virtual Jaguar v3.10.0 libretro
 ------------------------------
 

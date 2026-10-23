@@ -74,6 +74,8 @@ static void usage(const char* argv0) {
         "  --cheat-set NAME      use the cheat set NAME.cht for the loaded game (remembered)\n"
         "  --cheat-on CHEAT      turn on a database cheat by description, id or position (repeatable)\n"
         "  --cheat CODE          add a manual code, hex ADDRESS:VALUE e.g. 00007D3D:05 (repeatable)\n"
+        "  --cheats-community-install  headless: fetch the community cheat store (cheats.community.url in config.ini,\n"
+        "                        else the project site) and install the loaded cartridge's pack\n"
         "  --expect-ram A=VV     headless: fail unless main-RAM byte A (hex) is VV (hex) at the end\n"
         "\n"
         "RetroAchievements test hooks (headless only; the only server is a directory of canned\n"
@@ -266,6 +268,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(s, "--cheat-set")) a.cheatSet = need(s);
         else if (!std::strcmp(s, "--cheat-on")) a.cheatOn.emplace_back(need(s));
         else if (!std::strcmp(s, "--cheat")) a.cheatCodes.emplace_back(need(s));
+        else if (!std::strcmp(s, "--cheats-community-install")) a.cheatsCommunityInstall = true;
         else if (!std::strcmp(s, "--expect-ram")) {
             std::string kv = need(s);
             size_t eq = kv.find('=');
