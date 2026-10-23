@@ -989,6 +989,43 @@ static void testRemoveToggles() {
     fs::remove_all(tmp);
 }
 
+// An unsupported database cheat does not shadow a same-named supported community cheat.
+static void testSetEnabledByNameFallthrough() {
+    fs::path tmp = fs::temp_directory_path() / "vj-cheats-community-fallthrough";
+    fs::remove_all(tmp);
+    const fs::path lib = tmp / "lib", packs = tmp / "packs";
+    fs::create_directories(lib);
+    std::ofstream(lib / "Fall Game.cht", std::ios::binary)
+        << "cheat0_desc = \"Infinite Lives\"\ncheat0_code = \"not a code\"\ncheat0_enable = true\n";
+    auto setup = [&](CheatManager& m, Recorder& rec) {
+        rec.attach(m);
+        m.setStateDir(tmp.string() + "/games/");
+        m.setLibraryDirs({lib.string()});
+        m.setCommunityDir(packs.string());
+        m.rescan();
+        m.gameLoaded(cartGame(0x5E2CDBC0, "Fall Game"));
+    };
+    // No community match: still false, nothing enabled.
+    {
+        CheatManager m;
+        Recorder rec;
+        setup(m, rec);
+        CHECK(m.selectedSet() && !m.selectedSet()->cheats[0].supported);
+        CHECK(!m.setEnabledByName("Infinite Lives", true));
+        CHECK(m.enabledCount() == 0);
+    }
+    // Same name in the pack and supported: that one is enabled.
+    writePack(packs, "5E2CDBC0", "5E2CDBC0", {{"Infinite Lives", "001F0000:AB"}});
+    CheatManager m;
+    Recorder rec;
+    setup(m, rec);
+    CHECK(m.setEnabledByName("Infinite Lives", true));
+    CHECK(m.isEnabled(m.communitySet()->cheats[0], CheatOrigin::Community));
+    CHECK(!m.isEnabled(m.selectedSet()->cheats[0]));
+    CHECK(m.enabledCount() == 1 && m.appliedSegments() == 1);
+    fs::remove_all(tmp);
+}
+
 // FIPS 180-4 / NIST vectors.  The one-million-'a' message crosses many blocks; the 55/56/64-byte
 // lengths straddle the padding boundary (55: the length field still fits in the one block, 56: it forces an extra
 // block, 64: exactly one full block of data).
@@ -1023,6 +1060,7 @@ int main(int argc, char** argv) {
     testApplyOrder();
     testCommunityHardcore();
     testRemoveToggles();
+    testSetEnabledByNameFallthrough();
     testSha256();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

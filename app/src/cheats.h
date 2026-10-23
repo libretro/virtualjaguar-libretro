@@ -182,7 +182,9 @@ public:
     bool isEnabled(const ChtCheat& c, CheatOrigin origin = CheatOrigin::Database) const;
     void setEnabled(const ChtCheat& c, bool on, CheatOrigin origin = CheatOrigin::Database);
     // For scripts / the command line: description (case-insensitive), id, or list position, searched in the
-    // database set, then the community pack, then the manual codes.
+    // database set, then the community pack, then the manual codes.  A match that cannot be turned on (an unsupported
+    // cheat) does not end the search: the next set is tried, so a same-named supported community cheat is enabled
+    // instead; false only when nothing enableable matches.
     bool setEnabledByName(const std::string& name, bool on);
     void disableAll();
     unsigned enabledCount() const;

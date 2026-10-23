@@ -538,14 +538,6 @@ void CheatManager::loadCommunity() {
         enabled_.erase(key);
         pruned = true;
     }
-    for (auto it = enabled_.begin(); it != enabled_.end();) {   // (in memory only: cannot happen via loadState)
-        if (it->first.compare(0, 3, "cp.") == 0 && !known.count(it->first)) {
-            it = enabled_.erase(it);
-            pruned = true;
-        } else {
-            ++it;
-        }
-    }
     if (pruned) touch();
 }
 
