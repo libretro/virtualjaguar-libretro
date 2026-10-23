@@ -2373,6 +2373,15 @@ int App::runInteractive(const CliArgs& a) {
     if (a.latchWake != 0 && !headless_) latchWaker_.start();   // macOS only (latch_waker.h)
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
+    // G1 gate drivers (#967): --show-window tools opens every Tools window; --perf-halt re-opens them while halted.  The
+    // same open test as openDebugWindow (a second toggle would CLOSE the window).
+    auto openAllTools = [this](const char* suffix) {
+        for (const char* id : {"memory", "clut", "scanner", "cpu", "objects", "blitter", "textures", "scope"}) {
+            DebugTool* t = debug.findTool(id);
+            if (t && t->toggle && !(t->isOpen && t->isOpen())) t->toggle();
+            std::fprintf(stderr, "[app] tool %s open=%d%s\n", id, (t && t->isOpen && t->isOpen()) ? 1 : 0, suffix);
+        }
+    };
     if (a.showWindow.rfind("settings", 0) == 0) {
         showSettings = true;
         if (a.showWindow.rfind("settings-video", 0) == 0) devSelectTab = "Video";
@@ -2397,6 +2406,7 @@ int App::runInteractive(const CliArgs& a) {
     else if (a.showWindow == "netplay") showNetplay = true;
     else if (a.showWindow == "theme-editor") showThemeEditor = true;
     else if (a.showWindow == "controls") input.controls.show = true;
+    else if (a.showWindow == "tools") openAllTools("");
     else if (openDebugWindow(debug, a.showWindow)) {}   // memory, palette, scanner, objects, blitter, textures, scope
     unsigned uiFrames = 0;
 
@@ -2456,6 +2466,19 @@ int App::runInteractive(const CliArgs& a) {
             break;
         }
         if (a.perfPause && perf.seen == 30 && !paused && host.isLoaded()) togglePause();   // after a few real frames
+        if (a.perfHalt && perf.on && host.isLoaded()) {   // CSV row r = iteration warmup + r: rows ~130-410 are the halt
+            if (perf.seen == perf.warmup + 120) {
+                if (debug.enabled()) { debug.breakNow(); std::fprintf(stderr, "[perf] halt requested\n"); }
+                else std::fprintf(stderr, "[perf] halt unavailable\n");
+            } else if (perf.seen == perf.warmup + 240) {
+                openAllTools(" (halted)");
+                std::fprintf(stderr, "[perf] halted=%d\n", debug.halted() ? 1 : 0);
+            } else if (perf.seen == perf.warmup + 420) {
+                const bool was = debug.halted();
+                if (was) debug.resume();
+                std::fprintf(stderr, "[perf] resumed=%d\n", was ? 1 : 0);
+            }
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) handleEvent(e, false);
         if (quit) break;
