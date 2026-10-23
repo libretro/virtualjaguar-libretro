@@ -144,7 +144,9 @@ void cheatsAfterLoad(App& app) {
     CheatManager& cm = app.cheats;
     cm.gameLoaded(identityOf(app.host));   // apply() inside sends nothing while hardcore blocks cheats
     if (!cm.active()) return;
-    app.cheatStore.gameLoaded(cm.game().crc, cm);   // after the manager: it reads the community set that load just made
+    // This runs on the emulation thread in threaded mode; the store is main-thread only, so the load is handed over and
+    // cheatsPump applies it (after the manager above: it reads the community set that load just made).
+    app.cheatStore.postGameLoaded(cm.game().crc);
 
     if (cm.blockedNow()) {
         // The command-line twins of the window's toggles are as disabled as the window:
@@ -175,7 +177,6 @@ void cheatsAfterLoad(App& app) {
             g_cli.failed = true;
         }
     }
-    app.cheatStore.afterApply(cm);   // the command-line toggles above may have turned a community cheat on
     unsigned n = cm.enabledCount();
     if (n) app.toast(std::to_string(n) + " cheat" + (n == 1 ? "" : "s") + " on");
 }
@@ -188,11 +189,11 @@ void cheatsAfterStateLoad(App& app) {
 
 void cheatsOnClose(App& app) {
     app.cheats.gameClosed();
-    app.cheatStore.gameClosed();
+    app.cheatStore.postGameClosed();   // may be the emulation thread: applied by cheatsPump
 }
 
 void cheatsPump(App& app) {
-    // Every frame, not only while the Cheats window is open: an install must finish (and its files be written) even
+    // Pending load / close first (inside pump), then finished requests.  Every frame, not only while the Cheats window is open: an install must finish (and its files be written) even
     // if the window was closed meanwhile.  afterApply is latched and cheap; it covers a cheat turned on in the window
     // and the end of a hardcore block.
     app.cheatStore.pump(app.cheats);

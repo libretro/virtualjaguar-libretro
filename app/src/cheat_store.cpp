@@ -206,6 +206,9 @@ struct CheatStore::Shared {
     std::deque<Result> results;
     unsigned running = 0;
     std::atomic<bool> cancel{false};
+    // postGameLoaded / postGameClosed hand-off (under m): 0 none, 1 loaded(pendingCrc), 2 closed.
+    int pending = 0;
+    uint32_t pendingCrc = 0;
 
     bool enter() {
         std::lock_guard<std::mutex> l(m);
@@ -425,16 +428,35 @@ bool CheatStore::remove(uint32_t crc, CheatManager& cm) {
         cm.removeCommunityToggles();
         cm.reloadCommunity();
     }
+    turnedOff_ = 0;
     status_.clear();
     return had;
 }
 
+void CheatStore::postGameLoaded(uint32_t crc) {
+    std::lock_guard<std::mutex> l(sh_->m);
+    sh_->pending = 1;
+    sh_->pendingCrc = crc;
+}
+
+void CheatStore::postGameClosed() {
+    std::lock_guard<std::mutex> l(sh_->m);
+    sh_->pending = 2;
+}
+
 void CheatStore::pump(CheatManager& cm) {
     std::deque<Shared::Result> done;
+    int pending;
+    uint32_t pendingCrc;
     {
         std::lock_guard<std::mutex> l(sh_->m);
         done.swap(sh_->results);
+        pending = sh_->pending;
+        pendingCrc = sh_->pendingCrc;
+        sh_->pending = 0;
     }
+    if (pending == 1) gameLoaded(pendingCrc, cm);
+    else if (pending == 2) gameClosed();
     for (Shared::Result& r : done) {
         busy_ = false;
         if (r.manifest) manifestBusy_ = false;
@@ -474,7 +496,10 @@ void CheatStore::pump(CheatManager& cm) {
             continue;
         }
         status_ = "Installed " + r.meta.title + ".";
-        if (cm.active() && cm.game().crc == r.crc) cm.reloadCommunity();
+        if (cm.active() && cm.game().crc == r.crc) {
+            cm.reloadCommunity();
+            turnedOff_ = cm.lastPrunedEnabled();
+        }
     }
 }
 
@@ -483,6 +508,7 @@ void CheatStore::stop() {
     std::unique_lock<std::mutex> l(sh_->m);
     sh_->cv.wait(l, [&] { return sh_->running == 0; });
     sh_->results.clear();
+    sh_->pending = 0;
     busy_ = manifestBusy_ = false;
     packBusyCrc_ = 0;
 }
@@ -491,6 +517,7 @@ void CheatStore::stop() {
 // pack messages
 // ---------------------------------------------------------------------------------------------
 void CheatStore::gameLoaded(uint32_t crc, const CheatManager& cm) {
+    turnedOff_ = 0;
     crc_ = crc;
     haveGame_ = true;
     announced_ = false;
@@ -503,6 +530,7 @@ void CheatStore::afterApply(const CheatManager& cm) {
 }
 
 void CheatStore::gameClosed() {
+    turnedOff_ = 0;
     haveGame_ = false;
     crc_ = 0;
     announced_ = false;

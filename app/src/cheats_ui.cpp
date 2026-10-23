@@ -171,7 +171,8 @@ void drawCommunity(App& app, bool hardcore) {
             ImGui::TextDisabled("Checking the community store...");
             break;
         case PackState::NotOffered:
-            ImGui::TextWrapped("No community pack for this cartridge (CRC %s).", crcText);
+            if (store.manifestLoaded()) ImGui::TextWrapped("No community pack for this cartridge (CRC %s).", crcText);
+            else ImGui::TextWrapped("Community store not reached yet.");   // no list cached and the fetch failed or has not run
             break;
         case PackState::UpdateAvailable:
             ui::coloredWrapped(ui::vec4(ui::pal().warning),
@@ -188,6 +189,12 @@ void drawCommunity(App& app, bool hardcore) {
             break;
         default:
             break;
+    }
+    if (havePack && store.turnedOff() > 0) {
+        char m[96];
+        std::snprintf(m, sizeof m, "%u cheat%s changed in the update and %s turned off.", store.turnedOff(),
+                      store.turnedOff() == 1 ? "" : "s", store.turnedOff() == 1 ? "was" : "were");
+        ui::coloredWrapped(ui::vec4(ui::pal().warning), m);
     }
     if (havePack && hardcore)
         ui::coloredWrapped(ui::vec4(ui::pal().warning), "Installed; cheats cannot be enabled in hardcore mode.");
@@ -213,8 +220,8 @@ void drawCommunity(App& app, bool hardcore) {
         store.install(crc);
     if (havePack && button("Remove", !busy, "Deletes the pack and forgets which of its cheats were on."))
         store.remove(crc, cm);
-    if (st != PackState::DownloadsOff && st != PackState::Checking &&
-        button("Check for updates", downloads && !busy, "Asks the project's website for its current list of packs."))
+    if (button("Check for updates", downloads && !busy && st != PackState::Checking,
+               "Asks the project's website for its current list of packs."))
         store.checkNow();
 
     // ---- the cheats ----

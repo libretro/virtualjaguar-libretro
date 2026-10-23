@@ -174,6 +174,9 @@ public:
     // Toggles follow the cheat ids: an unchanged cheat stays on, a changed one comes back off, and cp.<id> keys
     // that match no cheat of the loaded pack are dropped from the ini.
     void reloadCommunity();
+    // How many cheats that were ON the last loadCommunity()/reloadCommunity() dropped because the pack no longer has a
+    // cheat with that id (it was changed or removed by an update).  0 when nothing was pruned.
+    unsigned lastPrunedEnabled() const { return lastPrunedEnabled_; }
     const ChtSet* communitySet() const { return communityLoaded_ ? &community_ : nullptr; }
     // Forget every community toggle of the current game (the pack was removed): erases each cp.<id> key, persists, applies.
     void removeCommunityToggles();
@@ -232,6 +235,7 @@ private:
     std::string communityDir_;
     ChtSet community_;
     bool communityLoaded_ = false;
+    unsigned lastPrunedEnabled_ = 0;
     std::map<std::string, bool> enabled_;     // ini key ("on.<id>" / "cp.<id>") -> on (only true entries)
     std::vector<UserCheat> user_;
     unsigned appliedSegments_ = 0;

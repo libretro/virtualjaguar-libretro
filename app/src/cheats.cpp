@@ -500,6 +500,7 @@ void CheatManager::loadSelectedSet() {
 void CheatManager::loadCommunity() {
     community_ = ChtSet();
     communityLoaded_ = false;
+    lastPrunedEnabled_ = 0;
     if (!game_.valid() || game_.crc == 0 || communityDir_.empty()) return;
     char name[16];
     std::snprintf(name, sizeof name, "%08X.cht", (unsigned)game_.crc);
@@ -535,7 +536,7 @@ void CheatManager::loadCommunity() {
         const std::string key = "cp." + kv.first;
         if (known.count(key)) continue;
         state_.erase(key);
-        enabled_.erase(key);
+        if (enabled_.erase(key)) lastPrunedEnabled_++;
         pruned = true;
     }
     if (pruned) touch();

@@ -2948,6 +2948,7 @@ int App::runHeadless(const CliArgs& a) {
                          input.controls.show ? "showing" : "hidden", a.expectControls ? "showing" : "hidden");
             return 1;
         }
+        cheatsPump(*this);   // the store learns of the load (and says a pack's messages for cheats the command line turned on)
         audioFramesSeen_ = 0;
         uint64_t hlT0 = SDL_GetPerformanceCounter(), hlRun = 0;
         double hlCpu0 = Perf::cpuSeconds();

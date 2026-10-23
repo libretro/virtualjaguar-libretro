@@ -8,7 +8,8 @@
 //   packs/<CRC>.cht      installed pack, bytes exactly as served (cap 64 KiB); <CRC> = %08X, upper case
 //   packs/<CRC>.json     the manifest's packs[i] object recorded at install (what the UI shows offline)
 //
-// Threading.  Every method is main-thread only.  Network work is handed to `run` as a closure that touches
+// Threading.  Every method is main-thread only, except postGameLoaded() / postGameClosed() (any thread: the app's game
+// load and close run on the emulation thread) and cancelFlag().  Network work is handed to `run` as a closure that touches
 // nothing but a shared hand-off block (not the store), calls `fetch`, verifies in memory, and queues a result;
 // pump() applies results on the main thread (writes the files, updates state, asks CheatManager to reload).
 // At most one request is in flight (busy()).  Nothing is written by the closure, and a failure anywhere leaves
@@ -21,8 +22,9 @@
 //   checkNow() / install(crc)           the "Check for updates" / Install / Update buttons
 //   remove(crc, cm)                     the Remove button
 //   pump(cm)                            once per UI frame, before drawing the section
-//   gameLoaded(crc, cm)                 right after cm.gameLoaded(id) on every game load (cm.gameClosed() ->
-//                                       store.gameClosed()), and afterApply(cm) after cheat toggles (see below)
+//   postGameLoaded(crc)                 right after cm.gameLoaded(id) on every game load (cm.gameClosed() ->
+//   postGameClosed()                    postGameClosed()); any thread, applied by the next pump().  afterApply(cm)
+//                                       after cheat toggles (see below)
 //   stop()                              app shutdown, after the worker is told to stop and before cheats are destroyed
 #pragma once
 
@@ -118,8 +120,13 @@ public:
     // Delete the pack and its sidecar.  For the current game also clears its community toggles and reloads.
     // False when nothing was installed or the file could not be deleted.
     bool remove(uint32_t crc, CheatManager& cm);
-    // Main thread, once per frame: apply finished requests.
+    // Main thread, once per frame: first apply a pending postGameLoaded / postGameClosed (gameLoaded / gameClosed
+    // below, so their state changes and message hooks run here), then finished requests.
     void pump(CheatManager& cm);
+    // Any thread.  The game was loaded / closed; the LAST one posted since the previous pump() wins (a close then a
+    // load is a load, which starts a new load anyway).  Nothing else of the store is touched off the main thread.
+    void postGameLoaded(uint32_t crc);
+    void postGameClosed();
     // Cancel what is in flight (cancelFlag() turns true), wait for started closures, drop their results.
     void stop();
     const std::atomic<bool>& cancelFlag() const;
@@ -131,6 +138,9 @@ public:
     const std::string& status() const { return status_; }
     bool busy() const { return busy_; }               // a request is in flight or its result is not pumped yet
     bool manifestLoaded() const { return manifestLoaded_; }
+    // After an Update of the loaded game's pack: how many cheats that were ON changed and came back off (0 otherwise).
+    // Cleared by the next game load / close and by remove().
+    unsigned turnedOff() const { return turnedOff_; }
 
     // ---- pack messages (the source script's on-load notes, e.g. "This version of Iron Soldier 1 IS supported.") ----
     // Each message is shown ONCE per game load, when the game's community pack has at least one cheat enabled and
@@ -169,6 +179,7 @@ private:
     uint32_t crc_ = 0;
     bool haveGame_ = false;
     bool announced_ = false;
+    unsigned turnedOff_ = 0;
     std::shared_ptr<Shared> sh_;
 };
 

@@ -786,6 +786,7 @@ static void testCommunityTogglesAcrossUpdate() {
     CHECK(c != nullptr);
     if (!c) return;
     CHECK(c->cheats[0].id == livesId && c->cheats[1].id != scoreId);
+    CHECK(m.lastPrunedEnabled() == 1);   // "Max score" was on and came back off; the untouched cheat does not count
     CHECK(m.isEnabled(c->cheats[0], CheatOrigin::Community));
     CHECK(!m.isEnabled(c->cheats[1], CheatOrigin::Community));   // changed: back off
     CHECK(m.enabledCount() == 1 && m.appliedSegments() == 1);
@@ -808,6 +809,9 @@ static void testCommunityTogglesAcrossUpdate() {
     m3.setCommunityDir(packs.string());
     m3.gameLoaded(g);
     CHECK(m3.enabledCount() == 0);
+    CHECK(m3.lastPrunedEnabled() == 1);
+    m3.reloadCommunity();
+    CHECK(m3.lastPrunedEnabled() == 0);   // nothing left to prune: the count describes the last load only
     CHECK(slurp(state + g.key + ".ini").find("cp.") == std::string::npos);
     fs::remove_all(tmp);
 }
@@ -1578,6 +1582,100 @@ static void testMessagesOncePerLoad() {
     CHECK(r.store.state(kStoreCrc) == PackState::NoGame);
 }
 
+static void testUpdateTurnedOff() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-turned-off");
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.serve(storeFixture("manifest.json"), body);
+    r.open();
+    CHECK(r.installNow());
+    CHECK(r.store.turnedOff() == 0);
+    r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);   // Infinite lives
+    r.cm.setEnabled(r.cm.communitySet()->cheats[1], true, CheatOrigin::Community);   // Max score
+    // the update changes Max score's code and adds a cheat: exactly the one cheat that was on and changed is reported
+    std::string body2 = body;
+    const size_t at = body2.find("001F0010:1234");
+    CHECK(at != std::string::npos);
+    body2.replace(at, 13, "001F0010:5678");
+    body2 += "\ncheat3_desc = \"Extra\"\ncheat3_code = \"001F0030:01\"\n";
+    r.serve(manifestJson({entryFor(body2)}), body2);
+    r.store.checkNow();
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::UpdateAvailable);
+    CHECK(r.installNow());
+    CHECK(r.store.turnedOff() == 1 && r.cm.enabledCount() == 1);
+    // a changed cheat that was OFF is not counted: update again, changing "Gold" (off)
+    const size_t g2 = body2.find("001F0020:01");
+    CHECK(g2 != std::string::npos);
+    std::string body3 = body2;
+    body3.replace(g2, 11, "001F0020:07");
+    r.serve(manifestJson({entryFor(body3)}), body3);
+    r.store.checkNow();
+    r.store.pump(r.cm);
+    CHECK(r.installNow());
+    CHECK(r.store.turnedOff() == 0);
+    // the notice is cleared by a new load and by Remove
+    r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);
+    std::string body4 = body3;
+    body4.replace(body4.find("001F0000:AB"), 11, "001F0000:AC");
+    r.serve(manifestJson({entryFor(body4)}), body4);
+    r.store.checkNow();
+    r.store.pump(r.cm);
+    CHECK(r.installNow() && r.store.turnedOff() == 1);
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.store.gameLoaded(kStoreCrc, r.cm);
+    CHECK(r.store.turnedOff() == 0);
+    r.cm.setEnabled(r.cm.communitySet()->cheats[1], true, CheatOrigin::Community);
+    std::string body5 = body4;
+    body5.replace(body5.find("001F0010:5678"), 13, "001F0010:9999");
+    r.serve(manifestJson({entryFor(body5)}), body5);
+    r.store.checkNow();
+    r.store.pump(r.cm);
+    CHECK(r.installNow() && r.store.turnedOff() == 1);
+    CHECK(r.store.remove(kStoreCrc, r.cm) && r.store.turnedOff() == 0);
+}
+
+static void testPostedGameEvents() {
+    // The app's game load / close run on the emulation thread: they are posted and the store only changes in pump().
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-posted");
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.serve(storeFixture("manifest.json"), body);
+    r.open();
+    CHECK(r.installNow());
+    r.cm.setEnabled(r.cm.communitySet()->cheats[0], true, CheatOrigin::Community);
+    r.store.gameClosed();
+    CHECK(r.store.state(kStoreCrc) == PackState::NoGame);
+    r.msgs.clear();
+
+    std::thread([&] { r.store.postGameLoaded(kStoreCrc); }).join();
+    CHECK(r.store.state(kStoreCrc) == PackState::NoGame && r.msgs.empty());   // nothing happened off the main thread
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::Installed);                   // applied by pump, which also announced
+    CHECK(r.msgs.size() == 2);
+    r.store.pump(r.cm);
+    CHECK(r.msgs.size() == 2);   // consumed once
+
+    std::thread([&] { r.store.postGameClosed(); }).join();
+    CHECK(r.store.state(kStoreCrc) == PackState::Installed);
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::NoGame);
+
+    // only the last post counts: close then load is a load (a new load, announced again); load then close is a close
+    std::thread([&] { r.store.postGameClosed(); r.store.postGameLoaded(kStoreCrc); }).join();
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::Installed && r.msgs.size() == 4);
+    std::thread([&] { r.store.postGameLoaded(kStoreCrc); r.store.postGameClosed(); }).join();
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::NoGame && r.msgs.size() == 4);
+
+    // stop() drops a post nobody pumped
+    std::thread([&] { r.store.postGameLoaded(kStoreCrc); }).join();
+    r.store.stop();
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::NoGame);
+}
+
 static void testAsyncHandoff() {
     const std::string body = storeFixture("5E2CDBC0.cht");
     Rig r("vj-store-async");
@@ -1739,6 +1837,8 @@ int main(int argc, char** argv) {
     testFetchThrows();
     testRemoveDuringInstall();
     testMessageCaps();
+    testUpdateTurnedOff();
+    testPostedGameEvents();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }
