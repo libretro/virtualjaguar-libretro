@@ -60,6 +60,16 @@ unsigned toUnsigned(const Json& j) {
     return j.asNumber() >= 4294967295.0 ? 4294967295u : (unsigned)j.asNumber();
 }
 
+// A manifest is remote input: at most 8 messages of 200 bytes each reach the toasts (cut on a UTF-8 boundary).
+constexpr size_t kMaxMessages = 8, kMaxMessageBytes = 200;
+std::string clipMessage(std::string s) {
+    if (s.size() <= kMaxMessageBytes) return s;
+    size_t n = kMaxMessageBytes;
+    while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) n--;
+    s.resize(n);
+    return s;
+}
+
 enum class Entry { Ok, Skip, Malformed };
 
 // One packs[i] object.  Malformed = a required key is missing or of the wrong type; Skip = present but unusable.
@@ -93,7 +103,8 @@ Entry parseEntry(const Json& o, PackMeta& m) {
                                      n["reason"].isString() ? n["reason"].asString() : "");
     if (o["messages"].isArray())
         for (const Json& s : o["messages"].items())
-            if (s.isString() && !s.asString().empty()) m.messages.push_back(s.asString());
+            if (s.isString() && !s.asString().empty() && m.messages.size() < kMaxMessages)
+                m.messages.push_back(clipMessage(s.asString()));
     m.json = o.dump();
     return Entry::Ok;
 }
@@ -210,6 +221,15 @@ struct CheatStore::Shared {
     }
 };
 
+// Holds a started job's slot: its destructor always runs leave(), so a throwing fetch hook (caught by the job,
+// but this does not rely on it) can never leave `running` raised and hang stop().
+struct JobSlot {
+    std::shared_ptr<CheatStore::Shared> sh;
+    CheatStore::Shared::Result r;
+    explicit JobSlot(std::shared_ptr<CheatStore::Shared> s) : sh(std::move(s)) {}
+    ~JobSlot() { sh->leave(std::move(r)); }
+};
+
 namespace {
 std::string unreachable(const std::string& err) {
     return "Could not reach the cheat store: " + (err.empty() ? std::string("request failed") : err) +
@@ -309,13 +329,18 @@ void CheatStore::startManifestFetch() {
     const std::string url = joinUrl(base_, "manifest.json");
     dispatch([sh, get, url]() {
         if (!sh->enter()) return;
-        Shared::Result r;
+        JobSlot slot(sh);
+        Shared::Result& r = slot.r;
         std::string body, err;
-        bool ok = get && get(url, kCheatManifestMaxBytes, body, err);
-        if (ok && body.size() > kCheatManifestMaxBytes) ok = false, err = "response too large";
-        if (!ok) r.error = unreachable(err);
-        else if (parseManifest(body, r.packs, r.error)) r.ok = true, r.raw = std::move(body);
-        sh->leave(std::move(r));
+        try {
+            bool ok = get && get(url, kCheatManifestMaxBytes, body, err);
+            if (ok && body.size() > kCheatManifestMaxBytes) ok = false, err = "response too large";
+            if (!ok) r.error = unreachable(err);
+            else if (parseManifest(body, r.packs, r.error)) r.ok = true, r.raw = std::move(body);
+        } catch (...) {
+            r = Shared::Result();
+            r.error = unreachable("the request failed unexpectedly");
+        }
     });
 }
 
@@ -355,28 +380,39 @@ bool CheatStore::install(uint32_t crc) {
         return false;
     }
     status_.clear();
+    packBusyCrc_ = crc;
     auto sh = sh_;
     auto get = fetch;
     const PackMeta meta = *off;
     const std::string url = joinUrl(base_, meta.file);
     dispatch([sh, get, url, meta, crc]() {
         if (!sh->enter()) return;
-        Shared::Result r;
+        JobSlot slot(sh);
+        Shared::Result& r = slot.r;
         r.manifest = false;
         r.crc = crc;
         r.meta = meta;
         std::string body, err;
-        bool ok = get && get(url, kCheatPackMaxBytes, body, err);
-        if (ok && body.size() > kCheatPackMaxBytes) ok = false, err = "response too large";
-        if (!ok) r.error = unreachable(err);
-        else if (verifyPack(meta, crc, body, r.error)) r.ok = true, r.raw = std::move(body);
-        sh->leave(std::move(r));
+        try {
+            bool ok = get && get(url, kCheatPackMaxBytes, body, err);
+            if (ok && body.size() > kCheatPackMaxBytes) ok = false, err = "response too large";
+            if (!ok) r.error = unreachable(err);
+            else if (verifyPack(meta, crc, body, r.error)) r.ok = true, r.raw = std::move(body);
+        } catch (...) {
+            r.ok = false;
+            r.raw.clear();
+            r.error = unreachable("the request failed unexpectedly");
+        }
     });
     return true;
 }
 
 bool CheatStore::remove(uint32_t crc, CheatManager& cm) {
     if (crc == 0 || dir_.empty()) return false;
+    if (packBusyCrc_ == crc) {   // pump() would write the pack back over the removal
+        status_ = "An install for this cartridge is in progress; remove it once it has finished.";
+        return false;
+    }
     std::error_code ec;
     const bool had = fs::remove(fs::path(chtPath(crc)), ec);
     if (ec) {
@@ -402,6 +438,7 @@ void CheatStore::pump(CheatManager& cm) {
     for (Shared::Result& r : done) {
         busy_ = false;
         if (r.manifest) manifestBusy_ = false;
+        else packBusyCrc_ = 0;
         if (!r.ok) {
             status_ = r.error;
             continue;
@@ -447,6 +484,7 @@ void CheatStore::stop() {
     sh_->cv.wait(l, [&] { return sh_->running == 0; });
     sh_->results.clear();
     busy_ = manifestBusy_ = false;
+    packBusyCrc_ = 0;
 }
 
 // ---------------------------------------------------------------------------------------------

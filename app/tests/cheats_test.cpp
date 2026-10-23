@@ -19,7 +19,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <chrono>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1610,6 +1613,104 @@ static void testAsyncHandoff() {
     CHECK(r.net.calls.empty());
 }
 
+static void testFetchThrows() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    for (int which = 0; which < 2; which++) {   // 0: the manifest fetch throws, 1: the pack fetch throws
+        Rig r("vj-store-throws");
+        r.cm.gameLoaded(cartGame(kStoreCrc));
+        r.serve(manifestJson({entryFor(body)}), body);
+        std::vector<std::thread> threads;
+        r.store.run = [&](std::function<void()> job) { threads.emplace_back(std::move(job)); };
+        if (which == 1) {
+            r.store.windowOpened(kStoreCrc, r.cfg);
+            for (std::thread& t : threads) t.join();
+            threads.clear();
+            r.store.pump(r.cm);
+            CHECK(r.store.state(kStoreCrc) == PackState::Offered);
+        }
+        r.store.fetch = [](const std::string&, size_t, std::string&, std::string&) -> bool { throw std::runtime_error("boom"); };
+        if (which == 0) r.store.windowOpened(kStoreCrc, r.cfg);
+        else CHECK(r.store.install(kStoreCrc));
+        for (std::thread& t : threads) t.join();   // the closure must not escape with the exception
+        // stop() must return (it waits for started jobs); a hang fails the check instead of the run
+        std::future<void> f = std::async(std::launch::async, [&] { r.store.stop(); });
+        CHECK(f.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+        if (f.wait_for(std::chrono::seconds(0)) != std::future_status::ready) std::exit(1);   // stuck: do not hang the suite
+        CheatStore again;   // a second store with the same hook: the failure reaches status(), not terminate()
+        r.wire(again);
+        again.run = r.store.run;
+        again.fetch = r.store.fetch;
+        again.setDir((r.tmp / "community2").string());
+        threads.clear();
+        again.windowOpened(kStoreCrc, r.cfg);
+        for (std::thread& t : threads) t.join();
+        again.pump(r.cm);
+        CHECK(again.status().find("Could not reach the cheat store") == 0 && !again.busy());
+        CHECK(!fs::exists(r.cht()));
+    }
+}
+
+static void testRemoveDuringInstall() {
+    const std::string body = storeFixture("5E2CDBC0.cht");
+    Rig r("vj-store-remove-busy");
+    r.cm.gameLoaded(cartGame(kStoreCrc));
+    r.serve(manifestJson({entryFor(body)}), body);
+    r.open();
+    CHECK(r.installNow());   // installed once
+    std::string body2 = body + "\ncheat3_desc = \"Extra\"\ncheat3_code = \"001F0030:01\"\n";
+    r.serve(manifestJson({entryFor(body2)}), body2);
+    r.store.checkNow();
+    r.store.pump(r.cm);
+    std::vector<std::function<void()>> jobs;
+    r.store.run = [&](std::function<void()> job) { jobs.push_back(std::move(job)); };
+    CHECK(r.store.install(kStoreCrc) && jobs.size() == 1);   // the update is in flight
+    CHECK(!r.store.remove(kStoreCrc, r.cm));
+    CHECK(r.store.status().find("in progress") != std::string::npos);
+    CHECK(fs::exists(r.cht()) && fs::exists(r.sidecar()));
+    jobs[0]();
+    r.store.pump(r.cm);
+    CHECK(r.store.state(kStoreCrc) == PackState::Installed && slurp(r.cht()) == body2);   // the update was not undone
+    CHECK(r.store.remove(kStoreCrc, r.cm) && !r.hasFiles());                              // and Remove works again
+    // a request for another CRC does not block Remove of this one
+    r.store.run = nullptr;   // inline again
+    r.net.bodies[std::string(kBase) + "packs/5E2CDBC0.cht"] = body;
+    r.net.bodies[std::string(kBase) + "manifest.json"] =
+        manifestJson({entryFor(body), entryJson("0A0B0C0D", std::string(64, 'c'), 10, "packs/0A0B0C0D.cht")});
+    r.store.checkNow();
+    r.store.pump(r.cm);
+    CHECK(r.installNow());
+    r.store.run = [&](std::function<void()> job) { jobs.push_back(std::move(job)); };
+    jobs.clear();
+    CHECK(r.store.install(0x0A0B0C0D) && jobs.size() == 1);
+    CHECK(r.store.remove(kStoreCrc, r.cm) && !r.hasFiles());
+    jobs[0]();
+    r.store.pump(r.cm);
+}
+
+static void testMessageCaps() {
+    std::string many = "[";
+    for (int i = 0; i < 12; i++) many += (i ? "," : "") + std::string("\"m") + std::to_string(i) + "\"";
+    many += ",\"" + std::string("a") + [] { std::string e; for (int i = 0; i < 150; i++) e += "\xC3\xA9"; return e; }() + "\"]";
+    std::vector<PackMeta> v;
+    std::string err;
+    const std::string sha(64, 'a');
+    CHECK(parseManifest(manifestJson({entryJson("5E2CDBC0", sha, 10, "packs/5E2CDBC0.cht", many)}), v, err) && v.size() == 1);
+    if (v.size() == 1) {
+        CHECK(v[0].messages.size() == 8 && v[0].messages[0] == "m0" && v[0].messages[7] == "m7");
+    }
+    // one long message: cut to <= 200 bytes on a character boundary; the sidecar copy is capped the same way
+    std::string longMsg = "[\"a";
+    for (int i = 0; i < 150; i++) longMsg += "\xC3\xA9";
+    longMsg += "\",\"" + std::string(500, 'x') + "\"]";
+    CHECK(parseManifest(manifestJson({entryJson("5E2CDBC0", sha, 10, "packs/5E2CDBC0.cht", longMsg)}), v, err) && v.size() == 1);
+    if (v.size() == 1 && v[0].messages.size() == 2) {
+        CHECK(v[0].messages[0].size() == 199);   // 1 + 99 two-byte characters: byte 200 would split one
+        CHECK((unsigned char)v[0].messages[0].back() == 0xA9 && v[0].messages[1].size() == 200);
+        PackMeta back;
+        CHECK(parsePackMeta(v[0].json, back) && back.messages.size() == 2 && back.messages[1].size() == 200);
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !std::strcmp(argv[1], "--corpus")) return corpus(argv[2]);
     testHelpers();
@@ -1635,6 +1736,9 @@ int main(int argc, char** argv) {
     testRemove();
     testMessagesOncePerLoad();
     testAsyncHandoff();
+    testFetchThrows();
+    testRemoveDuringInstall();
+    testMessageCaps();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

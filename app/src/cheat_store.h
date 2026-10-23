@@ -141,8 +141,9 @@ public:
     void afterApply(const CheatManager& cm);
     void gameClosed();                                // forget the game (state() -> NoGame) and the load
 
+public:
+    struct Shared;   // hand-off block (cheat_store.cpp); public only so the file-local JobSlot can name it
 private:
-    struct Shared;
     struct Installed {
         bool present = false;    // <CRC>.cht exists
         bool hasMeta = false;    // the sidecar parsed
@@ -163,6 +164,7 @@ private:
     bool manifestLoaded_ = false;
     mutable std::map<uint32_t, Installed> installed_;
     bool busy_ = false, manifestBusy_ = false;
+    uint32_t packBusyCrc_ = 0;     // the CRC of an install in flight (0 = none); remove() refuses it
     Config* cfg_ = nullptr;
     uint32_t crc_ = 0;
     bool haveGame_ = false;
