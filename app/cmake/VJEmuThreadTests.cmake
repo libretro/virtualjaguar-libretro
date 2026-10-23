@@ -30,6 +30,7 @@
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
 #   emu_thread_start_fallback  a failed thread start runs inline (nothing to lift any more)
 #   debug_on_threaded / gdb_enabled(_threaded)  nothing is off while threaded; the silent gdb host attaches at load
+#   no_threaded_limits    the Phase 3 bar, static: no threaded-only gate, text or limit test; "am I threaded?" only where allowed
 #   gdb_hardcore_locked_* / gdb_hardcore_flip_*  hardcore locks the stub to disabled at load; a mid-game flip reloads to apply it
 #   tsan_canary           (TSan builds only) a deliberate race the sanitizer must catch
 
@@ -213,6 +214,15 @@ add_test(NAME emu_thread_start_fallback
 set_tests_properties(emu_thread_start_fallback PROPERTIES TIMEOUT 120 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "could not start the emulation thread; running emulation on the UI thread.*headless: OK"
     FAIL_REGULAR_EXPRESSION "are back on|are off while|headless: FAIL|ThreadSanitizer|owner violation")
+
+# The Phase 3 bar (#967): turning the emulation thread on switches nothing off.  A static check over the tree
+# (tests/no_threaded_limits.sh), so it also keeps the bar from coming back (docs/agent/testing.md).  macOS and Linux only.
+find_program(VJ_BASH bash)
+if(VJ_BASH AND NOT WIN32)
+    add_test(NAME no_threaded_limits
+        COMMAND ${VJ_BASH} "${CMAKE_CURRENT_LIST_DIR}/../tests/no_threaded_limits.sh" "${VJ_ROOT}")
+    set_tests_properties(no_threaded_limits PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+endif()
 
 # The disc commands threaded: every one runs inside EmuThread::call (an insert re-stages the CD BIOS, which writes the
 # staged-BIOS record), and the menus read the disc list from the pinned snapshot.

@@ -1,0 +1,11 @@
+# Files that may ask "am I threaded?" (emuThreadThisRun, x.threaded()), with the most hits each (no_threaded_limits.sh, 5).
+# Every hit selects HOW something runs on the emulation thread or the UI thread; none may disable, grey out, hide, refuse
+# or lock a feature because the thread is on (#967 Phase 3 bar).  Raise a count only together with the new line's reason.
+app/src/app.cpp            12   # wireHost: ff/mute copies, the input-poll branch, inputState, inline syncCore; start/stop of the thread; run(): the one decision, and headless --tv-test-script stays inline
+app/src/app.h               4   # declarations: emu, threaded(), emuThreadThisRun(), emuThreadThisRun_
+app/src/ui.cpp              3   # "Restart the app to apply"; Close game / re-enter stay enabled threaded while halted (inline must resume first)
+app/src/achievements.cpp    3   # off-thread readMemory guard; pump mode; the hardcore restart retries threaded while halted
+app/src/debug/op_ui.cpp     2   # opStepFor inputs: threaded steps through emu.advance (inline needs !attached && !inFrame)
+app/src/netplay_ui.cpp      1   # headless self-test step: advance(1) + pinSnapshot instead of runFrame
+app/src/netplay.cpp         1   # bounce count: one more emulated frame when threaded
+app/src/tv/tv_app_host.cpp  1   # TV Settings: the "Restart the app to apply" note
