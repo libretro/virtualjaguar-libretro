@@ -577,6 +577,17 @@ function Install-App([string]$Work) {
     $srcRoot = $exe.DirectoryName
     $backup = ''
     try {
+      # Portable mode stores settings/saves/user content in data/ beside the exe.
+      # Preserve it in the staged tree before moving the old installation, so a
+      # failed copy leaves the active installation intact. Include hidden files.
+      $oldData = Join-Path $dest 'data'
+      if (Test-Path -LiteralPath $oldData -PathType Container) {
+        $stagedData = Join-Path $srcRoot 'data'
+        New-Item -ItemType Directory -Force -Path $stagedData | Out-Null
+        Get-ChildItem -LiteralPath $oldData -Force -ErrorAction Stop | ForEach-Object {
+          Copy-Item -LiteralPath $_.FullName -Destination $stagedData -Recurse -Force -ErrorAction Stop
+        }
+      }
       New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
       if (Test-Path -LiteralPath $dest) {
         $backup = "$dest.bak"
