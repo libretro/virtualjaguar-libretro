@@ -100,8 +100,26 @@ public:
     // detach).  The same for a STEP in flight: pump() returned STEP (no serial bump, the bar stays up) and the frame
     // ended before the core re-halted (the stepped instruction ended it, or the target had stopped); the mirror would
     // otherwise stay "halted" and, inline, stepEmulation() (gated on halted()) would never run the frame that re-halts.
-    // A no-op when neither.
+    // A no-op when neither.  Also where a Detach decided inside a halt completes: detachPending() -> detach(), outside
+    // retro_run() (App puts the silent gdb host straight back when the stub is on).
     void frameEnded();
+
+    // ---- leaving a halt (#1069, #1081 M1) ------------------------------------------------------------------------
+    // The app never answers the pump with DETACH: inside GDBHalt() a dropped host lets a gdb client's still-armed Z0 park
+    // the core again with nobody to pump.  Emulation thread (a lane post: inside the pump while halted, else at a frame
+    // boundary).  Halted: offers CONTINUE for the live halt, and with `dropHost` marks the host to be dropped by
+    // frameEnded() -- unless a new halt begins first (pump() cancels it: that halt needs the host).  Not halted and
+    // `dropHost`: detaches now (outside retro_run).  Either way releaseSerial() becomes the current serial.  Returns
+    // whether a live halt was released.  The caller disarms the app's breakpoints first (DebugSession), so the frame
+    // can end even with one in a hot loop.
+    bool releaseHalt(bool dropHost);
+    bool detachPending() const { return detachAfterFrame_.load(); }   // any thread: a frame-end drop is owed
+    void keepHost() { detachAfterFrame_ = false; }   // emulation thread: an attach() superseded the owed drop (#1081 M6)
+    // The serial of the halt the last releaseHalt() found (or the serial it saw when none was live).  A call that
+    // follows a release gives up only on a halt NEWER than this: App::releaseForCall's predicate is
+    // `releaseSerial() >= s0 && halt().halted && halt().serial > releaseSerial()`, s0 the serial the UI mirrored, so a
+    // release still queued (serial < s0) is waited for, and the release of a step's re-halt is not a give-up.
+    uint64_t releaseSerial() const { return releaseSerial_.load(); }   // any thread
 
 private:
     static int haltPumpThunk(void* user, int target, unsigned pc);
@@ -114,6 +132,8 @@ private:
     std::atomic<bool> halted_{false};                    // mirrors halt_.halted (frameEnded's fast path)
     std::atomic<bool> stepping_{false};                  // pump() returned STEP and the core has not re-halted yet
     std::atomic<uint64_t> verdict_{0};                   // (forSerial << 2) | v; 0 = none
+    std::atomic<bool> detachAfterFrame_{false};          // releaseHalt(true) inside a halt: frameEnded() drops the host
+    std::atomic<uint64_t> releaseSerial_{0};             // see releaseSerial()
 
     std::atomic<const vj_debug_iface*> iface_{nullptr};
     std::atomic<bool> attached_{false};

@@ -61,6 +61,7 @@ void rebuildLibraryDirs(App& app) {
     app.cheats.rescan();
 }
 
+// Emulation thread only (retro_get_memory_* is a core call): its one caller, cheatsHeadlessCheck, runs inside App::emuCall.
 uint8_t* systemRam(size_t& size) {
     size = retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
     return (uint8_t*)retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);

@@ -11,7 +11,13 @@
 // then, each on a fresh rig: a gdb_wait boot halt with no client (10: Detach releases it; 11: stop() joins within 500 ms),
 // and 12: a gdb CLIENT holds a halt raised by a persistent breakpoint while the app quits (the quit epilogue's flush, unload
 // and stop() must all complete: a core that only dropped the app's host would re-hit the breakpoint and park behind the
-// open socket for good).
+// open socket for good).  13 (#1069): the same held breakpoint, and the app does Detach, then a Reset: the re-hit must stay
+// visible to the app (the host is never dropped from inside a halt) and the Reset call must return, not wait on a core
+// nobody pumps; then an app breakpoint survives a Reset (#1081 M1).  14: the #1069 Detach INLINE (EmuThread::Mode::Inline,
+// the pump runs the UI frame): the UI frame must run again after the Detach.
+//
+// Sections 13 and 14 wait only in bounded polls (until(): 2 ms rounds, 5 s worth; the client's own round count) and never
+// assert that something took under N ms: a hosted CI VM is slow, and the unfixed app does not finish, it hangs.
 //
 // usage: vj_debug_e2e_threaded <rom.j64>
 #include "core_host.h"
@@ -348,18 +354,21 @@ int main(int argc, char** argv) {
           fs::exists(stateFile2));   // no halt now: the save runs
     CHECK(!fs::exists(stateFile));
 
-    // 5. Detach-first: a content call after detachAndResume() runs within one frame and nothing re-halts.
+    // 5. Release-first: a content call after releaseHalt() (App::releaseForCall) runs within one frame and nothing re-halts
+    // (the breakpoint at pc1 -- revisited every frame -- is disarmed for the release).  The predicate is App's.
     CHECK(r.dbg.addBreakpoint(VJ_DBG_TARGET_M68K, pc1));
     CHECK(until(r, [&] { return r.dbg.halted(); }));   // pc1 is revisited: the inline e2e relies on the same
     CHECK(r.dbg.haltReason() == VJ_DBG_STOP_BREAKPOINT);
     const uint64_t s5 = r.dbg.haltSerial();
-    ui("detach", [&] { r.dbg.detachAndResume(); });
+    ui("release", [&] { r.dbg.releaseHalt(); });
     const auto t5 = Clock::now();
     CHECK(r.emu.call([&] { return r.host.loadContent(rom, err); },
                      [&] {
+                         const uint64_t rel = r.dbg.core().releaseSerial();
                          const HaltState h = r.dbg.core().halt();
-                         return h.halted && h.serial != s5;
+                         return rel >= s5 && h.halted && h.serial > rel;
                      }));
+    r.dbg.rearmBreakpoints();   // what App does after the call: a no-op here, the core was swapped
     CHECK(since(t5) < 0.5);
     r.sync();
     CHECK(!r.dbg.halted() && !r.dbg.attached() && r.dbg.breakpoints().empty());   // syncCore forgets the list on the core swap
@@ -388,9 +397,9 @@ int main(int argc, char** argv) {
     ui("resume", [&] { r.dbg.resume(); });
     CHECK(until(r, [&] { return !r.dbg.halted(); }));
 
-    // 8. A posted lane detach that runs inside a live halt (the B1 carry): the UI's mirror has not seen the halt yet, so
-    // detach() takes the lane branch; the pump serves the post, and the post offers DETACH for the halt it finds.  Nothing
-    // below calls sync() until the core is halted, which is what keeps the mirror stale.
+    // 8. A posted lane detach that runs inside a live halt (the B1 carry): the UI's mirror has not seen the halt yet; the
+    // pump serves the post, which answers CONTINUE for the halt it finds (never DETACH: #1069) and leaves the host for the
+    // frame end.  Nothing below calls sync() until the core is halted, which is what keeps the mirror stale.
     ui("breakNow", [&] { r.dbg.breakNow(); });
     {
         const auto end = Clock::now() + std::chrono::seconds(5);
@@ -406,6 +415,7 @@ int main(int argc, char** argv) {
     const uint64_t f8 = r.host.frameCount();
     CHECK(until(r, [&] { return r.host.frameCount() > f8 + 3; }));   // the game runs on, nothing re-halts
     CHECK(!r.dbg.core().halt().halted);
+    CHECK(until(r, [&] { return !r.dbg.core().attached() && !r.dbg.core().detachPending(); }));   // dropped at the frame end
 
     // The main rig ends here (not halted); sections 9-11 each use a fresh rig and thread.
     CHECK(r.emu.callFor(std::chrono::milliseconds(3000), [&] { r.host.unloadContent(); }));
@@ -449,10 +459,11 @@ int main(int argc, char** argv) {
         const uint64_t fb = q.host.frameCount();
         sleepMs(100);
         CHECK(q.host.frameCount() == fb && q.dbg.halted());   // parked until someone resumes it
-        ui("detach", [&] { q.dbg.detachAndResume(); });
+        ui("detach", [&] { q.dbg.detach(); });
         CHECK(until(q, [&] { return !q.dbg.halted(); }));
         CHECK(until(q, [&] { return q.host.frameCount() > fb + 5; }));
         CHECK(!q.dbg.core().halt().halted);
+        CHECK(until(q, [&] { return !q.dbg.core().attached(); }));   // the host went at the frame end (no client: no re-halt)
         q.quitting = true;
         CHECK(q.emu.callFor(std::chrono::milliseconds(3000), [&] { q.host.unloadContent(); }));
         CHECK(q.emu.stop());
@@ -525,6 +536,189 @@ int main(int argc, char** argv) {
         CHECK(q.emu.stop(std::chrono::milliseconds(1500)));
         CHECK(since(t12) < 2.0);
         gc.close();
+        q.unwire();
+        q.host.resetOptionToDefault("virtualjaguar_gdb_stub");
+        q.host.resetOptionToDefault("virtualjaguar_gdb_wait");
+        q.host.resetOptionToDefault("virtualjaguar_gdb_port");
+    }
+
+    // 13. #1069: a gdb CLIENT holds a halt at its own persistent breakpoint (the hot loop again) and the user presses Detach,
+    // then Reset.  The Detach must not drop the app's host from inside the halt: the core would hit the still-armed
+    // breakpoint again at once and park behind the open socket with nobody to pump, the mirror would read "not halted" and
+    // every frame-lane call (the Reset) would wait until gdb continues.  Required: the re-hit shows up in the mirror as a
+    // new halt by gdb, the Reset call returns (it gives up: gdb holds the game), and once gdb removes its breakpoint and
+    // continues, the game runs on with the host still attached and a Reset runs.  Then #1081 M1: the app's own breakpoint
+    // survives a Reset -- the halt is released for the call and the list is re-armed before the first frame after it.
+    {
+        Rig q;
+        q.host.setDirectories(t + "system/", t + "saves/");
+        const std::string port = freePort();
+        q.host.setOptionValue("virtualjaguar_gdb_stub", "enabled");
+        q.host.setOptionValue("virtualjaguar_gdb_wait", "enabled");
+        q.host.setOptionValue("virtualjaguar_gdb_port", port);
+        q.wire();
+        CHECK(q.emu.start(EmuThread::Mode::Threaded, q));
+        CHECK(q.loadAttached(rom, err));
+        CHECK(until(q, [&] { return q.dbg.halted(); }));   // the gdb_wait boot halt
+        GdbClient gc;
+        CHECK(gc.connectTo(port));
+        gc.send("qSupported:multiprocess+");
+        sleepMs(50);
+        gc.send("Z0,8021c4,2");
+        sleepMs(50);
+        gc.send("c");
+        CHECK(until(q, [&] { return q.dbg.halted() && q.dbg.haltedPc() == 0x8021C4u; }));
+        CHECK(q.dbg.haltByGdb());
+        const uint64_t s13 = q.dbg.haltSerial();
+        // Detach while gdb holds the halt (what the halt bar's Detach does).
+        ui("detach", [&] { q.dbg.detach(); });
+        // The core continues and hits gdb's breakpoint again at once: the app must see THAT halt (a host-less park never
+        // reaches the mirror, and this poll runs out).
+        CHECK(until(q, [&] { return q.dbg.halted() && q.dbg.haltSerial() != s13 && q.dbg.haltByGdb(); }));
+        CHECK(q.dbg.breakpoints().empty());
+        CHECK(q.dbg.core().attached());   // the host stayed: it is what makes the halt visible
+        // Reset after the Detach (App::reset = App::callReleased: releaseHalt, then a frame-lane call with App::releaseForCall's
+        // predicate).  It must return: gdb holds the game, so it gives up and never runs -- a UI that waits here is the bug.
+        const uint64_t s13b = q.dbg.haltSerial();
+        ui("release", [&] { q.dbg.releaseHalt(); });
+        std::atomic<bool> returned{false}, ran13{false};
+        std::thread caller([&] {
+            q.emu.call(
+                [&] {
+                    ran13 = true;
+                    q.host.reset();
+                    q.dbg.rearmBreakpoints();
+                },
+                [&] {
+                    const uint64_t rel = q.dbg.core().releaseSerial();
+                    const HaltState h = q.dbg.core().halt();
+                    return rel >= s13b && h.halted && h.serial > rel;
+                });
+            q.dbg.rearmBreakpoints();
+            returned = true;
+        });
+        CHECK(until(q, [&] { return returned.load(); }));
+        if (!returned.load()) {   // the unfixed app: free the caller so the test can finish and report
+            gc.send("z0,8021c4,2");
+            gc.send("c");
+        }
+        caller.join();
+        CHECK(!ran13.load());
+        // gdb removes its breakpoint and continues: the frame ends, the game runs on, and the host is still there (the new
+        // halt cancelled the Detach's deferred drop: the app keeps seeing gdb's halts).
+        gc.send("z0,8021c4,2");
+        gc.send("c");
+        CHECK(until(q, [&] { return !q.dbg.halted(); }));
+        const uint64_t f13 = q.host.frameCount();
+        CHECK(until(q, [&] { return q.host.frameCount() > f13 + 5; }));
+        CHECK(q.dbg.core().attached());
+        bool ran13b = false;
+        CHECK(q.emu.call(
+            [&] {
+                ran13b = true;
+                q.host.reset();
+                return true;
+            },
+            [&] { return q.dbg.core().halt().halted; }));
+        CHECK(ran13b);
+        CHECK(until(q, [&] { return q.host.frameCount() > f13 + 10; }));
+        // #1081 M1: the app's own breakpoint (the same hot address) survives a Reset.  The halt is released for the call,
+        // the list stays, and it is re-armed inside the call -- so the hot loop halts the fresh run at the same address and
+        // the mirror knows the breakpoint as ours.
+        CHECK(q.dbg.addBreakpoint(VJ_DBG_TARGET_M68K, 0x8021C4u));
+        CHECK(until(q, [&] { return q.dbg.halted() && q.dbg.haltedPc() == 0x8021C4u; }));
+        CHECK(!q.dbg.haltByGdb());
+        const uint64_t s13c = q.dbg.haltSerial();
+        ui("release", [&] { q.dbg.releaseHalt(); });
+        bool ran13c = false;
+        q.emu.call(
+            [&] {
+                ran13c = true;
+                q.host.reset();
+                q.dbg.rearmBreakpoints();
+            },
+            [&] {
+                const uint64_t rel = q.dbg.core().releaseSerial();
+                const HaltState h = q.dbg.core().halt();
+                return rel >= s13c && h.halted && h.serial > rel;
+            });
+        q.dbg.rearmBreakpoints();
+        CHECK(ran13c);
+        CHECK(until(q, [&] { return q.dbg.halted() && q.dbg.haltSerial() != s13c && q.dbg.haltedPc() == 0x8021C4u; }));
+        CHECK(!q.dbg.haltByGdb() && q.dbg.breakpoints().size() == 1 && q.dbg.attached());
+        // Detach now (no gdb breakpoint armed): the list goes, the core runs on, the host is dropped at the frame end.
+        ui("detach", [&] { q.dbg.detach(); });
+        CHECK(until(q, [&] { return !q.dbg.halted(); }));
+        CHECK(q.dbg.breakpoints().empty());
+        CHECK(until(q, [&] { return !q.dbg.core().attached() && !q.dbg.core().detachPending(); }));
+        const uint64_t f13c = q.host.frameCount();
+        CHECK(until(q, [&] { return q.host.frameCount() > f13c + 5; }));
+        gc.close();
+        q.quitting = true;
+        CHECK(q.emu.callFor(std::chrono::milliseconds(3000), [&] { q.host.unloadContent(); }));
+        CHECK(q.emu.stop());
+        q.unwire();
+        q.host.resetOptionToDefault("virtualjaguar_gdb_stub");
+        q.host.resetOptionToDefault("virtualjaguar_gdb_wait");
+        q.host.resetOptionToDefault("virtualjaguar_gdb_port");
+    }
+
+    // 14. #1069 inline: the same Detach with the emulation on this thread (EmuThread::Mode::Inline; App's haltedFrame is the
+    // pump's runUiFrame).  A gdb client (its own thread) sets the breakpoint and continues; the UI frame that sees the halt
+    // presses Detach; the UI frame MUST run again for the re-hit (the unfixed app parks the core host-less inside retro_run
+    // and the window freezes until gdb continues).  The client ends the run by removing its breakpoint after a bounded wait.
+    {
+        Rig q;
+        q.host.setDirectories(t + "system/", t + "saves/");
+        const std::string port = freePort();
+        q.host.setOptionValue("virtualjaguar_gdb_stub", "enabled");
+        q.host.setOptionValue("virtualjaguar_gdb_wait", "enabled");
+        q.host.setOptionValue("virtualjaguar_gdb_port", port);
+        q.wire();
+        q.dbg.core().waitVerdict = nullptr;   // inline: the pump runs the UI frame (App::haltedFrame), not haltWait
+        std::atomic<int> phase{0};            // 0 waiting for gdb's halt, 1 Detach pressed, 2 the UI frame ran for the re-hit
+        int uiFrames = 0;
+        q.dbg.core().runUiFrame = [&] {
+            q.sync();
+            uiFrames++;
+            if (!q.dbg.halted() || q.dbg.haltedPc() != 0x8021C4u) return;   // the boot halt: gdb will continue it
+            if (phase.load() == 0) {
+                CHECK(q.dbg.haltByGdb());
+                phase = 1;
+                q.dbg.detach();   // Detach inside gdb's halt
+            } else if (phase.load() == 1) {
+                CHECK(q.dbg.haltByGdb());
+                phase = 2;        // the re-hit reached the UI: the host was kept
+            }
+        };
+        CHECK(q.emu.start(EmuThread::Mode::Inline, q));
+        CHECK(q.loadAttached(rom, err));
+        GdbClient gc;
+        CHECK(gc.connectTo(port));
+        std::atomic<bool> uiStarved{false};
+        std::thread client([&] {
+            gc.send("qSupported:multiprocess+");
+            sleepMs(50);
+            gc.send("Z0,8021c4,2");
+            sleepMs(50);
+            gc.send("c");   // ends the boot halt; the hot loop then halts at the breakpoint, the UI frame presses Detach
+            // Bounded poll (rounds, not a stopwatch) for the UI frame that follows the Detach.
+            for (int i = 0; i < 2500 && phase.load() < 2; i++) sleepMs(2);
+            if (phase.load() < 2) uiStarved = true;
+            gc.send("z0,8021c4,2");   // the client lets go: the frame can end
+            gc.send("c");
+        });
+        // The story happens inside the frame that hits the breakpoint (the boot halt, gdb's continue, the hot loop); a frame or
+        // two may pass first.  Bounded in frames; the client's own bound ends a frame the unfixed app would never leave.
+        for (int i = 0; i < 300 && phase.load() < 2 && !uiStarved.load(); i++) q.emu.inlineStep();
+        client.join();
+        CHECK(!uiStarved.load());
+        CHECK(phase.load() == 2);
+        CHECK(uiFrames >= 2);
+        q.sync();
+        CHECK(!q.dbg.halted() && q.dbg.breakpoints().empty());
+        gc.close();
+        q.host.unloadContent();
         q.unwire();
         q.host.resetOptionToDefault("virtualjaguar_gdb_stub");
         q.host.resetOptionToDefault("virtualjaguar_gdb_wait");

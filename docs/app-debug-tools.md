@@ -29,17 +29,44 @@ All calls are made on the thread that runs `retro_run()` (the UI thread inline, 
    Every processor is frozen exactly where it stopped.
 2. With an app host attached, `GDBHalt()` calls the host's `halt_pump` every iteration.  Threaded, the pump
    (`DebugCore::pump`) serves the debug lane, waits at most 4 ms and returns NONE, so the core's own loop keeps the gdb socket and
-   the halt timeout; the UI mirrors the halt once per frame (`DebugSession::syncHalt`) and its verdict (continue F9, step F10,
-   detach) is tagged with the halt serial it saw, so a verdict for a halt that is gone is dropped.  Inline the pump runs one UI
+   the halt timeout; the UI mirrors the halt once per frame (`DebugSession::syncHalt`) and its verdict (continue F9, step F10)
+   is tagged with the halt serial it saw, so a verdict for a halt that is gone is dropped (Detach and the content commands
+   are lane posts that decide on the core's real state: "One rule for leaving a halt" below).  Inline the pump runs one UI
    frame (`App::haltedFrame()`: events, ImGui, present -- no emulation step) as before.  A halt gdb or the halt timeout ends is
    closed by `frameEnded()` after the frame, and a STEP the core never re-halted (the stepped instruction ended the frame) is
    closed the same way.
 3. While parked, anything that would re-enter the core is held or refused.  Frame-lane commands (option changes, cheats,
-   controller, SRAM autosave) wait in the queue and apply after Continue; the halt bar and the Core options tab say so.  Save/load
-   state and boot refuse with a toast.  Open, close, reset and disc changes detach first (threaded) and then proceed (quit just resumes the core, below);
+   controller, SRAM autosave) wait in the queue and apply after Continue; the halt bar and the Core options tab say so (the
+   periodic ones -- the SRAM autosave, the achievements idle -- are coalesced to one queued post each, so a long halt cannot
+   grow the queue).  Save/load
+   state and boot refuse with a toast.  Open, close, reset and disc changes release the halt first (threaded, the rule below) and then proceed (quit just resumes the core, below);
    inline they keep refusing.  Every UI call into the core (`EmuThread::call`, `advance`) gives up when a halt begins, so
    the window never waits on a parked core.  Audio is paused and cleared on the way out.  Closing the window while halted
    resumes the core (`beginQuit()` ends the pump within one wait; the pump answers CONTINUE and the host stays attached until the content unloads, so a gdb breakpoint that is still armed cannot re-park the core behind a socket with nobody to release it).
+
+**One rule for leaving a halt (#1069, #1081 M1).**  A halt is only ever released with CONTINUE, and the app's host stays
+attached while the core is inside `retro_run()`.  The app never answers the pump with DETACH: a DETACH drops the host
+*inside* `GDBHalt()`, and when a gdb client's own `Z0` breakpoint is still armed the core hits it again at once and parks
+behind the open socket with nobody to pump -- the mirror then reads "not halted", a threaded call waits until gdb continues,
+and inline the window freezes.  So, threaded and inline alike:
+
+- **Detach** (the halt bar, the Tools menu, the macOS menu; hardcore does the same): the app's breakpoint list is dropped, its
+  entries are disarmed in the core, the pump answers CONTINUE, and the host itself is dropped by `frameEnded()` once the
+  frame is over -- outside `retro_run()`, where the silent gdb host is put straight back if the stub is on.  If the core
+  halts again before the frame ends (only gdb can cause that now: the app's breakpoints are gone), that halt needs the
+  host, so the pending drop is cancelled and the bar shows "HALTED by gdb".  A Break or a new breakpoint before the drop
+  has happened keeps the host too (the attach supersedes the drop): Detach, then Break, just works.
+- **Reset, Open, Close, a disc change** (`App::releaseForCall`): the same release, but the list and the host are kept.  The
+  enabled breakpoints are disarmed so the frame can end even with one in a hot loop, the command runs at the frame
+  boundary, and the list is re-armed before the first frame after it (inside the same emulation-thread call for Reset and
+  the disc commands, so a breakpoint on boot code fires after a Reset).  Open and Close replace the core, and the list is
+  per game, so there is nothing to re-arm; a command that gave up (gdb halted the game again) re-arms from the UI thread.
+- The call that follows a release gives up only on a halt NEWER than the one released (`DebugCore::releaseSerial()`), so a
+  Detach made while a step is in flight waits for the step's re-halt to be released instead of giving up on it.
+- A halt gdb's client holds is released the same way (the app and gdb share the halt: whoever answers first wins); a `Z0`
+  in a hot loop then halts again, the content command gives up with "the debugger halted the game again", and the halt bar
+  shows it.  Delete the breakpoint in gdb (or continue there) and retry.
+- Quitting is unchanged: `abortHalt` answers CONTINUE on every pump until the frame ends and the unload drops the host.
 4. Turning RetroAchievements **hardcore** on (from anywhere, including inside a halt) detaches, resumes and closes every
    tool; the Tools menu goes grey with the reason.
 
@@ -206,16 +233,18 @@ before the first frame.  Two consequences:
 
 - **`virtualjaguar_gdb_wait`** parks the boot even before a GDB client connects; the UI stays
   live, the halt bar shows it, and F9 (or **Detach**) continues.  A client that connects later asks `?` and gets `S05`.
-- **Detach debugger** drops every app breakpoint and the host, and with the stub still enabled the silent host comes back
-  one frame later (it re-attaches on the emulation thread before the next frame, so a gdb breakpoint is never missed).  Detach
+- **Detach debugger** drops every app breakpoint and, once the frame is over, the host; with the stub still enabled the
+  silent host comes back before the next frame (it re-attaches on the emulation thread, so a gdb breakpoint is never
+  missed).  Pressed while a gdb client holds a halt, it continues that halt ("One rule for leaving a halt" above): a `Z0`
+  the client left armed halts the core again at once, and the app shows that halt too.  Detach
   does not close the stub; turn the option off and reload for that.  Breakpoints you want after a Detach are set again.
 - **Quitting** resumes the core with the host kept attached (a gdb breakpoint hit again on the way out is answered
   at once), then closes the socket.  A **headless** run that gdb holds halted
   waits for the gdb client or a quit signal: SIGINT or SIGTERM ends it cleanly (exit 0, the socket closed); a second
   signal kills it at once, in case the core is wedged.
-- **Known limit (#967 follow-up):** while a gdb client holds a halt at a breakpoint it set with `Z0`, an app Detach (or
-  an open, close, reset or disc change, which detach first) drops the app's host, and the breakpoint can park the core
-  again with no host. The app then waits until gdb continues or disconnects. Continue or detach in gdb first.
+- **While halted, `rc_client_idle` does not run** (it is a frame-lane post, coalesced to one in the queue): the
+  RetroAchievements pings and retries resume after Continue.  A halted game is not being played, hardcore never
+  coexists with a halt (it locks the stub and detaches), and nothing is evaluated on frozen memory, so nothing is lost.
 
 ## Cost when you are not looking
 
@@ -234,8 +263,11 @@ threaded give the same Dram view).
 
 The halt on the emulation thread: `emu_thread_unit` (`testCallGivesUp`, `testAdvanceGivesUp`, `testServeDebugLane`),
 `emu_commands_unit` (`testDebugLaneWait`) and `debug_e2e_threaded` (the real core on a threaded `EmuThread`, wired as `App`
-wires it: break, step, continue, detach, hardcore and quit mid-halt, every UI operation within 50 ms while the core is parked, and
-the 3 s join).  The GDB stub: `gdb_threaded_halt` (a gdb client finds the headless app halted at boot, reads memory and
+wires it: break, step, continue, detach, hardcore and quit mid-halt, every UI operation within 50 ms while the core is parked,
+the 3 s join, and -- sections 13 and 14 -- a Detach and a Reset while a gdb client holds a `Z0` halt in a hot loop, threaded
+and inline: the re-hit stays visible, the Reset returns, an app breakpoint survives a Reset).  `debug_session_unit` pins the
+rule against the mock (a Detach inside a halt answers CONTINUE and drops the host at the frame end, a new halt cancels the
+drop, a release keeps and re-arms the list, the release serial).  The GDB stub: `gdb_threaded_halt` (a gdb client finds the headless app halted at boot, reads memory and
 continues; SIGTERM mid-halt exits cleanly; `gdb_inline_halt(_hardcore)` run the same inline), `debug_on_threaded`,
 `gdb_enabled(_threaded)` (the silent host attaches at load), `gdb_hardcore_locked_*` and `gdb_hardcore_flip_*` (hardcore locks the
 stub; a mid-game flip reloads).

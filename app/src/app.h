@@ -188,16 +188,34 @@ public:
     // ---- calling into the emulation thread from the UI (#967 phase 3b) ---------------------------------------
     // A frame-lane call waits for a frame boundary, and a halted core never reaches one.  Every UI-thread call passes a
     // give-up (EmuThread::call): "not now", R(), as soon as the core is halted.  `emuCall` is the default; open / close /
-    // reset / disc swaps detach the debugger first (`detachForCall`) and proceed; save / load state and boot refuse.
+    // reset / disc swaps release the halt first (`releaseForCall`: CONTINUE, host and breakpoint list kept, the list
+    // re-armed after -- docs/app-debug-tools.md "One rule for leaving a halt") and proceed; save / load state and boot refuse.
     // RetroAchievements replies ride the debug lane instead (Achievements::coreCall).
     static constexpr const char* kHaltedToast = "The debugger has the game halted - resume it first (F9)";
     std::function<bool()> haltGiveUp() const {
         return [this] { return debug.core().halt().halted; };
     }
-    // Threaded and halted: asks the pump to detach (the verdict for the halt we saw) and returns a predicate that turns
-    // true only if the core halts AGAIN afterwards (a new serial), so the call that follows waits out the resume.
-    // Otherwise haltGiveUp().
-    std::function<bool()> detachForCall();
+    // Threaded and halted: releases the halt (DebugSession::releaseHalt) and returns a predicate that turns true only if
+    // the core halts AGAIN after that release (DebugCore::releaseSerial), so the call that follows waits out the resume
+    // -- and the release of a step's re-halt (#1081 M5).  Otherwise haltGiveUp().
+    std::function<bool()> releaseForCall();
+    // releaseForCall(), then `fn` on the emulation thread at the frame boundary, then the breakpoint list re-armed --
+    // inside the call, before the first frame after it (a breakpoint on boot code fires after a Reset), or from here when
+    // the call gave up.  Returns whether fn ran (false: the core halted again first; gdb holds it).  Reset and the disc commands.
+    template <class F>
+    bool callReleased(F&& fn) {
+        const std::function<bool()> giveUp = releaseForCall();
+        bool ran = false;
+        emu.call(
+            [&] {
+                ran = true;
+                fn();
+                debug.rearmBreakpoints();
+            },
+            giveUp);
+        debug.rearmBreakpoints();   // a no-op when the lambda did it (and inline, where nothing was disarmed)
+        return ran;
+    }
     template <class F>
     auto emuCall(F&& fn) -> decltype(fn()) {
         return emu.call(std::forward<F>(fn), haltGiveUp());
@@ -295,8 +313,8 @@ public:
 
     // ---- actions ----------------------------------------------------------------
     bool openContent(const std::string& path);
-    // Write this game's auto-save when the policy allows (lib::shouldAutoSave).  `giveUp`: detachForCall()'s predicate when
-    // the caller has just asked a halted debugger to detach -- the save then waits out the resume instead of refusing.
+    // Write this game's auto-save when the policy allows (lib::shouldAutoSave).  `giveUp`: releaseForCall()'s predicate when
+    // the caller has just released a halt -- the save then waits out the resume instead of refusing.
     bool autoSave(const std::function<bool()>& giveUp = {});
     void offerResume();               // a game booted: load / ask / nothing, by the policy and the option
     void openAndLoadState(const std::string& path, int slot, const std::string& stateDisc = "");   // the library: open `path`, then load its state `slot`
@@ -547,6 +565,7 @@ private:
     uint64_t fpsWindowFrames_ = 0;
     float fpsShown_ = 0;
     double lastSramFlush_ = 0;
+    std::atomic<bool> sramPosted_{false};   // threaded: one SRAM autosave post in flight at most (#1081 M2: a halt holds the lane)
     double lastTitle_ = 0;
 
     std::vector<Osd> osd_;

@@ -661,16 +661,19 @@ void App::beginQuit() {
     debug.syncHalt();
 }
 
-// Threaded and halted: ask the pump to detach (the verdict for the halt the UI mirrors) and return the give-up for the call
-// that follows -- true only if the core halts AGAIN afterwards (a new serial), so that call waits out the resume.  The
-// halt serial is read before the verdict is offered.  Inline, or not halted: the plain halt predicate.
-std::function<bool()> App::detachForCall() {
+// Threaded and halted: release the halt (a lane post: CONTINUE for the halt it finds, the list disarmed so the frame can
+// end, host and list kept) and return the give-up for the call that follows -- true only if the core halts AGAIN after
+// that release.  `s0` is the mirrored serial: the release has run once releaseSerial() >= s0 (a release still queued is
+// waited for, so a Detach made while a step is in flight is not given up on), and a halt newer than the released one
+// is the give-up.  Inline, or not halted: the plain halt predicate.
+std::function<bool()> App::releaseForCall() {
     if (!threaded() || !debug.halted()) return haltGiveUp();
-    const uint64_t s0 = debug.core().haltSerial();
-    debug.detachAndResume();
+    const uint64_t s0 = debug.haltSerial();
+    debug.releaseHalt();
     return [this, s0] {
+        const uint64_t rel = debug.core().releaseSerial();
         const HaltState h = debug.core().halt();
-        return h.halted && h.serial != s0;
+        return rel >= s0 && h.halted && h.serial > rel;
     };
 }
 
@@ -1115,7 +1118,7 @@ void App::haltedFrame() {
         // and a quit are released at once.  A halt gdb caused stays: returning keeps the core's 2 ms socket loop serving
         // gdb, which is what gdb_wait and a breakpoint set from gdb ask for (the client continues it).
         if (quitRequested()) quitting_.store(true);   // the pump's abortHalt answers CONTINUE (never DETACH: a gdb breakpoint may re-halt)
-        else if (!debug.haltByGdb()) debug.detachAndResume();
+        else if (!debug.haltByGdb()) debug.detach();   // (inline: the post runs now, inside the pump: CONTINUE, the host dropped at the frame end)
         return;
     }
     SDL_Event e;
@@ -1279,9 +1282,9 @@ bool App::openContent(const std::string& pathIn) {
     pendingStateSlot_ = kNoPendingSlot;   // a state load queued for the previous game does not follow to this one
     resumeOffer.active = false;
     const bool noResume = suppressResume_ || reloading_;
-    // Threaded and halted: detach first (the core resumes, breakpoints cleared), THEN save where the game was -- the
-    // auto-save waits out the resume instead of being skipped.
-    const std::function<bool()> giveUp = detachForCall();
+    // Threaded and halted: release the halt first (the core resumes), THEN save where the game was -- the auto-save waits
+    // out the resume instead of being skipped.
+    const std::function<bool()> giveUp = releaseForCall();
     if (!reloading_) autoSave(giveUp);    // leaving a running game for another: keep where it was
     for (std::string& f : biosOnce_) f.clear();   // a game is not a BIOS boot
     bootTarget_ = 0;
@@ -1290,6 +1293,7 @@ bool App::openContent(const std::string& pathIn) {
     // Everything that touches the core runs where the core lives: on the emulation thread at a frame boundary when
     // threaded (this thread waits), right here otherwise.
     const bool ok = emu.call([&] { return openContentOnCore(path, err, overrideErrors); }, giveUp);
+    debug.rearmBreakpoints();   // the list is per game (a no-op after the swap); back in the core if the old game stayed
     if (!ok && err.empty()) err = "the debugger halted the game again";
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
@@ -1367,10 +1371,11 @@ bool App::openNoContent() {
     input.clearHolds();                   // a hold or tap pulse in flight belongs to the previous game
     pendingStateSlot_ = kNoPendingSlot;   // booting a BIOS replaces the running game like opening another one does
     resumeOffer.active = false;
-    const std::function<bool()> giveUp = detachForCall();
+    const std::function<bool()> giveUp = releaseForCall();
     autoSave(giveUp);
     std::string err;
     const bool ok = emu.call([&] { return openNoContentOnCore(err); }, giveUp);
+    debug.rearmBreakpoints();   // see openContent
     if (!ok && err.empty()) err = "the debugger halted the game again";
     host.pinSnapshot();
     seenDiscSwaps_ = host.discSwaps();
@@ -1485,7 +1490,7 @@ void App::closeContent() {
     input.clearHolds();
     pendingStateSlot_ = kNoPendingSlot;
     resumeOffer.active = false;
-    const std::function<bool()> giveUp = detachForCall();
+    const std::function<bool()> giveUp = releaseForCall();
     autoSave(giveUp);
     bool ran = false;
     emu.call(
@@ -1502,6 +1507,7 @@ void App::closeContent() {
         },
         giveUp);
     if (!ran) {   // the debugger halted the game again before the call could run: still loaded
+        debug.rearmBreakpoints();   // the list was disarmed for the release: back in the core
         toast(kHaltedToast, 2.5, 2);
         return;
     }
@@ -1523,15 +1529,12 @@ bool App::reset() {
     }
     // A call, not a post: retro_reset can re-stage the CD BIOS, which the BIOS panel reads.
     // ach.onReset() drives rc_client (rc_client_reset raises events): on the emulation thread, with do_frame.
-    // Threaded and halted: detach first (the reset runs once the core resumes).
-    bool ran = false;
-    emu.call(
-        [this, &ran] {
-            ran = true;
-            host.reset();
-            ach.onReset();
-        },
-        detachForCall());
+    // Threaded and halted: release the halt first (the reset runs once the core resumes); the breakpoint list survives
+    // and is back in the core before the first frame after the reset (#1081 M1).
+    const bool ran = callReleased([this] {
+        host.reset();
+        ach.onReset();
+    });
     debug.requestRefresh();
     toast(ran ? std::string("Reset") : std::string(kHaltedToast), ran ? 3.0 : 2.5, ran ? 1 : 2);   // not run: halted again
     return ran;
@@ -1656,18 +1659,14 @@ bool App::addDisc(const std::string& path) {
     }
     int idx = -1;
     bool wasEjected = false, nowEjected = false;
-    bool ran = false;
-    emu.call(
-        [&] {
-            ran = true;
-            wasEjected = host.discInfo().ejected;
-            idx = host.discAppend(path);
-            // The same as picking it in File > Disc: with the tray closed this swaps at once, with it open the disc goes in
-            // when the tray closes.
-            if (idx >= 0) host.discSetIndex((unsigned)idx);
-            nowEjected = host.discInfo().ejected;
-        },
-        detachForCall());
+    const bool ran = callReleased([&] {
+        wasEjected = host.discInfo().ejected;
+        idx = host.discAppend(path);
+        // The same as picking it in File > Disc: with the tray closed this swaps at once, with it open the disc goes in
+        // when the tray closes.
+        if (idx >= 0) host.discSetIndex((unsigned)idx);
+        nowEjected = host.discInfo().ejected;
+    });
     if (!ran) {   // the debugger halted the game again before the call could run
         toast(kHaltedToast, 2.5, 2);
         return false;
@@ -1845,8 +1844,8 @@ bool App::saveState(int slot, bool quiet, const std::function<bool()>& giveUpIn)
         if (!quiet) toast("No game loaded");
         return false;
     }
-    // A save needs the core at a frame boundary; a halted core is not at one.  Refuse, unless the caller has just asked
-    // the debugger to detach (detachForCall's predicate: the save then waits for the resume).
+    // A save needs the core at a frame boundary; a halted core is not at one.  Refuse, unless the caller has just released
+    // the halt (releaseForCall's predicate: the save then waits for the resume).
     std::function<bool()> giveUp = giveUpIn;
     if (!giveUp) {
         if (debug.halted()) {
@@ -2564,8 +2563,14 @@ int App::runInteractive(const CliArgs& a) {
         desktopFrame();
         double t = now();
         if (autosaveSram && host.isLoaded() && t - lastSramFlush_ > 5.0) {
-            if (threaded()) emu.post([this] { host.flushSaveRam(); });   // on the emulation thread, never waited for
-            else host.flushSaveRam();
+            // Threaded: on the emulation thread, never waited for, and at most one post queued (#1081 M2: the frame lane is
+            // held for the whole of a debugger halt, so a periodic post must coalesce, not accumulate).
+            if (!threaded()) host.flushSaveRam();
+            else if (!sramPosted_.exchange(true))
+                emu.post([this] {
+                    sramPosted_ = false;
+                    host.flushSaveRam();
+                });
             lastSramFlush_ = t;
         }
         if (threaded()) {

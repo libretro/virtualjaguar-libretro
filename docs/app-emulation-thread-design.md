@@ -207,6 +207,16 @@ bounded (`autoSave` 1.5 s, the unload `callFor` 3 s, the `stop` join 3 s), and a
 of hanging. The silent gdb host is not hardcore-gated (it never halts anything by itself; the app's own `attach()` and `breakNow()`
 stay gated by `DebugSession::enabled()`), and `attachGdbHostOnCore` re-attaches it before each frame it is missing.
 
+*Amended 2026-10-24 (#1069, #1081): leaving a halt.* The app never answers the pump with DETACH: inside `GDBHalt()` a dropped
+host lets a gdb client's still-armed `Z0` park the core again with nobody to pump (threaded, every frame-lane call then waits for
+gdb; inline, the window freezes).  Every release is a CONTINUE with the host kept.  Detach disarms and drops the app's breakpoint
+list and defers the host drop to `DebugCore::frameEnded()` (outside `retro_run()`; a new halt before then cancels it); Reset,
+Open, Close and the disc commands (`App::releaseForCall`) disarm the enabled breakpoints for the release and re-arm them before
+the first frame after the command, so the list survives a Reset.  The give-up predicate of the call that follows fires only on a
+halt newer than the released one (`releaseSerial()`).  The periodic frame-lane posts (SRAM autosave, achievements idle) are
+coalesced to one in flight, so a long halt leaves the queue bounded; `rc_client_idle` does not run while halted.
+`docs/app-debug-tools.md`, "One rule for leaving a halt".
+
 **GDB TCP stub.** `GDBHalt`'s socket loop runs on the emulation thread, so a gdb session that holds the target halted no
 longer freezes the window (fixes the freeze found in #936). If both gdb and the app debugger are attached, the first
 verdict wins, as today. The halt timeout is unchanged.
