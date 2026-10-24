@@ -96,9 +96,11 @@ public:
         dbg.core().iface()->get_regs(target, &r);
         return r;
     }
-    // One emulated frame, then the UI frame's syncDebug(): the mirror sees what the frame left behind (App does this every frame).
+    // One emulated frame, then the UI frame's syncDebug(): frameEnded() closes a halt the core left on its own and completes a
+    // Detach's host drop, and the mirror sees what the frame left behind (App does both every frame).
     void frame() {
         host.runFrame();
+        dbg.core().frameEnded();
         dbg.syncHalt();
     }
     // Runs frames until `done()` or the budget is spent.
@@ -131,7 +133,7 @@ std::vector<Step> traceFromBoot(Rig& rig, int n) {
         Line l = disasmOne(rig.dbg.core().iface(), VJ_DBG_TARGET_M68K, r.pc);
         tr.push_back({r.pc, l.text, l.len, rig.dbg.haltReason()});
         if ((int)tr.size() < n) rig.ctl.stepIn(VJ_DBG_TARGET_M68K);
-        else rig.dbg.detachAndResume();
+        else rig.dbg.detach();
     };
     CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_M68K));
     rig.frame();
@@ -423,7 +425,7 @@ int main(int argc, char** argv) {
         int ui = 0;
         rig.onUi = [&] {
             ui++;
-            rig.dbg.detachAndResume();
+            rig.dbg.detach();
         };
         CHECK(rig.ctl.breakIn(VJ_DBG_TARGET_M68K));
         rig.frame();

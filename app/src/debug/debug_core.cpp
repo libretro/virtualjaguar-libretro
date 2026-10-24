@@ -45,6 +45,7 @@ void DebugCore::setIface(const vj_debug_iface* i) {
         }
         stepping_ = false;
         verdict_ = 0;
+        detachAfterFrame_ = false;   // the host it would drop is the old core's
     }
     iface_ = i;
     gen_++;
@@ -84,16 +85,21 @@ int DebugCore::takeVerdict(uint64_t serial) {
 
 int DebugCore::pump(int target, unsigned pc) {
     bool entered = false;
-    int reason = VJ_DBG_STOP_NONE;
+    // The reason is read before the lock (#1081 M4: no iface call under haltMu_).  halt_reason was appended after the
+    // first release of the struct: check `size` first.  Only used on a new halt; cheap otherwise.
+    int reason = VJ_DBG_STOP_BREAKPOINT;
+    {
+        const vj_debug_iface* ifc = iface();
+        if (ifc && ifc->size >= offsetof(vj_debug_iface, halt_reason) + sizeof(ifc->halt_reason) && ifc->halt_reason)
+            reason = ifc->halt_reason();
+    }
     uint64_t serial = 0;
     {
         std::lock_guard<std::mutex> l(haltMu_);
+        // A new halt is one at another (target, pc), or one begun while none was open.  Known fold (#1081 M3): a halt
+        // gdb resumed and a re-halt at the SAME pc inside the same frame (before frameEnded() closed the first) read as
+        // one halt: no second onHalt, same serial.  Benign -- the state the UI shows and a verdict's meaning are identical.
         if (!halt_.halted || halt_.target != target || halt_.pc != pc) {
-            reason = VJ_DBG_STOP_BREAKPOINT;
-            // halt_reason was appended after the first release of the struct: check `size` first.
-            const vj_debug_iface* ifc = iface();
-            if (ifc && ifc->size >= offsetof(vj_debug_iface, halt_reason) + sizeof(ifc->halt_reason) && ifc->halt_reason)
-                reason = ifc->halt_reason();
             halt_.halted = true;
             halt_.target = target;
             halt_.pc = pc;
@@ -102,6 +108,7 @@ int DebugCore::pump(int target, unsigned pc) {
             serial_ = halt_.serial;
             halted_ = true;
             stepping_ = false;   // the step (if that is what this is) landed
+            detachAfterFrame_ = false;   // a halt needs the host: the Detach already did its visible work (#1069)
             entered = true;
         }
         serial = halt_.serial;
@@ -145,7 +152,26 @@ int DebugCore::pump(int target, unsigned pc) {
     return v;
 }
 
+bool DebugCore::releaseHalt(bool dropHost) {
+    bool live = false;
+    uint64_t serial = 0;
+    {
+        std::lock_guard<std::mutex> l(haltMu_);
+        live = halt_.halted;
+        serial = halt_.serial;
+        releaseSerial_ = serial;
+        if (live && dropHost) detachAfterFrame_ = true;
+    }
+    if (live) {
+        offerVerdict(VJ_DBG_RESUME_CONTINUE, serial);   // never DETACH from inside the halt (see the header)
+    } else if (dropHost) {
+        detach();   // a lane post outside a halt runs at a frame boundary: outside retro_run()
+    }
+    return live;
+}
+
 void DebugCore::frameEnded() {
+    if (detachAfterFrame_.exchange(false)) detach();   // the Detach decided inside the halt completes here (#1069)
     if (!halted_.load() && !stepping_.load()) return;
     {
         std::lock_guard<std::mutex> l(haltMu_);

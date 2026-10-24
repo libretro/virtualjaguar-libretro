@@ -27,7 +27,7 @@ void DebugSession::postCore(std::function<void()> fn) {
 
 void DebugSession::dropHalt() {
     mirror_ = HaltState();
-    byGdb_ = userHaltPending_ = detachPending_ = attachedMirror_ = false;
+    byGdb_ = userHaltPending_ = attachedMirror_ = disarmed_ = false;
 }
 
 void DebugSession::onCoreIface(const vj_debug_iface* i) {
@@ -91,13 +91,13 @@ std::string DebugSession::disabledReason() const {
 }
 
 void DebugSession::syncHalt() {
-    // A detach we posted but the emulation thread has not run yet keeps the mirror false (attach() orders itself behind it).
-    if (detachQueued_.load() == 0) attachedMirror_ = core_.attached();
+    // A detach we posted but the emulation thread has not run yet, or whose frame-end host drop is still owed, keeps the
+    // mirror false (attach() orders itself behind it).
+    if (!detachPending()) attachedMirror_ = core_.attached();
     const HaltState h = core_.halt();
     if (h.serial == mirror_.serial) return;   // current; a STEP in flight keeps the bar up (the serial does not move)
     const bool was = mirror_.halted;
     mirror_ = h;
-    detachPending_ = false;                   // the pump took (or the core ended) the halt a DETACH verdict was for
     if (h.halted) {
         byGdb_ = h.reason == VJ_DBG_STOP_BREAKPOINT ? !hasBreakpoint(h.target, h.pc) && !(ownsBreakAt && ownsBreakAt(h.target, h.pc))
                                                     : !userHaltPending_;
@@ -115,18 +115,26 @@ void DebugSession::syncHalt() {
 
 // ---- attach / halt -------------------------------------------------------------------------------------------
 
-bool DebugSession::attach() {
-    if (!enabled() || detachPending_) return false;
-    if (attachedMirror_ && detachQueued_.load() == 0 && core_.attached()) return true;
-    // The core's table is rebuilt from the list on every attach: a by-value copy of the enabled entries.
+std::vector<DebugBreakpoint> DebugSession::enabledBreakpoints() const {
     std::vector<DebugBreakpoint> bps;
     for (const DebugBreakpoint& b : bps_)
         if (b.enabled) bps.push_back(b);
+    return bps;
+}
+
+bool DebugSession::attach() {
+    if (!enabled()) return false;
+    if (attachedMirror_ && !detachPending() && core_.attached()) return true;
+    // The core's table is rebuilt from the list on every attach: a by-value copy of the enabled entries.
+    const std::vector<DebugBreakpoint> bps = enabledBreakpoints();
     // Decided inside the lane lambda, so a detach queued before this call runs first (the lane is FIFO) and the table
-    // is rebuilt only when this call is the one that attached.
+    // is rebuilt only when this call is the one that attached.  A Detach decided inside a halt leaves the host for the
+    // frame end (#1069); an attach in that window supersedes the drop (#1081 M6: Detach, then Break, just works) -- the
+    // table was disarmed by the Detach and the list emptied, so there is nothing stale to keep.
     bool ok = false;
     callCore([this, bps, &ok] {
         const bool was = core_.attached();
+        if (was) core_.keepHost();
         ok = core_.attach();
         if (!ok || was) return;
         for (const DebugBreakpoint& b : bps) core_.breakSet(b.target, b.addr);
@@ -144,31 +152,51 @@ bool DebugSession::haltLive() const {
     return h.halted && h.serial == mirror_.serial;
 }
 
-void DebugSession::postDetach() {
-    detachQueued_++;
-    postCore([this] {
-        core_.detach();
-        detachQueued_--;
-        // Run by the halt pump's lane service while a halt is live (a detach that raced a re-halt): the host is gone, so
-        // let the pump go too instead of leaving the core parked behind a detached debugger.
-        const HaltState h = core_.halt();
-        if (h.halted) core_.offerVerdict(VJ_DBG_RESUME_DETACH, h.serial);
+// The post decides on the emulation thread with the core's real state, so a stale mirror (gdb continued, a STEP in
+// flight) and a post that raced a re-halt all land right: served inside the pump when a halt is live (disarm, then
+// CONTINUE), at a frame boundary otherwise.  It is queued unconditionally (it may follow a queued attach: the lane is FIFO).
+void DebugSession::postRelease(std::vector<DebugBreakpoint> bps, bool dropHost) {
+    if (dropHost) detachQueued_++;
+    postCore([this, bps, dropHost] {
+        // Inside a live halt: the list's entries must go before the CONTINUE, or one in a hot loop re-halts the core
+        // before the frame can end (and the host would never be dropped / the command never run).
+        if (core_.halt().halted)
+            for (const DebugBreakpoint& b : bps) core_.breakClear(b.target, b.addr);
+        core_.releaseHalt(dropHost);
+        if (dropHost) detachQueued_--;   // after releaseHalt: the frame-end drop (detachPending) takes over without a gap
     });
-    attachedMirror_ = false;
+    if (dropHost) attachedMirror_ = false;
 }
 
 void DebugSession::detach() {
-    clearBreakpointList();   // Detach clears every breakpoint (the core's table goes with the host)
-    if (haltLive()) {
-        detachAndResume();   // the core is parked inside the pump: the DETACH verdict lets it go (never iface->detach from here)
-        return;
-    }
-    // Running, a STEP in flight, or the mirrored halt already ended: a lane post, unconditionally (it may follow a queued attach).
-    postDetach();
+    std::vector<DebugBreakpoint> bps = enabledBreakpoints();
+    clearBreakpointList();   // Detach clears every breakpoint: the list now, the core's table in the post / the host drop
+    disarmed_ = false;       // nothing left to re-arm
+    postRelease(std::move(bps), true);
+}
+
+void DebugSession::releaseHalt() {
+    if (!core_.loaded()) return;
+    disarmed_ = true;   // the post disarms the enabled entries when it finds the core halted; rearmBreakpoints() restores them
+    postRelease(enabledBreakpoints(), false);
+}
+
+void DebugSession::rearmBreakpoints() {
+    if (!disarmed_) return;
+    // The command replaced the core (open / close / reload): the list is per game, syncCore() drops it and this flag; a
+    // breakSet now would arm the OLD game's addresses in the new core.
+    if (core_.ifaceGen() != seenGen_) return;
+    disarmed_ = false;
+    if (!core_.attached()) return;   // (a Detach meanwhile: the list is empty anyway; attach() rebuilds the table from the list)
+    const std::vector<DebugBreakpoint> bps = enabledBreakpoints();
+    if (bps.empty()) return;
+    postCore([this, bps] {
+        for (const DebugBreakpoint& b : bps) core_.breakSet(b.target, b.addr);   // idempotent in the core
+    });
 }
 
 void DebugSession::breakNow(int target) {
-    if (!enabled() || halted() || detachPending_) return;
+    if (!enabled() || halted()) return;
     if (target < 0 || target >= VJ_DBG_NUM_TARGETS) return;
     if (!attach()) return;
     userHaltPending_ = true;
@@ -176,24 +204,13 @@ void DebugSession::breakNow(int target) {
 }
 
 void DebugSession::resume() {
-    if (!detachPending_ && haltLive()) core_.offerVerdict(VJ_DBG_RESUME_CONTINUE, haltSerial());
+    if (!detachPending() && haltLive()) core_.offerVerdict(VJ_DBG_RESUME_CONTINUE, haltSerial());
 }
 
 void DebugSession::step() {
-    if (detachPending_ || !haltLive()) return;
+    if (detachPending() || !haltLive()) return;
     userHaltPending_ = true;
     core_.offerVerdict(VJ_DBG_RESUME_STEP, haltSerial());
-}
-
-void DebugSession::detachAndResume() {
-    if (!halted()) return;
-    clearBreakpointList();
-    if (!haltLive()) {   // a STEP in flight or a stale mirror: a verdict would be dropped; detach through the lane
-        postDetach();
-        return;
-    }
-    detachPending_ = true;
-    core_.offerVerdict(VJ_DBG_RESUME_DETACH, haltSerial());
 }
 
 // ---- breakpoints -------------------------------------------------------------------------------------------------
@@ -238,7 +255,7 @@ void DebugSession::setBreakpointEnabled(int target, unsigned addr, bool on) {
     for (DebugBreakpoint& b : bps_) {
         if (b.target != target || b.addr != addr || b.enabled == on) continue;
         b.enabled = on;
-        if (!core_.attached()) return;
+        if (!core_.attached() || disarmed_) return;   // disarmed for a release: rearmBreakpoints() sets what is enabled then
         postCore([this, target, addr, on] {
             if (on)
                 core_.breakSet(target, addr);
@@ -257,6 +274,7 @@ void DebugSession::clearBreakpointList() {
 }
 
 void DebugSession::clearBreakpoints() {
+    disarmed_ = false;   // nothing left to re-arm
     if (core_.attached()) {
         std::vector<DebugBreakpoint> bps = bps_;
         postCore([this, bps] {

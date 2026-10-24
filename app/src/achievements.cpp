@@ -469,9 +469,16 @@ void Achievements::pump() {
             if (mockMode() && app_->window())
                 for (uint64_t f = framesSeen_; f < ran; f++) headlessFrame(++mockFrames_);
             framesSeen_ = ran;
-        } else if (app_->now() - lastIdlePost_ > 1.0) {
+        } else if (!idlePosted_.load() && app_->now() - lastIdlePost_ > 1.0) {
+            // One post in flight at most (#1081 M2): the frame lane is held for the whole of a debugger halt, so a post per
+            // second would pile up there.  rc_client_idle simply does not run while halted: a halted game is not being
+            // played, hardcore never coexists with a halt, and the pings / retries resume after Continue.
             lastIdlePost_ = app_->now();
-            app_->emu.post([this] { emuIdle(); });
+            idlePosted_ = true;
+            app_->emu.post([this] {
+                idlePosted_ = false;
+                emuIdle();
+            });
         }
     }
     drainEvents();   // events raised by rc_client_idle and by completions delivered in this pump

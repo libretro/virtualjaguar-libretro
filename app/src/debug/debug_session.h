@@ -9,13 +9,15 @@
 // coreCall (waits) or corePost (fire and forget), which App wires to the emulation thread's debug lane.  Both are
 // empty inline (headless, tests), and the action then runs right where it is called: same code, one thread.
 //   UI thread only:  bps_, regions_, tools_, providers_, lastPokeError_, loaded_, hardcore_,
-//                    the halt mirror (mirror_, byGdb_, userHaltPending_, detachPending_,
-//                    attachedMirror_), seenGen_, hadCore_, and the public callbacks.  Exception: regions_ and lastPokeError_ may be written inside
-//                    a callCore lambda (regions() / poke() nested in a window's one-shot action) while the UI thread
+//                    the halt mirror (mirror_, byGdb_, userHaltPending_, disarmed_,
+//                    attachedMirror_), seenGen_, hadCore_, and the public callbacks.  Exception: regions_, lastPokeError_ and
+//                    disarmed_ may be written inside a callCore / emu.call lambda (regions() / poke() nested in a window's
+//                    one-shot action; rearmBreakpoints() inside App::callReleased) while the UI thread
 //                    waits in that call; the call's completion orders those writes before the UI reads them.
 //   any thread:      core() (its getters are atomics), views() (one mutex inside), refreshSerial() / requestRefresh().
 // The halt itself lives in DebugCore (phase 3b): the emulation thread's pump decides, the UI mirrors it once per UI frame
-// (syncHalt) and answers with a verdict tagged by the halt serial it saw (resume / step / detachAndResume).
+// (syncHalt) and answers with a verdict tagged by the halt serial it saw (resume / step); a Detach or a release is a lane
+// post that decides on the core's real state (detach / releaseHalt).
 // The windows never touch the core: they set() a request on views(), call wakeViews() and read() the buffer.
 #pragma once
 
@@ -119,20 +121,33 @@ public:
     // list; the CPU window answers whether one of them is armed at (target, pc), so a halt there is not "by gdb".  UI thread.
     std::function<bool(int target, unsigned pc)> ownsBreakAt;
     // Registers the halt pump with the core and re-arms the breakpoint list.  Idempotent; false if the
-    // tools are not enabled, the core refused, or a Detach is still in flight.  Decides inside the lane (a queued
-    // detach is ordered before it).  Tool windows that only peek/poke need no attach.
+    // tools are not enabled or the core refused.  Decides inside the lane (a queued detach is ordered before it; a Detach
+    // whose frame-end host drop is still owed is superseded: the host stays, #1081 M6).  Tool windows that only
+    // peek/poke need no attach.
     bool attach();
-    void detach();                       // halted: detachAndResume(); else a lane post that clears every breakpoint in the core
+    // Detach: drops the breakpoint list now and posts the rest to the lane.  The post runs at a frame boundary (the host
+    // and the core's table go) or, while the core is halted, inside the pump: then it disarms the list's entries in the
+    // core, answers CONTINUE and leaves the host for DebugCore::frameEnded() to drop -- never DETACH from inside the halt
+    // (#1069: a gdb client's armed Z0 would park the host-less core behind its socket).  docs/app-debug-tools.md, "One
+    // rule for leaving a halt".
+    void detach();
+    // The content commands while halted (#1081 M1; App::releaseForCall): the same release as detach(), but the list and
+    // the host are kept.  The enabled breakpoints are disarmed in the core so the frame can end, and rearmBreakpoints()
+    // puts them back after the command.  Threaded only (inline, a halted core refuses the commands anyway).
+    void releaseHalt();
+    // After releaseHalt(): re-arms the enabled entries in the core.  Idempotent; a no-op when nothing is disarmed or the
+    // command replaced the core (the list is per game: syncCore() drops it).  UI thread, or inside the emu.call the UI
+    // waits in (App::callReleased: before the first frame after a Reset).
+    void rearmBreakpoints();
     // The core's host is attached and no detach of ours is queued.  Current right after attach() / detach(); otherwise
     // refreshed by syncHalt().
     bool attached() const { return attachedMirror_ && core_.attached(); }
     // F9 / F10 and the CPU window's buttons.  breakNow() is "stop at the next instruction"; while halted
-    // resume() / step() / detachAndResume() write the verdict for the mirrored halt (honoured by the pump's next
-    // iteration; dropped when that halt already ended).
+    // resume() / step() write the verdict for the mirrored halt (honoured by the pump's next iteration; dropped when
+    // that halt already ended).
     void breakNow(int target = VJ_DBG_TARGET_M68K);
     void resume();
     void step();
-    void detachAndResume();
 
     // ---- breakpoints ----------------------------------------------------------------------------
     // The list is the source of truth (the core's table is rebuilt from it on every attach).
@@ -209,8 +224,14 @@ public:
 private:
     bool haltLive() const;   // the mirrored halt is the core's live halt (same serial, core parked in the pump)
     void clearBreakpointList();   // bps_.clear() + a refresh serial; Detach drops the list with the core's table
-    void postDetach();       // detachQueued_++, lane post of core_.detach(), attachedMirror_ = false
-    void dropHalt();   // mirror_ = {}; byGdb_ = userHaltPending_ = detachPending_ = attachedMirror_ = false
+    // The one lane post behind detach() (dropHost) and releaseHalt(): disarms `bps` in the core when it finds the core
+    // halted, then core_.releaseHalt(dropHost).  dropHost: detachQueued_ brackets the post, attachedMirror_ = false.
+    void postRelease(std::vector<DebugBreakpoint> bps, bool dropHost);
+    std::vector<DebugBreakpoint> enabledBreakpoints() const;
+    // A Detach is in flight: its post has not run, or the frame-end host drop is still owed (DebugCore::detachPending).
+    // Keeps the attached() mirror false and makes resume() / step() no-ops (the Detach already answered CONTINUE).
+    bool detachPending() const { return detachQueued_.load() > 0 || core_.detachPending(); }
+    void dropHalt();   // mirror_ = {}; byGdb_ = userHaltPending_ = attachedMirror_ = disarmed_ = false
 
     DebugCore core_;
     DebugViews views_;
@@ -223,7 +244,7 @@ private:
     bool attachedMirror_ = false;        // see attached()
     bool byGdb_ = false;
     bool userHaltPending_ = false;       // breakNow() / step() asked for a halt; the next halt edge consumes it
-    bool detachPending_ = false;         // a DETACH verdict is in flight: attach() / breakNow() refuse until the serial moves
+    bool disarmed_ = false;              // releaseHalt() disarmed the list in the core; rearmBreakpoints() owes the sets
     std::atomic<int> detachQueued_{0};   // detach() posts not yet run on the emulation thread
     std::vector<DebugBreakpoint> bps_;
     std::vector<DebugTool> tools_;

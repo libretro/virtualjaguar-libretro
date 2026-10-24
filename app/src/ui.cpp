@@ -644,14 +644,14 @@ void drawMenuBar(App& app) {
             // only Add disc image... shows until a disc is in it.
             if (disc.count > 0 && ImGui::MenuItem(disc.ejected ? "Close tray" : "Open tray", nullptr, false, canReenter)) {
                 const bool eject = !disc.ejected;
-                app.emu.call([&host, eject] { host.discSetEject(eject); }, app.detachForCall());   // halted: detach first
+                app.callReleased([&host, eject] { host.discSetEject(eject); });   // halted: release the halt first
             }
             if (ImGui::MenuItem("Add disc image...", nullptr, false, canReenter)) app.showDiscDialog();
             if (disc.count > 1 && ImGui::BeginMenu("Disc")) {
                 for (unsigned i = 0; i < disc.count; i++) {
                     ImGui::PushID((int)i);   // a multi-disc set can repeat a label
                     if (ImGui::MenuItem(disc.labels[i].c_str(), nullptr, disc.index == i, canReenter))
-                        app.emu.call([&host, i] { host.discSetIndex(i); }, app.detachForCall());
+                        app.callReleased([&host, i] { host.discSetIndex(i); });
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();

@@ -182,9 +182,11 @@ static void testHardcoreWhileHalted() {
     s.onForcedClose.push_back([&](const char* w) { why = w; });
     s.core().runUiFrame = [&] { s.syncHalt(); s.setHardcore(true); };   // the player turned hardcore on from inside the halt
     int v = m.simulateHalt(VJ_DBG_TARGET_M68K, 0x1234);
-    CHECK(v == VJ_DBG_RESUME_DETACH);
+    CHECK(v == VJ_DBG_RESUME_CONTINUE);   // never DETACH from inside a halt (#1069): the host goes at the frame end
     s.syncHalt();
-    CHECK(!m.attached() && !s.attached() && !s.halted());
+    CHECK(m.attached() && !s.attached() && !s.halted() && s.core().detachPending());
+    s.core().frameEnded();
+    CHECK(!m.attached() && !s.attached() && !s.core().detachPending());
     CHECK(why == "hardcore");
     CHECK(!s.enabled());
     CHECK(!s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x10));
@@ -199,18 +201,150 @@ static void testHardcoreWhileHalted() {
     CHECK(!m2.attached() && !s2.attached());
 }
 
-// Detach from inside a halt (the DETACH verdict) also drops the session's breakpoint list.
+// Detach from inside a halt (#1069, the rule in docs/app-debug-tools.md): the list goes, its entries are disarmed in the
+// core before the CONTINUE, the host stays until frameEnded() drops it, and the mirror reads detached meanwhile.
 static void testDetachWhileHaltedClearsList() {
     DebugSession s;
     MockDebugIface m;
     s.setIface(m.iface());
     s.setContentLoaded(true);
     CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && s.breakpoints().size() == 1);
-    s.core().runUiFrame = [&] { s.syncHalt(); s.detach(); };
-    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_DETACH);
+    int resumes = 0;
+    s.core().onResume.push_back([&] { resumes++; });
+    s.core().runUiFrame = [&] {
+        s.syncHalt();
+        s.detach();
+        CHECK(m.breakpoints.empty() && m.attached());   // (inline: the post ran now) disarmed, host kept
+        CHECK(!s.attached() && s.core().detachPending());
+    };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(resumes == 1 && m.attached() && m.detachCalls == 0 && s.core().detachPending());
     s.syncHalt();
-    CHECK(s.breakpoints().empty() && !s.attached() && m.breakpoints.empty());
+    CHECK(s.breakpoints().empty() && !s.attached() && !s.halted());
+    s.resume();
+    s.step();
+    CHECK(s.core().pendingVerdict() == VJ_DBG_RESUME_NONE);   // no-ops while the Detach is in flight (it answered CONTINUE)
+    s.core().frameEnded();        // retro_run() returned: the host goes here, outside the core
+    CHECK(!m.attached() && m.detachCalls == 1 && !s.core().detachPending());
+    s.syncHalt();
     CHECK(s.attach() && s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && m.breakpoints.size() == 1);   // and it can be set again
+}
+
+// #1069: a new halt before the frame ends (a gdb client's own breakpoint, re-hit at once) needs the host: the deferred drop
+// is cancelled, the halt reaches the mirror as gdb's, and frameEnded() later drops nothing.
+static void testNewHaltCancelsDeferredDetach() {
+    DebugSession s;
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.attach());
+    int haltUi = 0;
+    s.onHaltUi.push_back([&](int, unsigned, int) { haltUi++; });
+    s.core().runUiFrame = [&] { s.syncHalt(); s.detach(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(s.core().detachPending() && m.attached());
+    s.core().runUiFrame = [&] { s.syncHalt(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x5000, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);   // the re-hit
+    CHECK(!s.core().detachPending() && m.attached());
+    s.syncHalt();
+    CHECK(s.halted() && s.haltByGdb() && haltUi == 2 && s.attached());
+    s.core().frameEnded();   // (gdb continued) a foreign resume: still no drop
+    CHECK(m.attached() && m.detachCalls == 0);
+    s.syncHalt();
+    CHECK(!s.halted() && s.attached());
+}
+
+// #1081 M1: the content commands' release keeps the list and the host.  The enabled entries are disarmed so the frame can
+// end, rearmBreakpoints() puts them back (once; a disabled entry stays off), and a core swap in between drops both.
+static void testReleaseHaltKeepsListAndRearms() {
+    DebugSession s;
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4000) && s.addBreakpoint(VJ_DBG_TARGET_M68K, 0x4010));
+    s.setBreakpointEnabled(VJ_DBG_TARGET_M68K, 0x4010, false);
+    CHECK(m.breakpoints.size() == 1);
+    const uint64_t s0 = s.core().haltSerial();
+    s.core().runUiFrame = [&] {
+        s.syncHalt();
+        s.releaseHalt();
+        CHECK(m.breakpoints.empty() && m.attached());   // disarmed, host kept
+    };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(s.core().releaseSerial() == s0 + 1 && !s.core().detachPending());
+    s.syncHalt();
+    CHECK(!s.halted() && s.attached() && s.breakpoints().size() == 2);
+    s.setBreakpointEnabled(VJ_DBG_TARGET_M68K, 0x4010, true);   // toggled while disarmed: no early set
+    CHECK(m.breakpoints.empty());
+    s.rearmBreakpoints();
+    CHECK(m.breakpoints.size() == 2 && m.attachCalls == 1);   // the enabled entries, no re-attach
+    s.rearmBreakpoints();
+    CHECK(m.breakpoints.size() == 2);                        // idempotent
+    // A release with the core running (nothing live): records the current serial (the CONTINUE bumped it), keeps the host;
+    // rearm is a no-op.
+    s.releaseHalt();
+    CHECK(s.core().releaseSerial() == s0 + 2 && m.attached() && m.breakpoints.size() == 2);
+    s.rearmBreakpoints();
+    CHECK(m.breakpoints.size() == 2);
+    // The command replaced the core: the old list must not be armed in the new one.
+    s.core().runUiFrame = [&] { s.syncHalt(); s.releaseHalt(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_BREAKPOINT) == VJ_DBG_RESUME_CONTINUE);
+    MockDebugIface m2;
+    s.core().setIface(m2.iface());   // the emulation-thread half of the swap (the call the UI waits in)
+    s.rearmBreakpoints();            // what App does right after the call, before syncCore()
+    CHECK(m2.breakpoints.empty() && !m2.attached());
+    s.syncCore();
+    CHECK(s.breakpoints().empty());
+    s.setContentLoaded(false);
+}
+
+// #1081 M5: the give-up predicate of the call that follows a release (App::releaseForCall).  A release made against the
+// mirror while a STEP is in flight runs at the step's re-halt and releases THAT halt; the predicate waits for the release
+// (releaseSerial() < s0) instead of giving up on the re-halt, and fires only on a halt newer than the released one.
+static void testReleaseSerialAndStepInFlight() {
+    DebugSession s;
+    MockDebugIface m;
+    s.setIface(m.iface());
+    s.setContentLoaded(true);
+    CHECK(s.attach());
+    std::vector<std::function<void()>> lane;
+    s.corePost = [&](std::function<void()> fn) { lane.push_back(std::move(fn)); };
+    const auto drain = [&] {
+        for (auto& f : lane) f();
+        lane.clear();
+    };
+    s.core().waitVerdict = [&] { s.syncHalt(); s.step(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    s.syncHalt();
+    const uint64_t s0 = s.haltSerial();
+    CHECK(s.halted() && !s.core().halt().halted);   // STEP in flight
+    s.releaseHalt();                                // the user pressed Reset against the mirrored halt
+    const auto giveUp = [&] {
+        const uint64_t rel = s.core().releaseSerial();
+        const HaltState h = s.core().halt();
+        return rel >= s0 && h.halted && h.serial > rel;
+    };
+    CHECK(!giveUp());                               // the release is still queued: wait
+    s.core().waitVerdict = [&] { drain(); };        // the step re-halts; the pump serves the lane: the post releases it
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(s.core().releaseSerial() == s0 + 1 && !giveUp());   // the re-halt was the released one, not a give-up
+    s.core().waitVerdict = [] {};
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4004, VJ_DBG_STOP_BREAKPOINT, 1) == VJ_DBG_RESUME_NONE);   // gdb's
+    CHECK(giveUp());                                // a halt newer than the released one
+    s.core().frameEnded();
+    // A step that never re-halts: frameEnded() closes it before the boundary drains the post; the post finds the core
+    // running, records the serial, and the predicate lets the call through.
+    s.core().waitVerdict = [&] { s.syncHalt(); s.step(); };
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4006, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_STEP);
+    s.syncHalt();
+    const uint64_t s1 = s.haltSerial();
+    s.releaseHalt();
+    s.core().frameEnded();
+    drain();
+    CHECK(s.core().releaseSerial() == s1 + 1 && m.attached());
+    const uint64_t rel = s.core().releaseSerial();
+    const HaltState h = s.core().halt();
+    CHECK(rel >= s1 && !h.halted);
 }
 
 static void testPokePolicy() {
@@ -794,9 +928,11 @@ static void testSessionVerdictsReachCore() {
     s.core().waitVerdict = [&] { s.syncHalt(); s.step(); };   // the UI thread, one frame later
     CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_STEP);
     CHECK(notifies == 1);
-    s.core().waitVerdict = [&] { s.syncHalt(); s.detach(); };   // Detach while halted = the DETACH verdict
-    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP) == VJ_DBG_RESUME_DETACH);
-    CHECK(notifies == 2 && !m.attached());
+    s.core().waitVerdict = [&] { s.syncHalt(); s.detach(); };   // Detach while halted = CONTINUE, the host dropped at the frame end
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(notifies == 2 && m.attached() && s.core().detachPending());
+    s.core().frameEnded();
+    CHECK(!m.attached());
     s.syncHalt();
     CHECK(!s.attached() && !s.halted());
 }
@@ -884,8 +1020,8 @@ static void testStaleVerdictDropped() {
     CHECK(!s.halted());
 }
 
-// Hardcore from the UI while halted: the DETACH verdict (never iface->detach on the UI thread); while running: a lane
-// post.  Inline (corePost empty) the post runs now.
+// Hardcore from the UI while halted: a lane post the pump serves (never iface->detach on the UI thread, never a DETACH
+// verdict); while running: the same post, run at the boundary.  Inline (corePost empty) the post runs now.
 static void testHardcoreGoesThroughTheLane() {
     DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
     int posts = 0;
@@ -895,24 +1031,35 @@ static void testHardcoreGoesThroughTheLane() {
     s.setHardcore(false);
     CHECK(s.attach() && s.attached());
     s.core().waitVerdict = [&] { s.syncHalt(); s.setHardcore(true); };
-    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_DETACH);
-    CHECK(posts == 1 && !m.attached() && !s.attached());   // the verdict, not a second post
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000) == VJ_DBG_RESUME_CONTINUE);
+    CHECK(posts == 2 && m.attached() && !s.attached() && s.core().detachPending());   // the post; the host goes at the frame end
+    s.core().frameEnded();
+    CHECK(!m.attached());
 }
 
-// Carried from 3a: while a DETACH verdict is in flight, attach() and breakNow() refuse; once the halt serial moved
-// (the pump took the detach) they work again.  A detach posted while running is ordered before a later attach by the lane.
+// #1081 M6: a Detach whose frame-end host drop is still owed is superseded by the next attach() (Detach, then Break):
+// the host stays, nothing is refused, and frameEnded() then drops nothing.  Inside the halt itself breakNow() is a no-op
+// (the mirror says halted) until the UI has seen the resume.  A detach posted while running is ordered before a later
+// attach by the lane.
 static void testAttachWhileDetachPending() {
     DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
     s.core().waitVerdict = [] {};
     CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER, 1) == VJ_DBG_RESUME_NONE);
     s.syncHalt();
-    s.detachAndResume();
-    CHECK(!s.attach());
+    s.detach();
+    CHECK(!s.attached() && s.core().detachPending());
     s.breakNow();
-    CHECK(m.haltNexts.empty());
-    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_DETACH);
+    CHECK(m.haltNexts.empty());   // the mirror still says halted: "already halted"
+    CHECK(m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4000, VJ_DBG_STOP_USER) == VJ_DBG_RESUME_CONTINUE);
     s.syncHalt();
-    CHECK(!s.halted() && !s.attached());
+    CHECK(!s.halted() && !s.attached() && m.attached() && s.core().detachPending());
+    s.breakNow();                 // Detach, then Break: the attach inside supersedes the owed drop
+    CHECK(m.haltNexts.size() == 1 && s.attached() && !s.core().detachPending() && m.attachCalls == 1);
+    s.core().frameEnded();
+    CHECK(m.attached() && m.detachCalls == 0);
+    s.detach();                   // running: the host goes now
+    CHECK(!m.attached());
+    s.syncHalt();
     CHECK(s.attach() && s.attached() && m.attached());
     // Running: a queued detach lands before the attach that follows it (both on the lane, in order).
     std::vector<std::function<void()>> lane;
@@ -962,8 +1109,8 @@ static void testStepWithoutRehaltClosesAtFrameEnd() {
 }
 
 // Detach with a halt that is not the core's live halt: a STEP in flight (the serial is unchanged but the core is
-// running) or a mirror that lags a foreign resume.  A DETACH verdict would be dropped by the next halt's serial and leave
-// detachPending_ set, so the detach goes through the lane; and hardcore must really end up detached.
+// running) or a mirror that lags a foreign resume.  The detach is a lane post that decides on the core's real state (here:
+// not halted, so the host goes at once); nothing is left pending, and hardcore must really end up detached.
 static void testDetachWithoutLiveHalt() {
     DebugSession s; MockDebugIface m; s.setIface(m.iface()); s.setContentLoaded(true); CHECK(s.attach());
     std::vector<std::function<void()>> lane;
@@ -978,7 +1125,7 @@ static void testDetachWithoutLiveHalt() {
     for (auto& f : lane) f();
     lane.clear();
     CHECK(!s.core().attached());
-    // The step's re-halt arrives: the new halt is not blocked by a stale detachPending_.
+    // The step's re-halt arrives: the new halt is not blocked by a stale detach-pending state.
     s.core().waitVerdict = [] {};
     m.simulateHalt(VJ_DBG_TARGET_M68K, 0x4002, VJ_DBG_STOP_STEP, 1);
     s.syncHalt();
@@ -1022,6 +1169,9 @@ int main() {
     testHaltResume();
     testHardcoreWhileHalted();
     testDetachWhileHaltedClearsList();
+    testNewHaltCancelsDeferredDetach();
+    testReleaseHaltKeepsListAndRearms();
+    testReleaseSerialAndStepInFlight();
     testBoundedPumpReturnsNone();
     testDetachEndsPumpWithinOneWait();
     testStepSerialAndReason();
