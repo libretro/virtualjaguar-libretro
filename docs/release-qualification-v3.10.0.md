@@ -46,7 +46,7 @@ active app. Ten new assertions fail against the original script.
 The fix copies portable user data into the staged replacement before moving the old
 installation. The expanded PowerShell suite passes 45 assertions locally under
 PowerShell 7.6.7. The POSIX suite passes 208 assertions across available shells.
-Native Windows PowerShell 5.1/7 evidence is required from the installer CI matrix.
+Native Windows PowerShell 5.1/7 installer CI also passed in #1059 and #1065.
 
 ## Repeatable published-download qualification
 
@@ -100,10 +100,9 @@ unchanged-release check. macOS RetroArch uses OpenGL: the local Cocoa frontend's
 null-video path crashes, while the OpenGL path runs and exits successfully.
 
 Hosted Linux qualification passed after correcting the Ubuntu 24.04 audio package
-name and authenticating release metadata requests. Hosted Intel Mac qualification
-reached the stapler check but Apple CloudKit returned an inconsistent/null response
-(error 68); it remains failed evidence pending a fresh strengthened run. No signing
-check is skipped to claim success.
+name and authenticating release metadata requests. An earlier Intel Mac attempt
+failed with an Apple CloudKit error 68; the strengthened clean Intel run subsequently
+passed. No signing check was skipped to claim success.
 
 The fresh Ubuntu 22.04.5 ARM64 VM also passed all 21 strengthened checks: actual
 v3.9.1 upgrades of core/app/both, changed payload hashes, RetroArch core runs,
@@ -116,13 +115,41 @@ The live website's POSIX and PowerShell copy/paste URLs and explicit `both` exam
 match the scripts. Both scripts expose explicit channel selection; qualification
 passes named baseline/candidate channels rather than relying on `latest`.
 
+## Completed hosted qualification
+
+All required platform lanes now have successful actual published-download evidence:
+
+| Environment | Successful job | Workflow run |
+|---|---|---|
+| macOS Intel, macOS 15.7.9 | 119032021639 | [39541919634](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39541919634) |
+| macOS Apple Silicon | 119032021912 | [39541919634](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39541919634) |
+| Ubuntu 22.04 x86_64 | 119033827891 | [39542703457](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39542703457) |
+| Ubuntu 24.04 ARM64 | 119033827546 | [39542703457](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39542703457) |
+| Windows Server 2025 x64, PowerShell 7 | 119628322467 | [39719144944](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39719144944) |
+| Windows Server 2025 x64, PowerShell 5.1 | 119628322649 | [39719144944](https://github.com/libretro/virtualjaguar-libretro/actions/runs/39719144944) |
+
+These lanes require genuine v3.9.1-to-candidate upgrades for core/app/both, changed
+payload hashes, actual installed-core execution in RetroArch, post-update public-ROM
+app launches, dry-run invariance and preserved user data. Windows additionally
+verifies the downloaded setup checksum, installs, launches, updates and uninstalls
+it while retaining user data. Both Windows lanes passed all 26 command checks.
+The setup SHA-256 is `b671e875038a6b8044b7af17fa3beb952b309f988f9ba5556f18a2b6a3eb1303`;
+Authenticode status is **NotSigned**. The Windows runtime lane uses Server 2025,
+not a claim of testing every supported Windows desktop version.
+
+The initial Windows qualification failed because the Chocolatey launcher returned
+before the frontend log existed. #1065 invokes the real installed RetroArch executable
+directly; both fresh Windows lanes above pass with this fix. #1065 also completed
+38 successful PR checks and two legitimate configured skips before merging into develop.
+
 ## Remaining distribution work
 
-- Complete the published-download jobs and resolve demonstrated failures before readiness.
-- Complete the clean hosted Intel Mac install/upgrade run; Rosetta coverage is recorded separately.
+- Integrate this scoped installer backport into master after its fresh applicable CI
+  and reviews pass. No final v3.10.0 tag has been created by this qualification work.
 - Windows signing remains an external service dependency; report unsigned assets honestly.
 - Final-tag filenames, checksums and package-manager manifests can only be verified against
   the actual final-tag artifacts after tagging. Do not submit templates with placeholder
   source hashes or nonexistent URLs. Homebrew/winget/Scoop/Flatpak submission and external
   acceptance remain post-publication work, distinct from template syntax validation.
-- Keep #839 and #840 open until their respective remaining acceptance evidence exists.
+- Keep #839 open for remaining distribution acceptance. #840's install/upgrade evidence
+  is complete; its installer fix still requires release integration.
