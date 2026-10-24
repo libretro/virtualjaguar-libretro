@@ -61,6 +61,11 @@ void revealFile(const std::string& path);   // "Show in Finder / Explorer"; fall
 void openFolder(const std::string& dir);
 const char* fileManagerName();              // "Finder" | "Explorer" | "File Manager"
 
+// ---- display power ---------------------------------------------------------------------------------------------
+// True while the display the window is on is asleep (macOS only; false everywhere else).  A vsync swap on macOS waits
+// for a display-link tick that a sleeping display never sends (swap_guard.h, #1081).  Main thread.
+bool displayAsleep(SDL_Window* w);
+
 // Dev / test: "virtualjaguar --dump-native-menu".  Prints the real NSMenu tree and checks it.
 // Returns 0 ok, 1 broken, 77 skip (no native menu on this OS, or no window server).
 int dumpNativeMenu();

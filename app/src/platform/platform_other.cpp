@@ -16,6 +16,7 @@ void windowCreated(SDL_Window*) {}
 void setDarkChrome(bool) {}
 bool installMenus() { return false; }
 void renderMenus(const MenuBar&, const std::vector<MenuItem>&) {}
+bool displayAsleep(SDL_Window*) { return false; }
 void noteRecent(const std::string&) {}
 void clearRecents() {}
 void setActivity(bool) {}

@@ -96,6 +96,8 @@ void setGameRunning(bool running, bool keepAwake) {
     }
 }
 
+bool displayAsleep(SDL_Window* w) { return os::displayAsleep(w); }
+
 void noteRecent(const std::string& path) { os::noteRecent(path); }
 void clearRecents() { os::clearRecents(); }
 
