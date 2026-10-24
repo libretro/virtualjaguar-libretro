@@ -82,6 +82,8 @@ void setDarkChrome(bool dark) {
 bool installMenus() { return false; }   // the in-window menu bar is the Windows menu bar here
 void renderMenus(const MenuBar&, const std::vector<MenuItem>&) {}
 
+bool displayAsleep(SDL_Window*) { return false; }
+
 void noteRecent(const std::string& path) {
     // Explorer's Recent and the taskbar Jump List's "Recent" category (the latter once the installer
     // has registered the file types, so Windows knows this program opens them).

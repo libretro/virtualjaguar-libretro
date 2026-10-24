@@ -411,6 +411,9 @@ bool App::initWindow() {
         return false;
     }
     SDL_GL_MakeCurrent(window_, gl_);
+    swapGuard_.contextCreated(platform::displayAsleep(window_));
+    if (swapGuard_.deadLink())
+        std::fprintf(stderr, "[gl] the display is asleep: vsync is off for this run (a swap would wait for a refresh that never comes)\n");
     applyVsync();
     SDL_SetWindowMinimumSize(window_, 320, 240);
     return true;
@@ -768,7 +771,7 @@ void App::busyFrame(double waited, unsigned tick) {
     SDL_GetWindowSizeInPixels(window_, &w, &h);
     if (w > 0 && h > 0) {
         video.drawBusy(w, h, waited);
-        SDL_GL_SwapWindow(window_);
+        swapWindow();
     }
 }
 
@@ -846,7 +849,7 @@ void App::tracePaced(double lateSec, const PacingClock& clock) {
 // latch's phase locked, whether or not it waits), the takes repeat every refresh, and the emulation thread keeps its
 // frame ends off them (PacingClock::steer).
 void App::publishTakeGrid(uint64_t takeNs) {
-    const uint64_t p = (paceSteerOn_ && vsync && latch_.locked()) ? latch_.periodNs() : 0;
+    const uint64_t p = (paceSteerOn_ && wantSync() && latch_.locked()) ? latch_.periodNs() : 0;
     takeNs_.store(takeNs, std::memory_order_relaxed);
     takePeriodNs_.store(p, std::memory_order_release);
 }
@@ -1144,9 +1147,9 @@ void App::haltedFrame() {
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     presentViewports();
-    SDL_GL_SwapWindow(window_);
+    swapWindow();
     updateTitle();
-    if (!vsync) SDL_DelayNS(8000000);   // no swap-interval pacing: do not spin while stopped
+    if (!wantSync()) SDL_DelayNS(8000000);   // no swap-interval pacing: do not spin while stopped
 }
 
 const char* App::viewportsNote() const {
@@ -1218,8 +1221,31 @@ void App::themePreviewEnd(bool keep) {
 }
 
 void App::applyVsync() {
-    pacer_.resetSwap(vsync);
-    if (gl_) SDL_GL_SetSwapInterval(vsync ? 1 : 0);
+    pacer_.resetSwap(wantSync());
+    if (gl_) SDL_GL_SetSwapInterval(wantSync() ? 1 : 0);
+}
+
+// Before a swap (#1081).  On macOS SDL's vsync is a CVDisplayLink that ticks once per refresh and a swap waits for the
+// tick.  The link is made from the active displays when the GL context is created: with the display asleep it never
+// ticks, not even after the display wakes, and the swap blocks forever (initWindow() sets SwapGuard::deadLink for that;
+// nothing can end a swap that is already waiting).  A display that falls asleep mid-run did not block on develop (the
+// link survives), so the check below is defensive: interval 0 while it sleeps, the user's setting on wake.  Interval 0
+// is the vsync-off path -- the swap returns at once, the loop's own clock paces -- so the emulation goes on unseen.
+// Throttled: the awake path pays one clock read per swap.  Call before the swap's timestamps, not inside them.
+void App::guardSwap() {
+    if (!gl_) return;
+    const uint64_t t = SDL_GetTicksNS();
+    if (t < nextDisplayPollNs_) return;
+    nextDisplayPollNs_ = t + 250000000ull;
+    if (!swapGuard_.update(platform::displayAsleep(window_))) return;
+    std::fprintf(stderr, "[gl] the display %s: swap interval %d\n", swapGuard_.asleep() ? "went to sleep" : "woke",
+                 wantSync() ? 1 : 0);
+    applyVsync();
+}
+
+void App::swapWindow() {
+    guardSwap();
+    SDL_GL_SwapWindow(window_);
 }
 
 // Vsync is a pacing tool for a core that has time to spare (pacing.h).  While the core is behind, SDL_GL_SwapWindow
@@ -1227,7 +1253,7 @@ void App::applyVsync() {
 // runs the emulation, so the swap interval is released and restored once the core keeps up again.
 void App::syncSwapInterval() {
     if (!gl_) return;
-    if (pacer_.updateSwap(vsync)) SDL_GL_SetSwapInterval(pacer_.swapSync ? 1 : 0);
+    if (pacer_.updateSwap(wantSync())) SDL_GL_SetSwapInterval(pacer_.swapSync ? 1 : 0);
 }
 
 void App::applyAudioSettings() {
@@ -2457,7 +2483,7 @@ int App::runInteractive(const CliArgs& a) {
                          std::to_string(video.shader.chainReuses());
             perf.note += std::string(", emulation thread ") + (threaded() ? "on" : "off");
             perf.note += std::string(", late latch ") +
-                         (threaded() && vsync && lateLatchOn_
+                         (threaded() && wantSync() && lateLatchOn_
                               ? std::string(latch_.locked() ? "locked" : "not locked") + " (misses " +
                                     std::to_string(latch_.misses()) + ", released " + std::to_string(latch_.released()) +
                                     ", pad " + std::to_string(latch_.padNs() / 1000000.0).substr(0, 4) + " ms)"
@@ -2546,6 +2572,7 @@ int App::runInteractive(const CliArgs& a) {
             quit = true;
         }
         presentViewports();
+        guardSwap();   // before the timestamps: the latch must not see it as swap time
         const Uint64 swap0 = SDL_GetTicksNS();
         SDL_GL_SwapWindow(window_);
         const Uint64 swap1 = SDL_GetTicksNS();
@@ -2578,8 +2605,8 @@ int App::runInteractive(const CliArgs& a) {
             // blocked: the late latch waits until just before the next vblank, publishing input as it comes, and the
             // swap paces the rest.  Off, or a swap that returned at once with vsync on (a minimized or occluded window
             // does not block): a short nap, so a new frame still shows within a few ms without spinning a core.
-            if (vsync && lateLatchOn_ && swapNs >= LateLatch::kBlockedNs) latchWait();
-            else if (!vsync || swapNs < LateLatch::kBlockedNs)
+            if (wantSync() && lateLatchOn_ && swapNs >= LateLatch::kBlockedNs) latchWait();
+            else if (!wantSync() || swapNs < LateLatch::kBlockedNs)
                 presentNap();
             latchedAtNs_ = SDL_GetTicksNS();
             latch_.noteWaitEnd(latchedAtNs_);
@@ -2593,7 +2620,7 @@ int App::runInteractive(const CliArgs& a) {
             }
         }
         perf.lap(Perf::Sleep);
-        perf.curSync = threaded() ? vsync : pacer_.swapSync;
+        perf.curSync = threaded() ? wantSync() : pacer_.swapSync;
         perfSample();
         if (a.perfInput && perf.on && perf.seen % 30 == 29)   // delays 0.5 .. 16.7 ms in 37 steps: every phase at 60 Hz
             SDL_AddTimerNS(500000ull + (uint64_t)(perfInputK_++ % 37) * 450000ull, perfInputKey,

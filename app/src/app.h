@@ -44,6 +44,7 @@
 #include "perf.h"
 #include "perf_trace.h"
 #include "stall_probe.h"
+#include "swap_guard.h"
 #include "platform/commands.h"
 #include "theme_custom.h"
 #include "tv/tv_mode.h"
@@ -365,6 +366,13 @@ public:
     void setFullscreen(bool fs);
     void applyVsync();
     void syncSwapInterval();
+    // #1081: the swap interval may be 1 only while the display is awake (swap_guard.h).  Every UI swap is preceded by
+    // guardSwap() (swapWindow() = both), which looks at the display (every 250 ms) and drops/restores the interval on a change.
+    SwapGuard swapGuard_;
+    uint64_t nextDisplayPollNs_ = 0;
+    bool wantSync() const { return swapGuard_.syncAllowed(vsync); }
+    void guardSwap();
+    void swapWindow();
     void applyTheme();                // the Dear ImGui style for the theme in force (theme.h); a no-op before the UI exists
     void setThemeChoice(const std::string& key);   // Settings > Interface > Appearance: system | dark | light | custom:<name>; remembered
     bool applyThemeChoice(const std::string& key); // the same without remembering; false when a custom theme is missing (System is used)

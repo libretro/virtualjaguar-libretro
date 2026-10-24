@@ -11,6 +11,7 @@
 #   perf_csv_unit         VJ_PERF_CSV columns: underruns and input latency
 #   perf_trace_unit       VJ_PERF_TRACE -emu.csv: fill_ns is the last column and never negative
 #   late_latch_unit       LateLatch: vblank tracking, budget, misses, and the event -> present model against a fake clock
+#   swap_guard_unit       SwapGuard: no vsync swap while the display sleeps, none at all after a context made asleep (#1081)
 #   latch_waker_unit      LatchWaker (macOS): the UI thread's timed event waits end on its wake event, on time (#1026)
 #   core_events_unit      CoreEventQueue: order, bounded log lines, content switch, two threads
 #   emu_thread_flag_rejects  --emu-thread takes on or off only
@@ -371,6 +372,13 @@ target_include_directories(vj_late_latch_test PRIVATE src)
 vj_emu_thread_warnings(vj_late_latch_test)
 add_test(NAME late_latch_unit COMMAND vj_late_latch_test)
 set_tests_properties(late_latch_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# SwapGuard (#1081): the swap interval is 0 while the display sleeps, and for good when the context was made asleep.
+add_executable(vj_swap_guard_test tests/swap_guard_test.cpp)
+target_include_directories(vj_swap_guard_test PRIVATE src)
+vj_emu_thread_warnings(vj_swap_guard_test)
+add_test(NAME swap_guard_unit COMMAND vj_swap_guard_test)
+set_tests_properties(swap_guard_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 # The build channel's default rule (#967 phase 3d): a stored choice always wins; only "never chosen" follows the channel.
 # The target links vj_build_channel, so it sees the defines the app was configured with.

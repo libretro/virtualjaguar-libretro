@@ -225,6 +225,20 @@ void renderMenus(const MenuBar& bar, const std::vector<MenuItem>& dock) {
     }
 }
 
+// No display is awake (CGGetActiveDisplayList is empty while they sleep -- the list SDL's display link is made from), or
+// the window's own display (its NSScreen; the main display when the window has none) is asleep.
+bool displayAsleep(SDL_Window* w) {
+    uint32_t active = 0;
+    if (CGGetActiveDisplayList(0, nullptr, &active) == kCGErrorSuccess && active == 0) return true;
+    CGDirectDisplayID id = CGMainDisplayID();
+    if (w) {
+        NSWindow* nw = (__bridge NSWindow*)SDL_GetPointerProperty(SDL_GetWindowProperties(w), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+        NSNumber* num = [[nw.screen deviceDescription] objectForKey:@"NSScreenNumber"];
+        if (num) id = (CGDirectDisplayID)num.unsignedIntValue;
+    }
+    return CGDisplayIsAsleep(id) != 0;
+}
+
 void noteRecent(const std::string& path) {
     if (path.empty()) return;
     NSURL* url = [NSURL fileURLWithPath:ns(path)];
