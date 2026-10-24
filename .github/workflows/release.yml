@@ -1037,7 +1037,7 @@ jobs:
             echo
             if [ "$APP_BUILT" = "true" ]; then
               DL="${GITHUB_SERVER_URL}/${REPO}/releases/download/nightly"
-              RAW="https://raw.githubusercontent.com/${REPO}/develop/tools"
+              RAW="https://raw.githubusercontent.com/${REPO}/master/tools"
               echo "### The Virtual Jaguar app (nightly)"
               echo
               echo "The standalone desktop app, built from this same commit. These links always point at the newest nightly."

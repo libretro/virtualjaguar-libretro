@@ -6,7 +6,7 @@
 #
 # POSIX sh.  Runs under sh, bash, zsh, dash, busybox ash.  Safe to pipe:
 #
-#   curl -fsSL https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/master/tools/install.sh | sh
 #
 # Piping into a shell means stdin is the script, so prompts read /dev/tty
 # instead.  Where there is no tty (CI, a pipe with no terminal) the script goes
@@ -76,7 +76,8 @@
 set -eu
 
 REPO="libretro/virtualjaguar-libretro"
-RAW="https://raw.githubusercontent.com/$REPO/develop/tools/install.sh"
+# master = the released installer; --auto-update re-fetches this URL.
+RAW="https://raw.githubusercontent.com/$REPO/master/tools/install.sh"
 BASE="${VJ_INSTALL_BASE_URL:-https://github.com/$REPO/releases}"
 BASE="${BASE%/}"
 CORE_NAME="virtualjaguar_libretro"
@@ -200,7 +201,7 @@ Virtual Jaguar -- installer / updater for the RetroArch core and the app.
 
 Piped into a shell, prompts read /dev/tty; with no tty it takes defaults.
 Windows: use install.ps1.  Download this script and read it first if you like:
-  curl -fLO https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.sh
+  curl -fLO https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/master/tools/install.sh
 USAGE
   fi
   exit 0
@@ -882,7 +883,7 @@ app_install() {
       ;;
     MINGW*|MSYS*|CYGWIN*)
       die "this is a Windows shell.  Use install.ps1 in PowerShell instead:
-       irm https://raw.githubusercontent.com/$REPO/develop/tools/install.ps1 | iex" ;;
+       irm https://raw.githubusercontent.com/$REPO/master/tools/install.ps1 | iex" ;;
     *) die "unsupported OS '$OS' for the app (macOS and Linux; Windows is install.ps1)." ;;
   esac
 
