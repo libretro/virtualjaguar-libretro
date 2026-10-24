@@ -8,13 +8,13 @@
 
   Run it straight from the web (read it first if you like):
 
-    irm https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.ps1 | iex
+    irm https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/master/tools/install.ps1 | iex
 
   `iex` cannot pass arguments, so configure that form with environment variables
   (VJ_WHAT, VJ_CHANNEL, VJ_YES, VJ_DRYRUN, VJ_CORE_DIR, VJ_APP_DEST,
   VJ_APP_FORMAT, VJ_FORCE) -- or hand the script block its parameters:
 
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.ps1))) -What both -DryRun
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/master/tools/install.ps1))) -What both -DryRun
 
   What it does
     core  finds RetroArch (registry, common folders, retroarch.cfg), reads the

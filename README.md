@@ -19,10 +19,10 @@ Website, downloads, compatibility and enhancement write-ups: **[jaguar.provenanc
 - **Installer:** one command installs or updates the core, the app, or both, and checks each download against `SHA256SUMS.txt` (read [`tools/install.sh`](tools/install.sh) and [`tools/install.ps1`](tools/install.ps1) first; both take `--dry-run` / `-DryRun` and `--channel nightly` / `-Channel nightly`):
 
   ```sh
-  curl -fsSL https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.sh | sh -s -- --what both   # or: --what core | --what app
+  curl -fsSL https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/master/tools/install.sh | sh -s -- --what both   # or: --what core | --what app
   ```
 
-  Windows (PowerShell): `$env:VJ_WHAT = 'both'; irm https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/develop/tools/install.ps1 | iex`
+  Windows (PowerShell): `$env:VJ_WHAT = 'both'; irm https://raw.githubusercontent.com/libretro/virtualjaguar-libretro/master/tools/install.ps1 | iex`
 
 Core release builds cover Linux (x86_64, aarch64, i686, and Raspberry Pi 1, 2, 3, 4 and 5, each with its own CPU-tuned build, plus 64-bit builds for the Pi 3, 4 and 5), macOS (Apple Silicon, Intel), Windows (x64, x86), Android (arm64-v8a, armeabi-v7a, x86_64, x86), iOS (arm64), tvOS (arm64), WebAssembly (Emscripten), PS Vita and Nintendo Switch. The matrix is in [`release.yml`](.github/workflows/release.yml). Other platforms get the core through the libretro buildbot.
 

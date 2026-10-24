@@ -57,8 +57,9 @@ MAKEFILE = ROOT / "Makefile"
 REPO_URL = "https://github.com/libretro/virtualjaguar-libretro"
 # raw.githubusercontent for the install one-liner; derived from REPO_URL so a
 # fork or rename cannot leave the curl command pointing at the wrong repo.
+# master, not develop: users get the released installer, not unreleased edits.
 RAW_URL = REPO_URL.replace("https://github.com/",
-                           "https://raw.githubusercontent.com/") + "/develop"
+                           "https://raw.githubusercontent.com/") + "/master"
 
 # The canonical base for every absolute URL the site emits; for a given page
 # the <link rel=canonical>, og:url and the sitemap <loc> must come out
