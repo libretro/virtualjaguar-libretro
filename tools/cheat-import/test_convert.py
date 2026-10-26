@@ -306,7 +306,7 @@ class ConversionTests(unittest.TestCase):
         text = source(SIMPLE).replace('bigpemu_register_setting_bool(category, "Other freeze", 0)',
             'bigpemu_register_setting_int_full(category, "Other freeze", 0, 0, flag++, 1)')
         with self.assertRaisesRegex(converter.Unsupported, "metadata must be constant"):
-            converter.Module(text)
+            converter.Module(text).convert(DIGEST)
 
     def test_printf_notify_load_message(self):
         load = r'flag = 0; if (digest == MATCH_HASH) { printf_notify("Supported.\n"); flag = 1; }'

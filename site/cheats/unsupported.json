@@ -1301,7 +1301,7 @@
     },
     {
       "calls": [],
-      "crc32": null,
+      "crc32": "2E17D5DA",
       "note": null,
       "path": "scripts/cheat_bubsy.c",
       "reason": "pointer/array declarations require manual review",
@@ -1323,7 +1323,7 @@
     },
     {
       "calls": [],
-      "crc32": null,
+      "crc32": "BDA405C6",
       "note": null,
       "path": "scripts/cheat_cannon_fodder.c",
       "reason": "pointer/array declarations require manual review",
@@ -1345,7 +1345,18 @@
     },
     {
       "calls": [],
-      "crc32": null,
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "pointer/array declarations require manual review",
+      "setting": null,
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "module"
+    },
+    {
+      "calls": [],
+      "crc32": "ECF854E7",
       "note": null,
       "path": "scripts/cheat_cybermorph.c",
       "reason": "pointer/array declarations require manual review",
@@ -1443,7 +1454,7 @@
     },
     {
       "calls": [],
-      "crc32": null,
+      "crc32": "0EC5369D",
       "note": null,
       "path": "scripts/cheat_evolution_dino_dudes.c",
       "reason": "pointer/array declarations require manual review",
@@ -1454,7 +1465,7 @@
     },
     {
       "calls": [],
-      "crc32": null,
+      "crc32": "3615AF6A",
       "note": null,
       "path": "scripts/cheat_fever_pitch_soccer.c",
       "reason": "pointer/array declarations require manual review",
@@ -1489,7 +1500,7 @@
     },
     {
       "calls": [],
-      "crc32": null,
+      "crc32": "DE55DCC7",
       "note": null,
       "path": "scripts/cheat_flashback.c",
       "reason": "pointer/array declarations require manual review",

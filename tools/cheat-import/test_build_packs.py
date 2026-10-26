@@ -184,6 +184,21 @@ class PackTests(unittest.TestCase):
         self.assertEqual((row["stage"], row["crc32"], row["reason"]),
                          ("identity", None, "no known cartridge for literals [0x962CCBEDFAAC5F28]"))
 
+    def test_integer_global_failure_retains_cartridge_attribution(self):
+        text = variant('bigpemu_register_setting_bool(category, "Other freeze", 0)',
+                       'bigpemu_register_setting_int_full(category, "Start At Level", 0, 0, 3, 1)',
+                       extra="int scratch[2];")
+        table = dict(TABLE)
+        table[f"{OTHER:016X}"] = cart(OTHER, "0000ABCD", name="Synthetic Game (Rev 2)")
+        text += f"\n#define OTHER_CART 0x{OTHER:016X}ULL\n"
+        files = make({"s": {"scripts/cheat_good.c": source(SIMPLE), "scripts/cheat_bad.c": text}}, table=table)
+        rows = load(files, "unsupported.json")["entries"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["crc32"] for r in rows}, {CRC, "0000ABCD"})
+        for row in rows:
+            self.assertEqual((row["path"], row["stage"], row["reason"]),
+                             ("scripts/cheat_bad.c", "module", "pointer/array declarations require manual review"))
+
     def test_module_error(self):
         files = make({"s": {"scripts/cheat_a.c": source(SIMPLE), "scripts/cheat_b.c": f"#define H 0x{DIGEST:016X}ULL\nint ;;; {{",
                             "scripts/cheat_c.c": source(SIMPLE) + "\nint *pointer;"}})

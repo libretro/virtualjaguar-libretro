@@ -508,12 +508,17 @@ class Module:
                 else: enum = None
                 self.globals.append((node, enum))
 
+        self.parameter_args = parameter_args
+
+    def prepare_settings(self):
+        # Defer global evaluation until convert() so failures retain the cartridge
+        # identity in the pack generator's per-cartridge error report.
         # Registration expressions are evaluated from initialized globals/macros/enums,
         # never by calling script functions or executing bigp_init.
         self.off_values = {key: 0 for key, _, _ in self.settings}
         self.parameters = {}
-        constants = self.global_runtime(0, {}) if parameter_args else None
-        for key, args in parameter_args.items():
+        constants = self.global_runtime(0, {}) if self.parameter_args else None
+        for key, args in self.parameter_args.items():
             for arg in args:
                 if any(isinstance(n, (C.FuncCall, C.Assignment)) or
                        (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(arg)):
@@ -574,6 +579,7 @@ class Module:
 
     def convert(self, digest):
         self.messages, self.dropped_messages, self.ignored_calls = [], [], set()
+        self.prepare_settings()
         baseline = self.runtime(digest, None)
         baseline.run(self.events["bigpemu_register_event_emu_thread_frame"])
         results, groups = [], []
