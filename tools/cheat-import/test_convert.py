@@ -82,6 +82,79 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(results[0]["code"], "001F0000:AB+001F0002:1234+001F0004:89ABCDEF+001F0008:89ABCDEF")
         self.assertEqual(results[1]["code"], "001F1000:09")
 
+    def table_source(self, table="static const uint32_t digits[4] = {0, 0, 0x1234, 0x5678};", body=None):
+        body = body or '''
+            if (a) { bigpemu_jag_write8(0x1f0000, 9); }
+            if (b > 1) {
+                uint32_t password = digits[b];
+                uint32_t dest = 3;
+                for (uint32_t i = 0; i < 4; ++i, --dest) {
+                    bigpemu_jag_write8(0x1f0100 + dest, '0' + ((password >> (i*4)) & 15));
+                }
+            }
+        '''
+        return source(body, extra=table).replace(
+            'bigpemu_register_setting_bool(category, "Other freeze", 0)',
+            'bigpemu_register_setting_int_full(category, "Password", -1, -1, 3, 1)')
+
+    def test_constant_table_passwords_and_sequenced_loop_update(self):
+        module = converter.Module(self.table_source())
+        results = module.convert(DIGEST)
+        self.assertEqual(results[0]["code"], "001F0000:09")
+        self.assertEqual(results[3]["name"], "Password: 2")
+        self.assertEqual(results[3]["code"], "001F0103:34+001F0102:33+001F0101:32+001F0100:31")
+        self.assertEqual(results[4]["code"], "001F0103:38+001F0102:37+001F0101:36+001F0100:35")
+        self.assertTrue(all("code" not in r for r in module.convert(DIGEST ^ 1)))
+
+    def test_constant_table_sizes_padding_and_integer_types(self):
+        for decl in ("const uint8_t digits[] = {258, 7};", "static uint8_t const digits[4] = {258, 7};"):
+            text = self.table_source(decl, "if (a) { bigpemu_jag_write16(0x1f0000, digits[0] + 256); }")
+            self.assertEqual(converter.Module(text).convert(DIGEST)[0]["code"], "001F0000:0102")
+        text = self.table_source("enum { SIZE = 4, LAST = 3 }; const int16_t digits[SIZE] = {-7};",
+                                 "if (a) { bigpemu_jag_write16(0x1f0000, digits[0]); bigpemu_jag_write8(0x1f0002, digits[LAST]); }")
+        self.assertEqual(converter.Module(text).convert(DIGEST)[0]["code"], "001F0000:FFF9+001F0002:00")
+
+    def test_constant_table_invalid_indices_are_not_python_indices(self):
+        for index in (-1, 4):
+            text = self.table_source(body=f"if (a) {{ bigpemu_jag_write8(0x1f0000, 1); bigpemu_jag_write32(0x1f0004, digits[{index}]); }}")
+            result = converter.Module(text).convert(DIGEST)[0]
+            self.assertIn("array index out of bounds", result["unsupported"])
+            self.assertNotIn("code", result)
+
+    def test_constant_table_unsupported_declarations_fail_closed(self):
+        for declaration in ("uint32_t digits[4] = {0};", "const uint32_t digits[4][2] = {{0}};",
+                            "const uint32_t *digits[4] = {0};", "const int digits[0] = {};",
+                            "const int digits[2] = {1,2,3};", "const int digits[] = {};",
+                            "const int digits[4];", "const int digits[4] = {[1] = 3};",
+                            'const int digits[4] = {"abc"};'):
+            with self.subTest(declaration=declaration), self.assertRaises(converter.Unsupported):
+                converter.Module(self.table_source(declaration)).convert(DIGEST)
+
+    def test_constant_table_limits_and_side_effects(self):
+        for declaration in ("const int digits[1025] = {0};", "const int digits[800] = {0}; const int more[800] = {0};",
+                            "const int digits[4] = {flag++};", "const int digits[flag++] = {0};",
+                            "const int digits[4] = {bigpemu_jag_read8(1)};"):
+            with self.subTest(declaration=declaration), self.assertRaises(converter.Unsupported):
+                converter.Module(self.table_source(declaration)).convert(DIGEST)
+
+    def test_constant_table_no_pointer_decay_or_mutation(self):
+        for statement in ("digits[0] = 9;", "++digits[0];", "digits = 2;", "++digits;",
+                          "bigpemu_jag_write32(0x1f0000, digits);", "int *ptr = digits;",
+                          "const int local[2] = {1,2};", "int digits = 2; bigpemu_jag_write8(0x1f0000, digits[0]);"):
+            text = self.table_source(body="if (a) { " + statement + " }")
+            result = converter.Module(text).convert(DIGEST)[0]
+            self.assertIn("unsupported", result, statement)
+            self.assertNotIn("code", result, statement)
+
+    def test_constant_table_index_dependencies_preserved(self):
+        text = self.table_source(body="if (a) { bigpemu_jag_write32(0x1f0000, digits[b+1]); }")
+        result = converter.Module(text).convert(DIGEST)[0]
+        self.assertIn("exactly one independent setting", result["unsupported"])
+
+    def test_sequenced_loop_update_still_checks_budget_and_persistent_state(self):
+        self.skipped("for (int i = 0; i < 1; ++i, --i) { }", "budget")
+        self.skipped("for (int i = 0; i < 1; ++i, ++flag) { bigpemu_jag_write8(0x1f0000, 7); }", "persistent")
+
     def test_unsigned_semantics_and_promotions(self):
         results = self.convert('''
             if (a) {
