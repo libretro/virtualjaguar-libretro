@@ -42,7 +42,7 @@ concurrency:
 jobs:
   run:
     name: Microbench ROM assertions (linux x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - name: Checkout
