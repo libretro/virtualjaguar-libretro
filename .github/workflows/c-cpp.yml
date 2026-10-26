@@ -22,7 +22,7 @@ concurrency:
 jobs:
   core-plan:
     name: Production core routing and safety tests
-    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     permissions:
       contents: read
     outputs:
@@ -41,7 +41,7 @@ jobs:
           fi
       - name: Verify compiler, SDK and production ABI contracts
         run: ruby .github/scripts/tests/core-workflow-contract.rb
-      - run: node --test .github/scripts/tests/release-packages.test.cjs .github/scripts/tests/release-cores.test.cjs
+      - run: node --test .github/scripts/tests/release-packages.test.cjs .github/scripts/tests/release-cores.test.cjs .github/scripts/tests/temp-linux-routing.test.cjs
       - id: plan
         uses: actions/github-script@v9
         with:
@@ -53,7 +53,7 @@ jobs:
     name: Verify and retain shared production cores
     needs: [core-plan]
     if: needs.core-plan.outputs.reuse == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     timeout-minutes: 360
     permissions:
       actions: read
@@ -168,7 +168,7 @@ jobs:
     # Mac Studio self-hosted runner for macOS rows on trusted events only (push,
     # schedule, dispatch, same-repo PR); fork PRs always get the hosted runner.
     # Kill switch: repository variable VJ_STUDIO_RUNNER=off.  See docs/agent/github.md.
-    runs-on: ${{ matrix.config.os == 'macos-latest' && vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || matrix.config.os }}
+    runs-on: ${{ matrix.config.os == 'ubuntu-latest' && github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || matrix.config.os == 'macos-latest' && vars.VJ_STUDIO_RUNNER != 'off' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","studio","vj"]') || matrix.config.os }}
 
     defaults:
       run:
@@ -456,7 +456,7 @@ jobs:
   # !cancelled() keeps later checks running after a failure; any failure still fails the job.
   source-validation:
     name: Source validation (lists, EditorConfig, cppcheck, C89)
-    runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v7
 
@@ -735,7 +735,7 @@ jobs:
     needs: [core-plan]
     if: needs.core-plan.outputs.reuse != 'true'
     name: build-PS Vita
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     container:
       image: vitasdk/vitasdk:latest
     steps:
@@ -757,7 +757,7 @@ jobs:
     needs: [core-plan]
     if: needs.core-plan.outputs.reuse != 'true'
     name: build-Nintendo Switch
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     container:
       image: devkitpro/devkita64:latest
     steps:
@@ -778,7 +778,7 @@ jobs:
 
   coverage:
     name: Code coverage (gcov + codecov)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # Coverage runs are advisory -- they don't gate merges.  The PR
     # delta is what reviewers care about; codecov posts that as a
     # comment automatically.
@@ -806,7 +806,7 @@ jobs:
 
   sanitizers:
     name: AddressSanitizer + UndefinedBehaviorSanitizer
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # Initially advisory: lets the job report findings without blocking
     # PRs while we triage the existing UB the cppcheck job already
     # flagged (signed shifts in src/tom/{gpu,op}.c, etc.).  Flip to
@@ -848,7 +848,7 @@ jobs:
 
   clang-tidy:
     name: clang-tidy on changed files
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # Advisory at first.  The .clang-tidy check list is curated, but
     # the first pass over emulator C will surface noisy true positives
     # that need triage.  Flip continue-on-error to false once the

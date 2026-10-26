@@ -54,7 +54,7 @@ concurrency:
 jobs:
   ir-ab:
     name: Ir A/B (linux x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     # Two full builds plus two cachegrind runs.  Cachegrind sustains roughly
     # 100M simulated instructions/sec, and jagniccc@300 is ~19.5e9 Ir per arm,
     # so budget ~3-4 min per measured run.

@@ -177,8 +177,17 @@ which only remaps lightweight ubuntu jobs.
 
 `VJ_TEMP_RUNNERS` is an optional repository variable containing a JSON object with
 a `refs` allowlist and mappings from hosted labels to private runner labels.
-Only listed Git refs use those mappings in explicitly opted-in lightweight jobs;
-absent refs or labels keep their original GitHub-hosted runners. Leave the variable unset normally. A temporary release
+Only listed Git refs use those mappings in opted-in jobs. The C/C++ Linux x86-64
+rows and Linux test workflows also honor the `ubuntu-latest` mapping for trusted
+events; fork PRs and `pull_request_target` keep GitHub-hosted runners. A matching
+runner must actually provide Ubuntu x86-64, including Docker for SDK containers;
+the macOS/ARM Studio runner cannot serve these jobs directly.
+For example, temporarily map `refs/pull/1096/merge` to a uniquely labelled Linux VM.
+Keep the VM isolated from host folders and remove its registration and mapping
+after validation. Already-created jobs retain their runner labels; the mapping
+applies when GitHub creates a new job or reruns the workflow.
+
+Absent refs or labels keep their original GitHub-hosted runners. Leave the variable unset normally. A temporary release
 runner must use a unique custom label with default labels disabled, preserve the
 requested OS/architecture, and be removed together with the variable after its
 checks finish. Do not map Ubuntu 22.04 packaging jobs onto Ubuntu 24.04: that would
