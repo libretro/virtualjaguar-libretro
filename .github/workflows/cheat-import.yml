@@ -27,7 +27,7 @@ jobs:
         python: ['3.10', '3.13']
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -r tools/cheat-import/requirements.txt
@@ -41,7 +41,7 @@ jobs:
     runs-on: ${{ contains(fromJSON(vars.VJ_TEMP_RUNNERS || '{"refs":[]}').refs, github.ref) && fromJSON(vars.VJ_TEMP_RUNNERS)['ubuntu-latest'] || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - run: python -m pip install -r tools/cheat-import/requirements.txt

@@ -148,7 +148,7 @@ jobs:
         include: ${{ fromJSON(inputs.qualification_windows_only && '[{"os":"windows-latest","ps":"powershell"},{"os":"windows-latest","ps":"pwsh"}]' || inputs.qualification_linux_only && '[{"os":"ubuntu-22.04","ps":"pwsh"},{"os":"ubuntu-24.04-arm","ps":"pwsh"}]' || inputs.qualification_intel_only && '[{"os":"macos-15-intel","ps":"pwsh"}]' || '[{"os":"windows-latest","ps":"powershell"},{"os":"windows-latest","ps":"pwsh"},{"os":"macos-latest","ps":"pwsh"},{"os":"macos-15-intel","ps":"pwsh"},{"os":"ubuntu-22.04","ps":"pwsh"},{"os":"ubuntu-24.04-arm","ps":"pwsh"}]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Runtime dependencies
