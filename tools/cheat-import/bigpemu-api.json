@@ -128,10 +128,10 @@
       "todo": "expand a small value range into one toggle per value"
     },
     "bigpemu_register_setting_int_full": {
-      "status": "setting-omitted",
+      "status": "supported",
       "meaning": "Numeric setting with explicit default, minimum, maximum and step (a start level or password index in the sources).",
-      "ours": "none yet",
-      "todo": "expand a small value range into one toggle per value"
+      "ours": "bounded constant ranges (at most 64 values) expand to disabled .cht choices; the inactive minimum is off and the last enabled choice wins",
+      "todo": "runtime-dependent choices, nonconstant or larger ranges require a manual port"
     },
     "bigpemu_set_module_usage_flags": {
       "status": "supported",

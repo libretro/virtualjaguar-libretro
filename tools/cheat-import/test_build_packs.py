@@ -108,15 +108,31 @@ class PackTests(unittest.TestCase):
 
     def test_partial_notes(self):
         text = variant('bigpemu_register_setting_bool(category, "Other freeze", 0)',
-                       'bigpemu_register_setting_int_full(category, "Start At Level", -1, -1, 9, 1)')
+                       'bigpemu_register_setting_int_full(category, "Start At Level", 0, 0, 100, 1)')
         files = make({"s": {"scripts/cheat_a.c": text}})
         pack = load(files, "manifest.json")["packs"][0]
         self.assertTrue(pack["partial"])
         self.assertEqual(pack["cheats"], 1)
-        self.assertEqual((pack["notes"][0]["setting"], pack["notes"][0]["reason"]), ("Start At Level", "parameter setting requires manual value selection"))
+        self.assertEqual((pack["notes"][0]["setting"], pack["notes"][0]["reason"]), ("Start At Level", "parameter setting exceeds 64-value limit"))
         self.assertIn('# Omitted: "Start At Level" (scripts/cheat_a.c): parameter setting', files[f"packs/{CRC}.cht"].decode())
         (row,) = load(files, "unsupported.json")["entries"]
         self.assertEqual((row["stage"], row["crc32"], row["setting"], row["calls"]), ("setting", CRC, "Start At Level", []))
+
+    def test_bounded_integer_pack_choices(self):
+        text = variant('bigpemu_register_setting_bool(category, "Other freeze", 0)',
+                       'bigpemu_register_setting_int_full(category, "Start At Level", 2, 0, 3, 1)',
+                       body=SIMPLE.replace("0x1234", "b"))
+        inputs = {"s": {"scripts/cheat_a.c": text}}
+        files = make(inputs)
+        self.assertEqual(files, make(inputs))
+        names, codes, enables = parse_cht(files[f"packs/{CRC}.cht"])
+        self.assertEqual(names, ["Grouped freeze", "Start At Level: 1", "Start At Level: 2", "Start At Level: 3"])
+        self.assertEqual(codes, ["001F0000:AB", "001F0002:0001", "001F0002:0002", "001F0002:0003"])
+        self.assertEqual(enables, ["false"]*4)
+        pack = load(files, "manifest.json")["packs"][0]
+        self.assertEqual(pack["overlaps"], [[1, 2], [1, 3], [2, 3]])
+        self.assertFalse(pack["partial"])
+        self.assertEqual(load(files, "unsupported.json")["entries"], [])
 
     def test_merge_dedupe(self):
         files = make({"s": {"scripts/cheat_a.c": source(SIMPLE), "scripts/cheat_b.c": source(SIMPLE)}})
@@ -167,6 +183,21 @@ class PackTests(unittest.TestCase):
         (row,) = load(files, "unsupported.json")["entries"]
         self.assertEqual((row["stage"], row["crc32"], row["reason"]),
                          ("identity", None, "no known cartridge for literals [0x962CCBEDFAAC5F28]"))
+
+    def test_integer_global_failure_retains_cartridge_attribution(self):
+        text = variant('bigpemu_register_setting_bool(category, "Other freeze", 0)',
+                       'bigpemu_register_setting_int_full(category, "Start At Level", 0, 0, 3, 1)',
+                       extra="int scratch[2];")
+        table = dict(TABLE)
+        table[f"{OTHER:016X}"] = cart(OTHER, "0000ABCD", name="Synthetic Game (Rev 2)")
+        text += f"\n#define OTHER_CART 0x{OTHER:016X}ULL\n"
+        files = make({"s": {"scripts/cheat_good.c": source(SIMPLE), "scripts/cheat_bad.c": text}}, table=table)
+        rows = load(files, "unsupported.json")["entries"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["crc32"] for r in rows}, {CRC, "0000ABCD"})
+        for row in rows:
+            self.assertEqual((row["path"], row["stage"], row["reason"]),
+                             ("scripts/cheat_bad.c", "module", "pointer/array declarations require manual review"))
 
     def test_module_error(self):
         files = make({"s": {"scripts/cheat_a.c": source(SIMPLE), "scripts/cheat_b.c": f"#define H 0x{DIGEST:016X}ULL\nint ;;; {{",

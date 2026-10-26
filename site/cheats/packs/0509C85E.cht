@@ -3,7 +3,15 @@
 # Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_raiden.c
 # Source SHA256: 32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456
 # Omitted: "P2 Stream Of Missiles As Gun" (scripts/cheat_raiden.c): no writes activated (check ROM revision/hash)
-# Omitted: "Start At Level" (scripts/cheat_raiden.c): parameter setting requires manual value selection
+# Omitted: "Start At Level: 0" (scripts/cheat_raiden.c): no writes activated (check ROM revision/hash)
+# Omitted: "Start At Level: 1" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Start At Level: 2" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Start At Level: 3" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Start At Level: 4" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Start At Level: 5" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Start At Level: 6" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Start At Level: 7" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
+# Omitted: "Start At Level: 8" (scripts/cheat_raiden.c): unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)
 # Overlap: cheat2 and cheat4 write the same bytes; later wins (app order).
 # Cartridge revision guard is enforced by the Virtual Jaguar app.
 vj_rom_crc32 = "0509C85E"

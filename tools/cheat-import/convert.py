@@ -29,7 +29,7 @@ class Unsupported(ValueError):
 SPECIAL_CALLS = {
     "bigpemu_get_module_handle": "supported", "bigpemu_set_module_usage_flags": "supported",
     "bigpemu_register_setting_category": "supported", "bigpemu_register_setting_bool": "supported",
-    "bigpemu_register_setting_int": "setting-omitted", "bigpemu_register_setting_int_full": "setting-omitted",
+    "bigpemu_register_setting_int": "setting-omitted", "bigpemu_register_setting_int_full": "supported",
     "bigpemu_register_event_sw_loaded": "supported", "bigpemu_register_event_emu_thread_frame": "supported",
     "bigpemu_get_loaded_fnv1a64": "supported", "bigpemu_get_setting_value": "supported",
     "bigpemu_jag_write8": "supported", "bigpemu_jag_write16": "supported", "bigpemu_jag_write32": "supported",
@@ -38,6 +38,7 @@ SPECIAL_CALLS = {
 INIT_CALLS = frozenset(n for n in SPECIAL_CALLS if n.startswith(("bigpemu_register_", "bigpemu_get_module", "bigpemu_set_module")))
 API_STATUSES = ("supported", "setting-omitted", "ignored", "unsupported")
 MAX_MESSAGES, MAX_MESSAGE_CHARS, NOTE_CHARS = 4, 200, 60
+MAX_INTEGER_VALUES, MAX_SETTING_COMBINATIONS = 64, 4096
 
 
 @functools.lru_cache(maxsize=None)
@@ -304,13 +305,14 @@ class Runtime:
             handle = self.get(identifier).n
             if handle != self.module.handles[identifier]:
                 raise Unsupported("setting handle was changed")
-            self.put(ptr.expr.name, Value(int(handle in (self.selected or ())), frozenset([handle])))
+            value = (self.selected or {}).get(handle, self.module.off_values[handle])
+            self.put(ptr.expr.name, Value(value, frozenset([handle])))
             return Value(0)
         write = re.fullmatch(r"bigpemu_jag_write(8|16|32)", name)
         if write and len(args) == 2:
             address, value = map(self.expr, args)
             deps = self.path | address.deps | value.deps
-            if not self.selected or "rom" not in deps or not (deps - {"rom"}) or not deps <= self.selected | {"rom"}:
+            if not self.selected or "rom" not in deps or not (deps - {"rom"}) or not deps <= set(self.selected) | {"rom"}:
                 raise Unsupported("write needs a ROM-hash guard and exactly one independent setting")
             if not address.deps <= self.path:
                 raise Unsupported("setting-dependent write address")
@@ -426,6 +428,7 @@ class Module:
         self.messages, self.dropped_messages, self.ignored_calls = [], [], set()  # per convert()
         categories = []
         registered = set()
+        parameter_args = {}
 
         class Registrations(C.NodeVisitor):
             def visit_FuncCall(visitor, node):
@@ -471,7 +474,14 @@ class Module:
                 if handle in self.handles: raise Unsupported("duplicate setting handle")
                 key = len(self.settings)+1
                 self.handles[handle] = key
-                self.settings.append((key, ast.literal_eval(args[1].value), name.endswith("_bool")))
+                boolean = name == "bigpemu_register_setting_bool"
+                self.settings.append((key, ast.literal_eval(args[1].value), boolean))
+                if not boolean:
+                    if name not in ("bigpemu_register_setting_int", "bigpemu_register_setting_int_full"):
+                        raise Unsupported("unsupported setting registration " + name)
+                    if (name.endswith("_full") and len(args) != 6) or (not name.endswith("_full") and len(args) != 3):
+                        raise Unsupported("malformed integer setting registration")
+                    parameter_args[key] = args[2:]
             elif name.startswith("bigpemu_register_event_") and len(args) == 2:
                 if name in self.events: raise Unsupported("duplicate event registration")
                 self.events[name] = args[-1].name
@@ -498,6 +508,38 @@ class Module:
                 else: enum = None
                 self.globals.append((node, enum))
 
+        self.parameter_args = parameter_args
+
+    def prepare_settings(self):
+        # Defer global evaluation until convert() so failures retain the cartridge
+        # identity in the pack generator's per-cartridge error report.
+        # Registration expressions are evaluated from initialized globals/macros/enums,
+        # never by calling script functions or executing bigp_init.
+        self.off_values = {key: 0 for key, _, _ in self.settings}
+        self.parameters = {}
+        constants = self.global_runtime(0, {}) if self.parameter_args else None
+        for key, args in self.parameter_args.items():
+            for arg in args:
+                if any(isinstance(n, (C.FuncCall, C.Assignment)) or
+                       (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(arg)):
+                    raise Unsupported("integer setting metadata must be constant")
+            default = integer(constants.expr(args[0])).n
+            try:
+                if len(args) != 4:
+                    raise Unsupported("parameter setting requires explicit bounds and step")
+                low, high, step = [integer(constants.expr(arg)).n for arg in args[1:]]
+                if step <= 0 or low > high or not low <= default <= high or (default-low) % step:
+                    raise Unsupported("invalid integer setting default/range/step")
+                self.off_values[key] = low
+                count = (high-low)//step + 1
+                if count == 1:
+                    raise Unsupported("parameter setting has no selectable values above its inactive minimum")
+                if count > MAX_INTEGER_VALUES:
+                    raise Unsupported(f"parameter setting exceeds {MAX_INTEGER_VALUES}-value limit")
+                self.parameters[key] = tuple(range(low, high+1, step))
+            except Unsupported as error:
+                self.parameters[key] = str(error)
+
     def notify(self, args, shown):
         """printf_notify: a lone string literal reached at load for this cartridge becomes a toast message;
         anything else (format arguments, frame callback, setting-dependent) is recorded as not shown."""
@@ -515,7 +557,7 @@ class Module:
         note = "script message not shown: " + (text[:NOTE_CHARS] if text else "dynamic")
         if note not in self.dropped_messages: self.dropped_messages.append(note)
 
-    def runtime(self, digest, selected):
+    def global_runtime(self, digest, selected):
         runtime = Runtime(self, digest, selected)
         for node, enum in self.globals:
             if enum:
@@ -527,48 +569,81 @@ class Module:
             else: runtime.stmt(node)
         for name, handle in self.handles.items():
             runtime.put(name, Value(handle))
+        return runtime
+
+    def runtime(self, digest, selected):
+        runtime = self.global_runtime(digest, selected)
         runtime.run(self.events["bigpemu_register_event_sw_loaded"])
         if runtime.writes: raise Unsupported("load-time memory changes are not frame cheats")
         return runtime
 
     def convert(self, digest):
         self.messages, self.dropped_messages, self.ignored_calls = [], [], set()
+        self.prepare_settings()
         baseline = self.runtime(digest, None)
         baseline.run(self.events["bigpemu_register_event_emu_thread_frame"])
-        results = []
+        results, groups = [], []
         for key, label, boolean in self.settings:
-            result = {"name": label}
-            try:
-                if not boolean: raise Unsupported("parameter setting requires manual value selection")
-                runtime = self.runtime(digest, frozenset([key]))
-                runtime.run(self.events["bigpemu_register_event_emu_thread_frame"])
-                if not runtime.writes: raise Unsupported("no writes activated (check ROM revision/hash)")
-                result["code"] = "+".join(f"{a:08X}:{v:0{w*2}X}" for a, v, w in runtime.writes)
-                result["writes"] = len(runtime.writes)
-            except Unsupported as error:
-                result["unsupported"] = str(error)
-            results.append(result)
-        # Individual traces cannot prove independence: an extra write might be
-        # guarded by (A && B). Check every combination of exported toggles.
-        supported = [(key, result) for (key, _, _), result in zip(self.settings, results) if "code" in result]
+            options = (1,) if boolean else self.parameters[key]
+            if isinstance(options, str):
+                results.append({"name": label, "unsupported": options})
+                groups.append([])
+                continue
+            group = []
+            for value in options:
+                if not boolean and value == self.off_values[key]:
+                    continue  # Off uses the range minimum, verified to have no RAM effects.
+                result = {"name": label if boolean else f"{label}: {value}"}
+                try:
+                    runtime = self.runtime(digest, {key: value})
+                    runtime.run(self.events["bigpemu_register_event_emu_thread_frame"])
+                    if not runtime.writes: raise Unsupported("no writes activated (check ROM revision/hash)")
+                    result["code"] = "+".join(f"{a:08X}:{v:0{w*2}X}" for a, v, w in runtime.writes)
+                    result["writes"] = len(runtime.writes)
+                    group.append((key, value, result, runtime.writes))
+                except Unsupported as error:
+                    result["unsupported"] = str(error)
+                results.append(result)
+            groups.append(group)
+
+        labels = [r["name"].casefold() for r in results]
+        if len(labels) != len(set(labels)):
+            raise Unsupported("expanded setting labels would be ambiguous in the .cht frontend")
+
         def image(writes):
             out = {}
             for address, value, width in writes:
                 for i, byte in enumerate(value.to_bytes(width, "big")):
                     out[address+i] = byte
             return out
-        for count in range(2, len(supported)+1):
-            for combination in itertools.combinations(supported, count):
-                selected = frozenset(key for key, _ in combination)
-                runtime = self.runtime(digest, selected)
-                runtime.run(self.events["bigpemu_register_event_emu_thread_frame"])
-                expected = []
-                for _, result in combination:
-                    for segment in result["code"].split("+"):
-                        address, value = segment.split(":")
-                        expected.append((int(address, 16), int(value, 16), len(value)//2))
-                if image(runtime.writes) != image(expected):
-                    raise Unsupported("toggles interact; independent freezes cannot preserve combined behaviour")
+
+        # Several values can be enabled in a .cht. Each must overwrite every byte
+        # of the preceding choice so only the last value survives in frontend order.
+        for group in groups:
+            if len({frozenset(image(writes)) for _, _, _, writes in group}) > 1:
+                for _, _, result, _ in group:
+                    result.pop("code")
+                    result.pop("writes")
+                    result["unsupported"] = "integer choices write different bytes; cannot preserve last-choice behaviour"
+                group.clear()
+
+        # Exhaust every off/value combination of original settings (not 2**N
+        # expanded toggles). Same-setting subsets reduce to their last choice above.
+        combinations = 1
+        for group in groups:
+            combinations *= len(group)+1
+        if combinations > MAX_SETTING_COMBINATIONS:
+            raise Unsupported(f"expanded settings exceed {MAX_SETTING_COMBINATIONS}-combination interaction limit")
+        for combination in itertools.product(*[[None] + group for group in groups]):
+            active = [choice for choice in combination if choice is not None]
+            if len(active) < 2:
+                continue
+            selected = {key: value for key, value, _, _ in active}
+            runtime = self.runtime(digest, selected)
+            runtime.run(self.events["bigpemu_register_event_emu_thread_frame"])
+            expected = [write for _, _, _, writes in active for write in writes]
+            if image(runtime.writes) != image(expected):
+                raise Unsupported("toggles interact; independent freezes cannot preserve combined behaviour")
         return results
 
 
