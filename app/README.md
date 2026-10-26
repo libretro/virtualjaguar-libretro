@@ -956,6 +956,7 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 [`docs/app-debug-tools.md`](../docs/app-debug-tools.md).
 
 - **Memory viewer** (hex / ASCII grid over every bus region, go-to, search, change highlighting, edits, "Add as cheat")
+  with a raw **Bitmap** mode (width/depth hints, live or staged CLUT, PNG export),
   and **Palette (CLUT)** (256 swatches as CRY or RGB16, with an editor).
 - **Cheat scanner**: find an address by narrowing (changed / increased / equal to ...), then keep it as an ordinary cheat.
 - **Object list**: the whole display list the Object Processor walks, decoded, with a bitmap preview, an outline over the
@@ -969,7 +970,7 @@ The **Tools** menu is a set of developer windows over a private debug interface 
 Writes go to RAM freely; hardware registers need "Allow register writes"; the CD registers (`$DFFF00-$DFFFFF`) and
 `B_CMD`, `G_CTRL`, `D_CTRL`, `OLP`, `LTXD`, `RTXD` are never written from here.  Everything greys out (and closes) while
 RetroAchievements hardcore is on.  Extra app instances keep their own windows but do not dump textures.  Developers can
-open one at start-up: `--show-window memory|palette|scanner|objects|blitter|textures|scope` (with `--screenshot`).
+open one at start-up: `--show-window memory|bitmap|palette|scanner|objects|blitter|textures|scope` (with `--screenshot`).
 
 ## Smoke tests
 
@@ -1024,7 +1025,7 @@ window uses), run for `--frames` frames, and reported as an FNV-1a frame hash
   `devices_unit` covers the show / hide policy (click, tap, Esc, F3, timeout).
 
 - `debug_*`: the debug tools.  `debug_session_unit` and the per-tool unit tests (`debug_memory_unit`, `debug_scan_unit`,
-  `debug_op_unit`, `debug_texture_unit`, `debug_blitter_unit`) run the pure logic against a fake core
+  `debug_op_unit`, `debug_bitmap_unit`, `debug_texture_unit`, `debug_blitter_unit`) run the pure logic against a fake core
   (`tests/debug_mock.h`); `debug_memory_ui_smoke` and `debug_scan_ui_smoke` draw the windows headlessly over it;
   `debug_e2e`, `debug_scan_e2e` and `debug_op_e2e` drive the real core on `yarc.j64` (halt / step / continue, a found counter
   kept as a working cheat, the display list captured by the core).

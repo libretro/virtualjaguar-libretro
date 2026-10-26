@@ -80,7 +80,16 @@ void drawDebugWindows(App& app) { app.debug.drawTools(); }
 void addDebugTools(App& app) {
     DebugSession& d = app.debug;
     d.addProvider({[](DebugSession& s) { registerMemoryTools(s); },     // Memory viewer + Palette (CLUT)
-                   [&app](DebugSession& s) { drawMemoryTools(s, &app.cheats); }});
+                   [&app](DebugSession& s) {
+                       BitmapUiContext ctx;
+                       ctx.createTexture = &VideoOut::createTextureRGBA;
+                       ctx.destroyTexture = &VideoOut::destroyTexture;
+                       ctx.openObject = [&s](const OpObject& obj, const OpRenderOptions& opt) {
+                           showObjectPreview(s, obj, opt);
+                       };
+                       ctx.exportDir = app.paths.root + "debug/";
+                       drawMemoryTools(s, &app.cheats, ctx);
+                   }});
     d.addProvider({[](DebugSession& s) { registerScannerTool(s); },
                    [&app](DebugSession& s) { drawScanner(s, app.cheats, app.host); }});
     d.addProvider({[](DebugSession& s) { registerObjectsTool(s); },
@@ -99,9 +108,11 @@ void addDebugTools(App& app) {
 void shutdownDebugTools() {
     textureToolShutdown();
     releaseObjectsTextures();
+    releaseBitmap();
 }
 
 bool openDebugWindow(DebugSession& session, const std::string& name) {
+    if (name == "bitmap") { showMemoryBitmapAt(session, 0); return true; }
     const std::string id = name == "palette" ? "clut" : name;
     DebugTool* t = session.findTool(id);
     if (!t || !t->toggle) return false;

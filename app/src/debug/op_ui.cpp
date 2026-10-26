@@ -466,6 +466,13 @@ void registerObjectsTool(DebugSession& session) {
     });
 }
 
+void showObjectPreview(DebugSession& s, const OpObject& obj, const OpRenderOptions& opt) {
+    g.vm.showPreview(s, obj, opt);
+    g.open = true;
+    g.highlight = false;
+    freeTexture();
+}
+
 void drawObjectsTool(App& app) {
     ObjectsContext ctx;
     const PicRect& pic = app.input.picture();

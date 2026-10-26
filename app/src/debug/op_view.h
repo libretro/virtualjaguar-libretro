@@ -60,6 +60,8 @@ public:
     // ---- selection / preview -----------------------------------------------------------------------
     int selected() const { return sel_; }
     void select(int idx);
+    // Installs a synthetic bitmap bound to this session/content epoch, without arming a snapshot.
+    void showPreview(DebugSession& s, const OpObject& obj, const OpRenderOptions& opt);
     const OpObject* selectedObject() const { return sel_ >= 0 && sel_ < (int)objs_.size() ? &objs_[(size_t)sel_] : nullptr; }
     // The selected bitmap rendered, or null (not a bitmap / not drawable: see imageError()).
     const OpImage* image() const { return haveImage_ ? &img_ : nullptr; }

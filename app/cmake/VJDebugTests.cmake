@@ -72,7 +72,8 @@ set_tests_properties(debug_memory_unit PROPERTIES TIMEOUT 60)
 #                          without a renderer against the mock, driven by synthetic key events: a typed hex
 #                          value reaches the interface, ROM / register / B_CMD edits are refused before it.
 add_executable(vj_debug_memory_ui_test
-    tests/debug_memory_ui_test.cpp src/debug/memory_ui.cpp src/debug/clut_ui.cpp src/debug/memory_view.cpp
+    tests/debug_memory_ui_test.cpp src/debug/bitmap_ui.cpp src/debug/bitmap_view.cpp
+    src/debug/op_render.cpp src/debug/op_decode.cpp src/debug/memory_ui.cpp src/debug/clut_ui.cpp src/debug/memory_view.cpp
     ${VJ_DEBUG_SESSION_SRCS} src/cheats.cpp src/config.cpp src/paths.cpp "${VJ_ROOT}/src/core/cheat.c"
     src/theme.cpp src/theme_style.cpp src/theme_custom.cpp)
 target_include_directories(vj_debug_memory_ui_test PRIVATE src src/debug tests "${VJ_ROOT}/src/debug"
@@ -264,8 +265,16 @@ target_link_libraries(vj_debug_scope_gate_test PRIVATE vj_core Threads::Threads)
 # #967 3a: the tool windows never touch vj_debug_iface; every window task adds its files to this list.
 # cpu_view.cpp, op_view.cpp, memory_view.cpp, blitter_log.cpp and texture_pack.cpp are not listed: their core work
 # sits inside callCore/postCore lambdas, which the regex cannot tell apart from a direct call on the UI thread.
-set(VJ_NO_IFACE_FILES memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp
+set(VJ_NO_IFACE_FILES bitmap_ui.cpp memory_ui.cpp clut_ui.cpp cpu_ui.cpp op_ui.cpp blitter_ui.cpp blitter_feed.cpp texture_ui.cpp
     scanner_ui.cpp scanner_actions.cpp scope_ui.cpp)
 add_test(NAME debug_no_direct_iface COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/src/debug
          "-DFILES=${VJ_NO_IFACE_FILES}" -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckNoDirectIface.cmake)
 set_tests_properties(debug_no_direct_iface PROPERTIES LABELS emu_thread)
+
+# Raw memory bitmap rendering and bounded width/depth inference (#1055).
+add_executable(vj_debug_bitmap_test tests/debug_bitmap_test.cpp src/debug/bitmap_view.cpp
+    src/debug/op_render.cpp src/debug/op_decode.cpp ${VJ_DEBUG_SESSION_SRCS})
+target_include_directories(vj_debug_bitmap_test PRIVATE src/debug tests "${VJ_ROOT}/src/debug")
+target_link_libraries(vj_debug_bitmap_test PRIVATE ${VJ_SDL3_TARGET})
+add_test(NAME debug_bitmap_unit COMMAND vj_debug_bitmap_test)
+set_tests_properties(debug_bitmap_unit PROPERTIES TIMEOUT 60 LABELS emu_thread)

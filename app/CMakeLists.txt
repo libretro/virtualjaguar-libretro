@@ -375,6 +375,8 @@ set(VJ_APP_SOURCES
     src/debug/debug_views.cpp
     src/debug/debug_ui.cpp
     src/debug/memory_view.cpp
+    src/debug/bitmap_view.cpp
+    src/debug/bitmap_ui.cpp
     src/debug/memory_ui.cpp
     src/debug/clut_ui.cpp
     src/debug/cheat_scan.cpp
