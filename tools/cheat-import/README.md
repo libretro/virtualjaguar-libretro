@@ -61,24 +61,33 @@ authenticity signature. Do not remove it to make a different dump pass.
 
 ## Supported subset
 
-- One category, boolean settings, a software-load callback, and an emulation
-  frame callback, using the registration/call names present in the author's
+- One category, boolean and bounded integer settings, a software-load callback,
+  and an emulation frame callback, using the registration/call names present in the author's
   community C sources.
 - Constant byte, word, and long writes to the 2 MiB main RAM, including grouped
   writes and bounded integer loops. Word/long addresses must be even.
 - Integer constants, object-like macros, enums, scalar locals, explicit integer
   casts, simple arithmetic/bitwise expressions and conditions. Fixed-width C
   integer promotion and unsigned wrapping are modeled; signed overflow fails.
-- At most ten settings, with every combination of the exported toggles checked
-  for equivalent final byte writes. Cheats run as an ordered group per toggle;
-  sources whose combined behavior cannot be preserved are refused.
+- `bigpemu_register_setting_int_full` with constant default, inclusive minimum/maximum
+  and positive step, spanning at most 64 values. The default must be in range and
+  on the step grid. Macros and enums can supply the bounds. Each value above the
+  minimum becomes a disabled entry named `Setting: value`, including the default
+  if applicable. The minimum supplies the off value and must have no memory
+  effects with all cheats off. The source default never auto-enables a freeze.
+- At most ten original settings and 4096 off/value combinations, with every
+  combination checked for equivalent final byte writes. Integer choices must
+  write the same set of bytes, so enabling several choices leaves the last
+  enabled value in frontend order. Choose one value per setting. Cheats run as
+  an ordered group per toggle; sources whose combined behavior cannot be preserved are refused.
 
-RAM reads, copy/conditional/masked cheats, parameter-valued settings, helper
+RAM reads, copy/conditional/masked cheats, unbounded or larger integer settings, helper
 functions, pointers/arrays, static local state, frame-to-frame state changes,
 extra events, early returns, general preprocessing, and other unsupported C
 syntax need a manual port. No runtime values are guessed. Conversion assumes
-omitted settings remain off and produces only the exported constant freezes;
-it cannot provide the omitted source features. Overlapping cheats still follow
+omitted boolean settings remain zero and bounded integer settings remain at their
+minimum (unbounded or invalid registrations retain the legacy zero assumption).
+It produces only the exported constant freezes; it cannot provide the omitted source features. Overlapping cheats still follow
 the app's normal application order. Test converted cheats in the game and
 keep save backups before relying on them.
 
@@ -86,8 +95,11 @@ keep save backups before relying on them.
 status (`supported`, `setting-omitted`, `ignored`, `unsupported`) with our own
 description of what the call does and the follow-up needed. `load_api_map()`
 reads it; an unlisted call is `unmapped` and the refusal names it
-(`Unsupported.call`). Integer settings (`bigpemu_register_setting_int` and
-`bigpemu_register_setting_int_full`) are omitted toggles, not fatal. A `printf_notify("literal")` reached at load for the
+(`Unsupported.call`). `bigpemu_register_setting_int` lacks explicit bounds and
+remains omitted. Bounded
+`bigpemu_register_setting_int_full` choices are converted individually; unsupported
+choices are reported and omitted in full. Invalid or excessive ranges are reported
+for the setting. A `printf_notify("literal")` reached at load for the
 matching cartridge becomes `Module.messages` (at most four, 200 characters each);
 other uses are listed in `Module.dropped_messages`, and `printf` in
 `Module.ignored_calls`.

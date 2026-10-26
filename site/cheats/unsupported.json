@@ -660,7 +660,7 @@
         "scripts/cheat_zool2.c",
         "scripts/cheat_zoop.c"
       ],
-      "status": "setting-omitted"
+      "status": "supported"
     },
     "bigpemu_set_module_usage_flags": {
       "sources": [
@@ -835,12 +835,131 @@
       "stage": "setting"
     },
     {
-      "calls": [],
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
       "crc32": "CD5BF827",
       "note": null,
       "path": "scripts/cheat_attack_mutant_penguins.c",
-      "reason": "parameter setting requires manual value selection",
-      "setting": "Minimum Number Orbs",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 1",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 10",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 2",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 3",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 4",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 5",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 6",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 7",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 8",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Minimum Number Orbs: 9",
       "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
       "source": "jguffer",
       "stage": "setting"
@@ -850,8 +969,266 @@
       "crc32": "CD5BF827",
       "note": null,
       "path": "scripts/cheat_attack_mutant_penguins.c",
-      "reason": "parameter setting requires manual value selection",
-      "setting": "Unlock Levels",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Unlock Levels: 0",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Unlock Levels: 1",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 10",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 11",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 12",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 13",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 14",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 15",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 16",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 17",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 18",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 19",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 2",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 20",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 3",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 4",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 5",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 6",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 7",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 8",
+      "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "CD5BF827",
+      "note": null,
+      "path": "scripts/cheat_attack_mutant_penguins.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Unlock Levels: 9",
       "sha256": "a07b03d39da5e17080ed31296fb87e8c4b7e9df2691d0d0205f7bae4877d8909",
       "source": "jguffer",
       "stage": "setting"
@@ -924,7 +1301,7 @@
     },
     {
       "calls": [],
-      "crc32": "2E17D5DA",
+      "crc32": null,
       "note": null,
       "path": "scripts/cheat_bubsy.c",
       "reason": "pointer/array declarations require manual review",
@@ -946,7 +1323,7 @@
     },
     {
       "calls": [],
-      "crc32": "BDA405C6",
+      "crc32": null,
       "note": null,
       "path": "scripts/cheat_cannon_fodder.c",
       "reason": "pointer/array declarations require manual review",
@@ -960,7 +1337,7 @@
       "crc32": "FA7775AE",
       "note": null,
       "path": "scripts/cheat_checkered_flag.c",
-      "reason": "no toggle converted: Num Tournament Laps: parameter setting requires manual value selection",
+      "reason": "no toggle converted: Num Tournament Laps: 1: pointer/array declarations require manual review; Num Tournament Laps: 2: pointer/array declarations require manual review; Num Tournament Laps: 3: pointer/array declarations require manual review (+12 more)",
       "setting": null,
       "sha256": "986882cadb502dcfee7f22cfb346813996e04856a154d057308e75afde40c358",
       "source": "jguffer",
@@ -968,18 +1345,7 @@
     },
     {
       "calls": [],
-      "crc32": "BDE67498",
-      "note": null,
-      "path": "scripts/cheat_cybermorph.c",
-      "reason": "pointer/array declarations require manual review",
-      "setting": null,
-      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
-      "source": "jguffer",
-      "stage": "module"
-    },
-    {
-      "calls": [],
-      "crc32": "ECF854E7",
+      "crc32": null,
       "note": null,
       "path": "scripts/cheat_cybermorph.c",
       "reason": "pointer/array declarations require manual review",
@@ -1032,8 +1398,8 @@
       "crc32": "27594C6A",
       "note": null,
       "path": "scripts/cheat_d2k_2000.c",
-      "reason": "parameter setting requires manual value selection",
-      "setting": "Num Enemies For Orb Release",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Num Enemies For Orb Release: 0",
       "sha256": "35ce0943e13eec6bfa6e3ec2647330fba8cb85fc01a0e2afd23fabf30ef53ba2",
       "source": "jguffer",
       "stage": "setting"
@@ -1056,7 +1422,7 @@
       "crc32": "27594C6A",
       "note": null,
       "path": "scripts/cheat_d2k_plus_n_classic.c",
-      "reason": "parameter setting requires manual value selection",
+      "reason": "parameter setting exceeds 64-value limit",
       "setting": "Start At Level",
       "sha256": "7b1e664dbd279c03cdd2425e2960b927e25039e089d908c905fc38a0f5cf7995",
       "source": "jguffer",
@@ -1077,7 +1443,7 @@
     },
     {
       "calls": [],
-      "crc32": "0EC5369D",
+      "crc32": null,
       "note": null,
       "path": "scripts/cheat_evolution_dino_dudes.c",
       "reason": "pointer/array declarations require manual review",
@@ -1088,7 +1454,7 @@
     },
     {
       "calls": [],
-      "crc32": "3615AF6A",
+      "crc32": null,
       "note": null,
       "path": "scripts/cheat_fever_pitch_soccer.c",
       "reason": "pointer/array declarations require manual review",
@@ -1123,7 +1489,7 @@
     },
     {
       "calls": [],
-      "crc32": "DE55DCC7",
+      "crc32": null,
       "note": null,
       "path": "scripts/cheat_flashback.c",
       "reason": "pointer/array declarations require manual review",
@@ -1133,11 +1499,13 @@
       "stage": "module"
     },
     {
-      "calls": [],
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
       "crc32": "892BC67C",
       "note": null,
       "path": "scripts/cheat_flipout.c",
-      "reason": "no toggle converted: Start At Level: parameter setting requires manual value selection",
+      "reason": "no toggle converted: Start At Level: 0: no writes activated (check ROM revision/hash); Start At Level: 1: no writes activated (check ROM revision/hash); Start At Level: 2: unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats) (+53 more)",
       "setting": null,
       "sha256": "3b1640993110a686f5a5817bd7db9b4dc33e6991946f0e84a9a7429b73a04bbf",
       "source": "jguffer",
@@ -1153,17 +1521,6 @@
       "sha256": "c03bb1a1a55504fe2eef73efe86c6f94d05235953bc925e7031878d6b9c62e7d",
       "source": "jguffer",
       "stage": "identity"
-    },
-    {
-      "calls": [],
-      "crc32": "4899628F",
-      "note": null,
-      "path": "scripts/cheat_hoverstrike_cart.c",
-      "reason": "parameter setting requires manual value selection",
-      "setting": "Select Level",
-      "sha256": "8fc5b2dc395b67e58b281e017d2b171f2bde59be293fc1150bb701642bd28876",
-      "source": "jguffer",
-      "stage": "setting"
     },
     {
       "calls": [],
@@ -1253,8 +1610,415 @@
       "crc32": "1660F070",
       "note": null,
       "path": "scripts/cheat_power_drive_rally.c",
-      "reason": "parameter setting requires manual value selection",
-      "setting": "Start Level",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Start Level: 0",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 1",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 10",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 11",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 12",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 13",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 14",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 15",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 16",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 17",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 18",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 19",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 2",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 20",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 21",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 22",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 23",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 24",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 25",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 26",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 27",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 28",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 29",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 3",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 30",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 31",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 32",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 33",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 34",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 35",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 36",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 37",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 4",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 5",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 6",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 7",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 8",
+      "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "1660F070",
+      "note": null,
+      "path": "scripts/cheat_power_drive_rally.c",
+      "reason": "frame callback changes persistent state",
+      "setting": "Start Level: 9",
       "sha256": "56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd",
       "source": "jguffer",
       "stage": "setting"
@@ -1297,8 +2061,112 @@
       "crc32": "0509C85E",
       "note": null,
       "path": "scripts/cheat_raiden.c",
-      "reason": "parameter setting requires manual value selection",
-      "setting": "Start At Level",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Start At Level: 0",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 1",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 2",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 3",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 4",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 5",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 6",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 7",
+      "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "0509C85E",
+      "note": null,
+      "path": "scripts/cheat_raiden.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 8",
       "sha256": "32a0468e5df29dfb97b698f87208b30444a4aa2fca4691350029b4c186c12456",
       "source": "jguffer",
       "stage": "setting"
@@ -1466,7 +2334,7 @@
       "crc32": "C5562581",
       "note": null,
       "path": "scripts/cheat_zoop.c",
-      "reason": "no toggle converted: Num Shapes To Remove: parameter setting requires manual value selection",
+      "reason": "no toggle converted: Num Shapes To Remove: parameter setting exceeds 64-value limit",
       "setting": null,
       "sha256": "d3978fb8f3f63980dac423b6b881bb06cbb2da73fe5ea1f4a9d16c90ece36a09",
       "source": "jguffer",

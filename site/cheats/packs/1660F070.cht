@@ -2,7 +2,44 @@
 # Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
 # Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_power_drive_rally.c
 # Source SHA256: 56796b50451ebdc9965bb111e57af1a801da9fc66145fb72f69e6760c50286fd
-# Omitted: "Start Level" (scripts/cheat_power_drive_rally.c): parameter setting requires manual value selection
+# Omitted: "Start Level: 0" (scripts/cheat_power_drive_rally.c): no writes activated (check ROM revision/hash)
+# Omitted: "Start Level: 1" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 2" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 3" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 4" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 5" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 6" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 7" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 8" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 9" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 10" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 11" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 12" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 13" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 14" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 15" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 16" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 17" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 18" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 19" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 20" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 21" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 22" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 23" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 24" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 25" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 26" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 27" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 28" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 29" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 30" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 31" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 32" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 33" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 34" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 35" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 36" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
+# Omitted: "Start Level: 37" (scripts/cheat_power_drive_rally.c): frame callback changes persistent state
 # Cartridge revision guard is enforced by the Virtual Jaguar app.
 vj_rom_crc32 = "1660F070"
 cheats = 2

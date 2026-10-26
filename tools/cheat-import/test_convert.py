@@ -3,10 +3,12 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("cheat_converter", Path(__file__).with_name("convert.py"))
 converter = importlib.util.module_from_spec(spec)
@@ -127,7 +129,7 @@ class ConversionTests(unittest.TestCase):
 
     def test_parameter_and_ambiguous_labels(self):
         text = source(SIMPLE).replace('bigpemu_register_setting_bool(category, "Other freeze", 0)',
-                                     'bigpemu_register_setting_int(category, "Other freeze", 0, 0, 10, 1)')
+                                     'bigpemu_register_setting_int(category, "Other freeze", 0)')
         results = converter.Module(text).convert(DIGEST)
         self.assertIn("code", results[0])
         self.assertIn("parameter", results[1]["unsupported"])
@@ -180,17 +182,131 @@ class ConversionTests(unittest.TestCase):
             'bigpemu_register_setting_int_full(category, "Start At Level", -1, -1, 9, 1)')
         return converter.Module(text)
 
-    def test_int_full_setting_is_omitted_not_fatal(self):
-        results = self.int_module(SIMPLE).convert(DIGEST)
-        self.assertEqual(len(results), 2)
-        self.assertIn("code", results[0])
-        self.assertEqual(results[1]["unsupported"], "parameter setting requires manual value selection")
+    def test_int_full_expands_values_and_preserves_boolean(self):
+        module = self.int_module(SIMPLE.replace("if (b)", "if (b >= 0)").replace("0x1234", "b"))
+        results = module.convert(DIGEST)
+        self.assertEqual(len(results), 11)
+        self.assertEqual(results[0]["code"], "001F0000:AB")
+        self.assertEqual([r["name"] for r in results[1:]], [f"Start At Level: {n}" for n in range(10)])
+        self.assertEqual([r["code"] for r in results[1:]], [f"001F0002:{n:04X}" for n in range(10)])
+        self.assertTrue(all("code" not in r for r in module.convert(DIGEST ^ 1)))
+
+    def test_int_full_step_negative_macro_enum_and_default(self):
+        text = source(SIMPLE.replace("if (b)", "if (b > -4)").replace("0x1234", "b + 10"),
+                      extra="enum { LOW = -4, HIGH = 4 };\n#define STEP (1 << 1)")
+        text = text.replace('bigpemu_register_setting_bool(category, "Other freeze", 0)',
+                            'bigpemu_register_setting_int_full(category, "Other freeze", 2, LOW, HIGH, STEP)')
+        results = converter.Module(text).convert(DIGEST)
+        self.assertEqual([r["name"] for r in results[1:]], [f"Other freeze: {n}" for n in (-2, 0, 2, 4)])
+        self.assertEqual([r["code"] for r in results[1:]], [f"001F0002:{n:04X}" for n in (8, 10, 12, 14)])
 
     def test_int_full_dependent_write_refused(self):
         results = self.int_module("if (a) { bigpemu_jag_write8(0x1f0000, 1); if (b != -1) { bigpemu_jag_write8(0x1f0abc, 2); } }").convert(DIGEST)
-        self.assertEqual(len(results), 2)
-        self.assertIn("exactly one independent setting", results[0]["unsupported"])
+        self.assertIn("code", results[0])
+        self.assertTrue(all("code" not in r for r in results[1:]))
         self.assertTrue(all("1F0ABC" not in r.get("code", "") for r in results))
+
+    def test_int_full_runtime_choice_omitted_in_full(self):
+        results = self.int_module(SIMPLE.replace("if (b)", "if (b >= 0)").replace("0x1234", "b") +
+            "if (b == 3) { bigpemu_jag_read8(1); }").convert(DIGEST)
+        self.assertIn("unsupported call", results[4]["unsupported"])
+        self.assertNotIn("code", results[4])
+        self.assertIn("code", results[3])
+        self.assertIn("code", results[5])
+
+    def test_int_full_invalid_and_excessive_ranges(self):
+        for args, reason in (("0, 0, 2, 0", "invalid"), ("0, 0, 2, -1", "invalid"),
+                             ("0, 2, 0, 1", "invalid"), ("9, 0, 2, 1", "invalid"),
+                             ("1, 0, 4, 2", "invalid"), ("0, 0, 64, 1", "64-value"),
+                             ("0, 0, unknown, 1", "unknown identifier"),
+                             ("0, 0, 0, 1", "no selectable values")):
+            text = source(SIMPLE).replace('bigpemu_register_setting_bool(category, "Other freeze", 0)',
+                                         'bigpemu_register_setting_int_full(category, "Other freeze", ' + args + ')')
+            results = converter.Module(text).convert(DIGEST)
+            self.assertIn("code", results[0])
+            self.assertIn(reason, results[1]["unsupported"])
+
+    def test_int_full_minimum_must_be_inactive(self):
+        with self.assertRaisesRegex(converter.Unsupported, "ROM-hash guard"):
+            self.int_module(SIMPLE).convert(DIGEST)  # if (-1) writes even with all cheats off.
+
+    def test_int_full_default_does_not_auto_enable(self):
+        text = source(SIMPLE.replace("0x1234", "b")).replace(
+            'bigpemu_register_setting_bool(category, "Other freeze", 0)',
+            'bigpemu_register_setting_int_full(category, "Other freeze", 2, 0, 3, 1)')
+        results = converter.Module(text).convert(DIGEST)
+        self.assertEqual([r["code"] for r in results[1:]], ["001F0002:0001", "001F0002:0002", "001F0002:0003"])
+
+    def test_int_full_different_write_footprints_omitted(self):
+        results = self.int_module(SIMPLE.replace("if (b)", "if (b >= 0)") +
+            "if (b > 3) { bigpemu_jag_write8(0x1f0010, 7); }").convert(DIGEST)
+        self.assertIn("code", results[0])
+        self.assertTrue(all("different bytes" in r["unsupported"] for r in results[1:]))
+
+    def test_int_full_cross_setting_interactions(self):
+        with self.assertRaisesRegex(converter.Unsupported, "interact"):
+            self.int_module(SIMPLE.replace("if (b)", "if (b >= 0)") +
+                "if (a && b == 7) { bigpemu_jag_write8(0x1f0010, 7); }").convert(DIGEST)
+
+    def test_int_full_two_parameter_interaction(self):
+        text = source("if (a > 0) { bigpemu_jag_write8(0x1f0000, a); } "
+                      "if (b > 0) { bigpemu_jag_write8(0x1f0001, b); } "
+                      "if (a == 2 && b == 3) { bigpemu_jag_write8(0x1f0002, 9); }")
+        for label in ("Grouped freeze", "Other freeze"):
+            text = re.sub(r'bigpemu_register_setting_bool\(category, "' + label + r'", [01]\)',
+                          f'bigpemu_register_setting_int_full(category, "{label}", 0, 0, 3, 1)', text)
+        with self.assertRaisesRegex(converter.Unsupported, "interact"):
+            converter.Module(text).convert(DIGEST)
+
+    def test_int_full_expanded_label_collision(self):
+        text = source(SIMPLE).replace('"Grouped freeze"', '"Other freeze: 1"').replace(
+            'bigpemu_register_setting_bool(category, "Other freeze", 0)',
+            'bigpemu_register_setting_int_full(category, "Other freeze", 0, 0, 2, 1)')
+        with self.assertRaisesRegex(converter.Unsupported, "ambiguous"):
+            converter.Module(text).convert(DIGEST)
+
+    def test_int_full_interaction_budget(self):
+        text = source("if (a > 0) { bigpemu_jag_write8(0x1f0000, a); } if (b > 0) { bigpemu_jag_write8(0x1f0001, b); }")
+        for label in ("Grouped freeze", "Other freeze"):
+            text = re.sub(r'bigpemu_register_setting_bool\(category, "' + label + r'", [01]\)',
+                          f'bigpemu_register_setting_int_full(category, "{label}", 0, 0, 63, 1)', text)
+        with mock.patch.object(converter, "MAX_SETTING_COMBINATIONS", 100):
+            with self.assertRaisesRegex(converter.Unsupported, "interaction limit"):
+                converter.Module(text).convert(DIGEST)
+
+    def test_int_full_all_enabled_subsets_replay_last_choice(self):
+        text = source(SIMPLE.replace("if (b)", "if (b >= 0)").replace("0x1234", "b")).replace(
+            'bigpemu_register_setting_bool(category, "Other freeze", 0)',
+            'bigpemu_register_setting_int_full(category, "Start At Level", -1, -1, 2, 1)')
+        module = converter.Module(text)
+        results = module.convert(DIGEST)
+        # Exercise every frontend subset including multiple choices for one handle.
+        for mask in range(1 << len(results)):
+            actual = {}
+            selected = {}
+            for i, entry in enumerate(results):
+                if not mask & (1 << i):
+                    continue
+                selected[1 if i == 0 else 2] = 1 if i == 0 else i-1
+                for segment in entry["code"].split("+"):
+                    address, value = segment.split(":")
+                    for offset, byte in enumerate(bytes.fromhex(value)):
+                        actual[int(address, 16)+offset] = byte
+            runtime = module.runtime(DIGEST, selected)
+            runtime.run(module.events["bigpemu_register_event_emu_thread_frame"])
+            expected = {}
+            for address, value, width in runtime.writes:
+                for offset, byte in enumerate(value.to_bytes(width, "big")):
+                    expected[address+offset] = byte
+            self.assertEqual(actual, expected, mask)
+        self.assertEqual(converter.cht_entries(results).count("cheat0_enable = false"), 1)
+        self.assertFalse(any("enable = true" in line for line in converter.cht_entries(results)))
+
+    def test_int_full_metadata_side_effect_refused(self):
+        text = source(SIMPLE).replace('bigpemu_register_setting_bool(category, "Other freeze", 0)',
+            'bigpemu_register_setting_int_full(category, "Other freeze", 0, 0, flag++, 1)')
+        with self.assertRaisesRegex(converter.Unsupported, "metadata must be constant"):
+            converter.Module(text)
 
     def test_printf_notify_load_message(self):
         load = r'flag = 0; if (digest == MATCH_HASH) { printf_notify("Supported.\n"); flag = 1; }'
