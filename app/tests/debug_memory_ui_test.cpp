@@ -189,15 +189,36 @@ int main() {
     showMemoryAt(s, 0);
     settle(s, 8);
     CHECK(memory_test::byteAt(0x10, v) && v == 0x10);
-    CHECK(!memory_test::byteAt(0x200, v));                    // the narrow window asked for fewer bytes
+    CHECK(!memory_test::byteAt(0x1E0, v));                    // the narrow window asked for fewer bytes
     ImGui::SetWindowSize("Memory", ImVec2(660, 560));
     settle(s, 8);
-    CHECK(memory_test::byteAt(0x200, v) && v == 0x00);        // ...and the wide one's far end arrived with no refresh
+    CHECK(memory_test::byteAt(0x1E0, v) && v == 0xE0);        // ...and the wide one's far end arrived with no refresh
 
     // 7. A core going away mid-session does not crash the windows.
     s.setIface(nullptr);
     settle(s, 3);
     CHECK(!memoryWindowOpen() && !clutWindowOpen());
+
+    s.setIface(fx.counted.iface());
+    // Raw bitmap mode uses only marshalled core jobs, and keys affect bitmap geometry.
+    s.setHardcore(false);
+    showMemoryBitmapAt(s, MockDebugIface::kBitmapData);
+    settle(s, 5);
+    CHECK(bitmap_test::model().result().ok);
+    ImGui::SetWindowFocus("Memory");
+    settle(s);
+    const unsigned beforeWidth = bitmap_test::model().settings.width;
+    key(s, ImGuiKey_RightArrow);
+    settle(s);
+    CHECK(bitmap_test::model().settings.width == beforeWidth + 1);
+    CHECK(bitmap_test::model().result().image.w == (int)beforeWidth + 1);
+    const unsigned beforeAddress = bitmap_test::model().settings.address;
+    key(s, ImGuiKey_DownArrow);
+    settle(s);
+    CHECK(bitmap_test::model().settings.address == beforeAddress + bitmapRowBytes(beforeWidth + 1, 3));
+    CHECK(CountingIface::offCore() == 0);
+    s.closeAllTools("bitmap close");
+    CHECK(!bitmap_test::model().result().ok);
 
     ImGui::DestroyContext();
     std::printf("debug_memory_ui_smoke: %d checks, %d failed\n", g_checks, g_fail);

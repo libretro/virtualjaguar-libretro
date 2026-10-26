@@ -100,7 +100,7 @@ Every window follows the same rules:
 - **Opaque, resizable windows** placed through `ui::nextWindow`, text that wraps rather than clips.
 - Core calls follow the **Threading** rules below.
 
-Developers can open a window at start-up with `--show-window memory|palette|scanner|objects|blitter|textures|scope`
+Developers can open a window at start-up with `--show-window memory|bitmap|palette|scanner|objects|blitter|textures|scope`
 (with `--screenshot PNG` for a picture); it works with the emulation thread on too.
 
 ### Threading
@@ -127,6 +127,22 @@ Memory viewer: a hex / ASCII grid over every bus region the core lists (DRAM, ca
 registers, CLUT, line buffers, GPU and DSP RAM).  Values are big-endian bus order, shown as 8-, 16- or 32-bit cells.  It has
 go-to, back, "Follow pointer", an incremental hex / text search, change highlighting between refreshes, an in-place
 editor (click a cell, double-click or Enter, type hex) and **Add as cheat** for the selected cell.
+
+The **Bitmap** mode previews graphics at any mapped address, including cartridge, GPU and DSP RAM, through the
+same pixel decoder as Object list. Set width, height (0 = complete rows to the region end), 1/2/4/8/16/24 bpp and
+Auto (VMODE), CRY, RGB16 or Mixed colour. Indexed depths use the live CLUT at `$F00400`; enter another CLUT address
+and press Enter to inspect a staged palette. Rows are tightly packed (sub-byte rows round up to a byte);
+Jaguar 24 bpp uses four bytes per pixel. Previews are capped at 4096 by 1024 pixels.
+
+**Guess width / depth** samples at most 64 KiB from the start address. The five buttons rank byte-row similarity,
+with a preference for phrase strides and shorter equal-scoring harmonics, and show widths for the selected depth.
+The depth hint compares even/odd byte distributions: similar suggests 8 bpp, distinct suggests CRY16;
+uniform or ambiguous data is inconclusive. These are heuristics, not format detection.
+Left/Right changes width by one pixel (Shift: eight); Up/Down nudges the address by one row (Shift: one phrase).
+**Export PNG** writes the current preview to the editable path (initially `<data>/debug/bitmap.png`).
+**Open as OP object** opens a synthetic object in Object list for phrase-aligned addresses and whole-phrase widths
+within OP size limits; it does not write an object into the game. Width/depth guesses run on request and preview
+refreshes run on the emulation thread, including while paused or halted.
 
 The **Palette** window shows the 256 CLUT entries as swatches (CRY or RGB16, your choice, since indexed objects can be
 either depending on the video mode), the raw word, and an editor with a colour picker.  The CLUT is mirrored in two tables

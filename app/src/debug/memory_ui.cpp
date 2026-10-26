@@ -24,6 +24,7 @@ namespace {
 
 struct MemState {
     bool open = false;
+    bool bitmap = false;
     int region = 0;
     unsigned width = 1;                 // cell size in bytes: 1, 2, 4
     bool haveSel = false;
@@ -90,6 +91,7 @@ void selectAddr(DebugSession& s, unsigned addr, int regionIdx, bool pushHistory)
 // A closed or disabled window holds no requests, so it costs the emulation thread nothing; reopening starts from
 // "nothing known" (the next answer is adopted whatever its serial).
 void releaseViews(DebugSession& s) {
+    releaseBitmap();
     MemState& m = g_mem;
     if (m.winId != DebugViews::kNoId) s.views().clear(m.winId);
     if (m.selId != DebugViews::kNoId) s.views().clear(m.selId);
@@ -144,6 +146,7 @@ void syncCore(DebugSession& s) {
     MemState& m = g_mem;
     if (m.epochSeen == s.views().epoch()) return;
     m.epochSeen = s.views().epoch();
+    releaseBitmap();
     m.region = 0;
     m.haveSel = false;
     m.editing = false;
@@ -154,6 +157,7 @@ void syncCore(DebugSession& s) {
     m.track.reset();
     m.pendingRow = 0;
     m.lastHit = false;
+    if (m.bitmap && !s.regions().empty()) showBitmapAt(s, s.regions()[0].start);
 }
 
 ImVec4 changedCol() { return ui::vec4(ui::pal().warning); }
@@ -622,10 +626,16 @@ void showMemoryAt(DebugSession& s, unsigned addr) {
     g_mem.open = true;
     const auto& regs = s.regions();
     int idx = regionIndexAt(regs, addr);
-    if (idx >= 0) selectAddr(s, addr, idx, true);
+    if (idx >= 0) { selectAddr(s, addr, idx, true); if (g_mem.bitmap) showBitmapAt(s, addr); }
 }
 
-void drawMemoryWindow(DebugSession& s, CheatManager* cheats) {
+void showMemoryBitmapAt(DebugSession& s, unsigned addr) {
+    releaseViews(s);
+    g_mem.bitmap = true;
+    showMemoryAt(s, addr);
+}
+
+void drawMemoryWindow(DebugSession& s, CheatManager* cheats, const BitmapUiContext& ctx) {
     MemState& m = g_mem;
     if (!m.open) {
         releaseViews(s);
@@ -656,6 +666,16 @@ void drawMemoryWindow(DebugSession& s, CheatManager* cheats) {
     }
     syncCore(s);
     if (m.region < 0 || m.region >= (int)regs.size()) m.region = 0;
+    if (ImGui::RadioButton("Hex / ASCII", !m.bitmap) && m.bitmap) { m.bitmap = false; releaseBitmap(); }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Bitmap", m.bitmap) && !m.bitmap) {
+        m.bitmap = true;
+        releaseViews(s);
+        m.editing = false;
+        m.job.reset();
+        showBitmapAt(s, m.haveSel ? m.sel : regs[(size_t)m.region].start);
+    }
+    if (m.bitmap) { drawBitmap(s, ctx); ImGui::End(); return; }
     drawControls(s, regs);
     pollSearch(s, regs[(size_t)m.region]);
     const float footerH = ImGui::GetTextLineHeightWithSpacing() * 3.0f + ImGui::GetFrameHeightWithSpacing() + 4.0f;
@@ -665,8 +685,8 @@ void drawMemoryWindow(DebugSession& s, CheatManager* cheats) {
     ImGui::End();
 }
 
-void drawMemoryTools(DebugSession& s, CheatManager* cheats) {
-    drawMemoryWindow(s, cheats);
+void drawMemoryTools(DebugSession& s, CheatManager* cheats, const BitmapUiContext& ctx) {
+    drawMemoryWindow(s, cheats, ctx);
     drawClutWindow(s);
 }
 

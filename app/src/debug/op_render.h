@@ -33,6 +33,10 @@ enum class OpColorMode {
 
 struct OpRenderOptions {
     OpColorMode color = OpColorMode::Auto;
+    // Raw bitmap viewer: tightly packed byte rows and an exclusive range end; zero keeps OP phrase fetching.
+    unsigned rowStrideBytes = 0;
+    unsigned sourceEnd = 0;
+    unsigned clutAddress = 0xF00400;
     bool honorTrans = true;      // TRANS objects get alpha 0 where the raw value is 0
     bool honorReflect = true;    // mirror REFLECT objects
     unsigned maxW = 4096;        // the preview is clamped (garbage lists are common)

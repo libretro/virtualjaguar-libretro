@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include "bitmap_ui.h"
 
 namespace vj {
 
@@ -19,10 +20,10 @@ class CheatManager;
 void registerMemoryTools(DebugSession& s);
 
 // Draws whichever of the two windows is open.  `cheats` may be null (then "Add as cheat" is not offered).
-void drawMemoryTools(DebugSession& s, CheatManager* cheats);
+void drawMemoryTools(DebugSession& s, CheatManager* cheats, const BitmapUiContext& ctx = {});
 
 // Individual windows (drawMemoryTools calls these).
-void drawMemoryWindow(DebugSession& s, CheatManager* cheats);
+void drawMemoryWindow(DebugSession& s, CheatManager* cheats, const BitmapUiContext& ctx = {});
 void drawClutWindow(DebugSession& s);
 
 // Open state, for menu code that wants it directly.
@@ -31,6 +32,7 @@ bool& clutWindowOpen();
 
 // Opens the Memory viewer on `addr` (for other tools: "show this in memory", a register value, a pointer).
 void showMemoryAt(DebugSession& s, unsigned addr);
+void showMemoryBitmapAt(DebugSession& s, unsigned addr);
 
 // Test hook (debug_memory_ui_smoke): a byte of the window the grid last adopted from its published view.
 namespace memory_test {
