@@ -1304,11 +1304,22 @@
       "crc32": "2E17D5DA",
       "note": null,
       "path": "scripts/cheat_bubsy.c",
-      "reason": "pointer/array declarations require manual review",
-      "setting": null,
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Start Level With Filled In Password: 0",
       "sha256": "9638e480dbef9af2ba3672cbe37706bb17b302677dbd65cfa64f1ff94979339f",
       "source": "jguffer",
-      "stage": "module"
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "2E17D5DA",
+      "note": null,
+      "path": "scripts/cheat_bubsy.c",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Start Level With Filled In Password: 1",
+      "sha256": "9638e480dbef9af2ba3672cbe37706bb17b302677dbd65cfa64f1ff94979339f",
+      "source": "jguffer",
+      "stage": "setting"
     },
     {
       "calls": [],
@@ -1345,10 +1356,10 @@
     },
     {
       "calls": [],
-      "crc32": "BDE67498",
+      "crc32": "ECF854E7",
       "note": null,
       "path": "scripts/cheat_cybermorph.c",
-      "reason": "pointer/array declarations require manual review",
+      "reason": "no toggle converted: Infinite Lives: no writes activated (check ROM revision/hash); Infinite Health: no writes activated (check ROM revision/hash); Infinite Ammo: no writes activated (check ROM revision/hash) (+11 more)",
       "setting": null,
       "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
       "source": "jguffer",
@@ -1356,14 +1367,101 @@
     },
     {
       "calls": [],
-      "crc32": "ECF854E7",
+      "crc32": "BDE67498",
       "note": null,
       "path": "scripts/cheat_cybermorph.c",
-      "reason": "pointer/array declarations require manual review",
-      "setting": null,
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Always Use Superweapon: 0",
       "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
       "source": "jguffer",
-      "stage": "module"
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Select Cluster: 0",
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Select Cluster: 1",
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Select Cluster: 2",
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Select Cluster: 3",
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Select Cluster: 4",
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Select Cluster: 5",
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read32"
+      ],
+      "crc32": "BDE67498",
+      "note": null,
+      "path": "scripts/cheat_cybermorph.c",
+      "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+      "setting": "Select Cluster: 6",
+      "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+      "source": "jguffer",
+      "stage": "setting"
     },
     {
       "calls": [

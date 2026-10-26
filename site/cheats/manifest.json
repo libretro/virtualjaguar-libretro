@@ -1,14 +1,14 @@
 {
   "counts": {
-    "cheats": 110,
-    "packs": 23,
-    "partial_packs": 8,
-    "unsupported_entries": 131
+    "cheats": 134,
+    "packs": 25,
+    "partial_packs": 10,
+    "unsupported_entries": 139
   },
   "format": 1,
   "generated_from": {
     "cartridges_sha256": "edebcd7566e15f2426cacf5181379fbdd7b47c697110ccf79bb831205f3e853a",
-    "converter_sha256": "c1d8b426cdf986ce65e44afd3b442ddf63bb737f324b936c118ba44345101426",
+    "converter_sha256": "165b3a959509c43a0f70b184b97fde7eb5de8208355fc8f73c1484ccd97f57b9",
     "generator_sha256": "452c26c2a6b8a38501545cfc7853c74a4d8a90cd5b75fda732f6e8020df314db",
     "sources": [
       {
@@ -2675,6 +2675,411 @@
       "writes": 40
     },
     {
+      "bytes": 10412,
+      "cheats": 18,
+      "crc32": "2E17D5DA",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/2E17D5DA.cht",
+      "fnv1a64": "5C0C7827948F0F27",
+      "messages": [],
+      "name": "Bubsy - Fractured Furry Tails (1994)",
+      "notes": [
+        {
+          "path": "scripts/cheat_bubsy.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Start Level With Filled In Password: 0",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_bubsy.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Start Level With Filled In Password: 1",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ],
+        [
+          4,
+          15
+        ],
+        [
+          4,
+          16
+        ],
+        [
+          4,
+          17
+        ],
+        [
+          5,
+          6
+        ],
+        [
+          5,
+          7
+        ],
+        [
+          5,
+          8
+        ],
+        [
+          5,
+          9
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          5,
+          11
+        ],
+        [
+          5,
+          12
+        ],
+        [
+          5,
+          13
+        ],
+        [
+          5,
+          14
+        ],
+        [
+          5,
+          15
+        ],
+        [
+          5,
+          16
+        ],
+        [
+          5,
+          17
+        ],
+        [
+          6,
+          7
+        ],
+        [
+          6,
+          8
+        ],
+        [
+          6,
+          9
+        ],
+        [
+          6,
+          10
+        ],
+        [
+          6,
+          11
+        ],
+        [
+          6,
+          12
+        ],
+        [
+          6,
+          13
+        ],
+        [
+          6,
+          14
+        ],
+        [
+          6,
+          15
+        ],
+        [
+          6,
+          16
+        ],
+        [
+          6,
+          17
+        ],
+        [
+          7,
+          8
+        ],
+        [
+          7,
+          9
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          7,
+          11
+        ],
+        [
+          7,
+          12
+        ],
+        [
+          7,
+          13
+        ],
+        [
+          7,
+          14
+        ],
+        [
+          7,
+          15
+        ],
+        [
+          7,
+          16
+        ],
+        [
+          7,
+          17
+        ],
+        [
+          8,
+          9
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          8,
+          11
+        ],
+        [
+          8,
+          12
+        ],
+        [
+          8,
+          13
+        ],
+        [
+          8,
+          14
+        ],
+        [
+          8,
+          15
+        ],
+        [
+          8,
+          16
+        ],
+        [
+          8,
+          17
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          9,
+          11
+        ],
+        [
+          9,
+          12
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          9,
+          14
+        ],
+        [
+          9,
+          15
+        ],
+        [
+          9,
+          16
+        ],
+        [
+          9,
+          17
+        ],
+        [
+          10,
+          11
+        ],
+        [
+          10,
+          12
+        ],
+        [
+          10,
+          13
+        ],
+        [
+          10,
+          14
+        ],
+        [
+          10,
+          15
+        ],
+        [
+          10,
+          16
+        ],
+        [
+          10,
+          17
+        ],
+        [
+          11,
+          12
+        ],
+        [
+          11,
+          13
+        ],
+        [
+          11,
+          14
+        ],
+        [
+          11,
+          15
+        ],
+        [
+          11,
+          16
+        ],
+        [
+          11,
+          17
+        ],
+        [
+          12,
+          13
+        ],
+        [
+          12,
+          14
+        ],
+        [
+          12,
+          15
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          12,
+          17
+        ],
+        [
+          13,
+          14
+        ],
+        [
+          13,
+          15
+        ],
+        [
+          13,
+          16
+        ],
+        [
+          13,
+          17
+        ],
+        [
+          14,
+          15
+        ],
+        [
+          14,
+          16
+        ],
+        [
+          14,
+          17
+        ],
+        [
+          15,
+          16
+        ],
+        [
+          15,
+          17
+        ],
+        [
+          16,
+          17
+        ]
+      ],
+      "partial": true,
+      "sha256": "b7be0a353a1406bfbfd5804c5fe876d7fa116772143e946e18f00b7a1a15b2c3",
+      "sources": [
+        {
+          "converted": 18,
+          "omitted": 2,
+          "path": "scripts/cheat_bubsy.c",
+          "sha256": "9638e480dbef9af2ba3672cbe37706bb17b302677dbd65cfa64f1ff94979339f",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Bubsy - Fractured Furry Tails",
+      "updated": "2026-04-15",
+      "writes": 88
+    },
+    {
       "bytes": 611,
       "cheats": 1,
       "crc32": "348E6449",
@@ -2957,6 +3362,97 @@
       "title": "Rayman",
       "updated": "2026-04-15",
       "writes": 8
+    },
+    {
+      "bytes": 2440,
+      "cheats": 6,
+      "crc32": "BDE67498",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/BDE67498.cht",
+      "fnv1a64": "3F97A08E8550667C",
+      "messages": [
+        "This version fo cybermorph IS supported."
+      ],
+      "name": "Cybermorph (1993)",
+      "notes": [
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Always Use Superweapon: 0",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Select Cluster: 0",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Select Cluster: 1",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+          "setting": "Select Cluster: 2",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+          "setting": "Select Cluster: 3",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+          "setting": "Select Cluster: 4",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+          "setting": "Select Cluster: 5",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_cybermorph.c",
+          "reason": "unsupported call bigpemu_jag_read32 (RAM-dependent operations are not constant cheats)",
+          "setting": "Select Cluster: 6",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          4,
+          5
+        ]
+      ],
+      "partial": true,
+      "sha256": "10e739556904cdf8220e7d3274b264f54d31481d46c7af5185fe565d68466c0e",
+      "sources": [
+        {
+          "converted": 6,
+          "omitted": 8,
+          "path": "scripts/cheat_cybermorph.c",
+          "sha256": "9f8072bf866d4451bc11bbb2c8ee3d3ec4115f2584f494dc0ff35fb905145a58",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Cybermorph",
+      "updated": "2026-04-15",
+      "writes": 11
     },
     {
       "bytes": 747,

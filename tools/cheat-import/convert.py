@@ -39,6 +39,7 @@ INIT_CALLS = frozenset(n for n in SPECIAL_CALLS if n.startswith(("bigpemu_regist
 API_STATUSES = ("supported", "setting-omitted", "ignored", "unsupported")
 MAX_MESSAGES, MAX_MESSAGE_CHARS, NOTE_CHARS = 4, 200, 60
 MAX_INTEGER_VALUES, MAX_SETTING_COMBINATIONS = 64, 4096
+MAX_ARRAY_ELEMENTS = 1024  # Total across all constant tables in one evaluation.
 
 
 @functools.lru_cache(maxsize=None)
@@ -69,6 +70,11 @@ class Value:
     deps: frozenset = frozenset()
     bits: int = 32
     unsigned: bool = False
+
+
+@dataclass(frozen=True)
+class ConstantArray:
+    values: tuple
 
 
 def integer(value, bits=32, unsigned=False):
@@ -165,17 +171,20 @@ class Runtime:
         self.writes = []
         self.steps = 0
         self.resolving = set()
+        self.array_elements = 0
 
     def tick(self):
         self.steps += 1
         if self.steps > 20000:
             raise Unsupported("evaluation/loop budget exceeded")
 
-    def get(self, name):
+    def get(self, name, array=False):
         for scope in reversed(self.scopes):
             if name in scope:
                 value = scope[name]
                 if value is None: raise Unsupported("read of uninitialised local " + name)
+                if isinstance(value, ConstantArray) and not array:
+                    raise Unsupported("constant array requires a subscript; pointers are unsupported")
                 return value
         if name in self.module.macros:
             if name in self.resolving:
@@ -197,6 +206,8 @@ class Runtime:
         for i in reversed(range(len(self.scopes))):
             scope = self.scopes[i]
             if name in scope:
+                if isinstance(scope[name], ConstantArray):
+                    raise Unsupported("constant arrays cannot be assigned")
                 if self.frame and i == 0:
                     raise Unsupported("frame callback changes persistent state")
                 scope[name] = integer(value, *self.types[i][name])
@@ -228,6 +239,17 @@ class Runtime:
                 raise Unsupported("non-integer constant " + node.value)
         if isinstance(node, C.ID):
             return self.get(node.name)
+        if isinstance(node, C.ArrayRef):
+            if not isinstance(node.name, C.ID):
+                raise Unsupported("only one-dimensional constant array indexing is supported")
+            table = self.get(node.name.name, array=True)
+            if not isinstance(table, ConstantArray):
+                raise Unsupported("subscript requires a constant array")
+            index = self.expr(node.subscript)
+            if not 0 <= index.n < len(table.values):
+                raise Unsupported("array index out of bounds")
+            value = table.values[index.n]
+            return replace(value, deps=value.deps | index.deps)
         if isinstance(node, C.Cast):
             val = self.expr(node.expr)
             return integer(val, *type_info(node.to_type.type))
@@ -341,7 +363,10 @@ class Runtime:
                 self.scopes.pop()
                 self.types.pop()
         elif isinstance(node, C.Decl):
-            if isinstance(node.type, (C.PtrDecl, C.ArrayDecl)):
+            if isinstance(node.type, C.ArrayDecl):
+                self.declare_array(node)
+                return
+            if isinstance(node.type, C.PtrDecl):
                 raise Unsupported("pointer/array declarations require manual review")
             if "static" in node.storage and len(self.scopes) > 1:
                 raise Unsupported("static local state requires manual review")
@@ -349,6 +374,8 @@ class Runtime:
             self.put(node.name, value, declare=True, typ=type_info(node.type))
         elif isinstance(node, C.DeclList):
             for child in node.decls: self.stmt(child)
+        elif isinstance(node, C.ExprList):
+            for child in node.exprs: self.stmt(child)
         elif isinstance(node, C.Assignment) and isinstance(node.lvalue, C.ID):
             if node.op == "=": value = self.expr(node.rvalue)
             else:
@@ -382,6 +409,31 @@ class Runtime:
             raise Unsupported("early return requires manual review")
         elif not isinstance(node, C.EmptyStatement):
             raise Unsupported("unsupported statement " + type(node).__name__)
+
+    def declare_array(self, node):
+        element = node.type.type
+        if (len(self.scopes) != 1 or not isinstance(element, C.TypeDecl)
+                or "const" not in element.quals or not isinstance(node.init, C.InitList)):
+            raise Unsupported("pointer/array declarations require manual review")
+        typ = type_info(element)
+        expressions = node.init.exprs or []
+        # No function calls, side effects, nested lists or designated initializers.
+        # Dependencies cannot make a table a runtime value, either.
+        for expr in ([node.type.dim] if node.type.dim else []) + expressions:
+            if any(isinstance(n, (C.FuncCall, C.Assignment, C.InitList, C.NamedInitializer)) or
+                   (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(expr)):
+                raise Unsupported("constant array size/initializer requires constant integer expressions")
+        size = self.expr(node.type.dim) if node.type.dim else Value(len(expressions))
+        if size.deps or not 0 < size.n <= MAX_ARRAY_ELEMENTS - self.array_elements:
+            raise Unsupported("constant array size exceeds the 1024-element evaluation limit or is not constant")
+        if len(expressions) > size.n:
+            raise Unsupported("too many constant array initializers")
+        values = [integer(self.expr(expr), *typ) for expr in expressions]
+        if any(value.deps for value in values):
+            raise Unsupported("constant array initializer depends on runtime state")
+        values += [integer(Value(0), *typ)] * (size.n-len(values))
+        self.array_elements += size.n
+        self.scopes[-1][node.name] = ConstantArray(tuple(values))
 
     def run(self, name):
         body = self.module.functions[name].body

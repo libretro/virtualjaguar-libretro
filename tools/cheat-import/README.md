@@ -69,6 +69,14 @@ authenticity signature. Do not remove it to make a different dump pass.
 - Integer constants, object-like macros, enums, scalar locals, explicit integer
   casts, simple arithmetic/bitwise expressions and conditions. Fixed-width C
   integer promotion and unsigned wrapping are modeled; signed overflow fails.
+- Initialized global one-dimensional `const` integer tables, with constant
+  expressions for the size and entries (1024 elements total per evaluation).
+  An omitted size is inferred from the initializer, and missing trailing entries
+  are zero-filled. Indexing preserves integer types and setting dependencies;
+  negative and out-of-range indices are refused. Pointers, mutations, local or
+  multidimensional arrays, strings, and designated initializers remain unsupported.
+- Comma-separated statement lists, including loop updates such as `++i, --dest`,
+  evaluated left to right under the existing step and persistent-state checks.
 - `bigpemu_register_setting_int_full` with constant default, inclusive minimum/maximum
   and positive step, spanning at most 64 values. The default must be in range and
   on the step grid. Macros and enums can supply the bounds. Each value above the
@@ -82,7 +90,7 @@ authenticity signature. Do not remove it to make a different dump pass.
   an ordered group per toggle; sources whose combined behavior cannot be preserved are refused.
 
 RAM reads, copy/conditional/masked cheats, unbounded or larger integer settings, helper
-functions, pointers/arrays, static local state, frame-to-frame state changes,
+functions, pointers and other arrays, static local state, frame-to-frame state changes,
 extra events, early returns, general preprocessing, and other unsupported C
 syntax need a manual port. No runtime values are guessed. Conversion assumes
 omitted boolean settings remain zero and bounded integer settings remain at their
