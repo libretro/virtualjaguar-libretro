@@ -97,6 +97,8 @@ extern uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 
 /* 31.777777777 (NTSC) / 32.0 (PAL), per vjs.hardwareTypeNTSC. */
 double JaguarGetHalflinePeriodUs(void);
+/* The EVENT_MAIN half-line event; TOMReadHC() times HC against it. */
+void HalflineCallback(void);
 /* 524 (NTSC) / 624 (PAL): the reset-default field length. */
 uint32_t JaguarGetDefaultFieldHalflines(void);
 /* 1e6 / (halflines * halfline_us): 60.05445 Hz NTSC / 50.08013 Hz PAL. */

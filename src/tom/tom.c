@@ -414,7 +414,6 @@ uint32_t tomWidth, tomHeight;
 uint32_t tomTimerPrescaler;
 uint32_t tomTimerDivider;
 int32_t tomTimerCounter;
-static uint16_t tomHCReadPhase;
 
 /* Rows TOMExecHalfline actually wrote, tracked live so a mid-frame VDB/VDE
  * change cannot make the count disagree with what was drawn.  `Cur`
@@ -1528,10 +1527,12 @@ void tom_render_16bpp_rgb_scanline(uint32_t * VJ_RESTRICT backbuffer)
  *
  * That is exactly what this models: called from TOMExecHalfline for every
  * half-line, it latches when the beam reaches the aimed-at row.  No beam
- * hit-test window, no pulse generator, and above all no per-clock
- * horizontal counter -- which this core does not have (HC advances once
- * per half-line here) and which a corpus scan says nothing needs: no
- * shipped title reads HC/VC ($F00004/$F00006) at all, Balloons included.
+ * hit-test window, no pulse generator, and no ticking horizontal counter
+ * -- HC is only derived when software reads it (TOMReadHC).  No lightgun
+ * title reads HC/VC ($F00004/$F00006), Balloons included.  (The corpus
+ * scan that once said NO title reads them missed GPU code: a GPU `movei`
+ * stores its immediate low word first, so the literal never appears as
+ * $00F00004.  Atari Karts reads HC that way -- issue #1085.)
  * Synthesising the latched value from the aim point is therefore not a
  * shortcut around a timing model, it is the whole of the observable
  * behaviour.
@@ -1624,7 +1625,6 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    uint32_t * TOMCurrentLine = 0;
    uint16_t topVisible;
    uint16_t bottomVisible;
-   uint16_t hp = GET16(tomRam8, HP);
    uint32_t writtenRow;
 
    halfline &= 0x07FF;
@@ -1642,20 +1642,12 @@ void TOMExecHalfline(uint16_t halfline, bool render)
       tomRowsWrittenCur  = 0;
    }
 
-   // Update HC to approximate position within the scanline.
-   // Bit 10 (0x0400) is the half-line indicator, analogous to VC's
-   // field bit 11. The OP tests this via CONDITION_SECOND_HALF_LINE.
-   // Bits 0-9 approximate the position within the half-line.
-   if (halfline & 0x01)
-   {
-      SET16(tomRam8, HC, 0x0400 | (hp > 0 ? (hp + 1) / 2 : 0));
-      tomHCReadPhase = hp > 0 ? (hp + 1) / 2 : 0;
-   }
-   else
-   {
-      SET16(tomRam8, HC, 0);
-      tomHCReadPhase = 0;
-   }
+   // HC bit 10 (0x0400) is the half-line indicator, analogous to VC's
+   // field bit 11; the OP tests it via CONDITION_SECOND_HALF_LINE.  Bits
+   // 0-9 restart at every half-line and are derived on read from the
+   // elapsed time (TOMReadHC), so only the start-of-half-line value is
+   // stored here.
+   SET16(tomRam8, HC, (halfline & 0x01) ? 0x0400 : 0);
 
    /* Light gun LP edge (#438).  Before the odd-half-line early-out below,
     * because an aim point can sit on an odd half-line and the latch is
@@ -2024,7 +2016,6 @@ void TOMReset(void)
    tomTimerPrescaler = 0;					// TOM PIT is disabled
    tomTimerDivider = 0;
    tomTimerCounter = 0;
-   tomHCReadPhase = 0;
 }
 
 void TOMPITCallback(void);
@@ -2046,6 +2037,47 @@ static uint16_t TOMReadPIT(int divider)
       return 0;
    return divider ? (uint16_t)((clocks - 1) / period)
       : (uint16_t)((clocks - 1) % period);
+}
+
+/* HC ($F00004), derived on read (issue #1085).  The counter runs at the
+ * video clock -- one tick per system clock: HP+1 = 845 ticks per
+ * 31.78 us NTSC half-line -- restarting at every half-line, with bit 10
+ * the half-line parity TOMExecHalfline stores.  Ticks are the time since
+ * the half-line began at the start of this slice plus how far the reader
+ * has run inside the slice; the GPU and 68000 positions are known, other
+ * readers see the slice start.  Atari Karts seeds its AI steering from
+ * HC's low bits in GPU code, so a counter that does not move with time
+ * hands every kart the same "random" value each field. */
+static uint16_t TOMReadHC(uint32_t who)
+{
+   uint16_t half = GET16(tomRam8, HC) & 0x0400;
+   uint16_t hp = GET16(tomRam8, HP) & 0x03FF;
+   double usecs = GetCallbackTime(HalflineCallback, EVENT_MAIN);
+   double tick = vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC;
+   double elapsed;
+   uint32_t clocks = 0;
+
+   /* Not scheduled: inside the half-line callback itself, which is the
+    * start of the half-line. */
+   if (usecs >= 0.0)
+   {
+      elapsed = JaguarGetHalflinePeriodUs() - usecs;
+      if (elapsed > 0.0)
+         clocks = (uint32_t)(elapsed / tick);
+      /* Both positions are in their own scaled cycle domain; map through
+       * wall time as GPUSyncToM68K does (68000 = system clock / 2). */
+      if (who == GPU)
+         clocks += (uint32_t)(((int64_t)GPUSlicePosition() * 100)
+                              / riscClockScalePct);
+      else if (who == M68K)
+         clocks += (uint32_t)(((int64_t)m68k_cycles_run() * 200)
+                              / m68kClockScalePct);
+   }
+   if (!hp)
+      hp = 0x03FF;
+   if (clocks > hp)
+      clocks = hp;
+   return half | (uint16_t)clocks;
 }
 
 /* IODEC.NET Float1-5 selects MEMCON1 unless a readable target is
@@ -2077,6 +2109,10 @@ uint8_t TOMReadByte(uint32_t offset, uint32_t who)
       return GPUReadByte(offset, who);
    else if ((offset >= 0xF02200) && (offset < 0xF022A0))
       return BlitterReadByte(offset, who);
+   else if (offset == 0xF00004)
+      return TOMReadHC(who) >> 8;
+   else if (offset == 0xF00005)
+      return TOMReadHC(who) & 0xFF;
    else if (offset == 0xF00050)
       return TOMReadPIT(0) >> 8;
    else if (offset == 0xF00051)
@@ -2108,21 +2144,7 @@ uint16_t TOMReadWord(uint32_t offset, uint32_t who)
       return data;
    }
    else if (offset == 0xF00004)
-   {
-      uint16_t hc = GET16(tomRam8, HC);
-      uint16_t hp = GET16(tomRam8, HP);
-      uint16_t limit = hp > 0 ? (hp + 1) / 2 : 0x400;
-      uint16_t phase = tomHCReadPhase;
-
-      if (limit == 0)
-         limit = 1;
-
-      tomHCReadPhase++;
-      if (tomHCReadPhase >= limit)
-         tomHCReadPhase = 0;
-
-      return (hc & 0x0400) | (phase & 0x03FF);
-   }
+      return TOMReadHC(who);
    else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE + 0x20))
       return GPUReadWord(offset, who);
    else if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE + 0x1000))
@@ -2501,7 +2523,6 @@ size_t TOMStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, tom_video_int_pending);
 	STATE_LOAD_VAR(buf, tomWidth);
 	STATE_LOAD_VAR(buf, tomHeight);
-	tomHCReadPhase = GET16(tomRam8, HC) & 0x03FF;
 
 	return (size_t)(buf - start);
 }

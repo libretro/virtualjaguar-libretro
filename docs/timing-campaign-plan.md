@@ -483,6 +483,16 @@ the fb_ab tooling notes apply. CD titles additionally get a
 
 ## 6. HC granularity (maintainer scope item, from the #438 lightgun design)
 
+> **Superseded (2026-10, issue #1085).** HC is now derived on read
+> (`TOMReadHC` in `src/tom/tom.c`, the §6.2 design) and `tomHCReadPhase` is
+> gone. §6.1's "no commercial consumer" was wrong: the corpus scan searched
+> for the `$00F00004` literal, but a GPU `movei` stores its immediate low
+> word first (`0004 00F0`), so GPU-side readers are invisible to it. Atari
+> Karts' GPU kart code reads HC (`loadw` at `$F036DC`) and seeds each AI
+> kart's steering from its low bits. With one value per read the karts got
+> a fixed per-kart bias every field and drove off the track. The text below
+> is kept as the record of the original decision.
+
 **The discrepancy:** `TOMExecHalfline()` sets HC to one coarse value per
 halfline (`tom.c:~1282-1295`); real silicon's horizontal counter advances
 every video clock, and MiSTer hit-tests a live per-clock beam. The `$F00004`

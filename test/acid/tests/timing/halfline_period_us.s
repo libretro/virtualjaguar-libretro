@@ -2,9 +2,10 @@
 ; tests/timing/halfline_period_us.s - the NTSC scanline period, measured
 ; against the JERRY PIT rather than against 68K instruction count.
 ;
-; HC alternates between 0 and (0x0400 | HP/2) every halfline (per
-; src/tom/tom.c).  A 0 -> non-zero transition therefore marks the start
-; of one full scanline (= two halflines), which on NTSC is 63.5 us.
+; HC bit 10 ($0400) is clear in the first half-line of a scanline and
+; set in the second.  A 0 -> non-zero transition of that bit therefore
+; marks the start of one full scanline (= two halflines), which on NTSC
+; is 63.5 us.
 ;
 ; We arm PIT timer 1 at a known period and count scanline starts across
 ; a fixed number of PIT interrupts.  Both sides of that ratio are

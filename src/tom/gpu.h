@@ -23,9 +23,11 @@ void GPUExec(int32_t);
  * gpuSliceBudget in gpu.c.  GPUBeginSlice() declares the RISC cycles the
  * scheduler will hand the GPU for this slice, GPUSliceRemaining() reports
  * what is left after any mid-slice syncs, and GPUSyncToM68K() advances the
- * GPU to the 68000's position when the two processors communicate. */
+ * GPU to the 68000's position when the two processors communicate.
+ * GPUSlicePosition() is how far into the slice the GPU has run. */
 void GPUBeginSlice(uint32_t riscCycles);
 int32_t GPUSliceRemaining(void);
+int32_t GPUSlicePosition(void);
 void GPUSyncToM68K(void);
 void GPUUpdateRegisterBanks(void);
 /* Add wall-time system clocks to the current GPU instruction's bus

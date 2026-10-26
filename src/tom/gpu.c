@@ -725,6 +725,10 @@ static uint8_t  gpuFlagsIRQPending = 0;
  * *when* within the slice they are spent moves. */
 static int32_t gpuSliceBudget;
 static int32_t gpuSliceSpent;
+/* Slice position a GPUSyncToM68K() run started from, valid while it runs
+ * (GPUSlicePosition() needs it: the sync bumps gpuSliceSpent first). */
+static int32_t gpuSyncOrigin;
+static int     gpuSyncActive;
 
 #define GPU_RUNNING	(gpu_control & 0x01)
 
@@ -1701,6 +1705,19 @@ int32_t GPUSliceRemaining(void)
    return (left > 0 ? left : 0);
 }
 
+/* RISC cycles (scaled domain) the GPU has reached inside the current slice,
+ * counting the instruction now executing as not yet run.  Inside GPUExec
+ * this is where the exec started plus what the loop has consumed
+ * (gpuExecSliceRemaining is refreshed before every instruction); outside
+ * it, the slice spent so far.  Used for HC reads (issue #1085). */
+int32_t GPUSlicePosition(void)
+{
+   if (!gpu_in_exec)
+      return gpuSliceSpent;
+   return (gpuSyncActive ? gpuSyncOrigin : gpuSliceSpent)
+        + (gpuExecSliceBudget - gpuExecSliceRemaining);
+}
+
 /* Advance the GPU to the 68000's position inside the current slice.  Called
  * once per 68000 write access into GPU local RAM, BEFORE the write lands (see
  * M68KGPURAMSync in jaguar.c for why not after -- Myst, issue #756).
@@ -1740,10 +1757,13 @@ void GPUSyncToM68K(void)
    /* Bracketed here, not around GPUExec's body: this measures the GPU time
     * a 68K bus access pulled in, which is the term that makes vj_m68k_slice
     * interpretable (perf_iface.h).  It NESTS inside vj_gpu_exec on purpose. */
+   gpuSyncOrigin = gpuSliceSpent;
    gpuSliceSpent += run;
+   gpuSyncActive = 1;
    VJP_ENTER(VJP_GPU_SYNC);
    GPUExec(run);
    VJP_LEAVE(VJP_GPU_SYNC);
+   gpuSyncActive = 0;
 }
 
 /* ==================================================================

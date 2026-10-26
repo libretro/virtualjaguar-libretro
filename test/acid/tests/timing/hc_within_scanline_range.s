@@ -1,10 +1,10 @@
 ;
 ; tests/timing/hc_within_scanline_range.s - HC value must be bounded.
 ;
-; Sample HC ($F00004) and confirm the value sits in [0, 1000].  HP is
-; typically ~424 on NTSC and our deterministic stub returns 0 or HP/2,
-; so any reading above 1000 indicates either a runaway counter or a
-; stale rand()-style stub returning 16-bit garbage.
+; Sample HC ($F00004) and confirm the value sits in [0, 1000].  The low
+; 10 bits count video clocks across a half-line, 0..HP (844 on NTSC), so
+; any reading above 1000 in the first half of the line indicates either a
+; runaway counter or a stale rand()-style stub returning 16-bit garbage.
 ;
 ; Detail codes:
 ;   1 = observed HC out of expected [0, 1000] range
