@@ -32,7 +32,7 @@ bool bitmapRender(const vj_debug_iface* iface, const BitmapSettings& q, OpImage&
     out = OpImage();
     err.clear();
     if (!bitmapRowBytes(q.width, q.depth) || q.address >= q.end || q.end > 0x1000000 ||
-        q.clutAddress > 0x1000000 - 512) {
+        (q.depth <= 3 && q.clutAddress > 0x1000000 - 512)) {
         err = "Invalid bitmap width, depth, address range or CLUT address";
         return false;
     }

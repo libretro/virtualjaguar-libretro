@@ -64,12 +64,14 @@ void drawBitmap(DebugSession& s, const BitmapUiContext& ctx) {
     const char* colors[] = {"Auto (VMODE)", "CRY", "RGB16", "Mixed"};
     ImGui::SetNextItemWidth(ui::em(18));
     if (ImGui::Combo("Colour", &color, colors, 4)) { q.color = (OpColorMode)color; changed = true; }
+    ImGui::BeginDisabled(q.depth > 3);
     ImGui::SetNextItemWidth(ui::em(9));
     if (ImGui::InputText("CLUT (hex, live = F00400)", palette, sizeof palette, ImGuiInputTextFlags_EnterReturnsTrue)) {
         unsigned a;
         if (memview::parseAddress(palette, a) && a <= 0x1000000 - 512) { q.clutAddress = a; changed = true; }
         else status = "CLUT must hold 512 bytes inside the bus";
     }
+    ImGui::EndDisabled();
     const unsigned row = bitmapRowBytes(q.width, q.depth);
     ImGui::Text("%u bytes per row", row);
     if (ImGui::Button("- row")) nudge(s, -(int64_t)row);

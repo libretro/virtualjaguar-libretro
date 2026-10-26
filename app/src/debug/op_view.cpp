@@ -23,6 +23,16 @@ OpStep opStepFor(const OpStepGate& g) {
     return !g.attached && !g.inFrame ? OpStep::Inline : OpStep::None;
 }
 
+void OpViewModel::showPreview(DebugSession& s, const OpObject& obj, const OpRenderOptions& opt) {
+    clear();
+    epochSet_ = true;
+    epochSeen_ = s.views().epoch();
+    live = false;
+    render = opt;
+    setObjects({obj});
+    select(0);
+}
+
 void OpViewModel::clear() {
     objs_.clear();
     waiting_ = have_ = false;

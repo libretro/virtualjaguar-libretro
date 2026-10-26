@@ -1191,7 +1191,39 @@ static void testPngExport() {
     std::filesystem::remove_all(dir, ec);
 }
 
+static void testSyntheticPreviewAfterContentSwitch() {
+    UiFixture fx;
+    OpViewModel vm;
+    vm.update(fx.s, false); // records the first game's epoch
+    vm.releaseViews(fx.s);
+    vm.clear();
+    const auto oldEpoch = fx.s.views().epoch();
+    fx.s.setIface(nullptr);
+    fx.s.setIface(fx.counted.iface());
+    fx.s.setContentLoaded(true);
+    CHECK(fx.s.views().epoch() != oldEpoch);
+    Bm b;
+    b.data = MockDebugIface::kBitmapData;
+    b.height = 4; b.iwidth = b.dwidth = 2;
+    const unsigned arms = vm.armCount();
+    vm.showPreview(fx.s, b.decode(), {});
+    vm.update(fx.s, false);
+    CHECK_EQ(vm.objects().size(), 1);
+    CHECK(vm.selectedObject() && vm.selectedObject()->data == b.data);
+    CHECK(vm.image() != nullptr);
+    CHECK(!vm.waiting());
+    CHECK_EQ(vm.armCount(), arms);
+    // A subsequent content switch must still invalidate the synthetic object.
+    fx.s.setIface(nullptr);
+    fx.s.setIface(fx.counted.iface());
+    fx.s.setContentLoaded(true);
+    vm.update(fx.s, false);
+    CHECK(vm.objects().empty());
+    CHECK(CountingIface::offCore() == 0);
+}
+
 int main() {
+    testSyntheticPreviewAfterContentSwitch();
     testDecodeFields();
     testDecodeDepths();
     testDecodeOtherTypes();

@@ -37,7 +37,7 @@ void registerObjectsTool(DebugSession& session);
 // The per-frame draw: builds the ObjectsContext from the App and draws the window + outline.
 void drawObjectsTool(App& app);
 bool objectsWindowOpen();
-void showObjectPreview(const OpObject&, const OpRenderOptions&);
+void showObjectPreview(DebugSession&, const OpObject&, const OpRenderOptions&);
 void setObjectsWindowOpen(bool open);
 // Draws the window (when open) and the on-screen outline.  Safe to call every frame.
 void drawObjectsWindow(DebugSession& session, const ObjectsContext& ctx);

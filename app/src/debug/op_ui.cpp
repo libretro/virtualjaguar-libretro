@@ -466,12 +466,8 @@ void registerObjectsTool(DebugSession& session) {
     });
 }
 
-void showObjectPreview(const OpObject& obj, const OpRenderOptions& opt) {
-    g.vm.clear();
-    g.vm.live = false;
-    g.vm.render = opt;
-    g.vm.setObjects({obj});
-    g.vm.select(0);
+void showObjectPreview(DebugSession& s, const OpObject& obj, const OpRenderOptions& opt) {
+    g.vm.showPreview(s, obj, opt);
     g.open = true;
     g.highlight = false;
     freeTexture();

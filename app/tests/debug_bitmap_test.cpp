@@ -68,6 +68,14 @@ int main() {
     CHECK(opSavePng(raw, path.string(), err));
     CHECK(std::filesystem::file_size(path) > 0);
     std::filesystem::remove(path);
+    // Direct colour never dereferences the CLUT, even if its saved address is invalid.
+    q.clutAddress = 0xffffff;
+    for (unsigned d : {4u, 5u}) {
+        q.depth = d;
+        CHECK(bitmapRender(mock.iface(), q, raw, err));
+    }
+    q.depth = 3;
+    CHECK(!bitmapRender(mock.iface(), q, raw, err));
     // Adjacent rows share a random horizontal signature, with a slowly changing intensity.
     // Distinct chroma/intensity distributions in the 16-bit fixture; matched in 8-bit.
     for (unsigned depth : {3u, 4u}) {

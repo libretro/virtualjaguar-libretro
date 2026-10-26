@@ -84,7 +84,9 @@ void addDebugTools(App& app) {
                        BitmapUiContext ctx;
                        ctx.createTexture = &VideoOut::createTextureRGBA;
                        ctx.destroyTexture = &VideoOut::destroyTexture;
-                       ctx.openObject = showObjectPreview;
+                       ctx.openObject = [&s](const OpObject& obj, const OpRenderOptions& opt) {
+                           showObjectPreview(s, obj, opt);
+                       };
                        ctx.exportDir = app.paths.root + "debug/";
                        drawMemoryTools(s, &app.cheats, ctx);
                    }});
