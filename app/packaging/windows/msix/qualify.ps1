@@ -40,9 +40,15 @@ try {
     $data = Join-Path $env:RUNNER_TEMP 'Jaguar qualification data'
     New-Item -ItemType Directory -Path $data -Force | Out-Null
     "window.w=1600`nwindow.h=1000`n" | Set-Content (Join-Path $data 'config.ini') -Encoding ASCII
+    $script:invocationIndex = 0
     function Run-Candidate([string[]]$Arguments) {
-        $process = Start-Process -FilePath $exe -ArgumentList $Arguments -PassThru
+        $script:invocationIndex++
+        $stdout = Join-Path $out "run-$script:invocationIndex.stdout.log"
+        $stderr = Join-Path $out "run-$script:invocationIndex.stderr.log"
+        $process = Start-Process -FilePath $exe -ArgumentList $Arguments -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         if (!$process.WaitForExit(90000)) { $process.Kill(); throw 'Installed app timed out' }
+        Get-Content $stdout, $stderr | Write-Output
         if ($process.ExitCode -ne 0) { throw "Installed app exited $($process.ExitCode)" }
     }
     Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', "`"$rom`"")
