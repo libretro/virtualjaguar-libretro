@@ -54,10 +54,18 @@ static DSP_NOINLINE void DSP_UNTIMED_NAME(int32_t cycles)
 	 * per-instruction state the affine extrapolation does not model, so
 	 * any of them turns the whole thing off:
 	 *   - vjs.riscIdleSkip: the user-facing core option itself;
-	 *   - blitMemoMode / blitMemoRecording: the JaguarRead and JaguarWrite
-	 *     families note reads and writes for the memo (blit_memo.h:64-65,
-	 *     src/core/jaguar.c:1139), and skipping loads would change what
-	 *     the memo records;
+	 *   - blitMemoRecording: while a blit is being recorded the
+	 *     JaguarRead family notes every read for the memo, and skipping
+	 *     loads would change what it records.  Recording is set only
+	 *     around BlitMemoLaunch's synchronous engine run, during which
+	 *     no GPU or DSP instruction executes, so this is belt-and-braces.
+	 *     blitMemoMode alone is NOT a gate (#952): outside recording the
+	 *     read hook is off, and the write hook (main-RAM page
+	 *     generations) is never reached by an admitted body -- the DSP
+	 *     admits no store at all, and the GPU admits only GPU-local-RAM
+	 *     long stores, which GPUWriteLong serves without any memo hook.
+	 *     The skipped iterations therefore leave the memo exactly as
+	 *     interpreting them would;
 	 *   - riscClockScalePct is deliberately NOT a gate (#378 overclock
 	 *     presets): SCALE_RISC_CYCLES is applied where the budget is handed out (jaguar.c), not inside
 	 *     DSPExec, so `cycles` here is already in the same currency the
@@ -87,7 +95,7 @@ static DSP_NOINLINE void DSP_UNTIMED_NAME(int32_t cycles)
 	 *     two loads per slice on trace builds and nothing at all on
 	 *     release builds. */
 	idleSkipActive = vjs.riscIdleSkip
-	              && !blitMemoMode && !blitMemoRecording
+	              && !blitMemoRecording
 	              && !busArbiter.enabled
 	              && !vjs.gpuPipelineTiming
 	              && !(dsp_control & 0x18);
