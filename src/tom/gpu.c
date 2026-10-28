@@ -2671,7 +2671,7 @@ void GPUExec(int32_t cycles)
     * GPUChargeBusStall is reached only by a blitter-register access,
     * which GPU_IDLE_EA_OK (RAM / local SRAM only) never admits. */
    idleSkipActive = vjs.riscIdleSkip
-                 && !blitMemoMode && !blitMemoRecording
+                 && !blitMemoRecording
                  && !busArbiter.enabled
                  && !vjs.gpuPipelineTiming
                  && !(gpu_control & 0x18);
