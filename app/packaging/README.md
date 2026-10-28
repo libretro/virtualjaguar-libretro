@@ -9,6 +9,14 @@ CI builds every installable package from one reusable workflow,
 | `app.yml` | pull requests | artifacts plus one sticky PR comment linking them; signed and notarized like a release when the secrets exist (same-repo PRs), ad-hoc signed for fork PRs |
 | manual dispatch | on demand | artifacts only; the `sign` input exercises the signing path |
 
+## Microsoft Store (MSIX)
+
+The separate Windows Store MSIX workflow prepares unsigned x64/ARM64 submission
+packages for the reserved product, outside the website release artifact run.
+See [`windows/msix/README.md`](windows/msix/README.md) for identity, build commands,
+validation and remaining Windows install/upgrade qualification. Website ZIP/EXE
+packages retain their existing delivery path.
+
 ## Assets
 
 `X.Y.Z` is the tag without `v`; nightlies use `nightly`, PRs `prNNN`, the `release/**` lane `prerelease`.
