@@ -75,6 +75,15 @@ authenticity signature. Do not remove it to make a different dump pass.
   are zero-filled. Indexing preserves integer types and setting dependencies;
   negative and out-of-range indices are refused. Pointers, mutations, local or
   multidimensional arrays, strings, and designated initializers remain unsupported.
+- Top-level `const` scalar integer locals in `bigp_init`, initialized from pure
+  integer expressions, macros, enums, globals, or earlier constant locals. Integer
+  setting registrations see only declarations that precede them. The locals are
+  confined to metadata evaluation and cannot shadow other identifiers or depend
+  on registration handles. Mutations, nested declarations, static locals, and
+  function calls in constant initializers remain unsupported. All declarations,
+  including unused ones, are evaluated under the existing execution budget.
+  Purity checks inspect referenced macro bodies and alias chains too; hidden
+  mutations or calls are refused rather than evaluated in the metadata runtime.
 - Comma-separated statement lists, including loop updates such as `++i, --dest`,
   evaluated left to right under the existing step and persistent-state checks.
 - `bigpemu_register_setting_int_full` with constant default, inclusive minimum/maximum

@@ -2428,15 +2428,236 @@
       "stage": "identity"
     },
     {
-      "calls": [],
-      "crc32": null,
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
       "note": null,
       "path": "scripts/cheat_zool2.c",
-      "reason": "unsupported initialisation declaration",
-      "setting": null,
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Extra Time",
       "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
       "source": "jguffer",
-      "stage": "module"
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Start At Level: 0",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 1",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 10",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 11",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 12",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 13",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 14",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 15",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 16",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 2",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 3",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 4",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 5",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 6",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 7",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 8",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
+      "crc32": "8975F48B",
+      "note": null,
+      "path": "scripts/cheat_zool2.c",
+      "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+      "setting": "Start At Level: 9",
+      "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+      "source": "jguffer",
+      "stage": "setting"
     },
     {
       "calls": [],

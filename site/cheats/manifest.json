@@ -1,14 +1,14 @@
 {
   "counts": {
-    "cheats": 134,
-    "packs": 25,
-    "partial_packs": 10,
-    "unsupported_entries": 139
+    "cheats": 137,
+    "packs": 26,
+    "partial_packs": 11,
+    "unsupported_entries": 156
   },
   "format": 1,
   "generated_from": {
     "cartridges_sha256": "edebcd7566e15f2426cacf5181379fbdd7b47c697110ccf79bb831205f3e853a",
-    "converter_sha256": "165b3a959509c43a0f70b184b97fde7eb5de8208355fc8f73c1484ccd97f57b9",
+    "converter_sha256": "944c9c0a03c9e1b1e958f74cf07d4000ad05fd5b4f785b3b754a073203c01fd2",
     "generator_sha256": "452c26c2a6b8a38501545cfc7853c74a4d8a90cd5b75fda732f6e8020df314db",
     "sources": [
       {
@@ -3335,6 +3335,142 @@
       "title": "Pitfall - The Mayan Adventure",
       "updated": "2026-04-15",
       "writes": 5
+    },
+    {
+      "bytes": 3261,
+      "cheats": 3,
+      "crc32": "8975F48B",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/8975F48B.cht",
+      "fnv1a64": "55C927B5C2AD250E",
+      "messages": [],
+      "name": "Zool 2 (1994)",
+      "notes": [
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Extra Time",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Start At Level: 0",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 1",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 2",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 3",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 4",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 5",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 6",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 7",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 8",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 9",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 10",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 11",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 12",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 13",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 14",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 15",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_zool2.c",
+          "reason": "unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats)",
+          "setting": "Start At Level: 16",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "81d5dbae3996d7cfbdba3079dfe885719610dbd36afcaccdfb39c7b2562deb57",
+      "sources": [
+        {
+          "converted": 3,
+          "omitted": 18,
+          "path": "scripts/cheat_zool2.c",
+          "sha256": "280141829099d1a0de7a84d06ffd2ba5bcdeb6aefe35e41e7ba56b9d882452a7",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Zool 2",
+      "updated": "2026-04-15",
+      "writes": 3
     },
     {
       "bytes": 909,

@@ -97,10 +97,20 @@ def type_info(node):
     raise Unsupported("unsupported integer type " + typ)
 
 
-def walk(node):
-    yield node
-    for _, child in node.children():
-        yield from walk(child)
+def walk(node, macros):
+    """Inspect syntax and referenced object-like macros without executing either.
+
+    Each macro body is inspected once: alias cycles terminate and shared macro
+    graphs cannot turn a small source into exponentially many validation steps.
+    """
+    pending, expanded = [node], set()
+    while pending:
+        current = pending.pop()
+        yield current
+        pending.extend(child for _, child in current.children())
+        if isinstance(current, C.ID) and current.name in macros and current.name not in expanded:
+            expanded.add(current.name)
+            pending.append(macros[current.name])
 
 
 def promote(value):
@@ -306,7 +316,7 @@ class Runtime:
         if name in ("printf_notify", "printf"):
             # Output only: arguments are never evaluated (no memory effect), so they must have no side effects.
             for arg in args:
-                for sub in walk(arg):
+                for sub in walk(arg, self.module.macros):
                     if isinstance(sub, (C.Assignment, C.FuncCall)) or (
                             isinstance(sub, C.UnaryOp) and sub.op in ("++", "--", "p++", "p--")):
                         raise Unsupported("side effect in message arguments requires manual review")
@@ -421,7 +431,7 @@ class Runtime:
         # Dependencies cannot make a table a runtime value, either.
         for expr in ([node.type.dim] if node.type.dim else []) + expressions:
             if any(isinstance(n, (C.FuncCall, C.Assignment, C.InitList, C.NamedInitializer)) or
-                   (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(expr)):
+                   (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(expr, self.module.macros)):
                 raise Unsupported("constant array size/initializer requires constant integer expressions")
         size = self.expr(node.type.dim) if node.type.dim else Value(len(expressions))
         if size.deps or not 0 < size.n <= MAX_ARRAY_ELEMENTS - self.array_elements:
@@ -481,6 +491,9 @@ class Module:
         categories = []
         registered = set()
         parameter_args = {}
+        init_constants, parameter_prefixes, init_handles = [], {}, set()
+        init_body = self.functions["bigp_init"].body
+        init_top_level = {id(node) for node in init_body.block_items or []}
 
         class Registrations(C.NodeVisitor):
             def visit_FuncCall(visitor, node):
@@ -506,8 +519,23 @@ class Module:
 
             def visit_Decl(visitor, node):
                 if not isinstance(node.init, C.FuncCall):
-                    raise Unsupported("unsupported initialisation declaration")
+                    if (not node.name or id(node) not in init_top_level or node.storage
+                            or not isinstance(node.type, C.TypeDecl) or "const" not in node.type.quals
+                            or node.init is None):
+                        raise Unsupported("unsupported initialisation declaration")
+                    type_info(node.type)
+                    if any(isinstance(n, (C.FuncCall, C.Assignment)) or
+                           (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--"))
+                           for n in walk(node.init, self.macros)):
+                        raise Unsupported("initialisation constant must have a pure integer initializer")
+                    init_constants.append(node)
+                    return
                 scan(node.name, node.init)
+                visitor.generic_visit(node)
+
+            def visit_UnaryOp(visitor, node):
+                if node.op in ("++", "--", "p++", "p--"):
+                    raise Unsupported("initialisation mutation requires manual review")
                 visitor.generic_visit(node)
 
             def visit_Assignment(visitor, node):
@@ -518,6 +546,7 @@ class Module:
 
         def scan(handle, call):
             registered.add(id(call))
+            init_handles.add(handle)
             name = getattr(call.name, "name", "")
             args = call.args.exprs if call.args else []
             if name == "bigpemu_register_setting_category" and len(args) == 2:
@@ -534,11 +563,12 @@ class Module:
                     if (name.endswith("_full") and len(args) != 6) or (not name.endswith("_full") and len(args) != 3):
                         raise Unsupported("malformed integer setting registration")
                     parameter_args[key] = args[2:]
+                    parameter_prefixes[key] = len(init_constants)
             elif name.startswith("bigpemu_register_event_") and len(args) == 2:
                 if name in self.events: raise Unsupported("duplicate event registration")
                 self.events[name] = args[-1].name
 
-        Registrations().visit(self.functions["bigp_init"].body)
+        Registrations().visit(init_body)
         required = {"bigpemu_register_event_sw_loaded", "bigpemu_register_event_emu_thread_frame"}
         if set(self.events) != required or len(set(categories)) != 1 or not self.settings:
             raise Unsupported("expected one title, settings, and load/frame callbacks only")
@@ -561,19 +591,39 @@ class Module:
                 self.globals.append((node, enum))
 
         self.parameter_args = parameter_args
+        self.init_constants, self.parameter_prefixes, self.init_handles = init_constants, parameter_prefixes, init_handles
+        reserved = set(self.macros) | init_handles | set(self.functions) | INIT_CALLS
+        for node, enum in self.globals:
+            if node.name: reserved.add(node.name)
+            if enum: reserved.update(item.name for item in enum.values.enumerators)
+        for node in init_constants:
+            if node.name in reserved:
+                raise Unsupported("initialisation constant name is duplicated or shadows another identifier")
+            reserved.add(node.name)
 
     def prepare_settings(self):
         # Defer global evaluation until convert() so failures retain the cartridge
         # identity in the pack generator's per-cartridge error report.
-        # Registration expressions are evaluated from initialized globals/macros/enums,
-        # never by calling script functions or executing bigp_init.
+        # Evaluate only scalar constant declarations, never script calls or bigp_init.
+        # Capture the locals visible at each integer registration, before later declarations.
         self.off_values = {key: 0 for key, _, _ in self.settings}
         self.parameters = {}
-        constants = self.global_runtime(0, {}) if self.parameter_args else None
+        constants = self.global_runtime(0, {}) if self.parameter_args or self.init_constants else None
+        snapshots = {0: {}}
+        if constants:
+            # Registration handles are synthetic identifiers, not constant integers.
+            for name in self.init_handles: constants.scopes[0].pop(name, None)
+            constants.scopes.append({})
+            constants.types.append({})
+            for count, node in enumerate(self.init_constants, 1):
+                constants.stmt(node)
+                if count in self.parameter_prefixes.values():
+                    snapshots[count] = dict(constants.scopes[-1])
         for key, args in self.parameter_args.items():
+            constants.scopes[-1] = snapshots[self.parameter_prefixes[key]]
             for arg in args:
                 if any(isinstance(n, (C.FuncCall, C.Assignment)) or
-                       (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(arg)):
+                       (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(arg, self.macros)):
                     raise Unsupported("integer setting metadata must be constant")
             default = integer(constants.expr(args[0])).n
             try:
