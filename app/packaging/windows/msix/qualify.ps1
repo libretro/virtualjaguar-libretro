@@ -47,8 +47,10 @@ try {
     }
     Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', "`"$rom`"")
     # Software OpenGL is supplied by the test host, never inserted into the package.
-    $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
-    $env:SDL_OPENGL_LIBRARY = 'C:\msys64\mingw64\bin\opengl32.dll'
+    $graphicsBin = Join-Path $env:VJ_TEST_MSYS2 'mingw64\bin'
+    $env:PATH = "$graphicsBin;$env:PATH"
+    $env:SDL_OPENGL_LIBRARY = Join-Path $graphicsBin 'opengl32.dll'
+    if (!(Test-Path $env:SDL_OPENGL_LIBRARY)) { throw 'Host Mesa OpenGL library missing' }
     $env:GALLIUM_DRIVER = 'llvmpipe'
     foreach ($view in @('keypad', 'settings-input', 'settings-video')) {
         $png = Join-Path $out "$view.png"
