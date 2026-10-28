@@ -1778,7 +1778,14 @@ void DSPSyncToM68K(void)
  * Body = target .. jr inclusive, plus the inlined delay-slot
  * instruction.  Static decode (register-independent) requires:
  *   - every opcode on the whitelist below (no store of any kind, no
- *     accumulator/latency opcode, no second branch);
+ *     accumulator/latency opcode, no `jump`), except that the body may
+ *     contain EXIT branches: a `jr` before the loop-closing one whose
+ *     target lies past the closing jr's delay slot (#952 -- Cybermorph
+ *     polls two bits of a register with `btst ; jr NE,out ; nop ;
+ *     btst ; jr EQ,head`).  An exit that is never taken leaves the
+ *     body straight-line; the probe proves it was not taken (see the
+ *     EXIT-BRANCH CHECK in DSPIdleLoopProbe) and the fixed-point proof
+ *     below then proves it never will be;
  *   - the decode walk lands exactly on the jr, so the body really is
  *     straight-line (movei carries a 32-bit immediate, i.e. 3 words);
  *   - no movei in the delay slot (its immediate would be fetched from
@@ -1826,6 +1833,9 @@ void DSPSyncToM68K(void)
  * zero-delta registers stay put -- while each counter register is only
  * ever incremented by a constant.  So iteration k's state is
  * S1 + (k-1)*delta for all k, and the branch condition never changes.
+ * The same holds at every point INSIDE the body, so an exit jr sees the
+ * same flags on every iteration: not taken from S1 to S2 (the probe
+ * checks that) means not taken on any extrapolated iteration either.
  *
  * Then n = (cycles_remaining / cost) - 1 (always leave one full
  * iteration to execute normally), reg += n*delta, cycles -= n*cost,
@@ -1874,6 +1884,14 @@ uint32_t dsp_idle_skip_opcodes = 0;		/* opcodes NOT interpreted -- the
 										 * over a skip on purpose, so it does
 										 * NOT show the saving. */
 
+/* Every taken `jr`, counted inside dsp_opcode_jr's taken branch rather
+ * than in DSPExec's loop: a test there changed the loop's code generation
+ * and cost Iron Soldier 2 +0.7% host instructions per frame (#952).  Here
+ * it measured +0.35% on Iron Soldier 2 (jr-heavy DSP, no idle skip to win
+ * back) and +0.09% on Doom.  Only differences are read, so it never needs
+ * a reset. */
+static uint32_t  dsp_jr_taken;
+
 static int       idleProbeStage;		/* 0 = none, 1 = have S0, 2 = have S1 */
 static uint32_t  idleProbeHead;
 static uint32_t  idleProbeJr;
@@ -1881,6 +1899,7 @@ static uint32_t *idleProbeBank;			/* dsp_reg at S0 -- see theorem (3) */
 static int32_t   idleProbeCyc0, idleProbeCyc1;
 static uint32_t  idleProbeOpc0, idleProbeOpc1;
 static uint32_t  idleProbeS0[64], idleProbeS1[64];
+static uint32_t  idleProbeJrt0, idleProbeJrt1;	/* dsp_jr_taken at S0/S1 */
 static uint64_t  idleProbeLdxFix;		/* dsp_load_wb_fixups at S0 */
 static uint64_t  idleProbeDivFix;		/* dsp_div_store_fixups at S0 */
 static uint8_t   idleProbeFz0, idleProbeFn0, idleProbeFc0;
@@ -1929,7 +1948,9 @@ static int dsp_idle_op_admitted(uint32_t idx)
 	 * PC-modifying opcode but the loop-closing jr itself is load-bearing
 	 * for the executed-path check below (idleBodyCount forces exactly
 	 * one route from head to jrAddr), not only for the store-freedom
-	 * this whitelist was originally written to guarantee. */
+	 * this whitelist was originally written to guarantee.  The one
+	 * exception, a forward exit jr, is admitted by dsp_idle_decode
+	 * itself and backed by the probe's EXIT-BRANCH CHECK. */
 	default:
 		return 0;
 	}
@@ -2004,6 +2025,7 @@ static int dsp_idle_operands(uint32_t idx, uint32_t p1, uint32_t p2,
 		src[(*nsrc)++] = cur + (int)p1;
 		*dst = cur + (int)p2;
 		return 1;
+	case 53:								/* exit jr -- reads flags only */
 	case 57:								/* nop */
 		return 1;
 	default:
@@ -2049,7 +2071,18 @@ static int dsp_idle_decode(uint32_t head, uint32_t jrAddr)
 			return 0;
 		op  = DSP_IDLE_FETCH(pc);
 		idx = (uint32_t)(op >> 10);
-		if (!dsp_idle_op_admitted(idx))
+		if (idx == 53)
+		{
+			/* Exit branch: only a jr that leaves the loop entirely, past
+			 * the closing jr's delay slot.  Anything landing inside
+			 * [head, jr+2] would make a second route around the loop. */
+			int32_t off = (int32_t)((op >> 5) & 0x1F);
+			if (off & 0x10)
+				off -= 0x20;
+			if (pc + 2 + (uint32_t)(off * 2) <= jrAddr + 2)
+				return 0;
+		}
+		else if (!dsp_idle_op_admitted(idx))
 			return 0;
 		idleBodyIdx[n] = (uint8_t)idx;
 		idleBodyP1[n]  = (uint8_t)((op >> 5) & 0x1F);
@@ -2284,6 +2317,7 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 		idleProbeFc0   = dsp_flag_c;
 		idleProbeCyc0  = cycles;
 		idleProbeOpc0  = dsp_exec_opcode_count;
+		idleProbeJrt0  = dsp_jr_taken;
 		idleProbeHead  = head;
 		idleProbeJr    = jrAddr;
 		idleProbeBank  = dsp_reg;
@@ -2301,6 +2335,7 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 		idleProbeFc1   = dsp_flag_c;
 		idleProbeCyc1  = cycles;
 		idleProbeOpc1  = dsp_exec_opcode_count;
+		idleProbeJrt1  = dsp_jr_taken;
 		idleProbeStage = 2;
 		return cycles;
 	}
@@ -2386,8 +2421,19 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 	 * array.)  Any other route from one arrival to the next must execute
 	 * the whole body AND at least one further instruction to get back,
 	 * so it costs strictly more.  Requiring exact equality therefore
-	 * admits the straight-line traversal and nothing else. */
-	if (opcost != (uint32_t)idleBodyCount + 1)
+	 * admits the straight-line traversal and nothing else.
+	 *
+	 * EXIT-BRANCH CHECK (#952).  That argument needs a branch-free body.
+	 * With an exit jr in it, a taken exit can leave, run undecoded code
+	 * (a store) and come back through a `jump` to the closing jr with
+	 * exactly the straight-line opcode count -- dsp_idle_probe_falsify
+	 * program D is such a route.  So also require that each probe
+	 * iteration took exactly ONE jr, the closing one: a taken exit is a
+	 * taken jr and would make it two.  With every exit untaken, the body
+	 * is straight-line again and the count argument above applies. */
+	if (opcost != (uint32_t)idleBodyCount + 1
+	    || idleProbeJrt1 - idleProbeJrt0 != 1
+	    || dsp_jr_taken - idleProbeJrt1 != 1)
 	{
 		dsp_idle_memo_reject(head, jrAddr);
 		return cycles;
@@ -2730,6 +2776,7 @@ INLINE static void dsp_opcode_jr(void)
 		int32_t delayed_pc = dsp_pc + (offset * 2);
 		uint16_t ds_opcode;
 		uint32_t ds_index;
+		dsp_jr_taken++;			/* idle-skip exit-branch check (#952) */
 		/* Same retire-window commits as dsp_opcode_jump. */
 		if (dspFlagsRetireDelay)
 		{

@@ -38,6 +38,22 @@
  *      Only the executed-path check (opcost == idleBodyCount + 1)
  *      rejects it.
  *
+ *   C. a loop with an exit branch (#952, Cybermorph's DSP wait loop)
+ *      ->  the probe MUST fire, and the loop must still leave once the
+ *      polled register changes.
+ *      head:  btst #0,r22 ; jr NE,out ; nop ; btst #1,r22 ; jr EQ,head
+ *             nop                  <- delay slot
+ *
+ *   D. the exit-branch exploit  ->  the probe MUST NOT fire.
+ *      head:  subq #1,r1 ; jr EQ,out ; nop x5 ; jr always,head ; nop
+ *      out:   store r3,(r4) ; movei #1,r1 ; jump (r6) ; nop
+ *      r6 = the closing jr.  The exit is taken every time, the detour
+ *      runs an undecoded store and re-enters through a `jump` (never
+ *      probed), and the route costs 9 opcodes, exactly the 7 decoded
+ *      + delay slot + 1 of a straight pass.  Registers and flags match
+ *      at every arrival, so only the exit-branch check (one taken jr per
+ *      iteration) rejects it.
+ *
  * Build: cc -O2 -Wall -std=c99 $(INCFLAGS) -o test/tools/dsp_idle_probe_falsify \
  *          test/tools/dsp_idle_probe_falsify.c test/harness/harness.c -ldl -lm
  * Needs the wide test ABI (make TEST_EXPORTS=1).  Uses test/roms/yarc.j64,
@@ -54,6 +70,7 @@
 /* RISC opcode indices (src/jerry/dsp.c dsp_opcode[]) */
 #define OP_ADDQT   3
 #define OP_SUBQ    6
+#define OP_BTST   13
 #define OP_STORE  47
 #define OP_JUMP   52
 #define OP_JR     53
@@ -63,12 +80,16 @@
 /* Branch condition codes: 0 = always, 1 = NE (fails when Z is set). */
 #define CC_ALWAYS  0
 #define CC_NE      1
+#define CC_EQ      2
 
 #define DSP_RAM_BASE 0x00F1B000u
 
 #define PROG_A_OFF   0x0100          /* $F1B100 */
 #define PROG_B_OFF   0x0200          /* $F1B200 */
+#define PROG_C_OFF   0x0300          /* $F1B300 */
+#define PROG_C_OUT   0x0320          /* $F1B320 -- C's exit target */
 #define SCRATCH_OFF  0x0400          /* $F1B400 -- the exploit's store target */
+#define PROG_D_OFF   0x0500          /* $F1B500 */
 
 static uint8_t  *dsp_ram;
 static uint32_t *p_dsp_pc;
@@ -127,6 +148,47 @@ static void build_prog_b(void)
     setreg(5, DSP_RAM_BASE + PROG_B_OFF);          /* jump target = head       */
 }
 
+static void build_prog_c(void)
+{
+    /* jr offsets: target = (jr + 2) + off * 2. */
+    put16(PROG_C_OFF +  0, enc(OP_BTST, 0, 22));              /* btst #0,r22    */
+    put16(PROG_C_OFF +  2, enc(OP_JR, 14, CC_NE));            /* jr ne,out      */
+    put16(PROG_C_OFF +  4, enc(OP_NOP, 0, 0));
+    put16(PROG_C_OFF +  6, enc(OP_BTST, 1, 22));              /* btst #1,r22    */
+    put16(PROG_C_OFF +  8, enc(OP_JR, 0x1B /* -5 */, CC_EQ)); /* jr eq,head     */
+    put16(PROG_C_OFF + 10, enc(OP_NOP, 0, 0));                /* (delay slot)   */
+    /* out: park in an idle loop of its own so the PC stays readable. */
+    put16(PROG_C_OUT +  0, enc(OP_ADDQT, 1, 7));              /* addqt #1,r7    */
+    put16(PROG_C_OUT +  2, enc(OP_JR, 0x1E /* -2 */, CC_ALWAYS));
+    put16(PROG_C_OUT +  4, enc(OP_NOP, 0, 0));
+
+    setreg(22, 0);                                 /* nothing to do yet        */
+}
+
+static void build_prog_d(void)
+{
+    unsigned i;
+
+    put16(PROG_D_OFF +  0, enc(OP_SUBQ, 1, 1));               /* subq #1,r1     */
+    put16(PROG_D_OFF +  2, enc(OP_JR, 7, CC_EQ));             /* jr eq,out      */
+    for (i = 4; i <= 12; i += 2)
+        put16(PROG_D_OFF + i, enc(OP_NOP, 0, 0));
+    put16(PROG_D_OFF + 14, enc(OP_JR, 0x18 /* -8 */, CC_ALWAYS)); /* jr head */
+    put16(PROG_D_OFF + 16, enc(OP_NOP, 0, 0));                /* (delay slot)   */
+    /* out = head + 18 */
+    put16(PROG_D_OFF + 18, enc(OP_STORE, 4, 3));              /* store r3,(r4)  */
+    put16(PROG_D_OFF + 20, enc(OP_MOVEI, 0, 1));              /* movei #1,r1    */
+    put16(PROG_D_OFF + 22, 0x0001);                           /*   LSW          */
+    put16(PROG_D_OFF + 24, 0x0000);                           /*   MSW          */
+    put16(PROG_D_OFF + 26, enc(OP_JUMP, 6, CC_ALWAYS));       /* jump (r6)      */
+    put16(PROG_D_OFF + 28, enc(OP_NOP, 0, 0));                /* (delay slot)   */
+
+    setreg(1, 1);
+    setreg(3, 0xDEADBEEFu);
+    setreg(4, DSP_RAM_BASE + SCRATCH_OFF);
+    setreg(6, DSP_RAM_BASE + PROG_D_OFF + 14);     /* jump target = closing jr */
+}
+
 /* Run one hand-assembled program from `off` for `cycles`, returning how
  * many times the fast-forward fired. */
 static uint32_t run_prog(uint32_t off, int32_t cycles,
@@ -148,11 +210,13 @@ static uint32_t run_prog(uint32_t off, int32_t cycles,
 int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
-    harness_result res[3];
+    harness_result res[6];
     unsigned nres = 0;
     uint32_t fires_a, fires_b, rej_a, rej_b, ops_a, ops_b;
+    uint32_t fires_c, fires_d, rej_c, rej_d, ops_c, ops_d, pc_c;
     static char detail_a[192], detail_b[192], detail_c[192];
-    int ok_a, ok_b;
+    static char detail_d[192], detail_e[192], detail_f[192];
+    int ok_a, ok_b, ok_c, ok_d, ok_e;
 
     cfg.frames = 2;
     cfg.quiet  = 1;
@@ -182,14 +246,26 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Build each program just before it runs: B and D both use r1. */
     build_prog_a();
-    build_prog_b();
-
     fires_a = run_prog(PROG_A_OFF, 20000, &rej_a, &ops_a);
+    build_prog_b();
     fires_b = run_prog(PROG_B_OFF, 20000, &rej_b, &ops_b);
+    build_prog_c();
+    fires_c = run_prog(PROG_C_OFF, 20000, &rej_c, &ops_c);
+    /* The polled bit arrives: C must leave the loop it was skipping. */
+    setreg(22, 1);
+    p_dspexec(200);
+    pc_c = *p_dsp_pc;
+    build_prog_d();
+    fires_d = run_prog(PROG_D_OFF, 20000, &rej_d, &ops_d);
 
     ok_a = (fires_a > 0);
     ok_b = (fires_b == 0);
+    ok_c = (fires_c > 0);
+    ok_d = (pc_c >= DSP_RAM_BASE + PROG_C_OUT
+            && pc_c <= DSP_RAM_BASE + PROG_C_OUT + 4);
+    ok_e = (fires_d == 0);
 
     snprintf(detail_a, sizeof detail_a,
              "genuinely idle loop (addqt/jr/nop) fired %u time(s), "
@@ -216,7 +292,33 @@ int main(int argc, char **argv)
     res[nres].detail = detail_c;
     nres++;
 
+    snprintf(detail_d, sizeof detail_d,
+             "loop with an exit jr (btst/jr ne/nop/btst/jr eq) fired %u "
+             "time(s), %u reject(s), %u opcodes charged",
+             fires_c, rej_c, ops_c);
+    res[nres].status = ok_c ? "PASS" : "FAIL";
+    res[nres].name   = "exit_branch_loop_fires";
+    res[nres].detail = detail_d;
+    nres++;
+
+    snprintf(detail_e, sizeof detail_e,
+             "after r22 bit 0 set, DSP PC $%06X (must be in $%06X..$%06X)",
+             pc_c, DSP_RAM_BASE + PROG_C_OUT, DSP_RAM_BASE + PROG_C_OUT + 4);
+    res[nres].status = ok_d ? "PASS" : "FAIL";
+    res[nres].name   = "exit_branch_still_exits";
+    res[nres].detail = detail_e;
+    nres++;
+
+    snprintf(detail_f, sizeof detail_f,
+             "taken exit + undecoded store + jump back, same opcode count, "
+             "fired %u time(s) (must be 0), %u reject(s), %u opcodes charged",
+             fires_d, rej_d, ops_d);
+    res[nres].status = ok_e ? "PASS" : "FAIL";
+    res[nres].name   = "taken_exit_detour_rejected";
+    res[nres].detail = detail_f;
+    nres++;
+
     harness_report(&cfg, res, nres);
     harness_shutdown(&cfg);
-    return (ok_a && ok_b) ? 0 : 1;
+    return (ok_a && ok_b && ok_c && ok_d && ok_e) ? 0 : 1;
 }
