@@ -82,3 +82,29 @@ jobs:
             store-out/SOURCE_COMMIT.txt
           if-no-files-found: error
           retention-days: 14
+
+  qualify-x64:
+    name: Store MSIX installed x64 smoke
+    needs: msix
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: store-msix-windows-x64
+          path: candidate
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-mesa
+      - name: Install a test-signed copy and capture Windows UI
+        shell: powershell
+        run: ./app/packaging/windows/msix/qualify.ps1 -CandidateDirectory candidate -OutputDirectory qualification
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: store-msix-qualification-x64
+          path: qualification/
+          if-no-files-found: error
+          retention-days: 14

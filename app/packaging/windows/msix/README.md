@@ -48,6 +48,12 @@ its own run. No workflow uploads to Partner Center, signs with production keys,
 changes prices or publishes. Numeric versions are the same for PR/manual builds;
 only upload a qualified release candidate, not every artifact.
 
+The x64 qualification job installs a test-signed copy on a disposable runner,
+runs the installed app's public-ROM hash check and captures three Windows UI
+views with host-provided Mesa software OpenGL. It removes the test installation
+and certificates and retains only logs and screenshots. This does not qualify
+hardware graphics, controller/audio behaviour or upgrade retention.
+
 ## Qualification before submission
 
 - Upload the qualified x64 and ARM64 packages to the existing **draft** product.
