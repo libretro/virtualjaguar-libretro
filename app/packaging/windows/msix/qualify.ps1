@@ -45,11 +45,25 @@ try {
         $script:invocationIndex++
         $stdout = Join-Path $out "run-$script:invocationIndex.stdout.log"
         $stderr = Join-Path $out "run-$script:invocationIndex.stderr.log"
-        $process = Start-Process -FilePath $exe -ArgumentList $Arguments -PassThru `
-            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = $exe
+        $start.Arguments = $Arguments -join ' '
+        $start.UseShellExecute = $false
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $start
+        if (!$process.Start()) { throw 'Could not start installed app' }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (!$process.WaitForExit(90000)) { $process.Kill(); throw 'Installed app timed out' }
+        $process.WaitForExit()
+        $stdoutTask.GetAwaiter().GetResult() | Set-Content $stdout
+        $stderrTask.GetAwaiter().GetResult() | Set-Content $stderr
         Get-Content $stdout, $stderr | Write-Output
-        if ($process.ExitCode -ne 0) { throw "Installed app exited $($process.ExitCode)" }
+        $exitCode = $process.ExitCode
+        $process.Dispose()
+        if ($exitCode -ne 0) { throw "Installed app exited $exitCode" }
     }
     Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', "`"$rom`"")
     # Software OpenGL is supplied by the test host, never inserted into the package.
