@@ -109,6 +109,21 @@ class PackTests(unittest.TestCase):
         with self.assertRaisesRegex(bp.BuildError, "no packs were converted"):
             make({"s": {"scripts/cheat_table.c": wrong_source}}, table=wrong_table)
 
+    def test_init_constant_bound_pack_and_determinism(self):
+        text = source(SIMPLE.replace("0x1234", "b")).replace(
+            'second = bigpemu_register_setting_bool(category, "Other freeze", 0);',
+            'const int maxValue = (1 << 2) - 2; '
+            'second = bigpemu_register_setting_int_full(category, "Other freeze", 0, 0, maxValue, 1);')
+        inputs = {"s": {"scripts/cheat_constants.c": text}}
+        files = make(inputs)
+        self.assertEqual(files, make(inputs))
+        names, codes, enables = parse_cht(files[f"packs/{CRC}.cht"])
+        self.assertEqual(names, ["Grouped freeze", "Other freeze: 1", "Other freeze: 2"])
+        self.assertEqual(codes, ["001F0000:AB", "001F0002:0001", "001F0002:0002"])
+        self.assertEqual(enables, ["false"]*3)
+        self.assertEqual(load(files, "unsupported.json")["entries"], [])
+        self.assertFalse(load(files, "manifest.json")["packs"][0]["partial"])
+
     def test_header_title_not_duplicated(self):
         def first(table):
             files = make({"s": {"scripts/cheat_a.c": source(SIMPLE)}}, table=table)

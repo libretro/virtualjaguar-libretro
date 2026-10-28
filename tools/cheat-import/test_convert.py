@@ -210,6 +210,67 @@ class ConversionTests(unittest.TestCase):
             with self.assertRaisesRegex(converter.Unsupported, "ambiguous"):
                 converter.Module(source(SIMPLE).replace("Other freeze", label))
 
+    def init_constant_source(self, declarations="const int maxValue = (2 * 2) - 1;", bound="maxValue", body=None):
+        return source(body or SIMPLE.replace("0x1234", "b")).replace(
+            'second = bigpemu_register_setting_bool(category, "Other freeze", 0);',
+            declarations + '\nsecond = bigpemu_register_setting_int_full(category, "Other freeze", 0, 0, ' + bound + ', 1);')
+
+    def test_init_const_bound_expands_without_losing_boolean(self):
+        module = converter.Module(self.init_constant_source())
+        result = module.convert(DIGEST)
+        self.assertEqual([r["code"] for r in result], ["001F0000:AB", "001F0002:0001", "001F0002:0002", "001F0002:0003"])
+        self.assertTrue(all("code" not in r for r in module.convert(DIGEST ^ 1)))
+
+    def test_init_const_order_macros_enums_and_fixed_width_types(self):
+        text = self.init_constant_source("const uint8_t wrapped = 258; const int maxValue = wrapped + LAST;", body=SIMPLE.replace("0x1234", "b"))
+        text += "\nenum { LAST = 1 };\n"
+        self.assertEqual(converter.Module(text).convert(DIGEST)[-1]["code"], "001F0002:0003")
+        text = self.init_constant_source("const int base = 1; const int maxValue = base + EXTRA;", bound="maxValue") + "\n#define EXTRA 2\n"
+        self.assertEqual(len(converter.Module(text).convert(DIGEST)), 4)
+
+    def test_init_const_future_declaration_not_visible_to_registration(self):
+        text = self.init_constant_source("")
+        text = text.replace('frame_event = bigpemu_register_event_emu_thread_frame(module, frame);',
+                            'const int maxValue = 3; frame_event = bigpemu_register_event_emu_thread_frame(module, frame);')
+        result = converter.Module(text).convert(DIGEST)
+        self.assertIn("code", result[0])
+        self.assertIn("unknown identifier maxValue", result[1]["unsupported"])
+
+    def test_init_const_invalid_declarations_and_initializers_refused(self):
+        for decl in ("int maxValue = 3;", "const int maxValue;", "const int maxValue[2] = {1,2};",
+                     "const int *maxValue = 0;", "static const int maxValue = 3;",
+                     "const int maxValue = flag++;", "const int maxValue = (flag = 3);",
+                     "const int maxValue = (int)bigpemu_jag_read8(0);",
+                     "const int maxValue = later; const int later = 3;",
+                     "const int maxValue = 1; const int maxValue = 3;",
+                     "const int flag = 3; const int maxValue = flag;",
+                     "const int frame = 3; const int maxValue = frame;",
+                     "const int bigpemu_register_setting_bool = 3; const int maxValue = 3;",
+                     "{ const int maxValue = 3; }"):
+            with self.subTest(decl=decl), self.assertRaises(converter.Unsupported):
+                converter.Module(self.init_constant_source(decl)).convert(DIGEST)
+
+    def test_init_const_cannot_be_modified_or_use_registration_handles(self):
+        for decl in ("const int maxValue = 3; ++maxValue;", "const int maxValue = 3; maxValue = 4;",
+                     "const int maxValue = first;", "const int maxValue = category;",
+                     "const int maxValue = ALIAS;"):
+            text = self.init_constant_source(decl) + "\n#define ALIAS first\n"
+            with self.subTest(decl=decl), self.assertRaises(converter.Unsupported):
+                converter.Module(text).convert(DIGEST)
+        text = self.init_constant_source("const int maxValue = 3; const int category = 1;")
+        with self.assertRaises(converter.Unsupported):
+            converter.Module(text).convert(DIGEST)
+
+    def test_init_const_is_not_visible_to_frame_callback(self):
+        result = converter.Module(self.init_constant_source(body=SIMPLE.replace("0xab", "maxValue"))).convert(DIGEST)
+        self.assertIn("unknown identifier maxValue", result[0]["unsupported"])
+        self.assertIn("code", result[1])
+
+    def test_unused_init_const_is_still_validated(self):
+        text = source(SIMPLE).replace('void bigp_init(void) {', 'void bigp_init(void) { const int unused = missing;')
+        with self.assertRaisesRegex(converter.Unsupported, "unknown identifier"):
+            converter.Module(text).convert(DIGEST)
+
     def test_setting_handle_arithmetic_refused(self):
         with self.assertRaisesRegex(converter.Unsupported, "registered global"):
             converter.Module(source(SIMPLE).replace("&a, first", "&a, first + 0")).convert(DIGEST)
@@ -378,7 +439,7 @@ class ConversionTests(unittest.TestCase):
     def test_int_full_metadata_side_effect_refused(self):
         text = source(SIMPLE).replace('bigpemu_register_setting_bool(category, "Other freeze", 0)',
             'bigpemu_register_setting_int_full(category, "Other freeze", 0, 0, flag++, 1)')
-        with self.assertRaisesRegex(converter.Unsupported, "metadata must be constant"):
+        with self.assertRaisesRegex(converter.Unsupported, "initialisation mutation"):
             converter.Module(text).convert(DIGEST)
 
     def test_printf_notify_load_message(self):

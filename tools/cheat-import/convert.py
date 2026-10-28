@@ -481,6 +481,9 @@ class Module:
         categories = []
         registered = set()
         parameter_args = {}
+        init_constants, parameter_prefixes, init_handles = [], {}, set()
+        init_body = self.functions["bigp_init"].body
+        init_top_level = {id(node) for node in init_body.block_items or []}
 
         class Registrations(C.NodeVisitor):
             def visit_FuncCall(visitor, node):
@@ -506,8 +509,23 @@ class Module:
 
             def visit_Decl(visitor, node):
                 if not isinstance(node.init, C.FuncCall):
-                    raise Unsupported("unsupported initialisation declaration")
+                    if (not node.name or id(node) not in init_top_level or node.storage
+                            or not isinstance(node.type, C.TypeDecl) or "const" not in node.type.quals
+                            or node.init is None):
+                        raise Unsupported("unsupported initialisation declaration")
+                    type_info(node.type)
+                    if any(isinstance(n, (C.FuncCall, C.Assignment)) or
+                           (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--"))
+                           for n in walk(node.init)):
+                        raise Unsupported("initialisation constant must have a pure integer initializer")
+                    init_constants.append(node)
+                    return
                 scan(node.name, node.init)
+                visitor.generic_visit(node)
+
+            def visit_UnaryOp(visitor, node):
+                if node.op in ("++", "--", "p++", "p--"):
+                    raise Unsupported("initialisation mutation requires manual review")
                 visitor.generic_visit(node)
 
             def visit_Assignment(visitor, node):
@@ -518,6 +536,7 @@ class Module:
 
         def scan(handle, call):
             registered.add(id(call))
+            init_handles.add(handle)
             name = getattr(call.name, "name", "")
             args = call.args.exprs if call.args else []
             if name == "bigpemu_register_setting_category" and len(args) == 2:
@@ -534,11 +553,12 @@ class Module:
                     if (name.endswith("_full") and len(args) != 6) or (not name.endswith("_full") and len(args) != 3):
                         raise Unsupported("malformed integer setting registration")
                     parameter_args[key] = args[2:]
+                    parameter_prefixes[key] = len(init_constants)
             elif name.startswith("bigpemu_register_event_") and len(args) == 2:
                 if name in self.events: raise Unsupported("duplicate event registration")
                 self.events[name] = args[-1].name
 
-        Registrations().visit(self.functions["bigp_init"].body)
+        Registrations().visit(init_body)
         required = {"bigpemu_register_event_sw_loaded", "bigpemu_register_event_emu_thread_frame"}
         if set(self.events) != required or len(set(categories)) != 1 or not self.settings:
             raise Unsupported("expected one title, settings, and load/frame callbacks only")
@@ -561,16 +581,36 @@ class Module:
                 self.globals.append((node, enum))
 
         self.parameter_args = parameter_args
+        self.init_constants, self.parameter_prefixes, self.init_handles = init_constants, parameter_prefixes, init_handles
+        reserved = set(self.macros) | init_handles | set(self.functions) | INIT_CALLS
+        for node, enum in self.globals:
+            if node.name: reserved.add(node.name)
+            if enum: reserved.update(item.name for item in enum.values.enumerators)
+        for node in init_constants:
+            if node.name in reserved:
+                raise Unsupported("initialisation constant name is duplicated or shadows another identifier")
+            reserved.add(node.name)
 
     def prepare_settings(self):
         # Defer global evaluation until convert() so failures retain the cartridge
         # identity in the pack generator's per-cartridge error report.
-        # Registration expressions are evaluated from initialized globals/macros/enums,
-        # never by calling script functions or executing bigp_init.
+        # Evaluate only scalar constant declarations, never script calls or bigp_init.
+        # Capture the locals visible at each integer registration, before later declarations.
         self.off_values = {key: 0 for key, _, _ in self.settings}
         self.parameters = {}
-        constants = self.global_runtime(0, {}) if self.parameter_args else None
+        constants = self.global_runtime(0, {}) if self.parameter_args or self.init_constants else None
+        snapshots = {0: {}}
+        if constants:
+            # Registration handles are synthetic identifiers, not constant integers.
+            for name in self.init_handles: constants.scopes[0].pop(name, None)
+            constants.scopes.append({})
+            constants.types.append({})
+            for count, node in enumerate(self.init_constants, 1):
+                constants.stmt(node)
+                if count in self.parameter_prefixes.values():
+                    snapshots[count] = dict(constants.scopes[-1])
         for key, args in self.parameter_args.items():
+            constants.scopes[-1] = snapshots[self.parameter_prefixes[key]]
             for arg in args:
                 if any(isinstance(n, (C.FuncCall, C.Assignment)) or
                        (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(arg)):
