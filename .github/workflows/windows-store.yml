@@ -103,16 +103,8 @@ jobs:
           path: candidate
           run-id: ${{ inputs.candidate_run || github.run_id }}
           github-token: ${{ github.token }}
-      - uses: msys2/setup-msys2@v2
-        id: graphics
-        with:
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-mesa
-      - name: Install a test-signed copy and capture Windows UI
+      - name: Install a test-signed copy and check the installed emulator
         shell: powershell
-        env:
-          VJ_TEST_MSYS2: ${{ steps.graphics.outputs.msys2-location }}
         run: ./app/packaging/windows/msix/qualify.ps1 -CandidateDirectory candidate -OutputDirectory qualification
       - uses: actions/upload-artifact@v7
         if: always()

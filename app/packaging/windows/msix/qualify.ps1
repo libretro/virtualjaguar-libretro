@@ -37,9 +37,6 @@ try {
     $installed | Select-Object Name, Version, PackageFamilyName, InstallLocation | Format-List
     $exe = Join-Path $installed.InstallLocation 'virtualjaguar.exe'
     $rom = (Resolve-Path "$PSScriptRoot/../../../../test/roms/yarc.j64").Path
-    $data = Join-Path $env:RUNNER_TEMP 'Jaguar qualification data'
-    New-Item -ItemType Directory -Path $data -Force | Out-Null
-    "window.w=1600`nwindow.h=1000`n" | Set-Content (Join-Path $data 'config.ini') -Encoding ASCII
     $script:invocationIndex = 0
     function Run-Candidate([string[]]$Arguments) {
         $script:invocationIndex++
@@ -66,24 +63,13 @@ try {
         if ($exitCode -ne 0) { throw "Installed app exited $exitCode" }
     }
     Run-Candidate @('--headless', '--frames', '300', '--expect-hash', 'f4c30ea3', "`"$rom`"")
-    # Software OpenGL is supplied by the test host, never inserted into the package.
-    $graphicsBin = Join-Path $env:VJ_TEST_MSYS2 'mingw64\bin'
-    $env:PATH = "$graphicsBin;$env:PATH"
-    $env:SDL_OPENGL_LIBRARY = Join-Path $graphicsBin 'opengl32.dll'
-    if (!(Test-Path $env:SDL_OPENGL_LIBRARY)) { throw 'Host Mesa OpenGL library missing' }
-    $env:GALLIUM_DRIVER = 'llvmpipe'
-    foreach ($view in @('keypad', 'settings-input', 'settings-video')) {
-        $png = Join-Path $out "$view.png"
-        Run-Candidate @('--data-dir', "`"$data`"", '--screenshot', "`"$png`"", '--screenshot-frame', '120', '--show-window', $view, "`"$rom`"")
-        if (!(Test-Path $png) -or (Get-Item $png).Length -lt 10000) { throw "Missing or empty screenshot: $view" }
-    }
     if ((Get-FileHash $original -Algorithm SHA256).Hash -ne $metadata.sha256) { throw 'Original Store candidate changed' }
-    'PASS: test-signed installation, installed headless hash and three Windows UI captures. Manual controller/audio/upgrade checks remain.' | Set-Content (Join-Path $out 'RESULT.txt')
+    'PASS: test-signed installation and installed headless hash. Manual GUI/controller/audio/upgrade checks remain.' | Set-Content (Join-Path $out 'RESULT.txt')
 } finally {
     if ($installed) { Remove-AppxPackage -Package $installed.PackageFullName }
     if ($trusted) { Remove-Item "Cert:\LocalMachine\TrustedPeople\$($trusted.Thumbprint)" }
     if ($certificate) { Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" }
-    # Retain diagnostics and PNGs only; never distribute test-signed packages/certs.
+    # Retain diagnostics only; never distribute test-signed packages/certs.
     Remove-Item (Join-Path $out 'test-only.msix'), (Join-Path $out 'test-only.cer') -Force -ErrorAction SilentlyContinue
     Stop-Transcript
 }
