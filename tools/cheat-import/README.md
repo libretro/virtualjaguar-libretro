@@ -82,6 +82,8 @@ authenticity signature. Do not remove it to make a different dump pass.
   on registration handles. Mutations, nested declarations, static locals, and
   function calls in constant initializers remain unsupported. All declarations,
   including unused ones, are evaluated under the existing execution budget.
+  Purity checks inspect referenced macro bodies and alias chains too; hidden
+  mutations or calls are refused rather than evaluated in the metadata runtime.
 - Comma-separated statement lists, including loop updates such as `++i, --dest`,
   evaluated left to right under the existing step and persistent-state checks.
 - `bigpemu_register_setting_int_full` with constant default, inclusive minimum/maximum

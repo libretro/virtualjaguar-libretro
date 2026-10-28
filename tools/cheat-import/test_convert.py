@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 import io
+import itertools
 import json
 import re
 from pathlib import Path
@@ -227,6 +228,39 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(converter.Module(text).convert(DIGEST)[-1]["code"], "001F0002:0003")
         text = self.init_constant_source("const int base = 1; const int maxValue = base + EXTRA;", bound="maxValue") + "\n#define EXTRA 2\n"
         self.assertEqual(len(converter.Module(text).convert(DIGEST)), 4)
+
+    def test_init_const_macros_cannot_hide_side_effects_or_calls(self):
+        for expr in ("++counter", "counter++", "--counter", "counter--", "counter = 2",
+                     "bigpemu_get_loaded_fnv1a64()"):
+            text = source(SIMPLE.replace("0xab", "counter"), extra=
+                          "int counter = 1;\n#define BUMP (" + expr + ")\n#define ALIAS BUMP\n")
+            text = text.replace("void bigp_init(void) {", "void bigp_init(void) { const int unused = ALIAS;")
+            with self.subTest(expr=expr), self.assertRaisesRegex(converter.Unsupported, "pure integer initializer"):
+                converter.Module(text).convert(DIGEST)
+
+    def test_setting_metadata_macros_cannot_hide_mutation(self):
+        text = self.init_constant_source(bound="ALIAS") + "\nint counter = 1;\n#define BUMP (++counter)\n#define ALIAS BUMP\n"
+        with self.assertRaisesRegex(converter.Unsupported, "metadata must be constant"):
+            converter.Module(text).convert(DIGEST)
+
+    def test_array_initializer_macros_cannot_hide_mutation(self):
+        text = source(SIMPLE, extra="int counter = 1;\n#define BUMP (++counter)\n#define ALIAS BUMP\nconst int table[] = {ALIAS};")
+        with self.assertRaisesRegex(converter.Unsupported, "constant integer expressions"):
+            converter.Module(text).convert(DIGEST)
+
+    def test_message_argument_macros_cannot_hide_mutation(self):
+        for name in ("printf", "printf_notify"):
+            text = source(name + '("%d", ALIAS);' + SIMPLE, extra="int counter = 1;\n#define BUMP (++counter)\n#define ALIAS BUMP\n")
+            with self.subTest(name=name), self.assertRaisesRegex(converter.Unsupported, "side effect"):
+                converter.Module(text).convert(DIGEST)
+
+    def test_macro_purity_walk_bounds_shared_expansions(self):
+        definitions = ["#define VALUE0 7"]
+        definitions += [f"#define VALUE{i} (VALUE{i-1} + VALUE{i-1})" for i in range(1, 41)]
+        module = converter.Module(source(SIMPLE, extra="\n".join(definitions)))
+        nodes = list(itertools.islice(converter.walk(module.macros["VALUE40"], module.macros), 201))
+        self.assertLess(len(nodes), 130)
+        self.assertTrue(any(isinstance(n, converter.C.Constant) and n.value == "7" for n in nodes))
 
     def test_init_const_future_declaration_not_visible_to_registration(self):
         text = self.init_constant_source("")

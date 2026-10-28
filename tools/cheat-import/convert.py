@@ -97,10 +97,20 @@ def type_info(node):
     raise Unsupported("unsupported integer type " + typ)
 
 
-def walk(node):
-    yield node
-    for _, child in node.children():
-        yield from walk(child)
+def walk(node, macros):
+    """Inspect syntax and referenced object-like macros without executing either.
+
+    Each macro body is inspected once: alias cycles terminate and shared macro
+    graphs cannot turn a small source into exponentially many validation steps.
+    """
+    pending, expanded = [node], set()
+    while pending:
+        current = pending.pop()
+        yield current
+        pending.extend(child for _, child in current.children())
+        if isinstance(current, C.ID) and current.name in macros and current.name not in expanded:
+            expanded.add(current.name)
+            pending.append(macros[current.name])
 
 
 def promote(value):
@@ -306,7 +316,7 @@ class Runtime:
         if name in ("printf_notify", "printf"):
             # Output only: arguments are never evaluated (no memory effect), so they must have no side effects.
             for arg in args:
-                for sub in walk(arg):
+                for sub in walk(arg, self.module.macros):
                     if isinstance(sub, (C.Assignment, C.FuncCall)) or (
                             isinstance(sub, C.UnaryOp) and sub.op in ("++", "--", "p++", "p--")):
                         raise Unsupported("side effect in message arguments requires manual review")
@@ -421,7 +431,7 @@ class Runtime:
         # Dependencies cannot make a table a runtime value, either.
         for expr in ([node.type.dim] if node.type.dim else []) + expressions:
             if any(isinstance(n, (C.FuncCall, C.Assignment, C.InitList, C.NamedInitializer)) or
-                   (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(expr)):
+                   (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(expr, self.module.macros)):
                 raise Unsupported("constant array size/initializer requires constant integer expressions")
         size = self.expr(node.type.dim) if node.type.dim else Value(len(expressions))
         if size.deps or not 0 < size.n <= MAX_ARRAY_ELEMENTS - self.array_elements:
@@ -516,7 +526,7 @@ class Module:
                     type_info(node.type)
                     if any(isinstance(n, (C.FuncCall, C.Assignment)) or
                            (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--"))
-                           for n in walk(node.init)):
+                           for n in walk(node.init, self.macros)):
                         raise Unsupported("initialisation constant must have a pure integer initializer")
                     init_constants.append(node)
                     return
@@ -613,7 +623,7 @@ class Module:
             constants.scopes[-1] = snapshots[self.parameter_prefixes[key]]
             for arg in args:
                 if any(isinstance(n, (C.FuncCall, C.Assignment)) or
-                       (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(arg)):
+                       (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(arg, self.macros)):
                     raise Unsupported("integer setting metadata must be constant")
             default = integer(constants.expr(args[0])).n
             try:
