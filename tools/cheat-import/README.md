@@ -73,8 +73,15 @@ authenticity signature. Do not remove it to make a different dump pass.
   expressions for the size and entries (1024 elements total per evaluation).
   An omitted size is inferred from the initializer, and missing trailing entries
   are zero-filled. Indexing preserves integer types and setting dependencies;
-  negative and out-of-range indices are refused. Pointers, mutations, local or
-  multidimensional arrays, strings, and designated initializers remain unsupported.
+  negative and out-of-range indices are refused. Pointers, mutations, local arrays,
+  and reading multidimensional/string-initialized arrays remain unsupported.
+- Unreferenced, non-volatile global `static const` integer tables with explicit
+  positive constant dimensions may be ignored after checking their declaration
+  and initializer for side effects, including macro expansions. This permits
+  inert nested reference tables and string rows in 8-bit tables. References in
+  any function, other global initializer, macro expansion, or unreachable branch
+  prevent ignoring the table. Ignored data is not materialized or zero-filled
+  and does not consume the 1024-element limit for tables that are actually read.
 - Top-level `const` scalar integer locals in `bigp_init`, initialized from pure
   integer expressions, macros, enums, globals, or earlier constant locals. Integer
   setting registrations see only declarations that precede them. The locals are

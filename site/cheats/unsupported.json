@@ -1555,11 +1555,11 @@
       "crc32": "0EC5369D",
       "note": null,
       "path": "scripts/cheat_evolution_dino_dudes.c",
-      "reason": "pointer/array declarations require manual review",
-      "setting": null,
+      "reason": "parameter setting exceeds 64-value limit",
+      "setting": "Set Last Used Password Level RTFM",
       "sha256": "cc0cfc14bcb0a8ecc3719a7567ddbc0c9b62466bf4760d304ce32736019b2744",
       "source": "jguffer",
-      "stage": "module"
+      "stage": "setting"
     },
     {
       "calls": [],
