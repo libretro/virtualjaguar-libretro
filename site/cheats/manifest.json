@@ -1,14 +1,14 @@
 {
   "counts": {
-    "cheats": 139,
-    "packs": 27,
-    "partial_packs": 12,
-    "unsupported_entries": 156
+    "cheats": 147,
+    "packs": 28,
+    "partial_packs": 13,
+    "unsupported_entries": 172
   },
   "format": 1,
   "generated_from": {
     "cartridges_sha256": "edebcd7566e15f2426cacf5181379fbdd7b47c697110ccf79bb831205f3e853a",
-    "converter_sha256": "2775f4a2b9a652737893424b0131d019e823a8b2f86e2d57aa2ca985d75c3f08",
+    "converter_sha256": "3611e8463efedf32a5b49d0cf48ad957933dbfe887e55dd3914836ffff34240b",
     "generator_sha256": "452c26c2a6b8a38501545cfc7853c74a4d8a90cd5b75fda732f6e8020df314db",
     "sources": [
       {
@@ -3945,6 +3945,221 @@
       "title": "Missile Command 3D",
       "updated": "2026-04-15",
       "writes": 29
+    },
+    {
+      "bytes": 5490,
+      "cheats": 8,
+      "crc32": "DE55DCC7",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/DE55DCC7.cht",
+      "fnv1a64": "DE2D2EFB0D1B64DE",
+      "messages": [],
+      "name": "Flashback (1995) (U.S. Gold)",
+      "notes": [
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Password For Easy Stage: 0",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Easy Stage: 1",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Easy Stage: 2",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Easy Stage: 3",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Easy Stage: 4",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Easy Stage: 5",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Easy Stage: 6",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Easy Stage: 7",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Password For Medium Stage: 0",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Medium Stage: 1",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Medium Stage: 2",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Medium Stage: 3",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Medium Stage: 4",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Medium Stage: 5",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Medium Stage: 6",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "write needs a ROM-hash guard and exactly one independent setting",
+          "setting": "Password For Medium Stage: 7",
+          "source": "jguffer"
+        },
+        {
+          "path": "scripts/cheat_flashback.c",
+          "reason": "no writes activated (check ROM revision/hash)",
+          "setting": "Password For Hard Stage: 0",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          5,
+          6
+        ],
+        [
+          5,
+          7
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "partial": true,
+      "sha256": "72b4cc49ad731504ade37220c21c976fb20c46b0027ed227ad972d8dbe7eab10",
+      "sources": [
+        {
+          "converted": 8,
+          "omitted": 17,
+          "path": "scripts/cheat_flashback.c",
+          "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Flashback",
+      "updated": "2026-04-15",
+      "writes": 43
     },
     {
       "bytes": 861,

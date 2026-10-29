@@ -111,22 +111,22 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(converter.Module(text).convert(DIGEST)[0]["code"], "001F0000:09")
 
     def test_table_references_in_macros_and_unreachable_code_prevent_skip(self):
-        table = 'static const uint8_t reference[2][4] = {"ABC", "DEF"};'
+        table = 'static const uint8_t reference[80][14] = {"ABC", "DEF"};'
         for body in ('if (0) { bigpemu_jag_write8(0x1f0000, reference[0][0]); }',
                      'if (a) { bigpemu_jag_write8(0x1f0000, ALIAS[0][0]); }',
                      'if (a) { bigpemu_jag_sysmemwrite(0x1f0000, &reference[0], 4); }'):
             text = source(body + SIMPLE, extra=table + '\n#define ALIAS reference\n')
-            with self.subTest(body=body), self.assertRaisesRegex(converter.Unsupported, "pointer/array"):
+            with self.subTest(body=body), self.assertRaisesRegex(converter.Unsupported, "1024-element"):
                 converter.Module(text).convert(DIGEST)
         text = source(SIMPLE, extra=table + '\nuint32_t helper(void) { return reference[0][0]; }')
-        with self.assertRaisesRegex(converter.Unsupported, "pointer/array"):
+        with self.assertRaisesRegex(converter.Unsupported, "1024-element"):
             converter.Module(text).convert(DIGEST)
         text = source(SIMPLE, extra=table + '\nconst int dependent = reference[0][0];')
-        with self.assertRaisesRegex(converter.Unsupported, "pointer/array"):
+        with self.assertRaisesRegex(converter.Unsupported, "1024-element"):
             converter.Module(text).convert(DIGEST)
 
     def test_unused_table_requires_static_const_integer_storage(self):
-        for table in ('const uint8_t reference[2][4] = {"ABC"};',
+        for table in ('const uint8_t reference[80][14] = {"ABC"};',
                       'static uint8_t reference[2][4] = {"ABC"};',
                       'static const volatile uint8_t reference[2][4] = {"ABC"};',
                       'static const uint8_t *reference[2] = {0};',
@@ -143,7 +143,7 @@ class ConversionTests(unittest.TestCase):
                       'static const uint8_t reference[missing][4] = {{0}};',
                       'static const uint8_t reference[2][4] = {{missing}};',
                       'static const int8_t reference[2][4] = {{999}};',
-                      'static const uint8_t reference[][4] = {{0}};'):
+                      'static const uint8_t reference[2][] = {{0}};'):
             text = source(SIMPLE, extra='int counter = 1;\n#define BUMP (++counter)\n' + table)
             with self.subTest(table=table), self.assertRaises(converter.Unsupported):
                 converter.Module(text).convert(DIGEST)
@@ -169,6 +169,72 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(results[4]["code"], "001F0103:38+001F0102:37+001F0101:36+001F0100:35")
         self.assertTrue(all("code" not in r for r in module.convert(DIGEST ^ 1)))
 
+    def test_nested_tables_preserve_rows_padding_and_integer_types(self):
+        text = source('''if (a) {
+            bigpemu_jag_write16(0x1f0000, digits[0][0][0] + 256);
+            bigpemu_jag_write8(0x1f0002, digits[0][0][1]);
+            bigpemu_jag_write8(0x1f0003, digits[1][1][1]);
+            bigpemu_jag_write8(0x1f0004, digits[1][0][1]);
+        }''', extra='const uint8_t digits[2][2][2] = {{{258}}, {{3, 4}}};')
+        self.assertEqual(converter.Module(text).convert(DIGEST)[0]["code"],
+                         "001F0000:0102+001F0002:00+001F0003:00+001F0004:04")
+
+    def test_nested_string_passwords_and_c_terminator_rules(self):
+        for declaration, expected in (
+                ('const uint8_t digits[2][4] = {"ABCD", "X"};', "41+42+43+44+58+00+00+00"),
+                ('const uint8_t digits[][3] = {"A\\x42", "C\\101"};', "41+42+00+43+41+00")):
+            width = 4 if '[4]' in declaration else 3
+            text = source(f'''if (a) {{
+                for (int i=0; i<2; ++i) {{
+                    for (int j=0; j<{width}; ++j) {{
+                        bigpemu_jag_write8(0x1f0000+i*{width}+j, digits[i][j]);
+                    }}
+                }}
+            }}''', extra=declaration)
+            result = converter.Module(text).convert(DIGEST)[0]
+            self.assertEqual([w.split(':')[1] for w in result['code'].split('+')], expected.split('+'))
+
+    def test_nested_table_index_dependencies_and_bounds(self):
+        table = 'const uint8_t digits[2][2] = {{1,2},{3,4}};'
+        for access in ('digits[-1][0]', 'digits[0][2]', 'digits[2][0]', 'digits[0][-1]',
+                       'digits[0]', 'digits[0][0][0]'):
+            result = converter.Module(source(f'if (a) {{ bigpemu_jag_write8(0x1f0000, {access}); }}', extra=table)).convert(DIGEST)[0]
+            self.assertNotIn('code', result, access)
+        for access in ('digits[b][0]', 'digits[0][b]'):
+            result = converter.Module(source(f'if (a) {{ bigpemu_jag_write8(0x1f0000, {access}); }}', extra=table)).convert(DIGEST)[0]
+            self.assertIn('exactly one independent setting', result['unsupported'])
+
+    def test_nested_indices_do_not_choose_an_order_for_side_effects(self):
+        table = 'const int digits[2][2] = {{1,2},{3,4}};'
+        for access in ('digits[i++][i++]', 'digits[0][++i]'):
+            text = source(f'if (a) {{ int i=0; bigpemu_jag_write8(0x1f0000, {access}); }}', extra=table)
+            self.assertIn('unsupported', converter.Module(text).convert(DIGEST)[0])
+
+    def test_nested_tables_share_total_budget_and_zero_fill_missing_rows(self):
+        text = source('''if (a) {
+            bigpemu_jag_write16(0x1f0000, digits[0][0]);
+            bigpemu_jag_write16(0x1f0002, digits[31][31]);
+        }''', extra='const int16_t digits[32][32] = {{-2}};')
+        self.assertEqual(converter.Module(text).convert(DIGEST)[0]['code'], '001F0000:FFFE+001F0002:0000')
+
+    def test_nested_tables_refuse_ambiguous_initializers_and_excessive_sizes(self):
+        for declaration in (
+                'const int digits[2][2] = {1,2,3,4};',
+                'const int digits[2][2] = {{1,2,3}};',
+                'const int digits[1][2] = {{1},{2}};',
+                'const int digits[2][] = {{1}};',
+                'const int digits[33][33] = {{1}};',
+                'const int digits[2][2] = {{1}}; const int more[1021] = {0};',
+                'const uint8_t digits[1][2] = {"ABC"};',
+                'const uint16_t digits[1][2] = {"A"};',
+                'const uint8_t digits[1][2] = {L"A"};',
+                'const uint8_t digits[1][2] = {"\\x123"};',
+                'const uint8_t digits[1][2] = {"é"};',
+                'const volatile uint8_t digits[2][2] = {{1}};',
+                'const int digits[2][2] = {{BUMP}};\n#define BUMP (++flag)\n'):
+            with self.subTest(declaration=declaration), self.assertRaises(converter.Unsupported):
+                converter.Module(source(SIMPLE, extra=declaration)).convert(DIGEST)
+
     def test_constant_table_sizes_padding_and_integer_types(self):
         for decl in ("const uint8_t digits[] = {258, 7};", "static uint8_t const digits[4] = {258, 7};"):
             text = self.table_source(decl, "if (a) { bigpemu_jag_write16(0x1f0000, digits[0] + 256); }")
@@ -185,7 +251,7 @@ class ConversionTests(unittest.TestCase):
             self.assertNotIn("code", result)
 
     def test_constant_table_unsupported_declarations_fail_closed(self):
-        for declaration in ("uint32_t digits[4] = {0};", "const uint32_t digits[4][2] = {{0}};",
+        for declaration in ("uint32_t digits[4] = {0};", "uint32_t digits[4][2] = {{0}};",
                             "const uint32_t *digits[4] = {0};", "const int digits[0] = {};",
                             "const int digits[2] = {1,2,3};", "const int digits[] = {};",
                             "const int digits[4];", "const int digits[4] = {[1] = 3};",

@@ -109,6 +109,28 @@ class PackTests(unittest.TestCase):
         with self.assertRaisesRegex(bp.BuildError, "no packs were converted"):
             make({"s": {"scripts/cheat_table.c": wrong_source}}, table=wrong_table)
 
+    def test_nested_password_table_pack_and_revision_guard(self):
+        text = source('''if (a) { bigpemu_jag_write8(0x1f0000, 9); }
+            if (b) { for (int i=0; i<3; ++i) {
+                bigpemu_jag_write8(0x1f0010+i, passwords[0][b-1][i]);
+            } }''', extra='static const uint8_t passwords[1][2][3] = {{"RED", "GO"}};').replace(
+                'bigpemu_register_setting_bool(category, "Other freeze", 0)',
+                'bigpemu_register_setting_int_full(category, "Password", 0, 0, 2, 1)')
+        inputs = {"s": {"scripts/cheat_password.c": text}}
+        files = make(inputs)
+        self.assertEqual(files, make(inputs))
+        names, codes, enables = parse_cht(files[f"packs/{CRC}.cht"])
+        self.assertEqual(names, ['Grouped freeze', 'Password: 1', 'Password: 2'])
+        self.assertEqual(codes, ['001F0000:09', '001F0010:52+001F0011:45+001F0012:44',
+                                 '001F0010:47+001F0011:4F+001F0012:00'])
+        self.assertEqual(enables, ['false'] * 3)
+        self.assertIn(f'vj_rom_crc32 = "{CRC}"', files[f"packs/{CRC}.cht"].decode())
+        self.assertEqual(load(files, "unsupported.json")["entries"], [])
+        wrong_source = text + f"\n#define OTHER_CART 0x{DIGEST ^ 1:016X}ULL\n"
+        with self.assertRaisesRegex(bp.BuildError, "no packs were converted"):
+            make({"s": {"scripts/cheat_password.c": wrong_source}},
+                 table={f"{DIGEST ^ 1:016X}": cart(DIGEST ^ 1)})
+
     def test_init_constant_bound_pack_and_determinism(self):
         text = source(SIMPLE.replace("0x1234", "b")).replace(
             'second = bigpemu_register_setting_bool(category, "Other freeze", 0);',

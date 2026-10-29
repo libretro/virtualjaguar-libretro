@@ -1,0 +1,77 @@
+# Community cheats for Flashback (1995) (U.S. Gold); nothing is enabled automatically.
+# Credit: Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.
+# Source: jguffer/BigPEmu_Scripts@24211503339a969f8494b8e189b8f2aa0cb9eba6 scripts/cheat_flashback.c
+# Source SHA256: b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71
+# Omitted: "Password For Easy Stage: 0" (scripts/cheat_flashback.c): no writes activated (check ROM revision/hash)
+# Omitted: "Password For Easy Stage: 1" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Easy Stage: 2" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Easy Stage: 3" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Easy Stage: 4" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Easy Stage: 5" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Easy Stage: 6" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Easy Stage: 7" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Medium Stage: 0" (scripts/cheat_flashback.c): no writes activated (check ROM revision/hash)
+# Omitted: "Password For Medium Stage: 1" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Medium Stage: 2" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Medium Stage: 3" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Medium Stage: 4" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Medium Stage: 5" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Medium Stage: 6" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Medium Stage: 7" (scripts/cheat_flashback.c): write needs a ROM-hash guard and exactly one independent setting
+# Omitted: "Password For Hard Stage: 0" (scripts/cheat_flashback.c): no writes activated (check ROM revision/hash)
+# Overlap: cheat1 and cheat2 write the same bytes; later wins (app order).
+# Overlap: cheat1 and cheat3 write the same bytes; later wins (app order).
+# Overlap: cheat1 and cheat4 write the same bytes; later wins (app order).
+# Overlap: cheat1 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat1 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat1 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat2 and cheat3 write the same bytes; later wins (app order).
+# Overlap: cheat2 and cheat4 write the same bytes; later wins (app order).
+# Overlap: cheat2 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat2 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat2 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat4 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat3 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat5 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat4 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat6 write the same bytes; later wins (app order).
+# Overlap: cheat5 and cheat7 write the same bytes; later wins (app order).
+# Overlap: cheat6 and cheat7 write the same bytes; later wins (app order).
+# Cartridge revision guard is enforced by the Virtual Jaguar app.
+vj_rom_crc32 = "DE55DCC7"
+cheats = 8
+
+cheat0_desc = "Infinite Health"
+cheat0_code = "00004811:09"
+cheat0_enable = false
+
+cheat1_desc = "Password For Hard Stage: 1"
+cheat1_code = "0000D4D6:52+0000D4D7:4F+0000D4D8:44+0000D4D9:45+0000D4DA:4F+0000D4DB:5F"
+cheat1_enable = false
+
+cheat2_desc = "Password For Hard Stage: 2"
+cheat2_code = "0000D4D6:42+0000D4D7:49+0000D4D8:4E+0000D4D9:47+0000D4DA:4F+0000D4DB:5F"
+cheat2_enable = false
+
+cheat3_desc = "Password For Hard Stage: 3"
+cheat3_code = "0000D4D6:4C+0000D4D7:53+0000D4D8:54+0000D4D9:45+0000D4DA:44+0000D4DB:5F"
+cheat3_enable = false
+
+cheat4_desc = "Password For Hard Stage: 4"
+cheat4_code = "0000D4D6:44+0000D4D7:41+0000D4D8:52+0000D4D9:54+0000D4DA:53+0000D4DB:5F"
+cheat4_enable = false
+
+cheat5_desc = "Password For Hard Stage: 5"
+cheat5_code = "0000D4D6:42+0000D4D7:55+0000D4D8:44+0000D4D9:44+0000D4DA:59+0000D4DB:5F"
+cheat5_enable = false
+
+cheat6_desc = "Password For Hard Stage: 6"
+cheat6_code = "0000D4D6:4D+0000D4D7:55+0000D4D8:53+0000D4D9:49+0000D4DA:43+0000D4DB:5F"
+cheat6_enable = false
+
+cheat7_desc = "Password For Hard Stage: 7"
+cheat7_code = "0000D4D6:53+0000D4D7:48+0000D4D8:4F+0000D4D9:47+0000D4DA:49+0000D4DB:5F"
+cheat7_enable = false
