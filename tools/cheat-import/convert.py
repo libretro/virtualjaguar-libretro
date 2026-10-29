@@ -39,7 +39,7 @@ INIT_CALLS = frozenset(n for n in SPECIAL_CALLS if n.startswith(("bigpemu_regist
 API_STATUSES = ("supported", "setting-omitted", "ignored", "unsupported")
 MAX_MESSAGES, MAX_MESSAGE_CHARS, NOTE_CHARS = 4, 200, 60
 MAX_INTEGER_VALUES, MAX_SETTING_COMBINATIONS = 64, 4096
-MAX_ARRAY_ELEMENTS = 1024  # Total across all constant tables in one evaluation.
+MAX_ARRAY_ELEMENTS = 1024  # Total materialized table elements per evaluation.
 
 
 @functools.lru_cache(maxsize=None)
@@ -421,6 +421,9 @@ class Runtime:
             raise Unsupported("unsupported statement " + type(node).__name__)
 
     def declare_array(self, node):
+        if id(node) in self.module.unused_tables:
+            self.check_unused_table(node)
+            return
         element = node.type.type
         if (len(self.scopes) != 1 or not isinstance(element, C.TypeDecl)
                 or "const" not in element.quals or not isinstance(node.init, C.InitList)):
@@ -444,6 +447,35 @@ class Runtime:
         values += [integer(Value(0), *typ)] * (size.n-len(values))
         self.array_elements += size.n
         self.scopes[-1][node.name] = ConstantArray(tuple(values))
+
+    def check_unused_table(self, node):
+        # An unreferenced static object cannot contribute to callback writes.
+        # Validate its declaration without allocating its rows or zero-fill.
+        if any(isinstance(n, (C.FuncCall, C.Assignment, C.NamedInitializer)) or
+               (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--"))
+               for n in walk(node, self.module.macros)):
+            raise Unsupported("unused static table must have a side-effect-free declaration")
+        element = node.type
+        while isinstance(element, C.ArrayDecl):
+            size = self.expr(element.dim)
+            if size.deps or size.n <= 0:
+                raise Unsupported("unused static table requires positive constant dimensions")
+            element = element.type
+        typ = type_info(element)
+        if not isinstance(node.init, C.InitList) and not (
+                isinstance(node.init, C.Constant) and node.init.type == "string"):
+            raise Unsupported("unused static table requires an initializer")
+        pending = [node.init]
+        while pending:
+            self.tick()
+            item = pending.pop()
+            if isinstance(item, C.InitList):
+                pending.extend(item.exprs or [])
+            elif isinstance(item, C.Constant) and item.type == "string":
+                if typ[0] != 8:
+                    raise Unsupported("unused string table requires 8-bit integer elements")
+            elif integer(self.expr(item), *typ).deps:
+                raise Unsupported("unused static table initializer depends on runtime state")
 
     def run(self, name):
         body = self.module.functions[name].body
@@ -589,6 +621,21 @@ class Module:
                 elif isinstance(node.type, C.Enum): enum = node.type
                 else: enum = None
                 self.globals.append((node, enum))
+
+        # Count all syntactic references, including macros and code that is not
+        # reached by conversion. A declaration name itself is not an ID node.
+        references = {n.name for n in walk(tree, self.macros) if isinstance(n, C.ID)}
+        self.unused_tables = set()
+        for node, _ in self.globals:
+            element, dimensions = node.type, []
+            while isinstance(element, C.ArrayDecl):
+                dimensions.append(element.dim)
+                element = element.type
+            if (dimensions and all(dim is not None for dim in dimensions)
+                    and node.storage == ["static"] and node.name not in references
+                    and isinstance(element, C.TypeDecl) and "const" in element.quals
+                    and "volatile" not in element.quals):
+                self.unused_tables.add(id(node))
 
         self.parameter_args = parameter_args
         self.init_constants, self.parameter_prefixes, self.init_handles = init_constants, parameter_prefixes, init_handles

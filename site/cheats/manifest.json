@@ -1,14 +1,14 @@
 {
   "counts": {
-    "cheats": 137,
-    "packs": 26,
-    "partial_packs": 11,
+    "cheats": 139,
+    "packs": 27,
+    "partial_packs": 12,
     "unsupported_entries": 156
   },
   "format": 1,
   "generated_from": {
     "cartridges_sha256": "edebcd7566e15f2426cacf5181379fbdd7b47c697110ccf79bb831205f3e853a",
-    "converter_sha256": "944c9c0a03c9e1b1e958f74cf07d4000ad05fd5b4f785b3b754a073203c01fd2",
+    "converter_sha256": "2775f4a2b9a652737893424b0131d019e823a8b2f86e2d57aa2ca985d75c3f08",
     "generator_sha256": "452c26c2a6b8a38501545cfc7853c74a4d8a90cd5b75fda732f6e8020df314db",
     "sources": [
       {
@@ -179,6 +179,40 @@
       "title": "Kasumi Ninja",
       "updated": "2026-04-15",
       "writes": 1
+    },
+    {
+      "bytes": 830,
+      "cheats": 2,
+      "crc32": "0EC5369D",
+      "credit": "Cheats by jguffer (https://github.com/jguffer/BigPEmu_Scripts), converted by the Virtual Jaguar project with the author's permission.",
+      "exceeds_core_limit": false,
+      "file": "packs/0EC5369D.cht",
+      "fnv1a64": "8ED8554F0955F6EF",
+      "messages": [],
+      "name": "Evolution - Dino Dudes (1993)",
+      "notes": [
+        {
+          "path": "scripts/cheat_evolution_dino_dudes.c",
+          "reason": "parameter setting exceeds 64-value limit",
+          "setting": "Set Last Used Password Level RTFM",
+          "source": "jguffer"
+        }
+      ],
+      "overlaps": [],
+      "partial": true,
+      "sha256": "4b70d79871ec39c4c26462de725d6d0509c324ceb4208df78106fcff3485627b",
+      "sources": [
+        {
+          "converted": 2,
+          "omitted": 1,
+          "path": "scripts/cheat_evolution_dino_dudes.c",
+          "sha256": "cc0cfc14bcb0a8ecc3719a7567ddbc0c9b62466bf4760d304ce32736019b2744",
+          "source": "jguffer"
+        }
+      ],
+      "title": "Evolution - Dino Dudes",
+      "updated": "2026-04-15",
+      "writes": 2
     },
     {
       "bytes": 596,

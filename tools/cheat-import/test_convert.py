@@ -98,6 +98,68 @@ class ConversionTests(unittest.TestCase):
             'bigpemu_register_setting_bool(category, "Other freeze", 0)',
             'bigpemu_register_setting_int_full(category, "Password", -1, -1, 3, 1)')
 
+    def test_unused_static_const_table_does_not_block_freezes(self):
+        table = 'static const uint8_t reference[80][14] = {"REFERENCE", "FOR DISPLAY"};'
+        module = converter.Module(source(SIMPLE, extra=table))
+        self.assertEqual([r["code"] for r in module.convert(DIGEST)], ["001F0000:AB", "001F0002:1234"])
+        self.assertTrue(all("code" not in r for r in module.convert(DIGEST ^ 1)))
+
+    def test_unused_table_is_not_materialized_or_charged_to_array_budget(self):
+        text = source("if (a) { bigpemu_jag_write8(0x1f0000, active[0]); }", extra=
+                      'static const uint8_t reference[80][14] = {"REFERENCE"}; '
+                      'const uint8_t active[1024] = {9};')
+        self.assertEqual(converter.Module(text).convert(DIGEST)[0]["code"], "001F0000:09")
+
+    def test_table_references_in_macros_and_unreachable_code_prevent_skip(self):
+        table = 'static const uint8_t reference[2][4] = {"ABC", "DEF"};'
+        for body in ('if (0) { bigpemu_jag_write8(0x1f0000, reference[0][0]); }',
+                     'if (a) { bigpemu_jag_write8(0x1f0000, ALIAS[0][0]); }',
+                     'if (a) { bigpemu_jag_sysmemwrite(0x1f0000, &reference[0], 4); }'):
+            text = source(body + SIMPLE, extra=table + '\n#define ALIAS reference\n')
+            with self.subTest(body=body), self.assertRaisesRegex(converter.Unsupported, "pointer/array"):
+                converter.Module(text).convert(DIGEST)
+        text = source(SIMPLE, extra=table + '\nuint32_t helper(void) { return reference[0][0]; }')
+        with self.assertRaisesRegex(converter.Unsupported, "pointer/array"):
+            converter.Module(text).convert(DIGEST)
+        text = source(SIMPLE, extra=table + '\nconst int dependent = reference[0][0];')
+        with self.assertRaisesRegex(converter.Unsupported, "pointer/array"):
+            converter.Module(text).convert(DIGEST)
+
+    def test_unused_table_requires_static_const_integer_storage(self):
+        for table in ('const uint8_t reference[2][4] = {"ABC"};',
+                      'static uint8_t reference[2][4] = {"ABC"};',
+                      'static const volatile uint8_t reference[2][4] = {"ABC"};',
+                      'static const uint8_t *reference[2] = {0};',
+                      'static const uint8_t reference[2][4];'):
+            with self.subTest(table=table), self.assertRaises(converter.Unsupported):
+                converter.Module(source(SIMPLE, extra=table)).convert(DIGEST)
+
+    def test_unused_table_rejects_hidden_effects_and_invalid_dimensions(self):
+        for table in ('static const uint8_t reference[2][4] = {{BUMP}};',
+                      'static const uint8_t reference[BUMP][4] = {{0}};',
+                      'static const uint8_t reference[2][4] = {{bigpemu_jag_read8(0)}};',
+                      'static const uint8_t reference[0][4] = {{0}};',
+                      'static const uint8_t reference[-1][4] = {{0}};',
+                      'static const uint8_t reference[missing][4] = {{0}};',
+                      'static const uint8_t reference[2][4] = {{missing}};',
+                      'static const int8_t reference[2][4] = {{999}};',
+                      'static const uint8_t reference[][4] = {{0}};'):
+            text = source(SIMPLE, extra='int counter = 1;\n#define BUMP (++counter)\n' + table)
+            with self.subTest(table=table), self.assertRaises(converter.Unsupported):
+                converter.Module(text).convert(DIGEST)
+
+    def test_unused_table_does_not_skip_other_global_declarations(self):
+        text = source(SIMPLE, extra='static const uint8_t reference[2][4] = {"ABC"}; int *other;')
+        with self.assertRaisesRegex(converter.Unsupported, "pointer/array"):
+            converter.Module(text).convert(DIGEST)
+
+    def test_unused_table_name_does_not_enable_skipping_local_arrays(self):
+        text = source('if (a) { const uint8_t reference[2][4] = {"ABC"}; }' + SIMPLE,
+                      extra='static const uint8_t reference[2][4] = {"DEF"};')
+        result = converter.Module(text).convert(DIGEST)
+        self.assertIn("pointer/array", result[0]["unsupported"])
+        self.assertIn("code", result[1])
+
     def test_constant_table_passwords_and_sequenced_loop_update(self):
         module = converter.Module(self.table_source())
         results = module.convert(DIGEST)

@@ -124,6 +124,20 @@ class PackTests(unittest.TestCase):
         self.assertEqual(load(files, "unsupported.json")["entries"], [])
         self.assertFalse(load(files, "manifest.json")["packs"][0]["partial"])
 
+    def test_unused_static_table_pack_and_revision_guard(self):
+        text = source(SIMPLE, extra='static const uint8_t reference[80][14] = {"REFERENCE"};')
+        inputs = {"s": {"scripts/cheat_reference.c": text}}
+        files = make(inputs)
+        self.assertEqual(files, make(inputs))
+        names, codes, enables = parse_cht(files[f"packs/{CRC}.cht"])
+        self.assertEqual(codes, ["001F0000:AB", "001F0002:1234"])
+        self.assertEqual(enables, ["false", "false"])
+        self.assertIn(f'vj_rom_crc32 = "{CRC}"', files[f"packs/{CRC}.cht"].decode())
+        self.assertEqual(load(files, "unsupported.json")["entries"], [])
+        wrong_source = text + f"\n#define OTHER_CART 0x{DIGEST ^ 1:016X}ULL\n"
+        with self.assertRaisesRegex(bp.BuildError, "no packs were converted"):
+            make({"s": {"scripts/cheat_reference.c": wrong_source}}, table={f"{DIGEST ^ 1:016X}": cart(DIGEST ^ 1)})
+
     def test_header_title_not_duplicated(self):
         def first(table):
             files = make({"s": {"scripts/cheat_a.c": source(SIMPLE)}}, table=table)
