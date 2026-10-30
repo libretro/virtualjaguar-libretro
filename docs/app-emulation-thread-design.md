@@ -106,9 +106,14 @@ The UI never waits on emulation.
 
 ### Mode B: display lock
 - The main thread sends a tick after each swap; the emulation thread runs one frame per tick (one per k ticks when the
-  display is close to a whole multiple of the core rate, e.g. 120/144 Hz). The audio rate is nudged ±0.5% to match
+  display is close to a whole multiple of the core rate, e.g. 120 Hz; see the amendment below). The audio rate is nudged ±0.5% to match
   (today's `AudioOut::update` controller).
 - If the display rate is not close to a whole multiple of the core rate, show a notice and fall back to mode A.
+- *Amended 2026-10-30 (phase 4 plan, #1038):* 144 Hz is **not** a lock case (144 / 60.05 = 2.40). Lock when
+  |display/k − core| / core < 0.3% with k = round(display / core), measured from the vblank period: 60 / 59.94 / 120 /
+  119.88 Hz lock NTSC, 50 / 100 Hz lock PAL, everything else falls back. Mode A is also forced while link play is
+  active, and in mode B the UI's latch wait ends when the tick's frame is published. Plan:
+  [app-emulation-thread-plan-phase4.md](app-emulation-thread-plan-phase4.md).
 
 ### Shared rules
 - **Fast-forward:** unthrottled or a set multiple, audio dropped (as today).
