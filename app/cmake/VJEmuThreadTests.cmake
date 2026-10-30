@@ -4,7 +4,8 @@
 #
 #   frame_exchange_unit   FrameExchange: newest wins, the reader's slot is never written, no tearing, content epochs
 #   emu_commands_unit     EmuCommands: FIFO per producer, the frame and debug lanes, timed waits, close-and-drain, errors
-#   pacing_clock_unit     PacingClock mode A against a fake clock and a fake 512-frame-chunk audio device
+#   pacing_clock_unit     PacingClock modes A and B against a fake clock, fake vblank ticks and a fake 512-frame-chunk audio device
+#   display_lock_unit     DisplayLock (#1038): which displays lock, each fallback reason, the hysteresis
 #   emu_thread_unit       EmuThread: inline vs threaded, call/post/debugCall ordering, pause/advance, stop/join timeout, shutdown races
 #   input_snapshot_unit   InputSnapshot: newest state, pointer motion exactly once, event timestamps, takenSince
 #   audio_out_unit        AudioOut under the SDL dummy driver: the mode-A hooks and cross-thread use
@@ -65,6 +66,12 @@ target_include_directories(vj_pacing_clock_test PRIVATE src)
 vj_emu_thread_warnings(vj_pacing_clock_test)
 add_test(NAME pacing_clock_unit COMMAND vj_pacing_clock_test)
 set_tests_properties(pacing_clock_unit PROPERTIES TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
+
+add_executable(vj_display_lock_test tests/display_lock_test.cpp)
+target_include_directories(vj_display_lock_test PRIVATE src)
+vj_emu_thread_warnings(vj_display_lock_test)
+add_test(NAME display_lock_unit COMMAND vj_display_lock_test)
+set_tests_properties(display_lock_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAIL_REGULAR_EXPRESSION "FAIL ")
 
 add_executable(vj_emu_thread_test tests/emu_thread_test.cpp src/emu_thread.cpp)
 target_include_directories(vj_emu_thread_test PRIVATE src)
