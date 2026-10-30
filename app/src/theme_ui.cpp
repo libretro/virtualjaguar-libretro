@@ -1,3 +1,4 @@
+#include "platform/file_access.h"
 // Themes in the UI: Settings > Interface > Appearance (the choice) and the theme editor window (custom themes:
 // edit with a live preview, save, duplicate, delete, export, import).  The logic and the files are in
 // theme_custom.cpp; this is only the widgets.
@@ -228,14 +229,14 @@ void drawThemeEditor(App& app) {
         theme::Custom c = g_ed.work;
         c.name = cleaned.empty() ? "My theme" : cleaned;
         static SDL_DialogFileFilter flt[1] = {{"Virtual Jaguar themes", "ini"}};
-        SDL_ShowSaveFileDialog(exportDone, new std::string(theme::serializeTheme(c)), app.window(), flt, 1,
+        vj::files::saveFile(exportDone, new std::string(theme::serializeTheme(c)), app.window(), flt, 1,
                                (c.name + ".ini").c_str());
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(ro);
     if (ImGui::Button("Import...") && app.window()) {
         static SDL_DialogFileFilter flt[2] = {{"Virtual Jaguar themes", "ini"}, {"All files", "*"}};
-        SDL_ShowOpenFileDialog(importDone, nullptr, app.window(), flt, 2, nullptr, false);
+        vj::files::openFile(importDone, nullptr, app.window(), flt, 2, nullptr, false);
     }
     ImGui::EndDisabled();
     if (ro) ui::hint("This window is a secondary copy of the app: themes are read-only here (Export still works).");
