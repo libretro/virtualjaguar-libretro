@@ -1562,11 +1562,13 @@
       "stage": "setting"
     },
     {
-      "calls": [],
+      "calls": [
+        "bigpemu_jag_read8"
+      ],
       "crc32": "3615AF6A",
       "note": null,
       "path": "scripts/cheat_fever_pitch_soccer.c",
-      "reason": "pointer/array declarations require manual review",
+      "reason": "no toggle converted: Round Password: 0: no writes activated (check ROM revision/hash); Round Password: 1: no writes activated (check ROM revision/hash); Round Password: 2: unsupported call bigpemu_jag_read8 (RAM-dependent operations are not constant cheats) (+27 more)",
       "setting": null,
       "sha256": "af678584b61ec36f86f92c2323f23fef64b97e890992d33f09f7aa20981e393f",
       "source": "jguffer",
@@ -1601,11 +1603,187 @@
       "crc32": "DE55DCC7",
       "note": null,
       "path": "scripts/cheat_flashback.c",
-      "reason": "pointer/array declarations require manual review",
-      "setting": null,
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Password For Easy Stage: 0",
       "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
       "source": "jguffer",
-      "stage": "module"
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Easy Stage: 1",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Easy Stage: 2",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Easy Stage: 3",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Easy Stage: 4",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Easy Stage: 5",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Easy Stage: 6",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Easy Stage: 7",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Password For Hard Stage: 0",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "no writes activated (check ROM revision/hash)",
+      "setting": "Password For Medium Stage: 0",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Medium Stage: 1",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Medium Stage: 2",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Medium Stage: 3",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Medium Stage: 4",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Medium Stage: 5",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Medium Stage: 6",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
+    },
+    {
+      "calls": [],
+      "crc32": "DE55DCC7",
+      "note": null,
+      "path": "scripts/cheat_flashback.c",
+      "reason": "write needs a ROM-hash guard and exactly one independent setting",
+      "setting": "Password For Medium Stage: 7",
+      "sha256": "b0d8a93cf46068c81f7cb52df5bde4d79e73f84ba685dd387a1c4fa4578e3b71",
+      "source": "jguffer",
+      "stage": "setting"
     },
     {
       "calls": [

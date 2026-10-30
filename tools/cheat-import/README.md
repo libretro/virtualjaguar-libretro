@@ -69,12 +69,16 @@ authenticity signature. Do not remove it to make a different dump pass.
 - Integer constants, object-like macros, enums, scalar locals, explicit integer
   casts, simple arithmetic/bitwise expressions and conditions. Fixed-width C
   integer promotion and unsigned wrapping are modeled; signed overflow fails.
-- Initialized global one-dimensional `const` integer tables, with constant
+- Initialized global non-volatile `const` integer tables, with constant
   expressions for the size and entries (1024 elements total per evaluation).
-  An omitted size is inferred from the initializer, and missing trailing entries
-  are zero-filled. Indexing preserves integer types and setting dependencies;
-  negative and out-of-range indices are refused. Pointers, mutations, local arrays,
-  and reading multidimensional/string-initialized arrays remain unsupported.
+  Only the outer size may be omitted and inferred from a braced initializer.
+  Nested tables require explicit braces for each row; missing entries and rows
+  are zero-filled. Narrow ASCII strings (including standard C escapes) can
+  initialize 8-bit rows. Exact-fit strings omit the terminator as in C; shorter
+  strings are zero-padded. Indexing requires every dimension, preserves integer
+  types and setting dependencies, and checks bounds for each row. Nested
+  subscripts must be side-effect-free. Pointers, mutations, local arrays,
+  brace elision, designated initializers and wide/non-ASCII strings remain unsupported.
 - Unreferenced, non-volatile global `static const` integer tables with explicit
   positive constant dimensions may be ignored after checking their declaration
   and initializer for side effects, including macro expansions. This permits

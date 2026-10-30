@@ -250,16 +250,29 @@ class Runtime:
         if isinstance(node, C.ID):
             return self.get(node.name)
         if isinstance(node, C.ArrayRef):
-            if not isinstance(node.name, C.ID):
-                raise Unsupported("only one-dimensional constant array indexing is supported")
-            table = self.get(node.name.name, array=True)
-            if not isinstance(table, ConstantArray):
-                raise Unsupported("subscript requires a constant array")
-            index = self.expr(node.subscript)
-            if not 0 <= index.n < len(table.values):
-                raise Unsupported("array index out of bounds")
-            value = table.values[index.n]
-            return replace(value, deps=value.deps | index.deps)
+            indices, root = [], node
+            while isinstance(root, C.ArrayRef):
+                indices.append(root.subscript)
+                root = root.name
+            if not isinstance(root, C.ID):
+                raise Unsupported("subscript requires a named constant array")
+            if len(indices) > 1 and any(
+                    isinstance(n, (C.Assignment, C.FuncCall)) or
+                    (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--"))
+                    for index in indices for n in walk(index, self.module.macros)):
+                raise Unsupported("nested array subscripts must be side-effect-free")
+            value, deps = self.get(root.name, array=True), frozenset()
+            for subscript in reversed(indices):
+                if not isinstance(value, ConstantArray):
+                    raise Unsupported("subscript requires a constant array")
+                index = self.expr(subscript)
+                if not 0 <= index.n < len(value.values):
+                    raise Unsupported("array index out of bounds")
+                deps |= index.deps
+                value = value.values[index.n]
+            if isinstance(value, ConstantArray):
+                raise Unsupported("constant array requires all subscripts; pointers are unsupported")
+            return replace(value, deps=value.deps | deps)
         if isinstance(node, C.Cast):
             val = self.expr(node.expr)
             return integer(val, *type_info(node.to_type.type))
@@ -424,29 +437,81 @@ class Runtime:
         if id(node) in self.module.unused_tables:
             self.check_unused_table(node)
             return
-        element = node.type.type
+        element, dimensions = node.type, []
+        while isinstance(element, C.ArrayDecl):
+            dimensions.append(element.dim)
+            element = element.type
         if (len(self.scopes) != 1 or not isinstance(element, C.TypeDecl)
-                or "const" not in element.quals or not isinstance(node.init, C.InitList)):
+                or "const" not in element.quals or "volatile" in element.quals
+                or not isinstance(node.init, (C.InitList, C.Constant))):
             raise Unsupported("pointer/array declarations require manual review")
         typ = type_info(element)
-        expressions = node.init.exprs or []
-        # No function calls, side effects, nested lists or designated initializers.
-        # Dependencies cannot make a table a runtime value, either.
-        for expr in ([node.type.dim] if node.type.dim else []) + expressions:
-            if any(isinstance(n, (C.FuncCall, C.Assignment, C.InitList, C.NamedInitializer)) or
+        # Inspect the full declaration, including macro expansions, before evaluation.
+        for expr in [dim for dim in dimensions if dim is not None] + [node.init]:
+            if any(isinstance(n, (C.FuncCall, C.Assignment, C.NamedInitializer)) or
                    (isinstance(n, C.UnaryOp) and n.op in ("++", "--", "p++", "p--")) for n in walk(expr, self.module.macros)):
                 raise Unsupported("constant array size/initializer requires constant integer expressions")
-        size = self.expr(node.type.dim) if node.type.dim else Value(len(expressions))
-        if size.deps or not 0 < size.n <= MAX_ARRAY_ELEMENTS - self.array_elements:
-            raise Unsupported("constant array size exceeds the 1024-element evaluation limit or is not constant")
-        if len(expressions) > size.n:
+        sizes, total = [], 1
+        for depth, dim in enumerate(dimensions):
+            if dim is None:
+                if depth or not isinstance(node.init, C.InitList):
+                    raise Unsupported("only the outer array size may be inferred from a braced initializer")
+                size = Value(len(node.init.exprs or []))
+            else:
+                size = self.expr(dim)
+            total *= size.n
+            if size.deps or size.n <= 0 or total > MAX_ARRAY_ELEMENTS - self.array_elements:
+                raise Unsupported("constant array size exceeds the 1024-element evaluation limit or is not constant")
+            sizes.append(size.n)
+        self.array_elements += total
+        self.scopes[-1][node.name] = self.array_initializer(node.init, sizes, typ)
+
+    def array_initializer(self, init, sizes, typ):
+        self.tick()
+        if isinstance(init, C.Constant) and init.type == "string":
+            if len(sizes) != 1 or typ[0] != 8:
+                raise Unsupported("string initializer requires an 8-bit integer row")
+            # Decode C escapes explicitly: Python's hexadecimal escape width differs.
+            text = init.value
+            if not text.startswith('"') or not text.endswith('"'):
+                raise Unsupported("only narrow ASCII string initializers are supported")
+            tokens = re.findall(r'[^"\\]|\\(?:[0-7]{1,3}|x[0-9a-fA-F]+|[\'"?\\abfnrtv])', text[1:-1])
+            if "".join(tokens) != text[1:-1]:
+                raise Unsupported("unsupported C string escape")
+            escapes = dict(zip("abfnrtv", (7, 8, 12, 10, 13, 9, 11)))
+            numbers = []
+            for token in tokens:
+                if token.startswith('\\x'):
+                    number = int(token[2:], 16)
+                elif token.startswith('\\') and token[1] in "01234567":
+                    number = int(token[1:], 8)
+                elif token.startswith('\\'):
+                    number = escapes.get(token[1], ord(token[1]))
+                else:
+                    number = ord(token)
+                if number > 127:
+                    raise Unsupported("only ASCII string initializers are supported")
+                numbers.append(number)
+            if len(numbers) > sizes[0]:
+                raise Unsupported("string initializer exceeds row size")
+            # C permits exact-fit strings without the trailing NUL; otherwise zero-fill.
+            return ConstantArray(tuple(integer(Value(n), *typ) for n in
+                                       numbers + [0] * (sizes[0] - len(numbers))))
+        if init is not None and not isinstance(init, C.InitList):
+            raise Unsupported("nested arrays require explicitly braced row initializers")
+        items = (init.exprs or []) if init is not None else []
+        if len(items) > sizes[0]:
             raise Unsupported("too many constant array initializers")
-        values = [integer(self.expr(expr), *typ) for expr in expressions]
-        if any(value.deps for value in values):
-            raise Unsupported("constant array initializer depends on runtime state")
-        values += [integer(Value(0), *typ)] * (size.n-len(values))
-        self.array_elements += size.n
-        self.scopes[-1][node.name] = ConstantArray(tuple(values))
+        items = items + [None] * (sizes[0] - len(items))
+        if len(sizes) > 1:
+            return ConstantArray(tuple(self.array_initializer(item, sizes[1:], typ) for item in items))
+        values = []
+        for item in items:
+            value = integer(self.expr(item) if item is not None else Value(0), *typ)
+            if value.deps:
+                raise Unsupported("constant array initializer depends on runtime state")
+            values.append(value)
+        return ConstantArray(tuple(values))
 
     def check_unused_table(self, node):
         # An unreferenced static object cannot contribute to callback writes.
