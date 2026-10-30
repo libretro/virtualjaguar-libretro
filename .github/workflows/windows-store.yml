@@ -1,0 +1,115 @@
+name: Windows Store MSIX
+
+# Store-only artifacts stay in a SEPARATE run: release.yml flattens all artifacts
+# from its own run. These unsigned submissions must never become website downloads.
+on:
+  pull_request:
+    branches: [develop, master, 'release/**']
+    paths:
+      - 'app/packaging/windows/msix/**'
+      - 'app/src/platform/platform_windows.cpp'
+      - '.github/workflows/windows-store.yml'
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: 'Existing successful packaging run to qualify without rebuilding (optional)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: windows-store-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  msix:
+    if: github.event_name != 'workflow_dispatch' || inputs.candidate_run == ''
+    name: Store MSIX ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+            msystem: MINGW64
+            packages: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+            cmake_extra: ''
+          - arch: arm64
+            os: windows-11-arm
+            msystem: CLANGARM64
+            packages: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja
+            cmake_extra: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test MSIX staging and input rejection
+        shell: pwsh
+        run: ./app/packaging/windows/msix/test-package.ps1
+      - name: Read numeric app version
+        shell: pwsh
+        run: |
+          $line = Get-Content Makefile | Where-Object { $_ -match '^CORE_BASE_VERSION\s*:=' }
+          if ($line -notmatch ':=\s*v([0-9]+\.[0-9]+\.[0-9]+)\s*$') { throw 'Expected numeric CORE_BASE_VERSION' }
+          "STORE_VERSION=$($Matches[1])" >> $env:GITHUB_ENV
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: false
+          install: ${{ matrix.packages }}
+      - name: Build the existing desktop app and install its payload
+        shell: 'msys2 {0}'
+        run: |
+          set -eu
+          cmake -S app -B build-store -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_BUILD_TESTS=OFF \
+            -DVJ_APP_FETCH_LIBRASHADER=ON -DVJ_TV_DEFAULT=manual -DVJ_BUILD_CHANNEL=release \
+            ${{ matrix.cmake_extra }}
+          cmake --build build-store -j4
+          cmake --install build-store --prefix "$PWD/stage-store"
+          stage-store/bin/virtualjaguar.exe --headless --frames 300 --expect-hash f4c30ea3 test/roms/yarc.j64
+          bash app/packaging/check-payload.sh build-store stage-store/bin virtualjaguar.exe
+      - name: Pack and validate Store MSIX with the Windows SDK
+        shell: pwsh
+        run: |
+          ./app/packaging/windows/msix/package.ps1 -InstallPrefix stage-store `
+            -Version $env:STORE_VERSION -Architecture '${{ matrix.arch }}' -OutputDirectory store-out
+          "Source commit: $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
+          'Unsigned Store submission only. Installation, upgrade and GUI qualification still required.' >> $env:GITHUB_STEP_SUMMARY
+          Get-FileHash store-out/*.msix -Algorithm SHA256 | Format-Table | Out-String | Add-Content $env:GITHUB_STEP_SUMMARY
+          $env:GITHUB_SHA | Set-Content store-out/SOURCE_COMMIT.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: store-msix-windows-${{ matrix.arch }}
+          path: |
+            store-out/*.msix
+            store-out/*.msix.json
+            store-out/SOURCE_COMMIT.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  qualify-x64:
+    name: Store MSIX installed x64 smoke
+    needs: msix
+    if: always() && (needs.msix.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.candidate_run != ''))
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: store-msix-windows-x64
+          path: candidate
+          run-id: ${{ inputs.candidate_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Install a test-signed copy and check the installed emulator
+        shell: powershell
+        run: ./app/packaging/windows/msix/qualify.ps1 -CandidateDirectory candidate -OutputDirectory qualification
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: store-msix-qualification-x64
+          path: qualification/
+          if-no-files-found: error
+          retention-days: 14

@@ -47,6 +47,14 @@ void initNetworking() {
 }
 
 void beforeWindow() {
+    // MSIX already supplies the package-family!application shell identity. An explicit
+    // unpackaged ID here would detach the running window from its Store Start-menu pin.
+    typedef LONG(WINAPI * GetPackageNameFn)(UINT32*, PWSTR);
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    GetPackageNameFn packageName = kernel ? (GetPackageNameFn)(void*)GetProcAddress(kernel, "GetCurrentPackageFullName") : nullptr;
+    UINT32 length = 0;
+    if (packageName && packageName(&length, nullptr) == ERROR_INSUFFICIENT_BUFFER) return;
+
     typedef HRESULT(WINAPI * SetAumidFn)(PCWSTR);
     HMODULE shell = LoadLibraryW(L"shell32.dll");
     if (!shell) return;
