@@ -1774,7 +1774,8 @@ void DSPSyncToM68K(void)
  * ---- ADMISSION RULE ------------------------------------------------
  *
  * Candidate: a TAKEN backward (or self-targeting) `jr` whose target is
- * at most 8 words behind, with the whole body inside DSP local RAM.
+ * at most 15 words behind (the jr's full reach), with the whole body
+ * inside DSP local RAM.
  * Body = target .. jr inclusive, plus the inlined delay-slot
  * instruction.  Static decode (register-independent) requires:
  *   - every opcode on the whitelist below (no store of any kind, no
@@ -1786,8 +1787,15 @@ void DSPSyncToM68K(void)
  *     body straight-line; the probe proves it was not taken (see the
  *     EXIT-BRANCH CHECK in DSPIdleLoopProbe) and the fixed-point proof
  *     below then proves it never will be;
- *   - the decode walk lands exactly on the jr, so the body really is
- *     straight-line (movei carries a 32-bit immediate, i.e. 3 words);
+ *   - or ONE internal forward jr instead of exits (#952, Iron Soldier 2:
+ *     `sub r31,r28 ; jr NN,+2 ; sharq #2,r28 ; addq #31,r28`), whose
+ *     target is an instruction after its delay slot and at most the
+ *     closing jr, and whose delay slot is neither a movei nor a jr.  It
+ *     splits the body into two routes, which the probe tells apart (see
+ *     the INTERNAL-BRANCH CHECK); the fixed-point proof below makes it
+ *     go the same way on every iteration;
+ *   - the decode walk lands exactly on the jr, so every instruction is
+ *     decoded (movei carries a 32-bit immediate, i.e. 3 words);
  *   - no movei in the delay slot (its immediate would be fetched from
  *     past the branch).
  * Register-dependent checks are deliberately deferred to the third
@@ -1812,20 +1820,23 @@ void DSPSyncToM68K(void)
  *     as the delta of `cycles`, never recomputed from
  *     dsp_opcode_cycles[] -- the inlined delay slot is not charged);
  *   - likewise the measured dsp_exec_opcode_count delta;
- *   - that measured opcode delta equals idleBodyCount + 1 EXACTLY, which
- *     is the count only a straight-line traversal of the decoded body
- *     can produce -- this is the executed-path check, see the comment at
- *     the test itself;
+ *   - that measured opcode delta, together with the number of taken jrs
+ *     per iteration, matches a route through the decoded body EXACTLY
+ *     (idleBodyCount + 1 with one taken jr; with an internal jr, also
+ *     K fewer with two) -- this is the executed-path check, see the
+ *     comment at the test itself;
  *   - every register with a NONZERO per-iteration delta is read and
  *     written only by an addqt/subqt whose destination is that same
- *     register.
+ *     register, or by an addq/subq onto itself whose flags are dead:
+ *     fully overwritten on every route before anything reads a flag
+ *     (dsp_idle_flags_dead).
  *
  * That last rule is what makes the branch unable to flip.  It is
  * strictly stronger than "the last flag-setting instruction reads only
- * zero-delta registers": addqt/subqt are the only admitted opcodes that
- * write no flags (dsp_opcode_addqt/subqt above), so any flag-setting
- * instruction is forced to read zero-delta operands, AND so is every
- * load base and every shift/rotate count.  Proof that the loop is then
+ * zero-delta registers": addqt/subqt write no flags, and a dead-flag
+ * addq/subq writes flags no instruction ever reads, so every flag value
+ * that IS read comes from zero-delta operands, AND so does every load
+ * base and every shift/rotate count.  Proof that the loop is then
  * affine forever: memory is constant by the theorem, so with all
  * zero-delta registers holding their S1 values and the flags holding
  * their S1 values, every instruction that does not touch a counter
@@ -1835,7 +1846,8 @@ void DSPSyncToM68K(void)
  * S1 + (k-1)*delta for all k, and the branch condition never changes.
  * The same holds at every point INSIDE the body, so an exit jr sees the
  * same flags on every iteration: not taken from S1 to S2 (the probe
- * checks that) means not taken on any extrapolated iteration either.
+ * checks that) means not taken on any extrapolated iteration either, and
+ * an internal jr goes the same way as it did from S1 to S2.
  *
  * Then n = (cycles_remaining / cost) - 1 (always leave one full
  * iteration to execute normally), reg += n*delta, cycles -= n*cost,
@@ -1850,12 +1862,13 @@ void DSPSyncToM68K(void)
  * state is re-derived from scratch inside each DSPExec call.
  */
 
-/* Longest body accepted, in 16-bit words (jr offset range [-8,-1]).
- * Belt-and-braces only: the caller's `pcThis - dsp_pc <= 14` filter
- * already caps [head, jr) at 7 words, so this bound never binds. */
-#define DSP_IDLE_MAX_BODY	8
-/* Body instruction slots: <= 7 before the jr, plus the delay slot. */
-#define DSP_IDLE_MAX_INSN	10
+/* Longest body accepted, in instructions before the closing jr.  The
+ * caller's `pcThis - dsp_pc <= 30` filter is the jr's full backward reach
+ * (offset -16), which caps [head, jr) at 15 words (#952: Iron Soldier 2's
+ * wait loop is 12), so this bound never binds. */
+#define DSP_IDLE_MAX_BODY	15
+/* Body instruction slots: <= 15 before the jr, plus the delay slot. */
+#define DSP_IDLE_MAX_INSN	16
 /* Per-slice reject memo: without it a loop that fails the fixed-point
  * test would be re-probed every three iterations for the whole slice. */
 #define DSP_IDLE_MEMO		16
@@ -1910,11 +1923,23 @@ static uint8_t   idleBodyP1[DSP_IDLE_MAX_INSN];
 static uint8_t   idleBodyP2[DSP_IDLE_MAX_INSN];
 static uint32_t  idleBodyImm[DSP_IDLE_MAX_INSN];
 static int       idleBodyCount;
+/* The body's one INTERNAL forward jr (#952), or -1: idleIntJr is its body
+ * index, and [idleIntFrom, idleIntTo) the body indices it jumps over when
+ * taken (its delay slot, idleIntJr + 1, runs on both routes). */
+static int       idleIntJr;
+static int       idleIntFrom, idleIntTo;
 
 static uint32_t  idleMemoHead[DSP_IDLE_MEMO];
 static uint32_t  idleMemoJr[DSP_IDLE_MEMO];
 static int       idleMemoCount;
 static int       idleMemoNext;
+/* The memo entry hit or added last.  Only trusted while idleMemoCount is
+ * nonzero: it is written together with a memo insert or hit, so after the
+ * per-slice memo reset it cannot name a loop until the memo holds that
+ * loop again.  Lets the common case -- the same rejected loop coming
+ * round again -- skip the scan (#952: probing every jr up to 15 words
+ * back cost Doom +0.25% host instructions without it). */
+static uint32_t  idleMemoLastHead, idleMemoLastJr;
 
 /* Opcode whitelist.  Admit only what has been reasoned about; anything
  * absent is rejected, including every store (45/46/47/49/50/60/61), the
@@ -1948,9 +1973,10 @@ static int dsp_idle_op_admitted(uint32_t idx)
 	 * PC-modifying opcode but the loop-closing jr itself is load-bearing
 	 * for the executed-path check below (idleBodyCount forces exactly
 	 * one route from head to jrAddr), not only for the store-freedom
-	 * this whitelist was originally written to guarantee.  The one
-	 * exception, a forward exit jr, is admitted by dsp_idle_decode
-	 * itself and backed by the probe's EXIT-BRANCH CHECK. */
+	 * this whitelist was originally written to guarantee.  The two
+	 * exceptions, forward exit jrs and one internal forward jr, are
+	 * admitted by dsp_idle_decode itself and backed by the probe's
+	 * EXIT-BRANCH CHECK. */
 	default:
 		return 0;
 	}
@@ -2039,7 +2065,11 @@ static int dsp_idle_memo_hit(uint32_t head, uint32_t jr)
 
 	for (i = 0; i < idleMemoCount; i++)
 		if (idleMemoHead[i] == head && idleMemoJr[i] == jr)
+		{
+			idleMemoLastHead = head;
+			idleMemoLastJr   = jr;
 			return 1;
+		}
 	return 0;
 }
 
@@ -2049,6 +2079,8 @@ static void dsp_idle_memo_reject(uint32_t head, uint32_t jr)
 		return;
 	idleMemoHead[idleMemoNext] = head;
 	idleMemoJr[idleMemoNext]   = jr;
+	idleMemoLastHead = head;
+	idleMemoLastJr   = jr;
 	idleMemoNext = (idleMemoNext + 1) % DSP_IDLE_MEMO;
 	if (idleMemoCount < DSP_IDLE_MEMO)
 		idleMemoCount++;
@@ -2059,11 +2091,14 @@ static void dsp_idle_memo_reject(uint32_t head, uint32_t jr)
 static int dsp_idle_decode(uint32_t head, uint32_t jrAddr)
 {
 	uint32_t pc = head;
+	uint32_t pcAt[DSP_IDLE_MAX_INSN];
+	uint32_t intTarget = 0;
 	uint16_t op;
 	uint32_t idx;
-	int n = 0;
+	int n = 0, exits = 0, j;
 
 	idleBodyCount = 0;
+	idleIntJr = -1;
 
 	while (pc < jrAddr)
 	{
@@ -2073,17 +2108,31 @@ static int dsp_idle_decode(uint32_t head, uint32_t jrAddr)
 		idx = (uint32_t)(op >> 10);
 		if (idx == 53)
 		{
-			/* Exit branch: only a jr that leaves the loop entirely, past
-			 * the closing jr's delay slot.  Anything landing inside
-			 * [head, jr+2] would make a second route around the loop. */
+			/* A jr before the closing one is either an EXIT branch,
+			 * landing past the closing jr's delay slot, or the body's one
+			 * INTERNAL forward branch (#952, Iron Soldier 2), landing on
+			 * an instruction after its own delay slot and no later than
+			 * the closing jr.  Anything else -- backward, onto its own
+			 * delay slot or onto the closing jr's -- would make a route
+			 * around the loop the probe cannot account for. */
 			int32_t off = (int32_t)((op >> 5) & 0x1F);
+			uint32_t target;
 			if (off & 0x10)
 				off -= 0x20;
-			if (pc + 2 + (uint32_t)(off * 2) <= jrAddr + 2)
+			target = pc + 2 + (uint32_t)(off * 2);
+			if (target > jrAddr + 2)
+				exits++;
+			else if (idleIntJr < 0 && target >= pc + 6 && target <= jrAddr)
+			{
+				idleIntJr = n;
+				intTarget = target;
+			}
+			else
 				return 0;
 		}
 		else if (!dsp_idle_op_admitted(idx))
 			return 0;
+		pcAt[n] = pc;
 		idleBodyIdx[n] = (uint8_t)idx;
 		idleBodyP1[n]  = (uint8_t)((op >> 5) & 0x1F);
 		idleBodyP2[n]  = (uint8_t)(op & 0x1F);
@@ -2104,6 +2153,32 @@ static int dsp_idle_decode(uint32_t head, uint32_t jrAddr)
 	if (pc != jrAddr)						/* decode fell out of step */
 		return 0;
 
+	if (idleIntJr >= 0)
+	{
+		/* Exit and internal branches together would let a taken exit
+		 * plus a `jump` back show the same taken-jr count as a taken
+		 * internal skip, which is what the probe tells them apart by. */
+		if (exits)
+			return 0;
+		/* Its delay slot must be in the body and be neither a movei
+		 * (immediate fetched past the branch) nor another jr. */
+		if (idleIntJr + 1 >= n || idleBodyIdx[idleIntJr + 1] == 38
+		    || idleBodyIdx[idleIntJr + 1] == 53)
+			return 0;
+		/* The target must start an instruction, not a movei immediate;
+		 * the closing jr itself counts as index n (the join then falls
+		 * just before its delay slot, which is the same thing). */
+		idleIntFrom = idleIntJr + 2;
+		idleIntTo   = -1;
+		if (intTarget == jrAddr)
+			idleIntTo = n;
+		for (j = idleIntFrom; j < n; j++)
+			if (pcAt[j] == intTarget)
+				idleIntTo = j;
+		if (idleIntTo <= idleIntFrom)		/* not a start, or skips nothing */
+			return 0;
+	}
+
 	/* The inlined delay slot at jr+2 runs on every iteration too.  A
 	 * movei there would fetch its immediate from past the branch, so
 	 * reject it rather than model it. */
@@ -2121,6 +2196,52 @@ static int dsp_idle_decode(uint32_t head, uint32_t jrAddr)
 	return 1;
 }
 
+/* Is the Z/N/C written by body instruction j dead -- overwritten in full
+ * on every route before any instruction reads a flag?  Lets a counter
+ * use the flag-setting addq/subq (#952: Iron Soldier 2's `addq #1,r19`,
+ * whose flags `sub r31,r28` replaces two instructions later), since flags
+ * that are never read cannot carry the counter's growth anywhere.
+ *
+ * Flag behavior is taken from the dsp_opcode_* bodies, not assumed:
+ *   - write all of Z, N and C without reading a flag ("killers"):
+ *     add addq sub subq neg abs shlq shrq sharq ror rorq cmp cmpq;
+ *   - read no flag, so the scan passes them: addqt subqt (write none),
+ *     and or xor not bset bclr (Z and N only), btst (Z only), the moves,
+ *     movei, the loads and nop;
+ *   - everything else ends the scan as a reader: any jr (the closing one
+ *     included, so the scan never wraps), addc / subc (read C), and
+ *     sat16s, treated as a reader rather than audited.
+ * A killer inside the internal jr's skippable region does not count for
+ * an instruction ahead of that region: the taken route never runs it. */
+static int dsp_idle_flags_dead(int j)
+{
+	int k, overRegion = (idleIntJr >= 0 && j < idleIntFrom);
+
+	for (k = j + 1; k < idleBodyCount; k++)
+	{
+		if (k == idleIntJr)
+			return 0;
+		switch (idleBodyIdx[k])
+		{
+		case  0: case  2: case  4: case  6: case  8:
+		case 22: case 24: case 25: case 27:
+		case 28: case 29: case 30: case 31:
+			if (overRegion && k >= idleIntFrom && k < idleIntTo)
+				break;
+			return 1;
+		case  3: case  7: case  9: case 10: case 11:
+		case 12: case 13: case 14: case 15:
+		case 34: case 35: case 36: case 37: case 38:
+		case 39: case 40: case 41: case 43: case 44:
+		case 57: case 58: case 59:
+			break;
+		default:
+			return 0;
+		}
+	}
+	return 0;
+}
+
 /* Register-dependent half of the admission rule, run at S2 where the
  * head state is provably steady.  Walks the body tracking each
  * register's known value so a load base written earlier in the same body
@@ -2130,8 +2251,9 @@ static int dsp_idle_check_body(const uint32_t *delta, int cur, int alt)
 {
 	uint32_t kval[64];
 	uint8_t  kok[64];
+	uint64_t skipped = 0;		/* registers written in the skippable region */
 	int src[3];
-	int nsrc, dst, s, j, i;
+	int nsrc, dst, s, j, i, counter;
 	uint32_t idx, p1, p2, ea;
 
 	for (i = 0; i < 32; i++)
@@ -2148,20 +2270,34 @@ static int dsp_idle_check_body(const uint32_t *delta, int cur, int alt)
 		p1  = idleBodyP1[j];
 		p2  = idleBodyP2[j];
 
+		/* Join after the internal jr's skippable region: the taken route
+		 * did not run it, so nothing it wrote is known any more.  Its own
+		 * instructions are still checked below as if they ran -- the
+		 * not-taken route does run them. */
+		if (j == idleIntTo && idleIntJr >= 0)
+			for (i = 0; i < 64; i++)
+				if (skipped & ((uint64_t)1 << i))
+					kok[i] = 0;
+
 		if (!dsp_idle_operands(idx, p1, p2, cur, alt, src, &nsrc, &dst))
 			return 0;
+		if (dst >= 0 && idleIntJr >= 0 && j >= idleIntFrom && j < idleIntTo)
+			skipped |= (uint64_t)1 << dst;
 
 		/* A register whose per-iteration delta is nonzero is a pure
 		 * counter: it may only be read, and only be written, by an
 		 * addqt/subqt targeting itself.  Those two are the only
 		 * admitted opcodes that touch no flag, so this forbids a
 		 * growing value from reaching a compare, a load address, a
-		 * shift count or anything else. */
+		 * shift count or anything else.  addq/subq onto itself also
+		 * qualify when the flags they write are dead
+		 * (dsp_idle_flags_dead, #952). */
+		counter = (idx == 3 || idx == 7)
+		       || ((idx == 2 || idx == 6) && dsp_idle_flags_dead(j));
 		for (s = 0; s < nsrc; s++)
-			if (delta[src[s]] != 0
-			    && !((idx == 3 || idx == 7) && src[s] == dst))
+			if (delta[src[s]] != 0 && !(counter && src[s] == dst))
 				return 0;
-		if (dst >= 0 && delta[dst] != 0 && !(idx == 3 || idx == 7))
+		if (dst >= 0 && delta[dst] != 0 && !counter)
 			return 0;
 
 		/* Loads: the effective address must be provably plain RAM. */
@@ -2271,8 +2407,14 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 {
 	uint32_t delta[64];
 	int32_t  cost, n;
-	uint32_t opcost;
+	uint32_t opcost, jrt;
 	int      cur, alt, i;
+
+	/* The same rejected loop again, with no probe in flight: exactly what
+	 * the memo check below would conclude, minus the scan. */
+	if (idleProbeStage == 0 && idleMemoCount != 0
+	    && head == idleMemoLastHead && jrAddr == idleMemoLastJr)
+		return cycles;
 
 	/* Whole body -- including the delay slot and its trailing byte --
 	 * must sit in DSP local SRAM, so every fetch is a pure dsp_ram_8
@@ -2430,10 +2572,29 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 	 * program D is such a route.  So also require that each probe
 	 * iteration took exactly ONE jr, the closing one: a taken exit is a
 	 * taken jr and would make it two.  With every exit untaken, the body
-	 * is straight-line again and the count argument above applies. */
-	if (opcost != (uint32_t)idleBodyCount + 1
-	    || idleProbeJrt1 - idleProbeJrt0 != 1
-	    || dsp_jr_taken - idleProbeJrt1 != 1)
+	 * is straight-line again and the count argument above applies.
+	 *
+	 * INTERNAL-BRANCH CHECK (#952).  With the body's one internal jr
+	 * (exits then excluded by the decoder) there are exactly two routes,
+	 * F = idleBodyCount + 1:
+	 *     internal not taken:  1 taken jr,  F opcodes
+	 *     internal taken:      2 taken jrs, F - K opcodes
+	 * (K = idleIntTo - idleIntFrom; the delay slot is charged once either
+	 * way, by DSPExec's loop or inline by dsp_opcode_jr).  Both iterations
+	 * must show the same pair, and it must be one of these two.  Any
+	 * other route has to fall through the closing jr (the only way out
+	 * without a taken jr), so it runs one full pass (at least F - K, or F
+	 * with the internal untaken), a transfer back plus its delay slot
+	 * (+2), and the closing jr plus its slot again (+2) -- and leaving can
+	 * only ADD taken jrs.  So a detour showing 1 taken jr took no internal
+	 * branch and costs >= F + 4, and one showing 2 costs >= F - K + 4:
+	 * never equal to the legal pair with the same count. */
+	jrt = idleProbeJrt1 - idleProbeJrt0;
+	if (dsp_jr_taken - idleProbeJrt1 != jrt
+	    || !((jrt == 1 && opcost == (uint32_t)idleBodyCount + 1)
+	         || (jrt == 2 && idleIntJr >= 0
+	             && opcost == (uint32_t)(idleBodyCount + 1
+	                                     - (idleIntTo - idleIntFrom)))))
 	{
 		dsp_idle_memo_reject(head, jrAddr);
 		return cycles;

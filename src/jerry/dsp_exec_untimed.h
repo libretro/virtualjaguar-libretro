@@ -257,11 +257,12 @@ static DSP_NOINLINE void DSP_UNTIMED_NAME(int32_t cycles)
 		}
 
 		/* Idle-loop fast-forward (issue #569).  A taken `jr` that landed
-		 * on or behind its own address, at most 8 words back, is the only
-		 * candidate; the unsigned difference rejects a not-taken jr
-		 * (pc = pcThis + 2) and every forward branch in one compare. */
+		 * on or behind its own address, up to its full reach of 15 words
+		 * back (#952), is the only candidate; the unsigned difference
+		 * rejects a not-taken jr (pc = pcThis + 2) and every forward
+		 * branch in one compare. */
 		if (idleSkipActive && index == 53
-		    && (uint32_t)(pcThis - dsp_pc) <= 14)
+		    && (uint32_t)(pcThis - dsp_pc) <= 30)
 			cycles = DSPIdleLoopProbe(cycles, dsp_pc, pcThis);
 
 		/* Age out a D_FLAGS store once the instruction that was already
