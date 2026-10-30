@@ -2208,16 +2208,20 @@ static int dsp_idle_decode(uint32_t head, uint32_t jrAddr)
  *   - read no flag, so the scan passes them: addqt subqt (write none),
  *     and or xor not bset bclr (Z and N only), btst (Z only), the moves,
  *     movei, the loads and nop;
- *   - everything else ends the scan as a reader: any jr (the closing one
- *     included, so the scan never wraps), addc / subc (read C), and
- *     sat16s, treated as a reader rather than audited.
+ *   - everything else ends the scan as a reader: the internal jr,
+ *     addc / subc (read C), and sat16s, treated as a reader rather than
+ *     audited.
+ * The closing jr reads the flags too.  It has no entry of its own in
+ * idleBodyIdx, but its delay slot is the last entry, so the scan stops
+ * short of that slot: a killer there runs after the branch has already
+ * read the counter's flags, and the scan never wraps.
  * A killer inside the internal jr's skippable region does not count for
  * an instruction ahead of that region: the taken route never runs it. */
 static int dsp_idle_flags_dead(int j)
 {
 	int k, overRegion = (idleIntJr >= 0 && j < idleIntFrom);
 
-	for (k = j + 1; k < idleBodyCount; k++)
+	for (k = j + 1; k < idleBodyCount - 1; k++)
 	{
 		if (k == idleIntJr)
 			return 0;

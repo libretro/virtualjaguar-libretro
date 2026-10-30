@@ -96,6 +96,13 @@
  *      A taken exit plus a `jump` back would show the same taken-jr
  *      count as a taken internal skip, so the decoder refuses the mix.
  *
+ *   J. F with a flag killer in the closing jr's delay slot  ->  MUST NOT
+ *      fire.
+ *      head:  addq #1,r19 ; jr NE,head ; cmpq #0,r0   (r19 from $FFFF0000)
+ *      The jr reads addq's Z before its delay slot overwrites it, so the
+ *      dead-flag scan must stop short of that slot.  At its own address:
+ *      F's reject-memo entry would otherwise mask it.
+ *
  * Build: cc -O2 -Wall -std=c99 $(INCFLAGS) -o test/tools/dsp_idle_probe_falsify \
  *          test/tools/dsp_idle_probe_falsify.c test/harness/harness.c -ldl -lm
  * Needs the wide test ABI (make TEST_EXPORTS=1).  Uses test/roms/yarc.j64,
@@ -115,6 +122,7 @@
 #define OP_ADDQT   3
 #define OP_SUBQ    6
 #define OP_BTST   13
+#define OP_CMPQ   31
 #define OP_STORE  47
 #define OP_JUMP   52
 #define OP_JR     53
@@ -139,6 +147,7 @@
 #define PROG_E_OFF   0x0600          /* $F1B600 */
 #define PROG_E_OUT   0x061C          /* $F1B61C -- E's exit park loop */
 #define PROG_F_OFF   0x0700          /* $F1B700 */
+#define PROG_J_OFF   0x0740          /* $F1B740 */
 #define PROG_G_OFF   0x0780          /* $F1B780 */
 #define PROG_H_OFF   0x0880          /* $F1B880 */
 #define PROG_I_OFF   0x0800          /* $F1B800 */
@@ -280,12 +289,13 @@ static void build_prog_e(uint32_t alt_r28)
     setreg(28, alt_r28);
 }
 
-static void build_prog_f(void)
+/* F at `off` with `slot` in the closing jr's delay slot (J: cmpq). */
+static void build_prog_f(uint32_t off, uint16_t slot)
 {
-    put16(PROG_F_OFF + 0, enc(OP_ADDQ, 1, 19));              /* addq #1,r19    */
-    put16(PROG_F_OFF + 2, enc(OP_JR, 0x1E /* -2 */, CC_NE)); /* jr ne,head     */
-    put16(PROG_F_OFF + 4, enc(OP_NOP, 0, 0));
-    put_park(PROG_F_OFF + 6);
+    put16(off + 0, enc(OP_ADDQ, 1, 19));                     /* addq #1,r19    */
+    put16(off + 2, enc(OP_JR, 0x1E /* -2 */, CC_NE));        /* jr ne,head     */
+    put16(off + 4, slot);
+    put_park(off + 6);
 
     setreg(19, 0xFFFF0000u);
 }
@@ -359,19 +369,19 @@ static uint32_t run_prog(uint32_t off, int32_t cycles,
 int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
-    harness_result res[13];
+    harness_result res[14];
     unsigned nres = 0;
     uint32_t fires_a, fires_b, rej_a, rej_b, ops_a, ops_b;
     uint32_t fires_c, fires_d, rej_c, rej_d, ops_c, ops_d, pc_c;
     uint32_t fires_e, fires_e2, fires_f, fires_g, fires_h, fires_i, pc_e;
-    uint32_t rej_e, rej_e2, rej_f, rej_g, rej_h, rej_i;
+    uint32_t fires_j, rej_e, rej_e2, rej_f, rej_g, rej_h, rej_i, rej_j;
     static char detail_a[192], detail_b[192], detail_c[192];
     static char detail_d[192], detail_e[192], detail_f[192];
     static char detail_g[192], detail_h[192], detail_i[192];
     static char detail_j[192], detail_k[192], detail_l[192];
-    static char detail_m[192];
+    static char detail_m[192], detail_n[192];
     int ok_a, ok_b, ok_c, ok_d, ok_e;
-    int ok_f, ok_g, ok_h, ok_i, ok_j, ok_k, ok_l;
+    int ok_f, ok_g, ok_h, ok_i, ok_j, ok_k, ok_l, ok_m;
 
     cfg.frames = 2;
     cfg.quiet  = 1;
@@ -425,8 +435,10 @@ int main(int argc, char **argv)
      * -100>>2 + 31 = 6 < 8. */
     build_prog_e(0x40u - 100u);
     fires_e2 = run_prog(PROG_E_OFF, 20000, &rej_e2, NULL);
-    build_prog_f();
+    build_prog_f(PROG_F_OFF, enc(OP_NOP, 0, 0));
     fires_f = run_prog(PROG_F_OFF, 20000, &rej_f, NULL);
+    build_prog_f(PROG_J_OFF, enc(OP_CMPQ, 0, 0));           /* cmpq #0,r0     */
+    fires_j = run_prog(PROG_J_OFF, 20000, &rej_j, NULL);
     build_prog_g();
     fires_g = run_prog(PROG_G_OFF, 20000, &rej_g, NULL);
     build_prog_h();
@@ -448,6 +460,7 @@ int main(int argc, char **argv)
     ok_j = (fires_g == 0);
     ok_k = (fires_i == 0);
     ok_l = (fires_h == 0);
+    ok_m = (fires_j == 0);
 
     snprintf(detail_a, sizeof detail_a,
              "genuinely idle loop (addqt/jr/nop) fired %u time(s), "
@@ -540,6 +553,15 @@ int main(int argc, char **argv)
     res[nres].detail = detail_k;
     nres++;
 
+    snprintf(detail_n, sizeof detail_n,
+             "counter addq whose Z the closing jr reads before its delay "
+             "slot's cmpq fired %u time(s) (must be 0), %u reject(s)",
+             fires_j, rej_j);
+    res[nres].status = ok_m ? "PASS" : "FAIL";
+    res[nres].name   = "delay_slot_flag_kill_rejected";
+    res[nres].detail = detail_n;
+    nres++;
+
     snprintf(detail_m, sizeof detail_m,
              "taken internal jr + fall-through + undecoded store + jump "
              "back, F opcodes with 2 taken jrs, fired %u time(s) (must be 0), "
@@ -560,5 +582,5 @@ int main(int argc, char **argv)
     harness_report(&cfg, res, nres);
     harness_shutdown(&cfg);
     return (ok_a && ok_b && ok_c && ok_d && ok_e
-            && ok_f && ok_g && ok_h && ok_i && ok_j && ok_k && ok_l) ? 0 : 1;
+            && ok_f && ok_g && ok_h && ok_i && ok_j && ok_k && ok_l && ok_m) ? 0 : 1;
 }
