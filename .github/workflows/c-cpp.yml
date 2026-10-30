@@ -10,6 +10,13 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ develop, master ]
+    # A PR that changes only docs builds nothing and tests nothing, so it runs
+    # none of this.  docs/cd-boot-matrix.md's format check lives in pages.yml,
+    # which has its own filter.  A release PR always carries code; to run this
+    # on a docs-only PR anyway, use workflow_dispatch on its branch.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 # Cancel in-progress runs when a new commit lands on the same PR.
