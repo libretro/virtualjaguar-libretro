@@ -615,6 +615,19 @@ for the frame in progress to end, including that frame's peer wait, which link p
 takes longer than a quarter of a second shows a spinner instead of freezing the window. A log line
 `[core_host] owner violation: ...` means a UI path still called into the core directly: that is a bug, please report it.
 
+### Reporting a threading problem
+
+The emulation thread is being qualified to become the default in releases (#1039). If something goes wrong only with it on
+(stutter, a hang, a crash, lagging input, skipping sound), please comment on #1039 or open an issue that links it, with:
+
+- The first line of **Help > About**: the version and build channel, such as `Virtual Jaguar 4.0.0 (nightly build)`.
+- The **Now: ...** line under **Settings > Video > Frame pacing**: which clock the thread follows, and why.
+- The display's refresh rate, the OS and the GPU.
+- Whether it also happens single-threaded: turn the setting off and restart, or run once with `--emu-thread off`. If it
+  happens both ways it is not a threading problem, but it is still worth reporting; say so.
+- If you started the app from a terminal, its lines starting `[emu]`, `[core_host]` or `[stall]`. Any `owner violation`
+  line is a bug on its own.
+
 ## Running several instances
 
 Run as many copies of the app as you like: to test netplay on one machine (host in one window,

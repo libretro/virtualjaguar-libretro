@@ -26,7 +26,7 @@ Each gate lists its evidence. Gates 1–3 are work in this repo; gates 4 and 5 a
 |---|---|---|
 | **G1 coverage** | Every headless test that runs the app with content has a `_threaded` twin, or a line here saying why it is mode-specific | PR 5a |
 | **G2 platforms** | G1's twins pass on every `app.yml` configuration: the six required ones, plus MSVC, which may stay experimental. TSan stays green | PR 5a CI |
-| **G3 Studio, 60 Hz** | The phase 4 measurement passes its bar (below) and the transition runs recover. The phase 1 gate (`emu_thread_gate_check.sh`) passes on the 4.0 candidate | #1128 comment, then the evidence table here |
+| **G3 Studio, 60 Hz** | The phase 4 measurement passes its bar (below) and the transition runs recover. The phase 3 Studio gate (`emu_thread_gate_check.sh`) passes on the 4.0 candidate | #1128 comment, then the evidence table here |
 | **G4 other displays** | At least one windowed report each for Windows, Linux and a 120 Hz panel, threaded, with no regression against inline | #1039 comments |
 | **G5 nightly window** | Two weeks of nightlies with no open threading regression; any report is fixed or shown not to be a threading issue | #1039 |
 
@@ -99,8 +99,18 @@ The `*_e2e` tests (`input_e2e`, `devices_e2e`, `bios_e2e`, `debug_scan_e2e`, `de
 
 ## Evidence
 
-Filled in by 5b. One row per run: build ID, host, display, arm, title, numbers, and a raw-trace path under `vj-eval/`.
+Filled in by 5b, then kept up to date as G3–G5 evidence arrives.
+
+Studio = the Mac Studio (M4 Max, 16 cores) on its 60 Hz panel, every windowed run launched through LaunchServices (#1026), 60 s per run with scripted input, started only at a 1-minute load under 4 (the host's iCloud daemons hold about 2.7 cores). Arms: off = inline; A = threaded, Jaguar rate; B = threaded, Match display. Event→present is the exact figure, about 11,100 samples per run. Traces are in `vj-eval/1039-g3/`.
 
 | Date | Build | Host / display | What | Result |
 |---|---|---|---|---|
-| | | | | |
+| 2026-10-31 | 06fa8a71 (#1130) | GitHub CI, every `app.yml` configuration | **G1, G2:** the threaded twins | **Met.** 21 twins; `emu_thread` label 82 → 102 tests. All seven app configurations pass, MSVC included, and so does the ThreadSanitizer job |
+| 2026-10-31 | a661028c (fe80b36a's code) | Studio | **G3 bar:** off / A / B / B / A / off on yarc, Cybermorph, yarc PAL (`mb-m3-*`) | **Met.** B − off event→present: yarc −0.18, Cybermorph +0.16, PAL +0.99 ms. 0 underruns in 18 runs. CPU against A: −9%, −6%, +1.5%. PAL reports `ratio`. Full tables: [#1128 comment](https://github.com/libretro/virtualjaguar-libretro/pull/1128#issuecomment-6545542038) |
+| 2026-10-31 | a661028c | Studio | **G3 transitions,** Match display, yarc (`mbt-t3*`) | **Met.** sleep: B → A (no_vsync) → B, 0 underruns. fs: locks to B. link: both copies `mode A (link)`. halt (5 s, then Continue): ends B locked, ticks dropped 0, **1 underrun** across the halt |
+| 2026-10-31 | 1b18d491 (phase 1) vs 43383a05 (develop) | Studio | **G3 "mode A vs phase 1":** A and off, yarc and Cybermorph, builds in order p1 dv dv p1 (`mb-p5-*`) | **Met: no mode A regression.** A − off event→present, p1 → dv: yarc +1.96 → −1.04 ms, Cybermorph +1.94 → +2.47 ms (dv's two runs: +1.5, +3.4). Mode A repeats in 60 s: yarc 26, 16 → 3, 1; Cybermorph 25, 19 → 64, 58. Inline Cybermorph rose as much (21, 15 → 46, 51), with the same change in frame cost in both arms (p1 4.8 → 3.0 ms, end-due spread 5.3 → 7.5 ms): the core or content changed between the builds, not the thread. A ÷ off repeats is about 1.2 on both builds. Both builds' traces read by the same summary script |
+| 2026-10-31 | 43383a05 | Studio | **G3 halt, inline arm** | **Not measurable.** Inline, a halt runs in the core's nested `haltedFrame` loop; `--perf-halt`'s Continue is in the outer loop, so it never comes. That nested loop still runs the UI, so the debugger's Continue button works. Run stopped after 1 h 40 min |
+| | 43383a05 | Studio | **G3 halt,** A vs B (`mbt-p5-{A,B}-halt`) | Pending |
+| | 43383a05 | Studio | **G3 phase 3 gate** (`emu_thread_gate_check.sh`) | Pending here. Run again on the 4.0 candidate |
+| | | Windows, Linux, 120 Hz | **G4** | Pending: request on #1039 |
+| 2026-10-31 → 2026-11-14 | nightlies | | **G5** | Window open from the 5a merge |
