@@ -631,7 +631,9 @@ void testCallGivesUp() {
     const int r = e.call([ran] { *ran = true; return 42; }, [&] { polls++; return halted.load(); });
     flip.join();
     CHECK(r == 0, "the call returned R() (%d)", r);
-    CHECK(since(t0) < 0.3 && since(t0) >= 0.05, "once the predicate turned true, within 300 ms (%.3f s)", since(t0));
+    // call() has no timeout: a predicate it never consulted would hang here, not run long.  The ceiling only tells a hang
+    // from a slow host (a starved macOS runner took 319 ms: every 1 ms sleep took 8).
+    CHECK(since(t0) < 2.0 && since(t0) >= 0.05, "once the predicate turned true, not before, no hang (%.3f s)", since(t0));
     CHECK(polls.load() >= 2, "the predicate was polled before the post and after a slice (%d)", polls.load());
     // Already halted when the call is made: nothing is queued, R() at once.
     polls = 0;
@@ -670,7 +672,7 @@ void testAdvanceGivesUp() {
     const Clock::time_point t0 = Clock::now();
     const bool r = e.advance(2, [&] { return halted.load(); });
     flip.join();
-    CHECK(!r && since(t0) >= 0.07 && since(t0) < 0.5, "gave up once the predicate turned true, not before (%.3f s)", since(t0));
+    CHECK(!r && since(t0) >= 0.07 && since(t0) < 2.0, "gave up once the predicate turned true, not before (%.3f s)", since(t0));
     CHECK(c.blocked.load(), "the budget was registered: the first frame started and parked");
     halted = false;
     c.block = false;
