@@ -3,6 +3,16 @@
 # package.sh <app> <profile> <application-identity> <installer-identity> <new.pkg>
 # Local sandbox qualification: package.sh <app> --test <Developer-ID-or-dash>
 set -euo pipefail
+usage() {
+    echo "Usage: $0 <app> <profile> <application-identity> <installer-identity> <new.pkg>" >&2
+    echo "       $0 <app> --test <Developer-ID-or-dash>" >&2
+    exit 1
+}
+if [ "${2:-}" = --test ]; then
+    [ "$#" -eq 3 ] || usage
+else
+    [ "$#" -eq 5 ] || usage
+fi
 here="$(cd "$(dirname "$0")" && pwd)"
 app="$1"
 [ -d "$app/Contents" ] || { echo 'Expected an assembled .app' >&2; exit 1; }

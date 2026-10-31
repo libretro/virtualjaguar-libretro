@@ -29,8 +29,10 @@ bool retainURL(NSURL* url) {
     init();
     NSString* path = url.path;
     if (!path) return false;
-    if (active[path]) return true; // never start the same scope twice
-    BOOL started = [url startAccessingSecurityScopedResource];
+    // Forget keeps a live scope for workers but removes its persisted bookmark.
+    // Re-adding that location must save a new bookmark without starting it twice.
+    if (active[path] && bookmarks[path]) return true;
+    BOOL started = !active[path] && [url startAccessingSecurityScopedResource];
     // Open/save panels already grant process access. A false start isn't a denial for
     // such a URL (or a file in our own container); bookmark creation still may succeed.
     NSError* error = nil;
