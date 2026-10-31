@@ -23,6 +23,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include "src/core/event.h"
 #include "src/core/settings.h"
@@ -53,12 +54,14 @@ static int failures = 0;
          else { printf("FAIL %s\n", msg); failures++; } } while (0)
 
 /* Port bands, PID-spread, same convention as test_jlink_tcp.c's own
-   comment: below every OS's ephemeral floor so a stray outgoing
-   connection on a CI runner cannot collide, and distinct from
-   test_jlink_discover.c's own band (43000+) so the two test binaries
-   never fight over a port if a runner happens to launch them together. */
-static int tcp_port(void)  { return 45000 + (int)(getpid() % 1500); }
-static int disc_port(void) { return 46500 + (int)(getpid() % 1500); }
+   comment: below every OS's ephemeral floor (Linux 32768) so a stray
+   outgoing connection on a CI runner cannot collide, and clear of
+   test_jlink_tcp.c's 17000-24999, the app's netplay tests' 20000-29999
+   and test_jlink_discover.c's 31400-32699, so no two test binaries
+   fight over a port.  Each test adds 0-3: TCP 30000-30602, discovery
+   30700-31302. */
+static int tcp_port(void)  { return 30000 + (int)(getpid() % 600); }
+static int disc_port(void) { return 30700 + (int)(getpid() % 600); }
 
 /* ---- fake peer: plain sockets, deliberately NOT going through
    jlink.c/jlink_discover.c at all -- this models "whatever is on the
@@ -97,6 +100,7 @@ static int fakeAccepted = -1;
    "silent peer" scenario below needs the fake peer to send nothing,
    which trivially requires no discovery socket either. */
 static int fakeSend = -1;
+static int fakeSendRc = 0, fakeSendErrno = 0, fakeSends = 0;   /* the last confirm sendto */
 
 static void fake_peer_start(int tport, int dport)
 {
@@ -110,14 +114,31 @@ static void fake_peer_start(int tport, int dport)
    sa.sin_family = AF_INET;
    sa.sin_addr.s_addr = htonl(INADDR_ANY);
    sa.sin_port = htons((unsigned short)tport);
-   bind(fakeListen, (struct sockaddr *)&sa, sizeof(sa));
-   listen(fakeListen, 1);
+   /* A failed bind used to pass silently and surface later as "not
+      confirmed" (the client never reached this listener); name it. */
+   if (bind(fakeListen, (struct sockaddr *)&sa, sizeof(sa)) != 0
+       || listen(fakeListen, 1) != 0)
+   {
+      printf("FAIL fake peer listen on TCP %d: %s\n", tport, strerror(errno));
+      failures++;
+   }
    fcntl(fakeListen, F_SETFL, fcntl(fakeListen, F_GETFL, 0) | O_NONBLOCK);
 
    fakeSend = (int)socket(AF_INET, SOCK_DGRAM, 0);
    fcntl(fakeSend, F_SETFL, fcntl(fakeSend, F_GETFL, 0) | O_NONBLOCK);
 
    fakeAccepted = -1;
+   fakeSendRc = fakeSendErrno = fakeSends = 0;
+}
+
+/* When a "confirmed" check fails, say which leg broke: the TCP link never
+   came up (the client only negotiates while connected), or the confirm
+   datagrams were not accepted by the kernel. */
+static void report_unconfirmed(int tport, int dport)
+{
+   printf("  tcp %d accepted=%s, %d confirm sends to udp %d, last rc=%d (%s)\n",
+          tport, fakeAccepted >= 0 ? "yes" : "no", fakeSends, dport,
+          fakeSendRc, fakeSendErrno ? strerror(fakeSendErrno) : "ok");
 }
 
 static void fake_peer_stop(void)
@@ -164,6 +185,9 @@ static int fake_peer_confirm_if_asked(int dport)
    to.sin_addr.s_addr = inet_addr("127.0.0.1");
    to.sin_port = htons((unsigned short)dport);
    rc = (int)sendto(fakeSend, buf, n, 0, (struct sockaddr *)&to, sizeof(to));
+   fakeSends++;
+   fakeSendRc = rc;
+   fakeSendErrno = rc < 0 ? errno : 0;
    if (getenv("VJ_NEG_DEBUG"))
       fprintf(stderr, "[negdbg] fake_peer sendto dport=%d rc=%d\n", dport, rc);
    return rc > 0;
@@ -253,6 +277,8 @@ static void test_confirms_with_answering_peer(void)
    pump_until_confirmed_or_timeout(dport, 2000, 1 /* responder answers */);
    CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
          "client negotiates full speedup with a confirming peer");
+   if (UARTWireSpeedup() != UART_WIRE_SPEEDUP_MAX)
+      report_unconfirmed(tport, dport);
 
    stop_real_client();
    fake_peer_stop();
@@ -298,6 +324,8 @@ static void test_disconnect_reverts_to_stock(void)
    pump_until_confirmed_or_timeout(dport, 2000, 1);
    CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
          "setup: confirmed before testing the drop");
+   if (UARTWireSpeedup() != UART_WIRE_SPEEDUP_MAX)
+      report_unconfirmed(tport, dport);
 
    /* Pull the fake peer's end of the TCP connection. */
    close(fakeAccepted);
@@ -333,6 +361,8 @@ static void test_intent_off_overrides_confirmed(void)
    pump_until_confirmed_or_timeout(dport, 2000, 1);
    CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
          "setup: confirmed before testing intent-off");
+   if (UARTWireSpeedup() != UART_WIRE_SPEEDUP_MAX)
+      report_unconfirmed(tport, dport);
 
    UARTSetWireSpeedupIntent(0);   /* option layer: user turned it off */
    CHECK(UARTWireSpeedup() == 1,

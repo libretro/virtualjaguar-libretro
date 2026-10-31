@@ -208,9 +208,11 @@ static void on_raw(const uint8_t *buf, size_t len, const char *from_addr,
    rawSeenAddr[sizeof(rawSeenAddr) - 1] = '\0';
 }
 
+/* Below Linux's ephemeral floor (32768), like test_jlink_tcp.c, and
+   clear of the other socket tests' bands: 31400-32699. */
 static int disc_test_port(void)
 {
-   return 43000 + (int)(getpid() % 4000);
+   return 31400 + (int)(getpid() % 1300);
 }
 
 /* Send one UDP datagram to 127.0.0.1:port from a throwaway socket,
