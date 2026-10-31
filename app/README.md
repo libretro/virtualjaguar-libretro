@@ -565,7 +565,7 @@ it. PNGs are decoded with SDL3's own loader (`SDL_LoadPNG_IO`): no image library
 busy UI no longer stalls the picture. The game runs at the true Jaguar rate (60.05 Hz, PAL 50.08 Hz), paced by the
 sound card's clock, and the display shows the newest frame (on a 60 Hz panel the true-rate drift alone skips one frame about every 18 s; in this phase frames that finish
 close to the take point also repeat or skip more often than in the single-thread loop, roughly 1 to 2.5 a second as
-measured on a 60 Hz panel, which the display-locked mode planned for a later phase addresses).
+measured on a 60 Hz panel; **Frame pacing: Match display**, below, removes both).
 The setting takes effect at the next start. It is **on** by default in nightly builds and **off** in releases (the build
 channel; About shows it, and the log prints `[emu] channel=...`). A stored choice always wins in both directions; **Reset
 group** in Settings > Interface returns to the channel's default. `dev` builds (pull-request artifacts, local builds)
@@ -584,6 +584,22 @@ copy) and `prefix-ui.csv` (each UI take and swap); `python3 app/tests/perf_trace
 really shown and splits their timing. With the latch's vblank grid locked, the emulation steps its pacing
 grid's phase once whenever frame ends would straddle the take point, so each 60.05-on-60 Hz crossing is one skip rather
 than a burst of repeats and skips; `--pace-steer off` turns that off for a measurement.
+
+**Settings > Video > Frame pacing** (`video.pacing`, #1038) picks the clock the emulation thread follows. **Jaguar
+rate** (the default) is the above: the console's own 60.05 / 50.08 Hz, kept by the sound card. **Match display** runs
+one emulated frame on every refresh (every second refresh at 120 Hz) where the display's measured rate is within 0.3%
+of a whole multiple of the game's: 60, 59.94, 120 and 119.88 Hz for NTSC games, 50 and 100 Hz for PAL. The sound plays
+that much faster or slower (0.09% on a 60 Hz panel, inaudible), the Jaguar rate's periodic repeat or skip goes away,
+and a frame starts right after the swap that hands it the newest input, so event to present matches the single-thread loop even
+for heavy games. It needs vsync and the late latch's lock on the vblanks, and settles for about two seconds after the
+start or a display change. Elsewhere (144 or 75 Hz, a PAL game on 60 Hz, vsync off, a refresh that is not steady), and
+always during fast-forward and link play, it uses the Jaguar rate; the setting shows why ("Now: ..."), and a lasting
+fallback shows a message once. The log says `[emu] frame pacing: mode B (locked)` / `mode A (<reason>)` at each
+change. A window that stops swapping (a modal, a sleeping display) does not stop the game: the emulation keeps the
+display's grid on its own, and returns to the Jaguar rate after a quarter of a second. `--pacing jaguar|display`
+chooses for one run without saving. The single-thread loop ignores the setting (it is already display-paced).
+`VJ_PERF_TRACE`'s emulation rows end with `mode`, `tick_seq`, `ticks_dropped` and `lock_reason`, which the summary
+script counts.
 
 While it is on, every Tools window works (their data is copied by the emulation thread after each frame, and their edits
 run on it), and so do Break, Step, breakpoints and the GDB stub. The halt is served by the emulation thread in 4 ms slices
@@ -1104,7 +1120,8 @@ The tests labelled `emu_thread` (`ctest -L emu_thread`) cover the emulation thre
 | `cmake/VJShaders.cmake` | pinned header fetch, optional prebuilt runtime, shader tests |
 | `src/audio.*` | SDL3 audio stream with dynamic rate control |
 | `src/emu_thread.*`, `src/emu_commands.h` | the emulation thread (#967): its loop, `post` / `call` / `advance`, the ordered command queue |
-| `src/pacing_clock.h` | mode A pacing: the core's period trimmed by the audio queue (the sound card as master clock) |
+| `src/pacing_clock.h` | the emulation thread's pacing: mode A, the core's period trimmed by the audio queue (the sound card as master clock); mode B, a frame every k display ticks with owed ticks dropped |
+| `src/display_lock.h` | Frame pacing's lock verdict (mode B, #1038): which displays lock at which k, the fallback reasons, the hysteresis |
 | `src/frame_exchange.h`, `src/frame.h` | finished frames from the emulation thread to the UI (triple buffer, content epochs) |
 | `src/emu_snapshot.h` | what the emulation thread publishes for the UI: the per-frame snapshot and the core-event stream (log lines, events, option writes) |
 | `src/ach_event.*` | an rc_client event copied, so it can be applied on the UI thread |

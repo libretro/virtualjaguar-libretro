@@ -755,6 +755,110 @@ void testAdvanceBudgetDoesNotOvertakeFramePost() {
     CHECK(e.stop(), "stop");
 }
 
+// Mode B (#1038): a fake UI publishing display ticks.  Frames only on ticks (k per frame), owed ticks dropped behind a
+// jump, the grid's own backstop when the UI stops ticking, mode A again without a grid; pause, advance() and commands as
+// in mode A.  Deadline polls and frame counts only: no latency ceilings (a starved runner only makes things slower).
+struct TickClient : FakeClient {
+    std::mutex gm;
+    bool on = false;
+    EmuThread::Client::DisplayGrid grid;   // (under gm)
+    bool displayGrid(double now, DisplayGrid& g) override {
+        (void)now;
+        std::lock_guard<std::mutex> l(gm);
+        if (on) g = grid;
+        return on;
+    }
+    void tick(EmuThread& e, uint64_t seq, unsigned k = 1, double period = 10.0) {   // a 10 s period: no backstop
+        {
+            std::lock_guard<std::mutex> l(gm);
+            on = true;
+            grid.tick = seq;
+            grid.tickAt = std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
+            grid.period = period;
+            grid.k = k;
+        }
+        e.notifyTick();
+    }
+    void off(EmuThread& e) {
+        {
+            std::lock_guard<std::mutex> l(gm);
+            on = false;
+        }
+        e.notifyTick();
+    }
+};
+
+bool waitFrames(const EmuThread& e, uint64_t n) {
+    for (int i = 0; i < 5000 && e.framesRun() < n; i++) sleepMs(1);
+    return e.framesRun() >= n;
+}
+
+void testDisplayTicks() {
+    EmuThread e;
+    TickClient c;
+    c.period = 0.001;   // mode A would run 1000 frames a second
+    c.tick(e, 100);
+    CHECK(e.start(EmuThread::Mode::Threaded, c), "start");
+    sleepMs(100);
+    CHECK(e.framesRun() == 0, "entering mode B, the first frame waits for the next tick (%llu)", (unsigned long long)e.framesRun());
+    c.tick(e, 101);
+    CHECK(waitFrames(e, 1), "tick 101: one frame");
+    sleepMs(100);
+    CHECK(e.framesRun() == 1 && e.modeB(), "and only one, on a tick (%llu)", (unsigned long long)e.framesRun());
+    for (uint64_t t = 102; t <= 104; t++) {
+        c.tick(e, t);
+        CHECK(waitFrames(e, t - 100), "tick %llu: its frame", (unsigned long long)t);
+    }
+    // k = 2: a new multiple settles on the next tick, then one frame every two ticks.
+    c.tick(e, 105, 2);
+    sleepMs(50);
+    const uint64_t at = e.framesRun();
+    c.tick(e, 106, 2);
+    CHECK(waitFrames(e, at + 1), "k=2: the first frame on the next tick");
+    c.tick(e, 107, 2);
+    sleepMs(100);
+    CHECK(e.framesRun() == at + 1, "k=2: nothing on the tick between (%llu)", (unsigned long long)(e.framesRun() - at));
+    c.tick(e, 108, 2);
+    CHECK(waitFrames(e, at + 2), "k=2: the next frame two ticks later");
+    // Commands are served while it waits for a tick.
+    const auto t0 = Clock::now();
+    CHECK(e.call([] { return 5; }) == 5, "a call() is answered between ticks (%.3f s)", since(t0));
+    // A jump of 10 ticks (a stall): the owed ticks are dropped, one catch-up frame runs, never a burst.
+    c.tick(e, 108, 1);
+    sleepMs(50);
+    const uint64_t b0 = e.framesRun(), d0 = e.droppedTicks();
+    c.tick(e, 109, 1);
+    CHECK(waitFrames(e, b0 + 1), "k=1 again: a frame on the next tick");
+    c.tick(e, 119, 1);
+    CHECK(waitFrames(e, b0 + 3), "a 10-tick jump: the frame on it and one catch-up frame");
+    sleepMs(100);
+    CHECK(e.framesRun() == b0 + 3, "no burst behind the jump (%llu frames)", (unsigned long long)(e.framesRun() - b0));
+    CHECK(e.droppedTicks() - d0 == 8, "the 8 owed ticks between were dropped (%llu)", (unsigned long long)(e.droppedTicks() - d0));
+    // Paused: no frames on ticks; advance() still runs its frames.
+    e.setPaused(true);
+    sleepMs(20);
+    const uint64_t p0 = e.framesRun();
+    c.tick(e, 120);
+    c.tick(e, 121);
+    sleepMs(100);
+    CHECK(e.framesRun() == p0, "paused: ticks run nothing");
+    const auto a0t = Clock::now();
+    CHECK(e.advance(2) && e.framesRun() == p0 + 2, "paused: advance(2) runs two frames without ticks");
+    CHECK(since(a0t) < 2.0, "without waiting for one (the next is 10 s away): no hang (%.3f s)", since(a0t));
+    e.setPaused(false);
+    // The UI stops ticking: the grid's own backstop keeps frames coming at the display rate.
+    c.tick(e, 130, 1, 0.005);
+    const uint64_t s0 = e.framesRun();
+    CHECK(waitFrames(e, s0 + 20), "no UI ticks: the grid's backstop keeps running frames (%llu)", (unsigned long long)(e.framesRun() - s0));
+    // No grid (mode A): frames on the clock again.
+    c.off(e);
+    const uint64_t a0 = e.framesRun();
+    CHECK(waitFrames(e, a0 + 50), "no grid: mode A runs frames on its own");
+    sleepMs(20);
+    CHECK(!e.modeB(), "and says so");
+    CHECK(e.stop(), "stop");
+}
+
 int main() {
 #ifdef _WIN32
     // The app runs EmuThread after SDL_Init, which sets the Windows timer resolution to 1 ms
@@ -782,6 +886,7 @@ int main() {
     testAdvanceGivesUp();
     testCallGiveUpLosesToStart();
     testAdvanceBudgetDoesNotOvertakeFramePost();
+    testDisplayTicks();
 #ifdef _WIN32
     timeEndPeriod(1);
 #endif

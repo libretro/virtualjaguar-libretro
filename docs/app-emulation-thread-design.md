@@ -114,6 +114,26 @@ The UI never waits on emulation.
   119.88 Hz lock NTSC, 50 / 100 Hz lock PAL, everything else falls back. Mode A is also forced while link play is
   active, and in mode B the UI's latch wait ends when the tick's frame is published. Plan:
   [app-emulation-thread-plan-phase4.md](app-emulation-thread-plan-phase4.md).
+- *As built (phase 4b, #1038):*
+  - **The measured period** is `LateLatch::measuredPeriodNs()`: the tracked vblank phase's travel over 2-20 s spans,
+    counted vblank by vblank, so a 59.94 Hz panel announced as 60 Hz reads 16.683 ms. Mode B waits for it.
+  - **Ticks count vblanks, not swaps.** The UI publishes one snapshot after each blocking swap (tick, its vblank time,
+    the measured period, k, the base ratio) under a mutex, after handing over the input that arrived while it built
+    and swapped, so the tick's frame polls it, as in the single-thread loop. A UI iteration that misses a vblank moves
+    the tick by two, and the emulation thread runs the frame it owes.
+  - **The emulation thread does not depend on the UI swapping.** When the UI's next tick is 2 ms late, the thread
+    starts the frame on the snapshot's grid by itself; when the snapshot is 250 ms old (a modal, a live resize, a
+    sleeping display), it runs mode A until the UI ticks again. One non-blocking swap leaves mode B at once.
+  - **Wake on publish, then the last chance.** The UI's latch wait ends when the tick's frame is published (an SDL
+    event from the emulation thread). Past the latch's padded wake time it goes on waiting for that frame only, until
+    the vblank minus the build estimate without the pad (`LateLatch::lastChanceNs`): a 14 ms frame (Cybermorph)
+    finishes after the padded wake time but still fits the period, as it does inline. The pipeline model
+    (`late_latch_unit`) puts mode B at 24.7 ms event to present for 5, 12 and 14 ms frames, against inline's 25.0;
+    without the last chance a 14 ms frame takes 41.3 ms.
+  - **Audio**: one controller at a time, switched at a frame boundary: mode B sets `AudioOut::setBaseRatio((display /
+    k) / core)` and trims around it with `update(true)`; mode A sets the base back to 1 and passes `update(false)`. The
+    base is republished only when the measurement moves it by more than 0.02% (each set restarts the trim).
+  - **Notices**: one per lasting (2 s) change of a fallback reason; settling and fast-forward never show one.
 
 ### Shared rules
 - **Fast-forward:** unthrottled or a set multiple, audio dropped (as today).

@@ -24,6 +24,7 @@ public:
         float aspect = 4.0f / 3.0f;   // CoreHost::aspect() when the frame was made
         uint64_t epoch = 0;           // stamped by writeBuffer()
         uint64_t inputSeq = 0;        // the InputSnapshot publish this frame's poll took (event -> present, VJ_PERF_CSV)
+        uint64_t tick = 0;            // mode B: the display tick the frame started on (0 = mode A)
     };
 
     // ---- writer (the emulation thread) ----

@@ -10,6 +10,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "config.h"
 #include "core_host.h"
 #include "debug/debug_session.h"
+#include "display_lock.h"
 #include "desktop_nav_app.h"
 #include "fonts.h"
 #include "fullscreen_menu.h"
@@ -113,6 +115,7 @@ struct CliArgs {
     bool perfInput = false;         // dev: with --perf-frames, inject a key event every 30 iterations (input-latency column)
     int lateLatch = -1;             // dev: --late-latch on|off, threaded + vsync only (default on; #967 measurement)
     int paceSteer = -1;             // dev: --pace-steer on|off, threaded + vsync only (default on; #967 evenness)
+    int pacing = -1;                // dev: --pacing jaguar|display, Video > Frame pacing for this run (not saved; #1038)
     int emuWake = -1;               // dev: --emu-wake precise|plain, the emulation thread's wake-ups (default precise)
     int latchWake = -1;             // dev: --latch-wake timer|plain, how the UI thread's timed event waits end (default timer; #1026)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
@@ -291,6 +294,11 @@ public:
     // Video settings (persisted)
     PresentOptions present;
     bool vsync = true;
+    // Video > Frame pacing (video.pacing): Match display = mode B (#1038, display_lock.h), emulation thread only.  Off =
+    // Jaguar rate (mode A), the default.  Read live after every swap: no restart.
+    bool pacingDisplay = false;
+    std::string pacingStatus() const;   // Settings: what Frame pacing is doing right now
+    int pacingFromCli_ = -1;            // --pacing: the value this run started with, never saved over the setting
     float volume = 1.0f;
     bool mute = false;
     float audioTargetMs = 64.0f;
@@ -503,6 +511,39 @@ private:
     bool paceSteerOn_ = true;
     std::atomic<uint64_t> takeNs_{0}, takePeriodNs_{0};
     void publishTakeGrid(uint64_t takeNs);
+    // Mode B (#1038, display_lock.h): the lock verdict, after every threaded swap, and the grid it hands the emulation
+    // thread (EmuThread::Client::displayGrid).  The grid is one snapshot under gridMu_: the emulation thread must never
+    // see mode B with another verdict's k or base ratio.
+    struct ModeBGrid {
+        bool on = false;
+        uint64_t tick = 0;       // the vblank this swap returned on (counted, never reset)
+        uint64_t tickNs = 0;     // when (SDL_GetTicksNS)
+        uint64_t periodNs = 0;   // LateLatch::measuredPeriodNs()
+        unsigned k = 1;
+        double baseRatio = 1.0;
+    };
+    static constexpr uint64_t kGridStaleNs = 250000000;   // a grid not refreshed this long (the UI stopped swapping): mode A
+    DisplayLock displayLock_;
+    DisplayLockVerdict lockVerdict_;            // UI thread: the last verdict
+    std::mutex gridMu_;
+    ModeBGrid grid_;                            // (under gridMu_)
+    uint64_t tickSeq_ = 0, tickNs_ = 0;         // UI thread: the last tick published (tickNs_ 0 = not ticking)
+    double gridBase_ = 1.0;                     // UI thread: the base ratio published (moved only past kBaseStep)
+    static constexpr double kBaseStep = 0.0002;  // (AudioOut::setBaseRatio restarts the trim: not on every re-measure)
+    LockReason noticeReason_ = LockReason::Setting, heldReason_ = LockReason::Setting;   // UI thread: displayLockNotice()
+    unsigned heldSwaps_ = 0;
+    LockReason loggedReason_ = LockReason::Setting;   // UI thread: the last reason logged
+    std::atomic<uint64_t> publishedTick_{0};    // emulation thread: the tick of the newest frame it finished (wake on publish)
+    std::atomic<int> lockReasonCode_{0};        // UI -> emulation thread (VJ_PERF_TRACE lock_reason)
+    uint64_t frameTick_ = 0;                    // emulation thread: the tick the frame about to run started on (0 = mode A)
+    bool audioModeB_ = false;                   // emulation thread: the audio controller in charge (mode B: AudioOut's)
+    double frameBase_ = 1.0;                    // emulation thread: the base ratio of the grid the frame started on
+    static constexpr Sint32 kFrameReadyCode = 0x564A4652;   // 'VJFR': the emulation thread finished a tick's frame
+    static bool isFrameReady(const SDL_Event& e) { return e.type == SDL_EVENT_USER && e.user.code == kFrameReadyCode; }
+    void displayLockAfterSwap(uint64_t swap0, uint64_t swap1);
+    void displayLockNotice();
+    void displayChanged();                      // the window moved display, its mode changed, fullscreen: measure again
+    static const char* lockReasonText(LockReason r);
     uint64_t latchedAtNs_ = 0;   // when this iteration's wait ended: its UI work starts there
     unsigned latchChecks_ = 0;
     bool latchLogged_ = false;

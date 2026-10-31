@@ -188,6 +188,18 @@ void drawVideoTab(App& app) {
     auto aspectLabel = [](void*, int i) { return kAspectChoices[i].label; };
     if (ImGui::Combo("Aspect ratio", &sel, aspectLabel, nullptr, kAspectChoiceCount)) p.aspectOverride = kAspectChoices[sel].value;
     if (ImGui::Checkbox("VSync", &app.vsync)) app.applyVsync();
+    int pace = app.pacingDisplay ? 1 : 0;
+    const char* paceChoices[] = {"Jaguar rate", "Match display"};
+    ImGui::SetNextItemWidth(ui::fitWidth(0.4f, 9.0f, 16.0f));
+    if (ImGui::Combo("Frame pacing", &pace, paceChoices, 2)) app.pacingDisplay = pace == 1;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Jaguar rate: the console's own 60.05 / 50.08 Hz, kept by the sound card. A 60 Hz display shows one\n"
+                          "frame twice about every 20 seconds.\n"
+                          "Match display: one frame per refresh (or per two) where the display runs at a multiple of the\n"
+                          "game's rate (60, 59.94, 120 Hz for NTSC games; 50, 100 Hz for PAL), the sound following it.\n"
+                          "Elsewhere it says why and uses the Jaguar rate. Needs the emulation thread and vsync.");
+    const std::string paceNow = app.pacingStatus();
+    if (!paceNow.empty()) ui::hint("%s", paceNow.c_str());
     bool fs = app.fullscreen;
     if (ImGui::Checkbox("Fullscreen (F11)", &fs)) app.setFullscreen(fs);
     drawShaderSettings(app);
