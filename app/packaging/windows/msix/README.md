@@ -23,8 +23,8 @@ cmake --install build --prefix stage-store
 ```
 
 The script validates the input PE machine and version (`major.minor.patch.0`,
-major > 0, components <= 65535, final component zero), preserves `bin/` beside the
-executable and all installed documentation, renders `AppxManifest.xml`, packs
+major > 0, components <= 65535, final component zero), places the contents of `bin/` at the
+package root and preserves all installed documentation, renders `AppxManifest.xml`, packs
 with SDK validation enabled, unpacks and checks every staged file's SHA256.
 The output includes an **unsigned** `.msix` and checksum/identity summary JSON.
 A fresh output folder avoids silently replacing packages from another source.

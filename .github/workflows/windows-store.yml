@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [develop, master, 'release/**']
     paths:
+      - 'Makefile'
+      - 'app/packaging/icons/**'
+      - 'app/packaging/check-payload.sh'
+      - 'test/roms/yarc.j64'
       - 'app/packaging/windows/msix/**'
       - 'app/src/platform/platform_windows.cpp'
       - '.github/workflows/windows-store.yml'

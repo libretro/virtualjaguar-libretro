@@ -27,7 +27,7 @@ try {
     $publicCertificate = Join-Path $out 'test-only.cer'
     Export-Certificate -Cert $certificate -FilePath $publicCertificate | Out-Null
     $trusted = Import-Certificate -FilePath $publicCertificate -CertStoreLocation Cert:\LocalMachine\TrustedPeople
-    $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+    $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
     if (!$sdk) { throw 'Windows SDK SignTool missing' }
     & $sdk.FullName sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $signedCopy
     if ($LASTEXITCODE -ne 0) { throw 'Test signing failed' }

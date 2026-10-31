@@ -92,7 +92,7 @@ if ($StageOnly) { Write-Output $layout; return }
 if (-not $IsWindows) { throw 'Packing requires Windows; use -StageOnly to inspect a layout on other hosts.' }
 if (-not $MakeAppx) {
     $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
-    $tools = @(Get-ChildItem -Path "$sdk/*/x64/makeappx.exe" | Sort-Object { [version]$_.Directory.Parent.Name } -Descending)
+    $tools = @(Get-ChildItem -Path "$sdk/*/x64/makeappx.exe" -ErrorAction SilentlyContinue | Sort-Object { [version]$_.Directory.Parent.Name } -Descending)
     if (-not $tools.Count) { throw 'Install the Windows SDK or pass -MakeAppx.' }
     $MakeAppx = $tools[0].FullName
 }
