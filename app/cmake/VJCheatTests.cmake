@@ -17,6 +17,9 @@
 #   cheat_tempest_*          (corpus + private ROM) the real database's Tempest 2000
 #                            "Infinite Lives" is found through the core's own title
 #                            identity and reaches RAM
+#   <each of the above through the real binary>_threaded   the same run with --emu-thread on (#967, label emu_thread, so the
+#                            TSan job runs it); the persist chain gets its own data dirs and fixture names, so the two
+#                            chains never share state
 
 set(_fx "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures")
 get_filename_component(_fx "${_fx}" ABSOLUTE)
@@ -45,41 +48,68 @@ add_test(NAME cheat_apply
 add_test(NAME cheat_apply_control
     COMMAND virtualjaguar --headless --frames 60 --expect-ram 1F0000=AB "${_yarc}")
 set_tests_properties(cheat_apply_control PROPERTIES PASS_REGULAR_EXPRESSION "${_no_cheat}")
+add_test(NAME cheat_apply_control_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 60 --expect-ram 1F0000=AB "${_yarc}")
+set_tests_properties(cheat_apply_control_threaded PROPERTIES PASS_REGULAR_EXPRESSION "${_no_cheat}")
 
 add_test(NAME cheat_state
     COMMAND virtualjaguar --headless --frames 240 --state-roundtrip
             --cheat 001F0000:AB --expect-ram 1F0000=AB "${VJ_ROMS}/jagniccc.j64")
+add_test(NAME cheat_state_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 240 --state-roundtrip
+            --cheat 001F0000:AB --expect-ram 1F0000=AB "${VJ_ROMS}/jagniccc.j64")
 
-set(_pd "${CMAKE_BINARY_DIR}/cheat-persist-data")
-set(_pc "${CMAKE_BINARY_DIR}/cheat-persist-control")
-add_test(NAME cheat_persist_clean
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "${_pd}" "${_pc}")
-# Run 1: yarc.cht (a fixture whose name matches the ROM's file name) supplies "Lives byte".
-add_test(NAME cheat_persist_save
-    COMMAND virtualjaguar --headless --frames 60 --data-dir "${_pd}" --cheats-dir "${_fx}"
-            --cheat-on "Lives byte" --expect-ram 1F0010=05 "${_yarc}")
-# Run 2: a new process, same data directory, NO cheat option: it must still be on.
-add_test(NAME cheat_persist_restart
-    COMMAND virtualjaguar --headless --frames 60 --data-dir "${_pd}" --cheats-dir "${_fx}"
-            --expect-ram 1F0010=05 "${_yarc}")
-# Control: the same, but a data directory nothing was saved to.
-add_test(NAME cheat_persist_control
-    COMMAND virtualjaguar --headless --frames 60 --data-dir "${_pc}" --cheats-dir "${_fx}"
-            --expect-ram 1F0010=05 "${_yarc}")
-set_tests_properties(cheat_persist_control PROPERTIES
-    PASS_REGULAR_EXPRESSION "headless: FAIL ram 0x1F0010 is [0-9A-F]+, expected 05")
-add_test(NAME cheat_persist_cleanup
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "${_pd}" "${_pc}")
-set_tests_properties(cheat_persist_clean PROPERTIES FIXTURES_SETUP cheat_persist_fresh)
-set_tests_properties(cheat_persist_save PROPERTIES
-    FIXTURES_REQUIRED cheat_persist_fresh FIXTURES_SETUP cheat_persist_saved)
-set_tests_properties(cheat_persist_restart cheat_persist_control PROPERTIES
-    FIXTURES_REQUIRED "cheat_persist_fresh;cheat_persist_saved")
-set_tests_properties(cheat_persist_cleanup PROPERTIES FIXTURES_CLEANUP "cheat_persist_fresh;cheat_persist_saved")
+# The save -> restart -> control chain, once inline and once threaded: <_th> is "" or "_threaded", and the twin has its
+# own data dirs and fixture names, so the two chains never share state.
+foreach(_th "" "_threaded")
+    if(_th)
+        set(_thargs --emu-thread on)
+    else()
+        set(_thargs)
+    endif()
+    set(_pd "${CMAKE_BINARY_DIR}/cheat-persist-data${_th}")
+    set(_pc "${CMAKE_BINARY_DIR}/cheat-persist-control${_th}")
+    add_test(NAME cheat_persist_clean${_th}
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${_pd}" "${_pc}")
+    # Run 1: yarc.cht (a fixture whose name matches the ROM's file name) supplies "Lives byte".
+    add_test(NAME cheat_persist_save${_th}
+        COMMAND virtualjaguar --headless ${_thargs} --frames 60 --data-dir "${_pd}" --cheats-dir "${_fx}"
+                --cheat-on "Lives byte" --expect-ram 1F0010=05 "${_yarc}")
+    # Run 2: a new process, same data directory, NO cheat option: it must still be on.
+    add_test(NAME cheat_persist_restart${_th}
+        COMMAND virtualjaguar --headless ${_thargs} --frames 60 --data-dir "${_pd}" --cheats-dir "${_fx}"
+                --expect-ram 1F0010=05 "${_yarc}")
+    # Control: the same, but a data directory nothing was saved to.
+    add_test(NAME cheat_persist_control${_th}
+        COMMAND virtualjaguar --headless ${_thargs} --frames 60 --data-dir "${_pc}" --cheats-dir "${_fx}"
+                --expect-ram 1F0010=05 "${_yarc}")
+    set_tests_properties(cheat_persist_control${_th} PROPERTIES
+        PASS_REGULAR_EXPRESSION "headless: FAIL ram 0x1F0010 is [0-9A-F]+, expected 05")
+    add_test(NAME cheat_persist_cleanup${_th}
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${_pd}" "${_pc}")
+    set_tests_properties(cheat_persist_clean${_th} PROPERTIES FIXTURES_SETUP cheat_persist_fresh${_th})
+    set_tests_properties(cheat_persist_save${_th} PROPERTIES
+        FIXTURES_REQUIRED cheat_persist_fresh${_th} FIXTURES_SETUP cheat_persist_saved${_th})
+    set_tests_properties(cheat_persist_restart${_th} cheat_persist_control${_th} PROPERTIES
+        FIXTURES_REQUIRED "cheat_persist_fresh${_th};cheat_persist_saved${_th}")
+    set_tests_properties(cheat_persist_cleanup${_th} PROPERTIES
+        FIXTURES_CLEANUP "cheat_persist_fresh${_th};cheat_persist_saved${_th}")
+endforeach()
+set_tests_properties(cheat_persist_clean_threaded cheat_persist_save_threaded cheat_persist_restart_threaded
+                     cheat_persist_control_threaded cheat_persist_cleanup_threaded PROPERTIES LABELS emu_thread)
 
 set_tests_properties(cheats_unit cheat_apply cheat_state cheat_persist_save cheat_persist_restart PROPERTIES
     TIMEOUT 300
     FAIL_REGULAR_EXPRESSION "headless: FAIL")
+# The twins: also the threaded OK line (the run really was threaded), and no owner violation / TSan report.  The controls
+# pass by failing for their stated reason, so they only guard against the threading errors.
+set_tests_properties(cheat_state_threaded cheat_persist_save_threaded cheat_persist_restart_threaded PROPERTIES
+    TIMEOUT 300 LABELS emu_thread
+    PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
+    FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+set_tests_properties(cheat_apply_control_threaded cheat_persist_control_threaded PROPERTIES
+    TIMEOUT 300 LABELS emu_thread
+    FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
 
 # ---- the real database, when it was downloaded -------------------------------------------
 if(VJ_CHEATS_DIR AND EXISTS "${VJ_CHEATS_DIR}/Tempest 2000.cht")
@@ -115,6 +145,19 @@ if(VJ_CHEATS_DIR AND EXISTS "${VJ_CHEATS_DIR}/Tempest 2000.cht")
         set_tests_properties(cheat_tempest_control PROPERTIES
             PASS_REGULAR_EXPRESSION "headless: FAIL ram 0x007D3D is [0-9A-F]+, expected 05")
         set_tests_properties(cheat_tempest_lives PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "headless: FAIL")
+        add_test(NAME cheat_tempest_lives_threaded
+            COMMAND virtualjaguar --headless --emu-thread on --frames 600 --cheats-dir "${VJ_CHEATS_DIR}"
+                    --cheat-on "Infinite Lives" --expect-ram 7D3D=05 "${_t2k}")
+        add_test(NAME cheat_tempest_control_threaded
+            COMMAND virtualjaguar --headless --emu-thread on --frames 600 --cheats-dir "${VJ_CHEATS_DIR}"
+                    --expect-ram 7D3D=05 "${_t2k}")
+        set_tests_properties(cheat_tempest_control_threaded PROPERTIES
+            PASS_REGULAR_EXPRESSION "headless: FAIL ram 0x007D3D is [0-9A-F]+, expected 05"
+            FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
+        set_tests_properties(cheat_tempest_lives_threaded PROPERTIES TIMEOUT 300
+            PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
+            FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+        set_tests_properties(cheat_tempest_lives_threaded cheat_tempest_control_threaded PROPERTIES LABELS emu_thread)
     else()
         message(STATUS "VJCheatTests: no private Tempest 2000 ROM; the database end-to-end test is not registered")
     endif()
@@ -138,6 +181,13 @@ if(Python3_Interpreter_FOUND AND _vj_bash2 AND EXISTS "${VJ_ROOT}/site/cheats/pa
                     "$<TARGET_FILE:virtualjaguar>" "${VJ_ROOT}/site/cheats" "${_evil}" 5E2CDBC0
                     "${CMAKE_BINARY_DIR}/cheat-community-test")
         set_tests_properties(cheat_community_install PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL ")
+        # Threaded: the script runs every app launch with --emu-thread on (its own work dir) and fails on an owner violation.
+        add_test(NAME cheat_community_install_threaded
+            COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_CURRENT_LIST_DIR}/../tests/cheat_community_smoke.py"
+                    "$<TARGET_FILE:virtualjaguar>" "${VJ_ROOT}/site/cheats" "${_evil}" 5E2CDBC0
+                    "${CMAKE_BINARY_DIR}/cheat-community-test_threaded" on)
+        set_tests_properties(cheat_community_install_threaded PROPERTIES TIMEOUT 300 LABELS emu_thread
+            FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
     else()
         message(STATUS "VJCheatTests: no private Doom - Evil Unleashed ROM; cheat_community_install is not registered")
     endif()

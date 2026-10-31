@@ -51,6 +51,10 @@ set(VJ_ROMS "${VJ_ROOT}/test/roms")
 set(VJ_SMOKE_FRAMES 300 CACHE STRING "Frames per game in the smoke tests")
 set(VJ_SMOKE_YARC_HASH "f4c30ea3" CACHE STRING "Expected final-frame hash of yarc.j64 (hex); empty disables the check")
 
+# The OK line of a headless run on the emulation thread (it says "emulation thread" only when the thread really ran):
+# what every _threaded twin requires (VJEmuThreadTests.cmake, VJCheatTests.cmake, the controls tests below).
+set(_vj_threaded_ok "headless: OK \\([0-9]+ load\\(s\\), emulation thread\\)")
+
 if(VJ_SMOKE_YARC_HASH)
     set(_yarc_hash_args --expect-hash ${VJ_SMOKE_YARC_HASH})
 else()
@@ -308,33 +312,51 @@ set_tests_properties(remap_unit input_e2e devices_unit devices_e2e bios_e2e PROP
 #   controls_overlay_rebound    a saved global rebinding (B = M, scancode 16) changes the text;
 #                               the per-game layer is covered by devices_unit.
 # ---------------------------------------------------------------------------
-set(VJ_CTL_DISMISSED "${CMAKE_BINARY_DIR}/ctl_dismissed")
-set(VJ_CTL_REBOUND "${CMAKE_BINARY_DIR}/ctl_rebound")
-set(VJ_CTL_DEFAULT "${CMAKE_BINARY_DIR}/ctl_default")
-file(MAKE_DIRECTORY "${VJ_CTL_DISMISSED}" "${VJ_CTL_REBOUND}" "${VJ_CTL_DEFAULT}")
-set(VJ_CTL_ON "${CMAKE_BINARY_DIR}/ctl_on")
-file(MAKE_DIRECTORY "${VJ_CTL_ON}")
-file(WRITE "${VJ_CTL_ON}/config.ini" "ui.controls.autoshow=1\n")
-file(WRITE "${VJ_CTL_DISMISSED}/config.ini" "ui.controls.autoshow=0\n")
-file(WRITE "${VJ_CTL_REBOUND}/config.ini" "input.kb.b=k16\nui.controls.autoshow=1\n")
+# Each test also runs as <name>_threaded (--emu-thread on, label emu_thread: the TSan job): the same expectations, and its
+# own data folder, since a headless run saves config.ini and the two must never share it.
+foreach(_th "" "_threaded")
+    if(_th)
+        set(_thargs --emu-thread on)
+    else()
+        set(_thargs)
+    endif()
+    set(VJ_CTL_DISMISSED "${CMAKE_BINARY_DIR}/ctl_dismissed${_th}")
+    set(VJ_CTL_REBOUND "${CMAKE_BINARY_DIR}/ctl_rebound${_th}")
+    set(VJ_CTL_DEFAULT "${CMAKE_BINARY_DIR}/ctl_default${_th}")
+    set(VJ_CTL_ON "${CMAKE_BINARY_DIR}/ctl_on${_th}")
+    file(MAKE_DIRECTORY "${VJ_CTL_DISMISSED}" "${VJ_CTL_REBOUND}" "${VJ_CTL_DEFAULT}" "${VJ_CTL_ON}")
+    file(WRITE "${VJ_CTL_ON}/config.ini" "ui.controls.autoshow=1\n")
+    file(WRITE "${VJ_CTL_DISMISSED}/config.ini" "ui.controls.autoshow=0\n")
+    file(WRITE "${VJ_CTL_REBOUND}/config.ini" "input.kb.b=k16\nui.controls.autoshow=1\n")
 
-add_test(NAME controls_overlay_default
-    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_DEFAULT}" --expect-controls-overlay hidden "${VJ_ROMS}/yarc.j64")
-set_tests_properties(controls_overlay_default PROPERTIES
-    PASS_REGULAR_EXPRESSION "\\[osd\\] Press F3 for the controls")
+    add_test(NAME controls_overlay_default${_th}
+        COMMAND virtualjaguar --headless ${_thargs} --frames 5 --data-dir "${VJ_CTL_DEFAULT}" --expect-controls-overlay hidden "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(controls_overlay_default${_th} PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\[osd\\] Press F3 for the controls")
 
-add_test(NAME controls_overlay_keyboard
-    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_ON}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
-set_tests_properties(controls_overlay_keyboard PROPERTIES
-    PASS_REGULAR_EXPRESSION "Player 1: Standard Joypad - keyboard.*B: Z.*Keypad 9 \\(Pro: X\\): [^\n]*, A\n")
+    add_test(NAME controls_overlay_keyboard${_th}
+        COMMAND virtualjaguar --headless ${_thargs} --frames 5 --data-dir "${VJ_CTL_ON}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(controls_overlay_keyboard${_th} PROPERTIES
+        PASS_REGULAR_EXPRESSION "Player 1: Standard Joypad - keyboard.*B: Z.*Keypad 9 \\(Pro: X\\): [^\n]*, A\n")
 
-add_test(NAME controls_overlay_dismissed
-    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_DISMISSED}" --expect-controls-overlay hidden "${VJ_ROMS}/yarc.j64")
+    add_test(NAME controls_overlay_dismissed${_th}
+        COMMAND virtualjaguar --headless ${_thargs} --frames 5 --data-dir "${VJ_CTL_DISMISSED}" --expect-controls-overlay hidden "${VJ_ROMS}/yarc.j64")
+    if(_th)   # no text of its own to pass on: the run must say it was threaded
+        set_tests_properties(controls_overlay_dismissed${_th} PROPERTIES PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}")
+    endif()
 
-add_test(NAME controls_overlay_rebound
-    COMMAND virtualjaguar --headless --frames 5 --data-dir "${VJ_CTL_REBOUND}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
-set_tests_properties(controls_overlay_rebound PROPERTIES
-    PASS_REGULAR_EXPRESSION "  B: M\n")
-set_tests_properties(controls_overlay_default controls_overlay_keyboard controls_overlay_dismissed controls_overlay_rebound PROPERTIES
-    TIMEOUT 120
-    FAIL_REGULAR_EXPRESSION "headless: FAIL")
+    add_test(NAME controls_overlay_rebound${_th}
+        COMMAND virtualjaguar --headless ${_thargs} --frames 5 --data-dir "${VJ_CTL_REBOUND}" --expect-controls-overlay shown --print-controls "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(controls_overlay_rebound${_th} PROPERTIES
+        PASS_REGULAR_EXPRESSION "  B: M\n")
+    set_tests_properties(controls_overlay_default${_th} controls_overlay_keyboard${_th} controls_overlay_dismissed${_th}
+                         controls_overlay_rebound${_th} PROPERTIES TIMEOUT 120)
+    if(_th)
+        set_tests_properties(controls_overlay_default${_th} controls_overlay_keyboard${_th} controls_overlay_dismissed${_th}
+                             controls_overlay_rebound${_th} PROPERTIES LABELS emu_thread
+            FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+    else()
+        set_tests_properties(controls_overlay_default controls_overlay_keyboard controls_overlay_dismissed
+                             controls_overlay_rebound PROPERTIES FAIL_REGULAR_EXPRESSION "headless: FAIL")
+    endif()
+endforeach()
