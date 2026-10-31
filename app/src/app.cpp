@@ -143,7 +143,27 @@ struct App::EmuClient : EmuThread::Client {
     double framePeriod() override { return 1.0 / std::max(1.0, app.host.fps()); }
     double audioQueuedMs() override { return app.emuAudioQueuedMs(); }
     void runFrame() override { app.emuRunOneFrame(); }
-    void framePaced(double lateSec, const PacingClock& clock) override { app.tracePaced(lateSec, clock); }
+    void framePaced(double lateSec, const PacingClock& clock) override {
+        app.frameTick_ = clock.ticking() ? clock.startedTick() : 0;
+        app.audioModeB_ = clock.ticking();
+        app.tracePaced(lateSec, clock);
+    }
+    bool displayGrid(double now, DisplayGrid& g) override {
+        App::ModeBGrid m;
+        {
+            std::lock_guard<std::mutex> l(app.gridMu_);
+            m = app.grid_;
+        }
+        const uint64_t sdlNow = SDL_GetTicksNS();   // the UI's clock -> this thread's
+        // (signed: the tick's vblank is the grid point nearest the swap's return, which can be a little after now)
+        if (!m.on || !m.periodNs || (int64_t)(sdlNow - m.tickNs) > (int64_t)App::kGridStaleNs) return false;
+        g.tick = m.tick;
+        g.tickAt = now - (double)(int64_t)(sdlNow - m.tickNs) / 1e9;
+        g.period = (double)m.periodNs / 1e9;
+        g.k = m.k;
+        app.frameBase_ = m.baseRatio;
+        return true;
+    }
     bool takeGrid(double now, double& at, double& period) override {
         const uint64_t p = app.takePeriodNs_.load(std::memory_order_acquire);
         const uint64_t t = app.takeNs_.load(std::memory_order_relaxed);
@@ -211,6 +231,7 @@ void App::applySettingsFromConfig() {
     present.stretch = cfg.getBool("video.stretch", false);
     present.aspectOverride = cfg.getFloat("video.aspect", 0.0f);
     vsync = cfg.getBool("video.vsync", true);
+    pacingDisplay = cfg.get("video.pacing", "jaguar") == "display";
     video.shader.loadSettings(cfg, paths.root);
     volume = cfg.getFloat("audio.volume", 1.0f);
     mute = cfg.getBool("audio.mute", false);
@@ -291,6 +312,8 @@ void App::saveConfig() {
     cfg.setBool("video.stretch", present.stretch);
     cfg.setFloat("video.aspect", present.aspectOverride);
     cfg.setBool("video.vsync", vsync);
+    if (pacingFromCli_ < 0 || pacingDisplay != (pacingFromCli_ == 1))   // (--pacing is for this run only)
+        cfg.set("video.pacing", pacingDisplay ? "display" : "jaguar");
     video.shader.saveSettings(cfg);
     cfg.setFloat("audio.volume", volume);
     cfg.setBool("audio.mute", mute);
@@ -790,7 +813,15 @@ void App::emuRunOneFrame() {
     // The lanes were drained before this call: a Detach posted by the UI has run, so the silent host is missing now.  Put it
     // back BEFORE the frame, or a gdb breakpoint firing in this frame would halt with no pump and no mirror.
     attachGdbHostOnCore();
-    if (!emuFastForward_.load(std::memory_order_relaxed)) audio.update(false);   // underruns only: mode A follows the audio clock
+    const uint64_t tick = frameTick_;   // (advance() frames are not paced: no tick, and the controller in charge stays)
+    frameTick_ = 0;
+    if (!emuFastForward_.load(std::memory_order_relaxed)) {
+        // One audio controller at a time, switched at this frame boundary.  Mode A: underruns only (the pacing follows
+        // the audio clock).  Mode B: the stream plays at the display's rate (base) and AudioOut trims around it.
+        const double base = audioModeB_ ? frameBase_ : 1.0;
+        if (base != audio.baseRatio()) audio.setBaseRatio(base);
+        audio.update(audioModeB_);
+    }
     host.wantVideo = true;
     PerfTrace::Emu te = tracePaced_;
     if (trace_.enabled()) {
@@ -815,8 +846,17 @@ void App::emuRunOneFrame() {
         s.frame.pixels.assign(f.pixels.begin(), f.pixels.end());
         s.aspect = host.aspect();
         s.inputSeq = emuInputSeq_;
+        s.tick = tick;
         frames.publish();
         lastSentSerial_ = f.serial;
+    }
+    if (tick) {   // mode B: the UI's latch wait ends now (also when the core made no new picture: nothing to wait for)
+        publishedTick_.store(tick, std::memory_order_release);
+        SDL_Event ev;
+        SDL_zero(ev);
+        ev.type = SDL_EVENT_USER;
+        ev.user.code = kFrameReadyCode;
+        SDL_PushEvent(&ev);
     }
     if (trace_.enabled()) {
         te.endNs = SDL_GetTicksNS();
@@ -842,6 +882,10 @@ void App::tracePaced(double lateSec, const PacingClock& clock) {
     tracePaced_.queuedMs = (float)emuAudioQueuedMs();
     tracePaced_.audio = clock.audioLocked() ? 1 : 0;
     tracePaced_.refill = clock.refilling() ? 1 : 0;
+    tracePaced_.mode = clock.ticking() ? 1 : 0;
+    tracePaced_.tickSeq = clock.ticking() ? clock.startedTick() : 0;
+    tracePaced_.ticksDropped = clock.droppedTicks();
+    tracePaced_.lockReason = (unsigned char)lockReasonCode_.load(std::memory_order_relaxed);
     tracePacedSet_ = true;
 }
 
@@ -852,6 +896,129 @@ void App::publishTakeGrid(uint64_t takeNs) {
     const uint64_t p = (paceSteerOn_ && wantSync() && latch_.locked()) ? latch_.periodNs() : 0;
     takeNs_.store(takeNs, std::memory_order_relaxed);
     takePeriodNs_.store(p, std::memory_order_release);
+}
+
+// UI thread, threaded, right after every swap (#1038): the display lock's verdict, and in mode B the tick this swap
+// returned on.  The tick counts vblanks, not swaps: an iteration that missed one moves it by two, and the emulation
+// thread runs the frame it owes.  As the single-thread loop does after its swap, the input that came in while the UI
+// built and swapped is handed over first, so the tick's frame polls it.
+void App::displayLockAfterSwap(uint64_t swap0, uint64_t swap1) {
+    DisplayLockInput in;
+    const uint64_t mp = latch_.measuredPeriodNs();
+    in.matchDisplay = pacingDisplay;
+    in.vsync = wantSync() && swap1 - swap0 >= LateLatch::kBlockedNs;   // a swap that did not block is no vblank
+    in.latchLocked = latch_.locked() && mp;   // (not measured yet: not a clock to follow yet)
+    in.displayPeriod = (double)mp / 1e9;
+    in.corePeriod = host.isLoaded() && host.fps() > 1.0 ? 1.0 / host.fps() : 0;
+    in.fastForward = fastForward;
+    in.linked = netplay.link() != LinkState::Off;
+    lockVerdict_ = displayLock_.evaluate(in);
+    lockReasonCode_.store((int)lockVerdict_.reason, std::memory_order_relaxed);
+    if (lockVerdict_.reason != loggedReason_) {   // (the transitions, for the log: Settings shows the live state)
+        loggedReason_ = lockVerdict_.reason;
+        std::fprintf(stderr, "[emu] frame pacing: %s (%s), display %.3f Hz, k=%u, base ratio %.5f\n",
+                     lockVerdict_.mode == PacingMode::B ? "mode B" : "mode A", DisplayLock::name(lockVerdict_.reason),
+                     mp ? 1e9 / (double)mp : 0.0, lockVerdict_.k, lockVerdict_.baseRatio);
+    }
+    displayLockNotice();
+    ModeBGrid g;
+    if (lockVerdict_.mode == PacingMode::B) {
+        const uint64_t v = latch_.nearestVblankNs(swap1);
+        tickSeq_ += (tickNs_ && v > tickNs_) ? std::max<uint64_t>(1, (v - tickNs_ + mp / 2) / mp) : 1;
+        tickNs_ = v;
+        if (std::fabs(lockVerdict_.baseRatio - gridBase_) > kBaseStep || !grid_.on) gridBase_ = lockVerdict_.baseRatio;
+        SDL_Event e;
+        while (!quit && SDL_PollEvent(&e))
+            if (!LatchWaker::isWake(e) && !isFrameReady(e)) handleEvent(e, false);
+        publishInput();
+        g.on = true;
+        g.tick = tickSeq_;
+        g.tickNs = v;
+        g.periodNs = mp;
+        g.k = lockVerdict_.k;
+        g.baseRatio = gridBase_;
+    } else {
+        tickNs_ = 0;
+        gridBase_ = 1.0;
+    }
+    {
+        std::lock_guard<std::mutex> l(gridMu_);
+        grid_ = g;
+    }
+    if (g.on) emu.notifyTick();
+}
+
+// The display's grid changed, or may have (another display, a new mode, fullscreen): mode B settles and measures again.
+void App::displayChanged() {
+    displayLock_.reset();
+    latch_.resetMeasure();
+    if (window_) latchUpdatePeriod();   // (inline it only sets a period nothing reads)
+}
+
+const char* App::lockReasonText(LockReason r) {
+    switch (r) {
+        case LockReason::Locked: return "following the display";
+        case LockReason::Setting: return "Jaguar rate";
+        case LockReason::NoVsync: return "vsync is off";
+        case LockReason::Unlocked: return "the display's refresh is not steady";
+        case LockReason::Ratio: return "not a multiple";
+        case LockReason::Settling: return "measuring the display";
+        case LockReason::FastForward: return "fast-forward";
+        case LockReason::Link: return "link play";
+    }
+    return "";
+}
+
+// One message per change of a fallback that lasted (two seconds), while Match display is chosen.  Settling and
+// fast-forward never show one (every start, every press); a latch that flaps (Unlocked and back) shows one at most per
+// lasting change.  Back to following the display after a message: says so once.
+void App::displayLockNotice() {
+    const LockReason r = lockVerdict_.reason;
+    if (r != heldReason_) {
+        heldReason_ = r;
+        heldSwaps_ = 0;
+    }
+    if (r == LockReason::Setting) noticeReason_ = LockReason::Setting;   // chosen again later: report from scratch
+    if (!pacingDisplay || r == LockReason::Settling || r == LockReason::FastForward || r == LockReason::Setting) return;
+    if (++heldSwaps_ != 120 || r == noticeReason_) return;
+    const LockReason was = noticeReason_;
+    noticeReason_ = r;
+    char msg[160];
+    const double displayHz = latch_.measuredPeriodNs() ? 1e9 / (double)latch_.measuredPeriodNs()
+                             : latch_.periodNs()         ? 1e9 / (double)latch_.periodNs()
+                                                         : 0.0;
+    if (r == LockReason::Locked) {
+        if (was == LockReason::Setting) return;   // the usual case: no news
+        std::snprintf(msg, sizeof msg, "Match display: following the display again (%.2f Hz)", displayHz);
+    } else if (r == LockReason::Ratio) {
+        std::snprintf(msg, sizeof msg, "Match display: using Jaguar rate (%.2f Hz is not a multiple of %.2f Hz)",
+                      displayHz, host.fps());
+    } else {
+        std::snprintf(msg, sizeof msg, "Match display: using Jaguar rate (%s)", lockReasonText(r));
+    }
+    toast(msg, 4.0);
+}
+
+// Settings > Video > Frame pacing: what it is doing now.
+std::string App::pacingStatus() const {
+    char buf[160];
+    if (!threaded()) return pacingDisplay ? "Match display needs the emulation thread: running at the Jaguar rate" : "";
+    const DisplayLockVerdict& v = lockVerdict_;
+    if (v.mode == PacingMode::B) {
+        const double hz = latch_.measuredPeriodNs() ? 1e9 / (double)latch_.measuredPeriodNs() : 0.0;
+        std::snprintf(buf, sizeof buf, "Now: following the display, %.2f Hz, %u refresh%s per frame", hz, v.k,
+                      v.k == 1 ? "" : "es");
+        return buf;
+    }
+    if (!pacingDisplay) return "Now: the Jaguar's own rate, kept by the sound card";
+    if (v.reason == LockReason::Ratio) {
+        const uint64_t p = latch_.measuredPeriodNs() ? latch_.measuredPeriodNs() : latch_.periodNs();
+        std::snprintf(buf, sizeof buf, "Now: Jaguar rate (%.2f Hz is not a multiple of %.2f Hz)", p ? 1e9 / (double)p : 0.0,
+                      host.fps());
+        return buf;
+    }
+    std::snprintf(buf, sizeof buf, "Now: Jaguar rate (%s)", lockReasonText(v.reason));
+    return buf;
 }
 
 // UI thread (VJ_PERF_TRACE): one row per iteration, right after its swap.
@@ -955,6 +1122,13 @@ void App::notePresented(uint64_t swapEndNs) {
 void App::latchWait() {
     if (latchChecks_++ % 60 == 0) latchUpdatePeriod();   // the window may have moved to another display
     const uint64_t wake = latch_.wakeAt(SDL_GetTicksNS());
+    // Mode B (#1038): the wait ends as soon as the frame for this iteration's tick is finished, and the UI builds and
+    // swaps at once, as the single-thread loop does.  Past the wake time it goes on for that frame only, up to the last
+    // moment a build still makes the vblank (LateLatch::lastChanceNs): a heavy frame (Cybermorph, ~14 ms) finishes after
+    // the padded wake time but still fits the period, as it does inline.
+    const uint64_t waitTick = lockVerdict_.mode == PacingMode::B ? tickSeq_ : 0;
+    const uint64_t until = waitTick && latch_.lastChanceNs() > wake ? latch_.lastChanceNs() : wake;
+    const auto frameReady = [&] { return waitTick && publishedTick_.load(std::memory_order_acquire) >= waitTick; };
     traceWakeNs_ = wake;
     traceTargetNs_ = latch_.targetNs();
     const auto over = [this](uint64_t wantNs, unsigned char by) {   // VJ_PERF_TRACE: a blocking call that overran
@@ -966,14 +1140,19 @@ void App::latchWait() {
     };
     for (;;) {
         const uint64_t t = SDL_GetTicksNS();
-        if (t >= wake || quit) return;
-        const uint64_t left = wake - t;
+        if (t >= until || quit || frameReady()) return;
+        const uint64_t left = until - t;
         const Sint32 ms = (Sint32)LateLatch::eventWaitMs(left);
         if (!ms) {
-            stall_.enter(wake, 2, trace_.uiRows());
-            SDL_DelayPrecise(left);
+            stall_.enter(until, 2, trace_.uiRows());
+            if (!waitTick) {
+                SDL_DelayPrecise(left);
+            } else {   // mode B: the frame's wake event cannot end a precise sleep, so look for it every 250 us
+                for (uint64_t n = SDL_GetTicksNS(); n < until && !frameReady(); n = SDL_GetTicksNS())
+                    SDL_DelayPrecise(std::min<uint64_t>(until - n, 250000));
+            }
             stall_.leave();
-            over(wake, 2);
+            over(until, 2);
             return;
         }
         SDL_Event e;
@@ -986,7 +1165,7 @@ void App::latchWait() {
             continue;
         }
         do {
-            if (LatchWaker::isWake(e)) continue;
+            if (LatchWaker::isWake(e) || isFrameReady(e)) continue;
             handleEvent(e, false);
             traceWaitEvents_++;
         } while (!quit && SDL_PollEvent(&e));
@@ -2120,13 +2299,16 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
     case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
     case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:   // the same display switched its refresh rate
         displayPeriodValid_ = false;   // the next displayPeriodNs() reads the new display's refresh rate
+        displayChanged();
         break;
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+        displayChanged();
         fullscreen = true;    // also the green button / Ctrl+Cmd+F on macOS, which never go through setFullscreen()
         fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
         tvFullscreenEdge();
         break;
     case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+        displayChanged();
         fullscreen = false;
         fullscreenMenu.update(fullscreen, fullscreenAutoHideMenu, menuPinned);
         tvFullscreenEdge();
@@ -2401,6 +2583,7 @@ int App::runInteractive(const CliArgs& a) {
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     lateLatchOn_ = a.lateLatch != 0;
     paceSteerOn_ = a.paceSteer != 0;
+    if (a.pacing >= 0) pacingDisplay = (pacingFromCli_ = a.pacing) == 1;
     if (a.latchWake != 0 && !headless_) latchWaker_.start();   // macOS only (latch_waker.h)
     fullscreen = false;
     if (a.fullscreen) setFullscreen(true);
@@ -2488,9 +2671,16 @@ int App::runInteractive(const CliArgs& a) {
                                     std::to_string(latch_.misses()) + ", released " + std::to_string(latch_.released()) +
                                     ", pad " + std::to_string(latch_.padNs() / 1000000.0).substr(0, 4) + " ms)"
                               : std::string("off"));
-            if (threaded())
+            if (threaded()) {
                 perf.note += std::string(", pace steering ") + (paceSteerOn_ ? "on" : "off") + " (" +
                              std::to_string(emu.phaseSteps()) + " steps)";
+                perf.note += std::string(", frame pacing ") + (pacingDisplay ? "match display" : "jaguar rate") + " (" +
+                             (emu.modeB() ? "mode B, k=" + std::to_string(lockVerdict_.k) : std::string("mode A")) + ", " +
+                             DisplayLock::name(lockVerdict_.reason) + ", ticks dropped " +
+                             std::to_string(emu.droppedTicks()) + ", display " +
+                             std::to_string(latch_.measuredPeriodNs() ? 1e9 / (double)latch_.measuredPeriodNs() : 0.0).substr(0, 6) +
+                             " Hz)";
+            }
             perf.report(host.contentName().c_str());
             stall_.stop();
             trace_.write();
@@ -2583,6 +2773,7 @@ int App::runInteractive(const CliArgs& a) {
             if (latchedAtNs_) latch_.noteBuild(swap0 - latchedAtNs_);
             latch_.onSwap(swap0, swap1);
             latchLog();
+            displayLockAfterSwap(swap0, swap1);
         }
         perf.lap(Perf::Present);
 

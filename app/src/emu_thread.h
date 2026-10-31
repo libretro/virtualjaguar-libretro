@@ -1,7 +1,8 @@
 // The emulation thread (#967, docs/app-emulation-thread-design.md): the one thread that calls into the core.
 //
 // Threaded: a std::thread runs the frame loop: apply queued commands, wait until PacingClock says a frame is due (or
-// for a command while paused / idle), run one frame through the Client, repeat.  The UI thread talks to it only
+// for a command while paused / idle), run one frame through the Client, repeat.  Mode B (#1038): while the Client
+// reports a display grid, frames start on its vblank ticks instead (PacingClock's tick path).  The UI thread talks to it only
 // through post() (fire and forget; applied at the next frame boundary, in order), call() (runs on the emulation
 // thread and waits for the result: at most one frame) and the per-frame publishers (FrameExchange, CoreHost's
 // EmuSnapshot, InputSnapshot).
@@ -58,6 +59,16 @@ public:
         // Where the UI takes finished frames, for PacingClock's steering: one take time (seconds, on `now`'s clock:
         // steady_clock) and the take period.  False = no take grid (vsync off, swaps not tracked): no steering.
         virtual bool takeGrid(double now, double& at, double& period) { (void)now, (void)at, (void)period; return false; }
+        // Mode B (#1038, display lock): the display grid the UI publishes after each swap.  False = mode A (the setting,
+        // no lock, fast-forward, link play, or a grid the UI has not refreshed for a while: a UI that stops swapping --
+        // a modal, a live resize, a sleeping display -- must not stop the emulation).
+        struct DisplayGrid {
+            uint64_t tick = 0;     // the vblank the UI last swapped on (a count that only goes up)
+            double tickAt = 0;     // when it was, on `now`'s clock (steady_clock seconds)
+            double period = 0;     // the measured vblank period, seconds
+            unsigned k = 1;        // vblanks per emulated frame
+        };
+        virtual bool displayGrid(double now, DisplayGrid& g) { (void)now, (void)g; return false; }
         virtual void afterCommands() {}               // a batch of commands ran (App: CoreHost::publishSnapshot)
         virtual void commandFailed(const std::string& what) { (void)what; }   // a post()ed command threw
     };
@@ -130,6 +141,11 @@ public:
     void setFastForward(bool on) {
         if (ff_.exchange(on) != on) cmds_.notify();
     }
+    // Mode B: the UI published a new display tick (Client::displayGrid): start its frame now.
+    void notifyTick() { cmds_.notify(); }
+    // Mode B: when the UI's tick is late (it is still building, or stopped swapping), a frame starts this long after the
+    // vblank the grid says it is due on, so the game keeps its rate without the UI.
+    static constexpr double kTickSlack = 0.002;
     static constexpr std::chrono::milliseconds kBusyAfter{250};
     // Called on the thread waiting in call() once it has waited kBusyAfter, then about every 16 ms until the call
     // returns (tick 0 first).  See the contract in docs/app-emulation-thread-plan-phase2.md (Task 7): it may pump OS
@@ -143,6 +159,8 @@ public:
     uint64_t framesRun() const { return frames_.load(); }
     uint64_t droppedFrames() const { return dropped_.load(); }
     uint64_t phaseSteps() const { return steers_.load(); }   // PacingClock::steers()
+    uint64_t droppedTicks() const { return droppedTicks_.load(); }   // mode B: PacingClock::droppedTicks()
+    bool modeB() const { return modeB_.load(); }                     // the last paced frame started on a display tick
 
 private:
     friend struct EmuThreadTestAccess;   // test-only inspection of the advance/queue publication boundary
@@ -164,7 +182,8 @@ private:
     std::atomic<double> targetMs_{64.0};
     std::atomic<unsigned> advanceLeft_{0};
     std::atomic<uint64_t> advanceDone_{0};   // budgeted frames run (bumped before advanceLeft_ drops)
-    std::atomic<uint64_t> frames_{0}, dropped_{0}, steers_{0};
+    std::atomic<uint64_t> frames_{0}, dropped_{0}, steers_{0}, droppedTicks_{0};
+    std::atomic<bool> modeB_{false};
     std::mutex mu_;
     std::condition_variable cv_;          // start and finish handshakes
     std::condition_variable advanceCv_;   // a frame ran

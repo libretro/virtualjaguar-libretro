@@ -35,6 +35,18 @@ def exact_latency(emu, ui):
         lat.append((sw[r] - e) / 1e6)
         e += 5310000
     return sum(lat) / len(lat) if lat else float('nan'), len(lat)
+REASONS = ['locked', 'setting', 'no_vsync', 'unlocked', 'ratio', 'settling', 'fast_forward', 'link']
+def mode_b(emu):
+    """Mode B (#1038) columns, when the trace has them: the share of frames started on a display tick, the ticks
+    dropped over the window, and the lock reasons seen (most frequent first)."""
+    if not emu or 'mode' not in emu[0]: return ''
+    b = sum(1 for e in emu if e['mode'] == '1')
+    dropped = int(emu[-1]['ticks_dropped']) - int(emu[0]['ticks_dropped'])
+    seen = {}
+    for e in emu:
+        r = int(e['lock_reason']); seen[r] = seen.get(r, 0) + 1
+    why = ' '.join(f"{REASONS[r] if r < len(REASONS) else r}:{n}" for r, n in sorted(seen.items(), key=lambda x: -x[1]))
+    return f" | mode B {b}/{len(emu)} frames, ticks dropped {dropped}, reasons {why}"
 for pre in sys.argv[1:]:
     emu = list(csv.DictReader(open(pre + '-emu.csv')))
     ui = list(csv.DictReader(open(pre + '-ui.csv')))
@@ -73,4 +85,4 @@ for pre in sys.argv[1:]:
           f"end-due p1-p99 spread {pct(fin,.99)-pct(fin,.01):.2f} ms | take-after-vblank p1 {pct(tk,.01):.2f} p50 {pct(tk,.5):.2f} p99 {pct(tk,.99):.2f} | "
           f"trim [{min(trim):.4f},{max(trim):.4f}] phase wander {hi-lo:.2f} ms | "
           f"ui-misses {misses} late-waits>3ms {late_waits} | "
-          f"event->present exact avg {lat_avg:.2f} ms (n={lat_n})")
+          f"event->present exact avg {lat_avg:.2f} ms (n={lat_n})" + mode_b(emu))

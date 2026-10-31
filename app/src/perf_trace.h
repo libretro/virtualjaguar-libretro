@@ -30,6 +30,11 @@ struct PerfTrace {
         uint64_t dueNs, startNs, endNs, serial, fillNs;
         float trim, filtQMs, queuedMs;
         unsigned char audio, refill;
+        // Mode B (#1038): the frame started on a display tick (mode 1) and which; the ticks dropped so far; the lock
+        // verdict's reason (display_lock.h LockReason: 0 locked, 1 setting, 2 no_vsync, 3 unlocked, 4 ratio,
+        // 5 settling, 6 fast_forward, 7 link).
+        unsigned char mode, lockReason;
+        uint64_t tickSeq, ticksDropped;
     };
     struct Ui {
         uint64_t takeNs, serial, swap0Ns, swap1Ns, wakeNs, waitEndNs, budgetNs, targetNs, waitOverNs, waitCpuNs;
@@ -66,13 +71,15 @@ struct PerfTrace {
         if (!enabled()) return;
         const size_t n = emuN_.load(std::memory_order_acquire);
         if (FILE* f = std::fopen((prefix + "-emu.csv").c_str(), "w")) {
-            std::fprintf(f, "due_ns,start_ns,end_ns,serial,trim,filt_q_ms,queued_ms,audio,refill,fill_ns\n");
+            std::fprintf(f, "due_ns,start_ns,end_ns,serial,trim,filt_q_ms,queued_ms,audio,refill,fill_ns,mode,tick_seq,"
+                            "ticks_dropped,lock_reason\n");
             for (size_t i = 0; i < n; i++) {
                 const Emu& e = emu_[i];
-                std::fprintf(f, "%llu,%llu,%llu,%llu,%.6f,%.3f,%.3f,%d,%d,%llu\n", (unsigned long long)e.dueNs,
+                std::fprintf(f, "%llu,%llu,%llu,%llu,%.6f,%.3f,%.3f,%d,%d,%llu,%d,%llu,%llu,%d\n", (unsigned long long)e.dueNs,
                              (unsigned long long)e.startNs, (unsigned long long)e.endNs, (unsigned long long)e.serial,
                              (double)e.trim, (double)e.filtQMs, (double)e.queuedMs, (int)e.audio, (int)e.refill,
-                             (unsigned long long)e.fillNs);
+                             (unsigned long long)e.fillNs, (int)e.mode, (unsigned long long)e.tickSeq,
+                             (unsigned long long)e.ticksDropped, (int)e.lockReason);
             }
             std::fclose(f);
         }

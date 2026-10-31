@@ -59,6 +59,10 @@ int main(int argc, char** argv) {
         e.endNs = 300 + i;
         e.serial = 7 + i;
         e.fillNs = i == 1 ? 4500 : 0;
+        e.mode = i == 2 ? 1 : 0;
+        e.tickSeq = i == 2 ? 123456789012ull : 0;
+        e.ticksDropped = i;
+        e.lockReason = i == 2 ? 0 : 4;
         t.emu(e);
     }
     t.write();
@@ -69,18 +73,24 @@ int main(int argc, char** argv) {
     CHECK(lines.size() == 4, "a header and three rows (%zu lines)", lines.size());
     if (lines.size() == 4) {
         const std::vector<std::string> hdr = split(lines[0]);
-        CHECK(hdr.size() == 10 && hdr.back() == "fill_ns", "fill_ns is the last of ten header columns: %s",
+        CHECK(hdr.size() == 14 && hdr[9] == "fill_ns", "fill_ns is the tenth of fourteen header columns: %s",
               lines[0].c_str());
-        CHECK(lines[0].rfind("due_ns,start_ns,end_ns,serial,trim,filt_q_ms,queued_ms,audio,refill,", 0) == 0,
-              "the columns before fill_ns are unchanged: %s", lines[0].c_str());
+        CHECK(lines[0].rfind("due_ns,start_ns,end_ns,serial,trim,filt_q_ms,queued_ms,audio,refill,fill_ns,", 0) == 0,
+              "the columns through fill_ns are unchanged: %s", lines[0].c_str());
+        CHECK(lines[0].size() > 0 && lines[0].substr(lines[0].rfind("fill_ns,") + 8) == "mode,tick_seq,ticks_dropped,lock_reason",
+              "mode B's columns come after them (#1038): %s", lines[0].c_str());
         for (size_t i = 1; i < lines.size(); i++) {
             const std::vector<std::string> row = split(lines[i]);
             CHECK(row.size() == hdr.size(), "row %zu has %zu fields, header %zu", i, row.size(), hdr.size());
             if (row.size() != hdr.size()) continue;
-            const long long fill = std::atoll(row.back().c_str());
-            CHECK(fill >= 0 && !row.back().empty() && row.back()[0] != '-', "row %zu fill_ns >= 0 (%s)", i,
-                  row.back().c_str());
+            const long long fill = std::atoll(row[9].c_str());
+            CHECK(fill >= 0 && !row[9].empty() && row[9][0] != '-', "row %zu fill_ns >= 0 (%s)", i, row[9].c_str());
             CHECK(fill == (i == 2 ? 4500 : 0), "row %zu fill_ns round-trips (%lld)", i, fill);
+            const size_t r = i - 1;
+            CHECK(row[10] == (r == 2 ? "1" : "0") && row[11] == (r == 2 ? "123456789012" : "0") &&
+                      row[12] == std::to_string(r) && row[13] == (r == 2 ? "0" : "4"),
+                  "row %zu mode B columns round-trip (%s,%s,%s,%s)", i, row[10].c_str(), row[11].c_str(),
+                  row[12].c_str(), row[13].c_str());
         }
     }
     std::remove((prefix + "-emu.csv").c_str());

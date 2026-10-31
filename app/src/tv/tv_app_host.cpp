@@ -261,6 +261,12 @@ std::vector<SettingRow> AppHost::settingRows() {
     add(pictureRow("stretch", "Stretch to window (ignore aspect ratio)", app_.present.stretch));
     add(aspectRow(app_.present.aspectOverride, kAspectChoices, kAspectChoiceCount));
     add(pictureRow("vsync", "VSync", app_.vsync));
+    {
+        SettingRow r = choiceRow("pacing", "Frame pacing", "picture", "Picture", {"Jaguar rate", "Match display"},
+                                 app_.pacingDisplay ? 1 : 0);
+        r.note = app_.pacingStatus();
+        add(std::move(r));
+    }
     add(pictureRow("fullscreen", "Fullscreen", app_.fullscreen));
 
     // ---- Sound
@@ -380,6 +386,8 @@ void AppHost::setSetting(const std::string& id, int index) {
     } else if (id == "vsync") {
         app_.vsync = on;
         app_.applyVsync();
+    } else if (id == "pacing") {
+        app_.pacingDisplay = index == 1;
     } else if (id == "fullscreen") {
         app_.setFullscreen(on);
     } else if (id == "volume") {

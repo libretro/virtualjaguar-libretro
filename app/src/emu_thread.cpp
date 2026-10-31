@@ -215,7 +215,20 @@ void EmuThread::loop() {
             pacing = true;
         }
         double due = in.now;
-        if (!budget) {
+        Client::DisplayGrid g;
+        const bool ticks = !budget && !in.fastForward && client_->displayGrid(in.now, g) && g.period > 0;
+        if (ticks) {
+            // Mode B: the UI's latest tick, or the grid's own once the UI is kTickSlack late for the next one.
+            const double over = in.now - g.tickAt - kTickSlack;
+            in.tickSeq = g.tick + (over > 0 ? (uint64_t)(over / g.period) : 0);
+            in.ticksPerFrame = std::max(1u, g.k);
+            if (!clock.tickDue(in)) {
+                const double backstop = g.tickAt + (double)(clock.nextTick() - g.tick) * g.period + kTickSlack;
+                cmds_.waitUntil(atSec(std::min(std::max(backstop, in.now + 0.0002), in.now + 0.1)));   // or notifyTick()
+                continue;
+            }
+            due = g.tickAt + ((double)in.tickSeq - (double)g.tick) * g.period;   // the vblank this frame starts on
+        } else if (!budget) {
             due = clock.nextDue(in);
             if (due > in.now + 0.0002) {
                 // Precise wake (default): the condition wait (woken by commands) ends kPreciseSec before the due time
@@ -229,8 +242,12 @@ void EmuThread::loop() {
                 continue;
             }
         }
-        clock.frameStarted(in);
-        if (!budget) client_->framePaced(in.now - due, clock);
+        if (ticks) clock.tickStarted(in);
+        else clock.frameStarted(in);   // (an advance() frame in mode B leaves the ticks alone: mode A's state is reset on return)
+        if (!budget) {
+            modeB_.store(ticks);
+            client_->framePaced(in.now - due, clock);
+        }
         client_->runFrame();
         clock.frameEnded(nowSec());
         frames_.fetch_add(1);
@@ -239,6 +256,7 @@ void EmuThread::loop() {
             advanceLeft_.fetch_sub(1);
         }
         dropped_.store(clock.droppedFrames());
+        droppedTicks_.store(clock.droppedTicks());
         steers_.store(clock.steers());
         notifyFrame();
     }

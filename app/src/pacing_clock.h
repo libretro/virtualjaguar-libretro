@@ -124,6 +124,7 @@ public:
         enterTicks(in);
         lastStart_ = in.now;
         curDue_ = -1;
+        startedSeq_ = in.tickSeq;
         if (in.tickSeq < nextSeq_) {   // the refill's extra frame
             extraRan_ = true;
             refillFrames_++;
@@ -152,6 +153,8 @@ public:
     bool audioLocked() const { return audio_ && !ticking_; }
     double trim() const { return audio_ && !ticking_ ? trim_ : 1.0; }
     bool ticking() const { return ticking_; }               // mode B
+    uint64_t nextTick() const { return nextSeq_; }          // mode B: the tick the next on-tick frame is due at
+    uint64_t startedTick() const { return startedSeq_; }    // mode B: the tick the frame started last started on
     uint64_t droppedTicks() const { return droppedTicks_; }  // mode B ticks dropped behind a stall (VJ_PERF_TRACE)
     uint64_t refillFrames() const { return refillFrames_; }  // mode B extra frames run to refill the queue
     uint64_t droppedFrames() const { return dropped_; }
@@ -288,6 +291,7 @@ private:
     uint64_t lastTickStart_ = UINT64_MAX;                   // mode B: the tick the last on-tick frame started on
     bool dropRefill_ = false;                               // mode B: ticks were dropped; refill to the target
     uint64_t droppedTicks_ = 0, refillFrames_ = 0;
+    uint64_t startedSeq_ = 0;                               // mode B: startedTick()
 };
 
 }  // namespace vj

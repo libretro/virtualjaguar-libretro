@@ -26,6 +26,7 @@ static void usage(const char* argv0) {
         "  --emu-thread on|off   the emulation on its own thread for this run (default: Settings > Interface; headless: off)\n"
         "  --late-latch on|off   dev: with the emulation thread and vsync, take each frame just before the vblank (default on)\n"
         "  --pace-steer on|off   dev: with the emulation thread and vsync, keep frame ends off the take point (default on)\n"
+        "  --pacing jaguar|display  dev: Video > Frame pacing for this run (not saved; default: the setting)\n"
         "  --emu-wake precise|plain  dev: the emulation thread's frame wake-ups (default precise)\n"
         "  --latch-wake timer|plain  dev: macOS, how the UI thread's timed event waits end (default timer; plain keeps the QoS raise)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
@@ -215,6 +216,14 @@ int main(int argc, char** argv) {
                 return 2;
             }
             a.lateLatch = v == "on" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--pacing")) {
+            const std::string v = need(s);
+            if (v != "jaguar" && v != "display") {
+                std::fprintf(stderr, "--pacing wants jaguar or display, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.pacing = v == "display" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--pace-steer")) {
             const std::string v = need(s);
