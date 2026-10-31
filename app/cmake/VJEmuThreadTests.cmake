@@ -25,11 +25,15 @@
 #   gdb_inline_halt       the same four steps with the emulation thread off (the headless loop syncs the halt after each frame)
 #   gdb_inline_halt_hardcore  inline: the client continues a boot halt, then a hardcore sign-in reloads the game (needs the halt mirror synced)
 #   smoke_*_threaded      the headless smoke tests with --emu-thread on: the inline hashes, and no owner violation
+#   smoke_{cd,boot_cart_rom,bad_option,locked_option,disc_insert_cart_hidden}_threaded  the rest of the smoke set, same expectations
+#   controls_overlay_*_threaded / cheat_{state,apply_control,persist_*,tempest_*,community_install}_threaded  (VJSmokeTests / VJCheatTests)
+#                         the controls overlay and cheat tests with --emu-thread on, each on its own data dir; netplay_pair_shared_threaded
 #   smoke_disc_swap_threaded  File > Disc on a loaded CD through EmuThread::call, read back from the pinned snapshot
 #   smoke_disc_swap_bios_threaded  the same in real-BIOS boot mode, where each insert re-stages the CD BIOS
 #   smoke_disc_insert_bios_threaded  the CD BIOS with no disc: Add disc image... inserts the first disc through call()
 #   smoke_m3u_playlist_threaded  an .m3u's discs registered inside EmuThread::call, read back from the pinned snapshot
 #   smoke_busy_threaded  a slow load call shows the busy state (log line headless)
+#   smoke_quit_during_call_threaded  SIGTERM while that slow call is in flight: the call finishes, exit 0, no owner violation
 #   emu_thread_start_fallback  a failed thread start runs inline (nothing to lift any more)
 #   debug_on_threaded / gdb_enabled(_threaded)  nothing is off while threaded; the silent gdb host attaches at load
 #   emu_thread_default_unit  build channel -> emulation-thread default; a stored choice always wins
@@ -195,7 +199,7 @@ set_tests_properties(perf_trace_unit PROPERTIES TIMEOUT 60 LABELS emu_thread FAI
 
 # The headless smoke tests (VJSmokeTests.cmake) again with --emu-thread on: the same hashes as inline, nothing on the
 # UI thread calling into the core, and the run really threaded (the OK line says so only then).
-set(_vj_threaded_ok "headless: OK \\([0-9]+ load\\(s\\), emulation thread\\)")
+# (_vj_threaded_ok, the OK line of a threaded run, is set in VJSmokeTests.cmake.)
 add_test(NAME smoke_yarc_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames ${VJ_SMOKE_FRAMES} ${_yarc_hash_args}
             "${VJ_ROMS}/yarc.j64")
@@ -210,11 +214,34 @@ add_test(NAME smoke_boot_cd_bios_threaded
 add_test(NAME cheat_apply_threaded
     COMMAND virtualjaguar --headless --emu-thread on --frames 60 --cheat 001F0000:AB --expect-ram 1F0000=AB
             "${VJ_ROMS}/yarc.j64")
+add_test(NAME smoke_cd_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 120 --allow-blank "${VJ_ROMS}/synth_jagcd.chd")
+add_test(NAME smoke_boot_cart_rom_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 400 --boot-bios cart --expect-bios cart:builtin
+            --expect-hash 3cc9c43e)
 set_tests_properties(smoke_yarc_threaded smoke_reload_threaded smoke_state_threaded smoke_boot_cd_bios_threaded
-                     cheat_apply_threaded PROPERTIES
+                     smoke_cd_threaded smoke_boot_cart_rom_threaded cheat_apply_threaded PROPERTIES
     TIMEOUT 300 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "${_vj_threaded_ok}"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+# The negative controls threaded: they pass by failing for the stated reason (the inline originals' PASS lines), and must
+# not trip an owner violation on the way.
+add_test(NAME smoke_bad_option_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5
+            --option virtualjaguar_no_such_option=1 "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_bad_option_threaded PROPERTIES PASS_REGULAR_EXPRESSION "rejected by the core")
+add_test(NAME smoke_locked_option_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 5
+            --option virtualjaguar_alt_inputs=enabled "${VJ_ROMS}/yarc.j64")
+set_tests_properties(smoke_locked_option_threaded PROPERTIES PASS_REGULAR_EXPRESSION "locked by the app.*rejected by the core")
+add_test(NAME smoke_disc_insert_cart_hidden_threaded
+    COMMAND virtualjaguar --headless --emu-thread on --frames 30 --allow-blank --boot-bios cart
+            --disc-insert "${VJ_ROMS}/synth_jagcd.chd")
+set_tests_properties(smoke_disc_insert_cart_hidden_threaded PROPERTIES
+    PASS_REGULAR_EXPRESSION "headless: FAIL --disc-insert: the disc menu is hidden")
+set_tests_properties(smoke_bad_option_threaded smoke_locked_option_threaded smoke_disc_insert_cart_hidden_threaded PROPERTIES
+    TIMEOUT 120 LABELS emu_thread FAIL_REGULAR_EXPRESSION "owner violation|ThreadSanitizer")
 
 # A thread that fails to start (VJ_TEST_EMU_START_FAIL takes the real failure branch): the run falls back inline.  Nothing
 # is switched off while threaded any more, so there is nothing to give back (the old "are back on" line must be gone).
@@ -468,3 +495,14 @@ add_test(NAME smoke_busy_threaded
 set_tests_properties(smoke_busy_threaded PROPERTIES TIMEOUT 120 LABELS emu_thread
     PASS_REGULAR_EXPRESSION "\\[emu\\] busy: a call has taken over 250 ms"
     FAIL_REGULAR_EXPRESSION "headless: FAIL|owner violation|ThreadSanitizer")
+
+# A quit (SIGTERM) while that same slow call is in flight: the call completes, the frame loops are skipped, the app exits 0
+# and the thread stops.  A script sends the signal once the busy line shows (so the UI thread is inside the call); not on Windows.
+if(Python3_Interpreter_FOUND AND NOT WIN32)
+    add_test(NAME smoke_quit_during_call_threaded
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../tests/quit_during_call.py"
+                $<TARGET_FILE:virtualjaguar> "${VJ_ROMS}/yarc.j64")
+    set_tests_properties(smoke_quit_during_call_threaded PROPERTIES TIMEOUT 120 LABELS emu_thread
+        PASS_REGULAR_EXPRESSION "PASS: quit during a slow call"
+        FAIL_REGULAR_EXPRESSION "FAIL |owner violation|ThreadSanitizer")
+endif()
