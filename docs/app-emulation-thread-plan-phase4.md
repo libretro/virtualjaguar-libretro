@@ -48,7 +48,11 @@ Hysteresis: enter B only after conditions 2–4 have held for 120 consecutive sw
 
 **Ticks.** After `latch_.onSwap(swap0, swap1)` the UI publishes `tick{seq, swap1}` to the emulation thread, along with the verdict (`EmuThread::displayTick`: atomics plus `cmds_.notify()`). This period is published whatever `--pace-steer` says. Today's `takePeriodNs_` is 0 unless steering is on, so mode B can't reuse it.
 
-**Emulation loop in mode B.** A frame is due when `seq − lastStartSeq ≥ k`, and it starts at once. If more than 2 frames' worth of ticks are owed (`2k`), the owed ticks are dropped and counted, never run as a burst (the #968 rule, as in mode A). Pause, halt, `advance(n)` budgets and the command lanes are unchanged. Mode switches happen only at a frame boundary:
+**Emulation loop in mode B.** A frame is due when `seq − lastStartSeq ≥ k`, and it starts at once. If more than 2 frames' worth of ticks are owed (`2k`), the owed ticks are dropped and counted, never run as a burst (the #968 rule, as in mode A). Pause, halt, `advance(n)` budgets and the command lanes are unchanged.
+
+Dropped ticks take their audio with them. The frame that ends a stall and the catch-up frame leave the queue near half the target, and the ±0.5% trim alone would take ~6 s to restore it. So after a drop (or with the queue under a quarter of the target, as in mode A), one extra frame runs per k ticks until the queue is back at `audio.target_ms`. The refill is keyed on the drop, not on a queue level: at a 20 ms target one frame's audio (16.7 ms) is most of the target, and any level threshold would also fire in steady state. A catch-up frame counts as its tick's extra, so no tick ever runs three frames.
+
+Mode switches happen only at a frame boundary:
 - A→B: `PacingClock` leaves the audio grid and its trim and steering stop.
 - B→A: `PacingClock::reset(now)`; the audio ratio returns to 1 and mode A's trim takes over.
 
@@ -87,6 +91,7 @@ Exactly one audio controller runs at a time.
   - k=1 runs one frame per tick.
   - k=2 runs one frame per two ticks.
   - A 3-period stall drops owed ticks and never bursts more than one catch-up frame.
+  - After a 200 ms stall the refill restores the queue within half a second; steady state never refills at `audio.target_ms` 20, 64 or 200 ms, k=1 or 2, with jittery device pulls.
   - A↔B switches reset correctly, with no owed time carried across.
   - A 60.00 Hz panel in mode B shows **no** periodic repeat over a simulated 60 s, where mode A shows the expected ~3.
   Keep every existing mode A test green.

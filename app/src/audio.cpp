@@ -38,6 +38,8 @@ bool AudioOut::open(double coreRate) {
     }
     rate_ = rate;
     SDL_SetAudioStreamGain(stream_, volume_);
+    ratio_.store(base_.load());
+    SDL_SetAudioStreamFrequencyRatio(stream_, (float)base_.load());
     if (!paused_.load()) SDL_ResumeAudioStreamDevice(stream_);
     return true;
 }
@@ -65,15 +67,15 @@ void AudioOut::update(bool adjustRatio) {
     const float q = queuedMs();
     if (q <= 0.5f) underruns_.fetch_add(1);
     if (!adjustRatio) return;
-    // Relative error against the target, mapped to a +/-0.5% playback-speed
-    // nudge.  Smoothed so one burst does not wobble the pitch.
-    const float target = targetMs_.load();
-    float err = std::max(-1.0f, std::min(1.0f, (q - target) / target));
-    double want = 1.0 + 0.005 * (double)err;
-    double r = ratio_.load();
-    r += (want - r) * 0.05;
+    const double r = nextRatio(ratio_.load(), base_.load(), q, targetMs_.load());
     ratio_.store(r);
     SDL_SetAudioStreamFrequencyRatio(stream_, (float)r);
+}
+
+void AudioOut::setBaseRatio(double base) {
+    base_.store(base);
+    ratio_.store(base);
+    if (stream_) SDL_SetAudioStreamFrequencyRatio(stream_, (float)base);
 }
 
 void AudioOut::setPaused(bool p) {
@@ -89,8 +91,11 @@ void AudioOut::setVolume(float v) {
 }
 
 void AudioOut::clear() {
-    if (stream_) SDL_ClearAudioStream(stream_);
-    ratio_.store(1.0);
+    const double base = base_.load();
+    ratio_.store(base);
+    if (!stream_) return;
+    SDL_ClearAudioStream(stream_);
+    SDL_SetAudioStreamFrequencyRatio(stream_, (float)base);
 }
 
 void AudioOut::bufferStatus(bool& active, unsigned& occupancy, bool& underrun) const {

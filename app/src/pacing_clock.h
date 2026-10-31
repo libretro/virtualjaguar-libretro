@@ -14,6 +14,19 @@
 //     target is reached (a new stream, or after a stall);
 //   * more than two frames late (a stall, a slow frame): the owed time is dropped, never run as a burst (#968);
 //   * fast-forward: 4x the core's rate on the wall clock.
+//
+// Mode B (#1038, display lock): frames start on the display's vblank ticks instead, one every k ticks (DisplayLock
+// decides k), and the audio stream's ratio follows the display (AudioOut::setBaseRatio), so the grid and the trim above
+// are not used.  tickDue() / tickStarted() replace nextDue() / frameStarted():
+//   * more than one frame's worth of ticks behind (a stall, a slow frame): the owed ticks are dropped and counted, and
+//     at most one catch-up frame runs (#968);
+//   * after dropped ticks, and nearly empty (under a quarter of the target, as above): one extra frame per k ticks until
+//     the target is reached.  A stall drops ticks, and with them the audio they would have made; the frame that ends it
+//     and the catch-up frame leave the queue near half the target (never under the quarter), which the +/-0.5% trim
+//     alone takes seconds to put back, and a second stall in that time would empty it.  Keyed on the drop, not on a
+//     queue level: at a small audio.target_ms (20 ms) one frame's audio (16.7 ms) is most of the target, and any level
+//     between "after a stall" and "steady state" would also fire every frame in steady state.
+// The first tick call after mode A enters mode B; the first nextDue() after mode B goes back to mode A through reset().
 // Pure arithmetic on the times it is handed, so tests/pacing_clock_test.cpp drives it with a fake clock and device.
 #pragma once
 
@@ -33,6 +46,9 @@ struct PacingInput {
     // in.now's clock and the take period.  takePeriod 0 = no grid (vsync off, not tracked yet): no steering.
     double takeAt = 0;
     double takePeriod = 0;
+    // Mode B: the UI's latest vblank tick (a count that only goes up) and the ticks per frame (DisplayLock's k).
+    uint64_t tickSeq = 0;
+    unsigned ticksPerFrame = 0;
 };
 
 class PacingClock {
@@ -64,12 +80,13 @@ public:
         hiHeld_ = -1e9;
         lastSteer_ = now;
         sinceStep_ = kStepGap;
+        ticking_ = false;
     }
 
     // When the next frame should start (absolute, on in.now's clock).  At or before in.now: start it now.
     // Deliberately non-const: it feeds the queue filter and accumulates dropped frames; safe to call repeatedly.
     double nextDue(const PacingInput& in) {
-        if (!init_) reset(in.now);
+        if (!init_ || ticking_) reset(in.now);   // (back from mode B: start mode A's grid over, nothing owed)
         observe(in);
         const double base = basePeriod(in);
         if (in.now - next_ > kMaxLateFrames * base) {
@@ -94,6 +111,36 @@ public:
         if (!refill_ && !in.fastForward) steer(in, base);
     }
 
+    // Mode B: should a frame start now?  in.ticksPerFrame must be >= 1.
+    bool tickDue(const PacingInput& in) {
+        enterTicks(in);
+        observeRefill(in);
+        if (in.tickSeq >= nextSeq_) return true;
+        return refill_ && !extraRan_;   // one extra frame per k ticks while the queue refills
+    }
+
+    // Mode B: the caller starts a frame now, after tickDue() said so.
+    void tickStarted(const PacingInput& in) {
+        enterTicks(in);
+        lastStart_ = in.now;
+        curDue_ = -1;
+        if (in.tickSeq < nextSeq_) {   // the refill's extra frame
+            extraRan_ = true;
+            refillFrames_++;
+            return;
+        }
+        if (in.tickSeq > nextSeq_ + k_) {   // more than one frame behind: drop the rest, run one catch-up frame
+            const uint64_t late = in.tickSeq - nextSeq_ - k_;
+            droppedTicks_ += late;
+            dropped_ += late / k_;
+            dropRefill_ = true;   // their audio is missing: refill to the target
+            nextSeq_ = in.tickSeq - k_;
+        }
+        nextSeq_ += k_;
+        extraRan_ = in.tickSeq == lastTickStart_;   // a catch-up frame is this tick's extra: never 3 frames on one tick
+        lastTickStart_ = in.tickSeq;
+    }
+
     // The frame started last has finished (its picture is handed over) now.  Feeds the steering window.
     void frameEnded(double now) {
         if (curDue_ < 0) return;
@@ -102,8 +149,11 @@ public:
         curDue_ = -1;
     }
 
-    bool audioLocked() const { return audio_; }
-    double trim() const { return audio_ ? trim_ : 1.0; }
+    bool audioLocked() const { return audio_ && !ticking_; }
+    double trim() const { return audio_ && !ticking_ ? trim_ : 1.0; }
+    bool ticking() const { return ticking_; }               // mode B
+    uint64_t droppedTicks() const { return droppedTicks_; }  // mode B ticks dropped behind a stall (VJ_PERF_TRACE)
+    uint64_t refillFrames() const { return refillFrames_; }  // mode B extra frames run to refill the queue
     uint64_t droppedFrames() const { return dropped_; }
     double filteredQueueMs() const { return haveQ_ ? filtQ_ : -1.0; }   // (VJ_PERF_TRACE)
     bool refilling() const { return refill_; }
@@ -161,6 +211,32 @@ private:
         sinceStep_ = 0;
     }
 
+    // Mode A -> B, a new k, or a tick count that went back (a new stream of ticks): the first frame on the next tick.
+    void enterTicks(const PacingInput& in) {
+        const unsigned k = std::max(1u, in.ticksPerFrame);
+        if (ticking_ && k == k_ && in.tickSeq + k_ >= nextSeq_) return;
+        if (!init_) reset(in.now);
+        ticking_ = true;
+        k_ = k;
+        nextSeq_ = in.tickSeq + 1;
+        extraRan_ = dropRefill_ = false;
+        lastTickStart_ = UINT64_MAX;
+        curDue_ = -1;
+        haveQ_ = refill_ = overfull_ = false;
+    }
+
+    // Mode B keeps only the refill rule from observe(): no trim (the stream's ratio does that), no grid.
+    void observeRefill(const PacingInput& in) {
+        audio_ = false;
+        trim_ = 1.0;
+        if (in.audioQueuedMs < 0 || in.targetMs <= 0) {
+            refill_ = false;
+            return;
+        }
+        if (in.audioQueuedMs >= in.targetMs) refill_ = dropRefill_ = false;
+        else if (dropRefill_ || in.audioQueuedMs < kLowWater * in.targetMs) refill_ = true;
+    }
+
     static double basePeriod(const PacingInput& in) { return in.fastForward ? in.period / kFastForward : in.period; }
 
     void observe(const PacingInput& in) {
@@ -205,6 +281,13 @@ private:
     uint64_t steers_ = 0;
     double loHeld_ = 1e9, hiHeld_ = -1e9, lastSteer_ = 0;   // the held window edges (end - due), seconds
     unsigned sinceStep_ = kStepGap;                         // frames since the last step
+    bool ticking_ = false;                                  // mode B
+    unsigned k_ = 1;                                        // mode B: ticks per frame
+    uint64_t nextSeq_ = 0;                                  // mode B: the tick the next frame is due at
+    bool extraRan_ = false;                                 // mode B: this tick's extra frame (refill or catch-up) ran
+    uint64_t lastTickStart_ = UINT64_MAX;                   // mode B: the tick the last on-tick frame started on
+    bool dropRefill_ = false;                               // mode B: ticks were dropped; refill to the target
+    uint64_t droppedTicks_ = 0, refillFrames_ = 0;
 };
 
 }  // namespace vj
