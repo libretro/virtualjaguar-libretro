@@ -90,7 +90,7 @@ inline Outcome makeSelfRealtime(double periodSec) {
     // MMCSS: the "Games" task class, through avrt.dll at run time so the binary does not need avrt.lib.  The library
     // handle stays open: MMCSS membership lasts as long as the thread does.
     typedef HANDLE(WINAPI * AvSetFn)(LPCWSTR, LPDWORD);
-    if (HMODULE avrt = LoadLibraryW(L"avrt.dll")) {
+    if (HMODULE avrt = LoadLibraryExW(L"avrt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {
         if (AvSetFn fn = (AvSetFn)(void*)GetProcAddress(avrt, "AvSetMmThreadCharacteristicsW")) {
             DWORD idx = 0;
             note += fn(L"Games", &idx) ? " + MMCSS Games" : "; MMCSS Games refused";
