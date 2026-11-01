@@ -64,8 +64,7 @@ jobs:
               if not path.exists():
                   continue  # system DLL, not an MSYS2 dependency
               copied.add(name.lower())
-              destination = 'mesa-opengl32.dll' if name.lower() == 'opengl32.dll' else path.name
-              shutil.copy2(path, target / destination)
+              shutil.copy2(path, target / path.name)
               imports = subprocess.check_output(['llvm-objdump', '-p', str(path)], text=True)
               pending.extend(re.findall(r'DLL Name:\s*(\S+)', imports))
               unix_path = subprocess.check_output(['cygpath', '-u', str(path)], text=True).strip()
@@ -83,25 +82,40 @@ jobs:
                       dest.parent.mkdir(parents=True, exist_ok=True)
                       shutil.copy2(path, dest)
           (target / 'PACKAGES.txt').write_text(subprocess.check_output(['pacman', '-Q', *sorted(owners)], text=True))
+          # WGL/GDI must find the Mesa frontend by its standard name next to the
+          # executable. Keep a separate full app copy so normal graphics stays clean.
+          for path in list(pathlib.Path('stage/bin').iterdir()):
+              if path == target:
+                  continue
+              if path.is_dir():
+                  shutil.copytree(path, target / path.name, dirs_exist_ok=True)
+              else:
+                  shutil.copy2(path, target / path.name)
+          shutil.copy2('build/vj_gl_context_integration.exe', target)
+          (target / 'portable.txt').write_text('Keep software-test settings beside this executable.\n')
           PY
       - name: Replay the old loader and qualify real ARM64 software GL rendering
         run: |
           set -eu
+          set +e
+          build/vj_gl_context_integration.exe legacy >diagnostics/native-driver.txt 2>&1
+          set -e
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
-          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/mesa-opengl32.dll")"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
           export GALLIUM_DRIVER=llvmpipe
           export LIBGL_ALWAYS_SOFTWARE=true
           set +e
-          build/vj_gl_context_integration.exe legacy >diagnostics/legacy-loader.txt 2>&1
+          stage/bin/software-opengl/vj_gl_context_integration.exe legacy >diagnostics/legacy-loader.txt 2>&1
           legacy_result=$?
           set -e
           echo "Legacy loader exit: $legacy_result" | tee -a diagnostics/legacy-loader.txt
-          build/vj_gl_context_integration.exe >diagnostics/sdl-loader.txt 2>&1
+          stage/bin/software-opengl/vj_gl_context_integration.exe >diagnostics/sdl-loader.txt 2>&1
           cat diagnostics/sdl-loader.txt
-          timeout 90 build/virtualjaguar.exe --data-dir "$PWD/test-data" \
+          timeout 90 stage/bin/software-opengl/virtualjaguar.exe --data-dir "$PWD/test-data" \
             --screenshot "$PWD/diagnostics/arm64-software-gl.png" --screenshot-frame 20 \
             >diagnostics/app-stdout.txt 2>diagnostics/app-stderr.txt
           test -s diagnostics/arm64-software-gl.png
+          command rm -f stage/bin/software-opengl/vj_gl_context_integration.exe
           cat diagnostics/app-stderr.txt
       - name: Package the portable test build
         run: |
@@ -110,7 +124,7 @@ jobs:
           import pathlib
           root = pathlib.Path('stage/bin')
           normal = '@echo off\ncd /d "%~dp0"\nvirtualjaguar.exe >test-stdout.txt 2>test-stderr.txt\necho Exit code: %errorlevel%>>test-stderr.txt\nnotepad test-stderr.txt\n'
-          software = '@echo off\nsetlocal\ncd /d "%~dp0"\nset "PATH=%~dp0software-opengl;%PATH%"\nset "SDL_OPENGL_LIBRARY=%~dp0software-opengl\\mesa-opengl32.dll"\nset "GALLIUM_DRIVER=llvmpipe"\nset "LIBGL_ALWAYS_SOFTWARE=true"\nvirtualjaguar.exe >software-stdout.txt 2>software-stderr.txt\necho Exit code: %errorlevel%>>software-stderr.txt\nnotepad software-stderr.txt\n'
+          software = '@echo off\nsetlocal\ncd /d "%~dp0software-opengl"\nset "PATH=%~dp0software-opengl;%PATH%"\nset "SDL_OPENGL_LIBRARY=%~dp0software-opengl\\opengl32.dll"\nset "GALLIUM_DRIVER=llvmpipe"\nset "LIBGL_ALWAYS_SOFTWARE=true"\nvirtualjaguar.exe >"%~dp0software-stdout.txt" 2>"%~dp0software-stderr.txt"\necho Exit code: %errorlevel%>>"%~dp0software-stderr.txt"\nnotepad "%~dp0software-stderr.txt"\n'
           (root / 'Test-Normal-Graphics.cmd').write_bytes(normal.replace('\n','\r\n').encode())
           (root / 'Test-Software-Graphics.cmd').write_bytes(software.replace('\n','\r\n').encode())
           (root / 'TEST-BUILD.txt').write_text('ARM64 diagnostic candidate. Try Test-Normal-Graphics.cmd first, then Test-Software-Graphics.cmd. Close the app to open its log. Software mode uses CPU rendering and changes no system settings. Not a Store package.\n')
