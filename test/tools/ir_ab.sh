@@ -65,6 +65,11 @@
 #                                       for a real A/B without checking the
 #                                       workload still covers your change --
 #                                       see WORKLOAD below.)
+#   IR_STATE      a raw core savestate (the app's .state files, or
+#                 frame_hash_ab --save-state output) loaded before the
+#                 measured frames: the way to measure GAMEPLAY rather than
+#                 a boot sequence.  Copied into the work dir, so the
+#                 container sees it.  Pair it with IR_ROM of the same game.
 #   IR_MAKE_ARGS  extra make args applied to BOTH arms (ref mode)
 #   IR_JOBS       build parallelism    (default nproc)
 #   IR_GATE=1     exit 3 when B regresses by more than IR_THRESHOLD
@@ -233,6 +238,14 @@ snapshot_ref() {       # snapshot_ref <ref> <dest>
   git -C "$REPO" archive --format=tar "$1" | tar -xf - -C "$2"
 }
 
+# IR_STATE: into $WORK on the host, so the container run (which mounts only
+# $WORK, the ROM and the repo) finds it at a path that exists on both sides.
+if [ -n "${IR_STATE:-}" ] && [ "${IR_AB_PREPARED:-0}" != 1 ]; then
+  [ -f "$IR_STATE" ] || { echo "ir_ab: IR_STATE '$IR_STATE' is not a file" >&2; exit 1; }
+  cp "$IR_STATE" "$WORK/state.raw"
+  echo "ir_ab: savestate $(basename "$IR_STATE") loaded before the measured frames"
+fi
+
 if [ "${IR_AB_PREPARED:-0}" != 1 ]; then
   case "$MODE" in
     ref)      echo "ir_ab: snapshotting $ARM_A -> a, $ARM_B -> b"
@@ -334,6 +347,8 @@ cc -O2 -Wall -std=c99 -I"$WORK/a" -I"$WORK/a/test/harness" \
      echo "ir_ab: runner build failed:" >&2; cat "$WORK/runner.log" >&2; exit 1; }
 
 # ----------------------------------------------------------------- measure ---
+STATE_ARGS=()
+[ -f "$WORK/state.raw" ] && STATE_ARGS=(--load-state "$WORK/state.raw")
 measure() {  # measure <tag>
   # env -i: identical, minimal environment for both arms (also scrubs VJ_*
   # debug knobs).  Paths are equal-length by construction -- see header.
@@ -341,6 +356,7 @@ measure() {  # measure <tag>
     valgrind --tool=cachegrind --cache-sim=yes --branch-sim=no \
       --cachegrind-out-file="$WORK/cg.$1" \
       "$WORK/runner" "$WORK/$1/$LIB" "$ROM" --frames "$FRAMES" \
+      ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} \
       --csv "$WORK/$1.csv" >"$WORK/run.$1.log" 2>&1 || {
         echo "ir_ab: measured run failed for arm $1:" >&2
         tail -30 "$WORK/run.$1.log" >&2; exit 1; }
