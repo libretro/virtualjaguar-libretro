@@ -491,13 +491,29 @@ static void GPUPipeMemAccess(uint32_t addr, int isLoad)
 
 void GPUUpdateRegisterBanks(void);
 
-INLINE static void gpu_opcode_add(void);
-INLINE static void gpu_opcode_addc(void);
-INLINE static void gpu_opcode_addq(void);
+/* Hot opcode handlers are inlined into executeOpcode() by force.  They are
+ * declared INLINE, but at -O3 the compiler declined for 32 of them (the
+ * dispatcher is large), and a sampling profile of a GPU-bound frame showed
+ * every load/store, movei, add/sub and shift as its own call: a call, a
+ * return and a reload of the operand globals per emulated instruction.
+ * Only the small, non-recursive handlers are forced: jump/jr run their
+ * delay slot through executeOpcode() itself, and div/mmult/normi/pack are
+ * large and rare.  Perf pass 2026-11, measured with test/tools/ir_ab.sh. */
+#if defined(__GNUC__)
+#define GPU_OP_HOT __attribute__((always_inline)) INLINE static
+#elif defined(_MSC_VER)
+#define GPU_OP_HOT __forceinline static
+#else
+#define GPU_OP_HOT INLINE static
+#endif
+
+GPU_OP_HOT void gpu_opcode_add(void);
+GPU_OP_HOT void gpu_opcode_addc(void);
+GPU_OP_HOT void gpu_opcode_addq(void);
 INLINE static void gpu_opcode_addqt(void);
-INLINE static void gpu_opcode_sub(void);
-INLINE static void gpu_opcode_subc(void);
-INLINE static void gpu_opcode_subq(void);
+GPU_OP_HOT void gpu_opcode_sub(void);
+GPU_OP_HOT void gpu_opcode_subc(void);
+GPU_OP_HOT void gpu_opcode_subq(void);
 INLINE static void gpu_opcode_subqt(void);
 INLINE static void gpu_opcode_neg(void);
 INLINE static void gpu_opcode_and(void);
@@ -508,40 +524,40 @@ INLINE static void gpu_opcode_btst(void);
 INLINE static void gpu_opcode_bset(void);
 INLINE static void gpu_opcode_bclr(void);
 INLINE static void gpu_opcode_mult(void);
-INLINE static void gpu_opcode_imult(void);
-INLINE static void gpu_opcode_imultn(void);
+GPU_OP_HOT void gpu_opcode_imult(void);
+GPU_OP_HOT void gpu_opcode_imultn(void);
 INLINE static void gpu_opcode_resmac(void);
 INLINE static void gpu_opcode_imacn(void);
 INLINE static void gpu_opcode_div(void);
-INLINE static void gpu_opcode_abs(void);
-INLINE static void gpu_opcode_sh(void);
+GPU_OP_HOT void gpu_opcode_abs(void);
+GPU_OP_HOT void gpu_opcode_sh(void);
 INLINE static void gpu_opcode_shlq(void);
-INLINE static void gpu_opcode_shrq(void);
-INLINE static void gpu_opcode_sha(void);
-INLINE static void gpu_opcode_sharq(void);
+GPU_OP_HOT void gpu_opcode_shrq(void);
+GPU_OP_HOT void gpu_opcode_sha(void);
+GPU_OP_HOT void gpu_opcode_sharq(void);
 INLINE static void gpu_opcode_ror(void);
-INLINE static void gpu_opcode_rorq(void);
+GPU_OP_HOT void gpu_opcode_rorq(void);
 INLINE static void gpu_opcode_cmp(void);
-INLINE static void gpu_opcode_cmpq(void);
+GPU_OP_HOT void gpu_opcode_cmpq(void);
 INLINE static void gpu_opcode_sat8(void);
 INLINE static void gpu_opcode_sat16(void);
 INLINE static void gpu_opcode_move(void);
 INLINE static void gpu_opcode_moveq(void);
 INLINE static void gpu_opcode_moveta(void);
 INLINE static void gpu_opcode_movefa(void);
-INLINE static void gpu_opcode_movei(void);
-INLINE static void gpu_opcode_loadb(void);
-INLINE static void gpu_opcode_loadw(void);
-INLINE static void gpu_opcode_load(void);
-INLINE static void gpu_opcode_loadp(void);
-INLINE static void gpu_opcode_load_r14_indexed(void);
-INLINE static void gpu_opcode_load_r15_indexed(void);
-INLINE static void gpu_opcode_storeb(void);
-INLINE static void gpu_opcode_storew(void);
-INLINE static void gpu_opcode_store(void);
-INLINE static void gpu_opcode_storep(void);
-INLINE static void gpu_opcode_store_r14_indexed(void);
-INLINE static void gpu_opcode_store_r15_indexed(void);
+GPU_OP_HOT void gpu_opcode_movei(void);
+GPU_OP_HOT void gpu_opcode_loadb(void);
+GPU_OP_HOT void gpu_opcode_loadw(void);
+GPU_OP_HOT void gpu_opcode_load(void);
+GPU_OP_HOT void gpu_opcode_loadp(void);
+GPU_OP_HOT void gpu_opcode_load_r14_indexed(void);
+GPU_OP_HOT void gpu_opcode_load_r15_indexed(void);
+GPU_OP_HOT void gpu_opcode_storeb(void);
+GPU_OP_HOT void gpu_opcode_storew(void);
+GPU_OP_HOT void gpu_opcode_store(void);
+GPU_OP_HOT void gpu_opcode_storep(void);
+GPU_OP_HOT void gpu_opcode_store_r14_indexed(void);
+GPU_OP_HOT void gpu_opcode_store_r15_indexed(void);
 INLINE static void gpu_opcode_move_pc(void);
 INLINE static void gpu_opcode_jump(void);
 INLINE static void gpu_opcode_jr(void);
@@ -549,10 +565,10 @@ INLINE static void gpu_opcode_mmult(void);
 INLINE static void gpu_opcode_mtoi(void);
 INLINE static void gpu_opcode_normi(void);
 INLINE static void gpu_opcode_nop(void);
-INLINE static void gpu_opcode_load_r14_ri(void);
-INLINE static void gpu_opcode_load_r15_ri(void);
-INLINE static void gpu_opcode_store_r14_ri(void);
-INLINE static void gpu_opcode_store_r15_ri(void);
+GPU_OP_HOT void gpu_opcode_load_r14_ri(void);
+GPU_OP_HOT void gpu_opcode_load_r15_ri(void);
+GPU_OP_HOT void gpu_opcode_store_r14_ri(void);
+GPU_OP_HOT void gpu_opcode_store_r15_ri(void);
 INLINE static void gpu_opcode_sat24(void);
 INLINE static void gpu_opcode_pack(void);
 
@@ -3212,7 +3228,7 @@ INLINE static void gpu_opcode_jr(void)
 }
 
 
-INLINE static void gpu_opcode_add(void)
+GPU_OP_HOT void gpu_opcode_add(void)
 {
    uint32_t res = RN + RM;
    CLR_ZNC; SET_ZNC_ADD(RN, RM, res);
@@ -3220,7 +3236,7 @@ INLINE static void gpu_opcode_add(void)
 }
 
 
-INLINE static void gpu_opcode_addc(void)
+GPU_OP_HOT void gpu_opcode_addc(void)
 {
    uint64_t res = (uint64_t)RN + (uint64_t)RM + (uint64_t)gpu_flag_c;
    gpu_flag_c = (uint8_t)((res >> 32) & 0x01);
@@ -3229,7 +3245,7 @@ INLINE static void gpu_opcode_addc(void)
 }
 
 
-INLINE static void gpu_opcode_addq(void)
+GPU_OP_HOT void gpu_opcode_addq(void)
 {
    uint32_t r1 = gpu_convert_zero[IMM_1];
    uint32_t res = RN + r1;
@@ -3244,7 +3260,7 @@ INLINE static void gpu_opcode_addqt(void)
 }
 
 
-INLINE static void gpu_opcode_sub(void)
+GPU_OP_HOT void gpu_opcode_sub(void)
 {
    uint32_t res = RN - RM;
    SET_ZNC_SUB(RN, RM, res);
@@ -3252,7 +3268,7 @@ INLINE static void gpu_opcode_sub(void)
 }
 
 
-INLINE static void gpu_opcode_subc(void)
+GPU_OP_HOT void gpu_opcode_subc(void)
 {
    // This is how the GPU ALU does it--Two's complement with inverted carry
    uint64_t res = (uint64_t)RN + (uint64_t)(RM ^ 0xFFFFFFFF) + (gpu_flag_c ^ 1);
@@ -3263,7 +3279,7 @@ INLINE static void gpu_opcode_subc(void)
 }
 
 
-INLINE static void gpu_opcode_subq(void)
+GPU_OP_HOT void gpu_opcode_subq(void)
 {
    uint32_t r1 = gpu_convert_zero[IMM_1];
    uint32_t res = RN - r1;
@@ -3285,7 +3301,7 @@ INLINE static void gpu_opcode_cmp(void)
 }
 
 
-INLINE static void gpu_opcode_cmpq(void)
+GPU_OP_HOT void gpu_opcode_cmpq(void)
 {
    static int32_t sqtable[32] =
    { 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1 };
@@ -3351,7 +3367,7 @@ INLINE static void gpu_opcode_sat24(void)
 }
 
 
-INLINE static void gpu_opcode_store_r14_indexed(void)
+GPU_OP_HOT void gpu_opcode_store_r14_indexed(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
@@ -3371,7 +3387,7 @@ INLINE static void gpu_opcode_store_r14_indexed(void)
 }
 
 
-INLINE static void gpu_opcode_store_r15_indexed(void)
+GPU_OP_HOT void gpu_opcode_store_r15_indexed(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
@@ -3391,7 +3407,7 @@ INLINE static void gpu_opcode_store_r15_indexed(void)
 }
 
 
-INLINE static void gpu_opcode_load_r14_ri(void)
+GPU_OP_HOT void gpu_opcode_load_r14_ri(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + RM;
@@ -3411,7 +3427,7 @@ INLINE static void gpu_opcode_load_r14_ri(void)
 }
 
 
-INLINE static void gpu_opcode_load_r15_ri(void)
+GPU_OP_HOT void gpu_opcode_load_r15_ri(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + RM;
@@ -3431,7 +3447,7 @@ INLINE static void gpu_opcode_load_r15_ri(void)
 }
 
 
-INLINE static void gpu_opcode_store_r14_ri(void)
+GPU_OP_HOT void gpu_opcode_store_r14_ri(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + RM;
@@ -3451,7 +3467,7 @@ INLINE static void gpu_opcode_store_r14_ri(void)
 }
 
 
-INLINE static void gpu_opcode_store_r15_ri(void)
+GPU_OP_HOT void gpu_opcode_store_r15_ri(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT_STORE
    uint32_t address = gpu_reg[15] + RM;
@@ -3487,7 +3503,7 @@ INLINE static void gpu_opcode_pack(void)
 }
 
 
-INLINE static void gpu_opcode_storeb(void)
+GPU_OP_HOT void gpu_opcode_storeb(void)
 {
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM, RN & 0xFF, GPU);
@@ -3499,7 +3515,7 @@ INLINE static void gpu_opcode_storeb(void)
 }
 
 
-INLINE static void gpu_opcode_storew(void)
+GPU_OP_HOT void gpu_opcode_storew(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
@@ -3521,7 +3537,7 @@ INLINE static void gpu_opcode_storew(void)
 }
 
 
-INLINE static void gpu_opcode_store(void)
+GPU_OP_HOT void gpu_opcode_store(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
@@ -3559,7 +3575,7 @@ INLINE static void gpu_opcode_store(void)
  * only mask GPU local RAM.  Masking those too is left alone deliberately: it
  * is not needed for #138 and it does perturb Ruiner Pinball and Super Burnout,
  * which needs its own before/after evidence rather than riding along here. */
-INLINE static void gpu_opcode_storep(void)
+GPU_OP_HOT void gpu_opcode_storep(void)
 {
    /* One 64-bit phrase = one bus transaction (JTRM: "the memory
     * controller makes it all look 64 bits wide"), not two 32-bit ones. */
@@ -3568,7 +3584,7 @@ INLINE static void gpu_opcode_storep(void)
    GPUWriteLong((RM & 0xFFFFFFF8) + 4, RN, GPU);
 }
 
-INLINE static void gpu_opcode_loadb(void)
+GPU_OP_HOT void gpu_opcode_loadb(void)
 {
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
    {
@@ -3594,7 +3610,7 @@ INLINE static void gpu_opcode_loadb(void)
 }
 
 
-INLINE static void gpu_opcode_loadw(void)
+GPU_OP_HOT void gpu_opcode_loadw(void)
 {
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
    {
@@ -3627,7 +3643,7 @@ INLINE static void gpu_opcode_loadw(void)
    to test that. They seem to be stable, though, which would indicate such a mechanism.
    Sometimes, however, the off by 2 case returns $12345678!
    */
-INLINE static void gpu_opcode_load(void)
+GPU_OP_HOT void gpu_opcode_load(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    GPU_PIPE_LOAD(RM);
@@ -3639,7 +3655,7 @@ INLINE static void gpu_opcode_load(void)
 }
 
 
-INLINE static void gpu_opcode_loadp(void)
+GPU_OP_HOT void gpu_opcode_loadp(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
@@ -3663,7 +3679,7 @@ INLINE static void gpu_opcode_loadp(void)
 }
 
 
-INLINE static void gpu_opcode_load_r14_indexed(void)
+GPU_OP_HOT void gpu_opcode_load_r14_indexed(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
@@ -3683,7 +3699,7 @@ INLINE static void gpu_opcode_load_r14_indexed(void)
 }
 
 
-INLINE static void gpu_opcode_load_r15_indexed(void)
+GPU_OP_HOT void gpu_opcode_load_r15_indexed(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
@@ -3703,10 +3719,25 @@ INLINE static void gpu_opcode_load_r15_indexed(void)
 }
 
 
-INLINE static void gpu_opcode_movei(void)
+GPU_OP_HOT void gpu_opcode_movei(void)
 {
    // This instruction is followed by 32-bit value in LSW / MSW format...
-   RN = (uint32_t)GPUReadWord(gpu_pc, GPU) | ((uint32_t)GPUReadWord(gpu_pc + 2, GPU) << 16);
+   /* The immediate is almost always in local RAM, right behind the opcode
+    * the exec loop just fetched from gpu_ram_8: read it the same way instead
+    * of through two GPUReadWord calls (each a range-check chain and a call
+    * the compiler cannot see through).  movei is the most frequent GPU
+    * opcode in a 3D renderer (every constant, address and table base), and
+    * those two calls were ~7% of a GPU-bound frame (perf pass 2026-11).
+    * Both words must lie inside the 4 KB: an immediate straddling the end
+    * of local RAM takes the general path, exactly as before. */
+   if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc + 4 <= GPU_WORK_RAM_BASE + 0x1000)
+   {
+      uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;
+      RN = ((uint32_t)gpu_ram_8[off] << 8) | (uint32_t)gpu_ram_8[off + 1]
+         | ((uint32_t)gpu_ram_8[off + 2] << 24) | ((uint32_t)gpu_ram_8[off + 3] << 16);
+   }
+   else
+      RN = (uint32_t)GPUReadWord(gpu_pc, GPU) | ((uint32_t)GPUReadWord(gpu_pc + 2, GPU) << 16);
    gpu_pc += 4;
 }
 
@@ -3741,7 +3772,7 @@ INLINE static void gpu_opcode_resmac(void)
 }
 
 
-INLINE static void gpu_opcode_imult(void)
+GPU_OP_HOT void gpu_opcode_imult(void)
 {
    RN = (int16_t)RN * (int16_t)RM;
    SET_ZN(RN);
@@ -3875,7 +3906,7 @@ INLINE static void gpu_opcode_mmult(void)
 }
 
 
-INLINE static void gpu_opcode_abs(void)
+GPU_OP_HOT void gpu_opcode_abs(void)
 {
    gpu_flag_c = RN >> 31;
    if (RN == 0x80000000)
@@ -3898,7 +3929,7 @@ INLINE static void gpu_opcode_div(void)	// RN / RM
 }
 
 
-INLINE static void gpu_opcode_imultn(void)
+GPU_OP_HOT void gpu_opcode_imultn(void)
 {
    uint32_t res = (int32_t)((int16_t)RN * (int16_t)RM);
    gpu_acc = (int32_t)res;
@@ -3924,7 +3955,7 @@ INLINE static void gpu_opcode_shlq(void)
 }
 
 
-INLINE static void gpu_opcode_shrq(void)
+GPU_OP_HOT void gpu_opcode_shrq(void)
 {
    int32_t r1 = gpu_convert_zero[IMM_1];
    uint32_t res = RN >> r1;
@@ -3942,7 +3973,7 @@ INLINE static void gpu_opcode_ror(void)
 }
 
 
-INLINE static void gpu_opcode_rorq(void)
+GPU_OP_HOT void gpu_opcode_rorq(void)
 {
    /* gpu_convert_zero[0] returns 32 (rotate-by-0 means rotate-by-full-word
     * which is a no-op).  Masking to 0x1F maps 32 -> 0, preserving that
@@ -3955,7 +3986,7 @@ INLINE static void gpu_opcode_rorq(void)
 }
 
 
-INLINE static void gpu_opcode_sha(void)
+GPU_OP_HOT void gpu_opcode_sha(void)
 {
    uint32_t res;
 
@@ -3974,7 +4005,7 @@ INLINE static void gpu_opcode_sha(void)
 }
 
 
-INLINE static void gpu_opcode_sharq(void)
+GPU_OP_HOT void gpu_opcode_sharq(void)
 {
    uint32_t res = (int32_t)RN >> gpu_convert_zero[IMM_1];
    SET_ZN(res); gpu_flag_c = RN & 0x01;
@@ -3982,7 +4013,7 @@ INLINE static void gpu_opcode_sharq(void)
 }
 
 
-INLINE static void gpu_opcode_sh(void)
+GPU_OP_HOT void gpu_opcode_sh(void)
 {
    if (RM & 0x80000000)		// Shift left
    {
