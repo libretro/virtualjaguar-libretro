@@ -423,3 +423,21 @@ PNG, `.ico` and `.icns` files.
 Gatekeeper first-run on a freshly downloaded signed zip, SmartScreen on the installer, Intel Mac behavior
 (CI may not run the x86_64 slice), Wayland/X11/PipeWire sound on real Linux desktops, and the AppImage on
 distributions older than Ubuntu 22.04.
+
+Windows packages also stage a bundled Mesa OpenGL through
+`windows/stage-software-gl.py` (MSYS2 Mesa, Python and objdump required) in
+the `software-opengl/` folder (the name predates the Direct3D 12 path below).
+The normal executable automatically retries once with the bundled app if
+graphics startup fails, which on a stock Windows 10/11 install without a vendor
+OpenGL driver (Windows on ARM, VMs, Remote Desktop, the basic display adapter)
+means WGL handed us the GDI Generic OpenGL 1.1 driver. The retry preserves game
+arguments, working directory and the original config/save root; users do not
+need a separate launcher. The launcher picks Mesa's driver: `d3d12` (OpenGL on
+the machine's Direct3D 12 driver, hardware rendering, the same layer as
+Microsoft's OpenGL Compatibility Pack) when a hardware D3D12 adapter exists,
+pinned to that adapter; `llvmpipe` (CPU rendering, slower) otherwise, including
+when the only D3D12 adapter is the Microsoft Basic Render Driver (WARP), which
+is software too and slower than llvmpipe. A `GALLIUM_DRIVER` already in the
+environment wins. The `[gl]` log lines name the choice and the renderer that
+came up. Keep the dependency notices and matching architecture alongside the
+bundled executable.

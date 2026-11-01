@@ -10,7 +10,14 @@ on:
       - 'app/packaging/icons/**'
       - 'app/packaging/check-payload.sh'
       - 'test/roms/yarc.j64'
-      - 'app/packaging/windows/msix/**'
+      - 'app/packaging/windows/**'
+      - 'app/src/software_gl.h'
+      - 'app/src/gl_context.*'
+      - 'app/src/app.h'
+      - 'app/src/platform/software_gl_windows.cpp'
+      - 'app/src/main.cpp'
+      - 'app/src/app.cpp'
+      - 'app/CMakeLists.txt'
       - 'app/src/platform/platform_windows.cpp'
       - '.github/workflows/windows-store.yml'
   workflow_dispatch:
@@ -40,12 +47,12 @@ jobs:
           - arch: x64
             os: windows-latest
             msystem: MINGW64
-            packages: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+            packages: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-mesa mingw-w64-x86_64-python
             cmake_extra: ''
           - arch: arm64
             os: windows-11-arm
             msystem: CLANGARM64
-            packages: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja
+            packages: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja mingw-w64-clang-aarch64-mesa mingw-w64-clang-aarch64-python
             cmake_extra: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
     steps:
       - uses: actions/checkout@v7
@@ -75,6 +82,7 @@ jobs:
           cmake --install build-store --prefix "$PWD/stage-store"
           stage-store/bin/virtualjaguar.exe --headless --frames 300 --expect-hash f4c30ea3 test/roms/yarc.j64
           bash app/packaging/check-payload.sh build-store stage-store/bin virtualjaguar.exe
+          python app/packaging/windows/stage-software-gl.py stage-store
       - name: Pack and validate Store MSIX with the Windows SDK
         shell: pwsh
         run: |

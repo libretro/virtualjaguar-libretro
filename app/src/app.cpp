@@ -1,6 +1,7 @@
 #include "platform/file_access.h"
 #include "app.h"
 #include "build_channel.h"
+#include "gl_context.h"
 #include "devices_ui.h"
 #include "fonts_imgui.h"
 #include "ui_scale.h"
@@ -435,7 +436,11 @@ bool App::initWindow() {
         std::fprintf(stderr, "cannot create an OpenGL 3.3 core context: %s\n", SDL_GetError());
         return false;
     }
-    SDL_GL_MakeCurrent(window_, gl_);
+    if (!SDL_GL_MakeCurrent(window_, gl_)) {
+        std::fprintf(stderr, "cannot make OpenGL context current: %s\n", SDL_GetError());
+        return false;
+    }
+    if (!initOpenGLLoader()) return false;
     swapGuard_.contextCreated(platform::displayAsleep(window_));
     if (swapGuard_.deadLink())
         std::fprintf(stderr, "[gl] the display is asleep: vsync is off for this run (a swap would wait for a refresh that never comes)\n");
@@ -2574,7 +2579,11 @@ int App::runInteractive(const CliArgs& a) {
     lowDpi_ = a.lowDpi || a.pixelDensity > 1;   // --pixel-density builds its own density on a 1x window
     simDensity_ = a.pixelDensity > 1 ? std::min(4u, a.pixelDensity) : 0;
     g_simDensity = simDensity_ ? (float)simDensity_ : 1.0f;
-    if (!initWindow() || !initImGui()) return 1;
+    if (!initWindow() || !initImGui()) {
+        graphicsStartupError = SDL_GetError();
+        if (graphicsStartupError.empty()) graphicsStartupError = "Could not initialize the graphics renderer.";
+        return 1;
+    }
     desktopInit();
     if (!a.font.empty()) {
         if (!fonts::applySpec(a.font, fontSettings)) std::fprintf(stderr, "--font: cannot read '%s'\n", a.font.c_str());

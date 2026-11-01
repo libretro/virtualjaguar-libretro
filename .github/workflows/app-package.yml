@@ -349,6 +349,8 @@ jobs:
               mingw-w64-x86_64-gcc
               mingw-w64-x86_64-cmake
               mingw-w64-x86_64-ninja
+              mingw-w64-x86_64-mesa
+              mingw-w64-x86_64-python
             cmake_extra: ''
           - arch: arm64
             os: windows-11-arm
@@ -358,6 +360,8 @@ jobs:
               mingw-w64-clang-aarch64-clang
               mingw-w64-clang-aarch64-cmake
               mingw-w64-clang-aarch64-ninja
+              mingw-w64-clang-aarch64-mesa
+              mingw-w64-clang-aarch64-python
             cmake_extra: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
     defaults:
       run:
@@ -419,7 +423,9 @@ jobs:
           if [ "$ARCH" = arm64 ]; then grep -qiE 'aarch64|arm64' machine.txt; else grep -qiE 'x86-64|i386:x86-64' machine.txt; fi
 
       - name: Install tree
-        run: cmake --install build --prefix "$PWD/stage"
+        run: |
+          cmake --install build --prefix "$PWD/stage"
+          python app/packaging/windows/stage-software-gl.py stage
 
       # ---- SignPath (stub): runs only with the `sign` input and SIGNPATH_API_TOKEN; the SignPath
       # Foundation application is not approved yet, so this is dormant. -----------------------

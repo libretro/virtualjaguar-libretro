@@ -1,0 +1,111 @@
+name: Windows ARM OpenGL qualification
+on:
+  pull_request:
+    # Any pull request that touches the Windows GL path, whatever its base: the
+    # qualification must also run for a PR stacked on another PR's branch.
+    paths:
+      - 'app/src/gl_context.*'
+      - 'app/src/software_gl.h'
+      - 'app/src/platform/software_gl_windows.cpp'
+      - 'app/src/main.cpp'
+      - 'app/tests/software_gl_test.cpp'
+      - 'app/packaging/windows/stage-software-gl.py'
+      - 'app/src/app.cpp'
+      - 'app/tests/gl_context*'
+      - 'app/cmake/VJShaders.cmake'
+      - 'app/cmake/VJPlatformTests.cmake'
+      - '.github/workflows/windows-gl-test.yml'
+  workflow_dispatch:
+concurrency:
+  group: windows-gl-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  software-gl:
+    runs-on: windows-11-arm
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: false
+          install: >-
+            zip
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-ninja
+            mingw-w64-clang-aarch64-mesa
+            mingw-w64-clang-aarch64-python
+      - name: Configure and build the ARM64 test candidate
+        run: |
+          set -eu
+          cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_WERROR=ON -DVJ_BUILD_CHANNEL=nightly
+          cmake --build build --target virtualjaguar vj_gl_context_test vj_gl_context_integration vj_software_gl_test -j4
+          build/vj_gl_context_test.exe
+          build/vj_software_gl_test.exe
+          cmake --install build --prefix "$PWD/stage"
+      - name: Stage a separate software OpenGL runtime and its notices
+        run: |
+          set -eu
+          mkdir -p diagnostics
+          python app/packaging/windows/stage-software-gl.py stage
+          command cp -f build/vj_gl_context_integration.exe stage/bin/software-opengl/
+
+      - name: Replay the old loader and qualify real ARM64 software GL rendering
+        run: |
+          set -eu
+          set +e
+          build/vj_gl_context_integration.exe legacy >diagnostics/native-driver.txt 2>&1
+          set -e
+          timeout 90 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
+            --screenshot "$PWD/diagnostics/automatic-fallback.png" --screenshot-frame 20 \
+            >diagnostics/automatic-stdout.txt 2>diagnostics/automatic-stderr.txt
+          test -s diagnostics/automatic-fallback.png
+          grep -q 'automatically retrying with bundled Mesa OpenGL' diagnostics/automatic-stderr.txt
+          # The launcher picks d3d12 only for a hardware D3D12 adapter and llvmpipe
+          # otherwise; the hosted runner has only the Basic Render Driver (WARP), so
+          # it shows llvmpipe.  Either is the bundled Mesa and not the GDI Generic
+          # 1.1 driver the native attempt reported.
+          grep -E 'renderer=(llvmpipe|D3D12)' diagnostics/automatic-stderr.txt
+          grep -E '\[gl\] (bundled Mesa will render through Direct3D 12|no hardware Direct3D 12 adapter)' diagnostics/automatic-stderr.txt
+          test -f 'automatic fallback data/config.ini'
+          test ! -e 'automatic fallback data/saves/instance-2'
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe
+          export LIBGL_ALWAYS_SOFTWARE=true
+          set +e
+          stage/bin/software-opengl/vj_gl_context_integration.exe legacy >diagnostics/legacy-loader.txt 2>&1
+          legacy_result=$?
+          set -e
+          echo "Legacy loader exit: $legacy_result" | tee -a diagnostics/legacy-loader.txt
+          stage/bin/software-opengl/vj_gl_context_integration.exe >diagnostics/sdl-loader.txt 2>&1
+          cat diagnostics/sdl-loader.txt
+          timeout 90 stage/bin/software-opengl/virtualjaguar.exe --data-dir "$PWD/test-data" \
+            --screenshot "$PWD/diagnostics/arm64-software-gl.png" --screenshot-frame 20 \
+            >diagnostics/app-stdout.txt 2>diagnostics/app-stderr.txt
+          test -s diagnostics/arm64-software-gl.png
+          command rm -f stage/bin/software-opengl/vj_gl_context_integration.exe
+          cat diagnostics/app-stderr.txt
+      - name: Package the portable test build
+        run: |
+          set -eu
+          printf '%s\n' 'Open virtualjaguar.exe normally. If its graphics driver cannot initialize, it automatically retries with bundled Mesa OpenGL: hardware rendering through Direct3D 12 when the machine has it, CPU rendering (slower) otherwise. No driver installation or special launcher is needed.' >stage/bin/TEST-BUILD.txt
+          bash app/packaging/windows/package.sh stage gl-test out --arch arm64
+          printf '%s\n' "$GITHUB_SHA" >out/SOURCE_COMMIT.txt
+          sha256sum out/*.zip >out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-arm64-opengl-test
+          path: |
+            out/*
+            diagnostics/*
+          if-no-files-found: error

@@ -80,3 +80,13 @@ upload multiple different builds under an already published version.
 References: [manual packaging](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion),
 [version rules](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/package-version-numbering),
 [signing](https://learn.microsoft.com/en-us/windows/msix/package/signing-package-overview).
+
+Windows packages include a `software-opengl/` app copy and Mesa dependency notices.
+Startup tries the normal driver first. If window/context/renderer initialization
+fails, it releases the first instance and retries once with the bundled Mesa,
+preserving command-line arguments and the original data root. Mesa renders on
+the machine's hardware Direct3D 12 adapter when there is one (`d3d12`) and on
+the CPU otherwise (`llvmpipe`; the Basic Render Driver does not count as
+hardware). Only the child's environment selects Mesa; system drivers and
+settings are unchanged.
+Qualify both the normal and fallback launch paths for each Store architecture.

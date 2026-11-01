@@ -322,6 +322,7 @@ endif()
 set(VJ_APP_SOURCES
     src/main.cpp
     src/app.cpp
+    src/gl_context.cpp
     src/paths.cpp
     src/instance.cpp
     src/config.cpp
@@ -443,7 +444,7 @@ if(APPLE)
     set_source_files_properties(src/platform/platform_macos.mm PROPERTIES
         COMPILE_OPTIONS "-fobjc-arc;-Wno-deprecated-declarations")
 elseif(WIN32)
-    list(APPEND VJ_APP_SOURCES src/platform/platform_windows.cpp)
+    list(APPEND VJ_APP_SOURCES src/platform/platform_windows.cpp src/platform/software_gl_windows.cpp)
 else()
     list(APPEND VJ_APP_SOURCES src/platform/platform_other.cpp)
 endif()

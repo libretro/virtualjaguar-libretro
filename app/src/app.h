@@ -164,6 +164,7 @@ public:
     int run(const CliArgs& args);   // returns the process exit code
 
     // ---- services (public: the UI drives them) -------------------------------
+    std::string graphicsStartupError; // nonempty only when window/context/UI initialization fails
     Paths paths;
     Config cfg;
     CoreHost& host;
