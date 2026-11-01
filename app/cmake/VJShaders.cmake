@@ -159,11 +159,25 @@ elseif(VJ_APP_FETCH_LIBRASHADER)
         endif()
         if(EXISTS "${librashader_bin_SOURCE_DIR}/${_libname}")
             set(VJ_LIBRASHADER_LIB_FILE "${librashader_bin_SOURCE_DIR}/${_libname}")
+            message(STATUS "librashader runtime: ${VJ_LIBRASHADER_LIB_FILE} (prebuilt ${_zip})")
         else()
             message(WARNING "librashader: ${_libname} not found in ${_zip}")
         endif()
     else()
         message(STATUS "librashader: no prebuilt runtime is published for this platform; install it separately")
+    endif()
+elseif(VJ_SHADERS_AVAILABLE)
+    # The cache keeps an OFF from an earlier offline or packaging configure, and the default never
+    # comes back: say so where a download exists (Windows, Apple silicon), or a local build quietly
+    # ships no runtime and the Shader section reports the library missing.
+    set(_arch "${CMAKE_OSX_ARCHITECTURES}")
+    if(NOT _arch)
+        set(_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    if(WIN32 OR (APPLE AND _arch MATCHES "arm64|aarch64"))
+        message(WARNING "librashader: VJ_APP_FETCH_LIBRASHADER is OFF and VJ_LIBRASHADER_LIB is unset, so no runtime "
+                        "is copied beside the executable; shaders then need a system copy or VJ_LIBRASHADER. "
+                        "Configure again with -DVJ_APP_FETCH_LIBRASHADER=ON to download the pinned prebuilt.")
     endif()
 endif()
 
