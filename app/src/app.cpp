@@ -654,6 +654,7 @@ void App::wireHost() {
     });
     debug.onResumeUi.push_back([this] {
         pacer_.reset();
+        swapGrid_.restart();
         lastTick_ = now();                                // the halt must not count as elapsed emulation time
     });
 
@@ -961,6 +962,7 @@ void App::displayChanged() {
     displayLock_.reset();
     latch_.resetMeasure();
     if (window_) latchUpdatePeriod();   // (inline it only sets a period nothing reads)
+    gridChecks_ = 0;                     // inline: the step grid reads the new period at the next swap
 }
 
 const char* App::lockReasonText(LockReason r) {
@@ -1232,14 +1234,16 @@ void App::latchLog() {
 }
 
 // The display's refresh period for the latch (0 = unknown: it stays off).
-void App::latchUpdatePeriod() {
+void App::latchUpdatePeriod() { latch_.setPeriodNs(displayModePeriodNs()); }
+
+uint64_t App::displayModePeriodNs() {
     const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
     uint64_t ns = 0;
     if (m && m->refresh_rate_numerator > 0 && m->refresh_rate_denominator > 0)
         ns = (uint64_t)(1e9 * (double)m->refresh_rate_denominator / (double)m->refresh_rate_numerator);
     else if (m && m->refresh_rate > 0.0f)
         ns = (uint64_t)(1e9 / (double)m->refresh_rate);
-    latch_.setPeriodNs(ns);
+    return ns;
 }
 
 // UI thread, threaded: a content switch (load / unload; the call ran frames.clear() on the emulation thread) must not
@@ -1520,6 +1524,7 @@ bool App::openContent(const std::string& pathIn) {
     paused = false;
     syncEmuFlags();
     pacer_.reset();
+    swapGrid_.restart();
     lastTick_ = now();
     controlsOverlayOnLoad(*this);
     addRecent(path);
@@ -1600,6 +1605,7 @@ bool App::openNoContent() {
     paused = false;
     syncEmuFlags();
     pacer_.reset();
+    swapGrid_.restart();
     lastTick_ = now();
     invalidateThumbs();
     discordNoteGameStarted(*this);
@@ -2389,10 +2395,12 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
 // ---------------------------------------------------------------------------------
 void App::stepEmulation() {
     double t = now();
+    const double stepAt = (double)SDL_GetTicksNS() * 1e-9;   // (the swap times' clock, for swapGrid_)
     double dt = t - lastTick_;
     lastTick_ = t;
     if (!host.isLoaded() || paused || debug.halted()) {
         pacer_.reset();
+        swapGrid_.restart();
         return;
     }
     double period = 1.0 / std::max(1.0, host.fps());
@@ -2400,8 +2408,9 @@ void App::stepEmulation() {
     if (fastForward) {
         frames = 4;
         pacer_.reset();
+        swapGrid_.restart();
     } else {
-        frames = pacer_.plan(dt, period);
+        frames = pacer_.plan(dt + swapGrid_.correct(stepAt), period);   // booked at the vblank grid when locked (pacing.h)
     }
     PerfTrace::Emu teLast{};   // the last frame's row waits for the view copy below (its fill_ns)
     for (int i = 0; i < frames; i++) {
@@ -2788,6 +2797,16 @@ int App::runInteractive(const CliArgs& a) {
             latch_.onSwap(swap0, swap1);
             latchLog();
             displayLockAfterSwap(swap0, swap1);
+        } else if (pacer_.swapSync) {
+            if (gridChecks_++ % 60 == 0) gridPeriodNs_ = displayModePeriodNs();   // the window may have moved to another display
+            swapGrid_.onSwap((double)swap0 * 1e-9, (double)swap1 * 1e-9, (double)gridPeriodNs_ * 1e-9);
+        } else {
+            swapGrid_.reset();   // no swap-interval pacing: the pacer sees real time
+        }
+        if (!threaded() && swapGrid_.locked() != gridLogged_) {
+            gridLogged_ = swapGrid_.locked();
+            std::fprintf(stderr, "[pacing] inline step grid %s: refresh %.3f ms\n", gridLogged_ ? "locked" : "released",
+                         (double)gridPeriodNs_ / 1e6);
         }
         perf.lap(Perf::Present);
 
