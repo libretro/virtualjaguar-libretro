@@ -66,7 +66,7 @@
 #                                       workload still covers your change --
 #                                       see WORKLOAD below.)
 #   IR_STATE      a raw core savestate (the app's .state files, or
-#                 test_benchmark --save-state output) loaded before the
+#                 frame_hash_ab --save-state output) loaded before the
 #                 measured frames: the way to measure GAMEPLAY rather than
 #                 a boot sequence.  Copied into the work dir, so the
 #                 container sees it.  Pair it with IR_ROM of the same game.
