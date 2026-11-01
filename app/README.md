@@ -587,6 +587,14 @@ without it, turn it off in Settings (persistent) or start with `--emu-thread off
 the app falls back to the single-thread loop and says so in the log. Headless runs stay single-threaded unless
 `--emu-thread on` says otherwise.
 
+When it starts, the thread asks the OS to schedule it as the periodic deadline job it is: on macOS the time-constraint
+(real-time) policy, which runs ahead of every QoS class and on performance cores; on Windows time-critical priority plus
+the MMCSS "Games" task; on Linux `SCHED_RR` at a low real-time priority, which the kernel refuses unless `RLIMIT_RTPRIO`
+or rtkit allows it. On a loaded host this is the difference between the emulation keeping a core and sharing one (an M2
+Max at load 250 ran the same Doom frame in 5.4 ms with a core of its own and 18-20 ms without). The log's
+`[emu] emulation thread on; scheduling ...` line says what the thread got; `--emu-priority normal` skips the request for
+one run.
+
 With vsync, the window waits until just before each vblank, passing input to the emulation as it arrives, and then
 shows the newest frame (the late latch, `src/late_latch.h`). It stays off until it has found where the vblanks are,
 and lets go by itself if frames keep missing them; the log says `[emu] late latch locked` / `released`.
