@@ -15,7 +15,7 @@ bool initOpenGLLoader() {
                  version ? version : "unavailable", vendor ? vendor : "unavailable", renderer ? renderer : "unavailable");
     if (!supportsDesktopGL33(version)) {
         SDL_SetError("Virtual Jaguar requires desktop OpenGL 3.3 or newer; this driver provides %s. "
-                     "Use a compatible graphics driver or the software-OpenGL test launcher.", version ? version : "no current OpenGL context");
+                     "Use a compatible graphics driver or a software OpenGL implementation.", version ? version : "no current OpenGL context");
         std::fprintf(stderr, "[gl] %s\n", SDL_GetError());
         return false;
     }

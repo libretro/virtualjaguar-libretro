@@ -9,6 +9,9 @@ on:
       - 'app/cmake/VJShaders.cmake'
       - '.github/workflows/windows-gl-test.yml'
   workflow_dispatch:
+concurrency:
+  group: windows-gl-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -30,6 +33,7 @@ jobs:
             mingw-w64-clang-aarch64-cmake
             mingw-w64-clang-aarch64-ninja
             mingw-w64-clang-aarch64-mesa
+            mingw-w64-clang-aarch64-python
       - name: Configure and build the ARM64 test candidate
         run: |
           set -eu
@@ -60,7 +64,8 @@ jobs:
               if not path.exists():
                   continue  # system DLL, not an MSYS2 dependency
               copied.add(name.lower())
-              shutil.copy2(path, target / path.name)
+              destination = 'mesa-opengl32.dll' if name.lower() == 'opengl32.dll' else path.name
+              shutil.copy2(path, target / destination)
               imports = subprocess.check_output(['llvm-objdump', '-p', str(path)], text=True)
               pending.extend(re.findall(r'DLL Name:\s*(\S+)', imports))
               unix_path = subprocess.check_output(['cygpath', '-u', str(path)], text=True).strip()
@@ -83,7 +88,7 @@ jobs:
         run: |
           set -eu
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
-          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/mesa-opengl32.dll")"
           export GALLIUM_DRIVER=llvmpipe
           export LIBGL_ALWAYS_SOFTWARE=true
           set +e
@@ -105,7 +110,7 @@ jobs:
           import pathlib
           root = pathlib.Path('stage/bin')
           normal = '@echo off\ncd /d "%~dp0"\nvirtualjaguar.exe >test-stdout.txt 2>test-stderr.txt\necho Exit code: %errorlevel%>>test-stderr.txt\nnotepad test-stderr.txt\n'
-          software = '@echo off\nsetlocal\ncd /d "%~dp0"\nset "PATH=%~dp0software-opengl;%PATH%"\nset "SDL_OPENGL_LIBRARY=%~dp0software-opengl\\opengl32.dll"\nset "GALLIUM_DRIVER=llvmpipe"\nset "LIBGL_ALWAYS_SOFTWARE=true"\nvirtualjaguar.exe >software-stdout.txt 2>software-stderr.txt\necho Exit code: %errorlevel%>>software-stderr.txt\nnotepad software-stderr.txt\n'
+          software = '@echo off\nsetlocal\ncd /d "%~dp0"\nset "PATH=%~dp0software-opengl;%PATH%"\nset "SDL_OPENGL_LIBRARY=%~dp0software-opengl\\mesa-opengl32.dll"\nset "GALLIUM_DRIVER=llvmpipe"\nset "LIBGL_ALWAYS_SOFTWARE=true"\nvirtualjaguar.exe >software-stdout.txt 2>software-stderr.txt\necho Exit code: %errorlevel%>>software-stderr.txt\nnotepad software-stderr.txt\n'
           (root / 'Test-Normal-Graphics.cmd').write_bytes(normal.replace('\n','\r\n').encode())
           (root / 'Test-Software-Graphics.cmd').write_bytes(software.replace('\n','\r\n').encode())
           (root / 'TEST-BUILD.txt').write_text('ARM64 diagnostic candidate. Try Test-Normal-Graphics.cmd first, then Test-Software-Graphics.cmd. Close the app to open its log. Software mode uses CPU rendering and changes no system settings. Not a Store package.\n')

@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
         passed = pixel[0] > 240 && pixel[1] < 15 && pixel[2] < 15;
         std::printf("GL pixel=%u,%u,%u; version=%s\n", pixel[0], pixel[1], pixel[2], glGetString(GL_VERSION));
     }
-    imgl3wShutdown();
+    if (loaded) imgl3wShutdown();
     SDL_GL_DestroyContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();
