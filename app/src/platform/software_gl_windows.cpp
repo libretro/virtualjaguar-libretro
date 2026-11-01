@@ -5,6 +5,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <dxgi1_2.h>
+#include <d3d12.h>
 #include "software_gl.h"
 #include <algorithm>
 #include <cstdio>
@@ -13,6 +15,42 @@
 
 namespace vj {
 namespace {
+// The description of the first hardware adapter that can create a Direct3D 12
+// device at feature level 11_0, or empty when the machine has none.  The
+// "Microsoft Basic Render Driver" (WARP) is a software adapter and is skipped:
+// GL on WARP is slower than llvmpipe and the app did not survive it on the
+// hosted ARM64 runner.  dxgi.dll / d3d12.dll are loaded by hand so the
+// executable keeps running on a machine without either (no link dependency).
+std::wstring hardwareD3D12Adapter() {
+    std::wstring found;
+    HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
+    HMODULE d3d12 = LoadLibraryW(L"d3d12.dll");
+    if (!dxgi || !d3d12) {
+        if (dxgi) FreeLibrary(dxgi);
+        if (d3d12) FreeLibrary(d3d12);
+        return found;
+    }
+    using CreateFactory1 = HRESULT(WINAPI*)(REFIID, void**);
+    using CreateDevice = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+    auto createFactory = reinterpret_cast<CreateFactory1>(GetProcAddress(dxgi, "CreateDXGIFactory1"));
+    auto createDevice = reinterpret_cast<CreateDevice>(GetProcAddress(d3d12, "D3D12CreateDevice"));
+    IDXGIFactory1* factory = nullptr;
+    if (createFactory && createDevice && SUCCEEDED(createFactory(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
+        IDXGIAdapter1* adapter = nullptr;
+        for (UINT i = 0; found.empty() && factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+            DXGI_ADAPTER_DESC1 desc = {};
+            if (SUCCEEDED(adapter->GetDesc1(&desc)) && !(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
+                SUCCEEDED(createDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+                found = desc.Description;
+            adapter->Release();
+            adapter = nullptr;
+        }
+        factory->Release();
+    }
+    FreeLibrary(d3d12);
+    FreeLibrary(dxgi);
+    return found;
+}
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
     int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int)text.size(), nullptr, 0);
@@ -57,15 +95,28 @@ bool retrySoftwareOpenGL(int argc, char** argv, const std::string& dataDir, int&
     FreeEnvironmentStringsW(block);
     entries.push_back(L"SDL_OPENGL_LIBRARY=" + dll);
     entries.push_back(L"VJ_SOFTWARE_OPENGL_RETRY=1");
-    // Which Gallium driver Mesa uses is deliberately left to Mesa.  The bundled
-    // build carries d3d12 (OpenGL on the Direct3D 12 driver every stock Windows
-    // 10/11 install has, the same layer as Microsoft's OpenGL Compatibility
-    // Pack) and llvmpipe (pure software).  Mesa's WGL frontend takes d3d12 when
-    // a D3D12 adapter exists and llvmpipe otherwise, so a machine without a
-    // vendor OpenGL driver still gets hardware rendering; forcing llvmpipe here
-    // made every such machine rasterize the UI and the shader presets on the
-    // CPU.  GALLIUM_DRIVER and LIBGL_ALWAYS_SOFTWARE pass through untouched so a
-    // user (or the GL test workflow) can still pin a driver.
+    // Which Gallium driver the bundled Mesa uses.  It carries d3d12 (OpenGL on
+    // the Direct3D 12 driver every stock Windows 10/11 install has, the same
+    // layer as Microsoft's OpenGL Compatibility Pack) and llvmpipe (pure
+    // software).  With a hardware D3D12 adapter present, d3d12 renders on the
+    // GPU, pinned to that adapter so Mesa cannot drift onto WARP; without one,
+    // llvmpipe: Mesa left alone takes the Microsoft Basic Render Driver, which
+    // is software D3D12 under a GL translation, slower than llvmpipe and not
+    // something the app survived on the hosted ARM64 runner.  A GALLIUM_DRIVER
+    // the user already set wins over this probe.
+    if (!GetEnvironmentVariableW(L"GALLIUM_DRIVER", nullptr, 0)) {
+        std::wstring adapter = hardwareD3D12Adapter();
+        if (!adapter.empty()) {
+            entries.push_back(L"GALLIUM_DRIVER=d3d12");
+            if (!GetEnvironmentVariableW(L"MESA_D3D12_DEFAULT_ADAPTER_NAME", nullptr, 0))
+                entries.push_back(L"MESA_D3D12_DEFAULT_ADAPTER_NAME=" + adapter);
+            std::fprintf(stderr, "[gl] bundled Mesa will render through Direct3D 12 on %ls\n", adapter.c_str());
+        } else {
+            entries.push_back(L"GALLIUM_DRIVER=llvmpipe");
+            entries.push_back(L"LIBGL_ALWAYS_SOFTWARE=true");
+            std::fprintf(stderr, "[gl] no hardware Direct3D 12 adapter; bundled Mesa will render in software (llvmpipe)\n");
+        }
+    }
     std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
     std::vector<wchar_t> environment;
     for (const auto& entry : entries) environment.insert(environment.end(), entry.c_str(), entry.c_str() + entry.size() + 1);

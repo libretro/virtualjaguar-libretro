@@ -69,10 +69,12 @@ jobs:
             >diagnostics/automatic-stdout.txt 2>diagnostics/automatic-stderr.txt
           test -s diagnostics/automatic-fallback.png
           grep -q 'automatically retrying with bundled Mesa OpenGL' diagnostics/automatic-stderr.txt
-          # Mesa picks d3d12 when the runner exposes a D3D12 adapter and llvmpipe
-          # when it does not (hosted runners have no GPU); either is the bundled
-          # Mesa and not the GDI Generic 1.1 driver the native attempt reported.
+          # The launcher picks d3d12 only for a hardware D3D12 adapter and llvmpipe
+          # otherwise; the hosted runner has only the Basic Render Driver (WARP), so
+          # it shows llvmpipe.  Either is the bundled Mesa and not the GDI Generic
+          # 1.1 driver the native attempt reported.
           grep -E 'renderer=(llvmpipe|D3D12)' diagnostics/automatic-stderr.txt
+          grep -E '\[gl\] (bundled Mesa will render through Direct3D 12|no hardware Direct3D 12 adapter)' diagnostics/automatic-stderr.txt
           test -f 'automatic fallback data/config.ini'
           test ! -e 'automatic fallback data/saves/instance-2'
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
