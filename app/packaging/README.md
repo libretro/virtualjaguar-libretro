@@ -424,10 +424,17 @@ Gatekeeper first-run on a freshly downloaded signed zip, SmartScreen on the inst
 (CI may not run the x86_64 slice), Wayland/X11/PipeWire sound on real Linux desktops, and the AppImage on
 distributions older than Ubuntu 22.04.
 
-Windows packages also stage Mesa software OpenGL through
-`windows/stage-software-gl.py` (MSYS2 Mesa, Python and objdump required).
-The normal executable automatically retries once with the bundled software app
-if graphics startup fails. The retry preserves game arguments, working directory
-and the original config/save root; users do not need a separate launcher.
-Software rendering uses the CPU and can be slower. Keep its dependency notices
-and matching architecture alongside the software executable.
+Windows packages also stage a bundled Mesa OpenGL through
+`windows/stage-software-gl.py` (MSYS2 Mesa, Python and objdump required) in
+the `software-opengl/` folder (the name predates the Direct3D 12 path below).
+The normal executable automatically retries once with the bundled app if
+graphics startup fails, which on a stock Windows 10/11 install without a vendor
+OpenGL driver (Windows on ARM, VMs, Remote Desktop, the basic display adapter)
+means WGL handed us the GDI Generic OpenGL 1.1 driver. The retry preserves game
+arguments, working directory and the original config/save root; users do not
+need a separate launcher. Mesa chooses its own driver: `d3d12` (OpenGL on the
+machine's Direct3D 12 driver, hardware rendering, the same layer as Microsoft's
+OpenGL Compatibility Pack) when a D3D12 adapter exists, `llvmpipe` (CPU
+rendering, slower) otherwise. The `[gl] renderer=` log line names which one
+came up. Keep the dependency notices and matching architecture alongside the
+bundled executable.

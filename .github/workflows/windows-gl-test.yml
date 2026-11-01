@@ -67,8 +67,11 @@ jobs:
             --screenshot "$PWD/diagnostics/automatic-fallback.png" --screenshot-frame 20 \
             >diagnostics/automatic-stdout.txt 2>diagnostics/automatic-stderr.txt
           test -s diagnostics/automatic-fallback.png
-          grep -q 'automatically retrying with bundled software OpenGL' diagnostics/automatic-stderr.txt
-          grep -q 'renderer=llvmpipe' diagnostics/automatic-stderr.txt
+          grep -q 'automatically retrying with bundled Mesa OpenGL' diagnostics/automatic-stderr.txt
+          # Mesa picks d3d12 when the runner exposes a D3D12 adapter and llvmpipe
+          # when it does not (hosted runners have no GPU); either is the bundled
+          # Mesa and not the GDI Generic 1.1 driver the native attempt reported.
+          grep -E 'renderer=(llvmpipe|D3D12)' diagnostics/automatic-stderr.txt
           test -f 'automatic fallback data/config.ini'
           test ! -e 'automatic fallback data/saves/instance-2'
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
@@ -91,7 +94,7 @@ jobs:
       - name: Package the portable test build
         run: |
           set -eu
-          printf '%s\n' 'Open virtualjaguar.exe normally. If its graphics driver cannot initialize, it automatically retries with bundled software OpenGL. CPU rendering can be slower. No driver installation or special launcher is needed.' >stage/bin/TEST-BUILD.txt
+          printf '%s\n' 'Open virtualjaguar.exe normally. If its graphics driver cannot initialize, it automatically retries with bundled Mesa OpenGL: hardware rendering through Direct3D 12 when the machine has it, CPU rendering (slower) otherwise. No driver installation or special launcher is needed.' >stage/bin/TEST-BUILD.txt
           bash app/packaging/windows/package.sh stage gl-test out --arch arm64
           printf '%s\n' "$GITHUB_SHA" >out/SOURCE_COMMIT.txt
           sha256sum out/*.zip >out/SHA256SUMS.txt

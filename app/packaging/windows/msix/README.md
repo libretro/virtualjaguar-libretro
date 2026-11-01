@@ -83,7 +83,9 @@ References: [manual packaging](https://learn.microsoft.com/en-us/windows/msix/de
 
 Windows packages include a `software-opengl/` app copy and Mesa dependency notices.
 Startup tries the normal driver first. If window/context/renderer initialization
-fails, it releases the first instance and retries once with the bundled CPU
-renderer, preserving command-line arguments and the original data root. Only the
-child's environment selects Mesa; system drivers and settings are unchanged.
+fails, it releases the first instance and retries once with the bundled Mesa,
+preserving command-line arguments and the original data root. Mesa renders on
+the Direct3D 12 driver when the machine has one (hardware, `d3d12`) and on the
+CPU otherwise (`llvmpipe`). Only the child's environment selects Mesa; system
+drivers and settings are unchanged.
 Qualify both the normal and fallback launch paths for each Store architecture.

@@ -51,15 +51,21 @@ bool retrySoftwareOpenGL(int argc, char** argv, const std::string& dataDir, int&
     wchar_t* block = GetEnvironmentStringsW();
     if (!block) return false;
     for (const wchar_t* p = block; *p; p += std::wcslen(p) + 1) {
-        if (!_wcsnicmp(p, L"SDL_OPENGL_LIBRARY=", 19) || !_wcsnicmp(p, L"GALLIUM_DRIVER=", 15) ||
-            !_wcsnicmp(p, L"LIBGL_ALWAYS_SOFTWARE=", 22) || !_wcsnicmp(p, L"VJ_SOFTWARE_OPENGL_RETRY=", 25)) continue;
+        if (!_wcsnicmp(p, L"SDL_OPENGL_LIBRARY=", 19) || !_wcsnicmp(p, L"VJ_SOFTWARE_OPENGL_RETRY=", 25)) continue;
         entries.emplace_back(p);
     }
     FreeEnvironmentStringsW(block);
     entries.push_back(L"SDL_OPENGL_LIBRARY=" + dll);
-    entries.push_back(L"GALLIUM_DRIVER=llvmpipe");
-    entries.push_back(L"LIBGL_ALWAYS_SOFTWARE=true");
     entries.push_back(L"VJ_SOFTWARE_OPENGL_RETRY=1");
+    // Which Gallium driver Mesa uses is deliberately left to Mesa.  The bundled
+    // build carries d3d12 (OpenGL on the Direct3D 12 driver every stock Windows
+    // 10/11 install has, the same layer as Microsoft's OpenGL Compatibility
+    // Pack) and llvmpipe (pure software).  Mesa's WGL frontend takes d3d12 when
+    // a D3D12 adapter exists and llvmpipe otherwise, so a machine without a
+    // vendor OpenGL driver still gets hardware rendering; forcing llvmpipe here
+    // made every such machine rasterize the UI and the shader presets on the
+    // CPU.  GALLIUM_DRIVER and LIBGL_ALWAYS_SOFTWARE pass through untouched so a
+    // user (or the GL test workflow) can still pin a driver.
     std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
     std::vector<wchar_t> environment;
     for (const auto& entry : entries) environment.insert(environment.end(), entry.c_str(), entry.c_str() + entry.size() + 1);
@@ -79,7 +85,7 @@ bool retrySoftwareOpenGL(int argc, char** argv, const std::string& dataDir, int&
         startup.hStdInput = copies[0]; startup.hStdOutput = copies[1]; startup.hStdError = copies[2];
     }
     PROCESS_INFORMATION process = {};
-    std::fprintf(stderr, "[gl] automatically retrying with bundled software OpenGL\n");
+    std::fprintf(stderr, "[gl] automatically retrying with bundled Mesa OpenGL (Direct3D 12 when available, software otherwise)\n");
     std::fflush(nullptr);
     BOOL created = CreateProcessW(child.c_str(), command.data(), nullptr, nullptr, TRUE,
                                  CREATE_UNICODE_ENVIRONMENT, environment.data(), nullptr, &startup, &process);
