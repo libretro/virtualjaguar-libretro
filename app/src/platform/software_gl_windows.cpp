@@ -39,9 +39,15 @@ std::wstring hardwareD3D12Adapter() {
         IDXGIAdapter1* adapter = nullptr;
         for (UINT i = 0; found.empty() && factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
             DXGI_ADAPTER_DESC1 desc = {};
-            if (SUCCEEDED(adapter->GetDesc1(&desc)) && !(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
-                SUCCEEDED(createDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
-                found = desc.Description;
+            // DXGI_ADAPTER_FLAG_SOFTWARE is not reliably set on the Basic Render
+            // Driver (the hosted ARM64 runner enumerates it without the flag), so
+            // also reject Microsoft's vendor id 0x1414 and the name itself.
+            if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+                const bool software = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) || desc.VendorId == 0x1414 ||
+                                      std::wcsstr(desc.Description, L"Basic Render") != nullptr;
+                if (!software && SUCCEEDED(createDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+                    found = desc.Description;
+            }
             adapter->Release();
             adapter = nullptr;
         }
