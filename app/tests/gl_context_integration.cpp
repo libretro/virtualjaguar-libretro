@@ -23,6 +23,15 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 77;
     }
+    auto getString = reinterpret_cast<PFNGLGETSTRINGPROC>(SDL_GL_GetProcAddress("glGetString"));
+    const char* version = getString ? reinterpret_cast<const char*>(getString(GL_VERSION)) : nullptr;
+    if (!vj::supportsDesktopGL33(version)) {
+        std::fprintf(stderr, "SKIP driver has no desktop GL 3.3: %s\n", version ? version : "unavailable");
+        SDL_GL_DestroyContext(context);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 77;
+    }
     // 'legacy' replays the pre-fix independent OS-library loader for before/after evidence.
     bool loaded = argc > 1 && !std::strcmp(argv[1], "legacy") ? imgl3wInit() == 0 : vj::initOpenGLLoader();
     bool passed = false;
