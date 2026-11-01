@@ -1,0 +1,117 @@
+name: Windows ARM OpenGL qualification
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'app/src/gl_context.*'
+      - 'app/src/app.cpp'
+      - 'app/tests/gl_context*'
+      - 'app/cmake/VJShaders.cmake'
+      - '.github/workflows/windows-gl-test.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  software-gl:
+    runs-on: windows-11-arm
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: false
+          install: >-
+            zip
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-ninja
+            mingw-w64-clang-aarch64-mesa
+      - name: Configure and build the ARM64 test candidate
+        run: |
+          set -eu
+          cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DVJ_APP_WIN32_GUI=ON -DVJ_APP_WERROR=ON -DVJ_BUILD_CHANNEL=nightly
+          cmake --build build --target virtualjaguar vj_gl_context_test vj_gl_context_integration -j4
+          build/vj_gl_context_test.exe
+          cmake --install build --prefix "$PWD/stage"
+      - name: Stage a separate software OpenGL runtime and its notices
+        run: |
+          set -eu
+          mkdir -p stage/bin/software-opengl diagnostics
+          python - <<'PY'
+          import pathlib, re, shutil, subprocess
+          source = pathlib.Path('/clangarm64/bin')
+          target = pathlib.Path('stage/bin/software-opengl')
+          pending = ['opengl32.dll']
+          copied = set()
+          owners = set()
+          while pending:
+              name = pending.pop()
+              if name.lower() in copied:
+                  continue
+              path = source / name
+              if not path.exists():
+                  continue  # system DLL, not an MSYS2 dependency
+              copied.add(name.lower())
+              shutil.copy2(path, target / path.name)
+              imports = subprocess.check_output(['llvm-objdump', '-p', str(path)], text=True)
+              pending.extend(re.findall(r'DLL Name:\s*(\S+)', imports))
+              owners.add(subprocess.check_output(['pacman', '-Qqo', str(path)], text=True).strip())
+          assert (target / 'libgallium_wgl.dll').exists(), 'Mesa WGL driver missing'
+          notices = target / 'licenses'
+          for owner in sorted(owners):
+              for line in subprocess.check_output(['pacman', '-Ql', owner], text=True).splitlines():
+                  path = pathlib.Path(line.split(' ', 1)[1])
+                  if '/share/licenses/' in str(path) and path.is_file():
+                      dest = notices / owner / path.name
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(path, dest)
+          (target / 'PACKAGES.txt').write_text(subprocess.check_output(['pacman', '-Q', *sorted(owners)], text=True))
+          PY
+      - name: Replay the old loader and qualify real ARM64 software GL rendering
+        run: |
+          set -eu
+          export PATH="$PWD/stage/bin/software-opengl:$PATH"
+          export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
+          export GALLIUM_DRIVER=llvmpipe
+          export LIBGL_ALWAYS_SOFTWARE=true
+          set +e
+          build/vj_gl_context_integration.exe legacy >diagnostics/legacy-loader.txt 2>&1
+          legacy_result=$?
+          set -e
+          echo "Legacy loader exit: $legacy_result" | tee -a diagnostics/legacy-loader.txt
+          build/vj_gl_context_integration.exe >diagnostics/sdl-loader.txt 2>&1
+          cat diagnostics/sdl-loader.txt
+          timeout 90 build/virtualjaguar.exe --data-dir "$PWD/test-data" \
+            --screenshot "$PWD/diagnostics/arm64-software-gl.png" --screenshot-frame 20 \
+            >diagnostics/app-stdout.txt 2>diagnostics/app-stderr.txt
+          test -s diagnostics/arm64-software-gl.png
+          cat diagnostics/app-stderr.txt
+      - name: Package the portable test build
+        run: |
+          set -eu
+          python - <<'PY'
+          import pathlib
+          root = pathlib.Path('stage/bin')
+          normal = '@echo off\ncd /d "%~dp0"\nvirtualjaguar.exe >test-stdout.txt 2>test-stderr.txt\necho Exit code: %errorlevel%>>test-stderr.txt\nnotepad test-stderr.txt\n'
+          software = '@echo off\nsetlocal\ncd /d "%~dp0"\nset "PATH=%~dp0software-opengl;%PATH%"\nset "SDL_OPENGL_LIBRARY=%~dp0software-opengl\\opengl32.dll"\nset "GALLIUM_DRIVER=llvmpipe"\nset "LIBGL_ALWAYS_SOFTWARE=true"\nvirtualjaguar.exe >software-stdout.txt 2>software-stderr.txt\necho Exit code: %errorlevel%>>software-stderr.txt\nnotepad software-stderr.txt\n'
+          (root / 'Test-Normal-Graphics.cmd').write_bytes(normal.replace('\n','\r\n').encode())
+          (root / 'Test-Software-Graphics.cmd').write_bytes(software.replace('\n','\r\n').encode())
+          (root / 'TEST-BUILD.txt').write_text('ARM64 diagnostic candidate. Try Test-Normal-Graphics.cmd first, then Test-Software-Graphics.cmd. Close the app to open its log. Software mode uses CPU rendering and changes no system settings. Not a Store package.\n')
+          PY
+          bash app/packaging/windows/package.sh stage gl-test out --arch arm64
+          git rev-parse HEAD >out/SOURCE_COMMIT.txt
+          sha256sum out/*.zip >out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-arm64-opengl-test
+          path: |
+            out/*
+            diagnostics/*
+          if-no-files-found: error

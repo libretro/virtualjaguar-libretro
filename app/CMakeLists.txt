@@ -322,6 +322,7 @@ endif()
 set(VJ_APP_SOURCES
     src/main.cpp
     src/app.cpp
+    src/gl_context.cpp
     src/paths.cpp
     src/instance.cpp
     src/config.cpp

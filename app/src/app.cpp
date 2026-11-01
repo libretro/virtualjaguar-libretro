@@ -1,6 +1,7 @@
 #include "platform/file_access.h"
 #include "app.h"
 #include "build_channel.h"
+#include "gl_context.h"
 #include "devices_ui.h"
 #include "fonts_imgui.h"
 #include "ui_scale.h"
@@ -435,7 +436,14 @@ bool App::initWindow() {
         std::fprintf(stderr, "cannot create an OpenGL 3.3 core context: %s\n", SDL_GetError());
         return false;
     }
-    SDL_GL_MakeCurrent(window_, gl_);
+    if (!SDL_GL_MakeCurrent(window_, gl_)) {
+        std::fprintf(stderr, "cannot make OpenGL context current: %s\n", SDL_GetError());
+        return false;
+    }
+    if (!initOpenGLLoader()) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Virtual Jaguar graphics initialization", SDL_GetError(), window_);
+        return false;
+    }
     swapGuard_.contextCreated(platform::displayAsleep(window_));
     if (swapGuard_.deadLink())
         std::fprintf(stderr, "[gl] the display is asleep: vsync is off for this run (a swap would wait for a refresh that never comes)\n");

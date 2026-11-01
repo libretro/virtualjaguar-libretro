@@ -311,8 +311,17 @@ endfunction()
 #                    fallback.  SKIPPED (exit 77) without the library or a display.
 if(VJ_APP_BUILD_TESTS)
     enable_testing()
+    add_executable(vj_gl_context_test tests/gl_context_test.cpp)
+    target_include_directories(vj_gl_context_test PRIVATE src)
+    add_test(NAME gl_context_unit COMMAND vj_gl_context_test)
+    add_executable(vj_gl_context_integration tests/gl_context_integration.cpp src/gl_context.cpp)
+    target_include_directories(vj_gl_context_integration PRIVATE src)
+    target_link_libraries(vj_gl_context_integration PRIVATE vj_imgui ${VJ_SDL3_TARGET})
+    add_test(NAME gl_context_integration COMMAND vj_gl_context_integration)
+    set_tests_properties(gl_context_integration PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
     add_executable(vj_shader_tests
         test/shader_tests.cpp
+        src/gl_context.cpp
         src/shaders.cpp
         src/present_util.cpp
         src/paths.cpp
