@@ -3729,8 +3729,11 @@ GPU_OP_HOT void gpu_opcode_movei(void)
     * opcode in a 3D renderer (every constant, address and table base), and
     * those two calls were ~7% of a GPU-bound frame (perf pass 2026-11).
     * Both words must lie inside the 4 KB: an immediate straddling the end
-    * of local RAM takes the general path, exactly as before. */
-   if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc + 4 <= GPU_WORK_RAM_BASE + 0x1000)
+    * of local RAM takes the general path, exactly as before.  The upper
+    * bound is written without adding to gpu_pc, so a pc near 0xFFFFFFFF
+    * (a wild jump) cannot wrap into the fast path and index outside
+    * gpu_ram_8 (review of #1137). */
+   if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc <= GPU_WORK_RAM_BASE + 0x0FFC)
    {
       uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;
       RN = ((uint32_t)gpu_ram_8[off] << 8) | (uint32_t)gpu_ram_8[off + 1]
