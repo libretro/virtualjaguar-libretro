@@ -5,7 +5,8 @@
     {
       "name": "base",
       "hidden": true,
-      "binaryDir": "${sourceDir}/build-${presetName}"
+      "binaryDir": "${sourceDir}/build-${presetName}",
+      "cacheVariables": { "VJ_BUILD_CHANNEL": "dev" }
     },
     {
       "name": "release",
