@@ -30,6 +30,20 @@ ctest --test-dir app/build -C Release --output-on-failure   # headless smoke tes
 The binary is `app/build/virtualjaguar` (`app/build/Release/virtualjaguar.exe`
 with the Visual Studio generator).
 
+With CMake 3.21+ the same builds have names, run from `app/`:
+
+```sh
+cd app
+cmake --preset release            # or debug, or nightly (the nightly channel: emulation thread on by default)
+cmake --build --preset release -j
+ctest --preset release            # headless smoke tests
+```
+
+Each preset builds in its own `app/build-<preset>/` and sets its build type and channel on every
+configure. Any other `-D` option stays in the build directory's cache until you change it: an
+earlier `-DVJ_APP_FETCH_LIBRASHADER=OFF` keeps the librashader runtime out of every later build,
+and configure warns about that where a prebuilt exists.
+
 `-DVJ_TV_DEFAULT=auto|manual|off` (default `auto`) is the TV mode setting a fresh config starts on, so a local build starts on Auto
 while release packages are built with `manual` (see [TV mode](#tv-mode)).
 

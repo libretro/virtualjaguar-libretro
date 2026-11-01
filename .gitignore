@@ -210,3 +210,4 @@ test/roms/tier1/
 
 # Standalone app (app/): CMake build trees
 /app/build*/
+/app/CMakeUserPresets.json
