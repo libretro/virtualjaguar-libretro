@@ -426,10 +426,8 @@ set_tests_properties(emu_thread_default_unit PROPERTIES TIMEOUT 60 LABELS emu_th
 # The default rule through the real app (Review Focus 4): the data dir's ui.emu_thread decides "wanted"; only an unset key
 # follows the configured channel.  Headless stays inline unless --emu-thread says otherwise, so "this run" is off; the
 # stored-choice line is what pins the rule.  One data dir per test (ctest -j runs them in parallel).
-set(_vj_chan_def off)
-if(VJ_BUILD_CHANNEL STREQUAL "nightly")
-    set(_vj_chan_def on)
-endif()
+# Every channel defaults On since the 4.0 flip (#1039 5c); CMakeLists.txt validated the channel name already.
+set(_vj_chan_def on)
 foreach(_p unset false true)
     set(_d "${CMAKE_CURRENT_BINARY_DIR}/emu-default-${_p}")
     file(MAKE_DIRECTORY "${_d}")
