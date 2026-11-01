@@ -423,3 +423,11 @@ PNG, `.ico` and `.icns` files.
 Gatekeeper first-run on a freshly downloaded signed zip, SmartScreen on the installer, Intel Mac behavior
 (CI may not run the x86_64 slice), Wayland/X11/PipeWire sound on real Linux desktops, and the AppImage on
 distributions older than Ubuntu 22.04.
+
+Windows packages also stage Mesa software OpenGL through
+`windows/stage-software-gl.py` (MSYS2 Mesa, Python and objdump required).
+The normal executable automatically retries once with the bundled software app
+if graphics startup fails. The retry preserves game arguments, working directory
+and the original config/save root; users do not need a separate launcher.
+Software rendering uses the CPU and can be slower. Keep its dependency notices
+and matching architecture alongside the software executable.

@@ -4,9 +4,15 @@ on:
     branches: [develop]
     paths:
       - 'app/src/gl_context.*'
+      - 'app/src/software_gl.h'
+      - 'app/src/platform/software_gl_windows.cpp'
+      - 'app/src/main.cpp'
+      - 'app/tests/software_gl_test.cpp'
+      - 'app/packaging/windows/stage-software-gl.py'
       - 'app/src/app.cpp'
       - 'app/tests/gl_context*'
       - 'app/cmake/VJShaders.cmake'
+      - 'app/cmake/VJPlatformTests.cmake'
       - '.github/workflows/windows-gl-test.yml'
   workflow_dispatch:
 concurrency:
@@ -40,66 +46,31 @@ jobs:
           cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DVJ_APP_WIN32_GUI=ON -DVJ_APP_WERROR=ON -DVJ_BUILD_CHANNEL=nightly
-          cmake --build build --target virtualjaguar vj_gl_context_test vj_gl_context_integration -j4
+          cmake --build build --target virtualjaguar vj_gl_context_test vj_gl_context_integration vj_software_gl_test -j4
           build/vj_gl_context_test.exe
+          build/vj_software_gl_test.exe
           cmake --install build --prefix "$PWD/stage"
       - name: Stage a separate software OpenGL runtime and its notices
         run: |
           set -eu
-          mkdir -p stage/bin/software-opengl diagnostics
-          python - <<'PY'
-          import pathlib, re, shutil, subprocess
-          def windows_path(path):
-              return pathlib.Path(subprocess.check_output(['cygpath', '-m', str(path)], text=True).strip())
-          source = windows_path('/clangarm64/bin')
-          target = pathlib.Path('stage/bin/software-opengl')
-          pending = ['opengl32.dll']
-          copied = set()
-          owners = set()
-          while pending:
-              name = pending.pop()
-              if name.lower() in copied:
-                  continue
-              path = source / name
-              if not path.exists():
-                  continue  # system DLL, not an MSYS2 dependency
-              copied.add(name.lower())
-              shutil.copy2(path, target / path.name)
-              imports = subprocess.check_output(['llvm-objdump', '-p', str(path)], text=True)
-              pending.extend(re.findall(r'DLL Name:\s*(\S+)', imports))
-              unix_path = subprocess.check_output(['cygpath', '-u', str(path)], text=True).strip()
-              owners.add(subprocess.check_output(['pacman', '-Qqo', unix_path], text=True).strip())
-          assert (target / 'libgallium_wgl.dll').exists(), 'Mesa WGL driver missing'
-          notices = target / 'licenses'
-          for owner in sorted(owners):
-              for line in subprocess.check_output(['pacman', '-Ql', owner], text=True).splitlines():
-                  unix_path = line.split(' ', 1)[1]
-                  if '/share/licenses/' not in unix_path or unix_path.endswith('/'):
-                      continue
-                  path = windows_path(unix_path)
-                  if path.is_file():
-                      dest = notices / owner / path.name
-                      dest.parent.mkdir(parents=True, exist_ok=True)
-                      shutil.copy2(path, dest)
-          (target / 'PACKAGES.txt').write_text(subprocess.check_output(['pacman', '-Q', *sorted(owners)], text=True))
-          # WGL/GDI must find the Mesa frontend by its standard name next to the
-          # executable. Keep a separate full app copy so normal graphics stays clean.
-          for path in list(pathlib.Path('stage/bin').iterdir()):
-              if path == target:
-                  continue
-              if path.is_dir():
-                  shutil.copytree(path, target / path.name, dirs_exist_ok=True)
-              else:
-                  shutil.copy2(path, target / path.name)
-          shutil.copy2('build/vj_gl_context_integration.exe', target)
-          (target / 'portable.txt').write_text('Keep software-test settings beside this executable.\n')
-          PY
+          mkdir -p diagnostics
+          python app/packaging/windows/stage-software-gl.py stage
+          command cp -f build/vj_gl_context_integration.exe stage/bin/software-opengl/
+
       - name: Replay the old loader and qualify real ARM64 software GL rendering
         run: |
           set -eu
           set +e
           build/vj_gl_context_integration.exe legacy >diagnostics/native-driver.txt 2>&1
           set -e
+          timeout 90 stage/bin/virtualjaguar.exe --data-dir "$PWD/automatic fallback data" \
+            --screenshot "$PWD/diagnostics/automatic-fallback.png" --screenshot-frame 20 \
+            >diagnostics/automatic-stdout.txt 2>diagnostics/automatic-stderr.txt
+          test -s diagnostics/automatic-fallback.png
+          grep -q 'automatically retrying with bundled software OpenGL' diagnostics/automatic-stderr.txt
+          grep -q 'renderer=llvmpipe' diagnostics/automatic-stderr.txt
+          test -f 'automatic fallback data/config.ini'
+          test ! -e 'automatic fallback data/saves/instance-2'
           export PATH="$PWD/stage/bin/software-opengl:$PATH"
           export SDL_OPENGL_LIBRARY="$(cygpath -w "$PWD/stage/bin/software-opengl/opengl32.dll")"
           export GALLIUM_DRIVER=llvmpipe
@@ -120,15 +91,7 @@ jobs:
       - name: Package the portable test build
         run: |
           set -eu
-          python - <<'PY'
-          import pathlib
-          root = pathlib.Path('stage/bin')
-          normal = '@echo off\ncd /d "%~dp0"\nvirtualjaguar.exe >test-stdout.txt 2>test-stderr.txt\necho Exit code: %errorlevel%>>test-stderr.txt\nnotepad test-stderr.txt\n'
-          software = '@echo off\nsetlocal\ncd /d "%~dp0software-opengl"\nset "PATH=%~dp0software-opengl;%PATH%"\nset "SDL_OPENGL_LIBRARY=%~dp0software-opengl\\opengl32.dll"\nset "GALLIUM_DRIVER=llvmpipe"\nset "LIBGL_ALWAYS_SOFTWARE=true"\nvirtualjaguar.exe >"%~dp0software-stdout.txt" 2>"%~dp0software-stderr.txt"\necho Exit code: %errorlevel%>>"%~dp0software-stderr.txt"\nnotepad "%~dp0software-stderr.txt"\n'
-          (root / 'Test-Normal-Graphics.cmd').write_bytes(normal.replace('\n','\r\n').encode())
-          (root / 'Test-Software-Graphics.cmd').write_bytes(software.replace('\n','\r\n').encode())
-          (root / 'TEST-BUILD.txt').write_text('ARM64 diagnostic candidate. Try Test-Normal-Graphics.cmd first, then Test-Software-Graphics.cmd. Close the app to open its log. Software mode uses CPU rendering and changes no system settings. Not a Store package.\n')
-          PY
+          printf '%s\n' 'Open virtualjaguar.exe normally. If its graphics driver cannot initialize, it automatically retries with bundled software OpenGL. CPU rendering can be slower. No driver installation or special launcher is needed.' >stage/bin/TEST-BUILD.txt
           bash app/packaging/windows/package.sh stage gl-test out --arch arm64
           printf '%s\n' "$GITHUB_SHA" >out/SOURCE_COMMIT.txt
           sha256sum out/*.zip >out/SHA256SUMS.txt

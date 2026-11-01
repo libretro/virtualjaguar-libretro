@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "app.h"
+#include "software_gl.h"
 #include "platform/commands.h"
 #include "platform/platform.h"
 
@@ -327,6 +328,17 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (a.dumpNativeMenu) return vj::platform::dumpNativeMenu();
-    vj::App app;
-    return app.run(a);
+    int result = 1;
+    std::string graphicsError, dataDir;
+    {
+        vj::App app;
+        result = app.run(a);
+        graphicsError = app.graphicsStartupError;
+        dataDir = app.paths.root;
+    } // Release workers, streams and the instance lock before the software retry.
+    if (!graphicsError.empty()) {
+        if (vj::retrySoftwareOpenGL(argc, argv, dataDir, result)) return result;
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Virtual Jaguar graphics initialization", graphicsError.c_str(), nullptr);
+    }
+    return result;
 }
