@@ -301,6 +301,11 @@ reach the core as commands. The restart bounce that a mode change needs is count
   is a workflow env beside the TV default; the flatpak job rewrites the manifest's committed `-DVJ_BUILD_CHANNEL=release` because
   its `config-opts` are committed. The bar that lets it ship is `no_threaded_limits` (static, in CI) plus the Studio gate
   `app/tests/emu_thread_gate_check.sh`.
+  *Shipped (phase 5c, 2026-11-01):* **every channel defaults On** (`emuThreadDefaultFor` is true for `release`, `nightly`
+  and `dev`; `VJ_EMU_THREAD_DEFAULT_VALUE` is 1 for all three). The maintainer called the flip before gates G4 and G5 of
+  the phase 5 plan were met (the windowed evidence is the Studio's 60 Hz panel; see the plan's evidence table). Unchanged:
+  a stored `ui.emu_thread` wins, `--emu-thread off` runs one start inline, a failed thread start falls back inline, and
+  headless runs stay inline unless `--emu-thread on`. An unknown channel string still defaults Off.
 - The old loop stays selectable until a release ships with the setting defaulting On and no regressions; then it is
   removed.
 

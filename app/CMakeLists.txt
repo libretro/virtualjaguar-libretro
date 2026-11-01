@@ -69,18 +69,17 @@ set(VJ_TV_DEFAULT "auto" CACHE STRING "TV mode setting for a fresh config: auto 
 if(NOT VJ_TV_DEFAULT MATCHES "^(auto|manual|off)$")
     message(FATAL_ERROR "VJ_TV_DEFAULT must be auto, manual or off (got '${VJ_TV_DEFAULT}')")
 endif()
-# The build channel (#967 phase 3d, design section 8): release | nightly | dev.  Nightlies default Settings > Interface >
-# Emulation thread to On for users who never chose; releases and dev builds (PR artifacts, local builds) default Off.
-# app-package.yml passes it per lane like VJ_TV_DEFAULT above; a plain configure is dev.
-set(VJ_BUILD_CHANNEL "dev" CACHE STRING "release | nightly | dev: the build channel (nightlies default the emulation thread on, #967)")
+# The build channel (#967 phase 3d, design section 8): release | nightly | dev.  Since the 4.0 flip (#1039 phase 5c) every
+# channel defaults Settings > Interface > Emulation thread to On for users who never chose; a stored choice always wins.
+# The channel still names the build in About and the log.  app-package.yml passes it per lane like VJ_TV_DEFAULT above;
+# a plain configure is dev.  VJ_EMU_THREAD_DEFAULT_VALUE stays a variable so a channel can be defaulted Off again in one
+# place (build_channel.h's static_assert checks it against emuThreadDefaultFor).
+set(VJ_BUILD_CHANNEL "dev" CACHE STRING "release | nightly | dev: the build channel shown in About and the log (#967)")
 set_property(CACHE VJ_BUILD_CHANNEL PROPERTY STRINGS release nightly dev)
 if(NOT VJ_BUILD_CHANNEL MATCHES "^(release|nightly|dev)$")
     message(FATAL_ERROR "VJ_BUILD_CHANNEL must be release, nightly or dev (got '${VJ_BUILD_CHANNEL}')")
 endif()
-set(VJ_EMU_THREAD_DEFAULT_VALUE 0)
-if(VJ_BUILD_CHANNEL STREQUAL "nightly")
-    set(VJ_EMU_THREAD_DEFAULT_VALUE 1)
-endif()
+set(VJ_EMU_THREAD_DEFAULT_VALUE 1)
 add_library(vj_build_channel INTERFACE)
 target_compile_definitions(vj_build_channel INTERFACE VJ_BUILD_CHANNEL="${VJ_BUILD_CHANNEL}" VJ_EMU_THREAD_DEFAULT=${VJ_EMU_THREAD_DEFAULT_VALUE})
 option(VJ_MAC_APP_STORE "Build the sandboxed Mac App Store edition" OFF)

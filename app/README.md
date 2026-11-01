@@ -566,11 +566,12 @@ busy UI no longer stalls the picture. The game runs at the true Jaguar rate (60.
 sound card's clock, and the display shows the newest frame (on a 60 Hz panel the true-rate drift alone skips one frame about every 18 s; in this phase frames that finish
 close to the take point also repeat or skip more often than in the single-thread loop, roughly 1 to 2.5 a second as
 measured on a 60 Hz panel; **Frame pacing: Match display**, below, removes both).
-The setting takes effect at the next start. It is **on** by default in nightly builds and **off** in releases (the build
-channel; About shows it, and the log prints `[emu] channel=...`). A stored choice always wins in both directions; **Reset
-group** in Settings > Interface returns to the channel's default. `dev` builds (pull-request artifacts, local builds)
-default to off; `-DVJ_BUILD_CHANNEL=nightly` builds the nightly default from source. `--emu-thread on|off` decides for one run; headless runs stay single-threaded unless it
-says `on`.
+The setting takes effect at the next start. It is **on** by default in every build since 4.0 (releases, nightlies and
+`dev` builds alike; About shows the build channel, and the log prints `[emu] channel=..., emulation thread default on`).
+A stored choice always wins in both directions; **Reset group** in Settings > Interface returns to the default. To run
+without it, turn it off in Settings (persistent) or start with `--emu-thread off` (one run); if the thread cannot start,
+the app falls back to the single-thread loop and says so in the log. Headless runs stay single-threaded unless
+`--emu-thread on` says otherwise.
 
 With vsync, the window waits until just before each vblank, passing input to the emulation as it arrives, and then
 shows the newest frame (the late latch, `src/late_latch.h`). It stays off until it has found where the vblanks are,
@@ -617,8 +618,8 @@ takes longer than a quarter of a second shows a spinner instead of freezing the 
 
 ### Reporting a threading problem
 
-The emulation thread is being qualified to become the default in releases (#1039). If something goes wrong only with it on
-(stutter, a hang, a crash, lagging input, skipping sound), please comment on #1039 or open an issue that links it, with:
+The emulation thread is the default since 4.0 (#1039). If something goes wrong only with it on (stutter, a hang, a crash,
+lagging input, skipping sound), compare with `--emu-thread off`, then comment on #1039 or open an issue that links it, with:
 
 - The first line of **Help > About**: the version and build channel, such as `Virtual Jaguar 4.0.0 (nightly build)`.
 - The **Now: ...** line under **Settings > Video > Frame pacing**: which clock the thread follows, and why.

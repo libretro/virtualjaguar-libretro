@@ -4,6 +4,8 @@ Issue: #1039 (part of #967 / #254). Design of record: [app-emulation-thread-desi
 
 **Goal:** the 4.0 release turns Settings > Interface > Emulation thread **On by default**, on evidence, with the inline loop still selectable. This phase is mostly qualification. The only behaviour change is the last PR, which flips the release default.
 
+**Status (2026-11-01):** 5c shipped. Every channel (`release`, `nightly`, `dev`) defaults On. The maintainer called the flip with G1–G3 met and G4/G5 still open (see the evidence table); any G4/G5 report now lands against the default-on build.
+
 **Not in this phase:**
 - **Retiring the inline loop** (`stepEmulation`, `Pacer`, the inline branch of `runInteractive`). #1039's rule replaces the phase 4 plan's "Retiring the inline loop (phase 5)": remove it only after a stable release has shipped default-on without regressions. That follow-up issue is filed when the evidence exists, not before.
 - **Changing Frame pacing's default.** It stays Jaguar rate unless decision 1 below says otherwise.
@@ -78,7 +80,7 @@ The `*_e2e` tests (`input_e2e`, `devices_e2e`, `bios_e2e`, `debug_scan_e2e`, `de
   - A short "Reporting a threading problem" note in the README's "Emulation thread" section: how to report (the About window's version and channel line, the perf note, `--emu-thread off` to compare).
   - One pinned comment on #1039 asking nightly users for G4 reports.
   - Refs #1039.
-- **5c `feat(app)`: releases default the emulation thread On (the flip, last).**
+- **5c `feat(app)`: releases default the emulation thread On (the flip, last).** *Shipped 2026-11-01, with `dev` On too (decision 2).*
   - `emuThreadDefaultFor("release")` returns true. `VJ_EMU_THREAD_DEFAULT_VALUE` follows in `app/CMakeLists.txt`, and the `static_assert` in `build_channel.h` and the `emu_thread_default_unit` / `emu_thread_default_smoke_*` expectations change with it.
   - Unchanged:
     - a stored `ui.emu_thread` choice still wins;
@@ -93,7 +95,7 @@ The `*_e2e` tests (`input_e2e`, `devices_e2e`, `bios_e2e`, `debug_scan_e2e`, `de
 | | Question | Recommendation |
 |---|---|---|
 | 1 | **Frame pacing default:** keep Jaguar rate for 4.0, or default nightlies to Match display now so feedback accrues? | Default **nightlies** to Match display after G3 passes; keep Jaguar rate for the 4.0 release. Mode B's only windowed evidence is one 60 Hz macOS panel. |
-| 2 | **`dev` channel after the flip:** Off (today) or On? | **On**, with 5c. Phase 3 kept `dev` Off so PR artifacts behave like releases; after the flip that same reason means On. |
+| 2 | **`dev` channel after the flip:** Off (today) or On? | **On**, with 5c. Phase 3 kept `dev` Off so PR artifacts behave like releases; after the flip that same reason means On. *Taken: 5c sets all three channels On.* |
 | 3 | **G4 without volunteers:** if no Windows, Linux or 120 Hz report arrives, does the flip wait? | Wait for **Windows** (the largest user base), or waive in writing on #1039. Linux and 120 Hz can ship on unit-test coverage plus the inline fallback. |
 | 4 | **G5 length:** two weeks of nightlies? | Two weeks, starting when 5a merges, so the twins have run on every PR in that time. |
 
@@ -112,5 +114,5 @@ Studio = the Mac Studio (M4 Max, 16 cores) on its 60 Hz panel, every windowed ru
 | 2026-10-31 | 43383a05 | Studio | **G3 halt, inline arm** | **Not measurable.** Inline, a halt runs in the core's nested `haltedFrame` loop; `--perf-halt`'s Continue is in the outer loop, so it never comes. That nested loop still runs the UI, so the debugger's Continue button works. Run stopped after 1 h 40 min |
 | 2026-10-31 | 43383a05 | Studio | **G3 halt,** A vs B (`mbt-p5-{A,B}-halt`) | **Met.** A 5 s halt with all eight Tools windows open, then Continue: 0 underruns at Jaguar rate and at Match display. Match display ends B (locked), ticks dropped 0. The m3 run's single underrun did not come back |
 | 2026-10-31 → 11-01 | 43383a05 | Studio | **G3 phase 3 gate** (`emu_thread_gate_check.sh`, yarc; `p5-gate*`) | **Met on a quiet host,** to be run again on the 4.0 candidate. Two quiet runs pass: halted iteration p99 18.32 and 18.15 ms in part A, 18.35 and 17.57 ms in part B (limit 25 ms; phase 3 measured 18.0–20.7). Neuro ok. One run under load failed part A at p99 33.08 ms (10 of 281 halted iterations missed a vsync): the host's 1-minute load rose from 3.6 to 7.0 during it. One run never got a quiet host (load 89, Spotlight) and was skipped |
-| | | Windows, Linux, 120 Hz | **G4** | Pending: request on #1039 |
+| | | Windows, Linux, 120 Hz | **G4** | Pending: request on #1039. Not waited for: the maintainer called the flip on 2026-11-01 (5c) |
 | 2026-10-31 → 2026-11-14 | nightlies | | **G5** | Window open from the 5a merge |

@@ -304,8 +304,8 @@ void drawInterfaceTab(App& app) {
     ui::hint("Runs the emulation on its own thread, so a slow frame or a busy window does not stall the picture, and "
              "the game keeps its true speed (60.05 Hz, 50.08 Hz in PAL) on any display. Takes effect the next time the "
              "app starts. Break, Step, breakpoints and the GDB stub work with it on. %s",
-             kEmuThreadDefault ? "This is a nightly build, where it is on unless you turn it off here. Release builds default to off."
-                               : "Off by default here; nightly builds default to on.");
+             kEmuThreadDefault ? "On unless you turn it off here; --emu-thread off runs one start without it."
+                               : "Off by default in this build; turn it on here.");
     if (app.emuThreadWanted() != app.emuThreadThisRun()) ImGui::TextDisabled("Restart the app to apply.");
     ImGui::SeparatorText("Save states");
     ImGui::TextUnformatted("Resume where I left off");
