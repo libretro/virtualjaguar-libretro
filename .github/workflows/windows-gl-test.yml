@@ -45,7 +45,9 @@ jobs:
           mkdir -p stage/bin/software-opengl diagnostics
           python - <<'PY'
           import pathlib, re, shutil, subprocess
-          source = pathlib.Path('/clangarm64/bin')
+          def windows_path(path):
+              return pathlib.Path(subprocess.check_output(['cygpath', '-m', str(path)], text=True).strip())
+          source = windows_path('/clangarm64/bin')
           target = pathlib.Path('stage/bin/software-opengl')
           pending = ['opengl32.dll']
           copied = set()
@@ -61,13 +63,17 @@ jobs:
               shutil.copy2(path, target / path.name)
               imports = subprocess.check_output(['llvm-objdump', '-p', str(path)], text=True)
               pending.extend(re.findall(r'DLL Name:\s*(\S+)', imports))
-              owners.add(subprocess.check_output(['pacman', '-Qqo', str(path)], text=True).strip())
+              unix_path = subprocess.check_output(['cygpath', '-u', str(path)], text=True).strip()
+              owners.add(subprocess.check_output(['pacman', '-Qqo', unix_path], text=True).strip())
           assert (target / 'libgallium_wgl.dll').exists(), 'Mesa WGL driver missing'
           notices = target / 'licenses'
           for owner in sorted(owners):
               for line in subprocess.check_output(['pacman', '-Ql', owner], text=True).splitlines():
-                  path = pathlib.Path(line.split(' ', 1)[1])
-                  if '/share/licenses/' in str(path) and path.is_file():
+                  unix_path = line.split(' ', 1)[1]
+                  if '/share/licenses/' not in unix_path or unix_path.endswith('/'):
+                      continue
+                  path = windows_path(unix_path)
+                  if path.is_file():
                       dest = notices / owner / path.name
                       dest.parent.mkdir(parents=True, exist_ok=True)
                       shutil.copy2(path, dest)
