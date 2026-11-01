@@ -778,7 +778,7 @@ void App::startEmuThread() {
         return;
     }
     syncEmuFlags();
-    std::fprintf(stderr, "[emu] emulation thread on\n");
+    std::fprintf(stderr, "[emu] emulation thread on; scheduling %s\n", emu.realtimeNote().c_str());
 }
 
 // The emulation thread is busy with a call() the UI waits on (#967): keep the window alive and say so.  Called by
@@ -2584,6 +2584,7 @@ int App::runInteractive(const CliArgs& a) {
     applyAudioSettings();
     audio.open(48043.6);
     emu.setPreciseWake(a.emuWake != 0);   // (read when the thread starts)
+    emu.setRealtime(a.emuPriority != 0);  // (same)
     if (emuThreadThisRun_) startEmuThread();   // after the window and the audio device (design section 7)
     lateLatchOn_ = a.lateLatch != 0;
     paceSteerOn_ = a.paceSteer != 0;

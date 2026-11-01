@@ -1,4 +1,5 @@
 #include "emu_thread.h"
+#include "thread_realtime.h"
 
 #include <algorithm>
 #include <exception>
@@ -168,11 +169,22 @@ bool EmuThread::advance(unsigned n, std::function<bool()> giveUp) {
 
 void EmuThread::loop() {
     threadId_.store(std::this_thread::get_id());
+    // The frame loop is a periodic deadline job; schedule it as one (thread_realtime.h).  The period is a hint for the
+    // deadline policies, so the NTSC field is close enough for PAL too.  Before the handshake: the starter reads the note.
+    bool realtime = false;
+    if (realtime_.load()) {
+        const rt::Outcome o = rt::makeSelfRealtime(1.0 / 60.0);
+        realtime = o.realtime;
+        realtimeNote_ = o.note;
+    } else {
+        realtimeNote_ = "normal (not requested)";
+    }
 #if defined(__APPLE__)
-    // A default-QoS thread gets timer slack: on the Mac Studio its frame wake-ups ran ~2 ms (p99 ~3 ms) after their due
-    // time, which widens the window of frame end times the pacing grid has to keep off the UI's take point (#967).
-    // The frame loop is what the user is watching; it is as interactive as the main thread.
-    if (preciseWake_.load()) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    // Fallback when the real-time policy was refused or not asked for.  A default-QoS thread gets timer slack: on the
+    // Mac Studio its frame wake-ups ran ~2 ms (p99 ~3 ms) after their due time, which widens the window of frame end
+    // times the pacing grid has to keep off the UI's take point (#967).  The frame loop is what the user is watching;
+    // it is as interactive as the main thread.  (A real-time thread cannot take a QoS class, and does not need one.)
+    if (!realtime && preciseWake_.load()) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     client_->threadStarted();
     {

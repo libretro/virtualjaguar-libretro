@@ -116,6 +116,31 @@ void testInline() {
     CHECK(e.stop(), "stop is a no-op inline");
 }
 
+// The scheduling class (thread_realtime.h): asked for by default, never fatal, always reported; off on request.  What the
+// OS grants depends on the host (Linux refuses SCHED_RR without RLIMIT_RTPRIO), so the note's text is printed, not pinned.
+void testRealtimeNote() {
+    {
+        EmuThread e;
+        FakeClient c;
+        CHECK(e.start(EmuThread::Mode::Threaded, c), "start (real-time requested)");
+        CHECK(!e.realtimeNote().empty(), "the note is set before start() returns");
+        CHECK(e.realtimeNote().rfind("real-time", 0) == 0 || e.realtimeNote().rfind("normal", 0) == 0, "note: %s",
+              e.realtimeNote().c_str());
+        std::printf("emu_thread_test: scheduling %s\n", e.realtimeNote().c_str());
+        e.advance(2);
+        CHECK(c.frames >= 2, "frames run as a real-time thread");
+        CHECK(e.stop(), "stop");
+    }
+    {
+        EmuThread e;
+        FakeClient c;
+        e.setRealtime(false);
+        CHECK(e.start(EmuThread::Mode::Threaded, c), "start (normal)");
+        CHECK(e.realtimeNote() == "normal (not requested)", "off: %s", e.realtimeNote().c_str());
+        CHECK(e.stop(), "stop");
+    }
+}
+
 void testCallSeesPosts() {
     EmuThread e;
     FakeClient c;
@@ -866,6 +891,7 @@ int main() {
     timeBeginPeriod(1);
 #endif
     testInline();
+    testRealtimeNote();
     testCallSeesPosts();
     testProducers();
     testPauseAdvance();

@@ -103,6 +103,16 @@ The UI never waits on emulation.
   for A/B runs (the QoS raise stays), and with `VJ_PERF_TRACE` the stall probe (`app/src/stall_probe.h`) writes every
   wait that ends over 3 ms late to `<prefix>-stall.txt`, with the run state, CPU time, run-loop transitions and sampled
   stacks.
+- *Amended 2026-11-01: the emulation thread's scheduling class* (`app/src/thread_realtime.h`). The thread is a periodic
+  deadline job and asks the OS to schedule it as one when it starts: macOS `THREAD_TIME_CONSTRAINT_POLICY` (period one
+  frame, computation 30%, constraint 60%, preemptible; real-time threads run ahead of every QoS class and on performance
+  cores, so it replaces the user-interactive QoS raise, which stays as the fallback), Windows
+  `THREAD_PRIORITY_TIME_CRITICAL` plus the MMCSS "Games" task, Linux `SCHED_RR` at a low real-time priority where
+  `RLIMIT_RTPRIO` or rtkit allows it. Why: on an M2 Max at a 1-minute load of 250-950 the same Doom frame cost 5.4 ms
+  with a performance core of its own and 18-20 ms without one (58-86 involuntary context switches a frame; the game ran
+  at 54.6 fps). Never fatal; the log's `[emu] emulation thread on; scheduling ...` line says what the thread got.
+  `--emu-priority normal` skips it for one run (A/B); `EmuThread::realtimeNote()` and `emu_thread_unit`'s
+  `testRealtimeNote` cover it.
 
 ### Mode B: display lock
 - The main thread sends a tick after each swap; the emulation thread runs one frame per tick (one per k ticks when the

@@ -28,6 +28,7 @@ static void usage(const char* argv0) {
         "  --pace-steer on|off   dev: with the emulation thread and vsync, keep frame ends off the take point (default on)\n"
         "  --pacing jaguar|display  dev: Video > Frame pacing for this run (not saved; default: the setting)\n"
         "  --emu-wake precise|plain  dev: the emulation thread's frame wake-ups (default precise)\n"
+        "  --emu-priority realtime|normal  dev: the emulation thread's scheduling class (default realtime; the [emu] log line says what it got)\n"
         "  --latch-wake timer|plain  dev: macOS, how the UI thread's timed event waits end (default timer; plain keeps the QoS raise)\n"
         "  --data-dir DIR        keep config, saves and states in DIR\n"
         "                        (a portable.txt next to the binary does this too)\n"
@@ -240,6 +241,14 @@ int main(int argc, char** argv) {
                 return 2;
             }
             a.emuWake = v == "precise" ? 1 : 0;
+        }
+        else if (!std::strcmp(s, "--emu-priority")) {
+            const std::string v = need(s);
+            if (v != "realtime" && v != "normal") {
+                std::fprintf(stderr, "--emu-priority wants realtime or normal, got '%s'\n", v.c_str());
+                return 2;
+            }
+            a.emuPriority = v == "realtime" ? 1 : 0;
         }
         else if (!std::strcmp(s, "--latch-wake")) {
             const std::string v = need(s);

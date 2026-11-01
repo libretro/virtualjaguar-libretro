@@ -117,6 +117,7 @@ struct CliArgs {
     int paceSteer = -1;             // dev: --pace-steer on|off, threaded + vsync only (default on; #967 evenness)
     int pacing = -1;                // dev: --pacing jaguar|display, Video > Frame pacing for this run (not saved; #1038)
     int emuWake = -1;               // dev: --emu-wake precise|plain, the emulation thread's wake-ups (default precise)
+    int emuPriority = -1;           // dev: --emu-priority realtime|normal, the emulation thread's scheduling class (default realtime)
     int latchWake = -1;             // dev: --latch-wake timer|plain, how the UI thread's timed event waits end (default timer; #1026)
     // RetroAchievements (#836): the headless test hooks.  There is no way to sign in
     // headless; the only server is the canned-JSON mock, so a test can never reach
