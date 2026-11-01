@@ -1,7 +1,8 @@
 name: Windows ARM OpenGL qualification
 on:
   pull_request:
-    branches: [develop]
+    # Any pull request that touches the Windows GL path, whatever its base: the
+    # qualification must also run for a PR stacked on another PR's branch.
     paths:
       - 'app/src/gl_context.*'
       - 'app/src/software_gl.h'
