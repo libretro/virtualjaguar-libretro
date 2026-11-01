@@ -130,7 +130,7 @@ jobs:
           (root / 'TEST-BUILD.txt').write_text('ARM64 diagnostic candidate. Try Test-Normal-Graphics.cmd first, then Test-Software-Graphics.cmd. Close the app to open its log. Software mode uses CPU rendering and changes no system settings. Not a Store package.\n')
           PY
           bash app/packaging/windows/package.sh stage gl-test out --arch arm64
-          git rev-parse HEAD >out/SOURCE_COMMIT.txt
+          printf '%s\n' "$GITHUB_SHA" >out/SOURCE_COMMIT.txt
           sha256sum out/*.zip >out/SHA256SUMS.txt
       - uses: actions/upload-artifact@v7
         if: always()
