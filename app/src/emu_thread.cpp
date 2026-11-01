@@ -171,7 +171,7 @@ void EmuThread::loop() {
     threadId_.store(std::this_thread::get_id());
     // The frame loop is a periodic deadline job; schedule it as one (thread_realtime.h).  The period is a hint for the
     // deadline policies, so the NTSC field is close enough for PAL too.  Before the handshake: the starter reads the note.
-    bool realtime = false;
+    [[maybe_unused]] bool realtime = false;
     if (realtime_.load()) {
         const rt::Outcome o = rt::makeSelfRealtime(1.0 / 60.0);
         realtime = o.realtime;
