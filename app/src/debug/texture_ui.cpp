@@ -1,3 +1,4 @@
+#include "platform/file_access.h"
 // The Textures window.  See texture_ui.h.
 #include "texture_ui.h"
 
@@ -311,10 +312,10 @@ void startDialog(const char* kind, const std::string& hash) {
     if (!win) return;
     DialogReq* req = new DialogReq{kind, hash};
     if (std::strcmp(kind, "export") == 0) {
-        SDL_ShowOpenFolderDialog(dialogDone, req, win, nullptr, false);
+        vj::files::openFolder(dialogDone, req, win, nullptr, false);
     } else {
         static SDL_DialogFileFilter flt[2] = {{"PNG images", "png"}, {"All files", "*"}};
-        SDL_ShowOpenFileDialog(dialogDone, req, win, flt, 2, nullptr, false);
+        vj::files::openFile(dialogDone, req, win, flt, 2, nullptr, false);
     }
 }
 

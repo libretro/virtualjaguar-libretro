@@ -1,3 +1,4 @@
+#include "platform/file_access.h"
 #include "app.h"
 #include "build_channel.h"
 #include "devices_ui.h"
@@ -210,6 +211,7 @@ void App::loadConfig() {
         cfg.setPath(paths.instanceConfig);
         cfg.setSavePrefixes({"window.", "input.pads."});
     }
+    files::restore(cfg);
     input.init(cfg, paths.root);
     input.setPadFilter(parsePadFilter(cfg.get(instancePadKey(paths.instance), "all")));
     applySettingsFromConfig();
@@ -540,6 +542,7 @@ void App::shutdown() {
         ImGui::DestroyContext();
         imguiUp_ = false;
     }
+    files::shutdown();
     audio.close();
     input.shutdown();
     if (gl_) {
@@ -1842,7 +1845,7 @@ void App::showOpenDialog() {
     g_filters[0].pattern = g_filterPattern.c_str();
     g_filters[1].name = "All files";
     g_filters[1].pattern = "*";
-    SDL_ShowOpenFileDialog(dialogDone, this, window_, g_filters, 2,
+    vj::files::openFile(dialogDone, this, window_, g_filters, 2,
                            g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
 }
 
@@ -1852,7 +1855,7 @@ void App::showOpenDialog() {
 void App::showDiscDialog() {
     if (!window_) return;
     static const SDL_DialogFileFilter kFilters[2] = {{"Jaguar CD images", "cue;cdi;chd"}, {"All files", "*"}};
-    SDL_ShowOpenFileDialog(discDialogDone, this, window_, kFilters, 2, g_lastDir.empty() ? nullptr : g_lastDir.c_str(),
+    vj::files::openFile(discDialogDone, this, window_, kFilters, 2, g_lastDir.empty() ? nullptr : g_lastDir.c_str(),
                            false);
 }
 
@@ -2007,7 +2010,7 @@ void App::openAndLoadState(const std::string& pathIn, int slot, const std::strin
 void App::showImportBiosDialog() {
     if (!window_) return;
     static SDL_DialogFileFilter filters[2] = {{"BIOS images", "j64;rom;bin;jag"}, {"All files", "*"}};
-    SDL_ShowOpenFileDialog(importDialogDone, this, window_, filters, 2, g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
+    vj::files::openFile(importDialogDone, this, window_, filters, 2, g_lastDir.empty() ? nullptr : g_lastDir.c_str(), false);
 }
 
 void App::handleDrop(const std::string& path) {
@@ -2283,6 +2286,7 @@ void App::handleEvent(const SDL_Event& e, bool headless) {
         if (!e.drop.data) break;
         {
             // A PNG dropped on a library tile is that tile's cover; anything else opens as before.
+            files::remember(e.drop.data);
             const std::string path = e.drop.data;
             if (imguiUp_ && (homeVisible() || library.show) && pathExt(path) == "png") {
                 const float x = (e.drop.x != 0.0f || e.drop.y != 0.0f) ? e.drop.x : dropX_;

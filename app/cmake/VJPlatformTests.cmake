@@ -27,6 +27,14 @@ add_test(NAME platform_assoc_sync
 set_tests_properties(platform_assoc_sync PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
 
 if(APPLE)
+    add_executable(vj_file_access_macos_test tests/file_access_macos_test.mm src/config.cpp src/paths.cpp)
+    target_include_directories(vj_file_access_macos_test PRIVATE src)
+    target_compile_definitions(vj_file_access_macos_test PRIVATE VJ_MAC_APP_STORE=1)
+    target_compile_options(vj_file_access_macos_test PRIVATE -fobjc-arc -Wno-deprecated-declarations)
+    target_link_libraries(vj_file_access_macos_test PRIVATE ${VJ_SDL3_TARGET} "-framework Cocoa")
+    add_test(NAME file_access_macos_unit COMMAND vj_file_access_macos_test)
+    set_tests_properties(file_access_macos_unit PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "FAIL ")
+
     add_test(NAME native_menu_dump COMMAND virtualjaguar --dump-native-menu)
     set_tests_properties(native_menu_dump PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 FAIL_REGULAR_EXPRESSION "FAIL ")
 endif()

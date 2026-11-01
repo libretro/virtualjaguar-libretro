@@ -1,3 +1,4 @@
+#include "platform/file_access.h"
 #include "fonts_ui.h"
 
 #include <cctype>
@@ -36,7 +37,7 @@ void SDLCALL fontDialogDone(void*, const char* const* list, int) {
 
 void openFontDialog(App& app) {
     static SDL_DialogFileFilter flt[2] = {{"Font files", "ttf;otf;ttc"}, {"All files", "*"}};
-    if (app.window()) SDL_ShowOpenFileDialog(fontDialogDone, nullptr, app.window(), flt, 2, nullptr, false);
+    if (app.window()) vj::files::openFile(fontDialogDone, nullptr, app.window(), flt, 2, nullptr, false);
 }
 
 // The OS lookups are cached: on Linux resolving asks fontconfig (a child process).

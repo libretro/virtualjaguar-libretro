@@ -1,3 +1,4 @@
+#include "platform/file_access.h"
 // Settings > Video > Shader: library status, preset picker, parameters.
 #include <SDL3/SDL.h>
 
@@ -198,7 +199,7 @@ void drawShaderSettings(App& app) {
     ImGui::TextWrapped("%s", sc.preset.empty() ? "(none)" : sc.preset.c_str());
     if (ImGui::Button("Load preset file...") && app.window()) {
         static SDL_DialogFileFilter flt[2] = {{"Slang presets", "slangp"}, {"All files", "*"}};
-        SDL_ShowOpenFileDialog(presetDialogDone, nullptr, app.window(), flt, 2,
+        vj::files::openFile(presetDialogDone, nullptr, app.window(), flt, 2,
                                sc.folder.empty() ? nullptr : sc.folder.c_str(), false);
     }
     ImGui::SameLine();
@@ -237,7 +238,7 @@ void drawShaderSettings(App& app) {
     }
     if (oneRow) ImGui::SameLine();
     if (ImGui::Button("Browse...") && app.window())
-        SDL_ShowOpenFolderDialog(folderDialogDone, nullptr, app.window(),
+        vj::files::openFolder(folderDialogDone, nullptr, app.window(),
                                  sc.folder.empty() ? nullptr : sc.folder.c_str(), false);
     ImGui::SameLine();
     if (ImGui::Button("Rescan")) g_user.valid = false;
