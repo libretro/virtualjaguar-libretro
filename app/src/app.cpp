@@ -2797,16 +2797,18 @@ int App::runInteractive(const CliArgs& a) {
             latch_.onSwap(swap0, swap1);
             latchLog();
             displayLockAfterSwap(swap0, swap1);
-        } else if (pacer_.swapSync) {
-            if (gridChecks_++ % 60 == 0) gridPeriodNs_ = displayModePeriodNs();   // the window may have moved to another display
-            swapGrid_.onSwap((double)swap0 * 1e-9, (double)swap1 * 1e-9, (double)gridPeriodNs_ * 1e-9);
         } else {
-            swapGrid_.reset();   // no swap-interval pacing: the pacer sees real time
-        }
-        if (!threaded() && swapGrid_.locked() != gridLogged_) {
-            gridLogged_ = swapGrid_.locked();
-            std::fprintf(stderr, "[pacing] inline step grid %s: refresh %.3f ms\n", gridLogged_ ? "locked" : "released",
-                         (double)gridPeriodNs_ / 1e6);
+            if (pacer_.swapSync) {
+                if (gridChecks_++ % 60 == 0) gridPeriodNs_ = displayModePeriodNs();   // the window may have moved to another display
+                swapGrid_.onSwap((double)swap0 * 1e-9, (double)swap1 * 1e-9, (double)gridPeriodNs_ * 1e-9);
+            } else {
+                swapGrid_.reset();   // no swap-interval pacing: the pacer sees real time
+            }
+            if (swapGrid_.locked() != gridLogged_) {
+                gridLogged_ = swapGrid_.locked();
+                std::fprintf(stderr, "[pacing] inline step grid %s: refresh %.3f ms\n", gridLogged_ ? "locked" : "released",
+                             (double)gridPeriodNs_ / 1e6);
+            }
         }
         perf.lap(Perf::Present);
 
