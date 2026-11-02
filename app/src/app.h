@@ -554,6 +554,7 @@ private:
     bool waitEventUntil(SDL_Event& e, uint64_t dueNs, Sint32 ms);
     void latchLog();
     void latchUpdatePeriod();
+    uint64_t displayModePeriodNs();   // the display mode's refresh period (numerator / denominator), 0 = unknown
     bool menuRunsOn_ = false;         // the menu is open over a running game because allowPause() refused (netplay is its own case)
     bool pauseAllowed(std::string& why);   // ach.allowPause(), or the test seam
     bool testDenyPause = false;       // tv_script `hardcore-pause deny` (App::tvScriptStep): allowPause() refuses, as hardcore does between pauses
@@ -565,6 +566,10 @@ private:
     // pacing
     double lastTick_ = 0;
     Pacer pacer_;
+    SwapGrid swapGrid_;            // inline + swap interval 1: steps booked at their swaps' vblanks (#1141)
+    uint64_t gridPeriodNs_ = 0;    // ... on this refresh period, re-read every 60 swaps
+    unsigned gridChecks_ = 0;
+    bool gridLogged_ = false;
     uint64_t perfFreq_ = 1;
 
     // the emulation thread (#967)
