@@ -150,4 +150,35 @@ portable and installer packages; Linux has AppImage and Debian packages.
 
 ## Validation
 
-To be filled in from the release gates on the Mac Studio.
+Candidate `5a976df8` passed a clean build on the Mac Studio. The library reports `v3.11.0`, and the
+Makefile, `.info` and fallback versions agree. The full core suite (`make TEST_EXPORTS=1 test`) passed
+with the private corpus, including:
+
+- the audio presence and clipping tests;
+- the TOM readback and MMULT tests;
+- the GDB stub tests;
+- the idle-skip A/B tests, which confirm that skip-on and skip-off output is bit-identical;
+- the Doom pace gate.
+
+Six checks were skipped because their fixtures or tools were missing on that host.
+
+Against v3.10.0:
+
+- **Cartridge matrix (155 titles, HLE and BIOS):** zero backward moves with either blitter. Gorf 2000
+  improves in both modes, from a trap loop to game code. The three known HLE/BIOS asymmetries are
+  unchanged.
+- **CD matrix (28 title/mode rows, full disc corpus):** zero backward moves.
+- **Corpus A/B (160 cartridges, 300 frames with audio):**
+  - 157 are bit-identical, with the DSP idle skip off and on.
+  - Atari Karts, Gorf 2000 and White Men Can't Jump differ, as expected. All three read TOM's horizontal
+    counter, which #1094 changed. None of them differs in audio.
+
+On the Mac Studio, in both a quiet and a loaded state, the app ran Cybermorph and yarc with the thread
+off:
+
+- Repeated and dropped images fell from 19-53 a minute to 0-1 repeats.
+- Skips stay near the 3 a minute that a 60.05 Hz core has to make on a 60 Hz display. A loaded host
+  reached up to 8 a minute.
+- PAL is unchanged.
+
+GitHub CI on the release pull request is the remaining gate.
