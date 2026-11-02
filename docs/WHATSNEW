@@ -1,11 +1,47 @@
-Virtual Jaguar next (unreleased)
---------------------------------
+Virtual Jaguar v3.11.0 libretro
+------------------------------
+
+Emulation thread on by default, Match display pacing, community cheats,
+TV mode complete, faster GPU/DSP, and AvP's marines attack.
+Full notes: docs/RELEASE_NOTES_v3.11.0.md
+
+Options and v17 savestates carry over. A stored emulation-thread setting
+is kept; --emu-thread off runs without the thread.
+
+== Core ==
+* TOM HC readback is derived from emulated time: AvP's marines attack the
+  Alien again, and Atari Karts' AI varies again (#1094, #1096).
+* GPU interpreter inlines hot opcodes with direct-threaded dispatch; DSP
+  idle skip covers more wait loops (Iron Soldier 2, Cybermorph) and stays
+  on under blit memoization; bit-exact (#1057, #1117, #1118, #1121, #1137,
+  #1139, #1140).
+* .info savestate_features = "deterministic" (#1064).
 
 == Desktop app ==
+* Emulation thread defaults On in every build channel; Tools windows,
+  debugger halts, the GDB stub and Neuro work with it on; it runs as a
+  real-time thread where the OS allows (#1061, #1066, #1068, #1090, #1134,
+  #1135).
+* Settings > Video > Frame pacing: "Match display" starts frames on display
+  refreshes, with the audio following the display (#1125, #1128).
+* Without the thread, the pacer counts time on the display's vblank grid:
+  no more bursts of repeated and dropped frames (#1145).
 * Cheats window: "Community cheats" installs the verified, CRC32-matched
   pack for a cartridge from the project website (credited to jguffer,
   cheats start off, Update/Remove, hardcore-safe); Library "Download box
-  art" is now "Download art and cheat packs" (#1071).
+  art" is now "Download art and cheat packs" (#1071, #1073, #1076); the
+  converter handles more scripts (#1091, #1097, #1113, #1119, #1120).
+* TV mode: Settings, Overlays, Achievements and More screens; Off/Manual/
+  Auto switching with a first-use hint (#1060, #1067, #1077).
+* Windows with only OpenGL 1.1 falls back to the bundled Mesa (Direct3D 12,
+  else llvmpipe) instead of exiting (#1138, #1143).
+* Memory viewer bitmap mode with width guessing (#1095).
+* macOS: no GL swap hang when launched with the display asleep; the late
+  latch's event wait ends on time (#1058, #1089).
+* Windows portable updates keep data/ (#1059); installers fetch scripts
+  from master (#1087).
+* Packaging prepared for Microsoft Store, Steam and Mac App Store (not
+  published) (#1111, #1112); CMake presets (#1132).
 
 Virtual Jaguar v3.10.0 libretro
 ------------------------------
